@@ -2211,7 +2211,19 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// image operation and would re-pay cold prefill), but the newest user
 		// turn is the volatile tail that never caches anyway — same place the
 		// date stamp goes, and free for the same reason.
-		TurnNotes: func(user string) string { return turnNotes(pr.sess, t.udb, t.chatSessionID(), user) },
+		TurnNotes: func(user string) string {
+			notes := turnNotes(pr.sess, t.udb, t.chatSessionID(), user)
+			// The one-time ask about an idle open item is for the person in
+			// this conversation, so it rides the main turn only, never a
+			// worker or a dispatched agent.
+			if ask := t.openItemTurnNote(user); ask != "" {
+				if notes != "" {
+					notes += "\n\n"
+				}
+				notes += ask
+			}
+			return notes
+		},
 		// Last look before the reply goes out: is it true about what this turn
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.

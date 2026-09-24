@@ -415,7 +415,7 @@ const orphanMemoryRefAction = "orphan_memory_ref"
 // through the layer's own editor, which is where the owner can see what they
 // are removing.
 func (T *OrchestrateApp) handleAgentMemoryAudit(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -433,10 +433,20 @@ func (T *OrchestrateApp) handleAgentMemoryAudit(w http.ResponseWriter, r *http.R
 		http.NotFound(w, r)
 		return
 	}
+	// POST is the Undo on a move the memory lifecycle made.
+	if r.Method == http.MethodPost {
+		handleMemoryMovesPost(w, r, udb, agentID)
+		return
+	}
 	findings := T.auditAgentMemory(udb, user, agentID, a)
+	moves := listMemoryMoves(udb, agentID)
+	if moves == nil {
+		moves = []memoryMove{}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"findings": findings,
 		"count":    len(findings),
+		"moves":    moves,
 	})
 }

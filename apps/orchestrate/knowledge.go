@@ -36,6 +36,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/provenance"
 )
 
 func init() {
@@ -743,13 +744,13 @@ func countAgentKnowledgeChunks(appDB Database, user, agentID string) int {
 // labels the section correctly when the body has no headings of its
 // own. Empty topic falls back to the agent-wide bucket — but callers
 // should normally pass a normalized topic so retrieval can be sharp.
-func ingestAgentKnowledge(ctx context.Context, db Database, user, agentID, topic, title, body string) {
+func ingestAgentKnowledge(ctx context.Context, db Database, user, agentID, topic, title, body string) string {
 	if db == nil || user == "" || agentID == "" {
-		return
+		return ""
 	}
 	body = strings.TrimSpace(body)
 	if body == "" {
-		return
+		return ""
 	}
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -768,6 +769,7 @@ func ingestAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 	// Every save grows the corpus by one document (fresh reportID by design),
 	// so the bound is enforced at the single write choke point.
 	enforceFindingCap(user, agentID)
+	return reportID
 }
 
 // enforceFindingCap bounds an agent's self-saved findings at
@@ -1187,7 +1189,12 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	if VectorDB != nil && !semanticDedupRan && t.findingExactDuplicate(content) {
 		return fmt.Sprintf("Already saved (deduped): this exact finding is already in Memory. Skipping: retrieve it via %s.", memRecallPhrase()), nil
 	}
-	ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
+	reportID := ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
+	// A finding about something that happened on a date is dated, so it can
+	// age out of recall hints instead of being offered as news for good.
+	if kind, at := provenance.ClassifyMemKind(content, time.Now()); kind == provenance.MemKindEvent && reportID != "" && VectorDB != nil {
+		tagFindingChunks(reportID, chunkKindEvent, at, MemoryProvenance{})
+	}
 	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via %s.%s",
 		len(content), topic, memRecallPhrase(), conflictNote), nil
 }

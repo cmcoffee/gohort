@@ -227,6 +227,8 @@ const (
 	RetireSuperseded                     // a newer row replaced this attribute (Successor set)
 	RetireEvicted                        // the hard cap dropped it for space (no Successor)
 	RetireMerged                         // a sweep folded it into a combined row (Successor = that row)
+	RetirePast                           // an event aged out of the live set into reference memory (Successor = that finding)
+	RetireNotPursued                     // an open item nobody picked back up, closed after being asked about once
 )
 
 // MemoryProvenance is embedded (anonymously) into the stored memory types, so
@@ -268,6 +270,17 @@ type MemoryProvenance struct {
 	// AsOf without rewriting the note. Staleness is measured from AsOf.
 	AsOf time.Time `json:"as_of,omitempty"`
 
+	// --- Lifecycle: what the claim is about in time. See lifecycle.go. ---
+	//
+	// MemKind is a standing fact (zero), an event that happened on a date, or
+	// an open item waiting on somebody. EventAt is when an event happened, as
+	// best the note says (zero reads as the row's creation). AskedAt is when
+	// the agent was told to ask, once, whether an idle open item still stands;
+	// any fresh activity on the item clears it.
+	MemKind MemKind   `json:"mk,omitempty"`
+	EventAt time.Time `json:"ev_at,omitempty"`
+	AskedAt time.Time `json:"asked_at,omitempty"`
+
 	// --- Retirement: set when the row leaves the live set. Zero = live. ---
 	Reason    RetireReason `json:"reason,omitempty"`
 	RetiredAt time.Time    `json:"retired_at,omitempty"` // when it left the live set
@@ -289,6 +302,10 @@ func RetireReasonLabel(r RetireReason) string {
 		return "dropped to stay under the memory cap"
 	case RetireMerged:
 		return "merged into a combined note"
+	case RetirePast:
+		return "moved to reference memory as a past event"
+	case RetireNotPursued:
+		return "closed as not pursued"
 	default:
 		return "retired"
 	}

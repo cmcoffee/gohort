@@ -244,7 +244,72 @@ const agentMemoryModalTemplate = `<script>
       auditWrap.appendChild(auditList);
       body.appendChild(auditWrap);
 
+      // --- Moved by the memory lifecycle ---
+      // The daily pass takes past events out of the saved notes (into reference
+      // memory, where search still finds them) and closes open items nobody
+      // picked back up. It edits someone's memory without being asked, so every
+      // move is listed here with a way back. Silent when there are none.
+      var movesWrap = document.createElement('div');
+      movesWrap.style.cssText = 'margin-bottom:1rem;padding:0.6rem 0.7rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-1);display:none';
+      var movesTitle = document.createElement('div');
+      movesTitle.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
+      movesWrap.appendChild(movesTitle);
+      var movesIntro = document.createElement('p');
+      movesIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.83rem';
+      movesIntro.textContent = 'Past events moved to reference memory, where search still finds them, and open items closed after going unanswered. Undo puts one back in the saved notes.';
+      movesWrap.appendChild(movesIntro);
+      var movesList = document.createElement('div');
+      movesList.style.cssText = 'display:flex;flex-direction:column;gap:0.45rem';
+      movesWrap.appendChild(movesList);
+      body.appendChild(movesWrap);
+      function renderMoves(moves) {
+        movesList.innerHTML = '';
+        if (!moves || !moves.length) { movesWrap.style.display = 'none'; return; }
+        movesWrap.style.display = '';
+        movesTitle.textContent = 'Moved out of saved notes (' + moves.length + ')';
+        moves.forEach(function(mv) {
+          var row = document.createElement('div');
+          row.style.cssText = 'display:flex;gap:0.5rem;align-items:flex-start;border-left:2px solid var(--border);padding-left:0.55rem';
+          var meta = document.createElement('div');
+          meta.style.cssText = 'flex:1;min-width:0';
+          var what = document.createElement('div');
+          what.style.cssText = 'font-size:0.78rem;font-weight:600;color:var(--text)';
+          var when = mv.at ? new Date(mv.at).toLocaleDateString() : '';
+          what.textContent = (mv.kind === 'past_event' ? 'Past event, moved to reference memory' : 'Open item, closed as not pursued') + (when ? ' - ' + when : '');
+          meta.appendChild(what);
+          var q = document.createElement('div');
+          q.style.cssText = 'font-size:0.78rem;color:var(--text);opacity:0.85;white-space:pre-wrap;word-break:break-word;margin-top:0.15rem';
+          q.textContent = '“' + (mv.note || '') + '”';
+          meta.appendChild(q);
+          row.appendChild(meta);
+          var undo = document.createElement('button');
+          undo.type = 'button';
+          undo.className = 'ui-row-btn compact';
+          undo.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.5rem;min-width:0;flex:0 0 auto';
+          undo.textContent = 'Undo';
+          undo.title = 'Put it back in the saved notes';
+          undo.addEventListener('click', function() {
+            undo.disabled = true;
+            undo.textContent = 'Undoing…';
+            fetch(MEMBASE + 'memaudit', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({undo: mv.id})})
+              .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); })
+              .then(function() {
+                moves = moves.filter(function(x) { return x.id !== mv.id; });
+                renderMoves(moves);
+              })
+              .catch(function(e) {
+                undo.disabled = false;
+                undo.textContent = 'Undo';
+                window.uiAlert('Could not undo: ' + e.message);
+              });
+          });
+          row.appendChild(undo);
+          movesList.appendChild(row);
+        });
+      }
+
       fetch(MEMBASE + 'memaudit').then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
+        renderMoves((d && d.moves) || []);
         var found = (d && d.findings) || [];
         if (!found.length) return;              // silent when clean
         auditWrap.style.display = '';

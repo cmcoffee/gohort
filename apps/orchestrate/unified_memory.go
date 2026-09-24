@@ -39,6 +39,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/provenance"
 )
 
 // --- mode-aware tool-name phrases -----------------------------------------
@@ -811,6 +812,12 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 			}
 			switch kind {
 			case "fact":
+				// An open item is closed rather than deleted: declining it is
+				// an answer, and the owner can still put it back.
+				if f, ok := GetMemoryFactByID(t.udb, factsNamespace(t.agent.ID), ref); ok && !f.Retired() && f.MemKind == provenance.MemKindOpenItem {
+					closeOpenItem(t.udb, t.agent.ID, f, time.Now())
+					return "Closed the open item: it is off your saved notes. The owner can restore it from the Memory panel.", nil
+				}
 				if ForgetMemoryFactByID(t.udb, factsNamespace(t.agent.ID), ref) {
 					return "Forgot pinned note.", nil
 				}

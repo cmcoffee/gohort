@@ -51,7 +51,9 @@ func TestForgetByQueryDeletesNothingAndOffersBothKinds(t *testing.T) {
 	// The id it just offered is deletable in the same turn, though the saved
 	// conversation has not seen the tool result yet.
 	msg, err := forget(context.Background(), map[string]any{"id": "fact:" + note.ID})
-	if err != nil || !strings.Contains(msg, "Forgot") {
+	// A pending note is an open item, which forget closes rather than
+	// deletes; either way it leaves the saved notes this turn.
+	if err != nil || !(strings.Contains(msg, "Forgot") || strings.Contains(msg, "Closed the open item")) {
 		t.Fatalf("the offered id should delete: %q %v", msg, err)
 	}
 	if len(ListMemoryFacts(db, ns)) != 0 {

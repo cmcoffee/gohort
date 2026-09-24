@@ -202,9 +202,16 @@ func knowledgeHints(hits []SearchHit, threshold float64, exclude map[string]bool
 // Reference memory has no direct fetch, so they point at memory(action="search").
 func memoryHints(hits []SearchHit, threshold float64) []recallHint {
 	var out []recallHint
+	now := time.Now()
 	for _, h := range hits {
 		if float64(h.Score) < threshold {
 			break
+		}
+		// An event that has aged is history, not something to raise: a
+		// month-old trip scored above the bar on "it was good" and got asked
+		// about turn after turn. Search still finds it.
+		if pastEventHit(h, now) {
+			continue
 		}
 		name := hitLabel(h)
 		if name == "" {

@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/cmcoffee/gohort/core/provenance"
 )
 
 // MemoryFactsTable is the kvlite table name. One table shared across
@@ -438,6 +440,10 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 	if len(newVec) > 0 {
 		f.VectorModel = EmbedVersion()
 	}
+	// What the note is about in time: a standing fact, an event on a date, or
+	// an open item. Keywords first; the worker judge below overrides them when
+	// it runs, since it reads the note rather than matching words in it.
+	f.MemKind, f.EventAt = provenance.ClassifyMemKind(note, now)
 
 	// Relevance gate + supersession. When the gate applies (strict mode + worker
 	// available), a single worker call answers both "does this belong?" and "what
@@ -446,12 +452,21 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 	// embedding pass surfaced related candidates (the common case pays nothing).
 	var superseded []MemoryFact
 	if p.Chat != nil && FactGateApplies(p.Mode) {
-		relevant, toSupersede := judgeFactWrite(p.Chat, note, supersedeCandidates)
-		if !relevant {
+		j := judgeFactWrite(p.Chat, note, supersedeCandidates, now)
+		if !j.relevant {
 			Debug("[factstore] gate rejected non-durable note %q (ns=%s)", note, namespace)
 			return FactWriteResult{Reason: FactRejected}
 		}
-		superseded = applyJudgedSupersession(db, &f, now, toSupersede)
+		if j.kindSet {
+			f.MemKind, f.EventAt = j.kind, time.Time{}
+			if j.kind == provenance.MemKindEvent {
+				f.EventAt = now
+				if !j.eventAt.IsZero() {
+					f.EventAt = j.eventAt
+				}
+			}
+		}
+		superseded = applyJudgedSupersession(db, &f, now, j.supersedes)
 	} else if p.Chat != nil && len(supersedeCandidates) > 0 {
 		superseded = applyJudgedSupersession(db, &f, now, judgeSupersedes(p.Chat, note, supersedeCandidates))
 	}
@@ -492,6 +507,9 @@ func reconfirmFact(db Database, f MemoryFact, p FactWritePolicy) MemoryFact {
 		return f
 	}
 	f.AsOf = time.Now()
+	// Saying an open item again is the answer to "do you still want this?":
+	// it is live, and its idle clock starts over.
+	f.AskedAt = time.Time{}
 	db.Set(MemoryFactsTable, factDBKey(f.Namespace, f.ID), f)
 	return f
 }
@@ -657,9 +675,20 @@ Reply with ONLY a JSON array of the numbers of existing facts the new fact repla
 // keep (relevant) and which existing candidates it replaces (supersedes). Fails
 // OPEN on any error, nil chat, or unparseable reply: relevant=true, no
 // supersession — a save is never silently dropped because the judge was down.
-func judgeFactWrite(chat FactChatFunc, newNote string, candidates []MemoryFact) (bool, []MemoryFact) {
+// factJudgement is what the strict-mode write judge decided about a note.
+// kindSet is false when the judge did not say (or could not be read), which
+// leaves the keyword classification standing.
+type factJudgement struct {
+	relevant   bool
+	supersedes []MemoryFact
+	kind       provenance.MemKind
+	eventAt    time.Time
+	kindSet    bool
+}
+
+func judgeFactWrite(chat FactChatFunc, newNote string, candidates []MemoryFact, now time.Time) factJudgement {
 	if chat == nil {
-		return true, nil
+		return factJudgement{relevant: true}
 	}
 	var list strings.Builder
 	for i, f := range candidates {
@@ -668,43 +697,52 @@ func judgeFactWrite(chat FactChatFunc, newNote string, candidates []MemoryFact) 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	resp, err := chat(ctx, []Message{
-		{Role: "user", Content: fmt.Sprintf(`A personal chatbot keeps a SMALL set of short, durable facts about a user. Every saved fact is injected into every future prompt forever, so junk is expensive. A NEW note is about to be saved. Make two judgments.
+		{Role: "user", Content: fmt.Sprintf(`A personal chatbot keeps a SMALL set of short, durable facts about a user. Every saved fact is injected into every future prompt forever, so junk is expensive. A NEW note is about to be saved. Make three judgments.
 
 1. relevant: Is this a DURABLE fact worth recalling across sessions - a name, a stable preference, an identity, role, or relationship, ongoing project context, or a standing instruction? Reject it (relevant = false) if it is EPHEMERAL: small talk, a one-off remark, transient state ("user said hello", "user is typing", "it is raining right now"), or anything that will not matter next session. When you are genuinely unsure, keep it (relevant = true).
 
 2. supersedes: For each EXISTING fact listed, does the new note REPLACE it - same attribute or relationship, and they cannot both be currently true ("lives in Denver" becomes "lives in Austin")? Do NOT flag facts that can independently coexist ("likes coffee" vs "likes tea"). List the numbers of the facts the new note replaces.
 
+3. kind: "fact" if it stays true until something replaces it (a name, a preference, a role). "event" if it is something that happened, or will happen, on a particular date: a trip, a visit, an appointment, something the user just did. "open" if it records work or a decision still waiting on someone ("pending edits on the photos", "wants to look into X later"). For an event, give event_date as YYYY-MM-DD when the note says or implies it (today is %s); otherwise leave it out.
+
 NEW note: %q
 
 EXISTING facts:
 %s
-Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers]}. Use [] when nothing is superseded.`, newNote, list.String())},
+Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers], "kind": "fact" or "event" or "open", "event_date": "YYYY-MM-DD"}. Use [] when nothing is superseded.`, now.Format("2006-01-02"), newNote, list.String())},
 	}, WithSystemPrompt("You gate a personal chatbot's long-term memory: decide whether a new note is durable enough to keep, and which existing notes it replaces. Reply with ONLY the requested JSON object."),
 		WithThink(false),
-		WithMaxTokens(192))
+		WithMaxTokens(256))
 	if err != nil || resp == nil {
 		// FAIL-OPEN, and say so: with the worker down, the note stores
 		// unjudged — junk passes the gate and contradictions coexist until
 		// a later sweep. A silent skip made that pattern undiagnosable.
 		Log("[factstore] fact-write judge unavailable (%v), storing %q UNJUDGED (fail-open: no relevance gate, no supersession)", err, newNote)
-		return true, nil
+		return factJudgement{relevant: true}
 	}
 	var parsed struct {
-		Relevant   *bool `json:"relevant"`
-		Supersedes []int `json:"supersedes"`
+		Relevant   *bool  `json:"relevant"`
+		Supersedes []int  `json:"supersedes"`
+		Kind       string `json:"kind"`
+		EventDate  string `json:"event_date"`
 	}
 	if DecodeJSON(ResponseText(resp), &parsed) != nil {
 		Log("[factstore] fact-write judge reply unparseable: storing %q UNJUDGED (fail-open)", newNote)
-		return true, nil
+		return factJudgement{relevant: true}
 	}
-	relevant := parsed.Relevant == nil || *parsed.Relevant // missing field => keep
-	var out []MemoryFact
+	j := factJudgement{relevant: parsed.Relevant == nil || *parsed.Relevant} // missing field => keep
 	for _, n := range parsed.Supersedes {
 		if n >= 1 && n <= len(candidates) {
-			out = append(out, candidates[n-1])
+			j.supersedes = append(j.supersedes, candidates[n-1])
 		}
 	}
-	return relevant, out
+	if k := strings.TrimSpace(parsed.Kind); k != "" {
+		j.kind, j.kindSet = provenance.ParseMemKind(k), true
+		if at, ok := provenance.ParseEventDate(parsed.EventDate, now); ok {
+			j.eventAt = at
+		}
+	}
+	return j
 }
 
 // factSaveMu serializes StoreMemoryFactP per namespace (see the lock note
@@ -1467,7 +1505,24 @@ const groundingNote = "A note marked \"not independently checked\" is a LEAD, no
 // the model judges freshness against today's date (carried on the user turn).
 // Empty for stable facts and facts without an AsOf, so the common case is clean.
 func factProvenanceMarker(f MemoryFact) string {
-	return factSpeakerMarker(f) + factAttributionMarker(f) + factVolatilityMarker(f)
+	return factSpeakerMarker(f) + factAttributionMarker(f) + factVolatilityMarker(f) + factKindMarker(f)
+}
+
+// factKindMarker dates an event and an open item, so neither reads as live
+// news on a turn weeks later. Absolute dates, fixed once written, for the same
+// prompt-cache reason as the volatility marker.
+func factKindMarker(f MemoryFact) string {
+	switch f.MemKind {
+	case provenance.MemKindEvent:
+		if at := f.EventDate(f.Created); !at.IsZero() {
+			return " (event, " + at.Format("2006-01-02") + ")"
+		}
+	case provenance.MemKindOpenItem:
+		if !f.Created.IsZero() {
+			return " (open item, noted " + f.Created.Format("2006-01-02") + ")"
+		}
+	}
+	return ""
 }
 
 // factSpeakerMarker names whose claim this is when it is not the principal's.

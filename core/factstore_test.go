@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/provenance"
 )
 
 // TestSweepMergeDedupBackfillsSuccessor: when a sweep-merge's combined text
@@ -688,5 +690,49 @@ func TestStoreMemoryFactStampsUpdated(t *testing.T) {
 	got := ListMemoryFacts(db, ns)
 	if len(got) != 1 || got[0].Updated.IsZero() {
 		t.Fatalf("stored fact should carry Updated: %+v", got)
+	}
+}
+
+// A note about a trip is an event on a date and a note about pending work is
+// an open item; both say so in the prompt, with fixed dates, so neither reads
+// as live news weeks later. The write judge, when it runs, has the last word
+// on the kind.
+func TestSavedNotesKnowWhatTheyAreAboutInTime(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:lifecycle"
+	trip := StoreMemoryFactP(db, ns, "Just got back from a trip to Oregon on 2026-08-24", FactWritePolicy{Source: MemSourceUserStated})
+	if trip.Fact.MemKind != provenance.MemKindEvent || trip.Fact.EventAt.Format("2006-01-02") != "2026-08-24" {
+		t.Fatalf("a trip is an event on its date: %+v", trip.Fact.MemoryProvenance)
+	}
+	edits := StoreMemoryFactP(db, ns, "Pending edits on the portrait: swap the background", FactWritePolicy{Source: MemSourceUserStated})
+	if edits.Fact.MemKind != provenance.MemKindOpenItem {
+		t.Fatalf("pending work is an open item: %+v", edits.Fact.MemoryProvenance)
+	}
+	block := RenderMemoryFactsBlock(ListMemoryFacts(db, ns))
+	if !strings.Contains(block, "(event, 2026-08-24)") || !strings.Contains(block, "(open item, noted ") {
+		t.Errorf("the prompt block should date both:\n%s", block)
+	}
+
+	// Asked about, then said again: live, and no longer waiting on an answer.
+	f := edits.Fact
+	f.AskedAt = time.Now()
+	db.Set(MemoryFactsTable, ns+"/"+f.ID, f)
+	again := StoreMemoryFactP(db, ns, "Pending edits on the portrait: swap the background", FactWritePolicy{Source: MemSourceUserStated})
+	if again.Reason != FactDuplicate || !again.Fact.AskedAt.IsZero() {
+		t.Errorf("saying an open item again should clear the ask: %+v", again.Fact.MemoryProvenance)
+	}
+
+	// The judge overrides the keywords, date included.
+	judged := StoreMemoryFactP(db, "agent:judged", "Saw the northern lights with Sam",
+		FactWritePolicy{Mode: "chatbot", Source: MemSourceUserStated,
+			Chat: fakeChat(`{"relevant": true, "supersedes": [], "kind": "event", "event_date": "2026-09-20"}`, nil)})
+	if judged.Fact.MemKind != provenance.MemKindEvent || judged.Fact.EventAt.Format("2006-01-02") != "2026-09-20" {
+		t.Errorf("the judge's kind and date should stand: %+v", judged.Fact.MemoryProvenance)
+	}
+	plain := StoreMemoryFactP(db, "agent:judged", "Pending: nothing, this is a standing preference for tea",
+		FactWritePolicy{Mode: "chatbot", Source: MemSourceUserStated,
+			Chat: fakeChat(`{"relevant": true, "supersedes": [], "kind": "fact"}`, nil)})
+	if plain.Fact.MemKind != provenance.MemKindFact {
+		t.Errorf("the judge said fact, the keywords said open item; the judge wins: %+v", plain.Fact.MemoryProvenance)
 	}
 }
