@@ -1219,6 +1219,13 @@ type ChatSession struct {
 	Created time.Time `json:"Created"`
 	LastAt  time.Time `json:"LastAt"`
 
+	// Imported marks a session that came in from a file. Such a session is
+	// READ-ONLY: its tool results and replies were produced somewhere else, and
+	// replaying them to the model would hand it forged tool output as its own
+	// history. Continue carries it forward as quoted text instead
+	// (session_artifact.go). Nil on every session made here.
+	Imported *ImportedSession `json:"imported,omitempty"`
+
 	// Participants is the thread's membership (channel model — see
 	// docs/channel-model.md). Stage 1 holds only the single lead agent; the
 	// human owner is implicit in the user-scoped db. Additive and not yet read

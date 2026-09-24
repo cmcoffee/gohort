@@ -211,6 +211,11 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// under its requested id on first turn just like any session.
 	// Resolve session (create on first turn, otherwise load).
 	sess, _ := loadChatSession(udb, agent.ID, req.SessionID)
+	if sess.Imported != nil {
+		tmp := newSSEWriter(w)
+		tmp.Send(map[string]any{"kind": "error", "text": importedSessionRefusal})
+		return
+	}
 	isNewSession := sess.ID == ""
 	if isNewSession {
 		sess = ChatSession{

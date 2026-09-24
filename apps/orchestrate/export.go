@@ -79,6 +79,12 @@ func (T *OrchestrateApp) handleSessionExport(w http.ResponseWriter, r *http.Requ
 	switch format {
 	case "json":
 		payload := buildExportPayload(agent, sess, udb)
+		// The Markdown path's rule, which this path never applied: an agent
+		// that belongs to somebody else and enforces their rules keeps what
+		// its tools returned out of a file that travels further than the page.
+		if !exportForOwner(agent, user) && resolveGuardrailHooks(agent) != nil {
+			payload.Session.Messages = withholdToolResults(payload.Session.Messages)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filenameBase+`.json"`)
 		_ = json.NewEncoder(w).Encode(payload)
@@ -181,6 +187,25 @@ func buildExportPayload(agent AgentRecord, sess ChatSession, udb Database) sessi
 			Compacted:           exportCompaction(udb, agent.ID, sess.ID),
 		},
 	}
+}
+
+// withholdToolResults returns a copy of msgs with every tool call's result
+// and error removed, keeping the calls themselves.
+func withholdToolResults(msgs []ChatMessage) []ChatMessage {
+	out := make([]ChatMessage, len(msgs))
+	for i, m := range msgs {
+		if len(m.ToolCalls) > 0 {
+			calls := make([]PersistedToolCall, len(m.ToolCalls))
+			copy(calls, m.ToolCalls)
+			for j := range calls {
+				calls[j].Result = "(withheld: this agent belongs to somebody else and enforces their rules)"
+				calls[j].Err = ""
+			}
+			m.ToolCalls = calls
+		}
+		out[i] = m
+	}
+	return out
 }
 
 // exportCompaction reports the fold state when a thread has one, so an export

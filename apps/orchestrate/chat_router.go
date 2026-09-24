@@ -283,6 +283,21 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// /api/sessions/{sid}/continue — start a new conversation from an
+	// imported, read-only one (session_artifact.go).
+	if strings.HasSuffix(sid, "/continue") {
+		sid = strings.TrimSuffix(sid, "/continue")
+		if sid == "" || strings.Contains(sid, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		agent, ok := T.resolveAgent(w, r, udb, user)
+		if !ok {
+			return
+		}
+		T.handleSessionContinue(w, r, udb, agent, sid)
+		return
+	}
 	// Detect /api/sessions/{sid}/export — a sub-action that dumps
 	// the full session as JSON or markdown for sharing / debugging.
 	if strings.HasSuffix(sid, "/export") {

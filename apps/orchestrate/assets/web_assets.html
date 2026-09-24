@@ -2353,6 +2353,36 @@
         setTimeout(function() { a.remove(); }, 0);
       });
 
+      // Export → one conversation as a bundle, through the shared export
+      // dialog (which offers the agent to go with it).
+      window.uiRegisterClientAction('orchestrate_bundle_session', function(ctx) {
+        var agentID = getAgentID();
+        var sessionID = (ctx && ctx.sessionId) || '';
+        if (!agentID || !sessionID) { window.uiAlert('Open a conversation first: there is nothing to export yet.'); return; }
+        window.gohortArtifacts.exportFlow({
+          type: 'session', name: agentID + '/' + sessionID,
+          label: (getAgentLabel() || 'conversation') + '-' + sessionID.slice(0, 8)
+        });
+      });
+
+      // Continue → an imported conversation is read-only; this starts a new
+      // one that carries it as quoted background, and opens it.
+      window.uiRegisterClientAction('orchestrate_continue_session', function(ctx) {
+        var agentID = getAgentID();
+        var sessionID = (ctx && ctx.sessionId) || '';
+        if (!agentID || !sessionID) { window.uiAlert('Open the imported conversation first.'); return; }
+        fetch('api/sessions/' + encodeURIComponent(sessionID) + '/continue?agent_id=' + encodeURIComponent(agentID),
+              {method: 'POST', credentials: 'same-origin'})
+          .then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+            return r.json();
+          })
+          .then(function(d) {
+            window.location.href = '?agent=' + encodeURIComponent(agentID) + '&session=' + encodeURIComponent(d.id);
+          })
+          .catch(function(err) { window.uiAlert(err && err.message || String(err)); });
+      });
+
       // Ask the owner — the same shape as Send to Builder beside it, for the
       // agent that is not yours to fix. A tool exists for this too, and the
       // model will offer it when it hits a wall; a button is for the user who
