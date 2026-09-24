@@ -312,7 +312,11 @@
   // bubbles and pipeline_panel for transcript blocks. Top-level so
   // any component can call it without scope juggling.
   function mdToHTML(s) {
-    s = String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Quotes are escaped too. Link rules below put a URL straight into
+    // href="...", so an unescaped " in model or user text could close the
+    // attribute and add an event handler of its own.
+    s = String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     var fenceRe  = /```([\s\S]*?)```/g;
     var inlineRe = /`([^`\n]+)`/g;
     s = s.replace(fenceRe, function(_, body){ return '<pre><code>' + body.replace(/^\n/, '') + '</code></pre>'; });

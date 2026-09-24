@@ -1115,6 +1115,16 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 	// Only for DCR clients. A manually pre-registered client_id is the
 	// operator's, and re-registering it is not ours to do — that case is
 	// covered by naming both URIs in the admin form's help.
+	//
+	// Only a new PATH on a host the client already holds. The redirect URI is
+	// built from the request's Host when no External URL is configured, so a
+	// forged Host header would otherwise re-register the shared client to send
+	// consent codes to a host of the requester's choosing.
+	if strings.TrimSpace(cfg.OAuthClientID) == "" && !oc.knowsRedirect(redirectURI) &&
+		len(oc.RegisteredRedirects) > 0 && !redirectHostKnown(oc.RegisteredRedirects, redirectURI) {
+		return "", fmt.Errorf("this server's OAuth client is registered for %s, not %s: set External URL in Admin > Site Settings so every consent uses the same address",
+			redirectOrigins(oc.RegisteredRedirects), redirectOrigin(redirectURI))
+	}
 	if strings.TrimSpace(cfg.OAuthClientID) == "" && !oc.knowsRedirect(redirectURI) &&
 		strings.TrimSpace(oc.RegistrationEndpoint) != "" {
 		rctx, rcancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout())
@@ -1142,13 +1152,25 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 // for tokens, stores them for the authorizing user, and brings that
 // user's connection up (registering the global tool schema on first
 // success).
-func (m *MCPManager) CompleteOAuth(state, code string) error {
+//
+// completingUser must be the user who started the flow (see
+// SecureAPI.OAuthCallback for why the state alone cannot establish that). The
+// pending map is also swept here: nothing else ever removed an abandoned flow.
+func (m *MCPManager) CompleteOAuth(state, code, completingUser string) error {
 	m.oauthPendingMu.Lock()
+	for k, v := range m.oauthPending {
+		if time.Since(v.created) > 15*time.Minute {
+			delete(m.oauthPending, k)
+		}
+	}
 	p, ok := m.oauthPending[state]
 	delete(m.oauthPending, state)
 	m.oauthPendingMu.Unlock()
 	if !ok {
 		return fmt.Errorf("unknown or expired authorization state")
+	}
+	if strings.TrimSpace(completingUser) == "" || completingUser != p.user {
+		return fmt.Errorf("this authorization was started by a different account: start it again while signed in as yourself")
 	}
 	oc, ok := m.loadOAuthCfg(p.server)
 	if !ok {
@@ -1591,4 +1613,37 @@ func mcpSortedKeys(m map[string]any) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// redirectOrigin is a redirect URI's scheme://host, or "" when it has none.
+func redirectOrigin(u string) string {
+	pu, err := url.Parse(strings.TrimSpace(u))
+	if err != nil || pu.Host == "" {
+		return ""
+	}
+	return strings.ToLower(pu.Scheme + "://" + pu.Host)
+}
+
+// redirectHostKnown reports whether u is on an origin one of the registered
+// redirect URIs already uses.
+func redirectHostKnown(registered []string, u string) bool {
+	want := redirectOrigin(u)
+	for _, r := range registered {
+		if want != "" && redirectOrigin(r) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func redirectOrigins(registered []string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range registered {
+		if o := redirectOrigin(r); o != "" && !seen[o] {
+			seen[o] = true
+			out = append(out, o)
+		}
+	}
+	return strings.Join(out, ", ")
 }

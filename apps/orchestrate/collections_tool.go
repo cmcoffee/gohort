@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -156,6 +157,9 @@ func collectionsListTool() ChatTool {
 			if !ok {
 				return "", fmt.Errorf("collection %q not found", id)
 			}
+			if why := collectionWriteRefusal(c, sess.Username, "", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
+				return "", errors.New(why)
+			}
 			var changed []string
 			if _, has := args["name"]; has {
 				if s := strings.TrimSpace(stringArg(args, "name")); s != "" {
@@ -245,8 +249,14 @@ func collectionsListTool() ChatTool {
 			if id == "" || docID == "" {
 				return "", errors.New("id and doc_id are required for action=remove_doc")
 			}
-			if _, ok := loadCollection(sess.DB, sess.Username, id); !ok {
+			c, ok := loadCollection(sess.DB, sess.Username, id)
+			if !ok {
 				return "", fmt.Errorf("collection %q not found", id)
+			}
+			// Removing a document is curation: the owner's (or, for the
+			// deployment's own collection, an administrator's).
+			if why := collectionWriteRefusal(c, sess.Username, "remove_doc", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
+				return "", errors.New(why)
 			}
 			prefix := collectionSource(id)
 			removed := DeleteChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
@@ -280,6 +290,9 @@ func collectionsListTool() ChatTool {
 			c, ok := loadCollection(sess.DB, sess.Username, id)
 			if !ok {
 				return "", fmt.Errorf("collection %q not found", id)
+			}
+			if why := collectionWriteRefusal(c, sess.Username, "paste", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
+				return "", errors.New(why)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
@@ -317,6 +330,9 @@ func collectionsListTool() ChatTool {
 			c, ok := loadCollection(sess.DB, sess.Username, id)
 			if !ok {
 				return "", fmt.Errorf("collection %q not found", id)
+			}
+			if why := collectionWriteRefusal(c, sess.Username, "autofill", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
+				return "", errors.New(why)
 			}
 			norm := normalizeIngestURL(url)
 			for _, u := range c.IngestedURLs {

@@ -127,13 +127,59 @@ func parseCIDRList(list string) []*net.IPNet {
 	return out
 }
 
-// ClientIP extracts the originating client IP from the request. It honors
-// X-Forwarded-For (first hop) and X-Real-IP for proxied deployments.
+// TrustedProxiesFunc returns a comma-separated list of CIDR blocks (or bare
+// IPs) of reverse proxies whose X-Forwarded-For / X-Real-IP are believed, in
+// addition to loopback. Empty or unset: loopback only. Set by the application
+// from stored config.
+var TrustedProxiesFunc func() string
+
+// trustedProxy reports whether ip is a proxy whose forwarding headers count.
+func trustedProxy(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	if TrustedProxiesFunc == nil {
+		return false
+	}
+	for _, n := range parseCIDRList(TrustedProxiesFunc()) {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClientIP returns the originating client IP.
+//
+// Forwarding headers are believed ONLY from a trusted proxy (loopback, or
+// TrustedProxiesFunc), because anybody can send them: believing the FIRST
+// X-Forwarded-For hop, as this used to, let any client name its own address,
+// which walked straight past the login lockout (a fresh address per guess)
+// and the admin IP allowlist (send an allowlisted address). A proxy appends
+// the address it saw to the RIGHT of whatever the client sent, so the client
+// is the rightmost hop that is not itself a trusted proxy.
 func ClientIP(r *http.Request) net.IP {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(strings.TrimSpace(host))
+	if !trustedProxy(peer) {
+		return peer
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		first := strings.TrimSpace(strings.Split(xff, ",")[0])
-		if ip := net.ParseIP(first); ip != nil {
-			return ip
+		hops := strings.Split(xff, ",")
+		for i := len(hops) - 1; i >= 0; i-- {
+			ip := net.ParseIP(strings.TrimSpace(hops[i]))
+			if ip == nil {
+				break // malformed from here left: stop at what the proxies wrote
+			}
+			if !trustedProxy(ip) {
+				return ip
+			}
 		}
 	}
 	if xr := r.Header.Get("X-Real-IP"); xr != "" {
@@ -141,9 +187,5 @@ func ClientIP(r *http.Request) net.IP {
 			return ip
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	return net.ParseIP(host)
+	return peer
 }

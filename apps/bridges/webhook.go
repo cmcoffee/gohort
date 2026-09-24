@@ -162,7 +162,12 @@ func (T *Bridges) handleWebhookSecret(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such connector", http.StatusNotFound)
 		return
 	}
-	if c.Owner != "" && c.Owner != user && !IsAdminAllowed(r) {
+	// The owner, or an admin. IsAdminAllowed used to stand in for the admin
+	// half, but it is the admin IP ALLOWLIST (true for everyone when none is
+	// set), so any signed-in user could reset another user's signing secret
+	// and then send validly signed events into their agent. A connector with
+	// no recorded owner is an admin's.
+	if !(c.Owner != "" && c.Owner == user) && !RequestIsAdmin(r) {
 		http.Error(w, "not your connector", http.StatusForbidden)
 		return
 	}

@@ -221,15 +221,24 @@ func (s *SecureAPI) OAuthStart(c SecureCredential, user, redirectURI string) (st
 // OAuthCallback completes a consent flow: validates state, exchanges the code
 // (with the PKCE verifier) for tokens, and stores them for the user. Returns the
 // resolved (credential name, user) so the caller can redirect appropriately.
-func (s *SecureAPI) OAuthCallback(ctx context.Context, state, code string) (credName, user string, err error) {
+//
+// completingUser is whoever is signed in on the callback, and it must be the
+// user who STARTED the flow. The state alone cannot say that: somebody could
+// start a flow, send the resulting consent link to a colleague, and have the
+// colleague's provider account land in their own gohort account. A mismatch
+// burns the state and stores nothing.
+func (s *SecureAPI) OAuthCallback(ctx context.Context, state, code, completingUser string) (credName, user string, err error) {
 	oauthPendingMu.Lock()
 	p, ok := oauthPending_[state]
 	if ok {
 		delete(oauthPending_, state)
 	}
 	oauthPendingMu.Unlock()
-	if !ok {
+	if !ok || time.Since(p.at) > 10*time.Minute {
 		return "", "", fmt.Errorf("unknown or expired authorization state")
+	}
+	if strings.TrimSpace(completingUser) == "" || completingUser != p.user {
+		return "", "", fmt.Errorf("this authorization was started by a different account: start it again while signed in as yourself")
 	}
 	c, found := s.Load(p.cred)
 	if !found {

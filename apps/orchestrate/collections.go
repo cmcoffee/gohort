@@ -221,7 +221,7 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 	// It matters more than "somebody added a file". An agent takes its
 	// collections as ground truth, so whoever can write to one decides what
 	// every agent reading it believes, and they will believe it confidently.
-	if why := collectionWriteRefusal(c, user, action, r.Method); why != "" {
+	if why := collectionWriteRefusal(c, user, action, r.Method, RequestIsAdmin(r)); why != "" {
 		http.Error(w, why, http.StatusForbidden)
 		return
 	}
@@ -1930,7 +1930,21 @@ var collectionCorpusActions = map[string]bool{
 // exception is the empty action, which is the record itself: GET reads it, and
 // anything else is renaming, re-scoping or re-sharing somebody else's
 // collection.
-func collectionWriteRefusal(c Collection, user, action, method string) string {
+//
+// A DEPLOYMENT collection with no owner (deployment-knowledge, which every
+// agent without curated collections searches by default) is readable by
+// everybody and changed by an administrator only. It used to read as "no
+// owner, so anybody", which let any user delete it or plant text every agent
+// in the deployment would then treat as ground truth. An ownerless record in
+// a user's own store (one written before ownership existed) stays open, as it
+// always was.
+func collectionWriteRefusal(c Collection, user, action, method string, admin bool) string {
+	if c.Owner == "" && IsDeploymentScope(c) {
+		if admin || collectionReadActions[action] || (action == "" && method == http.MethodGet) {
+			return ""
+		}
+		return "\"" + c.Name + "\" is the deployment's shared knowledge: everybody can read it, and only an administrator can change it."
+	}
 	if c.Owner == "" || c.Owner == user {
 		return ""
 	}

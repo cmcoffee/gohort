@@ -117,7 +117,8 @@ func (T *Account) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 // handleOAuthCallback completes the flow: exchanges the code for the user's token
 // and returns them to the Account page.
 func (T *Account) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
@@ -126,7 +127,7 @@ func (T *Account) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	state := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
-	if _, _, err := Secure().OAuthCallback(r.Context(), state, code); err != nil {
+	if _, _, err := Secure().OAuthCallback(r.Context(), state, code, user); err != nil {
 		Log("[account] oauth callback failed: %v", err)
 		http.Redirect(w, r, "/extensions/?oauth=failed", http.StatusFound)
 		return
@@ -185,7 +186,8 @@ func (T *Account) handleMCPConnect(w http.ResponseWriter, r *http.Request) {
 // needs a logged-in session. Renders a self-contained result page (this tab is
 // typically a consent popup opened from chat or the Account panel).
 func (T *Account) handleMCPCallback(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	q := r.URL.Query()
@@ -198,7 +200,7 @@ func (T *Account) handleMCPCallback(w http.ResponseWriter, r *http.Request) {
 		mcpConnectResultPage(w, "Missing authorization code or state.")
 		return
 	}
-	if err := MCP().CompleteOAuth(state, code); err != nil {
+	if err := MCP().CompleteOAuth(state, code, user); err != nil {
 		mcpConnectResultPage(w, "Could not complete the connection:\n\n"+err.Error())
 		return
 	}

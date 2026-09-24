@@ -2,6 +2,7 @@ package textutil
 
 import (
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 )
@@ -60,6 +61,71 @@ func HTMLUnescape(s string) string {
 var inlineHTMLPassthroughRE = regexp.MustCompile(
 	`<sup\b[^>]*>.*?</sup>|<sub\b[^>]*>.*?</sub>|<a\b[^>]*>.*?</a>`)
 
+var (
+	passthroughHrefRE = regexp.MustCompile(`(?i)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	passthroughAnchor = regexp.MustCompile(`(?is)<a\b([^>]*)>(.*?)</a>`)
+	passthroughTag    = regexp.MustCompile(`(?is)^<(sup|sub)\b[^>]*>(.*)</(?:sup|sub)>$`)
+)
+
+// safeHref returns href when it is a link a reader can safely follow: http,
+// https, mailto, an in-page anchor, or a site-relative path. "" otherwise.
+func safeHref(href string) string {
+	h := strings.TrimSpace(html.UnescapeString(href))
+	lower := strings.ToLower(h)
+	switch {
+	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"),
+		strings.HasPrefix(lower, "mailto:"), strings.HasPrefix(h, "#"),
+		strings.HasPrefix(h, "/") && !strings.HasPrefix(h, "//"):
+		return h
+	}
+	return ""
+}
+
+// sanitizeAnchor rebuilds one <a ...>text</a> with only a checked href and
+// escaped text.
+func sanitizeAnchor(attrs, inner string) string {
+	text := HTMLEscape(html.UnescapeString(stripTags(inner)))
+	href := ""
+	if m := passthroughHrefRE.FindStringSubmatch(attrs); m != nil {
+		href = safeHref(m[1] + m[2] + m[3])
+	}
+	if href == "" {
+		return text
+	}
+	ext := ""
+	if l := strings.ToLower(href); strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") {
+		ext = ` target="_blank" rel="noopener noreferrer"`
+	}
+	return `<a href="` + HTMLEscape(href) + `"` + ext + `>` + text + `</a>`
+}
+
+var anyTagRE = regexp.MustCompile(`(?s)<[^>]*>`)
+
+func stripTags(s string) string { return anyTagRE.ReplaceAllString(s, "") }
+
+// sanitizePassthroughSpan rebuilds a protected <sup>, <sub> or <a> span from
+// its parts: sup/sub keep no attributes, an anchor keeps only a safe href, and
+// all text is escaped. What renders is the citation superscript the pass-through
+// exists for, and nothing a document's author slipped into the tag.
+func sanitizePassthroughSpan(span string) string {
+	if m := passthroughTag.FindStringSubmatch(span); m != nil {
+		tag, inner := strings.ToLower(m[1]), m[2]
+		var b strings.Builder
+		last := 0
+		for _, loc := range passthroughAnchor.FindAllStringSubmatchIndex(inner, -1) {
+			b.WriteString(HTMLEscape(html.UnescapeString(stripTags(inner[last:loc[0]]))))
+			b.WriteString(sanitizeAnchor(inner[loc[2]:loc[3]], inner[loc[4]:loc[5]]))
+			last = loc[1]
+		}
+		b.WriteString(HTMLEscape(html.UnescapeString(stripTags(inner[last:]))))
+		return "<" + tag + ">" + b.String() + "</" + tag + ">"
+	}
+	if m := passthroughAnchor.FindStringSubmatch(span); m != nil {
+		return sanitizeAnchor(m[1], m[2])
+	}
+	return HTMLEscape(span)
+}
+
 // InlineMarkdownToHTML converts inline markdown (bold, italic, code) to HTML.
 func InlineMarkdownToHTML(s string) string {
 	// Protect approved inline HTML spans from the escape pass. Without
@@ -73,7 +139,10 @@ func InlineMarkdownToHTML(s string) string {
 	var protected []string
 	s = inlineHTMLPassthroughRE.ReplaceAllStringFunc(s, func(match string) string {
 		idx := len(protected)
-		protected = append(protected, match)
+		// Rebuilt, not kept: the span arrives from model output and from
+		// documents other people can write, and a verbatim <a> kept any
+		// attribute it came with (an event handler, a javascript: href).
+		protected = append(protected, sanitizePassthroughSpan(match))
 		return fmt.Sprintf("\x00HTMLPROTECT%d\x00", idx)
 	})
 	s = HTMLEscape(s)
@@ -131,8 +200,10 @@ func InlineMarkdownToHTML(s string) string {
 			// and treat as external (new tab).
 			return fmt.Sprintf(`<a href="https://%s" target="_blank" rel="noopener noreferrer">%s</a>`, url, text)
 		default:
-			// Unclassifiable — leave verbatim so we don't make it worse.
-			return fmt.Sprintf(`<a href="%s">%s</a>`, url, text)
+			// Unclassifiable (javascript:, data:, a scheme we do not know):
+			// the text, not a link. Linking it verbatim made any scheme a
+			// script the reader clicks.
+			return text
 		}
 	})
 

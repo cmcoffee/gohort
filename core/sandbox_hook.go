@@ -928,6 +928,30 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 		writeHookError(conn, fmt.Sprintf("no credential named %q registered: register it via Extensions > API credentials (or Admin > APIs) first", name))
 		return
 	}
+	// Handing out the raw key is the widest thing a credential can do, so it
+	// passes every gate the server-side paths do, and then some. The WHO axis
+	// (fetch_via checks it through EnforceSecuredBinding; this path did not),
+	// the agent's own credential scope, and: never a key somebody LENT you
+	// (a lend is use through the server, not a copy of their key to keep),
+	// never an OAuth client secret or signing key (a deployment's, not a
+	// user's, and not a bearer token a script could use anyway).
+	if !sec.UserMayUse(cred, owner) {
+		Log("[hook/secret] DENIED %q for %q: not shared with this user", name, owner)
+		writeHookError(conn, fmt.Sprintf("credential %q is not shared with you", name))
+		return
+	}
+	if h.Sess != nil && h.Sess.CredentialDenied(name) {
+		writeHookError(conn, fmt.Sprintf("credential %q is not allowed for this agent (revoked in its credential scope)", name))
+		return
+	}
+	if cred.Owner != "" && cred.Owner != owner {
+		writeHookError(conn, fmt.Sprintf("credential %q was lent to you by %s: a lent key is used through fetch_via:%s, never handed to a script", name, cred.Owner, name))
+		return
+	}
+	if cred.Type == SecureCredOAuth2 {
+		writeHookError(conn, fmt.Sprintf("credential %q is OAuth: its stored secret is the deployment's client secret, which is never handed to a script. Use fetch_via:%s", name, name))
+		return
+	}
 	if cred.Secured {
 		// Secured credentials NEVER hand out the raw secret — even to a bound
 		// tool — so the key can't be exfiltrated by tool code. Server-side

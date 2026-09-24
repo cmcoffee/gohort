@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/cmcoffee/gohort/core/deps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/deps"
 )
 
 // ytDlpAuthArgs returns yt-dlp cookie flags when the operator has configured a
@@ -55,6 +57,15 @@ func firstLine(s string) string {
 //
 // Hard caps: 120s wall clock, 200 MB output.
 func downloadViaYtDlp(url string) ([]byte, error) {
+	// The URL comes from the model, which can be steered by any page it read.
+	// It must be a public http(s) URL: yt-dlp would otherwise read a value
+	// starting with "-" as one of its own options (some of which run
+	// commands), and fetch file:, loopback or metadata addresses for anyone
+	// who asked. The "--" below is the second half of the same fix.
+	url = strings.TrimSpace(url)
+	if err := core.RefuseNonPublicHost(url); err != nil {
+		return nil, fmt.Errorf("video url refused: %w", err)
+	}
 	if _, err := exec.LookPath("yt-dlp"); err != nil {
 		return nil, fmt.Errorf("yt-dlp is not installed on this server. Install the self-contained binary (recommended, it self-updates via `sudo yt-dlp -U`): download the latest from https://github.com/yt-dlp/yt-dlp/releases, put it on PATH (e.g. /usr/local/bin/yt-dlp), and chmod +x. Avoid `pip install` unless you know the Python it targets will stay put.")
 	}
@@ -98,7 +109,8 @@ func downloadViaYtDlp(url string) ([]byte, error) {
 	// logged-out requests) need a session; append cookies when the operator
 	// has configured one. yt-dlp reads them right before the URL.
 	args = append(args, ytDlpAuthArgs()...)
-	args = append(args, url)
+	// Nothing after "--" is an option, whatever it starts with.
+	args = append(args, "--", url)
 	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

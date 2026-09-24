@@ -2219,7 +2219,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 
 	// Client cap must match the context cap, or the shorter of the two wins
 	// and the override above is silently undone.
-	httpClient := &http.Client{Timeout: callTimeout}
+	httpClient := &http.Client{Timeout: callTimeout, CheckRedirect: credentialRedirectCheck(c)}
 	if c.InsecureSkipTLS {
 		// Per-credential opt-out of cert verification (self-signed / IP-addressed
 		// LAN appliances). Scoped to this credential's allow-listed host only.
@@ -2605,6 +2605,32 @@ func credMisconfigEscalation(name, baseErr string, count int) error {
 		return fmt.Errorf("%s", baseErr)
 	}
 	return fmt.Errorf("%s. STOP: this credential has been rejected %d times in a row. Its Base URL, Allowed Endpoints, or scheme is MISCONFIGURED, and trying different URLs will NOT fix it. Do not retry. Report this exact error to the user and ask them to correct the %q credential in Admin > APIs (Base URL must match the request's scheme+host, e.g. http:// vs https://; an Allowed Endpoint like /api/* permits everything under /api/).", baseErr, count, name)
+}
+
+// credentialRedirectCheck keeps a credentialed request inside the credential's
+// reach across redirects. Go's client strips Authorization on a cross-host
+// redirect but forwards every other header, so a header-type key (X-API-Key)
+// went wherever an allowed endpoint redirected, and the allowlist and deny
+// patterns were checked only on the first URL. A redirect is followed only to
+// the SAME host, and only when that URL passes both lists again.
+func credentialRedirectCheck(c SecureCredential) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		if len(via) > 0 && !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+			return fmt.Errorf("credential %q: refusing a redirect to another host (%s)", c.Name, req.URL.Host)
+		}
+		if !urlAllowedByCredential(c, req.URL.String()) {
+			return fmt.Errorf("credential %q: refusing a redirect outside its allowed endpoints", c.Name)
+		}
+		for _, deny := range c.DeniedURLPatterns {
+			if deny = strings.TrimSpace(deny); deny != "" && urlMatchesPattern(req.URL.String(), deny) {
+				return fmt.Errorf("credential %q: refusing a redirect to a denied endpoint", c.Name)
+			}
+		}
+		return nil
+	}
 }
 
 // urlAllowedByCredential is the request-time allow-list gate. It prefers the

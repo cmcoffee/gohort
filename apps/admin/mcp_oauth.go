@@ -48,7 +48,8 @@ func (a *AdminApp) handleMCPOAuthStart(w http.ResponseWriter, r *http.Request) {
 // a provider with a pre-registered client must have BOTH redirect URIs
 // registered, and the admin form's Client ID help says so.
 func (a *AdminApp) handleMCPOAuthCallback(w http.ResponseWriter, r *http.Request) {
-	if AuthCurrentUser(r) == "" {
+	user := AuthCurrentUser(r)
+	if user == "" {
 		http.Error(w, "not logged in", http.StatusUnauthorized)
 		return
 	}
@@ -62,7 +63,7 @@ func (a *AdminApp) handleMCPOAuthCallback(w http.ResponseWriter, r *http.Request
 		mcpOAuthResultPage(w, "Missing authorization code or state.")
 		return
 	}
-	if err := MCP().CompleteOAuth(state, code); err != nil {
+	if err := MCP().CompleteOAuth(state, code, user); err != nil {
 		mcpOAuthResultPage(w, "Could not complete the connection:\n\n"+err.Error())
 		return
 	}
@@ -73,6 +74,17 @@ func (a *AdminApp) handleMCPOAuthCallback(w http.ResponseWriter, r *http.Request
 // Must be https or localhost (OAuth 2.1 + Atlassian requirement); plain
 // http on a non-local host will be rejected by the authorization server.
 func mcpOAuthCallbackURL(r *http.Request) string {
+	// The configured External URL first, as the account flow does: the
+	// request's Host is whatever the client sent.
+	if AuthDB != nil {
+		if db := AuthDB(); db != nil {
+			var ext string
+			db.Get(WebTable, "external_url", &ext)
+			if ext = strings.TrimRight(strings.TrimSpace(ext), "/"); ext != "" {
+				return ext + "/admin/api/mcp-servers/oauth/callback"
+			}
+		}
+	}
 	scheme := "http"
 	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 		scheme = "https"
