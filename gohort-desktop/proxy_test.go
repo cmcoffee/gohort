@@ -115,3 +115,28 @@ func TestRefreshButtonClearsTheHeaderNotOneControl(t *testing.T) {
 		}
 	}
 }
+
+// TestPopupShimSavesURLDownloads guards downloads that are not an inline data:
+// link. WKWebView ignores <a download> on every href, and the shim used to
+// rescue only data: links, so a same-origin export URL (Knowledge, the bundle
+// client) or a blob: link (servitor) was a dead click with a 200 in the server
+// log. The harness clicks a URL download and a refused one, and checks the
+// first reaches the native save and the second says why it failed.
+func TestPopupShimSavesURLDownloads(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed; skipping shim behaviour check")
+	}
+	f, err := os.CreateTemp("", "popup_shim_*.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(popup_shim_js); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if out, err := exec.Command(node, "testdata/shim_download.js", f.Name()).CombinedOutput(); err != nil {
+		t.Fatalf("a URL download did not reach the native save, or a refused one said nothing: %v\n%s", err, out)
+	}
+}
