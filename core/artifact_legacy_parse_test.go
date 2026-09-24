@@ -211,3 +211,73 @@ func TestTheExportPlanAndTheKindsTheDialogTicks(t *testing.T) {
 		t.Fatalf("only the ticked kind should travel: %v", kinds)
 	}
 }
+
+// Opt-in data kinds ride a closure only when named; attachments import after
+// everything they could attach to; an item selected by id is not exported a
+// second time when a dependency points back at it by name.
+type dataFake struct{ ownerFake }
+
+// canonFake names its recipes canonically, so an id and a name can reach the
+// same recipe.
+type canonFake struct {
+	ownerFake
+	canon map[string]string
+}
+
+func (c *canonFake) ExportArtifact(db Database, name, owner string) (json.RawMessage, error) {
+	if _, err := c.ownerFake.ExportArtifact(db, name, owner); err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]string{"name": c.canon[name]})
+}
+
+func (*dataFake) OptInDependency() bool { return true }
+func (*dataFake) ImportsLate() bool     { return true }
+
+func TestOptInDataLateImportAndBackReferences(t *testing.T) {
+	agents := &canonFake{ownerFake: ownerFake{sniffingFake: sniffingFake{fakeArtifact{typ: "agent"}}},
+		canon: map[string]string{"id-1": "Helper", "Helper": "Helper"}}
+	agents.byOwner = map[string]map[string]bool{"alice": {"id-1": true, "Helper": true}}
+	agents.deps = map[string][]ArtifactSel{"id-1": {{Type: "memory", Name: "Helper"}, {Type: "agent", Name: "Helper"}}}
+	mem := &dataFake{ownerFake{sniffingFake: sniffingFake{fakeArtifact{typ: "memory"}}}}
+	mem.byOwner = map[string]map[string]bool{"alice": {"Helper": true}}
+	withFakeTypes(t, agents, mem)
+
+	// Not named: the memory stays home, even though every other kind travels.
+	b, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "agent", Name: "id-1"}}, UserExportOptions{IncludeDeps: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range b.Artifacts {
+		if a.Type == "memory" {
+			t.Fatal("opt-in data travelled without being asked for")
+		}
+	}
+	// Selected by id, pointed back at by name: one agent in the bundle.
+	b, err = ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "agent", Name: "id-1"}},
+		UserExportOptions{IncludeDeps: true, DepTypes: []string{"memory", "agent"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentsOut := 0
+	for _, a := range b.Artifacts {
+		if a.Type == "agent" {
+			agentsOut++
+		}
+	}
+	if agentsOut != 1 {
+		t.Errorf("the agent travelled %d times", agentsOut)
+	}
+
+	// Import order: the memory is listed first, lands last.
+	bundle := []byte(`{"bundle": "` + ArtifactBundleFormat + `", "artifacts": [
+		{"type": "memory", "name": "m", "recipe": "m"},
+		{"type": "agent", "name": "a", "recipe": "a"}]}`)
+	res, err := ImportArtifactBundle(nil, bundle, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Outcomes) != 2 || res.Outcomes[0].Type != "agent" || res.Outcomes[1].Type != "memory" {
+		t.Errorf("attachments should import after what they attach to: %+v", res.Outcomes)
+	}
+}

@@ -135,15 +135,34 @@ type ArtifactRecipeDependencies interface {
 // artifactDeps returns the declared dependencies of one selection, or nil if
 // its type declares none (doesn't implement ArtifactDependencies).
 func artifactDeps(db Database, s ArtifactSel) []ArtifactSel {
-	at, ok := lookupArtifactType(strings.TrimSpace(s.Type))
+	typ := strings.TrimSpace(s.Type)
+	at, ok := lookupArtifactType(typ)
 	if !ok {
 		return nil
 	}
-	dep, ok := at.(ArtifactDependencies)
-	if !ok {
-		return nil
+	var out []ArtifactSel
+	if dep, ok := at.(ArtifactDependencies); ok {
+		out = dep.Dependencies(db, strings.TrimSpace(s.Name), strings.TrimSpace(s.Owner))
 	}
-	return dep.Dependencies(db, strings.TrimSpace(s.Name), strings.TrimSpace(s.Owner))
+	for _, fn := range extraArtifactDeps[typ] {
+		out = append(out, fn(strings.TrimSpace(s.Name), strings.TrimSpace(s.Owner))...)
+	}
+	return out
+}
+
+var extraArtifactDeps = map[string][]func(name, owner string) []ArtifactSel{}
+
+// RegisterArtifactDependencies adds dependencies to an EXISTING type from a
+// package that owns something that type cannot see: a custom app's records
+// live in the customapps store, which the core custom_app type has no handle
+// on. Store side only, like the Dependencies interface it extends; fn gets the
+// artifact's name and owner and returns what else should travel with it.
+func RegisterArtifactDependencies(typ string, fn func(name, owner string) []ArtifactSel) {
+	if fn == nil {
+		return
+	}
+	typ = strings.TrimSpace(typ)
+	extraArtifactDeps[typ] = append(extraArtifactDeps[typ], fn)
 }
 
 // exportableCredential reports whether a credential NAME is worth folding into
@@ -180,6 +199,43 @@ type artifactRecipeSniffer interface {
 // credentials, source hooks: deployment-wide records) is admin-only.
 type artifactUserImportable interface {
 	UserImportable() bool
+}
+
+// artifactOptInDependency is an OPTIONAL capability for a kind that is data
+// rather than a recipe (an agent's memory, an app's records): it rides a
+// dependency closure only when the export names it. Enforced here, on the
+// server, so a bare export request or an account backup does not carry
+// somebody's memory because a dialog's default was never consulted.
+type artifactOptInDependency interface {
+	OptInDependency() bool
+}
+
+// artifactImportsLate is an OPTIONAL capability for a kind that attaches to
+// another artifact on the importing install (memory to its agent, records to
+// their app). Exports list an item before its dependencies, and import walks
+// that order, so without this the attachment would arrive before the thing it
+// attaches to.
+type artifactImportsLate interface {
+	ImportsLate() bool
+}
+
+func artifactTypeHas(typ string, probe func(ArtifactType) bool) bool {
+	at, ok := lookupArtifactType(typ)
+	return ok && probe(at)
+}
+
+func isOptInDependency(typ string) bool {
+	return artifactTypeHas(typ, func(at ArtifactType) bool {
+		o, ok := at.(artifactOptInDependency)
+		return ok && o.OptInDependency()
+	})
+}
+
+func importsLate(typ string) bool {
+	return artifactTypeHas(typ, func(at ArtifactType) bool {
+		l, ok := at.(artifactImportsLate)
+		return ok && l.ImportsLate()
+	})
 }
 
 // artifactTypeUserImportable reports whether an ordinary user may import
@@ -233,7 +289,7 @@ func lookupArtifactType(name string) (ArtifactType, bool) {
 // idempotent — "export all" already contains every dependency and the closure
 // is a no-op over it. Dependency waves are sorted for byte-stable output.
 func ExportArtifactBundle(db Database, sels []ArtifactSel) (ArtifactBundle, error) {
-	return exportArtifactBundle(db, sels, true, nil)
+	return exportArtifactBundle(db, sels, true, nil, nil)
 }
 
 // UserExportOptions says which dependencies a user's export carries.
@@ -285,7 +341,7 @@ func ExportArtifactBundleAsUser(db Database, owner string, sels []ArtifactSel, o
 		}
 		dep.Owner = owner
 		return dep, true
-	})
+	}, only)
 }
 
 // ArtifactExportPlanAsUser lists what a user's export of sels would carry
@@ -293,7 +349,13 @@ func ExportArtifactBundleAsUser(db Database, owner string, sels []ArtifactSel, o
 // an export dialog offers ("this agent uses 3 tools, 2 skills and a
 // collection"). Nothing is written; it is the same walk the export runs.
 func ArtifactExportPlanAsUser(db Database, owner string, sels []ArtifactSel) ([]ArtifactSel, error) {
-	b, err := ExportArtifactBundleAsUser(db, owner, sels, UserExportOptions{IncludeDeps: true})
+	// Every kind, opt-in data included: the plan is the list of choices, and
+	// an opt-in kind is a choice the dialog offers unticked.
+	var every []string
+	for name := range artifactTypes {
+		every = append(every, name)
+	}
+	b, err := ExportArtifactBundleAsUser(db, owner, sels, UserExportOptions{IncludeDeps: true, DepTypes: every})
 	if err != nil {
 		return nil, err
 	}
@@ -343,16 +405,25 @@ func ArtifactSelectionForOwner(db Database, owner string) []ArtifactSel {
 // opt-out in the export UI). The explicit selection is still strict: a typo
 // errors, same as the closure path.
 func ExportArtifactBundleShallow(db Database, sels []ArtifactSel) (ArtifactBundle, error) {
-	return exportArtifactBundle(db, sels, false, nil)
+	return exportArtifactBundle(db, sels, false, nil, nil)
 }
 
 // exportArtifactBundle is the shared body: it always exports the explicit
 // selection strictly, and walks the transitive dependency closure only when
 // includeDeps is set. depFilter, when set, rewrites or drops each dependency
 // before it is resolved (false = leave it out).
-func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool, depFilter func(ArtifactSel) (ArtifactSel, bool)) (ArtifactBundle, error) {
+func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool, depFilter func(ArtifactSel) (ArtifactSel, bool), optIn map[string]bool) (ArtifactBundle, error) {
 	bundle := ArtifactBundle{Bundle: ArtifactBundleFormat, ExportedAt: time.Now(), GohortVersion: AppVersion}
 	seen := map[string]bool{}
+	// One artifact can be reached two ways: selected by id (a page knows the
+	// id) and pulled back in by NAME through a dependency that points at it.
+	// A dependency naming something already in the bundle is that thing, so it
+	// is not exported twice. Only dependencies are checked: two explicit
+	// selections that share a display name are two things.
+	seenRecipe := map[string]bool{}
+	recipeKey := func(typ, owner, name string) string {
+		return strings.TrimSpace(typ) + "\x00" + strings.TrimSpace(owner) + "\x00" + strings.ToLower(strings.TrimSpace(name))
+	}
 	selKey := func(s ArtifactSel) string {
 		return strings.TrimSpace(s.Type) + "\x00" + strings.TrimSpace(s.Name) + "\x00" + strings.TrimSpace(s.Owner)
 	}
@@ -381,7 +452,9 @@ func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool, dep
 			return false, nil
 		}
 		seen[selKey(s)] = true
-		bundle.Artifacts = append(bundle.Artifacts, PortableArtifact{Type: typ, Name: name, Recipe: recipe})
+		one := PortableArtifact{Type: typ, Name: name, Recipe: recipe}
+		seenRecipe[recipeKey(typ, s.Owner, artifactRecipeName(one))] = true
+		bundle.Artifacts = append(bundle.Artifacts, one)
 		return true, nil
 	}
 
@@ -415,11 +488,17 @@ func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool, dep
 			return wave[i].Name < wave[j].Name
 		})
 		for _, s := range wave {
+			if isOptInDependency(s.Type) && !optIn[strings.TrimSpace(s.Type)] {
+				continue
+			}
 			if depFilter != nil {
 				var keep bool
 				if s, keep = depFilter(s); !keep {
 					continue
 				}
+			}
+			if seenRecipe[recipeKey(s.Type, s.Owner, s.Name)] {
+				continue
 			}
 			added, _ := addArtifact(s, false)
 			if added {
@@ -722,6 +801,10 @@ func importArtifactBundle(db Database, data []byte, owner string, userOnly bool)
 	if len(bundle.Artifacts) == 0 {
 		return res, Error("no artifacts in bundle")
 	}
+	// Attachments (memory, records) after everything they could attach to.
+	sort.SliceStable(bundle.Artifacts, func(i, j int) bool {
+		return !importsLate(bundle.Artifacts[i].Type) && importsLate(bundle.Artifacts[j].Type)
+	})
 	// imported tracks the selection of each artifact that actually landed, so the
 	// dependency pass knows what to inspect (and can resolve it from the store).
 	var imported []ArtifactSel

@@ -129,12 +129,15 @@ func (a *agentArtifact) Dependencies(db Database, name, owner string) []Artifact
 	}
 	// Resolve the top-level agent by name, then pull its whole recipe (record +
 	// owned sub-agents) so sub-agent allowlists are covered too.
-	var exp agentExport
-	found := false
+	var (
+		exp   agentExport
+		self  AgentRecord
+		found bool
+	)
 	for _, rec := range listAgents(udb, owner) {
-		if rec.OwnedBy == "" && rec.Name == name {
+		if rec.OwnedBy == "" && (rec.Name == name || rec.ID == name) {
 			if e, ok := buildAgentExport(udb, rec.ID, owner); ok {
-				exp, found = e, true
+				exp, self, found = e, rec, true
 			}
 			break
 		}
@@ -142,7 +145,31 @@ func (a *agentArtifact) Dependencies(db Database, name, owner string) []Artifact
 	if !found {
 		return nil
 	}
-	return agentExportDeps(db, exp, owner, nil)
+	deps := agentExportDeps(db, exp, owner, nil)
+	// Its memory, offered on the store side only: a recipe never declares it,
+	// so an import preview does not warn that memory is "missing". It is an
+	// opt-in kind, so it travels only when the export asks for it.
+	if _, has := (&agentMemoryArtifact{app: a.app}).recipeFor(owner, name); has {
+		deps = append(deps, ArtifactSel{Type: "agent_memory", Name: exp.Name, Owner: owner})
+	}
+	// The work it does on a timetable or on a signal: standing schedules that
+	// run it, and monitors that check or wake it. Store side only, like
+	// memory; they point at the agent, not the other way round.
+	runsThis := func(ref string) bool {
+		ref = strings.TrimSpace(ref)
+		return ref != "" && (ref == self.ID || strings.EqualFold(ref, self.Name))
+	}
+	for _, sa := range ListStandingAgents(RootDB, owner) {
+		if runsThis(sa.AgentID) {
+			deps = append(deps, ArtifactSel{Type: "schedule", Name: sa.Name, Owner: owner})
+		}
+	}
+	for _, m := range ListEventMonitors(RootDB, owner) {
+		if !m.OneShot && (runsThis(m.WakeAgent) || runsThis(m.CheckAgent)) {
+			deps = append(deps, ArtifactSel{Type: "monitor", Name: m.Name, Owner: owner})
+		}
+	}
+	return deps
 }
 
 // RecipeDependencies extracts the same references straight from a recipe (the

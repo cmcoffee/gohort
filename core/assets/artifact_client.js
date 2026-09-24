@@ -144,11 +144,20 @@
     ['agent', 'Agents'],
     ['custom_app', 'Custom apps'],
     ['monitor', 'Monitors'],
+    ['schedule', 'Schedules'],
+    ['guide', 'Guides'],
+    ['writer', 'Writers'],
+    ['agent_memory', 'Agent memory'],
+    ['app_records', 'App records'],
   ];
   // A collection carries its documents' full text: it can be large and it is
   // the owner's data, so it goes only when asked for.
-  var OFF_BY_DEFAULT = {collection: true};
+  // Memory and app records are data about a person, not a recipe: the server
+  // leaves them out unless the export names them, and so does the dialog.
+  var OFF_BY_DEFAULT = {collection: true, agent_memory: true, app_records: true};
   var KIND_NOTES = {
+    agent_memory: 'What the agent has learned for you: its saved facts, working notes and findings. Whoever imports the file gets them.',
+    app_records: 'The data you entered into the app. Whoever imports the file gets it.',
     collection: 'Carries the documents\' full text, and can be large.',
   };
 

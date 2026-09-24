@@ -206,7 +206,7 @@ func artifactsSection() ui.Section {
 	return ui.Section{
 		Title:    "Your data",
 		Subtitle: "Export what you have built, or bring in a file somebody exported.",
-		Detail: "Export everything downloads your agents, pipelines, machines, tools, skills, knowledge collections, custom apps and monitors as one file. No secrets are in it: credentials travel by name only, and connectors and API credentials are an administrator's to export.\n\n" +
+		Detail: "Export everything downloads your agents, pipelines, machines, tools, skills, knowledge collections, custom apps, monitors, schedules, Scribe documents and CodeWriter modes as one file, together with your agents' memory and your apps' data, since it is a backup of your account. No secrets are in it: credentials travel by name only, and connectors and API credentials are an administrator's to export. A single item's Export leaves memory and app data out unless you tick them.\n\n" +
 			"Import shows what a file would bring in before anything happens. It accepts a full bundle or a single agent, pipeline or machine file. Everything lands in your account inert: agents private, tools waiting for an administrator's approval, skills and apps switched off, monitors paused.",
 		Body: ui.Toolbar{Actions: []ui.ToolbarAction{
 			{Label: "Export everything", Title: "Download everything you own as one file", Method: "client", URL: "account_export_all", Variant: "primary"},

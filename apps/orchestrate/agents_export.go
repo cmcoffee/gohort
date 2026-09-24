@@ -21,8 +21,9 @@ type agentExport struct {
 
 // stripAgentIdentity clears the fields that describe a particular install of an
 // agent (id, owner, parent link, timestamps) so what remains is the portable
-// recipe. Memory does NOT travel — it's per-user-per-agent learning, not part
-// of the persona contract.
+// recipe. Memory is not part of the recipe: it is per-user-per-agent learning,
+// not the persona contract, and travels separately and only on request as an
+// "agent_memory" artifact (agent_memory_artifact.go).
 func stripAgentIdentity(a AgentRecord) AgentRecord {
 	a.ID = ""
 	a.Owner = ""

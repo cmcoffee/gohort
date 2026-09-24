@@ -93,6 +93,8 @@ func (T *CustomApps) WebName() string { return "My Apps" }
 func (T *CustomApps) WebDesc() string { return "Apps composed from primitives." }
 
 func (T *CustomApps) Routes() {
+	// An app's own rows travel with it on request (records_artifact.go).
+	T.registerRecordsArtifact()
 	T.HandleFunc("/", T.route)
 	// Wire self-updating apps: register the scheduled-action trigger dispatcher and
 	// the spec-lifecycle hooks that keep each app's standing triggers in sync.

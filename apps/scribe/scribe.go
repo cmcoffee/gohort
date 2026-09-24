@@ -132,6 +132,8 @@ func (T *Scribe) Routes() {
 	// servitor's save tool and its per-reply save button land an article here.
 	T.installSaveArticleHook()
 	RegisterUserDataHandler(&scribeUserData{app: T})
+	// Guides travel losslessly in the bundle format (guide_artifact.go).
+	RegisterGuideArtifactType(T)
 	T.HandleFunc("/", T.route)
 	// The interval half of the curator's batching. The threshold half fires
 	// from SubmitFinding; this is what stops a handful of findings sitting

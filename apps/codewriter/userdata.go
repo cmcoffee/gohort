@@ -12,7 +12,9 @@ type codeWriterUserData struct {
 	agent *CodeWriterAgent
 }
 
-var codeWriterTables = []string{snippetTable, valueTable, contextTable}
+// Writers and templates were missing here, so reassigning a user's data left
+// their saved modes and templates behind and purging it left them orphaned.
+var codeWriterTables = []string{snippetTable, valueTable, contextTable, writerTable, templateTable}
 
 // moveRecord decodes a gob-encoded value into the right concrete type
 // for the given table, writes it to dst, then deletes it from src.
@@ -36,6 +38,18 @@ func codeWriterMove(src, dst Database, tbl, key string) {
 			dst.Set(tbl, key, v)
 			src.Unset(tbl, key)
 		}
+	case writerTable:
+		var v WriterRecord
+		if src.Get(tbl, key, &v) {
+			dst.Set(tbl, key, v)
+			src.Unset(tbl, key)
+		}
+	case templateTable:
+		var v TemplateRecord
+		if src.Get(tbl, key, &v) {
+			dst.Set(tbl, key, v)
+			src.Unset(tbl, key)
+		}
 	}
 }
 
@@ -54,6 +68,8 @@ func (h *codeWriterUserData) Describe(uid string) UserDataSummary {
 	sum.Counts["snippets"] = udb.CountKeys(snippetTable)
 	sum.Counts["values"] = udb.CountKeys(valueTable)
 	sum.Counts["contexts"] = udb.CountKeys(contextTable)
+	sum.Counts["writers"] = udb.CountKeys(writerTable)
+	sum.Counts["templates"] = udb.CountKeys(templateTable)
 	return sum
 }
 

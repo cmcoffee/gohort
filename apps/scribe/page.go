@@ -51,6 +51,9 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 		// library you would be importing into.
 		ListActions: []ui.WorkbenchAction{
 			{Label: "Import", Kind: "client", URL: "scribe_import", Scope: "library"},
+			// The lossless door: a bundle (from Export > Bundle, or a whole
+			// account export) through the shared preview-then-import flow.
+			{Label: "Import bundle", Kind: "client", URL: "scribe_import_bundle", Scope: "library"},
 		},
 		// Center — the rendered document (server HTML: title + ToC + sections,
 		// or title + image + body).
@@ -72,6 +75,9 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 				{Label: "HTML file", Kind: "download", URL: "export?id={id}&format=html&download=1"},
 				{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
 				{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
+				// Every section, the subtitle, attached knowledge and sources:
+				// the one export that imports back as the same document.
+				{Label: "Bundle (lossless)", Kind: "client", URL: "scribe_export_bundle"},
 			}},
 			// Second, not eighth. Reaching for an earlier version is a recovery
 			// move — a section is gone and you want it back — so it should not be
@@ -241,6 +247,9 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("guides_publish", guidePublishAction).
 			ClientAction("scribe_rules", scribeRulesAction).
 			ClientAction("scribe_import", scribeImportAction).
+			JS(ArtifactClientJS).
+			ClientAction("scribe_export_bundle", scribeExportBundleAction).
+			ClientAction("scribe_import_bundle", scribeImportBundleAction).
 			ClientAction("scribe_image", scribeImageAction),
 	}
 	page.ServeHTTP(w, r)
@@ -283,6 +292,35 @@ const scribeImportAction = `function(ctx){
           .catch(function(err){ window.uiAlert('Import failed: ' + (err && err.message || err)); });
       });
       input.click();
+}`
+
+// scribeExportBundleAction downloads the open document as a bundle through the
+// shared export dialog (core ArtifactClientJS). Only the owner's own documents
+// export this way; a shared one keeps the HTML, PDF and Markdown renderings.
+const scribeExportBundleAction = `function(ctx){
+      var id = ctx && ctx.recordId;
+      if (!id) return;
+      fetch('guide?id=' + encodeURIComponent(id), {credentials:'same-origin'})
+        .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(g){
+          if (!g.own) {
+            window.uiAlert('Only the owner can export this as a bundle. The HTML, PDF and Markdown exports work for everyone it is shared with.');
+            return;
+          }
+          window.gohortArtifacts.exportFlow({type: 'guide', name: id, label: g.title || id});
+        })
+        .catch(function(err){ window.uiAlert('Export failed: ' + (err && err.message || err)); });
+}`
+
+// scribeImportBundleAction brings a bundle into the library through the shared
+// preview-then-import flow.
+const scribeImportBundleAction = `function(ctx){
+      window.gohortArtifacts.importFlow({
+        previewURL: '/account/api/artifacts/preview',
+        importURL: '/account/api/artifacts/import',
+        invalidate: ['guides'],
+        subtitle: 'A document lands in your library as your own, shared with nobody, with web research off until you turn it on in Settings. A title you already have is skipped.'
+      });
 }`
 
 // scribeImageAction manages an article's header image in a modal: show the

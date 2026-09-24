@@ -83,6 +83,9 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// collections. The old hand-rolled /codewriter/legacy surface has
 	// been retired.
 	sub := NewWebUI(T, prefix, AppUIAssets{})
+	// Writers travel in the bundle format (writer_artifact.go); here because
+	// T.DB is live.
+	RegisterArtifactType(&writerArtifact{app: T})
 	sub.HandleFunc("/", T.handleCodeWriterPage)
 	sub.HandleFunc("/api/chat", T.handleChat)
 	sub.HandleFunc("/api/snippets", T.handleSnippets)

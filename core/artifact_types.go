@@ -25,6 +25,7 @@ func init() {
 	RegisterArtifactType(customAppArtifact{})
 	RegisterArtifactType(sourceHookArtifact{})
 	RegisterArtifactType(monitorArtifact{})
+	RegisterArtifactType(scheduleArtifact{})
 	// Not materializable, registered anyway: declaring it is what lets the
 	// bundle machinery answer "is this attachment satisfied here" instead of
 	// letting an agent land pointing at a source nobody has.
@@ -1462,4 +1463,161 @@ func (monitorArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner
 	m.Created = time.Now()
 	SaveEventMonitor(db, m)
 	return name, "", nil
+}
+
+// ---- schedule --------------------------------------------------------------
+
+// scheduleArtifact makes a standing schedule portable: WHAT runs (an agent by
+// name, or a pipeline or machine by its traveled id), the brief, and WHEN. It
+// travels with the agent it runs, so moving an agent no longer loses the work
+// it was doing on a timetable.
+//
+// Everything that describes a run on this install stays behind: the owner, the
+// scheduler handle and next fire, pause and park state, report targets, the
+// objective's attempt history, who dispatched it. Import lands it PAUSED and
+// unscheduled, with the owner's own Resume as the review gate, the same way an
+// imported monitor lands.
+//
+// Standing schedules only for now. A recurring task has no record of its own
+// (it lives as a scheduler entry bound to a chat session), so it needs its
+// validation split from its arming before it can land paused.
+type scheduleArtifact struct{}
+
+// scheduleRecipe is the portable standing schedule. "schedule" names the kind
+// and doubles as the sniff key.
+type scheduleRecipe struct {
+	Schedule        string    `json:"schedule"` // "standing"
+	Name            string    `json:"name"`
+	Agent           string    `json:"agent,omitempty"`    // by name
+	Pipeline        string    `json:"pipeline,omitempty"` // by id (travels)
+	Machine         string    `json:"machine,omitempty"`  // by id (travels)
+	Mission         string    `json:"mission,omitempty"`
+	Cron            string    `json:"cron,omitempty"`
+	StartAt         time.Time `json:"start_at,omitempty"`
+	IntervalSeconds int       `json:"interval_seconds,omitempty"`
+	Surface         string    `json:"surface,omitempty"`
+	Until           string    `json:"until,omitempty"`
+	MaxAttempts     int       `json:"max_attempts,omitempty"`
+}
+
+func (scheduleArtifact) ArtifactType() string { return "schedule" }
+
+// UserImportable: a schedule lands paused under the importer.
+func (scheduleArtifact) UserImportable() bool { return true }
+
+// ImportsLate: it runs an agent that may arrive in the same bundle.
+func (scheduleArtifact) ImportsLate() bool { return true }
+
+func (scheduleArtifact) SniffsRecipe(fields map[string]json.RawMessage) bool {
+	_, ok := fields["schedule"]
+	return ok
+}
+
+func (scheduleArtifact) ListArtifacts(db Database) []ArtifactSel {
+	if RootDB == nil {
+		return nil
+	}
+	var out []ArtifactSel
+	for _, k := range RootDB.Keys(standingAgentsTable) {
+		var sa StandingAgent
+		if RootDB.Get(standingAgentsTable, k, &sa) && sa.Owner != "" {
+			out = append(out, ArtifactSel{Type: "schedule", Name: sa.Name, Owner: sa.Owner})
+		}
+	}
+	return out
+}
+
+func scheduleRecipeOf(sa StandingAgent, owner string) scheduleRecipe {
+	agent := strings.TrimSpace(sa.AgentID)
+	if agent != "" && ResolveAgentNameForExport != nil {
+		if n, ok := ResolveAgentNameForExport(owner, agent); ok {
+			agent = n
+		}
+	}
+	return scheduleRecipe{
+		Schedule: "standing", Name: sa.Name, Agent: agent,
+		Pipeline: sa.PipelineID, Machine: sa.MachineID,
+		Mission: sa.Mission, Cron: sa.Cron, StartAt: sa.StartAt, IntervalSeconds: sa.IntervalSeconds,
+		Surface: sa.Surface, Until: sa.Until, MaxAttempts: sa.MaxAttempts,
+	}
+}
+
+func (scheduleArtifact) ExportArtifact(_ Database, name, owner string) (json.RawMessage, error) {
+	owner = strings.TrimSpace(owner)
+	sa, ok := GetStandingAgent(RootDB, owner, strings.TrimSpace(name))
+	if !ok {
+		return nil, fmt.Errorf("no schedule named %q for user %q", name, owner)
+	}
+	// The brief is handed to the agent verbatim on every run.
+	if scanForEmbeddedSecret(sa.Mission) {
+		return nil, fmt.Errorf("schedule %q looks like it hardcodes a secret in its brief; move it to a credential before exporting", sa.Name)
+	}
+	return json.Marshal(scheduleRecipeOf(sa, owner))
+}
+
+func (scheduleArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner string) (string, string, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" || RootDB == nil {
+		return "", "", Error("schedule import requires an owner")
+	}
+	var r scheduleRecipe
+	if err := json.Unmarshal(recipe, &r); err != nil {
+		return "", "", fmt.Errorf("invalid schedule recipe: %w", err)
+	}
+	name := strings.TrimSpace(r.Name)
+	if name == "" {
+		return "", "", Error("missing schedule name")
+	}
+	if r.Schedule != "" && r.Schedule != "standing" {
+		return name, "only standing schedules can be imported", nil
+	}
+	if _, exists := GetStandingAgent(RootDB, owner, name); exists {
+		return name, "a schedule with this name already exists", nil
+	}
+	sa := StandingAgent{
+		Name: name, Owner: owner,
+		// By name: the runner resolves an agent by name or id when it fires,
+		// and the agent is reborn under a fresh id when it is imported.
+		AgentID: strings.TrimSpace(r.Agent), PipelineID: strings.TrimSpace(r.Pipeline), MachineID: strings.TrimSpace(r.Machine),
+		Mission: r.Mission, Cron: r.Cron, StartAt: r.StartAt, IntervalSeconds: r.IntervalSeconds,
+		Surface: r.Surface, Until: r.Until, MaxAttempts: r.MaxAttempts,
+		Paused: true, StopCause: StoppedByOwner,
+		StopNote: "Imported. Nothing runs until you resume it.",
+		Created:  time.Now(),
+	}
+	if err := sa.ValidateTarget(); err != nil {
+		return name, "", err
+	}
+	SaveStandingAgent(RootDB, sa)
+	return name, "", nil
+}
+
+func scheduleDeps(r scheduleRecipe, owner string) []ArtifactSel {
+	var out []ArtifactSel
+	if a := strings.TrimSpace(r.Agent); a != "" {
+		out = append(out, ArtifactSel{Type: "agent", Name: a, Owner: owner})
+	}
+	if p := strings.TrimSpace(r.Pipeline); p != "" {
+		out = append(out, ArtifactSel{Type: "pipeline", Name: p, Owner: owner})
+	}
+	if m := strings.TrimSpace(r.Machine); m != "" {
+		out = append(out, ArtifactSel{Type: "machine", Name: m, Owner: owner})
+	}
+	return out
+}
+
+func (scheduleArtifact) Dependencies(_ Database, name, owner string) []ArtifactSel {
+	sa, ok := GetStandingAgent(RootDB, strings.TrimSpace(owner), strings.TrimSpace(name))
+	if !ok {
+		return nil
+	}
+	return scheduleDeps(scheduleRecipeOf(sa, owner), owner)
+}
+
+func (scheduleArtifact) RecipeDependencies(_ Database, recipe json.RawMessage, owner string, _ func(typ, name string) bool) []ArtifactSel {
+	var r scheduleRecipe
+	if json.Unmarshal(recipe, &r) != nil {
+		return nil
+	}
+	return scheduleDeps(r, owner)
 }

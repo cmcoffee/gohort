@@ -292,6 +292,7 @@ func (T *OrchestrateApp) Routes() {
 	// the unified bundle (Admin > /api/artifacts/*). Holds the app because
 	// agents live in per-user stores (UserDB(T.DB, owner)), not RootDB.
 	RegisterAgentArtifactType(T)
+	RegisterAgentMemoryArtifactType(T)
 
 	// Register "pipeline" alongside it — pipeline defs live in the same
 	// per-user stores, and the two types close each other's references: an
