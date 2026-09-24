@@ -10,6 +10,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/ui"
 
+	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/notices"
 )
 
@@ -245,6 +246,13 @@ func ServeDashboard(addr string) error {
 	}
 	Log("Gohort Dashboard: %s://%s\n", scheme, addr)
 
+	return ListenAndServeTLS(addr, dashboardChain(mux))
+}
+
+// dashboardChain wraps the dashboard mux in the middleware every request goes
+// through, innermost first. Split out of ServeDashboard so the order, and the
+// fact that each layer is present at all, can be tested without a listener.
+func dashboardChain(mux http.Handler) http.Handler {
 	var handler http.Handler = accessLogMiddleware(mux)
 	if AuthDB != nil {
 		handler = AuthMiddleware(AuthDB(), handler)
@@ -256,10 +264,13 @@ func ServeDashboard(addr string) error {
 	// the deployment API key, an install with no accounts). See
 	// AppAvailabilityMiddleware.
 	handler = AppAvailabilityMiddleware(handler)
+	// Every request body is capped, ahead of anything that might read one. A
+	// route that legitimately takes more (a streamed upload) raises its own
+	// cap with netgate.RaiseBodyLimit before reading.
+	handler = netgate.LimitRequestBody(handler, netgate.DefaultBodyLimit)
 	// Outermost: baseline security headers on every response (incl. auth
 	// redirects and error pages).
-	handler = securityHeadersMiddleware(handler)
-	return ListenAndServeTLS(addr, handler)
+	return securityHeadersMiddleware(handler)
 }
 
 // dashboardHost serves the dashboard's own endpoints: the app cards, the

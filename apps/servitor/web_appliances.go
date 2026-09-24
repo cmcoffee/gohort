@@ -53,6 +53,12 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 					a.Shared = true
 					a.Password = ""
 					a.RepoToken = ""
+					// Someone else's record: its EnvVars can hold the
+					// secrets the command runs with. Names only, unless an
+					// admin (who may manage it) is looking.
+					if !servitorIsAdmin(r) {
+						a.EnvVars = redactEnvVars(a.EnvVars)
+					}
 					a.LeadTierAvailable = AllLLMsPrivate()
 					items = append(items, a)
 					seen[id] = true
@@ -222,6 +228,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			if req.RepoToken == "" {
 				req.RepoToken = existing.RepoToken
 			}
+			req.EnvVars = restoreRedactedEnvVars(req.EnvVars, existing.EnvVars)
 			// The one case where carrying one forward is wrong: a real type
 			// change. The secret belongs to a kind this appliance no longer
 			// is, it can never be used again, and leaving it is secret
@@ -272,6 +279,14 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			req.LinkedRepos = kept
 		}
 		req.Owner = owner
+		// A repo is cloned on THIS server; refuse a source it must not reach
+		// before the record exists to be cloned (see validateRepoSource).
+		if req.Type == "repo" {
+			if err := validateRepoSource(req.RepoURL, req.RepoBranch, UserIsAdmin(owner)); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
 		// Toolset bindings are fingerprinted on the way IN, against the owner's
 		// pool, so a binding can never reach the store without the pin that
 		// makes it verifiable. Any hash the client sent is discarded: a
@@ -338,6 +353,11 @@ func (T *Servitor) handleAppliance(w http.ResponseWriter, r *http.Request) {
 		a.Owner = owner
 		a.Password = ""
 		a.RepoToken = "" // never send the stored token back to the edit form
+		// EnvVars values are the owner's secrets: a user it is merely shared
+		// with sees the names (see redactEnvVars).
+		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
+			a.EnvVars = redactEnvVars(a.EnvVars)
+		}
 		a.LeadTierAvailable = AllLLMsPrivate()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(a)

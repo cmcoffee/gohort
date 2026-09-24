@@ -10,6 +10,8 @@ import (
 
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
+	"github.com/cmcoffee/gohort/core/revisions"
+	"github.com/cmcoffee/gohort/core/shareledger"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -330,5 +332,126 @@ func TestADisabledPublishedSkillActivatesForNobody(t *testing.T) {
 
 	if got := AvailableSkills(db, "dana"); len(got) != 0 {
 		t.Errorf("a muted deployment skill still activates: %+v", got)
+	}
+}
+
+// Muting a published skill hides it from everybody's turns. It must not hide it
+// from the pool's own writes: publishing another skill, or taking another back,
+// rebuilt the pool from the published list and erased every muted one.
+func TestPublishingAndTakingBackKeepMutedDeploymentSkills(t *testing.T) {
+	db := skillShareStore(t)
+	SaveSkill(db, "alice", SkillRecord{ID: "s1", Name: "Triage", Instructions: "Assess.", Disabled: true})
+	SaveSkill(db, "carol", SkillRecord{ID: "s2", Name: "Escalate", Instructions: "Page."})
+	SaveSkill(db, "carol", SkillRecord{ID: "s3", Name: "Close", Instructions: "Close."})
+
+	// A muted skill publishes as muted, and its author still sees it.
+	if err := promoteSkillToDeployment("alice", "s1"); err != nil {
+		t.Fatalf("publish muted: %v", err)
+	}
+	if got := PublishedSkillsBy(db, "alice"); len(got) != 1 || !got[0].Disabled {
+		t.Fatalf("the author cannot see their muted published skill: %+v", got)
+	}
+	// Somebody else publishes, then takes one back.
+	promoteSkillToDeployment("carol", "s2")
+	promoteSkillToDeployment("carol", "s3")
+	if err := NarrowSkillToOwner(db, "carol", "s3"); err != nil {
+		t.Fatalf("take back: %v", err)
+	}
+	var muted *SkillRecord
+	for _, s := range allDeploymentSkills(db) {
+		if s.ID == "s1" {
+			c := s
+			muted = &c
+		}
+	}
+	if muted == nil || !muted.Disabled {
+		t.Fatalf("another skill's publish or take-back erased the muted one: %+v", allDeploymentSkills(db))
+	}
+	// The muted one is still its author's to take back, still muted.
+	if err := NarrowSkillToOwner(db, "alice", "s1"); err != nil {
+		t.Fatalf("a muted published skill could not be taken back: %v", err)
+	}
+	if got := LoadSkills(db, "alice"); len(got) != 1 || !got[0].Disabled {
+		t.Errorf("taking it back lost the mute: %+v", got)
+	}
+	if got := DeploymentSkills(db); len(got) != 1 || got[0].ID != "s2" {
+		t.Errorf("the published list is wrong: %+v", got)
+	}
+}
+
+// The author edits a published skill in place, and only the author can. The
+// edit stays in the deployment pool and cannot bring the bundled tools or a
+// peer list back.
+func TestAnAuthorCanEditTheirPublishedSkill(t *testing.T) {
+	db := skillShareStore(t)
+	SaveSkill(db, "alice", SkillRecord{ID: "s1", Name: "Triage", Instructions: "Assess.",
+		Tools: []TempTool{{Name: "ssh_run"}}})
+	promoteSkillToDeployment("alice", "s1")
+
+	pub := PublishedSkillsBy(db, "alice")[0]
+	pub.Instructions = "Assess, then page."
+	pub.Disabled = true
+	pub.Tools = []TempTool{{Name: "ssh_run"}}
+	pub.AllowedUsers = []string{"bob"}
+	if _, err := saveDeploymentSkill(db, "bob", pub, "update"); err == nil {
+		t.Error("somebody edited a published skill that was not theirs")
+	}
+	// Through the ordinary save, which every author-facing surface uses.
+	if _, err := SaveSkill(db, "alice", pub); err != nil {
+		t.Fatalf("author edit: %v", err)
+	}
+	got := PublishedSkillsBy(db, "alice")
+	if len(got) != 1 || got[0].Instructions != "Assess, then page." || !got[0].Disabled {
+		t.Fatalf("the edit did not land in the deployment pool: %+v", got)
+	}
+	if len(got[0].Tools) != 0 || len(got[0].AllowedUsers) != 0 {
+		t.Errorf("an edit brought back what publishing dropped: %+v", got[0])
+	}
+	if len(LoadSkills(db, "alice")) != 0 {
+		t.Error("the edit made a second copy in the author's pool")
+	}
+	if len(DeploymentSkills(db)) != 0 {
+		t.Error("a muted published skill still activates")
+	}
+}
+
+// Publishing MOVES a skill: same owner, same id. Its history came from the
+// author's pool and must still be there, and an edit to the published copy
+// is filed in the same ring. And muting a published skill does not take it
+// off the author's list of what they have out there.
+func TestAPublishedSkillKeepsItsHistoryAndStaysOnTheAuthorsList(t *testing.T) {
+	db := skillShareStore(t)
+	SaveSkill(db, "alice", SkillRecord{ID: "s1", Name: "Triage", Instructions: "v1"})
+	s := LoadSkills(db, "alice")[0]
+	s.Instructions = "v2"
+	SaveSkill(db, "alice", s)
+	store, key := SkillRevisionRing(db, "alice", "s1")
+	before := len(revisions.List(store, revisions.KindSkill, key))
+	if before == 0 {
+		t.Fatal("setup: the edit should have filed a revision")
+	}
+	if err := promoteSkillToDeployment("alice", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(revisions.List(store, revisions.KindSkill, key)); n != before {
+		t.Fatalf("publishing dropped the history: %d before, %d after", before, n)
+	}
+	pub := PublishedSkillsBy(db, "alice")[0]
+	pub.Instructions = "v3"
+	pub.Disabled = true
+	if _, err := SaveSkill(db, "alice", pub); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(revisions.List(store, revisions.KindSkill, key)); n != before+1 {
+		t.Errorf("an edit to the published skill filed no revision: %d, want %d", n, before+1)
+	}
+	listed := false
+	for _, g := range shareledger.Mine("alice") {
+		if g.ID == "s1" {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Error("a muted published skill fell off its author's list of what they share")
 	}
 }

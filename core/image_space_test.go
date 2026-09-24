@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A picture the agent made is not evidence of what anything looks like.
@@ -1247,5 +1249,72 @@ func TestManifestLeadsWithTheStableID(t *testing.T) {
 	// The provenance split has to survive the relabelling.
 	if !strings.Contains(m, "GIVEN") || !strings.Contains(m, "YOU MADE") {
 		t.Errorf("provenance sections went missing:\n%s", m)
+	}
+}
+
+// Usernames are case-sensitive and may carry "." or "@", but the folder name
+// folded them away, so two different users could share one kept library or
+// ring and read each other's pictures.
+func TestImageDirNamesAreUniquePerUser(t *testing.T) {
+	pairs := [][2]string{
+		{"a.b", "a_b"},
+		{"User1", "user1"},
+		{"x@example.com", "x_example_com"},
+		{strings.Repeat("a", 64) + "1", strings.Repeat("a", 64) + "2"},
+	}
+	for _, p := range pairs {
+		if safeRecentUser(p[0]) == safeRecentUser(p[1]) {
+			t.Errorf("%q and %q share the folder %q", p[0], p[1], safeRecentUser(p[0]))
+		}
+	}
+	// A name that is already a safe path element keeps its folder, so the
+	// common case does not lose its library.
+	if got := safeRecentUser("user_1"); got != "user_1" {
+		t.Errorf("a safe name was renamed to %q", got)
+	}
+	// The hashed form cannot be claimed by registering it as a username.
+	h := safeRecentUser("a.b")
+	if safeRecentUser(h) == h {
+		t.Errorf("the username %q maps onto another user's folder", h)
+	}
+	for _, name := range []string{"../x", "a/b", ""} {
+		if got := safeRecentUser(name); strings.ContainsAny(got, "/.") || got == "" {
+			t.Errorf("%q reduced to an unsafe element %q", name, got)
+		}
+	}
+}
+
+// Making folder names unique moved every user whose name was not already
+// safe. Their kept images must follow them when the old folder was theirs
+// alone, and stay put when two accounts had shared it.
+func TestKeptLibraryFollowsItsSoleOwnerToTheNewFolder(t *testing.T) {
+	saved := ImageDir()
+	SetImageDir(t.TempDir())
+	t.Cleanup(func() { SetImageDir(saved) })
+	adb := &DBase{Store: kvlite.MemStore()}
+	prevAuth := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	for _, u := range []string{"Ana", "Bo.K", "bo_k"} {
+		adb.Set(AuthTable, "user:"+u, AuthUser{Username: u})
+	}
+	kept := filepath.Join(ImageDir(), "kept")
+	seed := func(dir string) {
+		os.MkdirAll(filepath.Join(kept, dir, "agent-1"), 0o700)
+		os.WriteFile(filepath.Join(kept, dir, "agent-1", "cat.png"), []byte("x"), 0o600)
+	}
+	seed("ana")  // only Ana folded to this
+	seed("bo_k") // Bo.K and bo_k both did
+
+	dir := keptImageDirFor(&ToolSession{Username: "Ana"}, "agent-1")
+	if _, err := os.Stat(filepath.Join(dir, "cat.png")); err != nil {
+		t.Errorf("Ana's kept image did not follow her to %s", dir)
+	}
+	dir = keptImageDirFor(&ToolSession{Username: "Bo.K"}, "agent-1")
+	if _, err := os.Stat(filepath.Join(dir, "cat.png")); err == nil {
+		t.Error("a folder two accounts shared was handed to one of them")
+	}
+	if _, err := os.Stat(filepath.Join(kept, "bo_k", "agent-1", "cat.png")); err != nil {
+		t.Error("the shared legacy folder should be left where it is")
 	}
 }

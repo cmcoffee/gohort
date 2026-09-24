@@ -25,7 +25,8 @@ import (
 // whether to attach to an in-flight stream rather than rendering
 // stale state and missing the live tail.
 func (T *OrchestrateApp) handleRunsActive(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
@@ -34,7 +35,7 @@ func (T *OrchestrateApp) handleRunsActive(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	run := T.runsRegistry().BySession(sessionID)
+	run := T.runsRegistry().BySession(user, sessionID)
 	if run == nil {
 		w.Write([]byte("{}"))
 		return

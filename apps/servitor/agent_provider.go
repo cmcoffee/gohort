@@ -28,11 +28,19 @@ func init() {
 	// The visibility half: the tool provider says what an agent CAN DO, this
 	// says what it HOLDS, in the place someone looks when asking about an agent
 	// rather than about a machine.
+	//
+	// ManageURL is the app's own page: access is edited from the Access
+	// button beside the appliance there. It pointed at "/servitor/manage",
+	// a page removed when access moved onto the appliance, so the link 404'd.
 	RegisterAgentGrantor(AgentGrantor{
-		Name: "servitor", Label: "Machines", ManageURL: "/servitor/manage",
+		Name: "servitor", Label: "Machines", ManageURL: servitorManageURL,
 		Granted: applianceGrantsFor,
 	})
 }
+
+// servitorManageURL is where an agent's machine access is changed. Kept equal
+// to WebPath (see TestGrantorManageURLIsServed).
+const servitorManageURL = "/servitor"
 
 // applianceGrantsFor lists the machines an agent is connected to, with what
 // runs there without asking.

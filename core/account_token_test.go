@@ -170,9 +170,9 @@ func TestExpiredTokenStopsAuthenticating(t *testing.T) {
 
 	// Move its deadline into the past.
 	var stored AccountToken
-	RootDB.Get(accountTokenTable, tok.Token, &stored)
+	RootDB.Get(accountTokenTable, accountTokenKey(tok.Token), &stored)
 	stored.Expires = time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
-	RootDB.Set(accountTokenTable, tok.Token, stored)
+	RootDB.Set(accountTokenTable, accountTokenKey(tok.Token), stored)
 
 	if _, ok := lookupAccountTokenOwner(tok.Token); ok {
 		t.Error("an expired key still authenticates")
@@ -182,7 +182,7 @@ func TestExpiredTokenStopsAuthenticating(t *testing.T) {
 	}
 	// Removed on sight, so a sweep that has not run is never the difference
 	// between valid and not.
-	if RootDB.Get(accountTokenTable, tok.Token, &stored) {
+	if RootDB.Get(accountTokenTable, accountTokenKey(tok.Token), &stored) {
 		t.Error("the expired key was left in the store")
 	}
 }
@@ -201,7 +201,7 @@ func TestUsingATokenRecordsIt(t *testing.T) {
 	tok := MintAccountTokenScoped("craig", "laptop", &TokenScope{})
 
 	var before AccountToken
-	RootDB.Get(accountTokenTable, tok.Token, &before)
+	RootDB.Get(accountTokenTable, accountTokenKey(tok.Token), &before)
 	if before.LastSeen != "" {
 		t.Fatal("fixture: a fresh key should not look used")
 	}
@@ -209,7 +209,7 @@ func TestUsingATokenRecordsIt(t *testing.T) {
 	lookupAccountTokenOwner(tok.Token)
 
 	var after AccountToken
-	RootDB.Get(accountTokenTable, tok.Token, &after)
+	RootDB.Get(accountTokenTable, accountTokenKey(tok.Token), &after)
 	if after.LastSeen == "" {
 		t.Fatal("using a key did not record it")
 	}
@@ -217,7 +217,7 @@ func TestUsingATokenRecordsIt(t *testing.T) {
 	// the lazy write is that authentication stays a single Get.
 	stamp := after.LastSeen
 	lookupAccountTokenOwner(tok.Token)
-	RootDB.Get(accountTokenTable, tok.Token, &after)
+	RootDB.Get(accountTokenTable, accountTokenKey(tok.Token), &after)
 	if after.LastSeen != stamp {
 		t.Error("LastSeen was rewritten on a second use inside the interval")
 	}
@@ -229,9 +229,9 @@ func TestExpirySweepIsOwnerSafe(t *testing.T) {
 	dead := MintAccountTokenExpiring("craig", "dead", &TokenScope{}, time.Hour)
 
 	var d AccountToken
-	RootDB.Get(accountTokenTable, dead.Token, &d)
+	RootDB.Get(accountTokenTable, accountTokenKey(dead.Token), &d)
 	d.Expires = time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-	RootDB.Set(accountTokenTable, dead.Token, d)
+	RootDB.Set(accountTokenTable, accountTokenKey(dead.Token), d)
 
 	if n := SweepExpiredAccountTokens(); n != 1 {
 		t.Fatalf("expected 1 key swept, got %d", n)
@@ -252,7 +252,7 @@ func TestSetExpiryIsOwnerScoped(t *testing.T) {
 		t.Fatal("the owner could not set a deadline")
 	}
 	var stored AccountToken
-	RootDB.Get(accountTokenTable, tok.Token, &stored)
+	RootDB.Get(accountTokenTable, accountTokenKey(tok.Token), &stored)
 	if stored.Expires == "" {
 		t.Fatal("the deadline was not stored")
 	}
@@ -263,7 +263,7 @@ func TestSetExpiryIsOwnerScoped(t *testing.T) {
 		t.Fatal("the owner could not clear the deadline")
 	}
 	var cleared AccountToken
-	RootDB.Get(accountTokenTable, tok.Token, &cleared)
+	RootDB.Get(accountTokenTable, accountTokenKey(tok.Token), &cleared)
 	if cleared.Expires != "" {
 		t.Errorf("clearing left a deadline: %q", cleared.Expires)
 	}
@@ -276,4 +276,86 @@ func reqWithKey(secret string) *http.Request {
 	r := httptest.NewRequest("GET", "/v1/models", nil)
 	r.Header.Set("X-API-Key", secret)
 	return r
+}
+
+// A personal access token used to be the store KEY, and the record carried it
+// too, so anyone holding a copy of the database held every user's keys. It is
+// stored as a hash now; the record keeps only the masked hint.
+func TestAccountTokenStoredHashed(t *testing.T) {
+	acctFixture(t)
+	tok := MintAccountTokenScoped("user1", "laptop", &TokenScope{})
+	for _, key := range RootDB.Keys(accountTokenTable) {
+		if strings.Contains(key, tok.Token) {
+			t.Fatalf("store key holds the secret: %q", key)
+		}
+		var rec AccountToken
+		RootDB.Get(accountTokenTable, key, &rec)
+		if strings.Contains(rec.Token, tok.Token) {
+			t.Fatalf("stored record holds the secret: %q", rec.Token)
+		}
+	}
+	if owner, ok := lookupAccountTokenOwner(tok.Token); !ok || owner != "user1" {
+		t.Fatal("a hashed key no longer authenticates")
+	}
+	// The hash itself is not a credential.
+	if _, ok := lookupAccountTokenOwner(accountTokenKey(tok.Token)); ok {
+		t.Fatal("presenting the stored hash authenticated")
+	}
+	list := ListAccountTokens("user1")
+	if len(list) != 1 || list[0].Token == tok.Token || list[0].Token == "" {
+		t.Fatalf("list should show a masked hint, got %+v", list)
+	}
+}
+
+// A key written before hashing (keyed by its raw secret) keeps working, and
+// its first use, or the account page's sweep, moves it onto the hash.
+func TestLegacyRawTokenIsRehashed(t *testing.T) {
+	acctFixture(t)
+	secret := "ght_" + strings.Repeat("ab", 24)
+	RootDB.Set(accountTokenTable, secret, AccountToken{ID: "old1", Owner: "user1", Token: secret})
+	if owner, ok := lookupAccountTokenOwner(secret); !ok || owner != "user1" {
+		t.Fatal("a legacy key stopped working")
+	}
+	var rec AccountToken
+	if RootDB.Get(accountTokenTable, secret, &rec) {
+		t.Fatal("the raw-keyed row survived its first use")
+	}
+	if !RootDB.Get(accountTokenTable, accountTokenKey(secret), &rec) || rec.Token == secret {
+		t.Fatalf("the rehashed row is missing or still holds the secret: %+v", rec)
+	}
+
+	other := "ght_" + strings.Repeat("cd", 24)
+	RootDB.Set(accountTokenTable, other, AccountToken{ID: "old2", Owner: "user1", Token: other})
+	SweepExpiredAccountTokens()
+	if RootDB.Get(accountTokenTable, other, &rec) {
+		t.Fatal("the sweep left a raw-keyed row")
+	}
+	if _, ok := lookupAccountTokenOwner(other); !ok {
+		t.Fatal("a swept legacy key stopped working")
+	}
+}
+
+// The desktop websocket took any key its validators recognized, so a token its
+// owner scoped to the /v1 endpoint could open the tool bridge and announce
+// tools into the owner's agents. A scoped token has to name the desktop.
+func TestScopedTokenNeedsDesktopFeature(t *testing.T) {
+	acctFixture(t)
+	narrow := MintAccountTokenScoped("user1", "v1 only", &TokenScope{Features: []string{"openai"}})
+	wide := MintAccountTokenScoped("user1", "desktop", &TokenScope{Features: []string{desktopBridgeFeatureKey}})
+	legacy := MintAccountToken("user1", "old")
+
+	if u := DesktopBridgeUserOf(reqWithKey(narrow.Token)); u != "" {
+		t.Errorf("a key scoped away from the desktop opened the bridge as %q", u)
+	}
+	if u := DesktopBridgeUserOf(reqWithKey(wide.Token)); u != "user1" {
+		t.Errorf("a key scoped for the desktop was refused (%q)", u)
+	}
+	if u := DesktopBridgeUserOf(reqWithKey(legacy.Token)); u != "user1" {
+		t.Errorf("a legacy unscoped key was refused (%q)", u)
+	}
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-Gohort-Desktop-Client-Key", narrow.Token)
+	if u := DesktopClientUser(r); u != "" {
+		t.Errorf("a key scoped away from the desktop reached the client-tool surface as %q", u)
+	}
 }

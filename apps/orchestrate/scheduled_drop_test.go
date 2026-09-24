@@ -18,7 +18,7 @@ func TestADroppedFireLeavesALedgerRow(t *testing.T) {
 		AgentID:   "agent-123",
 		SessionID: "sess-1",
 		Name:      "Snuglab blog post",
-		Prompt:    "post today's snuglab entry",
+		Prompt:    "post today's journal entry",
 	}
 
 	recordScheduledDrop(p, core.RunFailed, "Did not run: its agent (id agent-123) no longer exists.")

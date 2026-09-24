@@ -189,3 +189,23 @@ func ClientIP(r *http.Request) net.IP {
 	}
 	return peer
 }
+
+// ForwardedHTTPS reports whether a trusted reverse proxy says the client
+// reached it over HTTPS (X-Forwarded-Proto: https).
+//
+// Behind a TLS-terminating proxy the hop to this process is plain HTTP, so
+// r.TLS is nil even though the browser is on HTTPS, and a Secure cookie
+// decided from r.TLS alone is never Secure in exactly the deployment that
+// most needs it. The header is believed only from a trusted proxy for the
+// same reason ClientIP's are: anybody can send it. The first value is the
+// one that counts, since it is the hop the browser made.
+func ForwardedHTTPS(r *http.Request) bool {
+	if r == nil || !trustedProxy(directPeerIP(r)) {
+		return false
+	}
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if i := strings.IndexByte(proto, ','); i >= 0 {
+		proto = proto[:i]
+	}
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
+}

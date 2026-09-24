@@ -52,8 +52,8 @@ func saveAllowedCategories(udb Database, in map[string]bool) {
 }
 
 // handlePermissions is GET (read the auto-run set) / POST (replace it). The
-// response/request body is a flat {category: bool} map over the four
-// categories, so the browser toggle UI round-trips it directly.
+// response/request body is a flat {category: bool} map over every risk
+// category, so the browser toggle UI round-trips it directly.
 func (T *Servitor) handlePermissions(w http.ResponseWriter, r *http.Request) {
 	_, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {

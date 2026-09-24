@@ -33,6 +33,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 // (Collection data layer moved to core/collections.go — Collection
@@ -553,6 +554,12 @@ func (T *OrchestrateApp) handleCollectionAudit(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(map[string]string{"report": b.String()})
 }
 
+// documentUploadBodyBytes is how large a document upload's request may be. The
+// file arrives base64 in JSON, a third larger than itself, so the server-wide
+// body cap would refuse a document of about 46 MB; these routes had no cap at
+// all before it, and a long PDF is a normal thing to hand a corpus.
+const documentUploadBodyBytes = 256 << 20
+
 // handleCollectionUpload extracts + ingests a document under the
 // collection's source prefix. Mirrors handleAgentKnowledgeUpload but
 // writes to collection:<id> instead of orchestrate:<user>:<agent>:attachments.
@@ -561,6 +568,7 @@ func (T *OrchestrateApp) handleCollectionUpload(w http.ResponseWriter, r *http.R
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	netgate.RaiseBodyLimit(r, documentUploadBodyBytes)
 	var body struct {
 		Name     string `json:"name"`
 		MimeType string `json:"mime_type"`
@@ -1913,6 +1921,21 @@ var collectionReadActions = map[string]bool{
 	"export": true,
 }
 
+// collectionReadOnGet are the routes that are a read when fetched and a write
+// otherwise: the record itself (GET reads it, PATCH/DELETE change it) and the
+// document list (GET lists it, sources/<id> removes one). "sources" was in the
+// corpus list only, so a plain reader's GET of the list was refused and the
+// page they were handed showed a shared collection as empty.
+var collectionReadOnGet = map[string]bool{
+	"":        true,
+	"sources": true,
+}
+
+// collectionIsRead reports whether this request only looks.
+func collectionIsRead(action, method string) bool {
+	return collectionReadActions[action] || (collectionReadOnGet[action] && method == http.MethodGet)
+}
+
 // collectionCorpusActions are the ones a CONTRIBUTOR may take: they put
 // documents in. Deliberately not "steward", which reorganises what is already
 // there — rewriting somebody else's corpus is a different trust from adding to
@@ -1942,7 +1965,7 @@ var collectionCorpusActions = map[string]bool{
 // always was.
 func collectionWriteRefusal(c Collection, user, action, method string, admin bool) string {
 	if c.Owner == "" && IsDeploymentScope(c) {
-		if admin || collectionReadActions[action] || (action == "" && method == http.MethodGet) {
+		if admin || collectionIsRead(action, method) {
 			return ""
 		}
 		return "\"" + c.Name + "\" is the deployment's shared knowledge: everybody can read it, and only an administrator can change it."
@@ -1950,7 +1973,7 @@ func collectionWriteRefusal(c Collection, user, action, method string, admin boo
 	if c.Owner == "" || c.Owner == user {
 		return ""
 	}
-	if collectionReadActions[action] || (action == "" && method == http.MethodGet) {
+	if collectionIsRead(action, method) {
 		return ""
 	}
 	// A contributor may ADD to the corpus. Not rename it, not re-scope it, not

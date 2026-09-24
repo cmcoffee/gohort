@@ -7540,7 +7540,11 @@
           var rn = (a.rules || '').split('\n').filter(function(s) { return s.trim(); }).length;
           setCount(rules, rn);
         }).catch(function(){});
-        fetch('api/agents/' + encodeURIComponent(id) + '/memory').then(function(r) {
+        // The saved facts, which is what the Memory modal opens on. This
+        // read /memory, an endpoint that no longer exists; /facts answers
+        // the same {notes: [...]} shape, so the count is the list the
+        // modal shows.
+        fetch('api/agents/' + encodeURIComponent(id) + '/facts').then(function(r) {
           return r.ok ? r.json() : null;
         }).then(function(m) {
           if (!m) return;

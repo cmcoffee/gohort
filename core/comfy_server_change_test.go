@@ -6,8 +6,8 @@
 // over the freshly-derived one. sameImageHost then refused the save, from a
 // field marked Advanced that the admin never sees:
 //
-//	upload_url host "alpaca.snuglab.locl:8188" must match
-//	submit_url host "alpaca.snuglab.local:8188"
+//	upload_url host "gpu-box.example.locl:8188" must match
+//	submit_url host "gpu-box.example.local:8188"
 //
 // Two nearly identical strings, no way forward, and the real cause hidden
 // behind a disclosure toggle.
@@ -33,13 +33,13 @@ func comfyVals(baseURL, uploadURL string) map[string]any {
 // The reported case: the panel round-trips a stale upload_url while the admin
 // corrects the server. The new host must win.
 func TestChangingTheServerCarriesTheUploadEndpointWithIt(t *testing.T) {
-	stale := "http://alpaca.snuglab.locl:8188/upload/image"
-	s := buildComfy(t, comfyVals("http://alpaca.snuglab.local:8188", stale))
+	stale := "http://gpu-box.example.locl:8188/upload/image"
+	s := buildComfy(t, comfyVals("http://gpu-box.example.local:8188", stale))
 
 	if strings.Contains(s.UploadURL, "locl") {
 		t.Fatalf("the old host survived the edit: %q", s.UploadURL)
 	}
-	if !strings.Contains(s.UploadURL, "alpaca.snuglab.local:8188") {
+	if !strings.Contains(s.UploadURL, "gpu-box.example.local:8188") {
 		t.Errorf("upload_url must follow base_url, got %q", s.UploadURL)
 	}
 	// And the pair the validator compares must now agree.
@@ -50,8 +50,8 @@ func TestChangingTheServerCarriesTheUploadEndpointWithIt(t *testing.T) {
 
 // A genuinely custom endpoint is a choice, not residue, and must survive.
 func TestACustomUploadPathIsPreserved(t *testing.T) {
-	custom := "http://alpaca.snuglab.local:8188/api/v2/put-image"
-	s := buildComfy(t, comfyVals("http://alpaca.snuglab.local:8188", custom))
+	custom := "http://gpu-box.example.local:8188/api/v2/put-image"
+	s := buildComfy(t, comfyVals("http://gpu-box.example.local:8188", custom))
 	if s.UploadURL != custom {
 		t.Errorf("custom upload endpoint = %q, want %q", s.UploadURL, custom)
 	}

@@ -98,13 +98,16 @@ func (T *Scribe) handlePublishChat(w http.ResponseWriter, r *http.Request, udb D
 	// Guide Author sets it — an unset mode resolves to "every agent you own".
 	agent.DispatchMode, agent.AllowedDispatchTargets = orchestrate.DispatchNone, nil
 
+	// The turn's lifetime, not the page's: same reason as handleChatSend.
+	turnCtx, endTurn := turnContext(r)
+	defer endTurn()
 	var tools []AgentToolDef
 	if _, ok := T.openPublishDocument(r, udb, user); ok {
-		tools = publish.BuildPublishTools(r.Context(), user, func() (publish.Document, bool) {
+		tools = publish.BuildPublishTools(turnCtx, user, func() (publish.Document, bool) {
 			return T.openPublishDocument(r, udb, user)
 		})
 	}
-	orch.PublicHandleSendWithAppTools(w, r, agent, tools)
+	orch.PublicHandleSendWithAppTools(w, r, agent, followTurn(tools, endTurn))
 }
 
 // handlePublishState feeds the Publish modal's header: whether this deployment

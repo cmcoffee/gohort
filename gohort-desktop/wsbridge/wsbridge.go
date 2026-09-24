@@ -35,11 +35,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cmcoffee/gohort/gohort-desktop/core"
+	"github.com/cmcoffee/gohort/gohort-desktop/mcp"
 	"github.com/gorilla/websocket"
 )
 
@@ -365,7 +367,14 @@ func (c *wsClient) handleInstall(m installFrame) {
 	// Each new/replaced capability is gated by the SAME user-consent prompt as a
 	// tool call — the machine's owner authorizes running new local code.
 	for name, s := range m.Servers {
-		if !c.consentInstall(name, s.Command, s.Args) {
+		// Checked before asking, so the user is never asked about something
+		// that would be refused, and never shown a command whose environment
+		// quietly runs other code.
+		if err := mcp.CheckPushedEnv(s.Env); err != nil {
+			core.Warn("[ws-bridge] install of %q refused: %v", name, err)
+			continue
+		}
+		if !c.consentInstall(name, s.Command, s.Args, envNames(s.Env)) {
 			continue
 		}
 		if err := c.installer.Install(name, s.Command, s.Args, s.Env); err != nil {
@@ -375,7 +384,7 @@ func (c *wsClient) handleInstall(m installFrame) {
 		core.Log("[ws-bridge] installed pushed capability %q (%s)", name, s.Command)
 	}
 	for name, s := range m.Commands {
-		if !c.consentInstall(name, s.Command, s.Args) {
+		if !c.consentInstall(name, s.Command, s.Args, nil) {
 			continue
 		}
 		spec := CommandSpec{Desc: s.Desc, Command: s.Command, Args: s.Args, Params: s.Params, Required: s.Required}
@@ -400,12 +409,14 @@ func (c *wsClient) handleInstall(m installFrame) {
 }
 
 // consentBridge asks the user to authorize turning on a built-in messaging
-// relay. A nil Approver auto-allows (the daemon opted into that).
+// relay. A nil Approver refuses: nobody can consent, and installing is not a
+// tool call the daemon's own config can pre-approve.
 func (c *wsClient) consentBridge(service string) bool {
 	if c.approver == nil {
-		return true
+		core.Warn("[ws-bridge] enabling bridge %q refused: no approver to ask", service)
+		return false
 	}
-	ok := c.approver.RequestApprovalBlocking("bridge-"+service, "enable_bridge:"+service,
+	ok := c.approver.RequestApprovalBlocking("bridge-"+service, BridgeConsentPrefix+service,
 		map[string]any{"service": service})
 	if !ok {
 		core.Log("[ws-bridge] enabling bridge %q denied by user", service)
@@ -414,17 +425,49 @@ func (c *wsClient) consentBridge(service string) bool {
 }
 
 // consentInstall asks the user to authorize running a new local capability.
-// A nil Approver auto-allows (the daemon's own config opted into that).
-func (c *wsClient) consentInstall(name, command string, args []string) bool {
+// A nil Approver refuses (see consentBridge). The environment's NAMES are
+// shown with the command: they are part of what runs.
+func (c *wsClient) consentInstall(name, command string, args, env []string) bool {
 	if c.approver == nil {
-		return true
+		core.Warn("[ws-bridge] install of %q refused: no approver to ask", name)
+		return false
 	}
-	ok := c.approver.RequestApprovalBlocking("install-"+name, "install_capability:"+name,
-		map[string]any{"command": command, "args": args})
+	detail := map[string]any{"command": command, "args": args}
+	if len(env) > 0 {
+		detail["env"] = env
+	}
+	ok := c.approver.RequestApprovalBlocking("install-"+name, InstallConsentPrefix+name, detail)
 	if !ok {
 		core.Log("[ws-bridge] install of %q denied by user", name)
 	}
 	return ok
+}
+
+// InstallConsentPrefix and BridgeConsentPrefix begin the approval name of an
+// install and a relay enable. An Approver must always ask for these: the
+// "approve every tool call" toggle and a tool's "Always allow" are about
+// calls to tools already on the machine, and a name-keyed "always" would let
+// the server push a different command under a name approved once.
+const (
+	InstallConsentPrefix = "install_capability:"
+	BridgeConsentPrefix  = "enable_bridge:"
+)
+
+// IsInstallConsent reports whether an approval name is an install or relay
+// enable rather than a tool call.
+func IsInstallConsent(name string) bool {
+	return strings.HasPrefix(name, InstallConsentPrefix) || strings.HasPrefix(name, BridgeConsentPrefix)
+}
+
+// envNames lists an environment's variable names, sorted, for the consent
+// prompt. Values are not shown: they are often tokens.
+func envNames(env map[string]string) []string {
+	out := make([]string, 0, len(env))
+	for k := range env {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (c *wsClient) pingLoop(conn *websocket.Conn, stop <-chan struct{}) {

@@ -5,6 +5,7 @@ package scribe
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -197,7 +198,13 @@ func (T *Scribe) handleGuide(w http.ResponseWriter, r *http.Request, udb Databas
 			http.Error(w, "only the owner can delete this "+g.kindNoun(), http.StatusForbidden)
 			return
 		}
-		deleteGuide(ownerUDB, user, id)
+		// The guide's research collection is its OWNER's, so it is the owner's
+		// collection that goes with it. Passing the caller here meant an
+		// administrator deleting somebody else's guide vacuumed a collection
+		// of that id in the administrator's own store and left the owner's
+		// behind, orphaned, with its chunks still in the index.
+		_, owner, _, _ := resolveGuide(T.DB, udb, user, id)
+		deleteGuide(ownerUDB, owner, id)
 		SetSharedOwner(T.DB, sharedGuidesIndex, id, "", false) // drop from the shared index
 		writeJSON(w, map[string]bool{"ok": true})
 	default:
@@ -1044,11 +1051,15 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	// is actually looking at.
 	guideID := requestGuideID(r, udb)
 
+	// The tools' lifetime is the TURN's, not the page's. See turnContext.
+	turnCtx, endTurn := turnContext(r)
+	defer endTurn()
+
 	var tools []AgentToolDef
 	if g, _, _, canEdit, found := T.resolve(r, udb, user, guideID); found {
 		agent.DispatchMode, agent.AllowedDispatchTargets = guideDispatchPolicy(g)
 		all := T.coauthorTools(coauthorScope{
-			Ctx: r.Context(), UDB: udb, Orch: orch, User: user, CanEdit: canEdit, Guide: guideID,
+			Ctx: turnCtx, UDB: udb, Orch: orch, User: user, CanEdit: canEdit, Guide: guideID,
 		})
 		if g.isArticle() {
 			// An article is one body: the section kit makes no sense over it.
@@ -1083,7 +1094,45 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	// the previous document — so the list could be correct and still show the
 	// wrong thing.
 	stampAppContext(r, guideID)
-	orch.PublicHandleSendWithAppTools(w, r, agent, tools)
+	orch.PublicHandleSendWithAppTools(w, r, agent, followTurn(tools, endTurn))
+}
+
+// turnContext is the context a chat send's tools are built on.
+//
+// Not r.Context(). The turn itself is detached from the request (orchestrate
+// roots it on its own cancelable context), so closing the page leaves the turn
+// running; but a tool that roots its own work on the context it was BUILT with
+// (a source's investigate_<system>, which dispatches a sub-run) died with the
+// page, and the turn carried on with that call failed underneath it.
+//
+// WithoutCancel keeps the request's values and drops its cancellation. The
+// cancel returned here is the turn's end: the caller defers it, because the
+// send handler returns when the turn does, and followTurn fires it when the
+// turn is stopped.
+func turnContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.WithoutCancel(r.Context()))
+}
+
+// followTurn makes an explicit Stop reach work rooted on turnContext.
+//
+// A tool call is handed the turn's own context, and a Stop cancels it; the
+// agent loop then waits on the call to return. A tool that ignores its call
+// context in favour of the one it was built with would hold the stopped turn
+// open until its sub-run finished on its own. So while any call is in flight,
+// its context ending ends the build context too: the turn is over either way.
+func followTurn(tools []AgentToolDef, end context.CancelFunc) []AgentToolDef {
+	out := make([]AgentToolDef, len(tools))
+	for i, td := range tools {
+		if inner := td.Handler; inner != nil {
+			td.Handler = func(ctx context.Context, args map[string]any) (string, error) {
+				stop := context.AfterFunc(ctx, end)
+				defer stop()
+				return inner(ctx, args)
+			}
+		}
+		out[i] = td
+	}
+	return out
 }
 
 // rulesNamespace keys the per-user house-style rules (core/docs DocRules).

@@ -85,6 +85,7 @@ func buildTunableSections() []ui.Section {
 			Subtitle: "Saved automatically as you edit.",
 			Body: ui.FormPanel{
 				Source:       "api/settings",
+				Method:       settingsSaveMethod,
 				ResetURL:     "api/settings/reset-tunables?category=" + url.QueryEscape(cat),
 				ResetLabel:   "Revert to defaults",
 				ResetConfirm: "Revert the " + cat + " settings to their built-in defaults?",

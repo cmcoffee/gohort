@@ -226,7 +226,7 @@ func TestActionListSpinsAndShowsProgress(t *testing.T) {
 // row while the pass was still going.
 func TestActionListRejoinsARunInProgress(t *testing.T) {
 	src := readRuntimeFile(t, "10_basics.js")
-	if !strings.Contains(src, "function showRunning(sinceMs, onDone) {") {
+	if !strings.Contains(src, "function showRunning(sinceMs, onDone, firstNote) {") {
 		t.Fatal("the running display must be startable, not a consequence of clicking")
 	}
 	// Both entrances use it: the click, and the arrival probe.

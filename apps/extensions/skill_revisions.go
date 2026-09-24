@@ -31,16 +31,11 @@ func (T *Extensions) handleUserSkillOne(w http.ResponseWriter, r *http.Request) 
 		http.NotFound(w, r)
 		return
 	}
-	// Scoped to the caller's own pool. LoadSkills reads one user's skills, so
-	// a skill id belonging to somebody else simply is not here.
-	var current SkillRecord
-	found := false
-	for _, s := range LoadSkills(AuthDB(), user) {
-		if s.ID == id {
-			current, found = s, true
-			break
-		}
-	}
+	// Scoped to the caller's own skills, in either pool: one they published
+	// is still theirs, with the same history. A skill id belonging to
+	// somebody else simply is not found.
+	own, found := findOwnSkill(user, id)
+	current := own.SkillRecord
 	if !found {
 		http.NotFound(w, r)
 		return

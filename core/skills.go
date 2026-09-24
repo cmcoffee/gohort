@@ -643,6 +643,17 @@ func SaveSkillAs(db Database, username string, s SkillRecord, reason string) (Sk
 	if store == nil || username == "" {
 		return SkillRecord{}, errString("save skill requires user")
 	}
+	// A skill its author published has moved to the deployment pool and is
+	// still theirs. Saving it goes there, to the copy everybody uses, rather
+	// than landing a second, private copy in the author's own pool. Publishing
+	// MOVES a record, so an id is only ever in one of the two.
+	if s.ID != "" {
+		for _, p := range PublishedSkillsBy(db, username) {
+			if p.ID == s.ID {
+				return saveDeploymentSkill(db, username, s, reason)
+			}
+		}
+	}
 	if s.ID == "" {
 		s.ID = "skill-" + UUIDv4()
 	}
@@ -743,6 +754,26 @@ func RollbackSkill(db Database, username, id, ref string) (SkillRecord, error) {
 // deletion and silently bloat the vector store.
 func DeleteSkill(db Database, username, id string) bool {
 	store := skillStore(db)
+	if !dropSkillRecord(db, username, id) {
+		return false
+	}
+	// The history goes with the skill, the way a deleted pipeline's does.
+	revisions.Delete(store, revisions.KindSkill, skillRingKey(username, id))
+	// Drop the skill's corpus chunks from its dedicated store.
+	if chunksDB := skillChunksDB(username); chunksDB != nil {
+		if n := WipeChunksBySourcePrefix(chunksDB, skillSource(id)); n > 0 {
+			Log("[skills] dropped %d chunk(s) for deleted skill %s", n, id)
+		}
+	}
+	return true
+}
+
+// dropSkillRecord takes a skill out of its owner's pool, with its shares, and
+// nothing else. Publishing MOVES a skill, so the move uses this rather than
+// DeleteSkill: the history and corpus belong to the skill, which still exists
+// under the same owner and id.
+func dropSkillRecord(db Database, username, id string) bool {
+	store := skillStore(db)
 	if store == nil || username == "" || id == "" {
 		return false
 	}
@@ -768,14 +799,6 @@ func DeleteSkill(db Database, username, id string) bool {
 	// nothing, which reads to a recipient as access they lost rather than a
 	// skill that is gone.
 	peershare.DropAll(store, sharedSkillsTable, username, id)
-	// The history goes with the skill, the way a deleted pipeline's does.
-	revisions.Delete(store, revisions.KindSkill, skillRingKey(username, id))
-	// Drop the skill's corpus chunks from its dedicated store.
-	if chunksDB := skillChunksDB(username); chunksDB != nil {
-		if n := WipeChunksBySourcePrefix(chunksDB, skillSource(id)); n > 0 {
-			Log("[skills] dropped %d chunk(s) for deleted skill %s", n, id)
-		}
-	}
 	return true
 }
 
@@ -1323,16 +1346,8 @@ func init() {
 // works for everybody and one pointing at the author's private corpus quietly
 // reaches nobody and says so.
 func DeploymentSkills(db Database) []SkillRecord {
-	store := skillStore(db)
-	if store == nil {
-		return nil
-	}
-	var out []SkillRecord
-	if !store.Get(deploymentSkillsTable, "all", &out) {
-		return nil
-	}
-	live := out[:0]
-	for _, s := range out {
+	var live []SkillRecord
+	for _, s := range allDeploymentSkills(db) {
 		// Disabled is the author's own mute and it still counts here: an admin
 		// approved publishing a skill, not publishing it regardless of what its
 		// author later decided about it.
@@ -1342,6 +1357,97 @@ func DeploymentSkills(db Database) []SkillRecord {
 	}
 	sort.SliceStable(live, func(i, j int) bool { return live[i].Updated.After(live[j].Updated) })
 	return live
+}
+
+// allDeploymentSkills is the deployment pool as stored, muted ones included.
+//
+// Every read-modify-write of the pool goes through this, never through
+// DeploymentSkills. That list hides what an author disabled, and a write built
+// on it writes the hidden ones out of existence: publishing any skill, or
+// taking any back, used to erase every muted deployment skill along with it.
+func allDeploymentSkills(db Database) []SkillRecord {
+	store := skillStore(db)
+	if store == nil {
+		return nil
+	}
+	var out []SkillRecord
+	store.Get(deploymentSkillsTable, "all", &out)
+	return out
+}
+
+// PublishedSkillsBy is what owner has published, muted ones included, for the
+// author's own list. DeploymentSkills leaves a muted one out because nobody
+// should activate it, but its author still has to SEE it to turn it back on
+// or take it back, or disabling a published skill is a one-way door.
+func PublishedSkillsBy(db Database, owner string) []SkillRecord {
+	if strings.TrimSpace(owner) == "" {
+		return nil
+	}
+	var out []SkillRecord
+	for _, s := range allDeploymentSkills(db) {
+		if s.Owner == owner {
+			out = append(out, s)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+	return out
+}
+
+// saveDeploymentSkill writes an author's edit to a skill they published. The
+// record stays in the deployment pool: an edit is an edit everybody gets,
+// which is why publishing moves the record rather than copying it. Reached
+// through SaveSkillAs, so every surface that saves an author's skill saves a
+// published one to the right place without knowing there are two pools.
+//
+// Only the author may, and only to what a published skill may carry. The
+// bundled tools stay off (bringing them back here would be the way around the
+// administrator who approved publishing it without them) and so do peer
+// recipients, since everybody already has it. Owner and Created come from the
+// stored record, never the argument.
+func saveDeploymentSkill(db Database, owner string, s SkillRecord, reason string) (SkillRecord, error) {
+	owner = strings.TrimSpace(owner)
+	store := skillStore(db)
+	if store == nil || owner == "" || s.ID == "" {
+		return SkillRecord{}, errString("owner and skill id are required")
+	}
+	all := allDeploymentSkills(db)
+	at := -1
+	for i := range all {
+		if all[i].ID == s.ID {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return SkillRecord{}, errString("no deployment skill " + s.ID)
+	}
+	if all[at].Owner != owner {
+		return SkillRecord{}, errString("skill " + s.ID + " was published by " + all[at].Owner + ", not " + owner)
+	}
+	// A rename is held to the rule publishing is: a turn matching a name has
+	// one answer. Checked only on a rename, so an edit to the text of a skill
+	// is never refused over a clash it did not cause.
+	if !strings.EqualFold(all[at].Name, s.Name) {
+		for i, o := range all {
+			if i != at && strings.EqualFold(o.Name, s.Name) {
+				return SkillRecord{}, errString("the deployment already publishes a skill called " + s.Name)
+			}
+		}
+	}
+	s.Owner = owner
+	s.Created = all[at].Created
+	s.Tools = nil
+	s.AllowedUsers = nil
+	s.SharedFrom, s.SharedOmitted = "", nil
+	s.Updated = time.Now()
+	// Same ring as before it was published: owner and id do not change when a
+	// skill moves pools, so its history is still the author's to read.
+	if reason != revisions.NoHistory && revisions.Differs(all[at], s, "updated") {
+		revisions.Push(store, revisions.KindSkill, skillRingKey(owner, s.ID), all[at], all[at].Updated, reason)
+	}
+	all[at] = s
+	store.Set(deploymentSkillsTable, "all", all)
+	return s, nil
 }
 
 // promoteSkillToDeployment moves a user's skill into the deployment pool, where
@@ -1385,7 +1491,9 @@ func promoteSkillToDeployment(owner, id string) error {
 		return errString("no skill " + id + " owned by " + owner +
 			" (a skill renamed after the request was filed no longer answers to the name on it)")
 	}
-	for _, s := range DeploymentSkills(nil) {
+	// Muted ones too: enabling one later must not produce the clash this
+	// refusal exists to prevent.
+	for _, s := range allDeploymentSkills(nil) {
 		if strings.EqualFold(s.Name, found.Name) {
 			return errString("the deployment already publishes a skill called " + found.Name +
 				"; rename yours before publishing it, so a turn matching that name has one answer")
@@ -1401,9 +1509,9 @@ func promoteSkillToDeployment(owner, id string) error {
 	// restore an ACL the owner had forgotten.
 	published.AllowedUsers = nil
 
-	existing := DeploymentSkills(nil)
+	existing := allDeploymentSkills(nil)
 	store.Set(deploymentSkillsTable, "all", append(existing, published))
-	DeleteSkill(nil, owner, found.ID)
+	dropSkillRecord(nil, owner, found.ID)
 	Log("[skills] %q published %q deployment-wide (%d bundled tool(s) not carried)", owner, published.Name, stripped)
 	noteSkillPublished(owner, published, stripped)
 	return nil
@@ -1422,7 +1530,10 @@ func NarrowSkillToOwner(db Database, owner, id string) error {
 	if store == nil || owner == "" || id == "" {
 		return errString("owner and skill id are required")
 	}
-	all := DeploymentSkills(db)
+	// The stored pool, not the published list: a muted skill is still one its
+	// author can take back, and the others written back below must include the
+	// muted ones or taking this one back erases them.
+	all := allDeploymentSkills(db)
 	var taken *SkillRecord
 	rest := make([]SkillRecord, 0, len(all))
 	for _, s := range all {
@@ -1518,13 +1629,14 @@ func init() {
 			// A published one reaches everybody, and taking it back is the
 			// author's — but through the skill's own door, not this one, since
 			// un-publishing is not the same act as dropping one recipient.
-			for _, s := range DeploymentSkills(nil) {
-				if s.Owner == owner {
-					out = append(out, shareledger.Grant{
-						ID: s.ID, Name: s.Name, Reach: "Deployment-wide", Wide: true,
-						Detail: skillShareDetail(s),
-					})
-				}
+			// Muted ones included: muting stops it activating, it does not
+			// stop it being published, and this list is what the author has
+			// out there.
+			for _, s := range PublishedSkillsBy(nil, owner) {
+				out = append(out, shareledger.Grant{
+					ID: s.ID, Name: s.Name, Reach: "Deployment-wide", Wide: true,
+					Detail: skillShareDetail(s),
+				})
 			}
 			return out
 		},

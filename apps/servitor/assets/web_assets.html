@@ -618,12 +618,16 @@
       var cats = [
         {key: 'data_mutate', label: 'Database writes',
          desc: 'INSERT / UPDATE / DELETE / DROP and other data changes (psql, mysql, redis-cli, mongo). Read-only queries never prompt.'},
-        {key: 'file_delete', label: 'File deletion',
-         desc: 'rm, shred, dd, truncate, git clean/reset: removing or overwriting files.'},
+        {key: 'file_delete', label: 'File changes',
+         desc: 'rm, cp/mv onto existing files, chmod, sed -i, redirects onto real files, git clean/reset: removing, overwriting or changing files outside the session scratch directory.'},
         {key: 'net_egress', label: 'Outbound calls',
          desc: 'curl, wget, ssh, scp, git push: the appliance reaching out to the network.'},
         {key: 'sys_control', label: 'System control',
-         desc: 'systemctl stop, reboot, kill, docker rm, firewall changes.'},
+         desc: 'systemctl stop/restart, reboot, kill, docker rm, kubectl apply, firewall changes.'},
+        {key: 'pkg_install', label: 'Software installs',
+         desc: 'apt/yum/pip/npm install, upgrade or remove. Listing what is installed never prompts.'},
+        {key: 'unverified', label: 'Unrecognized commands',
+         desc: 'Anything the gate cannot confirm is read-only: programs it does not know, scripts and interpreters (python, bash script.sh), and shell syntax it cannot read. Checking this runs them without asking.'},
       ];
       var state = {};
       var listBox = el('div', {}, [el('div', {class: 'ui-pl-empty'}, ['Loading…'])]);

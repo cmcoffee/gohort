@@ -85,12 +85,24 @@ func registeredRevokers() []UserCredentialRevoker {
 // AuthValidateSession consults first, so a store-only sweep would leave a
 // revoked session working until its entry happened to expire.
 func AuthRevokeUserSessions(db Database, user string) int {
+	return revokeUserSessionsExcept(db, user, "")
+}
+
+// revokeUserSessionsExcept is AuthRevokeUserSessions sparing one token: the
+// session a person used to change their own password. An empty keep spares
+// nothing.
+func revokeUserSessionsExcept(db Database, user, keep string) int {
 	user = strings.TrimSpace(user)
 	if db == nil || user == "" {
 		return 0
 	}
 	n := 0
 	for _, token := range db.Keys(AuthSessionTable) {
+		// Stored keys are hashes (a raw token only on a record from before
+		// that), so the session to spare is matched in both forms.
+		if keep != "" && (token == keep || token == sessionStoreKey(keep)) {
+			continue
+		}
 		var s authSession
 		if db.Get(AuthSessionTable, token, &s) && s.User == user {
 			db.Unset(AuthSessionTable, token)
@@ -102,6 +114,9 @@ func AuthRevokeUserSessions(db Database, user string) int {
 	// delete), and leaving that one behind is exactly the case this is for.
 	sessionMu.Lock()
 	for token, s := range sessionCache {
+		if keep != "" && token == keep {
+			continue
+		}
 		if s != nil && s.User == user {
 			delete(sessionCache, token)
 		}

@@ -62,7 +62,7 @@ func scratch_setup(ctx context.Context, run scratch_exec, dir string) error {
 	if run == nil || dir == "" {
 		return fmt.Errorf("scratch: no target")
 	}
-	out, err := run(ctx, fmt.Sprintf("mkdir -p %s && chmod 700 %s", dir, dir))
+	out, err := run(ctx, scratch_setup_cmd(dir))
 	if err != nil {
 		return fmt.Errorf("scratch: %w", err)
 	}
@@ -70,11 +70,31 @@ func scratch_setup(ctx context.Context, run scratch_exec, dir string) error {
 	// (read-only /tmp, quota, permissions) even though the shell exited 0 — or
 	// that no shell ran at all, which the exec paths report as COMMAND DID NOT
 	// RUN/COMPLETE rather than as an exit code.
+	if strings.Contains(out, scratch_refused) {
+		return fmt.Errorf("scratch: %s already exists and is a symlink or belongs to another account; not using it", dir)
+	}
 	if strings.Contains(out, "exit code") || strings.Contains(out, "COMMAND DID NOT") ||
 		strings.Contains(strings.ToLower(out), "denied") {
 		return fmt.Errorf("scratch: %s", strings.TrimSpace(out))
 	}
 	return nil
+}
+
+// scratch_refused is what scratch_setup_cmd prints when the path is not safe
+// to use.
+const scratch_refused = "SERVITOR-SCRATCH-REFUSED"
+
+// scratch_setup_cmd creates dir so that it is ours and nothing else.
+//
+// It used to be "mkdir -p DIR && chmod 700 DIR". /tmp is shared, and the path
+// is predictable (the CLI's is "cli-<host>"), so anyone on the box could plant
+// DIR first as a symlink to a directory of their choosing: mkdir -p accepted
+// it, chmod followed it, and every "scratch" write - ungated, because scratch
+// is where writing is free - landed in the linked directory instead. Now the
+// directory is created with its mode in one step, and an existing path is
+// used only when it is a real directory (not a link) owned by this account.
+func scratch_setup_cmd(dir string) string {
+	return fmt.Sprintf("mkdir -m 700 %[1]s 2>/dev/null || { [ -d %[1]s ] && [ ! -L %[1]s ] && [ -O %[1]s ] && chmod 700 %[1]s; } || echo %[2]s", dir, scratch_refused)
 }
 
 // scratch_teardown removes the run's scratch directory. Called on every exit

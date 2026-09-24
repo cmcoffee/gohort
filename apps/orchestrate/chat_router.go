@@ -170,7 +170,7 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 		// Running flag: in-flight Run keyed by session ID. BySession
 		// returns nil for unknown / no-run-active. Cheap map lookup
 		// per session — fine for typical list sizes.
-		if r := runs.BySession(s.ID); r != nil && r.Status() == RunStatusRunning {
+		if r := runs.BySession(user, s.ID); r != nil && r.Status() == RunStatusRunning {
 			item.Running = true
 		}
 		item.Watchers = watcherCounts[s.ID]
@@ -188,7 +188,7 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 			Source: ext.Source,
 			ChatID: ext.ChatID,
 		}
-		if r := runs.BySession(ext.ID); r != nil && r.Status() == RunStatusRunning {
+		if r := runs.BySession(user, ext.ID); r != nil && r.Status() == RunStatusRunning {
 			item.Running = true
 		}
 		item.Watchers = watcherCounts[ext.ID]
@@ -581,10 +581,10 @@ func (T *OrchestrateApp) handleCancelRouter(w http.ResponseWriter, r *http.Reque
 		if !ok {
 			return
 		}
-		T.handleCancel(w, r, agent)
+		T.handleCancel(w, r, user, agent)
 		return
 	}
-	T.handleCancel(w, r, AgentRecord{})
+	T.handleCancel(w, r, user, AgentRecord{})
 }
 
 // handleConfirmRouter resolves in-flight tool-call escalations (see

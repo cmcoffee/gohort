@@ -80,3 +80,21 @@ func TestTheShareEditorPatches(t *testing.T) {
 		t.Errorf("the candidate list is not this app's:\n%s", rendered)
 	}
 }
+
+// The steward form is owner only for the same reason: a reader reaches this
+// page, the steward endpoint refuses them, and the form then fails to load.
+func TestOnlyTheOwnerSeesTheStewardForm(t *testing.T) {
+	withStores(t)
+	app := &KnowledgeApp{}
+	owner := UserDB(CollectionsDB(), "alice")
+	if owner == nil {
+		t.Skip("no per-user store in this configuration")
+	}
+	SaveCollection(owner, Collection{ID: "col-1", Owner: "alice", Name: "Runbooks", AllowedUsers: []string{"bob"}})
+	if _, ok := app.stewardSection("alice", "col-1"); !ok {
+		t.Error("the owner cannot reach the steward form for their own collection")
+	}
+	if _, ok := app.stewardSection("bob", "col-1"); ok {
+		t.Error("a reader is offered a form the endpoint refuses")
+	}
+}

@@ -2,6 +2,7 @@ package core
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
 	"sort"
@@ -15,15 +16,17 @@ import (
 // minted/managed under /account, scoped to the user — so personal access lives
 // with the user's account instead of being coupled to the messaging Bridges app.
 //
-// Stored in a single global table keyed by the SECRET so auth is an O(1) Get; the
-// Owner field scopes listing + revocation. The full secret is returned exactly
-// once (at mint) and never listed again — ListAccountTokens masks it.
+// Stored in a single global table keyed by a SHA-256 of the secret (see
+// accountTokenKey) so auth is still an O(1) Get but a copy of the store is not
+// a copy of everyone's keys; the Owner field scopes listing + revocation. The
+// full secret is returned exactly once (at mint) and never stored: the record's
+// Token field holds only the masked hint the account page shows.
 type AccountToken struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Owner    string `json:"owner"`
-	Token    string `json:"token,omitempty"` // full secret: returned once at mint; masked on list
-	Created  string `json:"created"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Owner   string `json:"owner"`
+	Token   string `json:"token,omitempty"` // full secret: returned once at mint; stored and listed masked
+	Created string `json:"created"`
 	// LastSeen is the last time this key authenticated anything, to the hour.
 	//
 	// The field existed from the start and nothing ever wrote it, so every key
@@ -160,6 +163,70 @@ const accountTokenTouchInterval = time.Hour
 
 const accountTokenTable = "account_tokens"
 
+// accountTokenHashPrefix marks a row keyed by the secret's hash. A key without
+// it is a row written before hashing, keyed by the raw secret.
+const accountTokenHashPrefix = "sha256:"
+
+// accountTokenKey is the store key for a secret. The secret is 24 random bytes,
+// so a plain (unsalted, fast) hash is enough: there is nothing to brute-force.
+func accountTokenKey(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return accountTokenHashPrefix + hex.EncodeToString(sum[:])
+}
+
+// loadAccountToken finds the record for a presented secret and returns it with
+// its store key. A legacy row keyed by the raw secret is rehashed on the spot,
+// so an existing key keeps working and stops being stored in the clear the
+// first time it is used (rehashAccountTokens does the rest in one pass).
+func loadAccountToken(secret string) (AccountToken, string, bool) {
+	var t AccountToken
+	if RootDB == nil || strings.TrimSpace(secret) == "" || strings.HasPrefix(secret, accountTokenHashPrefix) {
+		return t, "", false
+	}
+	key := accountTokenKey(secret)
+	if RootDB.Get(accountTokenTable, key, &t) {
+		return t, key, true
+	}
+	var legacy AccountToken
+	if !RootDB.Get(accountTokenTable, secret, &legacy) {
+		return t, "", false
+	}
+	legacy.Token = maskAccountToken(secret)
+	RootDB.Set(accountTokenTable, key, legacy)
+	RootDB.Unset(accountTokenTable, secret)
+	return legacy, key, true
+}
+
+// rehashAccountTokens moves every row still keyed by its raw secret onto the
+// hashed key, so the plaintext does not wait for the key's next use to leave
+// the store. Idempotent; returns how many rows moved.
+func rehashAccountTokens() int {
+	if RootDB == nil {
+		return 0
+	}
+	n := 0
+	for _, key := range RootDB.Keys(accountTokenTable) {
+		if strings.HasPrefix(key, accountTokenHashPrefix) {
+			continue
+		}
+		if _, _, ok := loadAccountToken(key); ok {
+			n++
+		}
+	}
+	return n
+}
+
+// storeAccountToken writes a freshly minted key under its hash, with only the
+// masked hint in the record.
+func storeAccountToken(t AccountToken) {
+	if RootDB == nil {
+		return
+	}
+	rec := t
+	rec.Token = maskAccountToken(t.Token)
+	RootDB.Set(accountTokenTable, accountTokenKey(t.Token), rec)
+}
+
 func init() { RegisterAPIKeyValidator(lookupAccountTokenOwner) }
 
 func acctRandHex(n int) string {
@@ -178,9 +245,7 @@ func MintAccountToken(owner, name string) AccountToken {
 		Token:   "ght_" + acctRandHex(24),
 		Created: time.Now().UTC().Format(time.RFC3339),
 	}
-	if RootDB != nil {
-		RootDB.Set(accountTokenTable, t.Token, t)
-	}
+	storeAccountToken(t)
 	return t
 }
 
@@ -202,9 +267,7 @@ func MintAccountTokenExpiring(owner, name string, scope *TokenScope, ttl time.Du
 	if ttl > 0 {
 		t.Expires = time.Now().UTC().Add(ttl).Format(time.RFC3339)
 	}
-	if RootDB != nil {
-		RootDB.Set(accountTokenTable, t.Token, t)
-	}
+	storeAccountToken(t)
 	return t
 }
 
@@ -239,6 +302,7 @@ func SweepExpiredAccountTokens() int {
 	if RootDB == nil {
 		return 0
 	}
+	rehashAccountTokens()
 	n := 0
 	for _, secret := range RootDB.Keys(accountTokenTable) {
 		var t AccountToken
@@ -274,12 +338,14 @@ func SetAccountTokenScope(owner, id string, scope *TokenScope) bool {
 // only resolve the owner. Returns the raw record — do NOT echo t.Token, it is
 // the live secret. nil when no valid account token is presented.
 func AccountTokenFromRequest(r *http.Request) *AccountToken {
-	secret := rawAPIKey(r)
-	if secret == "" || RootDB == nil {
-		return nil
-	}
-	var t AccountToken
-	if RootDB.Get(accountTokenTable, secret, &t) && t.Owner != "" && !t.Expired() {
+	return accountTokenBySecret(rawAPIKey(r))
+}
+
+// accountTokenBySecret is AccountTokenFromRequest for a secret already read
+// off the wire (the desktop client-key header is not X-API-Key).
+func accountTokenBySecret(secret string) *AccountToken {
+	t, _, ok := loadAccountToken(secret)
+	if ok && t.Owner != "" && !t.Expired() {
 		return &t
 	}
 	return nil
@@ -307,7 +373,11 @@ func ListAccountTokens(owner string) []AccountToken {
 	for _, secret := range RootDB.Keys(accountTokenTable) {
 		var t AccountToken
 		if RootDB.Get(accountTokenTable, secret, &t) && t.Owner == owner {
-			t.Token = maskAccountToken(secret)
+			// A hashed row already carries its masked hint; a legacy row is
+			// keyed by the raw secret and its record holds that secret too.
+			if !strings.HasPrefix(secret, accountTokenHashPrefix) {
+				t.Token = maskAccountToken(secret)
+			}
 			out = append(out, t)
 		}
 	}
@@ -335,22 +405,19 @@ func RevokeAccountToken(owner, id string) bool {
 // registered alongside the bridge-key and desktop-key validators. Read-only (no
 // LastSeen write) so it stays a cheap O(1) Get on every authenticated request.
 func lookupAccountTokenOwner(secret string) (string, bool) {
-	if RootDB == nil || strings.TrimSpace(secret) == "" {
-		return "", false
-	}
-	var t AccountToken
-	if !RootDB.Get(accountTokenTable, secret, &t) || t.Owner == "" {
+	t, key, ok := loadAccountToken(secret)
+	if !ok || t.Owner == "" {
 		return "", false
 	}
 	if t.Expired() {
 		// Removed on sight rather than left to a sweep: a sweep that has not
 		// run yet must never be the difference between a credential being
 		// valid and not. Same rule peerKeyFromAccessToken applies.
-		RootDB.Unset(accountTokenTable, secret)
+		RootDB.Unset(accountTokenTable, key)
 		Log("[account] key %q (%s) expired at %s: removed", t.Name, t.ID, t.Expires)
 		return "", false
 	}
-	touchAccountToken(secret, t)
+	touchAccountToken(key, t)
 	return t.Owner, true
 }
 
@@ -360,7 +427,7 @@ func lookupAccountTokenOwner(secret string) (string, bool) {
 // exist, to keep authentication a single Get. That reasoning held for the
 // read; what it missed is that a key nobody can tell is unused is a key nobody
 // ever revokes, which is a worse cost than one write an hour.
-func touchAccountToken(secret string, t AccountToken) {
+func touchAccountToken(key string, t AccountToken) {
 	now := time.Now().UTC()
 	if t.LastSeen != "" {
 		if seen, err := time.Parse(time.RFC3339, t.LastSeen); err == nil &&
@@ -369,7 +436,7 @@ func touchAccountToken(secret string, t AccountToken) {
 		}
 	}
 	t.LastSeen = now.Format(time.RFC3339)
-	RootDB.Set(accountTokenTable, secret, t)
+	RootDB.Set(accountTokenTable, key, t)
 }
 
 // maskAccountToken renders a non-secret hint of a token for display.

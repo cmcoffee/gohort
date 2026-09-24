@@ -71,13 +71,18 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// probes can't — degrade gracefully to offline-only rather than
 	// reporting a spurious "live probe errored" on every read endpoint.
 	netOK := sess.NetworkAllowed()
+	// A tool that asks before each call is not fired by test either: the ask
+	// lives in the agent loop's gate on the tool's OWN name, and test calls it
+	// from inside tool_def, which asks nobody. Firing it here ran a gated tool
+	// (and, on an unattended fire, one the owner had blocked) with no consent.
+	gated := tempToolNeedsConfirm(&tt)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Verification report for %q (%d endpoint(s)):\n\n", name, len(endpoints))
 	if !netOK {
 		b.WriteString("(network is blocked this turn: running OFFLINE checks only; read endpoints are not live-probed.)\n\n")
 	}
-	failCount, writeManual, emptyRead := 0, 0, 0
+	failCount, writeManual, emptyRead, gatedManual := 0, 0, 0, 0
 
 	for _, ep := range endpoints {
 		method := strings.ToUpper(strings.TrimSpace(ep.Method))
@@ -169,6 +174,9 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			switch {
 			case !netOK:
 				note("read endpoint NOT live-probed: network is blocked this turn (private mode); offline checks only")
+			case gated:
+				note("read endpoint NOT live-probed: this tool asks for confirmation before each call, and test does not fire it past that. Call %s directly once so the confirmation applies, and confirm a 2xx.", tt.Name)
+				gatedManual++
 			case coversRequired(sample, ep.Required):
 				status, body, derr := liveProbe(sess, tt.Credential, ep, sample)
 				switch {
@@ -231,6 +239,9 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	case failCount > 0:
 		RecordToolVerification(sess, name, false, fmt.Sprintf("%d of %d endpoint(s) FAILED verification", failCount, len(endpoints)))
 		fmt.Fprintf(&b, "RESULT: %d of %d endpoint(s) FAILED. Fix each with tool_def(action=\"update\", actions=[{name, ...}]) and re-run test until green. Do NOT call this tool done or hand it to a user while any endpoint is FAIL.", failCount, len(endpoints))
+	case gatedManual > 0:
+		RecordToolVerification(sess, name, false, fmt.Sprintf("%d read endpoint(s) not fired: the tool needs confirmation, so it needs one direct call", gatedManual))
+		b.WriteString("RESULT: offline checks passed. The tool asks for confirmation before each call, so test did not fire it: make one direct call, confirm it, and check for a 2xx.")
 	case writeManual > 0:
 		RecordToolVerification(sess, name, false, fmt.Sprintf("%d write endpoint(s) never fired: needs one manual live call each to confirm a 2xx", writeManual))
 		fmt.Fprintf(&b, "RESULT: all automated checks passed. %d write endpoint(s) still need ONE manual live call each: fire one, confirm a 2xx, then it's done.", writeManual)
@@ -349,9 +360,12 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 		}
 	}
 
-	// C. The real run.
-	ran := false
+	// C. The real run. Not for a tool that asks before each call: see the
+	//    same rule in testGrouped.
+	ran, gated := false, tempToolNeedsConfirm(&tt)
 	switch {
+	case gated:
+		note("tool NOT run: it asks for confirmation before each call, and test does not fire it past that. Call %s directly once with real values so the confirmation applies.", tt.Name)
 	case sample == nil:
 		note("tool NOT run, pass cases=[{args:{...}}] with real values. Running it is the ONLY thing that verifies a shell tool; the checks above can't.")
 	case !coversRequired(sample, tt.Required):
@@ -387,6 +401,9 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 	case failed:
 		RecordToolVerification(sess, tt.Name, false, "shell tool failed verification")
 		b.WriteString("RESULT: FAILED. Fix with tool_def(action=\"update\", script_body=\"...\") and re-run test until it's green. Do NOT call this tool done or hand it to a user while it FAILs.")
+	case gated:
+		RecordToolVerification(sess, tt.Name, false, "never run: the tool needs confirmation, so it needs one direct call")
+		b.WriteString("RESULT: NOT VERIFIED. The static checks passed; the tool asks for confirmation before each call, so make one direct call and confirm it.")
 	case !ran:
 		RecordToolVerification(sess, tt.Name, false, "never run: test was called without cases")
 		b.WriteString("RESULT: NOT VERIFIED. The static checks passed, but the tool was never executed. Re-run: tool_def(action=\"test\", name=\"" + tt.Name + "\", cases=[{args:{...}}]) with real values.")

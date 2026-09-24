@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/snugforge/apiclient"
 	"github.com/cmcoffee/snugforge/iotimeout"
 )
@@ -834,7 +835,10 @@ func oaiTextContent(s string) json.RawMessage {
 // and encodes it as JPEG at visionJQQual quality. Returns the encoded bytes;
 // on any decode/encode failure returns the original src unchanged.
 func resizeImage(src []byte) []byte {
-	img, _, err := image.Decode(bytes.NewReader(src))
+	// Bounded decode: this is a user's upload, and a header claiming a
+	// gigapixel would otherwise be allocated in full just to be shrunk. A
+	// refused one goes on as sent, the same as any undecodable image.
+	img, _, err := media.DecodeImage(src)
 	if err != nil {
 		return src // fallback to original if decode fails
 	}

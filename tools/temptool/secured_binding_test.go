@@ -19,7 +19,7 @@ func TestSecuredCredBindingAuthoring(t *testing.T) {
 	defer func() { AuthDB = prev }()
 	if err := Secure().Save(SecureCredential{
 		Name: "tsbind_secured_api", Type: SecureCredBearer,
-		BaseURL: "http://teamspeak.snuglab.local:10080", Secured: true,
+		BaseURL: "http://chat-server.example.local:10080", Secured: true,
 	}, "tok"); err != nil {
 		t.Fatalf("save credential: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestSecuredCredBindingAuthoring(t *testing.T) {
 		return map[string]any{
 			"name": "ts3_status", "description": "check ts3", "mode": "shell",
 			"command_template":  "python3 {workspace_dir}/run.py",
-			"script_body":       "from gohort import fetch_via\nprint(fetch_via('tsbind_secured_api','http://teamspeak.snuglab.local:10080/clientlist'))\n",
+			"script_body":       "from gohort import fetch_via\nprint(fetch_via('tsbind_secured_api','http://chat-server.example.local:10080/clientlist'))\n",
 			"script_name":       "run.py",
 			"hook_capabilities": []any{"fetch_via:tsbind_secured_api"},
 		}

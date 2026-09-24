@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -408,7 +409,9 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 	// 8000 cap), assume more content exists and write the full version
 	// (separately fetched without truncation) to the cache.
 	suffix := ""
-	if sess != nil && sess.WorkspaceDir != "" && len(text) >= 7900 {
+	// Skipped outright with the cache off, rather than left to the write to
+	// refuse: the full text is a second fetch of the whole page.
+	if sess != nil && sess.WorkspaceDir != "" && len(text) >= 7900 && FetchCacheQuotaBytes() > 0 {
 		if full, err := FetchArticle(target, 0); err == nil && len(full) > len(text) {
 			if cachePath, savedAt, _, cerr := writeCacheString(target, sess.WorkspaceDir, full, mime); cerr == nil {
 				Debug("[fetch_url] truncated text auto-cached: %s → %s (full %d chars)", target, cachePath, len(full))
@@ -427,12 +430,23 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 	return fmt.Sprintf("%sFetched %s (%d chars):\n\n%s%s%s", lead, target, len(text), text, suffix, claim), nil
 }
 
+// errFetchCacheOff is what a cache write returns when the operator set the
+// fetch cache quota to 0. It used to be the evictor alone that read the quota,
+// and it read 0 as "nothing to enforce", so 0 meant an unbounded cache rather
+// than none.
+var errFetchCacheOff = errors.New("the fetch cache is disabled on this deployment (quota 0)")
+
 // fetchAndCache downloads target into the workspace's .fetch_cache dir
 // using a sha256-prefixed filename and a content-type-derived extension.
 // Hits the cache (skipping the network call) when an entry exists
 // and is younger than fetchURLCacheTTL — touches mtime on hit so the
 // LRU evictor sees real access times, not just write times.
 func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, error) {
+	// Refused before the hit check too: an operator who turned the cache off
+	// should not have it keep answering from what it held before.
+	if FetchCacheQuotaBytes() <= 0 {
+		return "", "", 0, errFetchCacheOff
+	}
 	cacheRel, cacheAbs, err := cachePathForURL(workspaceDir, target, mime)
 	if err != nil {
 		return "", "", 0, err
@@ -485,6 +499,9 @@ func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, er
 // directly without re-fetching. Used when FetchArticle has already
 // retrieved the full text body.
 func writeCacheString(target, workspaceDir, body, mime string) (string, string, int64, error) {
+	if FetchCacheQuotaBytes() <= 0 {
+		return "", "", 0, errFetchCacheOff
+	}
 	cacheRel, cacheAbs, err := cachePathForURL(workspaceDir, target, mime)
 	if err != nil {
 		return "", "", 0, err

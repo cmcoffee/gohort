@@ -2,10 +2,13 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
+	"github.com/cmcoffee/gohort/gohort-desktop/command"
 	"github.com/cmcoffee/gohort/gohort-desktop/core"
 )
 
@@ -99,8 +102,11 @@ func trackServer(name string, srv *server) {
 // the server-push path: a desktop_mcp connector, once approved + user-consented,
 // lands here. Applying it means SPAWNING the command — callers must gate on user
 // consent first.
-func Install(name, command string, args []string, env map[string]string) error {
-	sc := serverConfig{Command: command, Args: args, Env: env}
+func Install(name, cmd string, args []string, env map[string]string) error {
+	if err := CheckPushedEnv(env); err != nil {
+		return err
+	}
+	sc := serverConfig{Command: cmd, Args: args, Env: env}
 	srv, err := bringUp(name, sc)
 	if err != nil {
 		return err
@@ -108,6 +114,25 @@ func Install(name, command string, args []string, env map[string]string) error {
 	trackServer(name, srv)
 	if err := persistServer(name, sc); err != nil {
 		core.Warn("[mcp] installed %q but failed to persist mcp.json: %v", name, err)
+	}
+	return nil
+}
+
+// CheckPushedEnv refuses a server-pushed environment that would change how the
+// program loads rather than hand it values. The user consents to a command and
+// its arguments; LD_PRELOAD, DYLD_INSERT_LIBRARIES, NODE_OPTIONS and the like
+// run other code inside that command, which is a different thing than the one
+// they approved. A hand-written mcp.json is the user's own and is not checked.
+func CheckPushedEnv(env map[string]string) error {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !command.ValidEnvName(k) || command.LoaderEnv(k) {
+			return fmt.Errorf("refusing the pushed environment variable %q: an installed server may be given values, not a change to how its program loads", k)
+		}
 	}
 	return nil
 }

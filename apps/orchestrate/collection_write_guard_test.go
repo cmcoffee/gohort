@@ -159,3 +159,22 @@ func TestTheDeploymentKnowledgeIsAnAdministratorsToChange(t *testing.T) {
 		t.Error("a user could delete the deployment's knowledge")
 	}
 }
+
+// A reader is handed the collection's page, and that page lists the documents
+// with a GET of "sources". It was gated as a corpus write, so every reader who
+// was not also a contributor saw a shared collection as empty. Listing is a
+// read; removing one document (sources/<id>) still is not.
+func TestAReaderCanListTheDocumentsInASharedCollection(t *testing.T) {
+	c := Collection{ID: "col-1", Owner: "alice", Name: "Runbooks",
+		AllowedUsers: []string{"bob"}}
+	if why := collectionWriteRefusal(c, "bob", "sources", http.MethodGet, false); why != "" {
+		t.Errorf("a reader could not list the documents: %s", why)
+	}
+	if collectionWriteRefusal(c, "bob", "sources/doc-1", http.MethodDelete, false) == "" {
+		t.Error("a reader could remove a document from somebody else's collection")
+	}
+	dk := Collection{ID: DeploymentKnowledgeCollectionID, Name: "Deployment Knowledge", Scope: CollectionScopeDeployment}
+	if why := collectionWriteRefusal(dk, "bob", "sources", http.MethodGet, false); why != "" {
+		t.Errorf("a user could not list the deployment's knowledge: %s", why)
+	}
+}

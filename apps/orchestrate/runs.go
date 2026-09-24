@@ -377,9 +377,15 @@ func (r *Run) Complete(status string) {
 type RunRegistry struct {
 	mu      sync.Mutex
 	runs    map[string]*Run // by run ID
-	bySess  map[string]*Run // by session ID — at most one active run per session
+	bySess  map[string]*Run // by runSessKey(user, session) — at most one active run per session
 	sweeper sync.Once
 }
+
+// runSessKey is the bySess key. A session id alone is not an identity: ids
+// arrive from the client and fixed per-user thread names repeat across users,
+// so keyed by the id alone one user's send cancelled (and reported as running)
+// another user's turn on the same id.
+func runSessKey(userID, sessionID string) string { return userID + "\x1f" + sessionID }
 
 // NewRunRegistry constructs an empty registry. The first Create
 // call starts the cleanup sweeper goroutine.
@@ -420,9 +426,10 @@ func (rr *RunRegistry) Create(userID, agentID, sessionID string, cancel context.
 
 	// Replace any active run on this session — preserves the
 	// "fresh send cancels old" semantics from inflightCancels.
-	if prev, ok := rr.bySess[sessionID]; ok {
+	sk := runSessKey(userID, sessionID)
+	if prev, ok := rr.bySess[sk]; ok {
 		go prev.Cancel()
-		delete(rr.bySess, sessionID)
+		delete(rr.bySess, sk)
 	}
 
 	r := &Run{
@@ -436,7 +443,7 @@ func (rr *RunRegistry) Create(userID, agentID, sessionID string, cancel context.
 	}
 	rr.runs[r.ID] = r
 	if sessionID != "" {
-		rr.bySess[sessionID] = r
+		rr.bySess[sk] = r
 	}
 	return r
 }
@@ -451,10 +458,10 @@ func (rr *RunRegistry) Get(id string) *Run {
 // BySession returns the active run for a session, or nil if there
 // is none right now. Used by the chat panel to discover whether to
 // resume a stream after reconnect.
-func (rr *RunRegistry) BySession(sessionID string) *Run {
+func (rr *RunRegistry) BySession(userID, sessionID string) *Run {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
-	r := rr.bySess[sessionID]
+	r := rr.bySess[runSessKey(userID, sessionID)]
 	if r == nil {
 		return nil
 	}
@@ -591,11 +598,12 @@ func (rr *RunRegistry) sweep() {
 	for id, r := range rr.runs {
 		r.mu.Lock()
 		expired := r.closed && r.endedAt.Before(cutoff)
-		sess := r.SessionID
+		sess := runSessKey(r.UserID, r.SessionID)
+		hasSess := r.SessionID != ""
 		r.mu.Unlock()
 		if expired {
 			delete(rr.runs, id)
-			if sess != "" && rr.bySess[sess] == r {
+			if hasSess && rr.bySess[sess] == r {
 				delete(rr.bySess, sess)
 			}
 		}

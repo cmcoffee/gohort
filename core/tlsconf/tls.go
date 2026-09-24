@@ -44,8 +44,9 @@ func TLSEnabled() bool {
 // generated (and cached to disk for reuse). Falls back to plain HTTP if TLS
 // is not configured.
 func ListenAndServeTLS(addr string, handler http.Handler) error {
+	server := newServer(addr, handler)
 	if !TLSEnabled() {
-		return http.ListenAndServe(addr, handler)
+		return server.ListenAndServe()
 	}
 
 	cert_file, key_file, err := resolveTLSFiles()
@@ -58,17 +59,42 @@ func ListenAndServeTLS(addr string, handler http.Handler) error {
 		return fmt.Errorf("failed to load TLS certificate: %w", err)
 	}
 
-	server := &http.Server{
-		Addr:    addr,
-		Handler: handler,
-		TLSConfig: &tls.Config{
-			Certificates: []tls.Certificate{tlsCert},
-			MinVersion:   tls.VersionTLS12,
-		},
+	server.TLSConfig = &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		MinVersion:   tls.VersionTLS12,
 	}
 
 	// TLS cert/key already loaded into config, pass empty strings.
 	return server.ListenAndServeTLS("", "")
+}
+
+// Server timeouts. Only the two that cannot cut off legitimate work are set.
+//
+// ReadHeaderTimeout bounds how long a client may take to send its request
+// headers, which is the slowloris hold: without it a connection that dribbles
+// one header byte a minute keeps a goroutine and a socket forever. No real
+// client takes more than a moment over its headers.
+//
+// IdleTimeout bounds a keep-alive connection sitting between requests.
+//
+// ReadTimeout and WriteTimeout are deliberately left at zero. They are
+// whole-request deadlines: a ReadTimeout would fail a multi-gigabyte upload on
+// a slow link part way through, and a WriteTimeout would cut every SSE stream,
+// long LLM turn and live view at the deadline no matter how active it was.
+// Those paths are bounded by their own contexts and body caps instead.
+var (
+	serverReadHeaderTimeout = 20 * time.Second
+	serverIdleTimeout       = 120 * time.Second
+)
+
+// newServer builds the dashboard's http.Server with the timeouts above.
+func newServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		IdleTimeout:       serverIdleTimeout,
+	}
 }
 
 // resolveTLSFiles returns the cert and key file paths, generating a

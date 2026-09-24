@@ -80,6 +80,82 @@ func localCommandAllowed(a Appliance) error {
 	return fmt.Errorf("%s is a local command system owned by a non-admin account; it runs commands on the gohort server itself, so only an admin-owned one may run", applianceLabel(a.Name, a.ID))
 }
 
+// EnvVars on a local command appliance are how its owner hands the command a
+// token, a password, an API key. Sharing the appliance shares the ability to
+// USE the command, not the secrets it runs with: the record another user sees
+// carries the variable names only, and output from a session they run has the
+// values replaced before it reaches them.
+
+// redactEnvVars returns env with every value removed, keeping the names so a
+// viewer can still see what the command is configured with.
+func redactEnvVars(env []string) []string {
+	if len(env) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		out = append(out, name)
+	}
+	return out
+}
+
+// restoreRedactedEnvVars puts the stored value back on any entry that arrives
+// as a bare name - the redacted form - so a record round-tripped through a
+// redacted view can never blank a secret.
+func restoreRedactedEnvVars(in, stored []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	have := map[string]string{}
+	for _, kv := range stored {
+		if name, _, ok := strings.Cut(kv, "="); ok {
+			have[name] = kv
+		}
+	}
+	out := make([]string, 0, len(in))
+	for _, kv := range in {
+		if !strings.Contains(kv, "=") {
+			if full, ok := have[strings.TrimSpace(kv)]; ok {
+				out = append(out, full)
+			}
+			continue // a bare name with nothing stored behind it means nothing
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// minScrubLen: values shorter than this ("1", "on") are not secrets and would
+// shred ordinary output if replaced.
+const minScrubLen = 4
+
+// scrubEnvValues replaces every EnvVars value in out. Best effort by nature:
+// a user who can run arbitrary commands with the variables set can still get
+// at them by transforming them first. It closes the plain reads - env,
+// printenv, echo $VAR, an error message that quotes one - which is what a
+// shared user would otherwise see without trying.
+func scrubEnvValues(out string, env []string) string {
+	for _, kv := range env {
+		_, v, ok := strings.Cut(kv, "=")
+		if !ok || len(v) < minScrubLen {
+			continue
+		}
+		out = strings.ReplaceAll(out, v, "[hidden]")
+	}
+	return out
+}
+
+// envHiddenFrom reports whether user runs a's command without being its owner,
+// and so must not see its EnvVars values. owner is the resolved owner (the
+// record's Owner is empty on legacy records).
+func envHiddenFrom(a Appliance, owner, user string) bool {
+	if owner == "" {
+		owner = a.Owner
+	}
+	return len(a.EnvVars) > 0 && owner != "" && owner != user
+}
+
 // canManageAppliance reports whether reqUser may change sharing / edit / delete
 // the record: the owner, or an admin. Non-owners of a shared record can use it
 // but not manage it. Thin wrapper over the generic core.CanManageShared.

@@ -26,6 +26,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
+			req.APIKey = keepSecret(req.APIKey, a.storedEmbeddingConfig().APIKey)
 			// A peer selection carries no endpoint of its own — the manual
 			// fields are hidden while one is picked. Resolve it into a complete,
 			// ordinary config here so everything downstream (Embed,
@@ -55,6 +56,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 		if strings.TrimSpace(cfg.Provider) == "" {
 			cfg.Provider = EmbeddingProviderLocal
 		}
+		cfg.APIKey = maskSecret(cfg.APIKey)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(cfg)
 	})
@@ -75,6 +77,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 			writeTestResult(w, false, "", "invalid request body")
 			return
 		}
+		req.APIKey = keepSecret(req.APIKey, a.storedEmbeddingConfig().APIKey)
 		if !req.Enabled {
 			writeTestResult(w, false, "", "embeddings are disabled: flip the toggle on first")
 			return
@@ -178,6 +181,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
+			req.APIKey = keepSecret(req.APIKey, a.storedTranscribeConfig().APIKey)
 			// A peer selection carries no endpoint of its own — the manual
 			// fields are hidden while one is picked. Resolve it into a
 			// complete, ordinary config here so everything downstream
@@ -198,10 +202,8 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		var cfg TranscribeConfig
-		if a.db != nil {
-			a.db.Get(TranscribeTable, "current", &cfg)
-		}
+		cfg := a.storedTranscribeConfig()
+		cfg.APIKey = maskSecret(cfg.APIKey)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(cfg)
 	})
@@ -222,6 +224,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
+			req.APIKey = keepSecret(req.APIKey, a.storedString(ImageTable, "api_key"))
 			if a.db != nil {
 				a.db.Set(ImageTable, "provider", req.Provider)
 				a.db.Set(ImageTable, "api_key", req.APIKey)
@@ -240,7 +243,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 			provider = "gemini"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"provider": provider, "api_key": key})
+		json.NewEncoder(w).Encode(map[string]any{"provider": provider, "api_key": maskSecret(key)})
 	})
 
 	// STT connectivity test — GET {endpoint}/models with auth header so
@@ -261,6 +264,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 			writeTestResult(w, false, "", "invalid request body")
 			return
 		}
+		req.APIKey = keepSecret(req.APIKey, a.storedTranscribeConfig().APIKey)
 		if !req.Enabled {
 			writeTestResult(w, false, "", "transcription is disabled: flip the toggle on first")
 			return
@@ -385,7 +389,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 		}
 		// Fall back to the matching LLM provider's key when blank (same
 		// rule the GenerateImage runtime uses).
-		key := req.APIKey
+		key := keepSecret(req.APIKey, a.storedString(ImageTable, "api_key"))
 		if key == "" && a.db != nil {
 			switch req.Provider {
 			case "gemini":
@@ -498,4 +502,22 @@ func probeEmbeddingModels(ctx context.Context, url, apiKey, shape string) []stri
 		return out
 	}
 	return nil
+}
+
+// storedEmbeddingConfig / storedTranscribeConfig read the saved config, so a
+// posted secretUnchanged can be swapped back for the stored key.
+func (a *AdminApp) storedEmbeddingConfig() EmbeddingConfig {
+	var cfg EmbeddingConfig
+	if a.db != nil {
+		a.db.Get(EmbeddingTable, "current", &cfg)
+	}
+	return cfg
+}
+
+func (a *AdminApp) storedTranscribeConfig() TranscribeConfig {
+	var cfg TranscribeConfig
+	if a.db != nil {
+		a.db.Get(TranscribeTable, "current", &cfg)
+	}
+	return cfg
 }

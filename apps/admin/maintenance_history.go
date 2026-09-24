@@ -19,6 +19,7 @@ package admin
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -37,6 +38,31 @@ type maintenanceRun struct {
 	By      string    `json:"by,omitempty"`
 	Changed int       `json:"changed"`
 	Seconds int       `json:"seconds,omitempty"`
+}
+
+// maintenancePressed tracks which keys a press from this page is running, so a
+// second press while one is in flight (core joins it rather than starting
+// another) does not overwrite the first press's record with its own name and
+// the shorter time it spent waiting.
+var maintenancePressed = struct {
+	sync.Mutex
+	keys map[string]bool
+}{keys: map[string]bool{}}
+
+// claimMaintenancePress reports whether this press started the run and should
+// record it. release must be called when the run returns.
+func claimMaintenancePress(key string) (first bool, release func()) {
+	maintenancePressed.Lock()
+	defer maintenancePressed.Unlock()
+	if maintenancePressed.keys[key] {
+		return false, func() {}
+	}
+	maintenancePressed.keys[key] = true
+	return true, func() {
+		maintenancePressed.Lock()
+		delete(maintenancePressed.keys, key)
+		maintenancePressed.Unlock()
+	}
 }
 
 // recordMaintenanceRun stores what a press came to. Best-effort: a pass that

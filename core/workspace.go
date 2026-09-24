@@ -74,9 +74,13 @@ func BulkStagingDir() string {
 
 // FetchCacheQuotaBytes returns the per-user fetch_url cache quota in
 // bytes, configured via the admin Settings panel (key: fetch_cache_quota_mb).
-// Defaults to 100MB when unset. Returns 0 when AuthDB isn't wired or
-// the lookup fails — caller treats 0 as "skip cache write" rather than
-// "unlimited" so misconfiguration doesn't accidentally fill the disk.
+// Defaults to 100MB when unset or when AuthDB isn't wired. Returns 0 when
+// the operator stored 0, which the panel documents as "disables caching";
+// callers treat 0 as "write nothing to the cache", never as "unlimited".
+//
+// Presence, not value, decides the default: a stored 0 used to read the same
+// as an absent key and quietly came back as 100MB, so the one setting that
+// turns the cache off could not.
 func FetchCacheQuotaBytes() int64 {
 	if AuthDB == nil {
 		return 100 * 1024 * 1024
@@ -86,8 +90,7 @@ func FetchCacheQuotaBytes() int64 {
 		return 100 * 1024 * 1024
 	}
 	var mb int
-	db.Get(WebTable, "fetch_cache_quota_mb", &mb)
-	if mb <= 0 {
+	if !db.Get(WebTable, "fetch_cache_quota_mb", &mb) || mb < 0 {
 		mb = 100
 	}
 	return int64(mb) * 1024 * 1024

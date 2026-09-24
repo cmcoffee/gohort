@@ -607,8 +607,9 @@ func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, use
 	spec, _ := loadSpec(user, slug)
 	appdb := T.recordBase(spec, user)
 	// Clear any sharing this app carried so a deleted app leaves no dangling
-	// index entry.
-	SetSharedOwner(T.DB, sharedAppsIndex, slug, user, false)
+	// index entry. Only this owner's entry: slugs are per-owner, so another
+	// user's same-named shared app must stay shared.
+	T.unshareOwned(user, slug)
 	DeleteAppSpec(user, slug)      // shared per-owner spec store
 	appdb.Drop(recTable(slug))     // this app's records
 	appdb.Unset(activeTable, slug) // workbench open-document marker
@@ -1331,8 +1332,22 @@ func (T *CustomApps) setShared(owner, slug string, on bool) error {
 	}
 	spec.Shared = on
 	SaveAppSpec(spec)
-	SetSharedOwner(T.DB, sharedAppsIndex, slug, owner, on)
+	if on {
+		SetSharedOwner(T.DB, sharedAppsIndex, slug, owner, true)
+	} else {
+		T.unshareOwned(owner, slug)
+	}
 	return nil
+}
+
+// unshareOwned drops slug from the shared index only when owner is the one
+// holding it. The index has one owner per slug but every user has their own
+// slug namespace, so unsharing (or deleting) your "tool" must not unpublish
+// someone else's shared "tool".
+func (T *CustomApps) unshareOwned(owner, slug string) {
+	if cur, ok := LookupSharedOwner(T.DB, sharedAppsIndex, slug); ok && cur == owner {
+		SetSharedOwner(T.DB, sharedAppsIndex, slug, owner, false)
+	}
 }
 
 // approvePublish is the "app" kind's promotion approver: an administrator

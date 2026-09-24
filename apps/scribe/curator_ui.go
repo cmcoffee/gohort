@@ -126,9 +126,27 @@ const guideCuratorAction = `function(ctx){
             if (d.pending) {
               var now = el('button', {class:'ui-row-btn primary'}, ['Curate now']);
               now.addEventListener('click', function(){
-                now.disabled = true; now.textContent = 'Curating…';
+                // A run is a model call over every waiting finding and can
+                // take a minute: a moving frame and the seconds say it is
+                // alive, the count says how much it has to get through.
+                now.disabled = true;
+                var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏', fi = 0, t0 = Date.now();
+                var label = 'Curating ' + d.pending + ' finding(s)';
+                var tick = function(){
+                  var secs = Math.round((Date.now() - t0) / 1000);
+                  now.textContent = frames.charAt(fi++ % frames.length) + ' ' + label + (secs >= 3 ? ' - ' + secs + 's' : '');
+                };
+                tick();
+                var spin = setInterval(tick, 120);
                 fetch('curator/run', {method:'POST'}).then(function(r){
                   if (!r.ok) return r.text().then(function(t){ window.uiAlert(t); });
+                  return r.json().then(function(d){
+                    // Refused because a run is already going: say so rather
+                    // than re-rendering as if this press had done it.
+                    if (d && d.ran === false && d.reason) window.uiAlert(d.reason);
+                  }).catch(function(){});
+                }).catch(function(e){ window.uiAlert('Curate failed: ' + e.message); }).then(function(){
+                  clearInterval(spin);
                   load();
                   if (window.uiInvalidate) window.uiInvalidate('guides');
                 });

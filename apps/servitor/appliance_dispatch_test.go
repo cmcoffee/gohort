@@ -19,7 +19,8 @@ func approvedTool(t *testing.T, udb Database) ApplianceTool {
 		Name: "restart_web", ApplianceID: "lab-box", Description: "Restart the web service",
 		Template: "sudo systemctl restart {service}",
 		Params:   map[string]ToolParam{"service": {Type: "string", Enum: []string{"nginx", "apache2"}}},
-		Required: []string{"service"}, Risk: AllRiskCategories[0],
+		// The category the template classifies as, as a real mint stamps it.
+		Required: []string{"service"}, Risk: RiskSysControl,
 	}); err != nil {
 		t.Fatalf("save: %v", err)
 	}

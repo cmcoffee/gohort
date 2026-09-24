@@ -97,11 +97,19 @@ func (T *Servitor) handleMemoryClear(w http.ResponseWriter, r *http.Request) {
 	// Repo appliances: also drop the ingested code files. Reset the clone
 	// bookkeeping so the record reflects "needs re-clone". Connection settings
 	// (URL/branch/token) are kept, mirroring how SSH settings survive a clear.
+	//
+	// Re-read first. rec was loaded BEFORE clearApplianceMemory blanked the
+	// profile, log map and scan time on the stored record, and writing that
+	// copy back put the old profile straight back: "Clear Memory" on a repo
+	// came back with the profile it had just cleared.
 	if rec.Type == "repo" {
 		wipeRepoFiles(ownerUser, req.ApplianceID)
-		rec.RepoFiles = 0
-		rec.RepoCloned = ""
-		ownerUDB.Set(applianceTable, req.ApplianceID, rec)
+		var fresh Appliance
+		if ownerUDB.Get(applianceTable, req.ApplianceID, &fresh) {
+			fresh.RepoFiles = 0
+			fresh.RepoCloned = ""
+			ownerUDB.Set(applianceTable, req.ApplianceID, fresh)
+		}
 	}
 	// Bundles: clearing memory drops the recorded findings, NOT the evidence.
 	// A re-clone restores a repo; nothing restores a dump, so the ingested

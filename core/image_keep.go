@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -174,7 +175,75 @@ func keptImageDirFor(sess *ToolSession, agentID string) string {
 	if user == "" || strings.TrimSpace(agentID) == "" {
 		return ""
 	}
-	return filepath.Join(ImageDir(), "kept", safeRecentUser(user), safeRecentUser(agentID))
+	kept := filepath.Join(ImageDir(), "kept")
+	adoptLegacyKeptDir(kept, user, agentID)
+	return filepath.Join(kept, safeRecentUser(user), safeRecentUser(agentID))
+}
+
+// keptAdopted remembers which user/agent libraries have been checked for a
+// legacy folder, so the check is one stat per library per process.
+var keptAdopted sync.Map
+
+// adoptLegacyKeptDir moves a library out of the folder name it had before
+// folder names were made unique per user.
+//
+// The old name folded case and replaced "." and "@", so "Ana" and "ana" shared
+// one folder. A user whose name changed folders would otherwise find their
+// kept images gone, although they are sitting on disk under the old name. The
+// old folder is adopted only when this user is the ONLY account that maps to
+// it: where two did, it cannot be told whose pictures are whose, and handing
+// them to either would be the leak the rename closed. Kept images only; the
+// recent and delivered folders are transient.
+func adoptLegacyKeptDir(kept, user, agentID string) {
+	key := user + "\x00" + agentID
+	if _, done := keptAdopted.LoadOrStore(key, true); done {
+		return
+	}
+	userDir := filepath.Join(kept, safeRecentUser(user))
+	if legacy := reduceRecentUser(user); legacy != safeRecentUser(user) && legacyKeptOwnerIsOnly(legacy, user) {
+		moveIfAbsent(filepath.Join(kept, legacy), userDir)
+	}
+	// An agent id is a folder inside the user's own library, so no other
+	// person can share it; only the name is migrated.
+	if legacy := reduceRecentUser(agentID); legacy != safeRecentUser(agentID) {
+		moveIfAbsent(filepath.Join(userDir, legacy), filepath.Join(userDir, safeRecentUser(agentID)))
+	}
+}
+
+// legacyKeptOwnerIsOnly reports whether user is the single account whose name
+// folded to legacy. Unknown (no user store) reads as no.
+func legacyKeptOwnerIsOnly(legacy, user string) bool {
+	if AuthDB == nil {
+		return false
+	}
+	adb := AuthDB()
+	if adb == nil {
+		return false
+	}
+	n, mine := 0, false
+	for _, u := range AuthListUsers(adb) {
+		if reduceRecentUser(u.Username) == legacy {
+			n++
+			mine = mine || u.Username == user
+		}
+	}
+	return n == 1 && mine
+}
+
+// moveIfAbsent renames from to to when from exists and to does not.
+func moveIfAbsent(from, to string) {
+	if _, err := os.Stat(from); err != nil {
+		return
+	}
+	if _, err := os.Stat(to); err == nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
+		return
+	}
+	if err := os.Rename(from, to); err != nil {
+		Debug("[images] could not adopt %s: %v", from, err)
+	}
 }
 
 // safeKeptName reduces a requested name to a safe single path element, or ""

@@ -221,8 +221,15 @@ func draftOAuthCredentialToolDef(t *chatTurn) AgentToolDef {
 			Required: []string{"name", "grant", "token_url", "base_url"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			// An OAuth draft is GLOBAL (keyed by the bare name), so re-drafting a
+			// working credential rewrote the deployment's config, token endpoint
+			// included, from any user's chat. Same guard as draft_api_credential.
+			credName := strings.TrimSpace(stringArg(args, "name"))
+			if _, enabled, hasSecret := Secure().CredentialStatus(credName); enabled || hasSecret {
+				return fmt.Sprintf("The deployment already has a working credential called %q: NOT re-drafting it. A re-draft would overwrite its configuration and disable it. To use it, pass credential=%q to tool_def. If its configuration is wrong, an administrator changes it in Admin > APIs. If you need a separate credential, give it a different name.", credName, credName), nil
+			}
 			c := SecureCredential{
-				Name:        strings.TrimSpace(stringArg(args, "name")),
+				Name:        credName,
 				Type:        SecureCredOAuth2,
 				Grant:       strings.TrimSpace(stringArg(args, "grant")),
 				TokenURL:    strings.TrimSpace(stringArg(args, "token_url")),
@@ -383,7 +390,7 @@ func updateAPICredentialToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "update_api_credential",
-			Description: "Propose a CONFIG change to an EXISTING api credential the user owns: e.g. correct its base_url. This never deletes, re-creates, or disables the credential and never touches the secret: it shows the user an old→new diff with an Approve button, and on approval ONLY the config changes (the secret + enabled state are preserved). Use this instead of re-drafting or asking the user to delete a credential when a working credential's setting is wrong. You cannot change the secret (the user does that) and cannot edit a global/admin credential (an admin does that in Admin > APIs).",
+			Description: "Propose a CONFIG change to an EXISTING api credential the user owns: e.g. correct its base_url. This never deletes, re-creates, or disables the credential and never touches the secret: it shows the user an old→new diff with an Approve button, and on approval ONLY the config changes (the secret + enabled state are preserved). A base_url on a DIFFERENT host cannot keep the stored secret: the user makes that change in Extensions › API credentials and pastes the secret again. Use this instead of re-drafting or asking the user to delete a credential when a working credential's setting is wrong. You cannot change the secret (the user does that) and cannot edit a global/admin credential (an admin does that in Admin > APIs).",
 			Parameters: map[string]ToolParam{
 				"name":        {Type: "string", Description: "The existing credential to update (in the user's own API credentials)."},
 				"base_url":    {Type: "string", Description: "(optional) New base URL, e.g. https://p188-caldav.icloud.com/195178399. Omit to leave unchanged."},

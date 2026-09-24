@@ -9,9 +9,11 @@
 package scribe
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -139,7 +141,20 @@ func (T *Scribe) handleCuratorRunNow(w http.ResponseWriter, r *http.Request, udb
 		writeJSON(w, map[string]any{"ran": false, "reason": "nothing is waiting to be curated"})
 		return
 	}
-	run, err := T.RunCurator(r.Context(), user)
+	// Under the same per-user lock the automatic firings take. Without it a
+	// press landing while the threshold or interval run was in flight read the
+	// same pending findings and filed them a second time.
+	mu := curatorLock(user)
+	if !mu.TryLock() {
+		writeJSON(w, map[string]any{"ran": false, "reason": "the curator is already working through your queue"})
+		return
+	}
+	defer mu.Unlock()
+	// The run outlives the request: it files findings into guides as it goes,
+	// and closing the page used to cancel it partway, leaving a batch half
+	// placed and half returned to the queue.
+	run, err := T.RunCurator(context.WithoutCancel(r.Context()), user)
+	lastCuratorRun.Store(user, time.Now())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

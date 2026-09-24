@@ -22,6 +22,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // maxInputImageBytes caps one source photo. Generous for a phone photo, small
@@ -414,6 +416,12 @@ func verifyInputImage(name string, data []byte) (inputImage, error) {
 	}
 	if cfg.Width <= 0 || cfg.Height <= 0 {
 		return out, fmt.Errorf("%q has no dimensions", name)
+	}
+	// Refused here, at intake, rather than in whichever later step first
+	// decodes it in full (face refinement does): an 8 MB file can declare a
+	// size that decodes to tens of gigabytes.
+	if err := media.CheckImageDimensions(cfg.Width, cfg.Height); err != nil {
+		return out, fmt.Errorf("%q: %v", name, err)
 	}
 	return inputImage{name: name, data: data, mime: "image/" + format}, nil
 }

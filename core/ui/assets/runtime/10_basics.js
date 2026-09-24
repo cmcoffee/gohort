@@ -4733,9 +4733,12 @@
           // A spinner, not an ellipsis: a run that takes minutes has to look
           // alive, and a static "…" is indistinguishable from a hung one.
           var running = null; // {stop} while a run is being shown here
-          function showRunning(sinceMs, onDone) {
+          function showRunning(sinceMs, onDone, firstNote) {
             if (running) return running;
-            var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏', fi = 0, note = '';
+            // firstNote: what the arrival probe already read, so a rejoined
+            // row says where the run is at once rather than "working" until
+            // the first poll lands.
+            var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏', fi = 0, note = firstNote || '';
             var started = sinceMs || Date.now();
             btn.disabled = true;
             function paint() {
@@ -4807,7 +4810,7 @@
                 showRunning(Date.now(), function(outcome) {
                   if (running) running.stop();
                   status.textContent = outcome;
-                });
+                }, p.progress);
               } else if (p.outcome) {
                 status.textContent = p.outcome;
               }

@@ -141,6 +141,15 @@ func (T *Servitor) checkWatch(w ScheduledWatch) {
 	if !udb.Get(applianceTable, w.ApplianceID, &appliance) {
 		return
 	}
+	// Re-checked on every tick, not only when the watch was registered: a
+	// watch stored before registration was gated (or written some other
+	// way) would otherwise run unattended, every minute, with nobody asked.
+	if why := watchRunRefusal(w.Command); why != "" {
+		Log("[servitor] watch %s on %s retired without running: %s", w.ID, w.ApplianceID, why)
+		w.Done = true
+		T.DB.Set(watchTable, w.ID, w)
+		return
+	}
 	output, err := execWatch(appliance, w.UserID, w.Command)
 	if err != nil {
 		return
@@ -150,6 +159,17 @@ func (T *Servitor) checkWatch(w ScheduledWatch) {
 		T.DB.Set(watchTable, w.ID, w)
 		T.recordWatchResult(udb, w, appliance, output, false)
 	}
+}
+
+// watchRunRefusal says why cmd may not run as an unattended watch, or "". The
+// same two checks watch_condition makes at registration: the risk gate must
+// find nothing to ask about, and every command must be on the watch
+// allowlist.
+func watchRunRefusal(cmd string) string {
+	if cat, reason := classify_command_scoped(cmd, ""); cat != RiskNone {
+		return string(cat) + ": " + reason
+	}
+	return watchCommandRefusal(cmd)
 }
 
 // recordWatchResult stores a fact and note when a watch completes or expires.

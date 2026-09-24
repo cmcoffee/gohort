@@ -189,6 +189,13 @@ func loaderEnv(name string) bool {
 	return false
 }
 
+// LoaderEnv is loaderEnv for the other host that starts a process from a
+// server-pushed spec (the MCP host), so the list lives in one place.
+func LoaderEnv(name string) bool { return loaderEnv(name) }
+
+// ValidEnvName reports whether name is an ordinary environment variable name.
+func ValidEnvName(name string) bool { return envNameRE.MatchString(name) }
+
 // argsToEnv exports each DECLARED parameter as an environment variable. A key
 // the command did not declare, a malformed name, or a name that would change
 // how a program loads is left out: they used to be exported whatever they

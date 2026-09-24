@@ -927,41 +927,40 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		// AttachedCollections) are intentionally omitted — this surface edits
 		// behavior, not capability grants.
 		if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
-			for _, s := range LoadSkills(AuthDB(), user) {
-				if s.ID == id {
-					out := map[string]any{
-						"id":           s.ID,
-						"name":         s.Name,
-						"description":  s.Description,
-						"triggers":     strings.Join(s.Triggers, "\n"),
-						"instructions": s.Instructions,
-						// Two doors, both here: the rules as JSON to edit in
-						// place (what the admin form offers), and the address of
-						// the visual editor for anyone who would rather answer
-						// questions than write braces.
-						// Twice, deliberately: one copy is the read-only view,
-						// the other is what the textarea edits once Edit JSON
-						// is on. One field cannot be both without the form
-						// echoing its own display back into the payload.
-						"playbook_text": playbookText(s),
-						"playbook_url":  playbookEditorURL(s.ID),
-					}
-					// ?view=form is the behaviour form's own load. It leaves
-					// the grants out: a form posts back the whole record it
-					// loaded, so a grant on the wire here would be written back
-					// on Save as it stood when the row opened, undoing any chip
-					// flipped since.
-					if r.URL.Query().Get("view") != "form" {
-						out["allowed_tools"] = nonNilStrings(s.AllowedTools)
-						out["attached_collections"] = nonNilStrings(s.AttachedCollections)
-						// The picker reads what it will post back, so the field
-						// has to be on the wire or it opens empty and the first
-						// save silently clears the share.
-						out["allowed_users"] = nonNilStrings(s.AllowedUsers)
-					}
-					writeJSON(w, out)
-					return
+			if own, ok := findOwnSkill(user, id); ok {
+				s := own.SkillRecord
+				out := map[string]any{
+					"id":           s.ID,
+					"name":         s.Name,
+					"description":  s.Description,
+					"triggers":     strings.Join(s.Triggers, "\n"),
+					"instructions": s.Instructions,
+					// Two doors, both here: the rules as JSON to edit in
+					// place (what the admin form offers), and the address of
+					// the visual editor for anyone who would rather answer
+					// questions than write braces.
+					// Twice, deliberately: one copy is the read-only view,
+					// the other is what the textarea edits once Edit JSON
+					// is on. One field cannot be both without the form
+					// echoing its own display back into the payload.
+					"playbook_text": playbookText(s),
+					"playbook_url":  playbookEditorURL(s.ID),
 				}
+				// ?view=form is the behaviour form's own load. It leaves
+				// the grants out: a form posts back the whole record it
+				// loaded, so a grant on the wire here would be written back
+				// on Save as it stood when the row opened, undoing any chip
+				// flipped since.
+				if r.URL.Query().Get("view") != "form" {
+					out["allowed_tools"] = nonNilStrings(s.AllowedTools)
+					out["attached_collections"] = nonNilStrings(s.AttachedCollections)
+					// The picker reads what it will post back, so the field
+					// has to be on the wire or it opens empty and the first
+					// save silently clears the share.
+					out["allowed_users"] = nonNilStrings(s.AllowedUsers)
+				}
+				writeJSON(w, out)
+				return
 			}
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -1016,11 +1015,11 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, toSkillRow(s, false))
 		}
 		// Plus the ones this user published, which left their pool for the
-		// deployment's. Still theirs to edit and to take back.
-		for _, s := range DeploymentSkills(AuthDB()) {
-			if s.Owner == user {
-				rows = append(rows, toSkillRow(s, true))
-			}
+		// deployment's. Still theirs to edit and to take back, and a muted one
+		// is listed too: DeploymentSkills hides it from everybody's turns, and
+		// hiding it from its author would leave no row to Enable it from.
+		for _, s := range PublishedSkillsBy(AuthDB(), user) {
+			rows = append(rows, toSkillRow(s, true))
 		}
 		writeJSON(w, rows)
 	case http.MethodPost:
@@ -1048,20 +1047,13 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "missing id", http.StatusBadRequest)
 				return
 			}
-			var found *SkillRecord
-			for _, s := range LoadSkills(AuthDB(), user) {
-				if s.ID == id {
-					dup := s
-					found = &dup
-					break
-				}
-			}
-			if found == nil {
+			found, ok := findOwnSkill(user, id)
+			if !ok {
 				http.Error(w, "skill not found", http.StatusNotFound)
 				return
 			}
 			found.Disabled = (action == "disable")
-			if _, err := SaveSkill(AuthDB(), user, *found); err != nil {
+			if _, err := found.save(); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -1114,20 +1106,19 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "name is required", http.StatusBadRequest)
 			return
 		}
-		var rec SkillRecord
+		// A create (no id) always lands in the caller's own pool.
+		rec := ownedSkill{user: user}
 		if id != "" {
-			found := false
-			for _, s := range LoadSkills(AuthDB(), user) {
-				if s.ID == id {
-					rec = s // preserve Tools / AllowedTools / AttachedCollections
-					found = true
-					break
-				}
-			}
-			if !found {
+			found, ok := findOwnSkill(user, id) // preserves Tools / AllowedTools / AttachedCollections
+			if !ok {
 				http.Error(w, "skill not found", http.StatusNotFound)
 				return
 			}
+			rec = found
+		}
+		if rec.published && body.AllowedUsers != nil && len(*body.AllowedUsers) > 0 {
+			http.Error(w, publishedShareRefusal, http.StatusBadRequest)
+			return
 		}
 		rec.Name = name
 		rec.Description = strings.TrimSpace(body.Description)
@@ -1145,7 +1136,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		if body.AllowedUsers != nil {
 			rec.AllowedUsers = *body.AllowedUsers
 		}
-		if _, err := SaveSkill(AuthDB(), user, rec); err != nil {
+		if _, err := rec.save(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1172,16 +1163,13 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "nothing to change", http.StatusBadRequest)
 			return
 		}
-		var rec SkillRecord
-		found := false
-		for _, s := range LoadSkills(AuthDB(), user) {
-			if s.ID == id {
-				rec, found = s, true
-				break
-			}
-		}
+		rec, found := findOwnSkill(user, id)
 		if !found {
 			http.Error(w, "skill not found", http.StatusNotFound)
+			return
+		}
+		if rec.published && body.AllowedUsers != nil && len(*body.AllowedUsers) > 0 {
+			http.Error(w, publishedShareRefusal, http.StatusBadRequest)
 			return
 		}
 		if body.AllowedTools != nil {
@@ -1193,7 +1181,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		if body.AllowedUsers != nil {
 			rec.AllowedUsers = *body.AllowedUsers
 		}
-		if _, err := SaveSkill(AuthDB(), user, rec); err != nil {
+		if _, err := rec.save(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1212,6 +1200,44 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// ownedSkill is one of the caller's skills and which pool it is in. A
+// published skill has left its author's pool for the deployment's, but it is
+// still theirs to edit, mute and take back, so every lookup the author's own
+// surfaces make has to see both pools. Looking only in the author's pool is
+// what made Edit and Disable answer 404 on a row the same table had just
+// listed.
+type ownedSkill struct {
+	SkillRecord
+	user      string
+	published bool
+}
+
+// publishedShareRefusal is the answer to naming recipients on a published
+// skill: everybody already has it, and the publication drops the list anyway.
+const publishedShareRefusal = "this skill is published to everybody; take it back first to share it with named people"
+
+// findOwnSkill looks up id among user's skills: their own pool first, then the
+// ones they published.
+func findOwnSkill(user, id string) (ownedSkill, bool) {
+	for _, s := range LoadSkills(AuthDB(), user) {
+		if s.ID == id {
+			return ownedSkill{SkillRecord: s, user: user}, true
+		}
+	}
+	for _, s := range PublishedSkillsBy(AuthDB(), user) {
+		if s.ID == id {
+			return ownedSkill{SkillRecord: s, user: user, published: true}, true
+		}
+	}
+	return ownedSkill{}, false
+}
+
+// save writes the record back. SaveSkill itself sends a published one to the
+// deployment pool, so there is one save whichever pool it came from.
+func (o ownedSkill) save() (SkillRecord, error) {
+	return SaveSkill(AuthDB(), o.user, o.SkillRecord)
 }
 
 // handlePromotions lets a user request that one of their OWN resources be

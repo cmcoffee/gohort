@@ -17,6 +17,7 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 func init() { RegisterChatTool(&ScreenshotPageTool{}) }
@@ -210,6 +211,14 @@ func screenshotLooksBlank(data []byte) (bool, string) {
 	const minBytes = 4096 // anything smaller is almost certainly solid color
 	if len(data) < minBytes {
 		return true, fmt.Sprintf("only %d bytes", len(data))
+	}
+	// Bounded: the capture is of a page somebody else wrote, and a page can
+	// be made enormous. One too large to decode safely is left alone, the same
+	// answer as an undecodable one below: a capture that size is not blank.
+	if cfg, err := png.DecodeConfig(bytes.NewReader(data)); err == nil {
+		if derr := media.CheckImageDimensions(cfg.Width, cfg.Height); derr != nil {
+			return false, ""
+		}
 	}
 	img, err := png.Decode(bytes.NewReader(data))
 	if err != nil {

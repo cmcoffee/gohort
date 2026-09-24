@@ -12,6 +12,33 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// secretUnchanged is what a stored secret reads as on a GET. The admin forms
+// used to receive search, mail, image, embedding and transcription keys in
+// the clear: a password field hides them on screen, not from the page's
+// script, its network log or a cached response. The form posts this value
+// back when nobody touched the field, and keepSecret turns it into the
+// stored value again, so saving an unrelated field keeps the key and
+// clearing the field still clears it.
+const secretUnchanged = "(unchanged)"
+
+// maskSecret is the GET side: a set secret reads as the placeholder, an
+// unset one as empty, so the form can still tell the two apart.
+func maskSecret(v string) string {
+	if v == "" {
+		return ""
+	}
+	return secretUnchanged
+}
+
+// keepSecret is the POST (and Test) side: the placeholder means "the value
+// already stored".
+func keepSecret(posted, stored string) string {
+	if posted == secretUnchanged {
+		return stored
+	}
+	return posted
+}
+
 // registerNetConfigRoutes wires the net config API under the admin sub-mux.
 func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 	// Web search — per-key rows under SearchTable (provider, api_key,
@@ -26,6 +53,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
+			req.APIKey = keepSecret(req.APIKey, a.storedString(SearchTable, "api_key"))
 			// A peer selection carries no provider/key/endpoint of its own —
 			// those fields are hidden while one is picked. Resolve here, the
 			// same way the embeddings and transcription saves do, so what gets
@@ -60,7 +88,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"provider": provider, "api_key": key, "endpoint": endpoint, "source": source,
+			"provider": provider, "api_key": maskSecret(key), "endpoint": endpoint, "source": source,
 		})
 	})
 
@@ -125,6 +153,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 			writeTestResult(w, false, "", "invalid request body")
 			return
 		}
+		req.APIKey = keepSecret(req.APIKey, a.storedString(SearchTable, "api_key"))
 		// Resolve before inspecting the fields — with a peer picked they are
 		// hidden and empty, and testing a valid peer would otherwise fail on
 		// the provider being blank. Same lesson as the embeddings and
@@ -165,11 +194,8 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 		writeTestResult(w, true, fmt.Sprintf("OK via %s: %d chars returned", req.Provider, len(out)), "")
 	})
 
-	// Mail / SMTP — per-key rows under MailTable. Password is masked in
-	// GET via the placeholder convention (FormPanel password field with
-	// "(configured)" placeholder) — but for simplicity here we return
-	// the stored password as-is; the admin field is type:password so it
-	// renders masked on screen.
+	// Mail / SMTP — per-key rows under MailTable. The password reads as
+	// secretUnchanged on GET and is kept when that comes back.
 	sub.HandleFunc("/api/mail", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
 			return
@@ -180,6 +206,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
+			req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
 			if a.db != nil {
 				a.db.Set(MailTable, "server", req.Server)
 				a.db.Set(MailTable, "from", req.From)
@@ -200,6 +227,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 			a.db.Get(MailTable, "password", &cfg.Password)
 			a.db.Get(MailTable, "recipient", &cfg.Recipient)
 		}
+		cfg.Password = maskSecret(cfg.Password)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(cfg)
 	})
@@ -220,6 +248,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 			writeTestResult(w, false, "", "invalid request body")
 			return
 		}
+		req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
 		to := req.Recipient
 		if to == "" {
 			writeTestResult(w, false, "", "set a Default Recipient first; test mail needs an address")
@@ -341,4 +370,13 @@ func webSearchCtx(ctx context.Context, query string) (string, error) {
 		return "", nil
 	}
 	return out, nil
+}
+
+// storedString reads one string row, "" when unset or no store.
+func (a *AdminApp) storedString(table, key string) string {
+	var v string
+	if a.db != nil {
+		a.db.Get(table, key, &v)
+	}
+	return v
 }

@@ -186,7 +186,7 @@ what a "conversation" means for a caller that never comes back.
 An ordinary orchestrate agent **connected to an appliance**. Servitor's tool provider
 (`apps/servitor/agent_provider.go`) offers `request_capability`, `ask_system`, and the approved
 minted tools to any agent with a connection, so a normal agent gets real investigative reach while
-still running through `runPlan`, where the machine lives. Connect it at `/servitor/manage`, then
+still running through `runPlan`, where the machine lives. Connect it from the Access button beside the appliance at `/servitor`, then
 attach the machine to that agent.
 
 That also satisfies the spec's own requirement, which was an agent with real tools and a way to fan

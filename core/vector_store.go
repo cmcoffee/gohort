@@ -1149,10 +1149,22 @@ func ListMaintenanceFuncs() []struct{ Group, Key, Label, Desc string } {
 type maintenanceKeyCtx struct{}
 
 var maintenanceProgress struct {
-	mu     sync.Mutex
-	at     map[string]string
-	spoken map[string]string // a pass's own final words, if it said any
-	done   map[string]maintenanceOutcome
+	mu      sync.Mutex
+	at      map[string]string
+	spoken  map[string]string // a pass's own final words, if it said any
+	done    map[string]maintenanceOutcome
+	running map[string]*maintenanceRun // passes in flight, by key
+}
+
+// maintenanceRun is one pass in flight. It is what makes a pass RUNNING rather
+// than merely "has said something": most passes never report progress, so the
+// progress line alone could not tell a page that arrived mid-run that anything
+// was going on, and nothing stopped a second press from starting the same
+// pass alongside the first.
+type maintenanceRun struct {
+	started time.Time
+	n       int           // the count, set before over is closed
+	over    chan struct{} // closed when the pass returns (or panics)
 }
 
 // maintenanceOutcome is how a finished pass ended, kept for a while after it
@@ -1186,11 +1198,19 @@ func ReportMaintenanceProgress(ctx context.Context, line string) {
 }
 
 // MaintenanceProgress returns the running pass's latest line, or "" when it
-// is not running or has said nothing yet.
+// is not running. A pass that is running but has said nothing yet (or never
+// will; most do not) reads as "running - 42s", so a page that arrives mid-run
+// has something to rejoin rather than an idle row.
 func MaintenanceProgress(key string) string {
 	maintenanceProgress.mu.Lock()
 	defer maintenanceProgress.mu.Unlock()
-	return maintenanceProgress.at[key]
+	if line := maintenanceProgress.at[key]; line != "" {
+		return line
+	}
+	if run := maintenanceProgress.running[key]; run != nil {
+		return "running - " + time.Since(run.started).Round(time.Second).String()
+	}
+	return ""
 }
 
 // ReportMaintenanceOutcome lets a pass say how it ended in its own words,
@@ -1224,39 +1244,81 @@ func MaintenanceOutcome(key string) string {
 	return o.line
 }
 
-// finishMaintenanceProgress moves the pass from running to finished its
-// last line becomes the outcome, so a reader who arrives late sees how it
-// ended rather than nothing at all.
-func finishMaintenanceProgress(key string, count int) {
+// startMaintenanceRun claims key for one pass. When a pass of that key is
+// already in flight it returns that run and false: the caller waits on it
+// instead of starting another.
+func startMaintenanceRun(key string) (*maintenanceRun, bool) {
 	maintenanceProgress.mu.Lock()
 	defer maintenanceProgress.mu.Unlock()
-	if maintenanceProgress.done == nil {
-		maintenanceProgress.done = map[string]maintenanceOutcome{}
+	if run := maintenanceProgress.running[key]; run != nil {
+		return run, false
 	}
-	line := maintenanceProgress.spoken[key]
-	if line == "" {
-		line = fmt.Sprintf("%d record(s) changed", count)
+	if maintenanceProgress.running == nil {
+		maintenanceProgress.running = map[string]*maintenanceRun{}
 	}
-	maintenanceProgress.done[key] = maintenanceOutcome{
-		line: "finished: " + line,
-		at:   time.Now(),
+	run := &maintenanceRun{started: time.Now(), over: make(chan struct{})}
+	maintenanceProgress.running[key] = run
+	return run, true
+}
+
+// finishMaintenanceProgress moves the pass from running to finished. When it
+// returned normally its last line becomes the outcome, so a reader who arrives
+// late sees how it ended rather than nothing at all; a pass that panicked
+// leaves the previous outcome standing rather than claiming a finish. Either
+// way the key is released and anybody waiting on it is let go, in the same
+// lock, so no reader sees it both ended and still running.
+func finishMaintenanceProgress(key string, run *maintenanceRun, returned bool) {
+	maintenanceProgress.mu.Lock()
+	defer maintenanceProgress.mu.Unlock()
+	if returned {
+		if maintenanceProgress.done == nil {
+			maintenanceProgress.done = map[string]maintenanceOutcome{}
+		}
+		line := maintenanceProgress.spoken[key]
+		if line == "" {
+			line = fmt.Sprintf("%d record(s) changed", run.n)
+		}
+		maintenanceProgress.done[key] = maintenanceOutcome{
+			line: "finished: " + line,
+			at:   time.Now(),
+		}
 	}
 	delete(maintenanceProgress.at, key)
 	delete(maintenanceProgress.spoken, key)
+	delete(maintenanceProgress.running, key)
+	close(run.over)
 }
 
 // RunMaintenanceFunc runs the maintenance function matching key. Returns -1 if
 // not found.
+//
+// One pass per key at a time. A second start while one is in flight JOINS it:
+// it waits for that pass and returns its count rather than running the same
+// walk over the same store twice at once, which for a re-embed is double the
+// embedding calls and two writers racing on every chunk. The page that pressed
+// the button second still gets a spinner and a result; it is just the first
+// press's result.
 func RunMaintenanceFunc(ctx context.Context, key string) int {
 	for _, m := range maintenanceFuncs {
-		if m.Key == key {
-			// The key on the context is what lets a pass report progress
-			// without every pass's signature knowing about progress.
-			ctx = context.WithValue(ctx, maintenanceKeyCtx{}, key)
-			n := m.Run(ctx)
-			finishMaintenanceProgress(key, n)
-			return n
+		if m.Key != key {
+			continue
 		}
+		run, mine := startMaintenanceRun(key)
+		if !mine {
+			<-run.over
+			return run.n
+		}
+		returned := false
+		// Deferred so a pass that panics still releases the key: otherwise
+		// the button would read as running for the life of the process and
+		// every later press would wait on a pass that is never coming back.
+		defer func() { finishMaintenanceProgress(key, run, returned) }()
+		// The key on the context is what lets a pass report progress
+		// without every pass's signature knowing about progress.
+		ctx = context.WithValue(ctx, maintenanceKeyCtx{}, key)
+		run.n = m.Run(ctx)
+		returned = true
+		return run.n
 	}
 	return -1
 }

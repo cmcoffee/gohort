@@ -27,6 +27,7 @@
 package filestore
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -178,7 +179,63 @@ func (s storeSource) commandToolDefs(sess *ToolSession, user string, st Store) [
 		bound.WorkspaceDir = ws
 	}
 	bound.TempTools = tools
-	return temptool.BuildAgentToolDefs(bound)
+	defs := temptool.BuildAgentToolDefs(bound)
+	for i := range defs {
+		defs[i].Handler = refuseOptionArgs(tools, defs[i].Tool.Name, defs[i].Handler)
+	}
+	return defs
+}
+
+// refuseOptionArgs wraps a mapped command's handler so a value that fills a
+// whole argument cannot start with '-'. The binary is fixed by an admin and
+// the agent only supplies values, but "{name}" standing alone in the command
+// line lets a value like "--output=/elsewhere" or "-e ..." become an option of
+// that binary, which is choosing its behaviour rather than its input. Same
+// rule gohort-desktop applies to declared commands. A folder resolved by
+// path_scope is an absolute path and never trips it.
+func refuseOptionArgs(tools []*TempTool, defName string, h ToolHandlerFunc) ToolHandlerFunc {
+	if h == nil {
+		return h
+	}
+	return func(ctx context.Context, args map[string]any) (string, error) {
+		if act, ok := mappedActionFor(tools, defName, args); ok {
+			for name := range wholeArgPlaceholders(act.CommandTemplate) {
+				if v, ok := args[name]; ok && strings.HasPrefix(strings.TrimSpace(fmt.Sprint(v)), "-") {
+					return "", fmt.Errorf("the value for %s starts with '-', which the command would read as an option: pass the value itself", name)
+				}
+			}
+		}
+		return h(ctx, args)
+	}
+}
+
+// mappedActionFor finds which action a call reaches: a collapsed toolbox tool
+// names it in args["action"], an expanded one is "<tool>_<action>".
+func mappedActionFor(tools []*TempTool, defName string, args map[string]any) (TempToolAction, bool) {
+	for _, t := range tools {
+		for _, a := range t.Actions {
+			if defName == t.Name+"_"+a.Name {
+				return a, true
+			}
+			if defName == t.Name && strings.EqualFold(strings.TrimSpace(fmt.Sprint(args["action"])), a.Name) {
+				return a, true
+			}
+		}
+	}
+	return TempToolAction{}, false
+}
+
+// wholeArgPlaceholders lists the params that make up an entire argument of a
+// command template, quoted or not ("{file}", '{file}', {file}).
+func wholeArgPlaceholders(tpl string) map[string]bool {
+	out := map[string]bool{}
+	for _, f := range strings.Fields(tpl) {
+		f = strings.Trim(f, `"'`)
+		if len(f) > 2 && f[0] == '{' && f[len(f)-1] == '}' && !strings.ContainsAny(f[1:len(f)-1], "{} ") {
+			out[f[1:len(f)-1]] = true
+		}
+	}
+	return out
 }
 
 // storeCarriesLabel summarises what a folder hands to an agent beyond its own

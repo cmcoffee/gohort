@@ -324,17 +324,22 @@ func (s *SecureAPI) SaveOAuthDraft(c SecureCredential) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var existing SecureCredential
+	moved := false
 	if s.db.Get(secureAPITable, c.Name, &existing) {
 		c.CreatedAt = existing.CreatedAt
 		c.LastUsedAt = existing.LastUsedAt
+		moved = credDestinationMoved(existing, c)
 	} else {
 		c.CreatedAt = time.Now()
 	}
 	s.db.Set(secureAPITable, c.Name, c)
 	// Placeholder secret so loadSecret finds something; the admin replaces
-	// it with the real client_secret / private key / refresh token.
+	// it with the real client_secret / private key / refresh token. A draft
+	// that repoints an existing credential drops its real secret too: the
+	// admin re-enabling what reads as a draft must not send the old key to
+	// an address somebody else wrote.
 	var hasSecret string
-	if !s.db.Get(secureAPITable, secureCredSecretKey(c.Name), &hasSecret) || hasSecret == "" || hasSecret == "(pending)" {
+	if moved || !s.db.Get(secureAPITable, secureCredSecretKey(c.Name), &hasSecret) || hasSecret == "" || hasSecret == "(pending)" {
 		s.db.CryptSet(secureAPITable, secureCredSecretKey(c.Name), "(pending)")
 	}
 	invalidateOAuthClient(c.Name)
@@ -377,17 +382,19 @@ func (s *SecureAPI) SaveAPIDraft(c SecureCredential) error {
 	key := credStoreKey(c.Owner, c.Name)
 	secretKey := secureCredSecretKey(key)
 	var existing SecureCredential
+	moved := false
 	if s.db.Get(secureAPITable, key, &existing) {
 		c.CreatedAt = existing.CreatedAt
 		c.LastUsedAt = existing.LastUsedAt
+		moved = credDestinationMoved(existing, c)
 	} else {
 		c.CreatedAt = time.Now()
 	}
 	s.db.Set(secureAPITable, key, c)
 	// Placeholder secret so the UI flags "needs secret"; the owner replaces it
-	// with the real value.
+	// with the real value. A repointing draft drops a real secret, as above.
 	var hasSecret string
-	if !s.db.Get(secureAPITable, secretKey, &hasSecret) || hasSecret == "" || hasSecret == "(pending)" {
+	if moved || !s.db.Get(secureAPITable, secretKey, &hasSecret) || hasSecret == "" || hasSecret == "(pending)" {
 		s.db.CryptSet(secureAPITable, secretKey, "(pending)")
 	}
 	return nil

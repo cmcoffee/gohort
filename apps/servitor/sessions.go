@@ -85,6 +85,24 @@ func saveSession(udb Database, applianceID string, s chatSession) chatSession {
 	return s
 }
 
+// sessionIDUsableBy reports whether user may run under session id: it is not
+// live, and not holding a confirmation channel, for anybody else. An empty id
+// is always usable (a fresh one is minted).
+func sessionIDUsableBy(id, user string) bool {
+	if id == "" {
+		return true
+	}
+	if owner, live := probeSessions.OwnerOf(id); live && owner != user {
+		return false
+	}
+	if v, ok := confirmChans.Load(id); ok {
+		if p, ok := v.(pendingConfirm); ok && p.owner != user {
+			return false
+		}
+	}
+	return true
+}
+
 // ensureSession resolves the active session for a send: returns the
 // existing id when one is supplied and found; mints a fresh titled
 // session (honoring a supplied id) otherwise. The returned id is what

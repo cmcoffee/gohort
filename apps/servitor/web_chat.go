@@ -69,7 +69,17 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 	// key off this single value. The stale-cleanup race from reusing an
 	// id across runs is handled by the pointer-guard in
 	// LiveSessionMap.ScheduleCleanupAfter.
-	sid := ensureSession(udb, appliance.ID, req.SessionID, req.Message)
+	// A session id is public (every /api/live payload lists them), and the
+	// client picks it. Adopting one that is live under somebody else would
+	// re-register their run under this caller - their command output and
+	// approval cards streaming here, their confirm channel replaced by ours.
+	// Such an id is dropped and this conversation starts a fresh session.
+	reqSID := req.SessionID
+	if !sessionIDUsableBy(reqSID, userID) {
+		Log("[servitor] %s asked to continue session %q, which is live under another user: starting a new one", userID, reqSID)
+		reqSID = ""
+	}
+	sid := ensureSession(udb, appliance.ID, reqSID, req.Message)
 	ctx, cancel := context.WithCancel(AppContext())
 	probeSessions.Register(sid, label, cancel).SetOwner(userID)
 	sessionAppliances.Store(sid, appliance.ID)

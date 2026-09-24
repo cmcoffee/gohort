@@ -1136,7 +1136,12 @@ func wizardDescribeHTML() string {
             fetch('../api/agents/wizard',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({shape:d.shape,name:(nameInp.value||d.name),purpose:request,answers:answers})})
               .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
-              .then(function(rec){ window.location.href='agent/'+encodeURIComponent(rec.id); })
+              // Relative to THIS page, /orchestrate/agent/wizard, the same
+              // way the guided form's RedirectURL "{id}" is: a bare id lands
+              // on /orchestrate/agent/<id>. It said agent/<id>, which is
+              // /orchestrate/agent/agent/<id> from here, so the agent was
+              // created and the page it opened on was a 404.
+              .then(function(rec){ window.location.href=encodeURIComponent(rec.id); })
               .catch(function(e){
                 create.disabled=false; create.textContent='Create it';
                 out.appendChild(el('p',{class:'wd-hint',text:'Could not create it: '+((e&&e.message)||e)}));

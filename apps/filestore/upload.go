@@ -22,6 +22,7 @@
 package filestore
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,12 +32,35 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/archive"
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 // maxExpandBytes bounds what one upload may unpack to. Generous, so a
 // real capture fits; finite, because an upload is untrusted input and a
 // zip bomb should cost a refusal rather than the disk.
 const maxExpandBytes = 4 << 30 // 4 GiB
+
+// maxUploadBytes bounds one upload request, all of its files together. The
+// same figure as the unpack budget: a capture that fits here fits once it is
+// opened, and a request past it is refused before it can fill the disk the
+// store sits on. Larger sets go up in several requests, or into the store's
+// folder directly.
+var maxUploadBytes int64 = 4 << 30 // 4 GiB; a var only so a test can shrink it
+
+// refuseOversizeUpload answers 413 with a message that says what the limit is
+// and what to do instead, rather than the bare "request body too large" a
+// reader error would surface as.
+func refuseOversizeUpload(w http.ResponseWriter) {
+	http.Error(w, "that upload is larger than the "+HumanSize(maxUploadBytes)+
+		" one upload may be. Send the files in several smaller uploads, or copy them into the store's folder directly.",
+		http.StatusRequestEntityTooLarge)
+}
+
+// isOversize reports whether err is the body cap being hit.
+func isOversize(err error) bool {
+	var mbe *http.MaxBytesError
+	return errors.As(err, &mbe)
+}
 
 // handleUpload accepts one or more files into a store subfolder.
 //
@@ -78,6 +102,13 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The server-wide body cap is sized for JSON requests; a capture is far
+	// larger, so this route sets its own, finite one.
+	netgate.RaiseBodyLimit(r, maxUploadBytes)
+	if r.ContentLength > maxUploadBytes {
+		refuseOversizeUpload(w)
+		return
+	}
 	mr, err := r.MultipartReader()
 	if err != nil {
 		http.Error(w, "expected a multipart upload: "+err.Error(), http.StatusBadRequest)
@@ -91,6 +122,10 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
+			if isOversize(err) {
+				refuseOversizeUpload(w)
+				return
+			}
 			http.Error(w, "reading upload: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -102,6 +137,10 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 		n, saved, err := saveUploadPart(dest, name, part)
 		part.Close()
 		if err != nil {
+			if isOversize(err) {
+				refuseOversizeUpload(w)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

@@ -351,10 +351,10 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 
 	// inflightCancels stays populated for /api/cancel backward compat
 	// (the cancel endpoint key is sessionID, same shape as before).
-	inflightCancels.Store(sess.ID, cancel)
+	inflightCancels.Store(runSessKey(user, sess.ID), cancel)
 	defer func() {
 		cancel()
-		inflightCancels.Delete(sess.ID)
+		inflightCancels.Delete(runSessKey(user, sess.ID))
 		// Mark the run done. Complete is idempotent; the panic
 		// recovery defer below runs FIRST (LIFO) and gets to upgrade
 		// to Failed if a panic occurred, so the unconditional
@@ -990,8 +990,10 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 }
 
 // handleCancel aborts an in-flight runner by session ID. The runner
-// goroutine cleans up on ctx.Done.
-func (T *OrchestrateApp) handleCancel(w http.ResponseWriter, r *http.Request, agent AgentRecord) {
+// goroutine cleans up on ctx.Done. Only the caller's own turn: the id comes
+// from the request, so the cancel is looked up under (user, id), never the id
+// alone.
+func (T *OrchestrateApp) handleCancel(w http.ResponseWriter, r *http.Request, user string, agent AgentRecord) {
 	// The Agency chat panel POSTs the session id as the ?id= query param (no
 	// body); older callers send {session_id} in the JSON body. Accept BOTH —
 	// reading only the body meant the Agency cancel button silently no-opped
@@ -1005,7 +1007,7 @@ func (T *OrchestrateApp) handleCancel(w http.ResponseWriter, r *http.Request, ag
 		sid = strings.TrimSpace(body.SessionID)
 	}
 	if sid != "" {
-		if v, ok := inflightCancels.Load(sid); ok {
+		if v, ok := inflightCancels.Load(runSessKey(user, sid)); ok {
 			if cancel, ok := v.(context.CancelFunc); ok {
 				cancel()
 			}

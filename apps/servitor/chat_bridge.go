@@ -107,7 +107,7 @@ func translateProbeEvent(ev probeEvent) map[string]any {
 		return map[string]any{
 			"kind":   "confirm",
 			"id":     "c-" + cheapID(),
-			"prompt": "Destructive command",
+			"prompt": "Command needs approval",
 			"detail": ev.Text + "\n\nReason: " + ev.Reason,
 			"actions": []map[string]string{
 				{"label": "Allow", "value": "allow", "variant": "primary"},
@@ -264,6 +264,14 @@ func (T *Servitor) handleChatEvents(w http.ResponseWriter, r *http.Request) {
 		out := translateProbeEvent(ev)
 		if out == nil {
 			return true
+		}
+		// An approval card names the session and the command it is about,
+		// so the answer can only land on THAT pending command (see
+		// deliverConfirm). The bridge's random id alone could not say.
+		if ev.Kind == "confirm" {
+			if cid, ok := out["id"].(string); ok {
+				out["id"] = confirmCardID(id, ev.Text, cid)
+			}
 		}
 		if finalize, ok := out["_finalize"].(string); ok {
 			delete(out, "_finalize")

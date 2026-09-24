@@ -38,6 +38,13 @@ type ActionList struct {
 	// action that takes minutes: the spinner says it is alive, this says how
 	// far along. Supports {field} substitution from the item, so one endpoint
 	// can answer for every row. Empty = spinner and elapsed seconds only.
+	//
+	// It is also read once on arrival, and a non-empty "progress" then means
+	// "already running": the row rejoins with the spinner instead of offering
+	// a Run button for something in flight. So the endpoint has to answer
+	// non-empty for the WHOLE run, including before the action has said
+	// anything, or a page opened mid-run shows an idle row. {"outcome": "..."}
+	// with no progress is how the last run ended.
 	ProgressSource string `json:"progress_source,omitempty"`
 
 	// Invalidate — data sources to refresh after a successful action.

@@ -561,7 +561,11 @@ func (T *OrchestrateApp) PublicHandleSendWithAppTools(w http.ResponseWriter, r *
 
 // PublicHandleCancel mirrors PublicHandleSend's bypass for cancel.
 func (T *OrchestrateApp) PublicHandleCancel(w http.ResponseWriter, r *http.Request, agent AgentRecord) {
-	T.handleCancel(w, r, agent)
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.handleCancel(w, r, user, agent)
 }
 
 // PublicHandleRunsActive / PublicHandleRunsDispatch expose the run-stream

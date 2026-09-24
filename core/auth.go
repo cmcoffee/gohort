@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/ui"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -756,12 +757,22 @@ func AuthSetUser(db Database, username, password string, admin bool) {
 	user.Username = username
 	user.Admin = admin
 	// PassHash is kept unless a new password is given (empty = no change).
+	replaced := false
 	if password != "" {
 		if h := hashPassword(password); h != "" {
+			replaced = user.PassHash != ""
 			user.PassHash = h
 		}
 	}
 	db.Set(AuthTable, "user:"+username, user)
+	// A replaced password ends the sessions opened with the old one, as
+	// AuthAdminSetPassword does; this is the admin user editor's and the setup
+	// menu's way of setting one.
+	if replaced {
+		if n := AuthRevokeUserSessions(db, username); n > 0 {
+			Log("[auth] password replaced for %q: ended %d session(s)", username, n)
+		}
+	}
 }
 
 // AuthSetUserApps updates the allowed app list for a user.
@@ -978,7 +989,12 @@ func AuthDeleteUser(db Database, username string) {
 // to bcrypt (rehash-on-login migration), so no separate migration pass is needed.
 func AuthCheckPassword(db Database, username, password string) bool {
 	user, ok := AuthGetUser(db, username)
-	if !ok {
+	if !ok || user.PassHash == "" {
+		// Spend the same bcrypt comparison a wrong password costs. Answering an
+		// unknown name (or an invited account with no password yet) in
+		// microseconds, while a real one takes a bcrypt round, lets anyone
+		// holding a stopwatch list which usernames exist.
+		spendDummyPasswordCheck(password)
 		return false
 	}
 	valid, legacy := verifyPassword(user.PassHash, password)
@@ -995,13 +1011,36 @@ func AuthCheckPassword(db Database, username, password string) bool {
 	return true
 }
 
+// dummyPasswordHash is a bcrypt hash of nothing anyone knows, built once, for
+// spendDummyPasswordCheck to compare against.
+var (
+	dummyPasswordHashOnce sync.Once
+	dummyPasswordHash     []byte
+)
+
+// spendDummyPasswordCheck does the work of a failed bcrypt comparison and
+// throws the answer away, so a login for a name with no usable hash takes as
+// long as a wrong password for a real one.
+func spendDummyPasswordCheck(password string) {
+	dummyPasswordHashOnce.Do(func() {
+		dummyPasswordHash = []byte(hashPassword(generateToken()))
+	})
+	_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, passwordDigest(password))
+}
+
 // AuthChangePassword verifies the user's CURRENT password and, on success,
 // updates ONLY the password hash — every other field (admin flag, apps, per-user
 // preferences) is preserved, unlike AuthSetUser which rebuilds the record. Used
 // by the self-service "change password" flow on the account page. Returns false
 // if the user doesn't exist, the current password is wrong, or the new password
 // is empty.
-func AuthChangePassword(db Database, username, currentPassword, newPassword string) bool {
+//
+// On success every OTHER session of the user is ended. A password change is
+// what somebody does when they think the old one leaked, and a session opened
+// with the leaked password would otherwise outlive the change. keep is the
+// request making the change: its own session survives so the person is not
+// signed out of the page they are standing on. A nil keep ends them all.
+func AuthChangePassword(db Database, username, currentPassword, newPassword string, keep *http.Request) bool {
 	if db == nil || strings.TrimSpace(newPassword) == "" {
 		return false
 	}
@@ -1018,6 +1057,15 @@ func AuthChangePassword(db Database, username, currentPassword, newPassword stri
 	}
 	user.PassHash = nh
 	db.Set(AuthTable, "user:"+username, user)
+	keepToken := ""
+	if keep != nil {
+		if c, err := keep.Cookie(auth_cookie_name); err == nil {
+			keepToken = c.Value
+		}
+	}
+	if n := revokeUserSessionsExcept(db, username, keepToken); n > 0 {
+		Log("[auth] password changed for %q: ended %d other session(s)", username, n)
+	}
 	return true
 }
 
@@ -1025,6 +1073,10 @@ func AuthChangePassword(db Database, username, currentPassword, newPassword stri
 // check (admin authority) — and preserves every other field (admin flag, apps,
 // per-user preferences), unlike AuthSetUser which rebuilds the record. Returns
 // false if the user doesn't exist or the new password is empty.
+//
+// Every session the user has is ended. This is the admin reset and the
+// forgotten-password link, both of which mean the old password is no longer
+// trusted, so nothing opened with it should stay open.
 func AuthAdminSetPassword(db Database, username, newPassword string) bool {
 	if db == nil || strings.TrimSpace(newPassword) == "" {
 		return false
@@ -1039,6 +1091,9 @@ func AuthAdminSetPassword(db Database, username, newPassword string) bool {
 	}
 	user.PassHash = nh
 	db.Set(AuthTable, "user:"+username, user)
+	if n := AuthRevokeUserSessions(db, username); n > 0 {
+		Log("[auth] password set for %q: ended %d session(s)", username, n)
+	}
 	return true
 }
 
@@ -1115,6 +1170,36 @@ func generateToken() string {
 	return hex.EncodeToString(b)
 }
 
+// sessionStoreKey is where a session token's record is stored: its SHA-256,
+// never the token. The store is a file on disk and in every backup, and a raw
+// token there is a login for anybody who reads either. The in-memory cache
+// stays keyed by the token itself, since it never leaves the process.
+func sessionStoreKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// loadStoredSession reads a token's record from the store, moving a record
+// stored under the raw token (written before tokens were hashed) to its hashed
+// key on the way, so a session that was live across the upgrade stays live.
+// A presented token that is itself a stored key is refused: reading the store
+// must not be a way to sign in.
+func loadStoredSession(db Database, token string) (authSession, bool) {
+	var sess authSession
+	if token == "" || strings.HasPrefix(token, "sha256:") {
+		return sess, false
+	}
+	if db.Get(AuthSessionTable, sessionStoreKey(token), &sess) {
+		return sess, true
+	}
+	if !db.Get(AuthSessionTable, token, &sess) {
+		return sess, false
+	}
+	db.Set(AuthSessionTable, sessionStoreKey(token), sess)
+	db.Unset(AuthSessionTable, token)
+	return sess, true
+}
+
 // AuthCreateSession creates a new session for the given user and
 // returns the session token. Sessions expire after 24 hours.
 func AuthCreateSession(db Database, username string) string {
@@ -1125,7 +1210,7 @@ func AuthCreateSession(db Database, username string) string {
 		Created: now.Unix(),
 		Expires: now.Add(sessionDuration()).Unix(),
 	}
-	db.Set(AuthSessionTable, token, sess)
+	db.Set(AuthSessionTable, sessionStoreKey(token), sess)
 
 	sessionMu.Lock()
 	sessionCache[token] = &sess
@@ -1153,17 +1238,17 @@ func AuthValidateSession(db Database, token string) (string, bool) {
 		sessionMu.Lock()
 		delete(sessionCache, token)
 		sessionMu.Unlock()
-		db.Unset(AuthSessionTable, token)
+		db.Unset(AuthSessionTable, sessionStoreKey(token))
 		return "", false
 	}
 
 	// Fall back to database.
-	var sess authSession
-	if !db.Get(AuthSessionTable, token, &sess) {
+	sess, found := loadStoredSession(db, token)
+	if !found {
 		return "", false
 	}
 	if time.Now().Unix() >= sess.Expires {
-		db.Unset(AuthSessionTable, token)
+		db.Unset(AuthSessionTable, sessionStoreKey(token))
 		return "", false
 	}
 
@@ -1179,7 +1264,7 @@ func AuthValidateSession(db Database, token string) (string, bool) {
 	// store is on network storage it would be felt. Once per session per
 	// process is free.
 	if user, ok := AuthGetUser(db, sess.User); !ok || user.Pending {
-		db.Unset(AuthSessionTable, token)
+		db.Unset(AuthSessionTable, sessionStoreKey(token))
 		return "", false
 	}
 
@@ -1195,7 +1280,8 @@ func AuthDestroySession(db Database, token string) {
 	sessionMu.Lock()
 	delete(sessionCache, token)
 	sessionMu.Unlock()
-	db.Unset(AuthSessionTable, token)
+	db.Unset(AuthSessionTable, sessionStoreKey(token))
+	db.Unset(AuthSessionTable, token) // a record from before tokens were hashed
 }
 
 // AuthIsAdmin checks whether the currently authenticated user is an admin.
@@ -1282,6 +1368,19 @@ func SameOriginRequest(r *http.Request) bool {
 	// same-origin. The residual case (a page served from the user's OWN localhost)
 	// is inside the trust boundary a desktop webview already assumes.
 	return isLoopbackHost(u.Hostname())
+}
+
+// requestIsHTTPS reports whether the browser's connection is HTTPS, which is
+// what decides the session cookie's Secure flag. Three ways to know: this
+// process terminates TLS itself, the request arrived over TLS, or a trusted
+// reverse proxy terminated it and said so in X-Forwarded-Proto. Without the
+// last one, a deployment behind a TLS-terminating proxy issued a session
+// cookie the browser would also send over plain HTTP.
+func requestIsHTTPS(r *http.Request) bool {
+	if TLSEnabled() {
+		return true
+	}
+	return r != nil && (r.TLS != nil || netgate.ForwardedHTTPS(r))
 }
 
 // isLoopbackHost reports whether a host is a loopback name/address: localhost,
@@ -1484,7 +1583,7 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		// by an absolute ceiling from its creation — so working in gohort keeps
 		// you logged in, and walking away still logs you out. See
 		// auth_session_slide.go.
-		_, ok := AuthValidateSessionSliding(db, w, cookie.Value)
+		_, ok := authValidateSessionSliding(db, w, r, cookie.Value)
 		if !ok {
 			redirectToLogin(w, r)
 			return
@@ -1575,6 +1674,18 @@ func LoginHandler(db Database) http.HandlerFunc {
 			serveLoginPage(w, "")
 
 		case http.MethodPost:
+			// Login CSRF: a cross-site form that posts the ATTACKER'S
+			// credentials here signs the victim into the attacker's account,
+			// and whatever they then type or upload lands where the attacker
+			// can read it. AuthMiddleware's Origin check never sees this
+			// route (it lets the auth pages through before checking), and
+			// SameSite does not help, since there is no session cookie to
+			// withhold yet. Same verify-if-present rule as everywhere else.
+			if !SameOriginRequest(r) {
+				Log("[auth] refused a cross-origin login post from %s (Origin %q)", ClientIP(r), r.Header.Get("Origin"))
+				http.Error(w, "cross-origin login request rejected", http.StatusForbidden)
+				return
+			}
 			r.ParseForm()
 			username := strings.TrimSpace(r.FormValue("username"))
 			password := r.FormValue("password")
@@ -1613,7 +1724,7 @@ func LoginHandler(db Database) http.HandlerFunc {
 				Path:     "/",
 				HttpOnly: true,
 				SameSite: http.SameSiteLaxMode,
-				Secure:   TLSEnabled(),
+				Secure:   requestIsHTTPS(r),
 				MaxAge:   sessionMaxAge(),
 			})
 			Log("[auth] user %q logged in from %s", username, ClientIP(r))

@@ -123,8 +123,9 @@ func (T *MCPServer) handle(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleStatusPage renders the human-facing dashboard view: what the endpoint
-// is, how to connect, and what it exposes. Auth'd as a normal dashboard page
-// (the protocol GET/POST stay open; only this human view requires login).
+// is, how to connect, and what it exposes. Auth'd as a normal dashboard page.
+// The protocol side authenticates itself: the POST handshake and tools/list
+// stay open, and tools/call and the SSE stream need a key (see authorize).
 func (T *MCPServer) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
@@ -177,13 +178,52 @@ func (T *MCPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// authorize applies the MCP endpoint's gates to a request and returns the
+// owner it acts for. On refusal, refusal is the message for the caller and
+// status the HTTP status that fits it; what is logged names the action.
+//
+// Three tiers, mirroring the /v1 endpoint:
+//  1. a credential: a valid access token, bridge key or session
+//  2. admin: may this USER use the MCP endpoint at all
+//  3. key: did the user enable "mcp" on THIS key (nil scope = legacy
+//     unscoped key, grandfathered by AllowsFeature)
+//
+// A session-cookie or bridge-key request has no account token and skips tier
+// 3: those are the user themselves or an admin-minted bridge key, not a scoped
+// personal token.
+func (T *MCPServer) authorize(r *http.Request, action string) (owner, refusal string, status int) {
+	owner = DesktopBridgeUserOf(r)
+	if owner == "" {
+		Log("[mcpserver] %s REJECTED: no valid X-API-Key (mint a bridge key in Bridges admin)", action)
+		return "", "Unauthorized: this endpoint needs a valid gohort personal access token in the X-API-Key header. Create one on your Account page (/account) and put it in the connector config.", http.StatusUnauthorized
+	}
+	if !FeatureAllowedForUser(T.DB, MCPFeatureKey, owner) {
+		Log("[mcpserver] %s REJECTED: admin policy denies MCP for user=%s", action, owner)
+		return "", "Forbidden: an admin has not enabled MCP access for your account (Admin > Feature Access).", http.StatusForbidden
+	}
+	if tok := AccountTokenFromRequest(r); tok != nil && !tok.AllowsFeature(MCPFeatureKey) {
+		Log("[mcpserver] %s REJECTED: key %q lacks the mcp feature (owner=%s)", action, tok.Name, owner)
+		return "", "Forbidden: this access token is not allowed to use the MCP endpoint. On your Account page, open this key's Configure access and enable \"MCP endpoint\".", http.StatusForbidden
+	}
+	return owner, "", http.StatusOK
+}
+
 // handleSSE serves the GET server→client stream. We have no server-initiated
 // messages to push (every JSON-RPC response rides its POST), so this just
 // opens text/event-stream and holds the connection open with heartbeats until
 // the client disconnects — which is what a Streamable HTTP client needs to
-// consider itself connected. Open (no auth): no data flows here; tools/call
-// is the gated action.
+// consider itself connected.
+//
+// Gated like tools/call. It carries no data, but an open stream is a held
+// connection and a goroutine for as long as the caller likes, and handing
+// those out to anyone who can reach the port is a resource for an
+// unauthenticated stranger to exhaust. A client that has a key sends it on
+// this GET as on every POST.
 func (T *MCPServer) handleSSE(w http.ResponseWriter, r *http.Request) {
+	if _, refusal, status := T.authorize(r, "SSE stream"); refusal != "" {
+		http.Error(w, refusal, status)
+		return
+	}
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -308,27 +348,9 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		// Only the ACTION needs auth. Resolve the bridge key -> owner here and
 		// return a CLEAR JSON-RPC tool error (not an opaque HTTP 401 the client
 		// won't surface) when it's missing/unrecognized.
-		owner := DesktopBridgeUserOf(r)
-		if owner == "" {
-			Log("[mcpserver] tools/call REJECTED: no valid X-API-Key (mint a bridge key in Bridges admin)")
-			resp.Result = toolText("Unauthorized: this endpoint needs a valid gohort personal access token in the X-API-Key header. Create one on your Account page (/account) and put it in the connector config.", true)
-			break
-		}
-		// Feature gates, mirroring the /v1 endpoint's two tiers:
-		//   1. admin — may this USER use the MCP endpoint at all
-		//   2. key   — did the user enable "mcp" on THIS key (nil scope =
-		//      legacy unscoped key, grandfathered by AllowsFeature)
-		// A session-cookie or bridge-key request has no account token and
-		// skips tier 2 — those are the user themselves / an admin-minted
-		// bridge key, not a scoped personal token.
-		if !FeatureAllowedForUser(T.DB, MCPFeatureKey, owner) {
-			Log("[mcpserver] tools/call REJECTED: admin policy denies MCP for user=%s", owner)
-			resp.Result = toolText("Forbidden: an admin has not enabled MCP access for your account (Admin > Feature Access).", true)
-			break
-		}
-		if tok := AccountTokenFromRequest(r); tok != nil && !tok.AllowsFeature(MCPFeatureKey) {
-			Log("[mcpserver] tools/call REJECTED: key %q lacks the mcp feature (owner=%s)", tok.Name, owner)
-			resp.Result = toolText("Forbidden: this access token is not allowed to use the MCP endpoint. On your Account page, open this key's Configure access and enable \"MCP endpoint\".", true)
+		owner, refusal, _ := T.authorize(r, "tools/call")
+		if refusal != "" {
+			resp.Result = toolText(refusal, true)
 			break
 		}
 		text, images, err := T.callTool(r.Context(), owner, AccountTokenFromRequest(r), req.Params)

@@ -219,20 +219,41 @@ func IsInternalRequest(r *http.Request) bool {
 	return IsGenuineLocalRequest(r)
 }
 
+// baselineCSP is the Content-Security-Policy every response carries. It is
+// the part of a CSP that constrains nothing the UI does.
+//
+// There is no script-src or style-src, on purpose: the UI inlines scripts and
+// styles everywhere, so restricting either needs per-response nonces (a larger,
+// separate change) and a guess would blank pages. What is here:
+//
+//   - object-src 'none': no plugin content. Nothing in the tree embeds
+//     <object> or <embed>, and PDFs are served as downloads.
+//   - base-uri 'self': an injected <base href> cannot re-point every relative
+//     URL on a page (script src included) at another host.
+//   - frame-ancestors 'self': the CSP form of X-Frame-Options SAMEORIGIN,
+//     which is already sent, so nothing framed today stops being framed. The
+//     desktop app's overlay frames pages from its own loopback proxy origin,
+//     which is same-origin to the page it frames.
+//
+// srcdoc frames (the ui Isolate cards, authored documents) inherit this
+// policy. The sandboxed ones are already denied plugins, and base-uri only
+// refuses a <base href> pointing at another origin (<base target> still works),
+// so the inherited copy takes nothing away from them either.
+const baselineCSP = "object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+
 // securityHeadersMiddleware sets baseline security response headers on every
 // response: MIME-sniffing protection, clickjacking protection (the dashboard is
 // never meant to be framed by another origin), referrer minimization, and — under
-// TLS — HSTS. It deliberately does NOT set a Content-Security-Policy: the UI
-// inlines scripts and styles, so a correct CSP needs per-response nonces (a
-// larger, separate change). These headers are the high-ROI baseline that needs
-// no page changes. SAMEORIGIN (not DENY) so any legitimate same-origin embed
-// still works while cross-origin framing — the clickjacking vector — is blocked.
+// TLS — HSTS. These headers are the high-ROI baseline that needs no page
+// changes. SAMEORIGIN (not DENY) so any legitimate same-origin embed still
+// works while cross-origin framing — the clickjacking vector — is blocked.
 func securityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "SAMEORIGIN")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Content-Security-Policy", baselineCSP)
 		if TLSEnabled() {
 			// One year; no includeSubDomains/preload so a multi-subdomain
 			// deployment isn't forced to HTTPS on siblings that may not serve it.

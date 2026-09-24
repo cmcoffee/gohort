@@ -318,6 +318,13 @@ func (T *FileStoreApp) handleCommand(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	input := strings.TrimSpace(body.Input)
+	// The input is a whole argv element of an admin's fixed binary. Leading
+	// with '-' it would be read as an option ("--output=...") rather than as
+	// the value the person was asked for.
+	if strings.HasPrefix(input, "-") {
+		http.Error(w, "the response starts with '-', which the command would read as an option rather than a value", http.StatusBadRequest)
+		return
+	}
 
 	args := []string{dir}
 	// NEVER logged: on a two-phase action the input is the secret half of

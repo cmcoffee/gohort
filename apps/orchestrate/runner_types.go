@@ -18,7 +18,7 @@ import (
 // in-flight + subsequent tool refusal sites re-read Allowed() on
 // each call, so the flip propagates immediately.
 var (
-	inflightCancels    sync.Map // sessionID -> context.CancelFunc
+	inflightCancels    sync.Map // runSessKey(user, sessionID) -> context.CancelFunc
 	inflightConnectors sync.Map // sessionID -> *NetworkConnector
 )
 

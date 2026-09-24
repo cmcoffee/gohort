@@ -677,6 +677,13 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		if !exists {
 			return fmt.Errorf("secret value is required for new credentials")
 		}
+		// A user-owned credential repointed at another server keeps nothing:
+		// the stored key was entered for the old address, and keeping it
+		// would let an edit (or an agent's proposed edit) send it anywhere.
+		// Global credentials are written by an administrator only.
+		if c.Owner != "" && credDestinationMoved(existing, c) {
+			return fmt.Errorf("the credential now points at a different server: enter its secret again with the new address")
+		}
 		var existingSecret string
 		if !s.db.Get(secureAPITable, secretKey, &existingSecret) || existingSecret == "" {
 			return fmt.Errorf("secret value is required (no existing secret to preserve)")
@@ -688,6 +695,35 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	s.db.Set(secureAPITable, key, c)
 	s.db.CryptSet(secureAPITable, secretKey, secret)
 	return nil
+}
+
+// credOrigin reduces a URL or URL pattern to its lowercased scheme://host,
+// which is what decides where a secret is sent. A path change on the same
+// host is not a move.
+func credOrigin(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return strings.ToLower(raw)
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
+}
+
+// credDestinationMoved reports whether next points a credential's secret at a
+// different server than prev did: its base URL, URL pattern or token endpoint
+// names a new origin. A field left empty moves nothing (a form that does not
+// carry it is not an edit of it).
+func credDestinationMoved(prev, next SecureCredential) bool {
+	moved := func(a, b string) bool {
+		b = credOrigin(b)
+		return b != "" && b != credOrigin(a)
+	}
+	return moved(prev.BaseURL, next.BaseURL) ||
+		moved(prev.AllowedURLPattern, next.AllowedURLPattern) ||
+		moved(prev.TokenURL, next.TokenURL)
 }
 
 // Load fetches the public metadata for a credential by name. The

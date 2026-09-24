@@ -1,6 +1,9 @@
 package bridge
 
-import "github.com/cmcoffee/gohort/gohort-desktop/core"
+import (
+	"github.com/cmcoffee/gohort/gohort-desktop/core"
+	"github.com/cmcoffee/gohort/gohort-desktop/wsbridge"
+)
 
 // daemonApprover gates server-initiated tool calls. The agent has no
 // Wails window, so it asks via the platform prompt (a native NSAlert on
@@ -12,6 +15,13 @@ import "github.com/cmcoffee/gohort/gohort-desktop/core"
 type daemonApprover struct{}
 
 func (daemonApprover) RequestApprovalBlocking(id, name string, args map[string]any) bool {
+	// Installing a capability or enabling a relay always asks: the skip
+	// toggle and "Always allow" cover calls to tools already here, not new
+	// code the server pushes (see wsbridge.IsInstallConsent).
+	if wsbridge.IsInstallConsent(name) {
+		allow, _ := promptApproval(name, args)
+		return allow
+	}
 	bc := core.ReadBridgeConfig()
 	if bc.AutoApprove {
 		return true

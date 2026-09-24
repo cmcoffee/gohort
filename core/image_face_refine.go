@@ -37,6 +37,7 @@ import (
 	"image/png"
 	"sort"
 
+	"github.com/cmcoffee/gohort/core/media"
 	xdraw "golang.org/x/image/draw"
 )
 
@@ -141,7 +142,7 @@ func (f faceRefine) run(out restImageOutcome) restImageOutcome {
 		Debug("[face_refine] undecodable render: %v", err)
 		return out
 	}
-	src, _, err := image.Decode(bytes.NewReader(raw))
+	src, _, err := media.DecodeImage(raw)
 	if err != nil {
 		Debug("[face_refine] unreadable render: %v", err)
 		return out
@@ -232,7 +233,7 @@ func (f faceRefine) render(canvas image.Image, box image.Rectangle) (image.Image
 	if err != nil {
 		return nil, fmt.Errorf("the refinement render returned invalid base64: %w", err)
 	}
-	img, _, err := image.Decode(bytes.NewReader(data))
+	img, _, err := media.DecodeImage(data)
 	if err != nil {
 		return nil, fmt.Errorf("the refinement render is unreadable: %w", err)
 	}
@@ -297,7 +298,7 @@ func pickIdentityRefs(refs []inputImage, fracs []float64) []inputImage {
 // there is no face in it (or nothing readable at all — an unreadable reference
 // is not an identity, and the render that follows would have failed on it too).
 func faceFraction(ref inputImage) float64 {
-	img, _, err := image.Decode(bytes.NewReader(ref.data))
+	img, _, err := media.DecodeImage(ref.data)
 	if err != nil {
 		return 0
 	}

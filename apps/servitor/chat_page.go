@@ -10,6 +10,8 @@
 package servitor
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -202,7 +204,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 						// overflow menu so the toolbar stays lean.
 						{Label: "Map App", Title: "Enumerate a specific command's subcommands and flags",
 							Method: "client", URL: "servitor_run_mapapp", Group: "More"},
-						{Label: "Permissions", Title: "Choose which categories of risky command run without asking: database writes, file deletion, outbound calls, system control. Unchecked categories still prompt before each command.",
+						{Label: "Permissions", Title: "Choose which categories of risky command run without asking: database writes, file changes, outbound calls, system control, software installs, unrecognized commands. Unchecked categories still prompt before each command.",
 							Method: "client", URL: "servitor_permissions", Group: "More"},
 						{Label: "Copy session", Title: "Copy the full session as markdown (every user message, every assistant round, every tool call/result) for pasting into a prompt-tuning chat.",
 							Method: "client", URL: "copy_session", Group: "More"},
@@ -218,35 +220,21 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 	page.ServeHTTP(w, r)
 }
 
-// handleChatConfirm is the AgentLoopPanel-facing confirm endpoint.
-// The runtime POSTs {id, value} when the operator clicks one of
-// the confirm card's action buttons. We translate the value
-// (allow/always/deny) back to the boolean signal the waiting
-// runSession's confirm channel expects.
+// handleChatConfirm answers one operator-approval card.
 //
-// The routing is by OWNER, and it has to be. The card's id is generated per
-// event by the bridge and carries no session, so this endpoint cannot address
-// a channel — it selects one. It used to select the first channel in the whole
-// process that would accept, on the reasoning that "servitor has at most one
-// in-flight session per user at a time". That is true per user and false per
-// process: with two people working at once, either one's click answered
-// whichever session the map happened to visit first. Since the thing being
-// answered is the approval gate for running a destructive command over SSH,
-// that made one user's Allow able to release another user's command, recorded
-// against the other user.
-//
-// So the candidate set is now the caller's OWN interactive sessions, which is
-// what the original reasoning assumed it was. Within that set the ambiguity
-// the old comment described does survive: a user with two chat sessions both
-// waiting gets the answer delivered to whichever Range reaches first. Closing
-// that needs the session id carried in the confirm event itself, which is a
-// change to the bridge's event shape rather than to this handler.
+// The card's id names the session it was raised in and the command it is
+// about (confirmCardID, stamped by the events bridge), so an answer is
+// delivered to exactly that pending command and nowhere else. It used to be
+// routed by owner alone: with two of one person's sessions waiting, the click
+// on one card released whichever command the map visited first, and before
+// that, any user's click could release any other user's command. A card that
+// does not name its session is refused rather than routed by guesswork.
 func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Identity first: it is the routing key, not just a gate.
+	// Identity first: it is half of the access decision.
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -261,50 +249,96 @@ func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 	allow := body.Value == "allow" || body.Value == "always"
 
-	delivered := deliverConfirm(user, allow)
+	delivered := deliverConfirm(user, body.ID, allow)
 	if delivered == "" {
 		// Say so rather than answering 204. A silent success settles the card
 		// as answered while the run stays blocked, which reads as servitor
 		// ignoring the click; the runtime's catch re-enables the buttons.
-		http.Error(w, "no pending confirmation on any of your sessions: it may have already been answered, or the run may have ended", http.StatusConflict)
+		http.Error(w, "that command is no longer waiting for approval: it may have already been answered, timed out, or the run may have ended", http.StatusConflict)
 		return
 	}
 	Log("[servitor] %s answered confirm on session %s: allow=%v", user, delivered, allow)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// deliverConfirm hands one operator decision to a session that user owns and
-// returns the session id it went to, or "" when none was waiting.
-//
-// Split out of the handler because this is the whole of the access decision:
-// which channels a given user may write to. Keeping it a plain function of
-// (user, allow) is what lets the rule be tested without standing up a session
-// cookie, which is the difference between a rule that is checked and a rule
-// that is merely written down.
-func deliverConfirm(user string, allow bool) string {
-	if strings.TrimSpace(user) == "" {
-		return "" // no identity, no candidates — never fall through to "any"
+// confirmCardSep separates the parts of a card id. Not a character a UUID, a
+// hex tag or the bridge's own id uses; a client-chosen session id might, which
+// is why the id is parsed from the right.
+const confirmCardSep = "~"
+
+// confirmCmdTag is a short, stable fingerprint of the command a card asks about.
+func confirmCmdTag(cmd string) string {
+	sum := sha256.Sum256([]byte(cmd))
+	return hex.EncodeToString(sum[:6])
+}
+
+// confirmCardID builds the id an approval card carries: the session, the
+// command's fingerprint, and the bridge's own id to keep cards unique.
+func confirmCardID(sessionID, cmd, nonce string) string {
+	nonce = strings.ReplaceAll(nonce, confirmCardSep, "-")
+	return "c" + confirmCardSep + sessionID + confirmCardSep + confirmCmdTag(cmd) + confirmCardSep + nonce
+}
+
+// parseConfirmCardID splits a card id into its session and command tag.
+func parseConfirmCardID(id string) (sessionID, tag string, ok bool) {
+	if !strings.HasPrefix(id, "c"+confirmCardSep) {
+		return "", "", false
 	}
-	delivered := ""
-	confirmChans.Range(func(key, val any) bool {
-		p, ok := val.(pendingConfirm)
-		if !ok || p.ch == nil || !p.interactive {
-			return true
-		}
-		// Empty owner never matches, so an untagged channel is unanswerable
-		// rather than answerable by everyone.
-		if p.owner == "" || p.owner != user {
-			return true
-		}
-		select {
-		case p.ch <- allow:
-			delivered, _ = key.(string)
-			return false // stop after the first match
-		default:
-			return true // nothing waiting on this one; keep looking
-		}
-	})
-	return delivered
+	rest := strings.TrimPrefix(id, "c"+confirmCardSep)
+	k := strings.LastIndex(rest, confirmCardSep) // before the nonce
+	if k < 0 {
+		return "", "", false
+	}
+	rest = rest[:k]
+	k = strings.LastIndex(rest, confirmCardSep) // before the tag
+	if k <= 0 {
+		return "", "", false
+	}
+	return rest[:k], rest[k+1:], true
+}
+
+// deliverConfirm hands one operator decision to the command a card is about
+// and returns the session id it went to, or "" when it was not delivered.
+//
+// All of these must hold, and each one is a way an answer used to land in the
+// wrong place:
+//   - the card names a session (an unbound card is refused, never routed);
+//   - that session belongs to user (an empty owner matches nobody);
+//   - a person answers it (read-only runs feed their own standing denial);
+//   - it is waiting on THIS command right now. A card for a command that
+//     already timed out must not release the next one, and a decision sent
+//     while nothing waits would sit in the buffered channel and answer
+//     whatever the run asked next.
+//
+// Split out of the handler because this is the whole of the access decision,
+// and a plain function of its inputs can be tested without a session cookie.
+func deliverConfirm(user, cardID string, allow bool) string {
+	if strings.TrimSpace(user) == "" {
+		return ""
+	}
+	sid, tag, ok := parseConfirmCardID(cardID)
+	if !ok {
+		return ""
+	}
+	val, ok := confirmChans.Load(sid)
+	if !ok {
+		return ""
+	}
+	p, ok := val.(pendingConfirm)
+	if !ok || p.ch == nil || !p.interactive || p.owner == "" || p.owner != user {
+		return ""
+	}
+	pending, _ := pendingCmds.Load(sid)
+	cmd, ok := pending.(string)
+	if !ok || confirmCmdTag(cmd) != tag {
+		return ""
+	}
+	select {
+	case p.ch <- allow:
+		return sid
+	default:
+		return "" // an answer is already queued for it
+	}
 }
 
 // handleProfile returns the saved system profile for an appliance

@@ -230,12 +230,16 @@ func listGuides(udb Database) []Guide {
 	return out
 }
 
-func deleteGuide(udb Database, user, id string) {
+// deleteGuide removes a guide from udb, its owner's store. owner is the guide's
+// OWNER, not whoever asked for the delete: the research collection lives in
+// the owner's collection store (ensureGuideCollection), and DeleteCollection
+// refuses anybody else's.
+func deleteGuide(udb Database, owner, id string) {
 	udb.Unset(guidesTable, id)
 	udb.Unset(revisionsTable, id)
 	// Vacuum the guide's auto-research collection (metadata + its chunks in
 	// VectorDB) so deleting a guide doesn't leave an orphaned collection behind.
-	DeleteCollection(UserDB(CollectionsDB(), user), VectorDB, user, guideCollectionID(id))
+	DeleteCollection(UserDB(CollectionsDB(), owner), VectorDB, owner, guideCollectionID(id))
 }
 
 // --- per-guide research collection -------------------------------------------

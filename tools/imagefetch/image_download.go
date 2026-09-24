@@ -3,7 +3,6 @@ package imagefetch
 import (
 	"bytes"
 	"fmt"
-	"image"
 	_ "image/gif"
 	"image/jpeg"
 	_ "image/png"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 	_ "golang.org/x/image/webp" // register the WebP decoder for image.Decode
 )
 
@@ -51,7 +51,9 @@ func normalizeToJPEG(d []byte) (data []byte, w, h int, ok bool) {
 	if !strings.HasPrefix(http.DetectContentType(d), "image/") {
 		return nil, 0, 0, false
 	}
-	img, _, derr := image.Decode(bytes.NewReader(d))
+	// Bounded: the bytes are whatever a remote server sent, and a small
+	// file can declare dimensions that decode to gigabytes.
+	img, _, derr := media.DecodeImage(d)
 	if derr != nil {
 		return nil, 0, 0, false
 	}

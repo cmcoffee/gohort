@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 const virtualModel = "gohort" // model name exposed to proxy clients
@@ -77,6 +78,9 @@ func StartOllamaServer(port int) {
 		if !p.allow(w, r) {
 			return
 		}
+		if !p.allowPath(w, r) {
+			return
+		}
 		p.handle(w, r)
 	})
 
@@ -91,7 +95,7 @@ func StartOllamaServer(port int) {
 		}
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	srv := &http.Server{Addr: addr, Handler: mux}
+	srv := newProxyServer(addr, mux)
 
 	go func() {
 		<-AppContext().Done()
@@ -119,6 +123,23 @@ func StartOllamaServer(port int) {
 // Loopback, because an inference endpoint with no authentication is not a
 // thing to expose by omission.
 const defaultBind = "127.0.0.1"
+
+// proxyMaxBodyBytes caps a proxy request body. A chat request can carry
+// images base64, so it matches the main server's default.
+const proxyMaxBodyBytes = 64 << 20
+
+// newProxyServer is the proxy's http.Server with the main server's limits, for
+// the same reasons: a client that trickles its headers holds a connection
+// forever without ReadHeaderTimeout, and a body has to stop somewhere. No
+// whole-request deadline, since a streamed completion can run for minutes.
+func newProxyServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           netgate.LimitRequestBody(h, proxyMaxBodyBytes),
+		ReadHeaderTimeout: 20 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+}
 
 // isLoopbackBind reports whether a bind address reaches only this machine.
 // The empty string means Go's "all interfaces", which it does not.
@@ -162,6 +183,57 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 	Warn("[ollama-proxy] refused unauthenticated request from %s %s %s", directPeer(r), r.Method, r.URL.Path)
 	w.Header().Set("WWW-Authenticate", `Bearer realm="gohort"`)
 	http.Error(w, "this endpoint needs a gohort personal access token in X-API-Key or Authorization: Bearer (create one on your Account page)", http.StatusUnauthorized)
+	return false
+}
+
+// ollamaClientPaths are the Ollama and OpenAI-compatible endpoints an inference
+// client needs: chat, completion, embedding and model listing. Everything else
+// the pass-through would forward is model management on the real server.
+var ollamaClientPaths = map[string]bool{
+	"/api/chat":            true,
+	"/api/generate":        true,
+	"/api/embed":           true,
+	"/api/embeddings":      true,
+	"/api/show":            true,
+	"/api/ps":              true,
+	"/api/version":         true,
+	"/v1/chat/completions": true,
+	"/v1/completions":      true,
+	"/v1/embeddings":       true,
+	"/v1/models":           true,
+}
+
+// ollamaManagePaths change what the model server holds (delete, pull, push,
+// create, copy, blob upload). Forwarded for an administrator's key only.
+var ollamaManagePaths = map[string]bool{
+	"/api/delete": true,
+	"/api/pull":   true,
+	"/api/push":   true,
+	"/api/create": true,
+	"/api/copy":   true,
+}
+
+// allowPath narrows what an admitted caller may reach. allow says WHO may use
+// the proxy; this says WHAT, because the pass-through forwards the request
+// path verbatim to the real Ollama, and "may run inference" must not mean
+// "may delete or replace the deployment's models". Loopback is admitted
+// without a key, so it cannot prove it is an administrator and gets the
+// client set only; the backend may be on another host a local user cannot
+// otherwise reach.
+func (p *ollamaProxy) allowPath(w http.ResponseWriter, r *http.Request) bool {
+	path := r.URL.Path
+	if ollamaClientPaths[path] || strings.HasPrefix(path, "/v1/models/") {
+		return true
+	}
+	if ollamaManagePaths[path] || strings.HasPrefix(path, "/api/blobs/") {
+		if user := APIKeyUser(r); user != "" && UserIsAdmin(user) {
+			return true
+		}
+		Warn("[ollama-proxy] refused model-management %s %s from %s", r.Method, path, directPeer(r))
+		http.Error(w, "model management through the proxy needs an administrator's key", http.StatusForbidden)
+		return false
+	}
+	http.NotFound(w, r)
 	return false
 }
 

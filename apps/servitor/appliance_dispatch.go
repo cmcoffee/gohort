@@ -96,8 +96,22 @@ func DispatchApplianceTool(ctx context.Context, udb Database, d ApplianceDispatc
 	// render that comes out HIGHER than what was approved means the arguments
 	// pushed it somewhere the owner did not agree to, and that is refused
 	// however permissive the grants are.
+	//
+	// One exception, for tools approved before the classifier failed closed.
+	// Those stored RiskNone for any program the old classifier did not know,
+	// and now read as unverified. When the frozen TEMPLATE itself reads as
+	// unverified, the owner approved exactly that unknown program while
+	// reading it; the arguments did not push it anywhere, so it is not the
+	// raise this check exists to catch.
 	cat := tool.Risk
-	if rendered, _ := classify_command_scoped(cmd, ""); riskRank(rendered) > riskRank(cat) {
+	rendered, _ := classify_command_scoped(cmd, "")
+	legacyUnverified := rendered == RiskUnverified && riskRank(cat) < riskRank(RiskUnverified)
+	if legacyUnverified {
+		if tmpl, _ := classify_command_scoped(tool.Template, ""); tmpl != RiskUnverified {
+			legacyUnverified = false
+		}
+	}
+	if riskRank(rendered) > riskRank(cat) && !legacyUnverified {
 		Log("[servitor] %q rendered as %s but was approved as %s: refusing", tool.Name, rendered, cat)
 		return "", fmt.Errorf("%q was approved as a %s command, but with these values it reads as %s. Nothing ran. The arguments changed what the command does beyond what was approved: use different values, or have the owner approve a capability that covers this",
 			tool.Name, string(cat), string(rendered))
@@ -118,16 +132,28 @@ func DispatchApplianceTool(ctx context.Context, udb Database, d ApplianceDispatc
 // names rank ABOVE everything known: a category this build does not recognize
 // is one that arrived from somewhere newer, and treating it as harmless is the
 // wrong way to be wrong.
+//
+// RiskUnverified ranks just above none and below every named category: it says
+// the gate could not read the command, not that the command is known to do
+// something, so a line that ALSO deletes or installs is reported as that.
 func riskRank(c RiskCategory) int {
-	if c == RiskNone {
+	switch c {
+	case RiskNone:
 		return 0
+	case RiskUnverified:
+		return 1
 	}
-	for i, known := range AllRiskCategories {
-		if known == c {
-			return i + 1
+	rank := 2
+	for _, known := range AllRiskCategories {
+		if known == RiskUnverified {
+			continue
 		}
+		if known == c {
+			return rank
+		}
+		rank++
 	}
-	return len(AllRiskCategories) + 1
+	return rank + 1
 }
 
 // ApplianceToolDefs turns a system's APPROVED tools into definitions an agent

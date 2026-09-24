@@ -102,7 +102,13 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 		// WithoutCancel keeps the request's values (deadlines and identity
 		// for anything downstream) and drops only its cancellation.
 		started := time.Now()
-		count := RunMaintenanceFunc(context.WithoutCancel(r.Context()), key)
+		first, release := claimMaintenancePress(key)
+		// Released in a defer: a pass that panics must not leave its key
+		// claimed, or no later press would ever be recorded again.
+		count := func() int {
+			defer release()
+			return RunMaintenanceFunc(context.WithoutCancel(r.Context()), key)
+		}()
 		if count < 0 {
 			http.Error(w, "unknown maintenance function", http.StatusNotFound)
 			return
@@ -111,7 +117,11 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 		// previous record standing rather than claiming a run that did not
 		// finish. RunMaintenanceFunc blocks for the whole pass; the progress
 		// endpoint is what the page watches meanwhile.
-		a.recordMaintenanceRun(key, AuthCurrentUser(r), count, time.Since(started))
+		// A press that joined one already running reports the count and
+		// leaves the record to the press that started it.
+		if first {
+			a.recordMaintenanceRun(key, AuthCurrentUser(r), count, time.Since(started))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]int{"fixed": count})
 	})

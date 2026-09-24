@@ -78,7 +78,13 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 		}
 		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Running locally: %s", appliance.Command)})
 		execFn = func(cmd string) (string, error) {
-			return a.exec_local_ctx(ctx, cmd, appliance.WorkDir, appliance.EnvVars)
+			out, err := a.exec_local_ctx(ctx, cmd, appliance.WorkDir, appliance.EnvVars)
+			// A user the appliance is shared with never sees its EnvVars
+			// values (see scrubEnvValues).
+			if envHiddenFrom(appliance, ownerUser, userID) {
+				out = scrubEnvValues(out, appliance.EnvVars)
+			}
+			return out, err
 		}
 	} else {
 		client, err := acquireConn(userID, appliance)
@@ -130,10 +136,11 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 	// classification, allowances and confirmation prompt that a probe command
 	// gets — it previously had none at all.
 	gateCommand := func(cmd string) error {
-		cat, reason := classify_command_scoped(cmd, scratch)
-		if cat == RiskNone {
+		hits := assess_command(cmd, scratch)
+		if len(hits) == 0 {
 			return nil
 		}
+		cat, reason := hits[0].cat, hits[0].reason
 		if udb != nil {
 			var alwaysOK bool
 			if udb.Get(alwaysAllowTable, cmd, &alwaysOK) && alwaysOK {
@@ -148,10 +155,14 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 			// The scope is named in the status line because "why did that run
 			// without asking me" is the question anyone reads this for, and a
 			// bare "auto-allowed" cannot answer it.
-			if ok, scope := autoRunAllowed(udb, ActingAgent(ctx), appliance.ID, cat); ok {
-				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + " via " + string(scope) + "): " + cmd})
+			// Every risk on the line must be covered, not just the first.
+			set, scope := ResolveCommandGrant(udb, ActingAgent(ctx), appliance.ID)
+			need, why := risk_needing_approval(hits, func(c RiskCategory) bool { return set[c] })
+			if need == RiskNone {
+				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + hit_categories(hits) + " via " + string(scope) + "): " + cmd})
 				return nil
 			}
+			cat, reason = need, why
 		}
 		// An acting agent has nobody watching this stream, so parking the
 		// command here would block for five minutes and time out. Refuse now,

@@ -28,7 +28,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 							{Label: "Ollama", Value: "http://localhost:11434"},
 							{Label: "llama.cpp", Value: "http://localhost:8080/v1"}}},
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
-						Help:   "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
+						Help: "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
 						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the gohort host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +
 							"Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
 						Presets: bedrockRegionPresets()},
@@ -82,7 +82,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 						Help:   "For local / self-hosted lead providers. On Bedrock this OVERRIDES the AWS region below.",
 						Detail: "Anything here is used as the host verbatim, so on Bedrock the region box stops deciding where calls go while going on displaying whatever it was set to. Leave it blank unless you are pointing at a private link or a VPC endpoint."},
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
-						Help:   "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
+						Help: "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
 						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the gohort host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +
 							"Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
 						Presets: bedrockRegionPresets()},
@@ -186,6 +186,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 			Detail:   "Point Ollama clients at gohort's port instead of Ollama's and they share the local model scheduler.\n\nThis is a separate listener on its own port. It is not behind the dashboard login, the admin IP allowlist, or TLS, so what it is bound to is what decides who can reach it. Changing the port or interface requires a restart.",
 			Body: ui.FormPanel{
 				Source: "api/settings",
+				Method: settingsSaveMethod,
 				Fields: []ui.FormField{
 					{Field: "ollama_proxy_enabled", Label: "Enable Ollama Proxy", Type: "toggle"},
 					{Field: "ollama_proxy_port", Label: "Proxy port", Type: "number",

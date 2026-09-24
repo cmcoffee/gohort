@@ -22,7 +22,7 @@ func TestFetchURLAutoRoutesInternalHostBeforeSSRF(t *testing.T) {
 
 	if err := Secure().Save(SecureCredential{
 		Name: "ts3_api", Type: SecureCredBearer,
-		BaseURL: "http://teamspeak.snuglab.local:10080",
+		BaseURL: "http://chat-server.example.local:10080",
 	}, "tok"); err != nil {
 		t.Fatalf("save credential: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestFetchURLAutoRoutesInternalHostBeforeSSRF(t *testing.T) {
 	sess := &ToolSession{Username: "alice", DeniedCredentials: map[string]bool{"ts3_api": true}}
 	tool := &FetchURLTool{}
 
-	_, err := tool.runImpl(map[string]any{"url": "http://teamspeak.snuglab.local:10080/clientlist"}, sess)
+	_, err := tool.runImpl(map[string]any{"url": "http://chat-server.example.local:10080/clientlist"}, sess)
 	if err == nil {
 		t.Fatal("expected an error")
 	}

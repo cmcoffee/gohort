@@ -296,7 +296,7 @@ func TestResolveAspect(t *testing.T) {
 
 func TestImageHostPattern(t *testing.T) {
 	cases := map[string]string{
-		"http://alpaca.snuglab.local:8188/prompt":  "http://alpaca.snuglab.local:8188/**",
+		"http://gpu-box.example.local:8188/prompt": "http://gpu-box.example.local:8188/**",
 		"https://api.example.com/sdapi/v1/txt2img": "https://api.example.com/**",
 		"http://localhost:7860/foo":                "http://localhost:7860/**",
 	}
@@ -307,8 +307,8 @@ func TestImageHostPattern(t *testing.T) {
 	}
 	// The derived pattern must actually admit the connector's own http host but
 	// reject a different host — the whole point of scoping instead of http*://**.
-	p := imageHostPattern("http://alpaca.snuglab.local:8188/prompt")
-	if !urlAllowedByCredential(SecureCredential{AllowedURLPattern: p}, "http://alpaca.snuglab.local:8188/history/abc") {
+	p := imageHostPattern("http://gpu-box.example.local:8188/prompt")
+	if !urlAllowedByCredential(SecureCredential{AllowedURLPattern: p}, "http://gpu-box.example.local:8188/history/abc") {
 		t.Error("scoped pattern should allow the same host's poll URL")
 	}
 	if urlAllowedByCredential(SecureCredential{AllowedURLPattern: p}, "http://169.254.169.254/latest/meta-data") {
@@ -648,7 +648,7 @@ func TestImg2ImgTemplateIsPureData(t *testing.T) {
 //
 // A peer render is exactly this shape: the far side runs the whole job under
 // its own ten-minute budget and replies with pixels. Every peer edit that took
-// longer than half a minute came back as "den.snuglab.com did not respond
+// longer than half a minute came back as "image-host.example.com did not respond
 // within 30s", which reads as a network fault rather than a deadline nobody
 // could see.
 

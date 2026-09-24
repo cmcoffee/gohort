@@ -11,6 +11,13 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// settingsSaveMethod is how every panel backed by api/settings saves: PATCH,
+// so a change sends only the field that changed. Several panels share the one
+// record, and a POST sends back the whole of it as loaded, which wrote every
+// tunable's effective value as an explicit setting and put back whatever
+// another panel or another admin had changed since the page opened.
+const settingsSaveMethod = "PATCH"
+
 // registerSystemRoutes wires the system API under the admin sub-mux.
 func (a *AdminApp) registerSystemRoutes(sub *http.ServeMux) {
 	// API: list available apps.
@@ -46,9 +53,11 @@ func (a *AdminApp) registerSystemRoutes(sub *http.ServeMux) {
 		switch r.Method {
 		case http.MethodGet:
 			a.handleGetSettings(w, r)
-		case http.MethodPut, http.MethodPost:
-			// FormPanel auto-save defaults to POST; accept both so an
-			// in-place edit form saves without a per-field Method override.
+		case http.MethodPut, http.MethodPost, http.MethodPatch:
+			// The settings panels save with PATCH, which sends only the field
+			// that changed (see settingsForm). POST and PUT stay for the chip
+			// picker and any older caller; every key here is optional, so the
+			// handler is a partial update whichever verb carried it.
 			a.handleUpdateSettings(w, r)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -133,8 +142,10 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	if ollama_proxy_bind == "" {
 		ollama_proxy_bind = "127.0.0.1" // matches the proxy's own default
 	}
-	a.db.Get(WebTable, "fetch_cache_quota_mb", &fetch_cache_quota_mb)
-	if fetch_cache_quota_mb == 0 {
+	// Presence again: 0 is the documented "disables caching", and showing an
+	// operator who chose it the 100 default would have the next save of this
+	// panel turn the cache back on.
+	if !a.db.Get(WebTable, "fetch_cache_quota_mb", &fetch_cache_quota_mb) || fetch_cache_quota_mb < 0 {
 		fetch_cache_quota_mb = 100
 	}
 	if session_days == 0 {
@@ -389,6 +400,15 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	// change here. A present numeric key within its spec's [Min, Max] is
 	// stored as float64 (TuneInt casts); out-of-range or non-numeric is
 	// silently ignored. Invalidate the cache once if anything changed.
+	//
+	// A value is stored only when it is an actual override. The GET reports
+	// every knob at its EFFECTIVE value, and a panel that posts back the whole
+	// record it loaded used to write each one as an explicit setting, so
+	// saving one unrelated field froze every knob at today's default and a
+	// later release's better default never reached this deployment. So a
+	// value equal to what is already stored is left alone, and a value equal
+	// to the default is stored as no value at all (which also clears a pin
+	// the old behaviour left behind).
 	var generic map[string]any
 	if json.Unmarshal(raw, &generic) == nil {
 		tuned := false
@@ -413,6 +433,19 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			if f < s.Min || f > s.Max {
+				continue
+			}
+			var stored float64
+			has := a.db.Get(WebTable, s.Key, &stored)
+			if f == s.Default {
+				if has {
+					a.db.Unset(WebTable, s.Key)
+					Log("[admin] user %q set %s back to its default (%g)", current, s.Key, f)
+					tuned = true
+				}
+				continue
+			}
+			if has && stored == f {
 				continue
 			}
 			a.db.Set(WebTable, s.Key, f)

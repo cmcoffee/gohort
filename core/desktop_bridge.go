@@ -147,7 +147,7 @@ type DesktopBridge struct {
 type DesktopInstall struct {
 	Servers        map[string]DesktopMCPServer `json:"servers,omitempty"`
 	Commands       map[string]DesktopCommand   `json:"commands,omitempty"`
-	Bridges        map[string]DesktopBridge    `json:"bridges,omitempty"`          // keyed by SERVICE id ("imessage")
+	Bridges        map[string]DesktopBridge    `json:"bridges,omitempty"`         // keyed by SERVICE id ("imessage")
 	Remove         []string                    `json:"remove,omitempty"`          // MCP server names
 	RemoveCommands []string                    `json:"remove_commands,omitempty"` // command names
 	RemoveBridges  []string                    `json:"remove_bridges,omitempty"`  // SERVICE ids to disable
@@ -317,6 +317,9 @@ func DesktopClientUser(r *http.Request) string {
 	if key == "" {
 		return ""
 	}
+	if !desktopScopeAllows(key) {
+		return ""
+	}
 	apiKeyValidatorsMu.RLock()
 	defer apiKeyValidatorsMu.RUnlock()
 	for _, fn := range apiKeyValidators {
@@ -327,13 +330,47 @@ func DesktopClientUser(r *http.Request) string {
 	return ""
 }
 
+// desktopBridgeFeatureKey is the per-key scope a personal access token needs
+// before it can stand in for the desktop. Declared shareable so the key editor
+// offers it; a legacy unscoped key keeps working (the usual grandfather).
+const desktopBridgeFeatureKey = "desktop"
+
+func init() {
+	RegisterShareableFeature(ShareableFeature{
+		Key:   desktopBridgeFeatureKey,
+		Label: "Desktop bridge",
+		Desc:  "Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.",
+	})
+}
+
+// desktopScopeAllows reports whether a presented secret may authenticate the
+// desktop surface. Only personal access tokens carry a scope; desktop and
+// bridge keys exist for this and pass. A scoped token has to name the desktop
+// feature: otherwise a key its owner narrowed to, say, the /v1 endpoint could
+// open the tool bridge and announce tools into every agent the owner runs.
+func desktopScopeAllows(secret string) bool {
+	tok := accountTokenBySecret(secret)
+	if tok == nil {
+		return true
+	}
+	if !tok.AllowsFeature(desktopBridgeFeatureKey) || !FeatureAllowedForUser(RootDB, desktopBridgeFeatureKey, tok.Owner) {
+		Warn("[desktop-bridge] key %q (%s) of %s is not scoped for the desktop bridge: refused", tok.Name, tok.ID, tok.Owner)
+		return false
+	}
+	return true
+}
+
 // DesktopBridgeUserOf is the auth resolver the desktop WS mount uses:
 // cookie session first (the viewer's logged-in webview), then the
-// X-API-Key header (the headless daemon). Returning "" rejects the
+// X-API-Key header (the headless daemon), which must be scoped for the
+// desktop when it is a personal access token. Returning "" rejects the
 // connection.
 func DesktopBridgeUserOf(r *http.Request) string {
 	if u := AuthCurrentUser(r); u != "" {
 		return u
+	}
+	if !desktopScopeAllows(rawAPIKey(r)) {
+		return ""
 	}
 	return userFromAPIKey(r)
 }

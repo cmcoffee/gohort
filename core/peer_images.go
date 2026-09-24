@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 // peerImageBudget bounds a single render. Generous — a multi-step edit on a
@@ -94,6 +96,9 @@ func HandlePeerImageRender(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Several base64 source images can outgrow the server-wide default body
+	// cap, so this route takes the larger figure it has always allowed.
+	netgate.RaiseBodyLimit(r, 128<<20)
 	var req peerImageRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<20)).Decode(&req); err != nil {
 		peerDeny(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())

@@ -10,9 +10,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -89,18 +92,29 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 	}
 	defer os.RemoveAll(dir)
 
+	// Checked again here, not only when the record was saved: a record from
+	// before the check, an import, or a store edited some other way reaches
+	// this line too, and this is the line that runs git on the server.
+	if err := validateRepoSource(rec.RepoURL, rec.RepoBranch, UserIsAdmin(user)); err != nil {
+		Log("[servitor.repo] refusing to clone %s: %v", rec.Name, err)
+		return
+	}
 	args := []string{"clone", "--depth", "1", "--single-branch"}
 	if b := strings.TrimSpace(rec.RepoBranch); b != "" {
 		args = append(args, "--branch", b)
 	}
-	args = append(args, repoCloneURL(rec), dir)
+	// "--" so neither operand can ever be read as an option, whatever it
+	// starts with.
+	args = append(args, "--", repoCloneURL(rec), dir)
 
 	// Derive the timeout from the caller's ctx so a session Cancel aborts the
 	// clone mid-flight, not just the surrounding work.
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	// GIT_ALLOW_PROTOCOL also binds what git reaches on its own behalf
+	// (submodules, redirects), not just the URL checked above.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https:ssh")
 	if _, err := cmd.CombinedOutput(); err != nil {
 		Log("[servitor.repo] clone failed for %s: %v", rec.Name, err)
 		return
@@ -188,6 +202,60 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 	udb.Set(applianceTable, applianceID, rec)
 	Log("[servitor.repo] ingested %s: %d files (%d new, %d changed, %d removed)",
 		rec.Name, count, added, changed, removed)
+}
+
+// scpLikeRepo is the "user@host:path" form git accepts for ssh.
+var scpLikeRepo = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9.-]*:[A-Za-z0-9._~/-][^\s]*$`)
+
+// repoBranchRe is what a branch name may contain here: git's ref characters,
+// minus anything that could be read as an option or a revision expression.
+var repoBranchRe = regexp.MustCompile(`^[A-Za-z0-9._][A-Za-z0-9._/-]*$`)
+
+// validateRepoSource decides whether a repo appliance may be cloned from url.
+//
+// The clone runs git ON THE GOHORT SERVER, as the gohort process, with a URL
+// any user typed. Unchecked, that was a way to run a program there ("ext::"
+// transport, "--upload-pack=..." read as an option), to read the server's own
+// repositories ("file://", a bare local path) into a store the user can then
+// search, or to clone with the service account's ssh keys. So:
+//   - https:// always; ssh:// or the scp form "git@host:path" only for an
+//     admin-owned appliance, because ssh authenticates with the server's own
+//     keys - the same line the ssh appliance draws for a non-admin owner.
+//   - nothing that starts with "-", no whitespace or control characters, and a
+//     host that could not be taken for an option by ssh.
+//   - a branch made of ref characters only.
+func validateRepoSource(rawURL, branch string, ownerIsAdmin bool) error {
+	u := strings.TrimSpace(rawURL)
+	if u == "" {
+		return fmt.Errorf("repo url required")
+	}
+	if strings.HasPrefix(u, "-") || strings.IndexFunc(u, func(r rune) bool { return r <= ' ' || r == 0x7f }) >= 0 {
+		return fmt.Errorf("repo url may not start with '-' or contain spaces or control characters")
+	}
+	if b := strings.TrimSpace(branch); b != "" && (!repoBranchRe.MatchString(b) || strings.Contains(b, "..")) {
+		return fmt.Errorf("branch %q is not a plain branch name", b)
+	}
+	lower := strings.ToLower(u)
+	switch {
+	case strings.HasPrefix(lower, "https://"):
+		p, err := url.Parse(u)
+		if err != nil || p.Host == "" || strings.HasPrefix(p.Hostname(), "-") {
+			return fmt.Errorf("repo url is not a valid https:// address")
+		}
+		return nil
+	case strings.HasPrefix(lower, "ssh://"):
+		p, err := url.Parse(u)
+		if err != nil || p.Host == "" || strings.HasPrefix(p.Hostname(), "-") || strings.HasPrefix(p.User.Username(), "-") {
+			return fmt.Errorf("repo url is not a valid ssh:// address")
+		}
+	case scpLikeRepo.MatchString(u):
+	default:
+		return fmt.Errorf("repo url must be https:// (or, for an admin, ssh:// or git@host:path); other transports such as file://, ext:: or a local path are not allowed")
+	}
+	if !ownerIsAdmin {
+		return fmt.Errorf("an ssh repo url clones with the gohort server's own ssh keys, so only an admin-owned repo may use one: use an https:// url with an access token instead")
+	}
+	return nil
 }
 
 // repoCloneURL injects the access token (if any) for private-repo HTTPS clone.

@@ -130,3 +130,29 @@ func TestTheMaintenanceListAsksForItsHistory(t *testing.T) {
 	}
 	var _ ui.ActionList = list
 }
+
+// A second press while the first is running joins it; only the press that
+// started the run records it, so the record keeps the starter's name and the
+// real duration.
+func TestOnlyThePressThatStartedARunRecordsIt(t *testing.T) {
+	first, release := claimMaintenancePress("reembed")
+	if !first {
+		t.Fatal("the first press should own the run")
+	}
+	if again, rel2 := claimMaintenancePress("reembed"); again {
+		t.Error("a press during the run should not record it")
+	} else {
+		rel2()
+	}
+	if other, rel3 := claimMaintenancePress("dedupe"); !other {
+		t.Error("a different pass is its own run")
+	} else {
+		rel3()
+	}
+	release()
+	if next, rel4 := claimMaintenancePress("reembed"); !next {
+		t.Error("after the run returns, the next press owns the next run")
+	} else {
+		rel4()
+	}
+}

@@ -45,7 +45,7 @@ func lookupTempToolCache(sess *ToolSession, tt *TempTool, args map[string]any) (
 	if !ok {
 		return "", false
 	}
-	storeKey := tempToolCacheStoreKey(tt.Name, marker, rendered)
+	storeKey := tempToolCacheStoreKey(cacheToolOwner(sess, tt), tt.Name, marker, rendered)
 	var rec tempToolCacheRecord
 	if !RootDB.Get(tempToolCacheTable, storeKey, &rec) {
 		return "", false
@@ -83,7 +83,7 @@ func storeTempToolCache(sess *ToolSession, tt *TempTool, args map[string]any, re
 	if !ok {
 		return
 	}
-	RootDB.Set(tempToolCacheTable, tempToolCacheStoreKey(tt.Name, marker, rendered), tempToolCacheRecord{
+	RootDB.Set(tempToolCacheTable, tempToolCacheStoreKey(cacheToolOwner(sess, tt), tt.Name, marker, rendered), tempToolCacheRecord{
 		Result:   result,
 		StoredAt: time.Now(),
 	})
@@ -93,8 +93,29 @@ func storeTempToolCache(sess *ToolSession, tt *TempTool, args map[string]any, re
 // separator) keeps the parts unambiguously delimited even if a tool
 // name, scope marker, or rendered key string contains a colon, slash,
 // or any other punctuation we might otherwise have used.
-func tempToolCacheStoreKey(toolName, scopeMarker, renderedKey string) string {
-	return toolName + "\x1f" + scopeMarker + "\x1f" + renderedKey
+//
+// The tool's OWNER leads the key because tool names are per-user: two
+// users' tools called "lookup" are different code, and keyed by the bare
+// name a "global" entry one of them wrote was served to the other.
+func tempToolCacheStoreKey(owner, toolName, scopeMarker, renderedKey string) string {
+	return owner + "\x1f" + toolName + "\x1f" + scopeMarker + "\x1f" + renderedKey
+}
+
+// cacheToolOwner names whose tool this is, the same way a name resolves at
+// dispatch: the caller's own pool first, else the deployment-wide shared
+// tool of that name, else a draft of the caller's. Only consulted when the
+// tool declares a cache, so the pool scan stays off the ordinary path.
+func cacheToolOwner(sess *ToolSession, tt *TempTool) string {
+	if sess == nil {
+		return ""
+	}
+	if toolIsGranted(sess, tt) {
+		return sess.Username
+	}
+	if owner, ok := SharedToolOwners(sess.DB)[tt.Name]; ok {
+		return owner
+	}
+	return sess.Username
 }
 
 // cacheScopeMarker resolves the spec's scope to a concrete prefix.
@@ -105,10 +126,12 @@ func tempToolCacheStoreKey(toolName, scopeMarker, renderedKey string) string {
 func cacheScopeMarker(sess *ToolSession, scope string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(scope)) {
 	case "session":
-		if sess == nil || sess.ChatSessionID == "" {
+		if sess == nil || sess.ChatSessionID == "" || sess.Username == "" {
 			return "", false
 		}
-		return "session:" + sess.ChatSessionID, true
+		// Session ids are not unique across users (channel and MCP threads
+		// use fixed names per user), so the user is part of the marker.
+		return "session:" + sess.Username + "\x1f" + sess.ChatSessionID, true
 	case "user", "":
 		if sess == nil || sess.Username == "" {
 			return "", false

@@ -141,14 +141,14 @@ func TestSecuredCredentialSkipsAutoRoute(t *testing.T) {
 // (.local / private IP) still covers it. This is why moving the auto-route
 // ahead of the non-public-host SSRF refusal in the sandbox fetch hook lets a
 // script reach a self-hosted, credential-scoped API — the exact case
-// (ts3_api on teamspeak.snuglab.local) that broke when its host got scoped.
+// (ts3_api on chat-server.example.local) that broke when its host got scoped.
 func TestAutoRouteMatchesInternalHost(t *testing.T) {
 	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
 	// Non-secured, enabled, internal .local BaseURL, secret set.
-	s.db.Set(secureAPITable, "ts3_api", SecureCredential{Name: "ts3_api", BaseURL: "http://teamspeak.snuglab.local:10080"})
+	s.db.Set(secureAPITable, "ts3_api", SecureCredential{Name: "ts3_api", BaseURL: "http://chat-server.example.local:10080"})
 	s.db.Set(secureAPITable, secureCredSecretKey("ts3_api"), "tok")
 
-	name, err := s.AutoRouteCredential("http://teamspeak.snuglab.local:10080/clientlist")
+	name, err := s.AutoRouteCredential("http://chat-server.example.local:10080/clientlist")
 	if err != nil {
 		t.Fatalf("auto-route errored on a covered internal host: %v", err)
 	}

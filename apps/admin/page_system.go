@@ -46,6 +46,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 			Subtitle: "Authentication, naming, and operational quotas. Saved automatically as you edit.",
 			Body: ui.FormPanel{
 				Source: "api/settings",
+				Method: settingsSaveMethod,
 				Fields: []ui.FormField{
 					{Field: "allow_signup", Label: "Allow public signup", Type: "toggle",
 						Help: "When off, only existing accounts can sign in. Approvals can still happen via the user list."},
@@ -92,6 +93,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 			Detail:   "One rule per line, and rules are OR'd: a message matching ANY rule wakes the agent. These merge on top of each channel's own per-channel rules, set in the channel rail. Leave it blank to apply no global rule.",
 			Body: ui.FormPanel{
 				Source: "api/settings",
+				Method: settingsSaveMethod,
 				Fields: []ui.FormField{
 					{Field: "channel_wake_rules", Label: "Master rules", Type: "textarea", Rows: 5,
 						Placeholder: "Respond only when called by name\nAlways respond to a direct 1:1 message",

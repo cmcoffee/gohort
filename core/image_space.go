@@ -20,6 +20,8 @@
 package core
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -168,7 +170,26 @@ func recentImageDir(sess *ToolSession) string {
 
 // safeRecentUser reduces a username to something safe as a single path element,
 // so a username can never escape the directory or collide with a sibling.
+//
+// The reduction is lossy (case folds, "." and "@" become "_", long names are
+// cut), and usernames are case-sensitive, so two different people could land
+// in one folder and read each other's pictures. A name that survives unchanged
+// keeps its folder; any other gets a hash of the original appended after "--",
+// which an unchanged name never contains, so no two users can share a folder.
 func safeRecentUser(user string) string {
+	out := reduceRecentUser(user)
+	if out == user && !strings.Contains(out, "--") {
+		return out
+	}
+	if len(out) > 40 {
+		out = out[:40]
+	}
+	sum := sha256.Sum256([]byte(user))
+	return out + "--" + hex.EncodeToString(sum[:8])
+}
+
+// reduceRecentUser is safeRecentUser's lossy character pass.
+func reduceRecentUser(user string) string {
 	var b strings.Builder
 	for _, r := range user {
 		switch {

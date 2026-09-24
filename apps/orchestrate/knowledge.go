@@ -35,6 +35,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 func init() {
@@ -523,6 +524,7 @@ func (T *OrchestrateApp) handleAgentKnowledgeUpload(w http.ResponseWriter, r *ht
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	netgate.RaiseBodyLimit(r, documentUploadBodyBytes)
 	if T.DB == nil {
 		http.Error(w, "DB not initialized", http.StatusInternalServerError)
 		return

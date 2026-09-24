@@ -514,8 +514,8 @@ func sameImageHost(submitURL, otherURL string) error {
 //
 // Reported from the field as an impossible error:
 //
-//	upload_url host "alpaca.snuglab.locl:8188" must match
-//	submit_url host "alpaca.snuglab.local:8188"
+//	upload_url host "gpu-box.example.locl:8188" must match
+//	submit_url host "gpu-box.example.local:8188"
 //
 // One missing letter. Printing both strings is the right thing to do and still
 // useless — at a glance they are the same string, so the message reads as the

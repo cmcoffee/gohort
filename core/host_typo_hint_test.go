@@ -1,7 +1,7 @@
 // The reported error printed both hostnames and was still unreadable:
 //
-//	upload_url host "alpaca.snuglab.locl:8188" must match
-//	submit_url host "alpaca.snuglab.local:8188"
+//	upload_url host "gpu-box.example.locl:8188" must match
+//	submit_url host "gpu-box.example.local:8188"
 //
 // One missing letter, in two strings that look identical at a glance — so the
 // message read as the validator misfiring rather than as a typo, and the admin
@@ -14,14 +14,14 @@ import (
 )
 
 func TestTheTypoIsPointedAtNotJustPrinted(t *testing.T) {
-	err := sameImageHost("http://alpaca.snuglab.local:8188/prompt", "http://alpaca.snuglab.locl:8188/upload/image")
+	err := sameImageHost("http://gpu-box.example.local:8188/prompt", "http://gpu-box.example.locl:8188/upload/image")
 	if err == nil {
 		t.Fatal("mismatched hosts must still be an error")
 	}
 	msg := err.Error()
 
 	// Both hosts still named — the hint is an addition, not a replacement.
-	for _, want := range []string{"alpaca.snuglab.local:8188", "alpaca.snuglab.locl:8188"} {
+	for _, want := range []string{"gpu-box.example.local:8188", "gpu-box.example.locl:8188"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the message must still name %q:\n%s", want, msg)
 		}
@@ -53,7 +53,7 @@ func TestNearIdenticalHosts(t *testing.T) {
 		want bool
 		why  string
 	}{
-		{"alpaca.snuglab.local:8188", "alpaca.snuglab.locl:8188", true, "one deletion — the reported case"},
+		{"gpu-box.example.local:8188", "gpu-box.example.locl:8188", true, "one deletion — the reported case"},
 		{"box:8188", "box:8189", true, "one substitution, a mistyped port"},
 		{"box.local:8188", "box.locall:8188", true, "one insertion"},
 		{"box.local:8188", "box.lcoal:8188", true, "transposition is two edits"},

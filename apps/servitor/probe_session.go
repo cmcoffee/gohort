@@ -358,7 +358,11 @@ func (pr *probeRun) sshExec(cmd string) (string, error) {
 		return peerExecFor(pr.ctx, pr.appliance)(cmd)
 	}
 	if pr.appliance.Type == "command" {
-		return pr.a.exec_local_ctx(pr.ctx, cmd, pr.appliance.WorkDir, pr.appliance.EnvVars)
+		out, err := pr.a.exec_local_ctx(pr.ctx, cmd, pr.appliance.WorkDir, pr.appliance.EnvVars)
+		if envHiddenFrom(pr.appliance, pr.ownerUser, pr.userID) {
+			out = scrubEnvValues(out, pr.appliance.EnvVars)
+		}
+		return out, err
 	}
 	result, err := pr.a.exec_command_ctx(pr.ctx, cmd)
 	if err == nil {
@@ -395,10 +399,18 @@ func (pr *probeRun) sshExec(cmd string) (string, error) {
 // enforces — including with its `input` lines, which are commands typed into
 // an interactive session and are gated individually below.
 func (pr *probeRun) gateCommand(cmd string) error {
-	cat, reason := classify_command_scoped(cmd, pr.scratch)
-	if cat == RiskNone {
+	return pr.gateHits(cmd, assess_command(cmd, pr.scratch))
+}
+
+// gateHits is the gate over an already-classified command: label is what the
+// operator is shown (and what an always-allow is keyed by), hits is every risk
+// found in it. A category grant must cover ALL of the hits; one that covers
+// only some would let "rm x; python3 y" through on a file_delete grant alone.
+func (pr *probeRun) gateHits(cmd string, hits []risk_hit) error {
+	if len(hits) == 0 {
 		return nil
 	}
+	cat, reason := hits[0].cat, hits[0].reason
 	if pr.udb != nil {
 		// Per-command always-allow (operator trusts this exact command).
 		var alwaysOK bool
@@ -416,10 +428,13 @@ func (pr *probeRun) gateCommand(cmd string) error {
 		// The scope is named in the status line because "why did that run
 		// without asking me" is the question anyone reads this for, and a
 		// bare "auto-allowed" cannot answer it.
-		if ok, scope := autoRunAllowed(pr.udb, ActingAgent(pr.ctx), pr.appliance.ID, cat); ok {
-			emit(pr.id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + " via " + string(scope) + "): " + cmd})
+		set, scope := ResolveCommandGrant(pr.udb, ActingAgent(pr.ctx), pr.appliance.ID)
+		need, why := risk_needing_approval(hits, func(c RiskCategory) bool { return set[c] })
+		if need == RiskNone {
+			emit(pr.id, probeEvent{Kind: "status", Text: "Auto-allowed (" + hit_categories(hits) + " via " + string(scope) + "): " + cmd})
 			return nil
 		}
+		cat, reason = need, why
 	}
 	// An acting agent has nobody watching this stream, so parking the
 	// command here would block for five minutes and time out. Refuse now,
@@ -619,16 +634,15 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 			if err := pr.gateCommand(cmd); err != nil {
 				return "", err
 			}
-			// The input lines are commands typed into the interactive session
-			// the command above opened — `run_pty("bash", input: "rm -rf …")`
-			// is a shell command by another route, so each line is gated too.
-			// A password line classifies as benign and passes without ever
-			// being shown in a confirmation prompt.
-			for _, line := range strings.Split(inputText, "\n") {
-				if strings.TrimSpace(line) == "" {
-					continue
-				}
-				if err := pr.gateCommand(line); err != nil {
+			// The input lines are typed into the interactive session the
+			// command above opened, and are judged in its language: shell
+			// lines for a shell, SQL for a SQL client, and so on (see
+			// risk_pty.go). `run_pty("psql", input: "DELETE ...")` is a
+			// database write by another route, and used to pass as an
+			// unknown shell word. A password answer is let through unread
+			// and is never shown in a confirmation prompt.
+			for _, lr := range pty_input_risks(cmd, inputText, pr.scratch) {
+				if err := pr.gateHits(lr.line, lr.hits); err != nil {
 					return "", err
 				}
 			}

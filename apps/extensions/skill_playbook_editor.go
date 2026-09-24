@@ -43,21 +43,14 @@ func (T *Extensions) handleSkillPlaybookPage(w http.ResponseWriter, r *http.Requ
 	// Scoped to the caller's own pool by the lookup itself: a skill id that
 	// is not theirs is not found, which is the same answer as one that does
 	// not exist and tells a prober nothing either way.
-	skill, found := findSkill(AuthDB(), username, strings.TrimSpace(r.URL.Query().Get("id")))
+	// Published ones included: the Playbook column links here from the
+	// author's row for a skill they published, too.
+	skill, found := findOwnSkill(username, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
 		http.NotFound(w, r)
 		return
 	}
-	skillPlaybookPage(skill).ServeHTTP(w, r)
-}
-
-func findSkill(db Database, username, id string) (SkillRecord, bool) {
-	for _, s := range LoadSkills(db, username) {
-		if s.ID == id {
-			return s, true
-		}
-	}
-	return SkillRecord{}, false
+	skillPlaybookPage(skill.SkillRecord).ServeHTTP(w, r)
 }
 
 // skillPlaybookPage builds the page: one section per rule with its form,
@@ -355,7 +348,7 @@ func (T *Extensions) handleSkillPlaybookRule(w http.ResponseWriter, r *http.Requ
 	}
 	skillID := strings.TrimSpace(r.URL.Query().Get("id"))
 	rest := strings.Trim(strings.TrimSpace(r.URL.Query().Get("rule")), "/")
-	skill, found := findSkill(AuthDB(), username, skillID)
+	skill, found := findOwnSkill(username, skillID)
 	if !found {
 		http.NotFound(w, r)
 		return
@@ -372,7 +365,7 @@ func (T *Extensions) handleSkillPlaybookRule(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		skill.Playbook = append(skill.Playbook, mergeRuleForm(PlaybookRule{}, body))
-		if _, err := SaveSkill(AuthDB(), username, skill); err != nil {
+		if _, err := skill.save(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -398,7 +391,7 @@ func (T *Extensions) handleSkillPlaybookRule(w http.ResponseWriter, r *http.Requ
 		} else {
 			skill.Playbook[n] = mergeRuleForm(skill.Playbook[n], body)
 		}
-		saved, err := SaveSkill(AuthDB(), username, skill)
+		saved, err := skill.save()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

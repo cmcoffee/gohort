@@ -91,7 +91,7 @@ func renewedExpiry(sess authSession, now time.Time) (int64, bool) {
 	return next.Unix(), true
 }
 
-// AuthValidateSessionSliding validates a session token and, when it has passed
+// authValidateSessionSliding validates a session token and, when it has passed
 // its renewal point, extends it and re-stamps the browser cookie.
 //
 // The cookie has to be re-stamped too. Its MaxAge is the browser's own copy of
@@ -100,7 +100,10 @@ func renewedExpiry(sess authSession, now time.Time) (int64, bool) {
 //
 // Falls back to plain validation whenever it cannot renew — no writer, no
 // cookie, an unknown token — so this is never the reason a request fails.
-func AuthValidateSessionSliding(db Database, w http.ResponseWriter, token string) (string, bool) {
+//
+// r is the request being served, read only to decide the cookie's Secure flag
+// the same way login does (see requestIsHTTPS).
+func authValidateSessionSliding(db Database, w http.ResponseWriter, r *http.Request, token string) (string, bool) {
 	user, ok := AuthValidateSession(db, token)
 	if !ok || w == nil || db == nil {
 		return user, ok
@@ -122,7 +125,7 @@ func AuthValidateSessionSliding(db Database, w http.ResponseWriter, token string
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   TLSEnabled(),
+		Secure:   requestIsHTTPS(r),
 		// Seconds REMAINING, not the full window: at the absolute ceiling the
 		// two differ, and handing the browser the full window there would
 		// leave it holding a cookie the server has already stopped honouring.
@@ -141,11 +144,7 @@ func loadAuthSession(db Database, token string) (authSession, bool) {
 	if ok && cached != nil {
 		return *cached, true
 	}
-	var sess authSession
-	if !db.Get(AuthSessionTable, token, &sess) {
-		return authSession{}, false
-	}
-	return sess, true
+	return loadStoredSession(db, token)
 }
 
 // saveAuthSession persists a session record and refreshes the cache entry.
@@ -153,7 +152,7 @@ func loadAuthSession(db Database, token string) (authSession, bool) {
 // through, so a concurrent reader holding the previous pointer keeps reading a
 // consistent record instead of a half-updated one.
 func saveAuthSession(db Database, token string, sess authSession) {
-	db.Set(AuthSessionTable, token, sess)
+	db.Set(AuthSessionTable, sessionStoreKey(token), sess)
 	sessionMu.Lock()
 	sessionCache[token] = &sess
 	sessionMu.Unlock()

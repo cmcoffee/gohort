@@ -128,7 +128,7 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 			Body:     ui.Card{HTML: documentsDetailBody + documentsDetailAssets},
 		},
 	}
-	if s, ok := stewardSection(user, collectionIDFromPath(r.URL.Path)); ok {
+	if s, ok := T.stewardSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
 	if s, ok := T.sharingSection(user, collectionIDFromPath(r.URL.Path)); ok {
@@ -176,8 +176,16 @@ func collectionIDFromPath(path string) string {
 // only. So the ordinary case, "an agent looks after this collection", was
 // reachable only after standing up infrastructure it has no use for, and on a
 // deployment with none it was not reachable at all.
-func stewardSection(user, collectionID string) (ui.Section, bool) {
-	if strings.TrimSpace(collectionID) == "" {
+//
+// Owner only, like sharingSection and for the same reason: a reader or
+// contributor of a shared collection reaches this page too, the steward
+// endpoint refuses them, and a form that cannot load is worse than none.
+func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bool) {
+	if strings.TrimSpace(collectionID) == "" || strings.TrimSpace(user) == "" {
+		return ui.Section{}, false
+	}
+	c, ok := LoadCollection(UserDB(CollectionsDB(), user), user, collectionID)
+	if !ok || c.Owner != user || IsDeploymentScope(c) {
 		return ui.Section{}, false
 	}
 	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID) + "/steward"

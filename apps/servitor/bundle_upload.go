@@ -18,6 +18,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 // Bundle lifecycle states, stored on the appliance record so the UI can show
@@ -81,6 +82,10 @@ func (T *Servitor) handleBundleUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	// The server-wide body cap is sized for JSON; a bundle is far larger.
+	// StreamPartsToStage enforces bundle.MaxBytes on the file content, so the
+	// body cap only needs to clear that plus the multipart framing.
+	netgate.RaiseBodyLimit(r, bundle.MaxBytes+(1<<20))
 	mr, err := r.MultipartReader()
 	if err != nil {
 		http.Error(w, "expected a multipart form with one or more \"file\" parts: "+err.Error(), http.StatusBadRequest)
