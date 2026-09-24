@@ -588,7 +588,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					"so it holds even when the agent decided otherwise, and the agent cannot edit it away.",
 				Detail: "Its counterpart is Rules, under Configure: guidance prepended to the prompt that the agent follows, " +
 					"and that the agent and Builder can both rewrite. Rules shape behaviour; these enforce it.\n\n" +
-					"They inherit downward, so whatever this agent hands work to carries them too. A deployment's own rules sit beneath these as a floor you cannot lift here.",
+					"They inherit downward, so whatever this agent hands work to carries them too. A deployment's own rules sit beneath these as a floor you cannot lift here: they are checked on every request, action and reply, whichever checks you pick for your own rules.",
 				Body: ui.ClientRegion{
 					Action: "orchestrate_rules_modal",
 					Args:   map[string]any{"only": "guardrails", "agent": agent.ID},

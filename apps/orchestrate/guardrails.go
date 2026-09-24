@@ -176,6 +176,10 @@ type guardrailRule struct {
 	// Text is the rule as the warden sees it — marker stripped, so the judgment
 	// is made on what the owner wrote and nothing else.
 	Text string
+	// Global marks one of the deployment's Always rules (Governance, Rules)
+	// rather than one the agent's owner wrote. Globals are judged at every
+	// default hook whatever hooks the owner picked; see resolveGuardrailHooks.
+	Global bool
 	// Correctable marks the rare rule that shapes an answer rather than forbidding
 	// it, so a violation is worth sending back for a rewrite. Default false: a
 	// guardrail ends the turn. See guardrailCorrectableMarker.
@@ -220,10 +224,7 @@ type guardrailLink struct {
 // agent's rules and switches enforcement off, which is what makes Off different
 // from delete. enforcedGuardrailRules below is the other question.
 func guardrailRules(agent AgentRecord) []guardrailRule {
-	var out []guardrailRule
-	for _, g := range prompts.EnabledGlobalRules() {
-		out = append(out, parseGuardrailRule(strings.TrimSpace(g.Text)))
-	}
+	out := globalGuardrailRules()
 	for _, ln := range strings.Split(agent.Guardrails, "\n") {
 		s := strings.TrimSpace(ln)
 		if s == "" {
@@ -244,9 +245,16 @@ func enforcedGuardrailRules(agent AgentRecord) []guardrailRule {
 	if !agent.GuardrailsDisabled {
 		return guardrailRules(agent)
 	}
+	return globalGuardrailRules()
+}
+
+// globalGuardrailRules are the deployment's Always rules as guardrails.
+func globalGuardrailRules() []guardrailRule {
 	var out []guardrailRule
 	for _, g := range prompts.EnabledGlobalRules() {
-		out = append(out, parseGuardrailRule(strings.TrimSpace(g.Text)))
+		r := parseGuardrailRule(strings.TrimSpace(g.Text))
+		r.Global = true
+		out = append(out, r)
 	}
 	return out
 }
@@ -551,9 +559,41 @@ func resolveGuardrailHooks(agent AgentRecord) map[string]bool {
 	// Not a GuardrailsDisabled bail: suspension is the owner setting THEIR OWN
 	// rules aside, and guardrailRules already drops those while keeping the
 	// deployment's. Returning nil here would have suspended the globals too.
-	if len(enforcedGuardrailRules(agent)) == 0 {
+	rules := enforcedGuardrailRules(agent)
+	if len(rules) == 0 {
 		return nil // inert — nothing authored here or globally, or all suspended
 	}
+	own, global := false, false
+	for _, r := range rules {
+		if r.Global {
+			global = true
+		} else {
+			own = true
+		}
+	}
+	active := map[string]bool{}
+	if own {
+		active = ownGuardrailHooks(agent)
+	}
+	// THE SAME MISTAKE AS SUSPENSION, ONE LEVEL OVER. An owner's hook choice is
+	// about where THEIR rules are judged; it is not theirs to say where the
+	// deployment's are. It used to be both: an agent whose owner picked only
+	// the request check (to keep its replies streaming) never had a single
+	// reply judged against the Always rules, and the rules looked ignored. The
+	// deployment's rules are judged at every default hook, and the warden
+	// judges only the globals at a hook the owner did not pick
+	// (rulesAtHook).
+	if global {
+		for _, h := range defaultNewAgentGuardrailHooks() {
+			active[h] = true
+		}
+	}
+	return active
+}
+
+// ownGuardrailHooks is where the agent's OWN rules are judged: the owner's
+// chosen hooks, or the default set when none were chosen.
+func ownGuardrailHooks(agent AgentRecord) map[string]bool {
 	active := map[string]bool{}
 	for _, h := range agent.GuardrailHooks {
 		if validGuardHooks[strings.TrimSpace(h)] {
@@ -594,6 +634,22 @@ func resolveGuardrailHooks(agent AgentRecord) map[string]bool {
 		active[guardHookPreOutput] = true
 	}
 	return active
+}
+
+// rulesAtHook narrows the rules judged at one hook: the deployment's always,
+// the owner's only where the owner has them judged.
+func rulesAtHook(rules []guardrailRule, agent AgentRecord, hookPoint string) []guardrailRule {
+	own := ownGuardrailHooks(agent)
+	if own[hookPoint] {
+		return rules
+	}
+	var out []guardrailRule
+	for _, r := range rules {
+		if r.Global {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // guardrailHookActive reports whether the warden should run at hookPoint for

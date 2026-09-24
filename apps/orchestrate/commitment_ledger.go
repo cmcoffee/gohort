@@ -154,6 +154,19 @@ func commitmentTurnNote(db Database, sessionID string) string {
 	return commitmentNote(c)
 }
 
+// privateTurnNote tells a turn running Private that it is. The network tools
+// are simply absent from its catalog, and absence reads as "not loaded yet":
+// observed, a delegated agent spent twenty rounds building tool templates and
+// rewriting its notes looking for the web search it had been denied, and the
+// agent that delegated to it had offered delegation as the way round having no
+// internet. Said on every Private turn, because the fact holds on every one.
+func privateTurnNote(sess *ToolSession) string {
+	if sess == nil || sess.Network == nil || sess.Network.Allowed() {
+		return ""
+	}
+	return frameworkNoteTag + "PRIVATE: this conversation runs with the network cut off. Tools that reach the internet (web search, fetching or browsing pages) are not available here and cannot be added, built, or reached some other way, and any agent you delegate to runs Private too. If the request needs the internet, say so in one line: the user can turn Private off for this conversation."
+}
+
 // turnNotes composes every turn-scoped note this app supplies into the one
 // string the loop appends to the newest user message.
 //
@@ -161,6 +174,9 @@ func commitmentTurnNote(db Database, sessionID string) string {
 // the instruction sits closest to where the model starts writing.
 func turnNotes(sess *ToolSession, db Database, sessionID, userMessage string) string {
 	var parts []string
+	if n := privateTurnNote(sess); n != "" {
+		parts = append(parts, n)
+	}
 	if n := dependencyTurnNote(sess); n != "" {
 		parts = append(parts, n)
 	}

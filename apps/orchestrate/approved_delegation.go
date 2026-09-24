@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -110,4 +111,30 @@ func (T *OrchestrateApp) delegationTargetName(owner, target string) string {
 		}
 	}
 	return target
+}
+
+// noteDeniedDelegation tells the agent that asked for a delegation that the
+// owner said no. Not a new turn: the owner just clicked Deny and knows, and an
+// agent answering a click is noise. A live turn takes it between rounds; with
+// none, it is kept in the thread as a hidden note the next turn reads, so the
+// agent stops describing the request as pending and does not queue it again.
+func (T *OrchestrateApp) noteDeniedDelegation(a Authorization) {
+	sid, agentID := strings.TrimSpace(a.FromSession), strings.TrimSpace(a.FromAgent)
+	if sid == "" || agentID == "" {
+		return
+	}
+	note := fmt.Sprintf("%sThe user DENIED the delegation to %s you queued for approval (%s). It did not run and nothing came back. Do not queue it again unless they ask for it; if the work still matters to them, ask how they want to go about it.",
+		frameworkNoteTag, T.delegationTargetName(a.Owner, a.Agent), truncateObs(a.Brief, 160))
+	if q := lookupInjectionQueue(sid); q != nil && q.Owner == a.Owner {
+		q.Push(note)
+		return
+	}
+	udb := UserDB(T.DB, a.Owner)
+	if udb == nil {
+		return
+	}
+	if err := appendToStoredSession(udb, agentID, sid, ChatSession{ID: sid, AgentID: agentID},
+		ChatMessage{Role: "user", Content: note, Created: time.Now(), Hidden: true}); err != nil {
+		Log("[operator.approval] could not record a denied delegation in session %s: %v", sid, err)
+	}
 }

@@ -305,8 +305,14 @@ func (T *OrchestrateApp) handleApprovalDeny(w http.ResponseWriter, r *http.Reque
 	id := r.URL.Query().Get("id")
 	// Denying a sub-agent activation rejects the draft outright — delete the
 	// held agent so it doesn't linger dormant (PendingApproval) forever.
-	if a, found := GetAuthorization(RootDB, user, id); found && a.Action == "activate_sub_agent" {
+	a, found := GetAuthorization(RootDB, user, id)
+	if found && a.Action == "activate_sub_agent" {
 		deleteAgent(udb, user, a.Agent)
+	}
+	// A denied delegation is news to the agent that asked, which otherwise
+	// goes on telling the user it is waiting for approval.
+	if found && a.Action == "" {
+		T.noteDeniedDelegation(a)
 	}
 	DeleteAuthorization(RootDB, user, id)
 	w.WriteHeader(http.StatusNoContent)

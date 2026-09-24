@@ -1107,3 +1107,36 @@ func TestGovernanceBreachModesReachTheWardenAndNotThePrompt(t *testing.T) {
 		t.Errorf("the inherited-rules view shows markers:\n%s", md)
 	}
 }
+
+// An owner's hook choice decides where THEIR rules are judged, never where the
+// deployment's are. An agent whose owner picked only the request check (to keep
+// replies streaming) used to have no reply judged against Governance's Always
+// rules at all, so an admin's rule looked ignored.
+func TestGovernanceRulesAreJudgedWhateverHooksTheOwnerPicked(t *testing.T) {
+	restore := withGlobalRules(t, "Never discuss the lunar calendar.")
+	defer restore()
+	agent := AgentRecord{Guardrails: "never mention salary", GuardrailHooks: []string{guardHookPreInput}}
+
+	hooks := resolveGuardrailHooks(agent)
+	for _, h := range []string{guardHookPreInput, guardHookPreAction, guardHookPreOutput} {
+		if !hooks[h] {
+			t.Errorf("the deployment's rules must be judged at %s", h)
+		}
+	}
+	if !agentHasOutputGuardrail(agent) {
+		t.Error("with a global rule, the reply is judged, so it is held until the check clears")
+	}
+	atReply := rulesAtHook(enforcedGuardrailRules(agent), agent, guardHookPreOutput)
+	if len(atReply) != 1 || !atReply[0].Global || !strings.Contains(atReply[0].Text, "lunar") {
+		t.Errorf("at a hook the owner did not pick, only the global rule is judged: %+v", atReply)
+	}
+	if atRequest := rulesAtHook(enforcedGuardrailRules(agent), agent, guardHookPreInput); len(atRequest) != 2 {
+		t.Errorf("at a hook the owner picked, both are judged: %+v", atRequest)
+	}
+
+	// Own rules alone keep exactly the owner's choice.
+	prompts.SetGlobalRules(nil)
+	if h := resolveGuardrailHooks(agent); h[guardHookPreOutput] || !h[guardHookPreInput] {
+		t.Errorf("with no global rule the owner's selection stands: %v", h)
+	}
+}

@@ -125,3 +125,29 @@ func TestAPromiseToActIsStillCaughtAfterTheTightening(t *testing.T) {
 		}
 	}
 }
+
+// A question hands the next move over too. Observed: "What would you like me to
+// look up? I'll dispatch an agent with web access and bring back their
+// findings." was re-prompted as a give-up, and the retry answered a question
+// nobody had asked ("Nothing is stopping me, I'm just waiting on you"). A
+// promise that waits on an approval is waiting too. A polite closer is not a
+// question the work waits on.
+func TestAQuestionToTheUserIsAHandover(t *testing.T) {
+	for _, done := range []string{
+		"Yes! All your agents have web_search. What would you like me to look up? I'll dispatch an agent with web access and bring back their findings.",
+		"Want me to delegate it to Builder? I'll pass on whatever it finds.",
+		"It's queued in your Authorizations pane, just need you to approve it and I'll get you the results.",
+	} {
+		if replyStalledOnAPromise(done) {
+			t.Errorf("waiting on the user's answer is a finished turn: %q", done)
+		}
+	}
+	for _, stall := range []string{
+		"I'll look it up now. Anything else?",
+		"Let me grab that for you. Sound good?",
+	} {
+		if !replyStalledOnAPromise(stall) {
+			t.Errorf("a pleasantry after a promise is still a promise: %q", stall)
+		}
+	}
+}

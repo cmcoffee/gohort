@@ -97,3 +97,41 @@ func TestAnApprovedDelegationWithNoOriginReportsTheOldWay(t *testing.T) {
 		t.Errorf("with no origin the report lands in the target's thread as before: %+v", s)
 	}
 }
+
+// A Private turn is told it is Private, and so is any agent it delegates to
+// (the dispatch hands the child a blocked connector); an open turn hears
+// nothing.
+func TestAPrivateTurnIsToldItIsPrivate(t *testing.T) {
+	if n := privateTurnNote(&ToolSession{Network: NewNetworkConnector(true)}); !strings.Contains(n, "PRIVATE") || !strings.Contains(n, "delegate") {
+		t.Errorf("a Private turn should be told, delegation included: %q", n)
+	}
+	if n := privateTurnNote(&ToolSession{Network: NewNetworkConnector(false)}); n != "" {
+		t.Errorf("an open turn gets no note: %q", n)
+	}
+	if n := privateTurnNote(&ToolSession{}); n != "" {
+		t.Errorf("no connector means no privacy: %q", n)
+	}
+}
+
+// Denying a delegation reaches the agent that asked: into its live turn when
+// there is one, otherwise as a hidden note its next turn reads. No new turn.
+func TestADeniedDelegationIsNewsToTheAsker(t *testing.T) {
+	root := depStores(t, "u")
+	app := orchRef
+	a := Authorization{Owner: "u", Agent: "helper", Brief: "find the news", FromAgent: "lead"}
+
+	a.FromSession = "s-live-" + UUIDv4()
+	q := registerInjectionQueue(a.FromSession, "u", "lead")
+	t.Cleanup(func() { releaseInjectionQueue(a.FromSession) })
+	app.noteDeniedDelegation(a)
+	if notes := q.Drain(); len(notes) != 1 || !strings.Contains(notes[0].Text, "DENIED") {
+		t.Fatalf("a live turn should hear it between rounds: %+v", notes)
+	}
+
+	a.FromSession = "s-idle-" + UUIDv4()
+	app.noteDeniedDelegation(a)
+	s, ok := loadChatSession(UserDB(root, "u"), "lead", a.FromSession)
+	if !ok || len(s.Messages) != 1 || !s.Messages[0].Hidden || !strings.Contains(s.Messages[0].Content, "DENIED") {
+		t.Fatalf("with no live turn it should be kept as a hidden note: %+v", s)
+	}
+}

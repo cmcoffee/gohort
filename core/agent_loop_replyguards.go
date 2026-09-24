@@ -648,7 +648,7 @@ func replyStalledOnAPromise(content string) bool {
 		return false
 	}
 	lower := strings.ToLower(strings.ReplaceAll(trimmed, "’", "'"))
-	if userDirectiveRe.MatchString(lower) {
+	if userDirectiveRe.MatchString(lower) || asksTheUser(lower) {
 		return false
 	}
 	// A promise about future CONDUCT is not work left undone, and there is no
@@ -717,7 +717,32 @@ var firstPersonIntentRe = regexp.MustCompile(`\b(?:let me|i'll|i will|i'm going 
 // waiting, not stalled. Takes precedence over first-person intent, which the
 // same sentence often also contains ("send me the link and I'll look:").
 // "let me know" appears here rather than as intent for exactly that reason.
-var userDirectiveRe = regexp.MustCompile(`\b(?:paste|send me|send it|reply with|tell me|let me know|share (?:the|it|that)|upload|attach|type|enter|choose|pick)\b`)
+var userDirectiveRe = regexp.MustCompile(`\b(?:paste|send me|send it|reply with|tell me|let me know|share (?:the|it|that)|upload|attach|type|enter|choose|pick|approve|confirm)\b`)
+
+// asksTheUser reports whether a reply puts a real question to the user. A
+// question hands the next move over just as "tell me" does, so a promise that
+// depends on the answer is waiting, not stalled: "What would you like me to
+// look up? I'll dispatch an agent" was re-prompted as a give-up, and the retry
+// answered a question nobody had asked yet ("Nothing is stopping me").
+//
+// A closing pleasantry is not a question the turn waits on. "I'll look it up
+// now. Anything else?" is still a promise with nothing behind it.
+func asksTheUser(lower string) bool {
+	for _, q := range questionSentenceRe.FindAllString(lower, -1) {
+		q = strings.TrimSpace(strings.TrimRight(q, "?!. "))
+		if q != "" && !closingPleasantryRe.MatchString(q) {
+			return true
+		}
+	}
+	return false
+}
+
+// questionSentenceRe is one sentence ending in a question mark.
+var questionSentenceRe = regexp.MustCompile(`[^.!?\n]*\?`)
+
+// closingPleasantryRe matches the whole of a question asked out of politeness
+// rather than to get an answer the work depends on.
+var closingPleasantryRe = regexp.MustCompile(`^(?:anything else|(?:does )?(?:that|this) (?:sound good|work|make sense|help)|sound good|sounds good|make sense|ok|okay|right|cool|all good|how's that|good)$`)
 
 // responseWasTruncated reports whether the provider cut the response off at the
 // output ceiling rather than the model finishing.

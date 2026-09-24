@@ -117,6 +117,7 @@ func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRe
 	// were reading about a tool they could not have an opinion on, which is
 	// prompt weight AND an invitation to flag the wrong thing.
 	rules = rulesForTool(rules, wardenToolInPlay(hookPoint, candidate))
+	rules = rulesAtHook(rules, agent, hookPoint)
 	if len(rules) == 0 {
 		// Said out loud for the same reason a passing check is: a narrowing
 		// that leaves nothing to ask looks exactly like a guard that is not
