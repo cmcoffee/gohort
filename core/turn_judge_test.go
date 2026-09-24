@@ -10,6 +10,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -378,5 +379,69 @@ func TestACorrectionOnATurnThatRanNothingOnlyAsksForARewrite(t *testing.T) {
 	// last step left undone.
 	if busy := unkeptClaimCorrection(v, true); !strings.Contains(busy, "do it NOW with a real tool call") {
 		t.Errorf("a turn that did work should still be offered the tool call:\n%s", busy)
+	}
+}
+
+// The hard half of the rewrite-only rule: after a correction on a turn that ran
+// nothing, no tool is OFFERED, and a call that arrives anyway is refused before
+// it runs. The live case: a scheduled greeting was convicted, and the retry
+// called notify_owner.
+func TestARewriteOnlyTurnRunsNoTools(t *testing.T) {
+	fired := 0
+	notify := AgentToolDef{
+		Tool: Tool{Name: "notify_owner", Description: "text the owner", Parameters: map[string]ToolParam{"text": {Type: "string"}}},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			fired++
+			return "Sent.", nil
+		},
+	}
+	stub := &FakeLLM{Turns: []FakeTurn{
+		{Content: "Wishing you a pleasant evening."},
+		{ToolCalls: []ToolCall{{ID: "c1", Name: "notify_owner", Args: map[string]any{"text": "Good evening!"}}}},
+		{Content: "Good evening!", Repeat: true},
+	}}
+	judged := 0
+	app := &AppCore{LLM: stub, LeadLLM: stub}
+	resp, _, err := app.RunAgentLoop(context.Background(),
+		[]Message{{Role: "user", Content: "Say hello to the user."}},
+		AgentLoopConfig{
+			SystemPrompt: "Be warm.",
+			Tools:        []AgentToolDef{notify},
+			MaxRounds:    6,
+			TurnClaimJudge: func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
+				judged++
+				if judged == 1 {
+					return TurnClaimVerdict{Unkept: true, Claim: "Wishing you a pleasant evening.", Why: "the turn did not do it"}, true
+				}
+				return TurnClaimVerdict{}, true
+			},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fired != 0 {
+		t.Fatalf("a correction on a turn that ran nothing must not run a tool; notify_owner fired %d time(s)", fired)
+	}
+	if n := len(stub.Config(0).Tools); n == 0 {
+		t.Fatal("the first round should have been offered the tool, or this test proves nothing")
+	}
+	for i := 1; i < stub.Calls(); i++ {
+		if n := len(stub.Config(i).Tools); n != 0 {
+			t.Errorf("call %d after the correction was offered %d tool(s)", i, n)
+		}
+	}
+	refused := false
+	for _, m := range stub.Sent(2) {
+		for _, r := range m.ToolResults {
+			if r.ID == "c1" && r.IsError && strings.Contains(r.Content, "Not run: this turn is only rewriting its reply") {
+				refused = true
+			}
+		}
+	}
+	if !refused {
+		t.Error("the refused call should be answered as not run")
+	}
+	if resp == nil || resp.Content != "Good evening!" {
+		t.Errorf("the rewritten reply should be what goes out, got %+v", resp)
 	}
 }

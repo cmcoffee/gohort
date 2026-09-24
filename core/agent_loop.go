@@ -517,6 +517,12 @@ type loopRun struct {
 	errShapeNudged             map[string]bool
 	toolFailShapes             map[string]map[string]bool
 	graceRounds                int
+	// rewriteOnly is set when the turn judge convicted a reply on a turn that
+	// ran nothing. From then on the turn may only reword: no tools are
+	// offered, and any call that arrives anyway (parsed out of text, say) is
+	// refused before it runs. See unkeptClaimCorrection for why a correction
+	// must never be what makes an agent act.
+	rewriteOnly bool
 	// outputChecked marks that THIS round already judged its terminal reply, so
 	// the exit funnel does not pay a second warden call for the same draft.
 	// Reset at the top of every round: a new draft is a new question.
@@ -1694,7 +1700,7 @@ func (lr *loopRun) prepareCall() loopAction {
 	// never strip — that's what caused models to emit tool-calls as
 	// text). Grace-disabled short loops keep the original behavior:
 	// no tools on the forced final round.
-	lr.rs.offerTools = lr.graceRounds > 0 || lr.round < lr.maxRounds
+	lr.rs.offerTools = (lr.graceRounds > 0 || lr.round < lr.maxRounds) && !lr.rewriteOnly
 	if !lr.cfg.PromptTools && len(lr.toolDefs) > 0 && lr.rs.offerTools {
 		lr.rs.opts = append(lr.rs.opts, WithTools(lr.toolDefs))
 	}
@@ -2777,6 +2783,9 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 			lr.retractRound()
 			lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
 			lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + unkeptClaimCorrection(verdict, ev.TurnDidWork())})
+			if !ev.TurnDidWork() {
+				lr.rewriteOnly = true
+			}
 			return actContinue
 		}
 		if verdict.Unkept && lr.corrections.exhausted(correctionUnkeptClaim) {
@@ -3121,6 +3130,17 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 		if i >= maxToolCallsPerRound {
 			lr.rs.results[i] = ToolResult{ID: tc.ID, Content: fmt.Sprintf("Error: round batch cap, a single round may fire at most %d tool calls; this call (#%d) was dropped. Use the results you already have, or continue next round with a SMALLER, deliberate batch.", maxToolCallsPerRound, i+1), IsError: true}
 			lr.rs.toolErrors++
+			continue
+		}
+		// A rewrite-only turn runs nothing: see loopRun.rewriteOnly. Refused
+		// here, before the call becomes work, so it is never recorded as
+		// something the turn did and a second conviction still reads the turn
+		// as one that ran nothing. stay_silent is let through, because ending
+		// a turn quietly acts on nobody.
+		if lr.rewriteOnly && tc.Name != "stay_silent" {
+			Log("[agent_loop] round %d: refused %s: the turn judge asked for a rewrite of a turn that ran nothing, so no tool runs for the rest of it", lr.round, toolCallLabel(tc))
+			lr.emitDiag("rewrite-only-refused", fmt.Sprintf("Refused %s after a correction: the turn had run nothing, so the correction asked for new wording, not an action.", toolCallLabel(tc)))
+			lr.rs.results[i] = ToolResult{ID: tc.ID, Content: "Not run: this turn is only rewriting its reply, and no tool runs for the rest of it. Reply with the corrected text, nothing else.", IsError: true}
 			continue
 		}
 		if tc.Name == "stay_silent" {
