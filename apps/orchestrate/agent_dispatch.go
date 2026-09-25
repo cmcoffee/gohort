@@ -329,6 +329,34 @@ func (T *OrchestrateApp) ImportAgentNotes(owner, agentID string, notes []string)
 // against agentOwner's store. Sub-session is torn down on return so
 // transient state (authoring focus, session temp tools) doesn't
 // leak.
+
+// dispatchRouting is the lead-or-worker decision for a run another agent asked
+// for, made the way a direct chat makes it (shouldUseLeadModel): the target's
+// own "Use Lead model" choice, which privacy overrules. It used to be
+// hardcoded to the worker, so an agent set to reason on the lead did so when
+// the user asked it directly and never when another agent did.
+//
+// ctx must be the dispatch context after applyForcePrivateToDispatch, whose
+// connector says whether this run is Private. An agent that does not want the
+// lead keeps the worker route it always had.
+func dispatchRouting(ctx context.Context, subTurn *chatTurn) (LLMTier, string) {
+	if subTurn == nil {
+		return TierUnset, "app.orchestrate.worker"
+	}
+	subTurn.privateMode = !NetworkAllowedFromContext(ctx)
+	if subTurn.shouldUseLeadModel() {
+		Log("[orchestrate.routing] dispatched agent=%s → lead (its Use Lead model)", subTurn.agent.ID)
+		return LEAD, orchestratorRouteKey(subTurn.agent.ID, true)
+	}
+	// Said out loud only when the agent wanted the lead: otherwise the worker
+	// is simply its setting, and every dispatch would log it.
+	if subTurn.agent.LeadModel {
+		Log("[orchestrate.routing] dispatched agent=%s wants the lead but privacy holds it on the worker (private=%v force=%v)",
+			subTurn.agent.ID, subTurn.privateMode, agentForcesPrivate(subTurn.agent))
+	}
+	return TierUnset, "app.orchestrate.worker"
+}
+
 // applyForcePrivateToDispatch enforces target.ForcePrivate on a
 // dispatched run — RunAgentSync / RunAgentSyncContinuing / phantom's
 // dispatch_agent / agents(action="run") all funnel through this so a
@@ -354,26 +382,6 @@ func (T *OrchestrateApp) ImportAgentNotes(owner, agentID string, notes []string)
 //
 // No-op when ForcePrivate is false. Returns ctx + the (possibly
 // filtered) tool slice so the caller can replace its local references.
-// dispatchRouting is the lead-or-worker decision for a run another agent asked
-// for, made the way a direct chat makes it (shouldUseLeadModel): the target's
-// own "Use Lead model" choice, which privacy overrules. It used to be
-// hardcoded to the worker, so an agent set to reason on the lead did so when
-// the user asked it directly and never when another agent did.
-//
-// ctx must be the dispatch context after applyForcePrivateToDispatch, whose
-// connector says whether this run is Private. An agent that does not want the
-// lead keeps the worker route it always had.
-func dispatchRouting(ctx context.Context, subTurn *chatTurn) (LLMTier, string) {
-	if subTurn == nil {
-		return TierUnset, "app.orchestrate.worker"
-	}
-	subTurn.privateMode = !NetworkAllowedFromContext(ctx)
-	if subTurn.shouldUseLeadModel() {
-		return LEAD, orchestratorRouteKey(subTurn.agent.ID, true)
-	}
-	return TierUnset, "app.orchestrate.worker"
-}
-
 func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tools []AgentToolDef, target AgentRecord) (context.Context, []AgentToolDef) {
 	// The workspace ceiling first, and outside the early return below, because
 	// it applies whether or not this dispatch is private.

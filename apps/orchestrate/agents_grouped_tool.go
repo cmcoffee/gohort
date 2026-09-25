@@ -1325,7 +1325,11 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// agent's owner had authored. Nothing about the sub-run justified the
 	// exemption; the hooks were simply never added when this path was written.
 	llmMessages, gDecline := subTurn.applyInputGuardrail(llmMessages)
+	// The target's own "Use Lead model", as over a channel or a delegation;
+	// ctx carries the parent's privacy, so a Private parent stays off the lead.
+	runPin, runRoute := dispatchRouting(ctx, subTurn)
 	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
+		TierOverride: runPin,
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
 		PreEmptedReply:      gDecline,
@@ -1350,7 +1354,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		ToolFallbackResolver: subTurn.lazyToolFallback,
 		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
 		ChatOptions: []ChatOption{
-			WithRouteKey("app.orchestrate.worker"),
+			WithRouteKey(runRoute),
 			WithThink(think),
 		},
 	})
