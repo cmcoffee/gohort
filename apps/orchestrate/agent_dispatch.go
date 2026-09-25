@@ -354,6 +354,26 @@ func (T *OrchestrateApp) ImportAgentNotes(owner, agentID string, notes []string)
 //
 // No-op when ForcePrivate is false. Returns ctx + the (possibly
 // filtered) tool slice so the caller can replace its local references.
+// dispatchRouting is the lead-or-worker decision for a run another agent asked
+// for, made the way a direct chat makes it (shouldUseLeadModel): the target's
+// own "Use Lead model" choice, which privacy overrules. It used to be
+// hardcoded to the worker, so an agent set to reason on the lead did so when
+// the user asked it directly and never when another agent did.
+//
+// ctx must be the dispatch context after applyForcePrivateToDispatch, whose
+// connector says whether this run is Private. An agent that does not want the
+// lead keeps the worker route it always had.
+func dispatchRouting(ctx context.Context, subTurn *chatTurn) (LLMTier, string) {
+	if subTurn == nil {
+		return TierUnset, "app.orchestrate.worker"
+	}
+	subTurn.privateMode = !NetworkAllowedFromContext(ctx)
+	if subTurn.shouldUseLeadModel() {
+		return LEAD, orchestratorRouteKey(subTurn.agent.ID, true)
+	}
+	return TierUnset, "app.orchestrate.worker"
+}
+
 func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tools []AgentToolDef, target AgentRecord) (context.Context, []AgentToolDef) {
 	// The workspace ceiling first, and outside the early return below, because
 	// it applies whether or not this dispatch is private.
@@ -848,7 +868,9 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	telem := newTurnTelemetry()
 	dispatchMsgs, gDecline := subTurn.applyInputGuardrail([]Message{{Role: "user", Content: deliveredMessage}})
 	subTurn.noteMountedTools(tools)
+	dispatchPin, dispatchRoute := dispatchRouting(ctx, subTurn)
 	resp, syncTranscript, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
+		TierOverride: dispatchPin,
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
 		PreEmptedReply: gDecline,
@@ -907,7 +929,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		// call is pure latency — pre_output judges the reply that is handed back.
 		InterimContentHidden: true,
 		ChatOptions: []ChatOption{
-			WithRouteKey("app.orchestrate.worker"),
+			WithRouteKey(dispatchRoute),
 			WithThink(think),
 		},
 	})
@@ -1838,7 +1860,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		think = *run.Think
 	}
 	subTurn.noteMountedTools(tools)
+	dispatchPin, dispatchRoute := dispatchRouting(ctx, subTurn)
 	loopCfg := AgentLoopConfig{
+		TierOverride:  dispatchPin,
 		SendGuardKey:  sendGuardKey,
 		SystemPrompt:  sysPrompt,
 		Tools:         tools,
@@ -1867,7 +1891,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// gets picked up at the next round AND right before finalizing.
 		InjectionDrain: onRoundStart,
 		ChatOptions: []ChatOption{
-			WithRouteKey("app.orchestrate.worker"),
+			WithRouteKey(dispatchRoute),
 			WithThink(think),
 		},
 	}

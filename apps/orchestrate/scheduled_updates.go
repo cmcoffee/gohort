@@ -790,7 +790,11 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// stuck "running" until the sweeper's retention window.
 	defer liveRun.Complete(RunStatusFailed)
 	msgs, gDecline := subTurn.applyInputGuardrail(msgs)
+	// A scheduled fire reasons on the model the agent chose, as its direct
+	// chats and every dispatched run do (dispatchRouting).
+	firePin, fireRoute := dispatchRouting(ctx, subTurn)
 	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
+		TierOverride: firePin,
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
 		PreEmptedReply: gDecline,
@@ -880,7 +884,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		DrainViewImages:      subSess.DrainViewImages,
 		BeforeToolRound:      func() { SnapshotImageRefs(subSess) },
 		ChatOptions: []ChatOption{
-			WithRouteKey("app.orchestrate.worker"),
+			WithRouteKey(fireRoute),
 			WithThink(think),
 		},
 	})
