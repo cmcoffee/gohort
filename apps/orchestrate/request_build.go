@@ -29,7 +29,11 @@ const buildAgentAction = "build_agent"
 
 // requestBuildTool builds the request_build AgentToolDef for one agent. user is
 // the owner; agentID/agentName identify the requester stamped onto the approval.
-func requestBuildTool(user, agentID, agentName string) AgentToolDef {
+//
+// sess is the asking turn's session: the build reports back to that
+// conversation once it runs, and keeps its privacy. Nil queues it with no way
+// home, and the result lands only in the run ledger.
+func requestBuildTool(sess *ToolSession, user, agentID, agentName string) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "request_build",
@@ -56,19 +60,25 @@ func requestBuildTool(user, agentID, agentName string) AgentToolDef {
 			if name := strings.TrimSpace(StringArg(args, "name")); name != "" {
 				brief = "Suggested name: " + name + "\n\n" + brief
 			}
-			a := SaveAuthorization(RootDB, Authorization{
+			a := Authorization{
 				Owner:     user,
 				Action:    buildAgentAction,
 				Agent:     "builder", // approval dispatches Builder
 				FromAgent: agentID,   // stamps OwnedBy on the creation
 				Brief:     brief,
-			})
+			}
+			qctx := stampRequestOrigin(&a, sess)
+			a = SaveAuthorization(RootDB, a)
+			if sess != nil && sess.PendingApprovalPrompt != nil {
+				sess.PendingApprovalPrompt(a)
+			}
 			who := agentName
 			if who == "" {
 				who = "this agent"
 			}
-			Log("[orchestrate/request_build] %s queued a sub-agent build (auth %s, requester=%s)", user, a.ID, agentID)
-			return fmt.Sprintf("Queued a sub-agent build for the user's approval (id %s). It appears in their Authorizations pane; on approval Builder drafts it as a sub-agent of %s. Tell the user it's waiting for their approval and briefly what it will do.", a.ID, who), nil
+			Log("[orchestrate/request_build] %s queued a sub-agent build (auth %s, requester=%s, reports to session=%q)", user, a.ID, agentID, a.FromSession)
+			return fmt.Sprintf("Queued a sub-agent build for the user's approval (id %s). It appears in their Authorizations pane; on approval Builder drafts it as a sub-agent of %s. %s%s Tell the user it's waiting for their approval and briefly what it will do.",
+				a.ID, who, requestOriginNote(a), privateDelegationNote(qctx, false)), nil
 		},
 	}
 }

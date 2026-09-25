@@ -921,22 +921,12 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// conversation rides it too, so the approved run reports back
 				// here, and so does this turn's privacy, so it runs under it.
 				a := Authorization{Owner: owner, Agent: agent, Brief: brief, FromAgent: controllerAgentID}
-				qctx := context.Background()
-				if sess != nil {
-					qctx = sess.ContextWithNetworkConnector(sess.Context())
-					a.FromSession = sess.DeliverySession()
-					a.FromChatID = strings.TrimSpace(sess.ChannelChatID)
-					a.FromHandle = strings.TrimSpace(sess.ChannelHandle)
-					a.FromPrivate = !NetworkAllowedFromContext(qctx)
-				}
+				qctx := stampRequestOrigin(&a, sess)
 				a = SaveAuthorization(RootDB, a)
 				if sess != nil && sess.PendingApprovalPrompt != nil {
 					sess.PendingApprovalPrompt(a)
 				}
-				note := "Its result comes back to you here once it runs."
-				if a.FromSession == "" {
-					note = "Its result lands in the run ledger, not here."
-				}
+				note := requestOriginNote(a)
 				return fmt.Sprintf("Queued a delegation to %q for the user's approval: it's in the Authorizations pane (id %s) and runs once approved. %s%s", agent, a.ID, note, privateDelegationNote(qctx, false)), nil
 			},
 		},

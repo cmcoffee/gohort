@@ -348,7 +348,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// authors it OwnedBy this agent. Owner-run conversational turn only, and not
 	// Builder itself (Builder authors directly).
 	if forOrchestrator && ownerRun && !t.agent.Fleet && !isBuilderAgent(t.agent.ID) {
-		rb := requestBuildTool(t.user, t.agent.ID, t.agent.Name)
+		rb := requestBuildTool(sess, t.user, t.agent.ID, t.agent.Name)
 		tools = append(tools, rb)
 		toolNames = append(toolNames, rb.Tool.Name)
 	}

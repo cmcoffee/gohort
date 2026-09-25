@@ -17,7 +17,7 @@ func TestRequestBuildQueuesAuthorization(t *testing.T) {
 	defer func() { RootDB = prev }()
 	RootDB = &DBase{Store: kvlite.MemStore()}
 
-	td := requestBuildTool("alice", "agent-moltbook", "Moltbook")
+	td := requestBuildTool(nil, "alice", "agent-moltbook", "Moltbook")
 
 	// Blank brief refused.
 	if _, err := td.Handler(context.Background(), map[string]any{"brief": "   "}); err == nil {
@@ -50,5 +50,37 @@ func TestRequestBuildQueuesAuthorization(t *testing.T) {
 	}
 	if found != 1 {
 		t.Fatalf("expected exactly one build_agent authorization, got %d", found)
+	}
+}
+
+// The approved build reports back to the conversation that asked for it. It
+// used to queue with no origin, so runApprovedDelegation returned before
+// delivering: the build ran, Builder wrote its reply, and the agent that asked
+// was never told.
+func TestRequestBuildRemembersWhereItWasAskedFrom(t *testing.T) {
+	prev := RootDB
+	defer func() { RootDB = prev }()
+	RootDB = &DBase{Store: kvlite.MemStore()}
+
+	sess := &ToolSession{Username: "alice", ChatSessionID: "s-ask", ChannelChatID: "chat-1", Network: NewNetworkConnector(true)}
+	prompted := false
+	sess.PendingApprovalPrompt = func(Authorization) { prompted = true }
+	out, err := requestBuildTool(sess, "alice", "agent-moltbook", "Moltbook").Handler(context.Background(),
+		map[string]any{"brief": "A viral-post researcher."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "comes back to you here") {
+		t.Errorf("the asking agent should hear the result comes back:\n%s", out)
+	}
+	if !prompted {
+		t.Error("the queued build should raise the in-chat approval card, as a queued delegation does")
+	}
+	auths := ListAuthorizations(RootDB, "alice")
+	if len(auths) != 1 {
+		t.Fatalf("authorizations = %+v", auths)
+	}
+	if a := auths[0]; a.FromSession != "s-ask" || a.FromChatID != "chat-1" || a.FromAgent != "agent-moltbook" || !a.FromPrivate {
+		t.Errorf("the queued build should carry its origin and privacy: %+v", a)
 	}
 }

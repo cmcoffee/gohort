@@ -63,6 +63,36 @@ func privateDelegationNote(ctx context.Context, ran bool) string {
 	return " This conversation is Private, so it will run with its network tools removed: it cannot reach the internet either."
 }
 
+// stampRequestOrigin records on a queued request the conversation that asked,
+// so the approved run reports back there, and that conversation's privacy, so
+// the run keeps it. Returns the asking turn's context with its network state,
+// for a note that has to say whether the run will be Private.
+//
+// Shared by every request that waits on the owner's approval and then runs an
+// agent: delegate and request_build both queued the same way, and only one of
+// them remembered where it came from, which is how an approved build finished
+// with nobody told.
+func stampRequestOrigin(a *Authorization, sess *ToolSession) context.Context {
+	if sess == nil {
+		return context.Background()
+	}
+	qctx := sess.ContextWithNetworkConnector(sess.Context())
+	a.FromSession = sess.DeliverySession()
+	a.FromChatID = strings.TrimSpace(sess.ChannelChatID)
+	a.FromHandle = strings.TrimSpace(sess.ChannelHandle)
+	a.FromPrivate = !NetworkAllowedFromContext(qctx)
+	return qctx
+}
+
+// requestOriginNote tells the asking agent where the result of its queued
+// request will turn up.
+func requestOriginNote(a Authorization) string {
+	if a.FromSession == "" {
+		return "Its result lands in the run ledger, not here."
+	}
+	return "Its result comes back to you here once it runs."
+}
+
 // runApprovedDelegation runs an approved delegation to target and, when the
 // request recorded where it came from, wakes that conversation with the result.
 func (T *OrchestrateApp) runApprovedDelegation(a Authorization, target string) {
