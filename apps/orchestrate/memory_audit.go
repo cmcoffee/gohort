@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -53,6 +54,34 @@ type MemoryFinding struct {
 	Kind   string `json:"kind"`   // parked_call | dead_tool | stale_notes
 	Detail string `json:"detail"` // what is wrong, in a sentence
 	Quote  string `json:"quote"`  // the offending text, trimmed
+	// ID names this finding for Remove and Ignore. Derived from what it is
+	// about, including the text behind it, so an ignored finding comes back
+	// when that text changes: ignoring "this note" is not ignoring whatever
+	// the note says next.
+	ID string `json:"id,omitempty"`
+	// Remove is what removing it does, as the question to confirm. Empty when
+	// there is nothing precise to remove.
+	Remove string `json:"remove,omitempty"`
+	// Ignored marks a finding the owner set aside; listed only when asked for.
+	Ignored bool `json:"ignored,omitempty"`
+
+	// Server-side only: what the finding is about, so Remove acts on the
+	// entry the server found rather than on anything a page sends.
+	name   string // the dead tool's name, for a dead_tool finding
+	target findingTarget
+}
+
+// findingTarget is the one entry a finding's Remove deletes.
+type findingTarget struct {
+	factID     string   // a saved fact
+	noteLine   string   // one line of the working notes
+	clearNotes bool     // the working notes as a whole (stale)
+	entityID   string   // a graph entity...
+	dropEntity bool     // ...removed whole, when its own name is the problem
+	attrKeys   []string // ...or just these attributes
+	aliases    []string // ...and these aliases
+	reportIDs  []string // saved findings in reference memory
+	chunkIDs   []string // ...and loose chunks that belong to no report
 }
 
 // parkedCallRE matches a note that records an invocation to make later. The
@@ -93,13 +122,21 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 	notes := ResolveOperatingNotes(udb, ns, agent.SeedNotes).Text
 	if strings.TrimSpace(notes) != "" {
 		if parkedCallRE.MatchString(notes) {
+			line := firstLineWhere(notes, parkedCallRE.MatchString)
 			out = append(out, MemoryFinding{
 				Layer: "Working notes", Kind: "parked_call",
 				Detail: "This note records work to do later rather than the current state. If it names a tool call, the agent cannot make it from a note, and when the tool's schema isn't loaded it will improvise a way to reach it instead of asking.",
 				Quote:  firstMatchingLine(notes, parkedCallRE),
+				Remove: "Remove this line from the working notes?",
+				target: findingTarget{noteLine: line},
 			})
 		}
-		out = append(out, deadToolFindings("Working notes", notes, orphaned, retired)...)
+		for _, f := range deadToolFindings("Working notes", notes, orphaned, retired) {
+			name := f.name
+			f.target.noteLine = firstLineWhere(notes, func(l string) bool { _, ok := mentionsName(l, name); return ok })
+			f.Remove = "Remove the line that names it from the working notes?"
+			out = append(out, f)
+		}
 		// Only stored notes have an age; a seed has never been rewritten and
 		// saying so would be a complaint about configuration, not memory.
 		if !stored.UpdatedAt.IsZero() && time.Since(stored.UpdatedAt) > staleNotesAfter {
@@ -107,18 +144,25 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 				Layer: "Working notes", Kind: "stale_notes",
 				Detail: fmt.Sprintf("Last rewritten %d days ago. Working notes describe work in progress and are injected into every turn, so an old one is steering the agent with a description of something long finished.",
 					int(time.Since(stored.UpdatedAt).Hours()/24)),
-				Quote: truncateQuote(notes),
+				Quote:  truncateQuote(notes),
+				Remove: "Clear the working notes? The agent starts them over on its next turn.",
+				target: findingTarget{clearNotes: true, noteLine: stored.UpdatedAt.UTC().Format(time.RFC3339)},
 			})
 		}
 	}
 
-	for _, f := range ListMemoryFacts(udb, ns) {
-		out = append(out, deadToolFindings("Saved facts", f.Note, orphaned, retired)...)
-		if parkedCallRE.MatchString(f.Note) {
+	for _, fact := range ListMemoryFacts(udb, ns) {
+		for _, f := range deadToolFindings("Saved facts", fact.Note, orphaned, retired) {
+			f.Remove, f.target.factID = "Delete this saved fact?", fact.ID
+			out = append(out, f)
+		}
+		if parkedCallRE.MatchString(fact.Note) {
 			out = append(out, MemoryFinding{
 				Layer: "Saved facts", Kind: "parked_call",
 				Detail: "A saved fact is a durable rule, not a task list. Work to do belongs in the conversation or a scheduled run, not in something replayed into every future turn.",
-				Quote:  truncateQuote(f.Note),
+				Quote:  truncateQuote(fact.Note),
+				Remove: "Delete this saved fact?",
+				target: findingTarget{factID: fact.ID},
 			})
 		}
 	}
@@ -131,12 +175,14 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 	out = append(out, auditGraphMemory(udb, ns, orphaned, retired)...)
 	out = append(out, auditReferenceMemory(user, agentID, orphaned, retired)...)
 
-	// Orphan findings first — those name something known to be gone, where the
-	// others are judgements about shape.
-	sort.SliceStable(out, func(i, j int) bool { return kindRank(out[i].Kind) < kindRank(out[j].Kind) })
-	if len(out) > maxAuditFindings {
-		out = out[:maxAuditFindings]
+	for i := range out {
+		out[i].ID = findingID(agentID, out[i])
 	}
+	// Orphan findings first — those name something known to be gone, where the
+	// others are judgements about shape. Not capped here: the caller sets the
+	// ignored ones aside first, so an ignored finding never costs a real one
+	// its place under the cap.
+	sort.SliceStable(out, func(i, j int) bool { return kindRank(out[i].Kind) < kindRank(out[j].Kind) })
 	return out
 }
 
@@ -158,6 +204,26 @@ func auditGraphMemory(udb Database, ns string, orphaned, retired map[string]bool
 			// Name the entity: "Graph Memory" alone doesn't tell you which of
 			// thirty nodes to open.
 			f.Detail = fmt.Sprintf("Entity %q: %s", e.Name, f.Detail)
+			// Remove takes off only what names the tool, and the entity
+			// itself only when its own name is the problem.
+			f.target.entityID = e.ID
+			if _, ok := mentionsName(e.Name, f.name); ok {
+				f.target.dropEntity = true
+				f.Remove = fmt.Sprintf("Delete the entity %q?", e.Name)
+			} else {
+				for k, v := range e.Attrs {
+					if _, ok := mentionsName(v, f.name); ok {
+						f.target.attrKeys = append(f.target.attrKeys, k)
+					}
+				}
+				sort.Strings(f.target.attrKeys)
+				for _, al := range e.Aliases {
+					if _, ok := mentionsName(al, f.name); ok {
+						f.target.aliases = append(f.target.aliases, al)
+					}
+				}
+				f.Remove = fmt.Sprintf("Remove what names %q from the entity %q?", f.name, e.Name)
+			}
 			out = append(out, f)
 		}
 	}
@@ -181,6 +247,9 @@ func auditReferenceMemory(user, agentID string, orphaned, retired map[string]boo
 		count   int
 		example string
 		detail  string
+		name    string
+		reports []string
+		chunks  []string
 	}
 	byTool := map[string]*hit{}
 	var order []string
@@ -195,11 +264,17 @@ func auditReferenceMemory(user, agentID string, orphaned, retired map[string]boo
 		for _, f := range deadToolFindings("Reference Memory", c.Text, orphaned, retired) {
 			h, seen := byTool[f.Detail]
 			if !seen {
-				h = &hit{example: f.Quote, detail: f.Detail}
+				h = &hit{example: f.Quote, detail: f.Detail, name: f.name}
 				byTool[f.Detail] = h
 				order = append(order, f.Detail)
 			}
 			h.count++
+			switch {
+			case c.ReportID == "":
+				h.chunks = append(h.chunks, c.ID)
+			case !slices.Contains(h.reports, c.ReportID):
+				h.reports = append(h.reports, c.ReportID)
+			}
 		}
 	}
 	out := make([]MemoryFinding, 0, len(order))
@@ -209,9 +284,14 @@ func auditReferenceMemory(user, agentID string, orphaned, retired map[string]boo
 		if h.count > 1 {
 			detail = fmt.Sprintf("%s Referenced in %d saved entries.", detail, h.count)
 		}
+		remove := "Delete the saved finding that mentions it?"
+		if n := len(h.reports) + len(h.chunks); n > 1 {
+			remove = fmt.Sprintf("Delete the %d saved findings that mention it?", n)
+		}
 		out = append(out, MemoryFinding{
 			Layer: "Reference Memory", Kind: "dead_tool",
-			Detail: detail, Quote: h.example,
+			Detail: detail, Quote: h.example, Remove: remove,
+			name: h.name, target: findingTarget{reportIDs: h.reports, chunkIDs: h.chunks},
 		})
 	}
 	return out
@@ -254,6 +334,7 @@ func deadToolFindings(layer, text string, orphaned, retired map[string]bool) []M
 				Layer: layer, Kind: "dead_tool",
 				Detail: fmt.Sprintf("References %q, which is in Orphaned Tools: its last carrying agent was deleted, so no agent can call it. Re-home the tool, or drop the reference.", name),
 				Quote:  quoteAround(text, at),
+				name:   name,
 			})
 		}
 	}
@@ -263,6 +344,7 @@ func deadToolFindings(layer, text string, orphaned, retired map[string]bool) []M
 				Layer: layer, Kind: "dead_tool",
 				Detail: fmt.Sprintf("Names %q, which was a tool and is not any more: renamed or removed. Anything relying on it is describing a call that cannot be made.", name),
 				Quote:  quoteAround(text, at),
+				name:   name,
 			})
 		}
 	}
@@ -433,12 +515,40 @@ func (T *OrchestrateApp) handleAgentMemoryAudit(w http.ResponseWriter, r *http.R
 		http.NotFound(w, r)
 		return
 	}
-	// POST is the Undo on a move the memory lifecycle made.
+	// POST acts: {undo} puts back a move the memory lifecycle made, and
+	// {action, id} removes, ignores or restores one finding.
 	if r.Method == http.MethodPost {
-		handleMemoryMovesPost(w, r, udb, agentID)
+		var body struct {
+			Undo   string `json:"undo"`
+			Action string `json:"action"`
+			ID     string `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		var err error
+		switch {
+		case strings.TrimSpace(body.Undo) != "":
+			err = undoMemoryMove(udb, agentID, strings.TrimSpace(body.Undo))
+		case strings.TrimSpace(body.Action) != "" && strings.TrimSpace(body.ID) != "":
+			err = T.actOnFinding(udb, user, a, strings.TrimSpace(body.Action), strings.TrimSpace(body.ID))
+		default:
+			http.Error(w, "undo, or action and id, is required", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		return
 	}
-	findings := T.auditAgentMemory(udb, user, agentID, a)
+	findings, ignored := splitIgnoredFindings(udb, agentID, T.auditAgentMemory(udb, user, agentID, a))
+	if ignored == nil {
+		ignored = []MemoryFinding{}
+	}
 	moves := listMemoryMoves(udb, agentID)
 	if moves == nil {
 		moves = []memoryMove{}
@@ -447,6 +557,7 @@ func (T *OrchestrateApp) handleAgentMemoryAudit(w http.ResponseWriter, r *http.R
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"findings": findings,
 		"count":    len(findings),
+		"ignored":  ignored,
 		"moves":    moves,
 	})
 }

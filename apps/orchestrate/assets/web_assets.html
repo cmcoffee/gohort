@@ -3600,7 +3600,7 @@
         auditWrap.appendChild(auditTitle);
         var auditIntro = document.createElement('p');
         auditIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.83rem';
-        auditIntro.textContent = 'Entries that name something no longer there, or that record work instead of state. Nothing is removed for you: fix each one in its section below.';
+        auditIntro.textContent = 'Entries that name something no longer there, or that record work instead of state. Remove deletes the entry a finding is about, after you confirm; Ignore sets a finding aside until the text behind it changes.';
         auditWrap.appendChild(auditIntro);
         var auditList = document.createElement('div');
         auditList.style.cssText = 'display:flex;flex-direction:column;gap:0.45rem';
@@ -3670,12 +3670,40 @@
           });
         }
 
-        fetch(auditURL).then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
-          renderMoves((d && d.moves) || []);
-          var found = (d && d.findings) || [];
-          if (!found.length) return;              // silent when clean
+        function loadAudit() {
+          fetch(auditURL).then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
+            renderMoves((d && d.moves) || []);
+            renderAudit((d && d.findings) || [], (d && d.ignored) || []);
+          }).catch(function(){});
+        }
+        // actOnAudit runs Remove, Ignore or Restore on one finding. The server finds
+        // the finding again by its id and acts on what IT found, so the page never
+        // names what to delete.
+        function actOnAudit(action, f, btn) {
+          (async function() {
+            if (action === 'remove' && !(await window.uiConfirm(f.remove + '\n\n“' + (f.quote || '') + '”'))) return;
+            btn.disabled = true;
+            fetch(auditURL, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: action, id: f.id})})
+              .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); })
+              .then(function() { loadAudit(); })
+              .catch(function(e) { btn.disabled = false; window.uiAlert('Could not ' + action + ' it: ' + e.message); });
+          })();
+        }
+        function auditButton(label, title, onClick) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'ui-row-btn compact';
+          b.style.cssText = 'font-size:0.76rem;padding:0.2rem 0.5rem;min-width:0;min-height:0';
+          b.textContent = label;
+          b.title = title;
+          b.addEventListener('click', function() { onClick(b); });
+          return b;
+        }
+        function renderAudit(found, ignored) {
+          auditList.innerHTML = '';
+          if (!found.length && !ignored.length) { auditWrap.style.display = 'none'; return; }   // silent when clean
           auditWrap.style.display = '';
-          auditTitle.textContent = 'Needs attention (' + found.length + ')';
+          auditTitle.textContent = found.length ? 'Needs attention (' + found.length + ')' : 'Needs attention';
           found.forEach(function(f) {
             var row = document.createElement('div');
             row.style.cssText = 'border-left:2px solid var(--danger,#ff7b72);padding-left:0.55rem';
@@ -3693,9 +3721,36 @@
               q.textContent = '“' + f.quote + '”';
               row.appendChild(q);
             }
+            if (f.id) {
+              var acts = document.createElement('div');
+              acts.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.35rem';
+              if (f.remove) {
+                acts.appendChild(auditButton('Remove', f.remove, function(b) { actOnAudit('remove', f, b); }));
+              }
+              acts.appendChild(auditButton('Ignore', 'Stop showing this until the text behind it changes', function(b) { actOnAudit('ignore', f, b); }));
+              row.appendChild(acts);
+            }
             auditList.appendChild(row);
           });
-        }).catch(function(){});
+          // Ignored findings stay in view, quieter, each with its way back.
+          if (ignored.length) {
+            var ih = document.createElement('div');
+            ih.style.cssText = 'font-size:0.76rem;color:var(--text-mute);margin-top:0.35rem';
+            ih.textContent = 'Ignored (' + ignored.length + ')';
+            auditList.appendChild(ih);
+            ignored.forEach(function(f) {
+              var row = document.createElement('div');
+              row.style.cssText = 'display:flex;align-items:flex-start;gap:0.5rem;border-left:2px solid var(--border);padding-left:0.55rem;opacity:0.75';
+              var txt = document.createElement('div');
+              txt.style.cssText = 'flex:1;min-width:0;font-size:0.78rem;color:var(--text-mute);word-break:break-word';
+              txt.textContent = f.layer + ': ' + (f.quote ? '“' + f.quote + '”' : f.detail);
+              row.appendChild(txt);
+              row.appendChild(auditButton('Restore', 'Show this finding again', function(b) { actOnAudit('restore', f, b); }));
+              auditList.appendChild(row);
+            });
+          }
+        }
+        loadAudit();
 
         // --- Search section ---
         // One box over every memory layer, two modes:

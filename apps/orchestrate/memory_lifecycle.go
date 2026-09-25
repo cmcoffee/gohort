@@ -27,9 +27,7 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -404,23 +402,6 @@ func undoMemoryMove(udb Database, agentID, moveID string) error {
 	udb.Unset(memoryMovesTable, moveID)
 	Log("[orchestrate.memory.lifecycle] agent=%s undid %s: %q", agentID, m.Kind, truncateObs(m.Note, 80))
 	return nil
-}
-
-// handleMemoryMovesPost serves the Memory panel's Undo.
-func handleMemoryMovesPost(w http.ResponseWriter, r *http.Request, udb Database, agentID string) {
-	var body struct {
-		Undo string `json:"undo"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Undo) == "" {
-		http.Error(w, "undo is required", http.StatusBadRequest)
-		return
-	}
-	if err := undoMemoryMove(udb, agentID, strings.TrimSpace(body.Undo)); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 // --- asking about an idle open item -----------------------------------------
