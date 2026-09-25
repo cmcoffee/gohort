@@ -10,7 +10,6 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/prompts"
-	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 // runPlan asks the orchestrator (thinking LLM) to decide its next
@@ -911,22 +910,10 @@ func (pr *planRun) catalogKnowTools() error {
 	// guard backstops that): the agent can open a fresh titled session with
 	// a seeded handoff note and offer the user a link to continue there.
 	pr.cat.knowTools = append(pr.cat.knowTools, t.openSessionToolDef())
-	// Tool authoring: any agent can author its OWN tools via tool_def (the way
-	// phantom always could before it was centralized). Builder already has
-	// tool_def via its authoring catalog, so don't double it. AGENT and
-	// PIPELINE authoring still route to Builder; only tools are self-serve.
-	if !isBuilderAgent(t.agent.ID) {
-		pr.cat.knowTools = append(pr.cat.knowTools, ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), pr.sess))
-		// Tool authoring stays self-serve, but CREDENTIAL authoring is Builder's
-		// job: the five credential tools (draft_oauth_credential /
-		// draft_api_credential / update_api_credential / store_credential_secret
-		// / check_credential) used to ride along here for every agent — 5 schemas
-		// + the 4K credentialFirstGuidance block on every single turn — and were
-		// essentially never used outside Builder (tool-count audit). An agent
-		// whose api-mode tool_def needs a credential that doesn't exist gets a
-		// clear error and points the user at Builder, which carries the full
-		// credential suite + doctrine in its authoring catalog.
-	}
+	// No tool_def here. Tools were self-serve for every agent until v0.7.146;
+	// now a tool is built by Builder like everything else, and handed to the
+	// agent that needs it (add_tool / its authoring focus). Only Builder holds
+	// tool_def, through its authoring catalog.
 	// create_pipeline_tool is NOT added to the catalog — add_tool with
 	// mode="pipeline" covers the same use case via a unified surface.
 	// Having both visible caused pattern-match loops (LLM oscillated

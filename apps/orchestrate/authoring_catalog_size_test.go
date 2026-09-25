@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -290,29 +292,32 @@ func TestNoDeferralLeavesDirectToolsAlone(t *testing.T) {
 	}
 }
 
-// A non-author agent still carries the self-serve tool_def, and it was the
-// largest schema on an agent configured with no tools at all. With no authoring
-// catalog to join, it gets an index of its own: tools-only wording (this agent
-// cannot build agents or apps), still reachable by load_tool or a direct call.
-func TestSelfServeToolDefDeferredOnNonAuthor(t *testing.T) {
-	turn, _ := newAuthoringTestTurn(t)
-	turn.agent.Author = false
-	direct := []AgentToolDef{
-		turn.showLinkToolDef(),
-		{Tool: Tool{Name: "tool_def", Description: "the self-serve mount"}, Handler: func(context.Context, map[string]any) (string, error) { return "", nil }},
+// tool_def is Builder's alone: tools stopped being self-serve in v0.7.146, and
+// a tool is built by Builder like everything else. So the tool is constructed in
+// exactly one place, Builder's authoring catalog; a second mount would hand it
+// back to every agent with no test noticing.
+func TestOnlyBuildersCatalogMountsToolDef(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil || len(files) == 0 {
+		t.Skip("package sources unavailable")
 	}
-	kept := turn.deferKnownAuthoringTools(direct)
-	if got := namesOf(kept); len(got) != 1 || got[0] != "show_link" {
-		t.Fatalf("only show_link should stay direct, got %v", got)
+	var at []string
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		for i, l := range strings.Split(string(data), "\n") {
+			if strings.Contains(l, "temptool.BuildToolDef()") && !strings.HasPrefix(strings.TrimSpace(l), "//") {
+				at = append(at, fmt.Sprintf("%s:%d", f, i+1))
+			}
+		}
 	}
-	if !strings.HasPrefix(turn.authoringLazyPrompt, selfServeToolIndexHeader) || !strings.Contains(turn.authoringLazyPrompt, "- `tool_def`") {
-		t.Fatalf("index must carry the tools-only header and the tool_def line, got %q", turn.authoringLazyPrompt)
-	}
-	if strings.Contains(turn.authoringLazyPrompt, "agents, tools, skills") {
-		t.Fatal("a non-author must not be told it can build agents")
-	}
-	if h, ok := turn.lazyToolFallback("tool_def"); !ok || h == nil {
-		t.Fatal("tool_def must still resolve when called directly")
+	if len(at) != 1 || !strings.HasPrefix(at[0], "builder_tools.go:") {
+		t.Errorf("tool_def should be built only in builderAuthoringTools, found at %v", at)
 	}
 }
 

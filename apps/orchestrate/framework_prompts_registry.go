@@ -15,7 +15,6 @@ func init() {
 	reg("framework.plan_set", "Inline tools vs plan_set", "Orchestration", "Interactive surface (plan_set)", frameworkPlanSetBlock)
 	reg("framework.clarifying", "Asking clarifying questions", "Orchestration", "Interactive surface (ask_user)", frameworkClarifyingBlock)
 	reg("framework.work_honestly", "Work it honestly", "Orchestration", "Interactive surface", frameworkWorkHonestlyBlock)
-	reg("framework.tools_self_serve", "Tools are self-serve", "Authoring", "Agent has tool_def", frameworkToolsSelfServeBlock)
 	reg("framework.export", "Document export", "Authoring", "Agent has export", frameworkExportBlock)
 	reg("framework.builder_routing", "Apps / agents / pipelines → Builder", "Authoring", "Fleet, not Builder", frameworkBuilderRoutingBlock)
 	reg("framework.channel", "Your channel", "Fleet", "Cortex", frameworkChannelBlock())

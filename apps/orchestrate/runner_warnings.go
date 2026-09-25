@@ -290,6 +290,12 @@ func injectPromisedAuthoringWarning(sess *ChatSession, turnToolCalls []Persisted
 		case "ask_user", "plan_set":
 			return false
 		}
+		// Handing the build to Builder IS the action for every agent but
+		// Builder now (tools included, since v0.7.146): "I'll have Builder
+		// create that tool" followed by the handoff is a kept promise.
+		if handsToBuilder(tc) {
+			return false
+		}
 	}
 	if strings.HasSuffix(strings.TrimSpace(reply), "?") {
 		return false
@@ -379,6 +385,20 @@ func claimsSuccessWithoutAck(reply string) bool {
 		if strings.Contains(r, pos) {
 			return true
 		}
+	}
+	return false
+}
+
+// handsToBuilder reports whether a tool call passed work to Builder: the two
+// dedicated handoffs, or agents(run) naming Builder.
+func handsToBuilder(tc PersistedToolCall) bool {
+	switch tc.Name {
+	case "hand_to_builder", "request_build":
+		return true
+	case "agents":
+		target, _ := tc.Args["agent"].(string)
+		target = strings.ToLower(strings.TrimSpace(target))
+		return target == "builder" || isBuilderAgent(target)
 	}
 	return false
 }

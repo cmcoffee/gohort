@@ -48,24 +48,21 @@ Two execution surfaces; pick by the shape of the work.
 // leads with a bold sentence, not a `##` heading).
 const builderRoutingMarker = "**An APP goes to Builder"
 
-// frameworkBuilderRoutingBlock — authoring an APP, AGENT, PIPELINE, or SKILL is
-// Builder's job, not the calling orchestrator's. Lifted verbatim from the Chat
-// seed (the block the division-of-labor rule the user flagged as fleet-level,
-// not chat-specific). Gated on Fleet (only a delegating agent can hand work to
-// Builder) AND not-Builder (Builder IS the authoring agent — telling it to
-// route to itself is nonsense). Making a TOOL stays self-serve; that guidance
-// is a separate block (still in the seed until its own lift).
-const frameworkBuilderRoutingBlock = `**An APP goes to Builder. A gohort "app" is a dashboard SURFACE, never a downloadable file.** When the user asks to "build an app" / "a page/UI/dashboard where I can…" / "track / log / visualize / chart X", that's a gohort app: a surface under My Apps at /apps/<slug>/, built by Builder's app_def tool. Hand the WHOLE thing to Builder via agents(action="run", agent="builder", ...). Author none of it yourself, and do NOT peel off "the graph part" into a tool_def or emit a standalone HTML file and call that "your app" (a downloadable HTML file is a browser artifact, not a gohort app. This has burned us repeatedly). It just shows up under My Apps, so skip file-format questions ("image or HTML?"); the only things to pin before dispatch are the DATA (records/fields, source) and whether it needs a bound agent. Produce a standalone file only when the user EXPLICITLY asks for one to use outside gohort.
+// frameworkBuilderRoutingBlock — authoring an APP, AGENT, TOOL, PIPELINE, or
+// SKILL is Builder's job, not the calling agent's. Gated on the agent being able
+// to hand work to Builder (builderDispatchAllowed) and not being Builder, which
+// is the authoring agent and has no one to route to.
+const frameworkBuilderRoutingBlock = `**An APP goes to Builder. A gohort "app" is a dashboard SURFACE, never a downloadable file.** When the user asks to "build an app" / "a page/UI/dashboard where I can…" / "track / log / visualize / chart X", that's a gohort app: a surface under My Apps at /apps/<slug>/, built by Builder's app_def tool. Hand the WHOLE thing to Builder via agents(action="run", agent="builder", ...). Author none of it yourself, and do NOT peel off "the graph part" into a tool or emit a standalone HTML file and call that "your app" (a downloadable HTML file is a browser artifact, not a gohort app. This has burned us repeatedly). It just shows up under My Apps, so skip file-format questions ("image or HTML?"); the only things to pin before dispatch are the DATA (records/fields, source) and whether it needs a bound agent. Produce a standalone file only when the user EXPLICITLY asks for one to use outside gohort.
 
-**Agents, pipelines, and skills are built THROUGH Builder, in this thread: you do the quick intake, then Builder does the build.** When the user wants an AGENT, PIPELINE, or SKILL made:
+**Agents, tools, pipelines, and skills are built THROUGH Builder, in this thread: you do the quick intake, then Builder does the build.** When the user wants an AGENT, TOOL, PIPELINE, or SKILL made:
 
 1. FIRST pin any design decision a build needs that the user has NOT already given (typically: the data or source, the schedule or trigger, and the output shape such as format and length). If one is genuinely missing AND would change what gets built, ask it yourself with ask_user / ask_user_form before building. Do NOT make Builder guess at a decision you could just ask about; equally, do NOT re-ask anything the user already told you.
 
-2. THEN dispatch Builder as a sub-agent: agents(action="run", agent="builder", message="<a full brief: what to build, who it is for, the answers from step 1, plus the relevant detail from this conversation>"). Builder inherits your read-only tools (read_chat and the like) so it can inspect what you can see while it drafts. Whatever it creates is saved HELD FOR APPROVAL and becomes a sub-agent of yours the moment the user approves it in their Authorizations pane. Do NOT author agents / pipelines / skills yourself or via plan_set. After dispatching, tell the user what you had built and that it is waiting for their approval:
+2. THEN dispatch Builder as a sub-agent: agents(action="run", agent="builder", message="<a full brief: what to build, who it is for, the answers from step 1, plus the relevant detail from this conversation; for a tool, which agent should carry it>"). Builder inherits your read-only tools (read_chat and the like) so it can inspect what you can see while it drafts. Whatever it creates is saved HELD FOR APPROVAL and becomes a sub-agent of yours the moment the user approves it in their Authorizations pane. Do NOT author agents / tools / pipelines / skills yourself or via plan_set. After dispatching, tell the user what you had built and that it is waiting for their approval:
 
   "I had Builder draft that for you. Approve it in your Authorizations pane and it goes live: <one line on what it does>."
 
-For a complex or open-ended design ("help me figure out what I even want"), you don't need one perfect dispatch: go BACK AND FORTH with Builder in this thread. Dispatch what you have; if it needs a decision it can't assume, it says so, so relay that, get the answer, dispatch again in the SAME thread (it remembers the prior exchange). Keep iterating until the design is captured, then report what was built and that it's held for approval. (Tools you still make yourself.)`
+For a complex or open-ended design ("help me figure out what I even want"), you don't need one perfect dispatch: go BACK AND FORTH with Builder in this thread. Dispatch what you have; if it needs a decision it can't assume, it says so, so relay that, get the answer, dispatch again in the SAME thread (it remembers the prior exchange). Keep iterating until the design is captured, then report what was built and that it's held for approval.`
 
 // cannotAuthorMarker dedup-keys the can't-author block.
 const cannotAuthorMarker = "**You cannot author agents"
@@ -78,7 +75,7 @@ const cannotAuthorMarker = "**You cannot author agents"
 // the user to edit files. Flag the limit UP FRONT so the very first response is
 // a clean handoff, not a dead-end loop. Gated on not-Fleet and not-Builder — the
 // exact set that gets no authoring guidance otherwise.
-const frameworkCannotAuthorBlock = `**You cannot author agents, pipelines, skills, or apps yourself, but you CAN request a sub-agent.** Authoring is Builder's job and you can't dispatch Builder directly. When the user asks you to create a SUB-AGENT, call ` + "`request_build`" + ` with a complete spec (its job, persona, the tools/sources it needs, any schedule): that queues the build for the user's approval, and on approval Builder authors it as your sub-agent. Do this instead of trying to dispatch (least of all to yourself), improvising with searches, or telling the user to edit files. After calling it, tell the user it's queued for their approval and what it will do. For a pipeline, skill, or full app (not a sub-agent), you have no request path, so say plainly you can't build those and point them to Builder in their agent picker.`
+const frameworkCannotAuthorBlock = `**You cannot author agents, tools, pipelines, skills, or apps yourself, but you CAN request a sub-agent.** Authoring is Builder's job and you can't dispatch Builder directly. When the user asks you to create a SUB-AGENT, call ` + "`request_build`" + ` with a complete spec (its job, persona, the tools/sources it needs, any schedule): that queues the build for the user's approval, and on approval Builder authors it as your sub-agent. Do this instead of trying to dispatch (least of all to yourself), improvising with searches, or telling the user to edit files. After calling it, tell the user it's queued for their approval and what it will do. For a tool, pipeline, skill, or full app (not a sub-agent), you have no request path, so say plainly you can't build those and point them to Builder in their agent picker.`
 
 // clarifyingSectionHeading marks (and dedup-keys) the clarifying-questions block.
 const clarifyingSectionHeading = "## Asking the user clarifying questions"
@@ -106,16 +103,9 @@ DON'T ask when a tool call would just answer the question. "What's the price of 
 - Several specific VALUES the user must TYPE (an API base URL, a key, a count, an endpoint) → ask_user_form with steps[] where each step sets type ("text"/"number"/"textarea"/"select"/"password"). Any typed step renders the whole thing as ONE form (all fields at once, single Submit) instead of a step-through, the right shape for "fill these fields in." Use type:"password" for secrets/keys, type:"select" with options for a dropdown.
 - Open-ended single question with no clear options → ask_user without options.`
 
-// toolsSelfServeMarker / exportMarker dedup-key the tool-gated blocks (each
-// leads with a bold sentence, not a `##` heading).
-const toolsSelfServeMarker = "**Tools are self-serve."
+// exportMarker dedup-keys the export block (it leads with a bold sentence, not
+// a ## heading).
 const exportMarker = "**Producing a document FILE"
-
-// frameworkToolsSelfServeBlock — a TOOL is the calling agent's own job (author
-// it with tool_def), not Builder's. Lifted verbatim from the Chat seed. Gated
-// on the agent actually having tool_def (see agentAllowsFrameworkTool) so a
-// restricted agent that lacks it is never told to reach for it.
-const frameworkToolsSelfServeBlock = `**Tools are self-serve.** When the user wants a new TOOL, author it yourself with tool_def. You don't punt this to Builder. The loop: for an API endpoint, tool_def(mode="api", credential=...) wraps it directly; for local processing, write and run a script in the workspace (workspace write + run) to prove it works, then tool_def(mode="shell", script_body=...) to wrap it. The tool is callable immediately, and it persists: it attaches to this agent and is there next session (don't ask permission, just author it). Before you tell the user whether you HAVE some tool ("do you have a vapi tool?"), or build one that might already exist, call tool_def(action="list") and look: it is the only surface that shows every custom tool in scope. Answer from that list, never from memory, and never claim you "previously set one up" without checking it.`
 
 // frameworkExportBlock — producing a downloadable document/spreadsheet/deck is
 // the built-in export tool's job, never hand-built file bytes. Lifted verbatim
@@ -239,10 +229,9 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 	// Clarifying-questions guidance — ask_user rides the same interactive-web
 	// signal as plan_set; a dispatch/worker surface can't prompt the user.
 	add(hasPlanSet && !isBuilderAgent(agent.ID), "framework.clarifying", clarifyingSectionHeading, frameworkClarifyingBlock)
-	// Tools-self-serve and document-export — gated on the agent actually having
-	// the tool (tool_def / export), not on the surface: unlike plan_set these
-	// tools can exist off the interactive surface too, so capability is the gate.
-	add(agentAllowsFrameworkTool(agent, "tool_def") || agentCanAuthor(agent), "framework.tools_self_serve", toolsSelfServeMarker, frameworkToolsSelfServeBlock)
+	// Document export, gated on the agent actually having the tool, not on the
+	// surface: unlike plan_set it can exist off the interactive surface too.
+	// (The tools-self-serve block went with self-serve tool_def in v0.7.146.)
 	add(agentAllowsFrameworkTool(agent, "export"), "framework.export", exportMarker, frameworkExportBlock)
 	// Builder routing: every agent that may hand work to Builder (a conductor,
 	// or one granted "Can dispatch Builder"), never Builder itself. Since the

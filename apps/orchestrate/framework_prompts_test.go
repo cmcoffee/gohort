@@ -62,39 +62,40 @@ func TestFrameworkGatesClarifyingOnInteractiveSurface(t *testing.T) {
 	}
 }
 
-// tools-self-serve and export must be LIFTED OUT of the Chat seed persona.
+// export must be LIFTED OUT of the Chat seed persona, and the retired
+// tools-self-serve block must not have been left behind in it.
 func TestToolBlocksRemovedFromChatSeed(t *testing.T) {
 	p := chatSeed(t).OrchestratorPrompt
-	if strings.Contains(p, toolsSelfServeMarker) {
-		t.Fatalf("Chat seed still contains the tools-self-serve block (%q)", toolsSelfServeMarker)
+	if strings.Contains(p, "**Tools are self-serve.") {
+		t.Fatal("Chat seed still tells agents to build their own tools")
 	}
 	if strings.Contains(p, exportMarker) {
 		t.Fatalf("Chat seed still contains the export block (%q)", exportMarker)
 	}
 }
 
-// Default-pool agent (empty AllowedTools, like Chat) has tool_def + export, so
-// both blocks inject.
+// Default-pool agent (empty AllowedTools, like Chat) has export, so its block
+// injects. No agent is told to build its own tools any more (v0.7.146).
 func TestFrameworkInjectsToolBlocksForDefaultPool(t *testing.T) {
 	got := frameworkPromptBlocks("", chatSeed(t), true)
-	if !strings.Contains(got, toolsSelfServeMarker) {
-		t.Fatal("tools-self-serve block missing for a default-pool agent")
+	if strings.Contains(got, "**Tools are self-serve.") {
+		t.Fatal("an agent was told tools are self-serve; tools go through Builder now")
 	}
 	if !strings.Contains(got, exportMarker) {
 		t.Fatal("export block missing for a default-pool agent")
 	}
 }
 
-// A restricted allowlist gates each tool block on membership — no false "use
-// tool_def" prompt for an agent whose allowlist doesn't include it.
+// A restricted allowlist gates the export block on membership, so an agent is
+// never told to reach for a tool it does not have.
 func TestFrameworkGatesToolBlocksOnAllowlist(t *testing.T) {
 	without := AgentRecord{ID: "restricted", AllowedTools: []string{"web_search"}}
-	if strings.Contains(frameworkPromptBlocks("", without, true), toolsSelfServeMarker) {
-		t.Fatal("tools-self-serve block appeared for an agent whose allowlist lacks tool_def")
+	if strings.Contains(frameworkPromptBlocks("", without, true), exportMarker) {
+		t.Fatal("export block appeared for an agent whose allowlist lacks export")
 	}
-	with := AgentRecord{ID: "authoring", AllowedTools: []string{"tool_def"}}
-	if !strings.Contains(frameworkPromptBlocks("", with, true), toolsSelfServeMarker) {
-		t.Fatal("tools-self-serve block missing for an agent that allowlists tool_def")
+	with := AgentRecord{ID: "exporting", AllowedTools: []string{"export"}}
+	if !strings.Contains(frameworkPromptBlocks("", with, true), exportMarker) {
+		t.Fatal("export block missing for an agent that allowlists export")
 	}
 }
 
@@ -176,7 +177,7 @@ func TestChatSeedIsPurePersona(t *testing.T) {
 		t.Fatalf("Chat seed still contains a '## ' framework section:\n%s", p)
 	}
 	for _, marker := range []string{
-		planSetSectionHeading, clarifyingSectionHeading, toolsSelfServeMarker,
+		planSetSectionHeading, clarifyingSectionHeading,
 		exportMarker, builderRoutingMarker, channelSectionHeading,
 		fleetSupervisionMarker, howToDecideSectionHeading, workHonestlyMarker,
 	} {
@@ -221,7 +222,7 @@ func TestFrameworkBlocksRegisteredForPromptsPage(t *testing.T) {
 	}
 	for _, key := range []string{
 		"framework.how_to_decide", "framework.plan_set", "framework.clarifying",
-		"framework.work_honestly", "framework.tools_self_serve", "framework.export",
+		"framework.work_honestly", "framework.export",
 		"framework.builder_routing", "framework.channel", "framework.fleet",
 	} {
 		b, ok := have[key]

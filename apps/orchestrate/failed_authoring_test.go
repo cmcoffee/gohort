@@ -218,3 +218,23 @@ func TestIsTrialTool(t *testing.T) {
 		t.Error("absent record must report false")
 	}
 }
+
+// Every agent but Builder builds by handing the work to Builder, so a handoff
+// keeps an "I'll create that tool" promise. A dispatch to anyone else does not.
+func TestAHandoffToBuilderKeepsTheAuthoringPromise(t *testing.T) {
+	const promise = "I'll have Builder create that tool for you now."
+	for _, tc := range []PersistedToolCall{
+		{Name: "hand_to_builder"},
+		{Name: "request_build"},
+		{Name: "agents", Args: map[string]any{"action": "run", "agent": "Builder"}},
+		{Name: "agents", Args: map[string]any{"action": "run", "agent": "seed-builder"}},
+	} {
+		if injectPromisedAuthoringWarning(&ChatSession{}, []PersistedToolCall{tc}, promise) {
+			t.Errorf("a handoff to Builder (%s %v) was treated as a broken promise", tc.Name, tc.Args)
+		}
+	}
+	other := PersistedToolCall{Name: "agents", Args: map[string]any{"action": "run", "agent": "Comedian"}}
+	if !injectPromisedAuthoringWarning(&ChatSession{}, []PersistedToolCall{other}, promise) {
+		t.Error("dispatching some other agent does not build the tool, so the warning should still fire")
+	}
+}
