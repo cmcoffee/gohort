@@ -598,3 +598,103 @@ func TestTheMachineToolCanRepairWhatItCanRepair(t *testing.T) {
 		t.Errorf("list should say which machines have work left:\n%s", lst)
 	}
 }
+
+// The strict key list is MachinePhase's own JSON names, exactly: a field added
+// to the struct and missed here would be refused as unknown.
+func TestPhaseKeysMatchThePhaseStruct(t *testing.T) {
+	typ := reflect.TypeOf(MachinePhase{})
+	tags := map[string]bool{}
+	for i := 0; i < typ.NumField(); i++ {
+		tag := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
+		if tag != "" && tag != "-" {
+			tags[tag] = true
+		}
+	}
+	for k := range tags {
+		if !machinePhaseKeys[k] {
+			t.Errorf("phase field %q would be refused as unknown", k)
+		}
+	}
+	for k := range machinePhaseKeys {
+		if !tags[k] {
+			t.Errorf("%q is accepted but no phase field carries it", k)
+		}
+	}
+}
+
+// A field no step reads used to vanish on save. A branch condition in
+// particular: the step saved without it and nothing said so.
+func TestAnUnknownPhaseFieldIsRefused(t *testing.T) {
+	_, err := parseMachinePhases([]any{map[string]any{"name": "decide", "prompt": "p", "when": "state:router.is_humor", "else_next": "direct"}})
+	if err == nil || !strings.Contains(err.Error(), "choices") || !strings.Contains(err.Error(), "decide") {
+		t.Fatalf("a condition field should be refused, pointing at choices: %v", err)
+	}
+	_, err = parseMachinePhases([]any{map[string]any{"name": "s", "prompt": "p", "resident": true, "colour": "blue"}})
+	if err == nil || !strings.Contains(err.Error(), "colour") || !strings.Contains(err.Error(), "guard_to") {
+		t.Fatalf("an unknown field should be refused with the real field list: %v", err)
+	}
+}
+
+func TestUpdatePhaseRefusesWhatItDoesNotWrite(t *testing.T) {
+	turn := machineToolFixture(t)
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"name": "Triage", "phases": toolPhases()}, false); err != nil {
+		t.Fatal(err)
+	}
+	_, err := turn.machineUpdatePhase(map[string]any{"name": "Triage", "phase": "decompose", "prompt": "new", "when": "x", "output": nil})
+	if err == nil || !strings.Contains(err.Error(), "output, when") || !strings.Contains(err.Error(), "nothing was saved") {
+		t.Fatalf("unhandled fields should refuse the call by name: %v", err)
+	}
+	def, _ := turn.findMachine(map[string]any{"name": "Triage"})
+	if ph, _ := def.Phase("decompose"); ph.Prompt == "new" {
+		t.Error("a refused call must not have written the fields it did handle")
+	}
+}
+
+func TestUpdatePhaseSetsChoicesAndResidentAndNullClears(t *testing.T) {
+	turn := machineToolFixture(t)
+	phases := []any{
+		map[string]any{"name": "route", "prompt": "Route {input}", "next": "a"},
+		map[string]any{"name": "a", "prompt": "A", "resident": true},
+		map[string]any{"name": "b", "prompt": "B", "next": "a"},
+	}
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"name": "Fork", "phases": phases}, false); err != nil {
+		t.Fatal(err)
+	}
+	// Branch: choices replace the fixed next, which null clears.
+	if _, err := turn.machineUpdatePhase(map[string]any{"name": "Fork", "phase": "route", "choices": []any{"a", "b"}, "next": nil}); err != nil {
+		t.Fatalf("setting choices and clearing next: %v", err)
+	}
+	def, _ := turn.findMachine(map[string]any{"name": "Fork"})
+	route, _ := def.Phase("route")
+	if route.Next != "" || len(route.Choices) != 2 {
+		t.Errorf("route should branch with no fixed next, got next=%q choices=%v", route.Next, route.Choices)
+	}
+	// A step becomes one the conversation waits in.
+	if _, err := turn.machineUpdatePhase(map[string]any{"name": "Fork", "phase": "b", "resident": true, "next": nil}); err != nil {
+		t.Fatalf("making b resident: %v", err)
+	}
+	def, _ = turn.findMachine(map[string]any{"name": "Fork"})
+	if b, _ := def.Phase("b"); !b.Resident || b.Next != "" {
+		t.Errorf("b should wait with no next, got %+v", b)
+	}
+}
+
+// validate {phases} with no machine named checks the list itself, as the help
+// promises; it used to report that the call carried no phases.
+func TestValidateChecksABarePhaseList(t *testing.T) {
+	turn := machineToolFixture(t)
+	out, err := turn.machineValidate(map[string]any{"phases": toolPhases()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "carries no phases") || !strings.Contains(out, "WOULD SAVE") || !strings.Contains(out, "decompose, answer") {
+		t.Errorf("a bare phase list should be checked on its own:\n%s", out)
+	}
+	if _, found := turn.findMachine(map[string]any{"name": "(this phase list)"}); found {
+		t.Error("validate must write nothing")
+	}
+	// An update naming nothing says so, rather than blaming the phases.
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"phases": toolPhases()}, true); err == nil || strings.Contains(err.Error(), "carries no phases") {
+		t.Errorf("a nameless update should ask for the name: %v", err)
+	}
+}

@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -58,9 +59,15 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"desc":     {Type: "string", Description: "(update_phase) One-line summary of what the step is for."},
 				"think":    {Type: "string", Description: "(update_phase) \"on\" or \"off\".", Enum: []string{"on", "off"}},
 				"model":    {Type: "string", Description: "(update_phase) \"worker\" or \"lead\".", Enum: []string{"worker", "lead"}},
-				"next":     {Type: "string", Description: "(update_phase) The phase a transient step hands to."},
+				"next":     {Type: "string", Description: "(update_phase) The phase a transient step hands to, or a waiting step moves to after its reply. null clears it. A step that branches uses choices instead."},
 				"guard":    {Type: "string", Description: "(update_phase) Plain-language condition that moves the conversation out of this step."},
 				"guard_to": {Type: "string", Description: "(update_phase) Where the guard sends it."},
+				"choices": {
+					Type:        "array",
+					Description: "(update_phase) The steps this one may hand the turn to, when it decides at run time: this is how a step BRANCHES. Replaces its next. [] clears it.",
+					Items:       &ToolParam{Type: "string"},
+				},
+				"resident": {Type: "boolean", Description: "(update_phase) true: the conversation waits in this step and its reply goes to the person. false: it passes on to its next or choices."},
 				"phases": {
 					Type:        "array",
 					Description: "(create/update/validate) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself, do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output: their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"all\" for everything the agent has, \"read\", \"none\"; unset, a transient phase naming no tools reaches NOTHING and every other phase reaches everything; prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last, the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\", OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins, {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
@@ -342,6 +349,8 @@ func (t *chatTurn) machineDraftFromArgs(args map[string]any, isUpdate bool) (mac
 			createdViaUpdate = true
 			isUpdate = false
 			def = MachineDef{Name: name, Owner: t.user}
+		case name == "" && strings.TrimSpace(stringArg(args, "id")) == "":
+			return machineDraft{}, errors.New("name the machine to update (name or id). machine(action=\"list\") shows what you have")
 		default:
 			return machineDraft{}, errors.New("no matching machine to update: nothing is stored under that name/id, and this call carries no phases to store as a new one. machine(action=\"list\") shows what you actually have")
 		}
@@ -387,7 +396,21 @@ func (t *chatTurn) machineValidate(args map[string]any) (string, error) {
 	// worth having after something ELSE changed: an agent's allowlist is
 	// rewritten somewhere far from here, and the phases that named those tools
 	// are only wrong afterwards.
-	draft, err := t.machineDraftFromArgs(args, true)
+	// A phase list with no machine named is a candidate on its own, which the
+	// help promises: validate {phases:[...]}. It used to fall into the update
+	// branch, find nothing by name, and report that the call carried no phases.
+	var draft machineDraft
+	var err error
+	if _, sent := args["phases"]; sent && strings.TrimSpace(stringArg(args, "name")) == "" && strings.TrimSpace(stringArg(args, "id")) == "" {
+		candidate := make(map[string]any, len(args)+1)
+		for k, v := range args {
+			candidate[k] = v
+		}
+		candidate["name"] = "(this phase list)"
+		draft, err = t.machineDraftFromArgs(candidate, false)
+	} else {
+		draft, err = t.machineDraftFromArgs(args, true)
+	}
 	if err != nil {
 		return "NOT VALID, and NOTHING WAS WRITTEN: " + err.Error(), nil
 	}
@@ -801,6 +824,16 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 			", it has: " + strings.Join(def.PhaseNames(), ", "))
 	}
 
+	// Every key this call carries must be one it writes. A field it does not
+	// handle used to be dropped while the reply said "Updated", so an author
+	// who set resident or a branch condition was told it had worked.
+	if unknown := unknownUpdatePhaseKeys(args); len(unknown) > 0 {
+		return "", errors.New("update_phase does not change " + strings.Join(unknown, ", ") + ", so nothing was saved. " +
+			"It changes: " + strings.Join(updatePhaseFieldNames, ", ") + ". " +
+			"A step branches with choices (the steps it may pick between), not a condition field. " +
+			"For output, agent, pipeline, machine, tool, keep or exits_to, use action=\"update\" with the whole phase list.")
+	}
+
 	ph := &def.Phases[idx]
 	var changed []string
 	setStr := func(key string, dst *string, lower bool) {
@@ -808,7 +841,12 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 		if !present {
 			return
 		}
-		s := strings.TrimSpace(fmt.Sprint(v))
+		// null means clear. fmt.Sprint(nil) is "<nil>", which was being
+		// stored as the value: next=null named a step called "<nil>".
+		s := ""
+		if v != nil {
+			s = strings.TrimSpace(fmt.Sprint(v))
+		}
 		if lower {
 			s = strings.ToLower(s)
 		}
@@ -872,9 +910,28 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	setStr("guard_to", &ph.GuardTo, false)
 	setList("tools", &ph.Tools)
 	setList("deny", &ph.Deny)
+	if _, present := args["choices"]; present {
+		ph.Choices = stringSliceArg(args, "choices")
+		if len(ph.Choices) == 0 {
+			changed = append(changed, "choices (cleared)")
+		} else {
+			changed = append(changed, "choices = "+strings.Join(ph.Choices, ", "))
+		}
+	}
+	if v, present := args["resident"]; present {
+		on := false
+		switch b := v.(type) {
+		case bool:
+			on = b
+		case string:
+			on = strings.EqualFold(strings.TrimSpace(b), "true")
+		}
+		ph.Resident = on
+		changed = append(changed, fmt.Sprintf("resident = %v", on))
+	}
 
 	if len(changed) == 0 {
-		return "", errors.New("nothing to change: name at least one field (tools, deny, reach, prompt, desc, think, model, next, guard, guard_to). " +
+		return "", errors.New("nothing to change: name at least one field (" + strings.Join(updatePhaseFieldNames, ", ") + "). " +
 			"An omitted field is left alone; pass tools=[] to CLEAR a list")
 	}
 	if err := def.Validate(); err != nil {
@@ -1024,6 +1081,9 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 		if !ok {
 			return nil, fmt.Errorf("phase %d must be an object {name, prompt, resident?, next?}", i+1)
 		}
+		if unknown := unknownPhaseKeys(m); len(unknown) > 0 {
+			return nil, fmt.Errorf("phase %d (%s): %s", i+1, chFirst(strings.TrimSpace(mapStr(m, "name")), "unnamed"), unknownPhaseKeysMessage(unknown))
+		}
 		fields, err := parsePipelineFields(i+1, m["output"])
 		if err != nil {
 			return nil, err
@@ -1097,4 +1157,70 @@ func previewText(s string, max int) string {
 		return s
 	}
 	return s[:max] + "… (" + strconv.Itoa(len(s)) + " chars)"
+}
+
+// updatePhaseFieldNames is what update_phase writes, in the order it says so.
+var updatePhaseFieldNames = []string{
+	"prompt", "desc", "think", "model", "next", "choices", "resident",
+	"guard", "guard_to", "tools", "deny", "reach",
+}
+
+// unknownUpdatePhaseKeys names the keys an update_phase call carries that it
+// neither writes nor uses to find the step.
+func unknownUpdatePhaseKeys(args map[string]any) []string {
+	known := map[string]bool{"action": true, "name": true, "id": true, "phase": true}
+	for _, k := range updatePhaseFieldNames {
+		known[k] = true
+	}
+	var out []string
+	for k := range args {
+		if !known[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// machinePhaseKeys is every field a phase object may carry: MachinePhase's own
+// JSON names, which is what parseMachinePhases reads.
+var machinePhaseKeys = map[string]bool{
+	"name": true, "desc": true, "prompt": true, "tool": true, "args": true,
+	"reach": true, "tools": true, "deny": true, "model": true, "think": true,
+	"output": true, "resident": true, "next": true, "next_from": true,
+	"choices": true, "guard": true, "guard_to": true, "exits_to": true,
+	"keep": true, "agent": true, "pipeline": true, "machine": true,
+	"accumulates": true,
+}
+
+// unknownPhaseKeys names the keys of one phase object that no field reads. They
+// used to vanish on save, so a step written with a branch condition saved
+// without one and nothing said so.
+func unknownPhaseKeys(m map[string]any) []string {
+	var out []string
+	for k := range m {
+		if !machinePhaseKeys[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// unknownPhaseKeysMessage says what to use instead, naming the branching
+// fields when the unknown key looks like an attempt at a condition.
+func unknownPhaseKeysMessage(unknown []string) string {
+	msg := "unknown field(s) " + strings.Join(unknown, ", ") + ", so nothing was saved."
+	for _, k := range unknown {
+		switch strings.ToLower(k) {
+		case "when", "if", "else", "else_next", "then", "condition", "branch", "route", "routes", "on_true", "on_false":
+			return msg + " A step branches with choices (the steps it may pick between; it decides at run time) or next_from (one of its own string output fields holding a step name). There is no condition field."
+		}
+	}
+	names := make([]string, 0, len(machinePhaseKeys))
+	for k := range machinePhaseKeys {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return msg + " A step's fields are: " + strings.Join(names, ", ") + "."
 }
