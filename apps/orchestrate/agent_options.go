@@ -134,6 +134,23 @@ func (T *OrchestrateApp) handleAgentPickerOptions(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	opts, _, subs := agentPickerOptions(pickerAgents(listAgents(udb, user)))
-	writeJSON(w, map[string]any{"options": opts, "sub_agents": subs})
+	agents := pickerAgents(listAgents(udb, user))
+	opts, cortex, subs := agentPickerOptions(agents)
+	// The two Cortex maps ride along, so an agent Builder just created gets
+	// its Cortex row without a reload. They were only ever written into the
+	// page when it loaded, which left a new agent without one.
+	writeJSON(w, map[string]any{"options": opts, "sub_agents": subs,
+		"cortex_agents": cortex, "record_agents": recordAgentsFor(agents, cortex)})
+}
+
+// recordAgentsFor maps every agent that does NOT read its Cortex to its
+// Cortex thread, which the panel pins read-only as that agent's record.
+func recordAgentsFor(agents []AgentRecord, cortex map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, a := range agents {
+		if _, reads := cortex[a.ID]; !reads {
+			out[a.ID] = cortexSessionID(a.ID)
+		}
+	}
+	return out
 }

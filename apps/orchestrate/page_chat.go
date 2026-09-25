@@ -142,13 +142,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	cortexAgentsJSON, _ := json.Marshal(cortexAgents)
 	// Every other agent's cortex is a RECORD: kept for the owner, not read by
 	// the agent, pinned at the top of its sessions and opened read-only.
-	recordAgents := map[string]string{}
-	for _, a := range pickerAgents(agents) {
-		if _, reads := cortexAgents[a.ID]; !reads {
-			recordAgents[a.ID] = cortexSessionID(a.ID)
-		}
-	}
-	recordAgentsJSON, _ := json.Marshal(recordAgents)
+	recordAgentsJSON, _ := json.Marshal(recordAgentsFor(pickerAgents(agents), cortexAgents))
 	phases.mark("marshal head json")
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +

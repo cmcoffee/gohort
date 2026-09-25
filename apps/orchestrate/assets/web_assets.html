@@ -8553,6 +8553,11 @@
           // newly-authored sub-agent shows in the specialist picker.
           var subMap = data.sub_agents || {};
           window.ORCH_SUB_AGENTS = subMap;
+          // Which agents read their Cortex and which keep it as a record:
+          // refreshed with the list, so an agent created since the page loaded
+          // gets its Cortex row without a reload.
+          if (data.cortex_agents) window.ORCH_CHANNEL_AGENTS = data.cortex_agents;
+          if (data.record_agents) window.ORCH_RECORD_AGENTS = data.record_agents;
           sel.innerHTML = '';
           sel.appendChild(new Option('(select agent)', ''));
           // Group by the option's group field, preserving source order across

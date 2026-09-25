@@ -6,6 +6,8 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -97,5 +99,28 @@ func TestANewConversationIsRecordedByItsTitle(t *testing.T) {
 	got := cortexLines(t, db, a.ID)
 	if strings.Count(got, "Started:") != 1 || !strings.Contains(got, "Conversation: Started: Weather check") {
 		t.Errorf("one line per conversation, by its title, and nothing for a clean-room session:\n%s", got)
+	}
+}
+
+// An agent created after the page loaded (by Builder, mid-conversation) gets
+// its Cortex row from the picker refresh, which now carries both maps.
+func TestAPickerRefreshCarriesEveryAgentsCortex(t *testing.T) {
+	app, req, udb := authedApp(t)
+	reader, _ := saveAgent(udb, AgentRecord{Name: "Reader", Owner: "alice", OrchestratorPrompt: "p", Cortex: true})
+	fresh, _ := saveAgent(udb, AgentRecord{Name: "Fresh", Owner: "alice", OrchestratorPrompt: "p"})
+	w := httptest.NewRecorder()
+	app.handleAgentPickerOptions(w, req("GET", "/api/agent-options", nil))
+	var got struct {
+		Cortex  map[string]string `json:"cortex_agents"`
+		Records map[string]string `json:"record_agents"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if got.Cortex[reader.ID] != cortexSessionID(reader.ID) || got.Records[reader.ID] != "" {
+		t.Errorf("an agent that reads its Cortex is in the cortex map only: %+v", got)
+	}
+	if got.Records[fresh.ID] != cortexSessionID(fresh.ID) || got.Cortex[fresh.ID] != "" {
+		t.Errorf("an agent that does not read it keeps it as a record: %+v", got)
 	}
 }
