@@ -35,8 +35,8 @@ func (t *chatTurn) machineHost() *machineHost {
 		turn:      t.machineTurn,
 	}
 	h.agentID, h.agentName = t.agent.ID, chFirst(t.agent.Name, t.agent.ID)
-	if t.session != nil {
-		h.thread = t.session.ID
+	if thread := t.cursorThread(); thread != nil {
+		h.thread = thread.ID
 	}
 	// Progress out of a sub-run rides the turn's activity surface: these calls
 	// run at the head of the turn with somebody waiting, and a pipeline of six

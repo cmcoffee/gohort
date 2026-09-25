@@ -128,6 +128,11 @@ type chatTurn struct {
 	// held because the approval hook reads session state to find which
 	// credential a call rides on.
 	machineSess *ToolSession
+	// machineThread is where the machine cursor lives on a run with no web
+	// session: a channel inbound, a wake or a delegation keeps its own thread,
+	// and without somewhere to keep the cursor the agent's machine never ran
+	// there at all. See cursorThread.
+	machineThread *ChatSession
 	// attachedToolNames is what this turn's ATTACHMENTS minted: the tools
 	// of the agent's attached sources and pipelines, by name.
 	//

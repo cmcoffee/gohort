@@ -344,6 +344,14 @@ func dispatchRouting(ctx context.Context, subTurn *chatTurn) (LLMTier, string) {
 		return TierUnset, "app.orchestrate.worker"
 	}
 	subTurn.privateMode = !NetworkAllowedFromContext(ctx)
+	// A machine step that names a model is the most specific routing setting,
+	// resolved the way the web turn resolves it (turnRouting), privacy included.
+	if subTurn.machine.Tier() != TierUnset {
+		if pin, key := subTurn.turnRouting(); pin == LEAD {
+			return LEAD, key
+		}
+		return WORKER, "app.orchestrate.worker"
+	}
 	if subTurn.shouldUseLeadModel() {
 		Log("[orchestrate.routing] dispatched agent=%s → lead (its Use Lead model)", subTurn.agent.ID)
 		return LEAD, orchestratorRouteKey(subTurn.agent.ID, true)
@@ -1763,6 +1771,25 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if priorSession.Title == "" && run.Title != "" {
 		priorSession.Title = run.Title
 	}
+	// The agent's machine runs here as it does in web chat (machine.go). It used
+	// to run ONLY there: a channel message, a wake or a delegation to an agent
+	// with a machine went straight to the agent, so a router that decided which
+	// agent answers never saw anything that arrived by bridge. The cursor lives
+	// on this thread, so each conversation walks its own steps. Not under an
+	// app's own complete prompt, which owns the whole turn.
+	if strings.TrimSpace(run.SystemPromptOverride) == "" {
+		subTurn.machineThread = &priorSession
+		if mach := subTurn.enterMachine(message); mach.on {
+			sysPrompt += mach.Block()
+			narrowed, dropped, unmatched, _ := mach.narrowCatalog(tools, subTurn.attachedToolNames)
+			tools = narrowed
+			if subTurn.hasMachineExit() {
+				tools = append(tools, subTurn.changePhaseToolDef())
+			}
+			Log("[orchestrate.machine] dispatched agent=%s step=%q kind=%s: %d tool(s) after the step's list, %d dropped, %d unmatched",
+				target.ID, mach.Name(), run.Kind, len(tools), len(dropped), len(unmatched))
+		}
+	}
 	// The delegated-invocation marker only signals a CONVERSATIONAL agent
 	// (Builder) to skip its intake/confirm workflow and run headless from the
 	// brief — it's the only agent whose prompt reads it. The web ask_user is not
@@ -1889,6 +1916,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if run.Think != nil {
 		think = *run.Think
 	}
+	think = subTurn.machine.Think(think) // the step is the most specific setting
 	subTurn.noteMountedTools(tools)
 	dispatchPin, dispatchRoute := dispatchRouting(ctx, subTurn)
 	loopCfg := AgentLoopConfig{
@@ -2027,7 +2055,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		loopCfg.Tools = append(loopCfg.Tools, delegatedAskUserTool(ask))
 		loopCfg.RoundAbortTools = append(loopCfg.RoundAbortTools, "ask_user")
 	}
+	// A step's deny holds for tools that arrive after the catalog was narrowed,
+	// as on the web turn.
+	if subTurn.machine.on {
+		loopCfg.RoundToolFilter = func(name string) bool { return !subTurn.machine.Denies(name) }
+	}
 	resp, transcript, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
+	// The waiting step hands off now that it has had its turn (its next), as the
+	// web turn does on the way out; change_phase may have moved it mid-turn.
+	subTurn.completeMachine(subTurn.machine)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)
 	// A superseded/cancelled turn is CANCELED, not FAILED.

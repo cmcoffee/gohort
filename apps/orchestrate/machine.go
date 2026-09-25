@@ -67,14 +67,15 @@ func (t *chatTurn) machineTurn(msg string) MachineTurn {
 // works: the transient phases have to run BEFORE the persona is built,
 // because what they establish is part of it.
 func (t *chatTurn) enterMachine(userMsg string) turnMachine {
-	if t.agent.Machine == "" || t.session == nil {
+	thread := t.cursorThread()
+	if t.agent.Machine == "" || thread == nil {
 		return turnMachine{}
 	}
 	def, ok := t.sessionMachine()
 	if !ok {
 		return turnMachine{}
 	}
-	cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog, Opening: t.session.MachineOpening}
+	cur := &MachineCursor{Phase: thread.Phase, State: thread.MachineState, Log: thread.MachineLog, Opening: thread.MachineOpening}
 	ph, err := t.app.AdvanceMachine(t.ctx, def, cur, t.machineTurn(userMsg), t.phaseRunner(), t.turnDiag)
 	if err != nil {
 		// A machine that cannot produce a phase must not cost the user
@@ -107,7 +108,8 @@ func (t *chatTurn) hasMachineExit() bool {
 // cursor pointing into a machine that no longer contains it — every
 // turn, silently, for every open session.
 func (t *chatTurn) sessionMachine() (MachineDef, bool) {
-	id := strings.TrimSpace(t.session.MachineID)
+	thread := t.cursorThread()
+	id := strings.TrimSpace(thread.MachineID)
 	if id == "" {
 		id = strings.TrimSpace(t.agent.Machine)
 	}
@@ -123,9 +125,9 @@ func (t *chatTurn) sessionMachine() (MachineDef, bool) {
 		t.turnDiag("machine_missing", "machine "+id+" is no longer available; this turn ran without it")
 		return MachineDef{}, false
 	}
-	if t.session.MachineID != def.ID {
-		t.session.MachineID = def.ID
-		t.saveSession()
+	if thread.MachineID != def.ID {
+		thread.MachineID = def.ID
+		t.saveCursorThread()
 	}
 	return def, true
 }
@@ -134,14 +136,42 @@ func (t *chatTurn) sessionMachine() (MachineDef, bool) {
 // save when nothing moved, so an ordinary resident turn (the common
 // case, and the one that runs no phases at all) doesn't touch the store.
 func (t *chatTurn) persistCursor(cur *MachineCursor) {
-	if !cursorDiffers(t.session, cur) {
+	thread := t.cursorThread()
+	if thread == nil || !cursorDiffers(thread, cur) {
 		return
 	}
-	t.session.Phase = cur.Phase
-	t.session.MachineState = cur.State
-	t.session.MachineLog = cur.Log
-	t.session.MachineOpening = cur.Opening
-	t.saveSession()
+	thread.Phase = cur.Phase
+	thread.MachineState = cur.State
+	thread.MachineLog = cur.Log
+	thread.MachineOpening = cur.Opening
+	t.saveCursorThread()
+}
+
+// cursorThread is the record the machine cursor lives on: the web session,
+// or, on a run that has none (a channel inbound, a wake, a delegation), the
+// thread that run loaded. Nil when there is neither, and then no machine runs.
+func (t *chatTurn) cursorThread() *ChatSession {
+	if t.session != nil {
+		return t.session
+	}
+	return t.machineThread
+}
+
+// saveCursorThread writes the cursor's record back. The web session goes
+// through saveSession as it always did; a run's thread is saved in place, so
+// the run's own end-of-turn save, which appends the exchange to the same
+// record, carries the cursor with it.
+func (t *chatTurn) saveCursorThread() {
+	if t.session != nil {
+		t.saveSession()
+		return
+	}
+	if t.machineThread == nil {
+		return
+	}
+	if saved, err := saveChatSession(t.udb, *t.machineThread); err == nil {
+		*t.machineThread = saved
+	}
 }
 
 // cursorDiffers is the save gate. Length comparison alone was a trap
@@ -390,19 +420,20 @@ func (t *chatTurn) machineConfirm() func(name, args string) bool {
 // completeMachine closes the turn: a resident phase that names a Next
 // hands off now that it has had its turn.
 func (t *chatTurn) completeMachine(m turnMachine) {
-	if !m.on || t.session == nil {
+	thread := t.cursorThread()
+	if !m.on || thread == nil {
 		return
 	}
-	cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog, Opening: t.session.MachineOpening}
+	cur := &MachineCursor{Phase: thread.Phase, State: thread.MachineState, Log: thread.MachineLog, Opening: thread.MachineOpening}
 	before := cur.Phase
 	m.def.CompleteTurn(cur, m.phase, t.turnDiag)
 	if cur.Phase == before {
 		return
 	}
-	t.session.Phase = cur.Phase
-	t.session.MachineState = cur.State
-	t.session.MachineLog = cur.Log
-	t.saveSession()
+	thread.Phase = cur.Phase
+	thread.MachineState = cur.State
+	thread.MachineLog = cur.Log
+	t.saveCursorThread()
 }
 
 // saveSession writes the turn's session record back, keeping the
@@ -483,15 +514,19 @@ func (t *chatTurn) changePhaseToolDef() AgentToolDef {
 			}
 			t.phaseChanges++
 
-			cur := &MachineCursor{Phase: t.session.Phase, State: t.session.MachineState, Log: t.session.MachineLog, Opening: t.session.MachineOpening}
+			thread := t.cursorThread()
+			if thread == nil {
+				return "", Error("this conversation has no record to keep a phase on")
+			}
+			cur := &MachineCursor{Phase: thread.Phase, State: thread.MachineState, Log: thread.MachineLog, Opening: thread.MachineOpening}
 			ph, err := t.app.ChangePhase(t.ctx, m.def, cur, to, t.machineTurn(why), t.phaseRunner(), t.turnDiag)
 			if err != nil {
 				return "", err
 			}
-			t.session.Phase = cur.Phase
-			t.session.MachineState = cur.State
-			t.session.MachineLog = cur.Log
-			t.saveSession()
+			thread.Phase = cur.Phase
+			thread.MachineState = cur.State
+			thread.MachineLog = cur.Log
+			t.saveCursorThread()
 			// Keep the rest of the turn (and the end-of-turn handoff)
 			// pointed at where we actually are.
 			t.machine = turnMachine{def: m.def, phase: ph, state: cur.State, on: true,
