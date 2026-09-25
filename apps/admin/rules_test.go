@@ -192,3 +192,11 @@ func TestGovernanceWhenRepliesAreChecked(t *testing.T) {
 		t.Error("the streaming choice should save and read back")
 	}
 }
+
+// Both Rules lists save as they change, like the rest of the admin settings,
+// rather than behind a Save button.
+func TestTheRulesListsSaveOnChange(t *testing.T) {
+	if alwaysRulesForm().SubmitLabel != "" || styleRulesForm().SubmitLabel != "" {
+		t.Error("the Rules lists should save on change, with no Save button")
+	}
+}

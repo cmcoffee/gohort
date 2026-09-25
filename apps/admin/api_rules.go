@@ -163,12 +163,13 @@ func rulesSection() ui.Section {
 	}
 }
 
-// alwaysRulesForm edits the Always list.
+// alwaysRulesForm edits the Always list. No Save button: like the rest of
+// the admin settings it saves as it changes (each line as it is left, each
+// select as it is picked), posting the whole record so no field is blanked.
 func alwaysRulesForm() ui.FormPanel {
 	return ui.FormPanel{
-		Source:      "api/global-rules",
-		PostURL:     "api/global-rules",
-		SubmitLabel: "Save Always rules",
+		Source:  "api/global-rules",
+		PostURL: "api/global-rules",
 		Fields: []ui.FormField{{
 			Field:     "rules",
 			Label:     "Always",
@@ -247,9 +248,8 @@ var alwaysRuleModes = []ui.RowMode{
 // styleRulesForm edits the Style list, shipped rules included.
 func styleRulesForm() ui.FormPanel {
 	return ui.FormPanel{
-		Source:      "api/style-rules",
-		PostURL:     "api/style-rules",
-		SubmitLabel: "Save Style rules",
+		Source:  "api/style-rules",
+		PostURL: "api/style-rules",
 		Fields: []ui.FormField{{
 			Field: "rules",
 			Label: "Style",
