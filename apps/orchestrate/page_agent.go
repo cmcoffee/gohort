@@ -365,14 +365,16 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 
 			ui.FormField{Type: "header", Label: "Cortex & capability", Collapsed: true,
 				Help:   "Standing behaviors and capability grants.",
-				Detail: "Whether the agent reads its Cortex, plus the two toolsets it may hold: conductor (scheduling, monitors, delegate) and authoring (build agents, tools, apps).\n\nThese add TOOLS; they do not govern who the agent may call. That is the Delegation section further down, which is open by default because its target list sits directly beneath it." + appGrantHelp(user, id)},
+				Detail: "Whether the agent reads its Cortex, plus the conductor toolset (scheduling, monitors, delegate). Building is not a toolset any more: an agent hands it to Builder.\n\nThese add TOOLS; they do not govern who the agent may call. That is the Delegation section further down, which is open by default because its target list sits directly beneath it." + appGrantHelp(user, id)},
 			ui.FormField{Field: "channel", Type: "toggle", Label: "Reads its Cortex",
 				Help:   "Every agent keeps a Cortex, the record of what reached it. On, the agent also reads it: its recent lines ride into every session, and the thread becomes its own standing home.",
 				Detail: "Off, the Cortex is a record for you: the 📋 row pinned at the top of the rail, read-only, listing messages, requests from other agents, scheduled runs, monitor fires and new conversations. The agent never sees it and it costs nothing per turn.\n\nOn, it becomes the agent's mind: the 🧠 row, which the agent resumes and where event-monitor wakes and standing-agent reports land by default, kept bounded by a rolling summary. Its recent lines go into every other session's prompt, so the agent arrives aware of what has been happening. It also surfaces the Permissions queue and the Manage menu in the topbar, and is reached only from Agents.\n\nWhen the agent is published to the dashboard, granted users do not see the Cortex thread. They get ordinary chat sessions, each seeded read-only from the agent's standing awareness, so it shows up already aware; publishing and granting access is the consent to share that. Publishable as long as the delegation and management tools below are off."},
 			ui.FormField{Field: "fleet", Type: "toggle", Label: "Conductor tools (scheduling, monitors, delegate)",
 				Help:   "Grants the conductor toolset: delegate, scheduling, monitors, run-ledger, history-recall.",
 				Detail: "This is DISTINCT from \"the fleet\", the collection of all your agents, which every agent is in. It is also NOT the master switch for agent-to-agent calls: every non-sub agent can call peers via agents(action=\"run\") regardless, governed by the Dispatch policy below. Set that to \"Allow none\" to fully ground this agent.\n\nIt does not stop the agent doing work itself, it just adds the tools. An agent carrying these tools is never published publicly, since they reach owner-only management endpoints."},
-			authorCapabilityField(id),
+		)
+		fields = append(fields, authorCapabilityFields(id)...)
+		fields = append(fields,
 			ui.FormField{Field: "tag_name", Type: "toggle", Label: "Sign outbound messages with this agent's name",
 				Help:   "Prefixes every message this agent sends over a channel with its name.",
 				Detail: "For example, \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
@@ -984,7 +986,9 @@ func dispatchModeOptions(first string) []ui.SelectOption {
 	return out
 }
 
-// authorCapabilityField renders the "Authoring tools" control.
+// authorCapabilityFields renders the "Authoring tools" line: a read-only note on
+// Builder, and nothing on any other agent, since the Author flag is retired and
+// building goes through Builder ("Can dispatch Builder", Security & Access).
 //
 // For an ordinary agent it is a real toggle: authoring is a capability you
 // grant. For the BUILDER SEED it is not, and must not pretend to be —
@@ -1041,19 +1045,17 @@ func appGrantHelp(user, agentID string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func authorCapabilityField(agentID string) ui.FormField {
+func authorCapabilityFields(agentID string) []ui.FormField {
 	if isBuilderAgent(agentID) {
-		return ui.FormField{
+		return []ui.FormField{{
 			Type:  "header",
 			Label: "Authoring tools: always on for Builder",
 			Help:  "Builder holds the authoring catalog as its IDENTITY, not as a grant, so there is nothing to switch here.",
-			Detail: "The catalog is survey, create/update/clone agents, tool_def, app_def, skill_def, credential drafting, and bridge/connector. To have an agent that builds without being Builder, turn this capability on for that agent instead." +
+			Detail: "The catalog is survey, create/update/clone agents, tool_def, app_def, skill_def, credential drafting, and bridge/connector. No other agent holds it: an agent that needs something built hands it to Builder, which takes \"Can dispatch Builder\" under Security & Access (or the conductor tools)." +
 				"\n\nAuthoring is owner-only at runtime: if a turn runs as someone other than this agent's owner, the catalog is withheld and the reason is recorded in the session diagnostics.",
-		}
+		}}
 	}
-	return ui.FormField{Field: "author", Type: "toggle", Label: "Authoring tools (build agents, tools, apps)",
-		Help:   "Grants the full authoring toolset: the same catalog the Builder agent holds.",
-		Detail: "That is survey (map what already exists), create/update/clone agents, tool_def, app_def, skill_def, the credential draft and probe tools, bridge/connector, and, when you own the agent and it also holds the conductor tools, scheduling and monitors to wire a built tool live.\n\nThis is the de-silo of Builder: authoring is a capability any capable agent can hold, so it can BUILD new agents, tools and apps on the gohort framework the way Builder does, not just run pre-built ones. Independent of the conductor tools above. Like them, an authoring agent reaches owner-only endpoints, so it is never published publicly."}
+	return nil
 }
 
 // splitAgentFormSections turns one long form into page-level sections, split

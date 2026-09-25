@@ -18,12 +18,12 @@ func TestConsultTheLeadResolves(t *testing.T) {
 	t.Cleanup(func() { RootDB = prev })
 
 	plain := AgentRecord{ID: "a1"}
-	author := AgentRecord{ID: "a2", Author: true}
+	author := AgentRecord{ID: "seed-builder"}
 	if settingIsOn(db, plain, defaultConsultLead) {
 		t.Error("an ordinary agent does not consult by default")
 	}
 	if !settingIsOn(db, author, defaultConsultLead) {
-		t.Error("an authoring agent keeps consulting, as it always has")
+		t.Error("Builder, the authoring agent, keeps consulting, as it always has")
 	}
 	author.ConsultLead = settingOff
 	if settingIsOn(db, author, defaultConsultLead) {

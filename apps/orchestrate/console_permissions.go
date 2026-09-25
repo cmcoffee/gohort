@@ -575,8 +575,6 @@ func (T *OrchestrateApp) handleConsolePrivileges(w http.ResponseWriter, r *http.
 		switch strings.TrimSpace(field) {
 		case "fleet":
 			rec.Fleet = on
-		case "author":
-			rec.Author = on
 		// REACH. Turning this on lets every signed-in user of the deployment
 		// use the agent, which is the same reach a shared app has and has
 		// needed an administrator since v0.6.710; an agent is the larger

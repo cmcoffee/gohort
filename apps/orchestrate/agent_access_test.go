@@ -213,7 +213,7 @@ func TestTheSummaryLeadsWithHowMuch(t *testing.T) {
 	if !strings.Contains(narrow, "1 tool(s)") || !strings.Contains(narrow, "hands work to nothing") {
 		t.Errorf("a contained agent should read as contained: %q", narrow)
 	}
-	caps := agentAccessSummary(AgentRecord{Name: "Boss", Fleet: true, Author: true, AllowedTools: []string{"x"}}, nil)
+	caps := agentAccessSummary(AgentRecord{ID: "seed-builder", Name: "Boss", Fleet: true, AllowedTools: []string{"x"}}, nil)
 	if !strings.Contains(caps, "conductor") || !strings.Contains(caps, "authoring") {
 		t.Errorf("the toolsets that ride outside the allowlist must be named: %q", caps)
 	}

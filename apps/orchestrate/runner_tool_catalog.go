@@ -257,21 +257,11 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		} else {
 			extra = builderWorkerResearchTools(sess, t)
 		}
-		// Builder authors constantly, so it carries the catalog inline. Any OTHER
-		// agent has authoring as a CAPABILITY it uses occasionally — and the
-		// catalog is ~18.7k tokens, about a third of such an agent's whole prompt,
-		// paid on every turn including the eight-word ones. For them the catalog
-		// goes behind load_tool: an index of names and one-liners in the prompt,
-		// full schemas on demand. Cost is one extra round on a turn that actually
-		// authors; saving is ~17.6k tokens on every turn that does not.
-		if forOrchestrator && !isBuilderAgent(t.agent.ID) {
-			t.authoringLazyPrompt = registerLazyAuthoringTools(t, extra)
-			Log("[orchestrate.tools] agent=%s: %d authoring tool(s) deferred behind load_tool, index only in the prompt", t.agent.ID, len(extra))
-		} else {
-			tools = append(tools, extra...)
-			for _, td := range extra {
-				toolNames = append(toolNames, td.Tool.Name)
-			}
+		// Builder authors constantly, so it carries the catalog inline. It is
+		// the only agent that reaches here since the Author flag retired.
+		tools = append(tools, extra...)
+		for _, td := range extra {
+			toolNames = append(toolNames, td.Tool.Name)
 		}
 	}
 	// Consult the Lead: one self-contained question to the lead model when the

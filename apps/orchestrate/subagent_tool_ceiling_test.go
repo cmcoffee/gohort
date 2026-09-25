@@ -165,23 +165,6 @@ func TestAChildHoldingFleetItsParentLacksIsReported(t *testing.T) {
 	}
 }
 
-func TestAChildHoldingAuthorItsParentLacksIsReported(t *testing.T) {
-	udb, user := ceilingFixture(t)
-	parent := mkAgent(t, udb, "Parent", "", []string{"fetch_url"})
-	mkAgentRec(t, udb, AgentRecord{
-		Name: "Child", Owner: "alice", Description: "d", OrchestratorPrompt: "p",
-		OwnedBy: parent.ID, AllowedTools: []string{"fetch_url"}, Author: true,
-	})
-
-	got := SubAgentToolExceptions(udb, user)
-	if len(got) != 1 || len(got[0].Capabilities) != 1 {
-		t.Fatalf("an authoring child under a non-authoring parent must be flagged: %+v", got)
-	}
-	if !strings.Contains(got[0].Capabilities[0], "Authoring") {
-		t.Errorf("should name the capability: %v", got[0].Capabilities)
-	}
-}
-
 // A parent that HAS the flag confers nothing to report.
 func TestAChildSharingItsParentsFlagsIsNotReported(t *testing.T) {
 	udb, user := ceilingFixture(t)

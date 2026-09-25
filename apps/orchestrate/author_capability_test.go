@@ -2,8 +2,8 @@ package orchestrate
 
 import "testing"
 
-// agentCanAuthor is the de-silo predicate: the Builder seed authors by identity;
-// any other agent authors iff its Author flag is set. Fleet is irrelevant to it.
+// agentCanAuthor is Builder's alone: the seed authors by identity, and the
+// retired Author flag grants nothing to any other agent. Fleet is irrelevant.
 func TestAgentCanAuthor(t *testing.T) {
 	cases := []struct {
 		name string
@@ -13,9 +13,9 @@ func TestAgentCanAuthor(t *testing.T) {
 		{"builder seed authors by identity", AgentRecord{ID: "seed-builder"}, true},
 		{"builder seed authors even without flag", AgentRecord{ID: "seed-builder", Author: false}, true},
 		{"plain agent cannot author", AgentRecord{ID: "abc", Name: "Chat"}, false},
-		{"author-flagged agent can author", AgentRecord{ID: "abc", Author: true}, true},
+		{"the retired flag grants nothing", AgentRecord{ID: "abc", Author: true}, false},
 		{"fleet alone does not grant authoring", AgentRecord{ID: "abc", Fleet: true}, false},
-		{"author + fleet can author", AgentRecord{ID: "abc", Fleet: true, Author: true}, true},
+		{"flag + fleet grants nothing", AgentRecord{ID: "abc", Fleet: true, Author: true}, false},
 	}
 	for _, c := range cases {
 		if got := agentCanAuthor(c.rec); got != c.want {

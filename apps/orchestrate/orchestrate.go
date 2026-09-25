@@ -496,6 +496,10 @@ func (T *OrchestrateApp) Routes() {
 	// Fleet flag can actually be turned off (and the agent published).
 	T.migrateLegacyOrchestratorMode()
 
+	// One-shot: the Author flag is retired. Each agent that held it may hand
+	// building to Builder instead (migrateRetiredAuthorFlag).
+	T.migrateRetiredAuthorFlag()
+
 	// Namespace flatten: fold every agent record's embedded Tools into the
 	// unified per-user store (ScopeAgents rows). Idempotent — folded agents
 	// carry no embedded tools, so re-runs are one read per agent. Lazy

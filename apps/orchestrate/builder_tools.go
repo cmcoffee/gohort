@@ -984,17 +984,17 @@ func builderDispatchAllowed(a AgentRecord) bool {
 	return a.Fleet || a.AllowBuilderDispatch
 }
 
-// agentCanAuthor reports whether an agent should receive the authoring toolset —
-// the de-silo predicate. TRUE for the Builder seed (authoring is its identity)
-// OR any agent with the Author flag set (authoring granted as a capability).
-// Every tool-GRANT site (append builderAuthoringTools / app_def / operator
-// tools) consults this; the seed-IDENTITY checks (lead-model routing, picker
-// exclusion, the cannot-author prompt block) stay on isBuilderAgent, since those
-// are about the seed's special ROLE, not the authoring capability. Takes the
-// record because the flag lives on it — the ID alone can't answer the question
-// anymore, which is the whole point.
+// agentCanAuthor reports whether an agent receives the authoring toolset: the
+// Builder seed, whose identity it is, and nothing else. Every tool-GRANT site
+// (builderAuthoringTools, app_def, operator tools) asks this one predicate.
+//
+// Builder only, since v0.7.145. The Author flag that let any agent hold the
+// catalog is retired: those agents got Builder's tools without Builder's
+// doctrine, and every one that faced a channel was attack surface. Building
+// goes through Builder now, and an agent that used to author hands it work
+// instead (AllowBuilderDispatch, set by migrateRetiredAuthorFlag).
 func agentCanAuthor(a AgentRecord) bool {
-	return isBuilderAgent(a.ID) || a.Author
+	return isBuilderAgent(a.ID)
 }
 
 // isCloneOnlySeed reports whether an agent ID is a TEMPLATE seed: one Builder
@@ -1094,10 +1094,11 @@ You're a Builder-spawned worker executing one focused step (research / draft / s
 
   Frame as a RULE not a story: "When using gohort.fetch, import gohort first or get NameError" (rule), not "I wrote def fetch and forgot import" (story). Skip when the finding is specific to one tool (a particular endpoint URL, a credential name): that's a detail, not a lesson, and it bloats Builder's prompt without value.`
 
-// registerLazyAuthoringTools holds an Author-flagged agent's authoring catalog
-// out of the inline tool list and behind load_tool, returning the prompt index
-// that replaces it. Builder never comes through here — it authors constantly and
-// keeps the catalog inline.
+// registerLazyAuthoringTools holds an authoring catalog out of the inline tool
+// list and behind load_tool, returning the prompt index that replaces it. Its
+// production caller was the Author-flagged agent, retired in v0.7.145; Builder
+// keeps its catalog inline. The deferral state it creates is the same one the
+// self-serve tool_def and on-demand indexes use (deferKnownAuthoringTools).
 //
 // Measured motivation: the catalog is ~18.7k tokens, roughly a third of such an
 // agent's entire prompt, prefilled on every turn — the conversational ones

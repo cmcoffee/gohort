@@ -244,17 +244,18 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 	// tools can exist off the interactive surface too, so capability is the gate.
 	add(agentAllowsFrameworkTool(agent, "tool_def") || agentCanAuthor(agent), "framework.tools_self_serve", toolsSelfServeMarker, frameworkToolsSelfServeBlock)
 	add(agentAllowsFrameworkTool(agent, "export"), "framework.export", exportMarker, frameworkExportBlock)
-	// Builder routing — only a delegating (Fleet) agent that is NOT Builder
-	// itself. Builder is the authoring agent; routing it to itself is nonsense.
-	// Excludes any authoring-capable agent (Builder seed OR Author-flagged): an
-	// agent that can author itself has no reason to be told to route authoring
-	// elsewhere.
-	add(agent.Fleet && !agentCanAuthor(agent), "framework.builder_routing", builderRoutingMarker, frameworkBuilderRoutingBlock)
-	// The complement: an agent that CAN'T route to Builder (not Fleet), can't
-	// author itself (not Builder, not Author-flagged), is told up front that it
-	// cannot author — so a "create an agent" request produces a clean handoff
-	// instead of the self-dispatch / malformed-search flail.
-	add(!agent.Fleet && !agentCanAuthor(agent), "framework.cannot_author", cannotAuthorMarker, frameworkCannotAuthorBlock)
+	// Builder routing: every agent that may hand work to Builder (a conductor,
+	// or one granted "Can dispatch Builder"), never Builder itself. Since the
+	// Author flag retired this is how any agent other than Builder gets
+	// something built, so it goes to exactly the agents the dispatch gate lets
+	// through (builderDispatchAllowed), no more and no fewer.
+	canHand := builderDispatchAllowed(agent) && !isBuilderAgent(agent.ID)
+	add(canHand, "framework.builder_routing", builderRoutingMarker, frameworkBuilderRoutingBlock)
+	// The complement: an agent that can neither build nor hand building to
+	// Builder is told so up front, with request_build as its one path, so a
+	// "create an agent" request produces a clean handoff instead of the
+	// self-dispatch / malformed-search flail.
+	add(!canHand && !agentCanAuthor(agent), "framework.cannot_author", cannotAuthorMarker, frameworkCannotAuthorBlock)
 	// Channel home thread — Cortex agents only (carries the section heading).
 	add(agent.Cortex, "framework.channel", channelSectionHeading, frameworkChannelBlock())
 	// Fleet supervision, monitors, notify, phantom reach — Fleet agents. Ordered

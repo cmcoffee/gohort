@@ -297,7 +297,7 @@ var patchAgentFields = map[string]bool{
 	"enable_notes":   true,
 	"capture_prompt": true,
 	"allow_explorer": true, "explorer_hard_cap": true,
-	"channel": true, "fleet": true, "author": true, "tag_name": true,
+	"channel": true, "fleet": true, "tag_name": true,
 	"exposed": true, "mcp_exposed": true, "show_on_dashboard": true, "public_name": true,
 	"allow_private_mode": true, "force_private": true, "hidden": true,
 	"workspace_no_network": true, "workspace_network": true,

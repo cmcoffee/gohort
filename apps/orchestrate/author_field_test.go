@@ -5,51 +5,88 @@ import (
 	"testing"
 )
 
-// The Builder seed gets authoring by IDENTITY — agentCanAuthor OR's the seed
-// ID ahead of the flag, so the stored value is never consulted. Rendering a
-// live toggle there displayed "off" on an agent holding the full authoring
-// catalog, which is how a debugging session concluded authoring was disabled
-// when it was not.
+// The Builder seed gets authoring by IDENTITY, so its line is a read-only
+// note rather than a toggle. Rendering a live toggle there displayed "off" on an
+// agent holding the full authoring catalog, which is how a debugging session
+// concluded authoring was disabled when it was not.
 func TestAuthorFieldIsNotAToggleForBuilder(t *testing.T) {
-	f := authorCapabilityField("seed-builder")
+	fields := authorCapabilityFields("seed-builder")
+	if len(fields) != 1 {
+		t.Fatalf("Builder should get one read-only line, got %+v", fields)
+	}
+	f := fields[0]
 	if f.Type == "toggle" || f.Field == "author" {
 		t.Fatalf("Builder still renders a live author toggle: %+v", f)
 	}
 	if !strings.Contains(strings.ToLower(f.Label), "always on") {
 		t.Errorf("label should say the capability is always on, got %q", f.Label)
 	}
-	// Help or Detail: the long half of a field's copy lives behind the ⓘ
-	// icon now, and the reader still gets it either way.
 	if !strings.Contains(f.Help+f.Detail, "owner-only") {
 		t.Error("the field should mention the owner-only runtime gate, the one condition that DOES withhold authoring")
 	}
 }
 
-// Every other agent keeps a real, bound toggle: there the flag is the only
-// thing agentCanAuthor consults.
-func TestAuthorFieldIsAToggleForOtherAgents(t *testing.T) {
+// The Author flag is retired, so no other agent gets a toggle for it: a
+// control that changes nothing is worse than none.
+func TestNoAuthorToggleForOtherAgents(t *testing.T) {
 	for _, id := range []string{"", "some-agent", "seed-kb"} {
-		f := authorCapabilityField(id)
-		if f.Field != "author" || f.Type != "toggle" {
-			t.Errorf("agent %q should get a bound toggle, got %+v", id, f)
+		if f := authorCapabilityFields(id); len(f) != 0 {
+			t.Errorf("agent %q should get no authoring control, got %+v", id, f)
 		}
 	}
 }
 
-// The rendering must track the predicate. If agentCanAuthor ever stops
-// special-casing the seed, the toggle becomes meaningful again and this
-// test should be revisited alongside it.
-func TestBuilderAuthoringIsIdentityNotFlag(t *testing.T) {
+// Authoring is Builder's alone: the retired flag grants nothing.
+func TestOnlyBuilderAuthors(t *testing.T) {
 	if !agentCanAuthor(AgentRecord{ID: "seed-builder"}) {
 		t.Fatal("Builder lost identity-based authoring")
 	}
-	if !agentCanAuthor(AgentRecord{ID: "seed-builder", Author: false}) {
-		t.Error("the Author flag must not be able to disable Builder's authoring")
+	if agentCanAuthor(AgentRecord{ID: "other"}) {
+		t.Error("a non-Builder agent should not author")
 	}
-	if agentCanAuthor(AgentRecord{ID: "other", Author: false}) {
-		t.Error("a non-Builder agent without the flag should not author")
+	if agentCanAuthor(AgentRecord{ID: "other", Author: true}) {
+		t.Error("the retired Author flag must grant nothing")
 	}
-	if !agentCanAuthor(AgentRecord{ID: "other", Author: true}) {
-		t.Error("the flag should grant authoring to a non-Builder agent")
+}
+
+// The migration keeps what an authoring agent could get done: it may hand the
+// work to Builder, and Consult the Lead stays on unless the owner chose.
+func TestRetiringTheAuthorFlag(t *testing.T) {
+	got := retireAuthorFlag(AgentRecord{ID: "a1", Author: true})
+	if got.Author || !got.AllowBuilderDispatch || got.ConsultLead != settingOn {
+		t.Errorf("an authoring agent should move to Builder dispatch with consult kept: %+v", got)
+	}
+	chose := retireAuthorFlag(AgentRecord{ID: "a2", Author: true, ConsultLead: settingOff})
+	if chose.ConsultLead != settingOff {
+		t.Error("an owner's own consult choice must survive the migration")
+	}
+	plain := AgentRecord{ID: "a3"}
+	if retireAuthorFlag(plain).AllowBuilderDispatch {
+		t.Error("an agent that never authored gains nothing")
+	}
+}
+
+// With the flag retired, the prompt has to tell an agent how it gets something
+// built: an agent that may hand work to Builder is told to, and only an agent
+// that cannot is told it cannot. Keyed to the dispatch gate, so a grant under
+// "Allow none" still counts and a conductor under it does not.
+func TestThePromptSaysHowAnAgentGetsThingsBuilt(t *testing.T) {
+	has := func(a AgentRecord, marker string) bool {
+		return strings.Contains(frameworkPromptBlocks("", a, true), marker)
+	}
+	granted := AgentRecord{ID: "g", AllowBuilderDispatch: true}
+	if !has(granted, builderRoutingMarker) || has(granted, cannotAuthorMarker) {
+		t.Error("an agent granted Builder dispatch should be told to hand building to Builder")
+	}
+	plain := AgentRecord{ID: "p"}
+	if has(plain, builderRoutingMarker) || !has(plain, cannotAuthorMarker) {
+		t.Error("an agent that cannot reach Builder should be told it cannot build, with request_build as its path")
+	}
+	grounded := AgentRecord{ID: "c", Fleet: true, DispatchMode: dispatchNone}
+	if has(grounded, builderRoutingMarker) {
+		t.Error("a conductor under Allow none cannot reach Builder, so it must not be told to")
+	}
+	if has(AgentRecord{ID: "seed-builder"}, builderRoutingMarker) || has(AgentRecord{ID: "seed-builder"}, cannotAuthorMarker) {
+		t.Error("Builder is told neither to route to itself nor that it cannot build")
 	}
 }

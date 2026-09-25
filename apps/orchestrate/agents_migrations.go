@@ -356,6 +356,62 @@ func (T *OrchestrateApp) migrateLegacyOrchestratorMode() {
 	})
 }
 
+// migrateRetiredAuthorFlag moves every agent off the retired Author flag.
+//
+// Author gave any agent Builder's authoring catalog. It is retired because those
+// agents held the tools without Builder's doctrine, and an authoring agent that
+// faces a channel is attack surface (see authoring_requester.go). What such an
+// agent keeps is the ability to get things BUILT: it may hand the work to
+// Builder (AllowBuilderDispatch), which asks through it when it needs the user.
+// Consult the Lead was on for it by default because it could author; an agent
+// that never chose otherwise keeps it on rather than losing it silently.
+//
+// Once, deployment-wide, through the migration runner. agentCanAuthor ignores
+// the flag already, so a record this misses (an import, a restored backup)
+// grants nothing; it just does not gain the dispatch grant.
+func (T *OrchestrateApp) migrateRetiredAuthorFlag() {
+	NewMigrationRunner("orchestrate", "").Once("retire_author_flag:v1", func() int {
+		if T.DB == nil || AuthDB == nil {
+			return 0
+		}
+		authDB := AuthDB()
+		if authDB == nil {
+			return 0
+		}
+		changed := 0
+		for _, u := range AuthListUsers(authDB) {
+			udb := UserDB(T.DB, u.Username)
+			if udb == nil {
+				continue
+			}
+			for _, k := range udb.Keys(agentsTable) {
+				var a AgentRecord
+				if !udb.Get(agentsTable, k, &a) || !a.Author {
+					continue
+				}
+				udb.Set(agentsTable, k, retireAuthorFlag(a))
+				changed++
+			}
+		}
+		return changed
+	})
+}
+
+// retireAuthorFlag is the per-record half of migrateRetiredAuthorFlag.
+func retireAuthorFlag(a AgentRecord) AgentRecord {
+	if !a.Author {
+		return a
+	}
+	a.Author = false
+	if !isBuilderAgent(a.ID) {
+		a.AllowBuilderDispatch = true
+		if a.ConsultLead == "" {
+			a.ConsultLead = settingOn
+		}
+	}
+	return a
+}
+
 // migrateSeedShadowOverlays stamps every pre-overlay seed shadow with the
 // fields it had actually decided (see agent_overlay.go).
 //

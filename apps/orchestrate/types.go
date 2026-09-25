@@ -116,17 +116,9 @@ type AgentRecord struct {
 	// absolute (a user who disabled delegation disabled it, full stop).
 	AllowBuilderDispatch bool `json:"allow_builder_dispatch,omitempty"`
 
-	// Author, when true, grants the FULL authoring toolset — the same catalog
-	// the Builder seed holds: survey, create/update/clone/delete_agent, tool_def,
-	// app_def, skill_def, the credential draft/probe tools, bridge/connector, and
-	// (with ownership) the operator/scheduling tools. It is the de-silo of
-	// "Builder": authoring is a CAPABILITY any capable agent can hold, not an
-	// identity pinned to the seed. WiWee (a lean Fleet agent) out-built the heavy
-	// Builder with exactly this surface, which is what motivated making it a flag.
-	// Independent of Fleet — an agent can author without delegation, or vice
-	// versa. The seed Builder is Author-by-identity (isBuilderAgent) so it doesn't
-	// need the flag; every OTHER agent opts in via this. agentCanAuthor() is the
-	// single predicate every tool-grant site consults.
+	// Author is RETIRED (v0.7.145): it granted any agent the authoring catalog.
+	// Read only by migrateRetiredAuthorFlag, which turns it into
+	// AllowBuilderDispatch and clears it; agentCanAuthor no longer consults it.
 	Author bool `json:"author,omitempty"`
 
 	// RecallHints, when true, injects a per-turn "you already have relevant

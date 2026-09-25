@@ -58,7 +58,7 @@ func TestAChannelHandleIsNotTheOwnerWithNoBridgeToAsk(t *testing.T) {
 }
 
 func TestDispatchedAuthoringAnswersToTheOwnerOnly(t *testing.T) {
-	author := AgentRecord{ID: "a1", Name: "Author", Owner: "owner", Author: true}
+	author := AgentRecord{ID: "seed-builder", Name: "Builder", Owner: "owner"}
 	plain := AgentRecord{ID: "a2", Name: "Plain", Owner: "owner"}
 	bg := context.Background()
 	marked := withNonOwnerRequester(bg)
@@ -79,9 +79,9 @@ func TestDispatchedAuthoringAnswersToTheOwnerOnly(t *testing.T) {
 	if grant, _ := dispatchAuthoring(bg, author, "someone", "someone"); grant {
 		t.Error("a run for an account that does not own the agent was granted authoring because the caller named it as the store")
 	}
-	seed := AgentRecord{ID: "seed-x", Name: "Seed", Owner: seedOwner, Author: true}
+	seed := AgentRecord{ID: "seed-builder", Name: "Builder", Owner: seedOwner}
 	if grant, _ := dispatchAuthoring(bg, seed, seedOwner, "owner"); !grant {
-		t.Error("a seed agent belongs to everyone, as on the direct path")
+		t.Error("the Builder seed belongs to everyone, as on the direct path")
 	}
 }
 
@@ -142,5 +142,21 @@ func TestEveryAuthoringGrantAsksWhoTheRunIsFor(t *testing.T) {
 				t.Errorf("%s:%d appends the authoring catalog without dispatchAuthoring deciding it", f, i+1)
 			}
 		}
+	}
+}
+
+// Building answers to the owner, so a Builder handoff under work a contact
+// started is refused up front, with the reason, rather than run with its
+// catalog withheld.
+func TestAContactCannotSetBuilderToWork(t *testing.T) {
+	turn, _ := newRunGateTurn(t, "")
+	turn.agent.AllowBuilderDispatch = true
+	if _, _, err := turn.agentsRunGate(map[string]any{"agent": "seed-builder", "message": "build a tool"}); err != nil {
+		t.Fatalf("the owner's own run should reach Builder: %v", err)
+	}
+	turn.ctx = withNonOwnerRequester(turn.ctx)
+	_, _, err := turn.agentsRunGate(map[string]any{"agent": "seed-builder", "message": "build a tool"})
+	if err == nil || !strings.Contains(err.Error(), "owner") {
+		t.Fatalf("a contact's request must not reach Builder, and the refusal should say why: %v", err)
 	}
 }

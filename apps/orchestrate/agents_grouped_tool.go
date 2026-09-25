@@ -841,6 +841,13 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// without being a Fleet controller. Same downstream treatment — the
 	// dispatch runs Builder as a sub-agent and its output lands
 	// PendingApproval.
+	// Building answers to the owner. Work a contact started (a group-chat
+	// message, carried down every delegation beneath it) would reach Builder with
+	// its catalog withheld (authoring_requester.go), so say so here instead of
+	// running a Builder that cannot build.
+	if isBuilderAgent(target.ID) && nonOwnerRequester(t.ctx) {
+		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused: someone other than your owner started this, and building answers to the owner only. Tell them the owner has to ask for it", key)
+	}
 	if isBuilderAgent(target.ID) && !t.agent.Fleet && !t.agent.AllowBuilderDispatch {
 		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused: Builder is dispatch-callable only from a channel/fleet agent, or from an agent the user has granted \"Can dispatch Builder\" (Security & Access). Point the user at Builder in their agent picker (or the chat URL for Builder) and describe what they want built", key)
 	}

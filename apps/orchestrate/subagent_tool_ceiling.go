@@ -129,9 +129,6 @@ func SubAgentToolExceptions(udb Database, user string) []SubAgentToolException {
 		if child.Fleet && !parent.Fleet {
 			ex.Capabilities = append(ex.Capabilities, "Conductor tools (delegate, scheduling, monitors)")
 		}
-		if agentCanAuthor(child) && !agentCanAuthor(parent) {
-			ex.Capabilities = append(ex.Capabilities, "Authoring (build agents, tools, apps)")
-		}
 
 		childNames, childBounded := effectiveToolNames(child)
 		parentNames, parentBounded := effectiveToolNames(parent)

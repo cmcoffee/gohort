@@ -114,18 +114,18 @@ func TestPrivilegeToolRowsListsOnlyGrantedTools(t *testing.T) {
 	}
 }
 
-// TestPrivilegeFlagRows — the four always-shown rows (their absence is
+// TestPrivilegeFlagRows — the three always-shown rows (their absence is
 // information); a sub-agent's are locked because the server refuses to change
-// them.
+// them. The authoring row went with the retired Author flag.
 //
-// Four, not three: the reach and the dashboard shortcut are separate rows now.
+// The reach and the dashboard shortcut are separate rows.
 // One says who may use the agent and takes an administrator, the other says
 // where it appears for people who already can and takes nobody, and a single
 // row could only have described one of them.
 func TestPrivilegeFlagRows(t *testing.T) {
 	flags := privilegeFlagRows(AgentRecord{ID: "a4", Fleet: true})
-	if len(flags) != 4 {
-		t.Fatalf("flags = %d, want 4: %+v", len(flags), flags)
+	if len(flags) != 3 {
+		t.Fatalf("flags = %d, want 3: %+v", len(flags), flags)
 	}
 	if !flags[0].On || flags[0].Field != "fleet" {
 		t.Errorf("conductor flag = %+v", flags[0])
@@ -137,8 +137,8 @@ func TestPrivilegeFlagRows(t *testing.T) {
 	}
 	// Narrow grants appear only when on.
 	flags = privilegeFlagRows(AgentRecord{ID: "a5", MCPExposed: true, AllowBuilderDispatch: true})
-	if len(flags) != 6 {
-		t.Fatalf("flags = %d, want 6 with the two narrow grants on", len(flags))
+	if len(flags) != 5 {
+		t.Fatalf("flags = %d, want 5 with the two narrow grants on", len(flags))
 	}
 	for _, f := range privilegeFlagRows(AgentRecord{ID: "a6", OwnedBy: "p"}) {
 		if !f.Locked {

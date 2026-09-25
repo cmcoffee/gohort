@@ -40,8 +40,8 @@ func TestAnAuthorHandsAScheduleToTheAgentThatRunsIt(t *testing.T) {
 	}
 }
 
-// Authoring is a capability, not an identity, so an agent granted it has the
-// same problem for the same reason. Unless it is also a controller.
+// Authoring is Builder's alone since the Author flag retired, so an agent that
+// still carries the flag is an ordinary agent here: it keeps its schedules.
 func TestTheHandoffFollowsTheCapabilityNotTheName(t *testing.T) {
 	sess := scheduleHomeSession(t)
 	author, err := saveAgent(sess.DB, AgentRecord{
@@ -50,8 +50,8 @@ func TestTheHandoffFollowsTheCapabilityNotTheName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if got := scheduleHomeAgent(sess, author.ID, "agent-weather"); got != "agent-weather" {
-		t.Errorf("an authoring agent kept a schedule it built for another: home=%q", got)
+	if got := scheduleHomeAgent(sess, author.ID, "agent-weather"); got != author.ID {
+		t.Errorf("the retired flag still handed a schedule off: home=%q", got)
 	}
 
 	both, err := saveAgent(sess.DB, AgentRecord{
@@ -61,7 +61,7 @@ func TestTheHandoffFollowsTheCapabilityNotTheName(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 	if got := scheduleHomeAgent(sess, both.ID, "agent-weather"); got != both.ID {
-		t.Errorf("a fleet controller that can also author lost its schedule: home=%q", got)
+		t.Errorf("a fleet controller lost its schedule: home=%q", got)
 	}
 
 	// A plain agent keeps its own schedules.

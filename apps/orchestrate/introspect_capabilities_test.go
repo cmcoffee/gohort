@@ -37,13 +37,13 @@ func TestIntrospectExplainsAllowlistIsNotTheCatalog(t *testing.T) {
 	}
 }
 
-func TestIntrospectReportsGrantedAuthoring(t *testing.T) {
-	joined := strings.Join(effectiveExtraToolsets(AgentRecord{ID: "x", Author: true}), "\n")
-	if !strings.Contains(joined, "tool_def") {
-		t.Error("an Author-flagged agent should see its authoring toolset")
+func TestIntrospectReportsBuildersAuthoringOnly(t *testing.T) {
+	joined := strings.Join(effectiveExtraToolsets(AgentRecord{ID: "seed-builder"}), "\n")
+	if !strings.Contains(joined, "tool_def") || !strings.Contains(joined, "always on for Builder") {
+		t.Errorf("Builder should see its authoring toolset as identity:\n%s", joined)
 	}
-	if !strings.Contains(joined, "capability granted") {
-		t.Error("a flagged agent's authoring should read as a grant, not identity")
+	if flagged := strings.Join(effectiveExtraToolsets(AgentRecord{ID: "x", Author: true}), "\n"); strings.Contains(flagged, "Authoring toolset") {
+		t.Errorf("the retired Author flag must not be reported as a toolset:\n%s", flagged)
 	}
 }
 

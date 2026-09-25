@@ -29,6 +29,9 @@ type nonOwnerRequesterKey struct{}
 // withNonOwnerRequester marks ctx as work somebody other than the agent's
 // owner started. The mark only ever narrows: nothing clears it.
 func withNonOwnerRequester(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return context.WithValue(ctx, nonOwnerRequesterKey{}, true)
 }
 

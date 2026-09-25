@@ -86,7 +86,7 @@ func TestAFleetOfOneReachesNobody(t *testing.T) {
 // Reach is not the only reason to carry the tool: list and get READ the fleet,
 // which is what an authoring agent works on.
 func TestAuthoringAgentKeepsTheReadOnlyTool(t *testing.T) {
-	author := reachTurn(t, AgentRecord{ID: "a1", Name: "Scribe", Author: true, DispatchMode: dispatchNone})
+	author := reachTurn(t, AgentRecord{ID: "seed-builder", Name: "Builder", DispatchMode: dispatchNone})
 	if !author.agentsToolWanted() {
 		t.Fatal("an authoring agent needs list/get even with nothing to dispatch to")
 	}

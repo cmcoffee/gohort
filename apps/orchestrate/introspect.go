@@ -263,11 +263,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 func effectiveExtraToolsets(a AgentRecord) []string {
 	var out []string
 	if agentCanAuthor(a) {
-		why := "capability granted"
-		if isBuilderAgent(a.ID) {
-			why = "always on for Builder"
-		}
-		out = append(out, "Authoring toolset ("+why+"): tool_def, create_agent, update_agent, clone_agent, "+
+		out = append(out, "Authoring toolset (always on for Builder): tool_def, create_agent, update_agent, clone_agent, "+
 			"delete_agent, add_tool, skill_def, app_def, survey, plus credential drafting. "+
 			"These are appended to the catalog AFTER allowlist filtering, so they never appear in the allowlist "+
 			"above: its absence there says nothing about whether you can call them. "+

@@ -120,7 +120,7 @@ func TestTheQuestionSaysWhatIsBeingHandedOver(t *testing.T) {
 	}
 	// Capability toolsets are appended after the allowlist, so an allowlist
 	// comparison alone would miss the two that matter most.
-	authored := dispatchEscalationNote(caller, AgentRecord{Name: "Builder", Author: true, AllowedTools: []string{"web_search"}})
+	authored := dispatchEscalationNote(caller, AgentRecord{ID: "seed-builder", Name: "Builder", AllowedTools: []string{"web_search"}})
 	if !strings.Contains(authored, "author") {
 		t.Errorf("authoring is a capability the allowlist never shows: %q", authored)
 	}
