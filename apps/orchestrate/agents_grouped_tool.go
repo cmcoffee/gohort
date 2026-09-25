@@ -1118,7 +1118,10 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 			}
 		}
 	}
-	if agentCanAuthor(target) {
+	// Only for the owner, and never under a non-owner's request, which rides
+	// down from the channel run that started this (authoring_requester.go).
+	mayAuthor, authoringWithheld := dispatchAuthoring(t.ctx, target, t.user, t.user)
+	if mayAuthor {
 		tools = append(tools, builderAuthoringTools(subSess, nil)...)
 		// A dispatched authoring agent (Builder seed, or an Author-flagged agent)
 		// inherits the parent's non-consequential catalog so it can inspect the
@@ -1182,6 +1185,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// holds no custom tools, so the sub-agent got an empty pool while the same
 	// target reached by external dispatch got the real one.
 	subTurn.intentText = msg // Tier-1 tool elevation matches against the dispatch brief
+	subTurn.noteAuthoringWithheld(authoringWithheld)
 	poolDB, poolUser := subTurn.ownerView()
 	dispatchExtra, customToolPrompt := subTurn.dispatchExtraTools(subSess, poolUser, poolDB)
 	tools = append(tools, dispatchExtra...)
@@ -1511,7 +1515,14 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			// be mutated from a goroutine racing the turn that owns them. This
 			// path is the one channels and scheduled fires already use, and it
 			// builds its own session, run and catalog with no parent turn.
-			res, rerr := t.app.RunAgentSyncContinuingRich(d.Context(), AgentSyncRun{
+			// The detached session's context is its own, so the requester is
+			// carried across by hand: a handoff must not launder a non-owner's
+			// request into one the owner made (authoring_requester.go).
+			runCtx := d.Context()
+			if nonOwnerRequester(t.ctx) {
+				runCtx = withNonOwnerRequester(runCtx)
+			}
+			res, rerr := t.app.RunAgentSyncContinuingRich(runCtx, AgentSyncRun{
 				AgentOwner: t.user, RuntimeUser: t.user, AgentKey: target.ID,
 				SubSessionID: "dispatch:" + t.chatSessionID() + ":" + target.ID,
 				// Where a picture the sub-agent makes has to come home to.

@@ -774,8 +774,10 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	}
 	// Any authoring-capable target (the Builder seed OR an Author-flagged agent)
 	// gets its unregistered authoring tools appended here on the sync-dispatch
-	// path, so a dispatched/woken author behaves the same as on its own surface.
-	if agentCanAuthor(target) {
+	// path, so a dispatched/woken author behaves the same as on its own surface,
+	// and like its own surface, only for its owner (authoring_requester.go).
+	mayAuthor, authoringWithheld := dispatchAuthoring(ctx, target, agentOwner, runtimeUser)
+	if mayAuthor {
 		tools = append(tools, builderAuthoringTools(subSess, nil)...)
 	}
 	// Fleet targets get their exclusive fleet-management + delegation +
@@ -784,7 +786,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// catalog hook. Drop the generic interval scheduler (it schedules
 	// through the fleet instead). Authors also get these so a delegated
 	// build can wire its tool into a schedule/monitor (create_event_monitor).
-	if target.Fleet || agentCanAuthor(target) {
+	if target.Fleet || mayAuthor {
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
 		// No standalone history pair: `recall` spans folded-away history.
 		tools, _ = dropToolsByName(tools, nil, "recurring")
@@ -833,6 +835,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// dispatched turn means no trail, and a guard that leaves no breadcrumb is
 	// a guard nobody can account for after the fact.
 	subTurn.beginDispatchDiag(target.ID, subSessID)
+	subTurn.noteAuthoringWithheld(authoringWithheld)
 	tools = append(tools, extraTools...)
 	// Caller-injected per-run tools, the positional twin of AgentSyncRun.AppTools
 	// on the continuing path. After the whole catalog so the caller's name wins a
@@ -1443,6 +1446,12 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	injectionQueueID := run.InjectionQueueID
 	message := run.Message
 	freshSession := run.FreshSession
+	// A channel message from anyone but the owner marks this run and every run
+	// it starts, so a delegation cannot launder the sender away
+	// (authoring_requester.go).
+	if !channelSenderIsOwner(agentOwner, run) {
+		ctx = withNonOwnerRequester(ctx)
+	}
 	if T == nil || T.LLM == nil {
 		return AgentSyncResult{}, errors.New("orchestrate runtime not initialized")
 	}
@@ -1605,7 +1614,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			}
 		}
 	}
-	if agentCanAuthor(target) {
+	// Only for the owner, whoever the transport says wrote this: a channel
+	// inbound runs as the owner's account (authoring_requester.go).
+	mayAuthor, authoringWithheld := dispatchAuthoring(ctx, target, agentOwner, runtimeUser)
+	if mayAuthor {
 		tools = append(tools, builderAuthoringTools(subSess, nil)...)
 	}
 	// Fleet targets get their fleet-management + delegation + event-monitor
@@ -1613,7 +1625,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// channel agent on its channel thread through RunAgentSyncContinuing),
 	// so without it a woken fleet agent would have no delegate / monitor
 	// tools. Authors also get these so a delegated build can schedule/monitor.
-	if target.Fleet || agentCanAuthor(target) {
+	if target.Fleet || mayAuthor {
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
 		// No standalone history pair: `recall` spans folded-away history.
 		tools, _ = dropToolsByName(tools, nil, "recurring")
@@ -1678,6 +1690,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// (scheduled_updates.go), which was given a trail for exactly this reason;
 	// this is the other half of it.
 	subTurn.beginDispatchDiag(target.ID, subSessionID)
+	subTurn.noteAuthoringWithheld(authoringWithheld)
 	// The owner texting their own agent runs as phantom:<chatID> exactly like a
 	// stranger does, so without this they are an "outside party" on their own
 	// phone and their own carve-outs shut them out. Decided on the TRANSPORT
