@@ -424,3 +424,20 @@ func TestTheEditorOffersToKeepAWithdrawnTool(t *testing.T) {
 		t.Errorf("the kept tool is still listed missing: %s", w.Body.String())
 	}
 }
+
+// A tool the owner owns is never reported as taken back, even for an agent it
+// is not scoped to: scoping it elsewhere was the owner's own choice.
+func TestAnOwnToolScopedElsewhereIsNotMissing(t *testing.T) {
+	root := depStores(t, "u")
+	if err := AdminPersistTempTool(root, "u", TempTool{Name: "pull_feed", Description: "d", CommandTemplate: "echo"}); err != nil {
+		t.Fatal(err)
+	}
+	if !SetUserToolScopeAgents(root, "u", "pull_feed", []string{"other-agent"}) {
+		t.Fatal("could not scope the tool")
+	}
+	MergeAdoptedGlobalTools(root, "u", []string{"pull_feed"})
+	a := AgentRecord{ID: "agent-1", Owner: "u", Name: "Helper", OrchestratorPrompt: "p"}
+	if refs := agentMissingRefs(a, root, "u", nil, nil); len(refs) != 0 {
+		t.Errorf("the owner's own tool was reported missing: %+v", refs)
+	}
+}

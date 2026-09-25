@@ -135,9 +135,17 @@ func agentMissingRefs(a AgentRecord, poolDB Database, owner string, own, resolve
 		if own == nil || resolved == nil {
 			own, resolved = toolResolution(a, poolDB, owner)
 		}
+		// A name the owner OWNS is never somebody's withdrawal, whichever
+		// agents that tool is scoped to: scoping it elsewhere was their own
+		// choice, and "no longer available, it was taken back" said about it
+		// is a claim nobody made.
+		ownedAnywhere := map[string]bool{}
+		for _, p := range LoadPersistentTempTools(poolDB, owner) {
+			ownedAnywhere[p.Tool.Name] = true
+		}
 		names := make([]string, 0, len(adopted))
 		for name := range adopted {
-			if !resolved[name] && !own[name] && agentLoadsPoolTool(a, name) {
+			if !resolved[name] && !own[name] && !ownedAnywhere[name] && agentLoadsPoolTool(a, name) {
 				names = append(names, name)
 			}
 		}

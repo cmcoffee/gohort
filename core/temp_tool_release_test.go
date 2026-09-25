@@ -491,3 +491,33 @@ func TestALostToolIsRecreatedOnlyWhenItWasWithdrawn(t *testing.T) {
 		}
 	})
 }
+
+// The migration that grandfathered users into the global tools they used to
+// see put their OWN published tools on their adopt list. Nobody adopts what
+// they own, so those entries never loaded, and read downstream as tools
+// somebody had taken back. They are dropped; a real adoption is kept.
+func TestAnAdoptionOfYourOwnToolIsDropped(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+	for _, owner := range []string{"alice", "bob"} {
+		if err := AdminPersistTempTool(db, owner, TempTool{Name: owner + "_tool", Description: "d", CommandTemplate: "echo " + owner}); err != nil {
+			t.Fatal(err)
+		}
+		_ = SetPersistentTempToolShared(db, owner, owner+"_tool", true)
+	}
+	MergeAdoptedGlobalTools(db, "alice", []string{"alice_tool", "bob_tool"})
+
+	var loaded []string
+	for _, p := range AdoptedToolsFor(db, "alice") {
+		loaded = append(loaded, p.Tool.Name)
+	}
+	if strings.Join(loaded, ",") != "bob_tool" {
+		t.Errorf("only the colleague's tool loads as adopted: %v", loaded)
+	}
+	adopted := LoadAdoptedGlobalTools(db, "alice")
+	if adopted["alice_tool"] || !adopted["bob_tool"] {
+		t.Errorf("the self-adoption should be dropped and the real one kept: %v", adopted)
+	}
+}

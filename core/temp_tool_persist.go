@@ -938,9 +938,23 @@ func AdoptedToolsFor(db Database, user string) []LentTool {
 	sort.Strings(names)
 	var out []LentTool
 	learned := map[string]toolAdoption{}
+	// Adoptions of the user's OWN tools, which can never load: nobody adopts
+	// what they already own, and the candidates above leave their own out by
+	// design. They got here from the migration that grandfathered everybody
+	// into the global tools they used to see, their own published ones
+	// included, and they read downstream as tools somebody took back.
+	owned := map[string]bool{}
+	for _, p := range LoadPersistentTempTools(db, user) {
+		owned[p.Tool.Name] = true
+	}
+	stale := map[string]toolAdoption{}
 	for _, name := range names {
 		rec := recs[name]
 		cands := adoptionCandidates(db, user, name)
+		if rec.Owner == user || (rec.Owner == "" && owned[name] && len(cands) == 0) {
+			stale[name] = rec
+			continue
+		}
 		if rec.Owner == "" {
 			owners := distinctOwners(cands)
 			if len(owners) > 1 {
@@ -975,9 +989,17 @@ func AdoptedToolsFor(db Database, user string) []LentTool {
 		}
 		out = append(out, c)
 	}
-	if len(learned) > 0 {
+	if len(learned) > 0 || len(stale) > 0 {
 		tempToolPersistMu.Lock()
 		cur := loadAdoptions(db, user)
+		for name, rec := range stale {
+			// Only the record read above: one taken again since is the
+			// newer word.
+			if was, still := cur[name]; still && was.Owner == rec.Owner {
+				delete(cur, name)
+				Log("[temp_tool_persist] %s: dropped the adoption of %q: it is their own tool, which cannot be adopted", user, name)
+			}
+		}
 		for name, rec := range learned {
 			// Fill in only what is still missing. An adoption removed or taken
 			// again since the read above is the newer word.
