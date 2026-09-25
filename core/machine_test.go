@@ -1561,3 +1561,58 @@ func TestAToolStepsBadShapeIsRestatedNotRerun(t *testing.T) {
 		t.Errorf("a tool-less step should retry itself, got %d calls", len(seen))
 	}
 }
+
+// A step written to branch but given only a next leaves the steps it was
+// meant to choose between with nothing leading to them. Advice says so;
+// wired branches, guards, declared exits and a routing field's values all
+// count as leading somewhere.
+func TestAdviceNamesStepsNothingLeadsTo(t *testing.T) {
+	unreachable := func(d MachineDef) string {
+		var hits []string
+		for _, a := range d.Advice() {
+			if strings.Contains(a, "no step leads here") {
+				hits = append(hits, strings.SplitN(strings.TrimPrefix(a, "step "), ":", 2)[0])
+			}
+		}
+		return strings.Join(hits, ",")
+	}
+	broken := MachineDef{Name: "m", Phases: []MachinePhase{
+		{Name: "Router", Next: "Decide"},
+		{Name: "Decide", Next: "End"},
+		{Name: "Delegate", Next: "End"},
+		{Name: "Direct", Next: "End"},
+		{Name: "End", Resident: true},
+	}}
+	if got := unreachable(broken); got != "Delegate,Direct" {
+		t.Fatalf("unreachable = %q, want Delegate,Direct", got)
+	}
+
+	wired := broken
+	wired.Phases = append([]MachinePhase(nil), broken.Phases...)
+	wired.Phases[1] = MachinePhase{Name: "Decide", Choices: []string{"Delegate", "Direct"}}
+	if got := unreachable(wired); got != "" {
+		t.Fatalf("choices should reach both branches, got %q", got)
+	}
+
+	// Reached only through a guard's target, a declared exit, or a routing
+	// field's fixed values.
+	other := MachineDef{Name: "m", Phases: []MachinePhase{
+		{Name: "Talk", Resident: true, Guard: "the subject changed", GuardTo: "Triage", ExitsTo: []string{"Wrap"}},
+		{Name: "Triage", NextFrom: "go", Output: []PipelineField{{Name: "go", Type: FieldString, Enum: []string{"Talk", "Deep"}}}},
+		{Name: "Deep", Next: "Talk"},
+		{Name: "Wrap", Resident: true},
+	}}
+	if got := unreachable(other); got != "" {
+		t.Fatalf("guard, exits and enum should reach everything, got %q", got)
+	}
+
+	// A routing field without fixed values may name any step: say nothing.
+	open := MachineDef{Name: "m", Phases: []MachinePhase{
+		{Name: "Triage", NextFrom: "go", Output: []PipelineField{{Name: "go", Type: FieldString}}},
+		{Name: "A", Resident: true},
+		{Name: "B", Resident: true},
+	}}
+	if got := unreachable(open); got != "" {
+		t.Fatalf("an open routing field should report nothing, got %q", got)
+	}
+}

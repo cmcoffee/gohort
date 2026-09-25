@@ -748,6 +748,66 @@ func (d MachineDef) Advice() []string {
 			out = append(out, promptFormatAdvice(name))
 		}
 	}
+	for _, name := range d.unreachablePhases() {
+		out = append(out, "step "+name+": no step leads here, so it runs only if the model moves the conversation mid-turn. "+
+			"If a step is meant to hand off to it, list it in that step's choices, or make it that step's next.")
+	}
+	return out
+}
+
+// unreachablePhases names the steps no route leads to from Start: not a next,
+// not a choice, not a value a routing field may take, not a guard's target,
+// not a declared exit.
+//
+// Advice rather than a problem. Such a step is harmless to run around, and
+// change_phase can still reach it from a step with no exits declared, so
+// refusing the save would reject machines that work. What it usually means is
+// a step written to branch that was only ever given a next: the branch it was
+// for never runs, and nothing said so.
+//
+// A routing field with no fixed set of values may name any step, so nothing
+// is reported for that machine at all.
+func (d MachineDef) unreachablePhases() []string {
+	start := d.StartPhase()
+	if _, ok := d.Phase(start); !ok {
+		return nil // Problems reports a missing start
+	}
+	reached := map[string]bool{start: true}
+	queue := []string{start}
+	for len(queue) > 0 {
+		p, _ := d.Phase(queue[0])
+		queue = queue[1:]
+		targets := append([]string{p.Next}, p.Choices...)
+		targets = append(targets, p.ExitsTo...)
+		if strings.TrimSpace(p.Guard) != "" {
+			targets = append(targets, chooseStr(strings.TrimSpace(p.GuardTo), start))
+		}
+		if from := strings.TrimSpace(p.NextFrom); from != "" {
+			var enum []string
+			for _, f := range p.Output {
+				if f.Name == from {
+					enum = f.Enum
+				}
+			}
+			if len(enum) == 0 {
+				return nil
+			}
+			targets = append(targets, enum...)
+		}
+		for _, t := range targets {
+			t = strings.TrimSpace(t)
+			if _, ok := d.Phase(t); ok && !reached[t] {
+				reached[t] = true
+				queue = append(queue, t)
+			}
+		}
+	}
+	var out []string
+	for _, p := range d.Phases {
+		if name := strings.TrimSpace(p.Name); name != "" && !reached[name] {
+			out = append(out, name)
+		}
+	}
 	return out
 }
 
