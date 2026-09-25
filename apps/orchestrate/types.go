@@ -993,6 +993,12 @@ type AgentRecord struct {
 	// the more careful of the two.
 	GuardrailDepth string `json:"guardrail_depth,omitempty"`
 
+	// ConsultLead is whether this agent may ask the lead model ONE
+	// self-contained question when it hits a wall (the consult tool): "on",
+	// "off", or empty to follow the deployment default. Distinct from
+	// LeadModel, which hands the whole turn to the lead. See triSettings.
+	ConsultLead string `json:"consult_lead,omitempty"`
+
 	// GuardrailExceptions are named conditions a rule can be linked to. The
 	// warden receives each linked condition on an "Except:" line under the rule
 	// it belongs to, and a rule whose exception holds is COMPLIED WITH — no new

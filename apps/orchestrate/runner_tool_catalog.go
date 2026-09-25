@@ -274,6 +274,15 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			}
 		}
 	}
+	// Consult the Lead: one self-contained question to the lead model when the
+	// agent hits a wall, without handing it the turn. Its own setting, not a
+	// passenger on authoring; a Private turn drops it with every other network
+	// tool.
+	if forOrchestrator && settingIsOn(RootDB, t.agent, defaultConsultLead) {
+		ct := consultTool(t)
+		tools = append(tools, ct)
+		toolNames = append(toolNames, ct.Tool.Name)
+	}
 	// An agent IN CHARGE of a collection gets the four corpus actions for that
 	// collection, and only for that one.
 	//

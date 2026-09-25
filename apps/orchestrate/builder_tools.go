@@ -96,11 +96,11 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		ChatToolToAgentToolDefWithSession(addToolTool{}, sess),
 		ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), sess),
 		ChatToolToAgentToolDefWithSession(skillDefTool(), sess),
-		// consult — ask a stronger model ONE self-contained question (an API's
-		// request shape, a wall hit repeatedly) without handing it the turn.
-		// Paired with authoring because that is where an unknown request shape
-		// costs the most rounds; see consult.go.
-		consultTool(t),
+		// consult is not here any more: it is its own per-agent setting,
+		// "Consult the Lead" (triSettings), attached in the turn's catalog.
+		// Riding along with authoring gave it to no agent that could not
+		// author, and handed dispatched runs, which build this list with no
+		// turn, a copy that could only answer "consultation unavailable".
 		// bridge — wire a registered API credential to a schedule so an
 		// agent gets woken when an external service changes. Pure
 		// composition over SecureAPI credentials + watch-kind event

@@ -303,7 +303,7 @@ var patchAgentFields = map[string]bool{
 	"workspace_no_network": true, "workspace_network": true,
 	"share_cortex": true, "share_reference": true, "share_notes": true, "share_uploads": true, "disabled_tool_actions": true,
 	"allow_builder_dispatch": true, "dispatch_mode": true,
-	"inbound_mode": true, "allowed_callers": true,
+	"inbound_mode": true, "allowed_callers": true, "consult_lead": true,
 	"evals": true, "intake_form": true, "owned_by": true,
 	"work_plan": true,
 }

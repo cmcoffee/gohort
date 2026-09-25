@@ -153,6 +153,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// and there is nothing for gate 2 to protect. Hiding a toggle the runtime
 	// would honor is a control that reads as broken.
 	leadModelLocked := false
+	var editRec AgentRecord // for fields that say where their answer came from
 	if id != "" {
 		source = "../api/agents/" + id
 		title = "Edit agent"
@@ -162,6 +163,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// publishing, etc. still rendering for what's actually a
 		// sub-agent).
 		if rec, ok := loadAgent(udb, id); ok {
+			editRec = rec
 			agentLocked = rec.Locked
 			leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
 			if rec.OwnedBy != "" {
@@ -271,6 +273,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// would be a no-op. Hidden for ForcePrivate agents — their
 		// conversation must never leave for the remote lead model (gate 2).
 		leadModelField(T.HasDistinctLead() && !leadModelLocked),
+		consultLeadField(T.HasDistinctLead() && !leadModelLocked, editRec),
 		// Autonomous runs are NOT here. What this agent may do when nobody is
 		// present to click Approve is the Security page: the Unattended ladder
 		// on each tool, and the Limits tab for how much and how often.
@@ -1138,7 +1141,25 @@ func leadModelField(show bool) ui.FormField {
 	return ui.FormField{
 		Field: "lead_model", Type: "toggle", Label: "Use Lead model for reasoning",
 		Help:   "Run this agent's orchestrator and synthesis turns on the lead model, not the local worker.",
-		Detail: "The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default.\n\nAutomatically ignored on a Private turn, where the conversation stays local. The exception is Admin, LLMs, Model Privacy saying every model is private, in which case escalating keeps it local too.\n\nUsually you do not need this. An agent holding the consult tool already asks the lead ONE self-contained question when it hits a wall, at a fraction of the cost of escalating every round. Reach for this toggle when the agent's own reasoning, rather than one hard question, is what needs the stronger model.",
+		Detail: "The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default.\n\nAutomatically ignored on a Private turn, where the conversation stays local. The exception is Admin, LLMs, Model Privacy saying every model is private, in which case escalating keeps it local too.\n\nUsually you do not need this. Consult the Lead, below, lets the agent ask the lead ONE self-contained question when it hits a wall, at a fraction of the cost of sending every round there. Reach for this toggle when the agent's own reasoning, rather than one hard question, is what needs the stronger model.",
+	}
+}
+
+// consultLeadField is "Consult the Lead": whether the agent may ask the lead
+// model one self-contained question when stuck. Shown where the lead toggle
+// is, and for the same reason hidden where that is: with no distinct lead, or
+// for an agent whose conversation must not leave for it.
+func consultLeadField(show bool, rec AgentRecord) ui.FormField {
+	if !show {
+		return ui.FormField{Field: "consult_lead", Type: "hidden"}
+	}
+	return ui.FormField{
+		Field: "consult_lead", Type: "select", Label: "Consult the Lead",
+		Options: settingOptions(RootDB, defaultConsultLead),
+		Help:    settingSource(RootDB, rec, defaultConsultLead),
+		Detail: "On, the agent may ask the lead model ONE self-contained question when it hits a wall: an unfamiliar API's request shape, an error it cannot read. The question and its evidence go to the lead and nothing else does: no tool catalog, no history. The answer comes back as advice to verify, and the agent keeps working. At most three a turn.\n\n" +
+			"This is the cheap way to use the stronger model. Use Lead model for reasoning, above, hands it every turn instead.\n\n" +
+			"The default is set for the whole deployment by an administrator. Agents that can author tools and agents consult by default, as they always have. A Private conversation never consults.",
 	}
 }
 

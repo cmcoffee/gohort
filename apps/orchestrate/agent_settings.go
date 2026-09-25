@@ -36,6 +36,7 @@ const (
 	defaultShareUploads     = "share_uploads"
 	defaultInboundMode      = "inbound_mode"
 	defaultGuardrailDepth   = "guardrail_depth"
+	defaultConsultLead      = "consult_lead"
 )
 
 // Tri-state values. Empty is the third and is never written: it is what a
@@ -213,6 +214,23 @@ var triSettings = map[string]triSetting{
 		// Quicker is looser: a limit says "no agent's rules are checked more
 		// hastily than this".
 		strictness: prompts.RuleDepths(),
+	},
+	defaultConsultLead: {
+		key:   defaultConsultLead,
+		words: map[string]string{settingOn: "On", settingOff: "Off"},
+		own:   func(a AgentRecord) string { return a.ConsultLead },
+		// Before this was a setting, consult rode along with the authoring
+		// toolset, so an agent that can author had it and nothing else did.
+		// That stays its answer until somebody decides otherwise.
+		legacy: func(a AgentRecord) (string, bool) {
+			if agentCanAuthor(a) {
+				return settingOn, true
+			}
+			return "", false
+		},
+		framework:  settingOff,
+		values:     onOff(),
+		strictness: looseToStrict(),
 	},
 	defaultInboundMode: {
 		key: defaultInboundMode,

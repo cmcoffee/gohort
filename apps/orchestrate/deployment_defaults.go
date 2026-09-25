@@ -318,6 +318,8 @@ var deploymentSettingOrder = []struct {
 		"Whether code running in an agent's sandbox may open connections."},
 	{defaultInboundMode, "Which agents may dispatch to an agent",
 		"Who an agent accepts work from. Anyone, only its named callers, or nobody."},
+	{defaultConsultLead, "Whether an agent may consult the Lead",
+		"On, an agent that hits a wall may ask the lead model one self-contained question, at most three a turn. The lead is usually remote and billed, so Off keeps every agent on the worker. Private conversations never consult."},
 	{defaultGuardrailDepth, "How carefully an agent's own guardrails are checked",
 		"Quick answers straight off; Moderate and Thorough reason first, adding a few seconds to each checked reply. The deployment's Rules have their own depth, under Governance."},
 	{defaultShareCortex, "A shared agent's standing thread",
