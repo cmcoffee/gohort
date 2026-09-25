@@ -38,6 +38,7 @@ func (a *AdminApp) registerRulesRoutes(sub *http.ServeMux) {
 				// are checked alone rather than resetting it.
 				Depth     *string `json:"depth"`
 				Unchecked *string `json:"if_unchecked"`
+				When      *string `json:"when_checked"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
@@ -54,6 +55,9 @@ func (a *AdminApp) registerRulesRoutes(sub *http.ServeMux) {
 			if req.Unchecked != nil {
 				rules.SetGlobalRulesFailOpen(*req.Unchecked == "allow")
 			}
+			if req.When != nil {
+				rules.SetGlobalRulesStreaming(*req.When == "stream")
+			}
 			Log("[admin] global rules saved by %s: %d, checked %s, if unchecked %s", AuthCurrentUser(r), len(list),
 				rules.GlobalRulesDepth(), uncheckedWord(rules.GlobalRulesFailOpen()))
 			w.Header().Set("Content-Type", "application/json")
@@ -66,7 +70,8 @@ func (a *AdminApp) registerRulesRoutes(sub *http.ServeMux) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"rules": strings.Join(lines, "\n"),
-			"depth": rules.GlobalRulesDepth(), "if_unchecked": uncheckedWord(rules.GlobalRulesFailOpen())})
+			"depth": rules.GlobalRulesDepth(), "if_unchecked": uncheckedWord(rules.GlobalRulesFailOpen()),
+			"when_checked": whenCheckedWord(rules.GlobalRulesStreaming())})
 	})
 	sub.HandleFunc("/api/style-rules", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
@@ -197,8 +202,26 @@ func alwaysRulesForm() ui.FormPanel {
 				{Value: "allow", Label: "Let it through, and record that it went unchecked"},
 			},
 			Help: "The checker is a model call and can fail. Blocking is the safe side for rules written to stop something.",
+		}, {
+			Field: "when_checked", Type: "select", Label: "When replies are checked",
+			Options: []ui.SelectOption{
+				{Value: "before", Label: "Before they are shown (replies do not stream)"},
+				{Value: "stream", Label: "While they stream (a reply that breaks a rule is removed)"},
+			},
+			Help: "Before: nothing that breaks a rule is ever seen, and replies arrive whole. While streaming: replies appear as they are written, and one that breaks a rule is taken off the screen and replaced with a decline.",
+			Detail: "Choose Before for rules about what must not be revealed (secrets, names, internal details): streaming would show such a reply for the second or two its check takes. " +
+				"While streaming suits rules about conduct and tone, where a brief flash costs nothing. " +
+				"An agent whose own guardrails check its replies still holds them for those, whatever this says.",
 		}},
 	}
+}
+
+// whenCheckedWord is the form's spelling of when replies are checked.
+func whenCheckedWord(streaming bool) string {
+	if streaming {
+		return "stream"
+	}
+	return "before"
 }
 
 // uncheckedWord is the stored spelling of the fail policy.

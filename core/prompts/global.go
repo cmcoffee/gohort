@@ -219,6 +219,40 @@ func SetGlobalRulesFailOpen(open bool) {
 	db.Unset(OverrideTable, globalRulesUncheckedKey)
 }
 
+// globalRulesStreamKey records when replies are checked against the Always
+// rules: "live" to check as they finish streaming, absent to check before
+// they are shown.
+const globalRulesStreamKey = "prompt_global_rules_stream"
+
+// GlobalRulesStreaming reports whether replies stream live and are checked
+// against the Always rules as they finish, rather than held until the check
+// clears. False unless an administrator chose it: held is the side on which a
+// reply that breaks a rule is never seen, which is what a rule about what must
+// not be revealed needs. Streaming shows such a reply for the second or two
+// the check takes before it is removed.
+func GlobalRulesStreaming() bool {
+	if db := promptOverrideStore(); db != nil {
+		var v string
+		if db.Get(OverrideTable, globalRulesStreamKey, &v) {
+			return v == "live"
+		}
+	}
+	return false
+}
+
+// SetGlobalRulesStreaming records it.
+func SetGlobalRulesStreaming(live bool) {
+	db := promptOverrideStore()
+	if db == nil {
+		return
+	}
+	if live {
+		db.Set(OverrideTable, globalRulesStreamKey, "live")
+		return
+	}
+	db.Unset(OverrideTable, globalRulesStreamKey)
+}
+
 // itoa avoids pulling strconv in for two call sites.
 func itoa(n int) string {
 	if n == 0 {

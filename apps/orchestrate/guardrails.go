@@ -663,9 +663,28 @@ func guardrailHookActive(agent AgentRecord, hookPoint string) bool {
 // the client live — a blocked reply would flash on screen before the verdict —
 // so the runner buffers and paints the bubble only after the check clears.
 // pre_input/pre_action don't gate output prose, so they don't force buffering.
+//
+// Decided per kind of rule. The agent's OWN rules hold the reply when its
+// owner has them judge output. The deployment's hold it unless an
+// administrator chose to check them as replies finish streaming (Governance,
+// Rules), which trades a brief flash of a reply that breaks one for live
+// streaming. Before that choice existed, any Governance rule stopped every
+// agent streaming.
 func agentHasOutputGuardrail(agent AgentRecord) bool {
-	hooks := resolveGuardrailHooks(agent)
-	return hooks[guardHookPreOutput] || hooks[guardHookPeriodic]
+	own, global := false, false
+	for _, r := range enforcedGuardrailRules(agent) {
+		if r.Global {
+			global = true
+		} else {
+			own = true
+		}
+	}
+	if own {
+		if h := ownGuardrailHooks(agent); h[guardHookPreOutput] || h[guardHookPeriodic] {
+			return true
+		}
+	}
+	return global && !prompts.GlobalRulesStreaming()
 }
 
 // renderGuardrailsPromptSection puts the agent's enforced limits in its own

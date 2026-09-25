@@ -112,3 +112,30 @@ func TestGuardrailDepthHasItsOwnOwnerOnlyEndpoint(t *testing.T) {
 		t.Errorf("an unknown depth is refused, got %d", w.Code)
 	}
 }
+
+// Whether a reply is held until its check clears is decided per kind of rule:
+// the agent's own rules by its owner's hooks, the deployment's by Governance's
+// "when replies are checked". Any Governance rule used to stop every agent
+// streaming.
+func TestReplyHoldingFollowsWhoseRulesAndWhen(t *testing.T) {
+	restore := withGlobalRules(t, "Never discuss the lunar calendar.")
+	defer restore()
+	fast := AgentRecord{Guardrails: "never mention salary", GuardrailHooks: []string{guardHookPreInput, guardHookPreAction}}
+	bare := AgentRecord{}
+
+	if !agentHasOutputGuardrail(bare) || !agentHasOutputGuardrail(fast) {
+		t.Error("by default the deployment's rules hold replies until checked")
+	}
+	prompts.SetGlobalRulesStreaming(true)
+	if agentHasOutputGuardrail(bare) || agentHasOutputGuardrail(fast) {
+		t.Error("checked while streaming: agents whose own rules don't judge output stream again")
+	}
+	if hooks := resolveGuardrailHooks(bare); !hooks[guardHookPreOutput] {
+		t.Error("streaming changes WHEN the reply is checked, not whether")
+	}
+	balanced := fast
+	balanced.GuardrailHooks = nil // the default: request, action and reply
+	if !agentHasOutputGuardrail(balanced) {
+		t.Error("an agent whose own rules judge output still holds its replies")
+	}
+}

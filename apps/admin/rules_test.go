@@ -170,3 +170,25 @@ func TestGovernanceRuleCheckingSettings(t *testing.T) {
 		t.Errorf("the Always form should carry both settings: %v", fields)
 	}
 }
+
+func TestGovernanceWhenRepliesAreChecked(t *testing.T) {
+	store := &DBase{Store: kvlite.MemStore()}
+	SetPromptOverrideDB(store)
+	t.Cleanup(func() { SetPromptOverrideDB(nil) })
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	mux := http.NewServeMux()
+	a.registerRulesRoutes(mux)
+	get := func() string {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/global-rules", nil))
+		return w.Body.String()
+	}
+	if !strings.Contains(get(), `"when_checked":"before"`) || rules.GlobalRulesStreaming() {
+		t.Fatal("replies are checked before they are shown by default")
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/global-rules", strings.NewReader(`{"rules":"x","when_checked":"stream"}`)))
+	if !rules.GlobalRulesStreaming() || !strings.Contains(get(), `"when_checked":"stream"`) {
+		t.Error("the streaming choice should save and read back")
+	}
+}
