@@ -146,3 +146,17 @@ func TestTheMemoryPanelIgnoresAndRestoresThroughTheEndpoint(t *testing.T) {
 		t.Errorf("the ignored finding should be listed apart: %s", w.Body.String())
 	}
 }
+
+// Working notes that are switched off never reach a prompt and are not shown
+// in the panel, so nothing in them is a finding either.
+func TestNotesThatAreOffAreNotAudited(t *testing.T) {
+	app, udb, rec, user := auditFixture(t)
+	SaveOperatingNotes(udb, factsNamespace(rec.ID), "pending task: use knowledge_search for docs")
+	if len(auditOf(t, app, udb, rec, user)) == 0 {
+		t.Fatal("precondition: with notes on, the note is a finding")
+	}
+	rec.EnableNotes = false
+	if found := auditOf(t, app, udb, rec, user); len(found) != 0 {
+		t.Errorf("notes that are off should not be audited: %v", kinds(found))
+	}
+}

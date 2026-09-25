@@ -4063,15 +4063,11 @@
         });
         fetch(notesURL).then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
           if (!d) { notesSection.style.display = 'none'; return; }
-          if (!d.enabled && !d.can_enable) {
-            // Off, with no editor that could turn it on (an app agent's
-            // flags live in its registered spec). Hide rather than explain.
+          if (!d.enabled) {
+            // Off: nothing here reaches the agent's prompt, so the section
+            // is not shown. Turned on in the agent editor.
             notesSection.style.display = 'none';
             return;
-          }
-          if (!d.enabled) {
-            notesArea.disabled = true; notesSave.disabled = true; notesClear.disabled = true;
-            notesHelp.textContent = 'Working notes are turned off for this agent, so nothing here reaches its prompt. Enable them in the agent editor to give it a running-state scratchpad.';
           }
           notesCap = d.cap || 0;
           notesArea.value = d.text || '';

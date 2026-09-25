@@ -120,7 +120,9 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 	ns := factsNamespace(agentID)
 	stored := LoadOperatingNotes(udb, ns)
 	notes := ResolveOperatingNotes(udb, ns, agent.SeedNotes).Text
-	if strings.TrimSpace(notes) != "" {
+	// Notes that are switched off never reach a prompt, so nothing in them
+	// can mislead the agent, and the panel does not show them either.
+	if agent.EnableNotes && strings.TrimSpace(notes) != "" {
 		if parkedCallRE.MatchString(notes) {
 			line := firstLineWhere(notes, parkedCallRE.MatchString)
 			out = append(out, MemoryFinding{

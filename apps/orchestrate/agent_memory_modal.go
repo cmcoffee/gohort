@@ -517,20 +517,13 @@ const agentMemoryModalTemplate = `<script>
       });
       fetch(MEMBASE + 'notes').then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
         if (!d) { notesWrap.style.display = 'none'; return; }
-        if (!d.enabled && !d.can_enable) {
-          // Off, and this reader has no way to turn them on: an app agent's
-          // flags live in its code-registered spec and its record is hidden
-          // from the pickers. A section explaining a setting nobody can reach
-          // is worse than no section: it reads as something broken, and the
-          // remedy it names does not exist.
+        if (!d.enabled) {
+          // Off: nothing here reaches the agent's prompt, so the section is
+          // not shown at all. It is turned on in the agent editor, which is
+          // where somebody looking for it goes; a disabled editor here only
+          // added a section to scroll past on every agent that never uses it.
           notesWrap.style.display = 'none';
           return;
-        }
-        if (!d.enabled) {
-          // Opt-in per agent, and reachable. Say so rather than showing an
-          // editor whose contents would never reach a prompt.
-          notesArea.disabled = true; notesSave.disabled = true; notesClear.disabled = true;
-          notesIntro.textContent = 'Working notes are turned off for this agent, so nothing here reaches its prompt. Enable them in the agent editor to give it a running-state scratchpad.';
         }
         notesCap = d.cap || 0;
         notesArea.value = d.text || '';
