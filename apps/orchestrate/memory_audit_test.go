@@ -488,3 +488,32 @@ func TestAnOrdinaryAgentIsStillAuditedForToolNames(t *testing.T) {
 			"the scope gate went too wide and the audit now finds nothing anywhere")
 	}
 }
+
+// "memory" was retired as a tool and is still how anybody says memory. A
+// note using the word was reported as naming a removed tool on every open of
+// the pane. Only the shapes that are unmistakably the tool count for a name
+// that is also a word; a snake_case name needs only a word boundary.
+func TestARetiredNameThatIsAlsoAWordNeedsToLookLikeATool(t *testing.T) {
+	retired := map[string]bool{"memory": true, "store_fact": true}
+	for _, prose := range []string{
+		"Saved to Reference Memory for next time.",
+		"User wants a better memory of past trips.",
+		"memory_save is how findings are kept", // its own retired entry, not "memory"
+	} {
+		for _, f := range deadToolFindings("Saved facts", prose, nil, map[string]bool{"memory": true}) {
+			t.Errorf("an ordinary use of the word was flagged: %q -> %s", prose, f.Detail)
+		}
+	}
+	for _, call := range []string{
+		`Look it up with memory(action="search") first.`,
+		"Use the `memory` tool to check.",
+		"use the memory tool to check",
+	} {
+		if len(deadToolFindings("Saved facts", call, nil, map[string]bool{"memory": true})) != 1 {
+			t.Errorf("a call to the retired tool should be flagged: %q", call)
+		}
+	}
+	if len(deadToolFindings("Saved facts", "capture gotchas via store_fact", nil, retired)) != 1 {
+		t.Error("a snake_case retired name is flagged on a word boundary alone")
+	}
+}

@@ -71,9 +71,14 @@ func TestRetiredNamesMatchOnWordBoundaries(t *testing.T) {
 			t.Errorf("%q should not match a shorter retired name: %+v", text, got)
 		}
 	}
-	// The bare name still matches.
-	if got := deadToolFindings("Working notes", "check memory first", none(), retired); len(got) != 1 {
-		t.Errorf("the bare name should match: %+v", got)
+	// The bare name still matches when it is written as the tool. As a plain
+	// word ("check memory first") it is English, not a call, and flagging it
+	// is the false positive that repeated on every open of the pane.
+	if got := deadToolFindings("Working notes", "check memory() first", none(), retired); len(got) != 1 {
+		t.Errorf("a call to the bare name should match: %+v", got)
+	}
+	if got := deadToolFindings("Working notes", "check memory first", none(), retired); len(got) != 0 {
+		t.Errorf("the plain word is not the tool: %+v", got)
 	}
 }
 

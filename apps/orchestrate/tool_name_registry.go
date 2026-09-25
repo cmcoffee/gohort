@@ -104,19 +104,42 @@ func observeToolNames(udb Database, user string, current map[string]bool) map[st
 // Bounded so that retiring "memory" does not report every sentence containing
 // "memory_save", and retiring "store_fact" does not match "store_factory".
 // Underscores are word characters, so a plain strings.Contains would do both.
+//
+// A name that is also an ordinary WORD (no underscore) needs more than a word
+// boundary. "memory" was retired as a tool and is still how anybody says
+// memory: every note mentioning "Reference Memory" or "saved to memory" was
+// reported as naming a removed tool, on every open of the pane. For such a
+// name only the shapes that are unmistakably the TOOL count: a call
+// ("memory("), the name in backticks, or "memory tool". A snake_case name is
+// nobody's English, so a boundary is enough for it.
 func mentionsName(text, name string) (int, bool) {
 	low, want := strings.ToLower(text), strings.ToLower(name)
+	plainWord := !strings.Contains(want, "_")
 	for from := 0; ; {
 		i := strings.Index(low[from:], want)
 		if i < 0 {
 			return 0, false
 		}
 		i += from
-		if !identChar(low, i-1) && !identChar(low, i+len(want)) {
+		end := i + len(want)
+		if !identChar(low, i-1) && !identChar(low, end) && (!plainWord || writtenAsTool(low, i, end)) {
 			return i, true
 		}
-		from = i + len(want)
+		from = end
 	}
+}
+
+// writtenAsTool reports whether the word at [start,end) is written the way a
+// tool is: called, quoted as code, or named as a tool.
+func writtenAsTool(low string, start, end int) bool {
+	rest := strings.TrimLeft(low[end:], " \t")
+	if strings.HasPrefix(rest, "(") {
+		return true
+	}
+	if start > 0 && low[start-1] == '`' && end < len(low) && low[end] == '`' {
+		return true
+	}
+	return strings.HasPrefix(low[end:], " tool")
 }
 
 func identChar(s string, i int) bool {
