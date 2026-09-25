@@ -100,6 +100,10 @@ func (t *chatTurn) titleAfterFirstTurn() {
 	udb := t.udb
 	agentID := t.agent.ID
 	sessID := t.session.ID
+	// The agent's cortex records that a conversation started, by its title.
+	// Not a clean-room session (nothing leaves one), not a channel thread
+	// (recorded as it arrives), not the cortex itself.
+	record := !t.incognitoSession() && !strings.HasPrefix(sessID, "chan:") && sessID != cortexSessionID(agentID)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -116,6 +120,18 @@ func (t *chatTurn) titleAfterFirstTurn() {
 			return
 		}
 		title := generateSessionTitle(ctx, llm, s)
+		if record {
+			started := title
+			if started == "" {
+				for _, m := range s.Messages {
+					if m.Role == "user" && !m.Hidden {
+						started = m.Content
+						break
+					}
+				}
+			}
+			appendCortexObs(udb, agentID, "Conversation", cortexKindSession, "Started: "+cortexPointer(started, ""))
+		}
 		if title == "" || title == s.Title {
 			return
 		}

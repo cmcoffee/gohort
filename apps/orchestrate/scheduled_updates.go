@@ -1198,6 +1198,16 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
 		}
 	}
+	// The agent's cortex records every scheduled fire that reported somewhere
+	// else. Not a background task's own result coming back to it: that is the
+	// agent's work returning, not something reaching it.
+	if (loadSession != cortexSessionID(p.AgentID) || !recordFire) && !isTaskWake(p.Prompt) {
+		where := "full reply in its session"
+		if !recordFire {
+			where = "ran in the background"
+		}
+		appendCortexObs(udb, p.AgentID, recurringName(p), cortexKindScheduled, cortexPointer(reply, where))
+	}
 	// A background result whose conversation lives on a messaging channel has to
 	// be SENT there — appending it to the stored session is what the recurring
 	// path wants and leaves the person who asked with nothing.

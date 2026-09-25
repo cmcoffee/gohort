@@ -140,11 +140,21 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// when the selected parent has no children.
 	subAgentsJSON, _ := json.Marshal(subAgentsByParent)
 	cortexAgentsJSON, _ := json.Marshal(cortexAgents)
+	// Every other agent's cortex is a RECORD: kept for the owner, not read by
+	// the agent, pinned at the top of its sessions and opened read-only.
+	recordAgents := map[string]string{}
+	for _, a := range pickerAgents(agents) {
+		if _, reads := cortexAgents[a.ID]; !reads {
+			recordAgents[a.ID] = cortexSessionID(a.ID)
+		}
+	}
+	recordAgentsJSON, _ := json.Marshal(recordAgents)
 	phases.mark("marshal head json")
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
 		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
 		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(cortexAgentsJSON) +
+		";\nwindow.ORCH_RECORD_AGENTS = " + string(recordAgentsJSON) +
 		";</script>\n<script>" + ArtifactClientJS + "</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
 
 	// Builder handoff: a ?builder_brief=<id> deep-link (from the send_to_builder
@@ -677,6 +687,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// scheme.
 					AltNavFlag:      "ORCH_CHANNEL_AGENTS",
 					AltPrimaryLabel: "Cortex",
+					// Every agent has a cortex. One that does not read it
+					// keeps it as a record: pinned, read-only, and said so.
+					RecordNavFlag:    "ORCH_RECORD_AGENTS",
+					RecordLabel:      "Cortex",
+					RecordHint:       "record only: this agent does not read it",
+					RecordLockedText: "This is the agent's cortex, a record of what reached it: messages, requests, scheduled runs, monitor fires. The agent does not read it. Start a new session to talk to it.",
 					// "+ New ▾" offers a clean-room session. Picking it opens a
 					// fresh thread and arms incognito on the first send, so the
 					// runner stamps the session as a clean room at creation: no

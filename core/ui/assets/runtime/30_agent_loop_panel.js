@@ -69,6 +69,20 @@
     // agent resumes its OWN ongoing thread (core/ui stays agnostic of the
     // app's session-id scheme). Empty string for non-alt-nav agents.
     function altPinnedSession(agentId) { var m = altNavAgents(); return (m && agentId && m[agentId]) || ''; }
+    // Record threads (record_nav_flag): a second app-named map, agentId -> the
+    // id of a thread the app keeps as a LOG of what reached the agent. Pinned
+    // at the top of the ordinary session list, opened read-only, and it swaps
+    // nothing else. An alt-nav agent's pinned thread wins over its record.
+    var recordNavFlag = cfg.record_nav_flag || '';
+    function recordPinnedSession(agentId) {
+      if (altPinnedSession(agentId)) { return ''; }
+      var m = recordNavFlag && window[recordNavFlag];
+      return (m && agentId && m[agentId]) || '';
+    }
+    // recordLocked is true while a record thread is open: nothing is sent
+    // into a log. Checked by sendMessage and re-applied by enableInput, which
+    // every finished run calls.
+    var recordLocked = false;
     // Last surface this agent was on — so opening it later lands the same way: its
     // standing thread (cortex/home) → the cortex; a session → a NEW session.
     // Per-agent, browser-local (a landing preference, not synced state).
@@ -4717,7 +4731,7 @@
     }
 
     function enableInput() {
-      sendBtn.disabled = false;
+      sendBtn.disabled = recordLocked;
       sendBtn.style.display = '';
       cancelBtn.style.display = 'none';
       cancelBtn.disabled = false;
@@ -4729,7 +4743,19 @@
       stopHeartbeat();
     }
 
+    // applyRecordLock opens or closes the composer for the thread on screen: a
+    // record is read, never written into.
+    function applyRecordLock(sid) {
+      recordLocked = !!(sid && sid === recordPinnedSession(window.GOHORT_AGENT_ID));
+      inputArea.disabled = recordLocked;
+      sendBtn.disabled = recordLocked;
+      inputArea.placeholder = recordLocked
+        ? (cfg.record_locked_text || 'This thread is a record. Start a new session to talk.')
+        : (cfg.placeholder || 'Ask something…');
+    }
+
     function sendMessage() {
+      if (recordLocked) return;
       var text = inputArea.value.trim();
       if (!text && !pendingAttachments.length) return;
       // Paste-marker substitution: expand any "[Pasted text #N - X
@@ -5504,6 +5530,11 @@
         // (not in the items list), synthesize a placeholder row so there's always
         // an entry point — sending into it creates it on the first turn.
         var chanSid = altPinnedSession(window.GOHORT_AGENT_ID);
+        var isRecord = false;
+        if (!chanSid) {
+          chanSid = recordPinnedSession(window.GOHORT_AGENT_ID);
+          isRecord = !!chanSid;
+        }
         var homeRec = null;
         if (chanSid && Array.isArray(items)) {
           items = items.filter(function(s) {
@@ -5524,26 +5555,33 @@
             // Cortex — the standing/home thread, rendered as a MARKED ROW (gold
             // brain glyph + "home" badge + faint always-on gold tint) so it reads
             // as a session, just the special one, pinned at the top of the list.
-            var gold = '#d9b86c';
+            // A RECORD thread (the agent does not take turns in it) wears a
+            // neutral tint and says so, so it is never mistaken for the
+            // standing thread an agent resumes.
+            var gold = isRecord ? '#8a93a6' : '#d9b86c';
+            var heroLabel = isRecord ? (cfg.record_label || 'Activity') : (cfg.alt_primary_label || 'Cortex');
             var titleLine = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;white-space:nowrap;overflow:hidden'}, [
-              el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:ellipsis'}, [cfg.alt_primary_label || 'Cortex']),
-              el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;color:' + gold + ';border:1px solid ' + gold + ';border-radius:999px;padding:0.02rem 0.4rem;flex:0 0 auto'}, ['home']),
+              el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:ellipsis'}, [heroLabel]),
+              el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;color:' + gold + ';border:1px solid ' + gold + ';border-radius:999px;padding:0.02rem 0.4rem;flex:0 0 auto'}, [isRecord ? 'record' : 'home']),
             ]);
             if (homeRec.unread && !chActive) {
               titleLine.appendChild(el('span', {class: 'ui-unread-dot', title: 'New activity',
                 style: 'width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);flex:0 0 auto'}, ['']));
             }
             var chKids = [
-              el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:0.95rem;color:' + gold}, ['🧠']),
+              el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:0.95rem;color:' + gold}, [isRecord ? '📋' : '🧠']),
               el('div', {style: 'flex:1;min-width:0'}, [
                 titleLine,
-                el('div', {style: 'font-size:0.74rem;color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, ['standing thread']),
+                el('div', {style: 'font-size:0.74rem;color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},
+                  [isRecord ? (cfg.record_hint || 'what reached this agent') : 'standing thread']),
               ]),
             ];
             // Faint gold tint ALWAYS (marks it as the standing thread); a gold
             // border adds when it's the active thread.
             var heroBorder = chActive ? gold : 'transparent';
-            var heroBg = chActive ? 'rgba(217,184,108,0.16)' : 'rgba(217,184,108,0.07)';
+            var heroBg = isRecord
+              ? (chActive ? 'rgba(138,147,166,0.16)' : 'rgba(138,147,166,0.07)')
+              : (chActive ? 'rgba(217,184,108,0.16)' : 'rgba(217,184,108,0.07)');
             var chRow = el('button', {type: 'button', class: 'ui-channel-hero' + (chActive ? ' active' : ''),
               style: 'display:flex;align-items:flex-start;gap:0.5rem;width:100%;text-align:left;padding:0.5rem 0.6rem;border:1px solid ' + heroBorder + ';border-radius:7px;cursor:pointer;font:inherit;color:var(--text, inherit);background:' + heroBg,
               onclick: function() { openSession(chId); closeDrawer(); }}, chKids);
@@ -6000,6 +6038,7 @@
       // Start every open idle; tryResumeRun below flips it back to Cancel
       // only when THIS session has a run in flight.
       enableInput();
+      applyRecordLock(sid);
       // CONTEXT mode — list rows are reference contexts (workspaces,
       // projects, …). Selecting one binds future sends to that id
       // via cfg.list_body_field. Server-side LoadURL still gets

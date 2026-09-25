@@ -363,6 +363,20 @@ type AgentLoopPanel struct {
 	// top of the rail) for alt-nav agents. App-owned wording; core/ui defaults
 	// to "Channel" when unset rather than hardcoding any one app's term.
 	AltPrimaryLabel string `json:"alt_primary_label,omitempty"`
+	// RecordNavFlag names a window-global object the host page sets: a map
+	// from agent id to the id of that agent's RECORD thread, a log the app
+	// keeps of what reached the agent without the agent taking turns in it.
+	// The thread is pinned at the top of the session list and opens
+	// read-only. Unlike AltNavFlag it swaps nothing: the agent keeps its
+	// ordinary session list underneath. An agent in both maps is alt-nav.
+	// Empty = off.
+	RecordNavFlag string `json:"record_nav_flag,omitempty"`
+	// RecordLabel, RecordHint and RecordLockedText are the record row's name,
+	// its subtitle, and the composer's placeholder while the record is open.
+	// App-owned wording, with neutral defaults.
+	RecordLabel      string `json:"record_label,omitempty"`
+	RecordHint       string `json:"record_hint,omitempty"`
+	RecordLockedText string `json:"record_locked_text,omitempty"`
 
 	// Height overrides the panel's default size — any CSS length ("360px",
 	// "50vh"). The default fills the viewport, which is right for a page whose

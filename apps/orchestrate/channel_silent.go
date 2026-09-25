@@ -66,8 +66,9 @@ func (app *OrchestrateApp) overflowChannelReply(in ChannelInbound, replyText str
 	if db == nil {
 		return
 	}
+	// Every agent's cortex records the reply that never went out.
+	appendCortexObs(db, in.AgentID, channelObsFrom(in), cortexKindOverflow, replyText)
 	if ag, ok := loadAgent(db, in.AgentID); ok && ag.Cortex {
-		appendCortexObs(db, in.AgentID, channelObsFrom(in), cortexKindOverflow, replyText)
 		return
 	}
 	// Cortex off: the reply is already in the channel session (dispatch persisted

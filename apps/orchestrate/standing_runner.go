@@ -322,9 +322,20 @@ func registerStandingRunner(app *OrchestrateApp) {
 	// the session list reads as unread). Mirrors the event-monitor notify=direct
 	// delivery. Best-effort: a missing session is recreated; failures log only.
 	RegisterStandingReporter(func(ctx context.Context, sa StandingAgent, rec RunRecord) {
+		udb := UserDB(app.DB, sa.Owner)
+		if udb == nil {
+			return
+		}
+		body := strings.TrimSpace(rec.Raw)
+		if body == "" {
+			body = strings.TrimSpace(rec.Summary)
+		}
 		// An approved delegation reports back to the conversation that asked
-		// (runApprovedDelegation), not into the target's own thread.
+		// (runApprovedDelegation), not into the target's own thread. The
+		// target's cortex still records that it was asked and did it.
 		if capturedDelegation(ctx, rec.Raw) {
+			appendCortexObs(udb, sa.AgentID, "Delegation", cortexKindRequest,
+				"Asked: "+truncateObs(sa.Mission, 200)+" "+cortexPointer(body, "result went back to the conversation that asked"))
 			return
 		}
 		reportAgent := strings.TrimSpace(sa.ReportAgentID)
@@ -334,16 +345,18 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// Surface routes the report: session (home) / cortex / background. The run
 		// still happened; background just doesn't post the result to any thread.
 		reportSession, record := resolveSurface(sa.Surface, sa.ReportSessionID, reportAgent)
+		// Every run leaves a line in the cortex of the agent that RAN it, the
+		// record of what reached it, unless the full report is landing there
+		// anyway.
+		if !record || reportAgent != sa.AgentID || reportSession != cortexSessionID(sa.AgentID) {
+			where := "full report in the session it was scheduled from"
+			if !record {
+				where = "ran in the background"
+			}
+			appendCortexObs(udb, sa.AgentID, sa.Name, cortexKindScheduled, cortexPointer(body, where))
+		}
 		if !record {
 			return
-		}
-		udb := UserDB(app.DB, sa.Owner)
-		if udb == nil {
-			return
-		}
-		body := strings.TrimSpace(rec.Raw)
-		if body == "" {
-			body = strings.TrimSpace(rec.Summary)
 		}
 		if body == "" {
 			return // nothing to report

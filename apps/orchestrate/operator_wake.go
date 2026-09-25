@@ -300,6 +300,20 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// and stops itself when the condition is met. Only a monitor that was
 		// given one pays for this — it is one worker-tier call per fire.
 		app.settleMonitorObjective(ctx, m, summary, pacingAsk)
+		// The wake agent's cortex records the fire when it landed somewhere
+		// else (a session, a channel, a text). Only fires: a poll that found
+		// nothing never reaches here, so a monitor checking every thirty
+		// seconds leaves a line only when something changed.
+		if delivered && surfSession != cortexSessionID(wakeAgent) {
+			where := "delivered to its session"
+			switch {
+			case channelTargetDelivered:
+				where = "delivered to a channel"
+			case !recordCard:
+				where = "delivered outside the app"
+			}
+			appendCortexObs(UserDB(app.DB, owner), wakeAgent, monitorName, cortexKindMonitor, cortexPointer(summary, where))
+		}
 		if !delivered {
 			return false, "no notify destination accepted the event"
 		}

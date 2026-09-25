@@ -1370,16 +1370,14 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if gErr != nil {
 		return "", gErr
 	}
-	// Feed the request into the target's cortex (cortex agents only — a no-op
-	// otherwise) so a dispatched cortex/channel agent is AWARE another agent
+	// Feed the request into the target's cortex, every agent's record of what
+	// reached it, so a dispatched cortex/channel agent is AWARE another agent
 	// asked it to do something. The dispatch ran in the throwaway
 	// dispatch:<…> session, disconnected from the agent's standing thread, so
 	// without this a channel agent (WiWee) posts to its group on request and
 	// then can't field follow-ups about what it just "said". from = the
 	// dispatching parent; the request text itself is the observation.
-	if target.Cortex {
-		appendCortexObs(t.udb, target.ID, t.agent.Name, cortexKindRequest, msg)
-	}
+	appendCortexObs(t.udb, target.ID, t.agent.Name, cortexKindRequest, msg)
 	// Persist the exchange for the next follow-up. Store the RAW brief (not
 	// the delegated wrapper) so re-threaded history reads cleanly, and cap to
 	// the most recent turns to keep continuity cheap and ephemeral.

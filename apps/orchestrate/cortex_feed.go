@@ -30,7 +30,10 @@ const (
 )
 
 // AppendCortexObservation records one non-triggering observation into an agent's
-// cortex. No-op unless the agent has Cortex enabled. The observation renders as a
+// cortex. Every agent keeps one: it is the record of what reached the agent.
+// Whether the agent READS it (its recent lines in every prompt, resuming the
+// thread as its own) is what the Cortex setting decides, and that gate lives
+// with the readers, not here. The observation renders as a
 // distinct report card (ReportFrom + kind) and bumps LastAt only — NOT LastSeen —
 // so the cortex reads "unread" (new activity) until the user opens it. Never runs
 // the agent; this is awareness, not a turn. kind is one of the cortexKind* values.
@@ -48,9 +51,8 @@ func appendCortexObs(db Database, agentID, from, kind, text string, trace ...Per
 	if db == nil || agentID == "" || strings.TrimSpace(text) == "" {
 		return
 	}
-	ag, ok := loadAgent(db, agentID)
-	if !ok || !ag.Cortex {
-		return // cortex off for this agent — nothing to feed
+	if _, ok := loadAgent(db, agentID); !ok {
+		return
 	}
 	sid := cortexSessionID(agentID)
 	now := time.Now()
@@ -100,6 +102,25 @@ func appendCortexObs(db Database, agentID, from, kind, text string, trace ...Per
 			Log("[orchestrate.cortex] observation append failed for agent=%s: %v", agentID, err)
 		}
 	})
+}
+
+// cortexPointer is the line a cortex keeps for something that ran and reported
+// somewhere else: the first line of what it concluded, and where the rest is.
+// A pointer, not a copy: the full report already lives in the session it was
+// delivered to, and two copies are two things to disagree.
+func cortexPointer(result, where string) string {
+	line := strings.TrimSpace(result)
+	if i := strings.IndexByte(line, '\n'); i > 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	line = truncateObs(line, 200)
+	if line == "" {
+		line = "(no output)"
+	}
+	if where = strings.TrimSpace(where); where != "" {
+		line += " [" + where + "]"
+	}
+	return line
 }
 
 // cortexToolTrace bounds a turn's trace for the standing thread.

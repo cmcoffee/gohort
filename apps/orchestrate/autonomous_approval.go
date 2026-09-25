@@ -340,8 +340,8 @@ func (g *autonomousGate) queue(name, args string) {
 	// And a notice, so the fact can leave the building. The pane owns the
 	// decision and the badge; this is how a 5am fire is news before 9am.
 	g.app.notifyToolQueued(g.owner, g.agentID, name)
-	// Best-effort awareness card (no-op if the agent has cortex off; the
-	// Authorizations pane is the primary surface either way).
+	// Best-effort card in the agent's cortex, its record of what happened;
+	// the Authorizations pane is the primary surface either way.
 	appendCortexObs(UserDB(g.app.DB, g.owner), g.agentID, "Approval needed",
 		cortexKindOverflow, "Wanted to use \""+name+"\" on a scheduled run but it isn't pre-authorized. Approve it in the Authorizations pane to allow it on future runs.")
 }

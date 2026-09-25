@@ -381,14 +381,14 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 				},
 				Help:   "Whether the agent remembers people, only lessons, or nothing across sessions.",
 				Detail: "Personalized stores facts about people attributed by name (\"Dana prefers texts before 8pm\") alongside general lessons. Pick Lessons only for an agent shared across unrelated groups, so one room's personal details never surface in another.\n\nNone turns off remembering across sessions entirely. Uploaded knowledge and working notes still apply."},
-			{Field: "cortex", Type: "select", Label: "Standing mind",
+			{Field: "cortex", Type: "select", Label: "Reads its Cortex",
 				Options: []ui.SelectOption{
 					{Value: "", Label: "Default for this type, Assistant: on, Specialist: off"},
-					{Value: "on", Label: "On: keep a persistent home thread"},
-					{Value: "off", Label: "Off: ordinary sessions only"},
+					{Value: "on", Label: "On: it reads its Cortex and resumes it as its home thread"},
+					{Value: "off", Label: "Off: the Cortex is a record for you only"},
 				},
-				Help:   "A standing mind is the agent's persistent home thread, the 🧠 row pinned in its rail.",
-				Detail: "Schedule reports and monitor wakes land there, kept bounded by a rolling summary. Turn it off for a plain back-and-forth persona that nothing ever wakes."},
+				Help:   "Every agent keeps a Cortex, the record of what reached it. This decides whether the agent itself reads it.",
+				Detail: "On, its recent lines ride into every session and schedule reports and monitor wakes land there by default, kept bounded by a rolling summary. Off, it stays a read-only record pinned in the rail for you, and the agent is a plain back-and-forth persona that costs nothing extra per turn."},
 		},
 	}
 
