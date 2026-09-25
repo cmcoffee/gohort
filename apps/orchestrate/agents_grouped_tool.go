@@ -823,9 +823,9 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// Builder is never dispatchable. Builder's authoring rhythm needs
 	// a human in the loop — Phase 1 conversational intake, ask_user
 	// pauses for design clarifications, the approval gate on every
-	// authored tool. The [DELEGATED INVOCATION] marker that strips
-	// ask_user under dispatch turns Builder into a guessing game on a
-	// thin brief, and any tools it authors get stuck in a sub-session
+	// authored tool. A dispatched Builder can ask (builder_delegated_ask.go),
+	// but only by ending its run and waiting on a relay, which is slower than
+	// the conversation itself, and any tools it authors get stuck in a sub-session
 	// draft pool the dispatching agent can't see. The user clicks
 	// Builder in their picker directly when they want authoring; no
 	// other agent should be intermediating that conversation.
@@ -1266,9 +1266,13 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// Direct Agency chat with a sub-agent is a separate path (handleSend).
 	prior, _ := loadChatSession(t.udb, target.ID, subSessID)
 	// Only Builder acts on the delegated marker; others get the message verbatim.
+	// This thread persists, so Builder may ask and the answer comes back here
+	// (builder_delegated_ask.go).
 	deliveredMsg := msg
+	var ask *delegatedQuestion
 	if isBuilderAgent(target.ID) {
-		deliveredMsg = markAsDelegated(msg)
+		deliveredMsg = markAsDelegatedMayAsk(msg)
+		ask = &delegatedQuestion{}
 	}
 	llmMessages := make([]Message, 0, len(prior.Messages)+1)
 	for _, m := range prior.Messages {
@@ -1332,8 +1336,14 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// The target's own "Use Lead model", as over a channel or a delegation;
 	// ctx carries the parent's privacy, so a Private parent stays off the lead.
 	runPin, runRoute := dispatchRouting(ctx, subTurn)
+	var abortTools []string
+	if ask != nil {
+		tools = append(tools, delegatedAskUserTool(ask))
+		abortTools = []string{"ask_user"}
+	}
 	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
-		TierOverride: runPin,
+		TierOverride:    runPin,
+		RoundAbortTools: abortTools,
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
 		PreEmptedReply:      gDecline,
@@ -1371,6 +1381,12 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		return "", errors.New("agents(run): target returned no response")
 	}
 	cleanReply := strings.TrimSpace(resp.Content)
+	// A Builder that asked ends on its question, which is its reply in this
+	// thread and, relayed, the result the caller acts on.
+	asked := ask.asked()
+	if asked {
+		cleanReply = ask.forThread()
+	}
 	// What the sub-agent produced, judged by the caller's rules before it lands
 	// in the caller's context. The input check can be asked around; this one
 	// reads what actually came back.
@@ -1405,6 +1421,10 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	}
 	if _, err := saveChatSession(t.udb, prior); err != nil {
 		Log("[orchestrate.agents.run] WARN persist dispatch sub-session %s: %v", subSessID, err)
+	}
+	if asked {
+		Log("[orchestrate.agents.run] %s asked the user a question through caller=%s", target.Name, t.agent.ID)
+		return delegatedRelay(target.Name, cleanReply), nil
 	}
 	return fmt.Sprintf("From %s:\n\n%s", target.Name, cleanReply), nil
 }

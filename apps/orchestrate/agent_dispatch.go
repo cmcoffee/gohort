@@ -1765,14 +1765,23 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	// The delegated-invocation marker only signals a CONVERSATIONAL agent
 	// (Builder) to skip its intake/confirm workflow and run headless from the
-	// brief — it's the only agent whose prompt reads it. ask_user / approval
-	// pauses are already framework-gated (those tools aren't in the dispatch
-	// catalog; approvals auto-approve), so we don't instruct the LLM about them.
+	// brief — it's the only agent whose prompt reads it. The web ask_user is not
+	// in the dispatch catalog and approvals auto-approve; the one question a
+	// dispatched Builder may ask is the relay below.
 	// Skip it for everyone else, and always on an interactive surface (a channel
 	// has a human who answers follow-ups in the next message).
 	deliveredMessage := message
+	// An agent handing Builder a brief keeps this thread, so Builder may ask and
+	// the answer comes back here (builder_delegated_ask.go). Anything else that
+	// runs Builder headless (a machine step, an app) has nobody to relay to.
+	var ask *delegatedQuestion
 	if !run.Interactive && isBuilderAgent(target.ID) {
-		deliveredMessage = markAsDelegated(message)
+		if strings.TrimSpace(run.DelegatorAgentID) != "" {
+			deliveredMessage = markAsDelegatedMayAsk(message)
+			ask = &delegatedQuestion{}
+		} else {
+			deliveredMessage = markAsDelegated(message)
+		}
 	}
 	// Inbound images (channel path): the decoded bytes ride on the user message
 	// below as multimodal content the model sees THIS turn. Two representations,
@@ -2014,6 +2023,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// A terminal-rule pre_input block refused this request outright; the loop
 	// delivers the decline without calling a model.
 	loopCfg.PreEmptedReply = gDecline
+	if ask != nil {
+		loopCfg.Tools = append(loopCfg.Tools, delegatedAskUserTool(ask))
+		loopCfg.RoundAbortTools = append(loopCfg.RoundAbortTools, "ask_user")
+	}
 	resp, transcript, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)
@@ -2026,6 +2039,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		return AgentSyncResult{}, errors.New("agent returned no response")
 	}
 	cleanReply := strings.TrimSpace(resp.Content)
+	// A Builder that asked ends on its question: stored as its turn in this
+	// thread, and relayed to the agent that sent the brief as the result.
+	if ask.asked() {
+		cleanReply = ask.forThread()
+	}
 	// Round-cap fallback: the loop ran out of its budget without producing any
 	// text (and even the loop's forced-final-answer rescue came up empty). Don't
 	// hand the caller (channel reply, MCP client, inline dispatch) an empty
@@ -2158,6 +2176,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// success case, already marked Completed.
 	if len(imgs) > 0 || len(vids) > 0 {
 		phantomDelivery = false // the backstop recovered something after all
+	}
+	if ask.asked() {
+		Log("[orchestrate.RunAgentSyncContinuing] %s asked the user a question through delegator=%s", target.Name, run.DelegatorAgentID)
+		cleanReply = delegatedRelay(target.Name, cleanReply)
 	}
 	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap, PhantomDelivery: phantomDelivery, ToolCalls: turnToolCalls, Silenced: subSess != nil && subSess.Silenced}, nil
 }
