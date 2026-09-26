@@ -152,3 +152,29 @@ func TestAScriptTimeoutOnlyRaisesTheCallCap(t *testing.T) {
 		t.Error("fetch_via should take timeout=")
 	}
 }
+
+// A timeout names the fix for a slow endpoint instead of prescribing retries,
+// which only hit the same limit: a music generation timed out three times
+// running, each retry told it was probably a blip.
+func TestATimeoutSaysToRaiseTheWait(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(1500 * time.Millisecond)
+	}))
+	defer srv.Close()
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	if err := s.Save(SecureCredential{Name: "slow", Type: SecureCredNone, BaseURL: srv.URL}, ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.DispatchToolCallArgs(nil, "slow", map[string]any{"url": srv.URL + "/gen", secureTimeoutArg: 1})
+	if err == nil {
+		t.Fatal("a call past its wait limit should fail")
+	}
+	for _, want := range []string{"did not respond within 1s", "timeout_sec", "timeout=", "retry once"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the timeout should say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "once or twice") {
+		t.Error("the old advice to keep retrying is gone")
+	}
+}

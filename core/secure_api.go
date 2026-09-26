@@ -2301,7 +2301,10 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			if parsed != nil && parsed.Host != "" {
 				host = parsed.Host
 			}
-			return "", fmt.Errorf("%s did not respond within %s (timeout). This is OFTEN TRANSIENT (a slow LAN appliance, connection warmup, or a momentary network blip), and usually does NOT mean the IP, http-vs-https, port, or credential is wrong. Retry the request once or twice before concluding anything. Only suspect a misconfiguration if it times out REPEATEDLY across retries; do NOT tell the user to change the address/scheme/port based on a single timeout", host, callTimeout)
+			// Retrying is the wrong advice for an endpoint that does real work
+			// per request: a music generation timed out three times running
+			// at the same cap, each retry told it was probably a blip.
+			return "", fmt.Errorf("%s did not respond within %s (timeout). That is a wait limit, not a sign the address, scheme, port or credential is wrong: do NOT tell the user to change them over a timeout. If this endpoint does real work per request (a generation, a render, a long report), a retry hits the same limit: raise the wait instead, with timeout_sec on the tool (api, toolbox or shell, up to 300s) or timeout= on a script's fetch_via/fetch_url call, and say so plainly if you cannot. If it is normally fast, it may be a momentary blip: retry once, and if it times out again, stop and report it", host, callTimeout)
 		}
 		return "", fmt.Errorf("request failed: %s", redact(err.Error()))
 	}
