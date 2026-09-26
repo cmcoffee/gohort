@@ -324,3 +324,20 @@ func TestFrameworkFlagsCannotAuthorOnNonFleetAgent(t *testing.T) {
 		t.Error("a Fleet agent should get the Builder-routing block")
 	}
 }
+
+// A tool that runs but returns the wrong thing is a defect to take to
+// Builder, not one to engineer around. Every agent but Builder is told so,
+// with the offer where it can hand work to Builder and a pointer where not.
+func TestFrameworkNamesAWrongResultAsABrokenTool(t *testing.T) {
+	fleet := frameworkPromptBlocks("", chatSeed(t), true)
+	if !strings.Contains(fleet, brokenToolMarker) || !strings.Contains(fleet, frameworkBrokenToolAsk) {
+		t.Fatal("a Fleet agent should be told to offer a Builder fix for a wrong result")
+	}
+	plain := frameworkPromptBlocks("", AgentRecord{ID: "some-agent", DispatchMode: dispatchNone}, true)
+	if !strings.Contains(plain, brokenToolMarker) || strings.Contains(plain, frameworkBrokenToolAsk) || !strings.Contains(plain, "if they open it there") {
+		t.Fatal("an agent that cannot hand work to Builder should point the user there")
+	}
+	if strings.Contains(frameworkPromptBlocks("", seedNamed(t, "Builder"), true), brokenToolMarker) {
+		t.Fatal("Builder fixes tools; the block is not for it")
+	}
+}

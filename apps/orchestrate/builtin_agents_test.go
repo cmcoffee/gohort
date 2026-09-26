@@ -60,7 +60,7 @@ func TestBuiltinAgentsLoad(t *testing.T) {
 func TestBuiltinDocumentUnchanged(t *testing.T) {
 	const (
 		file = "builder.md"
-		want = "2d4c7c80405068e51396018a93df30b2edbdad04b65ec6bf20d2c3a2964440f8"
+		want = "0aefc7fbbeba22e90927e0c0bec2090bd47a0e683cf8cda57b1e9419347484cc"
 	)
 	data, err := builtinFS.ReadFile("builtin/" + file)
 	if err != nil {

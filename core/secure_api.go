@@ -410,6 +410,11 @@ type SecureAPIAuditEntry struct {
 // large JSON down to needed fields before context.
 func secureAPIMaxResponseBytes() int { return TuneInt("tune_secure_api_max_response_bytes") }
 
+// secureAPICutNote follows a response body cut at the text cap. Narrowing
+// fits a long list; it cannot help a response that carries a file inline
+// (audio, an image as base64), which was cut the same way every call.
+const secureAPICutNote = "\n... [TRUNCATED: the response exceeded the 256KB cap and was cut, so what is above is incomplete. A long list: narrow the request (pagination or limit params, filters on the API side) or project it with response_pipe. A file carried inline (audio, an image, a document as base64): narrowing cannot help, the tool has to write the whole response to a file instead (a script tool, or save_to on a direct fetch).]"
+
 // secureAPIMaxResponseBytesForPipe is the higher input cap used
 // when the caller has a response_pipe configured. The pipe will
 // project the response down to a small output, so reading more
@@ -2480,7 +2485,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			if pretty, err := json.MarshalIndent(anyVal, "", "  "); err == nil {
 				sb.Write(pretty)
 				if truncated {
-					sb.WriteString("\n... [TRUNCATED: response exceeded 256KB cap. To get the full data, narrow the request: add pagination/limit query params, filter on the API side (e.g. ?status=completed&limit=10), or wrap the call in a persistent tool with response_pipe to jq-project only the fields you need.]")
+					sb.WriteString(secureAPICutNote)
 				}
 				return sb.String(), nil
 			}
@@ -2488,7 +2493,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	}
 	sb.Write(bodyBytes)
 	if truncated {
-		sb.WriteString("\n... [TRUNCATED: response exceeded 256KB cap. To get the full data, narrow the request: add pagination/limit query params, filter on the API side (e.g. ?status=completed&limit=10), or wrap the call in a persistent tool with response_pipe to jq-project only the fields you need.]")
+		sb.WriteString(secureAPICutNote)
 	}
 	return sb.String(), nil
 }

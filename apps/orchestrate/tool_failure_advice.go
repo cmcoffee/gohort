@@ -17,14 +17,19 @@ import (
 	"sync"
 )
 
+// toolFailureNoteMarker follows the tool's name in the note, which is how a
+// spilled result tells the note apart from the body it was appended to.
+const toolFailureNoteMarker = " looks broken rather than your call"
+
 // toolFailureAdvice is the ToolSession.ToolFailureAdvice for an agent run.
 // interactive is whether the user can be asked on a card (ask_user); a
 // channel, delegated or scheduled run says it in the reply instead.
 // contactStarted is read at the moment of the failure, since the mark that
-// says so can be set after the session is built. A severe failure (a crash, a
-// timeout, a server error) is advised at once; one that could be a bad
-// argument, on its second occurrence. Each tool is advised once per run.
-func toolFailureAdvice(agent AgentRecord, interactive bool, contactStarted func() bool) func(string, bool) string {
+// says so can be set after the session is built. A failure with a why (a
+// crash, a timeout, a server error, output cut short) is advised at once; one
+// that could be a bad argument, on its second occurrence. Each tool is
+// advised once per run.
+func toolFailureAdvice(agent AgentRecord, interactive bool, contactStarted func() bool) func(string, string) string {
 	if isBuilderAgent(agent.ID) {
 		return nil
 	}
@@ -32,22 +37,21 @@ func toolFailureAdvice(agent AgentRecord, interactive bool, contactStarted func(
 	var mu sync.Mutex
 	failures := map[string]int{}
 	advised := map[string]bool{}
-	return func(tool string, severe bool) string {
+	return func(tool, why string) string {
 		if contactStarted != nil && contactStarted() {
 			return ""
 		}
 		mu.Lock()
 		defer mu.Unlock()
 		failures[tool]++
-		if advised[tool] || (!severe && failures[tool] < 2) {
+		if advised[tool] || (why == "" && failures[tool] < 2) {
 			return ""
 		}
 		advised[tool] = true
-		why := "it failed again"
-		if severe {
-			why = "it crashed, timed out or the service failed"
+		if why == "" {
+			why = "it failed again"
 		}
-		head := fmt.Sprintf("Note: %s looks broken rather than your call (%s). Do not keep retrying it, and do not work around it with other tools or direct API calls.", tool, why)
+		head := fmt.Sprintf("Note: %s%s (%s). Do not keep retrying it, and do not work around it with other tools, scripts of your own or direct API calls. Do not present a partial result as the whole one.", tool, toolFailureNoteMarker, why)
 		switch {
 		case interactive && canBuilder:
 			return head + fmt.Sprintf(" Tell the user plainly what failed and ask whether they want Builder to fix it (ask_user, Yes or No). If they say yes: agents(action=\"run\", agent=\"builder\", message=\"Fix the %s tool: <the arguments you called it with, this error, and what you were trying to do>\").", tool)

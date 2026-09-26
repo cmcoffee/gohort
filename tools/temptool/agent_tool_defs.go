@@ -574,11 +574,11 @@ func adviseOnFailure(sess *ToolSession, tt *TempTool, out string, err error) (st
 	if sess == nil || sess.ToolFailureAdvice == nil || tt == nil {
 		return out, err
 	}
-	failed, severe := toolRunFailure(out, err)
+	failed, why := toolRunFailure(out, err)
 	if !failed {
 		return out, err
 	}
-	advice := sess.ToolFailureAdvice(tt.Name, severe)
+	advice := sess.ToolFailureAdvice(tt.Name, why)
 	if advice == "" {
 		return out, err
 	}
@@ -588,31 +588,51 @@ func adviseOnFailure(sess *ToolSession, tt *TempTool, out string, err error) (st
 	return out + "\n\n" + advice, nil
 }
 
-// toolRunFailure reads a custom tool's result for failure, and for whether it
-// is one the caller's arguments could not have caused: a crash, a timeout, a
-// server error. A non-zero exit with no traceback, or an HTTP 4xx, can be a
-// bad argument, so it is a failure but not a severe one.
-func toolRunFailure(out string, err error) (failed, severe bool) {
+// Why a failure is the tool's and not the caller's arguments.
+const (
+	failureBroke = "it crashed, timed out or the service failed"
+	failureCut   = "its output was cut off at the size limit, so what came back is incomplete"
+)
+
+// toolRunFailure reads a custom tool's result for failure, and for why, when
+// it is one the caller's arguments could not have caused: a crash, a timeout,
+// a server error, output cut off at the size limit. A non-zero exit with no
+// traceback, or an HTTP 4xx, can be a bad argument, so it is a failure with no
+// why.
+//
+// A cut result is the one that looks like a success. Observed: a music tool
+// whose response carried the audio inline came back cut at the cap every
+// time, the agent decoded what it had, and handed the user a fragment as the
+// full track, then wrote its own extractors to dig for the rest.
+func toolRunFailure(out string, err error) (failed bool, why string) {
 	// A provider refusing the content (the phrase the secure API puts on such
 	// a reply) is the request, not the tool: rephrasing fixes it and Builder
 	// cannot, so it is not a failure to advise on.
 	if strings.Contains(out, "REFUSED THE CONTENT") || (err != nil && strings.Contains(err.Error(), "REFUSED THE CONTENT")) {
-		return false, false
+		return false, ""
 	}
 	if err != nil {
 		e := strings.ToLower(err.Error())
-		return true, strings.Contains(e, "timeout") || strings.Contains(e, "did not respond") || strings.Contains(e, "timed out")
+		if strings.Contains(e, "timeout") || strings.Contains(e, "did not respond") || strings.Contains(e, "timed out") {
+			return true, failureBroke
+		}
+		return true, ""
 	}
 	switch {
 	case strings.Contains(out, "[TIMED OUT"):
-		return true, true
+		return true, failureBroke
 	case strings.Contains(out, "Traceback (most recent call last)") && strings.Contains(out, "[exit: "):
-		return true, true
+		return true, failureBroke
+	case strings.Contains(out, "\n... [TRUNCATED"):
+		return true, failureCut
 	case strings.Contains(out, "[exit: "):
-		return true, false
+		return true, ""
 	}
 	if status, _ := splitStatusLine(out); status != "" && !isStatus2xx(status) {
-		return true, strings.HasPrefix(status, "HTTP 5")
+		if strings.HasPrefix(status, "HTTP 5") {
+			return true, failureBroke
+		}
+		return true, ""
 	}
-	return false, false
+	return false, ""
 }

@@ -166,11 +166,13 @@ type ToolSession struct {
 	// ToolFailureAdvice, when set, is asked when one of the user's own custom
 	// tools fails, and whatever it returns is added to the failed result. The
 	// host decides what the agent should do about a broken tool: offer the
-	// user a Builder fix, say so in a report, or nothing. severe marks a
-	// failure that cannot be the caller's arguments (a crash, a timeout, a
-	// server error). Without it an agent kept retrying a broken tool, or went
-	// around it, instead of getting it fixed. Nil = nothing added.
-	ToolFailureAdvice func(toolName string, severe bool) string
+	// user a Builder fix, say so in a report, or nothing. why is set for a
+	// failure that cannot be the caller's arguments, and says what happened
+	// (a crash, a timeout, a server error, output cut off at the size limit);
+	// empty, the failure could be a bad argument. Without it an agent kept
+	// retrying a broken tool, or went around it, instead of getting it fixed.
+	// Nil = nothing added.
+	ToolFailureAdvice func(toolName, why string) string
 
 	// BundledToolNames is the set of tool names attached DIRECTLY to the
 	// running agent's record (AgentRecord.Tools) rather than authored as

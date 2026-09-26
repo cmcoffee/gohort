@@ -17,6 +17,7 @@ func init() {
 	reg("framework.work_honestly", "Work it honestly", "Orchestration", "Interactive surface", frameworkWorkHonestlyBlock)
 	reg("framework.export", "Document export", "Authoring", "Agent has export", frameworkExportBlock)
 	reg("framework.builder_routing", "Apps / agents / pipelines → Builder", "Authoring", "Fleet, not Builder", frameworkBuilderRoutingBlock)
+	reg("framework.broken_tool", "A tool that works but gives the wrong result", "Authoring", "Every agent but Builder", frameworkBrokenToolBlock+frameworkBrokenToolAsk)
 	reg("framework.channel", "Your channel", "Fleet", "Cortex", frameworkChannelBlock())
 	reg("framework.fleet", "Supervising the fleet", "Fleet", "Fleet", frameworkFleetBlock)
 	// The tools-available digest — a TEMPLATE, unlike the static blocks above.

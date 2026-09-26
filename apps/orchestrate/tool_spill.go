@@ -108,6 +108,7 @@ func maybeSpillToolResult(sess *ToolSession, toolName, body string) (string, boo
 	// audio out of a 262KB response it had in full. The stub below keeps the
 	// banner, and reading the file back through workspace is fenced again.
 	raw, cleaned := spillFileBody(body)
+	cut := strings.Contains(body, spillCutMarker)
 	fname := spillFilename(toolName, raw)
 	abs := filepath.Join(spillDir, fname)
 	if err := os.WriteFile(abs, []byte(raw), 0600); err != nil {
@@ -116,12 +117,20 @@ func maybeSpillToolResult(sess *ToolSession, toolName, body string) (string, boo
 	}
 	rel := filepath.Join(spillDirName, fname)
 	stub := renderSpillStub(toolName, rel, body)
-	if cleaned {
+	switch {
+	case cut:
+		// A cut body is not "ready to parse": decoded, it is a fragment, and
+		// an agent handed one to the user as the full track.
+		stub = strings.Replace(stub, "Full body saved to workspace as", "It was CUT SHORT at the size limit before it reached you, so the file holds only the part that came back, NOT the whole response. Anything taken from it (decoded audio or an image, a parsed list) is incomplete: do not present it as the whole result. The part that came back is saved to workspace as", 1)
+	case cleaned:
 		stub = strings.Replace(stub, "Full body saved to workspace as", "The raw response body (no banner or status line, ready to parse) is saved to workspace as", 1)
 	}
 	Log("[spill] %s → %s (%d bytes, stub=%d bytes)", toolName, rel, len(body), len(stub))
 	return stub, true
 }
+
+// spillCutMarker opens the line a size cap puts after a body it cut.
+const spillCutMarker = "\n... [TRUNCATED"
 
 // spillStatusLine is an HTTP status line an api tool puts ahead of the body.
 var spillStatusLine = regexp.MustCompile(`^HTTP(?:/[0-9.]+)? [0-9]{3}[^\n{\[<]*`)
@@ -131,9 +140,16 @@ var spillStatusLine = regexp.MustCompile(`^HTTP(?:/[0-9.]+)? [0-9]{3}[^\n{\[<]*`
 // them), and a leading HTTP status line when what follows is a structured
 // body (JSON or XML), since that line is what stops the file parsing. Plain
 // text keeps its status line: nothing parses it, and it says how the call went.
-// Reports whether anything was removed.
+// Off the back come a cut marker and the broken-tool note, which are about
+// the body and not part of it. Reports whether anything was removed.
 func spillFileBody(body string) (string, bool) {
 	out := body
+	if i := strings.Index(out, spillCutMarker); i >= 0 {
+		out = out[:i]
+	}
+	if i := strings.LastIndex(out, "\n\nNote: "); i >= 0 && strings.Contains(out[i:], toolFailureNoteMarker) {
+		out = out[:i]
+	}
 	for strings.HasPrefix(out, untrustedContentFence) {
 		out = strings.TrimPrefix(out, untrustedContentFence)
 	}

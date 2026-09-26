@@ -47,3 +47,28 @@ func TestASpillFileHoldsTheRawBody(t *testing.T) {
 		t.Errorf("the spill file should parse as JSON: %v", err)
 	}
 }
+
+// A body cut at a size cap spills as the part that came back, with the cut
+// marker and any broken-tool note left off the file, and the stub says it is
+// partial. Called "ready to parse", a cut response was decoded and handed to
+// the user as a full track.
+func TestACutSpillSaysItIsPartial(t *testing.T) {
+	part := `{"id":"v1_x","data":"` + strings.Repeat("A", spillThresholdBytes())
+	note := "\n\nNote: generate_music" + toolFailureNoteMarker + " (its output was cut off)."
+	body := untrustedContentFence + "HTTP 200 OK\n" + part + "\n... [TRUNCATED: the response exceeded the 256KB cap]" + note
+	if raw, _ := spillFileBody(body); raw != part {
+		t.Errorf("the file should hold only the part that came back, got a tail of %q", raw[len(raw)-60:])
+	}
+	if raw, _ := spillFileBody(untrustedContentFence + "HTTP 503 Service Unavailable\n{\"e\":1}" + note); raw != `{"e":1}` {
+		t.Errorf("the broken-tool note is not part of the body, got %q", raw)
+	}
+
+	dir := t.TempDir()
+	stub, ok := maybeSpillToolResult(&ToolSession{WorkspaceDir: dir}, "generate_music", body)
+	if !ok {
+		t.Fatal("a body over the threshold should spill")
+	}
+	if !strings.Contains(stub, "CUT SHORT") || !strings.Contains(stub, "NOT the whole response") || strings.Contains(stub, "ready to parse") {
+		t.Errorf("the stub should say the file is partial:\n%s", stub[:400])
+	}
+}

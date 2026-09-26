@@ -77,6 +77,23 @@ const cannotAuthorMarker = "**You cannot author agents"
 // exact set that gets no authoring guidance otherwise.
 const frameworkCannotAuthorBlock = `**You cannot author agents, tools, pipelines, skills, or apps yourself, but you CAN request a sub-agent.** Authoring is Builder's job and you can't dispatch Builder directly. When the user asks you to create a SUB-AGENT, call ` + "`request_build`" + ` with a complete spec (its job, persona, the tools/sources it needs, any schedule): that queues the build for the user's approval, and on approval Builder authors it as your sub-agent. Do this instead of trying to dispatch (least of all to yourself), improvising with searches, or telling the user to edit files. After calling it, tell the user it's queued for their approval and what it will do. For a tool, pipeline, skill, or full app (not a sub-agent), you have no request path, so say plainly you can't build those and point them to Builder in their agent picker.`
 
+// brokenToolMarker marks (and dedup-keys) the defective-tool block.
+const brokenToolMarker = "**A tool that runs but gives you the wrong result is broken"
+
+// frameworkBrokenToolBlock covers the failure the tool-failure note cannot see:
+// a custom tool that exits cleanly with an inadequate result. Observed: a music
+// tool returned every song cut to thirty seconds, and the agent set about
+// writing its own extractor to recover the rest instead of getting the tool
+// fixed. A failure (a crash, a timeout, an error status) carries its own note
+// (tool_failure_advice.go); this is the same rule for a result that is merely
+// wrong, which only the agent reading it can judge. Two endings, keyed to
+// whether the agent can hand work to Builder.
+const frameworkBrokenToolBlock = brokenToolMarker + ` and fixing it is Builder's job.** When one of your custom tools returns something wrong or not good enough (audio cut short, fields missing, the wrong format, far less than it should), do not build your own way around it: no scripts of your own that redo its work, no re-parsing its saved output yourself, no direct calls to the service it wraps. `
+
+const frameworkBrokenToolAsk = `Tell the user plainly what is wrong with the result and ask whether they want Builder to fix the tool. If they say yes, dispatch Builder with the tool's name, what you called it with, and what was wrong with what came back. Meanwhile give them the result you have only if it is good enough as it stands, and say what is missing.`
+
+const frameworkBrokenToolPoint = `Tell the user plainly what is wrong with the result, and that Builder can fix the tool if they open it there. Give them the result you have only if it is good enough as it stands, and say what is missing.`
+
 // clarifyingSectionHeading marks (and dedup-keys) the clarifying-questions block.
 const clarifyingSectionHeading = "## Asking the user clarifying questions"
 
@@ -245,6 +262,13 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 	// "create an agent" request produces a clean handoff instead of the
 	// self-dispatch / malformed-search flail.
 	add(!canHand && !agentCanAuthor(agent), "framework.cannot_author", cannotAuthorMarker, frameworkCannotAuthorBlock)
+	// A custom tool that works but returns the wrong thing: offer Builder, or
+	// point to it. Builder is the fixer and gets neither.
+	brokenEnd := frameworkBrokenToolPoint
+	if canHand {
+		brokenEnd = frameworkBrokenToolAsk
+	}
+	add(!isBuilderAgent(agent.ID), "framework.broken_tool", brokenToolMarker, frameworkBrokenToolBlock+brokenEnd)
 	// Channel home thread — Cortex agents only (carries the section heading).
 	add(agent.Cortex, "framework.channel", channelSectionHeading, frameworkChannelBlock())
 	// Fleet supervision, monitors, notify, phantom reach — Fleet agents. Ordered

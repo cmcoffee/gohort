@@ -280,40 +280,44 @@ func TestALargeValueReachesTheScriptAsAFile(t *testing.T) {
 // 4xx could be the caller's arguments.
 func TestAFailedToolCarriesTheHostsAdvice(t *testing.T) {
 	cases := []struct {
-		out            string
-		err            error
-		failed, severe bool
+		out    string
+		err    error
+		failed bool
+		why    string
 	}{
-		{"ok", nil, false, false},
-		{"HTTP 200 OK\n{}", nil, false, false},
-		{"Traceback (most recent call last):\n boom\n[exit: exit status 1]", nil, true, true},
-		{"bad input\n[exit: exit status 2]", nil, true, false},
-		{"partial\n[TIMED OUT after 1m30s: command killed.]", nil, true, true},
-		{"HTTP 503 Service Unavailable\n{}", nil, true, true},
-		{"HTTP 400 Bad Request\n{}", nil, true, false},
-		{"", errors.New("gen.example.com did not respond within 30s (timeout)"), true, true},
-		{"", errors.New("missing required arg"), true, false},
+		{"ok", nil, false, ""},
+		{"HTTP 200 OK\n{}", nil, false, ""},
+		{"Traceback (most recent call last):\n boom\n[exit: exit status 1]", nil, true, failureBroke},
+		{"bad input\n[exit: exit status 2]", nil, true, ""},
+		{"partial\n[TIMED OUT after 1m30s: command killed.]", nil, true, failureBroke},
+		{"HTTP 503 Service Unavailable\n{}", nil, true, failureBroke},
+		{"HTTP 400 Bad Request\n{}", nil, true, ""},
+		{"", errors.New("gen.example.com did not respond within 30s (timeout)"), true, failureBroke},
+		{"", errors.New("missing required arg"), true, ""},
 		// A provider refusing the content is the request, not the tool.
-		{"HTTP 400 Bad Request\n[The provider REFUSED THE CONTENT of the request ...]\n{}", nil, false, false},
-		{"Error: API returned 400: [The provider REFUSED THE CONTENT ...]\n[exit: exit status 1]", nil, false, false},
+		{"HTTP 400 Bad Request\n[The provider REFUSED THE CONTENT of the request ...]\n{}", nil, false, ""},
+		{"Error: API returned 400: [The provider REFUSED THE CONTENT ...]\n[exit: exit status 1]", nil, false, ""},
+		// Output cut at a size cap reads as a success and is not one.
+		{"HTTP 200 OK\n{\"data\":\"SUQz\n... [TRUNCATED: the response exceeded the 256KB cap]", nil, true, failureCut},
+		{"{\"data\":\"SUQz\n... [TRUNCATED: showing lines 1-1 of 1 total (60000 chars).]", nil, true, failureCut},
 	}
 	for _, c := range cases {
-		if failed, severe := toolRunFailure(c.out, c.err); failed != c.failed || severe != c.severe {
-			t.Errorf("%q / %v: got failed=%v severe=%v", c.out, c.err, failed, severe)
+		if failed, why := toolRunFailure(c.out, c.err); failed != c.failed || why != c.why {
+			t.Errorf("%q / %v: got failed=%v why=%q", c.out, c.err, failed, why)
 		}
 	}
-	var gotSevere bool
-	sess := &ToolSession{ToolFailureAdvice: func(name string, severe bool) string {
-		gotSevere = severe
+	var gotWhy string
+	sess := &ToolSession{ToolFailureAdvice: func(name, why string) string {
+		gotWhy = why
 		return "ADVICE for " + name
 	}}
 	tt := &TempTool{Name: "make_song"}
 	out, err := adviseOnFailure(sess, tt, "boom\n[exit: exit status 1]", nil)
-	if err != nil || !strings.HasSuffix(out, "ADVICE for make_song") || gotSevere {
-		t.Errorf("a failed run gets the advice appended: %q %v severe=%v", out, err, gotSevere)
+	if err != nil || !strings.HasSuffix(out, "ADVICE for make_song") || gotWhy != "" {
+		t.Errorf("a failed run gets the advice appended: %q %v why=%q", out, err, gotWhy)
 	}
 	_, err = adviseOnFailure(sess, tt, "", errors.New("did not respond within 30s"))
-	if err == nil || !strings.Contains(err.Error(), "ADVICE for make_song") || !gotSevere {
+	if err == nil || !strings.Contains(err.Error(), "ADVICE for make_song") || gotWhy != failureBroke {
 		t.Errorf("an error carries it too: %v", err)
 	}
 	if out, _ := adviseOnFailure(sess, tt, "fine", nil); out != "fine" {
