@@ -435,6 +435,11 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 					"Register the credential via the admin UI first if it doesn't exist yet.",
 				missing.calls, missing.suggest)
 		}
+		// A name the gohort module does not export fails the first run, not
+		// the save; refuse it here, while the author is still looking.
+		if why := unknownGohortName(scriptBody); why != "" {
+			return "", fmt.Errorf("%s", why)
+		}
 		// Refuse network primitives. Builder repeatedly rewrites
 		// fetch-failing tools to urllib/requests/curl/wget when
 		// fetch_url returns 4xx, but those libraries are BLOCKED in

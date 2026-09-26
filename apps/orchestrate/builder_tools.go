@@ -447,7 +447,7 @@ func storeCredentialSecretToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "store_credential_secret",
-			Description: "Store an API key/token you just RECEIVED during a flow (a self-registration response, a key rotation) straight into an existing credential's encrypted vault: INSTEAD of printing it in chat or asking the user to copy-paste it. Overwrites any previously stored secret (that is how a rotation lands). Does NOT enable the credential; a new one still needs the admin to enable it. After storing: verify with check_credential, then dispatch through the credential (fetch_url_<name> / fetch_via), never keep using the raw key inline, and NEVER echo the value into your reply.",
+			Description: "Store an API key/token you just RECEIVED during a flow (a self-registration response, a key rotation) straight into an existing credential's encrypted vault: INSTEAD of printing it in chat or asking the user to copy-paste it. Overwrites any previously stored secret (that is how a rotation lands). Does NOT enable the credential; a new one still needs the admin to enable it. After storing: verify with check_credential, then dispatch through the credential (an agent calls the fetch_url_<name> tool; a script calls fetch_via(\"<name>\", ...) with hook_capabilities fetch_via:<name>), never keep using the raw key inline, and NEVER echo the value into your reply.",
 			Parameters: map[string]ToolParam{
 				"name":   {Type: "string", Description: "The credential to store into (must already exist: draft_api_credential / draft_oauth_credential first)."},
 				"secret": {Type: "string", Description: "The secret value exactly as received. Stored encrypted, write-only: it cannot be read back."},

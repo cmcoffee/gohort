@@ -6,7 +6,10 @@ package temptool
 // agent concluded the remote SITE was blocking it. Static and deterministic —
 // the same class of check as the syntax pass.
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestScriptCallsHookSpotsBothImportAndCall(t *testing.T) {
 	cases := []struct {
@@ -41,5 +44,32 @@ func TestHookCapabilityDeclaredMatchesTheServerGate(t *testing.T) {
 	// (capability may be qualified, the wanted method never is).
 	if hookCapabilityDeclared([]string{"fetch"}, "fetch_via") {
 		t.Error("a bare fetch grant must not satisfy fetch_via")
+	}
+}
+
+// A script that imports a name the gohort module does not export is refused at
+// authoring, and a credential's catalog-tool name is answered with the call that
+// actually works from a script.
+func TestAScriptCannotImportWhatTheGohortModuleDoesNotExport(t *testing.T) {
+	why := unknownGohortName("import os\nfrom gohort import fetch_url_gemini_api\n")
+	for _, want := range []string{"fetch_url_gemini_api", `fetch_via("gemini_api"`, "fetch_via:gemini_api"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("the refusal should carry %q:\n%s", want, why)
+		}
+	}
+	if why := unknownGohortName("from gohort import (\n    fetch_via,\n    made_up as m,\n)\n"); !strings.Contains(why, `"made_up"`) || !strings.Contains(why, "fetch_via") {
+		t.Errorf("a parenthesized import is read name by name: %q", why)
+	}
+	if why := unknownGohortName("import gohort\nr = gohort.call_weather(url)\n"); !strings.Contains(why, `fetch_via("weather"`) {
+		t.Errorf("a method call on the module is checked too: %q", why)
+	}
+	for _, ok := range []string{
+		"from gohort import fetch_url, fetch_via as fv, log\n",
+		"from gohort import secret  # the key\nimport gohort\ngohort.fetch_url(u)\n",
+		"# see docs.gohort.example(1) for more\nprint('from gohort import nothing')\n",
+	} {
+		if why := unknownGohortName(ok); why != "" {
+			t.Errorf("a script using only real names must pass: %q\n%s", ok, why)
+		}
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -341,4 +343,49 @@ func paramNamesInDefinitionOrder(v any) ([]string, error) {
 		}
 	}
 	return keys, nil
+}
+
+var (
+	gohortFromImport = regexp.MustCompile(`(?m)^[ \t]*from[ \t]+gohort[ \t]+import[ \t]+(\([^)]*\)|[^\n#]+)`)
+	gohortAttrCall   = regexp.MustCompile(`(?:^|[^\w.])gohort\.([A-Za-z_]\w*)\s*\(`)
+	credentialToolRe = regexp.MustCompile(`^(?:fetch_url|call)_(\w+)$`)
+)
+
+// unknownGohortName reports a name a script takes from the gohort module that
+// the module does not export, with what to write instead; "" when every name is
+// real. Observed: a script imported fetch_url_gemini_api, which is the name of
+// the credential's catalog tool, not a function. It passed authoring and died
+// on its first run with an ImportError, and the "fix" that followed dropped the
+// import on the belief that the runtime injects the name. Nothing does.
+func unknownGohortName(script string) string {
+	known := SandboxReachableNames()
+	var names []string
+	for _, m := range gohortFromImport.FindAllStringSubmatch(script, -1) {
+		list := strings.Trim(strings.TrimSpace(m[1]), "()")
+		for _, item := range strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == '\n' }) {
+			if f := strings.Fields(item); len(f) > 0 && f[0] != "*" && f[0] != "\\" {
+				names = append(names, f[0])
+			}
+		}
+	}
+	for _, m := range gohortAttrCall.FindAllStringSubmatch(script, -1) {
+		names = append(names, m[1])
+	}
+	for _, n := range names {
+		if known[n] {
+			continue
+		}
+		if c := credentialToolRe.FindStringSubmatch(n); c != nil {
+			return fmt.Sprintf("script_body takes %q from the gohort module, but that is the name of a tool an agent calls, not a function a script can import: nothing provides it, and the script fails on its first run. A script calls through the credential with `from gohort import fetch_via` and `fetch_via(%q, url, method=\"POST\", body=..., headers={...})`, which returns {status, status_line, body}; add \"fetch_via:%s\" to hook_capabilities. The key is attached server-side and the script never sees it", n, c[1], c[1])
+		}
+		exports := make([]string, 0, len(known))
+		for k := range known {
+			if !strings.HasPrefix(k, "_") {
+				exports = append(exports, k)
+			}
+		}
+		sort.Strings(exports)
+		return fmt.Sprintf("script_body takes %q from the gohort module, which has no such name: it exports only %s. Nothing else is injected into a script", n, strings.Join(exports, ", "))
+	}
+	return ""
 }
