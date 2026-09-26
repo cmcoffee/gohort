@@ -398,6 +398,8 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 			fail("live run FAILED: %v", derr)
 		case shellRunFailed(out):
 			fail("live run returned a non-zero exit / timeout: %s", oneLine(out, 300))
+		case shellRunHollow(out) != "":
+			fail("live run exited 0, but %s", shellRunHollow(out))
 		default:
 			pass("live run succeeded, output: %s", oneLine(out, 200))
 		}
@@ -440,6 +442,22 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 // that only checks err would call a script that died on line 1 a success.
 func shellRunFailed(out string) bool {
 	return strings.Contains(out, "[exit: ") || strings.Contains(out, "[TIMED OUT")
+}
+
+// shellRunHollow says what is wrong with a run that exited 0 and still gave
+// its caller nothing usable: no output at all, or output cut at the size
+// limit. Empty when the output is whole. Both passed as "ran clean": a music
+// tool printed nothing, its author reported songs "should now be about four
+// minutes", and the version before it printed the audio as base64 and was
+// cut to a fragment on every call.
+func shellRunHollow(out string) string {
+	switch {
+	case strings.TrimSpace(out) == "":
+		return "it printed NOTHING: the agent calling this tool gets no result, not even whether it worked. Print what the tool made (a saved file's path and size, a count, a summary) and re-test."
+	case strings.Contains(out, "\n... [TRUNCATED"):
+		return fmt.Sprintf("its output was CUT at the %d-character limit, so the agent calling it gets only the start. A tool that makes a file (audio, an image, a document) saves it to the workspace and prints the path and size, never the file itself; a long listing prints a summary or fewer items.", maxOutput)
+	}
+	return ""
 }
 
 // scriptSyntaxCheck parses tt.ScriptBody with the interpreter's own syntax

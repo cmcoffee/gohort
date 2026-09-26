@@ -542,14 +542,15 @@ func sessUser(sess *ToolSession) string {
 // report tells an author to call a tool that asks before each call directly,
 // once, and that call never counted: a tool run clean seven times stayed
 // "unverified" until it was deleted and recreated. A failed run changes
-// nothing; a bad argument from the caller is not the tool's verdict.
+// nothing; a bad argument from the caller is not the tool's verdict. Nor does
+// a run that printed nothing or was cut short: test fails those.
 func recordCleanRun(sess *ToolSession, tt *TempTool, out string, err error) {
 	if err != nil || sess == nil || tt == nil {
 		return
 	}
 	switch effectiveTempToolMode(*tt) {
 	case TempToolModeShell:
-		if shellRunFailed(out) {
+		if shellRunFailed(out) || shellRunHollow(out) != "" {
 			return
 		}
 	case TempToolModeAPI:

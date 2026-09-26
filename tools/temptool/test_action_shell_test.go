@@ -327,3 +327,16 @@ func TestAFailedToolCarriesTheHostsAdvice(t *testing.T) {
 		t.Error("with no advice hook, nothing is added")
 	}
 }
+
+// A run that exits 0 but gives its caller nothing usable is not verified:
+// no output at all, or output cut at the size limit.
+func TestAHollowShellRunIsNotClean(t *testing.T) {
+	for _, out := range []string{"", "  \n", "SUQzAwAA\n... [TRUNCATED: showing lines 1-1 of 1 total (90000 chars).]"} {
+		if shellRunHollow(out) == "" {
+			t.Errorf("%q should not count as a clean run", out)
+		}
+	}
+	if r := shellRunHollow("Saved song.mp3 (3.1 MB, 3:12)"); r != "" {
+		t.Errorf("a whole result is clean, got %q", r)
+	}
+}
