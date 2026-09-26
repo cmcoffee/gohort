@@ -1423,6 +1423,9 @@
     // mechanism for "hide this while the other way of doing it is in
     // use". An empty string, an empty list and an absent key all mean
     // the same thing to somebody filling in a form.
+    // testRowEl is the form's Test button row, when it has one; applyVisibility
+    // shows it only while cfg.test_show_when holds.
+    var testRowEl = null;
     function hasValue(v) {
       if (v == null || v === false || v === '') return false;
       if (Array.isArray(v)) return v.length > 0;
@@ -1433,8 +1436,15 @@
     // values, or one row of a "rows" field. Same grammar either way, so
     // a row-scoped condition is something an author already knows how to
     // write.
+    // "||" joins alternatives: the expression holds when ANY group does,
+    // and a group holds when ALL its ";" clauses do. Without it a field
+    // used under two unrelated conditions (Basic auth, or the OAuth
+    // password grant) could only be shown for one of them.
     function matchesWhen(expr, current) {
       if (!expr) return true;
+      if (expr.indexOf('||') >= 0) {
+        return expr.split('||').some(function(g) { return g.trim() !== '' && matchesWhen(g, current); });
+      }
       var clauses = expr.split(';');
       for (var i = 0; i < clauses.length; i++) {
         var c = clauses[i].trim();
@@ -1458,12 +1468,19 @@
         var negate = rhs.charAt(0) === '!';
         if (negate) rhs = rhs.substring(1);
         var actual = current[fld];
-        // null/undefined is the empty value, not the string "undefined".
-        var actualStr = (actual == null) ? '' : String(actual);
         var opts = rhs.split('|');
         var hit = false;
-        for (var j = 0; j < opts.length; j++) {
-          if (actualStr === opts[j]) { hit = true; break; }
+        if (Array.isArray(actual)) {
+          // A checklist matches when it CONTAINS any of the values: its
+          // String() is the joined list, which only ever equalled a value
+          // when exactly that one box was ticked.
+          hit = actual.some(function(a) { return opts.indexOf(String(a)) >= 0; });
+        } else {
+          // null/undefined is the empty value, not the string "undefined".
+          var actualStr = (actual == null) ? '' : String(actual);
+          for (var j = 0; j < opts.length; j++) {
+            if (actualStr === opts[j]) { hit = true; break; }
+          }
         }
         if (hit === negate) return false;
       }
@@ -1477,6 +1494,9 @@
           node.style.display = matchesShowWhen(f.show_when) ? '' : 'none';
         }
       });
+      if (testRowEl && cfg.test_show_when) {
+        testRowEl.style.display = matchesShowWhen(cfg.test_show_when) ? 'flex' : 'none';
+      }
       if (stepVisibilityHook) stepVisibilityHook();
     }
 
@@ -1860,7 +1880,14 @@
         // rowConditions: whether any column's visibility or lockedness
         // depends on the row's own values, in which case editing a cell
         // has to redraw the row rather than leave a stale one on screen.
-        var rowConditions = cols.some(function(c) { return c.hide_when || c.lock_when; });
+        var rowConditions = cols.some(function(c) { return c.hide_when || c.show_when || c.lock_when; });
+        // A column's ShowWhen is honoured per row, as HideWhen's inverse:
+        // it used to be ignored on columns, so a condition an author wrote
+        // did nothing and every cell showed on every row.
+        function cellHidden(c, row) {
+          return (c.hide_when && matchesWhen(c.hide_when, row)) ||
+                 (c.show_when && !matchesWhen(c.show_when, row));
+        }
         // rowShape is what those conditions currently SAY about one row:
         // which cells are hidden, which are locked. Comparing it before
         // and after a change separates a redraw from a no-op — a row
@@ -1869,7 +1896,7 @@
         function rowShape(row) {
           if (!rowConditions) return '';
           return cols.map(function(c) {
-            return (c.hide_when && matchesWhen(c.hide_when, row) ? 'h' : '-') +
+            return (cellHidden(c, row) ? 'h' : '-') +
                    (c.lock_when && matchesWhen(c.lock_when, row) ? 'l' : '-');
           }).join('');
         }
@@ -1898,7 +1925,7 @@
               // row should not be a control somebody can change and be
               // ignored for — the setting that silently does nothing is
               // worse than the setting that is not offered.
-              if (c.hide_when && matchesWhen(c.hide_when, row)) {
+              if (cellHidden(c, row)) {
                 // A hidden top-line cell still holds its column open, so
                 // rows stay aligned under the headers; a hidden own_line
                 // cell simply has no line.
@@ -3400,6 +3427,8 @@
         if (!cfg.test_url) return;
         var testRow = el('div', {class: 'ui-form-test-row',
           style: 'display:flex;align-items:center;gap:0.6rem;margin-top:0.5rem;flex-wrap:wrap'});
+        testRowEl = testRow;
+        if (cfg.test_show_when && !matchesShowWhen(cfg.test_show_when)) testRow.style.display = 'none';
         var testBtn = el('button', {class: 'ui-row-btn', type: 'button'},
           [cfg.test_label || 'Test connectivity']);
         var testResult = el('span', {class: 'ui-form-test-result',

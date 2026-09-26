@@ -33,7 +33,9 @@ func TestEveryCostEditingFormInvalidates(t *testing.T) {
 	src := adminPageSource(t)
 
 	// The four forms are the ones whose fields carry cost_per_call.
-	forms := strings.Count(src, "credentialFormFields()") + strings.Count(src, "sourceHookFormFields()")
+	// Matched up to the open paren: the credential form takes whether it is
+	// the edit form.
+	forms := strings.Count(src, "credentialFormFields(") + strings.Count(src, "sourceHookFormFields(")
 	forms -= 2 // the two func declarations themselves
 	if forms != 4 {
 		t.Fatalf("expected 4 cost-editing forms, found %d; the invalidation count below is calibrated to that", forms)

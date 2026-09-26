@@ -128,3 +128,43 @@ func TestTheLedgerTellsRefusedFromRejected(t *testing.T) {
 		}
 	}
 }
+
+// A share action shows only where the lending policy lets it succeed: the
+// write it would post is refused otherwise, and a picker that fills in and
+// then fails on save reads as broken. Row actions test truthiness only, so
+// the row carries the two flags, computed by the same MayLend the share
+// write refuses with.
+func TestTheShareActionsFollowTheLendingPolicy(t *testing.T) {
+	cases := []struct {
+		policy        string
+		reads, writes bool
+	}{
+		{"", true, true},
+		{LendAny, true, true},
+		{LendRead, true, false},
+		{LendNone, false, false},
+	}
+	for _, tc := range cases {
+		lend, write := SecureCredential{Lending: tc.policy}.MayLend()
+		if lend != tc.reads || write != tc.writes {
+			t.Errorf("policy %q: MayLend = (%v, %v), want (%v, %v)", tc.policy, lend, write, tc.reads, tc.writes)
+		}
+	}
+	raw, err := os.ReadFile("extensions.go")
+	if err != nil {
+		t.Fatalf("reading the source: %v", err)
+	}
+	src := string(raw)
+	for _, want := range []string{
+		`LendNone  bool ` + "`" + `json:"_lend_none"` + "`",
+		`LendWrite bool ` + "`" + `json:"_lend_write"` + "`",
+		`LendNone:        !lend,`,
+		`LendWrite:       write,`,
+		`ui.ExpandIf("Share for reads", "", "_lend_none",`,
+		`ui.ExpandIf("Share for writes", "_lend_write", "",`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the credential list no longer carries %s", want)
+		}
+	}
+}

@@ -220,6 +220,9 @@ func RegisterCustomAppTierControl(base string) {
 			// dial instead of keeping one that applies to nothing.
 			fields := make([]ui.FormField, 0, len(def.Stages))
 			for _, st := range def.Stages {
+				if !stageTierHonoured(st.Kind) {
+					continue
+				}
 				authored := "worker"
 				if strings.EqualFold(strings.TrimSpace(st.Model), "lead") {
 					authored = "lead"
@@ -237,6 +240,9 @@ func RegisterCustomAppTierControl(base string) {
 					Help: "kind=" + string(st.Kind),
 				})
 			}
+			if len(fields) == 0 {
+				return nil // no stage here reads a tier
+			}
 			q := fmt.Sprintf("?owner=%s&slug=%s", url.QueryEscape(app.Owner), url.QueryEscape(app.Slug))
 			return ui.FormPanel{
 				Source:      base + "/tiers" + q,
@@ -246,6 +252,19 @@ func RegisterCustomAppTierControl(base string) {
 			}
 		},
 	})
+}
+
+// stageTierHonoured reports whether a stage of this kind reads the tier
+// override. Only the kinds that make their own model call do: worker,
+// synthesize, fanout and panel. An agent stage runs on its agent's model, and
+// loop, branch, tool and machine stages make no call of their own, so a dial
+// for one would be a setting that silently does nothing.
+func stageTierHonoured(kind PipelineStageKind) bool {
+	switch kind {
+	case StageWorker, StageSynthesize, StageFanout, StagePanel:
+		return true
+	}
+	return false
 }
 
 // RegisterCustomAppReviewControl adds the script-review surface.
@@ -385,7 +404,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		}
 		for _, st := range def.Stages {
 			raw, present := in[st.Name]
-			if !present {
+			if !present || !stageTierHonoured(st.Kind) {
 				continue
 			}
 			val := strings.TrimSpace(fmt.Sprint(raw))

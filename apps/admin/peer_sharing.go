@@ -828,7 +828,8 @@ func peerSharingSections() []ui.Section {
 								Help:    "The key can do these and nothing else.",
 								Detail:  "Removing one takes effect immediately, and the peer keeps the same key either way."},
 							{Field: "appliances", Label: "Systems this key may reach", Type: "checklist",
-								Options: peerApplianceScopeOptions(),
+								Options:  peerApplianceScopeOptions(),
+								ShowWhen: "caps:" + PeerCapInvestigate + "|" + PeerCapKnowledge + "|" + PeerCapExec,
 								Help: "For the Investigate, Share-knowledge and Run-commands grants, and only these: there is no \"all systems\". " +
 									"The peer sends a QUESTION; this instance runs the investigation itself, on its own network, read-only. " +
 									"Credentials never leave here. Pick systems belonging to ONE user: the investigation runs as them, so it reaches exactly what they can. " +
@@ -981,8 +982,9 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 		}
 		help := "Run this tier's turns on " + p.BaseURL +
 			", this machine sends the prompt and the peer's GPU does the work. " +
-			"Leave the endpoint, model and key below blank: they are read from the peer record every time the model is built, " +
-			"so rotating the peer's key takes effect without editing anything here."
+			"Leave the endpoint and key below blank: they are read from the peer record every time the model is built, " +
+			"so rotating the peer's key takes effect without editing anything here. " +
+			"The model is not: name the model the peer serves, because a blank one is sent as \"local\" and the peer refuses it."
 		if p.LastError != "" {
 			help += " Last check failed: " + p.LastError
 		}

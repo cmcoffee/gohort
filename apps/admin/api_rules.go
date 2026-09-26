@@ -185,7 +185,9 @@ func alwaysRulesForm() ui.FormPanel {
 				"lines, one obligation each. State the boundary and what to do when a request would cross " +
 				"it. Be concrete about the behaviour, not aspirational about values. Do not use em-dashes.",
 		}, {
-			Field: "depth", Type: "select", Label: "How carefully they are checked",
+			// The three settings below are read only when a global rule is
+			// judged, and the list ships empty, so they wait for a rule.
+			Field: "depth", Type: "select", Label: "How carefully they are checked", ShowWhen: "rules",
 			Options: []ui.SelectOption{
 				{Value: rules.RuleDepthQuick, Label: "Quick"},
 				{Value: rules.RuleDepthModerate, Label: "Moderate"},
@@ -197,14 +199,14 @@ func alwaysRulesForm() ui.FormPanel {
 				"A reply is held until its check clears, so this is time added to every checked reply. " +
 				"An agent whose own rules are checked more carefully than this uses its own depth when both are judged together.",
 		}, {
-			Field: "if_unchecked", Type: "select", Label: "If a check cannot reach a verdict",
+			Field: "if_unchecked", Type: "select", Label: "If a check cannot reach a verdict", ShowWhen: "rules",
 			Options: []ui.SelectOption{
 				{Value: "block", Label: "Block the reply or action"},
 				{Value: "allow", Label: "Let it through, and record that it went unchecked"},
 			},
 			Help: "The checker is a model call and can fail. Blocking is the safe side for rules written to stop something.",
 		}, {
-			Field: "when_checked", Type: "select", Label: "When replies are checked",
+			Field: "when_checked", Type: "select", Label: "When replies are checked", ShowWhen: "rules",
 			Options: []ui.SelectOption{
 				{Value: "before", Label: "Before they are shown (replies do not stream)"},
 				{Value: "stream", Label: "While they stream (a reply that breaks a rule is removed)"},

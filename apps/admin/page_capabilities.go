@@ -68,8 +68,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 								Options: imageProviderOptions()},
 							{Field: "api_key", Label: "API Key", Type: "password",
 								Help:     "Provider API key. Leave it blank to reuse the matching LLM provider's key.",
-								Detail:   "Ignored for connector backends, which carry their own credential.",
-								ShowWhen: "provider"},
+								Detail:   "Only Gemini and OpenAI read it. Connector backends carry their own credential.",
+								ShowWhen: "provider:gemini|openai"},
 						},
 					},
 					ui.Toolbar{
@@ -306,7 +306,7 @@ func transcribeFormFields() []ui.FormField {
 			ShowWhen:    local},
 		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
 			Help:     "Optional bearer token.",
-			Detail:   "Set it for OpenAI hosted or authenticated proxies. Leave it blank for local Ollama, llama.cpp, or vLLM.",
+			Detail:   "Required for OpenAI hosted Whisper, or a whisper.cpp server behind an authenticating proxy. Leave it blank for a plain local whisper.cpp server.",
 			ShowWhen: local},
 	)
 }
@@ -325,6 +325,14 @@ func webSearchFormFields() []ui.FormField {
 	local := ""
 	if hasPeers {
 		local = "source:local"
+	}
+	// The key and endpoint also depend on the provider, so their rule adds a
+	// provider clause to the source one when there is a source to check.
+	withLocal := func(clause string) string {
+		if local == "" {
+			return clause
+		}
+		return local + ";" + clause
 	}
 
 	var fields []ui.FormField
@@ -347,11 +355,12 @@ func webSearchFormFields() []ui.FormField {
 				{Value: "searxng", Label: "SearXNG (self-hosted)"},
 			}},
 		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
-			ShowWhen: local,
-			Help:     "Required for Brave / Google / Serper."},
+			ShowWhen: withLocal("provider:!duckduckgo"),
+			Help:     "Required for Brave, Google and Serper. Google takes it as key:cx (the API key, a colon, then the search engine ID).",
+			Detail:   "SearXNG needs no key; one set here is sent only as an optional bearer token, for an instance behind an authenticating proxy."},
 		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
 			Placeholder: "https://searx.example.com",
-			ShowWhen:    local,
+			ShowWhen:    withLocal("provider:searxng"),
 			Help:        "Required for SearXNG. The base URL of your instance."},
 	)
 }

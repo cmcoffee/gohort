@@ -152,3 +152,25 @@ func TestTheLegacyMountIsStillHonoured(t *testing.T) {
 	// still has to hold is the mount and the grant migration above, which are
 	// what a stale bookmark and a stored grant actually go through.
 }
+
+// A tier dial is offered only for a stage kind that reads the override. The
+// interpreter reads it for worker, synthesize, fanout and panel stages; an
+// agent runs on its own model and the rest make no call of their own, so a
+// dial on one would be a setting that silently does nothing.
+func TestTierDialsOnlyForStagesThatReadATier(t *testing.T) {
+	for kind, want := range map[PipelineStageKind]bool{
+		StageWorker:     true,
+		StageSynthesize: true,
+		StageFanout:     true,
+		StagePanel:      true,
+		StageAgent:      false,
+		StageLoop:       false,
+		StageBranch:     false,
+		StageTool:       false,
+		StageMachine:    false,
+	} {
+		if got := stageTierHonoured(kind); got != want {
+			t.Errorf("stageTierHonoured(%q) = %v, want %v", kind, got, want)
+		}
+	}
+}

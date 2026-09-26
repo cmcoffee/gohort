@@ -387,15 +387,21 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 			writeTestResult(w, true, "Connector backend “"+req.Provider+"” is approved and active. It uses its own credential: generate an image to verify it end to end.", "")
 			return
 		}
-		// Fall back to the matching LLM provider's key when blank (same
-		// rule the GenerateImage runtime uses).
+		// Fall back to the key of an LLM that uses the SAME provider, worker
+		// first then lead: the rule the GenerateImage runtime uses
+		// (geminiAPIKey / openAIAPIKey). This used to take the worker's key
+		// whatever its provider, so a test could pass or fail on a key the
+		// real call would never use.
 		key := keepSecret(req.APIKey, a.storedString(ImageTable, "api_key"))
-		if key == "" && a.db != nil {
-			switch req.Provider {
-			case "gemini":
-				a.db.Get(LLMTable, "api_key", &key) // reuse if Gemini is also worker provider
-			case "openai":
-				a.db.Get(LLMTable, "api_key", &key)
+		if key == "" && a.db != nil && (req.Provider == "gemini" || req.Provider == "openai") {
+			for _, table := range []string{LLMTable, LeadLLMTable} {
+				var provider, k string
+				a.db.Get(table, "provider", &provider)
+				a.db.Get(table, "api_key", &k)
+				if provider == req.Provider && k != "" {
+					key = k
+					break
+				}
 			}
 		}
 		if key == "" {

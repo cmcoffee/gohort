@@ -306,8 +306,13 @@ func (s *SecureAPI) SaveOAuthDraft(c SecureCredential) error {
 	c.Disabled = true // inert until the admin adds the secret + enables
 	switch c.Grant {
 	case OAuthGrantClientCredentials, OAuthGrantJWTBearer, OAuthGrantRefreshToken, OAuthGrantPassword:
+	case "authorization_code":
+		if err := checkAuthCodeConfig(c); err != nil {
+			return err
+		}
+		c.CredScope = "per_user" // each person connects their own account
 	default:
-		return fmt.Errorf("draft needs a grant: client_credentials, jwt_bearer, refresh_token, or password")
+		return fmt.Errorf("draft needs a grant: client_credentials, jwt_bearer, refresh_token, password, or authorization_code")
 	}
 	if strings.TrimSpace(c.TokenURL) == "" || !strings.HasPrefix(strings.ToLower(c.TokenURL), "https://") {
 		return fmt.Errorf("draft needs an https token_url")

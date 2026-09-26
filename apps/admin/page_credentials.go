@@ -82,13 +82,17 @@ func (a *AdminApp) credentialsSections() []ui.Section {
 							// edited by its own picker below the form, not as a
 							// free-text tags field — so admins pick real users.
 							ui.Expand("Edit", ui.FormPanel{
-								Source:      "api/secure-api?name={name}",
-								PostURL:     "api/secure-api",
-								Invalidate:  costSources,
-								TestURL:     "api/secure-api/test",
-								TestLabel:   "Test token (oauth2)",
-								SubmitLabel: "Save changes",
-								Fields:      credentialFormFields(),
+								Source:     "api/secure-api?name={name}",
+								PostURL:    "api/secure-api",
+								Invalidate: costSources,
+								TestURL:    "api/secure-api/test",
+								TestLabel:  "Test token (oauth2)",
+								// The test mints a token, so it can only fail
+								// for a static secret, and authorization_code
+								// has no token until a user connects.
+								TestShowWhen: "type:oauth2;grant:!authorization_code",
+								SubmitLabel:  "Save changes",
+								Fields:       credentialFormFields(true),
 							}),
 							// Tools — the tools connected to this credential (they declare
 							// it). What a Secured cred is bound to (and a scoped one
@@ -210,11 +214,12 @@ func (a *AdminApp) credentialsSections() []ui.Section {
 						Variant:  "primary",
 						Width:    "640px",
 						Body: ui.FormPanel{
-							PostURL:     "api/secure-api",
-							TestURL:     "api/secure-api/test",
-							TestLabel:   "Test token (oauth2)",
-							SubmitLabel: "Create credential",
-							Fields:      credentialFormFields(),
+							PostURL:      "api/secure-api",
+							TestURL:      "api/secure-api/test",
+							TestLabel:    "Test token (oauth2)",
+							TestShowWhen: "type:oauth2;grant:!authorization_code",
+							SubmitLabel:  "Create credential",
+							Fields:       credentialFormFields(false),
 							// Supplying a credential a tool was waiting on
 							// clears that tool's "⚠ missing" badge: the
 							// usual reason to add one is the tool that has
@@ -243,8 +248,22 @@ func (a *AdminApp) credentialsSections() []ui.Section {
 // via value-matched ShowWhen so a bearer token doesn't surface OAuth /
 // JWT fields. The secret is a password that stays blank on edit — leaving
 // it blank keeps the stored secret; the OAuth config of an existing draft
-// is preserved server-side when only the secret is resent.
-func credentialFormFields() []ui.FormField {
+// is preserved server-side when only the secret is resent. editing shows
+// Whose credentials read-only: Save keeps the stored scope on an update, so
+// a select there would change nothing.
+func credentialFormFields(editing bool) []ui.FormField {
+	credScope := ui.FormField{Field: "cred_scope", Label: "Whose credentials", Type: "select",
+		Options: []ui.SelectOption{
+			{Value: "shared", Label: "Shared: one key for everyone (you set it here)"},
+			{Value: "per_user", Label: "Per user: each user sets their own key (on their Account page)"},
+		},
+		Help:   "Whether one shared secret covers everybody, or each user supplies their own.",
+		Detail: "Shared uses this credential's secret above for every user's calls: a service account or shared key. Per user means each user supplies their OWN key on their Account page, and calls run as that user with it. A new per-user credential still needs a secret above, though its calls do not use it. authorization_code is always per user, and its secret is the app's client secret, which a public PKCE client leaves blank. Use per-user when writes need real attribution and per-user permissions."}
+	if editing {
+		credScope.Type = "readonly"
+		credScope.Options = nil
+		credScope.Help = "Set when the credential is created and cannot be changed afterwards. per_user means each user sets their own key; blank or shared means one key for everyone."
+	}
 	return []ui.FormField{
 		{Field: "ident", Type: "header", Label: "Identity"},
 		{Field: "name", Label: "Name", Placeholder: "github_api", Help: "snake_case. Becomes call_<name> in the LLM catalog. Re-using a name updates that credential."},
@@ -268,15 +287,15 @@ func credentialFormFields() []ui.FormField {
 		{Field: "token_url", Label: "Token URL (https)", Placeholder: "https://api.ebay.com/identity/v1/oauth2/token", ShowWhen: "type:oauth2"},
 		{Field: "authorize_url", Label: "Authorize URL (https)", Placeholder: "https://accounts.google.com/o/oauth2/v2/auth", ShowWhen: "type:oauth2;grant:authorization_code", Help: "The provider's consent page, where each user is sent to approve.",
 			Detail: "They are redirected back to /account/oauth/callback (PKCE). Register that callback URL with the provider, and set Whose credentials to Per user. The Client Secret below is the app's client secret; leave it blank for a public, PKCE-only client."},
-		{Field: "client_id", Label: "Client / App ID", Placeholder: "non-secret app/client ID", ShowWhen: "type:oauth2"},
+		{Field: "client_id", Label: "Client / App ID", Placeholder: "non-secret app/client ID", ShowWhen: "type:oauth2;grant:!jwt_bearer"},
 		// Single shared secret field (one input avoids the duplicate-name
 		// clobber the form's submit loop would otherwise cause). For OAuth it
 		// IS the client secret; positioned right after Client/App ID so the
 		// OAuth block reads Token URL → Client/App ID → Client Secret → Scope.
-		{Field: "username", Label: "Username", Placeholder: "the user / API key to log in as", ShowWhen: "type:oauth2|basic_auth", Help: "HTTP Basic auth and the OAuth2 password grant.",
+		{Field: "username", Label: "Username", Placeholder: "the user / API key to log in as", ShowWhen: "type:basic_auth||type:oauth2;grant:password", Help: "HTTP Basic auth and the OAuth2 password grant.",
 			Detail: "For OPNsense (basic_auth) this is the API key, and the secret goes in the Secret/Password field below. Stored as plain config, so it shows when you re-edit; only the secret stays hidden."},
 		{Field: "secret", Label: "Client Secret / Secret / Password", Type: "password", Help: "The secret for this credential. Stored encrypted; leave it blank when editing to keep it.",
-			Detail: "Which secret depends on the kind. OAuth wants the CLIENT secret (jwt_bearer wants the RSA private key, refresh_token wants the refresh token). bearer wants the token. header and query want the API key. basic_auth wants the PASSWORD, paired with the Username above; on OPNsense that is the API secret."},
+			Detail: "Which secret depends on the kind. OAuth wants the CLIENT secret (jwt_bearer wants the RSA private key, refresh_token wants the refresh token, authorization_code wants the app's client secret, optional for a public, PKCE-only client). bearer wants the token. header and query want the API key. basic_auth wants the PASSWORD, paired with the Username above; on OPNsense that is the API secret."},
 		{Field: "scope", Label: "Scope (optional)", Placeholder: "https://api.ebay.com/oauth/api_scope", ShowWhen: "type:oauth2"},
 		{Field: "jwt_issuer", Label: "JWT issuer (iss)", Placeholder: "service-account@project.iam.gserviceaccount.com", ShowWhen: "type:oauth2;grant:jwt_bearer"},
 		{Field: "jwt_subject", Label: "JWT subject (sub, optional)", ShowWhen: "type:oauth2;grant:jwt_bearer"},
@@ -320,13 +339,7 @@ func credentialFormFields() []ui.FormField {
 			Detail: "It feeds the Costs tab chart and the per-source breakdown. 0 means untracked, for a free endpoint."},
 		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "The escalation tier: whether a call through this credential has to be approved first.",
 			Detail: "On, every agent call renders an Allow once / Deny card in the chat and waits for the session owner; headless runs, meaning channel wakes and schedules, are denied outright. Use it for services that reach real people, such as messaging, or that spend money.\n\nOff, calls dispatch silently, which is right for an agent's own low-stakes accounts."},
-		{Field: "cred_scope", Label: "Whose credentials", Type: "select",
-			Options: []ui.SelectOption{
-				{Value: "shared", Label: "Shared: one key for everyone (you set it here)"},
-				{Value: "per_user", Label: "Per user: each user sets their own key (on their Account page)"},
-			},
-			Help:   "Whether one shared secret covers everybody, or each user supplies their own.",
-			Detail: "Shared uses this credential's secret below for every user's calls: a service account or shared key. Per user means you leave the secret blank here, each user supplies their OWN key on their Account page, and calls run as that user. Use per-user when writes need real attribution and per-user permissions."},
+		credScope,
 		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to the LLM as the call_<name> tool description."},
 	}
 }

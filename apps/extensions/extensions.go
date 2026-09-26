@@ -128,6 +128,12 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			// to today. A decision about the key, not about an occasion.
 			Lending      string `json:"lending"`
 			LendingLabel string `json:"lending_label"`
+			// The policy as the two share actions gate on it. Row actions test
+			// a field for truthiness only, so the value test is done here, by
+			// the same MayLend the share write refuses with: an action that
+			// shows is one that can succeed.
+			LendNone  bool `json:"_lend_none"`
+			LendWrite bool `json:"_lend_write"`
 			// The two share lists the pickers edit, plus the one-line summary
 			// the table column reads. Who a key reaches is the fact this page
 			// exists to let someone control, so it belongs in the list and not
@@ -142,6 +148,7 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			CanHandOver     bool `json:"can_hand_over"`
 		}
 		toRow := func(c SecureCredential) row {
+			lend, write := c.MayLend()
 			return row{
 				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
 				Description: c.Description, RequiresConfirm: c.RequiresConfirm,
@@ -152,6 +159,8 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 				SharedSummary:   shareSummary(c),
 				Lending:         c.Lending,
 				LendingLabel:    lendingListLabel(c),
+				LendNone:        !lend,
+				LendWrite:       write,
 				HandoverPending: handoverPending(user, c.Name),
 				CanHandOver:     !handoverPending(user, c.Name),
 			}
@@ -1570,7 +1579,7 @@ func credentialFormFields() []ui.FormField {
 		}},
 		{Field: "param_name", Label: "Header / Param name", Placeholder: "X-Api-Key or api_key", ShowWhen: "type:header|query"},
 		{Field: "base_url", Label: "Base URL", Placeholder: "https://api.example.com", Help: "The server this credential talks to. Requests are allowed only under this host."},
-		{Field: "secret", Label: "Secret / token / password", Type: "password", ShowWhen: "type:bearer|header|query|basic_auth", Help: "Stored encrypted, never shown to the assistant. Leave blank when editing to keep the stored value."},
+		{Field: "secret", Label: "Secret / token / password", Type: "password", ShowWhen: "type:bearer|header|query|basic_auth", Help: "Stored encrypted, never shown to the assistant. For HTTP Basic, enter it as user:pass. Leave blank when editing to keep the stored value."},
 		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "When on, every agent call through this credential asks you to allow it first.",
 			Detail: "Use it for anything that reaches real people or spends money."},
 		{Field: "secured", Label: "Only tools that declare it", Type: "toggle",
@@ -1762,7 +1771,10 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							},
 							EmptyText: "Nothing has been sent through this credential yet.",
 						}),
-						ui.Expand("Share for reads", ui.ACLPicker(ui.ACLPickerConfig{
+						// Each share action shows only where the lending policy
+						// allows it: reads unless it is Nobody, writes only for
+						// Readers and writers (or not decided).
+						ui.ExpandIf("Share for reads", "", "_lend_none", ui.ACLPicker(ui.ACLPickerConfig{
 							OptionsSource: "api/user-candidates",
 							RecordSource:  "api/credentials?name={name}",
 							Field:         "shared_read_only",
@@ -1774,7 +1786,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							EmptyText:  "No other users to share with yet.",
 							Invalidate: []string{"api/credentials"},
 						})),
-						ui.Expand("Share for writes", ui.ACLPicker(ui.ACLPickerConfig{
+						ui.ExpandIf("Share for writes", "_lend_write", "", ui.ACLPicker(ui.ACLPickerConfig{
 							OptionsSource: "api/user-candidates",
 							RecordSource:  "api/credentials?name={name}",
 							Field:         "shared_read_write",

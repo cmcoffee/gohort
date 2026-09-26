@@ -247,8 +247,8 @@ func actionFormFields() []ui.FormField {
 		{Field: "two_phase", Type: "toggle", Label: "Two phases (asks for input)",
 			Help:   "Whether the command runs once, or twice with a value from the person in between.",
 			Detail: "On, the first run prints something (a challenge, a summary, a prompt) which is shown to the person, who supplies a value; the command then runs again with it. Off, one call and the folder is ready.\n\nUse two phases when a value has to come from OUTSIDE this system and nothing here can obtain it."},
-		{Field: "input_label", Type: "text", Label: "Input label", Placeholder: "Response key",
-			Help: "What the box asks for on the second phase. Only used when two phases is on."},
+		{Field: "input_label", Type: "text", Label: "Input label", Placeholder: "Response key", ShowWhen: "two_phase",
+			Help: "What the box asks for on the second phase."},
 		{Field: "help", Type: "textarea", Label: "Note", Rows: 2,
 			Help: "Optional. Shown beside the button: say what it does and when to reach for it."},
 	}

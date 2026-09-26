@@ -175,17 +175,17 @@ func adminSection(r *http.Request) ui.Section {
 					Help:        "The credential used to create and update pages.",
 					Detail:      "Its Base URL should be the Confluence site, for example https://acme.atlassian.net, and its allowed endpoints must include /wiki/api/v2/**. Set the credential's scope to per-user if each person should publish as themselves.",
 				},
+				// A destination with no credential is not offered at all, so
+				// the rest of its settings wait until one is named.
 				{
 					Field: "confluence_base_url", Label: "Confluence site URL", Type: "text",
+					ShowWhen:    "confluence_credential",
 					Placeholder: "https://acme.atlassian.net (optional)",
 					Help:        "Only needed when page links should be built from a different host than the credential's.",
 					Detail:      "Leave it empty to use the credential's Base URL.",
 				},
-				{
-					Field: "webhook_label", Label: "Webhook name", Type: "text",
-					Placeholder: "Team wiki",
-					Help:        "What this destination is called in the Publish dialog. Leave empty for \"Webhook\".",
-				},
+				// The credential leads the webhook group for the same reason:
+				// the fields it reveals appear below it, not above.
 				{
 					Field: "webhook_credential", Label: "Webhook credential", Type: "text",
 					Placeholder: "name of a SecureAPI credential",
@@ -193,12 +193,20 @@ func adminSection(r *http.Request) ui.Section {
 					Detail:      "The generic destination: anything that accepts an HTTP post of a document.",
 				},
 				{
+					Field: "webhook_label", Label: "Webhook name", Type: "text",
+					ShowWhen:    "webhook_credential",
+					Placeholder: "Team wiki",
+					Help:        "What this destination is called in the Publish dialog. Leave empty for \"Webhook\".",
+				},
+				{
 					Field: "webhook_url", Label: "Webhook URL", Type: "text",
+					ShowWhen:    "webhook_credential",
 					Placeholder: "https://example.com/api/docs",
 					Help:        "Absolute URL the document is posted to. Must be allowed by the credential's Base URL and endpoint list.",
 				},
 				{
 					Field: "webhook_format", Label: "Webhook body", Type: "select",
+					ShowWhen: "webhook_credential",
 					Options: []ui.SelectOption{
 						{Value: "json", Label: "JSON: the whole document as an object"},
 						{Value: "markdown", Label: "Markdown: the document body only"},

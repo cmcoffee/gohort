@@ -1262,6 +1262,9 @@
         repoSection.style.display = t === 'repo' ? '' : 'none';
         bundleSection.style.display = t === 'bundle' ? '' : 'none';
         toolsetSection.style.display = t === 'toolset' ? '' : 'none';
+        // Built further down, so absent on the first call; the line after it
+        // sets the opening state, and this keeps it right when the type changes.
+        if (runAsSection) runAsSection.style.display = t === 'toolset' ? '' : 'none';
         remoteSection.style.display = t === 'remote' ? '' : 'none';
         // A remote stub owns nothing here, so there is nothing to lend onward;
         // a workspace's members are shared individually.

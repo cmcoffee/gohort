@@ -129,3 +129,25 @@ func TestTheEditorOpensAPeerSystemAsRemote(t *testing.T) {
 		t.Fatal("the editor must switch a peer system to remote before its first setType")
 	}
 }
+
+// "Tools run as" applies to a toolset only. The editor sets it from the stored
+// type when it opens, and switching type has to move it too, or a new toolset
+// never shows it and a system switched away from one keeps it.
+func TestToolsRunAsFollowsTheTypeSwitch(t *testing.T) {
+	src, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	start := strings.Index(body, "function setType(t) {")
+	if start < 0 {
+		t.Fatal("the editor's setType is gone")
+	}
+	end := strings.Index(body[start:], "\n      }\n")
+	if end < 0 {
+		t.Fatal("could not find the end of setType")
+	}
+	if !strings.Contains(body[start:start+end], "runAsSection.style.display = t === 'toolset' ? '' : 'none';") {
+		t.Error("setType does not show Tools run as exactly for a toolset")
+	}
+}

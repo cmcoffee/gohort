@@ -569,8 +569,16 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	case SecureCredOAuth2:
 		switch c.Grant {
 		case OAuthGrantClientCredentials, OAuthGrantJWTBearer, OAuthGrantRefreshToken, OAuthGrantPassword:
+		case "authorization_code":
+			// Each person connects their own account (secure_api_authcode.go).
+			// The admin form offered this grant, the whole consent flow was
+			// built for it, and this switch refused it, so it could never be
+			// saved.
+			if err := checkAuthCodeConfig(c); err != nil {
+				return err
+			}
 		default:
-			return fmt.Errorf("oauth2 credential needs a grant: client_credentials, jwt_bearer, refresh_token, or password")
+			return fmt.Errorf("oauth2 credential needs a grant: client_credentials, jwt_bearer, refresh_token, password, or authorization_code")
 		}
 		if strings.TrimSpace(c.TokenURL) == "" {
 			return fmt.Errorf("oauth2 credential needs a token_url (the https token endpoint)")
@@ -660,6 +668,13 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	} else {
 		c.CreatedAt = time.Now()
 	}
+	// An authorization_code credential is per-user by nature: each person's
+	// own token is what it sends, and the consent flow serves only per-user
+	// credentials. Set here, after the preservation above, so an edit that
+	// switches a credential to this grant cannot leave it unconnectable.
+	if c.IsAuthCode() {
+		c.CredScope = "per_user"
+	}
 	// Type "none" carries no secret. Persist a placeholder so the
 	// dispatch path's loadSecret check still finds something (and
 	// can short-circuit safely), and skip all the secret-required
@@ -674,6 +689,12 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	// place." Lets the operator change the URL pattern, description,
 	// or other metadata without re-pasting the key on every edit.
 	if strings.TrimSpace(secret) == "" {
+		// A public OAuth client (PKCE) has no client secret; the code
+		// exchange sends one only when it is set.
+		if !exists && c.IsAuthCode() {
+			s.db.Set(secureAPITable, key, c)
+			return nil
+		}
 		if !exists {
 			return fmt.Errorf("secret value is required for new credentials")
 		}
@@ -694,6 +715,19 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	}
 	s.db.Set(secureAPITable, key, c)
 	s.db.CryptSet(secureAPITable, secretKey, secret)
+	return nil
+}
+
+// checkAuthCodeConfig is what an authorization_code credential needs before a
+// person can connect: the consent page to send them to, and the client they
+// consent to.
+func checkAuthCodeConfig(c SecureCredential) error {
+	if a := strings.ToLower(strings.TrimSpace(c.AuthorizeURL)); !strings.HasPrefix(a, "https://") {
+		return fmt.Errorf("authorization_code grant needs an https authorize_url (the provider's consent page)")
+	}
+	if strings.TrimSpace(c.ClientID) == "" {
+		return fmt.Errorf("authorization_code grant needs a client_id (the OAuth app registered with the provider)")
+	}
 	return nil
 }
 

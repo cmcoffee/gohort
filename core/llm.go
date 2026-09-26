@@ -1217,8 +1217,8 @@ type LLMProviderConfig struct {
 	ConnectTimeout      time.Duration // Dial timeout; defaults to 10s if zero.
 	RequestTimeout      time.Duration // Per-Read idle deadline applied via iotimeout; defaults to 5min if zero. Long because non-streaming Gemini / model-listing calls need to ride out slow handshakes; streaming paths layer a shorter StreamIdleTimeout on top.
 	StreamIdleTimeout   time.Duration // Idle-read deadline applied ONLY to streaming chat calls — if no bytes arrive for this long the body is closed and the error reads as transient so the retry layer can take another shot. Defaults to DefaultStreamIdleTimeout (60s) if zero. Tune up if the model legitimately stalls between tokens (heavy thinking budgets, cold prefills on a busy server).
-	DisableThinking     bool          // Master override: forces think=false on every call regardless of per-call WithThink(true). Supported for Ollama and Gemini (Flash) providers.
-	ThinkingBudget      int           // Max thinking tokens per call (Gemini and Ollama). 0 = model default. Ignored when DisableThinking is set.
+	DisableThinking     bool          // Master override: forces think=false on every call regardless of per-call WithThink(true). Read by Gemini, Ollama and llama.cpp (and peers, which run through llama.cpp).
+	ThinkingBudget      int           // Max thinking tokens per call, read by Gemini and llama.cpp (and peers); Ollama ignores it. 0 = model default. Ignored when DisableThinking is set.
 	NativeTools         bool          // When true, use native function calling. When false, tools are described in the system prompt and parsed from <tool_call> tags. Default false for ollama models without tool support.
 	OllamaMaxParallel   int           // Ollama only: global concurrency cap. 0 or negative = scheduler disabled; 1 = strict serial (default). Requests are fair-queued across sessions.
 	LlamacppMaxParallel int           // llama.cpp only: global concurrency cap. Default 1 (llama.cpp is single-threaded). Raise only when the server supports concurrent requests.
@@ -1723,6 +1723,13 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 // plan_set, with the agent itself reporting "I keep dropping the arguments on
 // send".
 func ProviderHasNativeTools(provider string) bool {
+	// A peer model is served through the llama.cpp client (ResolveModelProvider
+	// rewrites the provider before the client is built), so it calls tools
+	// natively too. Judged on the raw "peer:<name>" string it fell through to
+	// the fallback, and a peer-backed worker got prompt-parsed tool calls.
+	if strings.HasPrefix(strings.TrimSpace(provider), peerProviderPrefix) {
+		return true
+	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "anthropic", "bedrock", "openai", "gemini", "llama.cpp":
 		return true

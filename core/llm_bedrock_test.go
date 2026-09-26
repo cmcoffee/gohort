@@ -305,6 +305,11 @@ func TestProviderHasNativeTools(t *testing.T) {
 	if ProviderHasNativeTools("ollama") {
 		t.Error("ollama must keep honoring the native_tools toggle")
 	}
+	// A peer model runs through the llama.cpp client, so it is native too;
+	// judged on the raw "peer:<name>" it used to fall back to prompt-parsing.
+	if !ProviderHasNativeTools("peer:basement-gpu") {
+		t.Error("a peer-backed provider speaks native tool calling through llama.cpp")
+	}
 	// Case and spacing come from stored config, not a literal.
 	if !ProviderHasNativeTools("  Bedrock  ") {
 		t.Error("provider matching must tolerate stored whitespace and case")

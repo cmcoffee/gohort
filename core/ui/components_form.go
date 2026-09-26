@@ -96,6 +96,11 @@ type FormPanel struct {
 	// TestLabel — button text for the Test affordance. Defaults to
 	// "Test connectivity" when TestURL is set and this is empty.
 	TestLabel string `json:"test_label,omitempty"`
+	// TestShowWhen shows the Test button only while the expression holds,
+	// in the same grammar as FormField.ShowWhen. A test that can only fail
+	// for a setting ("Test token" on a credential that has no token) should
+	// not be offered for it. Empty = always shown.
+	TestShowWhen string `json:"test_show_when,omitempty"`
 
 	// HistoryURL — when set, renders a "History" button next to the form's
 	// other controls. Click GETs the URL and shows what comes back in the
@@ -438,7 +443,10 @@ type FormField struct {
 	// Grammar: "field" (truthy), "!field" (falsy/empty), "field:value",
 	// "field:v1|v2" (membership), "field:!v1|v2" (NOT one of those —
 	// the only way to write a condition that holds while the field is
-	// still untouched); clauses joined by ";" must ALL match.
+	// still untouched); clauses joined by ";" must ALL match, and groups
+	// joined by "||" are alternatives (any group matching is enough). On
+	// a list-valued field (a checklist), "field:v1|v2" means it CONTAINS
+	// one of them. Honoured on a "rows" column too, per row.
 	// Use to collapse irrelevant configuration when a master toggle is
 	// off — e.g. hide a whisper URL until `enabled` is on. Updates
 	// immediately when the gating field changes.

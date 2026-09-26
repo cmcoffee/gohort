@@ -1769,3 +1769,33 @@ func TestAutoRouteCoversTheUsersOwnCredential(t *testing.T) {
 		t.Errorf("a Secured credential is reachable only through its tools: name=%q err=%v", name, err)
 	}
 }
+
+// An authorization_code credential can be saved. The admin form offered the
+// grant and the consent flow was built for it, but Save refused it, so it
+// could never exist.
+func TestAnAuthorizationCodeCredentialSaves(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	c := SecureCredential{Name: "cal", Type: SecureCredOAuth2, Grant: "authorization_code",
+		BaseURL: "https://api.example.com", TokenURL: "https://auth.example.com/token",
+		AuthorizeURL: "https://auth.example.com/authorize", ClientID: "app-1"}
+	if err := s.Save(c, ""); err != nil {
+		t.Fatalf("a public client (no secret) should save: %v", err)
+	}
+	got, ok := s.Load("cal")
+	if !ok || !got.IsPerUser() || !got.IsAuthCode() {
+		t.Errorf("it is stored per-user, the only scope the consent flow serves: %+v", got)
+	}
+	bad := c
+	bad.Name, bad.AuthorizeURL = "cal2", "http://auth.example.com/authorize"
+	if err := s.Save(bad, "sek"); err == nil || !strings.Contains(err.Error(), "authorize_url") {
+		t.Errorf("an insecure or missing authorize_url is refused: %v", err)
+	}
+	bad = c
+	bad.Name, bad.ClientID = "cal3", ""
+	if err := s.Save(bad, "sek"); err == nil || !strings.Contains(err.Error(), "client_id") {
+		t.Errorf("a missing client_id is refused: %v", err)
+	}
+	if err := s.Save(SecureCredential{Name: "plain", Type: SecureCredBearer, BaseURL: "https://x.example"}, ""); err == nil {
+		t.Error("other types still need a secret on create")
+	}
+}

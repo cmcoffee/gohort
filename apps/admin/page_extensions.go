@@ -333,7 +333,7 @@ func mcpServerFormFields() []ui.FormField {
 		{Field: "oauth_note", Type: "header", Label: "Hosted login: Save first, then click Connect on the server's row to authorize. Each user connects their own account, from here or from Extensions → Connections. The callback host must be https or localhost. With a pre-registered client, register both redirect URIs listed under Client ID below.", ShowWhen: "auth_mode:oauth"},
 		{Field: "oauth_client_id", Label: "Client ID (only if no auto-registration)", ShowWhen: "auth_mode:oauth", Help: "Leave it BLANK for the normal flow, where gohort auto-registers a client.",
 			Detail: "That is Dynamic Client Registration. Fill this in ONLY when the provider does not support auto-registration: pre-register an OAuth app at the provider and paste the issued client_id here.\n\nRegister BOTH redirect URIs on it. <this host>/admin/api/mcp-servers/oauth/callback serves the Connect button on this page, and <this host>/account/mcp/callback serves every user connecting their own account from Extensions or a chat prompt.\n\nThey are different paths because the admin area is admin-only, so a non-admin cannot complete a consent that lands there. A provider that has only the first will reject the second with \"the app's callback URL is invalid\"."},
-		{Field: "oauth_client_secret", Label: "Client secret (optional)", Type: "password", ShowWhen: "auth_mode:oauth", Help: "Only for a manual Client ID that the provider made confidential.",
+		{Field: "oauth_client_secret", Label: "Client secret (optional)", Type: "password", ShowWhen: "auth_mode:oauth;oauth_client_id", Help: "Only for a manual Client ID that the provider made confidential.",
 			Detail: "Stored encrypted. Leave it blank to keep the existing one, and blank for public PKCE clients."},
 		{Field: "oauth_authorize_url", Label: "Authorize URL (only if no discovery)", Placeholder: "https://provider/oauth/authorize", ShowWhen: "auth_mode:oauth", Help: "Leave blank to auto-discover. Set only for a provider that doesn't publish .well-known OAuth metadata."},
 		{Field: "oauth_token_url", Label: "Token URL (only if no discovery)", Placeholder: "https://provider/oauth/token", ShowWhen: "auth_mode:oauth", Help: "Leave blank to auto-discover. Pair with Authorize URL."},
@@ -344,8 +344,7 @@ func mcpServerFormFields() []ui.FormField {
 		{Field: "expose_hdr", Type: "header", Label: "Exposure"},
 		{Field: "expose_tools", Label: "Expose tools to agents", Type: "toggle", Help: "Register the server's tools as <name>.<tool> in the agent catalog."},
 		{Field: "expose_reference", Label: "Expose as a reference source", Type: "toggle", Help: "Make the server selectable in writer/research source pickers (uses the Search tool below)."},
-		{Field: "search_tool", Label: "Search tool name", Placeholder: "search", Help: "MCP tool called for reference lookups. Defaults to 'search'.",
-			Detail: "Only used when 'Expose as a reference source' is on."},
+		{Field: "search_tool", Label: "Search tool name", Placeholder: "search", ShowWhen: "expose_reference", Help: "MCP tool called for reference lookups. Defaults to 'search'."},
 
 		{Field: "enabled", Label: "Enabled", Type: "toggle", Help: "Connect on startup and on save. Disable to suspend without deleting."},
 	}
