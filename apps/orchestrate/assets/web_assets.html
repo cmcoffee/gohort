@@ -511,14 +511,26 @@
  * Submitting packs values into a markdown user message and hands
  * off to the normal chat send path. */
 .ui-orch-intake {
-  background: var(--bg-2);
+  position: relative;
+  background: var(--bg-1);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.9rem 1rem;
-  margin: 1.5rem auto;
+  border-radius: 14px;
+  padding: 1.35rem 1.5rem 1.2rem;
+  margin: 1.75rem auto;
   width: 100%;
-  max-width: 520px;
+  max-width: 620px;
   align-self: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  counter-reset: intake-step;
+}
+/* A hairline of the accent along the top edge: the card reads as the start of
+ * something, not another settings box. */
+.ui-orch-intake::before {
+  content: '';
+  position: absolute; left: 1.5rem; right: 1.5rem; top: -1px; height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent-hi), transparent);
+  opacity: 0.85;
 }
 /* Decorated user bubble (intake submitted, now part of history):
  * stretch the bubble across the pane and strip its right-aligned
@@ -535,9 +547,11 @@
   padding: 0;
 }
 .ui-orch-intake-header {
-  font-size: 0.85rem;
-  color: var(--text-mute);
-  margin-bottom: 0.7rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-hi);
+  letter-spacing: -0.01em;
+  margin-bottom: 1.1rem;
 }
 /* Agency-side agent description block above intake form. Matches
    the look of .ui-agent-empty (which is what the public agent app
@@ -549,31 +563,103 @@
   text-align: center;
   padding: 1.5rem 0;
 }
+/* Each question is a numbered step on a rail. The counter skips a hidden step
+ * (display:none does not count), so the numbers always read 1, 2, 3 in what is
+ * on screen. A step revealed by an earlier answer glides in. */
 .ui-orch-intake-row {
-  display: flex; flex-direction: column; gap: 0.25rem;
-  margin-bottom: 0.7rem;
+  position: relative;
+  display: flex; flex-direction: column; gap: 0.45rem;
+  padding: 0 0 1.1rem 2.25rem;
+  counter-increment: intake-step;
+  animation: ui-orch-intake-in 0.22s ease-out;
+}
+.ui-orch-intake-row::before {
+  content: '';
+  position: absolute; left: 0.69rem; top: 1.55rem; bottom: 0.1rem; width: 1px;
+  background: var(--border);
+}
+.ui-orch-intake-row.is-last::before { display: none; }
+@keyframes ui-orch-intake-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-orch-intake-row { animation: none; }
 }
 .ui-orch-intake-label {
-  font-size: 0.78rem; font-weight: 600;
+  font-size: 0.86rem; font-weight: 600;
   color: var(--text-hi);
+  line-height: 1.45rem;
+}
+.ui-orch-intake-label::before {
+  content: counter(intake-step);
+  position: absolute; left: 0; top: 0;
+  width: 1.45rem; height: 1.45rem; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.72rem; font-weight: 700;
+  color: var(--accent-hi);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .ui-orch-intake-input {
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: 0.4rem 0.55rem; font: inherit;
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.62rem 0.8rem; font: inherit; font-size: 0.92rem;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  outline: none;
 }
-.ui-orch-intake-textarea { resize: vertical; min-height: 3.2rem; }
+.ui-orch-intake-input:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.ui-orch-intake-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.ui-orch-intake-input::placeholder { color: var(--text-mute); opacity: 0.8; }
+select.ui-orch-intake-input {
+  appearance: none; -webkit-appearance: none;
+  padding-right: 2.2rem; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%239ca3b8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.85rem center;
+}
+.ui-orch-intake-textarea { resize: vertical; min-height: 5rem; line-height: 1.45; }
 .ui-orch-intake-help {
-  font-size: 0.75rem; color: var(--text-mute);
+  font-size: 0.78rem; color: var(--text-mute); line-height: 1.4;
 }
 .ui-orch-intake-actions {
-  display: flex; flex-wrap: wrap; justify-content: flex-end; margin-top: 0.5rem;
+  display: flex; flex-wrap: wrap; justify-content: flex-end;
+  margin-top: 0.2rem; padding-top: 1rem;
+  border-top: 1px solid var(--border);
 }
+.ui-orch-intake-actions .ui-row-btn.primary {
+  background: var(--accent); color: #fff;
+  border: 1px solid var(--accent); border-radius: 10px;
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0 1.25rem; line-height: 1.2; font-size: 0.9rem; font-weight: 600;
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+.ui-orch-intake-actions .ui-row-btn.primary::after { content: ' \2192'; }
+.ui-orch-intake-actions .ui-row-btn.primary:hover:not(:disabled) {
+  background: var(--accent-hi); border-color: var(--accent-hi); transform: translateY(-1px);
+}
+/* Choices are chips: large enough to hit, lifting on hover, and filled with
+ * the accent once picked so the answer is visible at a glance. */
 .ui-orch-intake-button-row {
-  display: flex; flex-wrap: wrap; gap: 0.4rem;
+  display: flex; flex-wrap: wrap; gap: 0.5rem;
 }
 .ui-orch-intake-button {
-  padding: 0.35rem 0.8rem; font-size: 0.85rem;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 999px;
+  /* The base button keeps its touch-sized minimum height; centre the label
+   * in it rather than letting it ride at the top. */
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 1.1rem; line-height: 1.2; font-size: 0.88rem; font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+.ui-orch-intake-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  color: var(--text-hi);
+  transform: translateY(-1px);
 }
 .ui-orch-intake-button:disabled {
   opacity: 0.45;
@@ -581,12 +667,20 @@
 }
 .ui-orch-intake-button.selected {
   opacity: 1;
-  color: var(--accent);
+  color: var(--text-hi);
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-0));
   border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
 }
 .ui-orch-intake-button.selected:disabled {
   opacity: 0.9;
 }
+/* A single row of starting points needs no numbering, rail or submit bar:
+ * it is one question, answered by a click. */
+.ui-orch-intake-button-only { text-align: center; }
+.ui-orch-intake-button-only .ui-orch-intake-row { padding-left: 0; animation: none; }
+.ui-orch-intake-button-only .ui-orch-intake-row::before,
+.ui-orch-intake-button-only .ui-orch-intake-label::before { display: none; }
 .ui-orch-intake-button-only .ui-orch-intake-button-row {
   justify-content: center;
 }
@@ -8227,10 +8321,23 @@
             });
           });
         }
+        // The rail stops at the last step on screen, which moves as steps
+        // appear, so it is marked here rather than guessed by a selector.
+        function markLast() {
+          var last = null;
+          fields.forEach(function(f) {
+            var e = inputs[f.name];
+            if (!e) return;
+            e.row.classList.remove('is-last');
+            if (e.row.style.display !== 'none') last = e.row;
+          });
+          if (last) last.classList.add('is-last');
+        }
         if (stepped) {
-          wrap.addEventListener('intake-change', refresh);
+          wrap.addEventListener('intake-change', function() { refresh(); markLast(); });
           refresh();
         }
+        markLast();
         return {root: wrap, inputs: inputs, isShown: isShown};
       }
       function collectIntake(fields, inputs, isShown) {
