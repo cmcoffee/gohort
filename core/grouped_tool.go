@@ -393,6 +393,24 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 		// call cascaded into building an agent around a tool that never got
 		// created.) Return a directive ERROR so the misfire is unmistakable.
 		if extras := nonActionArgKeys(args); len(extras) > 0 {
+			// When the params can only mean one action, run it and say so.
+			// An agent sent workspace a command with no action six times in
+			// one turn, each refused, while "command" belongs to run alone.
+			// Only an unambiguous shape is inferred: every key a param of
+			// the action, at least one of them no other action's.
+			if inferred := g.inferAction(extras); inferred != "" {
+				withAction := make(map[string]any, len(args)+1)
+				for k, v := range args {
+					withAction[k] = v
+				}
+				withAction["action"] = inferred
+				defer func() {
+					if err == nil {
+						out = "(action=\"" + inferred + "\" was inferred from the params given; name it next time.)\n" + out
+					}
+				}()
+				return g.RunWithSession(withAction, sess)
+			}
 			return "", fmt.Errorf(
 				"%s was called with no \"action\" but WITH params (%s): nothing was done. Pick an action: %s. Re-call with action=\"<one>\" plus its params (action=\"help\" for the full spec)",
 				g.name, strings.Join(extras, ", "), strings.Join(g.sortedActionNames(), ", "))
@@ -500,6 +518,41 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 // nonActionArgKeys returns the arg keys other than "action", sorted. Used to
 // tell a bare probe (no args → show help) from a misfire (operation params
 // but no action → directive error).
+// inferAction names the one action a call without "action" can only mean: the
+// action whose params include every key given, where at least one of those keys
+// belongs to no other action. "" unless exactly one action fits.
+func (g *GroupedTool) inferAction(keys []string) string {
+	owners := func(k string) int {
+		n := 0
+		for _, def := range g.actions {
+			if _, ok := def.Params[k]; ok {
+				n++
+			}
+		}
+		return n
+	}
+	match := ""
+	for name, def := range g.actions {
+		covers, distinctive := true, false
+		for _, k := range keys {
+			if _, ok := def.Params[k]; !ok {
+				covers = false
+				break
+			}
+			if owners(k) == 1 {
+				distinctive = true
+			}
+		}
+		if covers && distinctive {
+			if match != "" {
+				return ""
+			}
+			match = name
+		}
+	}
+	return match
+}
+
 func nonActionArgKeys(args map[string]any) []string {
 	keys := make([]string, 0, len(args))
 	for k := range args {

@@ -283,3 +283,49 @@ func TestSerialFireWiring(t *testing.T) {
 		t.Errorf("single-fire tool mis-wired: single=%v serial=%v", sdef.SingleFirePerBatch, sdef.SerialFirePerBatch)
 	}
 }
+
+// A call that names no action but whose params can only mean one runs that
+// action. An agent sent workspace a command with no action six times in one
+// turn; "command" belongs to run alone, so each refusal cost a round for
+// nothing. A shape that fits more than one action, or none, is still refused.
+func TestAnUnambiguousCallWithNoActionRunsTheOnlyActionItFits(t *testing.T) {
+	ran := ""
+	act := func(name string, params ...string) *GroupedToolAction {
+		p := map[string]ToolParam{}
+		for _, k := range params {
+			p[k] = ToolParam{Type: "string"}
+		}
+		return &GroupedToolAction{Params: p, Handler: func(map[string]any, *ToolSession) (string, error) {
+			ran = name
+			return name + " done", nil
+		}}
+	}
+	g := NewGroupedTool("workspace", "files")
+	g.AddAction("run", act("run", "command", "cwd_root"))
+	g.AddAction("cat", act("cat", "path"))
+	g.AddAction("write", act("write", "path", "content"))
+
+	out, err := g.Run(map[string]any{"command": "ls"})
+	if err != nil || ran != "run" {
+		t.Fatalf("command alone means run: ran %q, err %v", ran, err)
+	}
+	if !strings.Contains(out, `action="run" was inferred`) || !strings.Contains(out, "run done") {
+		t.Errorf("the result should say the action was inferred and carry its output: %q", out)
+	}
+	ran = ""
+	if _, err := g.Run(map[string]any{"path": "a", "content": "b"}); err != nil || ran != "write" {
+		t.Errorf("path+content fits write alone: ran %q, err %v", ran, err)
+	}
+	for _, args := range []map[string]any{
+		{"path": "a"},                  // cat and write both take path, neither alone
+		{"command": "ls", "path": "a"}, // no one action takes both
+		{"script": "ls"},               // no action takes it
+	} {
+		ran = ""
+		if _, err := g.Run(args); err == nil || ran != "" {
+			t.Errorf("%v is ambiguous and must be refused, ran %q", args, ran)
+		} else if !strings.Contains(err.Error(), "nothing was done") {
+			t.Errorf("the refusal should still say nothing was done: %v", err)
+		}
+	}
+}
