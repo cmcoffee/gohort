@@ -88,3 +88,36 @@ func TestUpdateProposesDiff(t *testing.T) {
 		t.Fatalf("proposing an update must not disable or wipe the credential (enabled=%v hasSecret=%v)", enabled, hasSecret)
 	}
 }
+
+// A delegated Builder run builds its authoring tools with no turn. The
+// credential tools read the user off the turn, so drafting a credential there
+// panicked, and a Builder asked to wire an API (Suno) could never start: no
+// credential, no tool, nothing in Extensions.
+func TestADelegatedBuilderCanDraftACredential(t *testing.T) {
+	prev := AuthDB
+	AuthDB = func() Database { return &DBase{Store: kvlite.MemStore()} }
+	defer func() { AuthDB = prev }()
+
+	sess := &ToolSession{Username: "alice"}
+	var draft AgentToolDef
+	for _, td := range builderAuthoringTools(sess, nil) {
+		if td.Tool.Name == "draft_api_credential" {
+			draft = td
+		}
+	}
+	if draft.Handler == nil {
+		t.Fatal("draft_api_credential is missing from the authoring tools")
+	}
+	out, err := draft.Handler(context.Background(), map[string]any{
+		"name": "suno", "type": "bearer", "base_url": "https://api.example.com",
+	})
+	if err != nil {
+		t.Fatalf("drafting with no turn should work: %v", err)
+	}
+	if !strings.Contains(out, "Drafted") {
+		t.Errorf("the draft should report itself: %s", out)
+	}
+	if _, ok := Secure().LoadUser("alice", "suno"); !ok {
+		t.Error("the draft should be saved under the calling user, where Extensions lists it")
+	}
+}

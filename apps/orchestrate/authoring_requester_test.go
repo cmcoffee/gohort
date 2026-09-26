@@ -22,6 +22,17 @@ func (l ownerHandleLink) IsOwnerHandle(owner, handle string) bool {
 	return owner == l.owner && handle == l.handle
 }
 
+// selfClearingLink is the iMessage shape: the daemon clears the handle on the
+// owner's own messages, and the bridge counts an empty handle as the owner.
+type selfClearingLink struct {
+	MessagingLink
+	owner string
+}
+
+func (l selfClearingLink) IsOwnerHandle(owner, handle string) bool {
+	return owner == l.owner && handle == ""
+}
+
 func withOwnerHandleLink(t *testing.T, owner, handle string) {
 	prev, _ := ActiveMessagingLink()
 	RegisterMessagingLink(ownerHandleLink{owner: owner, handle: handle})
@@ -48,12 +59,30 @@ func TestChannelSenderIsOwnerOnlyByTheTransportHandle(t *testing.T) {
 	}
 }
 
+// The owner's own group-chat message arrives with the handle cleared, and the
+// bridge says that is the owner. The check asked nothing and refused the
+// owner's own request to have something built.
+func TestTheOwnersOwnMessageWithAClearedHandleIsTheOwner(t *testing.T) {
+	prev, _ := ActiveMessagingLink()
+	RegisterMessagingLink(selfClearingLink{owner: "owner"})
+	t.Cleanup(func() { RegisterMessagingLink(prev) })
+	if !channelSenderIsOwner("owner", AgentSyncRun{Kind: "channel", SenderHandle: ""}) {
+		t.Error("the bridge counts a cleared handle as the owner, and the check must ask it")
+	}
+	if channelSenderIsOwner("owner", AgentSyncRun{Kind: "channel", SenderHandle: "+15550199"}) {
+		t.Error("a contact's handle is still not the owner")
+	}
+}
+
 func TestAChannelHandleIsNotTheOwnerWithNoBridgeToAsk(t *testing.T) {
 	prev, _ := ActiveMessagingLink()
 	RegisterMessagingLink(nil)
 	t.Cleanup(func() { RegisterMessagingLink(prev) })
 	if channelSenderIsOwner("owner", AgentSyncRun{Kind: "channel", SenderHandle: "+15550100"}) {
 		t.Error("with no bridge to compare against, a handle cannot be shown to be the owner's")
+	}
+	if channelSenderIsOwner("owner", AgentSyncRun{Kind: "channel"}) {
+		t.Error("with no bridge, an empty handle cannot be shown to be the owner's either")
 	}
 }
 

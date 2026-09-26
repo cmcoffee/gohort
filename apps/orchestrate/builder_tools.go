@@ -69,6 +69,16 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 	if authoringUser == "" && t != nil {
 		authoringUser = t.user
 	}
+	// The credential tools read the calling user (and, when there is one, the
+	// chat to show a setup card in) off the turn. A delegated Builder run has no
+	// turn, so t is nil, and reading through it panicked: asked to wire an API it
+	// could never draft the credential, and nothing reached Extensions. The
+	// stand-in carries the user; the card helpers already skip a turn with no
+	// chat to show one in.
+	credTurn := t
+	if credTurn == nil {
+		credTurn = &chatTurn{user: authoringUser}
+	}
 	tools := []AgentToolDef{
 		// survey — Builder's "read the repo" move: one call maps the user's whole
 		// gohort (agents, tools, credentials + wired tools, apps, pipelines,
@@ -126,14 +136,14 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// draft_oauth_credential — Builder scaffolds an OAuth2 credential
 		// config from the API's docs; the admin pastes the secret + enables
 		// it via the in-chat setup card or the admin UI.
-		draftOAuthCredentialToolDef(t),
+		draftOAuthCredentialToolDef(credTurn),
 		// draft_api_credential — the non-oauth sibling: plain API key /
 		// bearer / header / basic_auth (OPNsense, X-API-Key services, etc.).
-		draftAPICredentialToolDef(t),
+		draftAPICredentialToolDef(credTurn),
 		// update_api_credential — approval-gated CONFIG edit (base_url, etc.)
 		// of a working credential, so the LLM never resorts to a destructive
 		// delete-and-re-draft to fix a setting.
-		updateAPICredentialToolDef(t),
+		updateAPICredentialToolDef(credTurn),
 		// store_credential_secret — write-only vault landing for keys
 		// received mid-flow (self-registration, rotation), so they go
 		// into the credential instead of into the chat.
@@ -142,7 +152,7 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// secret-set (owner-aware, so a user's own My-API-credentials entry is
 		// found) BEFORE wiring a tool to it. Builder lacked this, so it kept
 		// building against not-yet-registered creds and flailing.
-		checkCredentialToolDef(t),
+		checkCredentialToolDef(credTurn),
 	}
 	// Per-credential fetch_url_<name> tools — Builder uses these for
 	// authoring-time discovery (probe an endpoint, confirm shape)
