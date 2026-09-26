@@ -114,6 +114,13 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			merged[f] = v
 		}
 	}
+	// hook_capabilities REPLACES the declared list when given; omitted, the
+	// stored list round-trips untouched (tempToolToCreateArgs). It was left off
+	// update entirely, so a script that needed a new credential grant could not
+	// get one without deleting its tool.
+	if v, present := args["hook_capabilities"]; present {
+		merged["hook_capabilities"] = v
+	}
 	if v, present := args["params"]; present {
 		merged["params"] = v
 	}

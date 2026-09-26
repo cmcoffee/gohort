@@ -9,6 +9,7 @@
 package temptool
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -87,6 +88,7 @@ func BuildToolDef() *GroupedTool {
 			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none."},
 			"state_path":        {Type: "string", Description: "(shell, optional) Workspace subdirectory this tool may persist state in."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) Extra sandbox capabilities the script needs. See action=\"help\" for the list and when each applies."},
+			"test_args":         {Type: "object", Description: "(api/shell, optional) Sample {param: value} to run the saved tool with once, as action=\"test\" would; the result is added to this reply."},
 			"raw_network":       {Type: "boolean", Description: "(shell, advanced) Allow direct outbound network from the script instead of the gohort fetch shims. See action=\"help\" before using."},
 			"confirm_in_chat":   {Type: "boolean", Description: "Stop and ask the person watching before every call to this tool. Use for anything that changes something outside gohort and is worth a look before it happens: a post, a delete, a payment. In chat only: on a run with nobody watching the call is refused instead, since there is no one to ask."},
 			// Pipeline-mode params. Either pipeline_prompt OR pipeline_steps is required.
@@ -156,6 +158,7 @@ func BuildToolDef() *GroupedTool {
 				// otherwise. Recorded so the build-plan done-gate can't sign off
 				// on a tool nobody ever ran.
 				RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "authored but never tested: run tool_def(action=\"test\")")
+				out = verifyWithTestArgs(args, sess, out)
 			}
 			return out, err
 		},
@@ -180,24 +183,26 @@ func BuildToolDef() *GroupedTool {
 	gt.AddAction("update", &GroupedToolAction{
 		Description: "THE way to fix a broken tool: ALWAYS reach for update before delete+recreate. Deleting loses the tool's working actions AND its credential wiring, and a from-scratch rebuild routinely fails on a detail you already had right. PARTIALLY edit an existing tool WITHOUT recreating it whole: pass name plus only the fields you're changing. For a TOOLBOX: pass actions=[{name...}] to upsert (an action name that already exists is replaced, a new one is added), the OTHER actions are preserved untouched; pass remove_actions=[\"x\"] to drop actions. For an api/shell tool: pass any of description / params / required / url_template / command_template / method / body_template / response_pipe / script_body to change just those. (A POST action missing a body_template is auto-scaffolded: you don't have to hand-write it.)",
 		Params: map[string]ToolParam{
-			"name":             {Type: "string", Description: "The tool to update."},
-			"description":      {Type: "string", Description: "(optional) New top-level description: one or two sentences, cap 500 chars. Omit to leave the current one alone."},
-			"credential":       {Type: "string", Description: "(api/toolbox, optional) Name of a registered secure credential; auth is injected server-side and never reaches you. Use \"no_auth\" for public APIs. See action=\"help\"."},
-			"actions":          {Type: "array", Description: "(toolbox) Action objects to UPSERT by name: same shape as create's actions (including optional `disabled` to quarantine/re-enable one action). Existing actions not listed here are kept as-is."},
-			"remove_actions":   {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(toolbox) Names of actions to remove."},
-			"expand":           {Type: "boolean", Description: "(toolbox) Surface each action as its own top-level <toolbox>_<action> tool instead of one collapsed tool. See action=\"help\"."},
-			"params":           {Type: "object", Description: "Object of {param: {type, description}}. Types: string|integer|number|boolean|array|object. Full rules + coercion in action=\"help\"."},
-			"required":         {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none."},
-			"url_template":     {Type: "string", Description: "(api) New URL template."},
-			"command_template": {Type: "string", Description: "(shell) Shell command with {param} placeholders. Use script_body for anything non-trivial. See action=\"help\" for the sandbox fact sheet."},
-			"method":           {Type: "string", Description: "(api) New HTTP method."},
-			"body_template":    {Type: "string", Description: "(api) Request body with {param} placeholders, JSON-encoded and validated by default. See action=\"help\"."},
-			"headers":          {Type: "object", Description: "(api, optional) Extra request headers as {name: value}. See action=\"help\"."},
-			"content_type":     {Type: "string", Description: "(api, optional) Content-Type for the body. Empty = application/json; any other value switches to raw substitution."},
-			"response_pipe":    {Type: "string", Description: "(api, optional) sh -c filter over the response body (jq/awk/sed) to keep noise out of your context. See action=\"help\" for the jq gotchas."},
-			"response_extract": {Type: "object", Description: "(api) New response_extract spec (XML→JSON). Same shape as create; see the create schema."},
-			"category":         {Type: "string", Description: "Short grouping label for the tool catalog (e.g. \"Calendar\", \"Moltbook\")."},
-			"script_body":      {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only: no pip. See action=\"help\"."},
+			"name":              {Type: "string", Description: "The tool to update."},
+			"description":       {Type: "string", Description: "(optional) New top-level description: one or two sentences, cap 500 chars. Omit to leave the current one alone."},
+			"credential":        {Type: "string", Description: "(api/toolbox, optional) Name of a registered secure credential; auth is injected server-side and never reaches you. Use \"no_auth\" for public APIs. See action=\"help\"."},
+			"actions":           {Type: "array", Description: "(toolbox) Action objects to UPSERT by name: same shape as create's actions (including optional `disabled` to quarantine/re-enable one action). Existing actions not listed here are kept as-is."},
+			"remove_actions":    {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(toolbox) Names of actions to remove."},
+			"expand":            {Type: "boolean", Description: "(toolbox) Surface each action as its own top-level <toolbox>_<action> tool instead of one collapsed tool. See action=\"help\"."},
+			"params":            {Type: "object", Description: "Object of {param: {type, description}}. Types: string|integer|number|boolean|array|object. Full rules + coercion in action=\"help\"."},
+			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none."},
+			"url_template":      {Type: "string", Description: "(api) New URL template."},
+			"command_template":  {Type: "string", Description: "(shell) Shell command with {param} placeholders. Use script_body for anything non-trivial. See action=\"help\" for the sandbox fact sheet."},
+			"method":            {Type: "string", Description: "(api) New HTTP method."},
+			"body_template":     {Type: "string", Description: "(api) Request body with {param} placeholders, JSON-encoded and validated by default. See action=\"help\"."},
+			"headers":           {Type: "object", Description: "(api, optional) Extra request headers as {name: value}. See action=\"help\"."},
+			"content_type":      {Type: "string", Description: "(api, optional) Content-Type for the body. Empty = application/json; any other value switches to raw substitution."},
+			"response_pipe":     {Type: "string", Description: "(api, optional) sh -c filter over the response body (jq/awk/sed) to keep noise out of your context. See action=\"help\" for the jq gotchas."},
+			"response_extract":  {Type: "object", Description: "(api) New response_extract spec (XML→JSON). Same shape as create; see the create schema."},
+			"category":          {Type: "string", Description: "Short grouping label for the tool catalog (e.g. \"Calendar\", \"Moltbook\")."},
+			"script_body":       {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only: no pip. See action=\"help\"."},
+			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) REPLACES the declared sandbox capabilities, e.g. [\"fetch_via:<credential>\"]. Omit to keep the current ones."},
+			"test_args":         {Type: "object", Description: "(api/shell, optional) Sample {param: value} to run the edited tool with once, as action=\"test\" would; the result is added to this reply. An edit is untested until something runs it."},
 		},
 		Required:     []string{"name"},
 		Caps:         nil,
@@ -213,6 +218,7 @@ func BuildToolDef() *GroupedTool {
 				// let a failed verify get "fixed" by an update and then reported
 				// as done without anyone re-running it.
 				RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "edited since it was last tested: re-run tool_def(action=\"test\")")
+				out = verifyWithTestArgs(args, sess, out)
 			}
 			return out, err
 		},
@@ -273,6 +279,37 @@ func BuildToolDef() *GroupedTool {
 	})
 
 	return gt
+}
+
+// verifyWithTestArgs runs a tool just saved with the author's test_args, the
+// same run tool_def(action="test") makes, and folds the result into the save's
+// reply. test_args was documented for create and never read by create or
+// update, so it was dropped without a word: an update carrying test_args came
+// back with no verification in it, and the author reported the tool fixed. It
+// had never run. Without test_args the reply says the tool is untested.
+func verifyWithTestArgs(args map[string]any, sess *ToolSession, out string) string {
+	name := strings.TrimSpace(StringArg(args, "name"))
+	raw, present := args["test_args"]
+	if !present {
+		return out + "\n\nNOT VERIFIED: nothing has run this version of " + name + ". Run tool_def(action=\"test\", name=\"" + name + "\", cases=[{action?, args:{...}}]) before saying it works (action names the endpoint of a toolbox)."
+	}
+	sample, ok := raw.(map[string]any)
+	if text, isText := raw.(string); isText {
+		ok = json.Unmarshal([]byte(text), &sample) == nil
+	}
+	if !ok {
+		return out + "\n\ntest_args was not an object of {param: value}, so nothing ran and the tool is NOT verified. Run tool_def(action=\"test\", name=\"" + name + "\", cases=[{args:{...}}])."
+	}
+	if tt, found := loadExistingToolRecord(sess, name); found && tt.Mode == TempToolModeToolbox {
+		return out + "\n\ntest_args names no action, so a toolbox cannot be run with it and nothing ran: the tool is NOT verified. Run tool_def(action=\"test\", name=\"" + name + "\", cases=[{action:\"<action>\", args:{...}}])."
+	}
+	res, err := testGrouped(map[string]any{"name": name, "cases": []any{map[string]any{"args": sample}}}, sess)
+	if err != nil {
+		return out + "\n\nVerification with test_args could not run (" + err.Error() + "): the tool is NOT verified."
+	}
+	// The run reaches a real endpoint or script, so what it reports back is
+	// fenced, as the test action fences it.
+	return out + "\n\nVerification with test_args:\n" + UntrustedToolResultFence + res
 }
 
 func modeLabel(mode string) string {

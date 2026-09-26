@@ -1,6 +1,7 @@
 package temptool
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -154,4 +155,52 @@ func count(caps []string, want string) int {
 		}
 	}
 	return n
+}
+
+// update now takes hook_capabilities as a replacement list. It was left off
+// update entirely, so a script that needed a new credential grant could not
+// get one short of deleting its tool.
+func TestUpdateCanGrantANewCredential(t *testing.T) {
+	sess := &ToolSession{Username: "alice", ChatSessionID: "s1", WorkspaceDir: t.TempDir(), DB: &DBase{Store: kvlite.MemStore()}}
+	if _, err := createGrouped(map[string]any{
+		"name": "song", "description": "make a song", "mode": "shell",
+		"command_template": "python3 {workspace_dir}/run.py", "script_name": "run.py",
+		"script_body": "print('x')\n",
+	}, sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := updateGrouped(map[string]any{
+		"name":              "song",
+		"script_body":       "from gohort import fetch_via\nprint(fetch_via('music_api', 'https://x.test/gen'))\n",
+		"hook_capabilities": []any{"fetch_via:music_api"},
+	}, sess); err != nil {
+		t.Fatalf("update with a new grant: %v", err)
+	}
+	got, _ := loadExistingToolRecord(sess, "song")
+	if !hasCap(got.HookCapabilities, "fetch_via:music_api") || !hasCap(got.HookCapabilities, "fetch") {
+		t.Errorf("the grant should land and the defaults stay: %v", got.HookCapabilities)
+	}
+}
+
+// An edit says whether anything ran it. test_args was documented for create,
+// read by neither create nor update, and dropped without a word; an update that
+// carried it came back with no verification, and the author called it fixed.
+func TestASavedToolSaysWhetherItWasVerified(t *testing.T) {
+	sess := newTestSession()
+	sess.WorkspaceDir = t.TempDir()
+	injectShellTool(t, sess, "echo_tool", "import os\nprint(os.environ.get('summary'))\n")
+
+	if out := verifyWithTestArgs(map[string]any{"name": "echo_tool"}, sess, "Updated."); !strings.Contains(out, "NOT VERIFIED") {
+		t.Errorf("no test_args: the reply must say nothing ran: %q", out)
+	}
+	if out := verifyWithTestArgs(map[string]any{"name": "echo_tool", "test_args": 7}, sess, "Updated."); !strings.Contains(out, "NOT verified") {
+		t.Errorf("unusable test_args: the reply must say nothing ran: %q", out)
+	}
+	out := verifyWithTestArgs(map[string]any{"name": "echo_tool", "test_args": `{"summary":"hi"}`}, sess, "Updated.")
+	if !strings.Contains(out, "Verification with test_args") || !strings.Contains(out, "shell tool") {
+		t.Errorf("test_args (even as a JSON string) should run the test and fold its report in: %q", out)
+	}
+	if !strings.Contains(out, UntrustedToolResultFence) {
+		t.Error("what the run reports back is fenced, as the test action fences it")
+	}
 }
