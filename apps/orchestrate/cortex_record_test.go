@@ -77,10 +77,14 @@ func TestARunThatReportedElsewhereLeavesAPointer(t *testing.T) {
 	}
 }
 
+// A conversation starting is recorded, by its title, in the cortex of an agent
+// that READS it: that is the agent's only view of its other sessions. A
+// record-only cortex gets nothing, since its only reader has the session list.
 func TestANewConversationIsRecordedByItsTitle(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
-	a, _ := saveAgent(db, AgentRecord{Name: "Helper", Owner: "u", OrchestratorPrompt: "p"})
-	start := func(incognito bool) {
+	reader, _ := saveAgent(db, AgentRecord{Name: "Helper", Owner: "u", OrchestratorPrompt: "p", Cortex: true})
+	recordOnly, _ := saveAgent(db, AgentRecord{Name: "Quiet", Owner: "u", OrchestratorPrompt: "p"})
+	start := func(a AgentRecord, incognito bool) {
 		s := ChatSession{ID: UUIDv4(), AgentID: a.ID, Incognito: incognito,
 			Messages: []ChatMessage{{Role: "user", Content: "what's the weather?"}, {Role: "assistant", Content: "Sunny."}}}
 		saveChatSession(db, s)
@@ -89,16 +93,20 @@ func TestANewConversationIsRecordedByItsTitle(t *testing.T) {
 		ct := &chatTurn{app: app, udb: db, agent: a, user: "u", session: &s, isNewSession: true}
 		ct.titleAfterFirstTurn()
 	}
-	start(false)
-	start(true)
+	start(reader, false)
+	start(reader, true)
+	start(recordOnly, false)
 	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && !strings.Contains(cortexLines(t, db, a.ID), "Started") {
+	for time.Now().Before(deadline) && !strings.Contains(cortexLines(t, db, reader.ID), "Started") {
 		time.Sleep(20 * time.Millisecond)
 	}
-	time.Sleep(100 * time.Millisecond) // let the incognito one finish too, if it were going to write
-	got := cortexLines(t, db, a.ID)
+	time.Sleep(150 * time.Millisecond) // let the other two finish, if they were going to write
+	got := cortexLines(t, db, reader.ID)
 	if strings.Count(got, "Started:") != 1 || !strings.Contains(got, "Conversation: Started: Weather check") {
 		t.Errorf("one line per conversation, by its title, and nothing for a clean-room session:\n%s", got)
+	}
+	if other := cortexLines(t, db, recordOnly.ID); strings.Contains(other, "Started:") {
+		t.Errorf("a record-only cortex should not duplicate the session list:\n%s", other)
 	}
 }
 
