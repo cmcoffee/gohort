@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -77,9 +78,9 @@ func TestFetchViaHeadersReachWire(t *testing.T) {
 func TestShimFetchViaCarriesHeaders(t *testing.T) {
 	shim := SandboxHookPythonShim
 	for _, want := range []string{
-		`def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None):`,
+		`def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None):`,
 		`"headers": hdrs,`,
-		`def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None):`,
+		`def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None):`,
 	} {
 		if !strings.Contains(shim, want) {
 			t.Errorf("shim missing fetch_via headers plumbing: %q", want)
@@ -120,5 +121,34 @@ func TestAScriptFetchThroughACredentialGetsTheWholeBody(t *testing.T) {
 		if !strings.Contains(SandboxHookPythonShim, want) {
 			t.Errorf("fetch_url should take request_headers as fetch_via does; missing %q", want)
 		}
+	}
+}
+
+// A script's timeout reaches the credentialed call when it is longer than the
+// general cap, bounded, and never shortens it. The call used the general cap
+// whatever the script asked, so a slow generation could not finish from a
+// script.
+func TestAScriptTimeoutOnlyRaisesTheCallCap(t *testing.T) {
+	base := int(secureAPIRequestTimeout() / time.Second)
+	args := map[string]interface{}{}
+	raiseCallTimeout(args, map[string]interface{}{"timeout": float64(base + 60)})
+	if args[secureTimeoutArg] != base+60 {
+		t.Errorf("a longer timeout should reach the call: %v", args[secureTimeoutArg])
+	}
+	args = map[string]interface{}{}
+	raiseCallTimeout(args, map[string]interface{}{"timeout": float64(1)})
+	if _, set := args[secureTimeoutArg]; set {
+		t.Error("a shorter timeout must not cut the general cap")
+	}
+	args = map[string]interface{}{}
+	raiseCallTimeout(args, map[string]interface{}{"timeout": float64(10000)})
+	if args[secureTimeoutArg] != maxHookTimeoutSecs {
+		t.Errorf("the timeout is bounded: %v", args[secureTimeoutArg])
+	}
+	if d := hookMethodDeadline("fetch_via", map[string]interface{}{"timeout": float64(200)}); d < 200*time.Second {
+		t.Errorf("the hook's own deadline must outlast the call, got %s", d)
+	}
+	if !strings.Contains(SandboxHookPythonShim, `request_headers=None, timeout=None):`) {
+		t.Error("fetch_via should take timeout=")
 	}
 }

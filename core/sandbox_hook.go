@@ -398,11 +398,42 @@ func hookMethodDeadline(method string, params map[string]interface{}) time.Durat
 	case "browse_page":
 		return 75 * time.Second
 	case "fetch_via":
+		if t := hookTimeoutSecs(params); t > 0 {
+			return time.Duration(t)*time.Second + 15*time.Second
+		}
 		return 90 * time.Second
 	case "secret", "log":
 		return 10 * time.Second
 	}
 	return 10 * time.Second
+}
+
+// maxHookTimeoutSecs bounds how long a script may ask one credentialed call
+// to wait.
+const maxHookTimeoutSecs = 300
+
+// hookTimeoutSecs is the script's own timeout for a call, in whole seconds,
+// bounded to maxHookTimeoutSecs; 0 when it gave none.
+func hookTimeoutSecs(params map[string]interface{}) int {
+	t, _ := params["timeout"].(float64)
+	if t <= 0 {
+		return 0
+	}
+	if t > maxHookTimeoutSecs {
+		t = maxHookTimeoutSecs
+	}
+	return int(t)
+}
+
+// raiseCallTimeout carries a script's timeout into a credentialed call when it
+// is LONGER than the general cap, so a script can wait for a slow endpoint but
+// never shortens a limit an admin raised. The credential call used the general
+// cap whatever the script asked, so a generation longer than 30s could not
+// finish from a script at all.
+func raiseCallTimeout(args, params map[string]interface{}) {
+	if t := hookTimeoutSecs(params); t > int(secureAPIRequestTimeout()/time.Second) {
+		args[secureTimeoutArg] = t
+	}
 }
 
 // fetchDoneLog picks the sink for a fetch-completion line: a 2xx success goes to
@@ -550,6 +581,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			if saveTo = strings.TrimSpace(saveTo); saveTo != "" {
 				args["save_to"] = saveTo
 			}
+			raiseCallTimeout(args, params)
 			Log("[hook/fetch] auto-routing credential-covered URL via %q: %s", credName, rawURL)
 			out, derr := Secure().DispatchToolCallArgs(h.Sess, credName, args)
 			if derr != nil {
@@ -1063,6 +1095,7 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 	// A script consumes the body, not a model, so it reads under the piped
 	// cap: the general one cut a 263 KB audio response at 256 KiB.
 	args["__pipe_following"] = true
+	raiseCallTimeout(args, params)
 	Log("[hook/fetch_via] start %s %s via %q", method, url, credName)
 	callStart := time.Now()
 	out, err := Secure().DispatchToolCallArgs(h.Sess, credName, args)
@@ -1629,7 +1662,7 @@ class _Gohort:
         result = self._call("secret", {"name": name})
         return result["secret"] if isinstance(result, dict) else result
 
-    def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None):
+    def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None):
         """HTTP via a named gohort credential: URL allowlist enforced,
         auth injected server-side, audit logged. Tool must declare
         "fetch_via:<credential>" in hook_capabilities. headers is an
@@ -1650,12 +1683,16 @@ class _Gohort:
         hdrs = dict(headers or {})
         if request_headers:
             hdrs.update(request_headers)
+        # timeout (seconds, up to 300) raises the wait for a slow call, such
+        # as a generation that answers with the finished result; it never
+        # shortens the default.
         return self._call("fetch_via", {
             "credential": credential,
             "url": url,
             "method": method,
             "body": body or "",
             "headers": hdrs,
+            "timeout": timeout or 0,
         })
 
     def browse_page(self, url):
@@ -1711,8 +1748,8 @@ def secret(name):
     return gohort.secret(name)
 
 
-def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None):
-    return gohort.fetch_via(credential, url, method=method, body=body, headers=headers, request_headers=request_headers)
+def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None):
+    return gohort.fetch_via(credential, url, method=method, body=body, headers=headers, request_headers=request_headers, timeout=timeout)
 `
 
 // --- the shell network default -------------------------------------------
