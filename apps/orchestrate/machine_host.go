@@ -280,6 +280,10 @@ func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, re
 	h.diag("phase_delegate", "phase "+ph.Name+" delegated to "+chFirst(target.Name, target.ID))
 
 	label := chFirst(target.Name, target.ID)
+	// One level deeper: the delegate runs its own machine, which may delegate
+	// in turn, and two agents whose machines hand to each other would never
+	// stop. enterMachine counts the levels (maxMachineDelegation).
+	ctx = withMachineDelegation(ctx)
 	res, err := h.app.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
 		AgentOwner:   h.user,
 		RuntimeUser:  h.user,

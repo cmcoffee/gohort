@@ -75,6 +75,11 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 	if t.agent.Machine == "" || thread == nil {
 		return turnMachine{}
 	}
+	if d := machineDelegation(t.ctx); d > maxMachineDelegation {
+		t.turnDiag("machine_depth", "this run is "+strconv.Itoa(d)+" machine delegations deep (the limit is "+strconv.Itoa(maxMachineDelegation)+
+			"), so "+chFirst(t.agent.Name, t.agent.ID)+" answered as a plain agent rather than running its machine: machines that hand to each other would otherwise never stop")
+		return turnMachine{}
+	}
 	def, ok := t.sessionMachine()
 	if !ok {
 		return turnMachine{}
@@ -170,6 +175,69 @@ func machineStepTrace(def MachineDef, cur *MachineCursor, walkStart time.Time) [
 		out = append(out, PersistedToolCall{Name: "machine_step", Label: label, Args: args, Result: truncateObs(result, 300), Framework: true})
 	}
 	return out
+}
+
+// maxMachineDelegation is how many machine steps deep a delegated agent may
+// still run its own machine. Enough for a router handing to an agent that
+// routes again; short of the endless loop two machines that delegate to each
+// other would make.
+const maxMachineDelegation = 3
+
+type machineDelegationKey struct{}
+
+// withMachineDelegation marks ctx as one machine delegation deeper.
+func withMachineDelegation(ctx context.Context) context.Context {
+	return context.WithValue(ctx, machineDelegationKey{}, machineDelegation(ctx)+1)
+}
+
+// machineDelegation is how many machine steps have delegated to reach this run.
+func machineDelegation(ctx context.Context) int {
+	if ctx == nil {
+		return 0
+	}
+	n, _ := ctx.Value(machineDelegationKey{}).(int)
+	return n
+}
+
+// enterDispatchMachine runs the target agent's machine for a run that did not
+// come through web chat: a channel message, a delegation, a scheduled fire. A
+// machine replaces the agent's brain, so it has to run however the agent is
+// reached; it used to run on web chat alone, then on the channel path alone,
+// and a delegated agent answered as a plain agent.
+//
+// thread is where the machine's position lives: the run's stored thread, so a
+// conversation walks its own steps, or, with ephemeral, a record that is never
+// saved, for a run that starts fresh each time and walks from the first step.
+// The step's block is added to *sysPrompt and *tools is narrowed to the step's
+// list (plus change_phase when there is somewhere to go). The caller applies
+// the rest of what a machine turn carries: the step's think (Think), its tool
+// deny (machineToolFilter), a relay (machineRelay) and, for a stored thread,
+// the hand-off after the reply (completeMachine). Returns the turn's machine,
+// off when the agent has none.
+func (t *chatTurn) enterDispatchMachine(thread *ChatSession, ephemeral bool, message string, sysPrompt *string, tools *[]AgentToolDef, kind string) turnMachine {
+	t.machineThread, t.machineEphemeral = thread, ephemeral
+	mach := t.enterMachine(message)
+	if !mach.on {
+		return mach
+	}
+	*sysPrompt += mach.Block()
+	narrowed, dropped, unmatched, _ := mach.narrowCatalog(*tools, t.attachedToolNames)
+	*tools = narrowed
+	if t.hasMachineExit() {
+		*tools = append(*tools, t.changePhaseToolDef())
+	}
+	Log("[orchestrate.machine] dispatched agent=%s step=%q kind=%s: %d tool(s) after the step's list, %d dropped, %d unmatched",
+		t.agent.ID, mach.Name(), kind, len(*tools), len(dropped), len(unmatched))
+	return mach
+}
+
+// machineToolFilter keeps a step's deny in force for tools that arrive after
+// the catalog was narrowed, as on the web turn. nil when no machine runs.
+func (t *chatTurn) machineToolFilter() func(string) bool {
+	if !t.machine.on {
+		return nil
+	}
+	return func(name string) bool { return !t.machine.Denies(name) }
 }
 
 // withMachineTrace is a turn's stored tool records: what the machine did with
@@ -307,7 +375,7 @@ func (t *chatTurn) saveCursorThread() {
 		t.saveSession()
 		return
 	}
-	if t.machineThread == nil {
+	if t.machineThread == nil || t.machineEphemeral {
 		return
 	}
 	if saved, err := saveChatSession(t.udb, *t.machineThread); err == nil {

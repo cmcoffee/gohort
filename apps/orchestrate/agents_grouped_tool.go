@@ -1332,7 +1332,14 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// strips CapNetwork tools from the catalog. No-op when
 	// target.ForcePrivate is false.
 	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
-	think := resolveDispatchThink(target)
+	// The target's machine, resuming where this conversation's thread with it
+	// left off: the same thread carries the exchange, so a follow-up continues
+	// the walk rather than starting it over (enterDispatchMachine).
+	if prior.ID == "" {
+		prior.ID, prior.AgentID, prior.Created = subSessID, target.ID, time.Now()
+	}
+	subTurn.enterDispatchMachine(&prior, false, msg, &sysPrompt, &tools, "agents-run")
+	think := subTurn.machine.Think(resolveDispatchThink(target))
 	// The warden judges the agent that is RUNNING, so a sub-agent answers to its
 	// OWN rules — the same wiring RunAgentSyncContinuing and the channel dispatch
 	// use. This path had neither hook: an inline agents(run) executed completely
@@ -1340,6 +1347,9 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// agent's owner had authored. Nothing about the sub-run justified the
 	// exemption; the hooks were simply never added when this path was written.
 	llmMessages, gDecline := subTurn.applyInputGuardrail(llmMessages)
+	if gDecline == "" {
+		gDecline = subTurn.machineRelay() // a relaying step's reply, sent without a model
+	}
 	// The target's own "Use Lead model", as over a channel or a delegation;
 	// ctx carries the parent's privacy, so a Private parent stays off the lead.
 	runPin, runRoute := dispatchRouting(ctx, subTurn)
@@ -1351,6 +1361,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
 		TierOverride:    runPin,
 		RoundAbortTools: abortTools,
+		RoundToolFilter: subTurn.machineToolFilter(),
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
 		PreEmptedReply:      gDecline,
@@ -1387,6 +1398,8 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if resp == nil {
 		return "", errors.New("agents(run): target returned no response")
 	}
+	// The waiting step hands off now it has had its turn, as on every surface.
+	subTurn.completeMachine(subTurn.machine)
 	cleanReply := strings.TrimSpace(resp.Content)
 	// A Builder that asked ends on its question, which is its reply in this
 	// thread and, relayed, the result the caller acts on.

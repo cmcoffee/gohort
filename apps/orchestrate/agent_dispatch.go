@@ -878,7 +878,10 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	if isBuilderAgent(target.ID) {
 		deliveredMessage = markAsDelegated(message)
 	}
-	think := resolveDispatchThink(target)
+	// The target's machine, from its first step: this run keeps no thread, so
+	// there is no position to resume (enterDispatchMachine).
+	subTurn.enterDispatchMachine(&ChatSession{ID: subSessID, AgentID: target.ID}, true, message, &sysPrompt, &tools, "delegation")
+	think := subTurn.machine.Think(resolveDispatchThink(target))
 	// Telemetry — each RunAgentSync invocation gets its own per-turn
 	// accumulator so pipeline agent stages, external dispatches, and
 	// any other sync sub-agent run leaves a grep-able forensic record
@@ -886,23 +889,28 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// black box from the parent's perspective.
 	telem := newTurnTelemetry()
 	dispatchMsgs, gDecline := subTurn.applyInputGuardrail([]Message{{Role: "user", Content: deliveredMessage}})
+	if gDecline == "" {
+		gDecline = subTurn.machineRelay() // a relaying step's reply, sent without a model
+	}
 	subTurn.noteMountedTools(tools)
 	dispatchPin, dispatchRoute := dispatchRouting(ctx, subTurn)
 	resp, syncTranscript, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
 		TierOverride: dispatchPin,
-		// A terminal-rule pre_input block refused this request outright: the loop
-		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply: gDecline,
-		SendGuardKey:   sendGuardKey,
-		SystemPrompt:   sysPrompt,
-		Tools:          tools,
-		MaxRounds:      resolveMaxWorkerRounds(target),
-		StampLocation:  UserLocation(runtimeUser), // stamp the turn in the acting user's zone
-		ThinkBudget:    target.ThinkBudget,        // per-agent override; 0 = inherit route/global
-		Effort:         target.Effort,             // per-agent level; a budget above wins
-		ActionQuotas:   target.ActionQuotas,       // per-agent 24h caps; empty = uncapped
-		BudgetKey:      target.ID,
-		DailySpendUSD:  target.DailySpendUSD,
+		// A terminal-rule pre_input block refused this request outright, or a
+		// machine step relays an earlier step's answer: the loop delivers this
+		// text and never calls a model. Empty on every other turn.
+		PreEmptedReply:  gDecline,
+		RoundToolFilter: subTurn.machineToolFilter(),
+		SendGuardKey:    sendGuardKey,
+		SystemPrompt:    sysPrompt,
+		Tools:           tools,
+		MaxRounds:       resolveMaxWorkerRounds(target),
+		StampLocation:   UserLocation(runtimeUser), // stamp the turn in the acting user's zone
+		ThinkBudget:     target.ThinkBudget,        // per-agent override; 0 = inherit route/global
+		Effort:          target.Effort,             // per-agent level; a budget above wins
+		ActionQuotas:    target.ActionQuotas,       // per-agent 24h caps; empty = uncapped
+		BudgetKey:       target.ID,
+		DailySpendUSD:   target.DailySpendUSD,
 		// Standing fires and Fleet dispatches both land here, and neither
 		// carries tool results into the next run's history — so without this
 		// each one re-learns yesterday's dead endpoint from scratch. One
@@ -1778,17 +1786,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// on this thread, so each conversation walks its own steps. Not under an
 	// app's own complete prompt, which owns the whole turn.
 	if strings.TrimSpace(run.SystemPromptOverride) == "" {
-		subTurn.machineThread = &priorSession
-		if mach := subTurn.enterMachine(message); mach.on {
-			sysPrompt += mach.Block()
-			narrowed, dropped, unmatched, _ := mach.narrowCatalog(tools, subTurn.attachedToolNames)
-			tools = narrowed
-			if subTurn.hasMachineExit() {
-				tools = append(tools, subTurn.changePhaseToolDef())
-			}
-			Log("[orchestrate.machine] dispatched agent=%s step=%q kind=%s: %d tool(s) after the step's list, %d dropped, %d unmatched",
-				target.ID, mach.Name(), run.Kind, len(tools), len(dropped), len(unmatched))
-		}
+		subTurn.enterDispatchMachine(&priorSession, false, message, &sysPrompt, &tools, chFirst(run.Kind, "continuing"))
 	}
 	// The delegated-invocation marker only signals a CONVERSATIONAL agent
 	// (Builder) to skip its intake/confirm workflow and run headless from the
@@ -2062,8 +2060,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	// A step's deny holds for tools that arrive after the catalog was narrowed,
 	// as on the web turn.
-	if subTurn.machine.on {
-		loopCfg.RoundToolFilter = func(name string) bool { return !subTurn.machine.Denies(name) }
+	if f := subTurn.machineToolFilter(); f != nil {
+		loopCfg.RoundToolFilter = f
 	}
 	resp, transcript, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	// The waiting step hands off now that it has had its turn (its next), as the

@@ -76,18 +76,32 @@ func TestADispatchedStepThatNamesTheLeadGetsIt(t *testing.T) {
 	}
 }
 
-// The channel path has to keep calling into the machine: a behavioural test
-// cannot see a surface that silently stops doing so, which is how this gap
-// shipped in the first place.
-func TestTheChannelPathRunsTheMachine(t *testing.T) {
-	src, err := os.ReadFile("agent_dispatch.go")
-	if err != nil {
-		t.Skip("source unavailable")
-	}
-	for _, call := range []string{"subTurn.enterMachine(", "subTurn.completeMachine(", "mach.Block()", "mach.narrowCatalog(", "subTurn.machineTrace"} {
-		if !strings.Contains(string(src), call) {
-			t.Errorf("agent_dispatch.go no longer calls %s: an agent's machine would stop running for channel messages", call)
+// Every way an agent is reached runs its machine: a machine replaces the
+// agent's brain. It ran on web chat alone, then on the channel path alone, and
+// a delegated agent answered as a plain one. A behavioural test cannot see a
+// path that silently stops entering it, which is how each gap shipped.
+func TestEveryDispatchPathRunsTheMachine(t *testing.T) {
+	for file, want := range map[string]int{
+		"agent_dispatch.go":      2, // the continuing path (channels, wakes, handoffs) and delegations
+		"agents_grouped_tool.go": 1, // an awaited agents(run)
+		"scheduled_updates.go":   1, // a scheduled fire
+	} {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Skip("source unavailable")
 		}
+		body := string(src)
+		if n := strings.Count(body, "subTurn.enterDispatchMachine("); n != want {
+			t.Errorf("%s enters the agent's machine %d time(s), want %d", file, n, want)
+		}
+		for _, call := range []string{"subTurn.machineRelay()", "subTurn.machineToolFilter()"} {
+			if !strings.Contains(body, call) {
+				t.Errorf("%s no longer calls %s: a machine step there would lose its relay or its deny", file, call)
+			}
+		}
+	}
+	if src, err := os.ReadFile("agent_dispatch.go"); err == nil && !strings.Contains(string(src), "subTurn.machineTrace") {
+		t.Error("the continuing path no longer stores the machine's steps")
 	}
 }
 
@@ -230,5 +244,46 @@ func TestEveryWebSavePathKeepsTheMachineSteps(t *testing.T) {
 	}
 	if runner, err := os.ReadFile("runner.go"); err == nil && !strings.Contains(string(runner), "t.emitMachineTrace()") {
 		t.Error("the web turn must show the machine's steps live")
+	}
+}
+
+// A delegated run with a thread resumes its walk there; one that starts fresh
+// walks from the first step and leaves nothing stored behind it.
+func TestADispatchedRunEntersTheMachine(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.session = nil
+	sys := "persona"
+	tools := []AgentToolDef{{Tool: Tool{Name: "web_search"}}}
+	thread := &ChatSession{ID: "external-dispatch:u:a1", AgentID: "a1"}
+	m := turn.enterDispatchMachine(thread, true, "hello", &sys, &tools, "delegation")
+	if !m.on || m.Name() != "answer" {
+		t.Fatalf("the delegated agent should run its machine, got on=%v step=%q", m.on, m.Name())
+	}
+	if sys == "persona" {
+		t.Error("the step's block should be added to the prompt")
+	}
+	if _, stored := loadChatSession(turn.udb, "a1", thread.ID); stored {
+		t.Error("a run that starts fresh must not leave its machine position stored")
+	}
+	if turn.machineToolFilter() == nil {
+		t.Error("a running machine keeps its deny in force")
+	}
+}
+
+// Two agents whose machines delegate to each other would never stop: past the
+// limit the agent answers plainly, and says so.
+func TestMachineDelegationIsBounded(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	ctx := context.Background()
+	for i := 0; i <= maxMachineDelegation; i++ {
+		ctx = withMachineDelegation(ctx)
+	}
+	turn.ctx = ctx
+	if m := turn.enterMachine("hello"); m.on {
+		t.Fatal("past the delegation limit the agent should run without its machine")
+	}
+	turn.ctx = withMachineDelegation(context.Background())
+	if m := turn.enterMachine("hello"); !m.on {
+		t.Error("one delegation deep is the ordinary router-to-agent case and must still run the machine")
 	}
 }

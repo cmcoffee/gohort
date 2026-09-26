@@ -133,6 +133,10 @@ type chatTurn struct {
 	// and without somewhere to keep the cursor the agent's machine never ran
 	// there at all. See cursorThread.
 	machineThread *ChatSession
+	// machineEphemeral marks a machineThread that is never stored: a run that
+	// starts fresh each time (a delegation, a scheduled fire) walks from the
+	// first step and keeps no position between runs. See saveCursorThread.
+	machineEphemeral bool
 	// machineTrace is what the machine did with this turn's message before the
 	// model saw it: one Framework record per step it ran (the router's
 	// decision, a delegate's answer). Stored with the reply's tool runs so a
