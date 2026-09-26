@@ -499,6 +499,7 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	sess.Detach = t.detachLedger()
 	sess.DeniedCredentials = credentialDenySet(t.agent, sess.Username)
 	sess.DirectCredentialRefusal = directCredentialRefusal(t.agent, sess)
+	sess.ToolFailureAdvice = toolFailureAdvice(t.agent, t.sse != nil, func() bool { return nonOwnerRequester(t.ctx) })
 	// Tag with the active chat session id so SaveSessionTempTool /
 	// LoadSessionTempTools can scope tool drafts to this conversation.
 	// Tools the LLM authors mid-conversation (via create_pipeline_tool

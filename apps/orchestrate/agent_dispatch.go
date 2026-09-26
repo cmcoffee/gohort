@@ -670,6 +670,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		DeniedCredentials: credentialDenySet(target, runtimeUser),
 	}
 	subSess.DirectCredentialRefusal = directCredentialRefusal(target, subSess)
+	subSess.ToolFailureAdvice = toolFailureAdvice(target, false, func() bool { return nonOwnerRequester(ctx) })
 	// Inherit the delegator's workspace when there is one — the sub-agent is
 	// producing something its parent will read — and otherwise run in this
 	// agent's own directory rather than the shared user root.
@@ -1536,6 +1537,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		DeniedCredentials:  credentialDenySet(target, runtimeUser),
 	}
 	subSess.DirectCredentialRefusal = directCredentialRefusal(target, subSess)
+	subSess.ToolFailureAdvice = toolFailureAdvice(target, false, func() bool { return nonOwnerRequester(ctx) })
 	// Inherit the delegator's workspace when there is one — the sub-agent is
 	// producing something its parent will read — and otherwise run in this
 	// agent's own directory rather than the shared user root.

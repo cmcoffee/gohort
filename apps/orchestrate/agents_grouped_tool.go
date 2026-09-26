@@ -1086,6 +1086,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		Network: t.network,
 	}
 	subSess.DirectCredentialRefusal = directCredentialRefusal(target, subSess)
+	subSess.ToolFailureAdvice = toolFailureAdvice(target, false, func() bool { return nonOwnerRequester(t.ctx) })
 
 	// The sub-agent runs WHERE ITS DELEGATOR IS RUNNING, which until now meant
 	// the shared user root — the one directory both could name.

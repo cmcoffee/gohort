@@ -637,6 +637,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		Network: fireConnector,
 	}
 	subSess.DirectCredentialRefusal = directCredentialRefusal(agent, subSess)
+	subSess.ToolFailureAdvice = toolFailureAdvice(agent, false, nil) // the owner's own automation
 
 	// The fire runs in ITS AGENT's directory, the same place the agent's own
 	// turns run, so a wake can see what the agent just made.

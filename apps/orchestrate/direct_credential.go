@@ -48,7 +48,7 @@ func directCredentialRefusal(agent AgentRecord, sess *ToolSession) func(string) 
 		} else {
 			msg += ". No tool bound to it is attached to this agent"
 		}
-		return msg + ". If none of them does what is needed, or one is failing, hand the problem to Builder (hand_to_builder, or request_build) with what you were trying to do, instead of working around the tool"
+		return msg + ". If none of them does what is needed, or one is failing, do not work around it: tell the user what you were trying to do and offer to have Builder build or fix the tool"
 	}
 }
 

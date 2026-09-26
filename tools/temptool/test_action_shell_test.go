@@ -1,6 +1,7 @@
 package temptool
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -271,5 +272,51 @@ func TestALargeValueReachesTheScriptAsAFile(t *testing.T) {
 	args = map[string]any{"summary": map[string]any{"file": "../../etc/passwd"}}
 	if _, err := passLargeArgs(tt, args, buildEnvArgs(args), sess, ws); err == nil {
 		t.Error("a file outside the workspace must be refused")
+	}
+}
+
+// A failed custom tool carries the host's advice; a clean run carries none.
+// Crashes, timeouts and server errors are severe; a bare non-zero exit or a
+// 4xx could be the caller's arguments.
+func TestAFailedToolCarriesTheHostsAdvice(t *testing.T) {
+	cases := []struct {
+		out            string
+		err            error
+		failed, severe bool
+	}{
+		{"ok", nil, false, false},
+		{"HTTP 200 OK\n{}", nil, false, false},
+		{"Traceback (most recent call last):\n boom\n[exit: exit status 1]", nil, true, true},
+		{"bad input\n[exit: exit status 2]", nil, true, false},
+		{"partial\n[TIMED OUT after 1m30s: command killed.]", nil, true, true},
+		{"HTTP 503 Service Unavailable\n{}", nil, true, true},
+		{"HTTP 400 Bad Request\n{}", nil, true, false},
+		{"", errors.New("gen.example.com did not respond within 30s (timeout)"), true, true},
+		{"", errors.New("missing required arg"), true, false},
+	}
+	for _, c := range cases {
+		if failed, severe := toolRunFailure(c.out, c.err); failed != c.failed || severe != c.severe {
+			t.Errorf("%q / %v: got failed=%v severe=%v", c.out, c.err, failed, severe)
+		}
+	}
+	var gotSevere bool
+	sess := &ToolSession{ToolFailureAdvice: func(name string, severe bool) string {
+		gotSevere = severe
+		return "ADVICE for " + name
+	}}
+	tt := &TempTool{Name: "make_song"}
+	out, err := adviseOnFailure(sess, tt, "boom\n[exit: exit status 1]", nil)
+	if err != nil || !strings.HasSuffix(out, "ADVICE for make_song") || gotSevere {
+		t.Errorf("a failed run gets the advice appended: %q %v severe=%v", out, err, gotSevere)
+	}
+	_, err = adviseOnFailure(sess, tt, "", errors.New("did not respond within 30s"))
+	if err == nil || !strings.Contains(err.Error(), "ADVICE for make_song") || !gotSevere {
+		t.Errorf("an error carries it too: %v", err)
+	}
+	if out, _ := adviseOnFailure(sess, tt, "fine", nil); out != "fine" {
+		t.Errorf("a clean run is untouched: %q", out)
+	}
+	if out, _ := adviseOnFailure(&ToolSession{}, tt, "x\n[exit: exit status 1]", nil); strings.Contains(out, "ADVICE") {
+		t.Error("with no advice hook, nothing is added")
 	}
 }

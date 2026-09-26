@@ -457,9 +457,11 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 		def.Handler = func(ctx context.Context, args map[string]any) (string, error) {
 			live := currentTempTool(sess, tt.Name)
 			if live == nil || live.Mode != TempToolModeToolbox {
-				return snapshot.RunWithSession(args, sess)
+				out, err := snapshot.RunWithSession(args, sess)
+				return adviseOnFailure(sess, tt, out, err)
 			}
-			return newToolboxGroupedTool(live).RunWithSession(args, sess)
+			out, err := newToolboxGroupedTool(live).RunWithSession(args, sess)
+			return adviseOnFailure(sess, live, out, err)
 		}
 		def.Tool.Category = tt.Category // claimed grouping label rides onto the toolbox def too
 		return def
@@ -522,7 +524,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			}
 			out, err := dispatchTempTool(sess, run, args)
 			recordCleanRun(sess, run, out, err)
-			return out, err
+			return adviseOnFailure(sess, run, out, err)
 		},
 	}
 }
@@ -563,4 +565,48 @@ func recordCleanRun(sess *ToolSession, tt *TempTool, out string, err error) {
 		return
 	}
 	RecordToolVerification(sess, tt.Name, true, "")
+}
+
+// adviseOnFailure adds the host's advice (ToolSession.ToolFailureAdvice) to a
+// custom tool's failed result: an error, a script that exited non-zero or
+// timed out, or an HTTP error status.
+func adviseOnFailure(sess *ToolSession, tt *TempTool, out string, err error) (string, error) {
+	if sess == nil || sess.ToolFailureAdvice == nil || tt == nil {
+		return out, err
+	}
+	failed, severe := toolRunFailure(out, err)
+	if !failed {
+		return out, err
+	}
+	advice := sess.ToolFailureAdvice(tt.Name, severe)
+	if advice == "" {
+		return out, err
+	}
+	if err != nil {
+		return out, fmt.Errorf("%w\n\n%s", err, advice)
+	}
+	return out + "\n\n" + advice, nil
+}
+
+// toolRunFailure reads a custom tool's result for failure, and for whether it
+// is one the caller's arguments could not have caused: a crash, a timeout, a
+// server error. A non-zero exit with no traceback, or an HTTP 4xx, can be a
+// bad argument, so it is a failure but not a severe one.
+func toolRunFailure(out string, err error) (failed, severe bool) {
+	if err != nil {
+		e := strings.ToLower(err.Error())
+		return true, strings.Contains(e, "timeout") || strings.Contains(e, "did not respond") || strings.Contains(e, "timed out")
+	}
+	switch {
+	case strings.Contains(out, "[TIMED OUT"):
+		return true, true
+	case strings.Contains(out, "Traceback (most recent call last)") && strings.Contains(out, "[exit: "):
+		return true, true
+	case strings.Contains(out, "[exit: "):
+		return true, false
+	}
+	if status, _ := splitStatusLine(out); status != "" && !isStatus2xx(status) {
+		return true, strings.HasPrefix(status, "HTTP 5")
+	}
+	return false, false
 }

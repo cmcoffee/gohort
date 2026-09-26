@@ -21,7 +21,7 @@ func TestDirectCredentialAccessIsBuildersByDefault(t *testing.T) {
 	sess.AppendTempTool(&TempTool{Name: "weather", Mode: TempToolModeAPI, Credential: "weather_api"})
 	refuse := directCredentialRefusal(AgentRecord{ID: "wren"}, sess)
 	msg := refuse("gen_api")
-	for _, want := range []string{`"gen_api"`, "Nothing was sent", "Use extract_song, generate_music", "hand_to_builder"} {
+	for _, want := range []string{`"gen_api"`, "Nothing was sent", "Use extract_song, generate_music", "offer to have Builder"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal should say %q:\n%s", want, msg)
 		}
