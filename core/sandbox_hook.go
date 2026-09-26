@@ -555,6 +555,11 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 		if credName, rerr := Secure().AutoRouteCredential(rawURL, sessUsername(h.Sess)); rerr != nil {
 			writeHookError(conn, rerr.Error())
 			return
+		} else if credName != "" && h.ToolName == "" && h.Sess.DirectCredentialRefusal != nil && h.Sess.DirectCredentialRefusal(credName) != "" {
+			// An agent's own workspace script, not an authored tool: the same
+			// rule as its fetch_url tool. An authored tool IS the bound path.
+			writeHookError(conn, "fetch refused: "+h.Sess.DirectCredentialRefusal(credName))
+			return
 		} else if credName != "" && h.Sess.CredentialDenied(credName) {
 			// Credential scope: mirror the LLM fetch_url — a covered host whose
 			// credential is denied for this agent is blocked, not routed, so a

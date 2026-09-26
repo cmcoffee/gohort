@@ -1085,6 +1085,8 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// the child's network access mid-flight as well.
 		Network: t.network,
 	}
+	subSess.DirectCredentialRefusal = directCredentialRefusal(target, subSess)
+
 	// The sub-agent runs WHERE ITS DELEGATOR IS RUNNING, which until now meant
 	// the shared user root — the one directory both could name.
 	//

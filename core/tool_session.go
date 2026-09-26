@@ -153,6 +153,16 @@ type ToolSession struct {
 	// restriction. nil-safe via CredentialDenied.
 	DeniedCredentials map[string]bool
 
+	// DirectCredentialRefusal, when set, says whether this session's agent may
+	// reach a credential by fetching its host directly: "" allows it, and a
+	// non-empty string is the refusal to return instead, naming what to use.
+	// Consulted at the fetch_url auto-route, for the LLM tool and for an
+	// agent's own workspace script (an authored tool's script is the bound
+	// path and is not asked). An agent that hit a problem with its tool used
+	// to start making direct calls through the credential, guessing at the
+	// API; the fix belongs to Builder. Nil = no restriction.
+	DirectCredentialRefusal func(credName string) string
+
 	// BundledToolNames is the set of tool names attached DIRECTLY to the
 	// running agent's record (AgentRecord.Tools) rather than authored as
 	// session drafts or approved into the user pool. The app wires it at

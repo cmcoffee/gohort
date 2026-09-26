@@ -636,6 +636,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// WorkspaceNetworkAllowed ANDs them. One of the two set is half a gate.
 		Network: fireConnector,
 	}
+	subSess.DirectCredentialRefusal = directCredentialRefusal(agent, subSess)
+
 	// The fire runs in ITS AGENT's directory, the same place the agent's own
 	// turns run, so a wake can see what the agent just made.
 	subSess.WorkspaceDir, subSess.WorkspaceFallback = agentTurnWorkspace(p.Username, agent.ID)

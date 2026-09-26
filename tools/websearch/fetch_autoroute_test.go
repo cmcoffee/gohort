@@ -60,3 +60,29 @@ func TestFetchURLRefusesASecretInTheURL(t *testing.T) {
 		t.Fatalf("a key in the URL should be refused before sending, pointing at the credential's tool: %v", err)
 	}
 }
+
+// An agent that may not reach a credential directly is refused at the
+// auto-route with what to use instead, and nothing is sent. Denied-credential
+// scope is not the only gate any more: the default is that only Builder
+// fetches a credential's API directly.
+func TestFetchURLRefusesDirectCredentialAccess(t *testing.T) {
+	secStore := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return secStore }
+	defer func() { AuthDB = prev }()
+	if err := Secure().Save(SecureCredential{
+		Name: "gen_api", Type: SecureCredBearer, BaseURL: "https://gen.example.com",
+	}, "tok"); err != nil {
+		t.Fatalf("save cred: %v", err)
+	}
+	asked := ""
+	sess := &ToolSession{Username: "alice", DirectCredentialRefusal: func(cred string) string {
+		asked = cred
+		return "use generate_music instead"
+	}}
+	tool := new(FetchURLTool)
+	_, err := tool.runImpl(map[string]any{"url": "https://gen.example.com/v1/interactions"}, sess)
+	if err == nil || !strings.Contains(err.Error(), "use generate_music instead") || asked != "gen_api" {
+		t.Fatalf("a direct fetch to a covered host should be refused with the agent's alternatives: %v (asked %q)", err, asked)
+	}
+}

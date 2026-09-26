@@ -314,6 +314,11 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 			// that covers the host. Block rather than route (or fall through
 			// anonymous, which would 401 and leak that the host is credentialed)
 			// — the scope pill's deny is authoritative here too.
+			if sess.DirectCredentialRefusal != nil {
+				if why := sess.DirectCredentialRefusal(credName); why != "" {
+					return "", fmt.Errorf("%s", why)
+				}
+			}
 			if sess.CredentialDenied(credName) {
 				return "", fmt.Errorf("this host is served by credential %q, which this agent is not allowed to use (revoked in its credential scope). Ask an admin to re-enable %q for this agent under Admin > API Credentials > Manage scope, or use a different source", credName, credName)
 			}

@@ -83,9 +83,16 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// CapNetwork, so the Private-mode filter below still drops them per
 		// turn when the agent is running network-restricted.
 		toolNames = defaultNames
-		for _, td := range Secure().BuildTools(sess) {
-			if n := td.Tool.Name; !slices.Contains(toolNames, n) {
-				toolNames = append(toolNames, n)
+		// Raw per-credential tools are Builder's by default: an agent that hit
+		// a problem with its bound tool reached for fetch_url_<cred> and started
+		// guessing at the API itself. Other agents reach a credential through
+		// the tools bound to it; an owner who wants one to have the raw tool
+		// lists it explicitly (the allow-list branch above keeps it).
+		if isBuilderAgent(t.agent.ID) {
+			for _, td := range Secure().BuildTools(sess) {
+				if n := td.Tool.Name; !slices.Contains(toolNames, n) {
+					toolNames = append(toolNames, n)
+				}
 			}
 		}
 	}
