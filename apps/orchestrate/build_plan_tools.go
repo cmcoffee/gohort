@@ -650,15 +650,77 @@ func (t *chatTurn) buildGapsFinishCheck() func(string) (string, string) {
 	return buildGapsFinishCheck(func() *BuildPlanState { return t.session.BuildPlan }, t.udb, t.session.ID, &t.gapsShown, t.sse)
 }
 
-// dispatchFinishCheck is the same check for a delegated run of an authoring
+// buildGapsNote is what an authoring turn adds when it ends with the check's
+// corrections spent and gaps still standing: a labelled line naming them, so a
+// reply calling them working does not stand alone. "" when nothing is unmet,
+// or when steps are still pending, which is not a finish.
+func buildGapsNote(plan *BuildPlanState, udb Database, sessionID string) string {
+	rep := currentBuildGaps(plan, udb, sessionID)
+	if len(rep.Skipped) > 0 || rep.empty() {
+		return ""
+	}
+	var parts []string
+	for _, u := range rep.Unverified {
+		parts = append(parts, fmt.Sprintf("%s (%s)", u.Tool, u.Reason))
+	}
+	for _, st := range rep.Blocked {
+		parts = append(parts, fmt.Sprintf("step %d, %s (blocked: %s)", st.Step, st.Title, st.Reason))
+	}
+	return "[Build check] Still not verified when this reply was written: " + strings.Join(parts, "; ") + ". Anything above that says these work is unconfirmed."
+}
+
+// buildGapsUnmet is an interactive turn's FinishUnmet: the reply has already
+// streamed, so what is still unmet goes on the turn's diagnostics trail rather
+// than into the reply, where the host would render the whole reply twice.
+func (t *chatTurn) buildGapsUnmet() func() {
+	if !agentCanAuthor(t.agent) || t.session == nil {
+		return nil
+	}
+	return func() {
+		if note := buildGapsNote(t.session.BuildPlan, t.udb, t.session.ID); note != "" {
+			t.turnDiag("build-check-unmet", note)
+		}
+	}
+}
+
+// dispatchBuildCheck is the build check for a delegated run of an authoring
 // agent, which has no plan and records its tools under its own session key.
-// Nil for an agent that does not author: it has nothing to grade.
-func dispatchFinishCheck(target AgentRecord, ts *ToolSession) func(string) (string, string) {
+// A delegated reply is relayed rather than streamed, so what is still unmet
+// is added to the reply itself. Nil for an agent that does not author, and
+// every method is safe on nil.
+type dispatchBuildCheck struct {
+	ts    *ToolSession
+	shown string
+	note  string
+}
+
+func newDispatchBuildCheck(target AgentRecord, ts *ToolSession) *dispatchBuildCheck {
 	if !agentCanAuthor(target) || ts == nil || ts.ChatSessionID == "" {
 		return nil
 	}
-	var shown string
-	return buildGapsFinishCheck(nil, ts.DB, ts.ChatSessionID, &shown, nil)
+	return &dispatchBuildCheck{ts: ts}
+}
+
+func (d *dispatchBuildCheck) finishCheck() func(string) (string, string) {
+	if d == nil {
+		return nil
+	}
+	return buildGapsFinishCheck(nil, d.ts.DB, d.ts.ChatSessionID, &d.shown, nil)
+}
+
+func (d *dispatchBuildCheck) finishUnmet() func() {
+	if d == nil {
+		return nil
+	}
+	return func() { d.note = buildGapsNote(nil, d.ts.DB, d.ts.ChatSessionID) }
+}
+
+// annotate adds what is still unmet to the reply the run hands back.
+func (d *dispatchBuildCheck) annotate(resp *Response) {
+	if d == nil || d.note == "" || resp == nil {
+		return
+	}
+	resp.Content = strings.TrimRight(resp.Content, " \n") + "\n\n" + d.note
 }
 
 // strikeReason is the line shown beside the reply the check took back.

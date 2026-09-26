@@ -760,6 +760,13 @@ type AgentLoopConfig struct {
 	// Called only while a correction is left to spend, so whatever it returns
 	// is delivered, and a host may record it as shown. Nil = no check.
 	FinishCheck func(reply string) (notice, strikeReason string)
+	// FinishUnmet is called once when the turn ends with FinishCheck's
+	// corrections spent, so the host can say what is still unmet rather than
+	// let the last reply stand alone. Observed: the check held a reply twice,
+	// and the third, "Verified & Working" over a tool whose last test had
+	// failed, went out as written. The host decides how to say it: appending to
+	// a reply that already streamed would render it twice. Nil = nothing.
+	FinishUnmet func()
 
 	// RoundToolFilter, when set, is called at the top of each round for
 	// every candidate tool name; returning false drops that tool from the

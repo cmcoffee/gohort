@@ -101,3 +101,35 @@ func TestAFinishCheckThatNeverClearsStillEndsTheTurn(t *testing.T) {
 		t.Errorf("the check should re-prompt %d times and then let the reply stand, model called %d times", maxCorrectionsPerKind, n)
 	}
 }
+
+// When the check is out of corrections and the turn ends anyway, the host hears
+// it once, so it can say what is still unmet instead of letting the last reply
+// stand alone. A check that never held anything does not call it.
+func TestAFinishCheckOutOfCorrectionsTellsTheHostOnce(t *testing.T) {
+	stub := &FakeLLM{Turns: []FakeTurn{{Content: "Verified and working.", Repeat: true}}}
+	app := &AppCore{LLM: stub, LeadLLM: stub}
+	unmet := 0
+	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds:   10,
+		FinishCheck: func(string) (string, string) { return "tool x is not verified", "" },
+		FinishUnmet: func() { unmet++ },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if unmet != 1 {
+		t.Errorf("the host should hear once that the check ran out, heard %d times", unmet)
+	}
+
+	unmet = 0
+	clean := &FakeLLM{Turns: []FakeTurn{{Content: "Done.", Repeat: true}}}
+	if _, _, err := (&AppCore{LLM: clean, LeadLLM: clean}).RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds:   10,
+		FinishCheck: func(string) (string, string) { return "", "" },
+		FinishUnmet: func() { unmet++ },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if unmet != 0 {
+		t.Error("a check that never objected has nothing unmet to report")
+	}
+}

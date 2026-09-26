@@ -163,7 +163,41 @@ func TestTheBuildCheckLeavesAnUnfinishedPlanAndAnAnsweredReportAlone(t *testing.
 	if (&chatTurn{agent: AgentRecord{ID: "plain"}, session: &ChatSession{ID: "s4"}}).buildGapsFinishCheck() != nil {
 		t.Error("an agent that does not author has no build to check")
 	}
-	if dispatchFinishCheck(AgentRecord{ID: "seed-builder"}, &ToolSession{DB: db, ChatSessionID: "s3"}) == nil {
+	if newDispatchBuildCheck(AgentRecord{ID: "seed-builder"}, &ToolSession{DB: db, ChatSessionID: "s3"}).finishCheck() == nil {
 		t.Error("a delegated Builder run is checked too")
+	}
+	var none *dispatchBuildCheck
+	if none.finishCheck() != nil || none.finishUnmet() != nil {
+		t.Error("an agent that does not author gets no check")
+	}
+	none.annotate(&Response{Content: "x"})
+}
+
+// A delegated run whose check ran out hands back a reply that says what is
+// still not verified. Observed: "Verified & Working" went back to the calling
+// agent over a tool whose last test had failed, after the check held it twice.
+func TestADelegatedReplyCarriesWhatIsStillUnverified(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	recordToolVerify(db, "d1", "extract_audio", false, "shell tool failed verification")
+	bc := newDispatchBuildCheck(AgentRecord{ID: "seed-builder"}, &ToolSession{DB: db, ChatSessionID: "d1"})
+	bc.finishUnmet()()
+	resp := &Response{Content: "Verified & Working: extract_audio.\n"}
+	bc.annotate(resp)
+	for _, want := range []string{"Verified & Working", "[Build check]", "extract_audio (shell tool failed verification)", "unconfirmed"} {
+		if !strings.Contains(resp.Content, want) {
+			t.Errorf("the relayed reply should carry %q:\n%s", want, resp.Content)
+		}
+	}
+
+	recordToolVerify(db, "d1", "extract_audio", true, "")
+	clean := newDispatchBuildCheck(AgentRecord{ID: "seed-builder"}, &ToolSession{DB: db, ChatSessionID: "d1"})
+	clean.finishUnmet()()
+	resp = &Response{Content: "Done."}
+	clean.annotate(resp)
+	if resp.Content != "Done." {
+		t.Errorf("nothing unmet, nothing added: %q", resp.Content)
+	}
+	if note := buildGapsNote(gateSession("d2", "done", "pending").BuildPlan, db, "d2"); note != "" {
+		t.Errorf("a plan still pending is not a finish: %q", note)
 	}
 }

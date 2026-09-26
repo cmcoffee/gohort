@@ -524,6 +524,8 @@ type loopRun struct {
 	// refused before it runs. See unkeptClaimCorrection for why a correction
 	// must never be what makes an agent act.
 	rewriteOnly bool
+	// finishUnmetSent keeps AgentLoopConfig.FinishUnmet to one call a turn.
+	finishUnmetSent bool
 	// groundingRetry is the pending grounding correction, judged against the
 	// next final reply; see dropRepeatedGroundingRetry.
 	groundingRetry *groundingRetry
@@ -1052,6 +1054,12 @@ func (lr *loopRun) finishCheck() loopAction {
 		return actNone
 	}
 	if !lr.corrections.available(correctionFinishCheck) || lr.round >= lr.maxRounds {
+		// Out of corrections after holding a reply at least once: the host
+		// hears it, once, and says what is still unmet in its own way.
+		if lr.corrections.spentByKind[correctionFinishCheck] > 0 && lr.cfg.FinishUnmet != nil && !lr.finishUnmetSent {
+			lr.finishUnmetSent = true
+			lr.cfg.FinishUnmet()
+		}
 		return actNone
 	}
 	notice, strike := lr.cfg.FinishCheck(lr.rs.resp.Content)

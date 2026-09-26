@@ -1358,6 +1358,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		tools = append(tools, delegatedAskUserTool(ask))
 		abortTools = []string{"ask_user"}
 	}
+	buildCheck := newDispatchBuildCheck(target, subSess)
 	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
 		TierOverride:    runPin,
 		RoundAbortTools: abortTools,
@@ -1385,7 +1386,8 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// dynamicNewTempTools surfaces tools loaded via load_tool this turn.
 		ToolFallbackResolver: subTurn.lazyToolFallback,
 		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
-		FinishCheck:          dispatchFinishCheck(target, subSess),
+		FinishCheck:          buildCheck.finishCheck(),
+		FinishUnmet:          buildCheck.finishUnmet(),
 		ChatOptions: []ChatOption{
 			WithRouteKey(runRoute),
 			WithThink(think),
@@ -1399,6 +1401,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if resp == nil {
 		return "", errors.New("agents(run): target returned no response")
 	}
+	buildCheck.annotate(resp)
 	// The waiting step hands off now it has had its turn, as on every surface.
 	subTurn.completeMachine(subTurn.machine)
 	cleanReply := strings.TrimSpace(resp.Content)

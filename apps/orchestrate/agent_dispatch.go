@@ -894,6 +894,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	}
 	subTurn.noteMountedTools(tools)
 	dispatchPin, dispatchRoute := dispatchRouting(ctx, subTurn)
+	buildCheck := newDispatchBuildCheck(target, subSess)
 	resp, syncTranscript, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
 		TierOverride: dispatchPin,
 		// A terminal-rule pre_input block refused this request outright, or a
@@ -921,7 +922,8 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		CapturePrompt:    target.CapturePrompt,
 		TurnClaimJudge:   subTurn.claimJudge(ctx),
 		PriorReports:     func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
-		FinishCheck:      dispatchFinishCheck(target, subSess),
+		FinishCheck:      buildCheck.finishCheck(),
+		FinishUnmet:      buildCheck.finishUnmet(),
 		// And whether the reply KNOWS what it asserts. This site had the claim
 		// judge and not this one — an inconsistency rather than a decision, and
 		// the kind that is invisible because the path still works: a reply here
@@ -963,6 +965,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	})
 	Log("[orchestrate.RunAgentSync] owner=%s runtime=%s target=%s msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, len(message), runErr)
+	buildCheck.annotate(resp)
 	// The turn's tool trace, read once: the commitment ledger asks whether the
 	// turn did anything, and the caller recording the run wants the trace itself.
 	toolTrace := persistedToolCallsFromTranscript(syncTranscript)
@@ -2039,7 +2042,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	loopCfg.PhantomDeliveryRefs = func(reply string) []string {
 		return phantomDeliveryRefs(subSess, reply, produced.producedKind())
 	}
-	loopCfg.FinishCheck = dispatchFinishCheck(target, subSess)
+	buildCheck := newDispatchBuildCheck(target, subSess)
+	loopCfg.FinishCheck = buildCheck.finishCheck()
+	loopCfg.FinishUnmet = buildCheck.finishUnmet()
 	// Nothing on this path shows or keeps a non-final round's prose: only the
 	// final reply is persisted (one assistant ChatMessage, below), OnStep forwards
 	// the round number and tool calls but never content, and no SettleRound folds
@@ -2070,6 +2075,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		loopCfg.RoundToolFilter = f
 	}
 	resp, transcript, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
+	buildCheck.annotate(resp)
 	// The waiting step hands off now that it has had its turn (its next), as the
 	// web turn does on the way out; change_phase may have moved it mid-turn.
 	subTurn.completeMachine(subTurn.machine)
