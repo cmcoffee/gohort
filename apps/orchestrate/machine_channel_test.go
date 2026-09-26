@@ -206,3 +206,29 @@ func TestAStepThatRepliesWithSendsTheTextItself(t *testing.T) {
 		t.Errorf("a step without reply_with runs as usual, got %q", got)
 	}
 }
+
+// A web turn stores the machine's steps ahead of the model's own calls, on
+// every path a reply can be saved by. The direct-reply path, the usual one for
+// a machine turn, stored only the model's calls, so the routing never showed.
+func TestEveryWebSavePathKeepsTheMachineSteps(t *testing.T) {
+	step := PersistedToolCall{Name: "machine_step", Label: "M: A → B", Framework: true}
+	own := PersistedToolCall{Name: "web_search"}
+	turn := &chatTurn{machineTrace: []PersistedToolCall{step}}
+	got := turn.withMachineTrace([]PersistedToolCall{own})
+	if len(got) != 2 || got[0].Name != "machine_step" || got[1].Name != "web_search" {
+		t.Fatalf("the machine's steps first, then the model's calls: %+v", got)
+	}
+	if bare := (&chatTurn{}).withMachineTrace([]PersistedToolCall{own}); len(bare) != 1 {
+		t.Errorf("no machine, no change: %+v", bare)
+	}
+	src, err := os.ReadFile("runner_http.go")
+	if err != nil {
+		t.Skip("source unavailable")
+	}
+	if n := strings.Count(string(src), "turn.withMachineTrace("); n != 3 {
+		t.Errorf("the direct-reply, question and plan save paths must all store the machine's steps; found %d", n)
+	}
+	if runner, err := os.ReadFile("runner.go"); err == nil && !strings.Contains(string(runner), "t.emitMachineTrace()") {
+		t.Error("the web turn must show the machine's steps live")
+	}
+}

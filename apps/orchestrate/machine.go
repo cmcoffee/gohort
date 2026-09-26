@@ -172,6 +172,39 @@ func machineStepTrace(def MachineDef, cur *MachineCursor, walkStart time.Time) [
 	return out
 }
 
+// withMachineTrace is a turn's stored tool records: what the machine did with
+// the message first (it ran first), then the model's own calls. Every save path
+// of a web turn goes through it; a direct reply is the common machine turn and
+// used to store only the model's calls, so the routing never reached the page.
+func (t *chatTurn) withMachineTrace(calls []PersistedToolCall) []PersistedToolCall {
+	if len(t.machineTrace) == 0 {
+		return calls
+	}
+	return append(append([]PersistedToolCall(nil), t.machineTrace...), calls...)
+}
+
+// emitMachineTrace shows the machine's steps as tool chips on the live turn, in
+// the bubble the reply streams into, so the routing is visible as it happens
+// rather than only after a reload. A no-op without a live stream (a channel
+// turn, which carries the same records on its card).
+func (t *chatTurn) emitMachineTrace() {
+	if t.sse == nil || len(t.machineTrace) == 0 {
+		return
+	}
+	msgID := t.ensureBubbleForTool()
+	for _, rec := range t.machineTrace {
+		callID := UUIDv4()
+		t.sse.Send(map[string]any{
+			"kind": "tool_call", "msg_id": msgID, "call_id": callID,
+			"name": chFirst(rec.Label, rec.Name), "args": summarizeToolArgs(rec.Args), "args_full": rec.Args,
+		})
+		t.sse.Send(map[string]any{
+			"kind": "tool_result", "msg_id": msgID, "call_id": callID,
+			"name": chFirst(rec.Label, rec.Name), "result": rec.Result,
+		})
+	}
+}
+
 // machineWalkSummary says what the machine did with this turn's message: the
 // steps it walked, or that it resumed a step the conversation was already
 // waiting in and routed nothing. The second is the one that reads as "the

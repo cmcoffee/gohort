@@ -640,7 +640,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		// persist + run background consolidation + title generation.
 		turn.emitStatus("Direct response.")
 		orphanCalls := appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), directReply)
-		finalCalls := append(orphanCalls, turn.persistedToolCalls()...)
+		finalCalls := turn.withMachineTrace(append(orphanCalls, turn.persistedToolCalls()...))
 		sess.Messages = append(sess.Messages, ChatMessage{
 			Role: "assistant", Content: directReply,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
@@ -669,7 +669,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		// plan round with the answer in context.
 		turn.emitStatus("Orchestrator asked for clarification.")
 		orphanCalls := appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), question)
-		finalCalls := append(orphanCalls, turn.persistedToolCalls()...)
+		finalCalls := turn.withMachineTrace(append(orphanCalls, turn.persistedToolCalls()...))
 		sess.Messages = append(sess.Messages, ChatMessage{
 			Role: "assistant", Content: question,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
@@ -866,7 +866,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	}
 	// What the machine did before the model saw the message, shown with the
 	// turn's own tool runs (Framework records, never replayed to the model).
-	finalCalls = append(append([]PersistedToolCall(nil), turn.machineTrace...), finalCalls...)
+	finalCalls = turn.withMachineTrace(finalCalls)
 	// Delivery backstop: the reply SAYS it sent a picture and nothing was
 	// attached. The channel path has had this for a while; chat never did, so
 	// "here's your image" with no image was a dead end here — the file sat in

@@ -271,6 +271,7 @@ func (pr *planRun) assemblePrompt() {
 	// is the most authoritative instruction in the turn. It is also
 	// byte-stable across a resident run, so it costs no cache.
 	pr.mach = t.enterMachine(pr.triggerMsg)
+	t.emitMachineTrace() // the steps it walked, as chips, before the reply streams
 	persona += pr.mach.Block()
 	// Incognito (clean-room) session: inherit NOTHING — no memory facts and no
 	// cortex standing context. A one-off with no baggage. Connected sessions
