@@ -167,3 +167,24 @@ func TestAMachineDelegationIsRecordedNotListed(t *testing.T) {
 		t.Error("the machine's delegate step no longer records the request on the delegate's cortex")
 	}
 }
+
+// A delegation names its target however the caller wrote it: "Builder",
+// "builder". The target's cortex card used to be keyed by that raw name, find
+// no agent, and be dropped, which left Builder's record empty however often it
+// was asked to build.
+func TestADelegationByNameReachesTheTargetsCortex(t *testing.T) {
+	root := depStores(t, "u")
+	app := orchRef
+	stubDelegationRunner(t, app)
+	udb := UserDB(root, "u")
+	a, _ := saveAgent(udb, AgentRecord{Name: "Builder Helper", Owner: "u", OrchestratorPrompt: "p"})
+
+	app.runApprovedDelegation(Authorization{Owner: "u", Agent: "builder helper", Brief: "wire the song API",
+		FromAgent: "lead", FromSession: "s-ask-" + UUIDv4()}, "builder helper")
+	if got := cortexLines(t, udb, a.ID); !strings.Contains(got, "Asked: wire the song API") {
+		t.Errorf("a delegation made by name should land on the target's cortex:\n%s", got)
+	}
+	if id := resolvedAgentID(udb, "u", "nobody at all"); id != "nobody at all" {
+		t.Errorf("an unknown reference comes back unchanged, got %q", id)
+	}
+}

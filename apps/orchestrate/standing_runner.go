@@ -326,6 +326,13 @@ func registerStandingRunner(app *OrchestrateApp) {
 		if udb == nil {
 			return
 		}
+		// A delegation names its target however the caller wrote it
+		// ("Builder", "builder"), and everything below is keyed by agent id: a
+		// name matched no agent, so the target's cortex card was dropped
+		// without a word and a report meant for its thread went nowhere it
+		// could be read. Resolve both to ids once, here.
+		sa.AgentID = resolvedAgentID(udb, sa.Owner, sa.AgentID)
+		sa.ReportAgentID = resolvedAgentID(udb, sa.Owner, sa.ReportAgentID)
 		body := strings.TrimSpace(rec.Raw)
 		if body == "" {
 			body = strings.TrimSpace(rec.Summary)
@@ -621,4 +628,16 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 	Log("[orchestrate.standing] user=%q fired machine %q → finished at %s after %d step(s), %d bytes out, %d cached tool call(s), %d trace entries",
 		sa.Owner, def.Name, final.Name, trace.phases(), len(out), cache.Hits(), len(trace.Steps()))
 	return StandingRunResult{Status: RunOK, Summary: strings.TrimSpace(out), Steps: trace.Steps()}
+}
+
+// resolvedAgentID turns an agent reference (id or name) into the agent's id,
+// or returns it unchanged when nothing answers to it.
+func resolvedAgentID(udb Database, owner, ref string) string {
+	if strings.TrimSpace(ref) == "" {
+		return ref
+	}
+	if a, ok := findAgentByNameOrID(udb, owner, ref); ok {
+		return a.ID
+	}
+	return ref
 }
