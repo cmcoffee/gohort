@@ -1316,6 +1316,11 @@ type ChatSession struct {
 	// answered by parsing prose without breaking the first time someone
 	// rewords a message.
 	MachineLog []PhaseHop `json:"MachineLog,omitempty"`
+	// Triage is the diagnose-first gate on a session handed to Builder: what
+	// could be at fault, and what Builder has named to fix. Editing is refused
+	// until a target is named. Nil on every other session. See
+	// builder_triage.go.
+	Triage *BuilderTriage `json:"triage,omitempty"`
 	// MachineOpening is the cursor's Opening — the words that opened the
 	// conversation, written once by the first walk. Without a persisted
 	// home the cursor was rebuilt empty every turn and the "written

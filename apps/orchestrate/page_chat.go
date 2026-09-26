@@ -164,6 +164,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 			if udb.Get(builderBriefTable, bid, &brief) {
 				udb.Unset(builderBriefTable, bid) // one-shot
 				builderBrief = brief.Text
+				// The Builder session this text arrives in claims these.
+				stageBuilderTriage(udb, brief.Text, brief.Candidates)
 			}
 		}
 	}

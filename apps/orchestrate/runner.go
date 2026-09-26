@@ -860,6 +860,11 @@ func (pr *planRun) catalogKnowTools() error {
 			// actual gohort app instead of a standalone HTML file.
 			t.appDefToolDef(),
 		)
+		// A session handed to Builder must name what it is fixing before it
+		// edits (builder_triage.go); this is how it names it.
+		if t.session != nil && t.session.Triage != nil {
+			pr.cat.knowTools = append(pr.cat.knowTools, t.chooseTargetToolDef())
+		}
 	}
 	// Mounted only when this turn can reach something to dispatch to, or the
 	// agent authors and needs to READ the fleet — see agentsToolWanted. Same

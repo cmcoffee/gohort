@@ -55,6 +55,9 @@ type builderBriefRecord struct {
 	Text          string    `json:"text"`
 	SourceAgentID string    `json:"source_agent_id"`
 	Created       time.Time `json:"created"`
+	// Candidates is what the session's trouble could be in, carried to the
+	// Builder session that receives this brief (builder_triage.go).
+	Candidates []TriageCandidate `json:"candidates,omitempty"`
 }
 
 // handleSendToBuilder stages a brief for the given session and returns
@@ -87,11 +90,13 @@ func (T *OrchestrateApp) handleSendToBuilder(w http.ResponseWriter, r *http.Requ
 		Reason string `json:"reason"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	cands := triageCandidates(agent, sess, udb, user)
 	brief := builderBriefRecord{
 		ID:            UUIDv4(),
-		Text:          buildBuilderBrief(agent, sess, body.Reason, exportForOwner(agent, user)),
+		Text:          buildBuilderBrief(agent, sess, body.Reason, exportForOwner(agent, user), cands),
 		SourceAgentID: agent.ID,
 		Created:       time.Now(),
+		Candidates:    cands,
 	}
 	udb.Set(builderBriefTable, brief.ID, brief)
 	w.Header().Set("Content-Type", "application/json")
@@ -140,7 +145,7 @@ const maxBriefTranscript = 60000
 // confident diagnosis of whichever problem it noticed first, and that is not
 // reliably the one the user cared about. An empty reason is stated as absent
 // rather than papered over, so Builder asks instead of guessing.
-func buildBuilderBrief(agent AgentRecord, sess ChatSession, reason string, forOwner bool) string {
+func buildBuilderBrief(agent AgentRecord, sess ChatSession, reason string, forOwner bool, cands []TriageCandidate) string {
 	var b strings.Builder
 	reason = strings.TrimSpace(reason)
 	if reason != "" {
@@ -155,19 +160,25 @@ func buildBuilderBrief(agent AgentRecord, sess ChatSession, reason string, forOw
 	} else {
 		b.WriteString("I was just working with one of my agents and want it improved. I have NOT told you what went wrong: read the session below, and if more than one thing could be the problem, ask me which before you change anything.\n\n")
 	}
-	fmt.Fprintf(&b, "**Agent to improve:** %s  (id: `%s`)\n", agent.Name, agent.ID)
+	fmt.Fprintf(&b, "**Agent the session was with:** %s  (id: `%s`)\n", agent.Name, agent.ID)
 	if d := strings.TrimSpace(agent.Description); d != "" {
 		fmt.Fprintf(&b, "**What it's for:** %s\n", d)
 	}
+	// The fault is not always the agent: a broken tool looks like a
+	// misbehaving agent from the chat. The candidates say where else it
+	// could be, and choose_target is how Builder commits to one.
+	if len(cands) > 0 {
+		b.WriteString("\n" + triageBriefSection(cands))
+	}
 	b.WriteString("\nPlease:\n")
-	b.WriteString("1. Pull this agent's current configuration (agents tool, action \"get\", full true) so you can see its prompt, rules, and tools before changing anything.\n")
+	b.WriteString("1. Pull the current definition of what you are fixing before changing anything: for the agent, agents(action=\"get\", full=true) for its prompt, rules and tools; for a tool, tool_def(action=\"get\"); for a pipeline or machine, its own get.\n")
 	if reason != "" {
 		b.WriteString("2. Find the behavior I described in the transcript below: the turns where it actually happened. If you cannot find it, say so rather than fixing something else.\n")
 	} else {
 		b.WriteString("2. Read the session transcript below and pinpoint where its behavior fell short of what I wanted: the spots where I had to correct, redirect, or repeat myself.\n")
 	}
-	b.WriteString("3. Write the failing case FIRST. Turn the correction into an eval case: the message that produced the bad turn is the prompt, and what I corrected it TO is the assertion. " +
-		"Use eval(action=\"list\") to find a suite that grades this agent and eval(action=\"add_case\", ...) to add it; if there is no suite yet, eval(action=\"create_suite\", target_kind=\"agent\", target=\"" + agent.ID + "\", ...).\n")
+	b.WriteString("3. Write the failing case FIRST, as an eval of what you are fixing. Turn the correction into an eval case: the message that produced the bad turn is the prompt, and what I corrected it TO is the assertion; for a tool, replay the call that went wrong with its arguments from the transcript. " +
+		"Use eval(action=\"list\") to find a suite that grades it and eval(action=\"add_case\", ...) to add it; if there is no suite yet, eval(action=\"create_suite\", target_kind=\"agent\", target=\"" + agent.ID + "\", ...) for the agent, or target_kind=\"tool\", \"pipeline\" or \"machine\" with its name for one of those.\n")
 	b.WriteString("4. Run that suite now, BEFORE you change anything: eval(action=\"run\", suite=\"<name>\", note=\"before\"). Suites run with tools stubbed, so nothing external happens. " +
 		"The case you just wrote should FAIL. If it passes, the case does not capture the problem: fix the case rather than the agent, or the score will say a bug is gone that never left.\n")
 	b.WriteString("5. Propose specific changes (prompt wording, standing rules, tools, or knowledge) that would prevent the problem, and walk me through them before you apply anything.\n")

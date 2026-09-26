@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -883,6 +884,22 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				}
 				t.dispatchCounts[key] = prior + 1
 				t.toolMu.Unlock()
+			}
+			// A handed-off session diagnoses before it edits: an authoring
+			// write is refused until choose_target names what is being fixed.
+			// Enforced here, where every call passes, because the same rule as
+			// a sentence in the brief was advice a model could skip.
+			if t.session != nil && triageBlocks(t.session.Triage, name, args) {
+				if !hidden {
+					t.sse.Send(map[string]any{
+						"kind": "activity",
+						"type": "error",
+						"id":   activityCheapID(),
+						"text": "⛔ " + callLabel + " refused (no target chosen)",
+					})
+				}
+				t.recordToolCall(toolCallRecord{Name: name, Args: args, Err: triageRefusal})
+				return "", errors.New(triageRefusal)
 			}
 			var msgID, callID string
 			if !hidden {

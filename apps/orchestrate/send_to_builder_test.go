@@ -17,6 +17,7 @@ func briefWithReason(reason string) string {
 		}},
 		reason,
 		true, // the owner: Builder cannot diagnose from the calls alone
+		nil,
 	)
 }
 

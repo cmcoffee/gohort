@@ -232,6 +232,11 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			// sessions to a document.
 			AppContext: req.AppContext,
 		}
+		// A session handed to Builder opens with the brief; the triage staged
+		// under that text makes it diagnose before it edits.
+		if isBuilderAgent(agent.ID) {
+			sess.Triage = claimBuilderTriage(udb, req.Message)
+		}
 		var err error
 		sess, err = saveChatSession(udb, sess)
 		if err != nil {

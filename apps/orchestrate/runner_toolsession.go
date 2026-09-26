@@ -42,6 +42,8 @@ func init() {
 		"tool_template", "collections", "draft_oauth_credential",
 		"draft_api_credential", "update_api_credential",
 		"store_credential_secret", "check_credential",
+		// the diagnose-first step on a session handed to Builder
+		"choose_target",
 	)
 	// The other two deferred sets, by symbol so a name added there is
 	// reserved with it.
