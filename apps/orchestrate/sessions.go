@@ -153,10 +153,12 @@ func listChatSessions(db Database, agentID string) []ChatSession {
 	var out []ChatSession
 	for _, k := range db.Keys(tbl) {
 		// Ephemeral agents(run) dispatch continuity is stored as a session
-		// keyed "dispatch:<parentSessID>:<target.ID>" so follow-ups re-thread.
-		// It's internal plumbing, not a user-facing thread; keep it out of
-		// the session rail.
-		if strings.HasPrefix(k, "dispatch:") {
+		// keyed "dispatch:<parentSessID>:<target.ID>" so follow-ups re-thread,
+		// and a machine step's delegate keeps one per (conversation, step) as
+		// "machine:<thread>:<step>". Both are internal plumbing, not threads
+		// anybody opened; the request reaches the target's cortex instead
+		// (recordMachineDelegation), and the rail keeps to real sessions.
+		if strings.HasPrefix(k, "dispatch:") || strings.HasPrefix(k, "machine:") {
 			continue
 		}
 		var s ChatSession

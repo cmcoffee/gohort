@@ -305,6 +305,7 @@ func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, re
 	if report == "" {
 		return "", Error("phase " + ph.Name + " delegated to " + label + " and got nothing back")
 	}
+	recordMachineDelegation(h.udb, target.ID, h.agentName, ph.Name, prompt, report, res.ToolCalls)
 	if len(ph.Output) == 0 {
 		// Nothing declared: the report IS the step's product, and there is
 		// nothing to decode.
@@ -317,6 +318,18 @@ func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, re
 		"\n\nRecord what it found in the fields below. Take the delegate's findings as given: "+
 		"do not re-do its work, second-guess it, or fill a field it did not address. "+
 		"A field it left unanswered is better left empty than invented.")
+}
+
+// recordMachineDelegation puts a machine step's request on the delegate's
+// cortex, the record of what reached an agent, the way an agents(run) request
+// and an approved delegation already land there. The thread it ran in stays
+// out of the session list (listChatSessions): it holds the delegate's
+// continuity, not a conversation anybody opened, and listing it filled the
+// delegate's rail with one entry per routed message.
+func recordMachineDelegation(udb Database, targetID, caller, step, prompt, report string, trace []PersistedToolCall) {
+	appendCortexObs(udb, targetID, chFirst(caller, "A machine"), cortexKindRequest,
+		"Asked in step "+step+": "+truncateObs(prompt, 200)+" "+cortexPointer(report, "answer went back to "+chFirst(caller, "the machine")),
+		trace...)
 }
 
 // runPipelinePhase runs one step THROUGH a stored pipeline.

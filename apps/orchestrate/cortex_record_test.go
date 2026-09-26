@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -130,5 +131,39 @@ func TestAPickerRefreshCarriesEveryAgentsCortex(t *testing.T) {
 	}
 	if got.Records[fresh.ID] != cortexSessionID(fresh.ID) || got.Cortex[fresh.ID] != "" {
 		t.Errorf("an agent that does not read it keeps it as a record: %+v", got)
+	}
+}
+
+// A machine step's delegation is a request that reached the delegate: it goes
+// on the delegate's cortex, and the thread it ran in stays off the session
+// list, which it had been filling with one entry per routed message.
+func TestAMachineDelegationIsRecordedNotListed(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	comedian, _ := saveAgent(db, AgentRecord{Name: "Comedian", Owner: "u", OrchestratorPrompt: "p"})
+	saveChatSession(db, ChatSession{ID: "machine:s1:ComedianDelegate", AgentID: comedian.ID,
+		Messages: []ChatMessage{{Role: "user", Content: "a joke"}, {Role: "assistant", Content: "one"}}})
+	saveChatSession(db, ChatSession{ID: "real-session", AgentID: comedian.ID, Title: "A real one",
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}}})
+	for _, s := range listChatSessions(db, comedian.ID) {
+		if strings.HasPrefix(s.ID, "machine:") {
+			t.Errorf("a machine step's thread is listed as a session: %s", s.ID)
+		}
+	}
+	if n := len(listChatSessions(db, comedian.ID)); n != 1 {
+		t.Errorf("the real session should still be listed, got %d", n)
+	}
+
+	recordMachineDelegation(db, comedian.ID, "WiWee", "ComedianDelegate", "Answer this request: tell a joke",
+		"Why did the scarecrow win an award?", []PersistedToolCall{{Name: "get_joke", Result: "a joke"}})
+	got := cortexLines(t, db, comedian.ID)
+	if !strings.Contains(got, "WiWee: Asked in step ComedianDelegate: Answer this request: tell a joke") || !strings.Contains(got, "scarecrow") {
+		t.Errorf("the delegate's cortex should record who asked, from which step, and what it answered:\n%s", got)
+	}
+	s, _ := loadChatSession(db, comedian.ID, cortexSessionID(comedian.ID))
+	if last := s.Messages[len(s.Messages)-1]; len(last.ToolCalls) != 1 || last.ToolCalls[0].Name != "get_joke" {
+		t.Errorf("the card should carry the delegate's own tool runs: %+v", last.ToolCalls)
+	}
+	if src, err := os.ReadFile("machine_host.go"); err == nil && !strings.Contains(string(src), "recordMachineDelegation(") {
+		t.Error("the machine's delegate step no longer records the request on the delegate's cortex")
 	}
 }
