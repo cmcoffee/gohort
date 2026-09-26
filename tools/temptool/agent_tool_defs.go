@@ -593,6 +593,12 @@ func adviseOnFailure(sess *ToolSession, tt *TempTool, out string, err error) (st
 // server error. A non-zero exit with no traceback, or an HTTP 4xx, can be a
 // bad argument, so it is a failure but not a severe one.
 func toolRunFailure(out string, err error) (failed, severe bool) {
+	// A provider refusing the content (the phrase the secure API puts on such
+	// a reply) is the request, not the tool: rephrasing fixes it and Builder
+	// cannot, so it is not a failure to advise on.
+	if strings.Contains(out, "REFUSED THE CONTENT") || (err != nil && strings.Contains(err.Error(), "REFUSED THE CONTENT")) {
+		return false, false
+	}
 	if err != nil {
 		e := strings.ToLower(err.Error())
 		return true, strings.Contains(e, "timeout") || strings.Contains(e, "did not respond") || strings.Contains(e, "timed out")

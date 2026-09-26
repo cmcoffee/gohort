@@ -293,6 +293,9 @@ func TestAFailedToolCarriesTheHostsAdvice(t *testing.T) {
 		{"HTTP 400 Bad Request\n{}", nil, true, false},
 		{"", errors.New("gen.example.com did not respond within 30s (timeout)"), true, true},
 		{"", errors.New("missing required arg"), true, false},
+		// A provider refusing the content is the request, not the tool.
+		{"HTTP 400 Bad Request\n[The provider REFUSED THE CONTENT of the request ...]\n{}", nil, false, false},
+		{"Error: API returned 400: [The provider REFUSED THE CONTENT ...]\n[exit: exit status 1]", nil, false, false},
 	}
 	for _, c := range cases {
 		if failed, severe := toolRunFailure(c.out, c.err); failed != c.failed || severe != c.severe {

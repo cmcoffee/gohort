@@ -401,7 +401,10 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 					if tc.Cached {
 						marker = " ♻ cached"
 					}
-					fmt.Fprintf(&b, "- 🔧 `%s(%s)`%s\n", tc.Name, argsStr, marker)
+					// A delegated call keeps its "↳ [Builder]" label, so the
+					// export says who made it; without it a sub-agent's edits
+					// read as the agent's own.
+					fmt.Fprintf(&b, "- 🔧 `%s(%s)`%s\n", chFirst(tc.Label, tc.Name), argsStr, marker)
 					if tc.Err != "" {
 						fmt.Fprintf(&b, "  ↳ ERROR: %s\n", tc.Err)
 					} else if tc.Result != "" {

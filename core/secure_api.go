@@ -718,6 +718,26 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	return nil
 }
 
+// contentRefusalMarkers are what a provider's refusal body says when it
+// declined the content of a request under a content, safety or usage policy.
+var contentRefusalMarkers = []string{
+	"prohibited", "content_blocked", "content blocked", "content_filter", "content filter",
+	"safety", "moderation", "usage policy", "use policy", "content policy",
+	"input blocked", "prompt blocked", "blocked by", "responsible ai",
+}
+
+// contentRefusal reports whether an error body is a provider declining the
+// content of a request rather than its shape.
+func contentRefusal(body []byte) bool {
+	b := strings.ToLower(string(body))
+	for _, m := range contentRefusalMarkers {
+		if strings.Contains(b, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // checkAuthCodeConfig is what an authorization_code credential needs before a
 // person can connect: the consent page to send them to, and the client they
 // consent to.
@@ -2444,7 +2464,14 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// "this service must be telnet/impossible," and ABANDONS a working HTTP
 	// credential (rebuilds as a shell tool, or blocks the user for the
 	// endpoint) instead of just fixing the path.
-	if s := resp.StatusCode; s == 400 || s == 404 || s == 405 || s == 422 {
+	if s := resp.StatusCode; (s == 400 || s == 403 || s == 422 || s == 451) && contentRefusal(bodyBytes) {
+		// The provider refused WHAT was asked, not how. The request-shape
+		// hint below told a model to "iterate the request", and it rephrased
+		// the same refused idea a dozen times while a builder rewrote a
+		// working tool. The fixed phrase REFUSED THE CONTENT is also how a
+		// custom tool's failure reader tells a refusal from a broken tool.
+		fmt.Fprintf(&sb, "[The provider REFUSED THE CONTENT of the request (a content, safety or usage policy), not its shape: the path, parameters, credential and tool are fine, and the same wording gets the same refusal. Rephrase what is being asked for. A common cause is naming a real person, artist, brand or copyrighted work to imitate: describe the style or qualities instead (\"90s West Coast G-funk\", not an artist's name). If the request itself is what the policy refuses, tell the user plainly.]\n")
+	} else if s := resp.StatusCode; s == 400 || s == 404 || s == 405 || s == 422 {
 		fmt.Fprintf(&sb, "[The server RESPONDED with HTTP %d: it is reachable and speaking HTTP, so the credential and protocol are FINE. A %d means the PATH, QUERY PARAMS, or BODY are wrong FOR THIS ENDPOINT, iterate the request: try a different path/params, copy the shape of a working sibling tool on this credential (check_credential lists them), or read the provider's HTTP-API docs. Do NOT switch this tool to shell/telnet, and do NOT ask the user to reconfigure the credential, over a 4xx.]\n", s, s)
 	}
 	if strings.Contains(ct, "json") {

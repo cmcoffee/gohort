@@ -177,6 +177,7 @@ func (t *chatTurn) persistedToolCallsFromUnlocked(from int) []PersistedToolCall 
 			Result: rec.Result,
 			Err:    rec.Err,
 			Cached: rec.Cached,
+			Label:  rec.Label,
 		})
 	}
 	return out

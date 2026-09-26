@@ -47,3 +47,24 @@ func TestABrokenToolLeadsToABuilderOffer(t *testing.T) {
 		t.Errorf("an agent that cannot reach Builder points the user there instead: %s", grounded)
 	}
 }
+
+// A call made inside another agent keeps its label through the save, and the
+// export shows it, so a sub-agent's edits do not read as the agent's own.
+func TestADelegatedCallKeepsItsLabelInTheExport(t *testing.T) {
+	turn := &chatTurn{}
+	turn.recordToolCall(toolCallRecord{Name: "tool_def", Args: map[string]any{"action": "update"}, Result: "ok", Label: "↳ [Builder] tool_def"})
+	turn.recordToolCall(toolCallRecord{Name: "web_search", Result: "ok"})
+	turn.toolMu.Lock()
+	calls := turn.persistedToolCallsFromUnlocked(0)
+	turn.toolMu.Unlock()
+	if len(calls) != 2 || calls[0].Label != "↳ [Builder] tool_def" || calls[1].Label != "" {
+		t.Fatalf("the label should survive the save: %+v", calls)
+	}
+	md := renderSessionMarkdown(AgentRecord{ID: "wren", Name: "Wren"}, ChatSession{Messages: []ChatMessage{
+		{Role: "user", Content: "fix it"},
+		{Role: "assistant", Content: "done", ToolCalls: calls},
+	}}, true)
+	if !strings.Contains(md, "`↳ [Builder] tool_def(") || !strings.Contains(md, "`web_search(") {
+		t.Errorf("the export should name who made each call:\n%s", md)
+	}
+}

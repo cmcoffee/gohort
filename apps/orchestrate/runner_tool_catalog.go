@@ -969,6 +969,9 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				}
 			}
 			rec := toolCallRecord{Name: name, Args: args, Result: out}
+			if prefix != "" {
+				rec.Label = prefix + name
+			}
 			if err != nil {
 				rec.Err = err.Error()
 				if !hidden {

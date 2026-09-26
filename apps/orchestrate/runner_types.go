@@ -687,6 +687,10 @@ type toolCallRecord struct {
 	Result string
 	Err    string // set when the original call failed
 	Cached bool   // true when the wrapper returned a cached body (no fresh dispatch)
+	// Label is the call as shown when it ran inside another agent or a step
+	// ("↳ [Builder] tool_def"); empty for the agent's own calls. Kept so the
+	// saved transcript and its export say who made the call.
+	Label string
 }
 
 // isNetworkTool reports whether a registered ChatTool contacts the

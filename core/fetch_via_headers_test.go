@@ -178,3 +178,30 @@ func TestATimeoutSaysToRaiseTheWait(t *testing.T) {
 		t.Error("the old advice to keep retrying is gone")
 	}
 }
+
+// A provider refusing the content gets its own hint: rephrase what is asked,
+// not the request's shape. The shape hint told a model to "iterate the
+// request", and it rephrased a refused idea a dozen times.
+func TestAContentRefusalIsNotAShapeError(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	if err := s.Save(SecureCredential{Name: "gen", Type: SecureCredNone, BaseURL: srv.URL}, ""); err != nil {
+		t.Fatal(err)
+	}
+	body = `{"error":{"code":"prohibited_content","message":"Input blocked: the prompt contains sensitive words"}}`
+	out, _ := s.DispatchToolCallArgs(nil, "gen", map[string]any{"url": srv.URL + "/gen", "method": "POST", "body": "{}"})
+	if !strings.Contains(out, "REFUSED THE CONTENT") || !strings.Contains(out, "describe the style") || strings.Contains(out, "PATH, QUERY PARAMS") {
+		t.Errorf("a content refusal should get the rephrase hint, not the shape hint:\n%s", out)
+	}
+	body = `{"error":{"message":"Unknown name \"input\": Cannot find field."}}`
+	out, _ = s.DispatchToolCallArgs(nil, "gen", map[string]any{"url": srv.URL + "/gen", "method": "POST", "body": "{}"})
+	if strings.Contains(out, "REFUSED THE CONTENT") || !strings.Contains(out, "PATH, QUERY PARAMS") {
+		t.Errorf("a real shape error keeps the shape hint:\n%s", out)
+	}
+}
