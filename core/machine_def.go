@@ -748,6 +748,12 @@ func (d MachineDef) Advice() []string {
 			out = append(out, promptFormatAdvice(name))
 		}
 	}
+	settles, router := d.routesOnce()
+	for i, name := range settles {
+		out = append(out, "step "+name+": "+router[i]+" decides only on a conversation's first message. Once a message lands here it stays "+
+			"(no next, no guard), so every later message goes straight to "+name+" without being routed. That is right for a conversation "+
+			"that settles; if every message should be routed, set "+name+"'s next to "+d.StartPhase()+".")
+	}
 	for _, name := range d.unreachablePhases() {
 		out = append(out, "step "+name+": no step leads here, so it runs only if the model moves the conversation mid-turn. "+
 			"If a step is meant to hand off to it, list it in that step's choices, or make it that step's next.")
@@ -772,27 +778,56 @@ func (d MachineDef) unreachablePhases() []string {
 	if _, ok := d.Phase(start); !ok {
 		return nil // Problems reports a missing start
 	}
-	reached := map[string]bool{start: true}
-	queue := []string{start}
+	reached, open := d.reachableFrom(start)
+	if open {
+		return nil
+	}
+	var out []string
+	for _, p := range d.Phases {
+		if name := strings.TrimSpace(p.Name); name != "" && !reached[name] {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// phaseTargets is where a step's own wiring can send the conversation: its
+// next, its choices, its declared exits, its guard's target, and the values a
+// routing field may take. open is true for a routing field with no fixed set
+// of values, which may name any step.
+func (d MachineDef) phaseTargets(p MachinePhase) (targets []string, open bool) {
+	targets = append([]string{p.Next}, p.Choices...)
+	targets = append(targets, p.ExitsTo...)
+	if strings.TrimSpace(p.Guard) != "" {
+		targets = append(targets, chooseStr(strings.TrimSpace(p.GuardTo), d.StartPhase()))
+	}
+	if from := strings.TrimSpace(p.NextFrom); from != "" {
+		var enum []string
+		for _, f := range p.Output {
+			if f.Name == from {
+				enum = f.Enum
+			}
+		}
+		if len(enum) == 0 {
+			return targets, true
+		}
+		targets = append(targets, enum...)
+	}
+	return targets, false
+}
+
+// reachableFrom is every step the wiring can lead to from one step, that step
+// included. open reports a routing field that may name any step, where the
+// answer is "all of them" and a caller judging reachability should say nothing.
+func (d MachineDef) reachableFrom(from string) (reached map[string]bool, open bool) {
+	reached = map[string]bool{from: true}
+	queue := []string{from}
 	for len(queue) > 0 {
 		p, _ := d.Phase(queue[0])
 		queue = queue[1:]
-		targets := append([]string{p.Next}, p.Choices...)
-		targets = append(targets, p.ExitsTo...)
-		if strings.TrimSpace(p.Guard) != "" {
-			targets = append(targets, chooseStr(strings.TrimSpace(p.GuardTo), start))
-		}
-		if from := strings.TrimSpace(p.NextFrom); from != "" {
-			var enum []string
-			for _, f := range p.Output {
-				if f.Name == from {
-					enum = f.Enum
-				}
-			}
-			if len(enum) == 0 {
-				return nil
-			}
-			targets = append(targets, enum...)
+		targets, anywhere := d.phaseTargets(p)
+		if anywhere {
+			open = true
 		}
 		for _, t := range targets {
 			t = strings.TrimSpace(t)
@@ -802,13 +837,39 @@ func (d MachineDef) unreachablePhases() []string {
 			}
 		}
 	}
-	var out []string
-	for _, p := range d.Phases {
-		if name := strings.TrimSpace(p.Name); name != "" && !reached[name] {
-			out = append(out, name)
+	return reached, open
+}
+
+// routesOnce finds each step the conversation settles in after a router
+// decided how to get there: a waiting step with no next and no guard that a
+// deciding step (choices or next_from) leads to. Such a machine routes the
+// FIRST message of a conversation and then answers every later one from
+// wherever that first decision parked it, which is right for a conversation
+// that settles into a frame and wrong for a router meant to judge each
+// message. Both are real designs, so this is advice naming the fix, not a
+// problem. Returns the waiting step and the router that leads to it.
+func (d MachineDef) routesOnce() (settles, router []string) {
+	if d.Unattended {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	for _, r := range d.Phases {
+		if r.Resident || (len(r.Choices) == 0 && strings.TrimSpace(r.NextFrom) == "") {
+			continue
+		}
+		reached, _ := d.reachableFrom(r.Name)
+		for _, p := range d.Phases {
+			name := strings.TrimSpace(p.Name)
+			if !reached[name] || seen[name] || !p.Resident ||
+				strings.TrimSpace(p.Next) != "" || strings.TrimSpace(p.Guard) != "" {
+				continue
+			}
+			seen[name] = true
+			settles = append(settles, name)
+			router = append(router, strings.TrimSpace(r.Name))
 		}
 	}
-	return out
+	return settles, router
 }
 
 // promptFormatAdvice is the one finding whose fix is PROSE: everything

@@ -76,6 +76,7 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 		return turnMachine{}
 	}
 	cur := &MachineCursor{Phase: thread.Phase, State: thread.MachineState, Log: thread.MachineLog, Opening: thread.MachineOpening}
+	parkedIn, walkStart := thread.Phase, time.Now()
 	ph, err := t.app.AdvanceMachine(t.ctx, def, cur, t.machineTurn(userMsg), t.phaseRunner(), t.turnDiag)
 	if err != nil {
 		// A machine that cannot produce a phase must not cost the user
@@ -86,9 +87,37 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 		return turnMachine{}
 	}
 	t.persistCursor(cur)
+	Log("[orchestrate.machine] agent=%s machine=%q: %s", t.agent.ID, def.Name, machineWalkSummary(parkedIn, ph.Name, cur.Log, walkStart))
 	t.machine = turnMachine{def: def, phase: ph, state: cur.State, on: true,
 		vars: PhaseVars{MachineTurn: t.machineTurn(""), Opening: cur.Opening}}
 	return t.machine
+}
+
+// machineWalkSummary says what the machine did with this turn's message: the
+// steps it walked, or that it resumed a step the conversation was already
+// waiting in and routed nothing. The second is the one that reads as "the
+// machine was bypassed" from a log that only names the step a turn ended in,
+// so it says so in words. hops are the cursor's log; only those recorded since
+// walkStart belong to this turn.
+func machineWalkSummary(parkedIn, landed string, hops []PhaseHop, walkStart time.Time) string {
+	var path []string
+	for _, h := range hops {
+		if h.At.Before(walkStart) {
+			continue
+		}
+		if len(path) == 0 {
+			path = append(path, h.From)
+		}
+		path = append(path, h.To)
+	}
+	switch {
+	case len(path) > 0:
+		return "walked " + strings.Join(path, " → ") + " (" + landed + " answers)"
+	case strings.TrimSpace(parkedIn) == "":
+		return "started in " + landed + ", a step that waits: nothing to route"
+	default:
+		return "resumed in " + landed + ", a step the conversation was already waiting in: nothing was routed this turn"
+	}
 }
 
 // hasMachineExit reports whether change_phase is worth offering: a

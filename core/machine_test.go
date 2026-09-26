@@ -1616,3 +1616,53 @@ func TestAdviceNamesStepsNothingLeadsTo(t *testing.T) {
 		t.Fatalf("an open routing field should report nothing, got %q", got)
 	}
 }
+
+// A router that parks the conversation in a waiting step with no way out
+// routes only the first message; the advice names the step and the fix.
+func TestAdviceNamesARouterThatDecidesOnce(t *testing.T) {
+	once := func(d MachineDef) string {
+		var hits []string
+		for _, a := range d.Advice() {
+			if strings.Contains(a, "decides only on a conversation's first message") {
+				hits = append(hits, strings.SplitN(strings.TrimPrefix(a, "step "), ":", 2)[0])
+			}
+		}
+		return strings.Join(hits, ",")
+	}
+	parked := MachineDef{Name: "m", Start: "Router", Phases: []MachinePhase{
+		{Name: "Router", Next: "Decide"},
+		{Name: "Decide", Choices: []string{"Delegate", "Direct"}},
+		{Name: "Delegate", Agent: "Comedian", Next: "Report"},
+		{Name: "Direct", Resident: true},
+		{Name: "Report", Resident: true},
+	}}
+	if got := once(parked); got != "Direct,Report" {
+		t.Fatalf("both waiting steps park the conversation, got %q", got)
+	}
+	for _, a := range parked.Advice() {
+		if strings.HasPrefix(a, "step Direct:") && !strings.Contains(a, "set Direct's next to Router") {
+			t.Errorf("the advice should name the fix: %s", a)
+		}
+	}
+
+	looping := parked
+	looping.Phases = append([]MachinePhase(nil), parked.Phases...)
+	looping.Phases[3].Next = "Router"
+	looping.Phases[4].Next = "Router"
+	if got := once(looping); got != "" {
+		t.Errorf("waiting steps that hand back to the router route every message, got %q", got)
+	}
+
+	guarded := parked
+	guarded.Phases = append([]MachinePhase(nil), parked.Phases...)
+	guarded.Phases[3].Guard = "a new request arrived"
+	if got := once(guarded); got != "Report" {
+		t.Errorf("a guard is a way out, so only Report should be named, got %q", got)
+	}
+
+	// No router at all: a plain conversation that settles is not advice.
+	plain := MachineDef{Name: "m", Phases: []MachinePhase{{Name: "intake", Next: "answer"}, {Name: "answer", Resident: true}}}
+	if got := once(plain); got != "" {
+		t.Errorf("no deciding step, nothing to say, got %q", got)
+	}
+}

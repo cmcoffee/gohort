@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -87,5 +88,26 @@ func TestTheChannelPathRunsTheMachine(t *testing.T) {
 		if !strings.Contains(string(src), call) {
 			t.Errorf("agent_dispatch.go no longer calls %s: an agent's machine would stop running for channel messages", call)
 		}
+	}
+}
+
+// The log line says what the machine did with the message, so a turn that
+// resumed a parked step reads as that rather than as the machine being skipped.
+func TestTheMachineLogSaysWhetherItRouted(t *testing.T) {
+	start := time.Now()
+	earlier := start.Add(-time.Hour)
+	hops := []PhaseHop{
+		{From: "Router", To: "Direct", At: earlier}, // a previous turn's walk
+		{From: "Router", To: "Decide", At: start},
+		{From: "Decide", To: "Direct", At: start.Add(time.Millisecond)},
+	}
+	if got := machineWalkSummary("Direct", "Direct", hops, start); got != "walked Router → Decide → Direct (Direct answers)" {
+		t.Errorf("a routed turn should name its path, got %q", got)
+	}
+	if got := machineWalkSummary("Direct", "Direct", hops[:1], start); !strings.Contains(got, "resumed in Direct") || !strings.Contains(got, "nothing was routed") {
+		t.Errorf("a parked turn should say nothing was routed, got %q", got)
+	}
+	if got := machineWalkSummary("", "answer", nil, start); !strings.HasPrefix(got, "started in answer") {
+		t.Errorf("a first turn that starts in a waiting step should say so, got %q", got)
 	}
 }
