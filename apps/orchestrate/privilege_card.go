@@ -147,7 +147,7 @@ func classifyPrivilegeTool(sess *ToolSession, name string, tt *TempTool) (string
 			return "credential: " + strings.TrimSpace(tt.Credential), credentialAlwaysConfirms(owner, tt.Credential)
 		case tt.RawNetwork:
 			return "raw network", false
-		case temptool.NeedsConfirm(tt):
+		case temptool.NeedsConfirm(tt, owner):
 			return "consequential", false
 		default:
 			return "read-only", false

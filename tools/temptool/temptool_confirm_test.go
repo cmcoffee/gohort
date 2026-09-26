@@ -59,3 +59,26 @@ func TestTempToolNeedsConfirmCredentialTier(t *testing.T) {
 		t.Fatal("RawNetwork must gate even with a quiet credential")
 	}
 }
+
+// A tool on the user's OWN credential takes that credential's tier. Only global
+// credentials were looked at, so it was never found, failed closed, and asked
+// before every call; test would not live-probe it either.
+func TestAToolOnAUsersOwnCredentialTakesItsTier(t *testing.T) {
+	prev := AuthDB
+	AuthDB = func() Database { return &DBase{Store: kvlite.MemStore()} }
+	defer func() { AuthDB = prev }()
+	if err := Secure().Save(SecureCredential{Name: "own_gen", Owner: "alice", Type: SecureCredBearer,
+		BaseURL: "https://gen.example.com"}, "tok"); err != nil {
+		t.Fatalf("save own cred: %v", err)
+	}
+	tt := &TempTool{Mode: TempToolModeAPI, Credential: "own_gen"}
+	if tempToolNeedsConfirm(tt, "alice") {
+		t.Error("the owner's quiet credential should let the tool run unattended")
+	}
+	if !tempToolNeedsConfirm(tt, "bob") || !tempToolNeedsConfirm(tt) {
+		t.Error("for anyone else, or with no user, the credential is not theirs to resolve: fail closed")
+	}
+	if !NeedsConfirm(tt) || NeedsConfirm(tt, "alice") {
+		t.Error("the exported form takes the user the same way")
+	}
+}

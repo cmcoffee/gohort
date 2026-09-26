@@ -50,6 +50,21 @@ func createPipelineGrouped(args map[string]any, sess *ToolSession) (string, erro
 	if len(inner) == 0 {
 		return "", fmt.Errorf("pipeline_tools must list at least one inner tool name")
 	}
+	// Every inner tool must be one the pipeline can actually call. A pipeline
+	// naming a tool it cannot reach used to save, report itself registered,
+	// and fail on its first run.
+	var unreachable []string
+	for _, n := range inner {
+		if n == name {
+			return "", fmt.Errorf("pipeline_tools lists %q, the pipeline itself: a pipeline cannot call itself", n)
+		}
+		if !pipelineToolReachable(sess, n) {
+			unreachable = append(unreachable, n)
+		}
+	}
+	if len(unreachable) > 0 {
+		return "", fmt.Errorf("pipeline_tools names %v, which this pipeline cannot call: no custom tool or catalog tool has that name. Create the tool first, or fix the name (action=\"list\" shows your tools)", unreachable)
+	}
 	if len(steps) > 0 {
 		allowed := map[string]bool{}
 		for _, n := range inner {

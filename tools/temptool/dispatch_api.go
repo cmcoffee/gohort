@@ -13,7 +13,14 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// fullBodyArg marks an api call whose response feeds another tool rather than a
+// model (a pipeline step), so it reads the whole body under the piped cap.
+// Underscored like the other internal keys so no declared param collides.
+const fullBodyArg = "__full_body"
+
 func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	fullBody, _ := args[fullBodyArg].(bool)
+	delete(args, fullBodyArg)
 	if sess.DB == nil {
 		return "", fmt.Errorf("api tool %q requires a session with DB access", tt.Name)
 	}
@@ -132,7 +139,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		raw, err = Secure().DispatchToolCallRequest(sess, ToolCallRequest{
 			Credential: tt.Credential, URL: urlStr, Method: method, Body: body,
 			ContentType: tt.ContentType, Headers: tt.Headers,
-			PipeFollowing: tt.ResponsePipe != "" || tt.ResponseExtract != nil,
+			PipeFollowing: tt.ResponsePipe != "" || tt.ResponseExtract != nil || fullBody,
 			TimeoutSecs:   tt.TimeoutSec,
 		})
 	}

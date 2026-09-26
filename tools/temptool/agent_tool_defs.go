@@ -209,7 +209,7 @@ func perActionToolDef(sess *ToolSession, tt *TempTool, act TempToolAction) Agent
 		// Same tier resolution as the collapsed group: the credential's
 		// Require-confirm toggle decides, not a blanket true — an expanded
 		// action must not be stricter than the toolbox it came from.
-		NeedsConfirm: tempToolNeedsConfirm(tt),
+		NeedsConfirm: tempToolNeedsConfirm(tt, sessUser(sess)),
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			a2 := make(map[string]any, len(args)+1)
 			for k, v := range args {
@@ -347,9 +347,13 @@ func capsSubset(want, have []Capability) bool {
 // runs — the inline privileges card names which of an agent's tools will stop
 // and ask on an unattended fire, and it has to agree with the gate exactly or
 // it teaches the user something false.
-func NeedsConfirm(tt *TempTool) bool { return tempToolNeedsConfirm(tt) }
+func NeedsConfirm(tt *TempTool, user ...string) bool { return tempToolNeedsConfirm(tt, user...) }
 
-func tempToolNeedsConfirm(tt *TempTool) bool {
+// tempToolNeedsConfirm is the rule described above. user, when given, is the session's user, whose OWN credentials the tool's
+// credential is resolved among first. Only global credentials were ever
+// looked at, so a tool on a user's own credential could not be found, failed
+// closed, and asked before every call whatever the credential said.
+func tempToolNeedsConfirm(tt *TempTool, user ...string) bool {
 	if tt == nil {
 		return true
 	}
@@ -373,7 +377,11 @@ func tempToolNeedsConfirm(tt *TempTool) bool {
 		}
 	}
 	if cred := strings.TrimSpace(tt.Credential); cred != "" {
-		if c, ok := Secure().Load(cred); ok {
+		owner := ""
+		if len(user) > 0 {
+			owner = user[0]
+		}
+		if c, ok := Secure().Resolve(cred, owner); ok {
 			return c.RequiresConfirm
 		}
 		return true // credential named but not resolvable — fail closed
@@ -450,6 +458,16 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 	// Caps depend on execution mode (see tempToolCaps). The AllowedCaps
 	// filter then hides the tool from sessions that don't grant the tier.
 	caps := tempToolCaps(tt)
+	needsConfirm := tempToolNeedsConfirm(tt, sessUser(sess))
+	if tt.Mode == TempToolModePipeline {
+		inner, confirm := pipelineInnerProfile(sess, tt, 0)
+		for _, c := range inner {
+			if !capsSubset([]Capability{c}, caps) {
+				caps = append(caps, c)
+			}
+		}
+		needsConfirm = needsConfirm || confirm
+	}
 	// Same provenance-neutral rule as the toolbox suffix above: persistent
 	// pool tools flow through here too, so no "defined this session" claim.
 	descSuffix := " (custom shell tool: manage via tool_def)"
@@ -473,7 +491,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 		// — matching how the interactive orchestrate path already treats it
 		// (its confirm hook only gates credentialed tools), so an unattended
 		// scheduled fire doesn't queue an approval for every benign tool call.
-		NeedsConfirm: tempToolNeedsConfirm(tt),
+		NeedsConfirm: needsConfirm,
 		// Live-resolve on dispatch — same staleness fix as the toolbox path
 		// above, generalized to api/shell/pipeline tools. An agent-OWNED
 		// temp tool is pinned into the static catalog and skipped by the
@@ -498,4 +516,12 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			return dispatchTempTool(sess, tt, args)
 		},
 	}
+}
+
+// sessUser is the session's user, "" without a session.
+func sessUser(sess *ToolSession) string {
+	if sess == nil {
+		return ""
+	}
+	return sess.Username
 }

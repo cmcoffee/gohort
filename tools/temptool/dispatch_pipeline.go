@@ -124,16 +124,18 @@ func dispatchPipelineStepsTempTool(sess *ToolSession, tt *TempTool, args map[str
 		for k, v := range step.Args {
 			resolved[k] = resolvePipelineArg(v, args, rawOutputs, jsonOutputs, nameIndex)
 		}
-		// Dispatch the tool. The lookup goes through the session-
-		// aware helper so session-scoped temp tools (drafts, inner
-		// pipelines) are reachable.
-		defs, err := GetAgentToolsWithSession(sess, toolName)
-		if err != nil || len(defs) == 0 {
+		def, custom, err := pipelineStepTool(sess, toolName)
+		if err != nil {
 			return "", fmt.Errorf("step %d: tool %q not found in catalog: %v", stepNum, toolName, err)
+		}
+		// A step's output feeds the next step, not a model, so an api step
+		// reads the whole body rather than the cap meant for a model's context.
+		if custom != nil && (custom.Mode == TempToolModeAPI || custom.Mode == TempToolModeToolbox) {
+			resolved[fullBodyArg] = true
 		}
 		// The session's context: a step pipeline runs N tools in sequence, and
 		// a Stop pressed during step 2 should not have to wait for steps 3..N.
-		out, err := defs[0].Handler(sess.Context(), resolved)
+		out, err := def.Handler(sess.Context(), resolved)
 		if err != nil {
 			Log("[temptool.pipeline_steps] tool=%q step %d (%s) FAILED: %v", tt.Name, stepNum, toolName, err)
 			return "", fmt.Errorf("step %d (%s): %v", stepNum, toolName, err)
@@ -267,4 +269,81 @@ func extractJSONPath(root any, path string) string {
 		b, _ := json.Marshal(v)
 		return string(b)
 	}
+}
+
+// pipelineStepTool resolves a pipeline step's tool: the user's own custom tool
+// of that name first (the session's copy, or its stored row), then the
+// built-in and credential catalog. Only the catalog was ever consulted, so no
+// step could call a custom tool: a two-step music pipeline failed on step 1
+// with "generate_music not found" while generate_music sat loaded in the
+// session. custom is the resolved custom tool, nil for a catalog tool.
+func pipelineStepTool(sess *ToolSession, name string) (def AgentToolDef, custom *TempTool, err error) {
+	if tt := currentTempTool(sess, name); tt != nil {
+		return agentToolFromTemp(sess, tt), tt, nil
+	}
+	defs, err := GetAgentToolsWithSession(sess, name)
+	if err != nil {
+		return AgentToolDef{}, nil, err
+	}
+	if len(defs) == 0 {
+		return AgentToolDef{}, nil, fmt.Errorf("tool %q is not available here", name)
+	}
+	return defs[0], nil, nil
+}
+
+// maxPipelineNesting bounds how deep pipeline-in-pipeline profiling goes. A
+// cycle, or nesting past it, is treated as needing confirmation.
+const maxPipelineNesting = 3
+
+// pipelineInnerProfile is what a pipeline's tools can do, so the pipeline asks
+// for no less: the union of their capabilities, and whether any of them needs
+// confirmation before each call. A pipeline declared execute alone, so an
+// agent without network could reach it through one, and a tool that asks
+// before each call ran unasked as a step.
+func pipelineInnerProfile(sess *ToolSession, tt *TempTool, depth int) (caps []Capability, confirm bool) {
+	add := func(cs []Capability) {
+		for _, c := range cs {
+			if !capsSubset([]Capability{c}, caps) {
+				caps = append(caps, c)
+			}
+		}
+	}
+	for _, n := range tt.PipelineTools {
+		inner := currentTempTool(sess, n)
+		if inner == nil {
+			if defs, err := GetAgentToolsWithSession(sess, n); err == nil {
+				for _, d := range defs {
+					add(d.Tool.Caps)
+					confirm = confirm || d.NeedsConfirm
+				}
+			}
+			continue
+		}
+		if inner.Mode == TempToolModePipeline {
+			if depth >= maxPipelineNesting || inner.Name == tt.Name {
+				confirm = true
+				continue
+			}
+			c, cf := pipelineInnerProfile(sess, inner, depth+1)
+			add(c)
+			confirm = confirm || cf
+			continue
+		}
+		add(tempToolCaps(inner))
+		confirm = confirm || tempToolNeedsConfirm(inner, sessUser(sess))
+	}
+	return caps, confirm
+}
+
+// pipelineToolReachable reports whether a pipeline can call name: one of the
+// user's custom tools, or a catalog tool.
+func pipelineToolReachable(sess *ToolSession, name string) bool {
+	if currentTempTool(sess, name) != nil {
+		return true
+	}
+	if _, ok := loadExistingToolRecord(sess, name); ok {
+		return true
+	}
+	defs, err := GetAgentToolsWithSession(sess, name)
+	return err == nil && len(defs) > 0
 }

@@ -85,6 +85,14 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			defer func() { sess.BundleAuthoredToolTo = "" }()
 		}
 	}
+	// A mode is what the tool IS, and update keeps it: a request to change it
+	// was dropped without a word, so a pipeline "converted" to a shell tool
+	// came back rebuilt as the same pipeline, with a warning about a credential.
+	if want := strings.TrimSpace(StringArg(args, "mode")); want != "" {
+		if have := effectiveTempToolMode(existing); want != have {
+			return "", fmt.Errorf("update cannot change a tool's mode (%q is %s, not %s): delete it and create it again as %s, re-stating every field. Nothing was changed", name, effectiveTempToolMode(existing), want, want)
+		}
+	}
 	stage = "merge"
 	merged := tempToolToCreateArgs(existing)
 

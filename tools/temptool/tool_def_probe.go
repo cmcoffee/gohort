@@ -95,7 +95,7 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 	// lives in the agent loop's gate on the tool's OWN name, and test calls it
 	// from inside tool_def, which asks nobody. Firing it here ran a gated tool
 	// (and, on an unattended fire, one the owner had blocked) with no consent.
-	gated := tempToolNeedsConfirm(&tt)
+	gated := tempToolNeedsConfirm(&tt, sessUser(sess))
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Verification report for %q (%d endpoint(s)):\n\n", name, len(endpoints))
@@ -382,7 +382,7 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 
 	// C. The real run. Not for a tool that asks before each call: see the
 	//    same rule in testGrouped.
-	ran, gated := false, tempToolNeedsConfirm(&tt)
+	ran, gated := false, tempToolNeedsConfirm(&tt, sessUser(sess))
 	switch {
 	case gated:
 		note("tool NOT run: it asks for confirmation before each call, and test does not fire it past that. Call %s directly once with real values so the confirmation applies.", tt.Name)
