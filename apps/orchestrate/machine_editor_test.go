@@ -1877,3 +1877,53 @@ func TestTheSettingsFormCarriesRouteEachMessage(t *testing.T) {
 		t.Errorf("the form should read it back: %s", w.Body.String())
 	}
 }
+
+// "Reply with the answer from" is a picker: a step's name in the editor, its
+// {state:} template in storage, and a hand-written template kept as Custom.
+func TestReplyWithIsAStepPicker(t *testing.T) {
+	app, udb, user, def := editorFixture(t)
+	answer, _ := def.Phase("answer")
+	opts := replyWithOptions(def, answer)
+	if len(opts) != 2 || opts[0].Value != "" || opts[1].Value != "triage" {
+		t.Fatalf("nothing, then each step that passes on (not itself, not a waiting step): %+v", opts)
+	}
+
+	post := func(body string) MachinePhase {
+		t.Helper()
+		r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=answer", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		cur, _ := LoadMachineDef(udb, user, def.ID)
+		app.handleMachinePhases(w, asUser(r, user), udb, user, cur)
+		if w.Code != 200 {
+			t.Fatalf("%d %s", w.Code, w.Body.String())
+		}
+		after, _ := LoadMachineDef(udb, user, def.ID)
+		ph, _ := after.Phase("answer")
+		return ph
+	}
+	if ph := post(`{"reply_with":"triage"}`); ph.ReplyWith != "{state:triage}" {
+		t.Fatalf("picking a step should store its answer, got %q", ph.ReplyWith)
+	}
+	r := httptest.NewRequest("GET", "/api/machines/"+def.ID+"/phases?name=answer", nil)
+	w := httptest.NewRecorder()
+	cur, _ := LoadMachineDef(udb, user, def.ID)
+	app.handleMachinePhases(w, asUser(r, user), udb, user, cur)
+	if !strings.Contains(w.Body.String(), `"reply_with":"triage"`) {
+		t.Errorf("the picker should read back the step's name: %s", w.Body.String())
+	}
+	if ph := post(`{"reply_with":""}`); ph.ReplyWith != "" {
+		t.Errorf("picking nothing should clear it, got %q", ph.ReplyWith)
+	}
+
+	// A template the picker cannot express survives, offered as itself.
+	custom := "Here's one: {state:triage}"
+	if ph := post(`{"reply_with":"` + custom + `"}`); ph.ReplyWith != custom {
+		t.Fatalf("a custom template is stored as written, got %q", ph.ReplyWith)
+	}
+	cur, _ = LoadMachineDef(udb, user, def.ID)
+	answer, _ = cur.Phase("answer")
+	opts = replyWithOptions(cur, answer)
+	if last := opts[len(opts)-1]; last.Value != custom || !strings.HasPrefix(last.Label, "Custom: ") {
+		t.Errorf("a custom template should be offered as itself so the editor keeps it: %+v", opts)
+	}
+}

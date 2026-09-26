@@ -577,6 +577,53 @@ func ownFieldOptions(p MachinePhase) []ui.SelectOption {
 
 // otherPhaseOptions lists every phase except this one — for keep, which
 // names phases whose findings survive re-entry.
+// replyWithOptions is the "Reply with the answer from" picker: nothing, or a
+// step that passes on (a waiting step's reply is the conversation's, not an
+// answer to relay). A template the picker cannot express, written through
+// the machine tool, is offered as itself so opening the editor never drops it.
+func replyWithOptions(def MachineDef, self MachinePhase) []ui.SelectOption {
+	out := []ui.SelectOption{{Value: "", Label: "(nothing: the step answers from its prompt)"}}
+	for _, p := range def.Phases {
+		if p.Resident || p.Name == self.Name {
+			continue
+		}
+		label := p.Name
+		if a := strings.TrimSpace(p.Agent); a != "" {
+			label += " (" + a + ")"
+		}
+		out = append(out, ui.SelectOption{Value: p.Name, Label: label})
+	}
+	if tmpl := strings.TrimSpace(self.ReplyWith); tmpl != "" && replyWithChoice(def, tmpl) == tmpl {
+		out = append(out, ui.SelectOption{Value: tmpl, Label: "Custom: " + tmpl})
+	}
+	return out
+}
+
+// replyWithChoice is the picker value for a stored reply_with: the step's name
+// when it is exactly one step's answer, the template itself otherwise.
+func replyWithChoice(def MachineDef, tmpl string) string {
+	tmpl = strings.TrimSpace(tmpl)
+	if name, ok := strings.CutPrefix(tmpl, "{state:"); ok {
+		if name, ok = strings.CutSuffix(name, "}"); ok {
+			if _, found := def.Phase(name); found {
+				return name
+			}
+		}
+	}
+	return tmpl
+}
+
+// replyWithFromChoice turns the picker's value back into a template: a step's
+// name becomes that step's answer, anything else (empty, or a Custom template
+// left as it was) is stored as it came.
+func replyWithFromChoice(def MachineDef, choice string) string {
+	choice = strings.TrimSpace(choice)
+	if _, found := def.Phase(choice); found {
+		return "{state:" + choice + "}"
+	}
+	return choice
+}
+
 func otherPhaseOptions(def MachineDef, self string) []ui.SelectOption {
 	var out []ui.SelectOption
 	for _, p := range def.Phases {
@@ -780,11 +827,11 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 				Detail: "A step the conversation waits in replies to the PERSON, so there is no decoder to hand fields to. " +
 					"Its reply is never pinned to the blackboard either, which would paste it into every later step's prompt, forever. " +
 					"Anything later steps need has to be worked out by the step that feeds this one."},
-			ui.FormField{Field: "reply_with", Type: "textarea", Rows: 2, Label: "Reply with, no model",
-				Placeholder: "{state:ComedianDelegate}",
-				Help:        "Empty: the step answers from its prompt. Set: this IS the reply, sent as written.",
+			ui.FormField{Field: "reply_with", Type: "select", Label: "Reply with the answer from", Options: replyWithOptions(def, p),
+				Help: "Pick a step and its answer IS the reply, sent as it is with no model call. Nothing picked: this step answers from its prompt.",
 				Detail: "For a step that only passes along what an earlier step produced, such as a delegate's answer. A model asked to relay tends to rewrite it, hand it off again, or decline. " +
-					"{state:Step} is what that step produced, {input} is the message. The agent's output rules still judge it; if one stops it, or the step it names did not run this turn, the step answers from its prompt instead."},
+					"The agent's output rules still judge the answer; if one stops it, or the step picked did not run this turn, this step answers from its prompt instead. " +
+					"A template of your own (fixed words around an answer, two steps together) can be set through Builder, and shows here as Custom."},
 			ui.FormField{Field: "next", Type: "select", Label: "After one turn, go to", Options: phaseOptions(def, true),
 				Help:   "Leave it empty for the usual case: the conversation stays here.",
 				Detail: "Set it to make this a ONE-turn step: it replies once, then moves on. That is how an intake beat asks its questions and continues."},
@@ -1258,7 +1305,9 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 				writeJSON(w, map[string]any{"block": block, "note": note})
 				return
 			}
-			writeJSON(w, phaseRecord(ph))
+			rec := phaseRecord(ph)
+			rec["reply_with"] = replyWithChoice(def, ph.ReplyWith) // the picker holds a step's name
+			writeJSON(w, rec)
 			return
 		}
 		rows := make([]map[string]any, 0, len(def.Phases))
@@ -1312,6 +1361,10 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 			ph = MachinePhase{Name: target}
 		}
 		applyPhaseEdit(&ph, body)
+		// The picker posts a step's name; stored, it is that step's answer.
+		if _, sent := body["reply_with"]; sent {
+			ph.ReplyWith = replyWithFromChoice(def, ph.ReplyWith)
+		}
 		if idx >= 0 {
 			// A rename. Two names are in play, and both need care: the
 			// new one must not collide with another step (references
