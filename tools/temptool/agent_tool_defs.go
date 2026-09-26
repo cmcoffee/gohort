@@ -3,6 +3,7 @@ package temptool
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -383,6 +384,37 @@ func tempToolNeedsConfirm(tt *TempTool) bool {
 	return false
 }
 
+// currentTempTool is the record a call should run: the session's live copy,
+// unless the user's stored row of that tool has changed since the session
+// loaded it. The session reads the store once, at turn start, and an edit made
+// by ANOTHER session (a delegated Builder fixing a tool the calling agent
+// holds) only reaches that other session's copy. Observed: Builder rewrote a
+// failing script, and the agent that asked for the fix ran the old script
+// again, the same traceback from the same file, until its turn ended.
+//
+// Only a row this agent would load itself is taken: unscoped or scoped to it,
+// and not turned off, which is the rule the turn-start load applies. Callers
+// keep their capability guard, so a stored edit that needs more than the
+// catalog gated on still waits for the next turn.
+func currentTempTool(sess *ToolSession, name string) *TempTool {
+	live := sess.LookupTempTool(name)
+	if sess == nil || sess.DB == nil || sess.Username == "" {
+		return live
+	}
+	p, ok := UserToolByName(sess.DB, sess.Username, name)
+	if !ok || p.Tool.Disabled || p.Tool.BuilderOnly || p.Tool.BoundOnly {
+		return live
+	}
+	if len(p.ScopeAgents) > 0 && !p.ScopedToAgent(sess.AgentID) {
+		return live
+	}
+	if live != nil && (live.Mode != p.Tool.Mode || reflect.DeepEqual(*live, p.Tool)) {
+		return live
+	}
+	stored := p.Tool
+	return &stored
+}
+
 func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 	// Toolbox mode is structurally a GroupedTool — bundle of action-
 	// dispatched sub-endpoints. The LLM-facing schema is identical to
@@ -405,7 +437,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 		// next turn (cosmetic — the model calls the name it just authored,
 		// and both dispatch and the help action resolve against live).
 		def.Handler = func(ctx context.Context, args map[string]any) (string, error) {
-			live := sess.LookupTempTool(tt.Name)
+			live := currentTempTool(sess, tt.Name)
 			if live == nil || live.Mode != TempToolModeToolbox {
 				return snapshot.RunWithSession(args, sess)
 			}
@@ -456,7 +488,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 		// can't run an un-gated shell pipe this turn; until then the snapshot
 		// dispatches. Non-cap edits — the common case — apply immediately.
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			live := sess.LookupTempTool(tt.Name)
+			live := currentTempTool(sess, tt.Name)
 			if live == nil {
 				return dispatchTempTool(sess, tt, args)
 			}

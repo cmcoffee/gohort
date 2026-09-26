@@ -139,3 +139,47 @@ func TestToolboxDisabledActionQuarantined(t *testing.T) {
 		t.Errorf("disabled action should be unroutable, got: %v", err)
 	}
 }
+
+// An edit made by ANOTHER session reaches a session that loaded the tool
+// before it. Observed: a delegated Builder rewrote a failing script, and the
+// agent that asked for the fix ran the old one again, same traceback, same file.
+func TestAToolEditedElsewhereRunsAsEdited(t *testing.T) {
+	caller := newTestSession()
+	caller.AgentID = "wren"
+	old := TempTool{Name: "make_song", Mode: "shell", ScriptBody: "print('old')", CommandTemplate: "python3 {script}"}
+	if err := AdminPersistTempTool(caller.DB, "alice", old); err != nil {
+		t.Fatal(err)
+	}
+	loaded := old
+	if err := caller.AppendTempTool(&loaded); err != nil {
+		t.Fatal(err)
+	}
+	if got := currentTempTool(caller, "make_song"); got.ScriptBody != "print('old')" {
+		t.Fatalf("nothing changed, the session copy runs: %q", got.ScriptBody)
+	}
+
+	// Builder's session saves a new body; the caller's session copy is untouched.
+	fixed := old
+	fixed.ScriptBody = "print('new')"
+	if !UpdatePersistentTempTool(caller.DB, "alice", fixed) {
+		t.Fatal("the edit was not stored")
+	}
+	if got := currentTempTool(caller, "make_song"); got.ScriptBody != "print('new')" {
+		t.Errorf("the stored edit should run, got %q", got.ScriptBody)
+	}
+
+	// A row this agent would not load is never taken: scoped elsewhere, or off.
+	if !SetUserToolScopeAgents(caller.DB, "alice", "make_song", []string{"someone_else"}) {
+		t.Fatal("scope not set")
+	}
+	if got := currentTempTool(caller, "make_song"); got.ScriptBody != "print('old')" {
+		t.Errorf("a row scoped to another agent must not replace this agent's copy, got %q", got.ScriptBody)
+	}
+	off := fixed
+	off.Disabled = true
+	SetUserToolScopeAgents(caller.DB, "alice", "make_song", nil)
+	UpdatePersistentTempTool(caller.DB, "alice", off)
+	if got := currentTempTool(caller, "make_song"); got.ScriptBody != "print('old')" {
+		t.Errorf("a tool turned off is not picked up mid-turn, got %q", got.ScriptBody)
+	}
+}
