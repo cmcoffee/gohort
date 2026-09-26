@@ -82,9 +82,8 @@ func TestADispatchedStepThatNamesTheLeadGetsIt(t *testing.T) {
 // path that silently stops entering it, which is how each gap shipped.
 func TestEveryDispatchPathRunsTheMachine(t *testing.T) {
 	for file, want := range map[string]int{
-		"agent_dispatch.go":      2, // the continuing path (channels, wakes, handoffs) and delegations
+		"agent_dispatch.go":      2, // the continuing path (channels, handoffs) and delegations
 		"agents_grouped_tool.go": 1, // an awaited agents(run)
-		"scheduled_updates.go":   1, // a scheduled fire
 	} {
 		src, err := os.ReadFile(file)
 		if err != nil {
@@ -102,6 +101,28 @@ func TestEveryDispatchPathRunsTheMachine(t *testing.T) {
 	}
 	if src, err := os.ReadFile("agent_dispatch.go"); err == nil && !strings.Contains(string(src), "subTurn.machineTrace") {
 		t.Error("the continuing path no longer stores the machine's steps")
+	}
+}
+
+// A machine routes MESSAGES. A scheduled fire or a finished background task
+// reporting in is the framework waking the agent: run through a router, a
+// Builder's result came out as another joke and the news was lost. A monitor
+// wake, whose input is a report card, is the same on the continuing path.
+func TestWakesRunWithoutTheMachine(t *testing.T) {
+	src, err := os.ReadFile("scheduled_updates.go")
+	if err != nil {
+		t.Skip("source unavailable")
+	}
+	if strings.Contains(string(src), "enterDispatchMachine(") || strings.Contains(string(src), "machineRelay()") {
+		t.Error("a scheduled fire or task result must run as the agent itself, not through its machine")
+	}
+	disp, err := os.ReadFile("agent_dispatch.go")
+	if err != nil {
+		t.Skip("source unavailable")
+	}
+	if !strings.Contains(string(disp), `strings.TrimSpace(run.InputReportFrom) == "" {
+		subTurn.enterDispatchMachine(`) {
+		t.Error("a monitor wake on the continuing path must not enter the machine")
 	}
 }
 

@@ -1785,7 +1785,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// agent answers never saw anything that arrived by bridge. The cursor lives
 	// on this thread, so each conversation walks its own steps. Not under an
 	// app's own complete prompt, which owns the whole turn.
-	if strings.TrimSpace(run.SystemPromptOverride) == "" {
+	//
+	// Only for a MESSAGE, from a person or an agent. A wake whose input is a
+	// report card (a monitor firing) is the framework telling the agent
+	// something happened, which is not what a machine is there to route.
+	if strings.TrimSpace(run.SystemPromptOverride) == "" && strings.TrimSpace(run.InputReportFrom) == "" {
 		subTurn.enterDispatchMachine(&priorSession, false, message, &sysPrompt, &tools, chFirst(run.Kind, "continuing"))
 	}
 	// The delegated-invocation marker only signals a CONVERSATIONAL agent

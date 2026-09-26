@@ -718,12 +718,11 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// ("Let me handle this cycle.") and stops at round 1 with zero tool calls
 	// instead of planning and executing the work. Align it so a scheduled fire
 	// plans and acts like a live turn does.
+	// No machine here. A fire is the framework waking the agent (a schedule,
+	// a finished background task reporting in), not a message for a machine
+	// to route: run through a router, a Builder result became another joke and
+	// the news never reached the chat. The agent runs as itself.
 	think := resolveDispatchThink(agent)
-	// The agent's machine, from its first step on every fire: the position is
-	// not kept in the conversation the fire reports into, which is the
-	// person's own chat and must not be moved by a schedule.
-	subTurn.enterDispatchMachine(&ChatSession{ID: schedSessID, AgentID: agent.ID}, true, fireContent, &sysPrompt, &tools, "scheduled")
-	think = subTurn.machine.Think(think)
 	// Track the highest round the loop reached, so we can tell a fire that
 	// finished with budget to spare from one that consumed its whole round
 	// allowance and had to be forced to wrap up (its work is likely incomplete).
@@ -795,23 +794,18 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// stuck "running" until the sweeper's retention window.
 	defer liveRun.Complete(RunStatusFailed)
 	msgs, gDecline := subTurn.applyInputGuardrail(msgs)
-	if gDecline == "" {
-		gDecline = subTurn.machineRelay() // a relaying step's reply, sent without a model
-	}
 	// A scheduled fire reasons on the model the agent chose, as its direct
 	// chats and every dispatched run do (dispatchRouting).
 	firePin, fireRoute := dispatchRouting(ctx, subTurn)
 	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
 		TierOverride: firePin,
-		// A terminal-rule pre_input block refused this request outright, or a
-		// machine step relays an earlier step's answer: the loop delivers this
-		// text and never calls a model. Empty on every other turn.
-		PreEmptedReply:  gDecline,
-		RoundToolFilter: subTurn.machineToolFilter(),
-		SendGuardKey:    sendGuardKey,
-		SystemPrompt:    sysPrompt,
-		Tools:           tools,
-		MaxRounds:       softCap,
+		// A terminal-rule pre_input block refused this request outright: the loop
+		// delivers this text and never calls a model. Empty on every other turn.
+		PreEmptedReply: gDecline,
+		SendGuardKey:   sendGuardKey,
+		SystemPrompt:   sysPrompt,
+		Tools:          tools,
+		MaxRounds:      softCap,
 		// A fire's history is stored messages — role and content, no tool
 		// results — so the repeat guard starts every cycle knowing nothing.
 		// Keyed on the agent and the thread this schedule runs in, so what
