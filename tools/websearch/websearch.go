@@ -307,7 +307,7 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 	// Multiple-covering / disabled / secretless hosts return a precise error.
 	// Mirrors the sandbox hook's handleFetch ordering.
 	if sess != nil {
-		if credName, rerr := Secure().AutoRouteCredential(target); rerr != nil {
+		if credName, rerr := Secure().AutoRouteCredential(target, sess.Username); rerr != nil {
 			return "", rerr
 		} else if credName != "" {
 			// Credential scope: this agent may be barred from the credential

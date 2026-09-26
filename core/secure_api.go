@@ -2481,9 +2481,20 @@ func CredentialAuthGuard(rawURL string, headers map[string]any) error {
 //   - ("", nil): no credential covers the host — a genuine anonymous fetch.
 //
 // Host matching mirrors CredentialAuthGuard (BaseURL prefix).
-func (s *SecureAPI) AutoRouteCredential(rawURL string) (string, error) {
+//
+// user, when given, is the session's user: their OWN credentials are checked
+// first and win, as their namespace wins in Resolve. Only global credentials
+// were ever considered, so a script's fetch to the host of a user's own
+// credential went out with no key and came back 403, while the api tool on
+// that same credential got a 200.
+func (s *SecureAPI) AutoRouteCredential(rawURL string, user ...string) (string, error) {
 	if s == nil || !s.ready() {
 		return "", nil
+	}
+	if len(user) > 0 && strings.TrimSpace(user[0]) != "" {
+		if name, err := s.autoRouteOwn(rawURL, user[0]); name != "" || err != nil {
+			return name, err
+		}
 	}
 	var covering []string
 	for _, c := range s.List() {
@@ -2519,6 +2530,37 @@ func (s *SecureAPI) AutoRouteCredential(rawURL string) (string, error) {
 	default:
 		return "", fmt.Errorf("this host is covered by MULTIPLE credentials %v: fetch_url can't auto-pick one. Call the specific credential tool directly (fetch_url_<name>) so the right auth is used", covering)
 	}
+}
+
+// autoRouteOwn is AutoRouteCredential over one user's own credentials: the
+// name of the one that covers rawURL, an error when that cannot be done
+// cleanly, or ("", nil) when none of theirs covers it.
+func (s *SecureAPI) autoRouteOwn(rawURL, user string) (string, error) {
+	var covering []string
+	for _, c := range s.ListUser(user) {
+		if c.Secured {
+			continue // reachable only through the tools that declare it, as above
+		}
+		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+		if base != "" && (rawURL == base || strings.HasPrefix(rawURL, base+"/")) {
+			covering = append(covering, c.Name)
+		}
+	}
+	switch len(covering) {
+	case 0:
+		return "", nil
+	case 1:
+		name := covering[0]
+		_, enabled, hasSecret := s.CredentialStatusOwned(user, name)
+		if !enabled {
+			return "", fmt.Errorf("this host is covered by your credential %q, but it's DISABLED: fetch_url will not send unauthenticated to a credential-covered host. Enable it in Extensions > API credentials, then retry", name)
+		}
+		if !hasSecret {
+			return "", fmt.Errorf("this host is covered by your credential %q, but no secret is set: paste the key in Extensions > API credentials, then retry. fetch_url will not send unauthenticated to a credential-covered host", name)
+		}
+		return name, nil
+	}
+	return "", fmt.Errorf("this host is covered by MULTIPLE of your credentials %v: fetch_url can't auto-pick one. Call the specific credential tool directly (fetch_url_<name>) so the right auth is used", covering)
 }
 
 // DispatchToolCallArgs dispatches a full request-arg map (url / method / body /

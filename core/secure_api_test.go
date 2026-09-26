@@ -1734,3 +1734,38 @@ func TestCredentialToolEmptyPatternReadsAsOpen(t *testing.T) {
 		t.Fatalf("empty pattern must read as open, got %q", d)
 	}
 }
+
+// A user's OWN credential covers its host for that user's fetches. Only global
+// credentials were considered, so a script's fetch to the host of a user's own
+// credential went out with no key and came back 403, while the api tool on the
+// same credential got a 200.
+func TestAutoRouteCoversTheUsersOwnCredential(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	url := "https://gen.example.com/v1beta/interactions"
+	s.db.Set(secureAPITable, credStoreKey("alice", "gen_api"), SecureCredential{Name: "gen_api", Owner: "alice", BaseURL: "https://gen.example.com/"})
+	s.db.Set(secureAPITable, secureCredSecretKey(credStoreKey("alice", "gen_api")), "k")
+
+	if name, err := s.AutoRouteCredential(url, "alice"); name != "gen_api" || err != nil {
+		t.Fatalf("the owner's fetch should route through their credential: name=%q err=%v", name, err)
+	}
+	if name, err := s.AutoRouteCredential(url, "bob"); name != "" || err != nil {
+		t.Errorf("another user's credential covers nothing for bob: name=%q err=%v", name, err)
+	}
+	if name, err := s.AutoRouteCredential(url); name != "" || err != nil {
+		t.Errorf("with no user, only global credentials count: name=%q err=%v", name, err)
+	}
+
+	// Their own wins over a global credential on the same host.
+	s.db.Set(secureAPITable, "shared_gen", SecureCredential{Name: "shared_gen", BaseURL: "https://gen.example.com"})
+	s.db.Set(secureAPITable, secureCredSecretKey("shared_gen"), "g")
+	if name, _ := s.AutoRouteCredential(url, "alice"); name != "gen_api" {
+		t.Errorf("the user's own credential should win, got %q", name)
+	}
+
+	// A Secured own credential is never auto-routed, same as a global one.
+	s.db.Set(secureAPITable, credStoreKey("carol", "locked"), SecureCredential{Name: "locked", Owner: "carol", BaseURL: "https://locked.example.com", Secured: true})
+	s.db.Set(secureAPITable, secureCredSecretKey(credStoreKey("carol", "locked")), "k")
+	if name, err := s.AutoRouteCredential("https://locked.example.com/x", "carol"); name != "" || err != nil {
+		t.Errorf("a Secured credential is reachable only through its tools: name=%q err=%v", name, err)
+	}
+}

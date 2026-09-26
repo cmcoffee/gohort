@@ -521,7 +521,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// scoped behind a credential. Only hosts covered by NO credential fall
 	// through to the SSRF refusal.
 	if h != nil && h.Sess != nil {
-		if credName, rerr := Secure().AutoRouteCredential(rawURL); rerr != nil {
+		if credName, rerr := Secure().AutoRouteCredential(rawURL, sessUsername(h.Sess)); rerr != nil {
 			writeHookError(conn, rerr.Error())
 			return
 		} else if credName != "" && h.Sess.CredentialDenied(credName) {
