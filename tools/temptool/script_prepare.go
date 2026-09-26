@@ -376,7 +376,7 @@ func unknownGohortName(script string) string {
 			continue
 		}
 		if c := credentialToolRe.FindStringSubmatch(n); c != nil {
-			return fmt.Sprintf("script_body takes %q from the gohort module, but that is the name of a tool an agent calls, not a function a script can import: nothing provides it, and the script fails on its first run. A script calls through the credential with `from gohort import fetch_via` and `fetch_via(%q, url, method=\"POST\", body=..., headers={...})`, which returns {status, status_line, body}; add \"fetch_via:%s\" to hook_capabilities. The key is attached server-side and the script never sees it", n, c[1], c[1])
+			return fmt.Sprintf("script_body takes %q from the gohort module, but that is the name of a tool an agent calls, not a function a script can import: nothing provides it, and the script fails on its first run. From a script, the simplest route is `from gohort import fetch_url` and `fetch_url(url, method=\"POST\", body=..., headers={...})` on a URL at the credential's own host: the call goes through %q automatically, with no grant to declare. To name the credential explicitly, use `from gohort import fetch_via` and `fetch_via(%q, url, ...)` and add \"fetch_via:%s\" to hook_capabilities. Both return {status, status_line, body}, and either way the key is attached server-side and the script never sees it", n, c[1], c[1], c[1])
 		}
 		exports := make([]string, 0, len(known))
 		for k := range known {

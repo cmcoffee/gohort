@@ -52,7 +52,7 @@ func TestHookCapabilityDeclaredMatchesTheServerGate(t *testing.T) {
 // actually works from a script.
 func TestAScriptCannotImportWhatTheGohortModuleDoesNotExport(t *testing.T) {
 	why := unknownGohortName("import os\nfrom gohort import fetch_url_gemini_api\n")
-	for _, want := range []string{"fetch_url_gemini_api", `fetch_via("gemini_api"`, "fetch_via:gemini_api"} {
+	for _, want := range []string{"fetch_url_gemini_api", "from gohort import fetch_url", "no grant", `fetch_via("gemini_api"`, "fetch_via:gemini_api"} {
 		if !strings.Contains(why, want) {
 			t.Errorf("the refusal should carry %q:\n%s", want, why)
 		}
