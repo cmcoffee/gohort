@@ -2228,6 +2228,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if ask.asked() {
 		Log("[orchestrate.RunAgentSyncContinuing] %s asked the user a question through delegator=%s", target.Name, run.DelegatorAgentID)
 		cleanReply = delegatedRelay(target.Name, cleanReply)
+	} else if ask != nil && endsWithQuestionForUser(cleanReply) {
+		// Asked in prose instead of through ask_user: still the user's question.
+		Log("[orchestrate.RunAgentSyncContinuing] %s ended on a question for the user, relayed through delegator=%s", target.Name, run.DelegatorAgentID)
+		cleanReply = delegatedProseRelay(target.Name, cleanReply)
 	}
 	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap, PhantomDelivery: phantomDelivery, ToolCalls: turnToolCalls, Silenced: subSess != nil && subSess.Silenced}, nil
 }

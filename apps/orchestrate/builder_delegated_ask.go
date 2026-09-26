@@ -104,6 +104,44 @@ func delegatedAskUserTool(q *delegatedQuestion) AgentToolDef {
 	}
 }
 
+// endsWithQuestionForUser reports a delegated Builder reply that asks the user
+// something without using ask_user: it ends on a question, or it lays out
+// options (Option A / Option B, Option 1 / Option 2) and asks which. Asked in
+// prose, the question skipped the relay, and the calling agent answered it on
+// the user's behalf ("Tell him to go with Option A"). A loose match costs a
+// question the user sees; a miss costs a decision made for them.
+func endsWithQuestionForUser(reply string) bool {
+	tail := strings.TrimRight(strings.TrimSpace(reply), "*_`\"') \n\t")
+	if strings.HasSuffix(tail, "?") {
+		return true
+	}
+	lower := strings.ToLower(reply)
+	offers := (strings.Contains(lower, "option a") && strings.Contains(lower, "option b")) ||
+		(strings.Contains(lower, "option 1") && strings.Contains(lower, "option 2"))
+	if !offers {
+		return false
+	}
+	end := lower
+	if len(end) > 400 {
+		end = end[len(end)-400:]
+	}
+	for _, cue := range []string{"?", "which", "choose", "let me know", "confirm", "prefer"} {
+		if strings.Contains(end, cue) {
+			return true
+		}
+	}
+	return false
+}
+
+// delegatedProseRelay is a Builder reply that asks in prose, handed to the
+// calling agent as the question it is: the whole reply, since the options are
+// the content, and the same instruction the ask_user relay carries.
+func delegatedProseRelay(builderName, reply string) string {
+	return builderName + " replied, and it ends with a question only the user can answer:\n\n" + reply +
+		"\n\nPut this to the user as it stands, without choosing or answering for them. " +
+		"When they reply, send their answer to " + builderName + " with agents(action=\"run\") from this conversation: it picks up where it stopped."
+}
+
 // markAsDelegatedMayAsk is markAsDelegated for a run whose answer can come
 // back: the same "Brief: " tail (lastDispatchTopic reads it), with ask_user
 // offered for what only the user can settle instead of "make defaults".

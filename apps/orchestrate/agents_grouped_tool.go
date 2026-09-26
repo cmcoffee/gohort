@@ -1446,6 +1446,11 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		Log("[orchestrate.agents.run] %s asked the user a question through caller=%s", target.Name, t.agent.ID)
 		return delegatedRelay(target.Name, cleanReply), nil
 	}
+	// Asked in prose instead of through ask_user: still the user's question.
+	if ask != nil && endsWithQuestionForUser(cleanReply) {
+		Log("[orchestrate.agents.run] %s ended on a question for the user, relayed through caller=%s", target.Name, t.agent.ID)
+		return delegatedProseRelay(target.Name, cleanReply), nil
+	}
 	return fmt.Sprintf("From %s:\n\n%s", target.Name, cleanReply), nil
 }
 

@@ -93,3 +93,35 @@ func TestTheDelegatedQuestionEndsTheRun(t *testing.T) {
 		t.Errorf("the model was called %d times; the run should end at the question", n)
 	}
 }
+
+// A delegated Builder that asks in prose instead of through ask_user still asks
+// the user. Tonight's reply laid out options and the calling agent chose one
+// for the user; now it is relayed as the question it is.
+func TestABuilderQuestionAskedInProseIsStillTheUsers(t *testing.T) {
+	asks := []string{
+		"I found two ways to reach Suno.\n\nOption A: a hosted wrapper at one address.\nOption B: a self-hosted wrapper.\n\nWhich should I build against?",
+		"Which base URL do you want the credential to use?",
+		"There are two routes. Option 1 is hosted, Option 2 you run yourself. Let me know which you prefer.",
+		"Should I wire it now?**",
+	}
+	for _, r := range asks {
+		if !endsWithQuestionForUser(r) {
+			t.Errorf("should read as a question for the user: %q", r)
+		}
+	}
+	done := []string{
+		"Drafted the suno credential and built the generate tool. It is waiting for your key in Extensions.",
+		"I compared Option A with others last week; this build uses the documented endpoint.",
+	}
+	for _, r := range done {
+		if endsWithQuestionForUser(r) {
+			t.Errorf("a finished report is not a question: %q", r)
+		}
+	}
+	relay := delegatedProseRelay("Builder", asks[0])
+	for _, want := range []string{"Option A", "Option B", "without choosing or answering for them", `agents(action="run")`} {
+		if !strings.Contains(relay, want) {
+			t.Errorf("the relay should carry the whole reply and the instruction; missing %q:\n%s", want, relay)
+		}
+	}
+}
