@@ -75,10 +75,11 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			Detail: "Anything the new kind does not use stays visible while it still holds a value, so you can clear it."},
 	}
 
-	// The prompt: every kind that makes a model call.
+	// The prompt: every kind that makes a model call, a panel's question
+	// to its voices, and the input a machine stage starts its run with.
 	fields = append(fields, ui.FormField{
 		Field: "prompt", Type: "textarea", Rows: 6, Label: "Instructions",
-		ShowWhen: keepWhileSet(s.Prompt, "kind:worker|agent|fanout"),
+		ShowWhen: keepWhileSet(s.Prompt, "kind:worker|synthesize|agent|fanout|panel|machine"),
 		Help: "The METHOD, not the shape of the answer. Declared fields below already say what to produce. " +
 			"Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}" +
 			chIf(kind == string(StageFanout), ", and {item} for the element this branch got", "") + ".",
@@ -114,6 +115,15 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			Options:  append([]ui.SelectOption{{Value: "", Label: "(none)"}}, cat.tools...),
 			Help:     "Called directly with the arguments you write.",
 			Detail:   "For computation rather than judgement: arithmetic, dedup, one specific API call."},
+		ui.FormField{Field: "args", Type: "rows", Label: "Arguments",
+			ShowWhen: keepWhileMap(s.Args, "kind:tool"),
+			Columns: []ui.FormField{
+				{Field: "name", Type: "text", Label: "Name", Width: 4, Placeholder: "e.g. url"},
+				{Field: "value", Type: "text", Label: "Value", Width: 8, Placeholder: "e.g. {stage:plan.url}"},
+			},
+			Help: "One row per argument the tool takes.",
+			Detail: "A value may template what earlier stages produced: {input}, {prev}, {stage:NAME}, {stage:NAME.field}. " +
+				"A placeholder fills a VALUE only: the names are yours, and nothing a model wrote upstream can add or rename one."},
 		ui.FormField{Field: "machine", Type: "select", Label: "Which machine",
 			ShowWhen: keepWhileSet(s.Machine, "kind:machine"),
 			Options:  append([]ui.SelectOption{{Value: "", Label: "(none)"}}, cat.machines...),
@@ -138,7 +148,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 	fields = append(fields,
 		ui.FormField{Type: "header", Label: "How this stage runs", Collapsed: true},
 		ui.FormField{Field: "model", Type: "select", Label: "Which model",
-			ShowWhen: keepWhileSet(s.Model, "kind:worker|fanout"),
+			ShowWhen: keepWhileSet(s.Model, "kind:worker|synthesize|fanout|panel"),
 			Options: []ui.SelectOption{
 				{Value: "", Label: "Inherit the agent's routing"},
 				{Value: "worker", Label: "Worker: the cheap, local one"},
@@ -146,7 +156,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			},
 			Help: "A transform or a routing decision is worker work; a stage that commits to an explanation is usually lead."},
 		ui.FormField{Field: "think", Type: "select", Label: "Reasoning",
-			ShowWhen: keepWhileSet(StageThinkMode(s), "kind:worker|fanout"),
+			ShowWhen: keepWhileSet(StageThinkMode(s), "kind:worker|synthesize|fanout|panel"),
 			Options: []ui.SelectOption{
 				{Value: "", Label: "Inherit"},
 				{Value: "on", Label: "On: this stage is a judgement"},
@@ -167,7 +177,9 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			Help: "One round is a poll: nobody has replied to anybody. Two is the smallest thing worth calling a debate. " +
 				"Voices times rounds is model calls, so three voices over three rounds is nine before anything is synthesized."},
 		ui.FormField{Field: "reach", Type: "select", Label: "Tools this stage may reach",
-			ShowWhen: keepWhileSet(StageReach(s), "kind:worker|fanout"),
+			// "all" is the default, not a stored choice: kept by it, the gate
+			// never closed and every kind showed a reach it ignores.
+			ShowWhen: keepWhileSet(chIf(StageReach(s) == ReachAll, "", StageReach(s)), "kind:worker|synthesize|fanout"),
 			Options: []ui.SelectOption{
 				{Value: ReachAll, Label: "Everything the calling agent has",
 					Help: "The default. A pipeline attached to an agent with web_search inherits it."},
@@ -180,9 +192,9 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			Detail: "A pipeline is run by whatever agent attached it, and its catalog is assembled fresh each turn: an MCP server publishes its tools when it connects, a credential mints its own per session. So a name can stop resolving without anybody changing this pipeline."},
 		ui.FormField{Type: "header", Label: stageNameNarrowingLabel(s),
 			Collapsed: len(s.Tools) == 0,
-			ShowWhen:  "kind:worker|fanout;reach:!none"},
+			ShowWhen:  "kind:worker|synthesize|fanout;reach:!none"},
 		ui.FormField{Field: "tools", Type: "checklist", Label: "Only these tools",
-			ShowWhen:    keepWhileList(s.Tools, "kind:worker|fanout;reach:!none"),
+			ShowWhen:    keepWhileList(s.Tools, "kind:worker|synthesize|fanout;reach:!none"),
 			Options:     toolChecklistOptions(cat.tools, s.Tools),
 			Placeholder: "(no tools to offer)",
 			Help:        "Names on TOP of the reach above. None checked means the reach alone decides.",
@@ -199,6 +211,16 @@ func stageNameNarrowingLabel(s PipelineStage) string {
 		return "Narrow by name: " + strconv.Itoa(n) + " named"
 	}
 	return "Narrow by name (advanced)"
+}
+
+// stageReadsPrompt is the add forms' prompt rule on the server: a loop, a
+// branch and a tool stage never read one.
+func stageReadsPrompt(k PipelineStageKind) bool {
+	switch k {
+	case StageLoop, StageBranch, StageTool:
+		return false
+	}
+	return true
 }
 
 // keepWhileMap is keepWhileSet for a map-valued field: show the control while
@@ -261,7 +283,7 @@ func stageRecord(s PipelineStage) map[string]any {
 		"name": s.Name, "kind": kind, "prompt": s.Prompt,
 		"agent": s.Agent, "fan_over": s.FanOver, "count": s.Count,
 		"until": s.Until, "when": s.When, "skip_to": s.SkipTo,
-		"tool": s.Tool, "model": s.Model, "think": StageThinkMode(s),
+		"tool": s.Tool, "args": nameValueRowsOf(s.Args), "machine": s.Machine, "model": s.Model, "think": StageThinkMode(s),
 		"panel": s.Panel, "reach": StageReach(s), "tools": s.Tools, "output": stageOutputRecord(s),
 	}
 }
@@ -315,6 +337,9 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 	}
 	if v, ok := body["reach"]; ok {
 		s.Reach = strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))
+	}
+	if v, ok := body["args"]; ok {
+		s.Args = nameValueRows(v)
 	}
 	if _, ok := body["panel"]; ok {
 		s.Panel = stringSliceFromArgs(body, "panel")
@@ -370,6 +395,12 @@ func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Req
 			stage = PipelineStage{Kind: StageWorker}
 		}
 		applyStageEdit(&stage, body)
+		if !slot.found() && !stageReadsPrompt(stage.Kind) {
+			// The add form hides the prompt for these kinds but still posts
+			// it, and a tool stage carrying one is refused over a box the
+			// author can no longer see.
+			stage.Prompt = ""
+		}
 		if strings.TrimSpace(stage.Name) == "" {
 			http.Error(w, "give the stage a name", http.StatusBadRequest)
 			return

@@ -127,7 +127,9 @@ func metaPanel(def MachineDef, base string) ui.FormPanel {
 					"by handing off nowhere, that step's result is the run's result. " +
 					"An existing conversational machine will not simply flip: its waiting steps are what a run cannot use. " +
 					"Use it for work that takes many steps and no input: an overnight investigation, a nightly report."},
-			{Field: "route_each_message", Type: "toggle", Label: "Route every message",
+			// Hidden under unattended: a job has no messages, so the toggle
+			// would be a control that does nothing (core/machine.go).
+			{Field: "route_each_message", Type: "toggle", Label: "Route every message", ShowWhen: "!unattended",
 				Help: "ON: every new message starts at the first step, wherever the last one left off. For a machine that routes, sending each message to whatever should answer it.",
 				Detail: "OFF, a conversation settles: the steps before the waiting one run on the first message, and every later message goes straight to the step it landed in. That is right for intake and then a conversation. " +
 					"ON, each message is judged again from the top, and what the previous message was routed to is cleared first, so it cannot leak into this answer. Lists that build up across a run (accumulators) are kept. " +
@@ -427,17 +429,6 @@ func childMachineShowWhen(p MachinePhase) string {
 		return ""
 	}
 	return "!agent;!pipeline"
-}
-
-// delegatedShowWhen is the same rule for the single-value settings under
-// a delegate. They are not even inert: when the delegate does not exist
-// in this deployment the phase runs INLINE with exactly these, which is
-// the case a portable machine meets most often.
-func delegatedShowWhen(stored string) string {
-	if strings.TrimSpace(stored) != "" {
-		return ""
-	}
-	return "!agent"
 }
 
 // routingShowWhen keeps the two routing mechanisms exclusive while only
@@ -800,9 +791,12 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 				Help: "One row per argument the tool takes.",
 				Detail: "A value may template what earlier steps produced: {input}, {prev}, {state:STEP.field}. " +
 					"A placeholder fills a VALUE only: the names are yours, and nothing a model wrote upstream can add or rename one."},
+			// Last in the runner's order (tool, pipeline, machine, delegate),
+			// so it steps aside while any of the others is picked.
 			ui.FormField{Field: "agent", Type: "select", Label: "Who runs this step", Options: cat.agents,
-				Help:   "Leave it with this agent, or hand it to another one.",
-				Detail: "A delegate has its own persona, tools and memory. It gets the instructions below, works, and reports back; what it reports is recorded further down. Use it when the work needs different REACH, not different wording. How the step runs, meaning model, reasoning and tools, becomes the delegate's own configuration."},
+				ShowWhen: keepWhileSet(p.Agent, "!tool;!pipeline;!machine"),
+				Help:     "Leave it with this agent, or hand it to another one.",
+				Detail:   "A delegate has its own persona, tools and memory. It gets the instructions below, works, and reports back; what it reports is recorded further down. Use it when the work needs different REACH, not different wording. How the step runs, meaning model, reasoning and tools, becomes the delegate's own configuration."},
 		)
 	}
 	// The instructions come AFTER the two questions that decide what they
@@ -841,7 +835,8 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 				Help:        "Plain words, judged on each new turn that arrives here.",
 				Detail:      "Empty means the conversation stays until something else moves it. It costs one model call per turn, so say something worth checking."},
 			ui.FormField{Field: "guard_to", Type: "select", Label: "…and go to", Options: phaseOptions(def, true),
-				Help: "Empty means back to the start."},
+				ShowWhen: keepWhileSet(p.GuardTo, "guard"),
+				Help:     "Empty means back to the start."},
 			// Both ways a conversation leaves on the AGENT's initiative —
 			// change_phase mid-turn, and the guard naming somewhere — are
 			// bounded by this one list. It lives here, with the other
@@ -927,7 +922,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 						{Value: "union", Label: "Union: skip what is already there"},
 						{Value: "replace", Label: "Replace: this becomes the list"},
 					}},
-					{Field: "by", Type: "text", Label: "Same when", Width: 3,
+					{Field: "by", Type: "text", Label: "Same when", Width: 3, ShowWhen: "mode:union",
 						Placeholder: "e.g. id",
 						Help:        "Union only: the field that decides two entries are the same one. Leave empty to compare whole values."},
 				}},
@@ -993,14 +988,17 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		// Hidden the moment the step is delegated: a delegate runs on its
 		// OWN model, reasoning and tools, so these would be controls
 		// somebody can change and be ignored for. The same rule the
-		// built-in field rows follow.
-		ui.FormField{Field: "model", Type: "select", Label: "Which model", ShowWhen: delegatedShowWhen(p.Model), Options: []ui.SelectOption{
+		// built-in field rows follow. A tool step runs no model at all.
+		// Kept while set: a stored value is not even inert under a
+		// delegate, since a delegate missing from this deployment runs the
+		// step INLINE with exactly these.
+		ui.FormField{Field: "model", Type: "select", Label: "Which model", ShowWhen: keepWhileSet(p.Model, "!agent;!tool"), Options: []ui.SelectOption{
 			{Value: "", Label: "Inherit the agent's routing"},
 			{Value: "worker", Label: "Worker: the cheap, local one"},
 			{Value: "lead", Label: "Lead: the precise, remote one"},
 		},
 			Help: "A routing decision or a transform is worker work; a step that commits to an explanation is usually lead."},
-		ui.FormField{Field: "think", Type: "select", Label: "Reasoning", ShowWhen: delegatedShowWhen(p.Think), Options: []ui.SelectOption{
+		ui.FormField{Field: "think", Type: "select", Label: "Reasoning", ShowWhen: keepWhileSet(p.Think, "!agent;!tool"), Options: []ui.SelectOption{
 			{Value: "", Label: "Inherit the agent's setting"},
 			{Value: "on", Label: "On: this step is a judgement"},
 			{Value: "off", Label: "Off: this step is a transform"},

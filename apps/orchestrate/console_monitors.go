@@ -105,8 +105,11 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.
 		"schedulable":      IsScheduledEventKind(m.Kind),
 		"paused":           m.Paused,
 		// What it tells the woken agent — every kind has one, including the
-		// push-triggered webhook.
-		"wake_brief": m.WakeBrief,
+		// push-triggered webhook. A monitor that only texts or posts
+		// directly wakes nobody, so the editor leaves the brief out.
+		"wake_brief":  m.WakeBrief,
+		"notify":      m.Notify,
+		"wakes_agent": monitorWakesAgent(m),
 		// poll: the question put to the checker agent, and the answer that
 		// counts as a yes. check_agent is shown but not edited here; pointing a
 		// monitor at a different agent is what Relink is for.
@@ -190,6 +193,28 @@ func (T *OrchestrateApp) handleConsoleMonitorUpdate(w http.ResponseWriter, r *ht
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// monitorWakesAgent reports whether a fire can reach an agent, which is the
+// only reader of the brief. A bound channel always does; otherwise notify
+// lists the destinations (comma-separated, empty = channel), and a list of
+// nothing but text and direct runs no LLM turn. An unknown mode delivers
+// nothing, so the waker's never-drop fallback wakes the agent after all.
+func monitorWakesAgent(m EventMonitor) bool {
+	if strings.TrimSpace(m.WakeChannel) != "" {
+		return true
+	}
+	named := false
+	for _, mode := range strings.Split(m.Notify, ",") {
+		switch strings.TrimSpace(mode) {
+		case "":
+		case EventNotifyText, EventNotifyDirect:
+			named = true
+		default:
+			return true
+		}
+	}
+	return !named
 }
 
 // monitorUpdateBody is what the Scheduler's monitor editor posts. Interval is a

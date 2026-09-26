@@ -186,3 +186,27 @@ func TestOnlyTheStopsThatNeedAPersonAreAmber(t *testing.T) {
 		t.Errorf("a running schedule was marked: %v", st)
 	}
 }
+
+// The brief is read only by an agent wake. A monitor that only texts or
+// posts directly wakes nobody, so the editor leaves the brief out; a bound
+// channel, the channel default, and an unknown mode (which the waker's
+// never-drop fallback turns into a wake) all still use it.
+func TestOnlyAMonitorThatWakesAnAgentOffersABrief(t *testing.T) {
+	for _, c := range []struct {
+		m    EventMonitor
+		want bool
+	}{
+		{EventMonitor{}, true},
+		{EventMonitor{Notify: EventNotifyChannel}, true},
+		{EventMonitor{Notify: EventNotifyText}, false},
+		{EventMonitor{Notify: EventNotifyDirect}, false},
+		{EventMonitor{Notify: "direct, text"}, false},
+		{EventMonitor{Notify: "direct,channel"}, true},
+		{EventMonitor{Notify: "pager"}, true},
+		{EventMonitor{Notify: EventNotifyText, WakeChannel: "ch-1"}, true},
+	} {
+		if got := monitorWakesAgent(c.m); got != c.want {
+			t.Errorf("notify=%q channel=%q: wakes an agent = %v, want %v", c.m.Notify, c.m.WakeChannel, got, c.want)
+		}
+	}
+}

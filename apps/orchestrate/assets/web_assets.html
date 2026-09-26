@@ -7402,11 +7402,16 @@
         // A brief is required only of a monitor that HAS one. Plenty are
         // created without: create_event_monitor asks for a name and a kind, and
         // a notify=text monitor never wakes an agent so its brief is unused.
-        // Demanding one here would make those uneditable.
+        // Demanding one here would make those uneditable. A monitor that only
+        // texts or posts directly wakes no agent, so the box is left out and
+        // the save leaves the stored brief alone.
         var briefWasSet = !!(mon.wake_brief || '').trim();
-        var brief = schedArea(mon.wake_brief || '', 4,
-          'What the agent is handed when this fires. e.g. "the build went red: say which test and who last touched it"');
-        host.appendChild(schedLabeled('Brief handed to the agent', brief));
+        var brief = null;
+        if (mon.wakes_agent !== false) {
+          brief = schedArea(mon.wake_brief || '', 4,
+            'What the agent is handed when this fires. e.g. "the build went red: say which test and who last touched it"');
+          host.appendChild(schedLabeled('Brief handed to the agent', brief));
+        }
 
         var kind = mon.kind || '';
         var check, match, url, jsonPath, regex, op, threshold, script;
@@ -7438,8 +7443,9 @@
         }
 
         return function() {
-          if (briefWasSet && !brief.value.trim()) { window.uiAlert('Keep a brief: it is what the agent is told when this fires.'); return null; }
-          var body = {wake_brief: brief.value};
+          if (brief && briefWasSet && !brief.value.trim()) { window.uiAlert('Keep a brief: it is what the agent is told when this fires.'); return null; }
+          var body = {};
+          if (brief) body.wake_brief = brief.value;
           if (kind === 'poll') {
             if (!check.value.trim()) { window.uiAlert('Enter a check: the question asked each interval.'); return null; }
             body.check = check.value;

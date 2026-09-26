@@ -577,7 +577,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					Fields: []ui.FormField{
 						{Field: "allow_explorer", Type: "toggle", Label: "Let it lift its own round budget",
 							Help: "For agents mapping unfamiliar APIs, where the work is not knowable in advance."},
-						{Field: "explorer_hard_cap", Type: "number", Label: "Explorer ceiling",
+						{Field: "explorer_hard_cap", Type: "number", Label: "Explorer ceiling", ShowWhen: "allow_explorer",
 							Help: "Max rounds once it has lifted the budget. Blank or 0 = the default of 50. Only applies while the switch above is on."},
 					},
 				},
@@ -666,7 +666,8 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					Fields: []ui.FormField{
 						{Field: "force_private", Type: "toggle", Label: "Force Private mode: never reaches out",
 							Help: "Permanently drops network and sub-agent dispatch tools, and holds the agent on the local model."},
-						{Field: "allow_private_mode", Type: "toggle", Label: "Offer a Private toggle on its chat",
+						// Moot while Private mode is forced: there is nothing left to toggle.
+						{Field: "allow_private_mode", Type: "toggle", Label: "Offer a Private toggle on its chat", ShowWhen: "!force_private",
 							Help: "Lets whoever is using the agent drop network tools for one turn."},
 					},
 				},

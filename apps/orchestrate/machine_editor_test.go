@@ -1687,10 +1687,11 @@ func TestADelegatesStoredModelAndReasoningStayVisible(t *testing.T) {
 			t.Errorf("%s is set to something and hidden behind %q", f.Field, f.ShowWhen)
 		}
 	}
-	// Unset ones still get out of the way under a delegate.
+	// Unset ones still get out of the way under a delegate, and under a
+	// tool step, which runs no model at all.
 	bare := MachinePhase{Name: "dig", Prompt: "look", Next: "answer", Agent: "ag-1"}
 	for _, f := range phaseFieldsFor(def, bare, editorCatalog{}) {
-		if (f.Field == "model" || f.Field == "think") && f.ShowWhen != "!agent" {
+		if (f.Field == "model" || f.Field == "think") && f.ShowWhen != "!agent;!tool" {
 			t.Errorf("%s should stay hidden when empty, got %q", f.Field, f.ShowWhen)
 		}
 	}
@@ -1925,5 +1926,55 @@ func TestReplyWithIsAStepPicker(t *testing.T) {
 	opts = replyWithOptions(cur, answer)
 	if last := opts[len(opts)-1]; last.Value != custom || !strings.HasPrefix(last.Label, "Custom: ") {
 		t.Errorf("a custom template should be offered as itself so the editor keeps it: %+v", opts)
+	}
+}
+
+// Each runner choice gets out of the way of the ones the runner would pick
+// first (tool, pipeline, child machine, delegate), guard_to only matters
+// once a guard can trip, "Same when" is read only by a union, and a job
+// has no messages to route.
+func TestStepControlsHideWhereTheRunnerIgnoresThem(t *testing.T) {
+	def := MachineDef{Name: "M", Start: "dig", Phases: []MachinePhase{
+		{Name: "dig", Prompt: "look", Next: "answer"},
+		{Name: "answer", Prompt: "reply", Resident: true},
+	}}
+	rules := func(p MachinePhase) map[string]ui.FormField {
+		out := map[string]ui.FormField{}
+		for _, f := range phaseFieldsFor(def, p, editorCatalog{}) {
+			if f.Field != "" {
+				out[f.Field] = f
+			}
+		}
+		return out
+	}
+	pass := rules(def.Phases[0])
+	if got := pass["agent"].ShowWhen; got != "!tool;!pipeline;!machine" {
+		t.Errorf("an empty delegate should step aside for the other runners, got %q", got)
+	}
+	if got := rules(MachinePhase{Name: "dig", Prompt: "look", Agent: "ag-1", Tool: "calc"})["agent"].ShowWhen; got != "" {
+		t.Errorf("a stored delegate must stay visible so it can be cleared, got %q", got)
+	}
+	var by ui.FormField
+	for _, c := range pass["accumulates"].Columns {
+		if c.Field == "by" {
+			by = c
+		}
+	}
+	if by.ShowWhen != "mode:"+AccumUnion {
+		t.Errorf("\"Same when\" is read only by a union, got %q", by.ShowWhen)
+	}
+
+	waits := rules(def.Phases[1])
+	if got := waits["guard_to"].ShowWhen; got != "guard" {
+		t.Errorf("guard_to only matters once a guard is written, got %q", got)
+	}
+	if got := rules(MachinePhase{Name: "answer", Prompt: "reply", Resident: true, GuardTo: "dig"})["guard_to"].ShowWhen; got != "" {
+		t.Errorf("a stored guard_to must stay visible so it can be cleared, got %q", got)
+	}
+
+	for _, f := range metaPanel(def, "api/machines/x").Fields {
+		if f.Field == "route_each_message" && f.ShowWhen != "!unattended" {
+			t.Errorf("route_each_message does nothing on a job, got %q", f.ShowWhen)
+		}
 	}
 }

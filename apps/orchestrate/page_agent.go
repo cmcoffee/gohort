@@ -234,14 +234,18 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			Placeholder: fmt.Sprintf("%d", defaultMaxWorkerRounds),
 			Help:        fmt.Sprintf("How many LLM call + tool-execution cycles the worker may use for a single step. Each round is one model call. Leave blank for the default (%d); raise when the worker chains many tool calls (research with cross-references, or surveying a command before writing it down); lower for fast single-tool answers. Anything under %d is raised to %d: a cap too low to finish an action is worse than no cap.", defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds),
 			SuggestURL:  "../api/agents/suggest"},
-		{Field: "gap_check", Type: "toggle", Label: "Gap detection",
+		// Hidden under a tracked plan: the gap pass reviews plan_set's steps,
+		// and a tracked plan replaces plan_set, so it would never fire.
+		{Field: "gap_check", Type: "toggle", Label: "Gap detection", ShowWhen: "!work_plan",
 			Help: "Post-plan review pass that fills structural gaps before synthesis. Worth it for research; off for chat."},
 		{Field: "work_plan", Type: "toggle", Label: "Tracked plan",
 			Help:   "The agent commits to a visible checklist and works it.",
 			Detail: "Each step is started, then closed with findings or marked blocked with a reason, and anything left unfinished is stated in the answer instead of quietly dropped. The checklist survives the turn, so a plan begun in one message is still the plan in the next.\n\nReplaces this agent's plan_set, which fans a single turn out to workers and ends the round. Worth it for work with several results that build on each other, overhead for questions one call answers."},
 		{Type: "header", Label: "Reasoning", Collapsed: true,
 			Help: "Override the LLM's reasoning mode for this agent's turns."},
-		{Field: "think", Type: "select", Label: "Think mode",
+		// A set effort decides whether the agent reasons (thinkMode), so
+		// Think mode is only read while effort is left at its default.
+		{Field: "think", Type: "select", Label: "Think mode", ShowWhen: "!effort",
 			Options: []ui.SelectOption{
 				{Value: "auto", Label: "Auto: follow the deployment routing (" + currentAutoThinkLabel() + ")"},
 				{Value: "on", Label: "On: force reasoning for every turn"},
@@ -249,7 +253,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			},
 			Help:   "Whether this agent reasons before it answers.",
 			Detail: "Top-level conversational agents default On, because reasoning helps planners and synthesizers. Sub-agent specialists default Off, for faster lookups. Pick Auto only when you want the framework route to decide."},
+		// Shown while reasoning can be on: an effort level, or no effort and
+		// Think mode not off.
 		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
+			ShowWhen:    "effort:low|medium|high||!effort;think:!off",
 			Placeholder: "0",
 			Help:        "Max thinking tokens per LLM call. 0 inherits the deployment default (4096).",
 			Detail:      "The admin global budget is a hard ceiling, so this can only LOWER the budget, for snappier turns. A value above the ceiling is clamped. Only applies when Think is on."},
@@ -320,7 +327,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// somebody sets on it, not a description of what it is.
 			ui.FormField{Type: "header", Label: "Memory", Collapsed: true,
 				Help: "What the agent remembers across turns. Knowledge (uploaded files) is always available."},
-			ui.FormField{Field: "memory_mode", Type: "select", Label: "Memory mode",
+			// Only shapes Explicit Memory, so it steps aside when that is off.
+			ui.FormField{Field: "memory_mode", Type: "select", Label: "Memory mode", ShowWhen: "!disable_explicit",
 				Options: []ui.SelectOption{
 					{Value: "agent", Label: "Agent: generalized lessons only"},
 					{Value: "chatbot", Label: "Chatbot: lessons + user personalization"},

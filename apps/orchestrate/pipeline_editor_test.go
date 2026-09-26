@@ -181,3 +181,83 @@ func TestARefusedStageEditSaysWhy(t *testing.T) {
 		t.Errorf("the reason should name the reference: %s", w.Body.String())
 	}
 }
+
+// Each control shows for the kinds the interpreter actually reads it on. A
+// panel reads the prompt, the tier and the reasoning; a machine stage hands
+// its prompt to the run as input; a synthesize body stage runs as a worker.
+// A panel's voices get no stage tools (runStage resolves them only for
+// worker, synthesize, tool and fanout), so reach stays off it.
+func TestStageControlsShowForTheKindsThatReadThem(t *testing.T) {
+	_, _, _, def := stageEditFixture(t)
+	rules := map[string]string{}
+	for _, f := range stageFormFields(def, PipelineStage{Name: "x", Kind: StageWorker}, editorCatalog{}) {
+		if f.Field != "" && f.Type != "header" {
+			rules[f.Field] = f.ShowWhen
+		}
+	}
+	kinds := func(rule string) map[string]bool {
+		out := map[string]bool{}
+		clause := strings.Split(rule, ";")[0]
+		for _, k := range strings.Split(strings.TrimPrefix(clause, "kind:"), "|") {
+			out[k] = true
+		}
+		return out
+	}
+	for field, want := range map[string][]string{
+		"prompt": {"worker", "synthesize", "agent", "fanout", "panel", "machine"},
+		"model":  {"worker", "synthesize", "fanout", "panel"},
+		"think":  {"worker", "synthesize", "fanout", "panel"},
+		"reach":  {"worker", "synthesize", "fanout"},
+		"tools":  {"worker", "synthesize", "fanout"},
+		"args":   {"tool"},
+	} {
+		got := kinds(rules[field])
+		for _, k := range want {
+			if !got[k] {
+				t.Errorf("%s is hidden on a %s stage, which reads it (rule %q)", field, k, rules[field])
+			}
+		}
+		if len(got) != len(want) {
+			t.Errorf("%s shows for kinds that never read it: %q", field, rules[field])
+		}
+	}
+}
+
+// A tool stage's arguments are edited on the form, and a save through the
+// rows control lands in the stage's Args map the interpreter reads.
+func TestAToolStagesArgumentsRoundTrip(t *testing.T) {
+	app, udb, user, def := stageEditFixture(t)
+	w := postStage(t, app, user, def.ID, "", `{"name":"fetch","kind":"tool","tool":"fetch_url",`+
+		`"args":[{"name":"url","value":"{stage:answer}"},{"name":"","value":"stray"}]}`)
+	if w.Code != 200 {
+		t.Fatalf("add: %d %s", w.Code, w.Body.String())
+	}
+	stored, _ := LoadPipelineDef(udb, user, def.ID)
+	got := stored.Stages[len(stored.Stages)-1]
+	if len(got.Args) != 1 || got.Args["url"] != "{stage:answer}" {
+		t.Fatalf("args did not land: %v", got.Args)
+	}
+	rec := stageRecord(got)
+	rows, _ := rec["args"].([]map[string]any)
+	if len(rows) != 1 || rows[0]["name"] != "url" {
+		t.Errorf("the form does not load the args back: %v", rec["args"])
+	}
+	if rec["machine"] != "" {
+		t.Errorf("the record should carry machine for the form to bind: %v", rec["machine"])
+	}
+}
+
+// The add form hides the prompt for kinds that never read one but still
+// posts it, so a tool stage typed as a worker first is not refused over a
+// box its author can no longer see.
+func TestAddingAToolStageDropsTheHiddenPrompt(t *testing.T) {
+	app, udb, user, def := stageEditFixture(t)
+	w := postStage(t, app, user, def.ID, "", `{"name":"calc","kind":"tool","tool":"calc","prompt":"left over"}`)
+	if w.Code != 200 {
+		t.Fatalf("add refused over a hidden prompt: %d %s", w.Code, w.Body.String())
+	}
+	stored, _ := LoadPipelineDef(udb, user, def.ID)
+	if p := stored.Stages[len(stored.Stages)-1].Prompt; p != "" {
+		t.Errorf("the hidden prompt was stored: %q", p)
+	}
+}
