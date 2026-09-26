@@ -656,6 +656,11 @@ func replyStalledOnAPromise(content string) bool {
 	if behavioralCommitmentRe.MatchString(lower) {
 		return false
 	}
+	// Nor is an offer that waits on the user: nothing is owed until they take
+	// it up.
+	if conditionalOfferRe.MatchString(lower) {
+		return false
+	}
 	return futureCommitmentRe.MatchString(lower)
 }
 
@@ -697,6 +702,19 @@ var futureCommitmentRe = regexp.MustCompile(`\b(?:let me|i'll|i will|i'm going t
 // action for a promise no action can keep does not correct the turn, it
 // derails it.
 var behavioralCommitmentRe = regexp.MustCompile(`\b(?:going forward|from now on|next time|in future|in the future|this time|won't happen again|will not happen again|keep (?:that|this|it) in mind|keep (?:that|this|it) straight|watch (?:out )?for (?:that|this|it)|be (?:more )?careful|my (?:mistake|bad)|noted)\b`)
+
+// conditionalOfferRe matches a promise that hangs on the USER: an offer
+// ("I'll set it up if you want"), or standing by for something they may ask
+// later ("I'll keep more on standby just in case you need another"). Neither is
+// work left undone this turn, and there is no tool that performs "later, if you
+// ask". Keyed on "you" deliberately: a bare "just in case" still binds the agent
+// ("let me pull the logs just in case" is work it said it would do now).
+//
+// Observed 2026-09-25: a group-chat quip, "I'll keep the creative surplus on
+// standby just in case you need another tomorrow", was pushed to "do it NOW",
+// the rewrite came out as "Consider the creative surplus billed for the
+// evening", and that tripped a salary rule it had nothing to do with.
+var conditionalOfferRe = regexp.MustCompile(`\b(?:in case you|if you (?:need|want|'d like|would like)|whenever you|when you(?:'re| are) ready|should you|on standby|on hand|here if you|here whenever)\b`)
 
 // callWordRe word-bounds the announcement keywords so "basically:" /
 // "technically:" (which CONTAIN "call") can't false-fire the guard.

@@ -151,3 +151,29 @@ func TestAQuestionToTheUserIsAHandover(t *testing.T) {
 		}
 	}
 }
+
+// An offer that waits on the user owes nothing this turn. Pushing one to "do it
+// NOW" rewrote a group-chat quip into a line that then tripped an unrelated
+// rule. A bare "just in case" still binds the agent: that is work it said it
+// would do.
+func TestAnOfferThatWaitsOnTheUserIsNotAStall(t *testing.T) {
+	for _, offer := range []string{
+		"Good. Don't let it go to your head. I'll keep the creative surplus on standby just in case you need another tomorrow.",
+		"I'll set up the connector if you want.",
+		"I'll have the next draft ready whenever you want it.",
+		"I'll run it when you're ready.",
+		"I'll keep a few more on hand.",
+	} {
+		if replyStalledOnAPromise(offer) {
+			t.Errorf("an offer waiting on the user is not a stall: %q", offer)
+		}
+	}
+	for _, stall := range []string{
+		"Let me pull the logs just in case.",
+		"I'll grab a fresh copy and try that again.",
+	} {
+		if !replyStalledOnAPromise(stall) {
+			t.Errorf("work the agent said it would do now is still a stall: %q", stall)
+		}
+	}
+}
