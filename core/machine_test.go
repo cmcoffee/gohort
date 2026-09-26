@@ -1713,3 +1713,34 @@ func TestAdvanceMachine_RouteEachMessageStartsEveryMessageOver(t *testing.T) {
 		}
 	}
 }
+
+// A delegated step's prompt is what its agent receives. "Delegate to the
+// Comedian" sent TO the Comedian made it try to call itself, and "the message:
+// {user}" handed it a name instead of the request. Both are advice.
+func TestAdviceCatchesPromptsWrittenFromTheWrongSide(t *testing.T) {
+	advice := func(p MachinePhase) string {
+		d := MachineDef{Name: "m", Phases: []MachinePhase{p, {Name: "end", Resident: true}}}
+		return strings.Join(d.Advice(), "\n")
+	}
+	bad := advice(MachinePhase{Name: "ComedianDelegate", Agent: "Comedian", Next: "end",
+		Prompt: "The user's request is humor-related. Delegate the original user message: {user} to the Comedian agent."})
+	if !strings.Contains(bad, "sent TO Comedian") || !strings.Contains(bad, "{user} is who is talking") || !strings.Contains(bad, "the message is {input}") {
+		t.Errorf("both mistakes should be named:\n%s", bad)
+	}
+	if got := advice(MachinePhase{Name: "ComedianDelegate", Agent: "Comedian", Next: "end", Prompt: "Answer this request: {input}"}); strings.Contains(got, "sent TO") || strings.Contains(got, "{user} is who") {
+		t.Errorf("a task written for the delegate is fine:\n%s", got)
+	}
+	if got := advice(MachinePhase{Name: "s", Agent: "Comedian", Next: "end", Prompt: "Comedian, write a joke about {input}"}); strings.Contains(got, "sent TO") {
+		t.Errorf("naming the agent without a handoff is not the mistake:\n%s", got)
+	}
+	if got := advice(MachinePhase{Name: "s", Next: "end", Prompt: "Greet {user} by name, then answer {input}."}); strings.Contains(got, "{user} is who") {
+		t.Errorf("{user} used as a name is right:\n%s", got)
+	}
+	if got := advice(MachinePhase{Name: "s", Next: "end", Prompt: "Answer the message from {user} warmly: {input}"}); strings.Contains(got, "{user} is who") {
+		t.Errorf("the message FROM {user} uses it as the name it is:\n%s", got)
+	}
+	d := MachineDef{Name: "m", Phases: []MachinePhase{{Name: "reply", Resident: true, Prompt: "Reply to their message: {user}"}}}
+	if got := strings.Join(d.Advice(), "\n"); !strings.Contains(got, "already in the conversation") {
+		t.Errorf("a waiting step gets the fix that works there:\n%s", got)
+	}
+}

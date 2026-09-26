@@ -760,6 +760,17 @@ func (d MachineDef) Advice() []string {
 		if len(p.Output) > 0 && asksForRawJSON(p.Prompt) {
 			out = append(out, promptFormatAdvice(name))
 		}
+		if agent := strings.TrimSpace(p.Agent); agent != "" && promptDelegatesTo(p.Prompt, agent) {
+			out = append(out, "step "+name+": this prompt is sent TO "+agent+", which does the work, so \"delegate to "+agent+
+				"\" reads to it as an instruction to call itself. Write the task itself, for example: Answer this request: {input}")
+		}
+		if userMeantAsMessage(p.Prompt) {
+			fix := "the message is {input}"
+			if p.Resident {
+				fix = "the message is already in the conversation, so this step needs no variable for it"
+			}
+			out = append(out, "step "+name+": {user} is who is talking, not what they said; "+fix+".")
+		}
 	}
 	settles, router := d.routesOnce()
 	for i, name := range settles {
@@ -772,6 +783,52 @@ func (d MachineDef) Advice() []string {
 			"If a step is meant to hand off to it, list it in that step's choices, or make it that step's next.")
 	}
 	return out
+}
+
+// promptDelegatesTo reports a delegated step's prompt telling its own agent to
+// hand the work to itself: the prompt names the agent and asks for a handoff.
+// The prompt is what that agent receives, so the author meant "this step is
+// the Comedian's" and wrote "delegate to the Comedian", which the Comedian
+// then tries to do. Advice, so a loose match costs a line, not a refusal.
+func promptDelegatesTo(prompt, agent string) bool {
+	lp, la := strings.ToLower(prompt), strings.ToLower(strings.TrimSpace(agent))
+	if la == "" || !strings.Contains(lp, la) {
+		return false
+	}
+	for _, verb := range []string{"delegate", "hand it", "hand off", "hand the", "forward", "dispatch", "send it to", "send this to", "pass it to", "pass this to", "route it", "route this"} {
+		if strings.Contains(lp, verb) {
+			return true
+		}
+	}
+	return false
+}
+
+// userMeantAsMessage reports {user} standing where the message belongs:
+// directly after a word naming what was said, with nothing between but
+// punctuation or "is"/"was" ("the message: {user}", "request is {user}").
+// {user} is who is talking, so that step gets a name instead of the request.
+// A connecting word means it is used as the name it is ("the message from
+// {user}"), which is right.
+func userMeantAsMessage(prompt string) bool {
+	lp := strings.ToLower(prompt)
+	for at := 0; ; {
+		i := strings.Index(lp[at:], "{user}")
+		if i < 0 {
+			return false
+		}
+		before := lp[max(0, at+i-40) : at+i]
+		for _, w := range []string{"message", "request", "question", "said", "asked", "wrote", "query", "input", "text"} {
+			j := strings.LastIndex(before, w)
+			if j < 0 {
+				continue
+			}
+			gap := strings.Trim(before[j+len(w):], " \t\n:=\"'-")
+			if gap == "" || gap == "is" || gap == "was" {
+				return true
+			}
+		}
+		at += i + len("{user}")
+	}
 }
 
 // unreachablePhases names the steps no route leads to from Start: not a next,
