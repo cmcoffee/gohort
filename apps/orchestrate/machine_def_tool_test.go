@@ -698,3 +698,28 @@ func TestValidateChecksABarePhaseList(t *testing.T) {
 		t.Errorf("a nameless update should ask for the name: %v", err)
 	}
 }
+
+// Route every message is a machine-level switch the tool sets and an update
+// that does not mention it leaves alone.
+func TestTheToolSetsRouteEachMessage(t *testing.T) {
+	turn := machineToolFixture(t)
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"name": "Router", "phases": toolPhases(), "route_each_message": true}, false); err != nil {
+		t.Fatal(err)
+	}
+	def, _ := turn.findMachine(map[string]any{"name": "Router"})
+	if !def.RouteEachMessage {
+		t.Fatal("create should set route_each_message")
+	}
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"name": "Router", "description": "routes"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if def, _ = turn.findMachine(map[string]any{"name": "Router"}); !def.RouteEachMessage {
+		t.Error("an update that does not mention it must leave it on")
+	}
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"name": "Router", "route_each_message": false}, true); err != nil {
+		t.Fatal(err)
+	}
+	if def, _ = turn.findMachine(map[string]any{"name": "Router"}); def.RouteEachMessage {
+		t.Error("an update can turn it off")
+	}
+}

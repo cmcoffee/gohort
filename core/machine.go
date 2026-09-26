@@ -124,6 +124,14 @@ func (T *AppCore) AdvanceMachine(ctx context.Context, def MachineDef, cur *Machi
 	if err != nil {
 		return MachinePhase{}, err
 	}
+	// A machine that routes each message starts every new one at the top,
+	// wherever the last one left the conversation. No guard: there is nothing
+	// to judge about leaving a step every message leaves.
+	if resumed && def.RouteEachMessage && !def.Unattended {
+		ph = def.restartForMessage(cur)
+		ph, _, err = T.walk(ctx, def, cur, ph, turn, run, note)
+		return ph, err
+	}
 	// The guard judges a NEW user turn arriving at a phase the session
 	// was already parked in. It deliberately does not run on a phase the
 	// walk just entered: there is nothing to re-decide about a phase the
@@ -385,6 +393,24 @@ func (d MachineDef) resume(cur *MachineCursor, note func(kind, detail string)) (
 	}
 	cur.Phase = ph.Name
 	return ph, false, nil
+}
+
+// restartForMessage puts a RouteEachMessage conversation back at Start for a
+// new message: the previous message's step results are cleared, since what
+// one message was routed to is not something the next one decided, and the
+// accumulators are kept, since they exist to outlive a pass. The move is a
+// recorded hop but not a breadcrumb: it happens on every message by design,
+// and a card per message would be noise.
+func (d MachineDef) restartForMessage(cur *MachineCursor) MachinePhase {
+	start, _ := d.Phase(d.StartPhase())
+	keep := d.accumulatorNames()
+	for name := range cur.State {
+		if !keep[name] {
+			delete(cur.State, name)
+		}
+	}
+	cur.moveTo(cur.Phase, start, "a new message: this machine routes every message", func(string, string) {}, keep)
+	return start
 }
 
 // MoveCursor moves a session's cursor to a named phase on somebody's say-so

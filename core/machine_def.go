@@ -109,6 +109,19 @@ type MachineDef struct {
 	// person is a step this run can never leave.
 	Unattended bool `json:"unattended,omitempty"`
 
+	// RouteEachMessage makes every new message start at Start, wherever the
+	// conversation was left waiting, with the previous message's step results
+	// cleared (accumulators kept). It is the shape of a machine whose job is
+	// routing: judge each message, send it to whatever should answer it.
+	//
+	// Without it a conversation settles: the transient steps run on the first
+	// message, the walk parks in a waiting step, and every later message goes
+	// straight there. That is right for intake-then-converse and was twice the
+	// wrong answer for a router, where getting it right meant setting next back
+	// to the router on every waiting step. This says it once, for the machine.
+	// A conversational setting: an unattended run has no messages to route.
+	RouteEachMessage bool `json:"route_each_message,omitempty"`
+
 	// AllowedUsers is the peer-share recipient set: which OTHER users of
 	// this deployment may read and run this machine. Empty (the default,
 	// and what every machine was before this) means private to the owner.
@@ -752,7 +765,7 @@ func (d MachineDef) Advice() []string {
 	for i, name := range settles {
 		out = append(out, "step "+name+": "+router[i]+" decides only on a conversation's first message. Once a message lands here it stays "+
 			"(no next, no guard), so every later message goes straight to "+name+" without being routed. That is right for a conversation "+
-			"that settles; if every message should be routed, set "+name+"'s next to "+d.StartPhase()+".")
+			"that settles; if every message should be routed, turn on Route every message (route_each_message), or set "+name+"'s next to "+d.StartPhase()+".")
 	}
 	for _, name := range d.unreachablePhases() {
 		out = append(out, "step "+name+": no step leads here, so it runs only if the model moves the conversation mid-turn. "+
@@ -849,7 +862,7 @@ func (d MachineDef) reachableFrom(from string) (reached map[string]bool, open bo
 // message. Both are real designs, so this is advice naming the fix, not a
 // problem. Returns the waiting step and the router that leads to it.
 func (d MachineDef) routesOnce() (settles, router []string) {
-	if d.Unattended {
+	if d.Unattended || d.RouteEachMessage {
 		return nil, nil
 	}
 	seen := map[string]bool{}

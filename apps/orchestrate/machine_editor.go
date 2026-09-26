@@ -127,6 +127,11 @@ func metaPanel(def MachineDef, base string) ui.FormPanel {
 					"by handing off nowhere, that step's result is the run's result. " +
 					"An existing conversational machine will not simply flip: its waiting steps are what a run cannot use. " +
 					"Use it for work that takes many steps and no input: an overnight investigation, a nightly report."},
+			{Field: "route_each_message", Type: "toggle", Label: "Route every message",
+				Help: "ON: every new message starts at the first step, wherever the last one left off. For a machine that routes, sending each message to whatever should answer it.",
+				Detail: "OFF, a conversation settles: the steps before the waiting one run on the first message, and every later message goes straight to the step it landed in. That is right for intake and then a conversation. " +
+					"ON, each message is judged again from the top, and what the previous message was routed to is cleared first, so it cannot leak into this answer. Lists that build up across a run (accumulators) are kept. " +
+					"A job that runs unattended has no messages, so this does nothing there."},
 		},
 	}
 }
@@ -1192,6 +1197,7 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, map[string]any{
 			"name": def.Name, "description": def.Description,
 			"start": def.StartPhase(), "unattended": def.Unattended,
+			"route_each_message": def.RouteEachMessage,
 		})
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		var body map[string]any
@@ -1210,6 +1216,9 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 		}
 		if _, ok := body["unattended"]; ok {
 			def.Unattended = BoolArg(body, "unattended")
+		}
+		if _, ok := body["route_each_message"]; ok {
+			def.RouteEachMessage = BoolArg(body, "route_each_message")
 		}
 		// Saved even when it does not validate. This is an editor: a
 		// machine half-built is the normal state while somebody is

@@ -35,7 +35,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "machine",
-			Description: "Author phase machines: workflows an agent LIVES IN across a conversation. The session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, validate, list, get, delete.\n\n`update` REPLACES the whole phase list; to change one field of one step use `update_phase`. Run `validate` first: a refused `update` stores NOTHING.\n\nUse a machine when a conversation should work out what is asked once and then settle into that frame, or when EVERY message must take a path (route it, hand some kinds to another agent): then the routing step lists its choices and the waiting step's `next` points back at it, so each message starts over. Use a PIPELINE for work that runs start-to-finish and returns a result, and neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call**: an unattached machine does nothing. Call action=\"help\" for the full spec.",
+			Description: "Author phase machines: workflows an agent LIVES IN across a conversation. The session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, validate, list, get, delete.\n\n`update` REPLACES the whole phase list; to change one field of one step use `update_phase`. Run `validate` first: a refused `update` stores NOTHING.\n\nUse a machine when a conversation should work out what is asked once and then settle into that frame, or when EVERY message must take a path (route it, hand some kinds to another agent): then set route_each_message and give the routing step its choices. Use a PIPELINE for work that runs start-to-finish and returns a result, and neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call**: an unattached machine does nothing. Call action=\"help\" for the full spec.",
 			Parameters: map[string]ToolParam{
 				"action":      {Type: "string", Description: "One of: create | update | update_phase | list | get | repair | delete | help."},
 				"name":        {Type: "string", Description: "Machine name. Required for create; get/update/repair/delete also accept the id."},
@@ -54,14 +54,15 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 					Description: "(update_phase) Tool names this step may NOT reach, subtracted last. Empty array clears.",
 					Items:       &ToolParam{Type: "string"},
 				},
-				"reach":    {Type: "string", Description: "(update_phase) \"all\" (everything the agent has), \"read\" (only what reads: nothing that writes, runs, or reaches the network), or \"none\" (this step only decides). Unset, a transient step that names no tools reaches nothing; every other step reaches everything.", Enum: []string{"all", "read", "none"}},
-				"prompt":   {Type: "string", Description: "(update_phase) The step's directive."},
-				"desc":     {Type: "string", Description: "(update_phase) One-line summary of what the step is for."},
-				"think":    {Type: "string", Description: "(update_phase) \"on\" or \"off\".", Enum: []string{"on", "off"}},
-				"model":    {Type: "string", Description: "(update_phase) \"worker\" or \"lead\".", Enum: []string{"worker", "lead"}},
-				"next":     {Type: "string", Description: "(update_phase) The phase a transient step hands to, or a waiting step moves to after its reply. null clears it. A step that branches uses choices instead."},
-				"guard":    {Type: "string", Description: "(update_phase) Plain-language condition that moves the conversation out of this step."},
-				"guard_to": {Type: "string", Description: "(update_phase) Where the guard sends it."},
+				"reach":              {Type: "string", Description: "(update_phase) \"all\" (everything the agent has), \"read\" (only what reads: nothing that writes, runs, or reaches the network), or \"none\" (this step only decides). Unset, a transient step that names no tools reaches nothing; every other step reaches everything.", Enum: []string{"all", "read", "none"}},
+				"prompt":             {Type: "string", Description: "(update_phase) The step's directive."},
+				"desc":               {Type: "string", Description: "(update_phase) One-line summary of what the step is for."},
+				"think":              {Type: "string", Description: "(update_phase) \"on\" or \"off\".", Enum: []string{"on", "off"}},
+				"model":              {Type: "string", Description: "(update_phase) \"worker\" or \"lead\".", Enum: []string{"worker", "lead"}},
+				"next":               {Type: "string", Description: "(update_phase) The phase a transient step hands to, or a waiting step moves to after its reply. null clears it. A step that branches uses choices instead."},
+				"guard":              {Type: "string", Description: "(update_phase) Plain-language condition that moves the conversation out of this step."},
+				"guard_to":           {Type: "string", Description: "(update_phase) Where the guard sends it."},
+				"route_each_message": {Type: "boolean", Description: "(create / update) true: every new message starts at the first step, wherever the last one left off, with the last message's step results cleared. For a machine whose job is ROUTING each message. Omit to leave it as it is."},
 				"choices": {
 					Type:        "array",
 					Description: "(update_phase) The steps this one may hand the turn to, when it decides at run time: this is how a step BRANCHES. Replaces its next. [] clears it.",
@@ -109,7 +110,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 }
 
 const machineHelpText = `machine actions:
-- create  {name, description?, start?, phases:[...], attach_to_agents?:[names]}, author a machine.
+- create  {name, description?, start?, route_each_message?, phases:[...], attach_to_agents?:[names]}, author a machine.
 - update  {name|id, ...}: revise in place (same id, attachments stay). REPLACES the phase list.
 - validate {phases:[...]} or {name|id}: check WITHOUT writing. Reports what would refuse the save,
            tool names that resolve to nothing, and steps whose agent cannot reach what they name.
@@ -132,7 +133,10 @@ answer in that frame for the rest of the thread: re-deciding only when the subje
 changes.
 
 Turn 1 runs the transient phases and then replies from the resident one. Turns 2+ go straight to the
-resident phase, with the earlier decisions pinned into the prompt. Those decisions are NOT chat
+resident phase, with the earlier decisions pinned into the prompt. A ROUTER is the other shape: every
+message must be judged and sent somewhere (humor to one agent, the rest answered directly). Set
+route_each_message: true and each new message starts at the first step again, with the previous
+message's results cleared; no step's next has to point back. Those decisions are NOT chat
 history: they are state, so turn 8 is not re-reading turn 1's reasoning.
 
 === PHASE FIELDS ===
@@ -362,6 +366,9 @@ func (t *chatTurn) machineDraftFromArgs(args map[string]any, isUpdate bool) (mac
 	}
 	if s := strings.TrimSpace(stringArg(args, "start")); s != "" {
 		def.Start = s
+	}
+	if v, present := args["route_each_message"]; present {
+		def.RouteEachMessage = v == true || strings.EqualFold(strings.TrimSpace(fmt.Sprint(v)), "true")
 	}
 	if len(phases) > 0 {
 		def.Phases = phases

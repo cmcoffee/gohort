@@ -1666,3 +1666,50 @@ func TestAdviceNamesARouterThatDecidesOnce(t *testing.T) {
 		t.Errorf("no deciding step, nothing to say, got %q", got)
 	}
 }
+
+// A machine that routes each message starts every new one at the top, wherever
+// the last one parked it, and the last message's step results do not follow.
+func TestAdvanceMachine_RouteEachMessageStartsEveryMessageOver(t *testing.T) {
+	def := triageMachine()
+	def.RouteEachMessage = true
+	run, calls, _ := scriptedRunner(map[string]string{
+		"decompose": `{"parts":["cost"]}`,
+		"route":     `{"target":"answer"}`,
+	})
+	note, _, _ := collectNotes()
+	cur := &MachineCursor{Phase: "deep", State: MachineState{
+		"decompose": {Fields: map[string]any{"parts": []any{"stale"}}},
+		"deep":      {Text: "last message's answer"},
+	}}
+
+	ph, err := (&AppCore{}).AdvanceMachine(context.Background(), def, cur, MachineTurn{Input: "a new question"}, run, note)
+	if err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if got := strings.Join(*calls, ","); got != "decompose,route" {
+		t.Errorf("every message should be routed again, got calls %q", got)
+	}
+	if ph.Name != "answer" || cur.Phase != "answer" {
+		t.Errorf("this message routed to answer, got phase %s cursor %s", ph.Name, cur.Phase)
+	}
+	if _, stale := cur.State["deep"]; stale {
+		t.Error("the previous message's results must not carry into this one")
+	}
+	if parts, _ := cur.State["decompose"].Fields["parts"].([]any); len(parts) != 1 || parts[0] != "cost" {
+		t.Errorf("this message's own results should be on the blackboard, got %#v", cur.State["decompose"])
+	}
+	// Without the switch the same cursor resumes where it was and runs nothing.
+	def.RouteEachMessage = false
+	run2, calls2, _ := scriptedRunner(nil)
+	parked := &MachineCursor{Phase: "deep", State: MachineState{}}
+	if ph, _ := (&AppCore{}).AdvanceMachine(context.Background(), def, parked, MachineTurn{Input: "x"}, run2, note); ph.Name != "deep" || len(*calls2) != 0 {
+		t.Errorf("a settling machine resumes in place, got %s after %v", ph.Name, *calls2)
+	}
+	// And the advice about deciding once goes quiet when the switch is on.
+	def.RouteEachMessage = true
+	for _, a := range def.Advice() {
+		if strings.Contains(a, "decides only on a conversation's first message") {
+			t.Errorf("a machine that routes each message was told it routes once: %s", a)
+		}
+	}
+}

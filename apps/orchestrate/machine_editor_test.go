@@ -1847,3 +1847,33 @@ func TestTheDenyChecklistRoundTrips(t *testing.T) {
 		t.Errorf("the deny could not be cleared: %+v", got.Phases[0].Deny)
 	}
 }
+
+// The settings form reads and writes Route every message, and a save that does
+// not carry it leaves it alone.
+func TestTheSettingsFormCarriesRouteEachMessage(t *testing.T) {
+	app, udb, user, def := editorFixture(t)
+	post := func(body string) {
+		t.Helper()
+		r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/meta", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		app.handleMachineMeta(w, asUser(r, user), udb, user, def)
+		if w.Code != 200 {
+			t.Fatalf("%d %s", w.Code, w.Body.String())
+		}
+		def, _ = LoadMachineDef(udb, user, def.ID)
+	}
+	post(`{"route_each_message":true}`)
+	if !def.RouteEachMessage {
+		t.Fatal("the toggle did not save")
+	}
+	post(`{"name":"Renamed"}`)
+	if !def.RouteEachMessage {
+		t.Error("saving another field turned it off")
+	}
+	r := httptest.NewRequest("GET", "/api/machines/"+def.ID+"/meta", nil)
+	w := httptest.NewRecorder()
+	app.handleMachineMeta(w, asUser(r, user), udb, user, def)
+	if !strings.Contains(w.Body.String(), `"route_each_message":true`) {
+		t.Errorf("the form should read it back: %s", w.Body.String())
+	}
+}
