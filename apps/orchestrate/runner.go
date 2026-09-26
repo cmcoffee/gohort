@@ -2264,6 +2264,9 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		PhantomDeliveryRefs: func(reply string) []string {
 			return phantomDeliveryRefs(pr.sess, reply, pr.produced.producedKind())
 		},
+		// An authoring turn may not finish on a reply over tools it never
+		// verified: the build check runs first. See buildGapsFinishCheck.
+		FinishCheck: t.buildGapsFinishCheck(),
 		// Drain mid-flight user injections EACH ROUND so the orchestrator
 		// incorporates them during inline work — not just at plan-step
 		// boundaries / synthesis. Without this, a note injected while the

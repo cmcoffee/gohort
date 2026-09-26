@@ -921,6 +921,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		CapturePrompt:    target.CapturePrompt,
 		TurnClaimJudge:   subTurn.claimJudge(ctx),
 		PriorReports:     func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
+		FinishCheck:      dispatchFinishCheck(target, subSess),
 		// And whether the reply KNOWS what it asserts. This site had the claim
 		// judge and not this one — an inconsistency rather than a decision, and
 		// the kind that is invisible because the path still works: a reply here
@@ -2038,6 +2039,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	loopCfg.PhantomDeliveryRefs = func(reply string) []string {
 		return phantomDeliveryRefs(subSess, reply, produced.producedKind())
 	}
+	loopCfg.FinishCheck = dispatchFinishCheck(target, subSess)
 	// Nothing on this path shows or keeps a non-final round's prose: only the
 	// final reply is persisted (one assistant ChatMessage, below), OnStep forwards
 	// the round number and tool calls but never content, and no SettleRound folds

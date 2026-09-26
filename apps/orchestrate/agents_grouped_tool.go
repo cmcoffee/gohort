@@ -1385,6 +1385,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// dynamicNewTempTools surfaces tools loaded via load_tool this turn.
 		ToolFallbackResolver: subTurn.lazyToolFallback,
 		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
+		FinishCheck:          dispatchFinishCheck(target, subSess),
 		ChatOptions: []ChatOption{
 			WithRouteKey(runRoute),
 			WithThink(think),

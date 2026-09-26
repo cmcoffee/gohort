@@ -102,3 +102,68 @@ func TestGapGateQuietOnceReported(t *testing.T) {
 		t.Fatal("a blocked step still closes the plan — the gap check is exactly what should surface it")
 	}
 }
+
+// The check now runs INSIDE the turn, before the reply goes out, rather than as
+// a note for the next turn after the user has already read "it's fixed".
+// Observed: a delegated Builder edited a failing tool, never ran it, and said
+// it had been fixed; the next call failed exactly as before.
+func TestTheBuildCheckRunsBeforeTheReplyGoesOut(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	sess := gateSession("s1", "done")
+	plan := func() *BuildPlanState { return sess.BuildPlan }
+	var shown string
+	check := buildGapsFinishCheck(plan, db, "s1", &shown, nil)
+
+	if notice, _ := check("All done."); notice != "" {
+		t.Fatalf("nothing unverified, nothing blocked: the reply stands, got %q", notice)
+	}
+	if !sess.BuildPlan.GapsReported {
+		t.Error("a clean check made on the model's behalf counts as the report")
+	}
+
+	recordToolVerify(db, "s1", "music_gen", false, "edited since it was last tested")
+	notice, strike := check("The tool has been fixed.")
+	if !strings.Contains(notice, "music_gen") || !strings.Contains(notice, "edited since") || !strings.Contains(notice, "tool_def(action=\"test\")") {
+		t.Errorf("the notice should name the tool, why, and how to verify it: %q", notice)
+	}
+	if !strings.Contains(strike, "music_gen") {
+		t.Errorf("the strike line should say what was found: %q", strike)
+	}
+	if again, _ := check("I edited music_gen but have not run it."); again != "" {
+		t.Error("a set of gaps the model has been shown is not shown again; its next reply goes out")
+	}
+
+	recordToolVerify(db, "s1", "music_gen", true, "")
+	recordToolVerify(db, "s1", "other_tool", false, "never tested")
+	if notice, _ := check("Both work now."); !strings.Contains(notice, "other_tool") {
+		t.Errorf("a new gap is a new set and is shown: %q", notice)
+	}
+}
+
+// A plan with steps still pending is the approval turn or a question mid-build,
+// and a report the model made itself counts as shown.
+func TestTheBuildCheckLeavesAnUnfinishedPlanAndAnAnsweredReportAlone(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	recordToolVerify(db, "s2", "draft_tool", false, "never tested")
+	pending := gateSession("s2", "done", "pending")
+	var shown string
+	check := buildGapsFinishCheck(func() *BuildPlanState { return pending.BuildPlan }, db, "s2", &shown, nil)
+	if notice, _ := check("Here is the plan. Shall I go ahead?"); notice != "" {
+		t.Errorf("a plan still pending is not a finish: %q", notice)
+	}
+
+	turn := &chatTurn{udb: db, session: gateSession("s3", "done"), agent: AgentRecord{ID: "seed-builder"}}
+	recordToolVerify(db, "s3", "draft_tool", false, "never tested")
+	if _, err := turn.reportBuildGapsToolDef().Handler(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if notice, _ := turn.buildGapsFinishCheck()("draft_tool is not verified yet."); notice != "" {
+		t.Errorf("the model called report_build_gaps itself and saw this set: %q", notice)
+	}
+	if (&chatTurn{agent: AgentRecord{ID: "plain"}, session: &ChatSession{ID: "s4"}}).buildGapsFinishCheck() != nil {
+		t.Error("an agent that does not author has no build to check")
+	}
+	if dispatchFinishCheck(AgentRecord{ID: "seed-builder"}, &ToolSession{DB: db, ChatSessionID: "s3"}) == nil {
+		t.Error("a delegated Builder run is checked too")
+	}
+}

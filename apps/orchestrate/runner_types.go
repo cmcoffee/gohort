@@ -283,6 +283,10 @@ type chatTurn struct {
 	appealSpent bool
 	appealWon   map[string]bool
 
+	// gapsShown is the set of build gaps the model has already been shown this
+	// turn, by report_build_gaps or by the finish check, which shows a set once.
+	gapsShown string
+
 	// appTools are extra per-run tools supplied by the HOST APP dispatching this
 	// turn (e.g. a workbench's co-author tool that writes into the open document's
 	// record store). Injected into the orchestrator's catalog so the agent can call

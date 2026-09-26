@@ -497,48 +497,12 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 			if plan != nil {
 				plan.GapsReported = true
 			}
-			type gapEntry struct {
-				Step   int    `json:"step"`
-				Title  string `json:"title"`
-				Reason string `json:"reason"`
-			}
-			type unverifiedEntry struct {
-				Tool   string `json:"tool"`
-				Reason string `json:"reason"`
-			}
-			type gapReport struct {
-				Blocked    []gapEntry        `json:"blocked,omitempty"`
-				Skipped    []gapEntry        `json:"skipped,omitempty"`
-				Unverified []unverifiedEntry `json:"unverified,omitempty"`
-			}
-			rep := gapReport{}
-			var steps []BuildPlanStep
-			if plan != nil {
-				steps = plan.Steps
-			}
-			for _, s := range steps {
-				switch s.Status {
-				case "blocked":
-					rep.Blocked = append(rep.Blocked, gapEntry{Step: s.Number, Title: s.Title, Reason: s.BlockedReason})
-				case "pending", "in_progress":
-					rep.Skipped = append(rep.Skipped, gapEntry{Step: s.Number, Title: s.Title, Reason: "step never completed"})
-				}
-			}
-			// Step status is SELF-REPORTED: the model calls mark_step_done itself,
-			// so a step can read "done" over a tool whose verification failed —
-			// which is precisely what happened, and this gate said "All steps
-			// completed successfully" on top of it. Grade the tools too, from the
-			// verification ledger, which records the outcome where it was actually
-			// known instead of leaving it as prose in a scrolled-past result.
-			if t.session != nil {
-				for _, u := range unverifiedTools(t.udb, t.session.ID) {
-					rep.Unverified = append(rep.Unverified, unverifiedEntry{Tool: u.Tool, Reason: u.Reason})
-				}
-			}
+			rep := currentBuildGaps(plan, t.udb, t.session.ID)
+			t.gapsShown = rep.key()
 			if plan != nil {
 				emitBuildPlanBlock(t.sse, plan)
 			}
-			if len(rep.Blocked) == 0 && len(rep.Skipped) == 0 && len(rep.Unverified) == 0 {
+			if rep.empty() {
 				if plan == nil {
 					return "No build plan is active (a repair, not a build) and every tool you touched this session stands verified: no gaps to report. You may write the final reply.", nil
 				}
@@ -555,6 +519,157 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 			return msg, nil
 		},
 	}
+}
+
+// buildGaps is what report_build_gaps grades, and what the finish check below
+// grades on its behalf.
+type buildGaps struct {
+	Blocked    []buildGapStep `json:"blocked,omitempty"`
+	Skipped    []buildGapStep `json:"skipped,omitempty"`
+	Unverified []buildGapTool `json:"unverified,omitempty"`
+}
+
+type buildGapStep struct {
+	Step   int    `json:"step"`
+	Title  string `json:"title"`
+	Reason string `json:"reason"`
+}
+
+type buildGapTool struct {
+	Tool   string `json:"tool"`
+	Reason string `json:"reason"`
+}
+
+// currentBuildGaps grades the session's plan steps and the verification ledger.
+//
+// Step status is SELF-REPORTED: the model calls mark_step_done itself, so a
+// step can read "done" over a tool whose verification failed, which is
+// precisely what happened, and report_build_gaps said "All steps completed
+// successfully" on top of it. The tools are graded from the ledger, which
+// records the outcome where it was actually known.
+func currentBuildGaps(plan *BuildPlanState, udb Database, sessionID string) buildGaps {
+	var rep buildGaps
+	if plan != nil {
+		for _, st := range plan.Steps {
+			switch st.Status {
+			case "blocked":
+				rep.Blocked = append(rep.Blocked, buildGapStep{Step: st.Number, Title: st.Title, Reason: st.BlockedReason})
+			case "pending", "in_progress":
+				rep.Skipped = append(rep.Skipped, buildGapStep{Step: st.Number, Title: st.Title, Reason: "step never completed"})
+			}
+		}
+	}
+	for _, u := range unverifiedTools(udb, sessionID) {
+		rep.Unverified = append(rep.Unverified, buildGapTool{Tool: u.Tool, Reason: u.Reason})
+	}
+	return rep
+}
+
+func (g buildGaps) empty() bool {
+	return len(g.Blocked) == 0 && len(g.Skipped) == 0 && len(g.Unverified) == 0
+}
+
+// key identifies this set of gaps, so a set the model has already been shown
+// is not shown to it again.
+func (g buildGaps) key() string {
+	if g.empty() {
+		return ""
+	}
+	data, _ := json.Marshal(g)
+	return string(data)
+}
+
+// buildGapsFinishCheck is an authoring run's AgentLoopConfig.FinishCheck: the
+// report_build_gaps call Builder is told to make before its final reply, made
+// for it when it did not. Observed: a delegated Builder edited a failing tool,
+// never ran it, and answered "has been fixed"; the next call failed exactly as
+// before.
+//
+// Holds a reply back only for gaps the model has not been shown, whether by
+// its own report_build_gaps call or by this check, so a reply that already
+// accounts for them goes out on the next try. A plan with steps still pending
+// is left alone: that is the plan-approval turn or a question mid-build, and
+// the reply there is legitimately not a finish.
+//
+// plan reads the live plan (nil when there is none, as on a delegated run);
+// sessionID is the key the verification ledger records this run's tools under.
+func buildGapsFinishCheck(plan func() *BuildPlanState, udb Database, sessionID string, shown *string, sse *sseWriter) func(string) (string, string) {
+	return func(string) (string, string) {
+		var p *BuildPlanState
+		if plan != nil {
+			p = plan()
+		}
+		rep := currentBuildGaps(p, udb, sessionID)
+		if len(rep.Skipped) > 0 {
+			return "", ""
+		}
+		if rep.empty() {
+			// Checked on its behalf and clean: the after-turn warning about a
+			// skipped report has nothing left to say.
+			if p != nil {
+				p.GapsReported = true
+			}
+			return "", ""
+		}
+		key := rep.key()
+		if shown != nil && *shown == key {
+			return "", ""
+		}
+		if shown != nil {
+			*shown = key
+		}
+		if p != nil {
+			p.GapsReported = true
+			emitBuildPlanBlock(sse, p)
+		}
+		return rep.finishNotice(), rep.strikeReason()
+	}
+}
+
+// finishNotice tells the model what the check found, in the terms it needs to
+// act on: which tools are not verified and why, and which steps are blocked.
+func (g buildGaps) finishNotice() string {
+	var b strings.Builder
+	b.WriteString("Your reply was held back: before a reply that finishes the work, the build check (report_build_gaps) runs, and you had not run it. It found:")
+	for _, u := range g.Unverified {
+		fmt.Fprintf(&b, "\n  - tool %s is NOT verified: %s", u.Tool, u.Reason)
+	}
+	for _, st := range g.Blocked {
+		fmt.Fprintf(&b, "\n  - step %d (%s) is blocked: %s", st.Step, st.Title, st.Reason)
+	}
+	b.WriteString("\n\nAn edit is not a fix and a save is not a test: until a tool has run and worked, you do not know that it works. Verify each tool now (tool_def(action=\"test\") with cases, or add_tool with test_args) and fix what fails. If you cannot verify one, say plainly in your reply which one and why. Do NOT tell the user an unverified tool works or has been fixed.")
+	return b.String()
+}
+
+// buildGapsFinishCheck wires the check for an interactive turn. Nil for an
+// agent that does not author.
+func (t *chatTurn) buildGapsFinishCheck() func(string) (string, string) {
+	if !agentCanAuthor(t.agent) || t.session == nil {
+		return nil
+	}
+	return buildGapsFinishCheck(func() *BuildPlanState { return t.session.BuildPlan }, t.udb, t.session.ID, &t.gapsShown, t.sse)
+}
+
+// dispatchFinishCheck is the same check for a delegated run of an authoring
+// agent, which has no plan and records its tools under its own session key.
+// Nil for an agent that does not author: it has nothing to grade.
+func dispatchFinishCheck(target AgentRecord, ts *ToolSession) func(string) (string, string) {
+	if !agentCanAuthor(target) || ts == nil || ts.ChatSessionID == "" {
+		return nil
+	}
+	var shown string
+	return buildGapsFinishCheck(nil, ts.DB, ts.ChatSessionID, &shown, nil)
+}
+
+// strikeReason is the line shown beside the reply the check took back.
+func (g buildGaps) strikeReason() string {
+	switch n := len(g.Unverified); {
+	case n == 1:
+		return fmt.Sprintf("Held back: sent before the build check, which found %s not verified.", g.Unverified[0].Tool)
+	case n > 1:
+		return fmt.Sprintf("Held back: sent before the build check, which found %d tools not verified.", n)
+	}
+	return "Held back: sent before the build check, which found blocked steps."
 }
 
 // toInt is a small JSON-tolerant int coercion for revise_build_plan's

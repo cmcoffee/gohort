@@ -29,6 +29,7 @@ const (
 	correctionUngrounded      = "ungrounded-claim"
 	correctionMachinery       = "machinery-leak"
 	correctionTruncated       = "output-truncated"
+	correctionFinishCheck     = "finish-check"
 )
 
 const (

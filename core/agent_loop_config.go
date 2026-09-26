@@ -750,6 +750,17 @@ type AgentLoopConfig struct {
 	// no picture and nothing anywhere in the words to suggest one was missing.
 	PhantomDeliveryRefs func(reply string) []string
 
+	// FinishCheck runs when the model ends its turn with a reply, before the
+	// reply is accepted, for a host whose agent must have checked something
+	// before it may call the work done. The contract lived in the prompt and
+	// the tool description, and a model that skipped it told the user a tool
+	// "has been fixed" that had never run. A non-empty notice means the reply
+	// may not stand as written: it is struck with strikeReason (erased when
+	// that is empty), the notice goes back to the model, and the turn goes on.
+	// Called only while a correction is left to spend, so whatever it returns
+	// is delivered, and a host may record it as shown. Nil = no check.
+	FinishCheck func(reply string) (notice, strikeReason string)
+
 	// RoundToolFilter, when set, is called at the top of each round for
 	// every candidate tool name; returning false drops that tool from the
 	// round's catalog. Use to SUPPRESS a tool mid-turn — e.g. after it has

@@ -1044,6 +1044,32 @@ func (lr *loopRun) strikeRound(reason string) {
 	lr.retractRound()
 }
 
+// finishCheck asks the host whether the turn may end on this reply; see
+// AgentLoopConfig.FinishCheck. The reply it objects to is struck rather than
+// erased, so the reader sees what was taken back and why.
+func (lr *loopRun) finishCheck() loopAction {
+	if lr.cfg.FinishCheck == nil || strings.TrimSpace(lr.rs.resp.Content) == "" {
+		return actNone
+	}
+	if !lr.corrections.available(correctionFinishCheck) || lr.round >= lr.maxRounds {
+		return actNone
+	}
+	notice, strike := lr.cfg.FinishCheck(lr.rs.resp.Content)
+	if strings.TrimSpace(notice) == "" {
+		return actNone
+	}
+	Debug("[agent_loop] finish check held the reply back, re-prompting: correction %d/%d", lr.corrections.spend(correctionFinishCheck), maxCorrectionsPerKind)
+	lr.emitDiag("finish-check-corrected", "The reply was held back by a check that must pass before the turn ends, and the model was re-prompted with what it found.")
+	if strike != "" {
+		lr.strikeRound(strike)
+	} else {
+		lr.retractRound()
+	}
+	lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
+	lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + notice})
+	return actContinue
+}
+
 // labelNextRound asks the host to label the next reply bubble it finalizes;
 // "" cancels a pending label. Nil-safe.
 func (lr *loopRun) labelNextRound(label string) {
@@ -2878,6 +2904,13 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 	// turn judge on purpose: judging a reply that will not be sent can only
 	// strike or re-prompt something nobody should see.
 	if act := lr.dropRepeatedGroundingRetry(); act != actNone {
+		return act
+	}
+
+	// The host's own condition on finishing, ahead of the turn judge: it is
+	// deterministic and costs no call, and a reply it sends back should not
+	// have a judge spend one on it first.
+	if act := lr.finishCheck(); act != actNone {
 		return act
 	}
 
