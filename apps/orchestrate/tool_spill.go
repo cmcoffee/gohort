@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -101,16 +102,49 @@ func maybeSpillToolResult(sess *ToolSession, toolName, body string) (string, boo
 		Log("[spill] mkdir %s failed: %v, returning body as-is", spillDir, err)
 		return "", false
 	}
-	fname := spillFilename(toolName, body)
+	// The FILE holds what the tool returned, not how it was framed for the
+	// model: the untrusted-content banner and an HTTP status line made a JSON
+	// body unparseable, and an agent spent a dozen calls failing to pull the
+	// audio out of a 262KB response it had in full. The stub below keeps the
+	// banner, and reading the file back through workspace is fenced again.
+	raw, cleaned := spillFileBody(body)
+	fname := spillFilename(toolName, raw)
 	abs := filepath.Join(spillDir, fname)
-	if err := os.WriteFile(abs, []byte(body), 0600); err != nil {
+	if err := os.WriteFile(abs, []byte(raw), 0600); err != nil {
 		Log("[spill] write %s failed: %v, returning body as-is", abs, err)
 		return "", false
 	}
 	rel := filepath.Join(spillDirName, fname)
 	stub := renderSpillStub(toolName, rel, body)
+	if cleaned {
+		stub = strings.Replace(stub, "Full body saved to workspace as", "The raw response body (no banner or status line, ready to parse) is saved to workspace as", 1)
+	}
 	Log("[spill] %s → %s (%d bytes, stub=%d bytes)", toolName, rel, len(body), len(stub))
 	return stub, true
+}
+
+// spillStatusLine is an HTTP status line an api tool puts ahead of the body.
+var spillStatusLine = regexp.MustCompile(`^HTTP(?:/[0-9.]+)? [0-9]{3}[^\n{\[<]*`)
+
+// spillFileBody is what a spill file holds: the tool's own output with the
+// framing taken off the front. The untrusted-content banner (any number of
+// them), and a leading HTTP status line when what follows is a structured
+// body (JSON or XML), since that line is what stops the file parsing. Plain
+// text keeps its status line: nothing parses it, and it says how the call went.
+// Reports whether anything was removed.
+func spillFileBody(body string) (string, bool) {
+	out := body
+	for strings.HasPrefix(out, untrustedContentFence) {
+		out = strings.TrimPrefix(out, untrustedContentFence)
+	}
+	out = strings.TrimLeft(out, " \t\r\n")
+	if loc := spillStatusLine.FindStringIndex(out); loc != nil {
+		rest := strings.TrimLeft(out[loc[1]:], " \t\r\n")
+		if strings.HasPrefix(rest, "{") || strings.HasPrefix(rest, "[") || strings.HasPrefix(rest, "<") {
+			out = rest
+		}
+	}
+	return out, out != body
 }
 
 // renderSpillStub builds the LLM-facing replacement: header + head
