@@ -377,6 +377,12 @@ type AgentLoopPanel struct {
 	RecordLabel      string `json:"record_label,omitempty"`
 	RecordHint       string `json:"record_hint,omitempty"`
 	RecordLockedText string `json:"record_locked_text,omitempty"`
+	// PinnedClearURL, when set, puts a clear button on the pinned row (the
+	// home thread or the record), POSTed after PinnedClearConfirm is accepted.
+	// Extras placeholders resolve in it like any other panel URL. The app owns
+	// what clearing means; empty = no button.
+	PinnedClearURL     string `json:"pinned_clear_url,omitempty"`
+	PinnedClearConfirm string `json:"pinned_clear_confirm,omitempty"`
 
 	// Height overrides the panel's default size — any CSS length ("360px",
 	// "50vh"). The default fills the viewport, which is right for a page whose

@@ -687,6 +687,13 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					RecordLabel:      "Cortex",
 					RecordHint:       "record only: this agent does not read it",
 					RecordLockedText: "This is the agent's cortex, a record of what reached it: messages, requests, scheduled runs, monitor fires. The agent does not read it. Start a new session to talk to it.",
+					// Clear, on the pinned row, for either kind of cortex. The
+					// Manage menu's Clear Cortex only shows for an agent that
+					// reads its cortex, so a record-only one had no way to be
+					// cleared. Same endpoint for both: every agent's cortex is
+					// the one thread cortexSessionID names.
+					PinnedClearURL:     "api/console/channel/clear?agent={agent_id}",
+					PinnedClearConfirm: "Clear this agent's Cortex? Everything recorded in it, and its rolling summary, is removed. Monitors, standing agents and approvals are kept.",
 					// "+ New ▾" offers a clean-room session. Picking it opens a
 					// fresh thread and arms incognito on the first send, so the
 					// runner stamps the session as a clean room at creation: no
