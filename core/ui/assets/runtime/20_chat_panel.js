@@ -694,7 +694,7 @@
       panel.innerHTML = '';
       tools.forEach(function(t) {
         var summaryChildren = [el('span', {class: 'ui-chat-tool-name'}, ['→ ' + t.name])];
-        if (t.args) summaryChildren.push(el('span', {class: 'ui-chat-tool-args'}, [t.args]));
+        if (t.args) summaryChildren.push(el('span', {class: 'ui-chat-tool-args', title: toolArgsHover(t.argsFull)}, [t.args]));
         var summary = el('summary', {class: 'ui-chat-tool-summary'}, summaryChildren);
         var det = el('details', {class: 'ui-chat-tool'});
         det.appendChild(summary);
@@ -705,28 +705,8 @@
         // labeled <pre> per key, pretty-printed JSON for objects /
         // arrays. Only shown when argsFull is present (older bubbles
         // without it just fall through to the output block).
-        if (t.argsFull && typeof t.argsFull === 'object') {
-          var keys = Object.keys(t.argsFull);
-          if (keys.length > 0) {
-            keys.sort();
-            var argBox = el('div', {class: 'ui-chat-tool-argblock'});
-            keys.forEach(function(k) {
-              var v = t.argsFull[k];
-              var rendered;
-              if (typeof v === 'string') {
-                rendered = v;
-              } else {
-                try { rendered = JSON.stringify(v, null, 2); }
-                catch (e) { rendered = String(v); }
-              }
-              var row = el('div', {class: 'ui-chat-tool-argrow'});
-              row.appendChild(el('span', {class: 'ui-chat-tool-argkey'}, [k]));
-              row.appendChild(el('pre', {class: 'ui-chat-tool-argval'}, [rendered]));
-              argBox.appendChild(row);
-            });
-            body.appendChild(argBox);
-          }
-        }
+        var argBox = toolArgsBlock(t.argsFull, 'ui-chat-tool');
+        if (argBox) body.appendChild(argBox);
         var trimmed = String(t.output || '').trim();
         if (t.output === null) {
           body.appendChild(el('div', {class: 'ui-chat-tool-empty'}, ['(running…)']));

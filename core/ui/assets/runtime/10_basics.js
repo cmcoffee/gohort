@@ -1,3 +1,63 @@
+  // --- tool-call arguments --------------------------------------------
+  // A tool call shows a one-line summary with every value clipped, which
+  // keeps a row of calls readable and hides the request that was actually
+  // sent. These three render the SAME structured args three ways, for every
+  // panel that lists tool calls: the clipped line, the full text for a hover,
+  // and the full labelled block for the expanded view.
+
+  // toolArgValue is one arg value as text: strings as-is, everything else as
+  // indented JSON.
+  function toolArgValue(v) {
+    if (typeof v === 'string') return v;
+    try { return JSON.stringify(v, null, 2); } catch (e) { return String(v); }
+  }
+
+  // toolArgsSummary is the clipped one-line form: key="value", values cut at
+  // 60 characters, keys sorted. The server builds the same line for a live
+  // call; this builds it for a call replayed from history.
+  function toolArgsSummary(args) {
+    if (!args || typeof args !== 'object') return String(args || '');
+    return Object.keys(args).sort().map(function(k) {
+      var v = args[k], s;
+      if (typeof v === 'string') s = v;
+      else if (Array.isArray(v)) s = JSON.stringify(v);
+      else if (v && typeof v === 'object') s = '{…}';
+      else s = String(v);
+      s = s.replace(/\n/g, ' ');
+      if (s.length > 60) s = s.slice(0, 60) + '…';
+      return k + '=' + JSON.stringify(s);
+    }).join(', ');
+  }
+
+  // toolArgsHover is the full args as plain text for a title tooltip, capped
+  // so a whole script does not become a screen-sized tooltip; the expanded
+  // view has all of it.
+  function toolArgsHover(args) {
+    if (!args || typeof args !== 'object') return '';
+    var text = Object.keys(args).sort().map(function(k) {
+      return k + ': ' + toolArgValue(args[k]);
+    }).join('\n');
+    return text.length > 2000 ? text.slice(0, 2000) + '\n… (expand for the rest)' : text;
+  }
+
+  // toolArgsBlock is the full args for the expanded view: one labelled row
+  // per key, each value in its own scrollable block. cls prefixes the class
+  // names so each panel styles it as its own. null when there are no args.
+  function toolArgsBlock(args, cls) {
+    if (!args || typeof args !== 'object') return null;
+    var keys = Object.keys(args);
+    if (!keys.length) return null;
+    keys.sort();
+    var box = el('div', {class: cls + '-argblock'});
+    keys.forEach(function(k) {
+      var row = el('div', {class: cls + '-argrow'});
+      row.appendChild(el('span', {class: cls + '-argkey'}, [k]));
+      row.appendChild(el('pre', {class: cls + '-argval'}, [toolArgValue(args[k])]));
+      box.appendChild(row);
+    });
+    return box;
+  }
+
   // comboSeq gives each combo cell's <datalist> a unique id. Ids are
   // document-global, so two rows sharing one would put the first row's
   // suggestions on every later cell.

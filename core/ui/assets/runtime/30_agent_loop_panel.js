@@ -3778,11 +3778,16 @@
         // sub-agent loop vs a regular registered tool.
         var displayName = (t.kind === 'pipeline' ? '🪈 ' : '') + '→ ' + t.name;
         var summaryChildren = [el('span', {class: 'ui-agent-tool-name'}, [displayName])];
-        if (t.args) summaryChildren.push(el('span', {class: 'ui-agent-tool-args'}, [t.args]));
+        if (t.args) summaryChildren.push(el('span', {class: 'ui-agent-tool-args', title: toolArgsHover(t.argsFull)}, [t.args]));
         var summary = el('summary', {class: 'ui-agent-tool-summary'}, summaryChildren);
         var det = el('details', {class: 'ui-agent-tool'});
         det.appendChild(summary);
         var body = el('div', {class: 'ui-agent-tool-body'});
+        // The request as it was sent, above what came back: the summary line
+        // clips every value, so without this the only way to see what a call
+        // actually asked for was the server log.
+        var argBox = toolArgsBlock(t.argsFull, 'ui-agent-tool');
+        if (argBox) body.appendChild(argBox);
         if (t.output === null) {
           body.appendChild(el('div', {class: 'ui-agent-tool-empty'}, ['(running…)']));
         } else {
@@ -4461,6 +4466,7 @@
             call_id: ev.call_id || '',
             name: ev.name || 'tool',
             args: ev.args || '',
+            argsFull: ev.args_full || null,
             output: null,
             kind: ev.tool_kind || '',
           });
@@ -5417,9 +5423,8 @@
       if (!rmHost) return;
       if (!rmHost.tools) rmHost.tools = [];
       toolCalls.forEach(function(tc, idx) {
-        var argsStr = '';
-        try { argsStr = JSON.stringify(tc.args || tc.Args || {}); }
-        catch (_) { argsStr = String(tc.args || tc.Args || ''); }
+        var argsFull = tc.args || tc.Args || null;
+        var argsStr = toolArgsSummary(argsFull);
         var resultText = tc.result || tc.Result || '';
         var errText = tc.err || tc.Err || '';
         var output = errText ? ('ERROR: ' + errText) : resultText;
@@ -5428,6 +5433,7 @@
           call_id: 'replay-' + mid + '-' + idx,
           name: (tc.label || tc.Label || tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
           args: argsStr,
+          argsFull: argsFull,
           output: String(output == null ? '' : output),
           kind: '',
         });
@@ -6095,9 +6101,8 @@
                   if (ctxHost) {
                     if (!ctxHost.tools) ctxHost.tools = [];
                     ctxToolCalls.forEach(function(tc, idx) {
-                      var argsStr = '';
-                      try { argsStr = JSON.stringify(tc.args || tc.Args || {}); }
-                      catch (_) { argsStr = String(tc.args || tc.Args || ''); }
+                      var argsFull = tc.args || tc.Args || null;
+                      var argsStr = toolArgsSummary(argsFull);
                       var resultText = tc.result || tc.Result || '';
                       var errText = tc.err || tc.Err || '';
                       var output = errText ? ('ERROR: ' + errText) : resultText;
@@ -6106,6 +6111,7 @@
                         call_id: 'replay-' + mid + '-' + idx,
                         name: (tc.label || tc.Label || tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
                         args: argsStr,
+                        argsFull: argsFull,
                         output: String(output == null ? '' : output),
                         kind: '',
                       });

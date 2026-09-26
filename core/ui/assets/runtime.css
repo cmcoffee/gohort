@@ -4467,6 +4467,30 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-tool-args { color: var(--text-mute); font-size: 0.72rem; }
 .ui-agent-tool-body { padding: 0.2rem 0 0.4rem 0.8rem; }
 .ui-agent-tool-empty { color: var(--text-mute); font-style: italic; font-size: 0.78rem; }
+/* The call's arguments in full, above its result: one labelled block per
+   key, accent-tinted keys so inputs read apart from the output below. */
+.ui-agent-tool-argblock {
+  display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.45rem;
+}
+.ui-agent-tool-argrow { display: flex; flex-direction: column; gap: 0.15rem; }
+.ui-agent-tool-argkey {
+  font-size: 0.7rem; font-weight: 600; color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; opacity: 0.85;
+}
+.ui-agent-tool-argval {
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg-1);
+  border-left: 2px solid var(--accent);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 16rem;
+  overflow: auto;
+}
 .ui-agent-tool-result {
   margin: 0;
   padding: 0.3rem 0.5rem;
