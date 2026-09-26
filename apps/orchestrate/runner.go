@@ -153,6 +153,7 @@ type planRun struct {
 	// The loop's input and outcome.
 	llmMsgs   []Message
 	gDecline  string
+	relay     string // a machine step's reply_with, sent in place of a model turn
 	userSaid  string
 	orchStart time.Time
 	resp      *Response
@@ -1865,6 +1866,11 @@ func (pr *planRun) prepareMessages() {
 	// topical/disclosure rule ("never mention salary") is caught at the door,
 	// not after the model has already narrated the answer in an interim turn.
 	pr.llmMsgs, pr.gDecline = t.applyInputGuardrail(pr.llmMsgs)
+	// A step that relays an earlier step's answer sends it as rendered, with no
+	// model call (machineRelay); a refusal above takes precedence.
+	if pr.gDecline == "" {
+		pr.relay = t.machineRelay()
+	}
 	// What the USER actually said, captured before the loop writes on it. The
 	// loop appends turn-scoped context (the image manifest) and prepends the
 	// date stamp to this same trailing message in place, and the graph extractor
@@ -2154,7 +2160,8 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 	return AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply: pr.gDecline,
+		// A machine step's reply_with rides the same seam: the reply IS the text.
+		PreEmptedReply: chFirst(pr.gDecline, pr.relay),
 		SendGuardKey:   sendGuardKey,
 		SystemPrompt:   pr.sys,
 		Tools:          pr.allTools,

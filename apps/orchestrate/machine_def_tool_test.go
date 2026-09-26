@@ -432,7 +432,7 @@ func TestTheToolDecodesAndDocumentsEveryPhaseField(t *testing.T) {
 			"name": "found", "type": "string", "desc": "what turned up",
 			"required": true, "from": "{now}", "enum": []any{"answer"},
 		}},
-		"resident": true, "next": "answer", "next_from": "found",
+		"resident": true, "reply_with": "{state:answer}", "next": "answer", "next_from": "found",
 		"choices": []any{"answer"}, "guard": "they moved on", "guard_to": "answer",
 		"keep": []any{"answer"}, "agent": "Log analyst", "exits_to": []any{"answer"},
 		"pipeline": "Fact check", "machine": "Gap filler",

@@ -63,6 +63,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"guard":              {Type: "string", Description: "(update_phase) Plain-language condition that moves the conversation out of this step."},
 				"guard_to":           {Type: "string", Description: "(update_phase) Where the guard sends it."},
 				"route_each_message": {Type: "boolean", Description: "(create / update) true: every new message starts at the first step, wherever the last one left off, with the last message's step results cleared. For a machine whose job is ROUTING each message. Omit to leave it as it is."},
+				"reply_with":         {Type: "string", Description: "(update_phase) On a step the conversation waits in: a template that IS the reply, sent with no model call, e.g. {state:ComedianDelegate}. For relaying what an earlier step produced. null clears it."},
 				"choices": {
 					Type:        "array",
 					Description: "(update_phase) The steps this one may hand the turn to, when it decides at run time: this is how a step BRANCHES. Replaces its next. [] clears it.",
@@ -144,6 +145,10 @@ name       unique label; also the key others read as {state:NAME}. No dots.
 desc       one line: what this phase is for. Shown to the guard and in the phase list.
 prompt     the directive, layered on top of the agent's persona (it does not replace it)
 resident   true = user turns land here and a turn ENDS here. At least one per machine.
+reply_with (resident) a template that IS the reply, sent with no model call: {state:Step} for what
+           an earlier step produced, {input} for the message. For a step that only passes along a
+           delegate's answer: a model asked to relay rewrites it, re-delegates, or declines.
+           Still judged by the agent's output rules; falls back to prompt if empty or stopped.
 next       where control goes when this phase finishes
 choices    (transient) [phase names] this phase may hand to; it DECIDES between them at run time.
            Prefer this over next_from: the framework declares the routing field (next_step) and
@@ -913,6 +918,7 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	setStr("think", &ph.Think, true)
 	setStr("model", &ph.Model, true)
 	setStr("next", &ph.Next, false)
+	setStr("reply_with", &ph.ReplyWith, false)
 	setStr("guard", &ph.Guard, false)
 	setStr("guard_to", &ph.GuardTo, false)
 	setList("tools", &ph.Tools)
@@ -1096,19 +1102,20 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			return nil, err
 		}
 		out = append(out, MachinePhase{
-			Name:     strings.TrimSpace(mapStr(m, "name")),
-			Desc:     strings.TrimSpace(mapStr(m, "desc")),
-			Prompt:   mapStr(m, "prompt"),
-			Reach:    normalizeReach(mapStr(m, "reach")),
-			Tools:    mapStrList(m, "tools"),
-			Deny:     mapStrList(m, "deny"),
-			Model:    strings.ToLower(strings.TrimSpace(mapStr(m, "model"))),
-			Think:    normalizePhaseThink(m["think"]),
-			Output:   fields,
-			Resident: mapBool(m, "resident"),
-			Next:     strings.TrimSpace(mapStr(m, "next")),
-			NextFrom: strings.TrimSpace(mapStr(m, "next_from")),
-			Choices:  mapStrList(m, "choices"),
+			Name:      strings.TrimSpace(mapStr(m, "name")),
+			Desc:      strings.TrimSpace(mapStr(m, "desc")),
+			Prompt:    mapStr(m, "prompt"),
+			Reach:     normalizeReach(mapStr(m, "reach")),
+			Tools:     mapStrList(m, "tools"),
+			Deny:      mapStrList(m, "deny"),
+			Model:     strings.ToLower(strings.TrimSpace(mapStr(m, "model"))),
+			Think:     normalizePhaseThink(m["think"]),
+			Output:    fields,
+			Resident:  mapBool(m, "resident"),
+			Next:      strings.TrimSpace(mapStr(m, "next")),
+			ReplyWith: strings.TrimSpace(mapStr(m, "reply_with")),
+			NextFrom:  strings.TrimSpace(mapStr(m, "next_from")),
+			Choices:   mapStrList(m, "choices"),
 			// Agent was missing here, so a machine written through this
 			// tool could never delegate a step and an existing one lost
 			// its delegate on the next update.
@@ -1168,7 +1175,7 @@ func previewText(s string, max int) string {
 
 // updatePhaseFieldNames is what update_phase writes, in the order it says so.
 var updatePhaseFieldNames = []string{
-	"prompt", "desc", "think", "model", "next", "choices", "resident",
+	"prompt", "desc", "think", "model", "next", "choices", "resident", "reply_with",
 	"guard", "guard_to", "tools", "deny", "reach",
 }
 
@@ -1194,7 +1201,7 @@ func unknownUpdatePhaseKeys(args map[string]any) []string {
 var machinePhaseKeys = map[string]bool{
 	"name": true, "desc": true, "prompt": true, "tool": true, "args": true,
 	"reach": true, "tools": true, "deny": true, "model": true, "think": true,
-	"output": true, "resident": true, "next": true, "next_from": true,
+	"output": true, "resident": true, "reply_with": true, "next": true, "next_from": true,
 	"choices": true, "guard": true, "guard_to": true, "exits_to": true,
 	"keep": true, "agent": true, "pipeline": true, "machine": true,
 	"accumulates": true,

@@ -299,6 +299,15 @@ type MachinePhase struct {
 	// resident phase means "stay", which is the ordinary case.
 	Next string `json:"next,omitempty"`
 
+	// ReplyWith, on a step the conversation waits in, IS the reply: this
+	// template rendered ({state:Step}, {input} and the rest) and sent as it
+	// is, with no model call. For a step whose whole job is passing along what
+	// an earlier step produced, where asking a model to relay it invited it to
+	// rewrite, re-delegate or decline. The host still judges the text against
+	// the agent's output rules, and answers from Prompt instead when the
+	// template renders to nothing or a rule stops it.
+	ReplyWith string `json:"reply_with,omitempty"`
+
 	// NextFrom names one of THIS phase's own declared string output
 	// fields whose VALUE is the next phase name. This is how a router
 	// routes, and it is deliberately not an expression: Validate proves
@@ -1426,6 +1435,15 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	}
 	if err := doubleBraceProblem(name, "prompt", p.Prompt); err != nil {
 		probs = append(probs, err.Error())
+	}
+	if rw := strings.TrimSpace(p.ReplyWith); rw != "" {
+		if !p.Resident {
+			probs = append(probs, "step "+name+": reply_with is only valid on a step the conversation waits in (a step that passes on hands its result to the next step, not to the person). Put it on the step that replies.")
+		}
+		if err := doubleBraceProblem(name, "reply_with", rw); err != nil {
+			probs = append(probs, err.Error())
+		}
+		probs = append(probs, stateRefProblems(name, rw, seen, declared)...)
 	}
 	if p.Resident {
 		// A resident step's prompt renders into the system prefix

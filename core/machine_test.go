@@ -1744,3 +1744,23 @@ func TestAdviceCatchesPromptsWrittenFromTheWrongSide(t *testing.T) {
 		t.Errorf("a waiting step gets the fix that works there:\n%s", got)
 	}
 }
+
+// reply_with is the reply of a step the conversation waits in; on a step that
+// passes on there is no person to send it to, and its references must resolve.
+func TestReplyWithBelongsToAWaitingStep(t *testing.T) {
+	ok := MachineDef{Name: "m", Phases: []MachinePhase{
+		{Name: "ask", Agent: "Comedian", Next: "report", Prompt: "Answer: {input}"},
+		{Name: "report", Resident: true, ReplyWith: "{state:ask}"},
+	}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("a waiting step relaying an earlier one is valid: %v", err)
+	}
+	bad := MachineDef{Name: "m", Phases: []MachinePhase{
+		{Name: "ask", Next: "report", Prompt: "p", ReplyWith: "{state:ask}"},
+		{Name: "report", Resident: true, ReplyWith: "{state:nowhere}"},
+	}}
+	probs := strings.Join(bad.Problems(), "\n")
+	if !strings.Contains(probs, "reply_with is only valid on a step the conversation waits in") || !strings.Contains(probs, "nowhere") {
+		t.Errorf("a passing step's reply_with and an unknown reference should both be reported:\n%s", probs)
+	}
+}

@@ -43,6 +43,9 @@ type turnMachine struct {
 	// MachineTurn here is safe.
 	vars PhaseVars
 	on   bool
+	// input is this turn's message, for a step whose reply_with names {input}.
+	// vars carries the session-stable subset only, so it is kept apart.
+	input string
 }
 
 // machineTurn is the facts about THIS turn that only the host has: who
@@ -91,8 +94,41 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 	Log("[orchestrate.machine] agent=%s machine=%q: %s", t.agent.ID, def.Name, machineWalkSummary(parkedIn, ph.Name, cur.Log, walkStart))
 	t.machineTrace = machineStepTrace(def, cur, walkStart)
 	t.machine = turnMachine{def: def, phase: ph, state: cur.State, on: true,
-		vars: PhaseVars{MachineTurn: t.machineTurn(""), Opening: cur.Opening}}
+		vars: PhaseVars{MachineTurn: t.machineTurn(""), Opening: cur.Opening}, input: userMsg}
 	return t.machine
+}
+
+// machineRelay is the reply a step with reply_with sends in place of a model
+// turn, or "" when the turn should run as usual.
+//
+// Relaying through a model is what failed: asked to pass along what the
+// delegate wrote, the model rewrote it, delegated again, or announced it would
+// "handle that myself" and sent nothing. So the text goes out as rendered. It
+// still answers to the agent's own output rules, judged here because a reply
+// that never runs a model never reaches the loop's own check; a rule that
+// stops it, or a template with nothing to fill it (the step it names did not
+// run), hands the turn back to the step's prompt, with a note saying why.
+func (t *chatTurn) machineRelay() string {
+	m := t.machine
+	tmpl := strings.TrimSpace(m.phase.ReplyWith)
+	if !m.on || tmpl == "" {
+		return ""
+	}
+	vars := m.vars
+	vars.Input = m.input
+	text := strings.TrimSpace(ResolvePhaseTemplate(tmpl, vars, m.state))
+	if text == "" || strings.Contains(text, "{state:") {
+		t.turnDiag("machine_relay_empty", "step "+m.phase.Name+" replies with "+tmpl+", which had nothing to fill it this turn, so the step answered from its prompt instead")
+		return ""
+	}
+	if check := t.guardrailEnforcer().Check; check != nil {
+		if d := check(GuardHookPreOutput, text); d.Blocked {
+			t.turnDiag("machine_relay_blocked", "step "+m.phase.Name+"'s relayed reply was stopped by an output rule, so the step answered from its prompt instead")
+			return ""
+		}
+	}
+	Log("[orchestrate.machine] agent=%s step=%q replied with %s (%d chars, no model call)", t.agent.ID, m.phase.Name, tmpl, len(text))
+	return text
 }
 
 // machineStepTrace records each step this turn's walk RAN, as a Framework
@@ -602,7 +638,7 @@ func (t *chatTurn) changePhaseToolDef() AgentToolDef {
 			// Keep the rest of the turn (and the end-of-turn handoff)
 			// pointed at where we actually are.
 			t.machine = turnMachine{def: m.def, phase: ph, state: cur.State, on: true,
-				vars: PhaseVars{MachineTurn: t.machineTurn(""), Opening: cur.Opening}}
+				vars: PhaseVars{MachineTurn: t.machineTurn(""), Opening: cur.Opening}, input: m.input}
 
 			return "Phase changed to " + ph.Name + ". The current-phase block in your system prompt is now out of date, these instructions replace it for the rest of this turn:\n" +
 				m.def.PhaseBlock(ph, cur.State, t.machine.vars), nil

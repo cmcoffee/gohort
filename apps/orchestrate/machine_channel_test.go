@@ -174,3 +174,35 @@ func TestFrameworkRecordsAreNotReplayedToTheModel(t *testing.T) {
 		t.Fatalf("only the model's own call should replay, got %+v", mixed)
 	}
 }
+
+// A step with reply_with sends the rendered text in place of a model turn, so
+// a relay cannot be rewritten, re-delegated or declined. It still answers to
+// the agent's output rules, and hands back to the step's prompt when there is
+// nothing to fill it or a rule stops it.
+func TestAStepThatRepliesWithSendsTheTextItself(t *testing.T) {
+	relayTurn := func(state MachineState, blocked bool) *chatTurn {
+		ph := MachinePhase{Name: "Report", Resident: true, ReplyWith: "{state:Delegate}"}
+		turn := &chatTurn{agent: AgentRecord{ID: "a1"}, machine: turnMachine{
+			def: MachineDef{Name: "m", Phases: []MachinePhase{ph}}, phase: ph, state: state, on: true, input: "tell a joke",
+		}}
+		turn.guardrails = &guardrailEnforcement{Check: func(hook, candidate string) GuardrailDecision {
+			return GuardrailDecision{Blocked: blocked && hook == GuardHookPreOutput}
+		}}
+		return turn
+	}
+	joke := MachineState{"Delegate": {Text: "Why did the scarecrow win an award?"}}
+	if got := relayTurn(joke, false).machineRelay(); got != "Why did the scarecrow win an award?" {
+		t.Errorf("the delegate's answer should be the reply, got %q", got)
+	}
+	if got := relayTurn(MachineState{}, false).machineRelay(); got != "" {
+		t.Errorf("with nothing to fill it, the step answers from its prompt, got %q", got)
+	}
+	if got := relayTurn(joke, true).machineRelay(); got != "" {
+		t.Errorf("an output rule that stops the relay hands the turn back, got %q", got)
+	}
+	plain := relayTurn(joke, false)
+	plain.machine.phase.ReplyWith = ""
+	if got := plain.machineRelay(); got != "" {
+		t.Errorf("a step without reply_with runs as usual, got %q", got)
+	}
+}

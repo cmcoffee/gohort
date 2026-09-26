@@ -2051,6 +2051,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// A terminal-rule pre_input block refused this request outright; the loop
 	// delivers the decline without calling a model.
 	loopCfg.PreEmptedReply = gDecline
+	// A machine step that relays an earlier step's answer sends it as rendered,
+	// with no model call (machineRelay).
+	if gDecline == "" {
+		loopCfg.PreEmptedReply = subTurn.machineRelay()
+	}
 	if ask != nil {
 		loopCfg.Tools = append(loopCfg.Tools, delegatedAskUserTool(ask))
 		loopCfg.RoundAbortTools = append(loopCfg.RoundAbortTools, "ask_user")

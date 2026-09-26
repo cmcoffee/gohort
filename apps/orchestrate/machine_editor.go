@@ -780,6 +780,11 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 				Detail: "A step the conversation waits in replies to the PERSON, so there is no decoder to hand fields to. " +
 					"Its reply is never pinned to the blackboard either, which would paste it into every later step's prompt, forever. " +
 					"Anything later steps need has to be worked out by the step that feeds this one."},
+			ui.FormField{Field: "reply_with", Type: "textarea", Rows: 2, Label: "Reply with, no model",
+				Placeholder: "{state:ComedianDelegate}",
+				Help:        "Empty: the step answers from its prompt. Set: this IS the reply, sent as written.",
+				Detail: "For a step that only passes along what an earlier step produced, such as a delegate's answer. A model asked to relay tends to rewrite it, hand it off again, or decline. " +
+					"{state:Step} is what that step produced, {input} is the message. The agent's output rules still judge it; if one stops it, or the step it names did not run this turn, the step answers from its prompt instead."},
 			ui.FormField{Field: "next", Type: "select", Label: "After one turn, go to", Options: phaseOptions(def, true),
 				Help:   "Leave it empty for the usual case: the conversation stays here.",
 				Detail: "Set it to make this a ONE-turn step: it replies once, then moves on. That is how an intake beat asks its questions and continues."},
@@ -1406,6 +1411,9 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if v, ok := str("guard"); ok {
 		ph.Guard = v
 	}
+	if v, ok := str("reply_with"); ok {
+		ph.ReplyWith = v
+	}
 	if v, ok := str("guard_to"); ok {
 		ph.GuardTo = v
 	}
@@ -1572,7 +1580,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 		"name": p.Name, "desc": p.Desc, "prompt": p.Prompt,
 		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
 		"pipeline": p.Pipeline, "machine": p.Machine, "accumulates": accumulatorRows(p),
-		"guard": p.Guard, "guard_to": p.GuardTo,
+		"guard": p.Guard, "guard_to": p.GuardTo, "reply_with": p.ReplyWith,
 		"think": p.Think, "reach": PhaseReach(p), "tools": p.Tools, "deny": p.Deny, "output": rows,
 		"tool": p.Tool, "args": nameValueRowsOf(p.Args),
 		"model": p.Model, "keep": p.Keep, "targets": routingTargetsOf(p), "exits_to": p.ExitsTo,
