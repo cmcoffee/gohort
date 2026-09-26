@@ -21,6 +21,7 @@ import (
 	"unicode"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/browser"
 	"github.com/cmcoffee/snugforge/apiclient"
 	readability "github.com/go-shiori/go-readability"
@@ -287,6 +288,11 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 	parsed, err := url.Parse(target)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return "", fmt.Errorf("'url' must be an http:// or https:// URL%s", SameOriginURLHint(target))
+	}
+	// A secret never travels in a URL the model wrote: refuse it before
+	// anything is sent.
+	if why := textutil.URLSecretReason(target); why != "" {
+		return "", fmt.Errorf("refused: this URL carries %s. Secrets are never passed in tool arguments: use the credential's own fetch_url_<name> tool (check_credential shows which exist), which attaches the key server-side. Nothing was sent", why)
 	}
 	// Auto-route FIRST: when a registered credential covers this host, dispatch
 	// THROUGH it (auth injected server-side) instead of an anonymous request that

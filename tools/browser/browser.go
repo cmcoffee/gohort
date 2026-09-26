@@ -19,6 +19,7 @@ import (
 	readability "github.com/go-shiori/go-readability"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 func init() {
@@ -419,6 +420,11 @@ func (t *BrowsePageTool) runImpl(args map[string]any, sess *ToolSession) (string
 	parsed, err := url.Parse(target)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return "", fmt.Errorf("url must be http:// or https://%s", SameOriginURLHint(target))
+	}
+	// A secret never travels in a URL the model wrote: refuse it before
+	// anything is sent.
+	if why := textutil.URLSecretReason(target); why != "" {
+		return "", fmt.Errorf("refused: this URL carries %s. Secrets are never passed in tool arguments: use the credential's own fetch_url_<name> tool (check_credential shows which exist), which attaches the key server-side. Nothing was sent", why)
 	}
 	// SSRF guard — same rules as fetch_url, and now literally the same code:
 	// this check had been copy-pasted here, into the sandbox hook, and was

@@ -1,6 +1,10 @@
 package textutil
 
-import "strings"
+import (
+	"net/url"
+	"regexp"
+	"strings"
+)
 
 // SameOriginURLHint returns guidance to append when a network tool refuses a
 // url, IF what it was handed is a path on this server rather than a malformed
@@ -55,4 +59,54 @@ func customAppSlug(path string) string {
 		return ""
 	}
 	return rest
+}
+
+// secretQueryParams are query parameters that carry a credential outright.
+// Matched by exact name, so a pagination "page_token" or a "tokenizer" option
+// is not caught; "token" is on the list but, like the rest, only counts with a
+// value long enough to be a key.
+var secretQueryParams = map[string]bool{
+	"key": true, "api_key": true, "apikey": true, "api-key": true,
+	"access_token": true, "auth_token": true, "token": true,
+	"client_secret": true, "secret": true, "password": true, "passwd": true,
+}
+
+// secretShapes are key formats recognisable on sight, wherever they sit in a
+// URL: Google API keys, OpenAI-style keys, GitHub tokens, Slack tokens, AWS
+// access key ids.
+var secretShapes = regexp.MustCompile(`AIza[0-9A-Za-z_\-]{30,}|\bsk-[A-Za-z0-9_\-]{20,}|\bgh[pousr]_[A-Za-z0-9]{30,}|\bxox[abposr]-[A-Za-z0-9\-]{10,}|\bAKIA[0-9A-Z]{16}\b`)
+
+// URLSecretReason says why a URL looks like it carries a secret (a credential
+// in a query parameter, a recognisable key, a password in the userinfo), or ""
+// when it does not.
+//
+// A network tool refuses such a URL. Secrets never travel as tool arguments:
+// a credential's own fetch tool attaches it server-side. Observed 2026-09-26:
+// an agent fetching a Gemini URL wrote "?key=AIza..." into a plain fetch_url
+// call, a key that was in no tool result, so either invented or recalled from
+// somewhere it should not have been, and sent to the network either way.
+func URLSecretReason(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	if u.User != nil {
+		if _, hasPass := u.User.Password(); hasPass {
+			return "a password in the URL itself (user:password@host)"
+		}
+	}
+	for name, vals := range u.Query() {
+		if !secretQueryParams[strings.ToLower(name)] {
+			continue
+		}
+		for _, v := range vals {
+			if len(strings.TrimSpace(v)) >= 16 {
+				return "a credential in its \"" + name + "\" query parameter"
+			}
+		}
+	}
+	if secretShapes.MatchString(raw) {
+		return "what looks like an API key or token"
+	}
+	return ""
 }

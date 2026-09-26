@@ -49,3 +49,14 @@ func TestFetchURLAutoRoutesInternalHostBeforeSSRF(t *testing.T) {
 		t.Fatalf("an uncovered internal host must still be refused; got: %v", err2)
 	}
 }
+
+// A URL carrying a credential is refused before any routing or request: the
+// key never leaves, whether a credential covers the host or not.
+func TestFetchURLRefusesASecretInTheURL(t *testing.T) {
+	_, err := (&FetchURLTool{}).Run(map[string]any{
+		"url": "https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyA0000000000000000000000000000000",
+	})
+	if err == nil || !strings.Contains(err.Error(), "Nothing was sent") || !strings.Contains(err.Error(), "fetch_url_<name>") {
+		t.Fatalf("a key in the URL should be refused before sending, pointing at the credential's tool: %v", err)
+	}
+}

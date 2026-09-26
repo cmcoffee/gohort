@@ -68,3 +68,30 @@ func TestCustomAppSlugEdges(t *testing.T) {
 		t.Errorf("a trailing-slash-less path should still resolve, got %q", got)
 	}
 }
+
+// A URL the model wrote may not carry a credential: a key in a query
+// parameter, a recognisable key format anywhere, or a password in the userinfo.
+// Ordinary URLs, pagination tokens and short values pass.
+func TestURLSecretReason(t *testing.T) {
+	for _, u := range []string{
+		"https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyA0000000000000000000000000000000",
+		"https://api.example.com/v1/data?api_key=abcdef0123456789abcdef",
+		"https://api.example.com/v1/data?access_token=abcdef0123456789abcdef",
+		"https://user:hunter2@example.com/private",
+		"https://example.com/proxy/sk-abcdefghijklmnopqrstuvwxyz0123/run",
+	} {
+		if URLSecretReason(u) == "" {
+			t.Errorf("should be refused as carrying a secret: %s", u)
+		}
+	}
+	for _, u := range []string{
+		"https://ai.google.dev/gemini-api/docs/music-generation",
+		"https://api.example.com/v1/items?page_token=abcdef0123456789abcdef",
+		"https://example.com/search?q=api+key+rotation&key=short",
+		"https://user@example.com/profile",
+	} {
+		if why := URLSecretReason(u); why != "" {
+			t.Errorf("an ordinary URL was refused (%s): %s", why, u)
+		}
+	}
+}
