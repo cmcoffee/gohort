@@ -463,6 +463,9 @@ Then in the script:
   #   fetch_via("apple_caldav", url, method="PROPFIND", body=xml,
   #             headers={"Depth": "1", "Content-Type": "application/xml"})
   # The credential's auth header always wins over anything you pass.
+  # A slow endpoint (a generation that answers with the finished result)
+  # takes timeout=<seconds>, up to 300; give the tool timeout_sec to match,
+  # or its whole run is killed at the general cap first.
   # Returns {status, status_line, body}; status is the NUMERIC code, same
   # as fetch_url, so a plain  if r["status"] != 200:  works unchanged.
   # Do NOT write  int(r["status"].split()[1]), that was a workaround

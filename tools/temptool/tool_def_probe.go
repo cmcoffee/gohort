@@ -195,7 +195,7 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 			case !netOK:
 				note("read endpoint NOT live-probed: network is blocked this turn (private mode); offline checks only")
 			case gated:
-				note("read endpoint NOT live-probed: this tool asks for confirmation before each call, and test does not fire it past that. Call %s directly once so the confirmation applies, and confirm a 2xx.", tt.Name)
+				note("read endpoint NOT live-probed: this tool asks for confirmation before each call, and test does not fire it past that. Call %s directly once so the confirmation applies: a 2xx from that call counts as verified.", tt.Name)
 				gatedManual++
 			case coversRequired(sample, ep.Required):
 				status, body, derr := liveProbe(sess, tt.Credential, ep, sample)
@@ -385,7 +385,7 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 	ran, gated := false, tempToolNeedsConfirm(&tt, sessUser(sess))
 	switch {
 	case gated:
-		note("tool NOT run: it asks for confirmation before each call, and test does not fire it past that. Call %s directly once with real values so the confirmation applies.", tt.Name)
+		note("tool NOT run: it asks for confirmation before each call, and test does not fire it past that. Call %s directly once with real values so the confirmation applies: a clean run of that call counts as verified.", tt.Name)
 	case sample == nil:
 		note("tool NOT run, pass cases=[{args:{...}}] with real values. Running it is the ONLY thing that verifies a shell tool; the checks above can't.")
 	case !coversRequired(sample, tt.Required):

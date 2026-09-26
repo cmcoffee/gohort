@@ -89,7 +89,7 @@ func BuildToolDef() *GroupedTool {
 			"state_path":        {Type: "string", Description: "(shell, optional) Workspace subdirectory this tool may persist state in."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) Extra sandbox capabilities the script needs. See action=\"help\" for the list and when each applies."},
 			"test_args":         {Type: "object", Description: "(api/shell, optional) Sample {param: value} to run the saved tool with once, as action=\"test\" would; the result is added to this reply."},
-			"timeout_sec":       {Type: "integer", Description: "(api/toolbox, optional) Seconds one request may take, up to 300, for an endpoint slower than the default cap (a generation that returns the finished result)."},
+			"timeout_sec":       {Type: "integer", Description: "(api/toolbox/shell, optional) Seconds, up to 300, for a tool slower than the default cap: one request of an api/toolbox tool, or the whole run of a shell tool. A script's own fetch_via/fetch_url also takes timeout= for the call itself."},
 			"raw_network":       {Type: "boolean", Description: "(shell, advanced) Allow direct outbound network from the script instead of the gohort fetch shims. See action=\"help\" before using."},
 			"confirm_in_chat":   {Type: "boolean", Description: "Stop and ask the person watching before every call to this tool. Use for anything that changes something outside gohort and is worth a look before it happens: a post, a delete, a payment. In chat only: on a run with nobody watching the call is refused instead, since there is no one to ask."},
 			// Pipeline-mode params. Either pipeline_prompt OR pipeline_steps is required.
@@ -205,7 +205,7 @@ func BuildToolDef() *GroupedTool {
 			"script_body":       {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only: no pip. See action=\"help\"."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) REPLACES the declared sandbox capabilities, e.g. [\"fetch_via:<credential>\"]. Omit to keep the current ones."},
 			"test_args":         {Type: "object", Description: "(api/shell, optional) Sample {param: value} to run the edited tool with once, as action=\"test\" would; the result is added to this reply. An edit is untested until something runs it."},
-			"timeout_sec":       {Type: "integer", Description: "(api/toolbox, optional) Seconds one request may take, up to 300. Omit to keep the current value."},
+			"timeout_sec":       {Type: "integer", Description: "(api/toolbox/shell, optional) Seconds, up to 300: one request of an api/toolbox tool, or the whole run of a shell tool. Omit to keep the current value."},
 		},
 		Required:     []string{"name"},
 		Caps:         nil,

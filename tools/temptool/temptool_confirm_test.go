@@ -1,7 +1,10 @@
 package temptool
 
 import (
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -80,5 +83,67 @@ func TestAToolOnAUsersOwnCredentialTakesItsTier(t *testing.T) {
 	}
 	if !NeedsConfirm(tt) || NeedsConfirm(tt, "alice") {
 		t.Error("the exported form takes the user the same way")
+	}
+}
+
+// fetch_via through a credential takes that credential's tier, as an api tool
+// on it does. Blanket-true made a shell tool on a quiet credential ask before
+// every call, so test would never run it.
+func TestFetchViaTakesTheCredentialsTier(t *testing.T) {
+	prev := AuthDB
+	AuthDB = func() Database { return &DBase{Store: kvlite.MemStore()} }
+	defer func() { AuthDB = prev }()
+	Secure().Save(SecureCredential{Name: "quiet_gen", Owner: "alice", Type: SecureCredBearer, BaseURL: "https://gen.example.com"}, "tok")
+	Secure().Save(SecureCredential{Name: "loud_gen", Owner: "alice", Type: SecureCredBearer, BaseURL: "https://gen.example.com", RequiresConfirm: true}, "tok")
+	shell := func(caps ...string) *TempTool {
+		return &TempTool{ScriptBody: "print(1)", HookCapabilities: append([]string{"fetch", "log"}, caps...)}
+	}
+	if tempToolNeedsConfirm(shell("fetch_via:quiet_gen"), "alice") {
+		t.Error("fetch_via on a quiet credential should run unattended")
+	}
+	if !tempToolNeedsConfirm(shell("fetch_via:loud_gen"), "alice") {
+		t.Error("fetch_via on a Require-confirm credential keeps the gate")
+	}
+	if !tempToolNeedsConfirm(shell("fetch_via:quiet_gen"), "bob") || !tempToolNeedsConfirm(shell("fetch_via:nobody"), "alice") {
+		t.Error("a credential that does not resolve for this user fails closed")
+	}
+	if !tempToolNeedsConfirm(shell("secret:quiet_gen"), "alice") {
+		t.Error("secret: hands the raw key to the script and always asks")
+	}
+}
+
+// A clean direct run counts as verified, at the bar test sets. The test report
+// told an author to call a gated tool directly once, and that call never
+// counted: seven clean runs left the tool "unverified".
+func TestACleanDirectRunCountsAsVerified(t *testing.T) {
+	prev := ToolVerifyRecorder
+	var got []string
+	ToolVerifyRecorder = func(_ *ToolSession, name string, passed bool, _ string) {
+		got = append(got, fmt.Sprintf("%s=%v", name, passed))
+	}
+	defer func() { ToolVerifyRecorder = prev }()
+	sess := newTestSession()
+	shell := &TempTool{Name: "s", ScriptBody: "print(1)"}
+	api := &TempTool{Name: "a", Mode: TempToolModeAPI, CommandTemplate: "https://x.example/a"}
+	piped := &TempTool{Name: "p", Mode: TempToolModeAPI, CommandTemplate: "https://x.example/p", ResponsePipe: "jq ."}
+
+	recordCleanRun(sess, shell, "done", nil)
+	recordCleanRun(sess, shell, "boom\n[exit: exit status 1]", nil)
+	recordCleanRun(sess, shell, "", fmt.Errorf("refused"))
+	recordCleanRun(sess, api, "HTTP 200 OK\n{}", nil)
+	recordCleanRun(sess, api, "HTTP 500 Internal Server Error\n{}", nil)
+	recordCleanRun(sess, piped, "{}", nil)
+	if strings.Join(got, ",") != "s=true,a=true" {
+		t.Errorf("only the clean shell run and the 2xx api call count, got %v", got)
+	}
+}
+
+// timeout_sec lengthens a shell tool's run, and never shortens it.
+func TestAShellToolsTimeoutLengthensItsRun(t *testing.T) {
+	if got := shellRunTimeout(&TempTool{TimeoutSec: 200}); got != 200*time.Second {
+		t.Errorf("a longer own timeout applies, got %s", got)
+	}
+	if got := shellRunTimeout(&TempTool{TimeoutSec: 10}); got != commandTimeout {
+		t.Errorf("a shorter one does not cut the general cap, got %s", got)
 	}
 }

@@ -368,19 +368,29 @@ func tempToolNeedsConfirm(tt *TempTool, user ...string) bool {
 	if tt.RawNetwork || tt.Mode == TempToolModePersistent {
 		return true
 	}
+	owner := ""
+	if len(user) > 0 {
+		owner = user[0]
+	}
 	for _, c := range tt.HookCapabilities {
-		switch c {
-		case "fetch", "log", "browse_page":
+		switch {
+		case c == "fetch" || c == "log" || c == "browse_page":
 			// read-only audited hooks — benign
+		case strings.HasPrefix(c, "fetch_via:"):
+			// A call through a credential: allowlisted, audited, the key kept
+			// server-side. It takes that credential's own tier, as an api tool
+			// on it does. Blanket-true made a shell tool on a quiet credential
+			// ask before every call, so test would never run it, while an api
+			// tool on the same credential ran unattended.
+			cred := strings.TrimSpace(strings.TrimPrefix(c, "fetch_via:"))
+			if cr, ok := Secure().Resolve(cred, owner); !ok || cr.RequiresConfirm {
+				return true // unresolvable fails closed
+			}
 		default:
-			return true // secret:<name>, fetch_via:<name>, or any other capability
+			return true // secret:<name> hands the raw key to the script, or anything else
 		}
 	}
 	if cred := strings.TrimSpace(tt.Credential); cred != "" {
-		owner := ""
-		if len(user) > 0 {
-			owner = user[0]
-		}
 		if c, ok := Secure().Resolve(cred, owner); ok {
 			return c.RequiresConfirm
 		}
@@ -506,14 +516,13 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 		// can't run an un-gated shell pipe this turn; until then the snapshot
 		// dispatches. Non-cap edits — the common case — apply immediately.
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			live := currentTempTool(sess, tt.Name)
-			if live == nil {
-				return dispatchTempTool(sess, tt, args)
+			run := tt
+			if live := currentTempTool(sess, tt.Name); live != nil && capsSubset(tempToolCaps(live), caps) {
+				run = live
 			}
-			if capsSubset(tempToolCaps(live), caps) {
-				return dispatchTempTool(sess, live, args)
-			}
-			return dispatchTempTool(sess, tt, args)
+			out, err := dispatchTempTool(sess, run, args)
+			recordCleanRun(sess, run, out, err)
+			return out, err
 		},
 	}
 }
@@ -524,4 +533,34 @@ func sessUser(sess *ToolSession) string {
 		return ""
 	}
 	return sess.Username
+}
+
+// recordCleanRun counts a direct call that ran clean as verification: the same
+// bar test sets, exit 0 for a shell tool and a 2xx for an api tool. The test
+// report tells an author to call a tool that asks before each call directly,
+// once, and that call never counted: a tool run clean seven times stayed
+// "unverified" until it was deleted and recreated. A failed run changes
+// nothing; a bad argument from the caller is not the tool's verdict.
+func recordCleanRun(sess *ToolSession, tt *TempTool, out string, err error) {
+	if err != nil || sess == nil || tt == nil {
+		return
+	}
+	switch effectiveTempToolMode(*tt) {
+	case TempToolModeShell:
+		if shellRunFailed(out) {
+			return
+		}
+	case TempToolModeAPI:
+		// A pipe or an extract replaces the status line, so the result
+		// cannot say whether the call succeeded.
+		if tt.ResponsePipe != "" || tt.ResponseExtract != nil {
+			return
+		}
+		if status, _ := splitStatusLine(out); !isStatus2xx(status) {
+			return
+		}
+	default:
+		return
+	}
+	RecordToolVerification(sess, tt.Name, true, "")
 }

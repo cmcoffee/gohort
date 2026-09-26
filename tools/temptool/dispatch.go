@@ -515,7 +515,8 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// parent is what makes a Stop reach a command already running. The loop
 	// tests its own context only between rounds, so a handler that ignores
 	// cancellation is a handler the user cannot stop.
-	ctx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
+	runTimeout := shellRunTimeout(tt)
+	ctx, cancel := context.WithTimeout(sess.Context(), runTimeout)
 	defer cancel()
 	// Wrap with the session's network connector so the sandbox
 	// applies --unshare-net when the calling turn is in private
@@ -669,7 +670,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	}
 
 	if res.TimedOut {
-		notice := fmt.Sprintf("\n[TIMED OUT after %s: command killed.]", commandTimeout)
+		notice := fmt.Sprintf("\n[TIMED OUT after %s: command killed.]", runTimeout)
 		if output == "" {
 			return strings.TrimPrefix(notice, "\n"), nil
 		}
@@ -788,4 +789,15 @@ func toolIsGranted(sess *ToolSession, tt *TempTool) bool {
 		}
 	}
 	return false
+}
+
+// shellRunTimeout is how long a shell tool's command may run: the general cap,
+// or the tool's own timeout_sec when that is longer. timeout_sec was accepted
+// on a shell tool and ignored, so an author who set it to wait out a slow call
+// saw the script killed at the general cap anyway.
+func shellRunTimeout(tt *TempTool) time.Duration {
+	if own := time.Duration(tt.TimeoutSec) * time.Second; own > commandTimeout {
+		return own
+	}
+	return commandTimeout
 }
