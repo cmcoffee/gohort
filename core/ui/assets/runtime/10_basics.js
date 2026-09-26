@@ -1322,6 +1322,73 @@
     return wrap;
   };
 
+  // --- conditions ----------------------------------------------------
+  // hasValue and matchesWhen are the ShowWhen grammar, shared: a form
+  // field, a rows column, a Test button, and any app surface that gates
+  // its own fields (window.uiMatchesWhen) all read the same rules, so a
+  // condition an author learned in one place means the same everywhere.
+  function hasValue(v) {
+    if (v == null || v === false || v === '') return false;
+    if (Array.isArray(v)) return v.length > 0;
+    return !!v;
+  }
+
+  // matchesWhen is matchesShowWhen against ANY record — the form's own
+  // values, or one row of a "rows" field. Same grammar either way, so
+  // a row-scoped condition is something an author already knows how to
+  // write.
+  // "||" joins alternatives: the expression holds when ANY group does,
+  // and a group holds when ALL its ";" clauses do. Without it a field
+  // used under two unrelated conditions (Basic auth, or the OAuth
+  // password grant) could only be shown for one of them.
+  function matchesWhen(expr, current) {
+    if (!expr) return true;
+    if (expr.indexOf('||') >= 0) {
+      return expr.split('||').some(function(g) { return g.trim() !== '' && matchesWhen(g, current); });
+    }
+    var clauses = expr.split(';');
+    for (var i = 0; i < clauses.length; i++) {
+      var c = clauses[i].trim();
+      if (!c) continue;
+      if (c.charAt(0) === '!') {
+        if (hasValue(current[c.substring(1).trim()])) return false;
+        continue;
+      }
+      var colon = c.indexOf(':');
+      if (colon < 0) {
+        if (!hasValue(current[c])) return false;
+        continue;
+      }
+      var fld = c.substring(0, colon);
+      var rhs = c.substring(colon + 1);
+      // Leading "!" negates the membership test. Needed because an
+      // UNSET field cannot be matched positively: a select whose
+      // default is the empty string reads as undefined until somebody
+      // touches it, so "show unless it says none" is the only way to
+      // write the condition that survives the untouched state.
+      var negate = rhs.charAt(0) === '!';
+      if (negate) rhs = rhs.substring(1);
+      var actual = current[fld];
+      var opts = rhs.split('|');
+      var hit = false;
+      if (Array.isArray(actual)) {
+        // A checklist matches when it CONTAINS any of the values: its
+        // String() is the joined list, which only ever equalled a value
+        // when exactly that one box was ticked.
+        hit = actual.some(function(a) { return opts.indexOf(String(a)) >= 0; });
+      } else {
+        // null/undefined is the empty value, not the string "undefined".
+        var actualStr = (actual == null) ? '' : String(actual);
+        for (var j = 0; j < opts.length; j++) {
+          if (actualStr === opts[j]) { hit = true; break; }
+        }
+      }
+      if (hit === negate) return false;
+    }
+    return true;
+  }
+  window.uiMatchesWhen = function(expr, record) { return matchesWhen(expr, record || {}); };
+
   components.form_panel = function(cfg, ctx) {
     var wrap = el('div', {class: 'ui-form'});
     var current = {};
@@ -1426,66 +1493,7 @@
     // testRowEl is the form's Test button row, when it has one; applyVisibility
     // shows it only while cfg.test_show_when holds.
     var testRowEl = null;
-    function hasValue(v) {
-      if (v == null || v === false || v === '') return false;
-      if (Array.isArray(v)) return v.length > 0;
-      return !!v;
-    }
 
-    // matchesWhen is matchesShowWhen against ANY record — the form's own
-    // values, or one row of a "rows" field. Same grammar either way, so
-    // a row-scoped condition is something an author already knows how to
-    // write.
-    // "||" joins alternatives: the expression holds when ANY group does,
-    // and a group holds when ALL its ";" clauses do. Without it a field
-    // used under two unrelated conditions (Basic auth, or the OAuth
-    // password grant) could only be shown for one of them.
-    function matchesWhen(expr, current) {
-      if (!expr) return true;
-      if (expr.indexOf('||') >= 0) {
-        return expr.split('||').some(function(g) { return g.trim() !== '' && matchesWhen(g, current); });
-      }
-      var clauses = expr.split(';');
-      for (var i = 0; i < clauses.length; i++) {
-        var c = clauses[i].trim();
-        if (!c) continue;
-        if (c.charAt(0) === '!') {
-          if (hasValue(current[c.substring(1).trim()])) return false;
-          continue;
-        }
-        var colon = c.indexOf(':');
-        if (colon < 0) {
-          if (!hasValue(current[c])) return false;
-          continue;
-        }
-        var fld = c.substring(0, colon);
-        var rhs = c.substring(colon + 1);
-        // Leading "!" negates the membership test. Needed because an
-        // UNSET field cannot be matched positively: a select whose
-        // default is the empty string reads as undefined until somebody
-        // touches it, so "show unless it says none" is the only way to
-        // write the condition that survives the untouched state.
-        var negate = rhs.charAt(0) === '!';
-        if (negate) rhs = rhs.substring(1);
-        var actual = current[fld];
-        var opts = rhs.split('|');
-        var hit = false;
-        if (Array.isArray(actual)) {
-          // A checklist matches when it CONTAINS any of the values: its
-          // String() is the joined list, which only ever equalled a value
-          // when exactly that one box was ticked.
-          hit = actual.some(function(a) { return opts.indexOf(String(a)) >= 0; });
-        } else {
-          // null/undefined is the empty value, not the string "undefined".
-          var actualStr = (actual == null) ? '' : String(actual);
-          for (var j = 0; j < opts.length; j++) {
-            if (actualStr === opts[j]) { hit = true; break; }
-          }
-        }
-        if (hit === negate) return false;
-      }
-      return true;
-    }
     function applyVisibility() {
       cfg.fields.forEach(function(f) {
         var node = fieldEls[f.field];

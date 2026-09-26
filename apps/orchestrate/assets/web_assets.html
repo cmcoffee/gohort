@@ -7926,6 +7926,13 @@
           if (o != null && typeof o === 'object' && o.label != null) return String(o.label);
           return optionValue(o);
         }
+        // A form with steps (a field that waits on an earlier answer, or a
+        // select that lists live options) is answered, then sent: its buttons
+        // pick instead of submitting, since later questions depend on them.
+        var stepped = fields.some(function(f) { return f.show_when || f.options_from; });
+        function changed() {
+          try { wrap.dispatchEvent(new Event('intake-change')); } catch (_) {}
+        }
         fields.forEach(function(f) {
           var row = document.createElement('div');
           row.className = 'ui-orch-intake-row';
@@ -7939,9 +7946,21 @@
             inp = document.createElement('textarea');
             inp.rows = 3;
             inp.className = 'ui-orch-intake-input ui-orch-intake-textarea';
+          } else if (t === 'select' && f.options_from) {
+            // Live options: filled by refresh() below. A replayed answer is
+            // shown as itself, since a disabled record is not refetched.
+            inp = document.createElement('select');
+            inp.className = 'ui-orch-intake-input';
+            var held = safeText(values[f.name] || '');
+            var first = document.createElement('option');
+            first.value = held;
+            first.textContent = held || 'Choose…';
+            inp.appendChild(first);
+            inp.addEventListener('change', changed);
           } else if (t === 'select') {
             inp = document.createElement('select');
             inp.className = 'ui-orch-intake-input';
+            inp.addEventListener('change', changed);
             (f.options || []).forEach(function(o) {
               var opt = document.createElement('option');
               opt.value = optionValue(o);
@@ -8058,6 +8077,12 @@
               if (disabled) btn.disabled = true;
               btn.addEventListener('click', function() {
                 inp.dataset.value = val;
+                if (stepped) {
+                  inp.querySelectorAll('.ui-orch-intake-button').forEach(function(b) { b.classList.remove('selected'); });
+                  btn.classList.add('selected');
+                  changed();
+                  return;
+                }
                 // An option that is only a CATEGORY asks before it submits.
                 // "Fix something" used to send those two words and nothing
                 // else, so the agent opened with no target and swept every
@@ -8122,7 +8147,8 @@
           if (f.placeholder && t !== 'file' && t !== 'button' && t !== 'checklist') inp.placeholder = safeText(f.placeholder);
           if (values[f.name] != null && t !== 'file' && t !== 'button' && t !== 'checklist') inp.value = safeText(values[f.name]);
           if (disabled && t !== 'button' && t !== 'checklist') inp.disabled = true;
-          inputs[f.name] = {field: f, input: inp};
+          if (inp.tagName === 'INPUT' || inp.tagName === 'TEXTAREA') inp.addEventListener('input', changed);
+          inputs[f.name] = {field: f, input: inp, row: row};
           row.appendChild(inp);
           if (f.help) {
             var help = document.createElement('div');
@@ -8132,9 +8158,84 @@
           }
           wrap.appendChild(row);
         });
-        return {root: wrap, inputs: inputs};
+        // Steps: which fields show, and what the live selects list, follow the
+        // answers so far. Same ShowWhen grammar as the settings forms.
+        function answers() {
+          var m = {};
+          fields.forEach(function(f) {
+            var e = inputs[f.name];
+            if (!e) return;
+            if ((f.type || 'text') === 'button') m[f.name] = e.input.dataset.value || '';
+            else if (e.input.value !== undefined) m[f.name] = e.input.value;
+          });
+          return m;
+        }
+        function isShown(f) {
+          if (!f.show_when) return true;
+          if (!window.uiMatchesWhen) return true;
+          var m = answers();
+          // A field waits on its predecessors being shown, not just answered:
+          // an answer left behind by a step that has since hidden does not count.
+          fields.forEach(function(g) {
+            if (g !== f && g.show_when && window.uiMatchesWhen && !window.uiMatchesWhen(g.show_when, m)) m[g.name] = '';
+          });
+          return window.uiMatchesWhen(f.show_when, m);
+        }
+        var lastURL = {};
+        function refresh() {
+          var m = answers();
+          fields.forEach(function(f) {
+            var e = inputs[f.name];
+            if (!e) return;
+            var shown = isShown(f);
+            e.row.style.display = shown ? '' : 'none';
+            if (!f.options_from || disabled || !shown) return;
+            var missing = false;
+            var url = String(f.options_from).replace(/\{(\w+)\}/g, function(_, k) {
+              var v = m[k] || '';
+              if (!v) missing = true;
+              return encodeURIComponent(v);
+            });
+            if (missing || lastURL[f.name] === url) return;
+            lastURL[f.name] = url;
+            var sel = e.input, keep = sel.value;
+            sel.innerHTML = '';
+            var wait = document.createElement('option');
+            wait.value = ''; wait.textContent = 'Loading…';
+            sel.appendChild(wait);
+            fetch(url, {credentials: 'same-origin'}).then(function(r) { return r.ok ? r.json() : []; }).then(function(list) {
+              if (lastURL[f.name] !== url) return; // a newer answer asked since
+              sel.innerHTML = '';
+              var head = document.createElement('option');
+              head.value = '';
+              head.textContent = (list && list.length) ? 'Choose…' : 'Nothing of this kind yet';
+              sel.appendChild(head);
+              (list || []).forEach(function(o) {
+                var opt = document.createElement('option');
+                opt.value = optionValue(o);
+                opt.textContent = optionLabel(o);
+                if (opt.value === keep) opt.selected = true;
+                sel.appendChild(opt);
+              });
+            }).catch(function() {
+              if (lastURL[f.name] !== url) return;
+              sel.innerHTML = '';
+              var err = document.createElement('option');
+              err.value = ''; err.textContent = 'Could not load the list';
+              sel.appendChild(err);
+              delete lastURL[f.name];
+            });
+          });
+        }
+        if (stepped) {
+          wrap.addEventListener('intake-change', refresh);
+          refresh();
+        }
+        return {root: wrap, inputs: inputs, isShown: isShown};
       }
-      function collectIntake(fields, inputs) {
+      function collectIntake(fields, inputs, isShown) {
+        // A step the answers have hidden is neither required nor sent.
+        fields = fields.filter(function(f) { return !isShown || isShown(f); });
         var missing = [];
         fields.forEach(function(f) {
           var entry = inputs[f.name];
@@ -8276,7 +8377,7 @@
         submitBtn.textContent = 'Start session';
         if (buttonOnly) submitBtn.style.display = 'none';
         submitBtn.addEventListener('click', function() {
-          var entries = collectIntake(fields, built.inputs);
+          var entries = collectIntake(fields, built.inputs, built.isShown);
           if (!entries) return;
           if (entries.length === 0) { window.uiAlert('Fill in at least one field.'); return; }
           var values = valuesByNameFromEntries(entries);
@@ -8335,7 +8436,7 @@
             cancel.className = 'ui-row-btn';
             cancel.textContent = 'Cancel';
             save.addEventListener('click', function() {
-              var entries = collectIntake(fields, built.inputs);
+              var entries = collectIntake(fields, built.inputs, built.isShown);
               if (!entries) return;
               if (entries.length === 0) { window.uiAlert('Fill in at least one field.'); return; }
               save.disabled = true; cancel.disabled = true;

@@ -1743,6 +1743,19 @@ type IntakeField struct {
 	// Options absent from the map keep submitting immediately.
 	Detail map[string]string `json:"detail,omitempty"`
 
+	// ShowWhen shows this field only while the expression holds over the
+	// answers so far, in the settings forms' ShowWhen grammar ("field",
+	// "!field", "field:v1|v2", ";" for and, "||" for or). It turns a flat
+	// form into steps: pick an action, then a kind, then the fields that
+	// kind needs. A hidden field is neither required nor sent.
+	ShowWhen string `json:"show_when,omitempty"`
+	// OptionsFrom fetches a select's options instead of listing them: a URL
+	// relative to the app, where {field} is replaced by that field's current
+	// answer, answering [{value, label}]. Refetched when an answer it names
+	// changes, so "Which one?" lists the user's own agents or tools of the
+	// kind picked a step earlier.
+	OptionsFrom string `json:"options_from,omitempty"`
+
 	AllowOther bool `json:"allow_other,omitempty"` // for type=checklist only. When true, renders an extra "Other:" row with a free-text input. Non-empty text becomes a list value, joined with the other picks ("**Topics:** AI, Healthcare, my custom thing"). Lets the user contribute outside the curated options without forcing the LLM to pre-imagine every answer.
 }
 

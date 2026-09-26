@@ -62,20 +62,28 @@ func TestBuilderSeed_HasStartingPoints(t *testing.T) {
 	if builder.ID == "" {
 		t.Fatal("Builder seed not found")
 	}
-	if len(builder.IntakeForm) != 1 || builder.IntakeForm[0].Type != "button" {
-		t.Fatalf("Builder should carry a single button field, got %+v", builder.IntakeForm)
+	form := builder.IntakeForm
+	if len(form) < 3 || form[0].Type != "button" || form[0].ShowWhen != "" {
+		t.Fatalf("Builder's form should open on one ungated row of actions, got %+v", form)
 	}
-	opts := builder.IntakeForm[0].Options
-	if len(opts) < 4 {
-		t.Errorf("expected the build kinds as starting points, got %v", opts)
-	}
-	// An all-button form is what renders as "Pick a starting point" with
-	// no submit button and leaves the composer live — the whole reason
-	// this doesn't gate the "fix one thing" case.
-	for _, f := range builder.IntakeForm {
-		if f.Type != "button" {
-			t.Errorf("a non-button field would turn the starting points into a form with a submit gate: %+v", f)
+	// Every later step waits on an earlier answer: the form reveals itself
+	// one question at a time rather than presenting everything at once.
+	for _, f := range form[1:] {
+		if f.ShowWhen == "" {
+			t.Errorf("step %q should wait on an earlier answer", f.Name)
 		}
+	}
+	// Change and Fix name their target from the user's own things, fetched
+	// live, so a fix arrives with the thing to fix already named.
+	var target *IntakeField
+	for i := range form {
+		if form[i].OptionsFrom != "" {
+			target = &form[i]
+		}
+	}
+	if target == nil || target.Type != "select" || !strings.Contains(target.OptionsFrom, "{kind}") ||
+		!strings.Contains(target.ShowWhen, "Change|Fix") {
+		t.Errorf("a live \"which one\" picker should follow the kind for Change and Fix: %+v", target)
 	}
 	if hint := dispatchBriefHint(builder); hint == "" {
 		t.Error("Builder's starting points should reach callers as a brief hint")
@@ -133,10 +141,16 @@ func TestTheStartingRowOffersEveryKindBuilderAuthors(t *testing.T) {
 	if len(seed.IntakeForm) == 0 {
 		t.Fatal("Builder has no intake form")
 	}
-	opts := strings.Join(seed.IntakeForm[0].Options, "|")
+	var kinds []string
+	for _, f := range seed.IntakeForm {
+		if f.Name == "kind" {
+			kinds = f.Options
+		}
+	}
+	opts := strings.Join(kinds, "|")
 	for _, kind := range []string{"Agent", "App", "Tool", "Pipeline", "Machine"} {
 		if !strings.Contains(opts, kind) {
-			t.Errorf("the starting row must offer %q — Builder authors it", kind)
+			t.Errorf("the kind step must offer %q — Builder authors it", kind)
 		}
 	}
 	// The options double as the dispatch brief hint, so a caller composing a
@@ -146,9 +160,9 @@ func TestTheStartingRowOffersEveryKindBuilderAuthors(t *testing.T) {
 	if !strings.Contains(hint, "Machine") {
 		t.Errorf("callers must be told Machine is askable: %s", hint)
 	}
-	// Fix something stays last: it leads with a verb where the others are bare
-	// nouns, and it is the row's catch-all rather than another build kind.
-	if last := seed.IntakeForm[0].Options[len(seed.IntakeForm[0].Options)-1]; last != "Fix something" {
-		t.Errorf("the catch-all belongs at the end, got %q", last)
+	// Other stays last: it is the catch-all for what the kinds do not cover
+	// (a monitor, a schedule) rather than another kind.
+	if len(kinds) == 0 || kinds[len(kinds)-1] != "Other" {
+		t.Errorf("the catch-all belongs at the end, got %v", kinds)
 	}
 }

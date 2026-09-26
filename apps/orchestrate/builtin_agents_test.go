@@ -129,13 +129,16 @@ func TestSeedSettingsUnchanged(t *testing.T) {
 	if builder.MaxPlanSteps != 8 || builder.MaxWorkerRounds != 45 || builder.ExplorerHardCap != 80 || !builder.AllowExplorer {
 		t.Errorf("builder budgets = %d/%d explorer=%v cap=%d", builder.MaxPlanSteps, builder.MaxWorkerRounds, builder.AllowExplorer, builder.ExplorerHardCap)
 	}
-	if len(builder.IntakeForm) != 1 || len(builder.IntakeForm[0].Options) != 6 {
-		t.Fatalf("builder intake form = %+v, want one field with six starting points", builder.IntakeForm)
+	if len(builder.IntakeForm) < 2 {
+		t.Fatalf("builder intake form = %+v, want the action and kind steps at least", builder.IntakeForm)
+	}
+	if !reflect.DeepEqual(builder.IntakeForm[0].Options, []string{"Create", "Change", "Fix"}) {
+		t.Errorf("builder actions = %v", builder.IntakeForm[0].Options)
 	}
 	// Machine sits beside Pipeline on purpose: offering one without the other
 	// told everybody Builder does not do machines.
-	if !reflect.DeepEqual(builder.IntakeForm[0].Options, []string{"Agent", "App", "Tool", "Pipeline", "Machine", "Fix something"}) {
-		t.Errorf("builder starting points = %v", builder.IntakeForm[0].Options)
+	if !reflect.DeepEqual(builder.IntakeForm[1].Options, []string{"Agent", "Tool", "App", "Pipeline", "Machine", "Other"}) {
+		t.Errorf("builder kinds = %v", builder.IntakeForm[1].Options)
 	}
 
 	research := get("seed-research")

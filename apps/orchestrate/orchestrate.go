@@ -661,6 +661,8 @@ func (T *OrchestrateApp) Routes() {
 	// handoff (see send_to_builder.go). The brief is created by the
 	// /api/sessions/{sid}/send-to-builder sub-action and consumed here.
 	T.HandleFunc("/api/builder-brief/", T.handleBuilderBrief)
+	// Live options for an intake form's select (IntakeField.OptionsFrom).
+	T.HandleFunc("/api/intake/options", T.handleIntakeOptions)
 	T.HandleFunc("/api/send", T.handleSendRouter)
 	T.HandleFunc("/api/cancel", T.handleCancelRouter)
 	T.HandleFunc("/api/confirm", T.handleConfirmRouter)
