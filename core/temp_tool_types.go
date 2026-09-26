@@ -262,6 +262,11 @@ type TempTool struct {
 	// response body; a response_pipe, if also set, then projects the extracted
 	// JSON (XML → JSON → jq).
 	ResponseExtract *ExtractSpec `json:"response_extract,omitempty"`
+	// TimeoutSec (api and toolbox modes) replaces the general per-call cap for
+	// this tool's requests; 0 keeps it. For an endpoint whose one request IS
+	// the job, a generation that answers with the finished result, the general
+	// cap is the wrong clock: a music call timed out twice at 30s.
+	TimeoutSec int `json:"timeout_sec,omitempty"`
 	// Expand (toolbox mode only) surfaces each action as its own
 	// top-level `<toolbox>_<action>` tool instead of one collapsed
 	// action="<sub>" catalog entry. The record, credential, artifact,

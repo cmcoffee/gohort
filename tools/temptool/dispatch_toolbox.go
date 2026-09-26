@@ -133,6 +133,7 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 		Headers:         act.Headers,
 		ResponsePipe:    act.ResponsePipe,
 		ResponseExtract: act.ResponseExtract,
+		TimeoutSec:      tt.TimeoutSec,
 	}
 	// Required-arg check (mirrors the top-level dispatchTempTool guard
 	// but scoped to the action's params, since the outer toolbox tool

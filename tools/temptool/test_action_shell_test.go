@@ -1,6 +1,8 @@
 package temptool
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -182,5 +184,92 @@ func TestScriptSyntaxCheckPassesValidScript(t *testing.T) {
 	}
 	if problem != "" {
 		t.Fatalf("valid script reported as broken: %s", problem)
+	}
+}
+
+// Re-running the same test on the same unchanged tool returns the last result
+// instead of running again. Observed: the same failing test, re-run four
+// seconds apart on an unchanged tool, until the loop guard blocked tool_def.
+func TestAnUnchangedTestIsNotRunAgain(t *testing.T) {
+	sess := newTestSession()
+	sess.ChatSessionID = "rerun-" + t.Name()
+	sess.WorkspaceDir = t.TempDir()
+	injectShellTool(t, sess, "echo_it", "import os\nprint(os.environ.get('summary'))\n")
+	args := map[string]any{"name": "echo_it", "cases": []any{map[string]any{"args": map[string]any{"summary": "hi"}}}}
+
+	first, err := testGrouped(args, sess)
+	if err != nil || strings.Contains(first, "UNCHANGED") {
+		t.Fatalf("the first test runs: %v\n%s", err, first)
+	}
+	again, _ := testGrouped(args, sess)
+	if !strings.HasPrefix(again, "UNCHANGED") || !strings.Contains(again, first) {
+		t.Errorf("an identical re-run should return the last result, marked:\n%s", again)
+	}
+	other := map[string]any{"name": "echo_it", "cases": []any{map[string]any{"args": map[string]any{"summary": "bye"}}}}
+	if out, _ := testGrouped(other, sess); strings.HasPrefix(out, "UNCHANGED") {
+		t.Error("different cases are a different test")
+	}
+	forced := map[string]any{"name": "echo_it", "rerun": true, "cases": args["cases"]}
+	if out, _ := testGrouped(forced, sess); strings.HasPrefix(out, "UNCHANGED") {
+		t.Error("rerun=true runs it again")
+	}
+	forgetToolTest(sess, "echo_it")
+	if out, _ := testGrouped(args, sess); strings.HasPrefix(out, "UNCHANGED") {
+		t.Error("a save forgets the last result")
+	}
+}
+
+// A value too big for an environment variable reaches the script as a file,
+// and a string param can name a workspace file. Observed: a pipeline handed a
+// 262 KB response to its extraction step, which failed with "Argument list too
+// long" on every run. Tested at the hand-off: the sandbox hides the host's
+// /tmp, so a script cannot run in a test's temp workspace.
+func TestALargeValueReachesTheScriptAsAFile(t *testing.T) {
+	ws := t.TempDir()
+	sess := &ToolSession{WorkspaceDir: ws}
+	tt := &TempTool{Name: "size_it", Params: map[string]ToolParam{"summary": {Type: "string"}, "opts": {Type: "object"}}}
+
+	big := strings.Repeat("x", 300*1024)
+	args := map[string]any{"summary": big, "small": "ok"}
+	env := buildEnvArgs(args)
+	moved, err := passLargeArgs(tt, args, env, sess, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["summary"] != "" || env["small"] != "ok" || len(moved) != 1 {
+		t.Fatalf("only the oversized value moves, and $summary is left empty: %d moved, summary=%d bytes", len(moved), len(env["summary"]))
+	}
+	data, err := os.ReadFile(env["summary_file"])
+	if err != nil || string(data) != big {
+		t.Fatalf("$summary_file should hold the whole value: %v", err)
+	}
+	if !strings.HasPrefix(env["summary_file"], filepath.Join(ws, ".tool_args")) {
+		t.Errorf("the file belongs in the run's workspace: %s", env["summary_file"])
+	}
+	if note := fileArgsNote(moved); !strings.Contains(note, "summary_file") || !strings.Contains(note, "300 KB") {
+		t.Errorf("a failed run should say how the value arrived: %q", note)
+	}
+
+	if err := os.MkdirAll(filepath.Join(ws, ".tool_spill"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, ".tool_spill", "resp.json"), []byte(`{"ok":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []any{map[string]any{"file": ".tool_spill/resp.json"}, `{"file": ".tool_spill/resp.json"}`} {
+		args = map[string]any{"summary": ref}
+		env = buildEnvArgs(args)
+		if _, err := passLargeArgs(tt, args, env, sess, ws); err != nil || env["summary"] != `{"ok":true}` {
+			t.Errorf("a named workspace file arrives as the value (%T): %q %v", ref, env["summary"], err)
+		}
+	}
+	args = map[string]any{"opts": map[string]any{"file": "x"}}
+	env = buildEnvArgs(args)
+	if _, err := passLargeArgs(tt, args, env, sess, ws); err != nil || env["opts"] != `{"file":"x"}` {
+		t.Errorf("an object param keeps its object, even one shaped like a file reference: %q %v", env["opts"], err)
+	}
+	args = map[string]any{"summary": map[string]any{"file": "../../etc/passwd"}}
+	if _, err := passLargeArgs(tt, args, buildEnvArgs(args), sess, ws); err == nil {
+		t.Error("a file outside the workspace must be refused")
 	}
 }

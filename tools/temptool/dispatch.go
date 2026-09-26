@@ -543,6 +543,17 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// {name} substitution. Both paths now coexist; tools authored
 	// either way work.
 	envArgs := buildEnvArgs(args)
+	// A value too big to be an environment variable goes by file; see
+	// passLargeArgs. The files are this run's alone.
+	byFile, fileErr := passLargeArgs(tt, args, envArgs, sess, workspaceDir)
+	defer func() {
+		for _, f := range byFile {
+			os.Remove(f.path)
+		}
+	}()
+	if fileErr != nil {
+		return "", fileErr
+	}
 
 	// SandboxHook: when the tool declared HookCapabilities, start a
 	// per-dispatch UDS server inside the workspace, deploy the Python
@@ -666,9 +677,9 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	}
 	if res.Err != nil {
 		if output == "" {
-			return fmt.Sprintf("[exit: %v, no output]", res.Err), nil
+			return fmt.Sprintf("[exit: %v, no output]", res.Err) + fileArgsNote(byFile), nil
 		}
-		return output + fmt.Sprintf("\n[exit: %v]", res.Err), nil
+		return output + fmt.Sprintf("\n[exit: %v]", res.Err) + fileArgsNote(byFile), nil
 	}
 	return output, nil
 }

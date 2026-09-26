@@ -124,7 +124,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		// directly). Used for public JSON endpoints (Reddit,
 		// Wikipedia, public data feeds) where requiring a fake
 		// credential just to satisfy the dispatcher would be silly.
-		raw, err = dispatchPublicAPICall(sess.Context(), urlStr, method, body, tt.ContentType, tt.Headers)
+		raw, err = dispatchPublicAPICall(sess.Context(), urlStr, method, body, tt.ContentType, tt.Headers, tt.TimeoutSec)
 	} else {
 		// Headers ride along: a protocol like CalDAV carries required
 		// semantics in one (Depth: 1 on a REPORT/PROPFIND), and without
@@ -133,6 +133,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 			Credential: tt.Credential, URL: urlStr, Method: method, Body: body,
 			ContentType: tt.ContentType, Headers: tt.Headers,
 			PipeFollowing: tt.ResponsePipe != "" || tt.ResponseExtract != nil,
+			TimeoutSecs:   tt.TimeoutSec,
 		})
 	}
 	if err != nil {
@@ -252,7 +253,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 // Takes the turn's context so a Stop reaches a request already on the wire.
 // The client Timeout stays as the ceiling for a server that never answers;
 // the context is what answers to the person who pressed the button.
-func dispatchPublicAPICall(ctx context.Context, urlStr, method, body, contentType string, headers map[string]string) (string, error) {
+func dispatchPublicAPICall(ctx context.Context, urlStr, method, body, contentType string, headers map[string]string, timeoutSec int) (string, error) {
 	if method == "" {
 		method = "GET"
 	}
@@ -290,6 +291,9 @@ func dispatchPublicAPICall(ctx context.Context, urlStr, method, body, contentTyp
 	}
 	client := NewPublicHTTPClient()
 	client.Timeout = publicAPITimeout
+	if timeoutSec > 0 {
+		client.Timeout = time.Duration(timeoutSec) * time.Second
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http %s %s: %w", method, urlStr, err)

@@ -204,3 +204,40 @@ func TestASavedToolSaysWhetherItWasVerified(t *testing.T) {
 		t.Error("what the run reports back is fenced, as the test action fences it")
 	}
 }
+
+// A tool's own timeout survives an edit and is kept within bounds. Observed: a
+// music generation timed out twice at the general 30s cap.
+func TestAToolsTimeoutRoundTripsAndIsBounded(t *testing.T) {
+	args := tempToolToCreateArgs(TempTool{Name: "gen", Mode: TempToolModeAPI, Credential: "c", TimeoutSec: 120})
+	if got := timeoutSecArg(args); got != 120 {
+		t.Errorf("an update must carry the timeout through, got %d", got)
+	}
+	shell := tempToolToCreateArgs(TempTool{Name: "s", Credential: "stray", ScriptBody: "print(1)"})
+	if _, has := shell["credential"]; has {
+		t.Error("a stray credential on a shell record must not ride into create, which refuses it")
+	}
+	for in, want := range map[any]int{900: maxToolTimeoutSec, 45.0: 45, "60": 60, "soon": 0, -5: 0} {
+		if got := timeoutSecArg(map[string]any{"timeout_sec": in}); got != want {
+			t.Errorf("timeout_sec=%v: got %d, want %d", in, got, want)
+		}
+	}
+}
+
+// A credential on a shell tool is refused with the way a script does reach
+// one. It used to vanish: an update carrying one reported "did not land", and
+// the author deleted and recreated the tool five times.
+func TestAShellToolRefusesACredential(t *testing.T) {
+	sess := &ToolSession{Username: "alice", ChatSessionID: "s1", WorkspaceDir: t.TempDir(), DB: &DBase{Store: kvlite.MemStore()}}
+	_, err := createGrouped(map[string]any{
+		"name": "song", "description": "make a song", "mode": "shell", "credential": "gen_api",
+		"command_template": "python3 {workspace_dir}/run.py", "script_name": "run.py", "script_body": "print(1)\n",
+	}, sess)
+	if err == nil {
+		t.Fatal("a shell tool with a credential must be refused")
+	}
+	for _, want := range []string{"api and toolbox", "fetch_url(url)", `fetch_via("gen_api"`, `mode="api"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal should say %q: %v", want, err)
+		}
+	}
+}

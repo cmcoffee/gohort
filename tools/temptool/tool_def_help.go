@@ -841,6 +841,16 @@ SHELL tools go through the same action, with checks that fit a script:
 Without a cases entry a shell tool reports UNVERIFIED, not PASS:
 running it is the only thing that proves a script works.
 
+LARGE VALUES go by FILE. A value over 100 KB (a whole API response)
+cannot be an environment variable, so $<param> arrives EMPTY and
+$<param>_file holds the path: a script that may receive one reads
+  v = os.environ.get("input_text_file")
+  v = open(v).read() if v else os.environ.get("input_text", "")
+A string param may also be given as {"file": "<workspace path>"}, in
+a call or a test case, to pass a saved file (e.g. a spilled response
+under .tool_spill/): test against REAL data that way, not a made-up
+sample.
+
 ================================================================
 persist
 ================================================================

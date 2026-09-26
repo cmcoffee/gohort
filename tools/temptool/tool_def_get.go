@@ -350,8 +350,13 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 	if tt.Category != "" {
 		out["category"] = tt.Category
 	}
-	if tt.Credential != "" {
+	// A shell tool holds no credential; a stray one on an old record must
+	// not ride into create, which refuses it, and block every edit.
+	if tt.Credential != "" && mode != TempToolModeShell {
 		out["credential"] = tt.Credential
+	}
+	if tt.TimeoutSec > 0 {
+		out["timeout_sec"] = tt.TimeoutSec
 	}
 	switch mode {
 	case TempToolModeToolbox:

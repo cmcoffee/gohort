@@ -188,6 +188,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		ResponsePipe:    respPipe,
 		ResponseExtract: ParseExtractSpec(args["response_extract"]),
 		Category:        strings.TrimSpace(StringArg(args, "category")),
+		TimeoutSec:      timeoutSecArg(args),
 	}
 	// Allow in-session overwrite — see CreateTempToolTool for rationale.
 	sess.RemoveTempTool(tool.Name)
@@ -205,4 +206,32 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	_ = BoolArg(args, "persist")
 	saveSessionScoped()
 	return fmt.Sprintf("Created api tool %q (wraps credential %q). It is now in your tool catalog.%s", name, credName, spec), nil
+}
+
+// maxToolTimeoutSec bounds a tool's own request timeout. Long enough for a
+// generation that answers with its finished result; short enough that a hung
+// endpoint still frees the turn.
+const maxToolTimeoutSec = 300
+
+// timeoutSecArg reads timeout_sec, clamped to 1..maxToolTimeoutSec; 0 when
+// absent or unusable, which keeps the general cap.
+func timeoutSecArg(args map[string]any) int {
+	var n int
+	switch v := args["timeout_sec"].(type) {
+	case float64:
+		n = int(v)
+	case int:
+		n = v
+	case int64:
+		n = int(v)
+	case string:
+		fmt.Sscanf(strings.TrimSpace(v), "%d", &n)
+	}
+	if n <= 0 {
+		return 0
+	}
+	if n > maxToolTimeoutSec {
+		return maxToolTimeoutSec
+	}
+	return n
 }

@@ -2,11 +2,15 @@ package temptool
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -28,6 +32,22 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("no tool named %q: use action=\"list\" to see what exists", name)
 	}
+	fp := toolTestFingerprint(tt, args["cases"])
+	if !BoolArg(args, "rerun") {
+		if prev, seen := recentToolTest(sess, name, fp); seen {
+			return prev, nil
+		}
+	}
+	out, err := runToolTest(tt, args, sess)
+	if err == nil {
+		rememberToolTest(sess, name, fp, out)
+	}
+	return out, err
+}
+
+// runToolTest is the test itself, for a tool already resolved.
+func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, error) {
+	name := tt.Name
 
 	// Flatten to a uniform endpoint list. A single api tool becomes one
 	// synthetic endpoint; a toolbox contributes each of its actions.
@@ -704,4 +724,72 @@ func runPipeAgainst(pipe, body string, sess *ToolSession) string {
 		return oneLine(res.Output, 200)
 	}
 	return ""
+}
+
+// toolTestMemory is how long an identical test re-run returns the last result
+// instead of running again.
+const toolTestMemory = 10 * time.Minute
+
+type toolTestRun struct {
+	fingerprint string
+	out         string
+	at          time.Time
+}
+
+var (
+	toolTestRunsMu sync.Mutex
+	toolTestRuns   = map[string]toolTestRun{}
+)
+
+func toolTestKey(sess *ToolSession, name string) string {
+	id := ""
+	if sess != nil {
+		id = sess.ChatSessionID
+	}
+	return id + "\x00" + name
+}
+
+// toolTestFingerprint identifies the tool as it stands and the cases it was
+// run with.
+func toolTestFingerprint(tt TempTool, cases any) string {
+	a, _ := json.Marshal(tt)
+	b, _ := json.Marshal(cases)
+	h := sha256.Sum256(append(append(a, 0), b...))
+	return hex.EncodeToString(h[:])
+}
+
+// recentToolTest returns the last result for this exact tool and cases when it
+// ran within toolTestMemory. Observed: an author re-ran the same failing test
+// on the same unchanged tool again and again, four seconds apart, until the
+// loop guard blocked tool_def outright. Nothing between those runs could have
+// changed the answer.
+func recentToolTest(sess *ToolSession, name, fp string) (string, bool) {
+	toolTestRunsMu.Lock()
+	defer toolTestRunsMu.Unlock()
+	run, ok := toolTestRuns[toolTestKey(sess, name)]
+	if !ok || run.fingerprint != fp || time.Since(run.at) > toolTestMemory {
+		return "", false
+	}
+	ago := time.Since(run.at).Round(time.Second)
+	return fmt.Sprintf("UNCHANGED: %s and these cases are exactly what the test ran %s ago, so running it again gives the same answer and nothing was run. Change the tool (action=\"update\") or the cases. If something OUTSIDE the tool changed since (a credential's key was set, the service was fixed), pass rerun=true. The last result:\n\n%s", name, ago, run.out), true
+}
+
+func rememberToolTest(sess *ToolSession, name, fp, out string) {
+	toolTestRunsMu.Lock()
+	defer toolTestRunsMu.Unlock()
+	for k, run := range toolTestRuns {
+		if time.Since(run.at) > toolTestMemory {
+			delete(toolTestRuns, k)
+		}
+	}
+	toolTestRuns[toolTestKey(sess, name)] = toolTestRun{fingerprint: fp, out: out, at: time.Now()}
+}
+
+// forgetToolTest drops the remembered result when the tool is saved or removed.
+// The fingerprint would miss an edit anyway; this also keeps an edit that puts
+// the tool back exactly as it was from answering with a stale result.
+func forgetToolTest(sess *ToolSession, name string) {
+	toolTestRunsMu.Lock()
+	defer toolTestRunsMu.Unlock()
+	delete(toolTestRuns, toolTestKey(sess, name))
 }

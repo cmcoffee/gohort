@@ -89,6 +89,7 @@ func BuildToolDef() *GroupedTool {
 			"state_path":        {Type: "string", Description: "(shell, optional) Workspace subdirectory this tool may persist state in."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) Extra sandbox capabilities the script needs. See action=\"help\" for the list and when each applies."},
 			"test_args":         {Type: "object", Description: "(api/shell, optional) Sample {param: value} to run the saved tool with once, as action=\"test\" would; the result is added to this reply."},
+			"timeout_sec":       {Type: "integer", Description: "(api/toolbox, optional) Seconds one request may take, up to 300, for an endpoint slower than the default cap (a generation that returns the finished result)."},
 			"raw_network":       {Type: "boolean", Description: "(shell, advanced) Allow direct outbound network from the script instead of the gohort fetch shims. See action=\"help\" before using."},
 			"confirm_in_chat":   {Type: "boolean", Description: "Stop and ask the person watching before every call to this tool. Use for anything that changes something outside gohort and is worth a look before it happens: a post, a delete, a payment. In chat only: on a run with nobody watching the call is refused instead, since there is no one to ask."},
 			// Pipeline-mode params. Either pipeline_prompt OR pipeline_steps is required.
@@ -158,6 +159,7 @@ func BuildToolDef() *GroupedTool {
 				// otherwise. Recorded so the build-plan done-gate can't sign off
 				// on a tool nobody ever ran.
 				RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "authored but never tested: run tool_def(action=\"test\")")
+				forgetToolTest(sess, strings.TrimSpace(StringArg(args, "name")))
 				out = verifyWithTestArgs(args, sess, out)
 			}
 			return out, err
@@ -203,6 +205,7 @@ func BuildToolDef() *GroupedTool {
 			"script_body":       {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only: no pip. See action=\"help\"."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) REPLACES the declared sandbox capabilities, e.g. [\"fetch_via:<credential>\"]. Omit to keep the current ones."},
 			"test_args":         {Type: "object", Description: "(api/shell, optional) Sample {param: value} to run the edited tool with once, as action=\"test\" would; the result is added to this reply. An edit is untested until something runs it."},
+			"timeout_sec":       {Type: "integer", Description: "(api/toolbox, optional) Seconds one request may take, up to 300. Omit to keep the current value."},
 		},
 		Required:     []string{"name"},
 		Caps:         nil,
@@ -218,6 +221,7 @@ func BuildToolDef() *GroupedTool {
 				// let a failed verify get "fixed" by an update and then reported
 				// as done without anyone re-running it.
 				RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "edited since it was last tested: re-run tool_def(action=\"test\")")
+				forgetToolTest(sess, strings.TrimSpace(StringArg(args, "name")))
 				out = verifyWithTestArgs(args, sess, out)
 			}
 			return out, err
@@ -244,6 +248,7 @@ func BuildToolDef() *GroupedTool {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
 			}
+			forgetToolTest(sess, strings.TrimSpace(StringArg(args, "name")))
 			return deleteGrouped(args, sess)
 		},
 	})
@@ -252,6 +257,7 @@ func BuildToolDef() *GroupedTool {
 		Description: "VERIFY a tool actually works BEFORE you call it done or hand it to a user. SHELL tools: syntax-checks the script (an unterminated string or bad indent means every call dies before doing any work, this catches it without touching the live service), reports how each required param reaches the script, and, when you pass `cases`, RUNS the tool for real with those args and reports the exit status. A shell tool with no case stays UNVERIFIED: executing it is the only proof. API/TOOLBOX tools: for every endpoint it: (1) renders the URL + body template with your sample args and checks the body is valid JSON, catches a body field that never lands (the #1 cause of a live 400 like \"content must be a string\"); (2) compile-checks the response_pipe, catches a broken jq/awk filter before it fails live; (3) for READ endpoints (GET/HEAD and the read-only WebDAV queries REPORT/PROPFIND/SEARCH) it makes a real call and asserts a 2xx, then runs the response_pipe against the REAL response body, catches shape mismatches a syntax check can't. WRITE endpoints (POST/PUT/PATCH/DELETE) are NOT auto-fired (that would spam the live service): their body is render-validated only, and the report tells you to make one manual call and confirm a 2xx yourself. Pass `cases` with representative inputs per action so read probes and body renders have real values to work with (e.g. a real post_id for get_post). Returns a per-endpoint PASS/FAIL table. Run this, fix every FAIL by action=\"update\", and re-run until green: an unexercised toolbox action is a live grenade.",
 		Params: map[string]ToolParam{
 			"name":  {Type: "string", Description: "Name of the shell, api or toolbox tool to verify."},
+			"rerun": {Type: "boolean", Description: "Run again even though the tool and cases are unchanged since the last test: only when something outside the tool changed (a credential's key, the service)."},
 			"cases": {Type: "array", Description: "Sample inputs to exercise. Array of objects: {action?: \"<sub-action>\" (toolbox only, omit for a single api tool), args: {param: value...}}. Provide one per endpoint you want live-probed or body-validated; give real values (a genuine id, a valid query) so read probes hit 2xx. Endpoints with no case still get offline checks (pipe compile-check, and body render when they need no required args).", Items: &ToolParam{Type: "object"}},
 		},
 		Required: []string{"name"},

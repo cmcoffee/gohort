@@ -108,7 +108,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// Patch top-level scalar fields when provided (present = intent to change).
 	// "expand" (toolbox presentation toggle) rides the same present-means-change
 	// path — BoolArg in createToolboxGrouped reads whatever value lands here.
-	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "content_type", "headers", "response_pipe", "response_extract", "category", "script_body", "script_name", "expand",
+	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "content_type", "headers", "response_pipe", "response_extract", "category", "script_body", "script_name", "expand", "timeout_sec",
 		"pipeline_prompt", "pipeline_steps", "pipeline_tools", "pipeline_max_rounds"} {
 		if v, present := args[f]; present {
 			merged[f] = v

@@ -117,6 +117,12 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	mode := strings.TrimSpace(StringArg(args, "mode"))
 	switch mode {
 	case "", TempToolModeShell:
+		// A shell tool has no credential to hold, and the field used to vanish
+		// without a word: an update carrying one reported "did not land", and
+		// the author deleted and recreated the tool five times over it.
+		if cred := strings.TrimSpace(StringArg(args, "credential")); cred != "" {
+			return "", fmt.Errorf("credential applies to api and toolbox tools only: a shell tool has no credential, so %q would be dropped. A script reaches a credential from inside: fetch_url(url) on the credential's own host is routed through it automatically, or fetch_via(%q, url, ...) with hook_capabilities [\"fetch_via:%s\"] names it explicitly (the only way for a Secured credential). If gohort should make the call itself, use mode=\"api\" with credential=%q", cred, cred, cred, cred)
+		}
 		// Shell mode — call the existing CreateTempToolTool path by
 		// reconstructing its expected args.
 		shellArgs := map[string]any{
@@ -190,6 +196,9 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		if v, ok := args["response_pipe"]; ok {
 			apiArgs["response_pipe"] = v
+		}
+		if v, ok := args["timeout_sec"]; ok {
+			apiArgs["timeout_sec"] = v
 		}
 		if v, ok := args["response_extract"]; ok {
 			apiArgs["response_extract"] = v
@@ -415,6 +424,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		Actions:     actions,
 		Expand:      BoolArg(args, "expand"),
 		Category:    strings.TrimSpace(StringArg(args, "category")),
+		TimeoutSec:  timeoutSecArg(args),
 	}
 	sess.RemoveTempTool(tool.Name)
 	if err := sess.AppendTempTool(tool); err != nil {
