@@ -28,10 +28,15 @@ func toLLMMessages(msgs []ChatMessage) []Message {
 		// prior turns and has to re-derive what actually happened —
 		// which manifests as "looping on what we're even talking about"
 		// and re-asking questions whose answers came from tool returns.
-		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+		if m.Role == "assistant" && hasModelCalls(m.ToolCalls) {
 			calls := make([]ToolCall, 0, len(m.ToolCalls))
 			results := make([]ToolResult, 0, len(m.ToolCalls))
 			for ti, tc := range m.ToolCalls {
+				// A framework record (a machine step) is shown, never
+				// replayed: the model did not make that call.
+				if tc.Framework {
+					continue
+				}
 				// Stable per-(message, tool-index) IDs so the
 				// assistant's ToolCall.ID matches the corresponding
 				// ToolResult.ID within this conversion.
@@ -64,6 +69,17 @@ func toLLMMessages(msgs []ChatMessage) []Message {
 		out = append(out, base)
 	}
 	return out
+}
+
+// hasModelCalls reports whether any of a message's tool records is a call the
+// model made, as opposed to a Framework record shown beside them.
+func hasModelCalls(calls []PersistedToolCall) bool {
+	for _, c := range calls {
+		if !c.Framework {
+			return true
+		}
+	}
+	return false
 }
 
 // parsePlanSteps coerces the orchestrator's plan_set "steps" arg into

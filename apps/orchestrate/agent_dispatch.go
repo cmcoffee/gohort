@@ -2100,8 +2100,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// used three ways below: the empty-reply diagnostic, the staged-deliverable
 	// recovery, and — the one that was missing — the stored message itself.
 	turnToolCalls := persistedToolCallsFromTranscript(transcript)
+	// The machine's steps first, as they ran first: the routing a channel
+	// message got is otherwise in no trace, so its card showed nothing of it.
+	// Framework records, so the model is never told it made these calls.
+	modelCalls := len(turnToolCalls)
+	turnToolCalls = append(append([]PersistedToolCall(nil), subTurn.machineTrace...), turnToolCalls...)
 	if cleanReply == "" && !resp.HitRoundCap {
-		trace := turnToolCalls
+		trace := turnToolCalls[len(turnToolCalls)-modelCalls:] // the model's own calls, not the machine's steps
 		detail := "The agent finished without producing any reply text"
 		if n := len(trace); n > 0 {
 			detail += fmt.Sprintf(" after %d tool call(s), the last being %s", n, trace[n-1].Name)
@@ -2171,7 +2176,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// observed failure took: "On it — let me grab some reference photos", no tool
 	// call, turn over — and then the next message ("are you really?") answered by
 	// a model with no idea it had promised anything.
-	recordTurnCommitment(runtimeDB, subSessionID, cleanReply, len(turnToolCalls) > 0)
+	recordTurnCommitment(runtimeDB, subSessionID, cleanReply, modelCalls > 0)
 	imgs, vids := collectMessageMedia(subSess, cleanReply)
 	// Phantom-delivery backstop: the model produced a file (find/generate/fetch)
 	// but never called workspace(attach), then wrote a reply CLAIMING it sent it

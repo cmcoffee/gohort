@@ -864,6 +864,9 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	if strings.TrimSpace(reply) == "" && len(finalCalls) > 0 {
 		reply = "_(No written reply this turn: see the tool actions above.)_"
 	}
+	// What the machine did before the model saw the message, shown with the
+	// turn's own tool runs (Framework records, never replayed to the model).
+	finalCalls = append(append([]PersistedToolCall(nil), turn.machineTrace...), finalCalls...)
 	// Delivery backstop: the reply SAYS it sent a picture and nothing was
 	// attached. The channel path has had this for a while; chat never did, so
 	// "here's your image" with no image was a dead end here — the file sat in

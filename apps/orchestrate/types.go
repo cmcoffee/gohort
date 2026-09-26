@@ -1572,6 +1572,15 @@ type PersistedToolCall struct {
 	Result string         `json:"result,omitempty"`
 	Err    string         `json:"err,omitempty"`
 	Cached bool           `json:"cached,omitempty"` // true = wrapper returned cached body (no fresh dispatch)
+	// Framework marks a record the FRAMEWORK wrote, not a call the model made:
+	// a machine step the turn walked before the model saw the message. Shown
+	// with the turn's other tool runs, never replayed to the model as a call it
+	// made (toLLMMessages), since a name like machine_step is not a tool it has
+	// and history that says it called one invites it to try again.
+	Framework bool `json:"framework,omitempty"`
+	// Label is what the tool-runs list shows in place of Name, for a record
+	// whose name alone says little ("machine_step" versus the step it was).
+	Label string `json:"label,omitempty"`
 }
 
 // ChatMessageUsage is the per-assistant-message token / throughput

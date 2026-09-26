@@ -84,7 +84,7 @@ func TestTheChannelPathRunsTheMachine(t *testing.T) {
 	if err != nil {
 		t.Skip("source unavailable")
 	}
-	for _, call := range []string{"subTurn.enterMachine(", "subTurn.completeMachine(", "mach.Block()", "mach.narrowCatalog("} {
+	for _, call := range []string{"subTurn.enterMachine(", "subTurn.completeMachine(", "mach.Block()", "mach.narrowCatalog(", "subTurn.machineTrace"} {
 		if !strings.Contains(string(src), call) {
 			t.Errorf("agent_dispatch.go no longer calls %s: an agent's machine would stop running for channel messages", call)
 		}
@@ -109,5 +109,68 @@ func TestTheMachineLogSaysWhetherItRouted(t *testing.T) {
 	}
 	if got := machineWalkSummary("", "answer", nil, start); !strings.HasPrefix(got, "started in answer") {
 		t.Errorf("a first turn that starts in a waiting step should say so, got %q", got)
+	}
+}
+
+// The machine's steps land in the turn's trace, so a channel message's card
+// shows the routing: each step the walk ran this turn, what it decided, and the
+// delegate it handed the work to. A restart's hop off a waiting step and an
+// earlier turn's hops are not steps this turn ran.
+func TestTheTraceRecordsTheStepsThisTurnRan(t *testing.T) {
+	def := MachineDef{Name: "HumorRouter", Start: "Router", Phases: []MachinePhase{
+		{Name: "Router", Next: "Decide"},
+		{Name: "Decide", Choices: []string{"Delegate", "Direct"}},
+		{Name: "Delegate", Agent: "Comedian", Next: "Report"},
+		{Name: "Direct", Resident: true},
+		{Name: "Report", Resident: true},
+	}}
+	start := time.Now()
+	cur := &MachineCursor{
+		Log: []PhaseHop{
+			{From: "Router", To: "Decide", At: start.Add(-time.Hour)}, // an earlier turn
+			{From: "Direct", To: "Router", At: start},                 // the restart
+			{From: "Router", To: "Decide", At: start},
+			{From: "Decide", To: "Delegate", At: start},
+			{From: "Delegate", To: "Report", At: start},
+		},
+		State: MachineState{
+			"Router":   {Text: "yes"},
+			"Decide":   {Fields: map[string]any{"next_step": "Delegate"}},
+			"Delegate": {Text: "Why did the scarecrow win an award?"},
+		},
+	}
+	trace := machineStepTrace(def, cur, start)
+	if len(trace) != 3 {
+		t.Fatalf("three steps ran this turn, got %d: %+v", len(trace), trace)
+	}
+	for i, want := range []string{"Router", "Decide", "Delegate"} {
+		if trace[i].Args["step"] != want || !trace[i].Framework || trace[i].Name != "machine_step" {
+			t.Errorf("record %d should be framework step %s, got %+v", i, want, trace[i])
+		}
+	}
+	if trace[2].Args["agent"] != "Comedian" || trace[2].Args["then"] != "Report" || !strings.Contains(trace[2].Result, "scarecrow") {
+		t.Errorf("the delegate step should name the agent, where it went next, and what came back: %+v", trace[2])
+	}
+	if trace[2].Label != "HumorRouter: Delegate (Comedian) → Report" {
+		t.Errorf("the list should read as the step it was, got %q", trace[2].Label)
+	}
+	if !strings.Contains(trace[1].Result, "Delegate") {
+		t.Errorf("a deciding step with only fields should still show its decision: %+v", trace[1])
+	}
+}
+
+// A framework record is shown, never replayed: the model did not make that
+// call, and a history saying it called machine_step invites it to try.
+func TestFrameworkRecordsAreNotReplayedToTheModel(t *testing.T) {
+	step := PersistedToolCall{Name: "machine_step", Args: map[string]any{"step": "Router"}, Result: "yes", Framework: true}
+	real := PersistedToolCall{Name: "web_search", Args: map[string]any{"q": "x"}, Result: "hits"}
+
+	only := toLLMMessages([]ChatMessage{{Role: "assistant", Content: "a joke", ToolCalls: []PersistedToolCall{step}}})
+	if len(only) != 1 || len(only[0].ToolCalls) != 0 {
+		t.Fatalf("a reply whose only records are the machine's should replay as plain text, got %+v", only)
+	}
+	mixed := toLLMMessages([]ChatMessage{{Role: "assistant", Content: "found it", ToolCalls: []PersistedToolCall{step, real}}})
+	if len(mixed) != 2 || len(mixed[0].ToolCalls) != 1 || mixed[0].ToolCalls[0].Name != "web_search" || len(mixed[1].ToolResults) != 1 {
+		t.Fatalf("only the model's own call should replay, got %+v", mixed)
 	}
 }

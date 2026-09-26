@@ -5414,7 +5414,7 @@
         var cached = tc.cached || tc.Cached;
         rmHost.tools.push({
           call_id: 'replay-' + mid + '-' + idx,
-          name: (tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
+          name: (tc.label || tc.Label || tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
           args: argsStr,
           output: String(output == null ? '' : output),
           kind: '',
@@ -6092,7 +6092,7 @@
                       var cached = tc.cached || tc.Cached;
                       ctxHost.tools.push({
                         call_id: 'replay-' + mid + '-' + idx,
-                        name: (tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
+                        name: (tc.label || tc.Label || tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
                         args: argsStr,
                         output: String(output == null ? '' : output),
                         kind: '',

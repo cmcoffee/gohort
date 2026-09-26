@@ -16,6 +16,7 @@ package orchestrate
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -88,9 +89,51 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 	}
 	t.persistCursor(cur)
 	Log("[orchestrate.machine] agent=%s machine=%q: %s", t.agent.ID, def.Name, machineWalkSummary(parkedIn, ph.Name, cur.Log, walkStart))
+	t.machineTrace = machineStepTrace(def, cur, walkStart)
 	t.machine = turnMachine{def: def, phase: ph, state: cur.State, on: true,
 		vars: PhaseVars{MachineTurn: t.machineTurn(""), Opening: cur.Opening}}
 	return t.machine
+}
+
+// machineStepTrace records each step this turn's walk RAN, as a Framework
+// tool record: which machine and step, what it decided, the agent, pipeline or
+// machine it handed the work to, and what came back. A step ran if the walk
+// left it this turn and it is not a waiting step (those are the reply, run by
+// the turn itself, or a restart's starting point).
+func machineStepTrace(def MachineDef, cur *MachineCursor, walkStart time.Time) []PersistedToolCall {
+	var out []PersistedToolCall
+	for _, h := range cur.Log {
+		if h.At.Before(walkStart) {
+			continue
+		}
+		ph, ok := def.Phase(h.From)
+		if !ok || ph.Resident {
+			continue
+		}
+		args := map[string]any{"machine": def.Name, "step": ph.Name, "then": h.To}
+		switch {
+		case strings.TrimSpace(ph.Agent) != "":
+			args["agent"] = ph.Agent
+		case strings.TrimSpace(ph.Pipeline) != "":
+			args["pipeline"] = ph.Pipeline
+		case strings.TrimSpace(ph.Machine) != "":
+			args["child_machine"] = ph.Machine
+		}
+		res := cur.State[ph.Name]
+		result := strings.TrimSpace(res.Text)
+		if result == "" && len(res.Fields) > 0 {
+			result = fmt.Sprint(res.Fields)
+		}
+		label := def.Name + ": " + ph.Name
+		for _, k := range []string{"agent", "pipeline", "child_machine"} {
+			if v, ok := args[k].(string); ok {
+				label += " (" + v + ")"
+			}
+		}
+		label += " → " + h.To
+		out = append(out, PersistedToolCall{Name: "machine_step", Label: label, Args: args, Result: truncateObs(result, 300), Framework: true})
+	}
+	return out
 }
 
 // machineWalkSummary says what the machine did with this turn's message: the

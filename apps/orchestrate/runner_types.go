@@ -133,6 +133,12 @@ type chatTurn struct {
 	// and without somewhere to keep the cursor the agent's machine never ran
 	// there at all. See cursorThread.
 	machineThread *ChatSession
+	// machineTrace is what the machine did with this turn's message before the
+	// model saw it: one Framework record per step it ran (the router's
+	// decision, a delegate's answer). Stored with the reply's tool runs so a
+	// channel message's card shows the routing, which otherwise happened
+	// outside every trace. See machineStepTrace.
+	machineTrace []PersistedToolCall
 	// attachedToolNames is what this turn's ATTACHMENTS minted: the tools
 	// of the agent's attached sources and pipelines, by name.
 	//
