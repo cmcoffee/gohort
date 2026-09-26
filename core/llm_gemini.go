@@ -251,6 +251,16 @@ func (c *geminiClient) buildMessages(messages []Message) []gemContent {
 			contents = append(contents, gemContent{Role: "user", Parts: parts})
 
 		default:
+			// An empty message has nothing to send. Its part would carry no
+			// field at all (Text is omitempty), and Gemini rejects the whole
+			// request for it: "contents[n].parts[0].data: required oneof field
+			// 'data' must have one initialized field". A stored turn with no
+			// text (one that ended on a question card, a blank reply) in
+			// replayed history was enough to knock a lead-pinned run onto
+			// the worker for every round.
+			if strings.TrimSpace(m.Content) == "" {
+				continue
+			}
 			role := m.Role
 			if role == "assistant" {
 				role = "model"
@@ -261,7 +271,22 @@ func (c *geminiClient) buildMessages(messages []Message) []gemContent {
 			})
 		}
 	}
-	return contents
+	return mergeAdjacentRoles(contents)
+}
+
+// mergeAdjacentRoles folds consecutive contents of the same role into one, so
+// dropping an empty turn never leaves two user (or two model) turns side by
+// side, which multi-turn requests do not accept.
+func mergeAdjacentRoles(contents []gemContent) []gemContent {
+	out := contents[:0:0]
+	for _, c := range contents {
+		if n := len(out); n > 0 && out[n-1].Role == c.Role {
+			out[n-1].Parts = append(out[n-1].Parts, c.Parts...)
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // buildGeminiTools converts generic Tool definitions to Gemini format.

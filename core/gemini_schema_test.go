@@ -52,3 +52,24 @@ func TestSanitizeGeminiSchema(t *testing.T) {
 		t.Error("an array without items survived")
 	}
 }
+
+// An empty stored turn in replayed history became a part with no field, and
+// Gemini refused the whole request for it, which pushed a lead-pinned run onto
+// the worker. Empty turns are dropped, and the turns either side of one merge
+// so the request still alternates.
+func TestGeminiDropsEmptyTurns(t *testing.T) {
+	c := &geminiClient{}
+	got := c.buildMessages([]Message{
+		{Role: "user", Content: "build the connector"},
+		{Role: "assistant", Content: ""},
+		{Role: "user", Content: "go with option A"},
+		{Role: "assistant", Content: "Done."},
+	})
+	raw, _ := json.Marshal(got)
+	if strings.Contains(string(raw), "{}") {
+		t.Errorf("an empty part reached the request: %s", raw)
+	}
+	if len(got) != 2 || got[0].Role != "user" || len(got[0].Parts) != 2 || got[1].Role != "model" {
+		t.Fatalf("the empty model turn should drop and the two user turns merge: %s", raw)
+	}
+}

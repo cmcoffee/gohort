@@ -552,7 +552,12 @@ func buildAnthMessages(messages []Message) ([]anthMessage, error) {
 			msgs = append(msgs, anthMessage{Role: "user", Content: raw})
 
 		default:
-			// Simple text message.
+			// Simple text message. An empty one has nothing to send, and the
+			// API refuses empty content anywhere but a final assistant turn;
+			// the same stored turn with no text broke Gemini (llm_gemini.go).
+			if strings.TrimSpace(m.Content) == "" {
+				continue
+			}
 			raw, err := json.Marshal(m.Content)
 			if err != nil {
 				return nil, err
