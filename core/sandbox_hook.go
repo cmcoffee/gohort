@@ -535,9 +535,20 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			if m, ok := params["method"].(string); ok && m != "" {
 				method = strings.ToUpper(strings.TrimSpace(m))
 			}
-			args := map[string]interface{}{"url": rawURL, "method": method}
+			// The script's headers and save_to ride along, and the body is read
+			// under the piped cap: a script consumes it, not a model. Only url,
+			// method and body used to pass, so save_to silently wrote nothing
+			// and a 263 KB response came back cut at 256 KiB.
+			args := map[string]interface{}{"url": rawURL, "method": method, "__pipe_following": true}
 			if b, ok := params["body"].(string); ok && b != "" {
 				args["body"] = b
+			}
+			if hdrs, ok := params["headers"].(map[string]interface{}); ok && len(hdrs) > 0 {
+				args["request_headers"] = hdrs
+			}
+			saveTo, _ := params["save_to"].(string)
+			if saveTo = strings.TrimSpace(saveTo); saveTo != "" {
+				args["save_to"] = saveTo
 			}
 			Log("[hook/fetch] auto-routing credential-covered URL via %q: %s", credName, rawURL)
 			out, derr := Secure().DispatchToolCallArgs(h.Sess, credName, args)
@@ -559,11 +570,15 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 					}
 				}
 			}
-			writeHookResult(conn, map[string]interface{}{
+			result := map[string]interface{}{
 				"status":  status,
 				"headers": map[string]string{"X-Gohort-Fetched-Via": "credential:" + credName},
 				"body":    respBody,
-			})
+			}
+			if saveTo != "" {
+				result["path"] = saveTo // the same key a plain save_to fetch returns
+			}
+			writeHookResult(conn, result)
 			return
 		}
 	}
@@ -1045,6 +1060,9 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 	if hdrs, ok := params["headers"].(map[string]interface{}); ok && len(hdrs) > 0 {
 		args["request_headers"] = hdrs
 	}
+	// A script consumes the body, not a model, so it reads under the piped
+	// cap: the general one cut a 263 KB audio response at 256 KiB.
+	args["__pipe_following"] = true
 	Log("[hook/fetch_via] start %s %s via %q", method, url, credName)
 	callStart := time.Now()
 	out, err := Secure().DispatchToolCallArgs(h.Sess, credName, args)
@@ -1549,7 +1567,7 @@ class _Gohort:
             )
         return resp["result"]
 
-    def fetch_url(self, url, method="GET", headers=None, body=None, timeout=30, save_to=None):
+    def fetch_url(self, url, method="GET", headers=None, body=None, timeout=30, save_to=None, request_headers=None):
         """HTTP request via gohort. Returns dict {status, headers, body}.
         body is a string. Capped at 10MiB response (text mode) or
         100MiB (save_to mode).
@@ -1579,10 +1597,15 @@ class _Gohort:
             if r["status"] != 200: ...
             # file now exists at <workspace>/meme.png; r["path"] = "meme.png"
         """
+        # request_headers is accepted as an alias for headers, as fetch_via
+        # accepts it, so the api-tool spelling works in either call.
+        hdrs = dict(headers or {})
+        if request_headers:
+            hdrs.update(request_headers)
         return self._call("fetch", {
             "url": url,
             "method": method,
-            "headers": headers or {},
+            "headers": hdrs,
             "body": body or "",
             "timeout": timeout,
             "save_to": save_to or "",
@@ -1665,9 +1688,10 @@ gohort = _Gohort()
 # Every method on the singleton has a matching free function here so
 # the "from gohort import X" import shape works for any X the
 # singleton exposes.
-def fetch_url(url, method="GET", headers=None, body=None, timeout=30, save_to=None):
+def fetch_url(url, method="GET", headers=None, body=None, timeout=30, save_to=None, request_headers=None):
     return gohort.fetch_url(url, method=method, headers=headers,
-                            body=body, timeout=timeout, save_to=save_to)
+                            body=body, timeout=timeout, save_to=save_to,
+                            request_headers=request_headers)
 
 
 def fetch(url, method="GET", headers=None, body=None, timeout=30, save_to=None):

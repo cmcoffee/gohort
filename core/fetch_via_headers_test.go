@@ -86,3 +86,39 @@ func TestShimFetchViaCarriesHeaders(t *testing.T) {
 		}
 	}
 }
+
+// A script's fetch through a credential reads the whole body. The hook paths
+// set the piped flag; without it a response over the general cap is cut, which
+// is what turned a 263 KB audio response into JSON with a truncation marker
+// inside a base64 string.
+func TestAScriptFetchThroughACredentialGetsTheWholeBody(t *testing.T) {
+	big := `{"data":"` + strings.Repeat("A", 300*1024) + `"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(big))
+	}))
+	defer srv.Close()
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	if err := s.Save(SecureCredential{Name: "gen", Type: SecureCredNone, BaseURL: srv.URL}, ""); err != nil {
+		t.Fatal(err)
+	}
+	piped, err := s.DispatchToolCallArgs(nil, "gen", map[string]any{"url": srv.URL + "/x", "__pipe_following": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(piped, big) || strings.Contains(piped, "truncated") {
+		t.Errorf("the piped read should carry the whole %d-byte body unmarked", len(big))
+	}
+	plain, _ := s.DispatchToolCallArgs(nil, "gen", map[string]any{"url": srv.URL + "/x"})
+	if strings.Contains(plain, big) {
+		t.Error("a read for a model still stops at the general cap")
+	}
+	for _, want := range []string{
+		`def fetch_url(self, url, method="GET", headers=None, body=None, timeout=30, save_to=None, request_headers=None):`,
+		`def fetch_url(url, method="GET", headers=None, body=None, timeout=30, save_to=None, request_headers=None):`,
+		`request_headers=request_headers)`,
+	} {
+		if !strings.Contains(SandboxHookPythonShim, want) {
+			t.Errorf("fetch_url should take request_headers as fetch_via does; missing %q", want)
+		}
+	}
+}
