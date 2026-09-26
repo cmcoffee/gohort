@@ -377,12 +377,6 @@ type AgentLoopPanel struct {
 	RecordLabel      string `json:"record_label,omitempty"`
 	RecordHint       string `json:"record_hint,omitempty"`
 	RecordLockedText string `json:"record_locked_text,omitempty"`
-	// PinnedClearURL, when set, puts a clear button on the pinned row (the
-	// home thread or the record), POSTed after PinnedClearConfirm is accepted.
-	// Extras placeholders resolve in it like any other panel URL. The app owns
-	// what clearing means; empty = no button.
-	PinnedClearURL     string `json:"pinned_clear_url,omitempty"`
-	PinnedClearConfirm string `json:"pinned_clear_confirm,omitempty"`
 
 	// Height overrides the panel's default size — any CSS length ("360px",
 	// "50vh"). The default fills the viewport, which is right for a page whose
@@ -488,6 +482,11 @@ type OrchestratorNavItem struct {
 	// hidden wholesale on the alt-nav opt-in, so a per-item exemption inside
 	// one could never be reached.
 	AllAgents bool `json:"all_agents,omitempty"`
+	// RecordToo also shows the item for an agent whose pinned thread is a
+	// record (RecordNavFlag) rather than an alt-nav home: an action on that
+	// thread, such as clearing it, applies to both kinds. Actions post for the
+	// selected agent either way.
+	RecordToo bool `json:"record_too,omitempty"`
 	// BadgeField names a hidden row field; the count badge then reflects only
 	// rows where that field is truthy (e.g. "_pending" counts just the pending
 	// approvals on a page that also lists granted ones). Empty = count all rows.

@@ -923,7 +923,18 @@
             if (item.confirm && window.uiConfirm && !(await window.uiConfirm(item.confirm))) return;
             var url = item.action_url + (item.action_url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
             fetch(url, {method: 'POST'})
-              .then(function() { refreshChannelBadges(); closeDrawer(); openHomeThread(); })
+              .then(function() {
+                refreshChannelBadges(); closeDrawer();
+                // A record agent has no home thread to land on: refresh its
+                // list, and the record if it is the thread on screen.
+                var rec = recordPinnedSession(window.GOHORT_AGENT_ID);
+                if (rec) {
+                  if (activeSessionId === rec) openSession(rec);
+                  loadSessions();
+                } else {
+                  openHomeThread();
+                }
+              })
               .catch(function(err) { console.error('channel action failed: ' + err.message); });
           })();
           return;
@@ -1282,9 +1293,10 @@
         // belong to the selected agent, and where it was PLACED cannot change
         // whether that is true.
         var anyTopbar = false;
+        var isRecord = !!recordPinnedSession(agentId);
         var navOn = function(i) {
           var item = (cfg.orchestrator_nav || [])[i] || {};
-          return isOrch || !!item.all_agents;
+          return isOrch || !!item.all_agents || (!!item.record_too && isRecord);
         };
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
           if (!orchBtns[i]) return;
@@ -5585,31 +5597,7 @@
             var chRow = el('button', {type: 'button', class: 'ui-channel-hero' + (chActive ? ' active' : ''),
               style: 'display:flex;align-items:flex-start;gap:0.5rem;width:100%;text-align:left;padding:0.5rem 0.6rem;border:1px solid ' + heroBorder + ';border-radius:7px;cursor:pointer;font:inherit;color:var(--text, inherit);background:' + heroBg,
               onclick: function() { openSession(chId); closeDrawer(); }}, chKids);
-            if (cfg.pinned_clear_url) {
-              // A clear button beside the row, not inside it: the row is itself
-              // a button, and a click here must not also open the thread.
-              var clearBtn = el('button', {type: 'button', class: 'ui-row-btn compact', title: 'Clear this thread',
-                style: 'flex:0 0 auto;align-self:center;min-width:0;min-height:0;padding:0.2rem 0.45rem;font-size:0.8rem',
-                onclick: async function(ev) {
-                  ev.stopPropagation();
-                  if (!(await window.uiConfirm(cfg.pinned_clear_confirm || 'Clear this thread? Everything in it is removed.'))) return;
-                  clearBtn.disabled = true;
-                  fetchJSON(substituteExtras(cfg.pinned_clear_url), {method: 'POST'})
-                    .then(function() {
-                      if (activeSessionId === chId) openSession(chId);
-                      loadSessions();
-                    })
-                    .catch(function(e) {
-                      clearBtn.disabled = false;
-                      window.uiAlert('Could not clear it: ' + e.message);
-                    });
-                }}, ['🧹']);
-              chRow.style.flex = '1';
-              chRow.style.minWidth = '0';
-              primaryEl.appendChild(el('div', {style: 'display:flex;align-items:stretch;gap:0.3rem'}, [chRow, clearBtn]));
-            } else {
-              primaryEl.appendChild(chRow);
-            }
+            primaryEl.appendChild(chRow);
             primaryEl.style.display = '';
           } else {
             primaryEl.style.display = 'none';

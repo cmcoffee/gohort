@@ -552,7 +552,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// already has six.
 						{Label: "Compact Cortex", Menu: "Manage", Group: "Cortex", ActionURL: "api/console/channel/compact",
 							Confirm: "Compact this Cortex thread now? Older messages fold into its rolling summary (still searchable via history recall); the recent tail is kept verbatim. Runs in the background: reopen the thread to see the shorter view."},
-						{Label: "Clear Cortex", Menu: "Manage", Group: "Cortex", ActionURL: "api/console/channel/clear", Variant: "warning",
+						// RecordToo: an agent whose cortex is only a record (it does
+						// not read it) had no way to clear it, since this menu was
+						// for cortex-reading agents alone. Compact stays theirs: a
+						// record has no summary to fold into.
+						{Label: "Clear Cortex", Menu: "Manage", Group: "Cortex", ActionURL: "api/console/channel/clear", Variant: "warning", RecordToo: true,
 							Confirm: "Clear this Cortex thread's conversation and rolling summary? Your monitors, standing agents, and approvals are kept."},
 
 						// --- Your fleet: everything the user owns, not the agent in
@@ -687,13 +691,6 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					RecordLabel:      "Cortex",
 					RecordHint:       "record only: this agent does not read it",
 					RecordLockedText: "This is the agent's cortex, a record of what reached it: messages, requests, scheduled runs, monitor fires. The agent does not read it. Start a new session to talk to it.",
-					// Clear, on the pinned row, for either kind of cortex. The
-					// Manage menu's Clear Cortex only shows for an agent that
-					// reads its cortex, so a record-only one had no way to be
-					// cleared. Same endpoint for both: every agent's cortex is
-					// the one thread cortexSessionID names.
-					PinnedClearURL:     "api/console/channel/clear?agent={agent_id}",
-					PinnedClearConfirm: "Clear this agent's Cortex? Everything recorded in it, and its rolling summary, is removed. Monitors, standing agents and approvals are kept.",
 					// "+ New ▾" offers a clean-room session. Picking it opens a
 					// fresh thread and arms incognito on the first send, so the
 					// runner stamps the session as a clean room at creation: no

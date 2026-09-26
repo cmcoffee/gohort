@@ -18,7 +18,14 @@ function check(label, cond) {
 // One predicate, consulted everywhere an item can render — the bug was two
 // rules disagreeing about what all_agents means depending on placement.
 check('visibility is one shared predicate',
-  /var navOn = function\(i\) \{[\s\S]{0,200}?return isOrch \|\| !!item\.all_agents;/.test(src));
+  /var navOn = function\(i\) \{[\s\S]{0,200}?return isOrch \|\| !!item\.all_agents \|\| \(!!item\.record_too && isRecord\);/.test(src));
+
+// record_too: an action on the pinned thread (clearing it) applies to an
+// agent whose pinned thread is a record, which has no alt nav of its own.
+check('record_too shows an item for a record agent',
+  /var isRecord = !!recordPinnedSession\(agentId\);/.test(src));
+check('an action on a record agent refreshes its list rather than a home thread',
+  /var rec = recordPinnedSession\(window\.GOHORT_AGENT_ID\);[\s\S]{0,200}?loadSessions\(\);/.test(src));
 
 check('a menu is shown when it still holds something',
   /m\.control\.style\.display = m\.items\.some\(navOn\) \? '' : 'none';/.test(src));
