@@ -71,15 +71,6 @@ func shareChoice(field, noun, key string, db Database, owner string, agent Agent
 	}
 }
 
-// adminOnlyLink is a link field that renders for an administrator and an empty
-// spacer for everybody else.
-func adminOnlyLink(isAdmin bool, label, url, text, help string) ui.FormField {
-	if !isAdmin {
-		return ui.FormField{Type: "link", Label: ""}
-	}
-	return ui.FormField{Type: "link", Label: label, Default: url, Placeholder: text, Help: help}
-}
-
 func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
 	agent, ok := loadAgent(udb, id)
 	if !ok || (agent.Owner != "" && agent.Owner != user && agent.Owner != seedOwner) {
@@ -353,19 +344,37 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
-				Group: "Delegation",
-				Title: "This agent's own",
-				Subtitle: "Decisions that apply to this agent and nothing else. " +
-					"Where a control on this tab already carries its own state it is not repeated here, because the control IS the decision.",
-				Body: ui.Table{
-					Source:    decisions("delegation", "agent"),
-					RowKey:    "_id",
-					EmptyText: "No standing decisions about what it may call.",
-					Columns: []ui.Col{
-						{Field: "Who", Label: ""},
-						{Field: "Detail", Label: "", Mute: true},
+				Group:    "Delegation",
+				Title:    "Which agents it can call at all",
+				Subtitle: "The first of two layers, and the kill switch. Allow none stops every call to another agent whatever is decided further down; Builder answers only to its own switch below. The target list is read only by the two \"selected\" modes.",
+				Body: ui.FormPanel{
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
+					Fields: []ui.FormField{
+						{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
+							Options: dispatchModeOptions(effectiveDispatchMode(agent)),
+							Help:    "Which other agents this one may call via agents(action=\"run\").",
+							Detail:  "This is the blast radius, and it bounds damage in a way the tool list cannot: whatever this agent calls runs with ITS catalog, not this one's. Allow all means any non-hidden agent, and is the default. Only allow, and Allow all except, draw from the target list below. Allow none blocks all dispatch to other agents and is the actual delegation kill switch. Builder is not one of your agents and is governed by Can dispatch Builder alone."},
+						{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
+							Help:   "Lets this agent hand work to Builder, to author an agent, tool or app on its behalf. Holds under every dispatch policy, Allow none included.",
+							Detail: "The call is agents(action=\"run\", agent=\"builder\"). Off by default and normally reserved to conductor agents, because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft.\n\nSeparate from the authoring tools, which have the agent build things ITSELF; this one has it ask Builder to.\n\nThis is the only switch for Builder. Allow none stops every other agent but not Builder when this is on, so turn this off to stop Builder. Conductor agents can reach Builder without it, but only while their policy is not Allow none. Whatever Builder produces on a dispatch still waits for your approval."},
 					},
-					RowActions: append(policyLadder(), scopeMove(false)),
+				},
+			},
+			{
+				Group:    "Delegation",
+				Title:    "Dispatch target list",
+				Subtitle: dispatchTargetSubtitle(effectiveDispatchMode(agent)),
+				Body: ui.ChipPicker{
+					OptionsSource: T.WebPrefix() + "/api/agents?role=dispatch-target&self=" + url.QueryEscape(agent.ID),
+					RecordSource:  patchURL,
+					Field:         "allowed_dispatch_targets",
+					PostTo:        patchURL,
+					Method:        "PATCH",
+					NameField:     "id",
+					LabelField:    "name",
+					DescField:     "description",
 				},
 			},
 			{
@@ -391,6 +400,22 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			},
 			{
 				Group: "Delegation",
+				Title: "This agent's own",
+				Subtitle: "Decisions that apply to this agent and nothing else. " +
+					"Where a control on this tab already carries its own state it is not repeated here, because the control IS the decision.",
+				Body: ui.Table{
+					Source:    decisions("delegation", "agent"),
+					RowKey:    "_id",
+					EmptyText: "No standing decisions about what it may call.",
+					Columns: []ui.Col{
+						{Field: "Who", Label: ""},
+						{Field: "Detail", Label: "", Mute: true},
+					},
+					RowActions: append(policyLadder(), scopeMove(false)),
+				},
+			},
+			{
+				Group: "Delegation",
 				Title: "Applies to every agent",
 				Subtitle: "Decisions you made once for the whole fleet, which this agent reads because it has decided nothing of its own. " +
 					"Shown apart because they reach further: changing one here changes it for every agent that has not overridden it. Set them together under Security for all agents.",
@@ -403,81 +428,6 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						{Field: "Detail", Label: "", Mute: true},
 					},
 					RowActions: append(policyLadder(), scopeMove(true)),
-				},
-			},
-			{
-				Group:    "Delegation",
-				Title:    "Which agents it can call at all",
-				Subtitle: "The first of two layers, and the kill switch. Allow none stops every call to another agent whatever is decided further down; Builder answers only to its own switch below. The target list is read only by the two \"selected\" modes.",
-				Body: ui.FormPanel{
-					Source:  patchURL,
-					PostURL: patchURL,
-					Method:  "PATCH",
-					Fields: []ui.FormField{
-						{Field: "hidden", Type: "toggle", Invert: true, Label: "Listed in the agent fleet",
-							Help:   "On (default) = other agents can see and call it. Off drops it from the fleet and refuses dispatch.",
-							Detail: "Globally callable means it appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). Hidden, it is dropped from that block and dispatch is refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list.\n\nThis affects FLEET visibility only. The agent still appears in your own Agents picker and stays reachable at its dashboard URL when published."},
-						{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
-							Options: dispatchModeOptions(effectiveDispatchMode(agent)),
-							Help:    "Which other agents this one may call via agents(action=\"run\").",
-							Detail:  "This is the blast radius, and it bounds damage in a way the tool list cannot: whatever this agent calls runs with ITS catalog, not this one's. Allow all means any non-hidden agent, and is the default. Only allow, and Allow all except, draw from the target list below. Allow none blocks all dispatch to other agents and is the actual delegation kill switch. Builder is not one of your agents and is governed by Can dispatch Builder alone."},
-						{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
-							Help:   "Lets this agent hand work to Builder, to author an agent, tool or app on its behalf. Holds under every dispatch policy, Allow none included.",
-							Detail: "The call is agents(action=\"run\", agent=\"builder\"). Off by default and normally reserved to conductor agents, because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft.\n\nSeparate from the authoring tools, which have the agent build things ITSELF; this one has it ask Builder to.\n\nThis is the only switch for Builder. Allow none stops every other agent but not Builder when this is on, so turn this off to stop Builder. Conductor agents can reach Builder without it, but only while their policy is not Allow none. Whatever Builder produces on a dispatch still waits for your approval."},
-					},
-				},
-			},
-			{
-				Group:    "Delegation",
-				Title:    "Who may call THIS agent",
-				Subtitle: "The other direction. Everything above is what this agent may call; this is what may call it, decided here rather than on every other agent.",
-				Detail: "Without it, \"only these two may call me\" could only be arranged by visiting every other agent in the fleet and excluding this one, which nobody does and nothing checks held.\n\n" +
-					"Separate from being listed in the fleet, which is visibility: a caller that names a hidden agent still reaches it. This is permission, and nothing on the caller's side overrides it.\n\n" +
-					"A sub-agent's parent is always exempt. Ownership is the link, and a rule that locked a parent out of its own child would leave the child unreachable by anything.",
-				Body: ui.FormPanel{
-					Source:  patchURL,
-					PostURL: patchURL,
-					Method:  "PATCH",
-					Fields: []ui.FormField{
-						{Field: "inbound_mode", Type: "select", Label: "Accepts dispatches from",
-							Options: []ui.SelectOption{
-								{Value: "", Label: "Any agent"},
-								{Value: "only", Label: "Only the agents I list"},
-								{Value: "none", Label: "No agent"},
-							},
-							Help: "Any agent still means the caller's own policy applies. No agent is absolute.",
-						},
-					},
-				},
-			},
-			{
-				Group:    "Delegation",
-				Title:    "Agents that may call it",
-				Subtitle: "Read only while the setting above is \"Only the agents I list\". Empty there means nothing reaches it, which is the same as No agent.",
-				Body: ui.ChipPicker{
-					OptionsSource: T.WebPrefix() + "/api/agents?role=dispatch-target&self=" + url.QueryEscape(agent.ID),
-					RecordSource:  patchURL,
-					Field:         "allowed_callers",
-					PostTo:        patchURL,
-					Method:        "PATCH",
-					NameField:     "id",
-					LabelField:    "name",
-					DescField:     "description",
-				},
-			},
-			{
-				Group:    "Delegation",
-				Title:    "Dispatch target list",
-				Subtitle: dispatchTargetSubtitle(effectiveDispatchMode(agent)),
-				Body: ui.ChipPicker{
-					OptionsSource: T.WebPrefix() + "/api/agents?role=dispatch-target&self=" + url.QueryEscape(agent.ID),
-					RecordSource:  patchURL,
-					Field:         "allowed_dispatch_targets",
-					PostTo:        patchURL,
-					Method:        "PATCH",
-					NameField:     "id",
-					LabelField:    "name",
-					DescField:     "description",
 				},
 			},
 			{
@@ -520,8 +470,49 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
-				Group: "Limits",
-				Title: "Who may change any of this",
+				Group:    "Delegation",
+				Title:    "Who may call THIS agent",
+				Subtitle: "The other direction. The rest of this tab is what this agent may call; this is what may call it, decided here rather than on every other agent.",
+				Detail: "Without it, \"only these two may call me\" could only be arranged by visiting every other agent in the fleet and excluding this one, which nobody does and nothing checks held.\n\n" +
+					"Separate from being listed in the fleet, which is visibility: a caller that names a hidden agent still reaches it. This is permission, and nothing on the caller's side overrides it.\n\n" +
+					"A sub-agent's parent is always exempt. Ownership is the link, and a rule that locked a parent out of its own child would leave the child unreachable by anything.",
+				Body: ui.FormPanel{
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
+					Fields: []ui.FormField{
+						{Field: "hidden", Type: "toggle", Invert: true, Label: "Listed in the agent fleet",
+							Help:   "On (default) = other agents can see and call it. Off drops it from the fleet and refuses dispatch.",
+							Detail: "Globally callable means it appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). Hidden, it is dropped from that block and dispatch is refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list.\n\nThis affects FLEET visibility only. The agent still appears in your own Agents picker and stays reachable at its dashboard URL when published."},
+						{Field: "inbound_mode", Type: "select", Label: "Accepts dispatches from",
+							Options: []ui.SelectOption{
+								{Value: "", Label: "Any agent"},
+								{Value: "only", Label: "Only the agents I list"},
+								{Value: "none", Label: "No agent"},
+							},
+							Help: "Any agent still means the caller's own policy applies. No agent is absolute.",
+						},
+					},
+				},
+			},
+			{
+				Group:    "Delegation",
+				Title:    "Agents that may call it",
+				Subtitle: "Read only while the setting above is \"Only the agents I list\". Empty there means nothing reaches it, which is the same as No agent.",
+				Body: ui.ChipPicker{
+					OptionsSource: T.WebPrefix() + "/api/agents?role=dispatch-target&self=" + url.QueryEscape(agent.ID),
+					RecordSource:  patchURL,
+					Field:         "allowed_callers",
+					PostTo:        patchURL,
+					Method:        "PATCH",
+					NameField:     "id",
+					LabelField:    "name",
+					DescField:     "description",
+				},
+			},
+			{
+				Group:    "Limits",
+				Title:    "Who may change any of this",
 				Subtitle: "Every other control on this page is set by you and enforced by the framework. This one decides whether an AGENT can come back and edit them.",
 				Detail: "An agent holding the authoring toolset (Builder, or one you gave it to) can call update_agent on any agent you own. It cannot LOOSEN a ceiling - the spend cap, the action limits and the privacy lock only ratchet tighter, and an attempt to raise one is reverted and reported - but it can change everything else about the agent, including its prompt, its rules and its tool allowlist.\n\n" +
 					"Locked closes that door completely: no agent may edit or delete this one, and restoring an earlier revision is blocked too, since a restore is the largest edit there is. You keep editing it from here and from the editor either way.\n\n" +
@@ -633,21 +624,6 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 								"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script from one to the other.\n\n" +
 								"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright.\n\n" +
 								"A tool already in your pool is not stopped by this: it reaches out through the brokered fetch helper, which is a path you approved and which gohort dials on its behalf. What this stops is code the agent writes and runs on the spot."},
-						// The route to the default this control offers to
-						// use. In the SECTION rather than relying on the page
-						// nav: this page is read as a panel inside chat as
-						// often as at its own URL, and a panel draws the body
-						// alone, so a link living only in the header does not
-						// exist on the surface most people read it from.
-						//
-						// Shown to an ADMINISTRATOR only. Everybody can see
-						// what the default is - it is in the option label and
-						// the help line - and a link to a page that would
-						// refuse the reader is worse than no link: it reads as
-						// a permission they have and a page that is broken.
-						adminOnlyLink(RequestIsAdmin(r), "Where that default is set",
-							T.WebPrefix()+"/admin", "Deployment agent settings",
-							"One default for every agent, and the limit none of them may exceed."),
 					},
 				},
 			},

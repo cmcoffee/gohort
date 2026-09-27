@@ -106,15 +106,12 @@ func TestTheEditorsRemainingHeaderIsNotCollapsed(t *testing.T) {
 // is already showing, and .ui-page-tabs is laid out as a column of the header
 // GRID, so in ordinary body flow it drew on top of what was beneath it.
 func TestTheRouteToTheFleetDefaultIsInTheSection(t *testing.T) {
+	// The owner removed the "Where that default is set" link (2026-09-27): the
+	// option label and help line already say what the default is, and the
+	// link was clutter. Keep it gone.
 	security := mustReadFile(t, "page_agent_access.go")
-	if !strings.Contains(security, `adminOnlyLink(RequestIsAdmin(r), "Where that default is set"`) {
-		t.Error("the control offers a default with no way to reach where it is set")
-	}
-	// Only for somebody who can follow it. A link to a page that would refuse
-	// the reader is worse than no link: it reads as a permission they have and
-	// a page that is broken.
-	if !strings.Contains(security, "func adminOnlyLink(isAdmin bool") {
-		t.Error("the link is shown to everyone, including the people it would refuse")
+	if strings.Contains(security, "Where that default is set") || strings.Contains(security, "adminOnlyLink") {
+		t.Error("the link to where the default is set was removed on purpose")
 	}
 
 	// And the body rendering does NOT draw the page nav.
