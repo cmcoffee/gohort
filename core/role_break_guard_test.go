@@ -38,6 +38,8 @@ func TestOnlyAMidSentenceOpeningIsARoleBreak(t *testing.T) {
 		{"  ; also", "anything"},
 		{"for music generation and saves the result to the workspace?", open},
 		{"and re-publish it", "remove the limit"},
+		{". I'm also wondering if you are able to take that joke and generate an image for it?", open},
+		{") and then it works", "do the thing (the old way"},
 	} {
 		if !continuesUsersMessage(c.reply, c.asked) {
 			t.Errorf("%q after %q carries on the message", c.reply, c.asked)
@@ -50,6 +52,7 @@ func TestOnlyAMidSentenceOpeningIsARoleBreak(t *testing.T) {
 		{"For that, I ran the pipeline.", open},
 		{"for sure, running it now", open + "?"},
 		{"and it works", "does it work."},
+		{"...and that is it", open},
 		{"", open},
 	} {
 		if continuesUsersMessage(c.reply, c.asked) {

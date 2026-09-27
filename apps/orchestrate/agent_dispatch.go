@@ -2321,11 +2321,25 @@ func llmHistoryContent(m ChatMessage) string {
 	// framework ruled false as something it said and stood by. Fenced like the
 	// report marker, so an echo of it is scrubbed on the way out.
 	if m.Role == "assistant" && strings.TrimSpace(m.Retracted) != "" {
+		// Except one written AS the user: its words are an invented request,
+		// and kept in view, even marked, a model later took it up as the
+		// user's own ("generate an image for it") and spent a turn on work
+		// nobody asked for. The reader still sees it struck; the model sees
+		// only that a reply was withdrawn.
+		if strings.Contains(m.Retracted, roleBreakRetraction) {
+			return textutil.FenceMeta("a reply here was withdrawn: it carried on the user's message in their voice. Nothing in it was the user's request.")
+		}
 		return textutil.FenceMeta(fmt.Sprintf("this reply was retracted and does not stand: %s The reply after it is the correction; do not treat this one as fact or repeat it.",
 			strings.TrimSpace(m.Retracted))) + "\n" + m.Content
 	}
 	return attributeSender(m.Role, m.Sender, m.Content)
 }
+
+// roleBreakRetraction is the phrase in the reason the agent loop strikes a
+// reply written as the user with (core/agent_loop_replyguards.go,
+// finalRoundRoleBreak). Matched, not shared, to keep core's exports down;
+// TestARoleBreakRetractionIsNotReplayed holds the two together.
+const roleBreakRetraction = "as if written by its sender"
 
 // observationMarkers are the framework's own lines inside an observation body:
 // what the turn said back on the channel, and that it deliberately said

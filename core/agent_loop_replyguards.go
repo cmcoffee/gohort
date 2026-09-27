@@ -876,7 +876,12 @@ func providerCutReply(resp *Response) bool {
 // a message that ended.
 func continuesUsersMessage(reply, asked string) bool {
 	r := strings.TrimSpace(reply)
-	if strings.HasPrefix(r, ",") || strings.HasPrefix(r, ";") {
+	if strings.HasPrefix(r, ",") || strings.HasPrefix(r, ";") || strings.HasPrefix(r, ")") {
+		return true
+	}
+	// A lone full stop: ". I'm also wondering if you could..." ended the
+	// user's sentence and began another of theirs. An ellipsis is not one.
+	if strings.HasPrefix(r, ".") && !strings.HasPrefix(r, "..") {
 		return true
 	}
 	a := strings.TrimSpace(asked)
@@ -926,9 +931,13 @@ func (lr *loopRun) finalRoundRoleBreak() loopAction {
 		truncForLog(lr.rs.resp.Content, 80), lr.corrections.spend(correctionRoleBreak), maxCorrectionsPerKind)
 	lr.emitDiag("role-break-corrected", "The reply carried on the user's message in their voice instead of answering it. Taken back and asked again.")
 	lr.strikeRound("Retracted: carried on the message as if written by its sender, instead of answering it.")
+	// Its words leave the model's view entirely. They are an invented request
+	// in the user's voice, and kept, even as its own, the model later took
+	// one up as the user's ask and worked on it.
+	lr.history = lr.history[:n-1]
 	lr.history = append(lr.history, Message{
 		Role:    "user",
-		Content: frameworkNoticeTag + "Your previous reply was not a reply: it began mid-sentence and carried on the user's message in their voice, as if you were them. Their message is complete as sent. Answer it now, as yourself: act on what they asked.",
+		Content: frameworkNoticeTag + "Your last attempt at a reply was withdrawn: it began mid-sentence and carried on the user's message in their voice, as if you were them. Their message is complete as sent, and nothing in the withdrawn text was their request. Answer it now, as yourself: act on what they asked.",
 	})
 	return actContinue
 }
