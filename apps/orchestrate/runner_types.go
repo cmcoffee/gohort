@@ -416,6 +416,11 @@ type chatTurn struct {
 	// sessions — and drained onto the final message. They land under the
 	// final bubble rather than the mid-turn one that produced them, which a
 	// stored message has no id to distinguish anyway.
+	// machineToolList lists the agent's own tools for its machine's routing
+	// steps (MachineTurn.Tools), set from the turn's tool session before
+	// the machine walks.
+	machineToolList []string
+
 	deliveredAtt []string
 	// The same for what is not a picture (a song, a video, a document).
 	deliveredFiles []deliveredFile

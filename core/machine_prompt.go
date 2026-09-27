@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -98,7 +99,7 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) st
 	// this the allowed phases lived in the field's description as prose
 	// somebody maintained by hand — drifting from the phase names, and
 	// invisible to the validator and the diagram alike.
-	if r := d.routingBlock(ph); r != "" {
+	if r := d.routingBlock(ph, v); r != "" {
 		b.WriteString(r)
 	}
 
@@ -181,7 +182,13 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) st
 // it describes. Empty when the phase routes statically or declares no
 // targets — an undeclared routing field keeps its old behaviour, where
 // anything the model returns is tried and an unknown name falls back.
-func (d MachineDef) routingBlock(ph MachinePhase) string {
+//
+// Each target also says what it can DO: hand the work to an agent, run a
+// pipeline, use this agent's tools (listed), or only write text. Without it
+// a router chose from names and descriptions alone, and "make a song about
+// it" went to a step that could only write the lyrics back, past the one
+// that held the music tool.
+func (d MachineDef) routingBlock(ph MachinePhase, v PhaseVars) string {
 	from := ph.RoutesBy()
 	if from == "" {
 		return ""
@@ -193,15 +200,27 @@ func (d MachineDef) routingBlock(ph MachinePhase) string {
 	var b strings.Builder
 	b.WriteString("\n## Where this goes next\n")
 	b.WriteString("Put exactly one of these in \"" + from + "\". Choose by what the work needs, not by order.\n")
+	usesOwn := false
 	for _, t := range targets {
 		b.WriteString("- " + t)
-		if p, ok := d.Phase(strings.TrimSpace(t)); ok && strings.TrimSpace(p.Desc) != "" {
-			b.WriteString(": " + strings.TrimSpace(p.Desc))
+		if p, ok := d.Phase(strings.TrimSpace(t)); ok {
+			if desc := strings.TrimSpace(p.Desc); desc != "" {
+				b.WriteString(": " + desc)
+			}
+			can, own := phaseCapability(p)
+			b.WriteString(" (" + can + ")")
+			usesOwn = usesOwn || own
 		}
 		b.WriteString("\n")
 	}
 	if fb := strings.TrimSpace(ph.Next); fb != "" {
 		b.WriteString("If none of them fits, " + fb + " is used.\n")
+	}
+	if usesOwn && len(v.Tools) > 0 {
+		b.WriteString("When the request needs one of these, pick a step that can use this agent's tools:\n")
+		for _, t := range v.Tools {
+			b.WriteString("- " + t + "\n")
+		}
 	}
 	return b.String()
 }
@@ -249,4 +268,43 @@ func renderPhaseFindings(p MachinePhase, res PhaseResult) string {
 		b.WriteString(body)
 	}
 	return b.String()
+}
+
+// phaseCapability says in a few words what a step can do, from what it is:
+// whose work it is, and the tools it reaches. own reports a step that uses
+// the running agent's own tools without naming them, which is when the
+// router needs the agent's list to know what that means.
+func phaseCapability(p MachinePhase) (can string, own bool) {
+	switch {
+	case strings.TrimSpace(p.Tool) != "":
+		return "calls the " + strings.TrimSpace(p.Tool) + " tool", false
+	case strings.TrimSpace(p.Agent) != "":
+		return "hands the work to the " + strings.TrimSpace(p.Agent) + " agent, which works with its own tools", false
+	case strings.TrimSpace(p.Pipeline) != "":
+		return "runs the " + strings.TrimSpace(p.Pipeline) + " pipeline", false
+	case strings.TrimSpace(p.Machine) != "":
+		return "runs the " + strings.TrimSpace(p.Machine) + " machine", false
+	}
+	reach := PhaseReach(p)
+	if reach == ReachNone {
+		return "writes text only, no tools", false
+	}
+	var named []string
+	for _, n := range p.Tools {
+		if n = strings.TrimSpace(n); n != "" && n != NoToolsMarker {
+			named = append(named, n)
+		}
+	}
+	if len(named) > 0 {
+		const show = 6
+		list := strings.Join(named, ", ")
+		if len(named) > show {
+			list = strings.Join(named[:show], ", ") + fmt.Sprintf(" and %d more", len(named)-show)
+		}
+		return "can use " + list, false
+	}
+	if reach == ReachRead {
+		return "can use this agent's tools that only read", true
+	}
+	return "can use this agent's tools", true
 }

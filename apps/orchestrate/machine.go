@@ -17,6 +17,7 @@ package orchestrate
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -61,7 +62,42 @@ func (t *chatTurn) machineTurn(msg string) MachineTurn {
 		User:  t.user,
 		Agent: chFirst(t.agent.Name, t.agent.ID),
 		Now:   time.Now().In(UserLocation(t.user)).Format("Mon, January 2, 2006 at 3:04 PM MST"),
+		Tools: t.machineToolList,
 	}
+}
+
+// machineToolNotes lists a session's custom tools as "name: what it is for"
+// (the description's first sentence, trimmed), sorted, for a machine's
+// routing steps. The built-in tools are the same on every agent and a
+// router can take them as read; these are what make this agent different.
+func machineToolNotes(sess *ToolSession) []string {
+	if sess == nil {
+		return nil
+	}
+	var out []string
+	for _, tt := range sess.CopyTempTools() {
+		if tt == nil || strings.TrimSpace(tt.Name) == "" {
+			continue
+		}
+		desc := strings.TrimSpace(tt.Description)
+		if i := strings.Index(desc, ". "); i > 0 {
+			desc = desc[:i+1]
+		}
+		if len(desc) > 120 {
+			desc = strings.TrimSpace(desc[:117]) + "..."
+		}
+		line := tt.Name
+		if desc != "" {
+			line += ": " + desc
+		}
+		out = append(out, line)
+	}
+	sort.Strings(out)
+	const most = 40
+	if len(out) > most {
+		out = out[:most]
+	}
+	return out
 }
 
 // enterMachine resolves the session's machine, walks any transient

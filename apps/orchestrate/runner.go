@@ -270,6 +270,7 @@ func (pr *planRun) assemblePrompt() {
 	// round-shape preamble goes before it: recency weights, and the phase
 	// is the most authoritative instruction in the turn. It is also
 	// byte-stable across a resident run, so it costs no cache.
+	t.machineToolList = machineToolNotes(pr.sess)
 	pr.mach = t.enterMachine(pr.triggerMsg)
 	t.emitMachineTrace() // the steps it walked, as chips, before the reply streams
 	persona += pr.mach.Block()

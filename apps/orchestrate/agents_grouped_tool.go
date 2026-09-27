@@ -1341,6 +1341,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if prior.ID == "" {
 		prior.ID, prior.AgentID, prior.Created = subSessID, target.ID, time.Now()
 	}
+	subTurn.machineToolList = machineToolNotes(subSess)
 	subTurn.enterDispatchMachine(&prior, false, msg, &sysPrompt, &tools, "agents-run")
 	think := subTurn.machine.Think(resolveDispatchThink(target))
 	// The warden judges the agent that is RUNNING, so a sub-agent answers to its

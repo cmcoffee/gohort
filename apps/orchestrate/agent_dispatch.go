@@ -882,6 +882,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	}
 	// The target's machine, from its first step: this run keeps no thread, so
 	// there is no position to resume (enterDispatchMachine).
+	subTurn.machineToolList = machineToolNotes(subSess)
 	subTurn.enterDispatchMachine(&ChatSession{ID: subSessID, AgentID: target.ID}, true, message, &sysPrompt, &tools, "delegation")
 	think := subTurn.machine.Think(resolveDispatchThink(target))
 	// Telemetry — each RunAgentSync invocation gets its own per-turn
@@ -1797,6 +1798,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Only for a MESSAGE, from a person or an agent. A wake whose input is a
 	// report card (a monitor firing) is the framework telling the agent
 	// something happened, which is not what a machine is there to route.
+	subTurn.machineToolList = machineToolNotes(subSess)
 	if strings.TrimSpace(run.SystemPromptOverride) == "" && strings.TrimSpace(run.InputReportFrom) == "" {
 		subTurn.enterDispatchMachine(&priorSession, false, message, &sysPrompt, &tools, chFirst(run.Kind, "continuing"))
 	}

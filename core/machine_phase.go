@@ -132,6 +132,12 @@ func (d MachineDef) phasePrompt(ph MachinePhase, st MachineState, v PhaseVars) s
 	if !mentionsEstablished(ph.Prompt) {
 		out = v.establishedBlock() + out
 	}
+	// A transient step that decides where to go gets the same account of
+	// its choices a resident one does. It used to see only the bare names
+	// in its output contract.
+	if r := d.routingBlock(ph, v); r != "" {
+		out += r
+	}
 	return out
 }
 

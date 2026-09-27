@@ -55,6 +55,10 @@ type MachineTurn struct {
 	// business deciding the format a prompt reads, and the host already
 	// has the user's zone.
 	Now string
+	// Tools are the agent's own tools, each "name: what it is for", so a
+	// step choosing where the conversation goes knows what the steps that
+	// can use them can actually do. Not a prompt variable.
+	Tools []string
 }
 
 // PhaseVars are every value a step's prompt can reference: the host's
