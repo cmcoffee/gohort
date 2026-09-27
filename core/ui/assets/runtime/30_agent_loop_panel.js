@@ -81,8 +81,10 @@
     }
     // recordLocked is true while a record thread is open: nothing is sent
     // into a log. Checked by sendMessage and re-applied by enableInput, which
-    // every finished run calls.
+    // every finished run calls. answerPass lets one send through the lock: the
+    // answer to a question card in that thread, which a waiting run needs.
     var recordLocked = false;
+    var answerPass = false;
     // Last surface this agent was on — so opening it later lands the same way: its
     // standing thread (cortex/home) → the cortex; a session → a NEW session.
     // Per-agent, browser-local (a landing preference, not synced state).
@@ -4832,16 +4834,27 @@
     // applyRecordLock opens or closes the composer for the thread on screen: a
     // record is read, never written into.
     function applyRecordLock(sid) {
-      recordLocked = !!(sid && sid === recordPinnedSession(window.GOHORT_AGENT_ID));
+      var agentId = window.GOHORT_AGENT_ID;
+      var altLocked = !!(cfg.alt_locked && sid && sid === altPinnedSession(agentId));
+      recordLocked = altLocked || !!(sid && sid === recordPinnedSession(agentId));
       inputArea.disabled = recordLocked;
       sendBtn.disabled = recordLocked;
-      inputArea.placeholder = recordLocked
-        ? (cfg.record_locked_text || 'This thread is a record. Start a new session to talk.')
-        : (cfg.placeholder || 'Ask something…');
+      var lockedText = (altLocked && cfg.alt_locked_text) || cfg.record_locked_text ||
+        'This thread is a record. Start a new session to talk.';
+      inputArea.placeholder = recordLocked ? lockedText : (cfg.placeholder || 'Ask something…');
     }
 
+    // A question card answers through this rather than through the Send
+    // button, so its answer reaches a run waiting in a read-only thread.
+    inputArea.addEventListener('ui-ask-answer', function(ev) {
+      ev.preventDefault();
+      inputArea.value = (ev.detail && ev.detail.answer) || '';
+      answerPass = true;
+      try { sendMessage(); } finally { answerPass = false; }
+    });
+
     function sendMessage() {
-      if (recordLocked) return;
+      if (recordLocked && !answerPass) return;
       var text = inputArea.value.trim();
       if (!text && !pendingAttachments.length) return;
       // Paste-marker substitution: expand any "[Pasted text #N - X

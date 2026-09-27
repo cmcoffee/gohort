@@ -693,6 +693,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					RecordLabel:      "Cortex",
 					RecordHint:       "record only: this agent does not read it",
 					RecordLockedText: "This is the agent's cortex, a record of what reached it: messages, requests, scheduled runs, monitor fires. The agent does not read it. Start a new session to talk to it.",
+					// Every cortex is read here, never written: it holds what
+					// arrives (channels, scheduled runs, wakes) and the agent's
+					// own notes. A session is where a person talks to the agent,
+					// and one of an agent that reads its cortex sees it anyway.
+					AltLocked:     true,
+					AltLockedText: "This is the agent's cortex: what reached it (messages, scheduled runs, monitor fires) and its own notes. It reads it on every turn. Start a new session to talk to it.",
 					// "+ New ▾" offers a clean-room session. Picking it opens a
 					// fresh thread and arms incognito on the first send, so the
 					// runner stamps the session as a clean room at creation: no

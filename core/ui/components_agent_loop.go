@@ -377,6 +377,13 @@ type AgentLoopPanel struct {
 	RecordLabel      string `json:"record_label,omitempty"`
 	RecordHint       string `json:"record_hint,omitempty"`
 	RecordLockedText string `json:"record_locked_text,omitempty"`
+	// AltLocked opens an alt-nav agent's pinned thread read-only too: the
+	// thread is where things ARRIVE, and a person talks to the agent in a
+	// session. Answers to a question card in the thread still go through, so
+	// a run waiting on the person is never stuck. AltLockedText is the
+	// composer's placeholder there; it falls back to RecordLockedText.
+	AltLocked     bool   `json:"alt_locked,omitempty"`
+	AltLockedText string `json:"alt_locked_text,omitempty"`
 
 	// Height overrides the panel's default size — any CSS length ("360px",
 	// "50vh"). The default fills the viewport, which is right for a page whose

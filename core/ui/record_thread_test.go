@@ -27,9 +27,33 @@ func TestTheRuntimeLocksARecordThread(t *testing.T) {
 	js := string(runtimeJS)
 	for _, want := range []string{
 		"function recordPinnedSession(agentId)",
-		"if (recordLocked) return;",        // nothing is sent into a record
-		"sendBtn.disabled = recordLocked;", // a finished run does not unlock it
-		"applyRecordLock(sid);",            // every open decides
+		"if (recordLocked && !answerPass) return;", // nothing is sent into a record but an answer
+		"sendBtn.disabled = recordLocked;",         // a finished run does not unlock it
+		"applyRecordLock(sid);",                    // every open decides
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("runtime missing %q", want)
+		}
+	}
+}
+
+// A pinned home thread can be read-only too (AltLocked), and a question card
+// still answers into it: the card dispatches ui-ask-answer, which the panel
+// sends through the lock, so a run waiting in that thread is never stuck.
+func TestALockedHomeThreadStillTakesAnswers(t *testing.T) {
+	raw, _ := json.Marshal(AgentLoopPanel{AltLocked: true, AltLockedText: "read here"})
+	for _, want := range []string{`"alt_locked":true`, `"alt_locked_text":"read here"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("missing %s: %s", want, raw)
+		}
+	}
+	js := string(runtimeJS)
+	for _, want := range []string{
+		"cfg.alt_locked && sid && sid === altPinnedSession(agentId)",
+		"inputArea.addEventListener('ui-ask-answer'",
+		"answerPass = true;",
+		"new CustomEvent('ui-ask-answer'",
+		"if (!inputArea.dispatchEvent(ev)) return true;",
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("runtime missing %q", want)

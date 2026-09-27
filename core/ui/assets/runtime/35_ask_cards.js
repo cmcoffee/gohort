@@ -45,6 +45,11 @@
       if (window.uiAlert) window.uiAlert('Could not find the chat input to submit your answer.');
       return false;
     }
+    // A panel that handles answers itself takes it here, which is how an
+    // answer reaches a thread whose composer is locked; otherwise it goes
+    // through the Send button like a typed message.
+    var ev = new CustomEvent('ui-ask-answer', {detail: {answer: answer}, cancelable: true});
+    if (!inputArea.dispatchEvent(ev)) return true;
     inputArea.value = answer;
     sendBtn.click();
     return true;
