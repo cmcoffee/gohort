@@ -177,6 +177,12 @@ type AgentRecord struct {
 	// short-circuits before it costs anything.
 	Machine string `json:"machine,omitempty"`
 
+	// Bulletins names the boards this agent follows (bulletins.go): the
+	// latest post of each rides on every turn it takes, so a daily briefing
+	// or a message of the day is known without the agent fetching it. A
+	// board set to reach every agent needs no entry here.
+	Bulletins []string `json:"bulletins,omitempty"`
+
 	// PlanGuidance is appended to the orchestrator's system prompt and
 	// nudges decomposition style — "prefer 2-4 steps", "always start by
 	// restating the goal", etc. Optional.

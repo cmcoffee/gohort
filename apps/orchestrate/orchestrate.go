@@ -632,6 +632,8 @@ func (T *OrchestrateApp) Routes() {
 	// the /api routes for readability only — the mux matches on longest
 	// prefix, not on order.
 	T.HandleFunc("/machine", T.handleMachinePage)
+	T.HandleFunc("/api/bulletins", T.handleBulletins)
+	T.HandleFunc("/api/bulletins/", T.handleBulletinOne)
 	T.HandleFunc("/api/machines", T.handleMachines)
 	// Feeds the chat toolbar's status pill with the session's current phase.
 	T.HandleFunc("/api/session-status", T.handleSessionStatus)

@@ -2213,7 +2213,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// turn is the volatile tail that never caches anyway — same place the
 		// date stamp goes, and free for the same reason.
 		TurnNotes: func(user string) string {
-			notes := turnNotes(pr.sess, t.udb, t.chatSessionID(), user)
+			notes := t.withBulletins(turnNotes(pr.sess, t.udb, t.chatSessionID(), user))
 			// The one-time ask about an idle open item is for the person in
 			// this conversation, so it rides the main turn only, never a
 			// worker or a dispatched agent.

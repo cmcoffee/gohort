@@ -1384,6 +1384,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"wake_brief":       {Type: "string", Description: "What you should do when it fires (guides your reaction). Only used for notify=\"channel\"."},
 					"notify":           {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "How the user is alerted when it fires. \"channel\" (default): wake here in the thread so you can react/summarize (uses an LLM). \"direct\": post the change verbatim into the channel thread with NO LLM (it just shows up here + lights the unread dot). \"text\": text the owner's phone with the change, no LLM. ASK the user which they want when setting a monitor up."},
 					"wake_agent":       {Type: "string", Description: "(optional) Name or id of the agent this monitor belongs to: the one woken when it fires. Defaults to you. Set it when you are wiring a watch onto ANOTHER agent, so the alert lands in that agent's thread rather than in this conversation."},
+					"bulletin":         {Type: "string", Description: "Optional: the name of a bulletin board (Knowledge, Bulletins). Each change is POSTED to that board with NO LLM and nobody woken: every agent that follows the board sees it on its next turn. Use it to keep several agents up with one feed (today's headlines, a status) that a single monitor fetches. Pair with format_script to trim the change to a few lines; a post is at most 600 characters."},
 					"deliver_to":       {Type: "string", Description: "Optional: a chat_id from list_chats (e.g. \"any;+;chat872212368359368118\"). When set, the formatted alert is posted DIRECTLY to THAT conversation with NO LLM, instead of waking you in this thread: use it to route a watch/http_poll alert straight to a group chat or other channel. Setting it forces notify=\"direct\" to that chat. Omit to alert in this thread per notify."},
 					"surface":          {Type: "string", Enum: []string{"session", "cortex", "background"}, Description: "Where the fire surfaces for the agent: its trace card, rail badge, and (for a channel wake) its LLM turn all follow. Optional; OMIT it for the default rather than passing an empty string. \"session\" (default) = the creating session; \"cortex\" = the agent's cortex home thread (only if it has one); \"background\" = NO agent visibility (deliver externally via deliver_to only, no card, no badge, for a pure feed like a join/leave ticker you only want in the group chat). Relocatable later without recreate via the console's Move-to control."},
 					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
@@ -1430,6 +1431,15 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if deliverTo != "" {
 					notify = EventNotifyDirect
 				}
+				// bulletin posts each change to a board every following agent
+				// reads, with no LLM and nobody woken (bulletins.go).
+				board := bulletinName(oArgStr(args, "bulletin"))
+				if board != "" {
+					if _, ok := loadBulletin(UserDB(orchestrateBaseDB, owner), board); !ok {
+						return "", fmt.Errorf("no bulletin board named %q: make one in Knowledge, Bulletins, first", board)
+					}
+					notify = monitorNotifyBulletin
+				}
 				wakeAgentID, err := resolveMonitorWakeAgent(sess, agentID, oArgStr(args, "wake_agent"), notify, deliverTo)
 				if err != nil {
 					return "", err
@@ -1437,6 +1447,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				m := EventMonitor{
 					Name: name, Owner: owner, Kind: kind, Notify: notify,
 					DeliverChatID: deliverTo,
+					Bulletin:      board,
 					Surface:       strings.ToLower(strings.TrimSpace(oArgStr(args, "surface"))),
 					// Wake the agent that created this monitor, IN the session it
 					// was created in, so the event lands back where the user set

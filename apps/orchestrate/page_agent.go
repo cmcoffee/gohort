@@ -224,6 +224,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// above stays the agent's identity, and the machine supplies the
 		// procedure layered on top of it per phase.
 		machineSelectField(udb, user),
+		bulletinsField(udb),
 		{Type: "header", Label: "Budgets", Collapsed: true,
 			Help: "How much compute the agent may spend per turn."},
 		{Field: "max_plan_steps", Type: "number", Label: "Max plan steps", Min: 1, Max: 12,

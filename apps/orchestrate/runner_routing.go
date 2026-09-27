@@ -225,6 +225,12 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	// hand out because forwarding is opt-in, so by default it writes a
 	// notification and nothing leaves the machine.
 	out = append(out, notifyOwnerToolDef(sess, t.user, t.agent.ID, t.agent.ID))
+	// Posting to a bulletin board, for an agent the owner allowed to post to
+	// one (bulletins.go). Absent otherwise: a tool with nowhere to post is one
+	// the model would try anyway.
+	if def, ok := t.postBulletinToolDef(); ok {
+		out = append(out, def)
+	}
 	// Asking the person whose agent this is for something only they can grant.
 	// Only on somebody ELSE's: on your own there is nobody to ask, and a tool
 	// offering to write to yourself is one the model will eventually use.

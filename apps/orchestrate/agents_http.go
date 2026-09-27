@@ -110,6 +110,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 		var sent map[string]json.RawMessage
 		_ = json.Unmarshal(raw, &sent)
 		_, sentMachine := sent["machine"]
+		_, sentBulletins := sent["bulletins"]
 		req.Owner = user
 		// Seed-IDs are saved in place as a per-user shadow record;
 		// the in-code seed stays untouched and surfaces back if the
@@ -158,6 +159,12 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				if !sentMachine {
 					req.Machine = existing.Machine
 				}
+				// The same for the boards it follows: the Bulletins pills
+				// save them without this form, and a form posted from
+				// elsewhere must not unsubscribe the agent.
+				if !sentBulletins {
+					req.Bulletins = existing.Bulletins
+				}
 			}
 		} else if isSeedID(req.ID) {
 			// Seeds save as a per-user shadow. The form carries no `locked`
@@ -183,6 +190,9 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.ScanTrustedSources = existing.ScanTrustedSources
 				if !sentMachine {
 					req.Machine = existing.Machine // see above
+				}
+				if !sentBulletins {
+					req.Bulletins = existing.Bulletins // see above
 				}
 			}
 		}

@@ -73,6 +73,11 @@ const (
 	// the Agency channel thread. Origin-aware, not hardcoded to one surface.
 	EventNotifyDirect = "direct"
 	EventNotifyText   = "text"
+	// bulletin: post the change to a bulletin board (EventMonitor.Bulletin),
+	// no LLM: every agent following the board sees it on its next turn.
+	// Unexported to keep core's export count down; orchestrate, which posts,
+	// matches the same word.
+	eventNotifyBulletin = "bulletin"
 
 	// minPollInterval floors the poll cadence so a misconfigured monitor can't
 	// hammer the checker agent.
@@ -128,6 +133,10 @@ type EventMonitor struct {
 	// (the chat the watcher was created in — e.g. a group). Empty for a monitor
 	// created in the Agency console, where direct posts to the channel thread.
 	DeliverChatID string `json:"deliver_chat_id,omitempty"`
+
+	// Bulletin is the board a notify=bulletin fire posts to: one short post
+	// every following agent sees on its turns, with no model in the loop.
+	Bulletin string `json:"bulletin,omitempty"`
 
 	// WakeChannel is the CHANNEL a bridge/monitor delivers into (Stage B of the
 	// unified-bridge model: a source → a channel). When set, the fire runs the
@@ -355,6 +364,8 @@ func monitorSignature(m EventMonitor) (source, delivery string, ok bool) {
 		delivery = "text" // the owner's phone — same target regardless of agent
 	case EventNotifyDirect:
 		delivery = "direct:" + m.DeliverChatID
+	case eventNotifyBulletin:
+		delivery = "bulletin:" + m.Bulletin
 	default: // channel (and the empty default): wakes an agent in a thread
 		delivery = "channel:" + m.WakeAgent + ":" + m.WakeSession
 	}
@@ -1378,7 +1389,7 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	// output verbatim; only a channel wake (LLM in the loop) gets the diff
 	// wrapper. deliver_to already forces Notify=direct upstream, so Notify
 	// alone is the signal.
-	direct := m.Notify == EventNotifyDirect || m.Notify == EventNotifyText
+	direct := m.Notify == EventNotifyDirect || m.Notify == EventNotifyText || m.Notify == eventNotifyBulletin
 	summary, suppress := buildWatchSummary(ctx, cur, prior, body, direct)
 	if suppress {
 		// Intentional skip: the baseline was already advanced above, so persist

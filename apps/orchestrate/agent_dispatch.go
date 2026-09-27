@@ -921,7 +921,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		// attempt per run is what the memory buys back (see loadFailureMemory).
 		FailureMemoryKey: failureMemoryKey(target.ID, ""),
 		OnStep:           func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
-		TurnNotes:        func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
+		TurnNotes:        func(user string) string { return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessID, user)) },
 		CapturePrompt:    target.CapturePrompt,
 		TurnClaimJudge:   subTurn.claimJudge(ctx),
 		PriorReports:     func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
@@ -2007,7 +2007,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Recent-image ids when the message is about a picture. This is the path a
 	// channel reply takes, and the one where "blend these two photos" arrives
 	// with no filenames anywhere in it. See imageSpaceNote.
-	loopCfg.TurnNotes = func(user string) string { return turnNotes(subSess, runtimeDB, subSessionID, user) }
+	loopCfg.TurnNotes = func(user string) string {
+		return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessionID, user))
+	}
 	// Last look before the reply reaches the channel. See turn_judge.go.
 	loopCfg.TurnClaimJudge = subTurn.claimJudge(ctx)
 	loopCfg.PriorReports = func() []string {

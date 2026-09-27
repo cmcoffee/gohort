@@ -105,13 +105,14 @@ func (T *KnowledgeApp) handleListPage(w http.ResponseWriter, r *http.Request) {
 		Nav:       HubNav("/knowledge"), // shared hub tabs, Knowledge active
 		// The shared bundle client defines itself and touches no DOM, so it
 		// is safe in <head>; the list script below calls it on click.
-		ExtraHeadHTML: "<script>" + ArtifactClientJS + "</script>",
+		ExtraHeadHTML: "<script>" + ArtifactClientJS + "</script>" + bulletinPillsHead,
 
 		Sections: []ui.Section{
 			{
 				NoChrome: true,
 				Body:     ui.Card{HTML: documentsListBody + documentsListAssets},
 			},
+			bulletinsSection(),
 		},
 	}
 	page.ServeHTTP(w, r)

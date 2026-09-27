@@ -473,7 +473,7 @@ func evaluateGate(ctx context.Context, db Database, t ScheduledTrigger) (fire bo
 		}
 		// A no-LLM action (notify=direct/text) posts verbatim; only a channel
 		// wake (ActionCallback / notify=channel) gets the diff wrapper.
-		directNotify := cur.Notify == EventNotifyDirect || cur.Notify == EventNotifyText
+		directNotify := cur.Notify == EventNotifyDirect || cur.Notify == EventNotifyText || cur.Notify == eventNotifyBulletin
 		s, suppress := formatWatchAlert(ctx, cur.Owner, cur.Name, cur.FormatScript, prior, body, directNotify)
 		SaveScheduledTrigger(db, cur) // advance baseline regardless
 		if suppress {

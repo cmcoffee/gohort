@@ -253,6 +253,17 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 		}
 
+		// bulletin: post the change to a board, no LLM. Every agent following the
+		// board sees it on its next turn; nobody is woken.
+		if modes[monitorNotifyBulletin] {
+			if b, err := postBulletinFromMonitor(UserDB(app.DB, owner), m.Bulletin, summary, monitorName); err == nil {
+				delivered = true
+				Debug("[operator.wake] %s/%s posted to bulletin %q", owner, monitorName, b.Name)
+			} else {
+				Log("[operator.wake] %s/%s notify=bulletin failed: %v", owner, monitorName, err)
+			}
+		}
+
 		// channel: wake the agent to react — in the SURFACED session (cortex when
 		// moved there). Also the never-drop fallback when nothing else delivered:
 		// a Background monitor has no surface session, so the fallback wakes the
