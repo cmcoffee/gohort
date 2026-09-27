@@ -55,6 +55,10 @@ type TargetField struct {
 	Options  string `json:"options,omitempty"`
 	Required string `json:"required,omitempty"`
 	Help     string `json:"help,omitempty"`
+	// OptionsFrom is an API path on the target's integration, and optionally
+	// the field of each item to show: "/wp-json/wp/v2/categories name". The
+	// list is fetched when the Publish form opens, with no model.
+	OptionsFrom string `json:"options_from,omitempty"`
 }
 
 func (f TargetField) field() docs.PublishField {
@@ -68,10 +72,11 @@ func (f TargetField) field() docs.PublishField {
 	if typ == "" {
 		typ = "text"
 	}
-	if len(opts) > 0 && typ == "text" {
+	from := strings.TrimSpace(f.OptionsFrom)
+	if (len(opts) > 0 || from != "") && typ == "text" {
 		typ = "select"
 	}
-	return docs.PublishField{Name: f.Name, Label: f.Label, Type: typ, Options: opts,
+	return docs.PublishField{Name: f.Name, Label: f.Label, Type: typ, Options: opts, OptionsFrom: from,
 		Required: strings.EqualFold(strings.TrimSpace(f.Required), "yes"), Help: f.Help}
 }
 
@@ -224,6 +229,14 @@ func (d *targetsDest) TargetSpecs(ctx context.Context, user string) []docs.Publi
 	return out
 }
 
+func (d *targetsDest) FieldOptions(ctx context.Context, user, kind, field string) ([]string, error) {
+	t, ok := d.app.loadTarget(user, strings.TrimPrefix(kind, TargetKindPrefix))
+	if !ok {
+		return nil, fmt.Errorf("no publishing target %q", kind)
+	}
+	return d.app.liveOptions(ctx, user, t, field)
+}
+
 func (d *targetsDest) Publish(ctx context.Context, user string, req docs.PublishRequest) (docs.PublishResult, error) {
 	t, ok := d.app.loadTarget(user, req.Target)
 	if !ok {
@@ -325,6 +338,18 @@ func (T *PublishApp) handleTargets(w http.ResponseWriter, r *http.Request) {
 		}
 	case id != "" && action == "agents":
 		T.targetAgentPills(w, r, user, id)
+	case id != "" && action == "options" && r.Method == http.MethodGet:
+		t, found := T.loadTarget(user, id)
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		opts, err := T.liveOptions(r.Context(), user, t, r.URL.Query().Get("field"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeTargetJSON(w, map[string]any{"options": opts})
 	default:
 		http.NotFound(w, r)
 	}
@@ -387,4 +412,125 @@ func (T *PublishApp) targetAgentPills(w http.ResponseWriter, r *http.Request, us
 func writeTargetJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// maxLiveOptions bounds a fetched list: a form is not a search box.
+const maxLiveOptions = 200
+
+// liveOptions fetches one question's options from the target's integration:
+// a GET of its OptionsFrom path, the list found in the JSON, the named field
+// (or a likely one) of each item. No model, and the same credential rules as
+// any call through it (its base URL, allowed paths, audit).
+func (T *PublishApp) liveOptions(ctx context.Context, user string, t Target, fieldKey string) ([]string, error) {
+	var f TargetField
+	for _, c := range t.Fields {
+		if c.Name == strings.TrimSpace(fieldKey) {
+			f = c
+		}
+	}
+	from := strings.Fields(strings.TrimSpace(f.OptionsFrom))
+	switch {
+	case f.Name == "":
+		return nil, fmt.Errorf("%s has no question %q", t.Label, fieldKey)
+	case len(from) == 0:
+		return nil, fmt.Errorf("that question has no options to fetch")
+	case t.Uses != "api":
+		return nil, fmt.Errorf("options come from an API integration, and %s publishes through an agent", t.Label)
+	}
+	out, err := Secure().DispatchToolCallArgs(&ToolSession{Username: user}, t.Credential,
+		map[string]any{"url": from[0], "method": "GET", "__pipe_following": true})
+	if err != nil {
+		return nil, err
+	}
+	status, body := "", out
+	if strings.HasPrefix(out, "HTTP ") {
+		if i := strings.IndexByte(out, '\n'); i >= 0 {
+			status, body = out[:i], out[i+1:]
+		}
+	}
+	if status != "" && !strings.HasPrefix(status, "HTTP 2") {
+		return nil, fmt.Errorf("%s answered %s", t.Credential, strings.TrimSpace(status))
+	}
+	var v any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &v); err != nil {
+		return nil, fmt.Errorf("%s did not answer with JSON: %v", from[0], err)
+	}
+	key := ""
+	if len(from) > 1 {
+		key = from[1]
+	}
+	opts := extractOptions(v, key)
+	if len(opts) == 0 {
+		return nil, fmt.Errorf("%s returned no list to pick from", from[0])
+	}
+	return opts, nil
+}
+
+// extractOptions finds the list in a JSON answer (the whole answer, or the
+// first list under a usual key) and reads each item: a string as it is, an
+// object's named field, or its first likely one.
+func extractOptions(v any, key string) []string {
+	list, ok := v.([]any)
+	if !ok {
+		if m, isMap := v.(map[string]any); isMap {
+			for _, k := range []string{"data", "items", "results", "values", "records", "entries"} {
+				if l, isList := m[k].([]any); isList {
+					list, ok = l, true
+					break
+				}
+			}
+			if !ok {
+				keys := make([]string, 0, len(m))
+				for k := range m {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					if l, isList := m[k].([]any); isList {
+						list, ok = l, true
+						break
+					}
+				}
+			}
+		}
+	}
+	candidates := []string{key, "name", "title", "label", "key", "slug", "value", "id"}
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range list {
+		s := ""
+		switch it := item.(type) {
+		case string:
+			s = it
+		case float64:
+			s = fmt.Sprint(it)
+		case map[string]any:
+			for _, c := range candidates {
+				if c == "" {
+					continue
+				}
+				switch val := it[c].(type) {
+				case string:
+					s = val
+				case float64:
+					s = fmt.Sprint(val)
+				case map[string]any: // WordPress-style {"rendered": "..."}
+					if r, ok := val["rendered"].(string); ok {
+						s = r
+					}
+				}
+				if strings.TrimSpace(s) != "" {
+					break
+				}
+			}
+		}
+		if s = strings.TrimSpace(s); s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+			if len(out) >= maxLiveOptions {
+				break
+			}
+		}
+	}
+	return out
 }

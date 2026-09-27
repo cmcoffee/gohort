@@ -43,6 +43,8 @@ func (t *chatTurn) publishToolDef() (AgentToolDef, bool) {
 			a := f.Name
 			if len(f.Options) > 0 {
 				a += " [" + strings.Join(f.Options, " | ") + "]"
+			} else if f.OptionsFrom != "" {
+				a += " [one of the place's own list, from " + f.OptionsFrom + "]"
 			}
 			if f.Required {
 				a += " required"

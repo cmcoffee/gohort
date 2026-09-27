@@ -164,3 +164,17 @@ func chFirst(a, b string) string {
 	}
 	return b
 }
+
+// handlePublishOptions fetches a question's options live from the target
+// (its OptionsFrom), for the form to fill its pick-list when it opens. The
+// targets are the viewer's own, so no guide is involved.
+func (T *Scribe) handlePublishOptions(w http.ResponseWriter, r *http.Request, user string) {
+	q := r.URL.Query()
+	opts, err := docs.PublishFieldOptions(r.Context(), user, q.Get("kind"), q.Get("field"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"options": opts})
+}

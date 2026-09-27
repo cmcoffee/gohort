@@ -765,6 +765,35 @@ const guidePublishAction = `function(ctx){
             fetch('publish/state?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(nd){ d = nd; targets = nd.targets || []; showList(); });
           }
 
+          // A pick-list filled from the target's API when the form opens. It
+          // spins while it loads, and a failed fetch leaves a text box with
+          // the reason, so the question can still be answered.
+          function liveSelect(t, f){
+            var sel = el('select', {class:'ui-input', disabled:'disabled'});
+            var frames = '\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f', i = 0;
+            var wait = el('option', {value:'', text: frames[0] + ' Loading from ' + t.target.title + '...'});
+            sel.appendChild(wait);
+            var spin = setInterval(function(){ i = (i + 1) % frames.length; wait.textContent = frames[i] + ' Loading from ' + t.target.title + '...'; }, 120);
+            var box = el('span', {style:'display:contents'}, [sel]);
+            Object.defineProperty(box, 'value', {get: function(){ var c = box.firstChild; return c ? c.value : ''; }});
+            fetch('publish/options?' + qp + '&kind=' + encodeURIComponent(t.kind) + '&field=' + encodeURIComponent(f.name), {credentials:'same-origin', cache:'no-store'})
+              .then(function(r){ return r.text().then(function(x){ if (!r.ok) throw new Error(x || ('HTTP ' + r.status)); return JSON.parse(x); }); })
+              .then(function(j){
+                clearInterval(spin);
+                sel.innerHTML = '';
+                sel.appendChild(el('option', {value:'', text:'Choose...'}));
+                (j.options || []).forEach(function(o){ sel.appendChild(el('option', {value:o, text:o})); });
+                sel.disabled = false;
+              })
+              .catch(function(err){
+                clearInterval(spin);
+                box.innerHTML = '';
+                box.appendChild(el('input', {type:'text', class:'ui-input'}));
+                box.appendChild(el('small', {class:'guide-pub-fail', text:'Could not load the choices: ' + String(err && err.message || err).trim()}));
+              });
+            return box;
+          }
+
           // One target's form: the title, then the questions it asks.
           function showForm(t){
             view.innerHTML = '';
@@ -784,6 +813,8 @@ const guidePublishAction = `function(ctx){
                 input = el('select', {class:'ui-input'});
                 input.appendChild(el('option', {value:'', text:'Choose...'}));
                 f.options.forEach(function(o){ input.appendChild(el('option', {value:o, text:o})); });
+              } else if (f.options_from){
+                input = liveSelect(t, f);
               } else if (f.type === 'textarea'){
                 input = el('textarea', {class:'ui-input', rows:'3'});
               } else {

@@ -69,13 +69,14 @@ func targetFormFields(user string) []ui.FormField {
 			Detail:      "The document, its title and the answers to the questions below are handed over with this. Name the API call if you know it (\"POST /wp-json/wp/v2/posts with status draft\"); otherwise describe the result you want and the pass works it out from the API."},
 		{Field: "fields", Label: "Ask each time", Type: "rows", AddLabel: "Add a question",
 			Help:   "Short questions the Publish form asks, like a category or visibility. Their answers go with the instruction.",
-			Detail: "Give a list of options (comma-separated) for a pick-one question. Required ones must be answered before it publishes.",
+			Detail: "Give a list of options (comma-separated) for a pick-one question, or an API path on the integration to fetch them from when the form opens, optionally followed by the field of each item to show (\"/wp-json/wp/v2/categories name\"). Required ones must be answered before it publishes.",
 			Columns: []ui.FormField{
 				{Field: "label", Label: "Question", Type: "text", Placeholder: "Category"},
 				{Field: "type", Label: "Kind", Type: "select", Options: []ui.SelectOption{
 					{Value: "text", Label: "Short text"}, {Value: "textarea", Label: "Long text"}, {Value: "select", Label: "Pick one"},
 				}},
 				{Field: "options", Label: "Options", Type: "text", Placeholder: "News, Guides, Releases"},
+				{Field: "options_from", Label: "Or options from the API", Type: "text", Placeholder: "/wp-json/wp/v2/categories name"},
 				{Field: "required", Label: "Required", Type: "select", Options: []ui.SelectOption{
 					{Value: "", Label: "No"}, {Value: "yes", Label: "Yes"},
 				}},

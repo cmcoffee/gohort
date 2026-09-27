@@ -111,3 +111,53 @@ func TestTheTargetControls(t *testing.T) {
 		t.Error("the target should be gone")
 	}
 }
+
+// A question's options can come from the place's API: the list is found in
+// the usual answer shapes, read by the named field or a likely one, and a
+// target that publishes through an agent has no API to ask.
+func TestLiveOptionsAreReadFromTheAnswer(t *testing.T) {
+	parse := func(s string) any {
+		var v any
+		if err := json.Unmarshal([]byte(s), &v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	cases := []struct {
+		body, key string
+		want      []string
+	}{
+		{`[{"id":3,"name":"News"},{"id":4,"name":"Guides"}]`, "", []string{"News", "Guides"}},
+		{`[{"id":3,"name":"News","slug":"news"}]`, "slug", []string{"news"}},
+		{`{"data":[{"title":"Spaces"},{"title":"Spaces"},{"title":"Wiki"}]}`, "", []string{"Spaces", "Wiki"}},
+		{`{"total":2,"channels":["general","random"]}`, "", []string{"general", "random"}},
+		{`[{"id":7,"title":{"rendered":"Release notes"}}]`, "", []string{"Release notes"}},
+		{`{"ok":true}`, "", nil},
+	}
+	for _, c := range cases {
+		got := extractOptions(parse(c.body), c.key)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("%s (%q): got %q, want %q", c.body, c.key, got, c.want)
+		}
+	}
+
+	app := &PublishApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	tgt, err := normalizeTarget(Target{Label: "Wiki", Uses: "agent", Agent: "a1", Instructions: "Add a page.",
+		Fields: []TargetField{{Label: "Space", OptionsFrom: "/spaces name"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt.ID = "w1"
+	app.targetsDB("alice").Set(targetTable, tgt.ID, tgt)
+	if f := tgt.Fields[0].field(); f.Type != "select" || f.OptionsFrom != "/spaces name" {
+		t.Errorf("a live question is a pick-one that names where its list comes from: %+v", f)
+	}
+	d := &targetsDest{app: app}
+	if _, err := d.FieldOptions(context.Background(), "alice", "target:w1", "space"); err == nil || !strings.Contains(err.Error(), "agent") {
+		t.Errorf("an agent target has no API to fetch from: %v", err)
+	}
+	if _, err := d.FieldOptions(context.Background(), "alice", "target:w1", "nope"); err == nil {
+		t.Error("an unknown question must be refused")
+	}
+}

@@ -9,6 +9,7 @@ package docs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +24,9 @@ type PublishField struct {
 	Options  []string `json:"options,omitempty"`
 	Required bool     `json:"required,omitempty"`
 	Help     string   `json:"help,omitempty"`
+	// OptionsFrom names an API path on the target's integration whose list
+	// becomes the options, fetched when the form opens ("/categories name").
+	OptionsFrom string `json:"options_from,omitempty"`
 }
 
 // PublishTargetSpec is a target with its form and the agents allowed to
@@ -58,6 +62,26 @@ func PublishTargetSpecs(ctx context.Context, user string) []PublishTargetSpec {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Target.Title < out[j].Target.Title })
 	return out
+}
+
+// FieldOptionSource is a destination that can fetch a question's options
+// live (a field with OptionsFrom) when a form opens.
+type FieldOptionSource interface {
+	FieldOptions(ctx context.Context, user, kind, field string) ([]string, error)
+}
+
+// PublishFieldOptions fetches the live options of one question on a target,
+// from whichever destination serves its kind.
+func PublishFieldOptions(ctx context.Context, user, kind, field string) ([]string, error) {
+	d := lookupDest(kind)
+	if d == nil {
+		return nil, fmt.Errorf("no publish destination %q", kind)
+	}
+	s, ok := d.(FieldOptionSource)
+	if !ok {
+		return nil, fmt.Errorf("%s has no options to fetch", d.Label())
+	}
+	return s.FieldOptions(ctx, user, kind, field)
 }
 
 // MissingAnswers names the required fields a set of answers leaves empty.
