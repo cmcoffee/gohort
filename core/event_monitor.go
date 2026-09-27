@@ -164,6 +164,10 @@ type EventMonitor struct {
 	Check           string `json:"check,omitempty"`          // the brief/question given to the checker
 	MatchContains   string `json:"match_contains,omitempty"` // fire when the answer contains this (default "YES")
 	IntervalSeconds int    `json:"interval_seconds,omitempty"`
+	// DailyAt checks at set times of day instead of on the interval: minutes
+	// since midnight in the owner's zone, ascending. A watch feeding a morning
+	// bulletin looks at 08:00, not every N seconds from whenever it was made.
+	DailyAt []int `json:"daily_at,omitempty"`
 
 	// http_poll kind
 	URL       string `json:"url,omitempty"`        // endpoint fetched each interval
@@ -857,6 +861,9 @@ func isScheduledKind(kind string) bool {
 func IsScheduledEventKind(kind string) bool { return isScheduledKind(kind) }
 
 func nextPoll(m EventMonitor, from time.Time) time.Time {
+	if len(m.DailyAt) > 0 {
+		return nextDailyTime(m.DailyAt, from.In(UserLocation(m.Owner)))
+	}
 	iv := m.IntervalSeconds
 	if iv < minPollInterval {
 		iv = minPollInterval
@@ -2290,4 +2297,21 @@ func compactWatchJSON(v any) []byte {
 		return []byte("null")
 	}
 	return out
+}
+
+// nextDailyTime is the first of the set times (minutes since midnight)
+// strictly after now, today or tomorrow, in now's zone. From the calendar,
+// never from the last check, so a late check still leaves the next on the
+// hour; built with time.Date, so a daylight-saving change keeps 08:00 at
+// 08:00.
+func nextDailyTime(at []int, now time.Time) time.Time {
+	for d := 0; d <= 1; d++ {
+		y, mo, day := now.AddDate(0, 0, d).Date()
+		for _, m := range at {
+			if t := time.Date(y, mo, day, m/60, m%60, 0, 0, now.Location()); t.After(now) {
+				return t
+			}
+		}
+	}
+	return now.Add(24 * time.Hour)
 }

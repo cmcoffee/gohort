@@ -102,6 +102,7 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.
 		"kind":             m.Kind,
 		"interval_seconds": m.IntervalSeconds,
 		"interval_minutes": m.IntervalSeconds / 60,
+		"daily_at":         strings.ReplaceAll(fmtDailyAt(m.DailyAt), " ", ""),
 		"schedulable":      IsScheduledEventKind(m.Kind),
 		"paused":           m.Paused,
 		// What it tells the woken agent — every kind has one, including the
@@ -224,6 +225,9 @@ func monitorWakesAgent(m EventMonitor) bool {
 type monitorUpdateBody struct {
 	IntervalSeconds int `json:"interval_seconds"`
 	IntervalMinutes int `json:"interval_minutes"`
+	// DailyAt: "08:00,18:00" switches the monitor to set times of day, and
+	// "" (sent) switches it back to its interval. Nil leaves it as it is.
+	DailyAt *string `json:"daily_at"`
 
 	WakeBrief *string `json:"wake_brief"`
 
@@ -341,6 +345,21 @@ func applyMonitorUpdate(m *EventMonitor, body monitorUpdateBody) error {
 	}
 	if secs != 0 {
 		m.IntervalSeconds = secs
+	}
+	if body.DailyAt != nil {
+		at := strings.TrimSpace(*body.DailyAt)
+		switch {
+		case at == "":
+			m.DailyAt = nil
+		case !IsScheduledEventKind(m.Kind):
+			return Error("this monitor is push-triggered: it has no schedule for set times")
+		default:
+			mins, err := parseDailyAt(at)
+			if err != nil {
+				return err
+			}
+			m.DailyAt = mins
+		}
 	}
 	return nil
 }
@@ -473,11 +492,11 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 		detail := ""
 		switch m.Kind {
 		case EventKindPoll:
-			detail = fmt.Sprintf("every %ds via %s", m.IntervalSeconds, m.CheckAgent)
+			detail = fmt.Sprintf("%s via %s", monitorCadence(m), m.CheckAgent)
 		case EventKindHTTP:
-			detail = fmt.Sprintf("every %ds: %s %s %s", m.IntervalSeconds, m.URL, m.CompareOp, m.Threshold)
+			detail = fmt.Sprintf("%s: %s %s %s", monitorCadence(m), m.URL, m.CompareOp, m.Threshold)
 		case EventKindWatch:
-			detail = fmt.Sprintf("every %ds: watch %s", m.IntervalSeconds, m.ToolName)
+			detail = fmt.Sprintf("%s: watch %s", monitorCadence(m), m.ToolName)
 			if len(m.ToolArgs) > 0 {
 				if b, err := json.Marshal(m.ToolArgs); err == nil {
 					detail += " " + string(b)
@@ -802,4 +821,13 @@ func scheduleRowState(name, cause, note string) map[string]any {
 		title += " - " + strings.TrimPrefix(strings.TrimPrefix(lbl, "✓ "), "⚠ ")
 	}
 	return map[string]any{"icon": icon, "tone": tone, "title": title}
+}
+
+// monitorCadence says how often a monitor checks, for the confirmations and
+// the Scheduler row: "every 900s", or "daily at 08:00" for set times.
+func monitorCadence(m EventMonitor) string {
+	if len(m.DailyAt) > 0 {
+		return "daily at " + fmtDailyAt(m.DailyAt)
+	}
+	return fmt.Sprintf("every %ds", m.IntervalSeconds)
 }

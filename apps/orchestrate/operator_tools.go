@@ -1388,6 +1388,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"deliver_to":       {Type: "string", Description: "Optional: a chat_id from list_chats (e.g. \"any;+;chat872212368359368118\"). When set, the formatted alert is posted DIRECTLY to THAT conversation with NO LLM, instead of waking you in this thread: use it to route a watch/http_poll alert straight to a group chat or other channel. Setting it forces notify=\"direct\" to that chat. Omit to alert in this thread per notify."},
 					"surface":          {Type: "string", Enum: []string{"session", "cortex", "background"}, Description: "Where the fire surfaces for the agent: its trace card, rail badge, and (for a channel wake) its LLM turn all follow. Optional; OMIT it for the default rather than passing an empty string. \"session\" (default) = the creating session; \"cortex\" = the agent's cortex home thread (only if it has one); \"background\" = NO agent visibility (deliver externally via deliver_to only, no card, no badge, for a pure feed like a join/leave ticker you only want in the group chat). Relocatable later without recreate via the console's Move-to control."},
 					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
+					"daily_at":         {Type: "string", Description: "http_poll/watch/poll, instead of interval_seconds: check at set times of day, 24-hour HH:MM in the user's zone, \"08:00\" or several, \"08:00,18:00\". Use it for \"each morning\": an interval runs from whenever the monitor was made, not at a time of day."},
 					"until":            {Type: "string", Description: "Optional: the stopping CONDITION in plain words, \"the PR is merged\", \"the build goes green\". After each fire the change it saw is judged against this, and the monitor stops itself when the condition is met (kept, not deleted). Use it when the user wants to keep hearing about something UNTIL a state is reached: the monitor's own trigger says when to alert, this says when to stop. Costs one small model call per fire, so omit it when a fire count (stop_after) already says when to stop."},
 					"stop_after":       {Type: "number", Description: "Optional: stop the monitor after it has fired this many times. This bounds the ALERTS a monitor raises; it does NOT turn a monitor into a run-this-N-times job, for that use create_standing_agent, whose max_attempts bounds RUNS. Use it whenever the user bounds the alerts: \"tell me the next two times\", \"just once\", \"stop after 3\". On the last fire the monitor pauses itself and says so; it is kept, not deleted, and resuming gives it a fresh allowance. Omit for a monitor that should keep watching until the user stops it."},
 					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_chat for a chat). No LLM runs between changes: the cheapest detection."},
@@ -1477,6 +1478,17 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					MaxFires: maxInt(oArgInt(args, "stop_after"), 0),
 					Until:    strings.TrimSpace(oArgStr(args, "until")),
 				}
+				// daily_at checks at set times of day instead of on the interval.
+				if at := strings.TrimSpace(oArgStr(args, "daily_at")); at != "" {
+					if kind == EventKindWebhook {
+						return "", fmt.Errorf("a webhook monitor fires when something posts to it: it has no schedule for daily_at")
+					}
+					mins, err := parseDailyAt(at)
+					if err != nil {
+						return "", err
+					}
+					m.DailyAt = mins
+				}
 				if kind == EventKindWebhook {
 					m.Token = NewEventToken()
 					SaveEventMonitor(RootDB, m)
@@ -1513,8 +1525,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 						return "", fmt.Errorf("saved but scheduling failed: %w", err)
 					}
 					got, _ := GetEventMonitor(RootDB, owner, name)
-					return fmt.Sprintf("HTTP monitor %q created: every %ds I fetch %s, read %s, and wake you when the value %s %s. Fires once on the crossing (and re-arms after it recovers).%s Next check: %s.",
-						name, got.IntervalSeconds, m.URL, extractDesc, m.CompareOp, m.Threshold,
+					return fmt.Sprintf("HTTP monitor %q created: %s I fetch %s, read %s, and wake you when the value %s %s. Fires once on the crossing (and re-arms after it recovers).%s Next check: %s.",
+						name, monitorCadence(got), m.URL, extractDesc, m.CompareOp, m.Threshold,
 						fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 				}
 				if kind == EventKindWatch {
@@ -1544,11 +1556,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					}
 					got, _ := GetEventMonitor(RootDB, owner, name)
 					if m.DeliverChatID != "" {
-						return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and, when its output changes, post the formatted alert DIRECTLY to chat %s, no LLM, it does NOT come back to this thread.%s Next check: %s.",
-							name, got.IntervalSeconds, m.ToolName, m.DeliverChatID, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
+						return fmt.Sprintf("Watch monitor %q created: %s I run %s and, when its output changes, post the formatted alert DIRECTLY to chat %s, no LLM, it does NOT come back to this thread.%s Next check: %s.",
+							name, monitorCadence(got), m.ToolName, m.DeliverChatID, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 					}
-					return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and wake you ONLY when its output changes, no LLM runs in between.%s Next check: %s.",
-						name, got.IntervalSeconds, m.ToolName, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
+					return fmt.Sprintf("Watch monitor %q created: %s I run %s and wake you ONLY when its output changes, no LLM runs in between.%s Next check: %s.",
+						name, monitorCadence(got), m.ToolName, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 				}
 				wantAgent := strings.TrimSpace(oArgStr(args, "check_agent"))
 				m.Check = strings.TrimSpace(oArgStr(args, "check"))
@@ -1575,8 +1587,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					match = "YES"
 				}
 				got, _ := GetEventMonitor(RootDB, owner, name)
-				return fmt.Sprintf("Poll monitor %q created: every %ds, agent %q is asked %q; I wake when the answer contains %q.%s Next check: %s.",
-					name, got.IntervalSeconds, m.CheckAgent, m.Check, match, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
+				return fmt.Sprintf("Poll monitor %q created: %s, agent %q is asked %q; I wake when the answer contains %q.%s Next check: %s.",
+					name, monitorCadence(got), m.CheckAgent, m.Check, match, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 			},
 		},
 		{

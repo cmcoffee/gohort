@@ -7586,14 +7586,34 @@ select.ui-orch-intake-input {
         row.style.cssText = 'display:flex;gap:0.5rem;align-items:center';
         everyVal.style.maxWidth = '6rem';
         row.appendChild(everyVal); row.appendChild(unitSel);
-        host.appendChild(schedLabeled('Check every', row));
+        // On an interval, or at set times of day (in your time zone).
+        var whenSel = schedSelect([['interval', 'On an interval'], ['daily', 'Daily at set times']], mon.daily_at ? 'daily' : 'interval');
+        host.appendChild(schedLabeled('When', whenSel));
+        var everyRow = schedLabeled('Check every', row);
+        host.appendChild(everyRow);
+        var dailyAt = schedTxt(mon.daily_at || '', '08:00 or 08:00,18:00');
+        var dailyRow = schedLabeled('Times of day (HH:MM, your time zone)', dailyAt);
+        host.appendChild(dailyRow);
+        function syncWhen() {
+          var daily = whenSel.value === 'daily';
+          everyRow.style.display = daily ? 'none' : '';
+          dailyRow.style.display = daily ? '' : 'none';
+        }
+        whenSel.addEventListener('change', syncWhen);
+        syncWhen();
 
         return function() {
+          if (whenSel.value === 'daily') {
+            var at = dailyAt.value.trim();
+            if (!at) { window.uiAlert('Enter one or more times, like 08:00.'); return null; }
+            return {daily_at: at};
+          }
           var secsPer = unitSel.value === 'hours' ? 3600 : (unitSel.value === 'minutes' ? 60 : 1);
           var v = parseInt(everyVal.value, 10);
           var n = (isNaN(v) ? 0 : v) * secsPer;
           if (n < 5) { window.uiAlert('Interval must be at least 5 seconds.'); return null; }
-          return {interval_seconds: n};
+          // Back to an interval clears any set times.
+          return {interval_seconds: n, daily_at: ''};
         };
       }
 

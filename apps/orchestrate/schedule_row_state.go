@@ -82,7 +82,7 @@ func monitorNextRun(m EventMonitor) string {
 // A record that is not armed re-arms regardless of what changed: a save is a
 // chance to repair one that lost its task, and it had no clock to preserve.
 func monitorNeedsRearm(before, after EventMonitor) bool {
-	if before.IntervalSeconds != after.IntervalSeconds {
+	if before.IntervalSeconds != after.IntervalSeconds || fmtDailyAt(before.DailyAt) != fmtDailyAt(after.DailyAt) {
 		return true
 	}
 	return after.SchedulerID == "" || after.NextCheck.IsZero() || after.NextCheck.Before(time.Now())
