@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -199,7 +200,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		" Authoring focus is now %q: a subsequent add_tool with no `agent` argument attaches THERE. To tool up a different agent (e.g. the parent this was built for), pass agent=\"<name or id>\" explicitly.",
 		saved.Name,
 	)
-	unresolved := unresolvedToolNote(sess.DB, saved)
+	unresolved := unresolvedToolNote(sess.DB, saved) + promptToolGapNote(sess.DB, saved)
 	return fmt.Sprintf(
 		"AGENT_CREATED ok. id=%s name=%q.%s%s%s DONE: reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this.\n\nSaved record: %s",
 		saved.ID, saved.Name, verifyHint, focusNote, unresolved, b,
@@ -241,6 +242,59 @@ func unresolvedToolNote(db Database, a AgentRecord) string {
 		" what the agent cannot do.",
 		strings.Join(bad, ", "), pluralThem(len(bad)), pluralThem(len(bad)))
 }
+
+// promptToolGapNote names the tools an agent's instructions tell it to use
+// that it cannot call: a real tool left out of its allowed_tools, or
+// post_bulletin with no board letting it post. Observed: Builder saved an
+// agent whose whole job was "post it to the news board using the
+// post_news_to_bulletin tool", having just dropped that tool from its list,
+// and told the user the agent was configured. The agent could only fetch.
+func promptToolGapNote(db Database, a AgentRecord) string {
+	prompt := a.OrchestratorPrompt
+	if strings.TrimSpace(prompt) == "" {
+		return ""
+	}
+	allowed := map[string]bool{}
+	open := len(a.AllowedTools) == 0
+	for _, n := range a.AllowedTools {
+		if n = strings.TrimSpace(n); n == "*" {
+			open = true
+		}
+		allowed[n] = true
+	}
+	if isNoToolsSentinel(a.AllowedTools) {
+		open = false
+	}
+	seen := map[string]bool{}
+	var gaps []string
+	for _, name := range promptToolNameRe.FindAllString(prompt, -1) {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		switch {
+		case name == "post_bulletin":
+			poster := false
+			for _, b := range listBulletins(db) {
+				if b.canPost(a.ID) {
+					poster = true
+				}
+			}
+			if !poster {
+				gaps = append(gaps, "post_bulletin (no board lets this agent post: grant it with bulletins allow_poster {board, agent})")
+			}
+		case !open && !allowed[name] && isResolvableToolName(db, a.Owner, name):
+			gaps = append(gaps, name+" (not in its allowed_tools)")
+		}
+	}
+	if len(gaps) == 0 {
+		return ""
+	}
+	return " WARNING: its instructions tell it to use " + strings.Join(gaps, "; ") +
+		", so it cannot do that part of its job. Grant what it needs, or change the instructions and tell the user what the agent cannot do. Do not call it configured until then."
+}
+
+var promptToolNameRe = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b`)
 
 func pluralThem(n int) string {
 	if n == 1 {
@@ -637,7 +691,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// were authored somewhere else.
 	return fmt.Sprintf(
 		"AGENT_UPDATED ok. id=%s name=%q.%s%s DONE: reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
-		saved.ID, saved.Name, verifyHint, unresolvedToolNote(sess.DB, saved), b,
+		saved.ID, saved.Name, verifyHint, unresolvedToolNote(sess.DB, saved)+promptToolGapNote(sess.DB, saved), b,
 	), nil
 }
 

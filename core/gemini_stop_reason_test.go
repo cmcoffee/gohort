@@ -1,6 +1,9 @@
 package core
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // Gemini left Response.StopReason EMPTY on every response while OpenAI and
 // Anthropic both populated it. Empty is not neutral — the agent loop reads it:
@@ -49,5 +52,21 @@ func TestGeminiStopReasonPreservesFilterReasons(t *testing.T) {
 		if got == "" {
 			t.Errorf("%s mapped to empty", in)
 		}
+	}
+}
+
+// Gemini's cached share of a prompt is reported apart from the rest, the way
+// Anthropic reports it, so it is priced as a cache read and a turn's lead
+// budget counts only what was actually processed.
+func TestGeminiReportsItsCachedPromptApart(t *testing.T) {
+	var r gemResponse
+	if err := json.Unmarshal([]byte(`{"usageMetadata":{"promptTokenCount":63000,"cachedContentTokenCount":58000,"candidatesTokenCount":90}}`), &r); err != nil {
+		t.Fatal(err)
+	}
+	if got := geminiCached(r.UsageMetadata.PromptTokenCount, r.UsageMetadata.CachedContentTokenCount); got != 58000 {
+		t.Errorf("cached share: got %d, want 58000", got)
+	}
+	if geminiCached(100, 500) != 100 || geminiCached(0, 5) != 0 || geminiCached(100, -1) != 0 {
+		t.Error("the cached share never exceeds the prompt or goes negative")
 	}
 }

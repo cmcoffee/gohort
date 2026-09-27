@@ -197,6 +197,9 @@ type gemResponse struct {
 		PromptTokenCount     int `json:"promptTokenCount"`
 		CandidatesTokenCount int `json:"candidatesTokenCount"`
 		ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
+		// CachedContentTokenCount is the part of the prompt served from
+		// Gemini's (implicit) cache, and is INSIDE PromptTokenCount.
+		CachedContentTokenCount int `json:"cachedContentTokenCount"`
 	} `json:"usageMetadata"`
 	ModelVersion string `json:"modelVersion"`
 	Error        *struct {
@@ -511,8 +514,9 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	if len(result.Candidates) > 0 {
 		finishReason = result.Candidates[0].FinishReason
 	}
-	Debug("[gemini]: Chat complete: model=%s input_tokens=%d output_tokens=%d thinking_tokens=%d tool_calls=%d finish=%s",
-		result.ModelVersion, result.UsageMetadata.PromptTokenCount, result.UsageMetadata.CandidatesTokenCount, result.UsageMetadata.ThoughtsTokenCount, len(toolCalls), finishReason)
+	cached := geminiCached(result.UsageMetadata.PromptTokenCount, result.UsageMetadata.CachedContentTokenCount)
+	Debug("[gemini]: Chat complete: model=%s input_tokens=%d cached=%d output_tokens=%d thinking_tokens=%d tool_calls=%d finish=%s",
+		result.ModelVersion, result.UsageMetadata.PromptTokenCount, cached, result.UsageMetadata.CandidatesTokenCount, result.UsageMetadata.ThoughtsTokenCount, len(toolCalls), finishReason)
 	if finishReason == "SAFETY" || finishReason == "RECITATION" || finishReason == "BLOCKLIST" {
 		Debug("[gemini]: response blocked by safety filter: %s", finishReason)
 	}
@@ -521,13 +525,14 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	}
 
 	return &Response{
-		Content:      content,
-		Reasoning:    reasoning,
-		ToolCalls:    toolCalls,
-		Model:        result.ModelVersion,
-		StopReason:   geminiStopReason(finishReason),
-		InputTokens:  result.UsageMetadata.PromptTokenCount,
-		OutputTokens: result.UsageMetadata.CandidatesTokenCount,
+		Content:         content,
+		Reasoning:       reasoning,
+		ToolCalls:       toolCalls,
+		Model:           result.ModelVersion,
+		StopReason:      geminiStopReason(finishReason),
+		InputTokens:     result.UsageMetadata.PromptTokenCount - cached,
+		CacheReadTokens: cached,
+		OutputTokens:    result.UsageMetadata.CandidatesTokenCount,
 	}, nil
 }
 
@@ -612,7 +617,7 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 	// it, and it must reach Response.StopReason or the agent loop's
 	// clean-finish gate stays permanently closed for Gemini.
 	var streamFinishReason string
-	var inputTokens, outputTokens int
+	var inputTokens, outputTokens, cachedTokens int
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -635,6 +640,9 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 		}
 		if chunk.UsageMetadata.PromptTokenCount > 0 {
 			inputTokens = chunk.UsageMetadata.PromptTokenCount
+		}
+		if chunk.UsageMetadata.CachedContentTokenCount > 0 {
+			cachedTokens = chunk.UsageMetadata.CachedContentTokenCount
 		}
 		if chunk.UsageMetadata.CandidatesTokenCount > 0 {
 			outputTokens = chunk.UsageMetadata.CandidatesTokenCount
@@ -668,8 +676,9 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 		return nil, fmt.Errorf("gemini: stream read error: %w", err)
 	}
 
-	Debug("[gemini]: Stream complete: model=%s input_tokens=%d output_tokens=%d tool_calls=%d thinking=%d finish=%s",
-		modelVersion, inputTokens, outputTokens, len(toolCalls), thinking.Len(), chooseStr(streamFinishReason, "(none)"))
+	cachedTokens = geminiCached(inputTokens, cachedTokens)
+	Debug("[gemini]: Stream complete: model=%s input_tokens=%d cached=%d output_tokens=%d tool_calls=%d thinking=%d finish=%s",
+		modelVersion, inputTokens, cachedTokens, outputTokens, len(toolCalls), thinking.Len(), chooseStr(streamFinishReason, "(none)"))
 	if thinking.Len() > 0 {
 		Trace("[gemini]: <-- THINKING:\n%s", thinking.String())
 	}
@@ -682,14 +691,30 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 	}
 
 	return &Response{
-		Content:      full.String(),
-		Reasoning:    thinking.String(),
-		ToolCalls:    toolCalls,
-		Model:        modelVersion,
-		StopReason:   geminiStopReason(streamFinishReason),
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
+		Content:         full.String(),
+		Reasoning:       thinking.String(),
+		ToolCalls:       toolCalls,
+		Model:           modelVersion,
+		StopReason:      geminiStopReason(streamFinishReason),
+		InputTokens:     inputTokens - cachedTokens,
+		CacheReadTokens: cachedTokens,
+		OutputTokens:    outputTokens,
 	}, nil
+}
+
+// geminiCached is the cached share of a prompt, kept apart from InputTokens
+// the way Anthropic reports it, so a cache hit is priced as one and the turn's
+// lead budget counts what was actually processed. Observed: a Builder turn
+// re-sent a ~60k prompt (mostly tool schemas) eight times, the budget counted
+// every copy in full, and the rest of the build fell to the worker at round 8.
+func geminiCached(prompt, cached int) int {
+	if cached < 0 || prompt <= 0 {
+		return 0
+	}
+	if cached > prompt {
+		return prompt
+	}
+	return cached
 }
 
 // geminiStopReason maps Gemini's finishReason onto the vocabulary the rest of

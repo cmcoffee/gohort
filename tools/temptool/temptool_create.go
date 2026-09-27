@@ -406,6 +406,11 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		}
 		tool.HookCapabilities = clean
 	}
+	// A tool that calls the author's own tools through `default_api` dies on
+	// its first run; say what to do instead while the author is looking.
+	if why := callsOwnTools(cmd + "\n" + scriptBody); why != "" {
+		return "", fmt.Errorf("%s", why)
+	}
 	// Default-on the bare hook capabilities for any shell-mode tool
 	// with script_body. Builder doesn't have to remember to declare
 	// hook_capabilities=["fetch"] — the framework adds them

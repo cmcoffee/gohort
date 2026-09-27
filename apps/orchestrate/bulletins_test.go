@@ -175,3 +175,38 @@ func TestBuilderSetsUpABoard(t *testing.T) {
 		t.Errorf("list names the board and its poster: %s", out)
 	}
 }
+
+// An agent whose instructions name a tool it cannot call is saved with a
+// warning naming it: a real tool left out of its allowed_tools, or
+// post_bulletin with no board letting it post.
+func TestAnAgentsInstructionsMustMatchItsTools(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	var real string
+	for _, ct := range RegisteredChatTools() {
+		if n := ct.Name(); promptToolNameRe.FindString(n) == n && n != "post_bulletin" {
+			real = n
+			break
+		}
+	}
+	if real == "" {
+		t.Skip("no registered chat tool with a snake_case name in this binary")
+	}
+	bot, _ := saveAgent(db, AgentRecord{Name: "Briefing Bot", Owner: "u", AllowedTools: []string{"get_top_stories"},
+		OrchestratorPrompt: "Fetch the headlines, then post them with `" + real + "` and post_bulletin."})
+	note := promptToolGapNote(db, bot)
+	for _, want := range []string{real + " (not in its allowed_tools)", "post_bulletin (no board", "allow_poster", "Do not call it configured"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the warning should carry %q:\n%s", want, note)
+		}
+	}
+	saveBulletin(db, bulletinBoard{Name: "news", Posters: []string{bot.ID}})
+	bot.AllowedTools = append(bot.AllowedTools, real)
+	if note := promptToolGapNote(db, bot); note != "" {
+		t.Errorf("a granted tool and a board it may post to are fine: %s", note)
+	}
+	bot.OrchestratorPrompt = "Summarize the news_of_the_day in a friendly_tone."
+	bot.AllowedTools = []string{"get_top_stories"}
+	if note := promptToolGapNote(db, bot); note != "" {
+		t.Errorf("snake_case words that are not tools are ignored: %s", note)
+	}
+}

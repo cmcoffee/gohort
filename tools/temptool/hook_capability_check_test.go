@@ -73,3 +73,25 @@ func TestAScriptCannotImportWhatTheGohortModuleDoesNotExport(t *testing.T) {
 		}
 	}
 }
+
+// A tool that calls the author's own tools through default_api is refused at
+// save, in a command or a script, with the grant route named.
+func TestAToolCannotCallTheAuthorsOwnTools(t *testing.T) {
+	for _, src := range []string{
+		"print(default_api.bulletins(action='create', name='news'))",
+		"import os\nfrom default_api import bulletins\nprint(bulletins(action='create'))\n",
+	} {
+		why := callsOwnTools(src)
+		for _, want := range []string{"default_api", "allow_poster", "allowed tools", "gohort module"} {
+			if !strings.Contains(why, want) {
+				t.Errorf("%q: the refusal should carry %q:\n%s", src, want, why)
+			}
+		}
+	}
+	if !strings.Contains(callsOwnTools("default_api.bulletins(x)"), "your bulletins tool") {
+		t.Error("the tool it reached for is named")
+	}
+	if why := callsOwnTools("from gohort import fetch_url\nprint(fetch_url('https://example.com'))\n"); why != "" {
+		t.Errorf("an ordinary script passes: %s", why)
+	}
+}

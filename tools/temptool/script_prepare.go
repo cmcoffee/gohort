@@ -390,6 +390,27 @@ func unknownGohortName(script string) string {
 	return ""
 }
 
+var defaultAPIRe = regexp.MustCompile(`\bdefault_api\b(?:\.(\w+))?`)
+
+// callsOwnTools reports a command or script that reaches for the author's
+// own tools through `default_api`, the name some models give their function
+// namespace; "" when it does not. Observed: Builder wrote a shell tool that
+// ran print(default_api.bulletins(...)) to let an agent post to a board, then
+// `from default_api import bulletins` in Python, and spent the turn on the
+// syntax and import errors. No such module exists in a tool, and a tool
+// cannot call an agent's tools at all.
+func callsOwnTools(src string) string {
+	m := defaultAPIRe.FindStringSubmatch(src)
+	if m == nil {
+		return ""
+	}
+	what := "your own tools"
+	if m[1] != "" {
+		what = fmt.Sprintf("your %s tool", m[1])
+	}
+	return fmt.Sprintf("this calls %s through `default_api`, which does not exist inside a tool: default_api is only how your tools are named to you, and a tool's command or script cannot call any of them. Nothing to build here: if an agent needs what one of your tools gives, grant it to that agent with the tool that manages it (an agent posts to a bulletin board once bulletins allow_poster lets it, which gives it post_bulletin; an agent uses a catalog tool once it is in its allowed tools). A script itself has only the gohort module (fetch_url, fetch_via, ...) for reaching outside", what)
+}
+
 // NormalizeScriptBody undoes a script that arrived escaped a second time: the
 // whole program on one line, its line breaks written as the two characters
 // backslash and n. On disk that is a one-line file whose first line is the
