@@ -1,7 +1,9 @@
 package core
 
 import (
+	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,5 +195,32 @@ func TestNoCapabilitiesStillMeansNoSocket(t *testing.T) {
 	h, err := NewSandboxHook(t.TempDir(), nil, &ToolSession{})
 	if err != nil || h != nil {
 		t.Errorf("a tool with no capabilities gets no hook, got %v / %v", h, err)
+	}
+}
+
+// The hook counts what a script asked of it, so a run killed at its timeout
+// with nothing asked can say it never reached its service.
+func TestTheHookCountsTheScriptsCalls(t *testing.T) {
+	h, err := NewSandboxHook(t.TempDir(), []string{"log"}, &ToolSession{})
+	if err != nil || h == nil {
+		t.Fatalf("hook: %v", err)
+	}
+	defer h.Close()
+	if h.Calls.Load() != 0 {
+		t.Fatal("no call yet")
+	}
+	conn, err := net.Dial("unix", h.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte(`{"method":"log","params":{"message":"hi"}}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bufio.NewReader(conn).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if n := h.Calls.Load(); n != 1 {
+		t.Errorf("one request made, counted %d", n)
 	}
 }

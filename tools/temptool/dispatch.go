@@ -677,6 +677,12 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 
 	if res.TimedOut {
 		notice := fmt.Sprintf("\n[TIMED OUT after %s: command killed.]", runTimeout)
+		if hook != nil && hook.Calls.Load() == 0 {
+			// Observed: a script that re-executed itself forever was tested
+			// again and again with a longer timeout each time, five minutes
+			// and a full model round per try, while it never once called out.
+			notice = fmt.Sprintf("\n[TIMED OUT after %s: command killed. It made no gohort call (fetch_via, fetch_url, log) in that time, so it never reached its service: it is stuck in its own code before the first request (an endless loop, a wait on input, a script that cannot start). A longer timeout will not help; read the script.]", runTimeout)
+		}
 		if output == "" {
 			return strings.TrimPrefix(notice, "\n"), nil
 		}

@@ -179,3 +179,28 @@ func TestParseTestCases(t *testing.T) {
 		t.Fatalf("expected unlabeled case under empty key, got %v", got)
 	}
 }
+
+// A turn may fail the same tool's test three times; the fourth is not run and
+// says to stop and ask. A pass clears the count, and a new turn starts over.
+func TestRepeatedFailedTestsStopAndAsk(t *testing.T) {
+	sess := newTestSession()
+	injectBrokenMoltbook(t, sess)
+	for i := 0; i < maxFailedTestsPerTurn; i++ {
+		report, err := testGrouped(map[string]any{"name": "moltbook", "rerun": true}, sess)
+		if err != nil || !strings.Contains(report, "endpoint(s) FAILED") {
+			t.Fatalf("run %d should fail and be counted: %v\n%s", i+1, err, report)
+		}
+	}
+	report, _ := testGrouped(map[string]any{"name": "moltbook", "rerun": true}, sess)
+	if !strings.HasPrefix(report, "NOT RUN") || !strings.Contains(report, "ask whether to keep going") {
+		t.Fatalf("the fourth failed test should stop and ask:\n%s", report)
+	}
+	next := newTestSession()
+	if failedTestsThisTurn(next, "moltbook") != 0 {
+		t.Error("a new turn starts with no failures counted")
+	}
+	noteTestOutcome(sess, "moltbook", false)
+	if failedTestsThisTurn(sess, "moltbook") != 0 {
+		t.Error("a pass clears the count")
+	}
+}

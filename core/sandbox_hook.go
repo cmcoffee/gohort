@@ -41,6 +41,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/sandbox"
@@ -78,6 +79,10 @@ type SandboxHook struct {
 	// unnamed callers (run_local / persistent shell), which aren't binding-gated.
 	// Set by the dispatcher right after NewSandboxHook, before the sandbox runs.
 	ToolName string
+	// Calls counts the requests the script made, read after the run. A run
+	// killed at its timeout with none made never got as far as its service,
+	// and saying so is what stops an author raising the timeout again.
+	Calls atomic.Int64
 	// WorkspaceNetExempt lifts the workspace's REACH ceiling for this run, and
 	// only this run. It is set for a tool already in the owner's pool: a
 	// granted tool reaching out through this broker is a path somebody
@@ -306,6 +311,7 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		return
 	}
 	method = req.Method
+	h.Calls.Add(1)
 	if !h.granted(req.Method) {
 		Log("[hook] method %q not granted; capabilities=%v", req.Method, h.Capabilities)
 		writeHookError(conn, fmt.Sprintf("method %q not granted; capabilities=%v", req.Method, h.Capabilities))

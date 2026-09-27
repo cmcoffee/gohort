@@ -38,11 +38,55 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			return prev, nil
 		}
 	}
+	if n := failedTestsThisTurn(sess, name); n >= maxFailedTestsPerTurn {
+		return fmt.Sprintf("NOT RUN: the test of %s has failed %d times this turn, and each try costs a full round of this conversation plus, for a live run, a call to the service. Stop here: tell the user plainly what is failing, what you changed each time, and what you would try next, and ask whether to keep going. Their answer starts a new turn, where the test runs again; go on by fixing the one step that fails on its own, against a saved response in the workspace, before testing the whole tool.", name, n), nil
+	}
 	out, err := runToolTest(tt, args, sess)
 	if err == nil {
 		rememberToolTest(sess, name, fp, out)
 	}
+	noteTestOutcome(sess, name, err != nil || strings.Contains(out, "RESULT: FAILED") || strings.Contains(out, "endpoint(s) FAILED"))
 	return out, err
+}
+
+// maxFailedTestsPerTurn is how many failed tests of one tool a turn may run
+// before the author has to stop and ask. Observed: an author cycled update
+// then test on a broken music tool, each test a five-minute timeout and every
+// round ~45k tokens, with nothing new learned between tries.
+const maxFailedTestsPerTurn = 3
+
+// failedTests counts failed tests per turn (the ToolSession, which each turn
+// builds afresh) and tool. A pass clears the count.
+var (
+	failedTestsMu sync.Mutex
+	failedTests   = map[*ToolSession]map[string]int{}
+	failedTestsAt = map[*ToolSession]time.Time{}
+)
+
+func failedTestsThisTurn(sess *ToolSession, name string) int {
+	failedTestsMu.Lock()
+	defer failedTestsMu.Unlock()
+	return failedTests[sess][name]
+}
+
+func noteTestOutcome(sess *ToolSession, name string, failed bool) {
+	failedTestsMu.Lock()
+	defer failedTestsMu.Unlock()
+	for s, at := range failedTestsAt {
+		if time.Since(at) > time.Hour {
+			delete(failedTests, s)
+			delete(failedTestsAt, s)
+		}
+	}
+	if failedTests[sess] == nil {
+		failedTests[sess] = map[string]int{}
+	}
+	failedTestsAt[sess] = time.Now()
+	if failed {
+		failedTests[sess][name]++
+	} else {
+		delete(failedTests[sess], name)
+	}
 }
 
 // runToolTest is the test itself, for a tool already resolved.
