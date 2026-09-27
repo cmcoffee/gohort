@@ -436,6 +436,11 @@ func secureAPIMaxResponseBytesForPipe() int {
 // disk-quota footprint so they don't escape the sandbox.
 func secureAPIMaxSaveBytes() int64 { return int64(TuneInt("tune_secure_api_max_save_bytes")) }
 
+// scriptReadsArg marks a call a script made (fetch_via, or a fetch routed
+// through a credential): a body over the read cap is an error naming save_to,
+// never a silently cut body.
+const scriptReadsArg = "__script_reads"
+
 // secureAPIRequestTimeout caps wall-clock time per call.
 func secureAPIRequestTimeout() time.Duration {
 	return TuneDuration("tune_secure_api_request_timeout")
@@ -2417,6 +2422,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// LLM-visible side, so the pipe path is safe with a larger
 	// upstream read.
 	pipeFollowing, _ := args["__pipe_following"].(bool)
+	scriptReads, _ := args[scriptReadsArg].(bool)
 	readCap := secureAPIMaxResponseBytes()
 	if pipeFollowing {
 		readCap = secureAPIMaxResponseBytesForPipe()
@@ -2433,6 +2439,16 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if len(bodyBytes) > readCap {
 		bodyBytes = bodyBytes[:readCap]
 		truncated = true
+	}
+	if truncated && scriptReads {
+		// A script cannot tell a cut body from a whole one: the pipe path
+		// drops the marker, and even with it a base64 field just decodes
+		// short. Songs came back cut at the same length every time with no
+		// error anywhere. So a script gets none of it and the way to get all.
+		auditEntry.Status = resp.StatusCode
+		auditEntry.Error = "response over the script read cap"
+		s.recordAudit(auditEntry)
+		return "", fmt.Errorf("the response is larger than the %s a script can read in one piece, so none of it was returned: a cut body decodes into a fragment with no error. Pass save_to=\"<file>\" to write the whole response to the workspace (up to %s) and read that file", HumanSize(int64(readCap)), HumanSize(secureAPIMaxSaveBytes()))
 	}
 	// When piping, suppress the truncation marker — the pipe filters
 	// down anyway, the marker would just contaminate the LLM-visible

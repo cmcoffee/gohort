@@ -3,6 +3,8 @@ package core
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -78,9 +80,9 @@ func TestFetchViaHeadersReachWire(t *testing.T) {
 func TestShimFetchViaCarriesHeaders(t *testing.T) {
 	shim := SandboxHookPythonShim
 	for _, want := range []string{
-		`def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None):`,
+		`def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None, save_to=None):`,
 		`"headers": hdrs,`,
-		`def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None):`,
+		`def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None, save_to=None):`,
 	} {
 		if !strings.Contains(shim, want) {
 			t.Errorf("shim missing fetch_via headers plumbing: %q", want)
@@ -148,7 +150,7 @@ func TestAScriptTimeoutOnlyRaisesTheCallCap(t *testing.T) {
 	if d := hookMethodDeadline("fetch_via", map[string]interface{}{"timeout": float64(200)}); d < 200*time.Second {
 		t.Errorf("the hook's own deadline must outlast the call, got %s", d)
 	}
-	if !strings.Contains(SandboxHookPythonShim, `request_headers=None, timeout=None):`) {
+	if !strings.Contains(SandboxHookPythonShim, `request_headers=None, timeout=None, save_to=None):`) {
 		t.Error("fetch_via should take timeout=")
 	}
 }
@@ -203,5 +205,40 @@ func TestAContentRefusalIsNotAShapeError(t *testing.T) {
 	out, _ = s.DispatchToolCallArgs(nil, "gen", map[string]any{"url": srv.URL + "/gen", "method": "POST", "body": "{}"})
 	if strings.Contains(out, "REFUSED THE CONTENT") || !strings.Contains(out, "PATH, QUERY PARAMS") {
 		t.Errorf("a real shape error keeps the shape hint:\n%s", out)
+	}
+}
+
+// A script's read past the cap is an error that names save_to, not a body cut
+// short: songs came back cut at 4 MiB every time with no error anywhere. With
+// save_to the whole body lands in the workspace.
+func TestAScriptReadPastTheCapSaysSaveTo(t *testing.T) {
+	big := `{"data":"` + strings.Repeat("A", secureAPIMaxResponseBytesForPipe()+1024) + `"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(big))
+	}))
+	defer srv.Close()
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	if err := s.Save(SecureCredential{Name: "gen", Type: SecureCredNone, BaseURL: srv.URL}, ""); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.DispatchToolCallArgs(nil, "gen", map[string]any{"url": srv.URL + "/x", "__pipe_following": true, scriptReadsArg: true})
+	if err == nil || out != "" || !strings.Contains(err.Error(), "save_to") {
+		t.Fatalf("a script's read past the cap should fail naming save_to, got %d bytes, err=%v", len(out), err)
+	}
+	if out, err := s.DispatchToolCallArgs(nil, "gen", map[string]any{"url": srv.URL + "/x", "__pipe_following": true}); err != nil || out == "" {
+		t.Errorf("a response pipe still reads what fits, as before: err=%v", err)
+	}
+
+	ws := t.TempDir()
+	out, err = s.DispatchToolCallArgs(&ToolSession{WorkspaceDir: ws}, "gen", map[string]any{"url": srv.URL + "/x", "__pipe_following": true, scriptReadsArg: true, "save_to": "song.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(ws, "song.json"))
+	if string(data) != big {
+		t.Errorf("save_to should hold the whole %d-byte body, got %d (%s)", len(big), len(data), out)
+	}
+	if !strings.Contains(SandboxHookPythonShim, `"save_to": save_to or "",`) {
+		t.Error("the shim's fetch_via should send save_to")
 	}
 }

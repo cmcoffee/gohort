@@ -575,7 +575,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			// under the piped cap: a script consumes it, not a model. Only url,
 			// method and body used to pass, so save_to silently wrote nothing
 			// and a 263 KB response came back cut at 256 KiB.
-			args := map[string]interface{}{"url": rawURL, "method": method, "__pipe_following": true}
+			args := map[string]interface{}{"url": rawURL, "method": method, "__pipe_following": true, scriptReadsArg: true}
 			if b, ok := params["body"].(string); ok && b != "" {
 				args["body"] = b
 			}
@@ -1098,8 +1098,14 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 		args["request_headers"] = hdrs
 	}
 	// A script consumes the body, not a model, so it reads under the piped
-	// cap: the general one cut a 263 KB audio response at 256 KiB.
+	// cap: the general one cut a 263 KB audio response at 256 KiB. A body past
+	// even that is an error, and save_to streams any size to a file.
 	args["__pipe_following"] = true
+	args[scriptReadsArg] = true
+	saveTo, _ := params["save_to"].(string)
+	if saveTo = strings.TrimSpace(saveTo); saveTo != "" {
+		args["save_to"] = saveTo
+	}
 	raiseCallTimeout(args, params)
 	Log("[hook/fetch_via] start %s %s via %q", method, url, credName)
 	callStart := time.Now()
@@ -1130,11 +1136,15 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 	// carrying `int(r['status'].split()[1]) if isinstance(r['status'], str)
 	// else r['status']` to paper over the difference. The full line stays
 	// available as status_line for anything that wants the reason phrase.
-	writeHookResult(conn, map[string]interface{}{
+	result := map[string]interface{}{
 		"status":      statusCodeFromLine(statusLine),
 		"status_line": statusLine,
 		"body":        respBody,
-	})
+	}
+	if saveTo != "" {
+		result["path"] = saveTo // the same key fetch_url's save_to returns
+	}
+	writeHookResult(conn, result)
 }
 
 // statusCodeFromLine pulls the numeric code out of a status line like
@@ -1667,7 +1677,7 @@ class _Gohort:
         result = self._call("secret", {"name": name})
         return result["secret"] if isinstance(result, dict) else result
 
-    def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None):
+    def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None, save_to=None):
         """HTTP via a named gohort credential: URL allowlist enforced,
         auth injected server-side, audit logged. Tool must declare
         "fetch_via:<credential>" in hook_capabilities. headers is an
@@ -1684,7 +1694,13 @@ class _Gohort:
             if r["status"] != 207: ...
 
         status_line carries the full "HTTP 207 Multi-Status" text when you
-        want the reason phrase."""
+        want the reason phrase.
+
+        save_to writes the whole response body to that workspace file (up
+        to 100MB) and returns its path as "path"; body is then a one-line
+        summary. Use it for a large response, such as audio or an image
+        returned inline: a body too big to read in one piece is an error
+        without it, never a silently cut body."""
         hdrs = dict(headers or {})
         if request_headers:
             hdrs.update(request_headers)
@@ -1698,6 +1714,7 @@ class _Gohort:
             "body": body or "",
             "headers": hdrs,
             "timeout": timeout or 0,
+            "save_to": save_to or "",
         })
 
     def browse_page(self, url):
@@ -1753,8 +1770,8 @@ def secret(name):
     return gohort.secret(name)
 
 
-def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None):
-    return gohort.fetch_via(credential, url, method=method, body=body, headers=headers, request_headers=request_headers, timeout=timeout)
+def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None, save_to=None):
+    return gohort.fetch_via(credential, url, method=method, body=body, headers=headers, request_headers=request_headers, timeout=timeout, save_to=save_to)
 `
 
 // --- the shell network default -------------------------------------------
