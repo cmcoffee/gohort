@@ -80,19 +80,21 @@ func targetFormFields(user string) []ui.FormField {
 			Placeholder: "Create a draft post with the document as its body. The title is the post title. Put it in the category given.",
 			Help:        "What the publish does with the document: which endpoint, draft or live, where the answers below go.",
 			Detail:      "The document, its title and the answers to the questions below are handed over with this. Name the API call if you know it (\"POST /wp-json/wp/v2/posts with status draft\"); otherwise describe the result you want and the pass works it out from the API."},
-		{Field: "fields", Label: "Ask each time", Type: "rows", AddLabel: "Add a question",
-			Help:   "Short questions the Publish form asks, like a category or visibility. Their answers go with the instruction.",
-			Detail: "Give a list of options (comma-separated) for a pick-one question, or an API path on the integration to fetch them from when the form opens, optionally followed by the field of each item to show (\"/wp-json/wp/v2/categories name\"). Required ones must be answered before it publishes.",
+		{Field: "fields", Label: "Questions to settle", Type: "rows", AddLabel: "Add a question",
+			Help:   "What a publish needs to know, like a category or visibility. The Publisher asks you only what the document does not already settle.",
+			Detail: "For a pick-one question, list its options (comma-separated), or give an API path on the integration to fetch them from, optionally followed by the field of each item to show (\"/wp-json/wp/v2/categories name\"). Required ones are always settled before it publishes.",
 			Columns: []ui.FormField{
-				{Field: "label", Label: "Question", Type: "text", Placeholder: "Category"},
-				{Field: "type", Label: "Kind", Type: "select", Options: []ui.SelectOption{
+				{Field: "label", Label: "Question", Type: "text", Placeholder: "Category", Width: 3},
+				{Field: "type", Label: "Kind", Type: "select", Width: 2, Options: []ui.SelectOption{
 					{Value: "text", Label: "Short text"}, {Value: "textarea", Label: "Long text"}, {Value: "select", Label: "Pick one"},
 				}},
-				{Field: "options", Label: "Options", Type: "text", Placeholder: "News, Guides, Releases"},
-				{Field: "options_from", Label: "Or options from the API", Type: "text", Placeholder: "/wp-json/wp/v2/categories name"},
-				{Field: "required", Label: "Required", Type: "select", Options: []ui.SelectOption{
+				{Field: "required", Label: "Required", Type: "select", Width: 1, Options: []ui.SelectOption{
 					{Value: "", Label: "No"}, {Value: "yes", Label: "Yes"},
 				}},
+				{Field: "options", Label: "Options", Type: "text", OwnLine: true, ShowWhen: "type:select",
+					Placeholder: "News, Guides, Releases"},
+				{Field: "options_from", Label: "Or options from the API (path, then the field to show)", Type: "text", OwnLine: true, ShowWhen: "type:select",
+					Placeholder: "/wp-json/wp/v2/categories name"},
 			}},
 	}
 }
@@ -112,7 +114,7 @@ func targetsExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 		Title:    targetsSectionTitle,
 		Wide:     true,
 		Subtitle: "Places your documents can be published: one of your API integrations, or an agent, plus how to publish there.",
-		Detail: "Each target appears in Scribe's Publish list with its own short form. Publishing hands the document, your instruction and the form's answers to a pass that holds only that target's integration, and records where it landed so Republish updates the same place. " +
+		Detail: "Each target appears in Scribe's Publish list. Picking one opens the Publisher, which settles the questions below with you (only the ones the document does not answer), then hands the document, your instruction and the answers to a pass that holds only that target's integration. Where it landed is recorded against the document, so publishing it there again updates the same page. " +
 			"Switch agents on under Agents to let them publish there too, through a publish tool.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.ModalButton{

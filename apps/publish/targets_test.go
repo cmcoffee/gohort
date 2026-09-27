@@ -169,3 +169,56 @@ func TestTheSetupLinkLandsOnTheTargetsSection(t *testing.T) {
 		t.Errorf("setup link: got %q", got)
 	}
 }
+
+// The Publisher publishes to a target through its tools: it sees the target's
+// questions, passes answers, files the record under the target's own kind (the
+// one the quick Update path reads), and an update reuses the answers given
+// before.
+func TestThePublisherPublishesToATargetWithItsAnswers(t *testing.T) {
+	app := &PublishApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	tgt, err := normalizeTarget(Target{Label: "Team blog", Credential: "blogapi", Instructions: "Create a draft post.",
+		Fields: []TargetField{{Label: "Category", Options: "News, Guides", Required: "yes"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt.ID = "tb"
+	app.targetsDB("carol").Set(targetTable, tgt.ID, tgt)
+	docs.RegisterPublishDestination(&targetsDest{app: app})
+	var gotInstr string
+	docs.RegisterCredentialPublisher(func(_ context.Context, _, _, instr string) (string, string, error) {
+		gotInstr = instr
+		return "Posted.", "https://blog.example/p/1", nil
+	})
+
+	var records []docs.PublishRecord
+	open := func() (Document, bool) {
+		return Document{Doc: docs.PublishDoc{Title: "Launch", Markdown: "# Launch"}, Records: records,
+			Save: func(r docs.PublishRecord) error { records = docs.UpsertPublishRecord(records, r); return nil }}, true
+	}
+	tools := map[string]AgentToolDef{}
+	for _, td := range BuildPublishTools(context.Background(), "carol", open) {
+		tools[td.Tool.Name] = td
+	}
+	ctx := context.Background()
+	list, err := tools["list_publish_targets"].Handler(ctx, map[string]any{"destination": "target:"})
+	if err != nil || !strings.Contains(list, "asks category (Category): one of News | Guides, required") {
+		t.Errorf("the target's questions are listed under it: %v\n%s", err, list)
+	}
+	if _, err := tools["publish_document"].Handler(ctx, map[string]any{"destination": "target:", "target": "tb"}); err == nil || !strings.Contains(err.Error(), "Category") {
+		t.Errorf("a required question left unanswered comes back for the Publisher to ask: %v", err)
+	}
+	if _, err := tools["publish_document"].Handler(ctx, map[string]any{"destination": "target:", "target": "tb",
+		"answers": map[string]any{"category": "News"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Kind != "target:tb" || records[0].Answers["category"] != "News" || records[0].URL != "https://blog.example/p/1" {
+		t.Fatalf("the record is filed under the target's own kind with its answers: %+v", records)
+	}
+	if _, err := tools["publish_document"].Handler(ctx, map[string]any{"destination": "target:tb", "update_existing": true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotInstr, "Category: News") || !strings.Contains(gotInstr, "https://blog.example/p/1") {
+		t.Errorf("an update reuses the answers and points at the page it made:\n%s", gotInstr)
+	}
+}

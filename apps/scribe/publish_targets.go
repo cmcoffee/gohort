@@ -1,5 +1,7 @@
-// Publishing a guide to one of the person's own targets (apps/publish,
-// targets.go): pick a target, answer its short form, and it goes.
+// Quick updates of a guide already published to one of the person's own
+// targets (apps/publish, targets.go), with the answers it was published with.
+// A first publish goes through the Publisher chat instead, which settles the
+// target's questions with the person.
 //
 // A target's publish is a model pass that can take a minute, so it runs as a
 // background job rather than on the request: it survives the modal closing,
@@ -163,18 +165,4 @@ func chFirst(a, b string) string {
 		return a
 	}
 	return b
-}
-
-// handlePublishOptions fetches a question's options live from the target
-// (its OptionsFrom), for the form to fill its pick-list when it opens. The
-// targets are the viewer's own, so no guide is involved.
-func (T *Scribe) handlePublishOptions(w http.ResponseWriter, r *http.Request, user string) {
-	q := r.URL.Query()
-	opts, err := docs.PublishFieldOptions(r.Context(), user, q.Get("kind"), q.Get("field"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"options": opts})
 }

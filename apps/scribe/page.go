@@ -757,7 +757,17 @@ const guidePublishAction = `function(ctx){
                 if (j.url) view.appendChild(el('a', {class:'guide-pub-link', href: j.url, target:'_blank', rel:'noopener', text:'Open it'}));
                 var back = el('button', {class:'ui-row-btn', text:'Back'});
                 back.addEventListener('click', function(){ reload(); });
-                view.appendChild(el('div', {style:'margin-top:0.7rem'}, [back]));
+                var btns = [back];
+                if (!j.ok){
+                  // A quick update that failed usually needs an answer: hand
+                  // it to the Publisher with what went wrong.
+                  var talk = el('button', {class:'ui-row-btn ui-row-btn-primary', text:'Work it out with the Publisher'});
+                  talk.addEventListener('click', function(){
+                    openChat('Update this guide in my publishing target "' + j.target + '". The last try failed: ' + (j.message || 'no reason given'));
+                  });
+                  btns.unshift(talk);
+                }
+                view.appendChild(el('div', {class:'guide-pub-actions', style:'margin-top:0.7rem'}, btns));
                 if (window.uiInvalidate) window.uiInvalidate('guides');
               }).catch(function(){ setTimeout(poll, 3000); });
             }
@@ -773,79 +783,28 @@ const guidePublishAction = `function(ctx){
             fetch('publish/state?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(nd){ d = nd; targets = nd.targets || []; showList(); });
           }
 
-          // A pick-list filled from the target's API when the form opens. It
-          // spins while it loads, and a failed fetch leaves a text box with
-          // the reason, so the question can still be answered.
-          function liveSelect(t, f){
-            var sel = el('select', {class:'ui-input', disabled:'disabled'});
-            var frames = '\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f', i = 0;
-            var wait = el('option', {value:'', text: frames[0] + ' Loading from ' + t.target.title + '...'});
-            sel.appendChild(wait);
-            var spin = setInterval(function(){ i = (i + 1) % frames.length; wait.textContent = frames[i] + ' Loading from ' + t.target.title + '...'; }, 120);
-            var box = el('span', {style:'display:contents'}, [sel]);
-            Object.defineProperty(box, 'value', {get: function(){ var c = box.firstChild; return c ? c.value : ''; }});
-            fetch('publish/options?' + qp + '&kind=' + encodeURIComponent(t.kind) + '&field=' + encodeURIComponent(f.name), {credentials:'same-origin', cache:'no-store'})
-              .then(function(r){ return r.text().then(function(x){ if (!r.ok) throw new Error(x || ('HTTP ' + r.status)); return JSON.parse(x); }); })
-              .then(function(j){
-                clearInterval(spin);
-                sel.innerHTML = '';
-                sel.appendChild(el('option', {value:'', text:'Choose...'}));
-                (j.options || []).forEach(function(o){ sel.appendChild(el('option', {value:o, text:o})); });
-                sel.disabled = false;
-              })
-              .catch(function(err){
-                clearInterval(spin);
-                box.innerHTML = '';
-                box.appendChild(el('input', {type:'text', class:'ui-input'}));
-                box.appendChild(el('small', {class:'guide-pub-fail', text:'Could not load the choices: ' + String(err && err.message || err).trim()}));
-              });
-            return box;
-          }
-
-          // One target's form: the title, then the questions it asks.
-          function showForm(t){
+          // The Publisher, in this window: it publishes, and asks here
+          // whatever it actually needs (a target's questions it cannot
+          // settle from the guide, a value the place refused). Back returns
+          // to the list, which then shows where the guide landed.
+          function openChat(ask){
             view.innerHTML = '';
-            view.appendChild(el('div', {class:'guide-set-head', text:'Publish to ' + t.target.title}));
-            if (t.target.desc) view.appendChild(el('p', {class:'guide-kn-intro', text: t.target.desc}));
-            var inputs = {};
-            function field(label, input, help){
-              var wrap = el('label', {class:'guide-pub-field'}, [el('span', {text: label}), input]);
-              if (help) wrap.appendChild(el('small', {class:'guide-pub-mute', text: help}));
-              view.appendChild(wrap);
-            }
-            var title = el('input', {type:'text', class:'ui-input', placeholder:'The guide title'});
-            field('Title', title, 'Leave empty to use the guide title.');
-            (t.fields || []).forEach(function(f){
-              var input;
-              if (f.type === 'select' && (f.options || []).length){
-                input = el('select', {class:'ui-input'});
-                input.appendChild(el('option', {value:'', text:'Choose...'}));
-                f.options.forEach(function(o){ input.appendChild(el('option', {value:o, text:o})); });
-              } else if (f.options_from){
-                input = liveSelect(t, f);
-              } else if (f.type === 'textarea'){
-                input = el('textarea', {class:'ui-input', rows:'3'});
-              } else {
-                input = el('input', {type:'text', class:'ui-input'});
-              }
-              inputs[f.name] = {input: input, f: f};
-              field((f.label || f.name) + (f.required ? ' *' : ''), input, f.help);
-            });
-            var go = el('button', {class:'ui-row-btn ui-row-btn-primary', text:'Publish'});
             var back = el('button', {class:'ui-row-btn', text:'Back'});
-            back.addEventListener('click', showList);
-            go.addEventListener('click', function(){
-              var answers = {}, missing = [];
-              Object.keys(inputs).forEach(function(k){
-                var v = (inputs[k].input.value || '').trim();
-                if (v) answers[k] = v;
-                else if (inputs[k].f.required) missing.push(inputs[k].f.label || k);
-              });
-              if (missing.length){ window.uiAlert('Still needed: ' + missing.join(', ')); return; }
-              go.disabled = true;
-              startPublish({kind: t.kind, target: t.target.id, title: title.value.trim(), answers: answers}).then(function(){ go.disabled = false; });
-            });
-            view.appendChild(el('div', {class:'guide-pub-actions'}, [go, back]));
+            back.addEventListener('click', function(){ reload(); });
+            view.appendChild(el('div', {class:'guide-pub-actions'}, [back]));
+            var host = el('div', {class:'guide-pub-chat'});
+            view.appendChild(host);
+            window.uiMountComponent({
+              type: 'agent_loop_panel',
+              send_url: 'publish/chat/send?guide=' + encodeURIComponent(gid),
+              cancel_url: 'chat/cancel',
+              markdown: true,
+              lock_activity: true,
+              auto_send: ask,
+              empty_text: 'Getting it ready to publish...',
+              placeholder: 'Answer the Publisher...',
+              submit_label: 'Send'
+            }, host);
           }
 
           function showList(){
@@ -874,18 +833,18 @@ const guidePublishAction = `function(ctx){
               row.appendChild(again);
               view.appendChild(row);
             });
-            // The person's own targets, each opening its short form.
+            // The person's own targets, each opening the Publisher on it.
             if (targets.length){
               view.appendChild(el('div', {class:'guide-set-head', text:'Publish to'}));
               targets.forEach(function(t){
                 var b = el('button', {class:'guide-pub-target'}, [el('strong', {text: t.target.title}),
                   el('span', {class:'guide-pub-mute', text: t.target.desc ? ' - ' + t.target.desc : ''})]);
-                b.addEventListener('click', function(){ showForm(t); });
+                b.addEventListener('click', function(){ openChat('Publish this guide to my publishing target "' + t.target.title + '".'); });
                 view.appendChild(b);
               });
             } else {
               view.appendChild(el('div', {class:'guide-set-head', text:'Publish to'}));
-              view.appendChild(el('p', {class:'guide-kn-intro', text:'You have no publishing targets of your own yet: a place you publish to often, set up once with its own short form.'}));
+              view.appendChild(el('p', {class:'guide-kn-intro', text:'You have no publishing targets of your own yet: a place you publish to often, set up once with how to publish there.'}));
               var setup = setupLink('Set one up in Extensions');
               if (setup) view.appendChild(setup);
             }
@@ -893,22 +852,7 @@ const guidePublishAction = `function(ctx){
             // destination) goes through the Publisher, which asks where.
             if (d.other_count > 0){
               var other = el('button', {class:'ui-row-btn', text: targets.length ? 'Other destinations...' : 'Choose where to publish'});
-              other.addEventListener('click', function(){
-                view.innerHTML = '';
-                var host = el('div', {class:'guide-pub-chat'});
-                view.appendChild(host);
-                window.uiMountComponent({
-                  type: 'agent_loop_panel',
-                  send_url: 'publish/chat/send?guide=' + encodeURIComponent(gid),
-                  cancel_url: 'chat/cancel',
-                  markdown: true,
-                  lock_activity: true,
-                  auto_send: 'Publish this guide.',
-                  empty_text: 'Working out where this can go...',
-                  placeholder: 'Answer the Publisher...',
-                  submit_label: 'Send'
-                }, host);
-              });
+              other.addEventListener('click', function(){ openChat('Publish this guide.'); });
               view.appendChild(el('div', {style:'margin-top:0.8rem'}, [other]));
             }
           }
@@ -927,7 +871,6 @@ const guidePublishCSS = `.guide-pub-row { display: flex; align-items: center; ga
 .guide-pub-link:hover { text-decoration: underline; }
 .guide-pub-target { display: flex; gap: 0.3rem; align-items: baseline; width: 100%; text-align: left; padding: 0.6rem 0.8rem; margin-bottom: 0.45rem; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text-hi); cursor: pointer; font: inherit; }
 .guide-pub-target:hover { border-color: var(--accent); }
-.guide-pub-field { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.55rem 0; font-size: 0.88rem; color: var(--text); }
 .guide-pub-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
 .guide-pub-status { font-size: 0.95rem; color: var(--text-hi); padding: 0.6rem 0; }
 .guide-pub-ok { color: var(--ok, #3fb950); }

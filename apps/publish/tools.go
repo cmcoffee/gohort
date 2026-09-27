@@ -112,12 +112,16 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "%d place(s) in %s. Pass one of these ids as target:\n", len(targets), kind)
+			asks := targetQuestions(ctx, user, kind)
 			for _, t := range targets {
 				fmt.Fprintf(&b, "- id: %s, %s", t.ID, t.Title)
 				if t.Desc != "" {
 					fmt.Fprintf(&b, " (%s)", t.Desc)
 				}
 				b.WriteString("\n")
+				if q := asks[t.ID]; q != "" {
+					b.WriteString(q)
+				}
 			}
 			return b.String(), nil
 		},
@@ -134,6 +138,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 				"target":          {Type: "string", Description: "The target id from list_publish_targets (e.g. a Confluence space id). Omit only for a destination that lists no targets."},
 				"title":           {Type: "string", Description: "The name the document gets in the destination. Defaults to the document's own title."},
 				"update_existing": {Type: "boolean", Description: "Replace the previously published page instead of creating a new one. Only meaningful when this document has been published to this destination before."},
+				"answers":         {Type: "object", Description: "The target's questions, by name, when list_publish_targets showed any: {\"category\": \"News\"}. Required ones must be given."},
 			},
 			Required: []string{"destination"},
 		},
@@ -148,15 +153,17 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			if strings.TrimSpace(doc.Doc.Markdown) == "" {
 				return "", fmt.Errorf("the document is empty: there is nothing to publish yet")
 			}
-			kind := strings.TrimSpace(fmt.Sprint(args["destination"]))
 			req := docs.PublishRequest{
-				Target: strings.TrimSpace(fmt.Sprint(args["target"])),
-				Title:  strings.TrimSpace(fmt.Sprint(args["title"])),
-				Doc:    doc.Doc,
+				Target:  strings.TrimSpace(fmt.Sprint(args["target"])),
+				Title:   strings.TrimSpace(fmt.Sprint(args["title"])),
+				Doc:     doc.Doc,
+				Answers: answersArg(args["answers"]),
 			}
 			if req.Target == "<nil>" {
 				req.Target = ""
 			}
+			var kind string
+			kind, req.Target = familyKind(strings.TrimSpace(fmt.Sprint(args["destination"])), req.Target)
 			if req.Title == "" || req.Title == "<nil>" {
 				req.Title = doc.Doc.Title
 			}
@@ -167,6 +174,11 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			if truthy(args["update_existing"]) && hadPrev {
 				req.ExternalID = prev.ExternalID
 				req.Version = prev.Version
+				// An update keeps what was answered last time unless the
+				// answers were given again.
+				if len(req.Answers) == 0 {
+					req.Answers = prev.Answers
+				}
 			}
 
 			res, err := docs.PublishDocument(ctx, user, kind, req)
@@ -183,6 +195,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 				URL:         res.URL,
 				Version:     res.Version,
 				At:          time.Now().UTC().Format(time.RFC3339),
+				Answers:     req.Answers,
 			}
 			if doc.Save != nil {
 				if err := doc.Save(rec); err != nil {
@@ -200,7 +213,99 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 		},
 	}
 
-	return []AgentToolDef{listDestinations, listTargets, publishDoc}
+	listOptions := AgentToolDef{
+		Tool: Tool{
+			Name: "list_question_options",
+			Description: "Fetch the choices for one of a target's questions whose options come from the place's own API (list_publish_targets marks them), so the user can pick from the real list. " +
+				"Offer them with ask_user as options.",
+			Parameters: map[string]ToolParam{
+				"destination": {Type: "string", Description: "The destination id from list_publish_destinations."},
+				"target":      {Type: "string", Description: "The target id from list_publish_targets."},
+				"question":    {Type: "string", Description: "The question's name, as list_publish_targets shows it."},
+			},
+			Required: []string{"destination", "target", "question"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			kind, _ := familyKind(strings.TrimSpace(fmt.Sprint(args["destination"])), strings.TrimSpace(fmt.Sprint(args["target"])))
+			opts, err := docs.PublishFieldOptions(ctx, user, kind, strings.TrimSpace(fmt.Sprint(args["question"])))
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%d choice(s): %s", len(opts), strings.Join(opts, " | ")), nil
+		},
+	}
+
+	return []AgentToolDef{listDestinations, listTargets, publishDoc, listOptions}
+}
+
+// familyKind turns a family destination ("target:") and one of its targets
+// into the target's own kind ("target:<id>"), which is what a publish record is
+// filed under. The Publish form files its publishes the same way, so either
+// path finds the other's record and an update lands on the same page. A kind
+// given whole ("target:<id>") is accepted too, with its id as the target.
+// Other kinds pass through: an agent destination's "agent:<slug>" names one
+// destination, not a target inside a family.
+func familyKind(kind, target string) (string, string) {
+	if kind == TargetKindPrefix {
+		if target == "" {
+			return kind, target
+		}
+		return kind + target, target
+	}
+	if id, ok := strings.CutPrefix(kind, TargetKindPrefix); ok && target == "" {
+		target = id
+	}
+	return kind, target
+}
+
+// targetQuestions describes each target's questions for list_publish_targets,
+// by target id: name, options or where they come from, and whether required.
+func targetQuestions(ctx context.Context, user, kind string) map[string]string {
+	out := map[string]string{}
+	for _, s := range docs.PublishTargetSpecs(ctx, user) {
+		if !strings.HasPrefix(s.Kind, kind) || len(s.Fields) == 0 {
+			continue
+		}
+		var b strings.Builder
+		for _, f := range s.Fields {
+			label := f.Label
+			if label == "" {
+				label = f.Name
+			}
+			fmt.Fprintf(&b, "    asks %s (%s)", f.Name, label)
+			switch {
+			case len(f.Options) > 0:
+				b.WriteString(": one of " + strings.Join(f.Options, " | "))
+			case f.OptionsFrom != "":
+				b.WriteString(": one of the place's own list, from list_question_options")
+			}
+			if f.Required {
+				b.WriteString(", required")
+			}
+			if f.Help != "" {
+				b.WriteString(". " + f.Help)
+			}
+			b.WriteString("\n")
+		}
+		out[s.Target.ID] = b.String()
+	}
+	return out
+}
+
+// answersArg reads the answers object a model sends, whatever its values'
+// types, as strings.
+func answersArg(v any) map[string]string {
+	m, ok := v.(map[string]any)
+	if !ok || len(m) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for k, x := range m {
+		if s := strings.TrimSpace(fmt.Sprint(x)); s != "" && s != "<nil>" {
+			out[k] = s
+		}
+	}
+	return out
 }
 
 // targetTitle resolves a target id back to its human name for the stored
