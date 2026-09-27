@@ -241,7 +241,9 @@ func (t *chatTurn) recallToolDef() AgentToolDef {
 			if query == "" {
 				return "", errors.New("query or id is required")
 			}
-			return t.recallSearch(query, args)
+			out, err := t.recallSearch(query, args)
+			t.noteIssuedRecallIDs(out)
+			return out, err
 		},
 	}
 }
@@ -690,6 +692,14 @@ func (t *chatTurn) recallIDWasIssued(id string) bool {
 // reason: naming the tool that produces real ids is the only instruction that
 // ends the loop.
 func (t *chatTurn) inventedRecallIDError(id string) error {
+	// A near miss is named, not taken: the id is almost one this turn was
+	// given, a copy slip rather than an invention. Observed: an agent dropped
+	// four characters from the middle of a fact id and was told no such id
+	// had ever been given, with no way back to the real one. forget deletes,
+	// so the real id is only NAMED here; the model re-sends it.
+	if near := t.nearestIssuedRecallID(id); near != "" {
+		return fmt.Errorf("%q is not an id you were given, but it is a few characters off %q, which you were. Ids are opaque: copy one exactly, character for character, from the recall output. If %q is the one you meant, call again with it", id, near, near)
+	}
 	return fmt.Errorf("no id %q has been given to you in this conversation, so there is nothing to fetch. recall ids are opaque and come ONLY from a recall result you can see: they are never constructed, guessed, or built from a UUID. Call recall with `query` (a natural-language description of what you are after) and use an id from ITS output. If you were about to answer the user, do that instead: nothing here is blocking you", id)
 }
 
@@ -890,4 +900,95 @@ func splitRecallID(id string) (kind, ref string, ok bool) {
 		return kind, ref, true
 	}
 	return "", "", false
+}
+
+// recallIDLine finds each id recall prints ("  id: fact:…").
+var recallIDLine = regexp.MustCompile(`(?m)^\s*id:\s*(\S+)`)
+
+// noteIssuedRecallIDs records the ids a recall result shows, so they count as
+// given for the rest of the turn. The thread scan in recallIDWasIssued only
+// sees messages saved when a turn ENDS, so an id this same turn's recall had
+// just printed was refused as invented when the agent went to use it.
+func (t *chatTurn) noteIssuedRecallIDs(out string) {
+	if t == nil || out == "" {
+		return
+	}
+	matches := recallIDLine.FindAllStringSubmatch(out, -1)
+	if len(matches) == 0 {
+		return
+	}
+	t.forgetOfferedMu.Lock()
+	defer t.forgetOfferedMu.Unlock()
+	if t.forgetOffered == nil {
+		t.forgetOffered = map[string]bool{}
+	}
+	for _, m := range matches {
+		t.forgetOffered[strings.TrimSpace(m[1])] = true
+	}
+}
+
+// nearestIssuedRecallID is the id this turn was given that the refused one
+// is closest to, when it is close enough to be a copy slip (a few characters
+// dropped, doubled or changed) and of the same kind. "" when nothing is.
+func (t *chatTurn) nearestIssuedRecallID(id string) string {
+	if t == nil {
+		return ""
+	}
+	id = strings.TrimSpace(id)
+	kind := ""
+	if i := strings.IndexByte(id, ':'); i > 0 {
+		kind = id[:i]
+	}
+	t.forgetOfferedMu.Lock()
+	defer t.forgetOfferedMu.Unlock()
+	best, bestDist := "", 0
+	for cand := range t.forgetOffered {
+		if kind != "" && !strings.HasPrefix(cand, kind+":") {
+			continue
+		}
+		d := editDistance(id, cand)
+		// A slip, not a different id: within a fifth of the length, at most 8.
+		limit := len(cand) / 5
+		if limit > 8 {
+			limit = 8
+		}
+		if d == 0 || d > limit {
+			continue
+		}
+		if best == "" || d < bestDist {
+			best, bestDist = cand, d
+		}
+	}
+	return best
+}
+
+// editDistance is the Levenshtein distance between two short strings.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
+func min3(a, b, c int) int {
+	if b < a {
+		a = b
+	}
+	if c < a {
+		a = c
+	}
+	return a
 }

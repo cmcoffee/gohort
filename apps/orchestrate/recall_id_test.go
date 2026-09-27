@@ -127,3 +127,34 @@ func TestRecallDescriptionForbidsConstructingIDs(t *testing.T) {
 		t.Errorf("the id parameter must say where an id comes from: %q", idParam.Description)
 	}
 }
+
+// An id this same turn's recall printed counts as given: the thread scan only
+// sees messages saved when a turn ends. And a copy slip of one, four
+// characters dropped from the middle, gets the real id named instead of "no
+// such id was ever given"; forget still acts only on what is re-sent.
+func TestARecallIDFromThisTurnCountsAndASlipIsNamed(t *testing.T) {
+	turn := &chatTurn{session: &ChatSession{}}
+	real := "fact:0795eddd-1540-4171-866e-8d6e9ddefc22"
+	out := "- [pinned] User Craig remains online finalizing gohart release readiness.\n  id: " + real + "\n- [knowledge] FlashInfer\n  id: doc:autofill-f57ab20a\n"
+	if turn.recallIDWasIssued(real) {
+		t.Fatal("precondition: nothing issued yet")
+	}
+	turn.noteIssuedRecallIDs(out)
+	if !turn.recallIDWasIssued(real) || !turn.recallIDWasIssued("doc:autofill-f57ab20a") {
+		t.Fatal("ids this turn's recall printed should count as given")
+	}
+	slip := "fact:0795eddd-1540-4171-866e-9ddefc22"
+	if turn.recallIDWasIssued(slip) {
+		t.Fatal("a slip is not the id")
+	}
+	err := turn.inventedRecallIDError(slip)
+	if !strings.Contains(err.Error(), real) || !strings.Contains(err.Error(), "copy one exactly") {
+		t.Errorf("the slip should name the real id: %v", err)
+	}
+	if err := turn.inventedRecallIDError("fact:made-up-id"); strings.Contains(err.Error(), real) || !strings.Contains(err.Error(), "never constructed") {
+		t.Errorf("an invented id gets the plain refusal, no suggestion: %v", err)
+	}
+	if err := turn.inventedRecallIDError("doc:0795eddd-1540-4171-866e-9ddefc22"); strings.Contains(err.Error(), real) {
+		t.Errorf("a near id of another kind is not suggested: %v", err)
+	}
+}
