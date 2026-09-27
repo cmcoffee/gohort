@@ -78,36 +78,29 @@ func TestARunThatReportedElsewhereLeavesAPointer(t *testing.T) {
 	}
 }
 
-// A conversation starting is recorded, by its title, in the cortex of an agent
-// that READS it: that is the agent's only view of its other sessions. A
-// record-only cortex gets nothing, since its only reader has the session list.
-func TestANewConversationIsRecordedByItsTitle(t *testing.T) {
+// A web conversation leaves nothing in the cortex, not even its title: the
+// cortex is for what arrives (channels, schedules, wakes), and a conversation
+// reaches it only through the agent's own note_to_cortex.
+func TestANewConversationIsNotRecordedInTheCortex(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	reader, _ := saveAgent(db, AgentRecord{Name: "Helper", Owner: "u", OrchestratorPrompt: "p", Cortex: true})
-	recordOnly, _ := saveAgent(db, AgentRecord{Name: "Quiet", Owner: "u", OrchestratorPrompt: "p"})
-	start := func(a AgentRecord, incognito bool) {
-		s := ChatSession{ID: UUIDv4(), AgentID: a.ID, Incognito: incognito,
-			Messages: []ChatMessage{{Role: "user", Content: "what's the weather?"}, {Role: "assistant", Content: "Sunny."}}}
-		saveChatSession(db, s)
-		app := &OrchestrateApp{}
-		app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: "Weather check", Repeat: true}}}
-		ct := &chatTurn{app: app, udb: db, agent: a, user: "u", session: &s, isNewSession: true}
-		ct.titleAfterFirstTurn()
-	}
-	start(reader, false)
-	start(reader, true)
-	start(recordOnly, false)
+	s := ChatSession{ID: UUIDv4(), AgentID: reader.ID,
+		Messages: []ChatMessage{{Role: "user", Content: "what's the weather?"}, {Role: "assistant", Content: "Sunny."}}}
+	saveChatSession(db, s)
+	app := &OrchestrateApp{}
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: "Weather check", Repeat: true}}}
+	ct := &chatTurn{app: app, udb: db, agent: reader, user: "u", session: &s, isNewSession: true}
+	ct.titleAfterFirstTurn()
 	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && !strings.Contains(cortexLines(t, db, reader.ID), "Started") {
+	for time.Now().Before(deadline) {
+		if got, ok := loadChatSession(db, reader.ID, s.ID); ok && got.Title == "Weather check" {
+			break
+		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	time.Sleep(150 * time.Millisecond) // let the other two finish, if they were going to write
-	got := cortexLines(t, db, reader.ID)
-	if strings.Count(got, "Started:") != 1 || !strings.Contains(got, "Conversation: Started: Weather check") {
-		t.Errorf("one line per conversation, by its title, and nothing for a clean-room session:\n%s", got)
-	}
-	if other := cortexLines(t, db, recordOnly.ID); strings.Contains(other, "Started:") {
-		t.Errorf("a record-only cortex should not duplicate the session list:\n%s", other)
+	time.Sleep(100 * time.Millisecond)
+	if got := cortexLines(t, db, reader.ID); strings.Contains(got, "Weather check") || strings.Contains(got, "Started:") {
+		t.Errorf("a web conversation should leave nothing in the cortex:\n%s", got)
 	}
 }
 

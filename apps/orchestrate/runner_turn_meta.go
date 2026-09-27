@@ -100,14 +100,11 @@ func (t *chatTurn) titleAfterFirstTurn() {
 	udb := t.udb
 	agentID := t.agent.ID
 	sessID := t.session.ID
-	// The cortex of an agent that READS it records that a conversation
-	// started, by its title: its recent lines ride into every session, and it
-	// is the only view the agent has of its other conversations. A record-only
-	// cortex is read by nobody but the owner, who has the session list for
-	// exactly this, so writing it there only duplicated the list. Not a
-	// clean-room session (nothing leaves one), not a channel thread (recorded
-	// as it arrives), not the cortex itself.
-	record := t.agent.Cortex && !t.incognitoSession() && !strings.HasPrefix(sessID, "chan:") && sessID != cortexSessionID(agentID)
+	// A web conversation is NOT recorded in the cortex. It used to be, by its
+	// title, on every new session, and the owner read the cortex as a copy of
+	// the session list. The cortex is for what ARRIVES: channel messages,
+	// scheduled runs, wakes. A conversation reaches it only when the agent
+	// judges something worth keeping and says so with note_to_cortex.
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -124,18 +121,6 @@ func (t *chatTurn) titleAfterFirstTurn() {
 			return
 		}
 		title := generateSessionTitle(ctx, llm, s)
-		if record {
-			started := title
-			if started == "" {
-				for _, m := range s.Messages {
-					if m.Role == "user" && !m.Hidden {
-						started = m.Content
-						break
-					}
-				}
-			}
-			appendCortexObs(udb, agentID, "Conversation", cortexKindSession, "Started: "+cortexPointer(started, ""))
-		}
 		if title == "" || title == s.Title {
 			return
 		}
