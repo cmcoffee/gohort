@@ -156,6 +156,10 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 
 	cmd := strings.TrimSpace(StringArg(args, "command_template"))
 	scriptBody := StringArg(args, "script_body")
+	if fixed, ok := NormalizeScriptBody(scriptBody); ok {
+		Log("[temptool] %q: script_body arrived as one escaped line; restored its line breaks", name)
+		scriptBody = fixed
+	}
 	scriptName := strings.TrimSpace(StringArg(args, "script_name"))
 
 	// script_body shortcut: infer command_template when omitted, auto-mint a

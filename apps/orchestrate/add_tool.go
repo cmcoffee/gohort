@@ -258,6 +258,9 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		// template when omitted, ships the script into the workspace, and
 		// returns the names to persist so the tool travels with its code.
 		scriptBody := stringArg(args, "script_body")
+		if fixed, ok := temptool.NormalizeScriptBody(scriptBody); ok {
+			scriptBody = fixed
+		}
 		outCmd, scriptName, canonical, serr := temptool.PrepareScriptBody(
 			sess, name, cmd, scriptBody, strings.TrimSpace(stringArg(args, "script_name")), args["params"],
 		)

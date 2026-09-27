@@ -389,3 +389,48 @@ func unknownGohortName(script string) string {
 	}
 	return ""
 }
+
+// NormalizeScriptBody undoes a script that arrived escaped a second time: the
+// whole program on one line, its line breaks written as the two characters
+// backslash and n. On disk that is a one-line file whose first line is the
+// shebang, so the kernel reads the entire script as the interpreter line.
+// Observed: such a tool re-executed itself until the 5-minute kill, printed
+// nothing and never reached its API, and the syntax check had passed it
+// because Python reads a file that starts with "#" as a single comment.
+//
+// Only a body with no real line break at all, three or more escaped ones, and
+// the opening of a script (a shebang or a Python import) is touched, and it
+// is decoded in one pass, so an escape the script meant to keep (a "\\n"
+// inside a string) comes back as the "\n" it was. Reports whether it changed.
+func NormalizeScriptBody(body string) (string, bool) {
+	if !strings.Contains(body, `\n`) || strings.ContainsAny(body, "\n\r") {
+		return body, false
+	}
+	t := strings.TrimSpace(body)
+	if strings.Count(t, `\n`) < 3 || !(strings.HasPrefix(t, "#!") || strings.HasPrefix(t, "import ") || strings.HasPrefix(t, "from ")) {
+		return body, false
+	}
+	var b strings.Builder
+	for i := 0; i < len(t); i++ {
+		c := t[i]
+		if c != '\\' || i+1 == len(t) {
+			b.WriteByte(c)
+			continue
+		}
+		switch n := t[i+1]; n {
+		case 'n':
+			b.WriteByte('\n')
+		case 't':
+			b.WriteByte('\t')
+		case 'r':
+			b.WriteByte('\r')
+		case '\\', '\'', '"':
+			b.WriteByte(n)
+		default:
+			b.WriteByte(c)
+			b.WriteByte(n)
+		}
+		i++
+	}
+	return b.String() + "\n", true
+}

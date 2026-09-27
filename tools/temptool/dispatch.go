@@ -432,9 +432,15 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 			return "", fmt.Errorf("invalid script filename %q on tool %q (no path separators allowed)", onDiskName, tt.Name)
 		}
 		scriptPath := filepath.Join(workspaceDir, onDiskName)
+		// A tool saved before its escaped script was caught still runs: the
+		// file gets the restored lines, the record keeps what was sent.
+		body := tt.ScriptBody
+		if fixed, ok := NormalizeScriptBody(body); ok {
+			body = fixed
+		}
 		needWrite := true
 		if existing, err := os.ReadFile(scriptPath); err == nil {
-			if string(existing) == tt.ScriptBody {
+			if string(existing) == body {
 				needWrite = false
 			}
 		}
@@ -443,10 +449,10 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 			if err := os.MkdirAll(filepath.Dir(scriptPath), 0700); err != nil {
 				return "", fmt.Errorf("create parent dir for script %q on tool %q: %w", onDiskName, tt.Name, err)
 			}
-			if err := os.WriteFile(scriptPath, []byte(tt.ScriptBody), 0700); err != nil {
+			if err := os.WriteFile(scriptPath, []byte(body), 0700); err != nil {
 				return "", fmt.Errorf("redeploy script %q for tool %q: %w", onDiskName, tt.Name, err)
 			}
-			Debug("[temptool] redeployed script_body to %s for tool %q (%dB)", scriptPath, tt.Name, len(tt.ScriptBody))
+			Debug("[temptool] redeployed script_body to %s for tool %q (%dB)", scriptPath, tt.Name, len(body))
 		}
 		// Translate every LLM-facing script_name reference in the
 		// final command to the canonical on-disk filename. Last-

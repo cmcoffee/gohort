@@ -340,3 +340,25 @@ func TestAHollowShellRunIsNotClean(t *testing.T) {
 		t.Errorf("a whole result is clean, got %q", r)
 	}
 }
+
+// A script sent escaped a second time (one line, its breaks written as the
+// characters backslash and n) is restored: on disk it was a one-line file the
+// kernel read as one long shebang, and the tool re-executed itself until it
+// was killed. Escapes the script meant to keep survive the one-pass decode.
+func TestAnEscapedScriptBodyGetsItsLinesBack(t *testing.T) {
+	flat := `#!/usr/bin/env python3\nimport re\n\nprint(re.sub(r\'\\bx\\b\', \'y\', "a\\nb"))\nprint(\"done\")`
+	got, ok := NormalizeScriptBody(flat)
+	want := "#!/usr/bin/env python3\nimport re\n\nprint(re.sub(r'\\bx\\b', 'y', \"a\\nb\"))\nprint(\"done\")\n"
+	if !ok || got != want {
+		t.Fatalf("restored body:\n%s\nwant:\n%s", got, want)
+	}
+	for _, keep := range []string{
+		"#!/usr/bin/env python3\nprint('a\\nb\\nc\\nd')\n", // real line breaks: already fine
+		`printf 'a\nb\nc\nd'`,                              // a one-liner that means its escapes
+		`#!/bin/sh\necho hi`,                               // too few to be sure
+	} {
+		if _, ok := NormalizeScriptBody(keep); ok {
+			t.Errorf("%q should be left alone", keep)
+		}
+	}
+}

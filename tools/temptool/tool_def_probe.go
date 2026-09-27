@@ -503,7 +503,8 @@ func scriptSyntaxCheck(tt TempTool, sess *ToolSession) (lang, problem string, ch
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	path := filepath.Join(dir, "script"+ext)
-	if werr := os.WriteFile(path, []byte(tt.ScriptBody), 0700); werr != nil {
+	body, _ := NormalizeScriptBody(tt.ScriptBody) // check what dispatch will run
+	if werr := os.WriteFile(path, []byte(body), 0700); werr != nil {
 		return lang, "", false
 	}
 
