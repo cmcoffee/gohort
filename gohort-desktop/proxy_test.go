@@ -140,3 +140,19 @@ func TestPopupShimSavesURLDownloads(t *testing.T) {
 		t.Fatalf("a URL download did not reach the native save, or a refused one said nothing: %v\n%s", err, out)
 	}
 }
+
+// A save with no extension gets one from the type: a kept picture or song
+// saved after a reload arrives named only "image" or "audio".
+func TestASaveNameGetsItsExtension(t *testing.T) {
+	for _, c := range []struct{ name, mime, want string }{
+		{"image", "image/jpeg", "image.jpg"},
+		{"audio", "audio/mpeg", "audio.mp3"},
+		{"song.mp3", "audio/mpeg", "song.mp3"},
+		{"", "image/png", "download.png"},
+		{"notes", "", "notes"},
+	} {
+		if got := nameWithExt(c.name, c.mime); got != c.want {
+			t.Errorf("nameWithExt(%q, %q) = %q, want %q", c.name, c.mime, got, c.want)
+		}
+	}
+}

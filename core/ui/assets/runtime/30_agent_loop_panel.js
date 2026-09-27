@@ -2390,11 +2390,11 @@
     // bytes, an http one for something the app serves), so a replay hook
     // rebuilding a stored message doesn't have to reimplement the look and
     // then drift from it.
-    window.uiRenderMessageImage = function(bubble, src, alt) {
+    window.uiRenderMessageImage = function(bubble, src, alt, name) {
       if (!bubble || !src) return null;
       var img = el('img', {src: src, class: 'ui-agent-msg-image', alt: alt || 'image'});
       img.addEventListener('click', function() { openImageLightbox(src); });
-      agentMsgAttachmentBox(bubble).appendChild(img);
+      agentMsgAttachmentBox(bubble).appendChild(withDownload(img, src, name || mediaName('image', src)));
       return img;
     };
 
@@ -2407,10 +2407,10 @@
       opts = opts || {};
       if (!bubble || !opts.src) return null;
       var node;
-      if (opts.kind === 'audio') {
-        node = el('audio', {src: opts.src, class: 'ui-agent-msg-audio', controls: true, preload: 'metadata'});
-      } else if (opts.kind === 'video') {
-        node = el('video', {src: opts.src, class: 'ui-agent-msg-video', controls: true, preload: 'metadata'});
+      if (opts.kind === 'audio' || opts.kind === 'video') {
+        node = el(opts.kind, {src: opts.src, class: 'ui-agent-msg-' + opts.kind, controls: true, preload: 'metadata'});
+        agentMsgAttachmentBox(bubble).appendChild(withDownload(node, opts.src, opts.name || mediaName(opts.kind, opts.src)));
+        return node;
       } else {
         var name = opts.name || 'file';
         var size = humanBytes(opts.size);
@@ -3963,7 +3963,7 @@
       var src = 'data:' + mime + ';base64,' + b64;
       var img = el('img', {src: src, class: 'ui-agent-msg-image', alt: 'image'});
       img.addEventListener('click', function() { openImageLightbox(src); });
-      agentMsgAttachmentBox(bubble).appendChild(img);
+      agentMsgAttachmentBox(bubble).appendChild(withDownload(img, src, mediaName('image', src)));
     }
 
     // sniffAudioMime names the audio type of a base64 payload from its first
@@ -3994,10 +3994,32 @@
 
     function renderAgentVideo(bubble, b64) {
       var audio = sniffAudioMime(b64);
+      var src = 'data:' + (audio || 'video/mp4') + ';base64,' + b64;
       var node = audio
-        ? el('audio', {src: 'data:' + audio + ';base64,' + b64, class: 'ui-agent-msg-audio', controls: true})
-        : el('video', {src: 'data:video/mp4;base64,' + b64, class: 'ui-agent-msg-video', controls: true});
-      agentMsgAttachmentBox(bubble).appendChild(node);
+        ? el('audio', {src: src, class: 'ui-agent-msg-audio', controls: true})
+        : el('video', {src: src, class: 'ui-agent-msg-video', controls: true});
+      agentMsgAttachmentBox(bubble).appendChild(withDownload(node, src, mediaName(audio ? 'audio' : 'video', src)));
+    }
+
+    // withDownload puts a Download link under a picture, a sound or a video.
+    // They are shown, not linked, so without it there was no way to keep one:
+    // a desktop webview has no save-as on an image or a player, and the
+    // desktop app turns any <a download> into its native save dialog.
+    function withDownload(node, src, name) {
+      var link = el('a', {class: 'ui-agent-msg-dl', href: src, download: name, title: 'Download ' + name}, ['\u2B07 Download']);
+      return el('div', {class: 'ui-agent-msg-media'}, [node, link]);
+    }
+
+    // mediaName names a delivered picture, sound or video for saving: the kind
+    // plus the extension its type gives. A src with no type in it (a kept
+    // file served by URL) gets the kind alone, and the browser or the desktop
+    // app adds the extension from what the server sends.
+    function mediaName(kind, src) {
+      var m = /^data:([^;,]+)/.exec(String(src || ''));
+      var ext = m ? ({'image/png':'png','image/jpeg':'jpg','image/gif':'gif','image/webp':'webp',
+        'audio/mpeg':'mp3','audio/aac':'aac','audio/ogg':'ogg','audio/flac':'flac','audio/wav':'wav',
+        'audio/mp4':'m4a','video/mp4':'mp4'})[m[1].toLowerCase()] : '';
+      return kind + (ext ? '.' + ext : '');
     }
 
     function renderAgentFile(bubble, ev) {
@@ -4927,7 +4949,7 @@
             (function(srcSnapshot) {
               var img = el('img', {src: srcSnapshot, class: 'ui-agent-msg-image', alt: a.name || 'image'});
               img.addEventListener('click', function() { openImageLightbox(srcSnapshot); });
-              agentMsgAttachmentBox(userBubble).appendChild(img);
+              agentMsgAttachmentBox(userBubble).appendChild(withDownload(img, srcSnapshot, a.name || mediaName('image', srcSnapshot)));
             })(s);
           }
           images.push(b64);

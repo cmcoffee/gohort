@@ -4797,6 +4797,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border: 1px solid var(--border); display: block;
 }
 .ui-agent-msg-audio { display: block; width: 100%; max-width: 420px; }
+/* A delivered picture, sound or video with its Download link under it. */
+.ui-agent-msg-media { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; max-width: 100%; }
+.ui-agent-msg-dl {
+  font-size: 0.78rem; color: var(--text-mute); text-decoration: none;
+  padding: 0.1rem 0.2rem; border-radius: 4px;
+}
+.ui-agent-msg-dl:hover { color: var(--accent, #4f8cff); text-decoration: underline; }
 /* Full-screen lightbox for image zoom. Pinned to viewport, dims the
  * background, click-anywhere-or-Esc to dismiss. Used by both user-
  * attached images (rendered in user bubbles) and tool-delivered

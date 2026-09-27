@@ -38,10 +38,12 @@ import (
 	_ "image/jpeg"
 	"image/png"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	goruntime "runtime"
 	"strings"
 	"time"
@@ -501,7 +503,7 @@ func (a *App) openURL(rawURL string) error {
 }
 
 func (a *App) SaveAttachment(name, mimeType, b64 string) pick_result {
-	_ = mimeType // reserved for a future extension-default; bytes write the same regardless
+	name = nameWithExt(name, mimeType)
 	if a.ctx == nil {
 		return pick_result{Error: "desktop not ready"}
 	}
@@ -682,4 +684,34 @@ func (a *App) forgeClipboard() (string, error) {
 		return "", err
 	}
 	return string(body), nil
+}
+
+// nameWithExt gives a save name its extension from the type when it has none.
+// A picture or a song kept by the server and saved again after a reload
+// arrives as "image" or "audio": its type is known only from what the server
+// sent, and a file saved without an extension opens in nothing.
+func nameWithExt(name, mimeType string) string {
+	if name == "" {
+		name = "download"
+	}
+	if filepath.Ext(name) != "" {
+		return name
+	}
+	mt := strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType, ";", 2)[0]))
+	if ext, ok := preferredExt[mt]; ok {
+		return name + ext
+	}
+	if exts, err := mime.ExtensionsByType(mt); err == nil && len(exts) > 0 {
+		return name + exts[0]
+	}
+	return name
+}
+
+// preferredExt is the usual extension for the common types, where the
+// system table's first answer is an odd one (".jpe", ".mp2").
+var preferredExt = map[string]string{
+	"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp",
+	"audio/mpeg": ".mp3", "audio/mp4": ".m4a", "audio/wav": ".wav", "audio/x-wav": ".wav",
+	"audio/ogg": ".ogg", "audio/flac": ".flac", "audio/aac": ".aac", "video/mp4": ".mp4",
+	"application/pdf": ".pdf", "text/plain": ".txt", "text/html": ".html",
 }
