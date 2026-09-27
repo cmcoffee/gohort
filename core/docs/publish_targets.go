@@ -64,6 +64,24 @@ func PublishTargetSpecs(ctx context.Context, user string) []PublishTargetSpec {
 	return out
 }
 
+var publishTargetsSetupURL string
+
+// SetPublishTargetsSetupURL records where a person makes publishing targets,
+// set by the app that owns that page.
+func SetPublishTargetsSetupURL(u string) {
+	publishMu.Lock()
+	publishTargetsSetupURL = u
+	publishMu.Unlock()
+}
+
+// PublishTargetsSetupURL is where a person makes publishing targets, for a
+// publish surface with none to offer; "" when no app has said.
+func PublishTargetsSetupURL() string {
+	publishMu.RLock()
+	defer publishMu.RUnlock()
+	return publishTargetsSetupURL
+}
+
 // FieldOptionSource is a destination that can fetch a question's options
 // live (a field with OptionsFrom) when a form opens.
 type FieldOptionSource interface {

@@ -9,12 +9,19 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/docs"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-const targetsAPI = "/publish/api/targets"
+const (
+	targetsAPI          = "/publish/api/targets"
+	targetsSectionTitle = "Publishing targets"
+)
 
 func init() {
+	// Extensions deep-links a section by its title's slug, so a surface with
+	// no targets to offer can send the person straight to where one is made.
+	docs.SetPublishTargetsSetupURL("/extensions#" + ui.SectionSlug(targetsSectionTitle))
 	RegisterExtensionSection(ExtensionSectionEntry{
 		Build: targetsExtensionSection,
 		Head:  targetPillsHead,
@@ -96,7 +103,7 @@ func targetsExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 		}
 	}
 	return ui.Section{
-		Title:    "Publishing targets",
+		Title:    targetsSectionTitle,
 		Wide:     true,
 		Subtitle: "Places your documents can be published: one of your API integrations, or an agent, plus how to publish there.",
 		Detail: "Each target appears in Scribe's Publish list with its own short form. Publishing hands the document, your instruction and the form's answers to a pass that holds only that target's integration, and records where it landed so Republish updates the same place. " +

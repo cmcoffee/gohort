@@ -155,6 +155,7 @@ func (T *Scribe) handlePublishState(w http.ResponseWriter, r *http.Request, udb 
 		"published":    rows,
 		"targets":      targets,
 		"other_count":  others,
+		"targets_url":  docs.PublishTargetsSetupURL(),
 		"running":      job.Target != "" && !job.Done,
 	})
 }

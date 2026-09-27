@@ -714,8 +714,16 @@ const guidePublishAction = `function(ctx){
       fetch('publish/state?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
         window.uiOpenSimpleModal({title:'Publish guide', width:'760px', mount: function(body){
           var targets = (d && d.targets) || [];
+          // Where publishing targets are made, opened in a new tab so this
+          // guide stays put; reopening Publish picks up the new target.
+          function setupLink(label){
+            if (!d || !d.targets_url) return null;
+            return el('a', {class:'guide-pub-link', href: d.targets_url, target:'_blank', rel:'noopener', text: label});
+          }
           if (!d || (!d.configured && !targets.length)){
-            body.appendChild(el('p', {class:'guide-kn-intro', text:'Nowhere to publish yet. Make a publishing target from one of your API integrations in Extensions, Publishing targets, or ask an admin to set up a destination in Admin, Publishing.'}));
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'Nowhere to publish yet. Make a publishing target from one of your API integrations or agents, or ask an admin to set up a destination in Admin, Publishing.'}));
+            var first = setupLink('Set up a publishing target in Extensions');
+            if (first) body.appendChild(first);
             return;
           }
           if (!d.can_publish){
@@ -875,6 +883,11 @@ const guidePublishAction = `function(ctx){
                 b.addEventListener('click', function(){ showForm(t); });
                 view.appendChild(b);
               });
+            } else {
+              view.appendChild(el('div', {class:'guide-set-head', text:'Publish to'}));
+              view.appendChild(el('p', {class:'guide-kn-intro', text:'You have no publishing targets of your own yet: a place you publish to often, set up once with its own short form.'}));
+              var setup = setupLink('Set one up in Extensions');
+              if (setup) view.appendChild(setup);
             }
             // Everything else (an admin's Confluence, a webhook, an agent
             // destination) goes through the Publisher, which asks where.

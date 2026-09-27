@@ -161,3 +161,11 @@ func TestLiveOptionsAreReadFromTheAnswer(t *testing.T) {
 		t.Error("an unknown question must be refused")
 	}
 }
+
+// A publish surface with no targets links to where they are made: the
+// Extensions section, by the slug its rail answers to.
+func TestTheSetupLinkLandsOnTheTargetsSection(t *testing.T) {
+	if got := docs.PublishTargetsSetupURL(); got != "/extensions#publishing-targets" {
+		t.Errorf("setup link: got %q", got)
+	}
+}
