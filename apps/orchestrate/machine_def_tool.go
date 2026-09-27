@@ -46,7 +46,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"phase":       {Type: "string", Description: "(update_phase) Which step to change. Only the fields you pass are written; every other field of that step, and every other step, is left exactly as it was."},
 				"tools": {
 					Type:        "array",
-					Description: "(update_phase) Exact tool names this step may reach, applied on top of its reach. Pass an EMPTY array to clear the list, which makes the step inherit the whole catalog again, that is the only way to say it, since an omitted list and an empty one are the same value once parsed. Note that a non-empty list drops framework-provided tools it does not name (knowledge_search, fetch_knowledge_doc, ask_user), so name those here if the step's prompt calls for them.",
+					Description: "(update_phase) Exact tool names this step may reach, applied on top of its reach. Leave it empty unless the person named these tools or agreed when you asked: empty keeps everything the agent has, and the agent picks the tool when the step runs. Pass an EMPTY array to clear the list, which makes the step inherit the whole catalog again, that is the only way to say it, since an omitted list and an empty one are the same value once parsed. Note that a non-empty list drops framework-provided tools it does not name (knowledge_search, fetch_knowledge_doc, ask_user), so name those here if the step's prompt calls for them.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"deny": {
@@ -215,7 +215,8 @@ reach      how much of the agent's catalog this phase may touch: "all" = all of 
            them, so a name list written here describes one deployment and misdescribes the next.
            A capability travels.
 tools      what this phase may use, BY NAME, on top of whatever reach allowed. Empty INHERITS
-           whatever the reach allowed. Naming any tool narrows to those, plus the workflow controls,
+           whatever the reach allowed, and empty is the default to keep: name tools only when the
+           person named them or agreed when asked, and let the agent choose at run time. Naming any tool narrows to those, plus the workflow controls,
            which never go away, plus whatever the agent's attached SOURCES grant, which attaching
            is what granted; name one of a source's own tools and the list governs those too. For a
            phase that only decides or reshapes what it was given, list the single name "__none__":
