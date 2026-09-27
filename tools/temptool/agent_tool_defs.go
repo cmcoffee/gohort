@@ -614,6 +614,14 @@ func toolRunFailure(out string, err error) (failed bool, why string) {
 	}
 	if err != nil {
 		e := strings.ToLower(err.Error())
+		// Refused before it ran for what the CALL left out: the tool never
+		// ran, so it cannot be the tool that is broken, and the error already
+		// says what to pass. Counted, two empty calls told an agent the tool
+		// "looks broken" and to offer the user a Builder fix for its own
+		// missing argument.
+		if strings.Contains(e, "missing required arg") || (strings.Contains(e, "required arg") && strings.Contains(e, "is empty")) {
+			return false, ""
+		}
 		if strings.Contains(e, "timeout") || strings.Contains(e, "did not respond") || strings.Contains(e, "timed out") {
 			return true, failureBroke
 		}

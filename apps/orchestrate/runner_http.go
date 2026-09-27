@@ -638,6 +638,19 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		sse.Send(map[string]any{"kind": "error", "text": "plan: " + planErr.Error()})
 		return
 	}
+	// A cancelled turn keeps what it did. A cancel reaches here as no error
+	// and no content, so it went on to a stand-in "Respond directly" step
+	// whose loop saw the cancel and returned, saving nothing: eleven rounds
+	// and ten tool calls, tool edits among them, vanished, and the next turn
+	// could neither see nor explain work it had done.
+	cancelled := func() {
+		persistIncompleteTurnTrace(&sess, udb, turn, "it was cancelled")
+		sse.Send(map[string]any{"kind": "error", "text": "cancelled"})
+	}
+	if ctx.Err() != nil && directReply == "" && question == "" {
+		cancelled()
+		return
+	}
 	if directReply != "" {
 		// runPlan already emitted the bubble live — either streamed inline during
 		// the agent loop, or promoted post-loop via emitCapturedAsBubble (which
@@ -725,7 +738,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	for i := range steps {
 		select {
 		case <-ctx.Done():
-			sse.Send(map[string]any{"kind": "error", "text": "cancelled"})
+			cancelled()
 			return
 		default:
 		}
@@ -807,7 +820,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			for i := len(steps) - len(gaps); i < len(steps); i++ {
 				select {
 				case <-ctx.Done():
-					sse.Send(map[string]any{"kind": "error", "text": "cancelled"})
+					cancelled()
 					return
 				default:
 				}

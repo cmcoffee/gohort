@@ -293,7 +293,10 @@ func TestAFailedToolCarriesTheHostsAdvice(t *testing.T) {
 		{"HTTP 503 Service Unavailable\n{}", nil, true, failureBroke},
 		{"HTTP 400 Bad Request\n{}", nil, true, ""},
 		{"", errors.New("gen.example.com did not respond within 30s (timeout)"), true, failureBroke},
-		{"", errors.New("missing required arg"), true, ""},
+		{"", errors.New("bad credential"), true, ""},
+		// Refused for what the call left out: the tool never ran.
+		{"", errors.New(`missing required arg "input_text" (provided: [])`), false, ""},
+		{"", errors.New(`required arg "input_text" is empty (provide a value, not an empty string)`), false, ""},
 		// A provider refusing the content is the request, not the tool.
 		{"HTTP 400 Bad Request\n[The provider REFUSED THE CONTENT of the request ...]\n{}", nil, false, ""},
 		{"Error: API returned 400: [The provider REFUSED THE CONTENT ...]\n[exit: exit status 1]", nil, false, ""},
