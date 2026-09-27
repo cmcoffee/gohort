@@ -64,6 +64,10 @@ func PublishTargetSpecs(ctx context.Context, user string) []PublishTargetSpec {
 	return out
 }
 
+// MCPIntegrationPrefix marks a publishing target's integration as an MCP
+// server ("mcp:<server>") rather than an API credential.
+const MCPIntegrationPrefix = "mcp:"
+
 var publishTargetsSetupURL string
 
 // SetPublishTargetsSetupURL records where a person makes publishing targets,

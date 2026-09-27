@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -56,9 +57,9 @@ func registerAgentPublisher(app *OrchestrateApp) {
 
 // credentialPublisherPrompt is the whole brief of a credential-backed publish:
 // the target's own instruction arrives as the message, with the document.
-const credentialPublisherPrompt = `You publish one document through one API integration, following the instruction you are given, and then report where it landed.
+const credentialPublisherPrompt = `You publish one document through one integration (an API, or an MCP server's tools), following the instruction you are given, and then report where it landed.
 
-You have two tools: the integration's API, and report_published. Use the API to do exactly what the instruction says with this document (create the post, page or item it describes, with the title and the answers you are given), then call report_published with the address of what you made. If the instruction or the answers leave something the API needs unclear, pick the plainest reading and say which in the note. If the API refuses, try to correct the request from what it says; if you cannot, call report_published with ok=false and a note saying plainly what failed. Do not report success you did not see in an API response.`
+You have the integration's tools and report_published. Use them to do exactly what the instruction says with this document (create the post, page or item it describes, with the title and the answers you are given), then call report_published with the address of what you made. If the instruction or the answers leave something the API needs unclear, pick the plainest reading and say which in the note. If the API refuses, try to correct the request from what it says; if you cannot, call report_published with ok=false and a note saying plainly what failed. Do not report success you did not see in an API response.`
 
 // registerCredentialPublisher installs the closure core/docs calls when a
 // publishing target is an API integration rather than an agent. The run holds
@@ -74,18 +75,10 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 			return "", "", errors.New("orchestrate runtime not initialized")
 		}
 		sess := &ToolSession{Username: user}
-		var api AgentToolDef
-		found := false
-		for _, td := range Secure().BuildTools(sess) {
-			if td.Tool.Name == "fetch_url_"+credential {
-				api, found = td, true
-				break
-			}
+		tools, err := publishIntegrationTools(sess, credential)
+		if err != nil {
+			return "", "", err
 		}
-		if !found {
-			return "", "", fmt.Errorf("the API integration %q cannot be used here: it does not exist for you, is disabled, or is secured to the tools that declare it", credential)
-		}
-		api.NeedsConfirm, api.Confirmation = false, nil
 		var url, note string
 		reported, ok := false, false
 		report := AgentToolDef{
@@ -109,7 +102,7 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 		}
 		resp, _, err := app.RunAgentLoop(ctx, []Message{{Role: "user", Content: instruction}}, AgentLoopConfig{
 			SystemPrompt: credentialPublisherPrompt,
-			Tools:        []AgentToolDef{api, report},
+			Tools:        append(tools, report),
 			MaxRounds:    12,
 		})
 		if err != nil {
@@ -128,3 +121,40 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 		return note, url, nil
 	})
 }
+
+// publishIntegrationTools is what a credential-backed publish may hold: the
+// credential's own API tool, or, for "mcp:<server>", that server's tools. The
+// confirmation on each is lifted (see registerCredentialPublisher). An MCP
+// server's tools that delete, remove or archive are left out: a publish
+// creates and updates, and a server's full toolset can do far more than that.
+func publishIntegrationTools(sess *ToolSession, credential string) ([]AgentToolDef, error) {
+	if server, isMCP := strings.CutPrefix(credential, docs.MCPIntegrationPrefix); isMCP {
+		cfg, ok := MCP().Load(server)
+		if !ok || !cfg.Enabled || !cfg.ExposeTools {
+			return nil, fmt.Errorf("the MCP server %q cannot be used here: it is not set up, is switched off, or does not offer its tools to agents", server)
+		}
+		var out []AgentToolDef
+		for _, ct := range FilterChatTools(BlockedTools) {
+			c, ok := ct.(CategorizedTool)
+			if !ok || c.Category() != MCPToolCategory(server) || publishWithheldRe.MatchString(ct.Name()) {
+				continue
+			}
+			td := ChatToolToAgentToolDefWithSession(ct, sess)
+			td.NeedsConfirm, td.Confirmation = false, nil
+			out = append(out, td)
+		}
+		if len(out) == 0 {
+			return nil, fmt.Errorf("the MCP server %q has no tools to publish with yet: it may not have connected", server)
+		}
+		return out, nil
+	}
+	for _, td := range Secure().BuildTools(sess) {
+		if td.Tool.Name == "fetch_url_"+credential {
+			td.NeedsConfirm, td.Confirmation = false, nil
+			return []AgentToolDef{td}, nil
+		}
+	}
+	return nil, fmt.Errorf("the API integration %q cannot be used here: it does not exist for you, is disabled, or is secured to the tools that declare it", credential)
+}
+
+var publishWithheldRe = regexp.MustCompile(`(?i)(?:^|[_.\-])(?:delete|remove|archive|purge|trash|destroy)`)

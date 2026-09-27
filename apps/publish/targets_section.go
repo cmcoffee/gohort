@@ -29,8 +29,9 @@ func init() {
 	})
 }
 
-// credentialChoices are the API integrations a user can publish through:
-// their own and the shared ones they may use, by name.
+// credentialChoices are the integrations a user can publish through: their own
+// API credentials and the shared ones they may use, by name, then the MCP
+// servers that offer their tools to agents, as "mcp:<server>".
 func credentialChoices(user string) []ui.SelectOption {
 	seen := map[string]bool{}
 	var names []string
@@ -50,6 +51,11 @@ func credentialChoices(user string) []ui.SelectOption {
 	for _, n := range names {
 		out = append(out, ui.SelectOption{Value: n, Label: n})
 	}
+	for _, m := range MCP().List() {
+		if m.Enabled && m.ExposeTools {
+			out = append(out, ui.SelectOption{Value: docs.MCPIntegrationPrefix + m.Name, Label: m.Name + " (MCP server)"})
+		}
+	}
 	return out
 }
 
@@ -61,13 +67,13 @@ func targetFormFields(user string) []ui.FormField {
 			Help: "What you pick in Scribe's Publish list."},
 		{Field: "desc", Label: "What it is", Type: "text", Placeholder: "Posts go up as drafts for review"},
 		{Field: "uses", Label: "Publishes through", Type: "select", Options: []ui.SelectOption{
-			{Value: "api", Label: "One of your API integrations"},
+			{Value: "api", Label: "One of your integrations (API or MCP)"},
 			{Value: "agent", Label: "One of your agents"},
 		}},
-		{Field: "credential", Label: "API integration", Type: "select", ShowWhen: "uses:api||!uses",
+		{Field: "credential", Label: "Integration", Type: "select", ShowWhen: "uses:api||!uses",
 			Options: credentialChoices(user),
-			Help:    "A publish holds only this integration's API: it cannot reach anything else.",
-			Detail:  "Set integrations up under API credentials above. The integration's own address and allowed paths still apply."},
+			Help:    "A publish holds only this integration: it cannot reach anything else.",
+			Detail:  "Set API integrations up under API credentials above; their own address and allowed paths still apply. An MCP server is one an administrator connected with its tools offered to agents; a publish holds only that server's tools, without any that delete, remove or archive."},
 		{Field: "agent", Label: "Agent", Type: "select", ShowWhen: "uses:agent", Options: AgentNameOptions(user),
 			Help: "For a place with no API of its own: the agent is handed the document and your instruction."},
 		{Field: "instructions", Label: "How to publish there", Type: "textarea", Rows: 5, Required: true,

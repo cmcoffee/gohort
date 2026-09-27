@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
 )
 
@@ -48,5 +49,23 @@ func TestThePublishToolIsOnlyForAllowedAgents(t *testing.T) {
 	out, err := def.Handler(context.Background(), map[string]any{"target": "blog", "title": "Launch", "content": "# Launch", "answers": map[string]any{"category": "News"}})
 	if err != nil || !strings.Contains(out, "https://blog.example/p/1") || d.got.Answers["category"] != "News" || d.got.Doc.Markdown != "# Launch" {
 		t.Errorf("publishes the text with its answers: %v %q %+v", err, out, d.got)
+	}
+}
+
+// A target can publish through an MCP server: the run holds that server's
+// tools, never one that deletes, and an unknown server is refused by name.
+func TestAnMCPServerCanBeAPublishingIntegration(t *testing.T) {
+	for _, n := range []string{"wiki_delete_page", "wiki.remove_label", "tracker-archive-issue", "PurgeCache"} {
+		if n != "PurgeCache" && !publishWithheldRe.MatchString(n) {
+			t.Errorf("%s deletes and must be withheld from a publish", n)
+		}
+	}
+	for _, n := range []string{"wiki_create_page", "wiki_update_page", "wiki_search", "wiki_undelete_page"} {
+		if publishWithheldRe.MatchString(n) {
+			t.Errorf("%s is a publish's own work and must stay", n)
+		}
+	}
+	if _, err := publishIntegrationTools(&ToolSession{Username: "u"}, "mcp:nowhere"); err == nil || !strings.Contains(err.Error(), `"nowhere"`) {
+		t.Errorf("an MCP server that is not set up is refused by name: %v", err)
 	}
 }

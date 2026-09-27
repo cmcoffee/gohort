@@ -436,6 +436,8 @@ func (T *PublishApp) liveOptions(ctx context.Context, user string, t Target, fie
 		return nil, fmt.Errorf("that question has no options to fetch")
 	case t.Uses != "api":
 		return nil, fmt.Errorf("options come from an API integration, and %s publishes through an agent", t.Label)
+	case strings.HasPrefix(t.Credential, docs.MCPIntegrationPrefix):
+		return nil, fmt.Errorf("options come from an API integration's GET, and %s publishes through an MCP server: list them in Options instead", t.Label)
 	}
 	out, err := Secure().DispatchToolCallArgs(&ToolSession{Username: user}, t.Credential,
 		map[string]any{"url": from[0], "method": "GET", "__pipe_following": true})
