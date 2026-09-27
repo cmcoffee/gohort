@@ -3,6 +3,8 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // The live failure, 2026-09-03: an agent three messages into a session with no
@@ -157,4 +159,22 @@ func TestARecallIDFromThisTurnCountsAndASlipIsNamed(t *testing.T) {
 	if err := turn.inventedRecallIDError("doc:0795eddd-1540-4171-866e-9ddefc22"); strings.Contains(err.Error(), real) {
 		t.Errorf("a near id of another kind is not suggested: %v", err)
 	}
+}
+
+// The recall score log names every candidate with its score and what became
+// of it, so the operator floor can be set from numbers instead of a guess.
+func TestRecallScoreLogNamesEachCandidate(t *testing.T) {
+	l := recallScoreLog{query: "gohart", layer: "knowledge/finding"}
+	l.add(SearchHit{Score: 0.3812, ReportID: "765f85f4", Title: "It's cowardly to be a billionaire with a doomsday bunker."}, "shown")
+	l.add(SearchHit{Score: 0.2104, ReportID: "f5d6c192", Title: "Executive Summary"}, "below floor")
+	if len(l.entries) != 2 {
+		t.Fatalf("one entry per candidate: %v", l.entries)
+	}
+	if !strings.HasPrefix(l.entries[0], "0.381 765f85f4 ") || !strings.HasSuffix(l.entries[0], "(shown)") || !strings.Contains(l.entries[0], "...") {
+		t.Errorf("score, id, a clipped title and its fate: %q", l.entries[0])
+	}
+	if !strings.Contains(l.entries[1], "(below floor)") {
+		t.Errorf("a dropped candidate says why: %q", l.entries[1])
+	}
+	l.emit() // must not panic
 }

@@ -367,11 +367,18 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 		if len(facts) > 0 {
 			ents := ListGraphEntities(t.udb, factsNamespace(t.agent.ID))
 			var b strings.Builder
+			pinScores := recallScoreLog{query: query, layer: "pinned (shown only; the fact search drops the rest)"}
 			for _, f := range facts {
+				score := float32(-1)
+				if len(qVec) > 0 && len(f.Vector) == len(qVec) {
+					score = Cosine(qVec, f.Vector)
+				}
+				pinScores.add(SearchHit{Score: score, ReportID: "fact:" + f.ID, Title: f.Note}, "shown")
 				pinnedNotes = append(pinnedNotes, f.Note)
 				fmt.Fprintf(&b, "- [pinned] %s%s%s\n  id: fact:%s\n",
 					strings.TrimSpace(f.Note), factEntityNudge(ents, f.Note), FactStalenessNote(f, now), f.ID)
 			}
+			pinScores.emit()
 			sections = append(sections, strings.TrimRight(b.String(), "\n"))
 		} else if hole := explainRetiredHole(t.udb, factsNamespace(t.agent.ID), query); hole != "" {
 			sections = append(sections, "[pinned] "+hole)
@@ -397,25 +404,34 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 		defer cancel()
 		hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(scope), t.agent.ID, topic, query, qVec, perLayer*2, t.skillsActive, t.agent.AttachedCollections, scope)
 		var findings, knowledge []SearchHit
+		scores := recallScoreLog{query: query, layer: "knowledge/finding"}
 		for _, h := range hits {
 			if h.Score < RelevanceFloor {
+				scores.add(h, "below floor")
 				continue
 			}
 			if chunkProvenance(h.Source, h.ReportID) == "derived" {
 				if !layers["finding"] {
+					scores.add(h, "finding layer off")
 					continue // Reference layer not searched this turn
 				}
 				// Cross-layer dedup: content saved as BOTH a pinned fact and a
 				// finding otherwise injects twice in one recall. The pinned
 				// copy wins (it carries the fact id + staleness affordances).
 				if findingMatchesPinned(h.Text, pinnedNotes) {
+					scores.add(h, "same as a pinned note")
 					continue
 				}
+				scores.add(h, "finding")
 				findings = append(findings, h) // collect all; recency re-rank + cap below
 			} else if layers["knowledge"] && len(knowledge) < perLayer {
+				scores.add(h, "shown")
 				knowledge = append(knowledge, h)
+			} else {
+				scores.add(h, "past the per-layer cap")
 			}
 		}
+		scores.emit()
 		// Findings (self-saved reference material) get recency-reordered so a
 		// fresher finding outranks an equally-relevant older one; curated
 		// [knowledge] is authoritative source-of-truth and is left as ranked.
@@ -440,10 +456,14 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 		source := operatorLCMSource(t.agent.ID, cortexSessionID(t.agent.ID))
 		hh := SearchRecallVec(t.udb, source, query, qVec, perLayer)
 		var b strings.Builder
+		scores := recallScoreLog{query: query, layer: "history"}
+		defer scores.emit()
 		for _, h := range hh {
 			if h.Score < RelevanceFloor {
+				scores.add(h, "below floor")
 				continue
 			}
+			scores.add(h, "shown")
 			label := h.Title
 			if label == "" {
 				label = h.Section
@@ -991,4 +1011,39 @@ func min3(a, b, c int) int {
 		a = c
 	}
 	return a
+}
+
+// recallScoreLog writes one debug line per recall layer: every candidate with
+// its score and what became of it, and the floors that applied. Without it
+// the only way to set the operator floor (Admin, Retrieval, Recall min score)
+// was to guess: recall showed what it kept and never how close the rest came,
+// and a made-up word pulled unrelated documents through with no number to
+// say by how much.
+type recallScoreLog struct {
+	query, layer string
+	entries      []string
+}
+
+func (l *recallScoreLog) add(h SearchHit, fate string) {
+	label := strings.TrimSpace(h.Title)
+	if label == "" {
+		label = strings.TrimSpace(h.Section)
+	}
+	if r := []rune(label); len(r) > 48 {
+		label = string(r[:45]) + "..."
+	}
+	l.entries = append(l.entries, fmt.Sprintf("%.3f %s %q (%s)", h.Score, h.ReportID, label, fate))
+}
+
+func (l *recallScoreLog) emit() {
+	if len(l.entries) == 0 {
+		return
+	}
+	floors := fmt.Sprintf("floor %.2f", RelevanceFloor)
+	if ms := RecallMinScore(); ms > 0 && l.layer != "history" {
+		// Applied inside the knowledge search, before these candidates: what
+		// fell under it is already gone and not listed here.
+		floors += fmt.Sprintf(", operator floor %.2f (applied first)", ms)
+	}
+	Debug("[recall] %q %s, %s: %s", firstLineSnippet(l.query, 80), l.layer, floors, strings.Join(l.entries, "; "))
 }
