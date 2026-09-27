@@ -32,6 +32,7 @@ const (
 	correctionFinishCheck     = "finish-check"
 	correctionRoleBreak       = "role-break"
 	correctionMalformedCall   = "malformed-call"
+	correctionUnfinished      = "unfinished-reply"
 )
 
 const (
@@ -965,6 +966,83 @@ func (lr *loopRun) finalRoundMalformedCall() loopAction {
 	lr.history = append(lr.history, Message{
 		Role:    "user",
 		Content: frameworkNoticeTag + "Your last tool call could not be read by the model provider (it was malformed) and was dropped, so it did not run and the user has seen only the text before it. Make the call again now, with arguments that match the tool's schema exactly: valid JSON, only the listed fields, the right types.",
+	})
+	return actContinue
+}
+
+// replyEndsMidSentence reports a reply whose last line visibly stops before
+// it is done: a lead-in colon with nothing after it, a dangling comma or
+// bracket, or a last word no sentence ends on ("the", "to", "your"). One
+// structural test for what phrase lists kept missing: "I need a couple more
+// details:" ended a Builder turn and matched none of them.
+//
+// A missing full stop alone is NOT a sign: chat personas drop it ("lol that's
+// great", "Sounds good"), and those are complete. Nor is anything that ends a
+// block by design: a code fence, a list item, a heading, a table row, a quote,
+// a bare link. A colon that hands the next move to the user ("Paste the error
+// here:") or asks them something is a finished turn.
+func replyEndsMidSentence(reply string) bool {
+	r := strings.TrimSpace(reply)
+	if r == "" || strings.Count(r, "```")%2 == 1 {
+		return false // empty, or cut inside a code block: other guards' cases
+	}
+	last := r
+	if i := strings.LastIndexByte(r, '\n'); i >= 0 {
+		last = strings.TrimSpace(r[i+1:])
+	}
+	if last == "" || strings.HasPrefix(last, "```") || structuralLineRe.MatchString(last) {
+		return false
+	}
+	lower := strings.ToLower(strings.ReplaceAll(last, "\u2019", "'"))
+	if strings.HasSuffix(last, ":") {
+		return !userDirectiveRe.MatchString(lower) && !asksTheUser(lower)
+	}
+	switch last[len(last)-1] {
+	case ',', ';', '(', '[', '{', '-', '/', '&', '+', '=':
+		return true
+	}
+	fields := strings.Fields(lower)
+	if len(fields) < 3 {
+		return false // a short sign-off is a reply
+	}
+	return danglingWords[strings.Trim(fields[len(fields)-1], "*_`\"'")]
+}
+
+// structuralLineRe matches a last line that legitimately ends without
+// punctuation: a list item, heading, table row, quote, or bare link.
+var structuralLineRe = regexp.MustCompile(`^(?:[-*+] |\d+[.)] |#|\||>|https?://\S+$)`)
+
+// danglingWords are words no sentence ends on.
+var danglingWords = map[string]bool{
+	"the": true, "a": true, "an": true, "to": true, "and": true, "or": true, "but": true,
+	"of": true, "for": true, "with": true, "your": true, "my": true, "our": true, "their": true,
+	"its": true, "is": true, "are": true, "was": true, "were": true, "be": true, "that": true,
+	"which": true, "who": true, "in": true, "on": true, "at": true, "by": true, "from": true,
+	"as": true, "if": true, "so": true, "than": true, "because": true, "into": true,
+	"about": true, "via": true, "like": true, "such": true, "including": true,
+}
+
+// finalRoundUnfinishedReply asks for the rest of a reply that visibly stops
+// mid-sentence (see replyEndsMidSentence). Runs after the announcement guards,
+// which already handle a colon that promised a tool call.
+func (lr *loopRun) finalRoundUnfinishedReply() loopAction {
+	if lr.truncatedLead.Len() > 0 || !replyEndsMidSentence(lr.rs.resp.Content) {
+		return actNone
+	}
+	lr.noteUncorrected(correctionUnfinished, "The reply again stopped mid-sentence; no further re-prompt was left, so it was delivered as written.")
+	if !lr.corrections.available(correctionUnfinished) || lr.round >= lr.maxRounds {
+		return actNone
+	}
+	tail := strings.TrimSpace(lr.rs.resp.Content)
+	if r := []rune(tail); len(r) > 80 {
+		tail = "..." + string(r[len(r)-80:])
+	}
+	Debug("[agent_loop] reply stops mid-sentence (%q), re-prompting: correction %d/%d", tail, lr.corrections.spend(correctionUnfinished), maxCorrectionsPerKind)
+	lr.emitDiag("unfinished-reply-corrected", "The reply stopped mid-sentence; asked for the rest.")
+	lr.settleRound()
+	lr.history = append(lr.history, Message{
+		Role:    "user",
+		Content: frameworkNoticeTag + fmt.Sprintf("Your reply stops mid-sentence (it ends %q), so the user has an unfinished message. Send the rest now: finish what you were saying. If it was leading into questions for the user, ask them; if it was leading into an action, take it with a real tool call.", tail),
 	})
 	return actContinue
 }
