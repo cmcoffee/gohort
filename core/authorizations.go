@@ -54,6 +54,7 @@ type Authorization struct {
 	Handle    string    `json:"handle,omitempty"`  // send_message / converse_contact: recipient handle (new-individual fallback)
 	Text      string    `json:"text,omitempty"`    // send_message: message body
 	Images    []string  `json:"images,omitempty"`  // send_message: base64 attachments captured at queue time (survive until approval)
+	Videos    []string  `json:"videos,omitempty"`  // send_message: base64 video and audio, delivered as files, not images
 	Requested time.Time `json:"requested"`
 	// FromAgent is the agent that requested this delegation, captured at queue
 	// time. Approving it runs the delegation with the same channel reach a

@@ -164,3 +164,35 @@ func itoaTest(i int) string {
 	}
 	return string(b)
 }
+
+// A delivered file of any type is kept under its own extension and comes back
+// with the type that extension names; only its owner can read it. Songs and
+// documents used to live only in the live stream.
+func TestADeliveredFileSurvivesForTheReload(t *testing.T) {
+	attachmentTestDir(t)
+	song := append([]byte("ID3\x03\x00"), bytes.Repeat([]byte{1}, 64)...)
+	id, err := SaveChatAttachment("alice", song, "melee.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, mt, err := LoadChatAttachment("alice", id)
+	if err != nil || !bytes.Equal(data, song) || mt != "audio/mpeg" {
+		t.Fatalf("the song should come back whole as audio/mpeg: %q %v", mt, err)
+	}
+	if _, _, err := LoadChatAttachment("bob", id); err == nil {
+		t.Error("another user must not read it")
+	}
+	id, err = SaveChatAttachment("alice", []byte("plain words"), "notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, mt, _ := LoadChatAttachment("alice", id); !strings.HasPrefix(mt, "text/plain") {
+		t.Errorf("a name with no extension is stored by its sniffed type, got %q", mt)
+	}
+	if _, err := SaveChatAttachment("alice", nil, "x.bin"); err == nil {
+		t.Error("empty bytes must be refused")
+	}
+	if chatFileExt("a.m/p3") != "" || chatFileExt("evil.ph p") != "" || chatFileExt("song.MP3") != ".mp3" {
+		t.Error("only a plain extension is used")
+	}
+}

@@ -2156,6 +2156,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// stored thread as ids, so opening the conversation on the web later shows
 	// the picture the contact received rather than a reply describing one.
 	deliveredIDs := keepDeliveredAttachments(subSess.Username, subSess.Images)
+	deliveredFiles := keepDeliveredFiles(subSess.Username, subSess.Videos, subSess.Files)
 	withSessionAppend(target.ID, subSessionID, func() {
 		baseCount := len(priorSession.Messages)
 		if latest, ok := loadChatSession(runtimeDB, target.ID, subSessionID); ok && len(latest.Messages) > baseCount {
@@ -2171,7 +2172,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			// then dropped. Same field, same shape, same renderer as runner.go
 			// and scheduled_updates.go; a rule on one side of that symmetry is
 			// a bug.
-			ChatMessage{Role: "assistant", Content: cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs, ToolCalls: turnToolCalls},
+			ChatMessage{Role: "assistant", Content: cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs, Files: deliveredFiles, ToolCalls: turnToolCalls},
 		)
 		// Bound STORAGE the same way the Cortex home thread does (runner.go
 		// handleSend): drop leading messages already folded into the summary

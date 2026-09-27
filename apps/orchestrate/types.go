@@ -1535,6 +1535,9 @@ type ChatMessage struct {
 	// IDs, deliberately: the session record is loaded whole every turn and
 	// folded into prompt history, and base64 in it would be paid for on each.
 	Attachments []string `json:"attachments,omitempty"`
+	// Files is the same for what a message delivered that is not a picture: a
+	// song, a video, a document, kept so a reload can still play or offer it.
+	Files []deliveredFile `json:"files,omitempty"`
 	// Sender names who authored this message, for channel-room transcripts
 	// where the session is a multi-party messaging thread: the contact's
 	// display name on inbound (user) messages, the bound agent's name on its

@@ -426,12 +426,15 @@ func isDeliverableFile(name string) bool {
 	return false
 }
 
-// isVideoAttachment classifies a workspace file path as a video by extension, so
-// a [ATTACH: clip.mp4] marker routes to the video channel instead of the image
-// channel.
+// isVideoAttachment classifies a workspace file path as a video or audio file
+// by extension, so a [ATTACH: clip.mp4] or song.mp3 routes to the video channel,
+// which delivers it as a file, instead of the image channel.
 func isVideoAttachment(name string) bool {
 	switch strings.ToLower(filepath.Ext(strings.TrimSpace(name))) {
-	case ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v":
+	case ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v",
+		// Audio rides the video list: the transport sends it as a file. On
+		// the image list a song went out named .jpg.
+		".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".flac":
 		return true
 	}
 	return false
@@ -580,49 +583,56 @@ func fetchAttachmentURL(ref string) (b64, kind string, ok bool) {
 // the implicit, easily-skipped workspace(action="attach")-first convention.
 const attachmentsParamDesc = "Optional attachment reference(s) to send WITH this message. Any of: a workspace file path from image(action=\"find\"/\"generate\") e.g. [\"find-djbk.jpg\"]; an inbound media id from the media manifest e.g. [\"media#1\"] to re-send a photo someone sent you; or a direct http(s) image/video URL e.g. [\"https://i.redd.it/abc.jpg\"] (fetched + attached; image/video only, size-capped). The items ride out to the recipient in one call. Prefer this over a separate workspace(action=\"attach\") step."
 
-// messageImages gathers every image to ride an outbound message: the explicit
-// `attachments` workspace paths (the steered, self-contained path) PLUS the
-// implicit sess.Images / [ATTACH:] markers (collectMessageAttachments), deduped.
-// One place so send_message, message_contact and notify_owner behave identically —
-// the fragmented "did the model remember to attach first?" failure mode is why
-// images were silently dropped.
-func messageImages(sess *ToolSession, args map[string]any, text string) []string {
-	images := collectMessageAttachments(sess, text)
+// messageMedia gathers what rides an outbound message, split by how the
+// transport delivers it: images, and videos (which carries audio too, as
+// files). The explicit `attachments` refs (the steered, self-contained path)
+// PLUS the implicit sess.Images / sess.Videos / [ATTACH:] markers, deduped.
+// One place so send_message, message_contact and notify_owner behave
+// identically: the fragmented "did the model remember to attach first?"
+// failure mode is why images were silently dropped. It used to gather images
+// only, so a video ref was dropped and a song went out as a .jpg.
+func messageMedia(sess *ToolSession, args map[string]any, text string) (images, videos []string) {
+	images = collectMessageAttachments(sess, text)
+	if sess != nil {
+		videos = append(videos, sess.Videos...)
+	}
 	seen := map[string]bool{}
-	for _, im := range images {
-		seen[im] = true
+	for _, m := range append(append([]string(nil), images...), videos...) {
+		seen[m] = true
 	}
 	// Collect refs from BOTH `attachments` (the canonical plural array) AND
 	// `attachment` (the singular alias LLMs reach for), each tolerating either an
-	// array OR a bare string — models pass whichever shape, and a dropped image on
+	// array OR a bare string: models pass whichever shape, and a dropped image on
 	// a name/shape mismatch is silent + confusing (observed: attachment="x.png"
 	// ignored because the handler only read attachments[]).
+	add := func(ref string) {
+		if strings.TrimSpace(ref) == "" {
+			return
+		}
+		b64, kind, ok := resolveAttachmentRef(sess, ref, true)
+		if !ok || seen[b64] {
+			return
+		}
+		seen[b64] = true
+		if kind == "video" {
+			videos = append(videos, b64)
+		} else {
+			images = append(images, b64)
+		}
+	}
 	for _, key := range []string{"attachments", "attachment"} {
 		switch v := args[key].(type) {
 		case []any:
 			for _, e := range v {
 				if s, ok := e.(string); ok {
-					seen = addAttachmentRef(sess, s, seen, &images)
+					add(s)
 				}
 			}
 		case string:
-			seen = addAttachmentRef(sess, v, seen, &images)
+			add(v)
 		}
 	}
-	return images
-}
-
-// addAttachmentRef resolves one attachment ref (workspace file / inbound media id
-// / remote URL) and appends it to images if it's a new, non-video image.
-func addAttachmentRef(sess *ToolSession, ref string, seen map[string]bool, images *[]string) map[string]bool {
-	if strings.TrimSpace(ref) == "" {
-		return seen
-	}
-	if b64, kind, ok := resolveAttachmentRef(sess, ref, true); ok && kind != "video" && !seen[b64] {
-		seen[b64] = true
-		*images = append(*images, b64)
-	}
-	return seen
+	return images, videos
 }
 
 // isReplyToActiveInbound reports whether recip is the very conversation this run
@@ -1655,21 +1665,21 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
 				label := operatorRecipientLabel(rec)
-				images := messageImages(sess, args, text)
+				images, videos := messageMedia(sess, args, text)
 				if IsContactBlocked(RootDB, owner, agentID, recip) {
 					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings: not sent.", label), nil
 				}
 				// Replying to the conversation that just messaged us is in-thread,
 				// not a proactive reach-out — deliver without the approval queue.
 				if isReplyToActiveInbound(sess, recip) {
-					if _, err := operatorDeliverMessage(owner, agentID, rec.ChatID, rec.Handle, text, images); err != nil {
+					if _, err := operatorDeliverMedia(owner, agentID, rec.ChatID, rec.Handle, text, images, videos); err != nil {
 						return "", err
 					}
 					return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
 				}
 				// Pre-authorized recipient: send immediately, skip the queue.
 				if IsContactPreAuthorized(RootDB, owner, agentID, recip) {
-					if _, err := operatorDeliverMessage(owner, agentID, rec.ChatID, rec.Handle, text, images); err != nil {
+					if _, err := operatorDeliverMedia(owner, agentID, rec.ChatID, rec.Handle, text, images, videos); err != nil {
 						return "", err
 					}
 					// If the target is a bound channel, make its agent see the post
@@ -1682,7 +1692,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// that may (inherited down the ownership chain). Send without queuing —
 				// the grant is the approval.
 				if channelSenderAuthorized(UserDB(orchestrateBaseDB, owner), owner, rec.ChatID, rec.Handle, agentID) {
-					if _, err := operatorDeliverMessage(owner, agentID, rec.ChatID, rec.Handle, text, images); err != nil {
+					if _, err := operatorDeliverMedia(owner, agentID, rec.ChatID, rec.Handle, text, images, videos); err != nil {
 						return "", err
 					}
 					recordChannelPost(sess.DB, owner, rec.ChatID, rec.Handle, text)
@@ -1700,7 +1710,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					}
 				}
 				a := SaveAuthorization(RootDB, Authorization{
-					Owner: owner, Action: "send_message", ChatID: rec.ChatID, Handle: rec.Handle, Text: text, Images: images,
+					Owner: owner, Action: "send_message", ChatID: rec.ChatID, Handle: rec.Handle, Text: text, Images: images, Videos: videos,
 				})
 				if sess != nil && sess.PendingApprovalPrompt != nil {
 					sess.PendingApprovalPrompt(a)
@@ -2214,13 +2224,13 @@ func notifyOwnerToolDef(sess *ToolSession, owner, agentID, controllerAgentID str
 			if AuthDB != nil {
 				wants = ResolveNotifyForward(AuthDB(), owner)
 			}
-			images := messageImages(sess, args, text)
+			images, videos := messageMedia(sess, args, text)
 			toPhone := wants == "phone" || wants == "both"
 			if !toPhone {
 				// Images cannot live in a notice, so say so rather than
 				// dropping them quietly. The agent can then decide to put
 				// what mattered into the text.
-				if len(images) > 0 {
+				if len(images)+len(videos) > 0 {
 					// The ONE thing the agent has to know, because it
 					// changes what it should do: the attachment did not
 					// arrive, so anything that mattered in it has to be
@@ -2251,7 +2261,7 @@ func notifyOwnerToolDef(sess *ToolSession, owner, agentID, controllerAgentID str
 			// DeliverMessage (not SendToHandle) so attachments ride along;
 			// persona is inactive for the owner's own chat, so the text
 			// is sent verbatim. Empty chatID resolves the owner's thread.
-			if _, err := operatorDeliverMessage(owner, agentID, "", self, outbound, images); err != nil {
+			if _, err := operatorDeliverMedia(owner, agentID, "", self, outbound, images, videos); err != nil {
 				// The notice is already filed, so say what is actually true
 				// rather than reporting a total failure. Telling the model
 				// the send failed when the owner WILL see it is how an agent

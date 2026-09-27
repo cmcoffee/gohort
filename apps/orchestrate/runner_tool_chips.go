@@ -96,14 +96,19 @@ func (t *chatTurn) flushNewAttachments(sess *ToolSession, msgID string, imgN, vi
 		// sessions attached it.
 		t.keepDelivered(b64)
 	}
-	for _, b64 := range sess.ClaimUnflushedVideos() {
+	// Videos (audio rides this list) and files are kept too, so a reload
+	// still offers them: they used to live only in the stream, and a song
+	// the agent sent was gone on refresh.
+	vids := sess.ClaimUnflushedVideos()
+	for _, b64 := range vids {
 		t.sse.Send(map[string]any{
 			"kind":   "video",
 			"msg_id": msgID,
 			"data":   b64,
 		})
 	}
-	for _, f := range sess.ClaimUnflushedFiles() {
+	files := sess.ClaimUnflushedFiles()
+	for _, f := range files {
 		t.sse.Send(map[string]any{
 			"kind":      "file",
 			"msg_id":    msgID,
@@ -112,6 +117,11 @@ func (t *chatTurn) flushNewAttachments(sess *ToolSession, msgID string, imgN, vi
 			"data":      f.Data,
 			"size":      f.Size,
 		})
+	}
+	if kept := keepDeliveredFiles(t.user, vids, files); len(kept) > 0 {
+		t.attMu.Lock()
+		t.deliveredFiles = append(t.deliveredFiles, kept...)
+		t.attMu.Unlock()
 	}
 }
 
@@ -155,6 +165,10 @@ func (t *chatTurn) recoverClaimedDelivery(reply string) {
 		t.sse.Send(map[string]any{"kind": kind, "msg_id": msgID, "data": b64})
 		if kind == "image" {
 			t.keepDelivered(b64)
+		} else if kept := keepDeliveredFiles(t.user, []string{b64}, nil); len(kept) > 0 {
+			t.attMu.Lock()
+			t.deliveredFiles = append(t.deliveredFiles, kept...)
+			t.attMu.Unlock()
 		}
 	}
 }
@@ -179,6 +193,15 @@ func (t *chatTurn) takeDeliveredAttachments() []string {
 	defer t.attMu.Unlock()
 	out := t.deliveredAtt
 	t.deliveredAtt = nil
+	return out
+}
+
+// takeDeliveredFiles is takeDeliveredAttachments for the kept files.
+func (t *chatTurn) takeDeliveredFiles() []deliveredFile {
+	t.attMu.Lock()
+	defer t.attMu.Unlock()
+	out := t.deliveredFiles
+	t.deliveredFiles = nil
 	return out
 }
 

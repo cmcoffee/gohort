@@ -1331,8 +1331,14 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 			nfo.Log("image %d decode error: %v", i, err)
 			continue
 		}
-		ext := imageExt(data)
-		tmp, err := os.CreateTemp("", "phantom-img-*"+ext)
+		// An audio file sent on the image list (a server from before audio rode
+		// the media list) goes out as the file it is: named .jpg, a song arrived
+		// as a broken picture. None of the image conversions below apply to it.
+		ext, prefix := imageExt(data), "phantom-img-*"
+		if a := audioExt(data); a != "" {
+			ext, prefix = a, "phantom-audio-*"
+		}
+		tmp, err := os.CreateTemp("", prefix+ext)
 		if err != nil {
 			nfo.Log("image %d temp file error: %v", i, err)
 			continue
@@ -1776,11 +1782,40 @@ func imageExt(data []byte) string {
 	return ".jpg"
 }
 
+// audioExt names an audio file from its first bytes, or returns "" when it is
+// not one: MP3 (an ID3 tag or an MPEG frame header), AAC (ADTS), WAV, Ogg,
+// FLAC, and M4A (an ISO file whose brand says audio).
+func audioExt(data []byte) string {
+	if len(data) < 4 {
+		return ""
+	}
+	switch {
+	case data[0] == 'I' && data[1] == 'D' && data[2] == '3':
+		return ".mp3"
+	case data[0] == 0xFF && data[1]&0xF6 == 0xF0:
+		return ".aac"
+	case data[0] == 0xFF && data[1]&0xE0 == 0xE0:
+		return ".mp3"
+	case string(data[:4]) == "OggS":
+		return ".ogg"
+	case string(data[:4]) == "fLaC":
+		return ".flac"
+	case string(data[:4]) == "RIFF" && len(data) >= 12 && string(data[8:12]) == "WAVE":
+		return ".wav"
+	case len(data) >= 12 && string(data[4:8]) == "ftyp" && (string(data[8:12]) == "M4A " || string(data[8:12]) == "M4B "):
+		return ".m4a"
+	}
+	return ""
+}
+
 // videoExt sniffs the container type from the first few bytes of a video
 // blob. ISO Base Media (mp4/mov/m4v) all carry an `ftyp` box at offset 4;
 // Matroska/WebM start with EBML header 0x1A45DFA3. Defaults to .mp4 since
 // that's what gohort's downloader prefers and what iMessage handles best.
 func videoExt(data []byte) string {
+	if a := audioExt(data); a != "" {
+		return a // audio rides the video list; named .mp4 it will not play
+	}
 	if len(data) >= 8 && data[4] == 'f' && data[5] == 't' && data[6] == 'y' && data[7] == 'p' {
 		// ISO base media — distinguish .mov from .mp4 via brand at offset 8.
 		if len(data) >= 12 {

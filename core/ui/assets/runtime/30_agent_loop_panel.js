@@ -2398,6 +2398,29 @@
       return img;
     };
 
+    // uiRenderMessageMedia is uiRenderMessageImage for everything else a
+    // message can carry: opts {src, kind: 'audio'|'video'|'file', name, size}.
+    // Audio and video get a player, anything else a download link, looking
+    // the same as the live-delivered ones. src is anything the browser can
+    // load, so a replay hook can point it at a file the app kept.
+    window.uiRenderMessageMedia = function(bubble, opts) {
+      opts = opts || {};
+      if (!bubble || !opts.src) return null;
+      var node;
+      if (opts.kind === 'audio') {
+        node = el('audio', {src: opts.src, class: 'ui-agent-msg-audio', controls: true, preload: 'metadata'});
+      } else if (opts.kind === 'video') {
+        node = el('video', {src: opts.src, class: 'ui-agent-msg-video', controls: true, preload: 'metadata'});
+      } else {
+        var name = opts.name || 'file';
+        var size = humanBytes(opts.size);
+        node = el('a', {class: 'ui-agent-msg-file', href: opts.src, download: name},
+          ['\uD83D\uDCCE ' + name + (size ? ' (' + size + ')' : '')]);
+      }
+      agentMsgAttachmentBox(bubble).appendChild(node);
+      return node;
+    };
+
     // uiRegisterBubbleAction lets apps add buttons to the per-bubble
     // action bar (Edit/Retry/Delete on user; Retry/Copy on assistant).
     // Each registered action gets appended after the built-ins. The
@@ -3939,24 +3962,43 @@
       agentMsgAttachmentBox(bubble).appendChild(img);
     }
 
+    // sniffAudioMime names the audio type of a base64 payload from its first
+    // bytes, or '' when it is not audio. The video list carries audio too, and
+    // a song declared as video/mp4 either would not play or played in a
+    // video frame with nothing in it.
+    function sniffAudioMime(b64) {
+      var h = '';
+      try { h = atob(String(b64 || '').slice(0, 16)); } catch (_) { return ''; }
+      if (h.length < 4) return '';
+      var c0 = h.charCodeAt(0), c1 = h.charCodeAt(1);
+      if (h.slice(0, 3) === 'ID3') return 'audio/mpeg';
+      if (c0 === 0xFF && (c1 & 0xF6) === 0xF0) return 'audio/aac';
+      if (c0 === 0xFF && (c1 & 0xE0) === 0xE0) return 'audio/mpeg';
+      if (h.slice(0, 4) === 'OggS') return 'audio/ogg';
+      if (h.slice(0, 4) === 'fLaC') return 'audio/flac';
+      if (h.slice(0, 4) === 'RIFF' && h.slice(8, 12) === 'WAVE') return 'audio/wav';
+      if (h.slice(4, 8) === 'ftyp' && h.slice(8, 12) === 'M4A ') return 'audio/mp4';
+      return '';
+    }
+
+    function humanBytes(n) {
+      if (!n) return '';
+      if (n >= 1048576) return (n/1048576).toFixed(1) + ' MB';
+      if (n >= 1024) return (n/1024).toFixed(1) + ' KB';
+      return n + ' B';
+    }
+
     function renderAgentVideo(bubble, b64) {
-      var vid = el('video', {
-        src: 'data:video/mp4;base64,' + b64,
-        class: 'ui-agent-msg-video',
-        controls: true,
-      });
-      agentMsgAttachmentBox(bubble).appendChild(vid);
+      var audio = sniffAudioMime(b64);
+      var node = audio
+        ? el('audio', {src: 'data:' + audio + ';base64,' + b64, class: 'ui-agent-msg-audio', controls: true})
+        : el('video', {src: 'data:video/mp4;base64,' + b64, class: 'ui-agent-msg-video', controls: true});
+      agentMsgAttachmentBox(bubble).appendChild(node);
     }
 
     function renderAgentFile(bubble, ev) {
       var mt = ev.mime_type || 'application/octet-stream';
-      var sizeStr = '';
-      if (ev.size) {
-        var n = ev.size;
-        if (n >= 1048576) sizeStr = (n/1048576).toFixed(1) + ' MB';
-        else if (n >= 1024) sizeStr = (n/1024).toFixed(1) + ' KB';
-        else sizeStr = n + ' B';
-      }
+      var sizeStr = humanBytes(ev.size);
       var name = ev.name || 'file';
       var label = '📎 ' + name + (sizeStr ? ' (' + sizeStr + ')' : '');
       var link = el('a', {

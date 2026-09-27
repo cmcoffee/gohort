@@ -417,7 +417,9 @@ type chatTurn struct {
 	// final bubble rather than the mid-turn one that produced them, which a
 	// stored message has no id to distinguish anyway.
 	deliveredAtt []string
-	attMu        sync.Mutex
+	// The same for what is not a picture (a song, a video, a document).
+	deliveredFiles []deliveredFile
+	attMu          sync.Mutex
 
 	// lastUsage holds the most-recent assistant-turn stats payload
 	// (tokens, throughput, elapsed) captured by emitStats. handleSend

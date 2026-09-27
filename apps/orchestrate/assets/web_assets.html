@@ -8660,15 +8660,25 @@ select.ui-orch-intake-input {
       function registerAttachmentReplayHook() {
         if (!window.uiRegisterMessageReplayHook) { setTimeout(registerAttachmentReplayHook, 50); return; }
         window.uiRegisterMessageReplayHook(function(bubble, msg) {
-          if (!bubble || !msg || !msg.attachments || !msg.attachments.length) return;
+          if (!bubble || !msg) return;
+          var pics = msg.attachments || [], files = msg.files || [];
+          if (!pics.length && !files.length) return;
           if (bubble.getAttribute('data-orch-attached') === '1') return; // idempotent
           bubble.setAttribute('data-orch-attached', '1');
-          msg.attachments.forEach(function(id) {
+          pics.forEach(function(id) {
             if (!id) return;
             // A thread old enough to fall past the retention cap has lost its
             // pictures; the handler 404s and the alt text is what shows. The
             // conversation itself is unaffected, so there is nothing to report.
             window.uiRenderMessageImage(bubble, 'api/attachment?id=' + encodeURIComponent(id), 'delivered image');
+          });
+          // Songs, videos and documents the message delivered, kept the same
+          // way: they used to exist only in the live stream.
+          if (!window.uiRenderMessageMedia) return;
+          files.forEach(function(f) {
+            if (!f || !f.id) return;
+            window.uiRenderMessageMedia(bubble, {src: 'api/attachment?id=' + encodeURIComponent(f.id),
+              kind: f.kind, name: f.name, size: f.size});
           });
         });
       }

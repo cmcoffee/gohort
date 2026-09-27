@@ -17,6 +17,7 @@ package core
 
 import (
 	"fmt"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -62,7 +63,13 @@ func chatAttachmentDir(user string) string {
 // message should carry. Best-effort by contract: an error means the message
 // still says what it said, just without a picture attached to it — never that
 // the delivery itself failed.
-func SaveChatAttachment(user string, data []byte) (string, error) {
+//
+// With a file name it keeps a file of any type instead (see saveChatFile): a
+// song, a video, a document.
+func SaveChatAttachment(user string, data []byte, fileName ...string) (string, error) {
+	if len(fileName) > 0 {
+		return saveChatFile(user, fileName[0], data)
+	}
 	dir := chatAttachmentDir(user)
 	if dir == "" {
 		return "", fmt.Errorf("no user to scope the attachment to")
@@ -102,7 +109,71 @@ func LoadChatAttachment(user, id string) ([]byte, string, error) {
 			return data, mime, nil
 		}
 	}
+	// A kept file (saveChatFile) is stored under the extension it arrived
+	// with. The id is validated above, so it carries no pattern characters.
+	if matches, _ := filepath.Glob(filepath.Join(dir, id+".*")); len(matches) > 0 {
+		data, err := os.ReadFile(matches[0])
+		if err == nil {
+			mt := mime.TypeByExtension(filepath.Ext(matches[0]))
+			if mt == "" {
+				mt = http.DetectContentType(data)
+			}
+			return data, mt, nil
+		}
+	}
 	return nil, "", fmt.Errorf("no such attachment")
+}
+
+// saveChatFile keeps a delivered file of any type (a song, a video, a
+// document) so a reloaded conversation can still offer it, and returns its id.
+// Stored under the extension of name, or of its sniffed type when name has
+// none, which is what the type is served back as. Same cap, directory and
+// eviction as the images. Before this only pictures were kept: a song the
+// agent sent played in the live stream and was gone on refresh.
+func saveChatFile(user, name string, data []byte) (string, error) {
+	dir := chatAttachmentDir(user)
+	if dir == "" {
+		return "", fmt.Errorf("no user to scope the attachment to")
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("empty attachment")
+	}
+	if len(data) > maxChatAttachmentBytes {
+		return "", fmt.Errorf("attachment is %s, over the %s cap", HumanSize(int64(len(data))), HumanSize(maxChatAttachmentBytes))
+	}
+	ext := chatFileExt(name)
+	if ext == "" {
+		if exts, _ := mime.ExtensionsByType(strings.SplitN(http.DetectContentType(data), ";", 2)[0]); len(exts) > 0 {
+			ext = chatFileExt(exts[0])
+		}
+	}
+	if ext == "" {
+		ext = ".bin"
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	id := ChatAttachmentIDPrefix + UUIDv4()
+	if err := os.WriteFile(filepath.Join(dir, id+ext), data, 0600); err != nil {
+		return "", err
+	}
+	pruneChatAttachments(dir)
+	return id, nil
+}
+
+// chatFileExt is the extension of name, lowercased and kept only when it is a
+// plain one (letters and digits, at most 8), or "".
+func chatFileExt(name string) string {
+	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(name)))
+	if len(ext) < 2 || len(ext) > 9 {
+		return ""
+	}
+	for _, r := range ext[1:] {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return ""
+		}
+	}
+	return ext
 }
 
 // ValidChatAttachmentID reports whether id is a well-formed attachment id. The

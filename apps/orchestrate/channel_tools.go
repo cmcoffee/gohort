@@ -401,20 +401,20 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				}
 				recip := operatorRecipientKey(chatID, handle)
 				label := chFirst(handle, chatID)
-				images := messageImages(sess, args, text)
+				images, videos := messageMedia(sess, args, text)
 				if IsContactBlocked(RootDB, owner, agentID, recip) {
 					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings: not sent.", label), nil
 				}
 				// Replying to the conversation that just messaged us is in-thread,
 				// not a proactive reach-out — deliver without the approval queue.
 				if isReplyToActiveInbound(sess, recip) {
-					if _, err := operatorDeliverMessage(owner, agentID, chatID, handle, text, images); err != nil {
+					if _, err := operatorDeliverMedia(owner, agentID, chatID, handle, text, images, videos); err != nil {
 						return "", err
 					}
 					return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
 				}
 				if IsContactPreAuthorized(RootDB, owner, agentID, recip) {
-					if _, err := operatorDeliverMessage(owner, agentID, chatID, handle, text, images); err != nil {
+					if _, err := operatorDeliverMedia(owner, agentID, chatID, handle, text, images, videos); err != nil {
 						return "", err
 					}
 					// If this chat is a bound channel, make its agent see the post
@@ -426,7 +426,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				// deliver to this channel (inherited down the ownership chain). Send
 				// without queuing; the grant is the approval.
 				if channelSenderAuthorized(UserDB(orchestrateBaseDB, owner), owner, chatID, handle, agentID) {
-					if _, err := operatorDeliverMessage(owner, agentID, chatID, handle, text, images); err != nil {
+					if _, err := operatorDeliverMedia(owner, agentID, chatID, handle, text, images, videos); err != nil {
 						return "", err
 					}
 					recordChannelPost(sess.DB, owner, chatID, handle, text)
@@ -441,7 +441,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				// contact was signed. The delivery reads a.Agent (console.go
 				// send_message approval), so populate it.
 				a := SaveAuthorization(RootDB, Authorization{
-					Owner: owner, Action: "send_message", Agent: agentID, ChatID: chatID, Handle: handle, Text: text, Images: images,
+					Owner: owner, Action: "send_message", Agent: agentID, ChatID: chatID, Handle: handle, Text: text, Images: images, Videos: videos,
 				})
 				// Decide it here if someone is watching, instead of leaving the
 				// user to find it on the Permissions tile.

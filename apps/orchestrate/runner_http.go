@@ -892,6 +892,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		// existed only as an SSE event, so reopening the thread showed the text
 		// that described a picture and no picture.
 		Attachments: turn.takeDeliveredAttachments(),
+		Files:       turn.takeDeliveredFiles(),
 	})
 	sess.Plans = append(sess.Plans, PlanSnapshot{
 		RoundIndex: len(sess.Plans),

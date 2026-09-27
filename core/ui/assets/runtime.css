@@ -4796,6 +4796,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   max-width: 100%; max-height: 320px; border-radius: 6px;
   border: 1px solid var(--border); display: block;
 }
+.ui-agent-msg-audio { display: block; width: 100%; max-width: 420px; }
 /* Full-screen lightbox for image zoom. Pinned to viewport, dims the
  * background, click-anywhere-or-Esc to dismiss. Used by both user-
  * attached images (rendered in user bubbles) and tool-delivered

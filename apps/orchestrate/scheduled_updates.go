@@ -1194,6 +1194,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			// with nobody watching. Keeping the bytes is the only way the thread
 			// can ever show what it delivered.
 			Attachments: keepDeliveredAttachments(p.Username, subSess.Images),
+			Files:       keepDeliveredFiles(p.Username, subSess.Videos, subSess.Files),
 		})
 		// `sess` was loaded before the agent loop ran, minutes ago on a local
 		// model. Two fires on the same thread at the same instant (the scheduler
