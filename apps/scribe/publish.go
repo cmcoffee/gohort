@@ -127,19 +127,35 @@ func (T *Scribe) handlePublishState(w http.ResponseWriter, r *http.Request, udb 
 		URL         string `json:"url,omitempty"`
 		Version     int    `json:"version,omitempty"`
 		At          string `json:"at,omitempty"`
+		// A target's publish is rerun through the job, with its answers.
+		Target  string            `json:"target,omitempty"`
+		Answers map[string]string `json:"answers,omitempty"`
 	}
 	rows := []publishedRow{}
 	for _, p := range g.Published {
 		rows = append(rows, publishedRow{
 			Kind: p.Kind, Title: p.Title, TargetTitle: p.TargetTitle,
-			URL: p.URL, Version: p.Version, At: p.At,
+			URL: p.URL, Version: p.Version, At: p.At, Target: p.Target, Answers: p.Answers,
 		})
 	}
+	// The person's own targets, each with its form, and whether a publish of
+	// this guide is running now, so a modal opened mid-run rejoins it.
+	targets := docs.PublishTargetSpecs(r.Context(), user)
+	others := 0
+	for _, d := range docs.PublishDestinations(user) {
+		if d.Available && d.Kind != "target:" {
+			others++
+		}
+	}
+	job, _ := currentPublishJob(id)
 	writeJSON(w, map[string]any{
 		"configured":   docs.HasPublishDestinations(),
 		"can_publish":  canEdit,
 		"destinations": docs.PublishDestinations(user),
 		"published":    rows,
+		"targets":      targets,
+		"other_count":  others,
+		"running":      job.Target != "" && !job.Done,
 	})
 }
 
@@ -173,6 +189,7 @@ func (T *Scribe) handleRepublish(w http.ResponseWriter, r *http.Request, udb Dat
 		Doc:        publishDoc(g),
 		ExternalID: prev.ExternalID,
 		Version:    prev.Version,
+		Answers:    prev.Answers,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)

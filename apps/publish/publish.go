@@ -18,6 +18,7 @@ package publish
 
 import (
 	"net/http"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
@@ -81,6 +82,7 @@ func (T *PublishApp) Routes() {
 	docs.RegisterPublishDestination(&confluenceDest{app: T})
 	docs.RegisterPublishDestination(&webhookDest{app: T})
 	T.registerAgentDestinations()
+	docs.RegisterPublishDestination(&targetsDest{app: T})
 	T.HandleFunc("/", T.route)
 }
 
@@ -91,6 +93,10 @@ func (T *PublishApp) route(w http.ResponseWriter, r *http.Request) {
 	case "/api/destinations":
 		T.handleDestinations(w, r)
 	default:
+		if strings.HasPrefix(r.URL.Path, "/api/targets") {
+			T.handleTargets(w, r)
+			return
+		}
 		http.NotFound(w, r)
 	}
 }

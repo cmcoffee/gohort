@@ -713,55 +713,162 @@ const guidePublishAction = `function(ctx){
       var qp = 'id=' + encodeURIComponent(gid);
       fetch('publish/state?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
         window.uiOpenSimpleModal({title:'Publish guide', width:'760px', mount: function(body){
-          if (!d || !d.configured){
-            body.appendChild(el('p', {class:'guide-kn-intro', text:'No publish destinations are configured on this deployment yet. An admin sets them up in Admin > Publishing: a Confluence site, or any endpoint that accepts a posted document.'}));
+          var targets = (d && d.targets) || [];
+          if (!d || (!d.configured && !targets.length)){
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'Nowhere to publish yet. Make a publishing target from one of your API integrations in Extensions, Publishing targets, or ask an admin to set up a destination in Admin, Publishing.'}));
             return;
           }
           if (!d.can_publish){
             body.appendChild(el('p', {class:'guide-kn-intro', text:'You need edit access to this guide to publish it.'}));
             return;
           }
-          // Where it already lives, with a one-click update of that same page.
-          (d.published || []).forEach(function(p){
-            var row = el('div', {class:'guide-pub-row'});
-            var where = p.target_title || p.kind;
-            var label = el('div', {class:'guide-pub-where'}, [el('strong', {text: p.title || 'Published'}),
-              el('span', {class:'guide-pub-mute', text: ' in ' + where + (p.version ? ' (v' + p.version + ')' : '')})]);
-            row.appendChild(label);
-            if (p.url){
-              var a = el('a', {class:'guide-pub-link', href: p.url, target:'_blank', rel:'noopener', text:'Open'});
-              row.appendChild(a);
+          var view = el('div', {});
+          body.appendChild(view);
+
+          // A publish in flight: alive (spinner + seconds) until it reports
+          // its own ending, polled every 2s. Rejoined when the modal opens
+          // mid-run.
+          function followJob(){
+            view.innerHTML = '';
+            var line = el('div', {class:'guide-pub-status'});
+            view.appendChild(line);
+            var frames = ['\u280b','\u2819','\u2839','\u2838','\u283c','\u2834','\u2826','\u2827','\u2807','\u280f'], fi = 0, last = null;
+            var spin = setInterval(function(){
+              fi = (fi + 1) % frames.length;
+              if (last && !last.done) line.textContent = frames[fi] + ' Publishing to ' + last.target + (last.elapsed >= 3 ? ' - ' + last.elapsed + 's' : '');
+            }, 120);
+            function poll(){
+              fetch('publish/job?' + qp, {credentials:'same-origin', cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+                if (j.none){ clearInterval(spin); showList(); return; }
+                last = j;
+                if (!j.done){ setTimeout(poll, 2000); return; }
+                clearInterval(spin);
+                line.textContent = (j.ok ? 'Published to ' : 'Could not publish to ') + j.target + ' (' + j.took + ').';
+                line.className = 'guide-pub-status ' + (j.ok ? 'guide-pub-ok' : 'guide-pub-fail');
+                if (j.message) view.appendChild(el('p', {class:'guide-kn-intro', text: j.message}));
+                if (j.url) view.appendChild(el('a', {class:'guide-pub-link', href: j.url, target:'_blank', rel:'noopener', text:'Open it'}));
+                var back = el('button', {class:'ui-row-btn', text:'Back'});
+                back.addEventListener('click', function(){ reload(); });
+                view.appendChild(el('div', {style:'margin-top:0.7rem'}, [back]));
+                if (window.uiInvalidate) window.uiInvalidate('guides');
+              }).catch(function(){ setTimeout(poll, 3000); });
             }
-            var again = el('button', {class:'ui-row-btn', text:'Update'});
-            again.addEventListener('click', function(){
-              again.disabled = true; again.textContent = 'Updating…';
-              fetch('publish/again?' + qp + '&kind=' + encodeURIComponent(p.kind), {method:'POST', credentials:'same-origin'})
-                .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t; }); })
-                .then(function(){ again.textContent = 'Updated'; if (window.uiInvalidate) window.uiInvalidate('guides'); })
-                .catch(function(err){ again.disabled = false; again.textContent = 'Update';
-                  window.uiAlert('Could not update it: ' + (err && err.message || err)); });
+            poll();
+          }
+          function startPublish(req){
+            return fetch('publish/to?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(req)})
+              .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t; }); })
+              .then(function(){ followJob(); })
+              .catch(function(err){ window.uiAlert('Could not publish: ' + (err && err.message || err)); });
+          }
+          function reload(){
+            fetch('publish/state?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(nd){ d = nd; targets = nd.targets || []; showList(); });
+          }
+
+          // One target's form: the title, then the questions it asks.
+          function showForm(t){
+            view.innerHTML = '';
+            view.appendChild(el('div', {class:'guide-set-head', text:'Publish to ' + t.target.title}));
+            if (t.target.desc) view.appendChild(el('p', {class:'guide-kn-intro', text: t.target.desc}));
+            var inputs = {};
+            function field(label, input, help){
+              var wrap = el('label', {class:'guide-pub-field'}, [el('span', {text: label}), input]);
+              if (help) wrap.appendChild(el('small', {class:'guide-pub-mute', text: help}));
+              view.appendChild(wrap);
+            }
+            var title = el('input', {type:'text', class:'ui-input', placeholder:'The guide title'});
+            field('Title', title, 'Leave empty to use the guide title.');
+            (t.fields || []).forEach(function(f){
+              var input;
+              if (f.type === 'select' && (f.options || []).length){
+                input = el('select', {class:'ui-input'});
+                input.appendChild(el('option', {value:'', text:'Choose...'}));
+                f.options.forEach(function(o){ input.appendChild(el('option', {value:o, text:o})); });
+              } else if (f.type === 'textarea'){
+                input = el('textarea', {class:'ui-input', rows:'3'});
+              } else {
+                input = el('input', {type:'text', class:'ui-input'});
+              }
+              inputs[f.name] = {input: input, f: f};
+              field((f.label || f.name) + (f.required ? ' *' : ''), input, f.help);
             });
-            row.appendChild(again);
-            body.appendChild(row);
-          });
-          // The conversation. It opens itself: the agent's first move is to
-          // look at what is configured and ask where this should go.
-          var host = el('div', {class:'guide-pub-chat'});
-          body.appendChild(host);
-          window.uiMountComponent({
-            type: 'agent_loop_panel',
-            // Names the guide being published. This panel is mounted inside a
-            // modal, not inside the workbench, so {scope} has no host to read
-            // the id the modal was opened for is carried directly instead.
-            send_url: 'publish/chat/send?guide=' + encodeURIComponent(gid),
-            cancel_url: 'chat/cancel',
-            markdown: true,
-            lock_activity: true,
-            auto_send: 'Publish this guide.',
-            empty_text: 'Working out where this can go…',
-            placeholder: 'Answer the Publisher…',
-            submit_label: 'Send'
-          }, host);
+            var go = el('button', {class:'ui-row-btn ui-row-btn-primary', text:'Publish'});
+            var back = el('button', {class:'ui-row-btn', text:'Back'});
+            back.addEventListener('click', showList);
+            go.addEventListener('click', function(){
+              var answers = {}, missing = [];
+              Object.keys(inputs).forEach(function(k){
+                var v = (inputs[k].input.value || '').trim();
+                if (v) answers[k] = v;
+                else if (inputs[k].f.required) missing.push(inputs[k].f.label || k);
+              });
+              if (missing.length){ window.uiAlert('Still needed: ' + missing.join(', ')); return; }
+              go.disabled = true;
+              startPublish({kind: t.kind, target: t.target.id, title: title.value.trim(), answers: answers}).then(function(){ go.disabled = false; });
+            });
+            view.appendChild(el('div', {class:'guide-pub-actions'}, [go, back]));
+          }
+
+          function showList(){
+            view.innerHTML = '';
+            // Where it already lives, with an update of that same place.
+            (d.published || []).forEach(function(p){
+              var row = el('div', {class:'guide-pub-row'});
+              var where = p.target_title || p.kind;
+              row.appendChild(el('div', {class:'guide-pub-where'}, [el('strong', {text: p.title || 'Published'}),
+                el('span', {class:'guide-pub-mute', text: ' in ' + where + (p.version ? ' (v' + p.version + ')' : '')})]));
+              if (p.url) row.appendChild(el('a', {class:'guide-pub-link', href: p.url, target:'_blank', rel:'noopener', text:'Open'}));
+              var again = el('button', {class:'ui-row-btn', text:'Update'});
+              again.addEventListener('click', function(){
+                if (String(p.kind).indexOf('target:') === 0){
+                  again.disabled = true;
+                  startPublish({kind: p.kind, target: p.target, title: p.title, answers: p.answers || {}});
+                  return;
+                }
+                again.disabled = true; again.textContent = 'Updating...';
+                fetch('publish/again?' + qp + '&kind=' + encodeURIComponent(p.kind), {method:'POST', credentials:'same-origin'})
+                  .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t; }); })
+                  .then(function(){ again.textContent = 'Updated'; if (window.uiInvalidate) window.uiInvalidate('guides'); })
+                  .catch(function(err){ again.disabled = false; again.textContent = 'Update';
+                    window.uiAlert('Could not update it: ' + (err && err.message || err)); });
+              });
+              row.appendChild(again);
+              view.appendChild(row);
+            });
+            // The person's own targets, each opening its short form.
+            if (targets.length){
+              view.appendChild(el('div', {class:'guide-set-head', text:'Publish to'}));
+              targets.forEach(function(t){
+                var b = el('button', {class:'guide-pub-target'}, [el('strong', {text: t.target.title}),
+                  el('span', {class:'guide-pub-mute', text: t.target.desc ? ' - ' + t.target.desc : ''})]);
+                b.addEventListener('click', function(){ showForm(t); });
+                view.appendChild(b);
+              });
+            }
+            // Everything else (an admin's Confluence, a webhook, an agent
+            // destination) goes through the Publisher, which asks where.
+            if (d.other_count > 0){
+              var other = el('button', {class:'ui-row-btn', text: targets.length ? 'Other destinations...' : 'Choose where to publish'});
+              other.addEventListener('click', function(){
+                view.innerHTML = '';
+                var host = el('div', {class:'guide-pub-chat'});
+                view.appendChild(host);
+                window.uiMountComponent({
+                  type: 'agent_loop_panel',
+                  send_url: 'publish/chat/send?guide=' + encodeURIComponent(gid),
+                  cancel_url: 'chat/cancel',
+                  markdown: true,
+                  lock_activity: true,
+                  auto_send: 'Publish this guide.',
+                  empty_text: 'Working out where this can go...',
+                  placeholder: 'Answer the Publisher...',
+                  submit_label: 'Send'
+                }, host);
+              });
+              view.appendChild(el('div', {style:'margin-top:0.8rem'}, [other]));
+            }
+          }
+          if (d.running) followJob(); else showList();
         }});
       });
 }`
@@ -774,6 +881,13 @@ const guidePublishCSS = `.guide-pub-row { display: flex; align-items: center; ga
 .guide-pub-mute { color: var(--text-mute); font-weight: 400; }
 .guide-pub-link { color: var(--accent); font-size: 0.85rem; text-decoration: none; }
 .guide-pub-link:hover { text-decoration: underline; }
+.guide-pub-target { display: flex; gap: 0.3rem; align-items: baseline; width: 100%; text-align: left; padding: 0.6rem 0.8rem; margin-bottom: 0.45rem; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text-hi); cursor: pointer; font: inherit; }
+.guide-pub-target:hover { border-color: var(--accent); }
+.guide-pub-field { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.55rem 0; font-size: 0.88rem; color: var(--text); }
+.guide-pub-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
+.guide-pub-status { font-size: 0.95rem; color: var(--text-hi); padding: 0.6rem 0; }
+.guide-pub-ok { color: var(--ok, #3fb950); }
+.guide-pub-fail { color: var(--danger, #f85149); }
 .guide-pub-chat { height: 52vh; min-height: 20rem; display: flex; flex-direction: column; margin-top: 0.4rem; }
 .guide-pub-chat > * { flex: 1; min-height: 0; }
 @media (max-width: 700px) { .guide-pub-chat { height: 60vh; } }`

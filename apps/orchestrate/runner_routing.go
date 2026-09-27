@@ -231,6 +231,11 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	if def, ok := t.postBulletinToolDef(); ok {
 		out = append(out, def)
 	}
+	// Publishing to the owner's publishing targets, for an agent switched on
+	// for at least one (publish_tool.go).
+	if def, ok := t.publishToolDef(); ok {
+		out = append(out, def)
+	}
 	// Asking the person whose agent this is for something only they can grant.
 	// Only on somebody ELSE's: on your own there is nobody to ask, and a tool
 	// offering to write to yourself is one the model will eventually use.

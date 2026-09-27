@@ -60,6 +60,10 @@ type PublishRequest struct {
 	Doc        PublishDoc `json:"-"`
 	ExternalID string     `json:"external_id,omitempty"`
 	Version    int        `json:"version,omitempty"`
+	// Answers are the target's intake-form answers, by field name (see
+	// PublishField): the category, visibility or space a person picked when
+	// publishing. Empty for a destination that asks nothing.
+	Answers map[string]string `json:"answers,omitempty"`
 }
 
 // PublishResult is where a document landed. ExternalID + Version are what a
@@ -113,7 +117,21 @@ func RegisterPublishDestination(d PublishDestination) {
 func lookupDest(kind string) PublishDestination {
 	publishMu.RLock()
 	defer publishMu.RUnlock()
-	return publishDests[strings.TrimSpace(kind)]
+	kind = strings.TrimSpace(kind)
+	if d, ok := publishDests[kind]; ok {
+		return d
+	}
+	// A FAMILY: a destination registered under a kind ending in ":" answers
+	// every kind that starts with it. Each person's own publishing targets
+	// are "target:<id>", one kind per target so a document's publish record
+	// (keyed by kind) tells its targets apart, while one registered
+	// destination serves them all.
+	if i := strings.IndexByte(kind, ':'); i > 0 {
+		if d, ok := publishDests[kind[:i+1]]; ok {
+			return d
+		}
+	}
+	return nil
 }
 
 // PublishDestinationInfo is one registered destination as seen by a picker or a
@@ -225,6 +243,9 @@ type PublishRecord struct {
 	URL         string `json:"url,omitempty"`
 	Version     int    `json:"version,omitempty"`
 	At          string `json:"at,omitempty"` // RFC3339 of the last publish
+	// Answers are the intake answers it was published with, so an update to
+	// a target that asks questions goes out with the same ones.
+	Answers map[string]string `json:"answers,omitempty"`
 }
 
 // FindPublishRecord returns the record for a destination kind, and whether one

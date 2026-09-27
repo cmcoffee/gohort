@@ -10,8 +10,10 @@ package orchestrate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
 )
 
@@ -49,5 +51,80 @@ func registerAgentPublisher(app *OrchestrateApp) {
 			return "", errors.New("the agent finished without saying what it did")
 		}
 		return said, nil
+	})
+}
+
+// credentialPublisherPrompt is the whole brief of a credential-backed publish:
+// the target's own instruction arrives as the message, with the document.
+const credentialPublisherPrompt = `You publish one document through one API integration, following the instruction you are given, and then report where it landed.
+
+You have two tools: the integration's API, and report_published. Use the API to do exactly what the instruction says with this document (create the post, page or item it describes, with the title and the answers you are given), then call report_published with the address of what you made. If the instruction or the answers leave something the API needs unclear, pick the plainest reading and say which in the note. If the API refuses, try to correct the request from what it says; if you cannot, call report_published with ok=false and a note saying plainly what failed. Do not report success you did not see in an API response.`
+
+// registerCredentialPublisher installs the closure core/docs calls when a
+// publishing target is an API integration rather than an agent. The run holds
+// ONLY that credential's API tool and report_published: a target someone set
+// up to post a document somewhere cannot become a way to reach anything else.
+//
+// The credential tool's confirmation is lifted for this run. The target is the
+// owner's standing instruction and the Publish press is the act that asked for
+// it; a confirmation card here would have nobody to answer it.
+func registerCredentialPublisher(app *OrchestrateApp) {
+	docs.RegisterCredentialPublisher(func(ctx context.Context, user, credential, instruction string) (string, string, error) {
+		if app == nil {
+			return "", "", errors.New("orchestrate runtime not initialized")
+		}
+		sess := &ToolSession{Username: user}
+		var api AgentToolDef
+		found := false
+		for _, td := range Secure().BuildTools(sess) {
+			if td.Tool.Name == "fetch_url_"+credential {
+				api, found = td, true
+				break
+			}
+		}
+		if !found {
+			return "", "", fmt.Errorf("the API integration %q cannot be used here: it does not exist for you, is disabled, or is secured to the tools that declare it", credential)
+		}
+		api.NeedsConfirm, api.Confirmation = false, nil
+		var url, note string
+		reported, ok := false, false
+		report := AgentToolDef{
+			Tool: Tool{
+				Name:        "report_published",
+				Description: "Report how the publish went, once, when you are done: whether the API confirmed it, the address of what you created or updated, and a one-line note.",
+				Parameters: map[string]ToolParam{
+					"ok":   {Type: "boolean", Description: "true only when an API response confirmed the document was created or updated."},
+					"url":  {Type: "string", Description: "The address of the published post, page or item, from the API's response. Empty when it failed or the API gave none."},
+					"note": {Type: "string", Description: "One line: what was published where, or what failed."},
+				},
+				Required: []string{"ok", "note"},
+			},
+			Handler: func(_ context.Context, args map[string]any) (string, error) {
+				url = strings.TrimSpace(stringArg(args, "url"))
+				note = strings.TrimSpace(stringArg(args, "note"))
+				ok, _ = args["ok"].(bool)
+				reported = true
+				return "Recorded. Reply with the same note and stop.", nil
+			},
+		}
+		resp, _, err := app.RunAgentLoop(ctx, []Message{{Role: "user", Content: instruction}}, AgentLoopConfig{
+			SystemPrompt: credentialPublisherPrompt,
+			Tools:        []AgentToolDef{api, report},
+			MaxRounds:    12,
+		})
+		if err != nil {
+			return "", "", err
+		}
+		if !reported {
+			said := ""
+			if resp != nil {
+				said = strings.TrimSpace(resp.Content)
+			}
+			return "", "", fmt.Errorf("the publish run ended without reporting where the document landed, so it may not have been published: %s", chFirst(said, "it said nothing"))
+		}
+		if !ok {
+			return note, "", fmt.Errorf("the publish did not go through: %s", chFirst(note, "no reason given"))
+		}
+		return note, url, nil
 	})
 }

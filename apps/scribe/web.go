@@ -81,6 +81,10 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 		T.handlePublishChat(w, r, udb, user)
 	case path == "publish/again":
 		T.handleRepublish(w, r, udb, user)
+	case path == "publish/to":
+		T.handlePublishTo(w, r, udb, user)
+	case path == "publish/job":
+		T.handlePublishJob(w, r, udb, user)
 	// Curator: the digest (what it did), the queue (what it has not done yet),
 	// an undo per decision, and a manual drain.
 	case path == "curator/runs":

@@ -337,6 +337,7 @@ func (T *OrchestrateApp) Routes() {
 	// this registers the agent-execution half. See docs/channels-and-agents.md.
 	registerChannelAgentRunner(T)
 	registerAgentPublisher(T)
+	registerCredentialPublisher(T)
 	registerAgentNamer(T)
 	// Channel wake-rule gatekeeper: the transport calls this before dispatching
 	// an inbound, so master (admin) + per-channel rules gate the agent run.
