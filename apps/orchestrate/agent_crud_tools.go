@@ -885,11 +885,6 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 			Description: "Agent-scoped tools that auto-load whenever this agent runs: bespoke shell/api tools for THIS agent's job, kept out of the user-wide pool. A tool name is one tool across all your agents: reusing a name another agent's tool already has shares that tool, and a different definition under it is refused, so give a new tool a new name. Each entry a TempTool: {name, description, params, mode (\"shell\"|\"api\"), command_template, body_template, credential, method}. Do NOT also list these in allowed_tools; they attach automatically. For a multi-stage workflow use attached_pipelines instead.",
 			Items:       &ToolParam{Type: "object"},
 		},
-		"evals": {
-			Type:        "array",
-			Description: "Saved test cases for the eval harness. Each EvalCase: {name, prompt, must_include[], must_not_include[], must_call_tools[], must_not_call_tools[], stub_results{} (tool→canned result), judge_prompt, notes}. Each runs as a fresh session: case-insensitive substring checks on the reply; tool checks against the ACTUAL call trace (catches narrated-but-never-emitted calls); judge_prompt an optional LLM-judged criterion. STUB is the default: nothing real fires. Run via POST .../api/agents/{id}/eval?runs=30 (?live=1 non-consequential for real, ?live=all everything).",
-			Items:       &ToolParam{Type: "object"},
-		},
 		// exposed / public_name are intentionally OMITTED here — they're
 		// admin-only overrides set via the agent editor. Keeping them out
 		// of the LLM-facing CRUD surface stops a self-managing agent from
@@ -955,7 +950,6 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 		// Tools deliberately NOT set: LLM-supplied inline tools commit to the
 		// unified store scoped to the agent (see create_agent, post-save) —
 		// the record no longer embeds tool copies.
-		Evals: evalsFromArgs(args),
 		// The hook set a new agent starts on. Inert until a guardrail is
 		// authored (resolveGuardrailHooks returns nil with no rules), so this
 		// costs a brand-new agent nothing — it just decides what happens the
@@ -1230,39 +1224,6 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	// "tools" deliberately NOT merged onto the record: inline tools commit to
 	// the unified store scoped to the agent (see update_agent, post-save).
-	if v, ok := args["evals"]; ok && v != nil {
-		rec.Evals = evalsFromArgs(args)
-	}
-}
-
-// evalsFromArgs coerces the LLM-supplied `evals` array into
-// []EvalCase. JSON-roundtrip handles type normalization; bad
-// entries (missing name or prompt) get logged and skipped.
-func evalsFromArgs(args map[string]any) []EvalCase {
-	raw, ok := args["evals"]
-	if !ok || raw == nil {
-		return nil
-	}
-	data, err := json.Marshal(raw)
-	if err != nil {
-		Log("[orchestrate.agent_crud] evals marshal failed: %v", err)
-		return nil
-	}
-	var cases []EvalCase
-	if err := json.Unmarshal(data, &cases); err != nil {
-		Log("[orchestrate.agent_crud] evals unmarshal failed: %v", err)
-		return nil
-	}
-	out := make([]EvalCase, 0, len(cases))
-	for _, c := range cases {
-		c.Name = strings.TrimSpace(c.Name)
-		c.Prompt = strings.TrimSpace(c.Prompt)
-		if c.Name == "" || c.Prompt == "" {
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
 }
 
 // agentScopedToolsFromArgs coerces the LLM-supplied `tools` array

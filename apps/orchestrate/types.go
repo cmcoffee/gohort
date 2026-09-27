@@ -850,12 +850,6 @@ type AgentRecord struct {
 	// exclude derived chunks from recall. The new name is more
 	// honest about what it does.)
 
-	// Evals is the agent's saved test cases — admin-curated prompts
-	// with optional pass criteria. Run via the eval harness endpoint
-	// (POST .../api/agents/{id}/eval) to catch prompt regressions
-	// after edits to OrchestratorPrompt / AllowedTools / Tools.
-	Evals []EvalCase `json:"evals,omitempty"`
-
 	// Tools are agent-scoped temp tools that auto-load whenever this
 	// agent runs. Same TempTool shape as session-scoped or persistent
 	// tools (shell / api / pipeline modes all supported), but the
@@ -1766,58 +1760,6 @@ type IntakeField struct {
 	OptionsFrom string `json:"options_from,omitempty"`
 
 	AllowOther bool `json:"allow_other,omitempty"` // for type=checklist only. When true, renders an extra "Other:" row with a free-text input. Non-empty text becomes a list value, joined with the other picks ("**Topics:** AI, Healthcare, my custom thing"). Lets the user contribute outside the curated options without forcing the LLM to pre-imagine every answer.
-}
-
-// EvalCase is one saved test case on an agent — admin-curated prompt
-// + grading criteria. The eval harness runs every case as an
-// independent fresh session, captures the agent's reply, and grades
-// it against MustInclude / MustNotInclude / JudgePrompt.
-type EvalCase struct {
-	Name           string   `json:"name"`                       // short label, e.g. "asks_clarifying"
-	Prompt         string   `json:"prompt"`                     // user message to send the agent
-	MustInclude    []string `json:"must_include,omitempty"`     // case-insensitive substrings expected in the reply
-	MustNotInclude []string `json:"must_not_include,omitempty"` // case-insensitive substrings that must NOT appear
-	// Tool-USE grading — is the model effective at using the tools we built?
-	// MustCallTools: tool names the model must call at least once this run
-	// (e.g. ["await_result"] for a deferred-reply scenario). MustNotCallTools:
-	// tools it must NOT call. Graded from the actual tool-call trace, not the
-	// reply text, so it catches "narrated it but never called the tool".
-	MustCallTools    []string `json:"must_call_tools,omitempty"`
-	MustNotCallTools []string `json:"must_not_call_tools,omitempty"`
-	// StubResults (eval STUB mode only) scripts what each tool RETURNS instead of
-	// running for real — keyed by tool name. Lets a scenario hand the model a
-	// realistic result ("Queued a message…", "Stored at find-x.jpg…") so a
-	// multi-step case behaves like production, without the side effect. A tool
-	// with no entry returns a generic stub notice. Ignored unless stub mode is on.
-	StubResults map[string]string `json:"stub_results,omitempty"`
-	JudgePrompt string            `json:"judge_prompt,omitempty"` // optional. When set, an LLM judge grades the reply against this criterion (yes/no)
-	// MustFields asserts on a pipeline's DECLARED output fields rather than on
-	// its prose: {"winner": "for"}. Compared case-insensitively against the
-	// FINAL stage's declared fields.
-	//
-	// Sharper than substring-matching a verdict paragraph, which is the whole
-	// reason to grade a pipeline differently from an agent — "wins" appearing
-	// somewhere in three paragraphs is not the same claim as winner == "for".
-	//
-	// Final stage only, and named plainly rather than as {stage:NAME.field},
-	// because that is what the interpreter hands back. A syntax implying any
-	// stage is reachable would be a promise the runner cannot keep.
-	MustFields map[string]string `json:"must_fields,omitempty"`
-	Notes      string            `json:"notes,omitempty"` // admin notes, not used by the grader
-}
-
-// EvalResult is one row from a harness run.
-type EvalResult struct {
-	Name string `json:"name"`
-	// Passed is strict — every run passed. Runs/Passes carry the pass RATE, which
-	// is the real signal for a non-deterministic model ("awaited 27/30").
-	Passed      bool     `json:"passed"`
-	Runs        int      `json:"runs,omitempty"`         // how many times the case was run
-	Passes      int      `json:"passes,omitempty"`       // how many of those passed
-	Output      string   `json:"output"`                 // the agent's reply (truncated for display)
-	Reasons     []string `json:"reasons,omitempty"`      // why a case failed (or "ok" entries on pass)
-	ToolsCalled []string `json:"tools_called,omitempty"` // distinct tools the model called this run
-	ErrText     string   `json:"error,omitempty"`        // populated when the agent itself errored mid-run
 }
 
 // ActionQuotaMap is a per-action 24-hour allowance, stored as a map and

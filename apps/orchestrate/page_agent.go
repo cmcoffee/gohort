@@ -445,13 +445,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// call are the blast radius, which is a security question asked
 			// when you are not editing, and they live on the agent's Security
 			// page under Delegation with the target list beside them.
-			ui.FormField{Type: "header", Label: "Intake & evals", Collapsed: true,
-				Help: "Optional structured input form + saved test cases."},
-			ui.FormField{Field: "evals", Type: "textarea", Label: "Eval cases (JSON)", Rows: 6,
-				Help:        "Optional. Saved test cases for the eval harness.",
-				Detail:      "Run them via POST /api/agents/<id>/eval to grade the agent against each case. POST /api/agents/<id>/eval-suite copies them into a standalone eval SUITE: the same cases plus the things a field cannot have, namely a run history, a fingerprint of the version each run graded, and a surface to watch a long run on. The copy leaves these cases exactly as they are.\n\nFormat: a JSON array of {name, prompt, must_include, must_not_include, judge_prompt, notes}. must_include and must_not_include are case-insensitive substring checks; judge_prompt is an optional LLM-as-judge criterion. Use it to lock in expected behavior before editing the orchestrator_prompt, so regressions are visible.",
-				Placeholder: "[\n  {\"name\": \"asks_clarifying\", \"prompt\": \"I want to compare these products\",\n   \"judge_prompt\": \"the reply asks at least one clarifying question rather than guessing which products\"},\n  {\"name\": \"cites_sources\", \"prompt\": \"What's TS3's default port?\",\n   \"must_include\": [\"10080\"], \"judge_prompt\": \"the reply cites the source URL\"}\n]",
-				SuggestURL:  "../api/agents/suggest"},
+			ui.FormField{Type: "header", Label: "Intake form",
+				Help: "Optional structured input form for a new session's first turn."},
 			ui.FormField{Field: "intake_form", Type: "textarea", Label: "Intake form (JSON)", Rows: 6,
 				Help:        "Optional. A form shown instead of the text input on the first turn of a new session.",
 				Detail:      "Submitting packs the values into a markdown user message and uploads any file fields as attachments. PDFs and DOCX get text-extracted server-side, images go to vision. Leave it blank for a normal chat-first agent.\n\nFormat: a JSON array of {name, label, type, placeholder, help, required, options}. type is \"text\" (the default), \"textarea\", \"select\" (single-choice dropdown), \"checklist\" (multi-pick checkboxes, whose selected values get comma-joined into the packed markdown), \"number\", \"file\", or \"button\" (self-submitting). options is an array of strings, used by select, checklist and button.",

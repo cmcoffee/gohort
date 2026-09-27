@@ -10,14 +10,10 @@
 // the agent's current config, diagnoses the misbehavior, and proposes
 // changes interactively before applying anything.
 //
-// The brief asks for the failing case BEFORE the fix, which is the whole
-// difference between improving an agent and believing you did. A correction
-// the user made by hand is already the case: the message that produced the bad
-// turn is the prompt, and what they corrected it to is the assertion. Written
-// first, it fails; written afterwards, it passes the moment it is created and
-// proves nothing. The eval tool (eval_tool.go) is what makes that reachable
-// from here — before it, this handoff ended at a proposal and nothing ever
-// checked whether the proposal worked.
+// The brief asks Builder to name the cause before it proposes anything, and,
+// for a tool, to replay the call that went wrong after the fix: a correction
+// the user made by hand says what the right result was, and a fix that does
+// not produce it is not one.
 //
 // Endpoints:
 //
@@ -177,13 +173,10 @@ func buildBuilderBrief(agent AgentRecord, sess ChatSession, reason string, forOw
 	} else {
 		b.WriteString("2. Read the session transcript below and pinpoint where its behavior fell short of what I wanted: the spots where I had to correct, redirect, or repeat myself.\n")
 	}
-	b.WriteString("3. Write the failing case FIRST, as an eval of what you are fixing. Turn the correction into an eval case: the message that produced the bad turn is the prompt, and what I corrected it TO is the assertion; for a tool, replay the call that went wrong with its arguments from the transcript. " +
-		"Use eval(action=\"list\") to find a suite that grades it and eval(action=\"add_case\", ...) to add it; if there is no suite yet, eval(action=\"create_suite\", target_kind=\"agent\", target=\"" + agent.ID + "\", ...) for the agent, or target_kind=\"tool\", \"pipeline\" or \"machine\" with its name for one of those.\n")
-	b.WriteString("4. Run that suite now, BEFORE you change anything: eval(action=\"run\", suite=\"<name>\", note=\"before\"). Suites run with tools stubbed, so nothing external happens. " +
-		"The case you just wrote should FAIL. If it passes, the case does not capture the problem: fix the case rather than the agent, or the score will say a bug is gone that never left.\n")
-	b.WriteString("5. Propose specific changes (prompt wording, standing rules, tools, or knowledge) that would prevent the problem, and walk me through them before you apply anything.\n")
-	b.WriteString("6. After I accept a change, run the suite again with a note saying what you changed, and tell me BOTH scores. " +
-		"A fix that does not move the number is not a fix, and a fix that moves this case while breaking another is worth knowing about before I find out in production.\n\n")
+	b.WriteString("3. Say what went wrong and why: the part of its definition that produced it. If you are not sure, say what you would check.\n")
+	b.WriteString("4. Propose specific changes (prompt wording, standing rules, tools, or knowledge) that would prevent the problem, and walk me through them before you apply anything.\n")
+	b.WriteString("5. If the trouble was a tool, after I accept a change replay the call that went wrong with tool_def(action=\"test\") and its arguments from the transcript, and show me what it returns now. " +
+		"A fix that does not change that result is not a fix.\n\n")
 
 	// Builder is being asked to diagnose this agent, which it cannot do from
 	// the calls alone. Owner-only either way: handleSendToBuilder is reached

@@ -314,7 +314,7 @@ var patchAgentFields = map[string]bool{
 	"share_cortex": true, "share_reference": true, "share_notes": true, "share_uploads": true, "disabled_tool_actions": true,
 	"allow_builder_dispatch": true, "dispatch_mode": true,
 	"inbound_mode": true, "allowed_callers": true, "consult_lead": true,
-	"evals": true, "intake_form": true, "owned_by": true,
+	"intake_form": true, "owned_by": true,
 	"work_plan": true,
 }
 
@@ -678,45 +678,6 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		// ways, and the scoping (this agent only) and the ledger entry that
 		// makes the lend revocable both live in there.
 		T.handleAgentCredentialDecision(w, r, user, id)
-		return
-	}
-	if action == "eval-suite" {
-		// Lift the agent's inline cases into a standalone suite, which is
-		// where a history and a per-run fingerprint become possible. The
-		// agent's own field is left exactly as it was.
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		agent, ok := findAgentByNameOrID(UserDB(T.DB, user), user, id)
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		suite, err := EvalSuiteFromAgent(agent)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		suite.Owner = user
-		saved, err := SaveEvalSuite(UserDB(T.DB, user), suite)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true, "id": saved.ID, "cases": len(saved.Cases),
-			"message": fmt.Sprintf("Created %q with %d case(s). The agent's own cases are unchanged.", saved.Name, len(saved.Cases)),
-		})
-		return
-	}
-	if action == "eval" {
-		// Dispatch into the eval-harness handler via a synthetic
-		// path so handleAgentEval's TrimPrefix logic still works.
-		r.URL.Path = "/api/agents/" + id + "/eval"
-		_ = user // (used implicitly by handleAgentEval via RequireUser)
-		T.handleAgentEval(w, r)
 		return
 	}
 	if action == "export" {

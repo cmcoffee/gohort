@@ -8,9 +8,9 @@
 // thing that decides.
 //
 // So ask it. resolveWorkerTools is what the runner calls to build a turn's
-// catalog, and it already runs off-turn in two other places
-// (inheritableParentTools, the eval harness) against a minimal chatTurn. This
-// is the third, and the list is exact by construction because it is the list.
+// catalog, and it already runs off-turn in one other place
+// (inheritableParentTools) against a minimal chatTurn. This
+// is the second, and the list is exact by construction because it is the list.
 
 package orchestrate
 

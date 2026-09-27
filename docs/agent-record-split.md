@@ -40,7 +40,7 @@ Two tool planes make this precise:
 | `OrchestratorPrompt` | `DisabledPersistentTools` |
 | Behavior: `Cortex, Fleet, Mode, Triggers, RecallHints, TagName` | `EnabledCredentials` (was `DisabledCredentials`) |
 | Memory: `MemoryMode, DisableExplicit` | `AttachedPipelines, DisabledPipelines` |
-| `AllowedTools []string` (references to shared) | `Rules, Evals` |
+| `AllowedTools []string` (references to shared) | `Rules` |
 | `Hidden, Exposed` | `OwnedBy, InheritParentTools` (sub-agent wiring) |
 | Skills/Collections references | `Locked`, per-agent scope decisions |
 

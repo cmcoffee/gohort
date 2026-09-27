@@ -1544,7 +1544,7 @@ func TestThePhaseToolPickerOffersTheFrameworkTools(t *testing.T) {
 		offered = append(offered, o.Value)
 	}
 	for _, want := range []string{"knowledge_search", "fetch_knowledge_doc"} {
-		if !contains(offered, want) {
+		if !containsString(offered, want) {
 			t.Errorf("a phase must be able to name %q — without it the narrowing has no cure in the editor", want)
 		}
 	}
@@ -1552,7 +1552,7 @@ func TestThePhaseToolPickerOffersTheFrameworkTools(t *testing.T) {
 	// The control plane survives narrowing whatever a phase names, so offering
 	// it would be a tick that changes nothing.
 	for _, exempt := range []string{"plan_set", "change_phase", "stay_silent", "keep_going"} {
-		if contains(offered, exempt) {
+		if containsString(offered, exempt) {
 			t.Errorf("%q is exempt from narrowing; offering it invites a tick that does nothing", exempt)
 		}
 	}
@@ -1563,7 +1563,7 @@ func TestThePhaseToolPickerOffersTheFrameworkTools(t *testing.T) {
 	for _, o := range availableWorkerToolOptions("u") {
 		agentSide = append(agentSide, o.Value)
 	}
-	if contains(agentSide, "knowledge_search") {
+	if containsString(agentSide, "knowledge_search") {
 		t.Error("the agent tools modal must not offer a framework tool — listing it in allowed_tools grants nothing")
 	}
 }

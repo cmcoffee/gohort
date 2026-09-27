@@ -19,7 +19,7 @@ func TestPatchAllowlistCoversTheEditorsFields(t *testing.T) {
 		"triggers", "allowed_tools", "max_plan_steps", "max_worker_rounds",
 		"think", "think_budget", "gap_check", "work_plan", "lead_model", "memory_mode",
 		"context_depth", "channel", "fleet", "exposed", "hidden",
-		"dispatch_mode", "intake_form", "evals",
+		"dispatch_mode", "intake_form",
 	} {
 		if !patchAgentFields[f] {
 			t.Errorf("editor field %q is not patchable — its section's saves would be lost", f)

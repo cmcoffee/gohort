@@ -77,7 +77,6 @@ func TestTheGateHoldsEditsUntilATargetIsNamed(t *testing.T) {
 	}{
 		{"tool_def", map[string]any{"action": "update"}},
 		{"update_agent", map[string]any{}},
-		{"eval", map[string]any{"action": "add_case"}},
 		{"tool_def", map[string]any{"action": "made_up"}},
 	} {
 		if !triageBlocks(tr, c.name, c.args) {

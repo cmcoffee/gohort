@@ -756,7 +756,6 @@ func slimAgentJSON(udb Database, user string, a AgentRecord) []byte {
 		"gap_check":                a.GapCheck,
 		"work_plan":                a.WorkPlan,
 		"knowledge_model":          a.KnowledgeModel,
-		"evals_count":              len(a.Evals),
 		"intake_form":              a.IntakeForm,
 		"_note":                    "Compact view: orchestrator_prompt / plan_guidance / rules are previewed (full text omitted to save context); tools listed by name+mode. To change a prose field, send the complete new text via update_agent. If you need to READ the full prose you didn't write this session (e.g. to edit an inherited prompt after clone_agent), call agents(action=\"get\", id=…, full=true).",
 	}

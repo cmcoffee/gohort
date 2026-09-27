@@ -51,8 +51,7 @@ type TriageCandidate struct {
 // pending reports whether editing is still closed: a handoff with no target.
 func (tr *BuilderTriage) pending() bool { return tr != nil && len(tr.Targets) == 0 }
 
-// triageKinds are the kinds of thing Builder can be pointed at, the same kinds
-// an eval suite can grade.
+// triageKinds are the kinds of thing Builder can be pointed at.
 var triageKinds = map[string]bool{"agent": true, "tool": true, "pipeline": true, "machine": true}
 
 // triageCandidates gathers what a session's trouble could be in: the agent
@@ -240,7 +239,7 @@ func claimBuilderTriage(udb Database, firstMessage string) *BuilderTriage {
 var triageGatedTools = map[string]bool{
 	"create_agent": true, "update_agent": true, "clone_agent": true, "delete_agent": true,
 	"add_tool": true, "tool_def": true, "app_def": true, "skill_def": true,
-	"pipeline_def": true, "pipeline": true, "machine": true, "eval": true,
+	"pipeline_def": true, "pipeline": true, "machine": true,
 	"connector": true, "bridge": true, "collections": true, "tool_template": true,
 	"draft_api_credential": true, "draft_oauth_credential": true,
 	"update_api_credential": true, "store_credential_secret": true,
@@ -312,7 +311,7 @@ func (t *chatTurn) chooseTargetToolDef() AgentToolDef {
 				}
 			}
 			tr.Targets = append(tr.Targets, pick)
-			msg := fmt.Sprintf("Target set: %s %q. Editing is open. Read its current definition before changing it, and write the failing case as an eval of this %s (target_kind=%q) before the fix.", kind, pick.Name, kind, kind)
+			msg := fmt.Sprintf("Target set: %s %q. Editing is open. Read its current definition before changing it, and say what in it caused the trouble before you propose a fix.", kind, pick.Name)
 			if !listed {
 				msg += " It was not among the candidates this session's tool calls produced, so say in your reply why it is the one."
 			}
