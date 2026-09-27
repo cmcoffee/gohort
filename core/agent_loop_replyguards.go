@@ -30,6 +30,7 @@ const (
 	correctionMachinery       = "machinery-leak"
 	correctionTruncated       = "output-truncated"
 	correctionFinishCheck     = "finish-check"
+	correctionRoleBreak       = "role-break"
 )
 
 const (
@@ -856,4 +857,45 @@ func providerCutReply(resp *Response) bool {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(resp.StopReason), "refusal")
+}
+
+// continuesUsersMessage reports whether a reply opens mid-sentence, with the
+// punctuation that joins clauses: the model carried on the user's message
+// instead of answering it. Observed: asked "remove the 500,000 limit on the
+// tool", a lead model replied ", its blocking it from writing longer things.
+// just remove that entire property on that tool, and re-publish it." and then
+// wrote a whole new request in the user's voice. No reply to a message starts
+// with a comma; a lowercase opening is left alone, since short replies can.
+func continuesUsersMessage(reply string) bool {
+	r := strings.TrimSpace(reply)
+	return strings.HasPrefix(r, ",") || strings.HasPrefix(r, ";")
+}
+
+// finalRoundRoleBreak takes back a reply written as the user rather than to
+// them (see continuesUsersMessage) and asks again. Only a reply that directly
+// follows the user's own message: after a tool result or a notice, or on the
+// continuation of a reply cut off at the token limit, a mid-sentence opening
+// can be the model's own sentence carrying on. Struck, not erased, so the
+// reader sees what was taken back.
+func (lr *loopRun) finalRoundRoleBreak() loopAction {
+	if lr.truncatedLead.Len() > 0 || !continuesUsersMessage(lr.rs.resp.Content) {
+		return actNone
+	}
+	n := len(lr.history)
+	if n < 2 || lr.history[n-2].Role != "user" || strings.HasPrefix(lr.history[n-2].Content, frameworkNoticeTag) {
+		return actNone
+	}
+	lr.noteUncorrected(correctionRoleBreak, "The reply again carried on the user's message in their voice instead of answering it. Delivered as written.")
+	if !lr.corrections.available(correctionRoleBreak) || lr.round >= lr.maxRounds {
+		return actNone
+	}
+	Debug("[agent_loop] reply continues the user's message (%q), re-prompting: correction %d/%d",
+		truncForLog(lr.rs.resp.Content, 80), lr.corrections.spend(correctionRoleBreak), maxCorrectionsPerKind)
+	lr.emitDiag("role-break-corrected", "The reply carried on the user's message in their voice instead of answering it. Taken back and asked again.")
+	lr.strikeRound("Retracted: carried on the message as if written by its sender, instead of answering it.")
+	lr.history = append(lr.history, Message{
+		Role:    "user",
+		Content: frameworkNoticeTag + "Your previous reply was not a reply: it began mid-sentence and carried on the user's message in their voice, as if you were them. Their message is complete as sent. Answer it now, as yourself: act on what they asked.",
+	})
+	return actContinue
 }

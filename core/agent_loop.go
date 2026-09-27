@@ -2361,6 +2361,7 @@ func (lr *loopRun) noToolCallRound() loopAction {
 		// that ends the round says so and the rest do not run.
 		for _, guard := range []func() loopAction{
 			lr.finalRoundTruncation,
+			lr.finalRoundRoleBreak,
 			lr.finalRoundPromiseGuards,
 			lr.finalRoundToolMentionGuard,
 			lr.finalRoundStallGuards,
