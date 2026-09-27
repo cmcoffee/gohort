@@ -542,7 +542,14 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 		fmt.Fprintf(&b, " Pointed %s at it: new sessions on %s will run it (sessions already open keep what they started with).",
 			strings.Join(attached, ", "), target)
 	case len(unknown) == 0:
-		b.WriteString(" NOT attached to any agent yet, so nothing runs it: pass attach_to_agents, or point an agent at it.")
+		// "Not attached" used to mean only that this call attached nothing,
+		// so every edit to a machine in use said nothing ran it, and an
+		// author told the owner to attach a machine their agent was running.
+		if users := t.machineUsers(saved.ID); len(users) > 0 {
+			fmt.Fprintf(&b, " Already run by %s: new sessions there run this version (sessions already open keep what they started with).", strings.Join(users, ", "))
+		} else {
+			b.WriteString(" NOT attached to any agent yet, so nothing runs it: pass attach_to_agents, or point an agent at it.")
+		}
 	}
 	if len(unknown) > 0 {
 		fmt.Fprintf(&b, " No agent found named: %s.", strings.Join(unknown, ", "))
@@ -648,6 +655,18 @@ func normalizeReach(v string) string {
 		return r
 	}
 	return ReachAll
+}
+
+// machineUsers names the owner's agents that already point at a machine,
+// the same reading the Machines page shows as "Used by".
+func (t *chatTurn) machineUsers(machineID string) []string {
+	var out []string
+	for _, ag := range listAgents(t.udb, t.user) {
+		if ag.Machine == machineID {
+			out = append(out, chFirst(ag.Name, ag.ID))
+		}
+	}
+	return out
 }
 
 func (t *chatTurn) attachMachineToAgents(raw any, machineID string) (attached, unknown []string) {

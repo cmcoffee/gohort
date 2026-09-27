@@ -723,3 +723,23 @@ func TestTheToolSetsRouteEachMessage(t *testing.T) {
 		t.Error("an update can turn it off")
 	}
 }
+
+// Editing a machine an agent already runs says who runs it, not that nothing
+// does: an author read "NOT attached" after every edit and told the owner to
+// attach a machine their agent was already running.
+func TestMachineTool_AnEditNamesTheAgentsAlreadyRunningIt(t *testing.T) {
+	turn := machineToolFixture(t)
+	if _, err := saveAgent(turn.udb, AgentRecord{Name: "Wren", Owner: "u", OrchestratorPrompt: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"name": "Triage", "phases": toolPhases(), "attach_to_agents": []any{"Wren"}}, false); err != nil {
+		t.Fatal(err)
+	}
+	out, err := turn.machineCreateOrUpdate(map[string]any{"name": "Triage", "phases": toolPhases()}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "NOT attached") || !strings.Contains(out, "Already run by Wren") {
+		t.Errorf("an edit to a machine in use should name who runs it: %s", out)
+	}
+}
