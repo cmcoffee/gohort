@@ -524,6 +524,11 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		if body.At > len(s.Messages) {
 			body.At = len(s.Messages)
 		}
+		// What the cut turns recorded about the tools they edited goes with
+		// them, or the build check holds the next turn to it.
+		if body.At < len(s.Messages) {
+			forgetToolVerificationsSince(udb, sid, s.Messages[body.At].Created)
+		}
 		s.Messages = s.Messages[:body.At]
 		if _, err := saveChatSession(udb, s); err != nil {
 			http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)

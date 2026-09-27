@@ -364,6 +364,14 @@ func (t *chatTurn) machineDraftFromArgs(args map[string]any, isUpdate bool) (mac
 			return machineDraft{}, errors.New("no matching machine to update: nothing is stored under that name/id, and this call carries no phases to store as a new one. machine(action=\"list\") shows what you actually have")
 		}
 	} else {
+		// A second machine under a name already in use is never what an
+		// author means, and a name then points at whichever one a lookup
+		// finds first. Observed: asked to recreate a machine, an author
+		// created a twin, attached "the" machine by name, and the agent
+		// stayed on the old one.
+		if existing, ok := t.findMachine(map[string]any{"name": name}); ok {
+			return machineDraft{}, fmt.Errorf("a machine named %q already exists (id=%s). Change it with action=\"update\" (name=%q), or to start over, delete it first (action=\"delete\") and then create", existing.Name, existing.ID, existing.Name)
+		}
 		def = MachineDef{Name: name, Owner: t.user}
 	}
 	if d := strings.TrimSpace(stringArg(args, "description")); d != "" {

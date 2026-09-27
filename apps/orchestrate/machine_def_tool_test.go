@@ -759,3 +759,20 @@ func TestMachineTool_AnIDThatIsANameStillFindsTheMachine(t *testing.T) {
 		t.Errorf("a rename keeps one machine, got %d", n)
 	}
 }
+
+// Creating a machine under a name already in use is refused, naming the one
+// that exists: a twin left the agent on the old machine while the author
+// believed it had replaced it.
+func TestMachineTool_CreateRefusesATakenName(t *testing.T) {
+	turn := machineToolFixture(t)
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"name": "Triage", "phases": toolPhases()}, false); err != nil {
+		t.Fatal(err)
+	}
+	_, err := turn.machineCreateOrUpdate(map[string]any{"name": "triage", "phases": toolPhases()}, false)
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("a second machine under the same name should be refused: %v", err)
+	}
+	if n := len(ListMachineDefs(turn.udb, "u")); n != 1 {
+		t.Errorf("still one machine, got %d", n)
+	}
+}

@@ -111,3 +111,27 @@ func clearToolVerifications(db Database, sessionID string) {
 	}
 	db.Unset(toolVerifyTable, sessionID)
 }
+
+// forgetToolVerificationsSince drops what the session recorded at or after
+// since: the work of turns the person has since cut from the thread (Edit or
+// Retry truncates it). Kept, it is a gap the model is held to with no record
+// of making it. Observed: a retried turn's build check found a tool unverified
+// that only the removed turn had edited, and Builder, with no memory of it,
+// spent the turn repairing a tool nobody had asked about.
+func forgetToolVerificationsSince(db Database, sessionID string, since time.Time) {
+	if db == nil || sessionID == "" || since.IsZero() {
+		return
+	}
+	existing := loadToolVerifications(db, sessionID)
+	out := existing[:0]
+	for _, e := range existing {
+		if e.At.Before(since) {
+			out = append(out, e)
+		}
+	}
+	if len(out) == 0 {
+		db.Unset(toolVerifyTable, sessionID)
+		return
+	}
+	db.Set(toolVerifyTable, sessionID, out)
+}
