@@ -71,3 +71,14 @@ func functionBody(js, decl string) string {
 	}
 	return rest
 }
+
+// Copy turn exports each call's real arguments, not the chip's one-line
+// summary: the summary is clipped with an ellipsis and, exported as a JSON
+// string, read as a malformed call.
+func TestCopyTurnExportsTheFullArguments(t *testing.T) {
+	js := string(runtimeJS)
+	if !strings.Contains(js, "var callArgs = (t.argsFull !== undefined && t.argsFull !== null) ? t.argsFull : t.args;") ||
+		!strings.Contains(js, "JSON.stringify(callArgs, null, 2)") {
+		t.Error("Copy turn should export argsFull, falling back to the summary only when there is none")
+	}
+}

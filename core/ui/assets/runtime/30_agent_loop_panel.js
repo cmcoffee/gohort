@@ -3377,10 +3377,14 @@
       function emitTools(tools) {
         (tools || []).forEach(function(t) {
           lines.push('### Tool call: ' + (t.name || '(unnamed)'));
-          if (t.args !== undefined) {
+          // The call's real arguments, not the chip's one-line summary: the
+          // summary is shortened with an ellipsis and was exported as a JSON
+          // string, which read as a malformed call rather than a clipped view.
+          var callArgs = (t.argsFull !== undefined && t.argsFull !== null) ? t.argsFull : t.args;
+          if (callArgs !== undefined) {
             var argsStr;
-            try { argsStr = JSON.stringify(t.args, null, 2); }
-            catch (_) { argsStr = String(t.args); }
+            try { argsStr = JSON.stringify(callArgs, null, 2); }
+            catch (_) { argsStr = String(callArgs); }
             lines.push('args:');
             lines.push(fence + 'json');
             lines.push(argsStr);
