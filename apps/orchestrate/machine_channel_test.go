@@ -205,7 +205,7 @@ func TestFrameworkRecordsAreNotReplayedToTheModel(t *testing.T) {
 		t.Fatalf("a reply whose only records are the machine's should replay as plain text, got %+v", only)
 	}
 	mixed := toLLMMessages([]ChatMessage{{Role: "assistant", Content: "found it", ToolCalls: []PersistedToolCall{step, real}}})
-	if len(mixed) != 2 || len(mixed[0].ToolCalls) != 1 || mixed[0].ToolCalls[0].Name != "web_search" || len(mixed[1].ToolResults) != 1 {
+	if len(mixed) != 3 || len(mixed[0].ToolCalls) != 1 || mixed[0].ToolCalls[0].Name != "web_search" || len(mixed[1].ToolResults) != 1 || mixed[2].Content != "found it" {
 		t.Fatalf("only the model's own call should replay, got %+v", mixed)
 	}
 }

@@ -58,12 +58,24 @@ func toLLMMessages(msgs []ChatMessage) []Message {
 					IsError: isErr,
 				})
 			}
+			// The stored text is the reply written AFTER these calls, so it
+			// replays after their results. It used to ride the call message
+			// as if it came first, which left the turn ending on the
+			// results: to the model, a turn it had not answered yet. On
+			// Gemini the next user message then merged into the results
+			// block, and the model finished that message as its own ("for
+			// music generation and saves the result to the workspace?").
+			reply := base.Content
+			base.Content = ""
 			base.ToolCalls = calls
 			out = append(out, base)
 			out = append(out, Message{
 				Role:        "user",
 				ToolResults: results,
 			})
+			if strings.TrimSpace(reply) != "" {
+				out = append(out, Message{Role: "assistant", Content: reply})
+			}
 			continue
 		}
 		out = append(out, base)

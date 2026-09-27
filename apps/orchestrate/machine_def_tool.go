@@ -1046,9 +1046,24 @@ func detachMachineFromAgents(udb Database, user, machineID string) []string {
 }
 
 // findMachine resolves a machine by id then case-insensitive name.
+//
+// An id that is not one is tried as a name: asked to rename a machine, an
+// author put the old name in id and the new one in name, and was told
+// nothing was stored under either.
 func (t *chatTurn) findMachine(args map[string]any) (MachineDef, bool) {
+	byName := func(name string) (MachineDef, bool) {
+		for _, d := range ListMachineDefs(t.udb, t.user) {
+			if strings.EqualFold(d.Name, name) {
+				return d, true
+			}
+		}
+		return MachineDef{}, false
+	}
 	if id := strings.TrimSpace(stringArg(args, "id")); id != "" {
 		if d, ok := LoadMachineDef(t.udb, t.user, id); ok {
+			return d, true
+		}
+		if d, ok := byName(id); ok {
 			return d, true
 		}
 	}
@@ -1056,12 +1071,7 @@ func (t *chatTurn) findMachine(args map[string]any) (MachineDef, bool) {
 	if name == "" {
 		return MachineDef{}, false
 	}
-	for _, d := range ListMachineDefs(t.udb, t.user) {
-		if strings.EqualFold(d.Name, name) {
-			return d, true
-		}
-	}
-	return MachineDef{}, false
+	return byName(name)
 }
 
 // parseAccumulators decodes a phase's contributions to the working set.

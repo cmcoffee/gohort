@@ -743,3 +743,19 @@ func TestMachineTool_AnEditNamesTheAgentsAlreadyRunningIt(t *testing.T) {
 		t.Errorf("an edit to a machine in use should name who runs it: %s", out)
 	}
 }
+
+// A rename that puts the old name in id and the new one in name renames the
+// machine, instead of reporting that nothing is stored under either.
+func TestMachineTool_AnIDThatIsANameStillFindsTheMachine(t *testing.T) {
+	turn := machineToolFixture(t)
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"name": "HumorRouter", "phases": toolPhases()}, false); err != nil {
+		t.Fatal(err)
+	}
+	out, err := turn.machineCreateOrUpdate(map[string]any{"id": "HumorRouter", "name": "WiweeRouter"}, true)
+	if err != nil || !strings.Contains(out, `Updated machine "WiweeRouter"`) {
+		t.Fatalf("the rename should find the machine by its name: %v %s", err, out)
+	}
+	if n := len(ListMachineDefs(turn.udb, "u")); n != 1 {
+		t.Errorf("a rename keeps one machine, got %d", n)
+	}
+}

@@ -865,10 +865,40 @@ func providerCutReply(resp *Response) bool {
 // tool", a lead model replied ", its blocking it from writing longer things.
 // just remove that entire property on that tool, and re-publish it." and then
 // wrote a whole new request in the user's voice. No reply to a message starts
-// with a comma; a lowercase opening is left alone, since short replies can.
-func continuesUsersMessage(reply string) bool {
+// with a comma.
+//
+// The same break without the comma: asked "can you make sure that pipeline
+// works correctly", a model replied "for music generation and saves the result
+// to the workspace?", the rest of the user's sentence as they might have
+// written it. So a reply that opens on a lowercase joining word, after a
+// message left without its closing punctuation, is one too. A lowercase
+// opening alone is not: "yes, done" is a reply, and so is anything answering
+// a message that ended.
+func continuesUsersMessage(reply, asked string) bool {
 	r := strings.TrimSpace(reply)
-	return strings.HasPrefix(r, ",") || strings.HasPrefix(r, ";")
+	if strings.HasPrefix(r, ",") || strings.HasPrefix(r, ";") {
+		return true
+	}
+	a := strings.TrimSpace(asked)
+	if a == "" || strings.ContainsAny(a[len(a)-1:], ".?!:)\"'") {
+		return false
+	}
+	first := r
+	if i := strings.IndexAny(r, " \t\n,"); i > 0 {
+		first = r[:i]
+	}
+	return continuationWords[first]
+}
+
+// continuationWords open a clause that carries on a sentence. Lowercase on
+// purpose: capitalised, each starts a reply of its own ("For that, ...").
+var continuationWords = map[string]bool{
+	"and": true, "but": true, "or": true, "nor": true, "for": true, "to": true,
+	"with": true, "without": true, "that": true, "which": true, "who": true,
+	"because": true, "so": true, "then": true, "of": true, "in": true, "on": true,
+	"from": true, "into": true, "about": true, "while": true, "when": true,
+	"where": true, "if": true, "as": true, "using": true, "including": true,
+	"plus": true, "via": true, "by": true, "at": true, "than": true,
 }
 
 // finalRoundRoleBreak takes back a reply written as the user rather than to
@@ -878,11 +908,14 @@ func continuesUsersMessage(reply string) bool {
 // can be the model's own sentence carrying on. Struck, not erased, so the
 // reader sees what was taken back.
 func (lr *loopRun) finalRoundRoleBreak() loopAction {
-	if lr.truncatedLead.Len() > 0 || !continuesUsersMessage(lr.rs.resp.Content) {
+	if lr.truncatedLead.Len() > 0 {
 		return actNone
 	}
 	n := len(lr.history)
 	if n < 2 || lr.history[n-2].Role != "user" || strings.HasPrefix(lr.history[n-2].Content, frameworkNoticeTag) {
+		return actNone
+	}
+	if !continuesUsersMessage(lr.rs.resp.Content, lr.history[n-2].Content) {
 		return actNone
 	}
 	lr.noteUncorrected(correctionRoleBreak, "The reply again carried on the user's message in their voice instead of answering it. Delivered as written.")

@@ -32,14 +32,28 @@ func TestAReplyThatCarriesOnTheUsersMessageIsAskedAgain(t *testing.T) {
 }
 
 func TestOnlyAMidSentenceOpeningIsARoleBreak(t *testing.T) {
-	for _, s := range []string{", and then", "  ; also"} {
-		if !continuesUsersMessage(s) {
-			t.Errorf("%q opens mid-sentence", s)
+	const open = "can you make sure that pipeline works correctly"
+	for _, c := range []struct{ reply, asked string }{
+		{", and then", "remove the limit on the tool"},
+		{"  ; also", "anything"},
+		{"for music generation and saves the result to the workspace?", open},
+		{"and re-publish it", "remove the limit"},
+	} {
+		if !continuesUsersMessage(c.reply, c.asked) {
+			t.Errorf("%q after %q carries on the message", c.reply, c.asked)
 		}
 	}
-	for _, s := range []string{"yes.", "Done.", "ok, removed it", "", "...and that is it"} {
-		if continuesUsersMessage(s) {
-			t.Errorf("%q is an ordinary reply", s)
+	for _, c := range []struct{ reply, asked string }{
+		{"yes.", open},
+		{"Done.", open},
+		{"ok, removed it", open},
+		{"For that, I ran the pipeline.", open},
+		{"for sure, running it now", open + "?"},
+		{"and it works", "does it work."},
+		{"", open},
+	} {
+		if continuesUsersMessage(c.reply, c.asked) {
+			t.Errorf("%q after %q is an ordinary reply", c.reply, c.asked)
 		}
 	}
 }
