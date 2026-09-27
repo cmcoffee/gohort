@@ -178,7 +178,8 @@ type orchUpdatePayload struct {
 
 	// Pattern modifiers (empty Pattern == fixed, the original every-N-minutes
 	// behavior). See recurring_pattern.go for the scheduling math.
-	Pattern       string `json:"pattern,omitempty"`         // "" | "fixed" | "random"
+	Pattern       string `json:"pattern,omitempty"`         // "" | "fixed" | "random" | "daily"
+	AtMinutes     []int  `json:"at_minutes,omitempty"`      // daily: times of day, minutes since local midnight
 	TimesPerDay   int    `json:"times_per_day,omitempty"`   // random: fires per active window
 	MinGapSeconds int    `json:"min_gap_seconds,omitempty"` // random: minimum spacing between fires
 	MaxGapSeconds int    `json:"max_gap_seconds,omitempty"` // random (continuous): maximum spacing
@@ -1476,6 +1477,13 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		if time.Duration(spec.IntervalSeconds)*time.Second < minInterval {
 			return "", fmt.Errorf("interval too small: minimum %s", minInterval)
 		}
+	case RecurringDaily:
+		if len(spec.AtMinutes) == 0 {
+			return "", errors.New("a daily task needs daily_at: one or more HH:MM times, e.g. 08:00")
+		}
+		if spec.HasWindow {
+			return "", errors.New("a daily task runs at its set times: leave out active_from / active_to")
+		}
 	case RecurringRandom:
 		// Default and floor the gap to the deployment minimum interval.
 		if time.Duration(spec.MinGapSeconds)*time.Second < minInterval {
@@ -1511,7 +1519,7 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 			}
 		}
 	default:
-		return "", fmt.Errorf("unknown pattern %q: use fixed or random", spec.Pattern)
+		return "", fmt.Errorf("unknown pattern %q: use fixed, random or daily", spec.Pattern)
 	}
 	active := ListOrchestrateUpdates(spec.SessionID)
 	if len(active) >= orchUpdateMaxPerSession() {
@@ -1530,6 +1538,7 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		Prompt:          spec.Prompt,
 		Name:            strings.TrimSpace(spec.Name),
 		Pattern:         spec.Pattern,
+		AtMinutes:       spec.AtMinutes,
 		IntervalSeconds: spec.IntervalSeconds,
 		TimesPerDay:     spec.TimesPerDay,
 		MinGapSeconds:   spec.MinGapSeconds,

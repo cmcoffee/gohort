@@ -30,6 +30,11 @@ import (
 const (
 	RecurringFixed  = "fixed"
 	RecurringRandom = "random"
+	// RecurringDaily fires at set times of day (AtMinutes), in the owner's
+	// zone. "Daily" used to mean every 1440 minutes from whenever the task
+	// was made, and a 24h interval with a window to pin the hour drifted with
+	// every late fire until it slipped out of the window and skipped a day.
+	RecurringDaily = "daily"
 )
 
 // RecurringSpec is the validated request the recurring(schedule) tool builds and
@@ -47,6 +52,7 @@ type RecurringSpec struct {
 	TimesPerDay     int    // random: fires per active window (0 = continuous/unlimited)
 	MinGapSeconds   int    // random: minimum spacing between fires
 	MaxGapSeconds   int    // random (continuous): maximum spacing; 0 → 2× min
+	AtMinutes       []int  // daily: times of day, minutes since local midnight, ascending
 
 	HasWindow     bool // whether the daily active window applies
 	WindowFromMin int  // window start, minutes since local midnight
@@ -269,6 +275,12 @@ func formatTimes(ts []time.Time) []string {
 // planned time and stores the rest, re-planning a fresh day when the queue is
 // empty. Returns an error only when a random plan can't be built (bad window).
 func computeNextFire(p *orchUpdatePayload, now time.Time) (time.Time, error) {
+	if p.Pattern == RecurringDaily {
+		if len(p.AtMinutes) == 0 {
+			return time.Time{}, errors.New("a daily task needs at least one time of day")
+		}
+		return nextDailyFire(p.AtMinutes, now), nil
+	}
 	if p.Pattern == RecurringRandom {
 		if p.isContinuousRandom() {
 			return nextSpacedRandomFire(p, now, rand.Float64), nil
@@ -359,6 +371,9 @@ func nextRandomFire(p *orchUpdatePayload, now time.Time, randFloat func() float6
 // recurringDetail renders a one-line human summary of a schedule's cadence for
 // the Schedules rail, introspect, and the admin describer.
 func recurringDetail(p orchUpdatePayload) string {
+	if p.Pattern == RecurringDaily {
+		return "daily at " + fmtDailyAt(p.AtMinutes)
+	}
 	win := ""
 	if p.HasWindow {
 		win = fmt.Sprintf(" - %s–%s", fmtHHMM(p.WindowFromMin), fmtHHMM(p.WindowToMin))
@@ -389,6 +404,9 @@ func effectiveMaxGapMin(minSec, maxSec int) int {
 // schedule confirmation string ("every 30 min", "at 5 random times per day
 // between 09:00 and 17:00, at least 30m apart").
 func specCadence(s RecurringSpec) string {
+	if s.Pattern == RecurringDaily {
+		return "every day at " + fmtDailyAt(s.AtMinutes)
+	}
 	win := ""
 	if s.HasWindow {
 		win = fmt.Sprintf(" between %s and %s", fmtHHMM(s.WindowFromMin), fmtHHMM(s.WindowToMin))
@@ -404,4 +422,55 @@ func specCadence(s RecurringSpec) string {
 		return fmt.Sprintf("at %d random time(s) per day%s%s", s.TimesPerDay, win, gap)
 	}
 	return fmt.Sprintf("every %d min%s", s.IntervalSeconds/60, win)
+}
+
+// nextDailyFire is the first of the set times strictly after now, today or
+// tomorrow, in now's zone. Worked out from the calendar each time, never from
+// the last fire: a fire that runs late (a restart, a busy box) still leaves
+// the next one on the hour. Built with time.Date, so a daylight-saving change
+// keeps 08:00 at 08:00 rather than shifting it by the hour gained or lost.
+func nextDailyFire(at []int, now time.Time) time.Time {
+	for d := 0; d <= 1; d++ {
+		y, mo, day := now.AddDate(0, 0, d).Date()
+		for _, m := range at {
+			if t := time.Date(y, mo, day, m/60, m%60, 0, 0, now.Location()); t.After(now) {
+				return t
+			}
+		}
+	}
+	return now.Add(24 * time.Hour) // unreachable with a non-empty list
+}
+
+// parseDailyAt reads "08:00" or "08:00, 18:30" into sorted, de-duplicated
+// minutes since midnight.
+func parseDailyAt(s string) ([]int, error) {
+	seen := map[int]bool{}
+	var out []int
+	for _, part := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
+		m, err := parseHHMM(part)
+		if err != nil {
+			return nil, err
+		}
+		if !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("daily_at needs at least one time, HH:MM (24-hour), e.g. 08:00 or 08:00,18:00")
+	}
+	if len(out) > 24 {
+		return nil, errors.New("daily_at takes at most 24 times")
+	}
+	sort.Ints(out)
+	return out, nil
+}
+
+// fmtDailyAt renders the times for labels and the editor: "08:00, 18:30".
+func fmtDailyAt(at []int) string {
+	parts := make([]string, 0, len(at))
+	for _, m := range at {
+		parts = append(parts, fmtHHMM(m))
+	}
+	return strings.Join(parts, ", ")
 }

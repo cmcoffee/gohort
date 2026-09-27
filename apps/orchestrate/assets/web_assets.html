@@ -7045,7 +7045,7 @@ select.ui-orch-intake-input {
           host.appendChild(wrap);
           return wrap;
         }
-        var patternSel = schedSelect([['fixed', 'Fixed: every N minutes'], ['random', 'Random']], task.pattern || 'fixed');
+        var patternSel = schedSelect([['fixed', 'Fixed: every N minutes'], ['daily', 'Daily: at set times'], ['random', 'Random']], task.pattern || 'fixed');
         labeled('Pattern', patternSel);
 
         var interval = schedNum(task.interval_minutes);
@@ -7066,11 +7066,13 @@ select.ui-orch-intake-input {
         indefinite.checked = !(parseInt(task.max_fires, 10) > 0);
 
         var fixedRow = labeled('Every N minutes', interval);
+        var dailyAt = schedTxt(task.daily_at || '', '08:00 or 08:00,18:00');
+        var dailyRow = labeled('Times of day (HH:MM, your time zone)', dailyAt);
         var timesRow = labeled('Times per day (blank = unlimited)', timesPerDay);
         var minGapRow = labeled('Min minutes between fires', minGap);
         var maxGapRow = labeled('Max minutes between fires (unlimited random)', maxGap);
-        labeled('Active window from (HH:MM, optional)', fromI);
-        labeled('Active window to (HH:MM, optional)', toI);
+        var fromRow = labeled('Active window from (HH:MM, optional)', fromI);
+        var toRow = labeled('Active window to (HH:MM, optional)', toI);
         labeled('Run indefinitely (no total-fire cap)', indefinite);
         var maxFiresRow = labeled('Max total fires (stop after this many)', maxFires);
         function syncIndefinite() {
@@ -7081,7 +7083,12 @@ select.ui-orch-intake-input {
 
         function syncPattern() {
           var isRandom = patternSel.value === 'random';
-          fixedRow.style.display = isRandom ? 'none' : '';
+          var isDaily = patternSel.value === 'daily';
+          fixedRow.style.display = (isRandom || isDaily) ? 'none' : '';
+          dailyRow.style.display = isDaily ? '' : 'none';
+          // A daily task runs at its set times; a window has nothing to add.
+          fromRow.style.display = isDaily ? 'none' : '';
+          toRow.style.display = isDaily ? 'none' : '';
           timesRow.style.display = isRandom ? '' : 'none';
           minGapRow.style.display = isRandom ? '' : 'none';
           maxGapRow.style.display = isRandom ? '' : 'none';
@@ -7094,11 +7101,12 @@ select.ui-orch-intake-input {
           return {
             pattern: patternSel.value,
             interval_minutes: iv(interval),
+            daily_at: dailyAt.value.trim(),
             times_per_day: iv(timesPerDay),
             min_gap_minutes: iv(minGap),
             max_gap_minutes: iv(maxGap),
-            active_from: fromI.value.trim(),
-            active_to: toI.value.trim(),
+            active_from: patternSel.value === 'daily' ? '' : fromI.value.trim(),
+            active_to: patternSel.value === 'daily' ? '' : toI.value.trim(),
             // Checked → 0, the stored form of "indefinite". Explicit rather
             // than relying on a blank field, so the intent round-trips.
             max_fires: indefinite.checked ? 0 : iv(maxFires)

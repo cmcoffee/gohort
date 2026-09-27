@@ -34,6 +34,7 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"Pick the action:\n" +
 				"  action=\"schedule\": set one up. Always: prompt (the directive run each fire, e.g. \"check the build, post if red\": don't put timing in it). Give it a short name too (e.g. \"build watch\") so its report cards and the Schedules rail identify it; if you omit name, the first line of the prompt is used. Then pick a pattern:\n" +
 				"     pattern=\"fixed\" (default): fires every interval_minutes (>=1).\n" +
+				"     pattern=\"daily\": fires at set times of day, daily_at=\"08:00\" (or several, \"08:00,18:00\"), in the user's time zone. Use it for \"every morning\", \"daily at 8\", \"each evening\": a 1440-minute interval runs 24h after whenever it was made, not at a time of day.\n" +
 				"     pattern=\"random\", random timing, two shapes: (a) set times_per_day to fire N random moments inside a daily window (active_from/active_to), each at least min_gap_minutes apart; or (b) OMIT times_per_day to fire UNLIMITED times per day at random gaps between min_gap_minutes and max_gap_minutes (the min gap is the throttle; runs until cancelled). Use random to make polling feel organic instead of clockwork.\n" +
 				"   Optional modifiers (any pattern): active_from/active_to (a daily HH:MM–HH:MM window, local time, outside which fires wait for the next window) and max_fires (auto-stop after this many total fires). Guardrails: min 1 min between fires, max 5 active tasks per session. Schedules run INDEFINITELY by default, until cancelled (a task that goes ~90 days doing no useful work is reaped). Do NOT set max_fires unless the user explicitly asked for a bounded number of runs. Optional `to` picks where its reports land (default above); a re-issue that omits `to` keeps the task where it already reports.\n" +
 				"  To CHANGE an existing task, re-issue action=\"schedule\" with the SAME name and the new timing / directive: it EDITS that task in place (keeping its run history and the thread it reports to) instead of creating a duplicate. The NAME is what identifies it, across every thread of this agent; a task with no name is matched by an identical prompt instead. Reusing a name is how you edit: pick a new name only when you actually want a second task. recurring(action=\"list\") shows the existing names.\n" +
@@ -46,7 +47,8 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"action":           {Type: "string", Enum: []string{"schedule", "list", "cancel", "move"}, Description: "schedule | list | cancel | move."},
 				"prompt":           {Type: "string", Description: "(schedule) The recurring task as a directive the agent follows each fire. Don't include timing: that's the pattern params."},
 				"name":             {Type: "string", Description: "(schedule, optional) Short label identifying this task on its report cards and in the Schedules rail (e.g. \"build watch\"). Defaults to the prompt's first line if omitted."},
-				"pattern":          {Type: "string", Enum: []string{"fixed", "random"}, Description: "(schedule) fixed = every interval_minutes (default); random = times_per_day random moments inside the active window."},
+				"pattern":          {Type: "string", Enum: []string{"fixed", "random", "daily"}, Description: "(schedule) fixed = every interval_minutes (default); random = times_per_day random moments inside the active window; daily = at the times in daily_at."},
+				"daily_at":         {Type: "string", Description: "(schedule, daily) Time(s) of day to fire, 24-hour HH:MM in the user's zone: \"08:00\", or several separated by commas, \"08:00,18:00\". Setting it makes the pattern daily."},
 				"interval_minutes": {Type: "integer", Description: "(schedule, fixed) How often the task fires, in minutes. Minimum 1."},
 				"times_per_day":    {Type: "integer", Description: "(schedule, random) Fire this many random times inside the daily window (1–48). OMIT for UNLIMITED firing at random gaps: see max_gap_minutes."},
 				"min_gap_minutes":  {Type: "integer", Description: "(schedule, random) Minimum minutes between consecutive fires: the throttle. Defaults to the deployment minimum (1) if omitted."},
@@ -191,6 +193,15 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 		MaxFires:    intFromArgs(args, "max_fires"),
 		Until:       strings.TrimSpace(stringArg(args, "until")),
 		MaxAttempts: intFromArgs(args, "max_attempts"),
+	}
+	// daily_at alone says what it is: a task at set times of day.
+	if at := strings.TrimSpace(stringArg(args, "daily_at")); at != "" {
+		mins, err := parseDailyAt(at)
+		if err != nil {
+			return "", err
+		}
+		spec.AtMinutes = mins
+		spec.Pattern = RecurringDaily
 	}
 	if spec.Pattern == "" {
 		spec.Pattern = RecurringFixed

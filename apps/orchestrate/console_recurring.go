@@ -329,6 +329,7 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 			"prompt":           p.Prompt,
 			"pattern":          pattern,
 			"interval_minutes": p.IntervalSeconds / 60,
+			"daily_at":         strings.ReplaceAll(fmtDailyAt(p.AtMinutes), " ", ""),
 			"times_per_day":    p.TimesPerDay,
 			"min_gap_minutes":  p.MinGapSeconds / 60,
 			"max_gap_minutes":  p.MaxGapSeconds / 60,
@@ -374,6 +375,7 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 	var body struct {
 		Pattern         string `json:"pattern"`
 		IntervalMinutes int    `json:"interval_minutes"`
+		DailyAt         string `json:"daily_at"`
 		TimesPerDay     int    `json:"times_per_day"`
 		MinGapMinutes   int    `json:"min_gap_minutes"`
 		MaxGapMinutes   int    `json:"max_gap_minutes"`
@@ -436,6 +438,14 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		MaxGapSeconds:   body.MaxGapMinutes * 60,
 		MaxFires:        body.MaxFires,
 	}
+	if spec.Pattern == RecurringDaily || (spec.Pattern == "" && strings.TrimSpace(body.DailyAt) != "") {
+		mins, derr := parseDailyAt(body.DailyAt)
+		if derr != nil {
+			http.Error(w, derr.Error(), http.StatusBadRequest)
+			return
+		}
+		spec.Pattern, spec.AtMinutes = RecurringDaily, mins
+	}
 	if spec.Pattern == "" {
 		spec.Pattern = RecurringFixed
 	}
@@ -497,6 +507,7 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		Prompt          string `json:"prompt"`
 		Pattern         string `json:"pattern"`
 		IntervalMinutes int    `json:"interval_minutes"`
+		DailyAt         string `json:"daily_at"`
 		TimesPerDay     int    `json:"times_per_day"`
 		MinGapMinutes   int    `json:"min_gap_minutes"`
 		MaxGapMinutes   int    `json:"max_gap_minutes"`
@@ -551,6 +562,14 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		MinGapSeconds:   body.MinGapMinutes * 60,
 		MaxGapSeconds:   body.MaxGapMinutes * 60,
 		MaxFires:        body.MaxFires,
+	}
+	if spec.Pattern == RecurringDaily || (spec.Pattern == "" && strings.TrimSpace(body.DailyAt) != "") {
+		mins, derr := parseDailyAt(body.DailyAt)
+		if derr != nil {
+			http.Error(w, derr.Error(), http.StatusBadRequest)
+			return
+		}
+		spec.Pattern, spec.AtMinutes = RecurringDaily, mins
 	}
 	if spec.Pattern == "" {
 		spec.Pattern = RecurringFixed
