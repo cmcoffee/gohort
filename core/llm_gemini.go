@@ -668,8 +668,8 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 		return nil, fmt.Errorf("gemini: stream read error: %w", err)
 	}
 
-	Debug("[gemini]: Stream complete: model=%s input_tokens=%d output_tokens=%d tool_calls=%d thinking=%d",
-		modelVersion, inputTokens, outputTokens, len(toolCalls), thinking.Len())
+	Debug("[gemini]: Stream complete: model=%s input_tokens=%d output_tokens=%d tool_calls=%d thinking=%d finish=%s",
+		modelVersion, inputTokens, outputTokens, len(toolCalls), thinking.Len(), chooseStr(streamFinishReason, "(none)"))
 	if thinking.Len() > 0 {
 		Trace("[gemini]: <-- THINKING:\n%s", thinking.String())
 	}
@@ -708,12 +708,23 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 // tool call. The local (OpenAI-compatible) model populated the field and got
 // the skip — which is exactly why Gemini "just stopped" where the local model
 // kept going.
+// stopMalformedCall is the stop reason for a tool call the provider could not
+// read and dropped: the turn is unfinished, not answered (see the agent loop's
+// malformed-call retry).
+const stopMalformedCall = "malformed_call"
+
 func geminiStopReason(finish string) string {
 	switch strings.ToUpper(strings.TrimSpace(finish)) {
 	case "STOP":
 		return "stop"
 	case "MAX_TOKENS":
 		return "length"
+	case "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL":
+		// The model tried to call a tool and Gemini could not read the call,
+		// so it dropped it and returned only the text before it. Read as a
+		// plain stop, that turn ended on a lead-in ("I need a couple more
+		// details:") with the question form it was about to send gone.
+		return stopMalformedCall
 	case "":
 		// No candidate / no reason reported. Treat as a clean stop rather
 		// than an empty string: empty is the value that silently disabled

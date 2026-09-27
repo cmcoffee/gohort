@@ -20,6 +20,10 @@ func TestEndsWithCallAnnouncement(t *testing.T) {
 		"Let me dig up that benchmark article with actual token/s numbers:",
 		"Here's the plan:",
 		"Now I'll pull the numbers:",
+		// 2026-09-27: a lead-in to questions that never came, and the turn
+		// ended there with nothing for the user to answer.
+		"Okay, \"Briefing Bot\" it is!\n\nNow, to set up your Briefing Bot, I need a couple more details:",
+		"We need the following:",
 	}
 	noFire := []string{
 		"Paste the error message here:",
@@ -31,6 +35,8 @@ func TestEndsWithCallAnnouncement(t *testing.T) {
 		// only the agent committing ITSELF and then stopping is broken.
 		"Send me the link and I'll take a look:",
 		"Reply with one of these:",
+		// Handing the next move over still ends a turn, "need" or not.
+		"Tell me the board name I need:",
 		"",
 	}
 	for _, c := range fire {

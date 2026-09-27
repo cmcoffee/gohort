@@ -140,3 +140,38 @@ func TestAMonitorPostIsCutToFit(t *testing.T) {
 		t.Errorf("want a post within the cap, marked as cut, signed by the monitor: %d chars, %q", n, b.Text[len(b.Text)-20:])
 	}
 }
+
+// Builder can set a board up end to end: create it, let the new agent post
+// to it, choose followers, and list what is there.
+func TestBuilderSetsUpABoard(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	bot, _ := saveAgent(db, AgentRecord{Name: "Briefing Bot", Owner: "u", OrchestratorPrompt: "p"})
+	wren, _ := saveAgent(db, AgentRecord{Name: "Wren", Owner: "u", OrchestratorPrompt: "p"})
+	tool := bulletinsToolDef(&chatTurn{udb: db, user: "u"})
+	call := func(args map[string]any) string {
+		out, err := tool.Handler(context.Background(), args)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return out
+	}
+	call(map[string]any{"action": "create", "name": "news", "desc": "Today's headlines", "ttl_hours": float64(24)})
+	if out := call(map[string]any{"action": "allow_poster", "board": "news", "agent": "Briefing Bot"}); !strings.Contains(out, "post_bulletin") {
+		t.Errorf("granting names the tool it gets: %s", out)
+	}
+	call(map[string]any{"action": "follow", "board": "news", "agent": "Wren"})
+	b, _ := loadBulletin(db, "news")
+	if b.TTLHours != 24 || !b.canPost(bot.ID) {
+		t.Errorf("board should carry its lifetime and its poster: %+v", b)
+	}
+	if a, _ := loadAgent(db, wren.ID); !containsString(a.Bulletins, "news") {
+		t.Error("Wren should follow the board")
+	}
+	call(map[string]any{"action": "follow", "board": "news", "agent": "all"})
+	if b, _ := loadBulletin(db, "news"); !b.AllAgents {
+		t.Error("\"all\" makes every agent follow it")
+	}
+	if out := call(map[string]any{"action": "list"}); !strings.Contains(out, "news: Today's headlines") || !strings.Contains(out, "Briefing Bot") {
+		t.Errorf("list names the board and its poster: %s", out)
+	}
+}

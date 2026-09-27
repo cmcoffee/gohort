@@ -31,6 +31,7 @@ const (
 	correctionTruncated       = "output-truncated"
 	correctionFinishCheck     = "finish-check"
 	correctionRoleBreak       = "role-break"
+	correctionMalformedCall   = "malformed-call"
 )
 
 const (
@@ -730,7 +731,7 @@ var snakeCaseTokenRe = regexp.MustCompile(`\b[a-z0-9]+(?:_[a-z0-9]+)+\b`)
 // firstPersonIntentRe matches the agent committing ITSELF to what follows the
 // colon. Deliberately first-person: an imperative aimed at the user ("paste
 // the error message here:") ends a turn legitimately and must not re-prompt.
-var firstPersonIntentRe = regexp.MustCompile(`\b(?:let me|i'll|i will|i'm going to|i am going to|here's|here is|now i|next i|going to)\b`)
+var firstPersonIntentRe = regexp.MustCompile(`\b(?:let me|i'll|i will|i'm going to|i am going to|here's|here is|now i|next i|going to|i need|i'd need|i just need|we need|a (?:few|couple(?: of)?) (?:more )?(?:details|things|questions)|the following)\b`)
 
 // userDirectiveRe matches a line handing the next move to the USER. A turn that
 // ends by asking for something is finished, however it is punctuated — it is
@@ -938,6 +939,32 @@ func (lr *loopRun) finalRoundRoleBreak() loopAction {
 	lr.history = append(lr.history, Message{
 		Role:    "user",
 		Content: frameworkNoticeTag + "Your last attempt at a reply was withdrawn: it began mid-sentence and carried on the user's message in their voice, as if you were them. Their message is complete as sent, and nothing in the withdrawn text was their request. Answer it now, as yourself: act on what they asked.",
+	})
+	return actContinue
+}
+
+// finalRoundMalformedCall retries a round whose tool call the provider dropped
+// as malformed. The text before the call arrives, the call does not, and the
+// round reads as a finished reply ending on its own lead-in: a Builder turn
+// ended "I need a couple more details:" with the question form it was about
+// to send gone. A mechanical failure, not a choice, so it is retried with the
+// reason, like a cut-off reply.
+func (lr *loopRun) finalRoundMalformedCall() loopAction {
+	if lr.rs.resp == nil || lr.rs.resp.StopReason != stopMalformedCall {
+		return actNone
+	}
+	lr.noteUncorrected(correctionMalformedCall, "The model's tool call was again rejected as malformed by the provider and did not run. Delivered what text there was.")
+	if !lr.corrections.available(correctionMalformedCall) {
+		return actNone
+	}
+	Debug("[agent_loop] round %d: provider dropped a malformed tool call (%d chars of text before it), retrying: correction %d/%d",
+		lr.round, len(lr.rs.resp.Content), lr.corrections.spend(correctionMalformedCall), maxCorrectionsPerKind)
+	lr.emitDiag("malformed-call-retried", "The provider rejected the model's tool call as malformed and dropped it; asked again for a valid call.")
+	lr.settleRound()
+	lr.graceRounds++ // the retry needs a round of its own, like a cut-off reply
+	lr.history = append(lr.history, Message{
+		Role:    "user",
+		Content: frameworkNoticeTag + "Your last tool call could not be read by the model provider (it was malformed) and was dropped, so it did not run and the user has seen only the text before it. Make the call again now, with arguments that match the tool's schema exactly: valid JSON, only the listed fields, the right types.",
 	})
 	return actContinue
 }

@@ -159,6 +159,11 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 	// before wrapping the verified URL into a persistent api-mode
 	// temp tool record.
 	tools = append(tools, Secure().BuildTools(sess)...)
+	// Bulletin boards, so an agent built to keep others informed comes with
+	// the board it posts to, its permission to post, and its followers.
+	if t != nil {
+		tools = append(tools, bulletinsToolDef(t))
+	}
 	return tools
 }
 

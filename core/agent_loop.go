@@ -2360,6 +2360,7 @@ func (lr *loopRun) noToolCallRound() loopAction {
 		// The final-round guards, in the order they always ran. The first one
 		// that ends the round says so and the rest do not run.
 		for _, guard := range []func() loopAction{
+			lr.finalRoundMalformedCall,
 			lr.finalRoundTruncation,
 			lr.finalRoundRoleBreak,
 			lr.finalRoundPromiseGuards,
