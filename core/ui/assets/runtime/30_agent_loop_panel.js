@@ -4832,16 +4832,28 @@
     }
 
     // applyRecordLock opens or closes the composer for the thread on screen: a
-    // record is read, never written into.
+    // record is read, never written into. A locked thread shows no composer at
+    // all, just a line saying where to talk instead; the input stays in the
+    // page, hidden, because a question card answers through it.
+    var lockNote = null;
     function applyRecordLock(sid) {
       var agentId = window.GOHORT_AGENT_ID;
       var altLocked = !!(cfg.alt_locked && sid && sid === altPinnedSession(agentId));
       recordLocked = altLocked || !!(sid && sid === recordPinnedSession(agentId));
       inputArea.disabled = recordLocked;
       sendBtn.disabled = recordLocked;
+      inputArea.placeholder = cfg.placeholder || 'Ask something…';
       var lockedText = (altLocked && cfg.alt_locked_text) || cfg.record_locked_text ||
         'This thread is a record. Start a new session to talk.';
-      inputArea.placeholder = recordLocked ? lockedText : (cfg.placeholder || 'Ask something…');
+      if (recordLocked && !lockNote && inputRow.parentNode) {
+        lockNote = el('div', {class: 'ui-agent-locked-note'});
+        inputRow.parentNode.insertBefore(lockNote, inputRow);
+      }
+      if (lockNote) {
+        lockNote.textContent = lockedText;
+        lockNote.style.display = recordLocked ? '' : 'none';
+      }
+      inputRow.style.display = recordLocked ? 'none' : '';
     }
 
     // A question card answers through this rather than through the Send
@@ -6220,7 +6232,7 @@
       // Channel threads are READ-ONLY in the web UI — messages arrive from the
       // messaging surface, not by typing here. Hide the composer for a channel
       // thread (id "chan:…") and restore it for ordinary sessions.
-      if (inputRow) inputRow.style.display = ((sid || '').indexOf('chan:') === 0) ? 'none' : '';
+      if (inputRow) inputRow.style.display = (recordLocked || (sid || '').indexOf('chan:') === 0) ? 'none' : '';
       // Stop any prior channel poll; a channel open re-starts it after replay.
       stopChannelPolling();
       // Reset run-tracking state — the new session may have its own

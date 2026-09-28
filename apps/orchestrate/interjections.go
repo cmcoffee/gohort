@@ -118,6 +118,12 @@ func (T *OrchestrateApp) handleInject(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		case "":
+			// A note into a cortex run is a write into the cortex, which a
+			// person reaches only by answering a question it asked.
+			if req.ID == cortexSessionID(q.AgentID) {
+				http.Error(w, cortexWriteRefusal, http.StatusForbidden)
+				return
+			}
 			// falls through to new-note path
 		default:
 			http.Error(w, "unknown action", http.StatusBadRequest)

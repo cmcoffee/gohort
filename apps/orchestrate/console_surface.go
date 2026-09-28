@@ -17,6 +17,42 @@ func cortexSessionID(agentID string) string {
 	return "channel:" + agentID
 }
 
+// cortexWriteRefusal is what a web write into a cortex is told.
+const cortexWriteRefusal = "The cortex is read-only here: it holds what reaches the agent (messages, scheduled runs, monitor fires) and its own notes. Start a new session to talk to it."
+
+// refusesWebWrite reports whether a message sent from the web UI must be
+// refused because it would land in the agent's cortex. The one exception is
+// an answer: the thread's last message is the agent asking the person
+// something (ask_user or ask_user_form), and a run waiting on that answer
+// would otherwise be stuck.
+func refusesWebWrite(agentID, sessionID string, sess ChatSession) bool {
+	if sessionID == "" || sessionID != cortexSessionID(agentID) {
+		return false
+	}
+	return !awaitsAnswer(sess)
+}
+
+// awaitsAnswer reports whether a session's last message is the agent asking
+// the person a question it has not had an answer to yet.
+func awaitsAnswer(sess ChatSession) bool {
+	for i := len(sess.Messages) - 1; i >= 0; i-- {
+		m := sess.Messages[i]
+		if m.Role == "user" {
+			return false
+		}
+		if m.Role != "assistant" {
+			continue
+		}
+		for _, tc := range m.ToolCalls {
+			if tc.Name == "ask_user" || tc.Name == "ask_user_form" {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
 // resolveSurface maps a scheduled thing's Surface mode to the session its fire
 // should land in, plus whether to surface it at all. `home` is the record's own
 // home session — a monitor's WakeSession, a standing agent's ReportSessionID, or

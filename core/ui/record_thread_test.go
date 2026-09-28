@@ -53,6 +53,8 @@ func TestALockedHomeThreadStillTakesAnswers(t *testing.T) {
 		"inputArea.addEventListener('ui-ask-answer'",
 		"answerPass = true;",
 		"new CustomEvent('ui-ask-answer'",
+		"inputRow.style.display = recordLocked ? 'none' : '';", // no composer on a locked thread
+		"class: 'ui-agent-locked-note'",                        // a line in its place
 		"if (!inputArea.dispatchEvent(ev)) return true;",
 	} {
 		if !strings.Contains(js, want) {

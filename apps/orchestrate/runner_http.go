@@ -216,6 +216,11 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		tmp.Send(map[string]any{"kind": "error", "text": importedSessionRefusal})
 		return
 	}
+	if refusesWebWrite(agent.ID, req.SessionID, sess) {
+		tmp := newSSEWriter(w)
+		tmp.Send(map[string]any{"kind": "error", "text": cortexWriteRefusal})
+		return
+	}
 	isNewSession := sess.ID == ""
 	if isNewSession {
 		sess = ChatSession{

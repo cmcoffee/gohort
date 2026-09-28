@@ -103,3 +103,27 @@ func TestARenamedRetimeEditsTheCortexHomedTaskInsteadOfDuplicatingIt(t *testing.
 		t.Error("an empty directive matched a task; a schedule call with no prompt should replace nothing")
 	}
 }
+
+// The server refuses a web write into an agent's cortex, whatever the page
+// does, except the answer to a question the agent asked there.
+func TestTheCortexRefusesWebWritesButTakesAnAnswer(t *testing.T) {
+	cortex := cortexSessionID("wren")
+	asked := ChatSession{Messages: []ChatMessage{
+		{Role: "user", Content: "[scheduled] morning check"},
+		{Role: "assistant", Content: "Which feed?", ToolCalls: []PersistedToolCall{{Name: "ask_user"}}},
+	}}
+	answered := ChatSession{Messages: append(append([]ChatMessage{}, asked.Messages...), ChatMessage{Role: "user", Content: "the news one"})}
+	plain := ChatSession{Messages: []ChatMessage{{Role: "assistant", Content: "Posted the digest."}}}
+	switch {
+	case !refusesWebWrite("wren", cortex, plain):
+		t.Error("a message typed into the cortex is refused")
+	case refusesWebWrite("wren", cortex, asked):
+		t.Error("the answer to the agent's own question goes through")
+	case !refusesWebWrite("wren", cortex, answered):
+		t.Error("once answered, the cortex is closed again")
+	case refusesWebWrite("wren", "some-session", plain), refusesWebWrite("wren", "", plain):
+		t.Error("an ordinary session is untouched")
+	case refusesWebWrite("wren", cortexSessionID("other"), plain):
+		t.Error("only this agent's own cortex id counts")
+	}
+}
