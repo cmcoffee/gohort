@@ -434,6 +434,9 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 		if tt.ResponseExtract != nil {
 			out["response_extract"] = tt.ResponseExtract
 		}
+		if tt.Job != nil {
+			out["job"] = tt.Job
+		}
 		if tt.ScriptBody != "" {
 			out["script_body"] = tt.ScriptBody
 		}

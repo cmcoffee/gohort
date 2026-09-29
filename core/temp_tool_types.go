@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/apijob"
 )
 
 // TempToolMode determines how a temp tool's body is interpreted at
@@ -262,6 +264,11 @@ type TempTool struct {
 	// response body; a response_pipe, if also set, then projects the extracted
 	// JSON (XML → JSON → jq).
 	ResponseExtract *ExtractSpec `json:"response_extract,omitempty"`
+	// Job (api mode) makes the call a submit-and-wait: the response is a job
+	// to poll until done, then the result or the file it produced (delivered
+	// to the person). See core/apijob. A job expected to run long goes to the
+	// background instead of holding the turn.
+	Job *apijob.Spec `json:"job,omitempty"`
 	// TimeoutSec (api and toolbox modes) replaces the general per-call cap for
 	// this tool's requests; 0 keeps it. For an endpoint whose one request IS
 	// the job, a generation that answers with the finished result, the general

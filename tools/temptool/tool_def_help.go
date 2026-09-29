@@ -658,6 +658,35 @@ caller can't mistake for content. Ragged records let values slide
 across item boundaries.
 
 ================================================================
+APIS THAT ANSWER WITH A JOB: job={...}, never a polling script
+
+Song, video and image generators, transcription and exports often answer
+the request with a job ("queued", an id) and deliver the result minutes
+later. Do NOT write a script that sleeps and polls: it hits the sandbox's
+time cap and holds the turn. Declare the job on the api tool instead, and
+the tool waits it out itself:
+
+  tool_def(action="create", mode="api", name="make_song",
+           credential="songs", method="POST",
+           url_template="https://api.example.com/v1/songs",
+           body_template={"prompt": {prompt}},
+           job={"id_path": "name",
+                "poll_url": "/v1/operations/{id}",
+                "ready_path": "done", "ready_values": ["true"],
+                "error_path": "error.code", "error_detail_path": "error.message",
+                "file_url_path": "response.audio_uri",
+                "expect_secs": 90, "max_secs": 600},
+           params={...})
+
+  * Paths are dot-paths into the JSON ("data.0.url"); {id} is the job id,
+    in poll_url and in paths (ComfyUI keys its history by it:
+    "{id}.outputs.9.images.0.filename").
+  * file_url_path (or file_url_template + file_fields) makes the tool fetch
+    the finished file and DELIVER it to the user: no attach step needed.
+  * result_path returns just the part of the final response that matters.
+  * expect_secs past a minute or so sends the job to the background, so the
+    turn is not held; it reports when done.
+
 WebDAV / CalDAV: the Depth header is not optional
 ================================================================
 

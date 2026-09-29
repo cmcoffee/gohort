@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -517,7 +518,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 		// CapExecute) must wait for the next turn's fresh build + gate, so it
 		// can't run an un-gated shell pipe this turn; until then the snapshot
 		// dispatches. Non-cap edits — the common case — apply immediately.
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+		Handler: jobDetach(sess, tt, func(ctx context.Context, args map[string]any) (string, error) {
 			run := tt
 			if live := currentTempTool(sess, tt.Name); live != nil && capsSubset(tempToolCaps(live), caps) {
 				run = live
@@ -525,8 +526,34 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			out, err := dispatchTempTool(sess, run, args)
 			recordCleanRun(sess, run, out, err)
 			return adviseOnFailure(sess, run, out, err)
-		},
+		}),
 	}
+}
+
+// jobDetach lets a job tool that usually runs long (its job's expect_secs)
+// go to the background instead of holding the turn, the way the image
+// generators do: the framework decides from the expected time, the job runs
+// against a session that outlives the turn, and its result (and the file it
+// delivers) arrives when it is done. A tool with no job, or a quick one, runs
+// inline as before.
+func jobDetach(sess *ToolSession, tt *TempTool, inline ToolHandlerFunc) ToolHandlerFunc {
+	if sess == nil || tt == nil || tt.Job == nil || tt.Job.ExpectSecs <= 0 {
+		return inline
+	}
+	expect := time.Duration(tt.Job.ExpectSecs) * time.Second
+	return WrapDetachable(DetachPolicy{
+		Tool:     tt.Name,
+		Label:    func(map[string]any) string { return tt.Name },
+		Expected: func(map[string]any, *ToolSession) time.Duration { return expect },
+		Typical:  func(map[string]any, *ToolSession) time.Duration { return expect },
+		Detached: func(args map[string]any, detached *ToolSession) (string, error) {
+			run := tt
+			if live := currentTempTool(detached, tt.Name); live != nil {
+				run = live
+			}
+			return dispatchTempTool(detached, run, args)
+		},
+	}, sess, inline)
 }
 
 // sessUser is the session's user, "" without a session.

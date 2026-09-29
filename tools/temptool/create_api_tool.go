@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/apijob"
 )
 
 // ----------------------------------------------------------------------
@@ -173,6 +174,10 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		return "", fmt.Errorf("required param(s) %v are sent NOWHERE: this %s tool references them in neither url_template nor body_template, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add a body_template that carries them, e.g. body_template: {\"content\": {content}}", unsent, method)
 	}
 
+	job, err := apijob.Parse(args["job"])
+	if err != nil {
+		return "", err
+	}
 	tool := &TempTool{
 		Name:            name,
 		Description:     desc,
@@ -187,6 +192,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		Headers:         stringMapArg(args, "headers"),
 		ResponsePipe:    respPipe,
 		ResponseExtract: ParseExtractSpec(args["response_extract"]),
+		Job:             job,
 		Category:        strings.TrimSpace(StringArg(args, "category")),
 		TimeoutSec:      timeoutSecArg(args),
 	}

@@ -206,6 +206,9 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		if v, ok := args["response_extract"]; ok {
 			apiArgs["response_extract"] = v
 		}
+		if v, ok := args["job"]; ok {
+			apiArgs["job"] = v
+		}
 		if v, ok := args["required"]; ok {
 			apiArgs["required"] = v
 		}

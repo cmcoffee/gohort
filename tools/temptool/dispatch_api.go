@@ -146,6 +146,10 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	if err != nil {
 		return raw, err
 	}
+	// A job tool's response is a job to wait out, not the result.
+	if tt.Job != nil {
+		return runAPIJob(sess, tt, urlStr, raw)
+	}
 	if tt.ResponsePipe == "" && tt.ResponseExtract == nil {
 		return raw, nil
 	}

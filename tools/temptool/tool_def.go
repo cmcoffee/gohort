@@ -16,6 +16,14 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// jobDesc documents the job spec for an api tool whose API answers with a job
+// to wait for (core/apijob).
+const jobDesc = "(api, optional) For an API that answers with a JOB instead of the result (song/video/image generation, transcription, exports): the tool waits it out itself. " +
+	"{id_path: where the job id is in the submit response, poll_url: where to ask how it is going ({id} = the id; relative to url_template's host is fine), ready_path: the field that says done, ready_values: [values meaning done] (omit: any non-empty value), " +
+	"error_path + error_values + error_detail_path: how it says it failed, result_path: the part of the final response to return, " +
+	"file_url_path: where the finished FILE's URL is (or file_url_template with {tokens} + file_fields {token: path}), file_name, interval_secs (default 3), max_secs (default 300, up to 3600), expect_secs: how long a job usually takes}. " +
+	"Paths are dot-paths (\"data.status\", \"outputs.0.url\", \"{id}.outputs\"). A file is fetched and DELIVERED to the user. A job with expect_secs past a minute or so runs in the background and reports when done. Never write a polling loop in a script for this."
+
 // responseExtractDesc documents the response_extract spec for the tool_def
 // schema. Shared across the create/action/update schemas so the shape stays
 // consistent. Namespace-agnostic (local names) is the headline — it's what
@@ -84,6 +92,7 @@ func BuildToolDef() *GroupedTool {
 			"content_type":      {Type: "string", Description: "(api, optional) Content-Type for the body. Empty = application/json; any other value switches to raw substitution."},
 			"response_pipe":     {Type: "string", Description: "(api, optional) sh -c filter over the response body (jq/awk/sed) to keep noise out of your context. See action=\"help\" for the jq gotchas."},
 			"response_extract":  {Type: "object", Description: responseExtractDesc},
+			"job":               {Type: "object", Description: jobDesc},
 			"category":          {Type: "string", Description: "Short grouping label for the tool catalog (e.g. \"Calendar\", \"Moltbook\")."},
 			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none."},
 			"state_path":        {Type: "string", Description: "(shell, optional) Workspace subdirectory this tool may persist state in."},
@@ -201,6 +210,7 @@ func BuildToolDef() *GroupedTool {
 			"content_type":      {Type: "string", Description: "(api, optional) Content-Type for the body. Empty = application/json; any other value switches to raw substitution."},
 			"response_pipe":     {Type: "string", Description: "(api, optional) sh -c filter over the response body (jq/awk/sed) to keep noise out of your context. See action=\"help\" for the jq gotchas."},
 			"response_extract":  {Type: "object", Description: "(api) New response_extract spec (XML→JSON). Same shape as create; see the create schema."},
+			"job":               {Type: "object", Description: "(api) New job spec, replacing the old one (same shape as create); null removes it. Omit to keep it."},
 			"category":          {Type: "string", Description: "Short grouping label for the tool catalog (e.g. \"Calendar\", \"Moltbook\")."},
 			"script_body":       {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only: no pip. See action=\"help\"."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) REPLACES the declared sandbox capabilities, e.g. [\"fetch_via:<credential>\"]. Omit to keep the current ones."},
