@@ -1,0 +1,77 @@
+{
+  "id": "slack",
+  "title": "Slack",
+  "category": "Messaging",
+  "description": "Post messages to Slack channels and list the channels a bot can see, through Slack's Web API with a bot token.",
+  "setup_notes": "Create a Slack app at api.slack.com/apps, add the bot scopes chat:write and channels:read, install it to your workspace, and copy the Bot User OAuth Token (it starts with xoxb-). Invite the bot to each channel it should post in (/invite @yourbot). The credential lands disabled: test and enable it under API Credentials, then approve the tools under Persistent Tools.",
+  "questions": [
+    {
+      "name": "bot_token",
+      "label": "Slack bot token",
+      "help": "The Bot User OAuth Token, starting with xoxb-. It is stored in the credential's secret store and never written into a tool.",
+      "required": true,
+      "secret": true,
+      "credential": "slack"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "slack",
+        "recipe": {
+          "name": "slack",
+          "type": "bearer",
+          "base_url": "https://slack.com",
+          "allowed_endpoints": [
+            "/api/chat.postMessage",
+            "/api/conversations.list"
+          ],
+          "description": "Slack Web API, with a bot token."
+        }
+      },
+      {
+        "type": "tool",
+        "name": "slack_post_message",
+        "recipe": {
+          "name": "slack_post_message",
+          "description": "Post a message to a Slack channel the bot has been invited to. Slack answers ok:false with the reason when it refuses.",
+          "mode": "api",
+          "credential": "slack",
+          "method": "POST",
+          "url_template": "https://slack.com/api/chat.postMessage",
+          "params": {
+            "channel": {
+              "type": "string",
+              "description": "The channel's id (C0123...) or name (#general)."
+            },
+            "text": {
+              "type": "string",
+              "description": "The message, in Slack's mrkdwn."
+            }
+          },
+          "required": [
+            "channel",
+            "text"
+          ],
+          "body_template": "{\"channel\": {channel}, \"text\": {text}}"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "slack_list_channels",
+        "recipe": {
+          "name": "slack_list_channels",
+          "description": "List the workspace's public channels, with their ids.",
+          "mode": "api",
+          "credential": "slack",
+          "method": "GET",
+          "url_template": "https://slack.com/api/conversations.list?limit=200&exclude_archived=true",
+          "params": {},
+          "required": []
+        }
+      }
+    ]
+  }
+}

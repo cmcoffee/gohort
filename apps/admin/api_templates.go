@@ -215,30 +215,6 @@ func (a *AdminApp) registerTemplatesRoutes(sub *http.ServeMux) {
 		json.NewEncoder(w).Encode(templateSchemaMap(t, nil, "", true))
 	})
 
-	// All templates (connector + tool) for the Templates catalog browse. Each row's
-	// id is "<target>/<name>" so the two namespaces don't collide.
-	sub.HandleFunc("/api/all-templates", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		type row struct {
-			ID          string `json:"id"`
-			Name        string `json:"name"`
-			Label       string `json:"label"`
-			Category    string `json:"category"`
-			Target      string `json:"target"`
-			Description string `json:"description"`
-		}
-		var out []row
-		for _, target := range []string{TargetConnector, TargetTool} {
-			for _, t := range Templates(target) {
-				out = append(out, row{target + "/" + t.Name, t.Name, t.Label, t.Category, target, t.Description})
-			}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(out)
-	})
-
 	// --- tool templates (same generic renderer, tool target) ----------------
 	//
 	// The tool artifact is a TempTool that routes through the tool governance

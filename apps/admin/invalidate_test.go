@@ -45,11 +45,6 @@ func TestTheActionsThatChangeAnotherSectionSaySo(t *testing.T) {
 		why  string
 	}{
 		{
-			post: "api/catalog?action=install&id={id}",
-			want: []string{"api/connectors", "api/persistent-tools", "api/secure-api", "api/skills"},
-			why:  "an install lands drafts in every one of those sections, and reviewing them is the next thing you do",
-		},
-		{
 			post: "api/promotions?action=approve&id={id}",
 			want: []string{"api/persistent-tools"},
 			why:  "approving shares the tool, which is a badge on its row in the table this queue feeds",
@@ -78,5 +73,16 @@ func TestTheActionsThatChangeAnotherSectionSaySo(t *testing.T) {
 	// refresh once an import lands.
 	if !strings.Contains(src, `invalidate: ['api/connectors','api/persistent-tools','api/secure-api','api/skills']`) {
 		t.Error("the file-import path should still invalidate the same four sections")
+	}
+}
+
+// Adding a template lands drafts in the credential, tool, connector and skill
+// sections, and reviewing them is the next thing you do, so the Add refreshes
+// every one of them.
+func TestAddingATemplateRefreshesWhereItsPiecesLand(t *testing.T) {
+	for _, w := range []string{"api/connectors", "api/persistent-tools", "api/secure-api", "api/skills"} {
+		if !strings.Contains(templateInstallAction, "'"+w+"'") {
+			t.Errorf("adding a template should refresh %s", w)
+		}
 	}
 }

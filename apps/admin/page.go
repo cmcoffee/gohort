@@ -148,8 +148,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("configure_backend", configureBackendAction).
 			ClientAction("configure_backend_pick", configureBackendPickAction).
 			ClientAction("add_tool_from_template", addToolFromTemplateAction).
-			ClientAction("template_add", templateAddAction).
 			ClientAction("add_extension", addExtensionAction).
+			ClientAction("template_install", templateInstallAction).
+			ClientAction("template_export", templateExportAction).
+			ClientAction("template_import", templateImportAction).
 			ClientAction("configure_tool", configureToolAction).
 			ClientAction("tools_export", toolsExportAction).
 			ClientAction("tools_export_all", toolsExportAllAction).
@@ -176,6 +178,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		a.costSections,
 		a.capabilitiesSections,
 		a.maintenanceSections,
+		a.importExportSections,
 		a.credentialsSections,
 		a.governanceSections,
 		a.extensionsSections,
@@ -208,16 +211,15 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Web Search": "Capabilities", "Mail (SMTP)": "System",
 		"Network Timeouts": "Tuning",
 
-		"Extensions": "Extensions",
+		"Templates": "Extensions", "Import and export": "Extensions",
 
 		// Pluggable integrations you ADD — grouped under Extensions (vs Capabilities,
 		// which are configured features like Image Generation / STT).
-		"Templates":       "Extensions",
 		"API Credentials": "Extensions", "MCP Servers": "Extensions", "Connectors": "Extensions",
 		"Source Hooks": "Extensions", "Persistent Tools (Pending)": "Extensions",
 		"Global Tools": "Extensions", "Agent-Scoped Tools": "Extensions", "Orphaned Tools": "Extensions",
 		"Tool Groups": "Extensions",
-		"Skills":      "Extensions", "Pipelines": "Extensions", "Catalog": "Extensions",
+		"Skills":      "Extensions", "Pipelines": "Extensions",
 
 		"Agent Capabilities: Outward & Spending": "Agents",
 
@@ -251,9 +253,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Persistent Tools (Pending)": true, "Global Tools": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
 		"Tool Groups": true, "Skills": true, "Pipelines": true, "App Groups": true,
-		"Extensions": true,
 		"Templates":  true,
-		"Catalog":    true,
 		"Migrations": true, "Database Browser": true,
 		"Agent Capabilities: Outward & Spending": true,
 	}
@@ -328,19 +328,6 @@ var configureBackendAction = `function(ctx){
   var name = ctx && ctx.record && ctx.record.name;
   if(!name){ window.uiAlert && window.uiAlert('No connector selected.'); return; }
   window.uiConfigureBackend(name, (ctx && ctx.reload) || function(){ location.reload(); });
-}`
-
-// templateAddAction (Templates catalog row "Add") → open the generic renderer for
-// the chosen template, resolving connector vs tool by the row's target.
-var templateAddAction = `function(ctx){
-  if(!window.uiTemplateForm){` + connectorFormDef + `}
-  var r=(ctx&&ctx.record)||{}; var target=r.target||'connector'; var name=r.name;
-  if(!name){ window.uiAlert && window.uiAlert('No template selected.'); return; }
-  var base=(target==='tool')?'api/tool-template':'api/connector-template';
-  fetch(base+'?name='+encodeURIComponent(name),{cache:'no-store',credentials:'same-origin'})
-    .then(function(res){ if(!res.ok) return res.text().then(function(t){throw new Error(t||('HTTP '+res.status));}); return res.json(); })
-    .then(function(sc){ window.uiTemplateForm(sc, function(){ location.reload(); }); })
-    .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
 }`
 
 // addToolFromTemplateAction (Global Tools toolbar) → Add a tool from a tool

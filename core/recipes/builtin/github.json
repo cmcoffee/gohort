@@ -1,0 +1,164 @@
+{
+  "id": "github",
+  "title": "GitHub",
+  "category": "Developer",
+  "description": "Read and file GitHub issues and read files from repositories, through the GitHub REST API with your token.",
+  "setup_notes": "Create a fine-grained personal access token at github.com/settings/personal-access-tokens with access to the repositories you want, and these permissions: Issues (read and write), Contents (read), Metadata (read). The credential lands disabled: test and enable it under API Credentials, then approve the tools under Persistent Tools.",
+  "questions": [
+    {
+      "name": "token",
+      "label": "GitHub token",
+      "help": "A fine-grained personal access token. It is stored in the credential's secret store and never written into a tool.",
+      "required": true,
+      "secret": true,
+      "credential": "github"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "github",
+        "recipe": {
+          "name": "github",
+          "type": "bearer",
+          "base_url": "https://api.github.com",
+          "allowed_endpoints": [
+            "/repos/**",
+            "/search/issues"
+          ],
+          "description": "GitHub REST API, with a personal access token."
+        }
+      },
+      {
+        "type": "tool",
+        "name": "github_list_issues",
+        "recipe": {
+          "name": "github_list_issues",
+          "description": "List a repository's issues (pull requests are included by GitHub; they carry a pull_request field).",
+          "mode": "api",
+          "credential": "github",
+          "method": "GET",
+          "url_template": "https://api.github.com/repos/{owner}/{repo}/issues?state={state}&per_page=30",
+          "params": {
+            "owner": {
+              "type": "string",
+              "description": "The account or organization that owns the repository."
+            },
+            "repo": {
+              "type": "string",
+              "description": "The repository name."
+            },
+            "state": {
+              "type": "string",
+              "description": "Which issues.",
+              "enum": [
+                "open",
+                "closed",
+                "all"
+              ]
+            }
+          },
+          "required": [
+            "owner",
+            "repo",
+            "state"
+          ]
+        }
+      },
+      {
+        "type": "tool",
+        "name": "github_search_issues",
+        "recipe": {
+          "name": "github_search_issues",
+          "description": "Search issues and pull requests across GitHub with GitHub's search syntax, e.g. 'repo:owner/name is:open label:bug crash'.",
+          "mode": "api",
+          "credential": "github",
+          "method": "GET",
+          "url_template": "https://api.github.com/search/issues?q={query}&per_page=20",
+          "params": {
+            "query": {
+              "type": "string",
+              "description": "The search, in GitHub's issue search syntax."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "type": "tool",
+        "name": "github_create_issue",
+        "recipe": {
+          "name": "github_create_issue",
+          "description": "Open a new issue in a repository.",
+          "mode": "api",
+          "credential": "github",
+          "method": "POST",
+          "url_template": "https://api.github.com/repos/{owner}/{repo}/issues",
+          "params": {
+            "owner": {
+              "type": "string",
+              "description": "The account or organization that owns the repository."
+            },
+            "repo": {
+              "type": "string",
+              "description": "The repository name."
+            },
+            "title": {
+              "type": "string",
+              "description": "The issue's title."
+            },
+            "body": {
+              "type": "string",
+              "description": "The issue's description, in Markdown."
+            }
+          },
+          "required": [
+            "owner",
+            "repo",
+            "title",
+            "body"
+          ],
+          "body_template": "{\"title\": {title}, \"body\": {body}}"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "github_read_file",
+        "recipe": {
+          "name": "github_read_file",
+          "description": "Read one file from a repository's default branch, as text.",
+          "mode": "api",
+          "credential": "github",
+          "method": "GET",
+          "url_template": "https://api.github.com/repos/{owner}/{repo}/contents/{path}",
+          "params": {
+            "owner": {
+              "type": "string",
+              "description": "The account or organization that owns the repository."
+            },
+            "repo": {
+              "type": "string",
+              "description": "The repository name."
+            },
+            "path": {
+              "type": "string",
+              "description": "The file's path in the repository, e.g. docs/setup.md."
+            }
+          },
+          "required": [
+            "owner",
+            "repo",
+            "path"
+          ],
+          "headers": {
+            "Accept": "application/vnd.github.raw+json"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -125,7 +125,7 @@ const (
 	// command's spilled output waits in. Two tools in two apps (orchestrate's
 	// document fetch, servitor's run_command) page the same way, and the
 	// text they page is the one thing they have in common.
-	coreFileCeiling = 201
+	coreFileCeiling = 198
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what

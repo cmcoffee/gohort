@@ -1,5 +1,5 @@
 {
-  "id": "agent-scout",
+  "id": "scout",
   "title": "Scout (example research agent)",
   "description": "A minimal general-purpose research agent template. Installs under your account; open it in Agency to customize the persona, rules, and tools.",
   "category": "Agents",

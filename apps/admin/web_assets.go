@@ -540,3 +540,92 @@ const skillsExportAction = `function(ctx){
 const skillsExportAllAction = `function(){
   __artifactExport('?all=skill', 'skills.gohort.json');
 }`
+
+// templateInstallAction (Templates row "Add", on a template) asks the
+// template's questions and adds it: the pieces land as drafts, a secret answer
+// goes into its credential, and the result lists what is left to do.
+const templateInstallAction = `function(ctx){
+  var r = (ctx && ctx.record) || {};
+  if(!r.id || !window.uiOpenSimpleModal){ return; }
+  var el = window.uiEl;
+  fetch('api/templates/recipe?id=' + encodeURIComponent(r.id), {credentials:'same-origin', cache:'no-store'})
+    .then(function(res){ return res.text().then(function(t){ if(!res.ok) throw new Error(t || ('HTTP ' + res.status)); return JSON.parse(t); }); })
+    .then(function(rec){
+      window.uiOpenSimpleModal({title: 'Add ' + (rec.title || r.title), width: '600px', mount: function(body, dlg){
+        function note(text, style){ body.appendChild(el('p', {style: 'margin:0 0 0.6rem;font-size:0.86rem;line-height:1.45;' + (style || 'color:var(--text-mute)'), text: text})); }
+        if (rec.description) note(rec.description, 'color:var(--text)');
+        if (rec.setup_notes) note(rec.setup_notes);
+        if ((rec.contains || []).length) note('Adds: ' + rec.contains.join(', ') + '. Everything lands as a draft for review.');
+        var inputs = {};
+        (rec.questions || []).forEach(function(q){
+          var lab = el('div', {style: 'font-weight:600;font-size:0.85rem;margin:0.6rem 0 0.2rem'}, [q.label + (q.required ? ' *' : '')]);
+          body.appendChild(lab);
+          var inp;
+          if ((q.options || []).length) {
+            inp = el('select', {class: 'ui-input'});
+            q.options.forEach(function(o){ inp.appendChild(el('option', {value: o, text: o})); });
+            if (q.default) inp.value = q.default;
+          } else {
+            inp = el('input', {class: 'ui-input', type: q.secret ? 'password' : 'text', autocomplete: 'off', style: 'width:100%;box-sizing:border-box'});
+            if (q.default) inp.value = q.default;
+            if (q.kind === 'url') inp.placeholder = 'https://';
+          }
+          body.appendChild(inp);
+          if (q.help) body.appendChild(el('div', {style: 'font-size:0.78rem;color:var(--text-mute);margin-top:0.15rem', text: q.help}));
+          inputs[q.name] = inp;
+        });
+        var out = el('div', {style: 'margin-top:0.7rem;font-size:0.85rem;white-space:pre-wrap'});
+        var go = el('button', {class: 'ui-row-btn', text: 'Add'});
+        go.addEventListener('click', function(){
+          var answers = {};
+          Object.keys(inputs).forEach(function(k){ answers[k] = inputs[k].value; });
+          go.disabled = true; out.textContent = 'Adding...';
+          fetch('api/templates/install?id=' + encodeURIComponent(rec.id), {method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'}, body: JSON.stringify({answers: answers})})
+            .then(function(res){ return res.text().then(function(t){ if(!res.ok) throw new Error(t || ('HTTP ' + res.status)); return JSON.parse(t); }); })
+            .then(function(d){
+              var lines = [d.message || 'Added.'];
+              (d.warnings || []).forEach(function(w){ lines.push('Note: ' + w); });
+              var todo = (d.checklist || []).map(function(c){ return '- ' + c.type + ' ' + c.name + ': ' + c.action; });
+              if (todo.length) { lines.push(''); lines.push('Next:'); lines = lines.concat(todo); }
+              out.textContent = lines.join('\n');
+              go.textContent = 'Done'; go.disabled = true;
+              if (window.uiInvalidate) window.uiInvalidate(['api/connectors','api/persistent-tools','api/secure-api','api/skills','api/templates']);
+            })
+            .catch(function(e){ go.disabled = false; out.textContent = 'Not added: ' + ((e && e.message) || e); });
+        });
+        body.appendChild(el('div', {style: 'margin-top:0.8rem;display:flex;gap:0.5rem'}, [go]));
+        body.appendChild(out);
+      }});
+    })
+    .catch(function(e){ window.uiAlert && window.uiAlert((e && e.message) || ('' + e)); });
+}`
+
+// templateExportAction (Templates row "Export") downloads a template file.
+const templateExportAction = `function(ctx){
+  var id = ctx && ctx.record && ctx.record.id;
+  if(!id){ return; }
+  __artifactDownload('api/templates/export?id=' + encodeURIComponent(id), 'gohort-template-' + id + '.json');
+}`
+
+// templateImportAction ("Import a template…") uploads a template file.
+const templateImportAction = `function(){
+  var input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json,application/json'; input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', function(){
+    var f = input.files && input.files[0];
+    input.remove();
+    if(!f){ return; }
+    var reader = new FileReader();
+    reader.onload = function(){
+      fetch('api/templates/import', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({pack: String(reader.result || '')})})
+        .then(function(res){ return res.text().then(function(t){ if(!res.ok) throw new Error(t || ('HTTP ' + res.status)); return JSON.parse(t); }); })
+        .then(function(d){ window.uiAlert && window.uiAlert(d.message || 'Imported.'); if (window.uiInvalidate) window.uiInvalidate(['api/templates']); })
+        .catch(function(e){ window.uiAlert && window.uiAlert('Not imported: ' + ((e && e.message) || e)); });
+    };
+    reader.readAsText(f);
+  });
+  input.click();
+}`

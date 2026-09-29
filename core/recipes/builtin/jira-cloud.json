@@ -1,0 +1,134 @@
+{
+  "id": "jira-cloud",
+  "title": "Jira Cloud",
+  "category": "Project tracking",
+  "description": "Search, create and comment on Jira Cloud issues, through Jira's REST API with your email and an API token.",
+  "setup_notes": "Create an API token at id.atlassian.com/manage-profile/security/api-tokens. The tools act as you, with your Jira permissions. The credential lands disabled: test and enable it under API Credentials, then approve the tools under Persistent Tools.",
+  "questions": [
+    {
+      "name": "site",
+      "label": "Jira site address",
+      "help": "Your site's address, like https://yourcompany.atlassian.net",
+      "required": true,
+      "kind": "url"
+    },
+    {
+      "name": "email",
+      "label": "Your Atlassian email",
+      "help": "The email you sign in to Jira with.",
+      "required": true
+    },
+    {
+      "name": "api_token",
+      "label": "Atlassian API token",
+      "help": "Stored in the credential's secret store and never written into a tool.",
+      "required": true,
+      "secret": true,
+      "credential": "jira"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "jira",
+        "recipe": {
+          "name": "jira",
+          "type": "basic_auth",
+          "username": "{{email}}",
+          "base_url": "{{site}}",
+          "allowed_endpoints": [
+            "/rest/api/3/**"
+          ],
+          "description": "Jira Cloud REST API at {{site}}, as {{email}}."
+        }
+      },
+      {
+        "type": "tool",
+        "name": "jira_search_issues",
+        "recipe": {
+          "name": "jira_search_issues",
+          "description": "Search Jira issues with JQL, e.g. 'project = OPS AND status = \"In Progress\" ORDER BY updated DESC'.",
+          "mode": "api",
+          "credential": "jira",
+          "method": "GET",
+          "url_template": "{{site}}/rest/api/3/search/jql?jql={jql}&maxResults=20&fields=summary,status,assignee,priority,updated",
+          "params": {
+            "jql": {
+              "type": "string",
+              "description": "The search, in JQL."
+            }
+          },
+          "required": [
+            "jql"
+          ]
+        }
+      },
+      {
+        "type": "tool",
+        "name": "jira_create_issue",
+        "recipe": {
+          "name": "jira_create_issue",
+          "description": "Create a Jira issue.",
+          "mode": "api",
+          "credential": "jira",
+          "method": "POST",
+          "url_template": "{{site}}/rest/api/3/issue",
+          "params": {
+            "project": {
+              "type": "string",
+              "description": "The project's key, e.g. OPS."
+            },
+            "summary": {
+              "type": "string",
+              "description": "The issue's one-line summary."
+            },
+            "issue_type": {
+              "type": "string",
+              "description": "The issue type as the project names it: Task, Bug, Story..."
+            },
+            "description": {
+              "type": "string",
+              "description": "The issue's description, as plain text."
+            }
+          },
+          "required": [
+            "project",
+            "summary",
+            "issue_type",
+            "description"
+          ],
+          "body_template": "{\"fields\": {\"project\": {\"key\": {project}}, \"summary\": {summary}, \"issuetype\": {\"name\": {issue_type}}, \"description\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": {description}}]}]}}}"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "jira_add_comment",
+        "recipe": {
+          "name": "jira_add_comment",
+          "description": "Add a comment to a Jira issue.",
+          "mode": "api",
+          "credential": "jira",
+          "method": "POST",
+          "url_template": "{{site}}/rest/api/3/issue/{issue_key}/comment",
+          "params": {
+            "issue_key": {
+              "type": "string",
+              "description": "The issue's key, e.g. OPS-123."
+            },
+            "comment": {
+              "type": "string",
+              "description": "The comment, as plain text."
+            }
+          },
+          "required": [
+            "issue_key",
+            "comment"
+          ],
+          "body_template": "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": {comment}}]}]}}"
+        }
+      }
+    ]
+  }
+}

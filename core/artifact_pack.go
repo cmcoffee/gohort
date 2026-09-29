@@ -834,6 +834,28 @@ func keyShapedMatch(m string) bool {
 	return letters && digits
 }
 
+// secretLikeRe matches literal secret-shaped values while leaving
+// {placeholder} substitution slots alone: a value that starts with "{" (the
+// templating convention) is never flagged. Catches "Bearer <literal>" and
+// "<key>=<literal>" forms, which are the common ways a hand-authored tool
+// smuggles a credential it should have routed through SecureAPI.
+var secretLikeRe = regexp.MustCompile(`(?i)(bearer\s+[a-z0-9._\-]{12,}|(api[_-]?key|token|secret|password|access[_-]?token)\s*[=:]\s*[^{\s][a-z0-9._/+\-]{7,})`)
+
+// scanForEmbeddedSecret reports whether s contains a literal secret-shaped
+// value. Heuristic by design: it errs toward catching obvious baked-in
+// tokens while ignoring the {placeholder} slots templates legitimately use.
+func scanForEmbeddedSecret(s string) bool {
+	if s == "" {
+		return false
+	}
+	return secretLikeRe.MatchString(s)
+}
+
+// ContainsLikelySecret reports whether s holds a literal secret-shaped value
+// (Bearer tokens, key=... / token: ... forms), for a caller that must refuse to
+// keep or share credential-bearing text: history archiving, a template file.
+func ContainsLikelySecret(s string) bool { return scanForEmbeddedSecret(s) }
+
 // recipeSecretHint returns "" when a recipe carries nothing secret-shaped, or
 // the key word of the first thing that looks like a hardcoded secret.
 func recipeSecretHint(recipe json.RawMessage) string {

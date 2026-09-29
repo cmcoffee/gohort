@@ -1,10 +1,28 @@
 package admin
 
 import (
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// extensionsSections is the extensions part of the admin page: MCP Servers, MCP Tools (exposed to external clients), Bridges, Extensions, Templates, Connectors, Catalog.
+// importExportSections opens the Extensions tab: bringing an extension in
+// from a file, and taking everything out as one.
+func (a *AdminApp) importExportSections() []ui.Section {
+	return []ui.Section{{
+		Title:    "Import and export",
+		Subtitle: "Bring in an extension someone exported, or take everything out as one file.",
+		Detail: "A bundle carries connectors, tools, API credentials, skills, pipelines, agents and the rest, as recipes. Import previews what it would add and what it depends on before anything lands, and everything lands as a DRAFT: connectors unapproved, tools pending, credentials inert. A name that already exists is skipped.\n\n" +
+			"No secret ever travels: a credential arrives with its settings and asks for its secret here.",
+		Body: ui.Toolbar{
+			Actions: []ui.ToolbarAction{
+				{Label: "Import a bundle…", Method: "client", URL: "artifacts_import_preview"},
+				{Label: "Export everything", Method: "client", URL: "artifacts_export_all"},
+			},
+		},
+	}}
+}
+
+// extensionsSections is the extensions part of the admin page: MCP Servers, MCP Tools (exposed to external clients), Bridges, Connectors, Templates.
 func (a *AdminApp) extensionsSections() []ui.Section {
 	return []ui.Section{
 		{
@@ -163,54 +181,6 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 			},
 		},
 		{
-			Title:    "Extensions",
-			Subtitle: "Every capability you can add from a template, in one catalog.",
-			Detail:   "That is connectors (service bridges) and tools (model-callable actions). Pick one to author it from its fields; it lands in its own section for approval, a connector under Connectors and a tool under Persistent Tools.\n\nTemplates ease authoring, they grant no new power: the same credential binding and approval still apply.",
-			Body: ui.Table{
-				Source: "api/extensions",
-				RowKey: "name",
-				Columns: []ui.Col{
-					{Field: "label", Flex: 1},
-					{
-						Field: "target", Label: "Kind", Type: "badge",
-						Badges: []ui.BadgeMapping{
-							{Value: "connector", Label: "Connector", Color: "info"},
-							{Value: "tool", Label: "Tool", Color: "success"},
-						},
-					},
-					{Field: "category", Mute: true},
-					{Field: "description", Mute: true, Flex: 2},
-				},
-				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Add", Method: "client",
-						PostTo: "add_extension", Variant: "primary"},
-				},
-				EmptyText: "No extension templates registered.",
-			},
-		},
-		{
-			Title:    "Templates",
-			Subtitle: "Ready-made blueprints for connectors and tools.",
-			Detail:   "A blueprint declares “what options are needed” and the framework builds the rest. “Add” opens a form to fill in your specifics; the result lands as a draft connector or a pending tool for review. New backends and tools of a known shape are just declarations, with no code.",
-			Body: ui.Table{
-				Source: "api/all-templates",
-				RowKey: "id",
-				Columns: []ui.Col{
-					{Field: "label", Flex: 1},
-					{Field: "target", Label: "Kind", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: "connector", Label: "Connector", Color: "mute"},
-						{Value: "tool", Label: "Tool", Color: "mute"},
-					}},
-					{Field: "category", Mute: true},
-					{Field: "description", Mute: true, Flex: 2},
-				},
-				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Add", Method: "client", PostTo: "template_add", Variant: "primary"},
-				},
-				EmptyText: "No templates registered.",
-			},
-		},
-		{
 			Title:    "Connectors",
 			Subtitle: "Bridge types the assistant drafted and left awaiting your approval.",
 			Detail:   "For example a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents, and a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above.\n\nThe assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve, and Delete tears the capability down.",
@@ -271,42 +241,13 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 					// type (connectors + tools + future types).
 					ui.Toolbar{
 						Actions: []ui.ToolbarAction{
-							{Label: "Import bundle…", Method: "client", URL: "artifacts_import_preview"},
 							{Label: "Export all connectors", Method: "client", URL: "connectors_export_all"},
-							{Label: "Export everything", Method: "client", URL: "artifacts_export_all"},
 						},
 					},
 				},
 			},
 		},
-		{
-			Title:    "Catalog",
-			Subtitle: "Ready-made connectors, tools, API credentials and agents, installable in one click.",
-			Detail:   "Installing runs the SAME import as a bundle file: everything lands as a DRAFT for review, with connectors unapproved, tools pending and credentials inert. Nothing goes live until you approve it in the sections above.",
-			Body: ui.Table{
-				Source: "api/catalog",
-				RowKey: "id",
-				Columns: []ui.Col{
-					{Field: "title", Flex: 1},
-					{Field: "category", Mute: true},
-					{Field: "summary", Label: "Installs", Mute: true, Flex: 1},
-					{Field: "description", Mute: true, Flex: 2},
-				},
-				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Install", Method: "POST", Variant: "primary",
-						PostTo: "api/catalog?action=install&id={id}",
-						// An install runs the same importer a file import
-						// does, and lands the same drafts: connectors
-						// unapproved, tools pending, credentials inert. Each
-						// is a section of its own, and reviewing them is the
-						// next thing you do — the file-import path has said
-						// so since it existed, and this one did not.
-						Invalidate: []string{"api/connectors", "api/persistent-tools", "api/secure-api", "api/skills"},
-						Confirm:    "Install this catalog entry? Its artifacts are added as drafts (pending review) in the sections above: nothing goes live until you approve it."},
-				},
-				EmptyText: "The catalog is empty.",
-			},
-		},
+		a.templatesSection(),
 	}
 }
 
@@ -347,5 +288,96 @@ func mcpServerFormFields() []ui.FormField {
 		{Field: "search_tool", Label: "Search tool name", Placeholder: "search", ShowWhen: "expose_reference", Help: "MCP tool called for reference lookups. Defaults to 'search'."},
 
 		{Field: "enabled", Label: "Enabled", Type: "toggle", Help: "Connect on startup and on save. Disable to suspend without deleting."},
+	}
+}
+
+// templatesSection is one list of every template: recipes that integrate a
+// service without Go (core/recipes: built-in, imported or saved here), and
+// the built-in forms that author one connector or tool.
+func (a *AdminApp) templatesSection() ui.Section {
+	var pieces []ui.SelectOption
+	var sels []ArtifactSel
+	if RootDB != nil {
+		sels = ArtifactSelectionForTypes(RootDB)
+	}
+	for _, sel := range sels {
+		label := sel.Type + ": " + sel.Name
+		if sel.Owner != "" {
+			label += " (" + sel.Owner + ")"
+		}
+		pieces = append(pieces, ui.SelectOption{Value: sel.Type + "|" + sel.Name + "|" + sel.Owner, Label: label})
+	}
+	yesNo := []ui.SelectOption{{Value: "", Label: "No"}, {Value: "yes", Label: "Yes"}}
+	return ui.Section{
+		Title:    "Templates",
+		Subtitle: "Recipes for integrating a service with gohort: answer a few questions, and its credential, tools and the rest are set up as drafts for review.",
+		Detail: "A template asks what it needs (a site address, your email, an API token), fills the answers in, and adds its pieces through the same importer as a bundle file: credentials disabled until you test them, tools pending approval. " +
+			"A secret you give goes straight into its credential's secret store and never into a tool or a file.\n\n" +
+			"Built-in templates ship with gohort. Import one someone shared, or Save as template to make one from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
+			"Built-in forms are the older kind, written in code: each authors one connector or tool from its fields.",
+		Body: ui.Stack{Children: []ui.Component{
+			ui.Toolbar{Actions: []ui.ToolbarAction{
+				{Label: "Import a template…", Method: "client", URL: "template_import"},
+			}},
+			ui.ModalButton{
+				Label: "Save as template…", Title: "Save as a template",
+				Subtitle: "Pick what goes in, then turn the values that differ between deployments into questions.",
+				Width:    "720px",
+				Body: ui.FormPanel{
+					PostURL: "api/templates/save", SubmitLabel: "Save template",
+					Invalidate: []string{"api/templates"},
+					Fields: []ui.FormField{
+						{Field: "title", Label: "Title", Type: "text", Required: true, Placeholder: "Acme wiki"},
+						{Field: "id", Label: "Id", Type: "text", Placeholder: "acme-wiki",
+							Help: "Lowercase letters, digits and dashes. Left empty, it is made from the title."},
+						{Field: "description", Label: "What it sets up", Type: "text"},
+						{Field: "category", Label: "Category", Type: "text", Placeholder: "Project tracking"},
+						{Field: "setup_notes", Label: "Setup notes", Type: "textarea", Rows: 3,
+							Help: "Shown when someone adds it: where to get a token, what to enable afterwards."},
+						{Field: "pieces", Label: "What goes in", Type: "checklist", Options: pieces, Required: true,
+							Help: "What each needs (the credential a tool uses, say) comes along."},
+						{Field: "questions", Label: "Questions", Type: "rows", AddLabel: "Add a question",
+							Help: "Each value is replaced by the answer wherever it appears. A secret question asks for a credential's secret instead, which never travels.",
+							Columns: []ui.FormField{
+								{Field: "name", Label: "Name", Type: "text", Placeholder: "site", Width: 2},
+								{Field: "label", Label: "Asked as", Type: "text", Placeholder: "Wiki address", Width: 3},
+								{Field: "required", Label: "Required", Type: "select", Options: yesNo, Width: 1},
+								{Field: "secret", Label: "Secret", Type: "select", Options: yesNo, Width: 1},
+								{Field: "value", Label: "Value to replace", Type: "text", OwnLine: true, HideWhen: "secret:yes",
+									Placeholder: "https://wiki.acme.example"},
+								{Field: "kind", Label: "Kind", Type: "select", OwnLine: true, HideWhen: "secret:yes", Options: []ui.SelectOption{
+									{Value: "", Label: "Text"}, {Value: "url", Label: "An https address"},
+								}},
+								{Field: "credential", Label: "The credential whose secret it asks for", Type: "text", OwnLine: true, ShowWhen: "secret:yes",
+									Placeholder: "wiki"},
+								{Field: "help", Label: "Help", Type: "text", OwnLine: true},
+							}},
+					},
+				},
+			},
+			ui.Table{
+				Source: "api/templates",
+				RowKey: "id",
+				Columns: []ui.Col{
+					{Field: "title", Flex: 2},
+					{Field: "kind", Label: "Kind", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: "template", Label: "Template", Color: "info"},
+						{Value: "form", Label: "Built-in form", Color: "mute"},
+					}},
+					{Field: "source", Label: "", Mute: true},
+					{Field: "category", Mute: true},
+					{Field: "description", Mute: true, Flex: 4, Line: 2},
+					{Field: "contains", Label: "", Mute: true, Flex: 4, Line: 2},
+				},
+				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Add", Method: "client", PostTo: "template_install", Variant: "primary", OnlyIf: "_recipe"},
+					{Type: "button", Label: "Add", Method: "client", PostTo: "add_extension", Variant: "primary", OnlyIf: "_form"},
+					{Type: "button", Label: "Export", Method: "client", PostTo: "template_export", Compact: true, OnlyIf: "_recipe"},
+					{Type: "button", Label: "Delete", Variant: "danger", Compact: true, OnlyIf: "_imported",
+						PostTo: "api/templates/delete?id={id}", Confirm: "Delete this template? What was already added from it stays."},
+				},
+				EmptyText: "No templates.",
+			},
+		}},
 	}
 }
