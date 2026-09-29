@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/messaging"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -56,7 +57,7 @@ func TestFillingATemplatePutsTheAnswersIn(t *testing.T) {
 	if strings.Contains(string(raw), "{{") || strings.Contains(string(raw), `"tok"`) {
 		t.Error("no placeholder is left and the secret is not in the pieces")
 	}
-	if secrets["jira"] != "tok" {
+	if secrets.Credentials["jira"] != "tok" {
 		t.Errorf("the secret is held for its credential: %v", secrets)
 	}
 	if _, _, _, err := Fill(r, map[string]string{"site": "http://acme.atlassian.net", "email": "x", "api_token": "t"}); err == nil {
@@ -242,5 +243,67 @@ func TestTheComfyUITemplateAddsAWiredConnector(t *testing.T) {
 	}
 	if _, err := Install(db, "comfyui", "admin", map[string]string{"base_url": "http://box:8188", "name": "comfy2", "workflow": "{not json"}); err == nil {
 		t.Error("a workflow that cannot be read is refused before anything lands")
+	}
+}
+
+// A bridge is a template too: the Slack bridge adds its credential and a
+// polling connector for the channel; the Mattermost bridge adds a generic
+// webhook connector and hands its token to the webhook secret store.
+func TestBridgeTemplatesAddConnectors(t *testing.T) {
+	db := testDB(t)
+	res, err := Install(db, "slack-bridge", "admin", map[string]string{"channel_id": "C0123", "bot_token": "xoxb-test-value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Imported != 2 {
+		t.Fatalf("the credential and the connector land: %+v", res)
+	}
+	c, ok := core.GetConnector(db, "slack_bridge")
+	if !ok || c.Kind != core.RestMessagingConnectorKind || c.Approved {
+		t.Fatalf("an unapproved rest_messaging connector: %+v", c)
+	}
+	var spec core.RestMessagingSpec
+	if err := json.Unmarshal(c.Spec, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.ChatIDConst != "C0123" || !strings.HasSuffix(spec.PollURL, "channel=C0123") || len(spec.Skip) != 2 {
+		t.Errorf("the channel is filled in and the bot's own posts are skipped: %+v", spec)
+	}
+
+	got := map[string]string{}
+	messaging.RegisterWebhookSecretSetter(func(conn, secret string) error { got[conn] = secret; return nil })
+	t.Cleanup(func() { messaging.RegisterWebhookSecretSetter(nil) })
+	res, err = Install(db, "mattermost-bridge", "admin", map[string]string{"site": "https://chat.example.com/", "name": "mm", "bot_token": "tok-a", "webhook_token": "tok-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Imported != 2 || got["mm"] != "tok-b" {
+		t.Fatalf("both land, and the webhook token goes to the connector's secret: %+v %v", res, got)
+	}
+	c, _ = core.GetConnector(db, "mm")
+	spec = core.RestMessagingSpec{}
+	json.Unmarshal(c.Spec, &spec)
+	if spec.WebhookProvider != "generic" || spec.Webhook == nil || spec.Webhook.TokenPath != "token" ||
+		spec.SendURL != "https://chat.example.com/api/v4/posts" || spec.Skip[0].Values[0] != "gohort" {
+		t.Errorf("a generic webhook spec with the answers in: %+v", spec)
+	}
+	if strings.Contains(string(c.Spec), "tok-") {
+		t.Error("no secret is written into the spec")
+	}
+}
+
+// A webhook secret question must point at a connector the template adds, and
+// only a secret question says where a secret goes.
+func TestWebhookSecretQuestionsAreChecked(t *testing.T) {
+	r, _, _ := Get(nil, "mattermost-bridge")
+	bad := r
+	bad.Questions = append([]Question(nil), r.Questions...)
+	bad.Questions[4].WebhookSecret = "other"
+	if Validate(bad) == nil {
+		t.Error("a webhook secret for a connector the template does not add is refused")
+	}
+	bad.Questions[4].WebhookSecret, bad.Questions[4].Secret = "{{name}}", false
+	if Validate(bad) == nil {
+		t.Error("a plain answer cannot name a secret's destination")
 	}
 }

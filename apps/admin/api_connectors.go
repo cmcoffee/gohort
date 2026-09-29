@@ -36,11 +36,12 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 				Template     string `json:"template,omitempty"` // provenance (which template authored it)
 				IsImage      bool   `json:"is_image"`           // rest_image → image-section toolbar pick
 				Configurable bool   `json:"configurable"`       // resolves to a template → gets "Configure" (incl. imports)
+				Webhook      string `json:"webhook,omitempty"`  // a push bridge's provider → gets "Webhook…"
 			}
 			var rows []connRow
 			for _, c := range ListConnectors(RootDB) {
 				_, canConfig := TemplateForConnector(c)
-				rows = append(rows, connRow{c.Name, c.Kind, ConnectorSummary(c), c.Owner, c.Approved, c.LastError, c.Template, c.Kind == RestImageConnectorKind, canConfig})
+				rows = append(rows, connRow{c.Name, c.Kind, ConnectorSummary(c), c.Owner, c.Approved, c.LastError, c.Template, c.Kind == RestImageConnectorKind, canConfig, connectorWebhook(c)})
 			}
 			json.NewEncoder(w).Encode(rows)
 		case http.MethodPost:
@@ -192,4 +193,17 @@ func stringifyComfyWorkflow(body []byte) []byte {
 		return body
 	}
 	return out
+}
+
+// connectorWebhook names a push bridge's webhook provider, or "" for anything
+// else, so only those rows offer the address and secret.
+func connectorWebhook(c Connector) string {
+	if c.Kind != RestMessagingConnectorKind {
+		return ""
+	}
+	var s RestMessagingSpec
+	if json.Unmarshal(c.Spec, &s) != nil {
+		return ""
+	}
+	return s.WebhookProvider
 }

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/messaging"
 )
 
 //go:embed builtin/*.json
@@ -61,9 +62,18 @@ type Question struct {
 	Helper string            `json:"helper,omitempty"`
 	With   map[string]string `json:"with,omitempty"`
 	// Secret answers are never substituted into the pieces: they are written
-	// into Credential's secret store after the import.
-	Secret     bool   `json:"secret,omitempty"`
-	Credential string `json:"credential,omitempty"`
+	// into Credential's secret store after the import, or with WebhookSecret,
+	// kept as that webhook connector's secret (its signing secret or token).
+	Secret        bool   `json:"secret,omitempty"`
+	Credential    string `json:"credential,omitempty"`
+	WebhookSecret string `json:"webhook_secret,omitempty"`
+}
+
+// Secrets are a template's secret answers, held apart from its pieces: by
+// credential, and by webhook connector.
+type Secrets struct {
+	Credentials map[string]string
+	Webhooks    map[string]string
 }
 
 // Recipe is one template.
@@ -112,10 +122,13 @@ func Validate(r Recipe) error {
 	if len(r.Bundle.Artifacts) == 0 {
 		return fmt.Errorf("the template installs nothing")
 	}
-	creds := map[string]bool{}
+	creds, conns := map[string]bool{}, map[string]bool{}
 	for _, a := range r.Bundle.Artifacts {
-		if a.Type == "credential" {
+		switch a.Type {
+		case "credential":
 			creds[a.Name] = true
+		case "connector":
+			conns[a.Name] = true
 		}
 	}
 	asked, secret := map[string]bool{}, map[string]bool{}
@@ -132,9 +145,18 @@ func Validate(r Recipe) error {
 		}
 		if q.Secret {
 			secret[q.Name] = true
-			if !creds[q.Credential] {
+			switch {
+			case q.Credential != "" && q.WebhookSecret != "":
+				return fmt.Errorf("secret question %q goes to a credential or a webhook, not both", q.Name)
+			case q.WebhookSecret != "":
+				if !conns[q.WebhookSecret] {
+					return fmt.Errorf("secret question %q must name a connector the template installs", q.Name)
+				}
+			case !creds[q.Credential]:
 				return fmt.Errorf("secret question %q must name a credential the template installs", q.Name)
 			}
+		} else if q.Credential != "" || q.WebhookSecret != "" {
+			return fmt.Errorf("question %q names where a secret goes but is not secret", q.Name)
 		}
 		switch q.Kind {
 		case "", "url", "http_url", "long":
@@ -376,8 +398,10 @@ func List(db core.Database) []Summary {
 // checked, each helper question run through its helper. Secret answers are
 // returned apart, by credential, never filled in; helpers' warnings are
 // returned for the person to read.
-func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]string, []string, error) {
-	vals, secrets := map[string]any{}, map[string]string{}
+func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, Secrets, []string, error) {
+	vals := map[string]any{}
+	secrets := Secrets{Credentials: map[string]string{}, Webhooks: map[string]string{}}
+	webhookSecrets := map[string]string{} // connector name as written, answer
 	plain := map[string]string{}
 	for _, q := range r.Questions {
 		v := strings.TrimSpace(answers[q.Name])
@@ -386,7 +410,7 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]
 		}
 		if v == "" {
 			if q.Required {
-				return core.ArtifactBundle{}, nil, nil, fmt.Errorf("%s is needed", q.Label)
+				return core.ArtifactBundle{}, Secrets{}, nil, fmt.Errorf("%s is needed", q.Label)
 			}
 			if q.Secret {
 				continue
@@ -398,7 +422,7 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]
 				ok = ok || o == v
 			}
 			if !ok {
-				return core.ArtifactBundle{}, nil, nil, fmt.Errorf("%s must be one of %s", q.Label, strings.Join(q.Options, ", "))
+				return core.ArtifactBundle{}, Secrets{}, nil, fmt.Errorf("%s must be one of %s", q.Label, strings.Join(q.Options, ", "))
 			}
 		}
 		if (q.Kind == "url" || q.Kind == "http_url") && v != "" {
@@ -406,14 +430,18 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]
 			okScheme := strings.HasPrefix(lower, "https://") || (q.Kind == "http_url" && strings.HasPrefix(lower, "http://"))
 			if !okScheme || strings.ContainsAny(v, " \"'<>") {
 				if q.Kind == "url" {
-					return core.ArtifactBundle{}, nil, nil, fmt.Errorf("%s must be an https address", q.Label)
+					return core.ArtifactBundle{}, Secrets{}, nil, fmt.Errorf("%s must be an https address", q.Label)
 				}
-				return core.ArtifactBundle{}, nil, nil, fmt.Errorf("%s must be an http or https address", q.Label)
+				return core.ArtifactBundle{}, Secrets{}, nil, fmt.Errorf("%s must be an http or https address", q.Label)
 			}
 			v = strings.TrimRight(v, "/")
 		}
 		if q.Secret {
-			secrets[q.Credential] = v
+			if q.WebhookSecret != "" {
+				webhookSecrets[q.WebhookSecret] = v
+			} else {
+				secrets.Credentials[q.Credential] = v
+			}
 			continue
 		}
 		plain[q.Name] = v
@@ -424,6 +452,9 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]
 			return plain[placeholderRe.FindStringSubmatch(m)[1]]
 		})
 	}
+	for conn, v := range webhookSecrets {
+		secrets.Webhooks[fillText(conn)] = v
+	}
 	var warnings []string
 	for _, q := range r.Questions {
 		if q.Helper == "" {
@@ -431,7 +462,7 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]
 		}
 		h, ok := LookupHelper(q.Helper)
 		if !ok {
-			return core.ArtifactBundle{}, nil, nil, fmt.Errorf("the helper %q is not on this gohort", q.Helper)
+			return core.ArtifactBundle{}, Secrets{}, nil, fmt.Errorf("the helper %q is not on this gohort", q.Helper)
 		}
 		with := map[string]string{}
 		for k, v := range q.With {
@@ -439,7 +470,7 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]
 		}
 		out, warns, err := h.Run(plain[q.Name], with)
 		if err != nil {
-			return core.ArtifactBundle{}, nil, nil, fmt.Errorf("%s: %v", q.Label, err)
+			return core.ArtifactBundle{}, Secrets{}, nil, fmt.Errorf("%s: %v", q.Label, err)
 		}
 		warnings = append(warnings, warns...)
 		for k, v := range out {
@@ -504,12 +535,25 @@ func Install(db core.Database, id, owner string, answers map[string]string) (cor
 		return res, err
 	}
 	res.Warnings = append(res.Warnings, warnings...)
-	for cred, secret := range secrets {
-		landed := false
+	landedAs := func(typ, name string) bool {
 		for _, o := range res.Outcomes {
-			landed = landed || (o.Type == "credential" && o.Name == cred && o.Status == "imported")
+			if o.Type == typ && o.Name == name && o.Status == "imported" {
+				return true
+			}
 		}
-		if !landed {
+		return false
+	}
+	for conn, secret := range secrets.Webhooks {
+		if !landedAs("connector", conn) {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("the connector %q already existed, so the webhook secret you gave was not written into it", conn))
+			continue
+		}
+		if err := messaging.SetWebhookSecret(conn, secret); err != nil {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("the webhook secret for %q could not be stored: %v", conn, err))
+		}
+	}
+	for cred, secret := range secrets.Credentials {
+		if !landedAs("credential", cred) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("the credential %q already existed, so the secret you gave was not written into it", cred))
 			continue
 		}

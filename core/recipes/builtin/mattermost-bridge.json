@@ -1,0 +1,96 @@
+{
+  "id": "mattermost-bridge",
+  "title": "Mattermost bridge (webhook)",
+  "category": "Bridges",
+  "description": "Brings Mattermost messages to your agents the moment they are posted (an outgoing webhook) and posts replies back as a bot account. A bridge described entirely as data: the generic webhook checks Mattermost's token and reads its fields by path.",
+  "setup_notes": "Mattermost must be able to reach this gohort's address. In Mattermost: under Integrations > Bot Accounts, add a bot and copy its access token, then add the bot to the channel. Under Integrations > Outgoing Webhooks, add one with Content Type application/json, the channel (or trigger words), and the Callback URL https://<this gohort's address>/bridges/api/webhook/<connector name>; save it and copy the Token it shows. Everything lands as a draft: enable the credential under API Credentials, approve the connector under Connectors, then bind the conversation to an agent in Bridges.",
+  "questions": [
+    {
+      "name": "site",
+      "label": "Mattermost address",
+      "help": "e.g. https://chat.example.com",
+      "kind": "url",
+      "required": true
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Letters, digits and underscores; it is the last part of the Callback URL.",
+      "default": "mattermost"
+    },
+    {
+      "name": "bot_username",
+      "label": "Bot's username",
+      "help": "Its own posts are skipped, so it never answers itself.",
+      "default": "gohort"
+    },
+    {
+      "name": "bot_token",
+      "label": "Bot access token",
+      "help": "From Integrations > Bot Accounts. Stored in the credential's secret store.",
+      "required": true,
+      "secret": true,
+      "credential": "mattermost_bridge"
+    },
+    {
+      "name": "webhook_token",
+      "label": "Outgoing webhook token",
+      "help": "The Token Mattermost shows for the outgoing webhook. Every push is checked against it.",
+      "required": true,
+      "secret": true,
+      "webhook_secret": "{{name}}"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "mattermost_bridge",
+        "recipe": {
+          "name": "mattermost_bridge",
+          "type": "bearer",
+          "base_url": "{{site}}",
+          "allowed_endpoints": [
+            "/api/v4/posts"
+          ],
+          "description": "Mattermost API for the Mattermost bridge, with a bot token."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "rest_messaging",
+          "desc": "Mattermost at {{site}} to channel agents",
+          "spec": {
+            "service": "mattermost",
+            "display_name": "Mattermost",
+            "markdown": true,
+            "credential": "mattermost_bridge",
+            "webhook_provider": "generic",
+            "webhook": {
+              "verify": "token",
+              "token_path": "token"
+            },
+            "map": {
+              "chat_id": "channel_id",
+              "msg_id": "post_id",
+              "sender": "user_name",
+              "sender_name": "user_name",
+              "conv_name": "channel_name",
+              "text": "text"
+            },
+            "skip": [
+              {"path": "user_name", "values": ["{{bot_username}}"]}
+            ],
+            "send_url": "{{site}}/api/v4/posts",
+            "send_method": "POST",
+            "send_body": "{\"channel_id\":\"{chat_id}\",\"message\":\"{text}\"}"
+          }
+        }
+      }
+    ]
+  }
+}

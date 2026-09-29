@@ -27,6 +27,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/messaging"
 )
 
 // RestMessagingConnectorKind is the Kind value for a server-polled messaging bridge.
@@ -47,6 +49,30 @@ type RestMessagingFieldMap struct {
 	Text       string `json:"text,omitempty"`        // REQUIRED — message body
 	ConvName   string `json:"conv_name,omitempty"`   // conversation/thread title
 	Timestamp  string `json:"timestamp,omitempty"`   // message time (optional, informational)
+}
+
+// RestMessagingSkip drops a message whose Path has a value, or with Values,
+// one of those values (compared without case): a bridge's own replies, edits,
+// joins and other system events. Path is element-relative like the map's.
+type RestMessagingSkip struct {
+	Path   string   `json:"path"`
+	Values []string `json:"values,omitempty"`
+}
+
+// RestMessagingWebhook describes a push for the "generic" webhook provider, so
+// a service that signs its body or sends a shared token needs no Go provider.
+// The secret it is checked against is kept by the bridges app, never here.
+type RestMessagingWebhook struct {
+	// Verify is "hmac_sha256" (the body signed with the secret) or "token"
+	// (the secret sent as-is, in a header or the body).
+	Verify    string `json:"verify"`
+	Header    string `json:"header,omitempty"`     // the header carrying the signature or token
+	TokenPath string `json:"token_path,omitempty"` // token mode: a body dot-path instead of a header
+	Prefix    string `json:"prefix,omitempty"`     // stripped from the signature before comparing ("sha256=")
+	Encoding  string `json:"encoding,omitempty"`   // hmac_sha256: "hex" (default) or "base64"
+	// ChallengePath is a body dot-path answered back as plain text when the
+	// push carries it (a URL-verification handshake), after the check passes.
+	ChallengePath string `json:"challenge_path,omitempty"`
 }
 
 // RestMessagingSpec is the Spec payload for a rest_messaging connector.
@@ -99,12 +125,22 @@ type RestMessagingSpec struct {
 	// Empty = poll mode. The provider's signing secret lives in an encrypted
 	// bridges table, never in this spec.
 	WebhookProvider string `json:"webhook_provider,omitempty"`
+	// Webhook describes the push when WebhookProvider is "generic".
+	Webhook *RestMessagingWebhook `json:"webhook,omitempty"`
+
+	// Skip drops messages the agent should not see (see RestMessagingSkip).
+	Skip []RestMessagingSkip `json:"skip,omitempty"`
+
+	// DisplayName and Markdown name a service gohort has no entry for, and say
+	// whether it renders markdown; a known service keeps its own.
+	DisplayName string `json:"display_name,omitempty"`
+	Markdown    bool   `json:"markdown,omitempty"`
 }
 
 // knownWebhookProviders gates spec.WebhookProvider at validate time. The provider
 // implementations live in the bridges app; core only needs the names to reject a
 // typo early. Keep in sync with apps/bridges/webhook.go's webhookProviders.
-var knownWebhookProviders = map[string]bool{"slack": true, "graph": true}
+var knownWebhookProviders = map[string]bool{"slack": true, "graph": true, "generic": true}
 
 func init() { RegisterConnectorKind(RestMessagingConnectorKind, restMessagingHandler{}) }
 
@@ -147,7 +183,12 @@ func (h restMessagingHandler) Validate(c Connector) error {
 		// PUSH mode: the provider owns inbound (handshake + verify + extraction), so
 		// poll_url and the poll-side map aren't required. Outbound (send_url) is.
 		if !knownWebhookProviders[s.WebhookProvider] {
-			return fmt.Errorf("unknown webhook_provider %q (supported: graph, slack)", s.WebhookProvider)
+			return fmt.Errorf("unknown webhook_provider %q (supported: generic, graph, slack)", s.WebhookProvider)
+		}
+		if s.WebhookProvider == "generic" {
+			if err := s.validateGenericWebhook(); err != nil {
+				return err
+			}
 		}
 	} else {
 		if !strings.HasPrefix(s.PollURL, "https://") && !strings.HasPrefix(s.PollURL, "http://") {
@@ -162,6 +203,41 @@ func (h restMessagingHandler) Validate(c Connector) error {
 	}
 	if s.SendURL != "" && !strings.HasPrefix(s.SendURL, "https://") && !strings.HasPrefix(s.SendURL, "http://") {
 		return fmt.Errorf("send_url must be http(s)")
+	}
+	for i, k := range s.Skip {
+		if strings.TrimSpace(k.Path) == "" {
+			return fmt.Errorf("skip %d has no path", i+1)
+		}
+	}
+	return nil
+}
+
+// validateGenericWebhook checks a generic push can be both trusted and read.
+func (s RestMessagingSpec) validateGenericWebhook() error {
+	w := s.Webhook
+	if w == nil {
+		return fmt.Errorf("the generic webhook provider needs a webhook block saying how a push is checked")
+	}
+	switch w.Verify {
+	case "hmac_sha256":
+		if strings.TrimSpace(w.Header) == "" {
+			return fmt.Errorf("webhook.header is required: the header the signature arrives in")
+		}
+		if w.Encoding != "" && w.Encoding != "hex" && w.Encoding != "base64" {
+			return fmt.Errorf("webhook.encoding must be hex or base64")
+		}
+	case "token":
+		if strings.TrimSpace(w.Header) == "" && strings.TrimSpace(w.TokenPath) == "" {
+			return fmt.Errorf("webhook.header or webhook.token_path is required: where the token arrives")
+		}
+	default:
+		return fmt.Errorf("webhook.verify must be hmac_sha256 or token, got %q: an unchecked push would let anyone speak to your agents", w.Verify)
+	}
+	if s.Map.ChatID == "" && s.ChatIDConst == "" {
+		return fmt.Errorf("map.chat_id (a dot-path) or chat_id_const (a fixed value) is required")
+	}
+	if s.Map.Text == "" {
+		return fmt.Errorf("map.text is required (a dot-path into each message)")
 	}
 	return nil
 }
@@ -178,6 +254,9 @@ func (h restMessagingHandler) Materialize(c Connector) error {
 	}
 	if err := provisionServiceBridge(c.Owner, s.Service, true); err != nil {
 		return fmt.Errorf("server bridge key: %w", err)
+	}
+	if s.DisplayName != "" {
+		messaging.RegisterBridgeService(s.Service, messaging.BridgeService{DisplayName: strings.TrimSpace(s.DisplayName), RendersMarkdown: s.Markdown})
 	}
 	return startMessagingPoller(c, true)
 }
@@ -374,6 +453,16 @@ func MergeRestMessagingSpec(base, over RestMessagingSpec) RestMessagingSpec {
 	fill(&out.SendMethod, base.SendMethod)
 	fill(&out.SendBody, base.SendBody)
 	fill(&out.WebhookProvider, base.WebhookProvider)
+	fill(&out.DisplayName, base.DisplayName)
+	if out.Webhook == nil {
+		out.Webhook = base.Webhook
+	}
+	if out.Skip == nil {
+		out.Skip = base.Skip
+	}
+	if !out.Markdown {
+		out.Markdown = base.Markdown
+	}
 	if out.IntervalSecs == 0 {
 		out.IntervalSecs = base.IntervalSecs
 	}

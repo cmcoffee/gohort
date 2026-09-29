@@ -1,0 +1,80 @@
+{
+  "id": "slack-bridge",
+  "title": "Slack bridge (a channel to an agent)",
+  "category": "Bridges",
+  "description": "Brings one Slack channel's messages to your agents and posts their replies back, by polling Slack's Web API with a bot token. No public address is needed.",
+  "setup_notes": "Create a Slack app at api.slack.com/apps, add the bot scopes channels:history and chat:write, install it to your workspace and copy the Bot User OAuth Token (it starts with xoxb-). Invite the bot to the channel (/invite @yourbot) and copy the channel's id (channel details, at the bottom; it starts with C). Everything lands as a draft: enable the credential under API Credentials, approve the connector under Connectors, then bind the channel to an agent in Bridges.",
+  "questions": [
+    {
+      "name": "channel_id",
+      "label": "Channel id",
+      "help": "The channel's id, starting with C (not its name).",
+      "required": true
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Letters, digits and underscores. One connector per channel.",
+      "default": "slack_bridge"
+    },
+    {
+      "name": "bot_token",
+      "label": "Slack bot token",
+      "help": "The Bot User OAuth Token, starting with xoxb-. It is stored in the credential's secret store.",
+      "required": true,
+      "secret": true,
+      "credential": "slack_bridge"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "slack_bridge",
+        "recipe": {
+          "name": "slack_bridge",
+          "type": "bearer",
+          "base_url": "https://slack.com",
+          "allowed_endpoints": [
+            "/api/conversations.history",
+            "/api/chat.postMessage"
+          ],
+          "description": "Slack Web API for the Slack bridge, with a bot token."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "rest_messaging",
+          "desc": "Slack channel {{channel_id}} to channel agents",
+          "spec": {
+            "service": "slack",
+            "credential": "slack_bridge",
+            "poll_url": "https://slack.com/api/conversations.history?channel={{channel_id}}",
+            "method": "GET",
+            "interval_secs": 15,
+            "list_path": "messages",
+            "chat_id_const": "{{channel_id}}",
+            "map": {
+              "msg_id": "ts",
+              "sender": "user",
+              "text": "text"
+            },
+            "skip": [
+              {"path": "bot_id"},
+              {"path": "subtype"}
+            ],
+            "cursor_path": "messages.0.ts",
+            "cursor_param": "oldest",
+            "send_url": "https://slack.com/api/chat.postMessage",
+            "send_method": "POST",
+            "send_body": "{\"channel\":\"{chat_id}\",\"text\":\"{text}\"}"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -340,6 +340,49 @@ const connectorEditSpecAction = `function(ctx){
     }).catch(function(e){ window.uiAlert && window.uiAlert((e && e.message)||(''+e)); });
 }`
 
+// connectorWebhookAction (Connectors row "Webhook…", on a push bridge) shows
+// the address to give the service and sets the secret each push is checked
+// against: a signing secret or a shared token, kept encrypted by the bridges
+// app and never shown again.
+const connectorWebhookAction = `function(ctx){
+  var r = (ctx && ctx.record) || {};
+  if(!r.name || !window.uiOpenSimpleModal){ return; }
+  var el = window.uiEl;
+  var url = location.origin + '/bridges/api/webhook/' + encodeURIComponent(r.name);
+  window.uiOpenSimpleModal({title: 'Webhook: ' + r.name, width: '600px', mount: function(body, dlg){
+    function note(text){ body.appendChild(el('p', {style: 'margin:0 0 0.6rem;font-size:0.86rem;line-height:1.45;color:var(--text-mute)', text: text})); }
+    note('Give the service this address to send its pushes to. It must be able to reach this gohort.');
+    var addr = el('input', {class: 'ui-input', type: 'text', readonly: 'readonly', value: url, style: 'width:100%;box-sizing:border-box;font-family:var(--mono, monospace);font-size:0.8rem'});
+    addr.addEventListener('focus', function(){ addr.select(); });
+    var copy = el('button', {class: 'ui-row-btn', text: 'Copy'});
+    copy.addEventListener('click', function(){
+      var done = function(){ copy.textContent = 'Copied'; setTimeout(function(){ copy.textContent = 'Copy'; }, 1500); };
+      if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, function(){ addr.select(); });
+      else addr.select();
+    });
+    body.appendChild(el('div', {style: 'display:flex;gap:0.5rem;align-items:center'}, [addr, copy]));
+    note(r.webhook === 'graph'
+      ? 'Microsoft Graph pushes carry a secret gohort makes itself; set one here only to replace it.'
+      : 'Every push is checked against the secret below (the service calls it a signing secret or a token). Setting it replaces the one kept now; it is stored encrypted and never shown again.');
+    var inp = el('input', {class: 'ui-input', type: 'password', autocomplete: 'off', placeholder: 'Secret or token', style: 'width:100%;box-sizing:border-box'});
+    body.appendChild(inp);
+    var out = el('div', {style: 'margin-top:0.6rem;font-size:0.85rem;min-height:1.1em'});
+    var save = el('button', {class: 'ui-row-btn', text: 'Set secret'});
+    save.addEventListener('click', function(){
+      var v = inp.value.trim();
+      if (!v) { out.textContent = 'Enter the secret first.'; return; }
+      save.disabled = true; out.textContent = 'Saving...';
+      fetch('/bridges/api/webhook-secret', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({connector: r.name, secret: v})})
+        .then(function(res){ return res.text().then(function(t){ if(!res.ok) throw new Error(t || ('HTTP ' + res.status)); }); })
+        .then(function(){ inp.value = ''; save.disabled = false; out.textContent = 'Saved. Pushes are now checked against it.'; })
+        .catch(function(e){ save.disabled = false; out.textContent = 'Not saved: ' + ((e && e.message) || e); });
+    });
+    body.appendChild(el('div', {style: 'margin-top:0.7rem;display:flex;gap:0.5rem'}, [save]));
+    body.appendChild(out);
+  }});
+}`
+
 // toolsExportAction downloads ONE persistent tool as a 1-item bundle. The
 // persistent-tools row nests the definition under .tool and carries the owning
 // user in .owner (tools are per-user), so export needs both.

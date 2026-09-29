@@ -56,7 +56,7 @@ type webhookProvider interface {
 	// handshake establishes the endpoint before a secret is in play.
 	challenge(w http.ResponseWriter, r *http.Request, body []byte) bool
 	// verify authenticates the request against the connector's stored secret.
-	verify(r *http.Request, body []byte, secret string) error
+	verify(r *http.Request, body []byte, secret string, spec RestMessagingSpec) error
 	// extract parses inbound messages from a verified event body. It may call the
 	// service's API (spec.Credential) to resolve a message the notification only
 	// references (Graph). Return (nil, nil) to ignore an irrelevant event.
@@ -67,8 +67,16 @@ type webhookProvider interface {
 }
 
 var webhookProviders = map[string]webhookProvider{
-	"slack": slackProvider{},
-	"graph": graphProvider{},
+	"slack":   slackProvider{},
+	"graph":   graphProvider{},
+	"generic": genericProvider{},
+}
+
+// checkedChallenger is a provider whose URL-verification handshake is answered
+// only once the push has passed its check (the generic provider: the
+// handshake is described by the spec, so it is not trusted before).
+type checkedChallenger interface {
+	checkedChallenge(w http.ResponseWriter, body []byte, spec RestMessagingSpec) bool
 }
 
 // handleWebhook is the public inbound route for every webhook connector.
@@ -115,9 +123,12 @@ func (T *Bridges) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "webhook not configured", http.StatusUnauthorized)
 		return
 	}
-	if err := prov.verify(r, body, secret); err != nil {
+	if err := prov.verify(r, body, secret, spec); err != nil {
 		Warn("[bridges] webhook %q signature check failed: %v", name, err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if cc, ok := prov.(checkedChallenger); ok && cc.checkedChallenge(w, body, spec) {
 		return
 	}
 	// Master panic switch: recorded-only when transport is off.
@@ -210,7 +221,7 @@ func (slackProvider) challenge(w http.ResponseWriter, r *http.Request, body []by
 
 // verify checks Slack's v0 signature: hmac_sha256(signing_secret, "v0:ts:body"),
 // hex, prefixed "v0=". Rejects a stale timestamp (>5 min) to blunt replay.
-func (slackProvider) verify(r *http.Request, body []byte, secret string) error {
+func (slackProvider) verify(r *http.Request, body []byte, secret string, _ RestMessagingSpec) error {
 	ts := r.Header.Get("X-Slack-Request-Timestamp")
 	sig := r.Header.Get("X-Slack-Signature")
 	if ts == "" || sig == "" {
@@ -285,7 +296,7 @@ func (graphProvider) challenge(w http.ResponseWriter, r *http.Request, _ []byte)
 	return false
 }
 
-func (graphProvider) verify(_ *http.Request, body []byte, secret string) error {
+func (graphProvider) verify(_ *http.Request, body []byte, secret string, _ RestMessagingSpec) error {
 	var p struct {
 		Value []struct {
 			ClientState string `json:"clientState"`

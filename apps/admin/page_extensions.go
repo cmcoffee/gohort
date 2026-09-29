@@ -211,6 +211,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 								Method: "POST", OnlyIf: "approved"},
 							{Type: "button", Label: "Configure", Method: "client",
 								PostTo: "configure_backend", OnlyIf: "configurable"},
+							{Type: "button", Label: "Webhook…", Method: "client",
+								PostTo: "connector_webhook", OnlyIf: "webhook", Compact: true},
 							{Type: "button", Label: "Edit spec", Method: "client",
 								PostTo: "connector_edit_spec", Compact: true},
 							{Type: "button", Label: "Export", Method: "client",

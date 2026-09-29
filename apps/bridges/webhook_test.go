@@ -32,21 +32,21 @@ func TestSlackVerify(t *testing.T) {
 	body := []byte(`{"type":"event_callback"}`)
 	now := strconv.FormatInt(time.Now().Unix(), 10)
 
-	if err := (slackProvider{}).verify(slackReq(secret, now, body), body, secret); err != nil {
+	if err := (slackProvider{}).verify(slackReq(secret, now, body), body, secret, RestMessagingSpec{}); err != nil {
 		t.Errorf("valid signature rejected: %v", err)
 	}
 	// Stale timestamp → replay guard trips.
 	old := strconv.FormatInt(time.Now().Unix()-600, 10)
-	if err := (slackProvider{}).verify(slackReq(secret, old, body), body, secret); err == nil {
+	if err := (slackProvider{}).verify(slackReq(secret, old, body), body, secret, RestMessagingSpec{}); err == nil {
 		t.Error("stale timestamp accepted")
 	}
 	// Tampered body → signature no longer matches.
 	r := slackReq(secret, now, body)
-	if err := (slackProvider{}).verify(r, []byte(`{"type":"tampered"}`), secret); err == nil {
+	if err := (slackProvider{}).verify(r, []byte(`{"type":"tampered"}`), secret, RestMessagingSpec{}); err == nil {
 		t.Error("tampered body accepted")
 	}
 	// Wrong secret → mismatch.
-	if err := (slackProvider{}).verify(slackReq("other", now, body), body, secret); err == nil {
+	if err := (slackProvider{}).verify(slackReq("other", now, body), body, secret, RestMessagingSpec{}); err == nil {
 		t.Error("wrong secret accepted")
 	}
 }

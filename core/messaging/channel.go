@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"fmt"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -138,6 +139,47 @@ var bridgeServices = map[string]BridgeService{
 	"email":    {"Email", false},
 }
 
+// addedServices holds the services a connector declared at run time (a
+// bridge described as data names itself and says whether it renders
+// markdown), guarded because they arrive while messages are flowing.
+var (
+	addedServicesMu sync.RWMutex
+	addedServices   = map[string]BridgeService{}
+)
+
+// RegisterBridgeService adds a transport a connector declared. A built-in id
+// keeps its own entry: a spec can name a new service, not restyle a known one.
+func RegisterBridgeService(id string, svc BridgeService) {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if id == "" || strings.TrimSpace(svc.DisplayName) == "" {
+		return
+	}
+	if _, builtin := bridgeServices[id]; builtin {
+		return
+	}
+	addedServicesMu.Lock()
+	addedServices[id] = svc
+	addedServicesMu.Unlock()
+}
+
+// WebhookSecretFn stores a webhook connector's signing secret or shared token
+// (kept encrypted by the bridges app, out of the connector's spec).
+type WebhookSecretFn func(connector, secret string) error
+
+var webhookSecretSetter WebhookSecretFn
+
+// RegisterWebhookSecretSetter installs the bridges-side secret store.
+func RegisterWebhookSecretSetter(fn WebhookSecretFn) { webhookSecretSetter = fn }
+
+// SetWebhookSecret stores a webhook connector's secret, so a template can set
+// it the way it sets a credential's.
+func SetWebhookSecret(connector, secret string) error {
+	if webhookSecretSetter == nil {
+		return fmt.Errorf("the bridges app is not loaded, so there is nowhere to keep a webhook secret")
+	}
+	return webhookSecretSetter(connector, secret)
+}
+
 // warnedUnknownServices dedupes the unknown-transport warning so a misspelled or
 // not-yet-registered service id is surfaced once, not on every message.
 var warnedUnknownServices sync.Map
@@ -149,6 +191,12 @@ var warnedUnknownServices sync.Map
 func lookupBridgeService(service string) (BridgeService, bool) {
 	id := strings.ToLower(strings.TrimSpace(service))
 	if svc, ok := bridgeServices[id]; ok {
+		return svc, true
+	}
+	addedServicesMu.RLock()
+	svc, ok := addedServices[id]
+	addedServicesMu.RUnlock()
+	if ok {
 		return svc, true
 	}
 	if id != "" {

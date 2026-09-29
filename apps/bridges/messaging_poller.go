@@ -324,6 +324,9 @@ func messagesFromResponse(root any, spec RestMessagingSpec) []hookRequest {
 	m := spec.Map
 	var out []hookRequest
 	for _, e := range arr {
+		if skipMessage(e, spec.Skip) {
+			continue
+		}
 		chatID := spec.ChatIDConst
 		if chatID == "" {
 			chatID = jsonPathString(e, m.ChatID)
@@ -345,6 +348,31 @@ func messagesFromResponse(root any, spec RestMessagingSpec) []hookRequest {
 		out = append(out, req)
 	}
 	return out
+}
+
+// skipMessage reports whether a message matches one of the spec's skip rules:
+// its path has a value (any, when the rule lists none) or one of the listed
+// values, compared without case.
+func skipMessage(e any, skips []RestMessagingSkip) bool {
+	for _, k := range skips {
+		v := resolveJSONPath(e, k.Path)
+		if v == nil {
+			continue
+		}
+		got := strings.TrimSpace(fmt.Sprint(v))
+		if len(k.Values) == 0 {
+			if b, isBool := v.(bool); got != "" && (!isBool || b) {
+				return true
+			}
+			continue
+		}
+		for _, want := range k.Values {
+			if strings.EqualFold(got, strings.TrimSpace(want)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // resolveJSONPath walks a decoded JSON value by a dot-path. At each level, on a

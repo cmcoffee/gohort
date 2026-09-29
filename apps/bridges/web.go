@@ -3,12 +3,14 @@ package bridges
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/messaging"
 )
 
 const configTable = "bridges_config"
@@ -129,6 +131,16 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		return nil
 	})
 	RegisterMessagingProbe(T.probeMessaging)
+
+	// A webhook connector's secret, set by a template as it is added (the
+	// same store POST /api/webhook-secret writes).
+	messaging.RegisterWebhookSecretSetter(func(connector, secret string) error {
+		if strings.TrimSpace(secret) == "" {
+			return fmt.Errorf("the secret is blank")
+		}
+		T.setWebhookSecret(connector, strings.TrimSpace(secret))
+		return nil
+	})
 
 	// Bridges half of the bot_framework connector kind. Unlike the graph webhook
 	// there is no subscription to create or renew — Bot Framework routing is

@@ -144,6 +144,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("connectors_export", connectorsExportAction).
 			ClientAction("connectors_export_all", connectorsExportAllAction).
 			ClientAction("connector_edit_spec", connectorEditSpecAction).
+			ClientAction("connector_webhook", connectorWebhookAction).
 			ClientAction("add_image_backend", addImageBackendAction).
 			ClientAction("configure_backend", configureBackendAction).
 			ClientAction("configure_backend_pick", configureBackendPickAction).

@@ -90,6 +90,17 @@ lives in one governed surface (Admin > Connectors). Six kinds ship:
   needs this deployment's public URL reachable by Graph (validated at creation)
   and the tenant's Teams change-notification licensing.
 
+  webhook_provider="generic" makes a push bridge for ANY service that posts
+  JSON, with no provider of its own: webhook says how each push is checked
+  (an HMAC-SHA256 signature of the body in a header, or a shared token in a
+  header or the body) and map/list_path say where the fields are (a push that
+  is one message needs no list_path). The admin sets the secret from the
+  connector's "Webhook..." button in Admin > Connectors, which also shows the
+  address to give the service. Add skip rules so the bridge's own replies are
+  not read back as messages, and display_name/markdown for a service gohort
+  does not know. Templates (Admin > Extensions > Templates) can install whole
+  bridges like this as data.
+
   bot_framework: gohort as a real Microsoft Teams BOT rather than a reader of
   one channel. It answers 1:1 DMs, group chats and channel @mentions, and
   replies under the bot's own identity. Reach for this when rest_messaging's
@@ -178,7 +189,11 @@ Typical flow for a calendar:
 			"service_host":         {Type: "string", Description: "(bot_framework, optional) the host replies are sent to (default https://smba.trafficmanager.net, which covers every public-cloud region, the region is a path segment). Set only for a sovereign cloud. The connector's credential must be allowed to reach it, which is checked at approval."},
 			"reply_in_thread":      {Type: "boolean", Description: "(bot_framework, optional) thread a channel reply under the message that triggered it instead of posting at the conversation root."},
 			"accept_channel_types": {Type: "array", Description: "(bot_framework, optional) limit which Teams surfaces route inbound: any of \"personal\" (1:1 DM), \"channel\", \"groupChat\". Omit to accept all three. The Teams app manifest is the real gate; this is a second one an admin can tighten without a manifest re-upload."},
-			"webhook_provider":     {Type: "string", Enum: []string{"slack", "graph"}, Description: "(rest_messaging, optional) switch inbound from POLL to real-time PUSH. \"slack\" (Slack Events API, turnkey: paste the webhook URL into the Slack app, admin sets the signing secret) or \"graph\". The poll fields become unused; send_url/credential still deliver replies."},
+			"webhook_provider":     {Type: "string", Enum: []string{"slack", "graph", "generic"}, Description: "(rest_messaging, optional) switch inbound from POLL to real-time PUSH. \"slack\" (Slack Events API, turnkey: paste the webhook URL into the Slack app, admin sets the signing secret), \"graph\", or \"generic\" (any service pushing JSON: describe the check in webhook and the fields in map). The poll fields become unused; send_url/credential still deliver replies."},
+			"webhook":              {Type: "object", Description: "(rest_messaging, with webhook_provider=\"generic\") how each push is checked: {\"verify\":\"hmac_sha256\" or \"token\", \"header\": the header carrying the signature or token, \"token_path\": a body dot-path instead of a header (token), \"prefix\": stripped first (e.g. \"sha256=\"), \"encoding\": \"hex\" or \"base64\" (hmac), \"challenge_path\": a body dot-path echoed back for a URL-verification handshake}. The secret itself is set by the admin, never here."},
+			"skip":                 {Type: "array", Description: "(rest_messaging, optional) messages to drop, each {\"path\": element dot-path, \"values\": [...]}: dropped when the path has a value, or one of the listed values. Use it to skip the bridge's own replies (e.g. {\"path\":\"bot_id\"}) and system events, or the agent answers itself."},
+			"display_name":         {Type: "string", Description: "(rest_messaging, optional) how a service gohort does not know is named to people (e.g. \"Mattermost\"). A known service keeps its own name."},
+			"markdown":             {Type: "boolean", Description: "(rest_messaging, optional) the service renders markdown, so replies keep their formatting. Only for a service gohort does not know."},
 			"image_spec":           {Type: "object", Description: "(rest_image, optional) explicit backend fields overriding/extending the preset: submit_url, submit_method, submit_body (a JSON template with {prompt}/{negative}/{width}/{height}/{steps}/{seed} tokens), image_b64_path or image_url_path (synchronous result), or the poll set submit_id_path/poll_url/poll_ready_path/poll_b64_path/poll_url_path/poll_url_template/poll_fields (async). Omit when a preset + vars is enough. For rest_image, `credential` names the SecureAPI credential (or \"no_auth\" for a local endpoint) and `vars` fills preset tokens like {\"base_url\":\"http://localhost:7860\"}."},
 			"description":          {Type: "string", Description: "(optional) What this connector is for. For desktop_command it is also the tool's description shown to callers."},
 		},
@@ -216,7 +231,11 @@ Typical flow for a calendar:
 			"send_url":         {Type: "string", Description: "(rest_messaging) new reply send endpoint."},
 			"send_method":      {Type: "string", Description: "(rest_messaging) new send HTTP method."},
 			"send_body":        {Type: "string", Description: "(rest_messaging) new reply body template."},
-			"webhook_provider": {Type: "string", Enum: []string{"slack", "graph"}, Description: "(rest_messaging) switch inbound to a real-time webhook provider."},
+			"webhook_provider": {Type: "string", Enum: []string{"slack", "graph", "generic"}, Description: "(rest_messaging) switch inbound to a real-time webhook provider."},
+			"webhook":          {Type: "object", Description: "(rest_messaging, generic webhook) new push check (replaces the whole block)."},
+			"skip":             {Type: "array", Description: "(rest_messaging) new skip rules (replaces the whole list)."},
+			"display_name":     {Type: "string", Description: "(rest_messaging) new display name for a service gohort does not know."},
+			"markdown":         {Type: "boolean", Description: "(rest_messaging) the service renders markdown."},
 		},
 		Required: []string{"name"},
 		Handler:  connectorUpdate,
@@ -467,6 +486,8 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 			ChatIDConst:     strings.TrimSpace(stringArg(args, "chat_id_const")),
 			MoreURLPath:     strings.TrimSpace(stringArg(args, "more_url_path")),
 			WebhookProvider: strings.TrimSpace(stringArg(args, "webhook_provider")),
+			DisplayName:     strings.TrimSpace(stringArg(args, "display_name")),
+			Markdown:        boolArg(args, "markdown"),
 			Map: RestMessagingFieldMap{
 				ChatID:     strings.TrimSpace(fm["chat_id"]),
 				MsgID:      strings.TrimSpace(fm["msg_id"]),
@@ -476,6 +497,9 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 				ConvName:   strings.TrimSpace(fm["conv_name"]),
 				Timestamp:  strings.TrimSpace(fm["timestamp"]),
 			},
+		}
+		if err := messagingSpecExtras(args, &over); err != nil {
+			return "", err
 		}
 		spec, err := ApplyRestMessagingPreset(stringArg(args, "preset"), over, stringMapArg(args, "vars"))
 		if err != nil {
@@ -673,6 +697,8 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 			SendMethod:      strings.TrimSpace(stringArg(args, "send_method")),
 			SendBody:        stringArg(args, "send_body"),
 			WebhookProvider: strings.TrimSpace(stringArg(args, "webhook_provider")),
+			DisplayName:     strings.TrimSpace(stringArg(args, "display_name")),
+			Markdown:        boolArg(args, "markdown"),
 			Map: RestMessagingFieldMap{
 				ChatID:     strings.TrimSpace(fm["chat_id"]),
 				MsgID:      strings.TrimSpace(fm["msg_id"]),
@@ -682,6 +708,9 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 				ConvName:   strings.TrimSpace(fm["conv_name"]),
 				Timestamp:  strings.TrimSpace(fm["timestamp"]),
 			},
+		}
+		if err := messagingSpecExtras(args, &over); err != nil {
+			return "", err
 		}
 		c.Spec, _ = json.Marshal(MergeRestMessagingSpec(existing, over))
 	case BotFrameworkConnectorKind:
@@ -922,4 +951,27 @@ func connectorImport(args map[string]any, sess *ToolSession) (string, error) {
 		}
 	}
 	return strings.TrimSpace(b.String()), nil
+}
+
+// messagingSpecExtras reads the rest_messaging fields that arrive as objects
+// (the generic webhook's check, the skip rules) into a spec, left unset when
+// not passed so an update keeps the existing ones.
+func messagingSpecExtras(args map[string]any, s *RestMessagingSpec) error {
+	if v, ok := args["webhook"]; ok && v != nil {
+		raw, _ := json.Marshal(v)
+		var wh RestMessagingWebhook
+		if err := json.Unmarshal(raw, &wh); err != nil {
+			return fmt.Errorf("webhook must be an object like {\"verify\":\"token\",\"header\":\"X-Token\"}: %v", err)
+		}
+		s.Webhook = &wh
+	}
+	if v, ok := args["skip"]; ok && v != nil {
+		raw, _ := json.Marshal(v)
+		var skip []RestMessagingSkip
+		if err := json.Unmarshal(raw, &skip); err != nil {
+			return fmt.Errorf("skip must be a list like [{\"path\":\"bot_id\"}]: %v", err)
+		}
+		s.Skip = skip
+	}
+	return nil
 }
