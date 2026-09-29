@@ -565,10 +565,14 @@ const templateInstallAction = `function(ctx){
             inp = el('select', {class: 'ui-input'});
             q.options.forEach(function(o){ inp.appendChild(el('option', {value: o, text: o})); });
             if (q.default) inp.value = q.default;
+          } else if (q.kind === 'long') {
+            inp = el('textarea', {class: 'ui-input', rows: '8', spellcheck: 'false', style: 'width:100%;box-sizing:border-box;font-family:var(--mono, monospace);font-size:0.8rem'});
+            if (q.default) inp.value = q.default;
           } else {
             inp = el('input', {class: 'ui-input', type: q.secret ? 'password' : 'text', autocomplete: 'off', style: 'width:100%;box-sizing:border-box'});
             if (q.default) inp.value = q.default;
             if (q.kind === 'url') inp.placeholder = 'https://';
+            if (q.kind === 'http_url') inp.placeholder = 'http://';
           }
           body.appendChild(inp);
           if (q.help) body.appendChild(el('div', {style: 'font-size:0.78rem;color:var(--text-mute);margin-top:0.15rem', text: q.help}));

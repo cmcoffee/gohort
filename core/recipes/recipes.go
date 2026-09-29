@@ -52,8 +52,14 @@ type Question struct {
 	Required bool     `json:"required,omitempty"`
 	Options  []string `json:"options,omitempty"` // a pick-one question
 	// Kind "url" checks the answer is an https address and drops a trailing
-	// slash, so {{site}}/rest/... joins cleanly.
+	// slash, so {{site}}/rest/... joins cleanly; "http_url" allows http too,
+	// for a server on the local network; "long" asks in a multi-line box.
 	Kind string `json:"kind,omitempty"`
+	// Helper hands the answer to a registered helper (see Helper), whose
+	// outputs the pieces use as {{question.output}}. With are the helper's
+	// other inputs, which may use {{answer}} placeholders.
+	Helper string            `json:"helper,omitempty"`
+	With   map[string]string `json:"with,omitempty"`
 	// Secret answers are never substituted into the pieces: they are written
 	// into Credential's secret store after the import.
 	Secret     bool   `json:"secret,omitempty"`
@@ -88,7 +94,8 @@ type Summary struct {
 var (
 	idRe          = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	nameRe        = regexp.MustCompile(`^[a-z][a-z0-9_]{0,40}$`)
-	placeholderRe = regexp.MustCompile(`\{\{([a-z][a-z0-9_]*)\}\}`)
+	placeholderRe = regexp.MustCompile(`\{\{([a-z][a-z0-9_]*)(?:\.([a-z][a-z0-9_]*))?\}\}`)
+	wholeRe       = regexp.MustCompile(`^\{\{([a-z][a-z0-9_]*)(?:\.([a-z][a-z0-9_]*))?\}\}$`)
 )
 
 // Validate refuses a template that could not install cleanly or would carry
@@ -129,6 +136,25 @@ func Validate(r Recipe) error {
 				return fmt.Errorf("secret question %q must name a credential the template installs", q.Name)
 			}
 		}
+		switch q.Kind {
+		case "", "url", "http_url", "long":
+		default:
+			return fmt.Errorf("question %q has kind %q; the kinds are url, http_url and long", q.Name, q.Kind)
+		}
+		if q.Helper != "" {
+			if q.Secret {
+				return fmt.Errorf("secret question %q cannot go to a helper", q.Name)
+			}
+			if _, ok := LookupHelper(q.Helper); !ok {
+				return fmt.Errorf("question %q names helper %q, which this gohort does not have", q.Name, q.Helper)
+			}
+		}
+	}
+	helperOf := map[string]string{}
+	for _, q := range r.Questions {
+		if q.Helper != "" {
+			helperOf[q.Name] = q.Helper
+		}
 	}
 	data, err := json.Marshal(r.Bundle)
 	if err != nil {
@@ -140,6 +166,11 @@ func Validate(r Recipe) error {
 			return fmt.Errorf("{{%s}} is a secret answer: it goes into its credential's secret store, never into a piece", m[1])
 		case !asked[m[1]]:
 			return fmt.Errorf("{{%s}} is used but no question asks for it", m[1])
+		case m[2] != "":
+			h, ok := LookupHelper(helperOf[m[1]])
+			if !ok || !h.hasOutput(m[2]) {
+				return fmt.Errorf("{{%s.%s}}: question %q has no helper output %q", m[1], m[2], m[1], m[2])
+			}
 		}
 	}
 	var hit string
@@ -178,6 +209,44 @@ func walkStrings(b core.ArtifactBundle, fn func(string) string) core.ArtifactBun
 			out.Artifacts[i].Recipe = raw
 		}
 		out.Artifacts[i].Name = fn(a.Name)
+	}
+	return out
+}
+
+// walkAny is walkStrings where a string may become any JSON value.
+func walkAny(b core.ArtifactBundle, fn func(string) any) core.ArtifactBundle {
+	out := b
+	out.Artifacts = make([]core.PortableArtifact, len(b.Artifacts))
+	var conv func(v any) any
+	conv = func(v any) any {
+		switch t := v.(type) {
+		case string:
+			return fn(t)
+		case []any:
+			for i := range t {
+				t[i] = conv(t[i])
+			}
+			return t
+		case map[string]any:
+			for k, x := range t {
+				t[k] = conv(x)
+			}
+			return t
+		}
+		return v
+	}
+	for i, a := range b.Artifacts {
+		out.Artifacts[i] = a
+		var v any
+		if json.Unmarshal(a.Recipe, &v) != nil {
+			continue
+		}
+		if raw, err := json.Marshal(conv(v)); err == nil {
+			out.Artifacts[i].Recipe = raw
+		}
+		if name, ok := fn(a.Name).(string); ok {
+			out.Artifacts[i].Name = name
+		}
 	}
 	return out
 }
@@ -304,9 +373,12 @@ func List(db core.Database) []Summary {
 
 // Fill answers a template's questions into its bundle: defaults where an
 // answer is blank, a required question left blank refused, a url answer
-// checked. Secret answers are returned apart, by credential, never filled in.
-func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]string, error) {
-	vals, secrets := map[string]string{}, map[string]string{}
+// checked, each helper question run through its helper. Secret answers are
+// returned apart, by credential, never filled in; helpers' warnings are
+// returned for the person to read.
+func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]string, []string, error) {
+	vals, secrets := map[string]any{}, map[string]string{}
+	plain := map[string]string{}
 	for _, q := range r.Questions {
 		v := strings.TrimSpace(answers[q.Name])
 		if v == "" {
@@ -314,7 +386,7 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]
 		}
 		if v == "" {
 			if q.Required {
-				return core.ArtifactBundle{}, nil, fmt.Errorf("%s is needed", q.Label)
+				return core.ArtifactBundle{}, nil, nil, fmt.Errorf("%s is needed", q.Label)
 			}
 			if q.Secret {
 				continue
@@ -326,12 +398,17 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]
 				ok = ok || o == v
 			}
 			if !ok {
-				return core.ArtifactBundle{}, nil, fmt.Errorf("%s must be one of %s", q.Label, strings.Join(q.Options, ", "))
+				return core.ArtifactBundle{}, nil, nil, fmt.Errorf("%s must be one of %s", q.Label, strings.Join(q.Options, ", "))
 			}
 		}
-		if q.Kind == "url" && v != "" {
-			if !strings.HasPrefix(strings.ToLower(v), "https://") || strings.ContainsAny(v, " \"'<>") {
-				return core.ArtifactBundle{}, nil, fmt.Errorf("%s must be an https address", q.Label)
+		if (q.Kind == "url" || q.Kind == "http_url") && v != "" {
+			lower := strings.ToLower(v)
+			okScheme := strings.HasPrefix(lower, "https://") || (q.Kind == "http_url" && strings.HasPrefix(lower, "http://"))
+			if !okScheme || strings.ContainsAny(v, " \"'<>") {
+				if q.Kind == "url" {
+					return core.ArtifactBundle{}, nil, nil, fmt.Errorf("%s must be an https address", q.Label)
+				}
+				return core.ArtifactBundle{}, nil, nil, fmt.Errorf("%s must be an http or https address", q.Label)
 			}
 			v = strings.TrimRight(v, "/")
 		}
@@ -339,18 +416,70 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, map[string]
 			secrets[q.Credential] = v
 			continue
 		}
+		plain[q.Name] = v
 		vals[q.Name] = v
 	}
-	out := walkStrings(r.Bundle, func(s string) string {
+	fillText := func(s string) string {
 		return placeholderRe.ReplaceAllStringFunc(s, func(m string) string {
-			return vals[placeholderRe.FindStringSubmatch(m)[1]]
+			return plain[placeholderRe.FindStringSubmatch(m)[1]]
+		})
+	}
+	var warnings []string
+	for _, q := range r.Questions {
+		if q.Helper == "" {
+			continue
+		}
+		h, ok := LookupHelper(q.Helper)
+		if !ok {
+			return core.ArtifactBundle{}, nil, nil, fmt.Errorf("the helper %q is not on this gohort", q.Helper)
+		}
+		with := map[string]string{}
+		for k, v := range q.With {
+			with[k] = strings.TrimSpace(fillText(v))
+		}
+		out, warns, err := h.Run(plain[q.Name], with)
+		if err != nil {
+			return core.ArtifactBundle{}, nil, nil, fmt.Errorf("%s: %v", q.Label, err)
+		}
+		warnings = append(warnings, warns...)
+		for k, v := range out {
+			vals[q.Name+"."+k] = v
+		}
+	}
+	lookup := func(m []string) (any, bool) {
+		key := m[1]
+		if m[2] != "" {
+			key += "." + m[2]
+		}
+		v, ok := vals[key]
+		return v, ok
+	}
+	out := walkAny(r.Bundle, func(s string) any {
+		// A placeholder standing alone takes the value whole, so a helper's
+		// output can be a JSON object (a connector's spec).
+		if m := wholeRe.FindStringSubmatch(s); m != nil {
+			if v, ok := lookup(m); ok {
+				return v
+			}
+			return ""
+		}
+		return placeholderRe.ReplaceAllStringFunc(s, func(ph string) string {
+			v, _ := lookup(placeholderRe.FindStringSubmatch(ph))
+			if str, isStr := v.(string); isStr {
+				return str
+			}
+			if v == nil {
+				return ""
+			}
+			b, _ := json.Marshal(v)
+			return string(b)
 		})
 	})
 	if out.Bundle == "" {
 		out.Bundle = core.ArtifactBundleFormat
 	}
 	out.ExportedAt = time.Now()
-	return out, secrets, nil
+	return out, secrets, warnings, nil
 }
 
 // Install adds a template: fills the answers in, imports the pieces as
@@ -362,7 +491,7 @@ func Install(db core.Database, id, owner string, answers map[string]string) (cor
 	if !ok {
 		return core.ArtifactImportResult{}, fmt.Errorf("no template %q", id)
 	}
-	bundle, secrets, err := Fill(r, answers)
+	bundle, secrets, warnings, err := Fill(r, answers)
 	if err != nil {
 		return core.ArtifactImportResult{}, err
 	}
@@ -374,6 +503,7 @@ func Install(db core.Database, id, owner string, answers map[string]string) (cor
 	if err != nil {
 		return res, err
 	}
+	res.Warnings = append(res.Warnings, warnings...)
 	for cred, secret := range secrets {
 		landed := false
 		for _, o := range res.Outcomes {

@@ -43,7 +43,7 @@ func TestFillingATemplatePutsTheAnswersIn(t *testing.T) {
 	if !ok {
 		t.Fatal("no jira-cloud template")
 	}
-	b, secrets, err := Fill(r, map[string]string{"site": "https://acme.atlassian.net/", "email": "someone@example.com", "api_token": "tok"})
+	b, secrets, _, err := Fill(r, map[string]string{"site": "https://acme.atlassian.net/", "email": "someone@example.com", "api_token": "tok"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,10 +59,10 @@ func TestFillingATemplatePutsTheAnswersIn(t *testing.T) {
 	if secrets["jira"] != "tok" {
 		t.Errorf("the secret is held for its credential: %v", secrets)
 	}
-	if _, _, err := Fill(r, map[string]string{"site": "http://acme.atlassian.net", "email": "x", "api_token": "t"}); err == nil {
+	if _, _, _, err := Fill(r, map[string]string{"site": "http://acme.atlassian.net", "email": "x", "api_token": "t"}); err == nil {
 		t.Error("a url answer must be https")
 	}
-	if _, _, err := Fill(r, map[string]string{"site": "https://acme.atlassian.net", "api_token": "t"}); err == nil {
+	if _, _, _, err := Fill(r, map[string]string{"site": "https://acme.atlassian.net", "api_token": "t"}); err == nil {
 		t.Error("a required question left blank is refused")
 	}
 }
@@ -158,5 +158,89 @@ func TestSavingAsATemplateTurnsValuesIntoQuestions(t *testing.T) {
 	}
 	if len(r.Questions) != 2 || r.Questions[0].Name != "site" {
 		t.Errorf("the questions keep their order: %+v", r.Questions)
+	}
+}
+
+// A helper question's outputs fill the pieces: a placeholder standing alone
+// takes the output whole (an object), one inside text takes it as text; the
+// helper's inputs are filled from the other answers first.
+func TestAHelperFillsItsOutputsIn(t *testing.T) {
+	var gotWith map[string]string
+	RegisterHelper("test_echo", Helper{Outputs: []string{"obj"}, Run: func(answer string, with map[string]string) (map[string]any, []string, error) {
+		gotWith = with
+		return map[string]any{"obj": map[string]any{"said": answer}}, []string{"a note"}, nil
+	}})
+	r := Recipe{ID: "t", Title: "T", Questions: []Question{
+		{Name: "host", Label: "Host", Kind: "http_url", Required: true},
+		{Name: "thing", Label: "Thing", Helper: "test_echo", With: map[string]string{"at": "{{host}}/x"}},
+	}, Bundle: core.ArtifactBundle{Bundle: core.ArtifactBundleFormat, Artifacts: []core.PortableArtifact{{Type: "connector", Name: "c",
+		Recipe: json.RawMessage(`{"name":"c","spec":"{{thing.obj}}","desc":"at {{host}}: {{thing.obj}}"}`)}}}}
+	if err := Validate(r); err != nil {
+		t.Fatal(err)
+	}
+	b, _, warns, err := Fill(r, map[string]string{"host": "http://box.lan:8188/", "thing": "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotWith["at"] != "http://box.lan:8188/x" || len(warns) != 1 {
+		t.Errorf("the helper's inputs are filled and its warnings returned: %v %v", gotWith, warns)
+	}
+	var got struct {
+		Spec map[string]any `json:"spec"`
+		Desc string         `json:"desc"`
+	}
+	if err := json.Unmarshal(b.Artifacts[0].Recipe, &got); err != nil || got.Spec["said"] != "hi" || got.Desc != `at http://box.lan:8188: {"said":"hi"}` {
+		t.Errorf("whole placeholder takes the object, inline takes text: %s %v", b.Artifacts[0].Recipe, err)
+	}
+	if _, _, _, err := Fill(r, map[string]string{"host": "ftp://box"}); err == nil {
+		t.Error("an http_url answer must be http or https")
+	}
+
+	bad := r
+	bad.Bundle.Artifacts = []core.PortableArtifact{{Type: "connector", Name: "c", Recipe: json.RawMessage(`{"spec":"{{thing.nope}}"}`)}}
+	if Validate(bad) == nil {
+		t.Error("an output the helper does not make is refused")
+	}
+	bad = r
+	bad.Questions = []Question{r.Questions[0], {Name: "thing", Label: "Thing", Helper: "no_such_helper"}}
+	if Validate(bad) == nil {
+		t.Error("a helper this gohort does not have is refused")
+	}
+	bad = r
+	bad.Bundle.Artifacts = []core.PortableArtifact{{Type: "connector", Name: "c", Recipe: json.RawMessage(`{"spec":"{{host.obj}}"}`)}}
+	if Validate(bad) == nil {
+		t.Error("a question with no helper has no outputs")
+	}
+	bad = r
+	bad.Questions = []Question{{Name: "host", Label: "Host", Kind: "uri"}, r.Questions[1]}
+	if Validate(bad) == nil {
+		t.Error("a kind gohort does not know is refused, not read as text")
+	}
+}
+
+// The ComfyUI starter wires the default graph into an image connector that
+// lands unapproved, pointed at the address given.
+func TestTheComfyUITemplateAddsAWiredConnector(t *testing.T) {
+	db := testDB(t)
+	res, err := Install(db, "comfyui", "admin", map[string]string{"base_url": "http://192.168.1.20:8188/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Imported != 1 {
+		t.Fatalf("one connector lands: %+v", res)
+	}
+	c, ok := core.GetConnector(db, "comfyui")
+	if !ok || c.Kind != core.RestImageConnectorKind || c.Template != "comfyui" {
+		t.Fatalf("a comfyui image connector: %+v", c)
+	}
+	var spec core.RestImageSpec
+	if err := json.Unmarshal(c.Spec, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(spec.PollURLTemplate, "http://192.168.1.20:8188/view?") || spec.ComfyMap.OutputNode != "9" || len(spec.ComfyMap.PromptNodes) == 0 {
+		t.Errorf("the spec is wired to the server: %+v", spec)
+	}
+	if _, err := Install(db, "comfyui", "admin", map[string]string{"base_url": "http://box:8188", "name": "comfy2", "workflow": "{not json"}); err == nil {
+		t.Error("a workflow that cannot be read is refused before anything lands")
 	}
 }

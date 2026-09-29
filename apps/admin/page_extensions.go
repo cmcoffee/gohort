@@ -347,6 +347,8 @@ func (a *AdminApp) templatesSection() ui.Section {
 									Placeholder: "https://wiki.acme.example"},
 								{Field: "kind", Label: "Kind", Type: "select", OwnLine: true, HideWhen: "secret:yes", Options: []ui.SelectOption{
 									{Value: "", Label: "Text"}, {Value: "url", Label: "An https address"},
+									{Value: "http_url", Label: "An http or https address (a server on your network)"},
+									{Value: "long", Label: "Long text (asked in a multi-line box)"},
 								}},
 								{Field: "credential", Label: "The credential whose secret it asks for", Type: "text", OwnLine: true, ShowWhen: "secret:yes",
 									Placeholder: "wiki"},

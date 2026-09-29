@@ -1,0 +1,48 @@
+{
+  "id": "comfyui",
+  "title": "ComfyUI (image generation)",
+  "description": "An image connector for a ComfyUI server, running the workflow you paste in (or a basic SD1.5 graph). Gives agents a generate_image tool. It installs unapproved: review the node map and approve it in Admin > Extensions.",
+  "category": "Images",
+  "setup_notes": "ComfyUI must be reachable from the gohort server (the default port is 8188). To use your own workflow, build it in ComfyUI with a SaveImage node, export it with Workflow > Export (API) (older versions: turn on Dev mode in Settings, then Save (API Format)) and paste that file's contents below. Leave it blank for a basic SD1.5 graph.",
+  "questions": [
+    {
+      "name": "base_url",
+      "label": "ComfyUI address",
+      "help": "The address gohort reaches ComfyUI at, e.g. http://192.168.1.20:8188",
+      "kind": "http_url",
+      "required": true
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Letters, digits and underscores; the tool is named after it.",
+      "default": "comfyui"
+    },
+    {
+      "name": "workflow",
+      "label": "Workflow (API format)",
+      "help": "The JSON from ComfyUI's Export (API). Blank uses a basic SD1.5 graph.",
+      "kind": "long",
+      "helper": "comfyui_workflow",
+      "with": {
+        "base_url": "{{base_url}}"
+      }
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "rest_image",
+          "template": "comfyui",
+          "desc": "ComfyUI image generation at {{base_url}}",
+          "spec": "{{workflow.spec}}"
+        }
+      }
+    ]
+  }
+}

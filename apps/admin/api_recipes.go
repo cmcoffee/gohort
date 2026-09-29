@@ -86,7 +86,8 @@ func (a *AdminApp) registerRecipeRoutes(sub *http.ServeMux) {
 		var body struct {
 			Answers map[string]string `json:"answers"`
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		// Room for a pasted workflow or spec, not just short answers.
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
