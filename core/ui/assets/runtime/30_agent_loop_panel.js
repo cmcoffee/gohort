@@ -857,6 +857,22 @@
       function clearOrchViewTimer() {
         if (orchViewTimer) { clearInterval(orchViewTimer); orchViewTimer = null; }
       }
+      // uiOpenNavItem opens a nav view by its label, the same as pressing its
+      // button, so a menu entry can be a shortcut to a view rather than a
+      // second way to reach the same thing; opts.tab opens a page view on one
+      // of its tabs. False when there is no such view.
+      var pendingNavTab = '';
+      window.uiOpenNavItem = function(label, opts) {
+        var items = cfg.orchestrator_nav || [];
+        for (var i = 0; i < items.length; i++) {
+          if (items[i] && items[i].label === label) {
+            pendingNavTab = (items[i].page_source && opts && opts.tab) || '';
+            selectOrchNav(i);
+            return true;
+          }
+        }
+        return false;
+      };
       // paintNarrowNote marks a view that was entered NARROWED and gives the
       // way back out. Without it a filtered pane is indistinguishable from the
       // whole one — same title, same rows, fewer of them — so the reader either
@@ -995,12 +1011,13 @@
               .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
               .then(function(pcfg) {
                 orchView.textContent = '';
+                if (pendingNavTab) { pcfg.initial_tab = pendingNavTab; pendingNavTab = ''; }
                 // The document's own chrome is already around this: the page
                 // header, its back arrow and its footer belong to a document,
                 // and a second set inside a panel is two of everything.
                 window.uiRenderPageBody(pcfg, orchView);
               })
-              .catch(function(err) { orchView.textContent = 'Failed to load: ' + err.message; });
+              .catch(function(err) { pendingNavTab = ''; orchView.textContent = 'Failed to load: ' + err.message; });
             return;
           }
           // A view the user ASKED for opens whole. A redraw after a change

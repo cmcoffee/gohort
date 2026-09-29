@@ -1,6 +1,8 @@
 package orchestrate
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -91,5 +93,44 @@ func TestAReplyCarriesOneMarkThatCanBeTakenBack(t *testing.T) {
 	markFlaggedReplies(db, "someone-else", "a", "s", m)
 	if m[1].Flag != "" {
 		t.Error("another person does not see this person's mark")
+	}
+}
+
+// Configure > Security opens the Security button's view, and never the
+// standalone page.
+func TestConfigureSecurityIsAShortcutToTheView(t *testing.T) {
+	raw, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	i := strings.Index(src, "uiRegisterClientAction('orchestrate_secure_agent'")
+	if i < 0 {
+		t.Fatal("the orchestrate_secure_agent action is gone")
+	}
+	end := strings.Index(src[i:], "});")
+	action := src[i : i+end]
+	if !strings.Contains(action, "uiOpenNavItem('Security')") {
+		t.Error("it opens the Security view")
+	}
+	if strings.Contains(action, "location.href") || strings.Contains(action, "/access") {
+		t.Error("it must never go to the standalone page")
+	}
+}
+
+// Agent > Share opens the Security view on its Share tab, never a page.
+func TestAgentShareOpensTheShareTab(t *testing.T) {
+	raw, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	i := strings.Index(src, "uiRegisterClientAction('orchestrate_share_agent'")
+	if i < 0 {
+		t.Fatal("the orchestrate_share_agent action is missing")
+	}
+	action := src[i : i+strings.Index(src[i:], "});")]
+	if !strings.Contains(action, "uiOpenNavItem('Security', {tab: 'Share'})") || strings.Contains(action, "location.href") {
+		t.Errorf("it opens the Share tab in the view, never a page: %s", action)
 	}
 }

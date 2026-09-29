@@ -351,8 +351,11 @@
     var tabbar = el('div', {class: 'ui-tabbar'});
     root.appendChild(tabbar);
     var panels = [];
+    // initial_tab opens the page on a tab by its name, for a shortcut that
+    // means one part of the page (the first tab otherwise).
+    var first = Math.max(0, order.indexOf(cfg.initial_tab || ''));
     order.forEach(function(g, idx) {
-      var panel = el('div', {class: 'ui-tabpanel' + (idx === 0 ? '' : ' ui-tab-hidden')});
+      var panel = el('div', {class: 'ui-tabpanel' + (idx === first ? '' : ' ui-tab-hidden')});
       if (secNav && secByGroup[g].length > 1) {
         buildSecNav(panel, secByGroup[g]);
       } else {
@@ -361,7 +364,7 @@
         groupHosts[g] = host;
       }
       panels.push(panel);
-      var btn = el('button', {type: 'button', class: 'ui-tab' + (idx === 0 ? ' active' : '')}, [g]);
+      var btn = el('button', {type: 'button', class: 'ui-tab' + (idx === first ? ' active' : '')}, [g]);
       btn.addEventListener('click', function() {
         for (var i = 0; i < panels.length; i++) panels[i].classList.toggle('ui-tab-hidden', i !== idx);
         var tabs = tabbar.querySelectorAll('.ui-tab');

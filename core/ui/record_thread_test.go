@@ -91,3 +91,25 @@ func TestAGroupHeadingCanCarryActions(t *testing.T) {
 		t.Error("the runtime draws group actions at the band's foot")
 	}
 }
+
+// A menu entry can open a nav view by its label, as a shortcut to the same
+// view rather than a second surface.
+func TestANavViewOpensByLabel(t *testing.T) {
+	js := string(runtimeJS)
+	if !strings.Contains(js, "window.uiOpenNavItem = function(label, opts)") || !strings.Contains(js, "if (items[i] && items[i].label === label) {") {
+		t.Error("the runtime opens a nav view by its label")
+	}
+}
+
+// A page view can open on one of its tabs by name.
+func TestAPageOpensOnANamedTab(t *testing.T) {
+	js := string(runtimeJS)
+	for _, want := range []string{
+		"var first = Math.max(0, order.indexOf(cfg.initial_tab || ''));",
+		"if (pendingNavTab) { pcfg.initial_tab = pendingNavTab; pendingNavTab = ''; }",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("runtime missing %q", want)
+		}
+	}
+}

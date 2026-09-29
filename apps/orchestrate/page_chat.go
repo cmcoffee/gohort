@@ -774,6 +774,10 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_import_agent"},
 						{Group: "Agent", Label: "Export", Title: "Download the active agent, choosing which of its tools, skills and knowledge go with it",
 							Method: "client", URL: "orchestrate_export_agent"},
+						// A shortcut to the Security view's Share tab: who else may
+						// use this agent and whose memory it keeps. Never a page.
+						{Group: "Agent", Label: "Share", Title: "Share the active agent: who else may use it, and whose memory it keeps.",
+							Method: "client", URL: "orchestrate_share_agent"},
 						{Group: "Agent", Label: "Delete", Title: "Delete the active agent",
 							Method: "client", URL: "orchestrate_delete_agent", Variant: "danger"},
 						{Group: "Configure", Label: "Tools", Title: "Review and edit the active agent's tool allowlist",
@@ -792,10 +796,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_pipelines_modal"},
 						{Group: "Configure", Label: "Machines", Title: "Phase machines: give this agent a workflow it moves through and stays in, instead of re-deciding its approach every turn.",
 							Method: "client", URL: "orchestrate_machines_modal"},
-						// Opens the agent's Security page rather than a modal of
-						// its own. It used to carry force_private, hidden and the
-						// dispatch targets directly, which made three surfaces
-						// holding one fact.
+						// A shortcut to the Security button's view, not a page or
+						// a modal of its own. It used to carry force_private,
+						// hidden and the dispatch targets directly, which made
+						// three surfaces holding one fact; then it opened the
+						// standalone page, a second way to reach the same view.
 						{Group: "Configure", Label: "Security", Title: "Everything that bounds this agent: its tools and whether they need watching, what its sandbox may reach, who it may talk to, and what it may hand work to.",
 							Method: "client", URL: "orchestrate_secure_agent"},
 						{Group: "Session", Label: "Copy session", Title: "Copy the full session as markdown (every user message, every assistant round, every tool call/result) for pasting into a prompt-tuning chat.",
