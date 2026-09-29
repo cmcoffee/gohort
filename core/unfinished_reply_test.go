@@ -117,7 +117,7 @@ func TestAReplyGuardInShadowOrOffLeavesTheReplyAlone(t *testing.T) {
 		return
 	}
 
-	if err := replyguard.SetMode(correctionUnfinished, replyguard.AllModels, replyguard.Shadow); err != nil {
+	if err := replyguard.Put(replyguard.Setting{ID: correctionUnfinished, Scope: replyguard.AllTiers, Mode: replyguard.Shadow}); err != nil {
 		t.Fatal(err)
 	}
 	calls, resp, h := run()
@@ -128,7 +128,7 @@ func TestAReplyGuardInShadowOrOffLeavesTheReplyAlone(t *testing.T) {
 		t.Errorf("shadow counts what it would have done: acted=%d shadowed=%d", a, s)
 	}
 
-	replyguard.SetMode(correctionUnfinished, replyguard.AllModels, replyguard.Off)
+	replyguard.Put(replyguard.Setting{ID: correctionUnfinished, Scope: replyguard.AllTiers, Mode: replyguard.Off})
 	if calls, _, _ := run(); calls != 1 {
 		t.Errorf("off does nothing: calls=%d", calls)
 	}
@@ -136,7 +136,7 @@ func TestAReplyGuardInShadowOrOffLeavesTheReplyAlone(t *testing.T) {
 		t.Errorf("off counts nothing: acted=%d shadowed=%d", a, s)
 	}
 
-	replyguard.SetMode(correctionUnfinished, replyguard.AllModels, "")
+	replyguard.Clear(correctionUnfinished, replyguard.AllTiers)
 	if calls, _, _ := run(); calls != 2 {
 		t.Errorf("on again, it corrects: calls=%d", calls)
 	}
@@ -204,8 +204,44 @@ func TestAnAuthoredGuardCorrectsTheReply(t *testing.T) {
 	if calls != 2 || !h.sawDiag("authored-guard-corrected") || resp.Content != "Here is what I found: the build passed." {
 		t.Errorf("on, it corrects: calls=%d reply=%q diags=%v", calls, resp.Content, h.diags)
 	}
-	replyguard.SetMode(g.ID, replyguard.AllModels, replyguard.Off)
+	replyguard.Put(replyguard.Setting{ID: g.ID, Scope: replyguard.AllTiers, Mode: replyguard.Off})
 	if calls, _, _ := run(); calls != 1 {
 		t.Errorf("off, it does nothing: calls=%d", calls)
+	}
+}
+
+// A guard's note and its retries can be set per tier: the model reads the
+// admin's note in place of the shipped one, and a guard allowed one retry
+// asks once.
+func TestAGuardsNoteAndRetriesFollowItsSettings(t *testing.T) {
+	replyguard.SetStore(guardStore{})
+	defer replyguard.SetStore(nil)
+	if err := replyguard.Put(replyguard.Setting{ID: correctionAnnouncedCall, Scope: replyguard.AllTiers, Note: "Run the thing you announced, now."}); err != nil {
+		t.Fatal(err)
+	}
+	stub := &FakeLLM{Turns: []FakeTurn{
+		{Content: "I'll check the logs now:"},
+		{Content: "The logs are clean."},
+	}}
+	app := &AppCore{LLM: stub, LeadLLM: stub}
+	h := &correctionHooks{}
+	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "check the logs"}}, h.wire(AgentLoopConfig{MaxRounds: 6})); err != nil {
+		t.Fatal(err)
+	}
+	sent := stub.LastSent()
+	if last := sent[len(sent)-1].Content; !strings.Contains(last, "Run the thing you announced, now.") || strings.Contains(last, noteAnnouncedCall) {
+		t.Errorf("the admin's note replaces the shipped one: %q", last)
+	}
+
+	if err := replyguard.Put(replyguard.Setting{ID: correctionUnfinished, Scope: replyguard.AllTiers, Retries: 1}); err != nil {
+		t.Fatal(err)
+	}
+	stub = &FakeLLM{Turns: []FakeTurn{{Content: "The board is set up, and", Repeat: true}}}
+	app = &AppCore{LLM: stub, LeadLLM: stub}
+	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "set it up"}}, (&correctionHooks{}).wire(AgentLoopConfig{MaxRounds: 6})); err != nil {
+		t.Fatal(err)
+	}
+	if stub.Calls() != 2 {
+		t.Errorf("one retry allowed, one taken: calls=%d", stub.Calls())
 	}
 }
