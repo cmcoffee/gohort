@@ -2,7 +2,12 @@ package core
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/replyguard"
 )
 
 // A reply whose last line visibly stops is unfinished; a complete one is not,
@@ -61,5 +66,114 @@ func TestAnUnfinishedReplyIsAskedToFinish(t *testing.T) {
 	}
 	if resp == nil || resp.Content != "The board is set up, and Briefing Bot posts to it every morning." {
 		t.Errorf("the finished reply is the answer: %+v", resp)
+	}
+}
+
+// guardStore is an in-memory replyguard store for loop tests.
+type guardStore map[string][]byte
+
+func (g guardStore) Get(table, key string, out interface{}) bool {
+	b, ok := g[table+"/"+key]
+	return ok && json.Unmarshal(b, out) == nil
+}
+func (g guardStore) Set(table, key string, v interface{}) {
+	b, _ := json.Marshal(v)
+	g[table+"/"+key] = b
+}
+func (g guardStore) Keys(table string) []string {
+	var out []string
+	for k := range g {
+		if len(k) > len(table) && k[:len(table)+1] == table+"/" {
+			out = append(out, k[len(table)+1:])
+		}
+	}
+	return out
+}
+
+// A guard set to shadow on a model counts what it would have done and leaves
+// the reply alone; set off, it does nothing at all. On, it corrects and counts.
+func TestAReplyGuardInShadowOrOffLeavesTheReplyAlone(t *testing.T) {
+	replyguard.SetStore(guardStore{})
+	defer replyguard.SetStore(nil)
+	run := func() (int, *Response, *correctionHooks) {
+		stub := &FakeLLM{Turns: []FakeTurn{
+			{Content: "The board is set up, and"},
+			{Content: "The board is set up, and it posts every morning.", Repeat: true},
+		}}
+		app := &AppCore{LLM: stub, LeadLLM: stub}
+		h := &correctionHooks{}
+		resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "set it up"}}, h.wire(AgentLoopConfig{MaxRounds: 6}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stub.Calls(), resp, h
+	}
+	count := func() (acted, shadowed int) {
+		for _, st := range replyguard.Stats() {
+			if st.ID == correctionUnfinished {
+				acted, shadowed = acted+st.Acted, shadowed+st.Shadowed
+			}
+		}
+		return
+	}
+
+	if err := replyguard.SetMode(correctionUnfinished, replyguard.AllModels, replyguard.Shadow); err != nil {
+		t.Fatal(err)
+	}
+	calls, resp, h := run()
+	if calls != 1 || h.sawDiag("unfinished-reply-corrected") || resp.Content != "The board is set up, and" {
+		t.Errorf("shadow leaves the reply as it was: calls=%d reply=%q", calls, resp.Content)
+	}
+	if a, s := count(); a != 0 || s != 1 {
+		t.Errorf("shadow counts what it would have done: acted=%d shadowed=%d", a, s)
+	}
+
+	replyguard.SetMode(correctionUnfinished, replyguard.AllModels, replyguard.Off)
+	if calls, _, _ := run(); calls != 1 {
+		t.Errorf("off does nothing: calls=%d", calls)
+	}
+	if a, s := count(); a != 0 || s != 1 {
+		t.Errorf("off counts nothing: acted=%d shadowed=%d", a, s)
+	}
+
+	replyguard.SetMode(correctionUnfinished, replyguard.AllModels, "")
+	if calls, _, _ := run(); calls != 2 {
+		t.Errorf("on again, it corrects: calls=%d", calls)
+	}
+	if a, _ := count(); a != 1 {
+		t.Errorf("a correction is counted as one: acted=%d", a)
+	}
+}
+
+// Every guard that spends a correction goes through guardActs, so none can
+// escape the admin's mode for it, and every correction kind is registered
+// with a name and a description. The finish check is the host's own rule and
+// the tool-mention guard gates on its else branch.
+func TestEveryReplyGuardAsksItsMode(t *testing.T) {
+	for _, file := range []string{"agent_loop.go", "agent_loop_replyguards.go"} {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if !strings.Contains(line, "lr.corrections.available(correction") || strings.Contains(line, "correctionFinishCheck") ||
+				strings.Contains(line, "!(lr.corrections.available(correctionToolMention)") {
+				continue
+			}
+			if !strings.Contains(line, "guardActs(") {
+				t.Errorf("%s:%d spends a correction without asking the guard's mode: %s", file, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+	known := map[string]bool{}
+	for _, g := range replyguard.Guards() {
+		known[g.ID] = g.Name != "" && g.Desc != ""
+	}
+	for _, k := range []string{correctionOrphanedXML, correctionPhantomDelivery, correctionFakeToolCode, correctionActionPromise,
+		correctionAnnouncedCall, correctionToolMention, correctionCollapse, correctionGiveUp, correctionUnkeptClaim,
+		correctionUngrounded, correctionMachinery, correctionTruncated, correctionRoleBreak, correctionMalformedCall, correctionUnfinished} {
+		if !known[k] {
+			t.Errorf("guard %q is not registered with a name and a description", k)
+		}
 	}
 }

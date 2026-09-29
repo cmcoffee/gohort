@@ -2465,7 +2465,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 			Reasoning: lr.rs.resp.Reasoning,
 		}
 		lr.noteUncorrected(correctionOrphanedXML, "The reply again wrote tool-call XML for an unknown tool; the markup was stripped but no further re-prompt was left to spend.")
-		if lr.corrections.available(correctionOrphanedXML) && lr.round < lr.maxRounds {
+		if lr.corrections.available(correctionOrphanedXML) && lr.round < lr.maxRounds && lr.guardActs(correctionOrphanedXML) {
 			hint := ""
 			if attemptedName != "" {
 				hint = fmt.Sprintf(" You attempted to call %q which is not a registered tool.", attemptedName)
@@ -2496,7 +2496,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 			Content:   lr.rs.resp.Content,
 			Reasoning: lr.rs.resp.Reasoning,
 		}
-		if lr.corrections.available(correctionPhantomDelivery) && lr.round < lr.maxRounds {
+		if lr.corrections.available(correctionPhantomDelivery) && lr.round < lr.maxRounds && lr.guardActs(correctionPhantomDelivery) {
 			// Joined, not %v: a ref is a filename when the reply named
 			// one and a plain noun phrase ("the image") when it didn't,
 			// and "[the image]" reads as a placeholder the model is
@@ -2567,7 +2567,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 			Reasoning: lr.rs.resp.Reasoning,
 		}
 		lr.noteUncorrected(correctionFakeToolCode, "The reply again wrote a tool call as a text block instead of calling it; the markup was stripped but no further re-prompt was left to spend.")
-		if lr.corrections.available(correctionFakeToolCode) && lr.round < lr.maxRounds {
+		if lr.corrections.available(correctionFakeToolCode) && lr.round < lr.maxRounds && lr.guardActs(correctionFakeToolCode) {
 			hint := ""
 			if attemptedName != "" {
 				hint = fmt.Sprintf(" You appeared to invoke %q.", attemptedName)
@@ -2603,7 +2603,7 @@ func (lr *loopRun) finalRoundTruncation() loopAction {
 	// unfinished one, and the corrections that pattern-match prose
 	// would either miss it or scold the model for being interrupted.
 	if responseWasTruncated(lr.rs.resp) {
-		if lr.corrections.available(correctionTruncated) {
+		if lr.corrections.available(correctionTruncated) && lr.guardActs(correctionTruncated) {
 			Debug("[agent_loop] round %d: output truncated (stop_reason=%q, %d chars), continuing (correction %d/%d)",
 				lr.round, lr.rs.resp.StopReason, len(lr.rs.resp.Content), lr.corrections.spend(correctionTruncated), maxCorrectionsPerKind)
 			lr.emitDiag("output-truncated", truncationDiag(lr.rs.resp))
@@ -2654,7 +2654,7 @@ func (lr *loopRun) finalRoundPromiseGuards() loopAction {
 	// never intended. Flip to true to re-enable; the reasoning-collapse
 	// correction below is unaffected either way.
 	const actionPromiseCorrection = false
-	if actionPromiseCorrection && lr.corrections.available(correctionActionPromise) && lr.round < lr.maxRounds && !lr.toolFiredThisTurn && containsActionPromise(lr.rs.resp.Content) {
+	if actionPromiseCorrection && lr.corrections.available(correctionActionPromise) && lr.round < lr.maxRounds && !lr.toolFiredThisTurn && containsActionPromise(lr.rs.resp.Content) && lr.guardActs(correctionActionPromise) {
 		Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", lr.corrections.spend(correctionActionPromise), maxCorrectionsPerKind, truncForLog(lr.rs.resp.Content, 80))
 		lr.history = append(lr.history, Message{
 			Role:    "user",
@@ -2677,7 +2677,7 @@ func (lr *loopRun) finalRoundPromiseGuards() loopAction {
 	if endsWithCallAnnouncement(lr.rs.resp.Content) {
 		lr.noteUncorrected(correctionAnnouncedCall, "The reply again ended announcing a call it never made; no further re-prompt was left to spend, so it was delivered as written.")
 	}
-	if lr.corrections.available(correctionAnnouncedCall) && lr.round < lr.maxRounds && endsWithCallAnnouncement(lr.rs.resp.Content) {
+	if lr.corrections.available(correctionAnnouncedCall) && lr.round < lr.maxRounds && endsWithCallAnnouncement(lr.rs.resp.Content) && lr.guardActs(correctionAnnouncedCall) {
 		Debug("[agent_loop] reply ends announcing a call that never followed, re-prompting: correction %d/%d: %q", lr.corrections.spend(correctionAnnouncedCall), maxCorrectionsPerKind, truncForLog(lr.rs.resp.Content, 80))
 		lr.emitDiag("announced-call-corrected", "The reply ended by announcing a tool call it never made; re-prompted to actually make the call or finish the reply.")
 		lr.settleRound() // finalize the announcement so the retry doesn't concatenate into it
@@ -2727,7 +2727,7 @@ func (lr *loopRun) finalRoundToolMentionGuard() loopAction {
 		name, needsArgs := mentionedUncalledTool(lr.rs.resp.Content, lr.handlers, lr.toolDefs)
 		if name != "" && !(lr.corrections.available(correctionToolMention) && lr.round < lr.maxRounds) {
 			lr.noteUncorrected(correctionToolMention, "The reply again named a tool in prose without calling it; no further re-prompt was left to spend.")
-		} else if name != "" {
+		} else if name != "" && lr.guardActs(correctionToolMention) {
 			Debug("[agent_loop] tool %q named in prose without a call (needs_args=%v), re-prompting: correction %d/%d", name, needsArgs, lr.corrections.spend(correctionToolMention), maxCorrectionsPerKind)
 			lr.emitDiag("tool-mention-corrected", fmt.Sprintf("The reply named the %q tool without calling it; re-prompted to either run it or answer plainly.", name))
 			lr.settleRound() // finalize the preamble so the retry doesn't concatenate into it
@@ -2775,7 +2775,7 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 	if collapsed {
 		lr.noteUncorrected(correctionCollapse, "The round again produced no visible reply and called no tool; no further re-prompt was left to spend.")
 	}
-	if collapsed && lr.corrections.available(correctionCollapse) && lr.round < lr.maxRounds {
+	if collapsed && lr.corrections.available(correctionCollapse) && lr.round < lr.maxRounds && lr.guardActs(correctionCollapse) {
 		Debug("[agent_loop] reasoning-collapse detected (reasoning=%d chars, content=%d chars), re-prompting: correction %d/%d", len(lr.rs.resp.Reasoning), len(trimmedContent), lr.corrections.spend(correctionCollapse), maxCorrectionsPerKind)
 		lr.emitDiag("empty-round-retried", "A round produced reasoning but no visible reply and no tool call; re-prompted for concrete output.")
 		lr.settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
@@ -2834,7 +2834,7 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 	if gaveUp {
 		lr.noteUncorrected(correctionGiveUp, "The turn again stopped with tool errors unaddressed and rounds to spare; no further re-prompt was left to spend.")
 	}
-	if gaveUp && lr.corrections.available(correctionGiveUp) {
+	if gaveUp && lr.corrections.available(correctionGiveUp) && lr.guardActs(correctionGiveUp) {
 		Debug("[agent_loop] give-up-with-errors-pending detected (errors=%d, rounds_left=%d, content=%dch, promised=%v), re-prompting: correction %d/%d",
 			lr.cumulativeToolErrors, roundsLeft, len(trimmedContent), promised, lr.corrections.spend(correctionGiveUp), maxCorrectionsPerKind)
 		// Two failures, two messages. Telling a model to "re-read the
@@ -2968,7 +2968,12 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		Now:           CurrentContextStampIn(lr.cfg.StampLocation),
 		ChangedState:  lr.turnChangedState,
 	}
-	verdict, convicted := judgeTurnClaim(lr.cfg, ev)
+	// Both findings off on this model: the judge's call is not made at all.
+	var verdict TurnClaimVerdict
+	convicted := false
+	if !lr.guardOff(correctionUnkeptClaim) || !lr.guardOff(correctionMachinery) {
+		verdict, convicted = judgeTurnClaim(lr.cfg, ev)
+	}
 	if !convicted && verdict.Overturned != "" {
 		lr.emitDiag("turn-judge-overturned", "A first reading flagged the reply and a closer one cleared it, so it went out as written. "+verdict.Overturned)
 		verdict.settle("turn-judge-overturned")
@@ -2978,7 +2983,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		// its own. A machinery-only conviction reaching the claim branch
 		// would tell the model its reply "did not happen" about a sentence
 		// that was true.
-		if verdict.Unkept && lr.corrections.available(correctionUnkeptClaim) && lr.round < lr.maxRounds {
+		if verdict.Unkept && lr.corrections.available(correctionUnkeptClaim) && lr.round < lr.maxRounds && lr.guardActs(correctionUnkeptClaim) {
 			Debug("[agent_loop] turn judge: reply claims work the turn did not do (%q), %s; re-prompting: correction %d/%d",
 				truncForLog(verdict.Claim, 80), verdict.Why, lr.corrections.spend(correctionUnkeptClaim), maxCorrectionsPerKind)
 			how := "Re-prompted to do it or say so."
@@ -3016,7 +3021,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		// claim needs the work done or admitted — so it must not spend the
 		// allowance the serious one might need in the same turn.
 		if leak := strings.TrimSpace(verdict.Machinery); leak != "" && !verdict.Unkept {
-			if lr.corrections.available(correctionMachinery) && lr.round < lr.maxRounds {
+			if lr.corrections.available(correctionMachinery) && lr.round < lr.maxRounds && lr.guardActs(correctionMachinery) {
 				Debug("[agent_loop] turn judge: reply explains machinery (%q); re-prompting: correction %d/%d",
 					truncForLog(leak, 80), lr.corrections.spend(correctionMachinery), maxCorrectionsPerKind)
 				lr.emitDiag("machinery-corrected", fmt.Sprintf("The reply explained how the work is being run (%q), which nobody asked about. Re-prompted for the same message without it.", truncForLog(leak, 120)))
@@ -3051,7 +3056,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 	// a "stored note" is what produced a reply apologising for not having
 	// checked a joke.
 	liveNote := liveClaimNote(lr.cfg.LiveClaimSpeaker, LatestUserContent(lr.messages))
-	if gv, convicted := judgeTurnGrounding(lr.cfg, TurnGroundingEvidence{
+	if gv, convicted := lr.groundingJudge(TurnGroundingEvidence{
 		Reply: lr.rs.resp.Content,
 		// Stored notes plus, on a channel, whatever the person just
 		// said. Composed here rather than by the host so the live entry
@@ -3060,7 +3065,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		ToolCalls:   lr.turnToolCalls,
 		ToolOutputs: lr.turnToolOutputs,
 	}); convicted {
-		if lr.corrections.available(correctionUngrounded) && lr.round < lr.maxRounds {
+		if lr.corrections.available(correctionUngrounded) && lr.round < lr.maxRounds && lr.guardActs(correctionUngrounded) {
 			Debug("[agent_loop] grounding judge: reply asserts an unchecked claim (%q), re-prompting: correction %d/%d",
 				truncForLog(gv.Claim, 80), lr.corrections.spend(correctionUngrounded), maxCorrectionsPerKind)
 			lr.emitDiag("ungrounded-claim-corrected", fmt.Sprintf("The reply stated %q as fact; it traces to an unchecked note (%q). Re-prompted to check it or attribute it.",
@@ -4141,6 +4146,7 @@ func (lr *loopRun) settleToolRound() loopAction {
 			ToolCalls:  lr.rs.resp.ToolCalls,
 			ToolErrors: lr.rs.toolErrors,
 			Done:       false,
+			Model:      lr.rs.resp.Model,
 		})
 	}
 	lr.cumulativeToolErrors += lr.rs.toolErrors

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/replyguard"
 )
 
 // lastUserContent returns the .Content of the last user-role message
@@ -160,6 +161,7 @@ func (t *chatTurn) emitStats(msgID string, resp *Response, start time.Time) {
 		payload["output_tokens"] = resp.OutputTokens
 		payload["reasoning_tokens"] = resp.ReasoningTokens
 		usage.InputTokens = promptTokens
+		usage.Model = resp.Model
 		usage.CacheReadTokens = resp.CacheReadTokens
 		usage.CacheWriteTokens = resp.CacheWriteTokens
 		usage.OutputTokens = resp.OutputTokens
@@ -206,6 +208,30 @@ func (t *chatTurn) drainLastUsage() *ChatMessageUsage {
 // (cleared, so it doesn't double the answer the model then writes in its
 // final reply). See the onStep !info.Done branch.
 const leadInMaxLen = 600
+
+// earlyAnswerGuard is the lead-in length check as a reply guard, so an admin
+// can see how often it holds text back on each model and turn it down where
+// it misfires.
+const earlyAnswerGuard = "early-answer"
+
+func init() {
+	replyguard.Register(replyguard.Guard{ID: earlyAnswerGuard, Name: "Answer written before a tool",
+		Desc: "A long paragraph written alongside a tool call is usually the answer given early and repeated at the end, so it would show twice. It is held back, and put back if the final reply comes out much shorter."})
+}
+
+// earlyAnswerActs is the early-answer guard's decision point: on, it holds
+// the text back; shadow, it only counts it; off, nothing.
+func earlyAnswerActs(model, text string) bool {
+	switch replyguard.ModeFor(earlyAnswerGuard, model) {
+	case replyguard.Off:
+		return false
+	case replyguard.Shadow:
+		replyguard.Record(earlyAnswerGuard, model, text, false)
+		return false
+	}
+	replyguard.Record(earlyAnswerGuard, model, text, true)
+	return true
+}
 
 // emitStatus pushes a phase-narration row into the activity pane.
 // Mirrors servitor's status events ("Investigator: synthesizing…",

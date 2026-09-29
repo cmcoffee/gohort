@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/cmcoffee/gohort/core/replyguard"
 )
 
 // deliveryMarkerRe matches the framework's own "send this file" marker. Shared
@@ -926,7 +928,7 @@ func (lr *loopRun) finalRoundRoleBreak() loopAction {
 		return actNone
 	}
 	lr.noteUncorrected(correctionRoleBreak, "The reply again carried on the user's message in their voice instead of answering it. Delivered as written.")
-	if !lr.corrections.available(correctionRoleBreak) || lr.round >= lr.maxRounds {
+	if !lr.corrections.available(correctionRoleBreak) || lr.round >= lr.maxRounds || !lr.guardActs(correctionRoleBreak) {
 		return actNone
 	}
 	Debug("[agent_loop] reply continues the user's message (%q), re-prompting: correction %d/%d",
@@ -955,7 +957,7 @@ func (lr *loopRun) finalRoundMalformedCall() loopAction {
 		return actNone
 	}
 	lr.noteUncorrected(correctionMalformedCall, "The model's tool call was again rejected as malformed by the provider and did not run. Delivered what text there was.")
-	if !lr.corrections.available(correctionMalformedCall) {
+	if !lr.corrections.available(correctionMalformedCall) || !lr.guardActs(correctionMalformedCall) {
 		return actNone
 	}
 	Debug("[agent_loop] round %d: provider dropped a malformed tool call (%d chars of text before it), retrying: correction %d/%d",
@@ -1030,7 +1032,7 @@ func (lr *loopRun) finalRoundUnfinishedReply() loopAction {
 		return actNone
 	}
 	lr.noteUncorrected(correctionUnfinished, "The reply again stopped mid-sentence; no further re-prompt was left, so it was delivered as written.")
-	if !lr.corrections.available(correctionUnfinished) || lr.round >= lr.maxRounds {
+	if !lr.corrections.available(correctionUnfinished) || lr.round >= lr.maxRounds || !lr.guardActs(correctionUnfinished) {
 		return actNone
 	}
 	tail := strings.TrimSpace(lr.rs.resp.Content)
@@ -1045,4 +1047,71 @@ func (lr *loopRun) finalRoundUnfinishedReply() loopAction {
 		Content: frameworkNoticeTag + fmt.Sprintf("Your reply stops mid-sentence (it ends %q), so the user has an unfinished message. Send the rest now: finish what you were saying. If it was leading into questions for the user, ask them; if it was leading into an action, take it with a real tool call.", tail),
 	})
 	return actContinue
+}
+
+// The reply guards, as the admin sees them: what each catches, in plain
+// words. Registered once; core/replyguard holds each one's mode per model and
+// its firings. The finish check and the owner's guardrails are not here: those
+// are the host's and the owner's rules, not the loop's fixes for a model.
+func init() {
+	for _, g := range []replyguard.Guard{
+		{ID: correctionMalformedCall, Name: "Malformed tool call", Desc: "The provider rejected a tool call the model tried to make, so only its lead-in arrived. The model is asked for the call again."},
+		{ID: correctionTruncated, Name: "Reply cut off at the length limit", Desc: "The provider stopped the reply at its output limit. The model is asked to carry on from where it stopped."},
+		{ID: correctionOrphanedXML, Name: "Tool call written as markup", Desc: "The reply wrote a tool call as XML text naming a tool that does not exist. The markup is always removed; this asks the model for a real call."},
+		{ID: correctionFakeToolCode, Name: "Tool call written as a text block", Desc: "The reply wrote a tool call as a <tool_code> block or ::name():: text, which runs nothing. The block is always removed; this asks for a real call."},
+		{ID: correctionPhantomDelivery, Name: "Delivers a file that does not exist", Desc: "The reply says it sent or attached a file that nothing produced. It is taken back and the model asked again."},
+		{ID: correctionRoleBreak, Name: "Carries on the user's message", Desc: "The reply continues the user's sentence in their voice instead of answering it. It is withdrawn and the model asked again."},
+		{ID: correctionActionPromise, Name: "Promises an action and stops", Desc: "The reply says it will do something and ends without a tool call."},
+		{ID: correctionAnnouncedCall, Name: "Announces a call that never comes", Desc: "The reply's last line introduces a call or a list (ending in a colon) and the turn stops there."},
+		{ID: correctionUnfinished, Name: "Stops mid-sentence", Desc: "The reply's last line ends on a joining word or mark (\"and\", \"the\", a comma) or a colon that asks the user nothing. The model is asked to finish."},
+		{ID: correctionToolMention, Name: "Names a tool instead of calling it", Desc: "A short lead-in names a tool in its text and makes no call. The model is asked to run it or answer plainly."},
+		{ID: correctionCollapse, Name: "Thinks and says nothing", Desc: "The model reasoned at length and returned no reply and no call. It is asked for concrete output."},
+		{ID: correctionGiveUp, Name: "Gives up with errors unaddressed", Desc: "The turn stops after tool errors while it still has rounds to spare. The model is asked to deal with the errors."},
+		{ID: correctionUnkeptClaim, Name: "Claims work it did not do", Desc: "A judge compares the reply with what the turn's tools actually did, and catches a claim of work that never happened.", Judge: true},
+		{ID: correctionMachinery, Name: "Explains its own machinery", Desc: "The same judge catches a reply explaining how the work is being run (ids, where it runs, check back later) when nobody asked.", Judge: true},
+		{ID: correctionUngrounded, Name: "States an unchecked note as fact", Desc: "A judge catches a reply asserting something that traces only to an unchecked note. Runs only when such notes are in play.", Judge: true},
+	} {
+		replyguard.Register(g)
+	}
+}
+
+// replyGuardModel names the model whose reply the guards are judging.
+func (lr *loopRun) replyGuardModel() string {
+	if lr.rs.resp == nil {
+		return ""
+	}
+	return lr.rs.resp.Model
+}
+
+// guardOff reports whether a guard is switched off for this reply's model, so
+// a judge guard does not spend its call.
+func (lr *loopRun) guardOff(kind string) bool {
+	return replyguard.ModeFor(kind, lr.replyGuardModel()) == replyguard.Off
+}
+
+// guardActs is every reply guard's decision point: called once it has found
+// its problem and has budget to correct it. On, the firing is counted and the
+// guard acts. Shadow, it is counted as what the guard would have done and the
+// reply is left alone. Off, nothing.
+func (lr *loopRun) guardActs(kind string) bool {
+	model := lr.replyGuardModel()
+	switch replyguard.ModeFor(kind, model) {
+	case replyguard.Off:
+		return false
+	case replyguard.Shadow:
+		replyguard.Record(kind, model, lr.rs.resp.Content, false)
+		Debug("[agent_loop] %s would have fired (shadow on %s): reply left as it is", kind, replyguard.NormalizeModel(model))
+		return false
+	}
+	replyguard.Record(kind, model, lr.rs.resp.Content, true)
+	return true
+}
+
+// groundingJudge runs the grounding judge unless its guard is off for this
+// model, in which case no call is made.
+func (lr *loopRun) groundingJudge(ev TurnGroundingEvidence) (TurnGroundingVerdict, bool) {
+	if lr.guardOff(correctionUngrounded) {
+		return TurnGroundingVerdict{}, false
+	}
+	return judgeTurnGrounding(lr.cfg, ev)
 }

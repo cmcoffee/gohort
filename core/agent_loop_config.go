@@ -83,6 +83,7 @@ type StepInfo struct {
 	ToolCalls  []ToolCall // Tool calls the LLM requested this round.
 	ToolErrors int        // Number of tool calls that returned errors.
 	Done       bool       // True if this is the final round (no more tool calls).
+	Model      string     // The model that produced this round, when the provider said.
 }
 
 // StepCallback is called after each round of the agent loop for observability.

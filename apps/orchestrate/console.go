@@ -156,6 +156,14 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// fired, admin only (judge_records.go). Read-only, so no gw() wrapper.
 	T.HandleFunc("/api/console/judge-records", T.handleConsoleFirings)
 	T.HandleFunc("/api/console/judge-records/export", T.handleConsoleFiringExport)
+	// Reply guards per model, and the flagged-replies queue (reply_flags.go).
+	// Admin only, checked in each handler; w() rejects a GET that writes.
+	T.HandleFunc("/api/console/reply-guards", T.handleReplyGuards)
+	T.HandleFunc("/api/console/reply-guards/mode", w(T.handleReplyGuardMode))
+	T.HandleFunc("/api/console/reply-flags", T.handleReplyFlags)
+	T.HandleFunc("/api/console/reply-flags/status", w(T.handleReplyFlagStatus))
+	// Anyone's thumbs-up or thumbs-down on one of their own replies.
+	T.HandleFunc("/api/reply-flag", w(T.handleReplyFlag))
 	// Tool health: actions that have failed repeatedly and never once worked.
 	T.HandleFunc("/api/console/broken-tools", T.handleConsoleBrokenTools)
 	T.HandleFunc("/api/console/broken-tools/forget", w(T.handleConsoleBrokenToolForget))

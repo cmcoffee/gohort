@@ -2452,6 +2452,10 @@
             try {
               act.onclick({
                 bubble: bubble,
+                // Which conversation the bubble is in, for an action that
+                // files something about it on the server.
+                sessionId: activeSessionId,
+                agentId: window.GOHORT_AGENT_ID || '',
                 getText: function() {
                   // Prefer the RAW markdown (msgEls[].rawText) — it
                   // preserves newlines / paragraph breaks. The bubble's

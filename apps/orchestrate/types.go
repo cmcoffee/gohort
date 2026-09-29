@@ -1596,6 +1596,9 @@ type PersistedToolCall struct {
 // replay path can hand it straight to renderMessageStats without
 // further mapping.
 type ChatMessageUsage struct {
+	// Model is the model that wrote the message, when the provider said, so a
+	// flagged reply can be filed against the model that produced it.
+	Model string `json:"model,omitempty"`
 	// InputTokens is the WHOLE prompt: uncached plus whatever was served from
 	// or written to the cache. The provider reports only the uncached part
 	// under that name, which on a cache hit is a handful of tokens and made an

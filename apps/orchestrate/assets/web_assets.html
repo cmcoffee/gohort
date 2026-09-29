@@ -8711,6 +8711,49 @@ select.ui-orch-intake-input {
         });
       }
       registerAttachmentReplayHook();
+
+      // Thumbs up / down on a reply. Down asks what was wrong (required: a
+      // bare "bad" is nothing a fix can be built from) and files it for the
+      // admin's review; up keeps the reply as a known-good example, which a
+      // future reply guard is tested against so it leaves such replies alone.
+      function registerReplyFlags() {
+        if (!window.uiRegisterBubbleAction || !window.uiEl) { setTimeout(registerReplyFlags, 50); return; }
+        var el = window.uiEl;
+        function send(ctx, verdict, evaluation) {
+          return fetch('api/reply-flag', {method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({session_id: ctx.sessionId || '', agent_id: ctx.agentId || '',
+              reply: ctx.getText(), verdict: verdict, evaluation: evaluation || ''})})
+            .then(function(r) { return r.text().then(function(t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return JSON.parse(t); }); });
+        }
+        function toast(text) { if (window.uiToast) window.uiToast(text); else if (window.uiAlert) window.uiAlert(text); }
+        window.uiRegisterBubbleAction({role: 'assistant', label: '\uD83D\uDC4D', title: 'A good reply: keep it as an example',
+          onclick: function(ctx) {
+            send(ctx, 'up', '').then(function(d) { toast(d.message || 'Kept.'); })
+              .catch(function(e) { toast('Could not save it: ' + (e && e.message || e)); });
+          }});
+        window.uiRegisterBubbleAction({role: 'assistant', label: '\uD83D\uDC4E', title: 'Something is wrong with this reply: tell the admin what',
+          onclick: function(ctx) {
+            if (!window.uiOpenSimpleModal) return;
+            window.uiOpenSimpleModal({title: 'What was wrong with this reply?', width: '560px', mount: function(body, dlg) {
+              body.appendChild(el('p', {style: 'margin:0 0 0.6rem;color:var(--text-mute);font-size:0.88rem;line-height:1.45', text: 'Say what it did wrong and what it should have done. This goes to the admin, with the reply, the message before it and the model, to decide whether a check should catch it in future.'}));
+              var ta = el('textarea', {class: 'ui-input', rows: '5', style: 'width:100%;box-sizing:border-box', placeholder: 'It answered twice: the same summary before and after the search.'});
+              body.appendChild(ta);
+              var go = el('button', {class: 'ui-row-btn', text: 'Send'});
+              go.addEventListener('click', function() {
+                var text = ta.value.trim();
+                if (!text) { ta.focus(); toast('Say what was wrong first.'); return; }
+                go.disabled = true;
+                send(ctx, 'down', text).then(function(d) { dlg.close(); toast(d.message || 'Sent.'); })
+                  .catch(function(e) { go.disabled = false; toast('Could not send it: ' + (e && e.message || e)); });
+              });
+              var row = el('div', {style: 'margin-top:0.6rem;display:flex;gap:0.5rem'}, [go]);
+              body.appendChild(row);
+              setTimeout(function() { ta.focus(); }, 30);
+            }});
+          }});
+      }
+      registerReplyFlags();
       // The per-reply ↗ Techwriter export was removed. Handing a raw
       // reply to another app produced articles nobody had named or
       // shaped; agents that should write there have techwriter tools of

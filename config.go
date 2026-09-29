@@ -14,6 +14,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/replyguard"
 
 	"github.com/cmcoffee/snugforge/nfo"
 )
@@ -1244,6 +1245,10 @@ func init_database() {
 	// Wire the per-source external-call cost ledger (cost hooks). Until this
 	// runs, RecordExternalCost is a no-op.
 	SetCostLedgerDB(global.db)
+
+	// Wire the reply guards' per-model modes and firing tallies (Admin, Reply
+	// guards). Until this runs, every guard is on and nothing is counted.
+	replyguard.SetStore(global.db)
 
 	// Load global source hooks — available to all agents regardless of entry point.
 	LoadSourceHooks(global.db)
