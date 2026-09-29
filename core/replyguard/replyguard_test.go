@@ -31,35 +31,60 @@ func (m memStore) Keys(table string) []string {
 	return out
 }
 
-// A model's own setting wins over the guard's default, the default over On,
-// and clearing a model's setting puts it back on the default.
-func TestAModelsSettingWinsOverTheDefault(t *testing.T) {
+// A tier's own setting wins over the all-tiers one, which wins over the
+// defaults; each part follows the scope above until it is set; clearing a part
+// follows the scope above again; Revert puts the guard back as shipped. A
+// tier setting remembers the model the tier was running.
+func TestATiersSettingWinsOverAllTiers(t *testing.T) {
 	SetStore(memStore{})
 	defer SetStore(nil)
-	Register(Guard{ID: "t-guard", Name: "Test"})
-	if m := ModeFor("t-guard", "gemini-2.5-flash"); m != On {
-		t.Errorf("unset: %q, want on", m)
+	Register(Guard{ID: "t-guard", Name: "Test", Note: "Shipped note."})
+	Register(Guard{ID: "t-coded", Name: "Coded note"})
+	if e := Resolve("t-guard", Worker); e.Mode != On || e.Retries != DefaultRetries || e.Note != "" {
+		t.Errorf("unset: %+v", e)
 	}
-	if err := SetMode("t-guard", AllModels, Shadow); err != nil {
-		t.Fatal(err)
+	NoteModel(Worker, "Qwen3.6")
+	must := func(s Setting) {
+		t.Helper()
+		if err := Put(s); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := SetMode("t-guard", "Models/Gemini-2.5-Flash", Off); err != nil {
-		t.Fatal(err)
+	must(Setting{ID: "t-guard", Scope: AllTiers, Mode: Shadow, Retries: 3})
+	must(Setting{ID: "t-guard", Scope: Worker, Mode: Off})
+	must(Setting{ID: "t-guard", Scope: Worker, Note: "Qwen, finish the sentence."})
+	w, l := Resolve("t-guard", Worker), Resolve("t-guard", Lead)
+	if w.Mode != Off || w.Retries != 3 || w.Note != "Qwen, finish the sentence." {
+		t.Errorf("the worker's own parts win, the rest follow all tiers: %+v", w)
 	}
-	if m := ModeFor("t-guard", "gemini-2.5-flash"); m != Off {
-		t.Errorf("the model's own setting (named any which way) wins: %q", m)
+	if l.Mode != Shadow || l.Retries != 3 || l.Note != "" {
+		t.Errorf("the lead follows all tiers: %+v", l)
 	}
-	if m := ModeFor("t-guard", "qwen3.6"); m != Shadow || DefaultMode("t-guard") != Shadow {
-		t.Errorf("another model follows the default: %q", m)
+	if s, _ := SettingFor("t-guard", Worker); s.SetOn != "qwen3.6" || s.Mode != Off {
+		t.Errorf("a put merges, and remembers the tier's model: %+v", s)
 	}
-	if err := SetMode("t-guard", "gemini-2.5-flash", ""); err != nil {
-		t.Fatal(err)
+	ClearPart("t-guard", Worker, "mode")
+	if m := ModeFor("t-guard", Worker); m != Shadow {
+		t.Errorf("a cleared part follows all tiers again: %q", m)
 	}
-	if m := ModeFor("t-guard", "gemini-2.5-flash"); m != Shadow {
-		t.Errorf("cleared, the model follows the default again: %q", m)
+	if !Customized("t-guard") {
+		t.Error("a guard with settings is customized")
 	}
-	if SetMode("no-such-guard", AllModels, Off) == nil || SetMode("t-guard", AllModels, "sometimes") == nil {
-		t.Error("an unknown guard or mode is refused")
+	Revert("t-guard")
+	if e := Resolve("t-guard", Worker); Customized("t-guard") || e.Mode != On || e.Retries != DefaultRetries || e.Note != "" {
+		t.Errorf("reverted, it is as shipped: %+v", e)
+	}
+	for name, bad := range map[string]Setting{
+		"unknown guard":        {ID: "no-such-guard", Scope: AllTiers, Mode: Off},
+		"unknown scope":        {ID: "t-guard", Scope: "gemini-2.5-flash", Mode: Off},
+		"unknown mode":         {ID: "t-guard", Scope: AllTiers, Mode: "sometimes"},
+		"too many retries":     {ID: "t-guard", Scope: AllTiers, Retries: MaxRetries + 1},
+		"coded note":           {ID: "t-coded", Scope: AllTiers, Note: "x"},
+		"checks on a built-in": {ID: "t-guard", Scope: AllTiers, Checks: []Check{{Kind: "length", Params: map[string]string{"max": "5"}}}},
+	} {
+		if Put(bad) == nil {
+			t.Errorf("%s should be refused", name)
+		}
 	}
 }
 
@@ -69,17 +94,17 @@ func TestFiringsAreTalliedWithRecentSamples(t *testing.T) {
 	SetStore(memStore{})
 	defer SetStore(nil)
 	for i := 0; i < maxSamples+3; i++ {
-		Record("t-guard", "qwen3.6", strings.Repeat("x", 2000)+" and", i%2 == 0)
+		Record("t-guard", Worker, "qwen3.6", strings.Repeat("x", 2000)+" and", i%2 == 0)
 	}
 	st := Stats()
-	if len(st) != 1 || st[0].Acted+st[0].Shadowed != maxSamples+3 || st[0].Shadowed == 0 {
+	if len(st) != 1 || st[0].Acted+st[0].Shadowed != maxSamples+3 || st[0].Shadowed == 0 || st[0].Tier != Worker {
 		t.Fatalf("tallied per guard and model, both kinds: %+v", st)
 	}
 	if len(st[0].Samples) != maxSamples || !strings.HasSuffix(st[0].Samples[0].Text, " and") || len([]rune(st[0].Samples[0].Text)) > maxSampleChars+1 {
 		t.Errorf("the last %d replies' tails are kept: %d samples, first %q", maxSamples, len(st[0].Samples), st[0].Samples[0].Text[:20])
 	}
 	SetStore(nil)
-	Record("t-guard", "qwen3.6", "x", true)
+	Record("t-guard", Worker, "qwen3.6", "x", true)
 	if Stats() != nil {
 		t.Error("with no store nothing is recorded")
 	}
@@ -198,11 +223,15 @@ func TestAnAuthoredGuardJoinsTheListWhileActive(t *testing.T) {
 	if !Known(a.ID) || len(ActiveAuthored()) != 1 {
 		t.Fatal("an active guard is in the list")
 	}
-	SetMode(a.ID, AllModels, Shadow)
-	Record(a.ID, "m", "x", false)
+	Put(Setting{ID: a.ID, Scope: AllTiers, Mode: Shadow})
+	Put(Setting{ID: a.ID, Scope: Worker, Checks: []Check{{Kind: "length", Params: map[string]string{"max": "40"}}}})
+	if e := Resolve(a.ID, Worker); len(e.Checks) != 1 {
+		t.Errorf("a drafted guard can carry its own checks for a tier: %+v", e)
+	}
+	Record(a.ID, Worker, "m", "x", false)
 	DeleteAuthored(a.ID)
-	if Known(a.ID) || ModeFor(a.ID, "m") != On {
-		t.Error("deleted, it leaves the list and its modes")
+	if Known(a.ID) || ModeFor(a.ID, Worker) != On || Customized(a.ID) {
+		t.Error("deleted, it leaves the list and its settings")
 	}
 	for _, st := range Stats() {
 		if st.ID == a.ID {

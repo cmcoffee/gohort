@@ -407,8 +407,8 @@ func (T *OrchestrateApp) handleAuthoredGuard(w http.ResponseWriter, r *http.Requ
 		replyguard.SaveAuthored(a)
 		// It starts in shadow: counted, the reply left alone, until the
 		// admin has seen what it catches and turns it on.
-		if replyguard.DefaultMode(id) == replyguard.On {
-			_ = replyguard.SetMode(id, replyguard.AllModels, replyguard.Shadow)
+		if _, set := replyguard.SettingFor(id, replyguard.AllTiers); !set {
+			_ = replyguard.Put(replyguard.Setting{ID: id, Scope: replyguard.AllTiers, Mode: replyguard.Shadow})
 		}
 	case "disable":
 		if a.Status == replyguard.StatusActive {
@@ -505,7 +505,7 @@ func draftedGuardsSection() ui.Section {
 		Subtitle: "Reply guards drafted from flagged replies. Use Draft a guard on a flagged reply to start one.",
 		Detail: "A model reads the flagged reply, what was said about it, and the fixed set of checks a guard may use, and drafts a guard: checks that must all hold, and the note the model is sent when it fires. " +
 			"It is then tested: it should catch the replies kept as cases and leave the good examples alone.\n\n" +
-			"Enable puts it among the Correction checks in Shadow, where it counts what it would do and changes nothing. Turn it On there once its catches look right. " +
+			"Enable puts it among the Correction checks in Shadow, where it counts what it would do and changes nothing. Turn it On there once its catches look right, for all tiers or just the lead or the worker. " +
 			"Redraft asks for a change in your own words; Test again reruns the test against everything flagged since.",
 		Wide: true,
 		Body: ui.Table{Source: api, RowKey: "id", AutoRefreshMS: 2000,
@@ -579,6 +579,65 @@ const draftedGuardsHead = `<script>
       }});
     });
   }
+  // Edit one guard's setting on one scope: its retries and, where the note
+  // is fixed text, the note; a drafted guard's checks too. Empty fields put
+  // that part back to what the scope above says.
+  function registerEdit() {
+    if (!window.uiRegisterClientAction || !window.uiEl) { setTimeout(registerEdit, 50); return; }
+    if (window.__replyGuardEdit) return;
+    window.__replyGuardEdit = true;
+    var el = window.uiEl;
+    window.uiRegisterClientAction('reply_guard_edit', function(ctx) {
+      var rec = ctx.record || {};
+      if (!window.uiOpenSimpleModal) return;
+      var title = String(rec.group || 'Guard').replace(/ · customized$/, '') + ' · ' + (rec.scope_label || '');
+      window.uiOpenSimpleModal({title: title, width: '620px', mount: function(body, dlg) {
+        function label(text, hint) {
+          var l = el('div', {style: 'font-weight:600;font-size:0.85rem;margin:0.7rem 0 0.25rem'}, [text]);
+          if (hint) l.appendChild(el('span', {style: 'font-weight:400;color:var(--text-mute);margin-left:0.4rem', text: hint}));
+          body.appendChild(l);
+        }
+        var above = rec.scope === '*' ? 'the default' : 'All tiers';
+        label('Retries a turn', 'how many times it may ask again');
+        var sel = el('select', {class: 'ui-input'});
+        sel.appendChild(el('option', {value: '0', text: 'Follow ' + above + (rec.retries_own ? '' : ' (' + rec.retries + ')')}));
+        for (var n = 1; n <= 5; n++) sel.appendChild(el('option', {value: String(n), text: String(n)}));
+        sel.value = rec.retries_own ? String(rec.retries) : '0';
+        body.appendChild(sel);
+        var ta = null, cj = null;
+        if (rec._note_editable) {
+          label('What the model is told', rec.note_own ? 'your note' : 'the guard\'s own note');
+          ta = el('textarea', {class: 'ui-input', rows: '5', style: 'width:100%;box-sizing:border-box'});
+          ta.value = rec.note_value || '';
+          body.appendChild(ta);
+          body.appendChild(el('div', {style: 'font-size:0.78rem;color:var(--text-mute);margin-top:0.2rem',
+            text: 'Leave it as it is, or empty it, to follow ' + above + '.'}));
+        } else {
+          label('What the model is told', 'written from the reply it caught, so it cannot be replaced');
+          body.appendChild(el('div', {style: 'font-size:0.85rem;color:var(--text-mute);white-space:pre-wrap', text: rec.note_value || ''}));
+        }
+        if (rec._authored) {
+          label('Checks', 'JSON, every check must hold; empty follows ' + above);
+          cj = el('textarea', {class: 'ui-input', rows: '8', style: 'width:100%;box-sizing:border-box;font-family:var(--font-mono,monospace);font-size:0.8rem'});
+          cj.value = rec.checks_own ? (rec.checks_json || '') : '';
+          if (!rec.checks_own) cj.placeholder = rec.checks_json || '';
+          body.appendChild(cj);
+        }
+        var go = el('button', {class: 'ui-row-btn', text: 'Save'});
+        go.addEventListener('click', function() {
+          go.disabled = true;
+          fetch('/orchestrate/api/console/reply-guards/setting?id=' + encodeURIComponent(rec._id), {
+            method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({retries: parseInt(sel.value, 10) || 0, note: ta ? ta.value : '', checks: cj ? cj.value : ''})
+          }).then(function(r) { return r.text().then(function(t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); }); })
+            .then(function() { dlg.close(); if (ctx.reload) ctx.reload(); })
+            .catch(function(e) { go.disabled = false; if (window.uiToast) window.uiToast('Not saved: ' + (e && e.message || e)); });
+        });
+        body.appendChild(el('div', {style: 'margin-top:0.8rem;display:flex;gap:0.5rem'}, [go]));
+      }});
+    });
+  }
   register();
+  registerEdit();
 })();
 </script>`

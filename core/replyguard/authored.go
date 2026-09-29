@@ -571,24 +571,21 @@ func ActiveAuthored() []Authored {
 	return out
 }
 
-// DeleteAuthored removes an authored guard with its modes and its tallies.
+// DeleteAuthored removes an authored guard with its settings and its tallies.
 func DeleteAuthored(id string) {
 	mu.Lock()
 	defer mu.Unlock()
 	loadAuthoredLocked()
+	loadSettingsLocked()
 	delete(authored, id)
 	unregisterLocked(id)
+	for _, s := range Scopes() {
+		clearLocked(id, s)
+	}
 	if store == nil {
 		return
 	}
 	store.Set(authoredTable, id, Authored{}) // an empty record reads as gone
-	loadModesLocked()
-	for k := range modes {
-		if strings.HasPrefix(k, id+"|") {
-			delete(modes, k)
-			store.Set(modesTable, k, Mode(""))
-		}
-	}
 	for _, k := range store.Keys(statsTable) {
 		if strings.HasPrefix(k, id+"|") {
 			store.Set(statsTable, k, Stat{})

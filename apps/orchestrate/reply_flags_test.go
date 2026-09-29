@@ -38,7 +38,7 @@ func TestTheEarlyAnswerCheckIsAReplyGuard(t *testing.T) {
 	if !replyguard.Known(earlyAnswerGuard) {
 		t.Fatal("early-answer is not registered")
 	}
-	if !earlyAnswerActs("any-model", "text") {
+	if !earlyAnswerActs("worker", "any-model", "text") {
 		t.Error("on by default")
 	}
 }

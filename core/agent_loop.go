@@ -1227,6 +1227,7 @@ func (lr *loopRun) setupState() {
 	// Rations the loop's silent re-prompts. Per KIND, not one pot — see
 	// correctionBudget for why that mattered.
 	lr.corrections = newCorrectionBudget()
+	lr.corrections.limit = lr.guardRetries
 	lr.guardrailOutputCorrections = 0 // pre_output revise passes used this turn
 	// judgedNarration records the interim prose the periodic guard has already
 	// ruled on this turn, so a model that repeats a lead-in verbatim doesn't pay
@@ -2623,7 +2624,7 @@ func (lr *loopRun) finalRoundTruncation() loopAction {
 			lr.truncatedLead.WriteString(lr.rs.resp.Content)
 			lr.history = append(lr.history, Message{
 				Role:    "user",
-				Content: frameworkNoticeTag + "Your previous reply was CUT OFF before you finished it: you did not choose to stop. Continue from where you left off without repeating what you already said. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits.",
+				Content: frameworkNoticeTag + lr.guardNote(correctionTruncated, noteTruncated),
 			})
 			return actContinue
 		}
@@ -2659,7 +2660,7 @@ func (lr *loopRun) finalRoundPromiseGuards() loopAction {
 		Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", lr.corrections.spend(correctionActionPromise), maxCorrectionsPerKind, truncForLog(lr.rs.resp.Content, 80))
 		lr.history = append(lr.history, Message{
 			Role:    "user",
-			Content: frameworkNoticeTag + "You stated an intention to take an action (e.g. 'let me try', 'one moment') but called no tool. Either call the tool now to actually do what you said, or reply plainly that you can't proceed and explain what you tried. Do NOT promise further action without taking it.",
+			Content: frameworkNoticeTag + lr.guardNote(correctionActionPromise, noteActionPromise),
 		})
 		return actContinue
 	}
@@ -2684,7 +2685,7 @@ func (lr *loopRun) finalRoundPromiseGuards() loopAction {
 		lr.settleRound() // finalize the announcement so the retry doesn't concatenate into it
 		lr.history = append(lr.history, Message{
 			Role:    "user",
-			Content: frameworkNoticeTag + "Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW: never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead.",
+			Content: frameworkNoticeTag + lr.guardNote(correctionAnnouncedCall, noteAnnouncedCall),
 		})
 		return actContinue
 	}
@@ -2782,7 +2783,7 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 		lr.settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
 		lr.history = append(lr.history, Message{
 			Role:    "user",
-			Content: frameworkNoticeTag + "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question.",
+			Content: frameworkNoticeTag + lr.guardNote(correctionCollapse, noteCollapse),
 		})
 		return actContinue
 	}
@@ -4148,6 +4149,7 @@ func (lr *loopRun) settleToolRound() loopAction {
 			ToolErrors: lr.rs.toolErrors,
 			Done:       false,
 			Model:      lr.rs.resp.Model,
+			Tier:       lr.rs.resp.Tier.String(),
 		})
 	}
 	lr.cumulativeToolErrors += lr.rs.toolErrors

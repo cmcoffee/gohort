@@ -389,77 +389,117 @@ func (T *OrchestrateApp) handleReplyFlagStatus(w http.ResponseWriter, r *http.Re
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-// replyGuardRow is one line of the Reply guards table: a guard's default
-// (Model "*") or its setting and firings on one model.
+// replyGuardRow is one line of the guard table: a guard for all tiers, or on
+// the lead or the worker tier.
 type replyGuardRow struct {
-	Key      string `json:"_id"`
-	Guard    string `json:"guard"`
-	Group    string `json:"group"`
-	Desc     string `json:"desc,omitempty"`
-	Model    string `json:"model"`
-	ModelKey string `json:"model_key"`
-	Mode     string `json:"_mode"`
-	Override bool   `json:"_override,omitempty"`
-	Acted    int    `json:"acted"`
-	Shadowed int    `json:"shadowed"`
-	Last     string `json:"last,omitempty"`
-	Samples  string `json:"samples,omitempty"`
+	Key        string `json:"_id"`
+	Guard      string `json:"guard"`
+	Group      string `json:"group"`
+	Desc       string `json:"desc,omitempty"`
+	Scope      string `json:"scope"`
+	ScopeLabel string `json:"scope_label"`
+	Mode       string `json:"_mode"`
+	Follows    string `json:"follows,omitempty"` // what a tier row takes from All tiers
+	Retries    int    `json:"retries"`
+	Note       string `json:"note_value,omitempty"`
+	NoteOwn    bool   `json:"note_own,omitempty"`
+	Editable   bool   `json:"_note_editable,omitempty"`
+	RetriesOwn bool   `json:"retries_own,omitempty"`
+	Checks     string `json:"checks_json,omitempty"` // a drafted guard's checks for this scope, as JSON
+	ChecksOwn  bool   `json:"checks_own,omitempty"`
+	Fires      string `json:"fires,omitempty"`
+	Authored   bool   `json:"_authored,omitempty"`
+	Override   bool   `json:"_override,omitempty"`   // this tier has settings of its own
+	CanRevert  bool   `json:"_can_revert,omitempty"` // a customized built-in, on its All tiers row
+	Warning    string `json:"warning,omitempty"`
+	Acted      int    `json:"acted"`
+	Shadowed   int    `json:"shadowed"`
+	Last       string `json:"last,omitempty"`
+	Samples    string `json:"samples,omitempty"`
 }
 
-// handleReplyGuards lists every guard with its default and one row per model
-// it has fired on or has a setting for. GET.
+// handleReplyGuards lists every guard on three rows: all tiers, the lead and
+// the worker, each with the model the tier runs and what the guard caught
+// there. GET.
 func (T *OrchestrateApp) handleReplyGuards(w http.ResponseWriter, r *http.Request) {
 	if !T.requireAdmin(w, r) {
 		return
 	}
-	stats := map[string]replyguard.Stat{}
-	for _, st := range replyguard.Stats() {
-		stats[st.ID+"|"+st.Model] = st
-	}
-	set := map[string]replyguard.Mode{}
-	for _, s := range replyguard.Settings() {
-		set[s.ID+"|"+s.Model] = s.Mode
-	}
+	stats := replyguard.Stats()
 	var rows []replyGuardRow
 	for _, g := range replyguard.Guards() {
 		group := g.Name
 		if g.Judge {
 			group += " (judge: a model call per check)"
 		}
-		def := replyGuardRow{Key: g.ID + "|" + replyguard.AllModels, Guard: g.ID, Group: group, Desc: g.Desc,
-			Model: "All models", ModelKey: replyguard.AllModels, Mode: string(replyguard.DefaultMode(g.ID))}
-		rows = append(rows, def)
-		models := map[string]bool{}
-		for k := range stats {
-			if id, m, _ := strings.Cut(k, "|"); id == g.ID {
-				models[m] = true
+		if g.Authored {
+			group += " (drafted)"
+		}
+		customized := replyguard.Customized(g.ID)
+		if customized {
+			group += " · customized"
+		}
+		var authoredChecks []replyguard.Check
+		defNote := g.Note
+		if g.Authored {
+			if a, ok := replyguard.LoadAuthored(g.ID); ok {
+				authoredChecks, defNote = a.Checks, a.Correction
 			}
 		}
-		for k := range set {
-			if id, m, _ := strings.Cut(k, "|"); id == g.ID && m != replyguard.AllModels {
-				models[m] = true
+		for _, scope := range replyguard.Scopes() {
+			eff := replyguard.Resolve(g.ID, scope)
+			own, hasOwn := replyguard.SettingFor(g.ID, scope)
+			row := replyGuardRow{Key: g.ID + "|" + scope, Guard: g.ID, Group: group, Scope: scope,
+				Mode: string(eff.Mode), Retries: eff.Retries, Editable: g.Editable(), Authored: g.Authored,
+				Note: chFirst(eff.Note, defNote), NoteOwn: hasOwn && own.Note != "", RetriesOwn: hasOwn && own.Retries > 0,
+				ChecksOwn: hasOwn && len(own.Checks) > 0}
+			checks := authoredChecks
+			if len(eff.Checks) > 0 {
+				checks = eff.Checks
 			}
-		}
-		var names []string
-		for m := range models {
-			names = append(names, m)
-		}
-		sort.Strings(names)
-		for _, m := range names {
-			st := stats[g.ID+"|"+m]
-			_, override := set[g.ID+"|"+m]
-			row := replyGuardRow{Key: g.ID + "|" + m, Guard: g.ID, Group: group, Model: m, ModelKey: m,
-				Mode: string(replyguard.ModeFor(g.ID, m)), Override: override, Acted: st.Acted, Shadowed: st.Shadowed}
-			if !st.Last.IsZero() {
-				row.Last = st.Last.Format(time.RFC3339)
+			if g.Authored && len(checks) > 0 {
+				cj, _ := json.MarshalIndent(checks, "", "  ")
+				row.Checks, row.Fires = string(cj), replyguard.DescribeAll(checks)
+			}
+			model := ""
+			if scope == replyguard.AllTiers {
+				row.ScopeLabel, row.Desc = "All tiers", g.Desc
+				row.CanRevert = customized && !g.Authored
+			} else {
+				model = replyguard.CurrentModel(scope)
+				row.ScopeLabel = strings.ToUpper(scope[:1]) + scope[1:]
+				if model != "" {
+					row.ScopeLabel += ": " + model
+				}
+				row.Override = hasOwn
+				if !hasOwn || own.Mode == "" {
+					row.Follows = "mode follows All tiers"
+				}
+				if hasOwn && own.SetOn != "" && model != "" && own.SetOn != model {
+					row.Warning = fmt.Sprintf("Set on %s; the %s is now %s. Review it, or Remove to follow All tiers.", own.SetOn, scope, model)
+				}
 			}
 			var b strings.Builder
-			for _, s := range st.Samples {
-				tag := "corrected"
-				if s.Shadow {
-					tag = "shadow: left as it was"
+			var last time.Time
+			for _, st := range stats {
+				if st.ID != g.ID || (scope != replyguard.AllTiers && st.Tier != scope) {
+					continue
 				}
-				fmt.Fprintf(&b, "[%s, %s]\n%s\n\n", s.At.Local().Format("Jan 2 15:04"), tag, s.Text)
+				row.Acted += st.Acted
+				row.Shadowed += st.Shadowed
+				if st.Last.After(last) {
+					last = st.Last
+				}
+				for _, smp := range st.Samples {
+					tag := "corrected"
+					if smp.Shadow {
+						tag = "shadow: left as it was"
+					}
+					fmt.Fprintf(&b, "[%s, %s, %s]\n%s\n\n", smp.At.Local().Format("Jan 2 15:04"), st.Model, tag, smp.Text)
+				}
+			}
+			if !last.IsZero() {
+				row.Last = last.Format(time.RFC3339)
 			}
 			row.Samples = strings.TrimSpace(b.String())
 			rows = append(rows, row)
@@ -468,39 +508,120 @@ func (T *OrchestrateApp) handleReplyGuards(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]any{"records": rows})
 }
 
-// handleReplyGuardMode sets one guard's mode on one model or all of them.
-// POST ?id=<guard>|<model> with {"_mode": on|shadow|off|""}, "" to follow the
-// default again; or, from the form, {guard, model, mode}.
+// guardScope reads "<guard>|<scope>" from ?id=.
+func guardScope(r *http.Request) (string, string) {
+	id, scope, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "|")
+	if scope == "" {
+		scope = replyguard.AllTiers
+	}
+	return id, scope
+}
+
+// handleReplyGuardMode sets a guard's mode on one scope. POST
+// ?id=<guard>|<scope> with {"_mode": on|shadow|off}.
 func (T *OrchestrateApp) handleReplyGuardMode(w http.ResponseWriter, r *http.Request) {
 	if !T.requireAdmin(w, r) {
 		return
 	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
 	var body map[string]string
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body)
-	guard, model, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "|")
-	mode, hasMode := body["_mode"]
-	if guard == "" {
-		guard, model, mode, hasMode = body["guard"], body["model"], body["mode"], true
-	}
-	if r.URL.Query().Get("clear") == "1" {
-		mode, hasMode = "", true
-	}
-	if !hasMode {
-		http.Error(w, "no mode given", http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(model) == "" {
-		model = replyguard.AllModels
-	}
-	if err := replyguard.SetMode(strings.TrimSpace(guard), strings.TrimSpace(model), replyguard.Mode(strings.TrimSpace(mode))); err != nil {
+	id, scope := guardScope(r)
+	if err := replyguard.Put(replyguard.Setting{ID: id, Scope: scope, Mode: replyguard.Mode(strings.TrimSpace(body["_mode"]))}); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	Log("[orchestrate.replyguard] %s on %s set to %q", guard, model, mode)
+	Log("[orchestrate.replyguard] %s on %s set to %q", id, scope, body["_mode"])
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleReplyGuardSetting edits a scope's note, retries and, for a drafted
+// guard, its checks. POST ?id=<guard>|<scope> with {note, retries, checks}.
+// An empty note, zero retries or empty checks put that part back to what the
+// scope above says.
+func (T *OrchestrateApp) handleReplyGuardSetting(w http.ResponseWriter, r *http.Request) {
+	if !T.requireAdmin(w, r) {
+		return
+	}
+	var body struct {
+		Note    string `json:"note"`
+		Retries int    `json:"retries"`
+		Checks  string `json:"checks"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	id, scope := guardScope(r)
+	g, ok := replyguard.Lookup(id)
+	if !ok {
+		http.Error(w, "no such guard", http.StatusNotFound)
+		return
+	}
+	set := replyguard.Setting{ID: id, Scope: scope, Retries: body.Retries}
+	// A note that is the guard's own, word for word, is not a change.
+	def := g.Note
+	if a, ok := replyguard.LoadAuthored(id); ok {
+		def = a.Correction
+	}
+	if n := strings.TrimSpace(body.Note); n != "" && n != strings.TrimSpace(def) {
+		set.Note = n
+	}
+	if c := strings.TrimSpace(body.Checks); c != "" {
+		if err := json.Unmarshal([]byte(c), &set.Checks); err != nil {
+			http.Error(w, "the checks are not valid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if a, ok := replyguard.LoadAuthored(id); ok {
+			if cur, _ := json.Marshal(a.Checks); string(cur) == mustJSON(set.Checks) && scope == replyguard.AllTiers {
+				set.Checks = nil // unchanged from the guard's own
+			}
+		}
+	}
+	if err := replyguard.Put(set); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if set.Note == "" {
+		replyguard.ClearPart(id, scope, "note")
+	}
+	if set.Retries == 0 {
+		replyguard.ClearPart(id, scope, "retries")
+	}
+	if len(set.Checks) == 0 {
+		replyguard.ClearPart(id, scope, "checks")
+	}
+	Log("[orchestrate.replyguard] %s on %s edited", id, scope)
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func mustJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+// handleReplyGuardClear removes a tier's own settings (Remove), or puts a
+// built-in guard back as shipped (?revert=1). POST ?id=<guard>|<scope>.
+func (T *OrchestrateApp) handleReplyGuardClear(w http.ResponseWriter, r *http.Request) {
+	if !T.requireAdmin(w, r) {
+		return
+	}
+	id, scope := guardScope(r)
+	g, ok := replyguard.Lookup(id)
+	if !ok {
+		http.Error(w, "no such guard", http.StatusNotFound)
+		return
+	}
+	if r.URL.Query().Get("revert") == "1" {
+		if g.Authored {
+			http.Error(w, "a drafted guard has no shipped version to revert to", http.StatusBadRequest)
+			return
+		}
+		replyguard.Revert(id)
+		Log("[orchestrate.replyguard] %s reverted to default", id)
+	} else {
+		replyguard.Clear(id, scope)
+		Log("[orchestrate.replyguard] %s on %s cleared", id, scope)
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -526,39 +647,38 @@ func subheading(text string) ui.Card {
 		html.EscapeString(text) + `</div>`}
 }
 
-// replyGuardControls is the guard table and its set-on-a-model form, shown at
-// the top of Correction checks (judge_records.go): what each guard caught per
-// model, and whether it runs there.
+// replyGuardControls is the guard table, shown at the top of Correction
+// checks (judge_records.go): every guard for all tiers and on the lead and the
+// worker, what it caught there, and how it is set.
 func replyGuardControls() []ui.Component {
 	const guards = "/orchestrate/api/console/reply-guards"
-	var guardOpts []ui.SelectOption
-	for _, g := range replyguard.Guards() {
-		guardOpts = append(guardOpts, ui.SelectOption{Value: g.ID, Label: g.Name})
-	}
 	return []ui.Component{
-		subheading("Guards, by model"),
+		subheading("Guards, by tier"),
 		ui.Table{Source: guards, RowKey: "_id", GroupBy: "group",
 			Columns: []ui.Col{
-				{Field: "model", Label: "Model", Flex: 2},
+				{Field: "scope_label", Label: "Tier", Flex: 2},
 				{Field: "acted", Label: "Corrected", Format: "thousands"},
 				{Field: "shadowed", Label: "Shadow", Format: "thousands"},
+				{Field: "retries", Label: "Retries"},
 				{Field: "last", Label: "Last", Format: "reltime", Mute: true},
+				{Field: "follows", Label: "", Mute: true},
+				{Field: "warning", Label: "", Flex: 3, Line: 2},
 				{Field: "desc", Label: "", Flex: 4, Mute: true, Line: 2},
 			},
 			RowActions: []ui.RowAction{
 				{Type: "segmented", Field: "_mode", PostTo: guards + "/mode?id={_id}", Options: replyGuardModeOptions()},
-				{Type: "button", Label: "Follow default", Compact: true, OnlyIf: "_override", PostTo: guards + "/mode?id={_id}&clear=1"},
-				ui.Expand("Caught", ui.RecordView{Pairs: []ui.DisplayPair{{Label: "Recent replies", Field: "samples", Block: true}}}),
+				{Type: "button", Label: "Edit", Compact: true, Method: "client", PostTo: "reply_guard_edit"},
+				{Type: "button", Label: "Remove", Compact: true, OnlyIf: "_override", PostTo: guards + "/clear?id={_id}",
+					Confirm: "Remove this tier's own settings? It follows All tiers again."},
+				{Type: "button", Label: "Revert to default", Compact: true, Variant: "warning", OnlyIf: "_can_revert", PostTo: guards + "/clear?id={_id}&revert=1",
+					Confirm: "Put this guard back as it shipped? Every setting on it, for all tiers and each tier, is removed."},
+				ui.Expand("Detail", ui.RecordView{Pairs: []ui.DisplayPair{
+					{Label: "What the model is told", Field: "note_value", Block: true},
+					{Label: "When it fires", Field: "fires", Block: true},
+					{Label: "Recent replies it caught", Field: "samples", Block: true},
+				}}),
 			},
 			EmptyText: "No reply guards are registered."},
-		ui.FormPanel{PostURL: guards + "/mode", SubmitLabel: "Set",
-			Invalidate: []string{guards},
-			Fields: []ui.FormField{
-				{Field: "guard", Label: "Set a guard on a model", Type: "select", Options: guardOpts, Required: true},
-				{Field: "model", Label: "Model", Type: "text", Placeholder: "gemini-2.5-flash", Required: true,
-					Help: "As the provider names it: set a guard on a model before it has fired there."},
-				{Field: "mode", Label: "Mode", Type: "select", Options: replyGuardModeOptions()},
-			}},
 	}
 }
 

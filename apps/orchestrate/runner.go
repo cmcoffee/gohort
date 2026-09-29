@@ -1271,7 +1271,7 @@ func (pr *planRun) onStepHandler(info StepInfo) {
 		// where long prose beside a call is correct rather than early: the
 		// tool is the delivery and the prose is the explanation that goes
 		// with it. Clearing it leaves a link with nothing said about it.
-		if len(cleaned) > leadInMaxLen && !isBuilderAgent(t.agent.ID) && !presentationOnlyRound(info.ToolCalls) && earlyAnswerActs(info.Model, cleaned) {
+		if len(cleaned) > leadInMaxLen && !isBuilderAgent(t.agent.ID) && !presentationOnlyRound(info.ToolCalls) && earlyAnswerActs(info.Tier, info.Model, cleaned) {
 			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
 			// Held, not dropped. The guard is betting the final round will say
 			// this again; restoreWithheldLeadIn collects if it does not.

@@ -4,15 +4,24 @@
 // send it back to try again.
 //
 // They were code and nothing else: tuned against the models this deployment
-// runs most, with no way to see how often each one fired, on which model, or
-// to turn one down where it misfires. Here each guard has a name, a line
-// saying what it catches, a mode per model (on, off, or shadow, which records
-// what it would have done and changes nothing), and a tally of its firings
-// with the last few replies it caught.
+// runs most, with no way to see how often each one fired, or to turn one down
+// where it misfires. Here each guard has a name, a line saying what it
+// catches, and settings for all tiers and for the lead and the worker tier
+// apart: its mode (on, off, or shadow, which records what it would have done
+// and changes nothing), how many times a turn it may ask again, and, where
+// the note it sends is fixed text, that note. A built-in guard reverts to its
+// shipped behaviour in one step.
+//
+// Settings are per TIER, not per model. A deployment runs one model per tier,
+// a guard that fixes one model's habit is often right for the next, and "the
+// worker" is how an admin thinks about it. Each tier setting remembers the
+// model it was made on, so a model swapped in behind a tier is noticed rather
+// than silently inheriting tuning made for another. Firings are counted per
+// model all the same, so a swap does not mix two models' histories.
 //
 // A leaf package: it knows no agent loop and imports nothing of core. The
-// loop registers its guards and asks ModeFor at each decision point; the
-// admin page reads Guards, Stats and SetMode.
+// loop registers its guards and asks Resolve at each decision point; the
+// admin page reads Guards, Stats and Settings and writes Put, Clear, Revert.
 package replyguard
 
 import (
@@ -31,7 +40,7 @@ type Store interface {
 	Keys(table string) []string
 }
 
-// Mode is what a guard does on a model.
+// Mode is what a guard does on a tier.
 type Mode string
 
 const (
@@ -40,12 +49,27 @@ const (
 	Off    Mode = "off"    // does not run
 )
 
-// AllModels is the model key for a guard's default across every model.
-const AllModels = "*"
+// Scopes a setting applies to: every tier, or one.
+const (
+	AllTiers = "*"
+	Lead     = "lead"
+	Worker   = "worker"
+)
+
+// Scopes lists the scopes in the order they are shown.
+func Scopes() []string { return []string{AllTiers, Lead, Worker} }
+
+// DefaultRetries is how many times a turn a guard may ask again, unless set.
+const DefaultRetries = 2
+
+// MaxRetries bounds a setting: past a few, a model that has not moved will not.
+const MaxRetries = 5
 
 const (
-	modesTable = "reply_guard_modes"
-	statsTable = "reply_guard_stats"
+	settingsTable = "reply_guard_settings"
+	legacyModes   = "reply_guard_modes" // per-model modes, before tiers
+	statsTable    = "reply_guard_stats"
+	tiersTable    = "reply_guard_tiers"
 	// maxSamples is how many recent replies a guard keeps per model: enough to
 	// judge whether it is catching the right thing, not a log.
 	maxSamples = 8
@@ -60,9 +84,43 @@ type Guard struct {
 	Name  string `json:"name"`
 	Desc  string `json:"desc"`
 	Judge bool   `json:"judge,omitempty"` // costs a model call to decide
+	// Note is the text the guard sends the model when it fires, when that
+	// text is fixed; a setting may replace it. Empty for a guard whose note is
+	// built from the reply it caught, which is not editable.
+	Note string `json:"note,omitempty"`
 	// Authored marks a guard drafted from flagged replies (authored.go)
 	// rather than one written into the loop.
 	Authored bool `json:"authored,omitempty"`
+}
+
+// Editable reports whether a setting may replace the guard's note.
+func (g Guard) Editable() bool { return g.Authored || g.Note != "" }
+
+// Setting is how a guard is set for one scope. Zero fields follow the scope
+// above (a tier follows All tiers, All tiers follows the guard's default).
+type Setting struct {
+	ID      string  `json:"id"`
+	Scope   string  `json:"scope"`
+	Mode    Mode    `json:"mode,omitempty"`
+	Note    string  `json:"note,omitempty"`
+	Retries int     `json:"retries,omitempty"`
+	Checks  []Check `json:"checks,omitempty"` // an authored guard's checks for this scope
+	// SetOn is the model the scope was running when this was set, so a
+	// different model behind the tier later can be pointed out.
+	SetOn string    `json:"set_on,omitempty"`
+	At    time.Time `json:"at"`
+}
+
+func (s Setting) empty() bool {
+	return s.Mode == "" && s.Note == "" && s.Retries == 0 && len(s.Checks) == 0
+}
+
+// Effective is a guard's behaviour on one tier, after its settings.
+type Effective struct {
+	Mode    Mode
+	Note    string  // "" = the guard's own note
+	Retries int     // always set
+	Checks  []Check // nil = the authored guard's own checks
 }
 
 // Sample is one reply a guard caught.
@@ -72,10 +130,11 @@ type Sample struct {
 	Shadow bool      `json:"shadow,omitempty"` // recorded in shadow mode: nothing was changed
 }
 
-// Stat is one guard's firings on one model.
+// Stat is one guard's firings on one model, and the tier that model served.
 type Stat struct {
 	ID       string    `json:"id"`
 	Model    string    `json:"model"`
+	Tier     string    `json:"tier,omitempty"`
 	Acted    int       `json:"acted"`
 	Shadowed int       `json:"shadowed"`
 	Last     time.Time `json:"last"`
@@ -83,11 +142,12 @@ type Stat struct {
 }
 
 var (
-	mu     sync.Mutex
-	store  Store
-	guards []Guard
-	byID   = map[string]int{}
-	modes  map[string]Mode // "<id>|<model>" -> mode; nil until loaded
+	mu       sync.Mutex
+	store    Store
+	guards   []Guard
+	byID     = map[string]int{}
+	settings map[string]Setting // "<id>|<scope>"; nil until loaded
+	current  = map[string]string{}
 )
 
 // SetStore wires persistence. Until it is called, every guard is on and
@@ -97,7 +157,8 @@ func SetStore(s Store) {
 	for id := range authored {
 		unregisterLocked(id)
 	}
-	store, modes, authored = s, nil, nil
+	store, settings, authored = s, nil, nil
+	current = map[string]string{}
 	loadAuthoredLocked()
 	mu.Unlock()
 }
@@ -140,16 +201,25 @@ func Guards() []Guard {
 	return append([]Guard(nil), guards...)
 }
 
-// Known reports whether a guard id is registered.
-func Known(id string) bool {
+// Lookup returns one registered guard.
+func Lookup(id string) (Guard, bool) {
 	mu.Lock()
 	defer mu.Unlock()
 	loadAuthoredLocked()
-	_, ok := byID[id]
+	i, ok := byID[id]
+	if !ok {
+		return Guard{}, false
+	}
+	return guards[i], true
+}
+
+// Known reports whether a guard id is registered.
+func Known(id string) bool {
+	_, ok := Lookup(id)
 	return ok
 }
 
-// NormalizeModel is the key a model is filed under: lower case, without a
+// NormalizeModel is the name a model is counted under: lower case, without a
 // provider's "models/" prefix, "unknown" when empty.
 func NormalizeModel(model string) string {
 	m := strings.ToLower(strings.TrimSpace(model))
@@ -160,120 +230,301 @@ func NormalizeModel(model string) string {
 	return m
 }
 
-func modeKey(id, model string) string { return id + "|" + model }
+// NormalizeTier is a tier name as a scope: lead, worker, or "" when unknown.
+func NormalizeTier(tier string) string {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case Lead:
+		return Lead
+	case Worker:
+		return Worker
+	}
+	return ""
+}
 
-func loadModesLocked() {
-	if modes != nil {
+func key(id, scope string) string { return id + "|" + scope }
+
+func loadSettingsLocked() {
+	if settings != nil {
 		return
 	}
-	modes = map[string]Mode{}
+	settings = map[string]Setting{}
 	if store == nil {
 		return
 	}
-	for _, k := range store.Keys(modesTable) {
+	for _, k := range store.Keys(settingsTable) {
+		var s Setting
+		if store.Get(settingsTable, k, &s) && s.ID != "" && !s.empty() {
+			settings[k] = s
+		}
+	}
+	// A guard's all-models mode from before tiers carries over. A per-model
+	// one does not: it named a model, not a tier, and the tier it served is
+	// not recorded.
+	for _, k := range store.Keys(legacyModes) {
+		id, scope, _ := strings.Cut(k, "|")
+		if scope != AllTiers {
+			continue
+		}
 		var m Mode
-		if store.Get(modesTable, k, &m) && m != "" {
-			modes[k] = m
+		if store.Get(legacyModes, k, &m) && m != "" {
+			if _, set := settings[key(id, AllTiers)]; !set {
+				settings[key(id, AllTiers)] = Setting{ID: id, Scope: AllTiers, Mode: m}
+			}
+		}
+		store.Set(legacyModes, k, Mode(""))
+	}
+	for _, k := range store.Keys(tiersTable) {
+		var m string
+		if store.Get(tiersTable, k, &m) && m != "" {
+			current[k] = m
 		}
 	}
 }
 
-// ModeFor is what a guard does on a model: the model's own setting, else the
-// guard's default for all models, else On.
-func ModeFor(id, model string) Mode {
+// Resolve is a guard's behaviour on a tier: the tier's own setting, then the
+// all-tiers setting, then the defaults. tier "" reads the all-tiers setting.
+func Resolve(id, tier string) Effective {
 	mu.Lock()
 	defer mu.Unlock()
-	loadModesLocked()
-	if m, ok := modes[modeKey(id, NormalizeModel(model))]; ok {
-		return m
+	loadSettingsLocked()
+	eff := Effective{Mode: On, Retries: DefaultRetries}
+	apply := func(s Setting) {
+		if s.Mode != "" {
+			eff.Mode = s.Mode
+		}
+		if s.Note != "" {
+			eff.Note = s.Note
+		}
+		if s.Retries > 0 {
+			eff.Retries = s.Retries
+		}
+		if len(s.Checks) > 0 {
+			eff.Checks = s.Checks
+		}
 	}
-	if m, ok := modes[modeKey(id, AllModels)]; ok {
-		return m
+	if s, ok := settings[key(id, AllTiers)]; ok {
+		apply(s)
 	}
-	return On
+	if t := NormalizeTier(tier); t != "" {
+		if s, ok := settings[key(id, t)]; ok {
+			apply(s)
+		}
+	}
+	return eff
 }
 
-// DefaultMode is a guard's setting for all models: On unless changed.
-func DefaultMode(id string) Mode {
+// ModeFor is what a guard does on a tier.
+func ModeFor(id, tier string) Mode { return Resolve(id, tier).Mode }
+
+// DefaultMode is a guard's mode for all tiers.
+func DefaultMode(id string) Mode { return Resolve(id, "").Mode }
+
+// SettingFor returns the stored setting for one scope, if any.
+func SettingFor(id, scope string) (Setting, bool) {
 	mu.Lock()
 	defer mu.Unlock()
-	loadModesLocked()
-	if m, ok := modes[modeKey(id, AllModels)]; ok {
-		return m
-	}
-	return On
+	loadSettingsLocked()
+	s, ok := settings[key(id, scope)]
+	return s, ok
 }
 
-// Setting is one stored mode: a guard's default (Model AllModels) or its
-// setting on one model.
-type Setting struct {
-	ID    string `json:"id"`
-	Model string `json:"model"`
-	Mode  Mode   `json:"mode"`
-}
-
-// Settings lists every stored mode.
+// Settings lists every stored setting.
 func Settings() []Setting {
 	mu.Lock()
 	defer mu.Unlock()
-	loadModesLocked()
-	var out []Setting
-	for k, m := range modes {
-		id, model, _ := strings.Cut(k, "|")
-		out = append(out, Setting{ID: id, Model: model, Mode: m})
+	loadSettingsLocked()
+	out := make([]Setting, 0, len(settings))
+	for _, s := range settings {
+		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ID != out[j].ID {
 			return out[i].ID < out[j].ID
 		}
-		return out[i].Model < out[j].Model
+		return out[i].Scope < out[j].Scope
 	})
 	return out
 }
 
-// SetMode sets a guard's mode on a model, or its default with AllModels. An
-// empty mode clears the setting, so the model follows the default again.
-func SetMode(id, model string, m Mode) error {
-	if !Known(id) {
-		return fmt.Errorf("no reply guard %q", id)
+// Customized reports whether a guard has any setting at all.
+func Customized(id string) bool {
+	for _, s := range Scopes() {
+		if _, ok := SettingFor(id, s); ok {
+			return true
+		}
 	}
-	switch m {
+	return false
+}
+
+func validScope(scope string) bool { return scope == AllTiers || scope == Lead || scope == Worker }
+
+// Put stores a setting, merged over what the scope already has: a zero field
+// leaves that part as it was. It refuses an unknown guard or scope, a mode
+// that is not one, retries out of range, a note on a guard whose note is not
+// editable, and checks on a guard that was not drafted or that do not
+// validate.
+func Put(s Setting) error {
+	g, ok := Lookup(s.ID)
+	if !ok {
+		return fmt.Errorf("no reply guard %q", s.ID)
+	}
+	if !validScope(s.Scope) {
+		return fmt.Errorf("scope must be all tiers, lead or worker, not %q", s.Scope)
+	}
+	switch s.Mode {
 	case "", On, Off, Shadow:
 	default:
-		return fmt.Errorf("mode must be on, off or shadow, not %q", m)
+		return fmt.Errorf("mode must be on, off or shadow, not %q", s.Mode)
 	}
-	if model != AllModels {
-		model = NormalizeModel(model)
+	if s.Retries < 0 || s.Retries > MaxRetries {
+		return fmt.Errorf("retries must be between 1 and %d", MaxRetries)
+	}
+	if strings.TrimSpace(s.Note) != "" && !g.Editable() {
+		return fmt.Errorf("%s writes its note from the reply it caught, so the note cannot be replaced", g.Name)
+	}
+	if len(s.Checks) > 0 {
+		if !g.Authored {
+			return fmt.Errorf("%s is built in: its checks are code", g.Name)
+		}
+		if err := Validate(s.Checks); err != nil {
+			return err
+		}
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	loadModesLocked()
-	k := modeKey(id, model)
-	if m == "" {
-		delete(modes, k)
-	} else {
-		modes[k] = m
+	loadSettingsLocked()
+	k := key(s.ID, s.Scope)
+	merged := settings[k]
+	merged.ID, merged.Scope = s.ID, s.Scope
+	if s.Mode != "" {
+		merged.Mode = s.Mode
 	}
+	if note := strings.TrimSpace(s.Note); note != "" {
+		merged.Note = note
+	}
+	if s.Retries > 0 {
+		merged.Retries = s.Retries
+	}
+	if len(s.Checks) > 0 {
+		merged.Checks = s.Checks
+	}
+	merged.At = time.Now()
+	if s.Scope != AllTiers {
+		merged.SetOn = current[s.Scope]
+	}
+	settings[k] = merged
 	if store != nil {
-		store.Set(modesTable, k, m)
+		store.Set(settingsTable, k, merged)
 	}
 	return nil
 }
 
+// ClearPart resets one part of a scope's setting ("mode", "note", "retries"
+// or "checks") so it follows the scope above again.
+func ClearPart(id, scope, part string) {
+	mu.Lock()
+	defer mu.Unlock()
+	loadSettingsLocked()
+	k := key(id, scope)
+	s, ok := settings[k]
+	if !ok {
+		return
+	}
+	switch part {
+	case "mode":
+		s.Mode = ""
+	case "note":
+		s.Note = ""
+	case "retries":
+		s.Retries = 0
+	case "checks":
+		s.Checks = nil
+	}
+	if s.empty() {
+		delete(settings, k)
+		if store != nil {
+			store.Set(settingsTable, k, Setting{})
+		}
+		return
+	}
+	settings[k] = s
+	if store != nil {
+		store.Set(settingsTable, k, s)
+	}
+}
+
+// Clear removes a scope's setting entirely, so it follows the scope above.
+func Clear(id, scope string) {
+	mu.Lock()
+	defer mu.Unlock()
+	loadSettingsLocked()
+	clearLocked(id, scope)
+}
+
+func clearLocked(id, scope string) {
+	k := key(id, scope)
+	if _, ok := settings[k]; !ok {
+		return
+	}
+	delete(settings, k)
+	if store != nil {
+		store.Set(settingsTable, k, Setting{}) // an empty record reads as unset
+	}
+}
+
+// Revert puts a guard back as it shipped: every scope's setting removed.
+func Revert(id string) {
+	mu.Lock()
+	defer mu.Unlock()
+	loadSettingsLocked()
+	for _, s := range Scopes() {
+		clearLocked(id, s)
+	}
+}
+
+// NoteModel records which model a tier is running, as the loop sees it.
+func NoteModel(tier, model string) {
+	tier, model = NormalizeTier(tier), NormalizeModel(model)
+	if tier == "" || model == "unknown" {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	loadSettingsLocked()
+	if current[tier] == model {
+		return
+	}
+	current[tier] = model
+	if store != nil {
+		store.Set(tiersTable, tier, model)
+	}
+}
+
+// CurrentModel is the model a tier was last seen running, "" when not yet.
+func CurrentModel(tier string) string {
+	mu.Lock()
+	defer mu.Unlock()
+	loadSettingsLocked()
+	return current[NormalizeTier(tier)]
+}
+
 // Record tallies one firing: acted when the guard corrected the reply, not
 // when it only recorded it in shadow mode. The reply's tail is kept as a
-// sample.
-func Record(id, model, reply string, acted bool) {
+// sample, and the tier the model was serving is noted with it.
+func Record(id, tier, model, reply string, acted bool) {
 	model = NormalizeModel(model)
 	mu.Lock()
 	defer mu.Unlock()
 	if store == nil {
 		return
 	}
-	k := modeKey(id, model)
+	k := key(id, model)
 	var st Stat
 	store.Get(statsTable, k, &st)
 	st.ID, st.Model = id, model
+	if t := NormalizeTier(tier); t != "" {
+		st.Tier = t
+	}
 	if acted {
 		st.Acted++
 	} else {

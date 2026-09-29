@@ -221,15 +221,16 @@ func init() {
 
 // earlyAnswerActs is the early-answer guard's decision point: on, it holds
 // the text back; shadow, it only counts it; off, nothing.
-func earlyAnswerActs(model, text string) bool {
-	switch replyguard.ModeFor(earlyAnswerGuard, model) {
+func earlyAnswerActs(tier, model, text string) bool {
+	replyguard.NoteModel(tier, model)
+	switch replyguard.ModeFor(earlyAnswerGuard, tier) {
 	case replyguard.Off:
 		return false
 	case replyguard.Shadow:
-		replyguard.Record(earlyAnswerGuard, model, text, false)
+		replyguard.Record(earlyAnswerGuard, tier, model, text, false)
 		return false
 	}
-	replyguard.Record(earlyAnswerGuard, model, text, true)
+	replyguard.Record(earlyAnswerGuard, tier, model, text, true)
 	return true
 }
 

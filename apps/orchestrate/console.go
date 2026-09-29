@@ -160,6 +160,8 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Admin only, checked in each handler; w() rejects a GET that writes.
 	T.HandleFunc("/api/console/reply-guards", T.handleReplyGuards)
 	T.HandleFunc("/api/console/reply-guards/mode", w(T.handleReplyGuardMode))
+	T.HandleFunc("/api/console/reply-guards/setting", w(T.handleReplyGuardSetting))
+	T.HandleFunc("/api/console/reply-guards/clear", w(T.handleReplyGuardClear))
 	T.HandleFunc("/api/console/reply-flags", T.handleReplyFlags)
 	T.HandleFunc("/api/console/reply-flags/status", w(T.handleReplyFlagStatus))
 	// Drafting guards from flagged replies (reply_guard_drafts.go).
