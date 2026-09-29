@@ -4751,6 +4751,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-msg-act.danger { color: var(--danger); }
 .ui-agent-msg-act.danger:hover { border-color: var(--danger); }
 .ui-agent-msg-act:disabled { opacity: 0.5; cursor: not-allowed; }
+/* An action that is ON for this message (a rating given) shows pressed, and
+ * stays in view at rest while the rest of the bar still waits for hover. */
+.ui-agent-msg-act.active { color: var(--accent); border-color: var(--accent); background: var(--bg-2); }
+.ui-agent-msg-actions.has-active { opacity: 1; }
+.ui-agent-msg-actions.has-active > * { opacity: 0; transition: opacity 0.12s ease; }
+.ui-agent-msg-actions.has-active > .active,
+.ui-agent-msg:hover .ui-agent-msg-actions.has-active > *,
+.ui-agent-msg-actions.has-active:focus-within > * { opacity: 1; }
 .ui-agent-msg-edit-bar {
   margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem;
 }

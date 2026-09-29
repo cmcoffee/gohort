@@ -448,6 +448,7 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		// Only the tail is rendered. Blocks and plans are session-level and
 		// ride along whole — they are not indexed by message, so trimming
 		// messages cannot orphan one.
+		markFlaggedReplies(T.DB, user, agent.ID, sid, s.Messages)
 		var off int
 		isCortex := sid == cortexSessionID(agent.ID)
 		s.Messages, off = tailMessages(s.Messages, resolveTailLimitFor(r.URL.Query().Get("limit"), isCortex))

@@ -1042,19 +1042,22 @@ func firingsSections() []ui.Section {
 		{
 			Group:    "Agents",
 			Title:    "Correction checks",
-			Subtitle: "Every correction check and guardrail that fired in the last 30 days, by finding and by pre-filter arm.",
-			Detail: "A firing is a check that flagged a reply: the end-of-turn claim judge, a phrase-list correction, or a guardrail. " +
+			Subtitle: "The checks that catch a model's reply going wrong and send it back: each one's mode per model, what it caught, and every firing in the last 30 days.",
+			Detail: "On corrects the reply. Shadow counts what the guard would have done and leaves the reply alone, which is how to try a guard on a model before trusting it, or to see whether one misfires. Off does not run it; a judge guard then makes no model call. " +
+				"The All models row is each guard's default. A model row appears once the guard has fired on that model, or when you set one; its setting wins over the default, and Follow default clears it. Expand a model row for the last replies the guard caught there.\n\n" +
+				"Below that, every firing in the last 30 days: the end-of-turn claim judge, the phrase-list corrections and the guardrails. " +
 				"The judge reads a flagged reply twice, and a conviction the closer reading cleared is counted as overturned: the reply went out as written. " +
-				"A guardrail block that an appeal later lifted is overturned too.\n\n" +
-				"A high overturn rate on one finding or one pre-filter arm is the sign that check is too eager.\n\n" +
+				"A guardrail block that an appeal later lifted is overturned too. A high overturn rate on one finding or one pre-filter arm is the sign that check is too eager.\n\n" +
 				"From a private turn (an agent forced private, Private mode, an incognito session) nothing textual is kept: only the check, the verdicts and the counts.",
 			Wide: true,
-			Body: ui.Stack{Children: []ui.Component{
+			Body: ui.Stack{Children: append(replyGuardControls(),
+				subheading("Firings by finding, last 30 days"),
 				ui.Table{Source: api, RecordsField: "by_kind", RowKey: "key", Columns: countCols("Finding"),
 					EmptyText: "Nothing has fired in the last 30 days."},
+				subheading("Claim judge, by pre-filter arm"),
 				ui.Table{Source: api, RecordsField: "by_arm", RowKey: "key", Columns: countCols("Pre-filter arm"),
 					EmptyText: "The claim judge has convicted nothing in the last 30 days."},
-			}},
+			)},
 		},
 		{
 			Group:    "Agents",

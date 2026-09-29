@@ -8716,24 +8716,47 @@ select.ui-orch-intake-input {
       // bare "bad" is nothing a fix can be built from) and files it for the
       // admin's review; up keeps the reply as a known-good example, which a
       // future reply guard is tested against so it leaves such replies alone.
+      // Pressing the lit one again takes it back; pressing the other swaps.
+      // A reloaded thread says which replies were marked (msg.flag), and the
+      // replay hook lights the button to match.
       function registerReplyFlags() {
-        if (!window.uiRegisterBubbleAction || !window.uiEl) { setTimeout(registerReplyFlags, 50); return; }
+        if (!window.uiRegisterBubbleAction || !window.uiEl || !window.uiRegisterMessageReplayHook) { setTimeout(registerReplyFlags, 50); return; }
         var el = window.uiEl;
-        function send(ctx, verdict, evaluation) {
-          return fetch('api/reply-flag', {method: 'POST', credentials: 'same-origin',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({session_id: ctx.sessionId || '', agent_id: ctx.agentId || '',
-              reply: ctx.getText(), verdict: verdict, evaluation: evaluation || ''})})
-            .then(function(r) { return r.text().then(function(t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return JSON.parse(t); }); });
-        }
         function toast(text) { if (window.uiToast) window.uiToast(text); else if (window.uiAlert) window.uiAlert(text); }
-        window.uiRegisterBubbleAction({role: 'assistant', label: '\uD83D\uDC4D', title: 'A good reply: keep it as an example',
+        function call(method, url, body) {
+          return fetch(url, {method: method, credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined})
+            .then(function(r) { return r.text().then(function(t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t ? JSON.parse(t) : {}; }); });
+        }
+        function mark(ctx, verdict, id) {
+          if (verdict) { ctx.bubble.dataset.orchFlag = verdict; ctx.bubble.dataset.orchFlagId = id || ''; }
+          else { delete ctx.bubble.dataset.orchFlag; delete ctx.bubble.dataset.orchFlagId; }
+          ctx.refresh();
+        }
+        function send(ctx, verdict, evaluation) {
+          return call('POST', 'api/reply-flag', {session_id: ctx.sessionId || '', agent_id: ctx.agentId || '',
+            reply: ctx.getText(), verdict: verdict, evaluation: evaluation || ''})
+            .then(function(d) { mark(ctx, d.verdict || verdict, d.id); return d; });
+        }
+        // undo takes back this reply's mark when it is the one pressed.
+        function undo(ctx) {
+          var id = ctx.bubble.dataset.orchFlagId;
+          if (!id) { mark(ctx, ''); return; }
+          call('DELETE', 'api/reply-flag?id=' + encodeURIComponent(id))
+            .then(function() { mark(ctx, ''); toast('Taken back.'); })
+            .catch(function(e) { toast('Could not take it back: ' + (e && e.message || e)); });
+        }
+        window.uiRegisterBubbleAction({role: 'assistant', label: '\uD83D\uDC4D', title: 'A good reply: keep it as an example (press again to take it back)',
+          active: function(ctx) { return ctx.bubble.dataset.orchFlag === 'up'; },
           onclick: function(ctx) {
+            if (ctx.bubble.dataset.orchFlag === 'up') { undo(ctx); return; }
             send(ctx, 'up', '').then(function(d) { toast(d.message || 'Kept.'); })
               .catch(function(e) { toast('Could not save it: ' + (e && e.message || e)); });
           }});
-        window.uiRegisterBubbleAction({role: 'assistant', label: '\uD83D\uDC4E', title: 'Something is wrong with this reply: tell the admin what',
+        window.uiRegisterBubbleAction({role: 'assistant', label: '\uD83D\uDC4E', title: 'Something is wrong with this reply: tell the admin what (press again to take it back)',
+          active: function(ctx) { return ctx.bubble.dataset.orchFlag === 'down'; },
           onclick: function(ctx) {
+            if (ctx.bubble.dataset.orchFlag === 'down') { undo(ctx); return; }
             if (!window.uiOpenSimpleModal) return;
             window.uiOpenSimpleModal({title: 'What was wrong with this reply?', width: '560px', mount: function(body, dlg) {
               body.appendChild(el('p', {style: 'margin:0 0 0.6rem;color:var(--text-mute);font-size:0.88rem;line-height:1.45', text: 'Say what it did wrong and what it should have done. This goes to the admin, with the reply, the message before it and the model, to decide whether a check should catch it in future.'}));
@@ -8747,11 +8770,16 @@ select.ui-orch-intake-input {
                 send(ctx, 'down', text).then(function(d) { dlg.close(); toast(d.message || 'Sent.'); })
                   .catch(function(e) { go.disabled = false; toast('Could not send it: ' + (e && e.message || e)); });
               });
-              var row = el('div', {style: 'margin-top:0.6rem;display:flex;gap:0.5rem'}, [go]);
-              body.appendChild(row);
+              body.appendChild(el('div', {style: 'margin-top:0.6rem;display:flex;gap:0.5rem'}, [go]));
               setTimeout(function() { ta.focus(); }, 30);
             }});
           }});
+        window.uiRegisterMessageReplayHook(function(bubble, msg) {
+          if (!bubble || !msg || !msg.flag) return;
+          bubble.dataset.orchFlag = msg.flag;
+          bubble.dataset.orchFlagId = msg.flag_id || '';
+          if (window.uiRefreshBubbleActions) window.uiRefreshBubbleActions(bubble);
+        });
       }
       registerReplyFlags();
       // The per-reply ↗ Techwriter export was removed. Handing a raw

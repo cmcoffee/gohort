@@ -2445,42 +2445,59 @@
     function appendBubbleActions(bar, role, bubble) {
       var list = bubbleActionRegistry[role] || [];
       list.forEach(function(act) {
+        var ctx = {
+          bubble: bubble,
+          // Which conversation the bubble is in, for an action that
+          // files something about it on the server.
+          sessionId: activeSessionId,
+          agentId: window.GOHORT_AGENT_ID || '',
+          // Redraw this bubble's action bar, after the action changed
+          // what its active() reports.
+          refresh: function() { window.uiRefreshBubbleActions(bubble); },
+          getText: function() {
+            // Prefer the RAW markdown (msgEls[].rawText) — it
+            // preserves newlines / paragraph breaks. The bubble's
+            // textContent is the RENDERED markdown, which collapses
+            // \n\n into nothing, so exporting from it strips the
+            // article's structure. Fall back to dataset.raw (set on
+            // ChatPanel/pipeline bubbles) then textContent.
+            if (bubble) {
+              for (var mk in msgEls) {
+                if (msgEls[mk] && msgEls[mk].bubble === bubble) {
+                  return msgEls[mk].rawText || '';
+                }
+              }
+              if (bubble.dataset && bubble.dataset.raw) return bubble.dataset.raw;
+              return bubble.textContent || '';
+            }
+            return '';
+          },
+        };
+        // An action that is ON for this bubble (a rating given, say) shows
+        // pressed, and keeps the bar in view so the state reads at rest.
+        var on = false;
+        try { on = typeof act.active === 'function' && !!act.active(ctx); } catch (e) {}
         var btn = el('button', {
-          class: 'ui-agent-msg-act' + (act.danger ? ' danger' : ''),
+          class: 'ui-agent-msg-act' + (act.danger ? ' danger' : '') + (on ? ' active' : ''),
           title: act.title || act.label || '',
+          'aria-pressed': on ? 'true' : 'false',
           onclick: function() {
-            try {
-              act.onclick({
-                bubble: bubble,
-                // Which conversation the bubble is in, for an action that
-                // files something about it on the server.
-                sessionId: activeSessionId,
-                agentId: window.GOHORT_AGENT_ID || '',
-                getText: function() {
-                  // Prefer the RAW markdown (msgEls[].rawText) — it
-                  // preserves newlines / paragraph breaks. The bubble's
-                  // textContent is the RENDERED markdown, which collapses
-                  // \n\n into nothing, so exporting from it strips the
-                  // article's structure. Fall back to dataset.raw (set on
-                  // ChatPanel/pipeline bubbles) then textContent.
-                  if (bubble) {
-                    for (var mk in msgEls) {
-                      if (msgEls[mk] && msgEls[mk].bubble === bubble) {
-                        return msgEls[mk].rawText || '';
-                      }
-                    }
-                    if (bubble.dataset && bubble.dataset.raw) return bubble.dataset.raw;
-                    return bubble.textContent || '';
-                  }
-                  return '';
-                },
-              });
-            } catch (e) { /* isolate */ }
+            try { act.onclick(ctx); } catch (e) { /* isolate */ }
           },
         }, [act.label || 'Action']);
         bar.appendChild(btn);
+        if (on) bar.classList.add('has-active');
       });
     }
+
+    // uiRefreshBubbleActions redraws a bubble's action bar, so an app that
+    // learned something about the message after it rendered (a replay hook
+    // reading the stored record) can have its buttons show it.
+    window.uiRefreshBubbleActions = function(bubble) {
+      if (!bubble || !bubble.classList) return;
+      if (bubble.classList.contains('ui-agent-msg-user')) attachUserActions(bubble);
+      else attachAssistantActions(bubble);
+    };
 
     // Extra fields strip — same shape as ChatPanel: each ChatField
     // becomes one input that rides on every send body. Values also

@@ -19,6 +19,7 @@ package orchestrate
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"sort"
@@ -31,7 +32,94 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-const replyFlagTable = "reply_flags"
+const (
+	replyFlagTable = "reply_flags"
+	// replyFlagRefTable indexes a person's flags by the thread they are in:
+	// "<user>|<agent>|<session>" -> []flagRef, so a session load can show
+	// which replies they marked without scanning every flag.
+	replyFlagRefTable = "reply_flag_refs"
+)
+
+// flagRef ties a flag to one reply in a thread: its position, and the start
+// of its text, since a retry or an edit can move what sits at a position.
+type flagRef struct {
+	ID      string `json:"id"`
+	Index   int    `json:"index"`
+	Verdict string `json:"verdict"`
+	Prefix  string `json:"prefix"`
+}
+
+func flagRefKey(user, agentID, sessionID string) string {
+	return user + "|" + agentID + "|" + sessionID
+}
+
+func flagPrefix(s string) string {
+	s = strings.TrimSpace(s)
+	if r := []rune(s); len(r) > 120 {
+		return string(r[:120])
+	}
+	return s
+}
+
+// markFlaggedReplies marks the replies in a served thread that this person
+// flagged (see ChatMessage.Flag). A reference whose position no longer holds
+// the reply it was made on is skipped rather than shown on the wrong one.
+func markFlaggedReplies(db Database, user, agentID, sessionID string, msgs []ChatMessage) {
+	if db == nil || sessionID == "" {
+		return
+	}
+	var refs []flagRef
+	if !db.Get(replyFlagRefTable, flagRefKey(user, agentID, sessionID), &refs) {
+		return
+	}
+	for _, ref := range refs {
+		if ref.Index < 0 || ref.Index >= len(msgs) || msgs[ref.Index].Role != "assistant" ||
+			!strings.HasPrefix(strings.TrimSpace(msgs[ref.Index].Content), ref.Prefix) {
+			continue
+		}
+		msgs[ref.Index].Flag, msgs[ref.Index].FlagID = ref.Verdict, ref.ID
+	}
+}
+
+// refFlag files a flag against the reply at index in its thread. One mark per
+// reply: a thumbs-down after a thumbs-up replaces it, and the replaced flag is
+// gone from the admin's queue too.
+func refFlag(db Database, f replyFlag, index int) {
+	key := flagRefKey(f.User, f.AgentID, f.SessionID)
+	var refs []flagRef
+	db.Get(replyFlagRefTable, key, &refs)
+	kept := []flagRef{}
+	for _, ref := range refs {
+		if ref.Index == index {
+			db.Unset(replyFlagTable, ref.ID)
+			continue
+		}
+		kept = append(kept, ref)
+	}
+	kept = append(kept, flagRef{ID: f.ID, Index: index, Verdict: f.Verdict, Prefix: flagPrefix(f.Reply)})
+	db.Set(replyFlagRefTable, key, kept)
+}
+
+// unflag removes one of a person's flags, and its thread reference.
+func unflag(db Database, f replyFlag) {
+	db.Unset(replyFlagTable, f.ID)
+	key := flagRefKey(f.User, f.AgentID, f.SessionID)
+	var refs []flagRef
+	if !db.Get(replyFlagRefTable, key, &refs) {
+		return
+	}
+	kept := []flagRef{}
+	for _, r := range refs {
+		if r.ID != f.ID {
+			kept = append(kept, r)
+		}
+	}
+	if len(kept) == 0 {
+		db.Unset(replyFlagRefTable, key)
+		return
+	}
+	db.Set(replyFlagRefTable, key, kept)
+}
 
 // Flag verdicts and review states.
 const (
@@ -84,6 +172,18 @@ func (T *OrchestrateApp) handleReplyFlag(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	if r.Method == http.MethodDelete {
+		// Pressed again: take it back. Only the person's own.
+		var f replyFlag
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" || !T.DB.Get(replyFlagTable, id, &f) || f.User != user {
+			http.Error(w, "no such flag", http.StatusNotFound)
+			return
+		}
+		unflag(T.DB, f)
+		writeJSON(w, map[string]any{"ok": true, "message": "Taken back."})
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return
@@ -128,8 +228,11 @@ func (T *OrchestrateApp) handleReplyFlag(w http.ResponseWriter, r *http.Request)
 	if a, ok := loadAgent(udb, req.AgentID); ok {
 		f.Agent = chFirst(a.Name, a.ID)
 	}
+	index := -1
 	if found {
-		if m, asked, ok := findFlaggedReply(sess, req.Reply); ok {
+		if i, asked, ok := findFlaggedReply(sess, req.Reply); ok {
+			m := sess.Messages[i]
+			index = i
 			f.Reply = clip(m.Content, flagReplyMax)
 			f.Asked = clip(asked, flagAskedMax)
 			if m.Usage != nil {
@@ -139,19 +242,22 @@ func (T *OrchestrateApp) handleReplyFlag(w http.ResponseWriter, r *http.Request)
 	}
 	f.Model = replyguard.NormalizeModel(f.Model)
 	T.DB.Set(replyFlagTable, f.ID, f)
+	if index >= 0 {
+		refFlag(T.DB, f, index)
+	}
 	Log("[orchestrate.flag] user=%q agent=%q model=%s marked a reply %s", user, f.Agent, f.Model, f.Verdict)
 	msg := "Kept as a good example."
 	if f.Verdict == flagDown {
 		msg = "Sent to the admin for review."
 	}
-	writeJSON(w, map[string]any{"ok": true, "message": msg})
+	writeJSON(w, map[string]any{"ok": true, "message": msg, "id": f.ID, "verdict": f.Verdict})
 }
 
 // findFlaggedReply finds the assistant message a flag is about, newest first:
 // the one whose text matches, else the one that starts the same way (a bubble
 // can differ from the stored text by trailing whitespace or a late edit). It
 // returns the message the person sent before it too.
-func findFlaggedReply(sess ChatSession, reply string) (ChatMessage, string, bool) {
+func findFlaggedReply(sess ChatSession, reply string) (int, string, bool) {
 	want := strings.TrimSpace(reply)
 	prefix := want
 	if r := []rune(prefix); len(r) > 200 {
@@ -169,7 +275,7 @@ func findFlaggedReply(sess ChatSession, reply string) (ChatMessage, string, bool
 		}
 	}
 	if match < 0 {
-		return ChatMessage{}, "", false
+		return -1, "", false
 	}
 	asked := ""
 	for i := match - 1; i >= 0; i-- {
@@ -178,7 +284,7 @@ func findFlaggedReply(sess ChatSession, reply string) (ChatMessage, string, bool
 			break
 		}
 	}
-	return sess.Messages[match], asked, true
+	return match, asked, true
 }
 
 // requireAdmin answers a non-admin with 403 and reports whether to go on.
@@ -246,7 +352,7 @@ func (T *OrchestrateApp) handleReplyFlagStatus(w http.ResponseWriter, r *http.Re
 	}
 	switch status {
 	case "delete":
-		T.DB.Unset(replyFlagTable, id)
+		unflag(T.DB, f)
 	case flagKept, flagDismissed, flagNew:
 		f.Status = status
 		T.DB.Set(replyFlagTable, id, f)
@@ -387,13 +493,51 @@ func init() {
 	}
 }
 
-func replyGuardSections() []ui.Section {
+// subheading labels one table among several in a section: a table carries no
+// heading of its own to say which question it answers.
+func subheading(text string) ui.Card {
+	return ui.Card{HTML: `<div style="font-size:0.74rem;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-mute);margin:0.9rem 0 0.25rem">` +
+		html.EscapeString(text) + `</div>`}
+}
+
+// replyGuardControls is the guard table and its set-on-a-model form, shown at
+// the top of Correction checks (judge_records.go): what each guard caught per
+// model, and whether it runs there.
+func replyGuardControls() []ui.Component {
 	const guards = "/orchestrate/api/console/reply-guards"
-	const flags = "/orchestrate/api/console/reply-flags"
 	var guardOpts []ui.SelectOption
 	for _, g := range replyguard.Guards() {
 		guardOpts = append(guardOpts, ui.SelectOption{Value: g.ID, Label: g.Name})
 	}
+	return []ui.Component{
+		subheading("Guards, by model"),
+		ui.Table{Source: guards, RowKey: "_id", GroupBy: "group",
+			Columns: []ui.Col{
+				{Field: "model", Label: "Model", Flex: 2},
+				{Field: "acted", Label: "Corrected", Format: "thousands"},
+				{Field: "shadowed", Label: "Shadow", Format: "thousands"},
+				{Field: "last", Label: "Last", Format: "reltime", Mute: true},
+				{Field: "desc", Label: "", Flex: 4, Mute: true, Line: 2},
+			},
+			RowActions: []ui.RowAction{
+				{Type: "segmented", Field: "_mode", PostTo: guards + "/mode?id={_id}", Options: replyGuardModeOptions()},
+				{Type: "button", Label: "Follow default", Compact: true, OnlyIf: "_override", PostTo: guards + "/mode?id={_id}&clear=1"},
+				ui.Expand("Caught", ui.RecordView{Pairs: []ui.DisplayPair{{Label: "Recent replies", Field: "samples", Block: true}}}),
+			},
+			EmptyText: "No reply guards are registered."},
+		ui.FormPanel{PostURL: guards + "/mode", SubmitLabel: "Set",
+			Invalidate: []string{guards},
+			Fields: []ui.FormField{
+				{Field: "guard", Label: "Set a guard on a model", Type: "select", Options: guardOpts, Required: true},
+				{Field: "model", Label: "Model", Type: "text", Placeholder: "gemini-2.5-flash", Required: true,
+					Help: "As the provider names it: set a guard on a model before it has fired there."},
+				{Field: "mode", Label: "Mode", Type: "select", Options: replyGuardModeOptions()},
+			}},
+	}
+}
+
+func replyGuardSections() []ui.Section {
+	const flags = "/orchestrate/api/console/reply-flags"
 	flagDetail := ui.RecordView{Pairs: []ui.DisplayPair{
 		{Label: "What was wrong", Field: "evaluation", Block: true},
 		{Label: "They asked", Field: "asked", Block: true},
@@ -408,39 +552,6 @@ func replyGuardSections() []ui.Section {
 			PostTo: flags + "/status?id={id}&status=" + to}
 	}
 	return []ui.Section{
-		{
-			Group:    "Agents",
-			Title:    "Reply guards",
-			Subtitle: "The checks that catch a model's reply going wrong in a known way and send it back. What each caught, per model, and whether it runs.",
-			Detail: "On corrects the reply. Shadow counts what the guard would have done and leaves the reply alone, which is how to try a guard on a model before trusting it, or to see whether one misfires. Off does not run it; a judge guard then makes no model call.\n\n" +
-				"The All models row is each guard's default. A model row appears once the guard has fired on that model, or when you set one below; its setting wins over the default, and Follow default clears it.\n\n" +
-				"Expand a model row for the last replies the guard caught there.",
-			Wide: true,
-			Body: ui.Stack{Children: []ui.Component{
-				ui.Table{Source: guards, RowKey: "_id", GroupBy: "group",
-					Columns: []ui.Col{
-						{Field: "model", Label: "Model", Flex: 2},
-						{Field: "acted", Label: "Corrected", Format: "thousands"},
-						{Field: "shadowed", Label: "Shadow", Format: "thousands"},
-						{Field: "last", Label: "Last", Format: "reltime", Mute: true},
-						{Field: "desc", Label: "", Flex: 4, Mute: true, Line: 2},
-					},
-					RowActions: []ui.RowAction{
-						{Type: "segmented", Field: "_mode", PostTo: guards + "/mode?id={_id}", Options: replyGuardModeOptions()},
-						{Type: "button", Label: "Follow default", Compact: true, OnlyIf: "_override", PostTo: guards + "/mode?id={_id}&clear=1"},
-						ui.Expand("Caught", ui.RecordView{Pairs: []ui.DisplayPair{{Label: "Recent replies", Field: "samples", Block: true}}}),
-					},
-					EmptyText: "No reply guards are registered."},
-				ui.FormPanel{PostURL: guards + "/mode", SubmitLabel: "Set",
-					Invalidate: []string{guards},
-					Fields: []ui.FormField{
-						{Field: "guard", Label: "Guard", Type: "select", Options: guardOpts, Required: true},
-						{Field: "model", Label: "Model", Type: "text", Placeholder: "gemini-2.5-flash", Required: true,
-							Help: "As the provider names it. Set a guard on a model before it has fired there."},
-						{Field: "mode", Label: "Mode", Type: "select", Options: replyGuardModeOptions()},
-					}},
-			}},
-		},
 		{
 			Group:    "Agents",
 			Title:    "Flagged replies",

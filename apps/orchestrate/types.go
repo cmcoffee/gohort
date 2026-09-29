@@ -1567,6 +1567,13 @@ type ChatMessage struct {
 	// the framework asked for reads as what it is rather than as a second
 	// unexplained answer. Display-only.
 	Label string `json:"label,omitempty"`
+
+	// Flag and FlagID are set only on the copy a session load serves: the
+	// viewer's own thumbs-up ("up") or thumbs-down ("down") on this reply and
+	// its id, so the buttons show it and a second press takes it back. Never
+	// stored on the message (reply_flags.go keeps them).
+	Flag   string `json:"flag,omitempty"`
+	FlagID string `json:"flag_id,omitempty"`
 }
 
 // PersistedToolCall is one tool invocation persisted alongside the

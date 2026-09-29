@@ -62,3 +62,19 @@ func TestALockedHomeThreadStillTakesAnswers(t *testing.T) {
 		}
 	}
 }
+
+// A message action can be ON for a bubble: active(ctx) marks it pressed, and
+// the bar can be redrawn when an app learns the state after render.
+func TestABubbleActionCanShowItIsOn(t *testing.T) {
+	js := string(runtimeJS)
+	for _, want := range []string{
+		"typeof act.active === 'function' && !!act.active(ctx)",
+		"window.uiRefreshBubbleActions = function(bubble)",
+		"refresh: function() { window.uiRefreshBubbleActions(bubble); }",
+		"sessionId: activeSessionId",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("runtime missing %q", want)
+		}
+	}
+}
