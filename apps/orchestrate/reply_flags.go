@@ -670,13 +670,18 @@ func replyGuardControls() []ui.Component {
 				{Type: "button", Label: "Edit", Compact: true, Method: "client", PostTo: "reply_guard_edit"},
 				{Type: "button", Label: "Remove", Compact: true, OnlyIf: "_override", PostTo: guards + "/clear?id={_id}",
 					Confirm: "Remove this tier's own settings? It follows All tiers again."},
-				{Type: "button", Label: "Revert to default", Compact: true, Variant: "warning", OnlyIf: "_can_revert", PostTo: guards + "/clear?id={_id}&revert=1",
-					Confirm: "Put this guard back as it shipped? Every setting on it, for all tiers and each tier, is removed."},
 				ui.Expand("Detail", ui.RecordView{Pairs: []ui.DisplayPair{
 					{Label: "What the model is told", Field: "note_value", Block: true},
 					{Label: "When it fires", Field: "fires", Block: true},
 					{Label: "Recent replies it caught", Field: "samples", Block: true},
 				}}),
+			},
+			// Beside the guard's name, since it acts on the whole guard (every
+			// tier), not on the row it would otherwise sit on. Read against the
+			// group's first row, which is the All tiers row.
+			GroupActions: []ui.RowAction{
+				{Type: "button", Label: "Revert to default", Variant: "warning", OnlyIf: "_can_revert", PostTo: guards + "/clear?id={_id}&revert=1",
+					Confirm: "Put this guard back as it shipped? Every setting on it, for all tiers and each tier, is removed."},
 			},
 			EmptyText: "No reply guards are registered."},
 	}

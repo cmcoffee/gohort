@@ -813,6 +813,11 @@ select:-webkit-autofill {
   margin-bottom: 0.2rem;
 }
 .ui-table-group:first-child { padding-top: 0.2rem; }
+/* A group heading with actions: the name on the left, its buttons beside it,
+ * in the heading's own quiet type rather than shouting over the rows. */
+.ui-table-group { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.ui-table-group-actions { display: inline-flex; gap: 0.35rem; text-transform: none; letter-spacing: normal; font-weight: 400; }
+.ui-table-group-actions .ui-row-btn { min-height: 0; padding: 0.15rem 0.55rem; font-size: 0.74rem; }
 /* A grouped table draws each group as an enclosed band. The heading alone
  * says where a group starts and nothing says where it ends, which is fine for
  * two groups and useless for six. */

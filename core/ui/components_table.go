@@ -36,6 +36,12 @@ type Table struct {
 	// individual agents, and chat sessions. Prefer a sort or a filter when the
 	// rows are the same kind and only differ by value.
 	GroupBy string `json:"group_by,omitempty"`
+	// GroupActions are buttons on a group's heading, beside its name, for an
+	// action on the GROUP rather than on one of its rows (put the whole thing
+	// back as it was, say). Each is a RowAction rendered against the group's
+	// first row, so OnlyIf, HideIf and {field} placeholders read that row:
+	// have the server put what the group's actions need on it.
+	GroupActions []RowAction `json:"group_actions,omitempty"`
 	// Search renders a filter box above the table. Typing narrows rows to those
 	// whose visible column values (and group heading) contain the text, matched
 	// case-insensitively. Client-side over the rows already fetched — this is a

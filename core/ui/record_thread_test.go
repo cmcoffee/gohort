@@ -78,3 +78,16 @@ func TestABubbleActionCanShowItIsOn(t *testing.T) {
 		}
 	}
 }
+
+// A grouped table can put buttons on a group's heading, read against the
+// group's first row.
+func TestAGroupHeadingCanCarryActions(t *testing.T) {
+	raw, _ := json.Marshal(Table{GroupBy: "g", GroupActions: []RowAction{{Type: "button", Label: "Revert"}}})
+	if !strings.Contains(string(raw), `"group_actions":[`) {
+		t.Errorf("group actions reach the table: %s", raw)
+	}
+	js := string(runtimeJS)
+	if !strings.Contains(js, "cfg.group_actions.forEach(function(act, ai)") || !strings.Contains(js, "class: 'ui-table-group-actions'") {
+		t.Error("the runtime draws group actions on the heading")
+	}
+}

@@ -226,7 +226,17 @@
               host = listEl;
             } else {
               var band = el('div', {class: 'ui-table-band'});
-              band.appendChild(el('div', {class: 'ui-table-group'}, [g]));
+              var head = el('div', {class: 'ui-table-group'}, [el('span', {class: 'ui-table-group-name'}, [g])]);
+              // Group actions sit on the heading, read against the group's
+              // first row (its OnlyIf and placeholders).
+              if ((cfg.group_actions || []).length) {
+                var gact = el('span', {class: 'ui-table-group-actions'});
+                cfg.group_actions.forEach(function(act, ai) {
+                  appendAction(gact, act, 'g' + ai, rec, rec[cfg.row_key], null);
+                });
+                if (gact.childNodes.length) head.appendChild(gact);
+              }
+              band.appendChild(head);
               host = el('div', {class: 'ui-table-band-body'});
               band.appendChild(host);
               listEl.appendChild(band);
