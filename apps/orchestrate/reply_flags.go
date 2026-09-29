@@ -153,6 +153,13 @@ type replyFlag struct {
 	Asked      string    `json:"asked,omitempty"`
 	Reply      string    `json:"reply"`
 	Status     string    `json:"status"`
+	// The turn around the reply, for testing a drafted guard against it:
+	// what the assistant showed earlier in the same turn, and how many tool
+	// calls the turn made. TurnKept is false on flags from before these were
+	// recorded, and on replies that could not be found in their thread.
+	Earlier   string `json:"earlier,omitempty"`
+	ToolCalls int    `json:"tool_calls,omitempty"`
+	TurnKept  bool   `json:"turn_kept,omitempty"`
 }
 
 func clip(s string, n int) string {
@@ -238,6 +245,8 @@ func (T *OrchestrateApp) handleReplyFlag(w http.ResponseWriter, r *http.Request)
 			if m.Usage != nil {
 				f.Model = m.Usage.Model
 			}
+			f.Earlier, f.ToolCalls = turnAround(sess.Messages, i)
+			f.Earlier, f.TurnKept = clip(f.Earlier, flagReplyMax), true
 		}
 	}
 	f.Model = replyguard.NormalizeModel(f.Model)
@@ -285,6 +294,23 @@ func findFlaggedReply(sess ChatSession, reply string) (int, string, bool) {
 		}
 	}
 	return match, asked, true
+}
+
+// turnAround is what the assistant said earlier in the turn that ends at
+// index i (the rounds after the person's message), and how many tool calls
+// the turn made.
+func turnAround(msgs []ChatMessage, i int) (earlier string, toolCalls int) {
+	toolCalls = len(msgs[i].ToolCalls)
+	var parts []string
+	for j := i - 1; j >= 0 && msgs[j].Role != "user"; j-- {
+		if msgs[j].Role == "assistant" {
+			toolCalls += len(msgs[j].ToolCalls)
+			if strings.TrimSpace(msgs[j].Content) != "" {
+				parts = append([]string{msgs[j].Content}, parts...)
+			}
+		}
+	}
+	return strings.Join(parts, "\n\n"), toolCalls
 }
 
 // requireAdmin answers a non-admin with 403 and reports whether to go on.
@@ -574,6 +600,8 @@ func replyGuardSections() []ui.Section {
 					},
 					RowActions: []ui.RowAction{
 						ui.Expand("Detail", flagDetail),
+						{Type: "button", Label: "Draft a guard", Compact: true, PostTo: "/orchestrate/api/console/reply-guards/draft?flag={id}",
+							Confirm: "Draft a reply guard from this flagged reply? A model drafts it and it is tested against everything flagged; it appears under Drafted guards, and nothing runs until you enable it."},
 						status(flagKept, "Keep", "success", ""),
 						status(flagDismissed, "Dismiss", "", ""),
 						{Type: "button", Label: "Delete", Variant: "danger", Compact: true, PostTo: flags + "/status?id={id}&status=delete",

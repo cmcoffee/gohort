@@ -2365,6 +2365,7 @@ func (lr *loopRun) noToolCallRound() loopAction {
 			lr.finalRoundRoleBreak,
 			lr.finalRoundPromiseGuards,
 			lr.finalRoundUnfinishedReply,
+			lr.finalRoundAuthoredGuards,
 			lr.finalRoundToolMentionGuard,
 			lr.finalRoundStallGuards,
 			lr.finalRoundJudges,

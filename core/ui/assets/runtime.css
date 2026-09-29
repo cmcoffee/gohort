@@ -4751,14 +4751,29 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-msg-act.danger { color: var(--danger); }
 .ui-agent-msg-act.danger:hover { border-color: var(--danger); }
 .ui-agent-msg-act:disabled { opacity: 0.5; cursor: not-allowed; }
-/* An action that is ON for this message (a rating given) shows pressed, and
- * stays in view at rest while the rest of the bar still waits for hover. */
+/* An action that is ON for this message (a rating given) shows pressed in
+ * the hover bar; the verdict itself sits on the message (.ui-agent-msg-badge). */
 .ui-agent-msg-act.active { color: var(--accent); border-color: var(--accent); background: var(--bg-2); }
-.ui-agent-msg-actions.has-active { opacity: 1; }
-.ui-agent-msg-actions.has-active > * { opacity: 0; transition: opacity 0.12s ease; }
-.ui-agent-msg-actions.has-active > .active,
-.ui-agent-msg:hover .ui-agent-msg-actions.has-active > *,
-.ui-agent-msg-actions.has-active:focus-within > * { opacity: 1; }
+/* A verdict on the message, at its head, with a matching edge on the bubble. */
+.ui-agent-msg-badge {
+  align-self: flex-start;
+  display: inline-block;
+  width: max-content;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-mute);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.55rem;
+  margin-bottom: 0.3rem;
+}
+.ui-agent-msg-badge.tone-good { color: var(--success); border-color: var(--success); }
+.ui-agent-msg-badge.tone-bad { color: var(--warning); border-color: var(--warning); }
+/* The edge goes on the reply's own bubble (the body), not the message box
+ * around it: the body has its own background and border, so an edge on the
+ * outer box showed beside the pill and then floated clear of the reply. */
+.ui-agent-msg-toned-good > .ui-agent-msg-body { border-left: 3px solid var(--success); }
+.ui-agent-msg-toned-bad > .ui-agent-msg-body { border-left: 3px solid var(--warning); }
 .ui-agent-msg-edit-bar {
   margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem;
 }

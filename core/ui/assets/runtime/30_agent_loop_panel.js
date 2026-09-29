@@ -2474,7 +2474,8 @@
           },
         };
         // An action that is ON for this bubble (a rating given, say) shows
-        // pressed, and keeps the bar in view so the state reads at rest.
+        // pressed in the bar, so it is clear which press takes it back. The
+        // state itself is shown on the message (uiSetMessageBadge).
         var on = false;
         try { on = typeof act.active === 'function' && !!act.active(ctx); } catch (e) {}
         var btn = el('button', {
@@ -2486,7 +2487,6 @@
           },
         }, [act.label || 'Action']);
         bar.appendChild(btn);
-        if (on) bar.classList.add('has-active');
       });
     }
 
@@ -3090,6 +3090,27 @@
       }
       chip.textContent = label;
     }
+
+    // uiSetMessageBadge puts a small chip at the head of a message, before its
+    // text, with a matching edge on the bubble: an app's verdict ON the
+    // message (a rating, a review state), shown where the message is read
+    // rather than as a button left lit under it. tone is "good" or "bad";
+    // null clears it.
+    window.uiSetMessageBadge = function(bubble, badge) {
+      if (!bubble || !bubble.classList) return;
+      var chip = bubble.querySelector(':scope > .ui-agent-msg-badge');
+      bubble.classList.remove('ui-agent-msg-toned-good', 'ui-agent-msg-toned-bad');
+      if (!badge || !badge.text) { if (chip) chip.remove(); return; }
+      if (!chip) {
+        chip = el('div', {class: 'ui-agent-msg-badge'});
+        var body = bubble.querySelector(':scope > .ui-agent-msg-body');
+        bubble.insertBefore(chip, body || bubble.firstChild);
+      }
+      chip.textContent = badge.text;
+      chip.title = badge.title || '';
+      chip.className = 'ui-agent-msg-badge' + (badge.tone ? ' tone-' + badge.tone : '');
+      if (badge.tone === 'good' || badge.tone === 'bad') bubble.classList.add('ui-agent-msg-toned-' + badge.tone);
+    };
 
     function setMessageMeta(id, meta) {
       var m = msgEls[id];

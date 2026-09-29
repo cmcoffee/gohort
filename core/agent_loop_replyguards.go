@@ -1115,3 +1115,73 @@ func (lr *loopRun) groundingJudge(ev TurnGroundingEvidence) (TurnGroundingVerdic
 	}
 	return judgeTurnGrounding(lr.cfg, ev)
 }
+
+// finalRoundAuthoredGuards runs the guards drafted from flagged replies
+// (core/replyguard authored.go). Each is data: checks that must all hold and
+// the note the model is sent. Structural checks run first and cost nothing; a
+// judge check runs only when they all held. On, a firing strikes the reply
+// (visible, crossed through, with the guard's name) and asks again with the
+// guard's note; shadow counts it; off skips it, judge call included.
+func (lr *loopRun) finalRoundAuthoredGuards() loopAction {
+	content := lr.rs.resp.Content
+	if strings.TrimSpace(content) == "" {
+		return actNone
+	}
+	var rc *replyguard.ReplyContext
+	for _, g := range replyguard.ActiveAuthored() {
+		if lr.guardOff(g.ID) {
+			continue
+		}
+		if rc == nil {
+			rc = &replyguard.ReplyContext{Reply: content, Asked: LatestUserContent(lr.messages),
+				Earlier: lr.earlierInTurn(), EarlierKnown: true, ToolCalls: len(lr.turnToolCalls)}
+		}
+		res, err := replyguard.Evaluate(g.Checks, *rc, lr.authoredJudge)
+		if err != nil {
+			Debug("[agent_loop] authored guard %s could not judge the reply: %v", g.ID, err)
+			continue
+		}
+		if !res.Hit {
+			continue
+		}
+		lr.noteUncorrected(g.ID, fmt.Sprintf("The %q check caught the reply again; no further re-prompt was left, so it was delivered as written.", g.Name))
+		if !lr.corrections.available(g.ID) || lr.round >= lr.maxRounds || !lr.guardActs(g.ID) {
+			continue
+		}
+		Debug("[agent_loop] authored guard %s caught the reply, re-prompting: correction %d/%d", g.ID, lr.corrections.spend(g.ID), maxCorrectionsPerKind)
+		lr.emitDiag("authored-guard-corrected", fmt.Sprintf("The %q check caught the reply (%s) and the model was asked again.", g.Name, replyguard.DescribeAll(g.Checks)))
+		lr.strikeRound(fmt.Sprintf("Taken back by the %q check.", g.Name))
+		lr.history = append(lr.history, Message{
+			Role:    "user",
+			Content: frameworkNoticeTag + strings.TrimSpace(g.Correction),
+		})
+		return actContinue
+	}
+	return actNone
+}
+
+// earlierInTurn is what the assistant already said earlier in this turn: its
+// text in the rounds since the person's message, before the current reply.
+func (lr *loopRun) earlierInTurn() string {
+	var parts []string
+	for i := len(lr.history) - 2; i >= 0; i-- {
+		m := lr.history[i]
+		if m.Role == "user" && !strings.HasPrefix(m.Content, frameworkNoticeTag) {
+			break
+		}
+		if m.Role == "assistant" && strings.TrimSpace(m.Content) != "" {
+			parts = append([]string{m.Content}, parts...)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// authoredJudge answers an authored guard's judge check with the worker model.
+func (lr *loopRun) authoredJudge(question string, rc replyguard.ReplyContext) (bool, error) {
+	resp, err := lr.T.WorkerChat(lr.ctx, []Message{{Role: "user", Content: replyguard.JudgePrompt(question, rc)}},
+		WithThink(false), WithRouteKey("framework.reply_guard.judge"), WithMaxTokens(8))
+	if err != nil || resp == nil {
+		return false, fmt.Errorf("judge call failed: %v", err)
+	}
+	return replyguard.JudgeAnswer(ResponseText(resp)), nil
+}

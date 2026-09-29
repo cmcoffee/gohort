@@ -60,6 +60,9 @@ type Guard struct {
 	Name  string `json:"name"`
 	Desc  string `json:"desc"`
 	Judge bool   `json:"judge,omitempty"` // costs a model call to decide
+	// Authored marks a guard drafted from flagged replies (authored.go)
+	// rather than one written into the loop.
+	Authored bool `json:"authored,omitempty"`
 }
 
 // Sample is one reply a guard caught.
@@ -91,7 +94,11 @@ var (
 // nothing is recorded.
 func SetStore(s Store) {
 	mu.Lock()
-	store, modes = s, nil
+	for id := range authored {
+		unregisterLocked(id)
+	}
+	store, modes, authored = s, nil, nil
+	loadAuthoredLocked()
 	mu.Unlock()
 }
 
@@ -99,6 +106,10 @@ func SetStore(s Store) {
 func Register(g Guard) {
 	mu.Lock()
 	defer mu.Unlock()
+	registerLocked(g)
+}
+
+func registerLocked(g Guard) {
 	if i, ok := byID[g.ID]; ok {
 		guards[i] = g
 		return
@@ -107,10 +118,25 @@ func Register(g Guard) {
 	guards = append(guards, g)
 }
 
+// unregisterLocked takes a guard out of the list (an authored guard switched
+// off or deleted).
+func unregisterLocked(id string) {
+	i, ok := byID[id]
+	if !ok {
+		return
+	}
+	guards = append(guards[:i], guards[i+1:]...)
+	byID = map[string]int{}
+	for j, g := range guards {
+		byID[g.ID] = j
+	}
+}
+
 // Guards lists the registered guards in the order they were registered.
 func Guards() []Guard {
 	mu.Lock()
 	defer mu.Unlock()
+	loadAuthoredLocked()
 	return append([]Guard(nil), guards...)
 }
 
@@ -118,6 +144,7 @@ func Guards() []Guard {
 func Known(id string) bool {
 	mu.Lock()
 	defer mu.Unlock()
+	loadAuthoredLocked()
 	_, ok := byID[id]
 	return ok
 }

@@ -162,6 +162,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/reply-guards/mode", w(T.handleReplyGuardMode))
 	T.HandleFunc("/api/console/reply-flags", T.handleReplyFlags)
 	T.HandleFunc("/api/console/reply-flags/status", w(T.handleReplyFlagStatus))
+	// Drafting guards from flagged replies (reply_guard_drafts.go).
+	T.HandleFunc("/api/console/reply-guards/draft", w(T.handleGuardDraft))
+	T.HandleFunc("/api/console/reply-guards/authored", T.handleAuthoredGuards)
+	T.HandleFunc("/api/console/reply-guards/authored/act", w(T.handleAuthoredGuard))
 	// Anyone's thumbs-up or thumbs-down on one of their own replies.
 	T.HandleFunc("/api/reply-flag", w(T.handleReplyFlag))
 	// Tool health: actions that have failed repeatedly and never once worked.

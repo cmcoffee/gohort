@@ -8728,9 +8728,18 @@ select.ui-orch-intake-input {
             headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined})
             .then(function(r) { return r.text().then(function(t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t ? JSON.parse(t) : {}; }); });
         }
+        // badge shows the mark ON the reply, before its text, rather than as
+        // a thumb left lit under it.
+        function badge(bubble, verdict) {
+          if (!window.uiSetMessageBadge) return;
+          if (verdict === 'up') window.uiSetMessageBadge(bubble, {text: '\uD83D\uDC4D Good example', tone: 'good', title: 'You marked this reply as a good example. Press the thumb again to take it back.'});
+          else if (verdict === 'down') window.uiSetMessageBadge(bubble, {text: '\uD83D\uDC4E Flagged for review', tone: 'bad', title: 'You flagged this reply for the admin. Press the thumb again to take it back.'});
+          else window.uiSetMessageBadge(bubble, null);
+        }
         function mark(ctx, verdict, id) {
           if (verdict) { ctx.bubble.dataset.orchFlag = verdict; ctx.bubble.dataset.orchFlagId = id || ''; }
           else { delete ctx.bubble.dataset.orchFlag; delete ctx.bubble.dataset.orchFlagId; }
+          badge(ctx.bubble, verdict);
           ctx.refresh();
         }
         function send(ctx, verdict, evaluation) {
@@ -8778,6 +8787,7 @@ select.ui-orch-intake-input {
           if (!bubble || !msg || !msg.flag) return;
           bubble.dataset.orchFlag = msg.flag;
           bubble.dataset.orchFlagId = msg.flag_id || '';
+          badge(bubble, msg.flag);
           if (window.uiRefreshBubbleActions) window.uiRefreshBubbleActions(bubble);
         });
       }

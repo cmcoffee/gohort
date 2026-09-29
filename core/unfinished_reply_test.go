@@ -177,3 +177,35 @@ func TestEveryReplyGuardAsksItsMode(t *testing.T) {
 		}
 	}
 }
+
+// A guard drafted from flagged replies runs like a built-in one: on, it takes
+// the reply back and sends the model its note; off, it does nothing.
+func TestAnAuthoredGuardCorrectsTheReply(t *testing.T) {
+	replyguard.SetStore(guardStore{})
+	defer replyguard.SetStore(nil)
+	g := replyguard.Authored{ID: "authored-please-wait", Name: "Asks the person to wait", Status: replyguard.StatusActive,
+		Checks:     []replyguard.Check{{Kind: "last_line_ends_with", Params: map[string]string{"endings": "please wait."}}},
+		Correction: "Your reply asks the person to wait for work you did not start. Do the work now, or say plainly what you cannot do."}
+	replyguard.SaveAuthored(g)
+	run := func() (int, *Response, *correctionHooks) {
+		stub := &FakeLLM{Turns: []FakeTurn{
+			{Content: "Looking into it now, please wait."},
+			{Content: "Here is what I found: the build passed.", Repeat: true},
+		}}
+		app := &AppCore{LLM: stub, LeadLLM: stub}
+		h := &correctionHooks{}
+		resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "check the build"}}, h.wire(AgentLoopConfig{MaxRounds: 6}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stub.Calls(), resp, h
+	}
+	calls, resp, h := run()
+	if calls != 2 || !h.sawDiag("authored-guard-corrected") || resp.Content != "Here is what I found: the build passed." {
+		t.Errorf("on, it corrects: calls=%d reply=%q diags=%v", calls, resp.Content, h.diags)
+	}
+	replyguard.SetMode(g.ID, replyguard.AllModels, replyguard.Off)
+	if calls, _, _ := run(); calls != 1 {
+		t.Errorf("off, it does nothing: calls=%d", calls)
+	}
+}
