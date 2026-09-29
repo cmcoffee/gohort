@@ -226,19 +226,20 @@
               host = listEl;
             } else {
               var band = el('div', {class: 'ui-table-band'});
-              var head = el('div', {class: 'ui-table-group'}, [el('span', {class: 'ui-table-group-name'}, [g])]);
-              // Group actions sit on the heading, read against the group's
-              // first row (its OnlyIf and placeholders).
+              band.appendChild(el('div', {class: 'ui-table-group'}, [g]));
+              host = el('div', {class: 'ui-table-band-body'});
+              band.appendChild(host);
+              // Group actions sit at the foot of the band, under its rows,
+              // read against the group's first row (its OnlyIf and
+              // placeholders). Appended now, after the body the rows go
+              // into, so they stay last.
               if ((cfg.group_actions || []).length) {
-                var gact = el('span', {class: 'ui-table-group-actions'});
+                var gact = el('div', {class: 'ui-table-group-foot'});
                 cfg.group_actions.forEach(function(act, ai) {
                   appendAction(gact, act, 'g' + ai, rec, rec[cfg.row_key], null);
                 });
-                if (gact.childNodes.length) head.appendChild(gact);
+                if (gact.childNodes.length) band.appendChild(gact);
               }
-              band.appendChild(head);
-              host = el('div', {class: 'ui-table-band-body'});
-              band.appendChild(host);
               listEl.appendChild(band);
             }
           }

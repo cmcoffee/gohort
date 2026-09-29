@@ -676,11 +676,11 @@ func replyGuardControls() []ui.Component {
 					{Label: "Recent replies it caught", Field: "samples", Block: true},
 				}}),
 			},
-			// Beside the guard's name, since it acts on the whole guard (every
-			// tier), not on the row it would otherwise sit on. Read against the
+			// Under the guard's three rows, in its card, since it acts on the
+			// whole guard (every tier) rather than on one row. Read against the
 			// group's first row, which is the All tiers row.
 			GroupActions: []ui.RowAction{
-				{Type: "button", Label: "Revert to default", Variant: "warning", OnlyIf: "_can_revert", PostTo: guards + "/clear?id={_id}&revert=1",
+				{Type: "button", Label: "Revert to default", OnlyIf: "_can_revert", PostTo: guards + "/clear?id={_id}&revert=1",
 					Confirm: "Put this guard back as it shipped? Every setting on it, for all tiers and each tier, is removed."},
 			},
 			EmptyText: "No reply guards are registered."},

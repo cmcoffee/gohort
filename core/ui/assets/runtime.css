@@ -813,11 +813,16 @@ select:-webkit-autofill {
   margin-bottom: 0.2rem;
 }
 .ui-table-group:first-child { padding-top: 0.2rem; }
-/* A group heading with actions: the name on the left, its buttons beside it,
- * in the heading's own quiet type rather than shouting over the rows. */
-.ui-table-group { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-.ui-table-group-actions { display: inline-flex; gap: 0.35rem; text-transform: none; letter-spacing: normal; font-weight: 400; }
-.ui-table-group-actions .ui-row-btn { min-height: 0; padding: 0.15rem 0.55rem; font-size: 0.74rem; }
+/* Group actions at the foot of a band: quiet grey, whatever variant they
+ * declare, since they act on the whole group and are reached for rarely. */
+.ui-table-group-foot { display: flex; gap: 0.4rem; flex-wrap: wrap; padding: 0.45rem 0 0.1rem; border-top: 1px solid var(--border); }
+.ui-table-group-foot .ui-row-btn,
+.ui-table-group-foot .ui-row-btn.warning,
+.ui-table-group-foot .ui-row-btn.danger {
+  min-height: 0; padding: 0.2rem 0.6rem; font-size: 0.76rem;
+  color: var(--text-mute); border-color: var(--border); background: transparent;
+}
+.ui-table-group-foot .ui-row-btn:hover { color: var(--text); border-color: var(--text-mute); }
 /* A grouped table draws each group as an enclosed band. The heading alone
  * says where a group starts and nothing says where it ends, which is fine for
  * two groups and useless for six. */
