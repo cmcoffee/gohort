@@ -116,6 +116,9 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 	if !strings.Contains(html, `rel="icon"`) {
 		html = strings.Replace(html, "<head>", "<head>"+faviconLinkTag, 1)
 	}
+	if !strings.Contains(html, `rel="manifest"`) {
+		html = strings.Replace(html, "<head>", "<head>"+webui.AppHeadTags, 1)
+	}
 
 	// Inject the shared @font-face declaration (Orbitron) right after
 	// <head>, so apps that render raw HTML templates (rather than

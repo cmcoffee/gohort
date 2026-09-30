@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/cmcoffee/gohort/core/webui"
 )
 
 // ThemeSpec is one selectable UI theme: Name is the data-theme value, Label is
@@ -112,6 +114,27 @@ func ThemeFirstPaintHead(theme string) string {
 		css = "html,body{background:" + bg + ";color:" + fg + "}"
 	}
 	return "<meta name=\"color-scheme\" content=\"" + scheme + "\">\n<style>" + css + "</style>\n"
+}
+
+// AppHead is webui.AppHeadTags plus the theme's background as theme-color,
+// so a phone's status bar and a saved home-screen app match the page.
+func AppHead(theme string) string {
+	out := webui.AppHeadTags
+	if bg := themeBackground(theme); bg != "" {
+		out += "<meta name=\"theme-color\" content=\"" + bg + "\">\n"
+	}
+	return out
+}
+
+// themeBackground is a theme's --bg-0, or "" when the theme is unknown.
+func themeBackground(theme string) string {
+	themesMu.RLock()
+	t, ok := themeByName[theme]
+	themesMu.RUnlock()
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(t.Tokens["--bg-0"])
 }
 
 // isLightColor reports whether a #rgb / #rrggbb is light enough that the

@@ -262,9 +262,9 @@ func RenderPageJSON(w io.Writer, pageJSON []byte, theme, extraHead, title string
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 %s<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%s">
-<title>%s</title>
+%s<title>%s</title>
 <link rel="stylesheet" href="/_ui/ui.css">
-%s</head>`, theme, ThemeFirstPaintHead(theme), webui.FaviconSVG, htmlEscape(title), extraHead)
+%s</head>`, theme, ThemeFirstPaintHead(theme), webui.FaviconSVG, AppHead(theme), htmlEscape(title), extraHead)
 	fmt.Fprintf(w, `
 <body>
 <div id="ui-root"></div>
@@ -298,6 +298,26 @@ func MountRuntime(mux *http.ServeMux) {
 	mux.HandleFunc("/_ui/ui.js", func(w http.ResponseWriter, r *http.Request) {
 		serveAsset(w, r, "application/javascript; charset=utf-8", jsETag, runtimeJS)
 	})
+	// Add to Home Screen: the manifest (in the active theme's colour) and
+	// the icons drawn from the mark.
+	mux.HandleFunc("/manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
+		body := string(webui.ManifestJSON(themeBackground(ActiveTheme())))
+		serveAsset(w, r, "application/manifest+json", `"`+assetETag(body)+`"`, body)
+	})
+	for _, p := range webui.AppIconPaths {
+		if p == "/manifest.webmanifest" {
+			continue
+		}
+		path := p
+		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			b, ok := webui.AppIconPNG(path)
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			serveAsset(w, r, "image/png", `"`+assetETag(string(b))+`"`, string(b))
+		})
+	}
 }
 
 func serveAsset(w http.ResponseWriter, r *http.Request, ct, etag, body string) {

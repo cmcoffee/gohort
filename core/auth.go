@@ -1853,7 +1853,8 @@ func authPageHTML(title, body string) string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>` + title + `</title>
+` + faviconLinkTag + `
+` + ui.AppHead(ui.ActiveTheme()) + `<title>` + title + `</title>
 <style>
 ` + ui.ThemeCSS() + `
   * { margin: 0; padding: 0; box-sizing: border-box; }

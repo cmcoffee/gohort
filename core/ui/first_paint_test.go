@@ -75,3 +75,23 @@ func TestLightColorInference(t *testing.T) {
 		}
 	}
 }
+
+// Every page can be kept on a phone's home screen: it names the manifest and
+// the icon, and its theme-color is the theme's own background, so the status
+// bar of the saved app matches the page.
+func TestPagesCanBeAddedToTheHomeScreen(t *testing.T) {
+	var b bytes.Buffer
+	if err := RenderPageJSON(&b, []byte(`{}`), "indigo", "", "T"); err != nil {
+		t.Fatal(err)
+	}
+	page := b.String()
+	for _, want := range []string{`<link rel="manifest" href="/manifest.webmanifest">`, `<link rel="apple-touch-icon" href="/apple-touch-icon.png">`,
+		`<meta name="apple-mobile-web-app-capable" content="yes">`, `<meta name="theme-color" content="#0f1117">`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if strings.Contains(AppHead("no-such-theme"), "theme-color") {
+		t.Error("an unknown theme names no colour rather than a wrong one")
+	}
+}

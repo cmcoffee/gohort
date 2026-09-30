@@ -114,6 +114,7 @@ func RenderPage(opts PageOpts) string {
 	sb.WriteString(FaviconSVG)
 	sb.WriteString(`">
 `)
+	sb.WriteString(AppHeadTags)
 	if opts.Prefix != "" {
 		sb.WriteString(`<base href="`)
 		sb.WriteString(html.EscapeString(opts.Prefix + "/"))

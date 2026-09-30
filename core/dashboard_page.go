@@ -177,6 +177,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 %FAVICON%
+%APPHEAD%
 <title>Gohort Dashboard</title>
 <style>
 %THEMECSS%
@@ -515,6 +516,7 @@ setInterval(refreshLive, 10000);
 </body>
 </html>`
 	html = strings.Replace(html, "%THEME%", ui.ActiveTheme(), 1)
+	html = strings.Replace(html, "%APPHEAD%", ui.AppHead(ui.ActiveTheme()), 1)
 	html = strings.Replace(html, "%THEMECSS%", ui.ThemeCSS(), 1)
 	html = strings.Replace(html, "%FAVICON%", faviconLinkTag, 1)
 	// Notices sit above the cards, because the point is to be read before the

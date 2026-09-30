@@ -12,6 +12,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/gohort/core/webui"
 )
 
 // ServeDashboard starts the unified web dashboard on the given address.
@@ -142,6 +143,11 @@ func ServeDashboard(addr string) error {
 	// capability URL) can boot its page instead of getting bounced to /login.
 	RegisterPublicPath("/_ui/ui.css")
 	RegisterPublicPath("/_ui/ui.js")
+	// The home-screen manifest and icons: a phone fetches them without the
+	// session (and before sign-in), and they carry nothing but the mark.
+	for _, p := range webui.AppIconPaths {
+		RegisterPublicPath(p)
+	}
 	// Wire the active-theme lookup to the stored deployment setting, so every
 	// un-pinned page renders in the admin-selected theme (falls back to the
 	// ui default when unset).
