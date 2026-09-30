@@ -784,7 +784,7 @@
     var overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:' + window.uiNextModalZ() + ';padding:1rem;box-sizing:border-box';
     var dlg = document.createElement('div');
-    dlg.style.cssText = 'box-sizing:border-box;background:var(--bg-1);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1rem;width:100%;max-width:' + (opts.width || '640px') + ';max-height:88vh;display:flex;flex-direction:column';
+    dlg.style.cssText = 'box-sizing:border-box;background:var(--bg-1);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1rem;width:100%;max-width:' + (opts.width || '640px') + ';max-height:88vh;max-height:calc(var(--ui-vh, 100dvh) - 2rem);display:flex;flex-direction:column';
     overlay.appendChild(dlg);
     var released = false;
     function close() {
@@ -939,7 +939,7 @@
       'border-left:1px solid var(--border);box-shadow:-8px 0 24px rgba(0,0,0,0.25)';
     // Header: title + open-in-tab + close.
     var hdr = document.createElement('div');
-    hdr.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.8rem;border-bottom:1px solid var(--border);flex:0 0 auto';
+    hdr.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.8rem;padding-top:calc(0.5rem + env(safe-area-inset-top, 0px));border-bottom:1px solid var(--border);flex:0 0 auto';
     var ttl = document.createElement('div');
     ttl.style.cssText = 'flex:1 1 auto;min-width:0;font-size:0.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
     var popBtn = document.createElement('button');

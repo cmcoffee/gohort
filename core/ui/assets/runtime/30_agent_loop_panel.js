@@ -997,7 +997,7 @@
           // On mobile, start the overlay BELOW the header bar so the ☰ stays
           // uncovered and tappable (otherwise inset:0 paints over it and there's
           // no way back). Desktop has no mobile header — pin to the top.
-          orchView.style.top = (drawer && window.innerWidth <= 700) ? (drawer.mobileHdr.offsetHeight + 'px') : '0';
+          orchView.style.top = (drawer && drawer.mobileHdr.offsetHeight > 0) ? (drawer.mobileHdr.offsetHeight + 'px') : '0';
           // Reflect the loaded view in the mobile header (e.g. "Authorizations")
           // instead of leaving the stale session title.
           if (drawer && drawer.mobileTitle) drawer.mobileTitle.textContent = item.label || '';
@@ -1889,9 +1889,17 @@
         function openMenu() {
           setOpenTopbarMenu(closeMenu); // close any other open top-bar menu first
           var r = toggle.getBoundingClientRect();
+          var top = Math.round(r.bottom + 4);
           menu.style.left = Math.round(r.left) + 'px';
-          menu.style.top = Math.round(r.bottom + 4) + 'px';
+          menu.style.top = top + 'px';
           menu.classList.add('open');
+          // Kept on screen once open (its width is only real then): from the
+          // button's left edge it ran off a phone's right side, and a long
+          // one off the bottom.
+          var left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 4);
+          menu.style.left = Math.round(Math.max(4, left)) + 'px';
+          menu.style.maxHeight = Math.max(120, window.innerHeight - top - 8) + 'px';
+          menu.style.overflowY = 'auto';
         }
         groupMap[gname].forEach(function(action) {
           var item = el('button', {type: 'button', class: (action.variant ? action.variant : ''),

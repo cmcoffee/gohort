@@ -121,6 +121,9 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			Description     string `json:"description,omitempty"`
 			RequiresConfirm bool   `json:"requires_confirm"`
 			HasSecret       bool   `json:"has_secret"`
+			// NeedsKey: an authenticated credential with no key stored (a
+			// draft never finished). Every tool on it fails until it is set.
+			NeedsKey bool `json:"needs_key"`
 			Disabled        bool   `json:"disabled"`
 			Secured         bool   `json:"secured"`
 			// Lending is the owner's standing answer to "may this be lent at
@@ -149,10 +152,12 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 		}
 		toRow := func(c SecureCredential) row {
 			lend, write := c.MayLend()
+			_, _, stored := Secure().CredentialStatusOwned(user, c.Name)
 			return row{
 				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
 				Description: c.Description, RequiresConfirm: c.RequiresConfirm,
-				HasSecret: c.Type != SecureCredNone, Disabled: c.Disabled,
+				HasSecret: c.Type != SecureCredNone && stored, Disabled: c.Disabled,
+				NeedsKey:  c.Type != SecureCredNone && !stored,
 				Secured:         c.Secured,
 				SharedReadOnly:  nonNilList(c.SharedReadOnly),
 				SharedReadWrite: nonNilList(c.SharedReadWrite),
@@ -1725,6 +1730,11 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 						{Field: "shared_summary", Label: "Shared", Mute: true},
 						{Field: "handover_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Handover pending", Color: "warning"},
+						}},
+						// A draft never finished: its tools fail until the key
+						// is set, so the list says so rather than "Active".
+						{Field: "needs_key", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Needs its key", Color: "warning"},
 						}},
 						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Disabled", Color: "danger"},

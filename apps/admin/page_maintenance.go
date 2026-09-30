@@ -207,6 +207,7 @@ func databaseBrowserCard() ui.Card {
 .dbb-item:hover { background:#21262d; }
 .dbb-item.active { background:#1f3047; color:#79c0ff; }
 .dbb-empty { padding:0.5rem 0.6rem; font-size:0.8rem; color:#8b949e; font-style:italic; }
+@media (max-width:700px) { .dbb { flex-direction:column; } .dbb-pane { width:auto !important; } .dbb-list { max-height:220px; } }
 .dbb-record { background:var(--bg-0,#0d1117); border:1px solid var(--border,#30363d); border-radius:6px; padding:0.6rem 0.75rem; overflow:auto; max-height:380px; font-size:0.78rem; color:var(--text,#c9d1d9); margin:0; white-space:pre; font-family:monospace; line-height:1.5; }
 </style>
 <div class="dbb">

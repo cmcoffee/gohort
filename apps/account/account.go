@@ -218,7 +218,7 @@ func mcpConnectResultPage(w http.ResponseWriter, msg string) {
 		notify = `<script>try{if(window.opener)window.opener.postMessage('gohort-mcp-connected','*');}catch(e){}setTimeout(function(){try{window.close();}catch(e){}},1200);</script>`
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Connect</title>` +
+	w.Write([]byte(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect</title>` +
 		`<style>html,body{height:100%;margin:0}body{background:#0d1117;color:#c9d1d9;` +
 		`font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center}` +
 		`.card{max-width:480px;width:90%;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:28px;white-space:pre-wrap;line-height:1.5}</style>` +

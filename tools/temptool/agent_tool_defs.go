@@ -50,10 +50,33 @@ func agentToolDefsFromTemp(sess *ToolSession, tt *TempTool) []AgentToolDef {
 	if IsReservedToolName(tt.Name) {
 		return nil
 	}
+	var defs []AgentToolDef
 	if tt.Mode == TempToolModeToolbox && tt.Expand {
-		return expandedToolboxDefs(sess, tt)
+		defs = expandedToolboxDefs(sess, tt)
+	} else {
+		defs = []AgentToolDef{agentToolFromTemp(sess, tt)}
 	}
-	return []AgentToolDef{agentToolFromTemp(sess, tt)}
+	return markNotReady(sess, tt, defs)
+}
+
+// markNotReady leads a tool's description with why it cannot work yet (its
+// credential is turned off or has no key), so the agent tells the user what is
+// missing instead of calling it every conversation and reporting the same
+// failure. The tool stays in the catalog: a capability the agent believes in
+// but cannot find sends it improvising another way in.
+func markNotReady(sess *ToolSession, tt *TempTool, defs []AgentToolDef) []AgentToolDef {
+	cred := strings.TrimSpace(tt.Credential)
+	if cred == "" || (tt.Mode != TempToolModeAPI && tt.Mode != TempToolModeToolbox) {
+		return defs
+	}
+	why := Secure().NotReady(sessUser(sess), cred)
+	if why == "" {
+		return defs
+	}
+	for i := range defs {
+		defs[i].Tool.Description = "NOT READY: " + why + ". Do not call it; tell the user what is missing. " + defs[i].Tool.Description
+	}
+	return defs
 }
 
 // expandedToolboxDefs surfaces each non-disabled toolbox action as its own

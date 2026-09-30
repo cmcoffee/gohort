@@ -2291,7 +2291,10 @@ select:-webkit-autofill {
 .ui-chat-mobile-hdr { display: none; }
 .ui-chat-backdrop { display: none; }
 
-@media (max-width: 700px) {
+/* 900px, not 700: the agent panel drops its side rail at 900, and between
+ * the two a tablet had no rail and no drawer, so its sessions were out of
+ * reach. The drawer and its header now arrive where the rail leaves. */
+@media (max-width: 900px) {
   /* Mobile layout — single column, full-screen-ish chat. */
   .ui-chat {
     grid-template-columns: 1fr;
@@ -2656,7 +2659,7 @@ select:-webkit-autofill {
  * visible on mobile where the drawer covers the whole viewport and the
  * backdrop tap-target sits behind it. */
 .ui-chat-side-close { display: none; }
-@media (max-width: 700px) {
+@media (max-width: 900px) {
   .ui-chat-side-close {
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; color: var(--text-mute);
@@ -5354,6 +5357,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border-radius: 10px;
   padding: 1.1rem 1.2rem;
   width: 100%; max-width: 540px; max-height: 85vh;
+  max-height: calc(var(--ui-vh, 100dvh) - 2rem);
   overflow-y: auto;
   display: flex; flex-direction: column; gap: 0.5rem;
   box-shadow: 0 12px 32px rgba(0,0,0,0.5);
@@ -5905,4 +5909,43 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-bell-act {
   background: none; border: 0; padding: 0; cursor: pointer;
   color: var(--accent); font-size: 0.7rem; font-family: inherit;
+}
+
+/* ---- Touch screens ---------------------------------------------------
+ * A phone has no hover, so anything revealed on :hover is invisible there
+ * yet still tappable (an unseen Delete under a message), and a 22px control
+ * is a miss. (hover: none) and (pointer: coarse) ask about the device, not
+ * the width, so a narrow desktop window keeps its compact controls. */
+@media (hover: none) {
+  .ui-agent-msg-actions { opacity: 1; }
+  .ui-agent-stats { opacity: 0.85; }
+  .ui-chat-side-ren { visibility: visible; }
+}
+@media (pointer: coarse) {
+  .ui-agent-msg-act { min-height: 36px; padding: 0.35rem 0.8rem; font-size: 0.8rem; }
+  .ui-chat-side-del, .ui-chat-side-ren { width: 2.25rem; height: 2.25rem; }
+  .ui-chat-side-ren { right: 2.7rem; }
+  .ui-chat-side-item.ui-chat-side-item-renable { padding-right: 5.2rem; }
+  .ui-chat-side-close { width: var(--tap, 44px); height: var(--tap, 44px); }
+  .ui-agent-mode, .ui-chat-mode { min-height: 36px; }
+  .ui-agent-top-bundle .ui-agent-modes-in-bundle .ui-row-btn { min-height: 36px; }
+  .ui-toolbar-menu > button { min-height: 40px; }
+  .ui-tab { min-height: 36px; }
+  /* The info mark stays small to look at; its hit area grows invisibly. */
+  .ui-info { position: relative; }
+  .ui-info::after { content: ""; position: absolute; inset: -0.55rem; }
+  /* iOS zooms into any focused field set under 16px and never zooms back
+   * out, so on a touch screen every field is 16px. */
+  .ui-chat-input, .ui-agent-input, .ui-input,
+  .ui-form-input, .ui-form-textarea, .ui-form-select { font-size: 16px; }
+}
+@media (max-width: 900px) {
+  /* The agent composer sits at the bottom of a full-height panel; keep its
+   * send row clear of the phone's home indicator, as the chat composer is. */
+  .ui-agent-input-row { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
+  /* One scrolling row of tabs rather than three wrapped rows of them. */
+  .ui-tabbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .ui-tabbar::-webkit-scrollbar { display: none; }
+  .ui-tab { flex: 0 0 auto; white-space: nowrap; }
+  .ui-tw-image { max-width: 100%; }
 }

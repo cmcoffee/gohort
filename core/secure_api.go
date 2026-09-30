@@ -931,6 +931,15 @@ func (s *SecureAPI) Resolve(name, user string) (SecureCredential, bool) {
 func (s *SecureAPI) ResolveIn(name, user, agentID string) (SecureCredential, bool) {
 	if strings.TrimSpace(user) != "" {
 		if c, ok := s.LoadUser(user, name); ok {
+			// A personal draft never finished (no key) must not hide a
+			// working credential of the same name: it can do nothing, and
+			// resolving to it turned every call into "no stored secret" while
+			// the working key sat unreachable, with nothing edited to explain
+			// it. Builder no longer drafts over a working name; this covers
+			// the drafts made before it stopped.
+			if g, ok := s.workingGlobalBehindDraft(c, user, name); ok {
+				return g, true
+			}
 			return c, true
 		}
 		// Then one somebody lent them. After their own, because a name they
@@ -949,6 +958,30 @@ func (s *SecureAPI) ResolveIn(name, user, agentID string) (SecureCredential, boo
 		}
 	}
 	return s.Load(name)
+}
+
+// shadowNoted keeps the "personal draft is hiding a working credential" line to
+// one per user and name, since resolution runs on every call.
+var shadowNoted sync.Map
+
+// workingGlobalBehindDraft returns the deployment credential of this name when
+// the user's own record is an unfinished draft (no key stored) and the
+// deployment's is enabled with its key.
+func (s *SecureAPI) workingGlobalBehindDraft(own SecureCredential, user, name string) (SecureCredential, bool) {
+	if own.IsPerUser() || own.Type == SecureCredNone || !s.draftPending(credStoreKey(user, name), own.Type) {
+		return SecureCredential{}, false
+	}
+	g, ok := s.Load(name)
+	if !ok || g.Disabled {
+		return SecureCredential{}, false
+	}
+	if _, _, hasSecret := s.CredentialStatusOwned("", name); !hasSecret && g.Type != SecureCredNone {
+		return SecureCredential{}, false
+	}
+	if _, seen := shadowNoted.LoadOrStore(user+"\x00"+name, true); !seen {
+		Log("[secure_api] %s has an unfinished personal credential %q with no key; using the deployment's working %q instead (delete the personal one under Extensions > API credentials)", user, name, name)
+	}
+	return g, true
 }
 
 // PerUserConnection describes one per_user credential's state for a given user —
@@ -1544,6 +1577,30 @@ func (s *SecureAPI) CredentialStatusOwned(owner, name string) (exists, enabled, 
 	sec = strings.TrimSpace(sec)
 	hasSecret = ok2 && sec != "" && sec != "(pending)"
 	return true, !c.Disabled, hasSecret
+}
+
+// NotReady says why a tool on this credential cannot work yet, in words for
+// the agent's catalog, or "" when it can (or the credential is not found,
+// which dispatch reports itself). A per-user credential is left to dispatch:
+// whether it is ready depends on who is calling.
+func (s *SecureAPI) NotReady(owner, name string) string {
+	c, ok := s.Resolve(name, owner)
+	if !ok || c.IsPerUser() {
+		return ""
+	}
+	if c.Disabled {
+		return fmt.Sprintf("its credential %q is turned off", c.Name)
+	}
+	if c.Type == SecureCredNone {
+		return ""
+	}
+	if _, _, hasSecret := s.CredentialStatusOwned(owner, name); !hasSecret {
+		if c.Owner != "" {
+			return fmt.Sprintf("its credential %q has no key yet (the user sets it under Extensions > API credentials)", c.Name)
+		}
+		return fmt.Sprintf("its credential %q has no key yet (an administrator sets it under Admin > Extensions > API Credentials)", c.Name)
+	}
+	return ""
 }
 
 // ----------------------------------------------------------------------

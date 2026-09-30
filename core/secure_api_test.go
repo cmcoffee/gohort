@@ -1799,3 +1799,40 @@ func TestAnAuthorizationCodeCredentialSaves(t *testing.T) {
 		t.Error("other types still need a secret on create")
 	}
 }
+
+// A personal draft with no key does not hide a working deployment credential
+// of the same name: calls reach the working one. Once the person gives their
+// own a key, theirs wins again; with no working one behind it, the draft is
+// what resolves (and dispatch says it needs its key).
+func TestUnfinishedPersonalDraftDoesNotShadowAWorkingCredential(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	if err := s.SaveAPIDraft(SecureCredential{Name: "forge", Type: SecureCredBearer, BaseURL: "https://forge.example", Owner: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := s.Resolve("forge", "alice"); !ok || c.Owner != "alice" {
+		t.Fatalf("with nothing behind it, the draft resolves: %+v", c)
+	}
+	if err := s.Save(SecureCredential{Name: "forge", Type: SecureCredBearer, BaseURL: "https://forge.example"}, "deploy-key"); err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := s.Resolve("forge", "alice"); !ok || c.Owner != "" {
+		t.Fatalf("the working deployment credential is reached past the empty draft: %+v", c)
+	}
+	if why := s.NotReady("alice", "forge"); why != "" {
+		t.Errorf("so tools on it are ready: %q", why)
+	}
+	own, _ := s.LoadUser("alice", "forge")
+	if err := s.Save(own, "alice-key"); err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := s.Resolve("forge", "alice"); !ok || c.Owner != "alice" {
+		t.Fatalf("with its own key, the personal one is theirs again: %+v", c)
+	}
+	s.SetDisabled("forge", true)
+	if err := s.SaveAPIDraft(SecureCredential{Name: "other", Type: SecureCredBearer, BaseURL: "https://o.example", Owner: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := s.Resolve("other", "alice"); c.Owner != "alice" {
+		t.Errorf("no deployment credential of that name: the draft stands: %+v", c)
+	}
+}
