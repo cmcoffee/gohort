@@ -1,0 +1,58 @@
+# Build, vet and test on every push to main and every pull request.
+#
+# This builds what a fresh clone gets, which a local build does not show:
+# GOWORK=off drops the machine-local go.work (which compiles against the
+# snugforge working tree and a patched fpdf), so dependencies come from the
+# versions go.mod pins, and -mod=readonly fails a go.mod/go.sum out of step
+# with the code. The private/ tree is not in the repo, so it is not built.
+#
+# The Go version is go.mod's own minimum, so code that needs a newer Go than
+# go.mod claims fails here instead of on someone else's machine.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOWORK: "off"
+      GOFLAGS: -mod=readonly
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Shell tools run under bubblewrap in production, so the sandbox tests
+      # run under it here too. Ubuntu 24.04 blocks the unprivileged user
+      # namespaces bubblewrap needs unless AppArmor is told to allow them.
+      # node (the runtime JS checks) and python3 come with the runner.
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --ro-bind / / true && echo "bubblewrap works"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -count=1 ./...

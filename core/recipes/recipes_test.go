@@ -251,7 +251,7 @@ func TestTheComfyUITemplateAddsAWiredConnector(t *testing.T) {
 // webhook connector and hands its token to the webhook secret store.
 func TestBridgeTemplatesAddConnectors(t *testing.T) {
 	db := testDB(t)
-	res, err := Install(db, "slack-bridge", "admin", map[string]string{"channel_id": "C0123", "bot_token": "xoxb-test-value"})
+	res, err := Install(db, "slack-bridge", "admin", map[string]string{"channel_id": "C0123", "bot_token": "bot-token-for-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
