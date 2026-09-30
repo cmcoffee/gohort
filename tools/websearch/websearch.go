@@ -328,8 +328,12 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 			}
 			// fetch_url does not stop to ask, so a credential that asks before
 			// each call is reached through its own tool, which does.
-			if c, ok := Secure().Resolve(credName, sess.Username); ok && c.RequiresConfirm {
-				return "", fmt.Errorf("this host is served by credential %q, which asks before each call: use fetch_url_%s, which asks the user first", credName, credName)
+			method := StringArg(args, "method")
+			if method == "" {
+				method = "GET"
+			}
+			if c, ok := Secure().Resolve(credName, sess.Username); ok && c.AsksBefore(method) {
+				return "", fmt.Errorf("this host is served by credential %q, which asks before %s calls: use fetch_url_%s, which asks the user first", credName, strings.ToUpper(method), credName)
 			}
 			out, derr := Secure().DispatchToolCallArgs(sess, credName, args)
 			if derr != nil {

@@ -103,12 +103,8 @@ func toolRecordFor(sess *ToolSession, name string) *TempTool {
 // through a hook never met the consent the credential asks for, in chat or
 // unattended.
 func credentialsForToolCall(sess *ToolSession, name string) []string {
-	if sess != nil {
-		for _, tt := range sess.CopyTempTools() {
-			if tt.Name == name {
-				return toolCredentials(*tt)
-			}
-		}
+	if tt, _ := toolForCall(sess, name); tt != nil {
+		return toolCredentials(*tt)
 	}
 	if rest := strings.TrimPrefix(name, bridgeCredToolPrefix); rest != name {
 		return []string{rest}
@@ -117,6 +113,62 @@ func credentialsForToolCall(sess *ToolSession, name string) []string {
 		return []string{rest}
 	}
 	return nil
+}
+
+// toolForCall finds the tool record a call runs: by name, or an expanded
+// toolbox's "<toolbox>_<action>" (returning the action). An expanded action
+// matched no record by name, so it met none of its credential's consent.
+func toolForCall(sess *ToolSession, name string) (*TempTool, string) {
+	if sess == nil {
+		return nil, ""
+	}
+	tools := sess.CopyTempTools()
+	for _, tt := range tools {
+		if tt.Name == name {
+			return tt, ""
+		}
+	}
+	for _, tt := range tools {
+		if tt.Mode == TempToolModeToolbox && tt.Expand && strings.HasPrefix(name, tt.Name+"_") {
+			return tt, strings.TrimPrefix(name, tt.Name+"_")
+		}
+	}
+	return nil, ""
+}
+
+// callMayWrite reports whether THIS call can change something, for a
+// credential that asks before writes: fetch_url_<cred> or a poll by its
+// method argument, an api tool by its method, a toolbox by the action called,
+// and a script always (its method is not known before it runs).
+func callMayWrite(tt *TempTool, action, name, args string) bool {
+	if tt == nil {
+		if strings.HasPrefix(name, "fetch_url_") || strings.HasPrefix(name, bridgeCredToolPrefix) {
+			return IsWriteMethod(methodOrGET(argFromPreview(args, "method")))
+		}
+		return true
+	}
+	switch tt.Mode {
+	case TempToolModeAPI:
+		return IsWriteMethod(methodOrGET(tt.Method))
+	case TempToolModeToolbox:
+		if action == "" {
+			action = argFromPreview(args, "action")
+		}
+		for _, a := range tt.Actions {
+			if a.Name == action {
+				return IsWriteMethod(methodOrGET(a.Method))
+			}
+		}
+	}
+	return true
+}
+
+// methodOrGET is a method, GET when none is given (dispatch's default).
+func methodOrGET(m string) string {
+	if strings.TrimSpace(m) == "" {
+		return "GET"
+	}
+	return m
 }
 
 // toolCredentials is the credentials one tool record reaches.
@@ -194,15 +246,26 @@ func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) boo
 				because: "you set this tool to ask before every call",
 			})
 		}
+		tt, action := toolForCall(sess, name)
+		writes := callMayWrite(tt, action, name, args)
 		var cred string
 		for _, cn := range credentialsForToolCall(sess, name) {
-			if c, ok := Secure().Resolve(cn, t.user); ok && c.RequiresConfirm {
+			if c, ok := Secure().Resolve(cn, t.user); ok && (c.RequiresConfirm || (c.ConfirmWrites && writes)) {
 				cred = cn
 				break
 			}
 		}
 		if cred == "" {
 			return true
+		}
+		if c, ok := Secure().Resolve(cred, t.user); ok && !c.RequiresConfirm {
+			// Asks before writes only, and this call writes.
+			return t.escalateToolConfirm(toolConfirmRequest{
+				tool:    name,
+				prompt:  fmt.Sprintf("Allow %s to make a change through %q?", name, cred),
+				detail:  args,
+				because: fmt.Sprintf("credential %q asks before any call that changes something", cred),
+			})
 		}
 		// Resolve, not Load — the user's OWN credential shadows a global one and is
 		// invisible to the global-namespace Load, which silently skipped the toggle

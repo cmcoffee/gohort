@@ -407,7 +407,9 @@ func tempToolNeedsConfirm(tt *TempTool, user ...string) bool {
 			// ask before every call, so test would never run it, while an api
 			// tool on the same credential ran unattended.
 			cred := strings.TrimSpace(strings.TrimPrefix(c, "fetch_via:"))
-			if cr, ok := Secure().Resolve(cred, owner); !ok || cr.RequiresConfirm {
+			// A script's method is not known before it runs, so a credential
+			// that asks before writes is asked about for the whole tool.
+			if cr, ok := Secure().Resolve(cred, owner); !ok || cr.AsksAtAll() {
 				return true // unresolvable fails closed
 			}
 		default:
@@ -416,7 +418,7 @@ func tempToolNeedsConfirm(tt *TempTool, user ...string) bool {
 	}
 	if cred := strings.TrimSpace(tt.Credential); cred != "" {
 		if c, ok := Secure().Resolve(cred, owner); ok {
-			return c.RequiresConfirm
+			return c.RequiresConfirm || (c.ConfirmWrites && tempToolMayWrite(tt))
 		}
 		return true // credential named but not resolvable — fail closed
 	}
@@ -708,4 +710,30 @@ func hooksFetch(caps []string) bool {
 		}
 	}
 	return false
+}
+
+// tempToolMayWrite reports whether a tool can make a call that changes
+// something: an api tool by its method, a toolbox by any live action's, and
+// any other kind (a script) because its method is not known ahead.
+func tempToolMayWrite(tt *TempTool) bool {
+	switch tt.Mode {
+	case TempToolModeAPI:
+		return IsWriteMethod(methodOrGET(tt.Method))
+	case TempToolModeToolbox:
+		for _, a := range tt.Actions {
+			if !a.Disabled && IsWriteMethod(methodOrGET(a.Method)) {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
+// methodOrGET is a declared method, GET when none is set (dispatch's default).
+func methodOrGET(m string) string {
+	if strings.TrimSpace(m) == "" {
+		return "GET"
+	}
+	return m
 }

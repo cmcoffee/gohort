@@ -117,6 +117,10 @@ type SecureCredential struct {
 	Description      string   `json:"description,omitempty"`
 	ParamName        string   `json:"param_name,omitempty"`
 	RequiresConfirm  bool     `json:"requires_confirm"`
+	// ConfirmWrites asks before each call that CHANGES something (any method
+	// but GET, HEAD or OPTIONS) and lets reads through: the tier between
+	// "ask every time" and "never ask" for a key an agent mostly reads with.
+	ConfirmWrites bool `json:"confirm_writes,omitempty"`
 	// CostPerCall, when > 0, prices each dispatched call through this
 	// credential into the admin cost chart + per-source breakdown (a "cost
 	// hook"). 0 = untracked (a free endpoint). Recorded via RecordExternalCost.
@@ -1873,7 +1877,9 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 			Required: []string{"url"},
 			Caps:     []Capability{CapNetwork},
 		},
-		NeedsConfirm: c.RequiresConfirm,
+		// Consulted per call when the credential asks before writes: the
+		// gate reads this call's method and lets a read through.
+		NeedsConfirm: c.AsksAtAll(),
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Resolved again per call, not the record captured when the
 			// catalog was built: a lend revoked or narrowed, a credential
@@ -2100,6 +2106,28 @@ func toolCallHeaderArgs(headers map[string]string) map[string]any {
 	return out
 }
 
+// AsksBefore reports whether a call with this HTTP method through c must be
+// approved first: every call when RequiresConfirm, a call that changes
+// something when ConfirmWrites. An unknown method ("") is read as a change,
+// since it could be one.
+func (c SecureCredential) AsksBefore(method string) bool {
+	return c.RequiresConfirm || (c.ConfirmWrites && IsWriteMethod(method))
+}
+
+// AsksAtAll reports whether any call through c may need approval: the flag a
+// tool on it carries so the confirm gate is consulted per call.
+func (c SecureCredential) AsksAtAll() bool { return c.RequiresConfirm || c.ConfirmWrites }
+
+// IsWriteMethod reports whether an HTTP method changes something: anything but
+// GET, HEAD and OPTIONS, including an unknown or templated one.
+func IsWriteMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "GET", "HEAD", "OPTIONS":
+		return false
+	}
+	return true
+}
+
 // reachesInternal says whether requests through c may go to internal
 // addresses (loopback, private, link-local: gohort itself, the cloud metadata
 // address, the LAN). A deployment credential may: an administrator set it up,
@@ -2163,8 +2191,10 @@ func (s *SecureAPI) callerMayDispatch(c SecureCredential, sess *ToolSession) err
 // bridge tool, a rest_poll connector): both go live with no approval, so they
 // are held to what the owner may spend, and a SECURED credential is refused,
 // since it is reached only through the tools bound to it and a poll is not one.
+// Nor is a call the credential asks about first (method, when given, is the
+// poll's): a poll fires with nobody there to ask.
 // Checked when the poll is made; dispatch asks again on every fire.
-func (s *SecureAPI) PollMayUse(owner, name string) error {
+func (s *SecureAPI) PollMayUse(owner, name string, method ...string) error {
 	c, ok := s.Resolve(name, owner)
 	if !ok {
 		return fmt.Errorf("no API credential named %q", name)
@@ -2174,6 +2204,13 @@ func (s *SecureAPI) PollMayUse(owner, name string) error {
 	}
 	if s.EffectiveSecured(c, owner) {
 		return fmt.Errorf("credential %q is SECURED: a standing poll cannot use it; poll through a tool bound to it instead", name)
+	}
+	m := "GET"
+	if len(method) > 0 && strings.TrimSpace(method[0]) != "" {
+		m = method[0]
+	}
+	if c.AsksBefore(m) {
+		return fmt.Errorf("credential %q asks before %s calls, and a standing poll runs with nobody there to ask", name, strings.ToUpper(m))
 	}
 	return nil
 }

@@ -158,3 +158,34 @@ func TestAWatchKeepsItsAgentsCredentialScope(t *testing.T) {
 		t.Errorf("another agent of bob's may: %v", err)
 	}
 }
+
+// "Confirm writes" asks before a call that changes something and lets reads
+// through; a standing poll cannot write through it, and its fetch_url tool
+// is marked so the gate is consulted per call.
+func TestConfirmWritesAsksOnlyBeforeChanges(t *testing.T) {
+	c := SecureCredential{Name: "tracker", ConfirmWrites: true}
+	for m, want := range map[string]bool{"GET": false, "head": false, "OPTIONS": false, "POST": true, "put": true, "DELETE": true, "PATCH": true, "": true} {
+		if got := c.AsksBefore(m); got != want {
+			t.Errorf("%q: asks=%v, want %v", m, got, want)
+		}
+	}
+	if !(SecureCredential{RequiresConfirm: true}).AsksBefore("GET") {
+		t.Error("confirm-each-call still asks before reads")
+	}
+
+	s := reachFixture(t)
+	if err := s.Save(SecureCredential{Name: "tracker", Type: SecureCredBearer, BaseURL: "https://tracker.example", ConfirmWrites: true}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PollMayUse("root", "tracker", "GET"); err != nil {
+		t.Errorf("a reading poll is fine: %v", err)
+	}
+	if err := s.PollMayUse("root", "tracker", "POST"); err == nil {
+		t.Error("a writing poll went through a credential that asks before writes")
+	}
+	for _, td := range s.BuildTools(&ToolSession{Username: "root"}) {
+		if td.Tool.Name == "fetch_url_tracker" && !td.NeedsConfirm {
+			t.Error("fetch_url_tracker is not put before the confirm gate")
+		}
+	}
+}

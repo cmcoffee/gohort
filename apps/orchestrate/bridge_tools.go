@@ -267,7 +267,7 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 		if !exists {
 			return "", fmt.Errorf("no API credential named %q: draft one first with draft_api_credential or draft_oauth_credential, then have the admin enable it in Admin > APIs", cred)
 		}
-		if err := Secure().PollMayUse(owner, cred); err != nil {
+		if err := Secure().PollMayUse(owner, cred, strings.TrimSpace(stringArg(args, "method"))); err != nil {
 			return "", err
 		}
 		if !enabled || !hasSecret {

@@ -90,3 +90,62 @@ func TestCheckCredentialShowsOnlyWhatTheCallerMaySee(t *testing.T) {
 		t.Errorf("carol sees her own call: %s", out)
 	}
 }
+
+// "Confirm writes" per call: in an unattended run a write through such a
+// credential waits for the owner and a read does not; a tool the owner
+// approved for unattended runs is already answered.
+func TestConfirmWritesInUnattendedRuns(t *testing.T) {
+	store := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return store }
+	t.Cleanup(func() { AuthDB = prev })
+	if err := Secure().Save(SecureCredential{Name: "tracker", Type: SecureCredBearer, BaseURL: "https://tracker.example", ConfirmWrites: true}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	sess := &ToolSession{Username: "alice"}
+	sess.TempTools = []*TempTool{
+		{Name: "tracker_box", Mode: TempToolModeToolbox, Credential: "tracker", Actions: []TempToolAction{{Name: "list"}, {Name: "close", Method: "DELETE"}}},
+		{Name: "tracker_box2", Mode: TempToolModeToolbox, Credential: "tracker", Expand: true, Actions: []TempToolAction{{Name: "list"}, {Name: "close", Method: "DELETE"}}},
+	}
+	g := &autonomousGate{app: &OrchestrateApp{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}}}, owner: "alice", sess: sess, auto: map[string]bool{}}
+	for _, c := range []struct {
+		name, args string
+		want       bool
+	}{
+		{"fetch_url_tracker", "method: GET\nurl: https://tracker.example/x", false},
+		{"fetch_url_tracker", "url: https://tracker.example/x", false},
+		{"fetch_url_tracker", "method: POST\nurl: https://tracker.example/x", true},
+		{"tracker_box", "action: list", false},
+		{"tracker_box", "action: close", true},
+		{"tracker_box2_list", "", false},
+		{"tracker_box2_close", "", true},
+	} {
+		if got := g.writeWaitsForOwner(c.name, c.args); got != c.want {
+			t.Errorf("%s %q: waits=%v, want %v", c.name, c.args, got, c.want)
+		}
+	}
+	g.auto["tracker_box"] = true
+	if g.writeWaitsForOwner("tracker_box", "action: close") {
+		t.Error("a tool the owner approved for unattended runs still waited")
+	}
+}
+
+// In chat, a read through a credential that asks before writes goes straight
+// through; a write asks, and with nobody watching the run it is refused.
+func TestConfirmWritesInChat(t *testing.T) {
+	store := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return store }
+	t.Cleanup(func() { AuthDB = prev })
+	if err := Secure().Save(SecureCredential{Name: "tracker", Type: SecureCredBearer, BaseURL: "https://tracker.example", ConfirmWrites: true}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	turn := &chatTurn{user: "alice"}
+	gate := turn.confirmFuncFor(&ToolSession{Username: "alice"})
+	if !gate("fetch_url_tracker", "method: GET\nurl: https://tracker.example/x") {
+		t.Error("a read was stopped")
+	}
+	if gate("fetch_url_tracker", "method: DELETE\nurl: https://tracker.example/x") {
+		t.Error("a write went through with nobody asked")
+	}
+}

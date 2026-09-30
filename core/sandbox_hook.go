@@ -583,11 +583,11 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			// script can't bypass the scope pill by fetching the host directly.
 			writeHookError(conn, "fetch blocked: host is served by credential \""+credName+"\", which this agent is not allowed to use (revoked in its credential scope)")
 			return
-		} else if credName != "" && credentialAsksEachCall(credName, sessUsername(h.Sess)) {
-			// A credential that asks before each call is not reached by a plain
-			// fetch, which no consent gate sees: a tool declares fetch_via for
-			// it, and the call is confirmed like the tool's own.
-			writeHookError(conn, "fetch refused: credential \""+credName+"\" asks before each call, so a script reaches it through fetch_via:"+credName+" declared on the tool, where the call can be confirmed")
+		} else if credName != "" && credentialAsksBefore(credName, sessUsername(h.Sess), hookMethod(params)) {
+			// A credential that asks before this call is not reached by a
+			// plain fetch, which no consent gate sees: a tool declares
+			// fetch_via for it, and the call is confirmed like the tool's own.
+			writeHookError(conn, "fetch refused: credential \""+credName+"\" asks before "+hookMethod(params)+" calls, so a script reaches it through fetch_via:"+credName+" declared on the tool, where the call can be confirmed")
 			return
 		} else if credName != "" {
 			method := "GET"
@@ -1842,9 +1842,17 @@ func init() {
 
 // credentialAsksEachCall reports whether the credential a name resolves to
 // for user is set to ask before every call.
-func credentialAsksEachCall(name, user string) bool {
+func credentialAsksBefore(name, user, method string) bool {
 	c, ok := Secure().Resolve(name, user)
-	return ok && c.RequiresConfirm
+	return ok && c.AsksBefore(method)
+}
+
+// hookMethod is a script request's HTTP method, GET when it names none.
+func hookMethod(params map[string]interface{}) string {
+	if m, ok := params["method"].(string); ok && strings.TrimSpace(m) != "" {
+		return strings.ToUpper(strings.TrimSpace(m))
+	}
+	return "GET"
 }
 
 // ScrubHandedOut replaces every raw key this hook gave the script, and its

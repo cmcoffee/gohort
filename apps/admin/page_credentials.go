@@ -339,6 +339,8 @@ func credentialFormFields(editing bool) []ui.FormField {
 			Detail: "It feeds the Costs tab chart and the per-source breakdown. 0 means untracked, for a free endpoint."},
 		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "The escalation tier: whether a call through this credential has to be approved first.",
 			Detail: "On, every agent call renders an Allow once / Deny card in the chat and waits for the session owner; headless runs, meaning channel wakes and schedules, are denied outright. Use it for services that reach real people, such as messaging, or that spend money.\n\nOff, calls dispatch silently, which is right for an agent's own low-stakes accounts."},
+		{Field: "confirm_writes", Label: "Confirm writes", Type: "toggle", ShowWhen: "!requires_confirm", Help: "Ask before a call that changes something (POST, PUT, PATCH, DELETE); reads go straight through.",
+			Detail: "The tier between asking every time and never asking, for a key an agent mostly reads with. A write shows an Allow once / Deny card to the session owner; in an unattended run (a schedule, a channel message) it waits in the owner's approval queue, whoever sent the message. Scripts are asked about as a whole, since their method is not known before they run. A standing poll cannot write through it."},
 		credScope,
 		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to the LLM as the call_<name> tool description."},
 	}

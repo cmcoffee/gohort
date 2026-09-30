@@ -275,7 +275,7 @@ func autonomousNoUnattendedSet(udb Database, agentID string) map[string]bool {
 // what the owner explicitly marked as gated. The rule itself is
 // autonomousToolAllowed; this is the half that has a queue to write to.
 func (g *autonomousGate) confirm(name, args string) bool {
-	if g.allows(name) {
+	if g.allows(name) && !g.writeWaitsForOwner(name, args) {
 		return true
 	}
 	// Marked never-unattended: refuse, and do NOT queue. A queue asks the owner
@@ -292,6 +292,37 @@ func (g *autonomousGate) confirm(name, args string) bool {
 		return false
 	}
 	g.queue(name, args)
+	return false
+}
+
+// writeWaitsForOwner reports whether this call changes something through a
+// credential that asks before writes, with nothing standing in for the
+// owner's answer: a sub-agent runs under its parent's, and a tool the owner
+// approved for unattended runs is already answered, as for a credential that
+// asks every time. Otherwise the call is queued for the owner, whoever sent
+// the message that started the run.
+func (g *autonomousGate) writeWaitsForOwner(name, args string) bool {
+	if g.subAgent || g.auto[name] {
+		return false
+	}
+	tt, action := toolForCall(g.sess, name)
+	if tt == nil {
+		if p, ok := UserToolByName(UserDB(g.app.DB, g.owner), g.owner, name); ok {
+			tt = &p.Tool
+		}
+	}
+	var creds []string
+	if tt != nil {
+		creds = toolCredentials(*tt)
+	} else {
+		creds = credentialsForToolCall(nil, name)
+	}
+	writes := callMayWrite(tt, action, name, args)
+	for _, cn := range creds {
+		if c, ok := Secure().Resolve(cn, g.owner); ok && c.ConfirmWrites && writes {
+			return true
+		}
+	}
 	return false
 }
 

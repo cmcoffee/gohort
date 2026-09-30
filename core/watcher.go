@@ -123,8 +123,19 @@ func InvokeWatchTool(owner, agentID, toolName string, toolArgs map[string]any) (
 // to it, and a poll is not one of them.
 func invokeCredentialPoll(sess *ToolSession, toolName string, toolArgs map[string]any) (string, error) {
 	credName := strings.TrimPrefix(toolName, "call_")
-	if c, ok := Secure().ResolveIn(credName, sessUsername(sess), sessAgentID(sess)); ok && Secure().EffectiveSecured(c, sessUsername(sess)) {
-		return "", fmt.Errorf("credential %q is SECURED: a standing poll cannot use it; poll through a tool bound to it instead", credName)
+	method := StringArg(toolArgs, "method")
+	if method == "" {
+		method = "GET"
+	}
+	if c, ok := Secure().ResolveIn(credName, sessUsername(sess), sessAgentID(sess)); ok {
+		if Secure().EffectiveSecured(c, sessUsername(sess)) {
+			return "", fmt.Errorf("credential %q is SECURED: a standing poll cannot use it; poll through a tool bound to it instead", credName)
+		}
+		if c.AsksBefore(method) {
+			// Nobody is there to ask: a poll never spends a key its owner
+			// wanted to approve call by call.
+			return "", fmt.Errorf("credential %q asks before %s calls, and a standing poll runs with nobody there to ask", credName, strings.ToUpper(method))
+		}
 	}
 	return Secure().DispatchToolCall(sess, credName, StringArg(toolArgs, "url"), StringArg(toolArgs, "method"), StringArg(toolArgs, "body"))
 }

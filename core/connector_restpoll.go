@@ -72,7 +72,7 @@ func (h restPollHandler) Validate(c Connector) error {
 	}
 	// It goes live on create (AutoApprove), so it is held to what its owner
 	// may spend when it is made, not only on each fire.
-	if err := Secure().PollMayUse(c.Owner, s.Credential); err != nil {
+	if err := Secure().PollMayUse(c.Owner, s.Credential, s.Method); err != nil {
 		return err
 	}
 	if !strings.HasPrefix(s.URL, "https://") && !strings.HasPrefix(s.URL, "http://") {

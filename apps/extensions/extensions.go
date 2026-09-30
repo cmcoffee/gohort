@@ -120,6 +120,7 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			ParamName       string `json:"param_name,omitempty"`
 			Description     string `json:"description,omitempty"`
 			RequiresConfirm bool   `json:"requires_confirm"`
+			ConfirmWrites   bool   `json:"confirm_writes"`
 			HasSecret       bool   `json:"has_secret"`
 			// NeedsKey: an authenticated credential with no key stored (a
 			// draft never finished). Every tool on it fails until it is set.
@@ -155,7 +156,7 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			_, _, stored := Secure().CredentialStatusOwned(user, c.Name)
 			return row{
 				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
-				Description: c.Description, RequiresConfirm: c.RequiresConfirm,
+				Description: c.Description, RequiresConfirm: c.RequiresConfirm, ConfirmWrites: c.ConfirmWrites,
 				HasSecret: c.Type != SecureCredNone && stored, Disabled: c.Disabled,
 				NeedsKey:  c.Type != SecureCredNone && !stored,
 				Secured:         c.Secured,
@@ -256,6 +257,7 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			Description     string `json:"description"`
 			Secret          string `json:"secret"`
 			RequiresConfirm bool   `json:"requires_confirm"`
+			ConfirmWrites   bool   `json:"confirm_writes"`
 			Secured         bool   `json:"secured"`
 			Lending         string `json:"lending"`
 		}
@@ -280,6 +282,7 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			ParamName:       strings.TrimSpace(body.ParamName),
 			Description:     strings.TrimSpace(body.Description),
 			RequiresConfirm: body.RequiresConfirm,
+			ConfirmWrites:   body.ConfirmWrites,
 			Lending:         body.Lending,
 			Owner:           user,
 		}
@@ -1587,6 +1590,8 @@ func credentialFormFields() []ui.FormField {
 		{Field: "secret", Label: "Secret / token / password", Type: "password", ShowWhen: "type:bearer|header|query|basic_auth", Help: "Stored encrypted, never shown to the assistant. For HTTP Basic, enter it as user:pass. Leave blank when editing to keep the stored value."},
 		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "When on, every agent call through this credential asks you to allow it first.",
 			Detail: "Use it for anything that reaches real people or spends money."},
+		{Field: "confirm_writes", Label: "Confirm writes", Type: "toggle", ShowWhen: "!requires_confirm", Help: "Ask before a call that changes something (POST, PUT, PATCH, DELETE); reads go straight through.",
+			Detail: "For a key your agents mostly read with. A write asks you first in the chat; in a run nobody is watching (a schedule, a channel message) it waits in your approval queue, whoever sent the message."},
 		{Field: "secured", Label: "Only tools that declare it", Type: "toggle",
 			Help: "OFF: every one of your agents gets a fetch_url_<name> tool for this credential and can call the API directly. " +
 				"ON: no such tool is generated, the credential is reachable only through tools you build that name it, so access follows those tools' scope rather than being open to everything you run. " +

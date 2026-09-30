@@ -239,6 +239,7 @@ func (a *AdminApp) registerCredentialsRoutes(sub *http.ServeMux) {
 				Description       string   `json:"description"`
 				CredScope         string   `json:"cred_scope"`
 				RequiresConfirm   bool     `json:"requires_confirm"`
+				ConfirmWrites     bool     `json:"confirm_writes"`
 				InsecureSkipTLS   bool     `json:"insecure_skip_tls"`
 				Secret            string   `json:"secret"`
 				Password          string   `json:"password"` // password-grant resource-owner password (the 2nd secret)
@@ -273,6 +274,7 @@ func (a *AdminApp) registerCredentialsRoutes(sub *http.ServeMux) {
 				Description:       strings.TrimSpace(req.Description),
 				CredScope:         strings.TrimSpace(req.CredScope),
 				RequiresConfirm:   req.RequiresConfirm,
+				ConfirmWrites:     req.ConfirmWrites,
 				InsecureSkipTLS:   req.InsecureSkipTLS,
 				AllowedMethods:    req.AllowedMethods,
 				DeniedURLPatterns: req.DeniedURLPatterns,
