@@ -322,6 +322,11 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 			if sess.CredentialDenied(credName) {
 				return "", fmt.Errorf("this host is served by credential %q, which this agent is not allowed to use (revoked in its credential scope). Ask an admin to re-enable %q for this agent under Admin > API Credentials > Manage scope, or use a different source", credName, credName)
 			}
+			// fetch_url does not stop to ask, so a credential that asks before
+			// each call is reached through its own tool, which does.
+			if c, ok := Secure().Resolve(credName, sess.Username); ok && c.RequiresConfirm {
+				return "", fmt.Errorf("this host is served by credential %q, which asks before each call: use fetch_url_%s, which asks the user first", credName, credName)
+			}
 			out, derr := Secure().DispatchToolCallArgs(sess, credName, args)
 			if derr != nil {
 				return out, derr

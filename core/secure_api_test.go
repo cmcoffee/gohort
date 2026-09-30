@@ -1168,6 +1168,9 @@ func TestTwoLendersOfTheSameNameRefuseToResolve(t *testing.T) {
 // owner's own use of the key allows.
 func TestAReadOnlyLendCannotWrite(t *testing.T) {
 	secureAPITestStore(t)
+	// The lender reaches the local test server, which only an
+	// administrator's personal credential may.
+	adminUsers(t, "alice")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{}`))
 	}))
@@ -1198,6 +1201,9 @@ func TestAReadOnlyLendCannotWrite(t *testing.T) {
 // A read-write lend writes. The grant is a grant.
 func TestAReadWriteLendCanWrite(t *testing.T) {
 	secureAPITestStore(t)
+	// The lender reaches the local test server, which only an
+	// administrator's personal credential may.
+	adminUsers(t, "alice")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{}`))
 	}))
@@ -1217,6 +1223,9 @@ func TestAReadWriteLendCanWrite(t *testing.T) {
 // exactly what its owner wants to see.
 func TestABlockedWriteIsRecorded(t *testing.T) {
 	secureAPITestStore(t)
+	// The lender reaches the local test server, which only an
+	// administrator's personal credential may.
+	adminUsers(t, "alice")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("the request reached the server")
 	}))
@@ -1890,4 +1899,17 @@ func TestAgentsCannotOverwriteAWorkingKey(t *testing.T) {
 	if err := s.StoreAgentSecret("alice", false, "missing", "k"); err == nil {
 		t.Error("a credential that does not exist is not created")
 	}
+}
+
+// adminUsers makes the named users administrators for one test, so their
+// personal credentials may reach internal addresses (a local test server).
+func adminUsers(t *testing.T, users ...string) {
+	t.Helper()
+	adb := &DBase{Store: kvlite.MemStore()}
+	for _, u := range users {
+		adb.Set(AuthTable, "user:"+u, AuthUser{Username: u, Admin: true})
+	}
+	prev := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prev })
 }

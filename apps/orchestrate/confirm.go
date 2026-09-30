@@ -96,21 +96,45 @@ func toolRecordFor(sess *ToolSession, name string) *TempTool {
 	return nil
 }
 
-func credentialForToolCall(sess *ToolSession, name string) string {
+// credentialsForToolCall is every credential a call can spend: an api tool's
+// own, and a script tool's fetch_via:<name> and secret:<name> hooks, or the
+// credential a bridge poll or fetch_url_<name> tool is named for. It used to
+// read only an api tool's Credential, so a script reaching the same key
+// through a hook never met the consent the credential asks for, in chat or
+// unattended.
+func credentialsForToolCall(sess *ToolSession, name string) []string {
 	if sess != nil {
 		for _, tt := range sess.CopyTempTools() {
 			if tt.Name == name {
-				return strings.TrimSpace(tt.Credential)
+				return toolCredentials(*tt)
 			}
 		}
 	}
 	if rest := strings.TrimPrefix(name, bridgeCredToolPrefix); rest != name {
-		return rest
+		return []string{rest}
 	}
 	if rest := strings.TrimPrefix(name, "fetch_url_"); rest != name {
-		return rest
+		return []string{rest}
 	}
-	return ""
+	return nil
+}
+
+// toolCredentials is the credentials one tool record reaches.
+func toolCredentials(tt TempTool) []string {
+	var out []string
+	if c := strings.TrimSpace(tt.Credential); c != "" {
+		out = append(out, c)
+	}
+	for _, capName := range tt.HookCapabilities {
+		for _, prefix := range []string{"fetch_via:", "secret:"} {
+			if rest := strings.TrimPrefix(capName, prefix); rest != capName {
+				if rest = strings.TrimSpace(rest); rest != "" {
+					out = append(out, rest)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // confirmFuncFor builds the AgentLoopConfig.Confirm hook for this
@@ -170,7 +194,13 @@ func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) boo
 				because: "you set this tool to ask before every call",
 			})
 		}
-		cred := credentialForToolCall(sess, name)
+		var cred string
+		for _, cn := range credentialsForToolCall(sess, name) {
+			if c, ok := Secure().Resolve(cn, t.user); ok && c.RequiresConfirm {
+				cred = cn
+				break
+			}
+		}
 		if cred == "" {
 			return true
 		}

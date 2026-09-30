@@ -129,18 +129,23 @@ func (g *autonomousGate) alwaysConfirms(name string) bool {
 // one of them used to answer it their own way and drifted; see
 // autonomousToolAllowed for why that drift is expensive.
 func toolAlwaysConfirms(udb Database, owner string, sess *ToolSession, name string) bool {
-	cred := credentialForToolCall(sess, name)
-	if cred == "" {
+	creds := credentialsForToolCall(sess, name)
+	if len(creds) == 0 {
 		// A standing fire builds its session INSIDE the dispatch, so the gate is
 		// constructed without one. The name→credential mapping doesn't need a
 		// session though — it's on the stored tool. Resolving it here is what
 		// keeps the two unattended surfaces on the same policy instead of the
 		// session-less one quietly allowing everything.
 		if p, ok := UserToolByName(udb, owner, name); ok {
-			cred = strings.TrimSpace(p.Tool.Credential)
+			creds = toolCredentials(p.Tool)
 		}
 	}
-	return credentialAlwaysConfirms(owner, cred)
+	for _, cred := range creds {
+		if credentialAlwaysConfirms(owner, cred) {
+			return true
+		}
+	}
+	return false
 }
 
 // credentialAlwaysConfirms is the innermost question — does THIS credential ask

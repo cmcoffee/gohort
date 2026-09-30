@@ -302,6 +302,9 @@ func (s *SecureAPI) SaveOAuthDraft(c SecureCredential) error {
 	if !s.ready() {
 		return fmt.Errorf("secure-api store not initialized")
 	}
+	if !validCredName(c.Name) {
+		return fmt.Errorf("name must be lowercase letters/digits/underscores only, with no \"__\"")
+	}
 	c.Type = SecureCredOAuth2
 	c.Disabled = true // inert until the admin adds the secret + enables
 	switch c.Grant {
@@ -362,8 +365,11 @@ func (s *SecureAPI) SaveAPIDraft(c SecureCredential) error {
 	if !s.ready() {
 		return fmt.Errorf("secure-api store not initialized")
 	}
-	if !validToolNameStr(c.Name) {
-		return fmt.Errorf("name must be lowercase letters/digits/underscores only")
+	if !validCredName(c.Name) {
+		return fmt.Errorf("name must be lowercase letters/digits/underscores only, with no \"__\"")
+	}
+	if err := s.internalReachRefusal(c); err != nil {
+		return err
 	}
 	switch c.Type {
 	case SecureCredBearer, SecureCredBasicAuth:
@@ -433,10 +439,25 @@ func (s *SecureAPI) TestMintFromPosted(ctx context.Context, c SecureCredential, 
 	if strings.TrimSpace(c.Grant) == "" || strings.TrimSpace(c.TokenURL) == "" {
 		return "", fmt.Errorf("grant and token_url are required to test")
 	}
+	if !validCredName(c.Name) {
+		return "", fmt.Errorf("name must be a credential's name: lowercase letters, digits and underscores, with no \"__\"")
+	}
+	// The password grant reads the STORED password by name inside the mint,
+	// whatever the posted form holds: test a moved token host only once saved.
+	if prev, ok := s.Load(c.Name); ok && c.Grant == OAuthGrantPassword && credDestinationMoved(prev, c) {
+		return "", fmt.Errorf("the token URL differs from the saved one: save the credential (and re-enter its secrets) before testing it")
+	}
 	secret := strings.TrimSpace(postedSecret)
 	if secret == "" || secret == "(pending)" {
-		if stored, ok := s.loadSecret(c.Name); ok {
-			secret = strings.TrimSpace(stored)
+		// The stored secret is used only for the credential it belongs to,
+		// posted as it is stored: a name that is not a credential's (a
+		// "@u:<user>:<name>" key, a "__" key) or a record pointed at another
+		// token host would send somebody's secret to an address of the
+		// poster's choosing.
+		if prev, ok := s.Load(c.Name); ok && validCredName(c.Name) && prev.Type == c.Type && !credDestinationMoved(prev, c) {
+			if stored, ok := s.loadSecret(c.Name); ok {
+				secret = strings.TrimSpace(stored)
+			}
 		}
 	}
 	if secret == "" || secret == "(pending)" {

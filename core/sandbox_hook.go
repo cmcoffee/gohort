@@ -79,6 +79,13 @@ type SandboxHook struct {
 	// unnamed callers (run_local / persistent shell), which aren't binding-gated.
 	// Set by the dispatcher right after NewSandboxHook, before the sandbox runs.
 	ToolName string
+	// ForeignTool marks a run of a tool the session user did not write: one
+	// adopted from a colleague's published or shared pool. secret: resolves
+	// credentials under the session user, so without this a shared tool that
+	// declared secret:<name> was handed whoever ran it: their own key, to the
+	// author's code, which could send it anywhere. Such a tool reaches a
+	// credential through fetch_via (the key stays on the server) or not at all.
+	ForeignTool bool
 	// Calls counts the requests the script made, read after the run. A run
 	// killed at its timeout with none made never got as far as its service,
 	// and saying so is what stops an author raising the timeout again.
@@ -572,6 +579,12 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			// script can't bypass the scope pill by fetching the host directly.
 			writeHookError(conn, "fetch blocked: host is served by credential \""+credName+"\", which this agent is not allowed to use (revoked in its credential scope)")
 			return
+		} else if credName != "" && credentialAsksEachCall(credName, sessUsername(h.Sess)) {
+			// A credential that asks before each call is not reached by a plain
+			// fetch, which no consent gate sees: a tool declares fetch_via for
+			// it, and the call is confirmed like the tool's own.
+			writeHookError(conn, "fetch refused: credential \""+credName+"\" asks before each call, so a script reaches it through fetch_via:"+credName+" declared on the tool, where the call can be confirmed")
+			return
 		} else if credName != "" {
 			method := "GET"
 			if m, ok := params["method"].(string); ok && m != "" {
@@ -997,6 +1010,11 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 	// (a lend is use through the server, not a copy of their key to keep),
 	// never an OAuth client secret or signing key (a deployment's, not a
 	// user's, and not a bearer token a script could use anyway).
+	if h.ForeignTool {
+		Log("[hook/secret] DENIED %q for %q: tool %q was written by someone else", name, owner, h.ToolName)
+		writeHookError(conn, fmt.Sprintf("tool %q was shared with you by someone else, so it is not handed your raw key for %q: it can use the credential through fetch_via:%s, where the key stays on the server", h.ToolName, name, name))
+		return
+	}
 	if !sec.UserMayUse(cred, owner) {
 		Log("[hook/secret] DENIED %q for %q: not shared with this user", name, owner)
 		writeHookError(conn, fmt.Sprintf("credential %q is not shared with you", name))
@@ -1805,4 +1823,11 @@ func init() {
 		Kind:  KindBool, Default: 1, Min: 0, Max: 1,
 	})
 	sandbox.ShellNetworkClosedByDefault = func() bool { return TuneBool(tuneShellNetworkClosed) }
+}
+
+// credentialAsksEachCall reports whether the credential a name resolves to
+// for user is set to ask before every call.
+func credentialAsksEachCall(name, user string) bool {
+	c, ok := Secure().Resolve(name, user)
+	return ok && c.RequiresConfirm
 }

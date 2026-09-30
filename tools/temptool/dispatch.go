@@ -587,6 +587,9 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		// this turn gets no such lift, or tool_def would be the way around the
 		// ceiling. See SandboxHook.WorkspaceNetExempt.
 		hook.WorkspaceNetExempt = toolIsGranted(sess, tt)
+		// Somebody else's tool (adopted from their pool) is not handed the
+		// runner's raw keys: see SandboxHook.ForeignTool.
+		hook.ForeignTool = toolIsForeign(sess, tt)
 		envArgs["GOHORT_HOOK_PATH"] = hook.SocketPath
 		// The gohort helper package is bind-mounted RO into the
 		// sandbox from a host-side library dir (see
@@ -797,6 +800,21 @@ func toolIsGranted(sess *ToolSession, tt *TempTool) bool {
 	}
 	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
 		if p.Tool.Name == tt.Name {
+			return true
+		}
+	}
+	return false
+}
+
+// toolIsForeign reports whether tt runs from another user's pool: adopted
+// from a colleague, not in the session user's own tools and not a draft
+// written this session.
+func toolIsForeign(sess *ToolSession, tt *TempTool) bool {
+	if sess == nil || tt == nil || toolIsGranted(sess, tt) {
+		return false
+	}
+	for _, lt := range AdoptedToolsFor(sess.DB, sess.Username) {
+		if lt.Tool.Name == tt.Name {
 			return true
 		}
 	}

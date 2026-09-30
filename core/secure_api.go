@@ -98,6 +98,9 @@ type SecureCredential struct {
 	// by core and read by dispatch, never serialized to the store, never
 	// present on a loaded credential, and never nameable by a model.
 	inlineSecret string
+	// publicOnly marks a credential synthesized for one call that must keep
+	// to public addresses (the legacy no_auth path). Unexported: never stored.
+	publicOnly bool
 
 	Name              string `json:"name"`
 	Type              string `json:"type"`
@@ -574,6 +577,13 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	if !validToolNameStr(c.Name) {
 		return fmt.Errorf("name must be lowercase letters/digits/underscores only")
 	}
+	if strings.Contains(c.Name, "__") && !s.db.Get(secureAPITable, credStoreKey(c.Owner, c.Name), &SecureCredential{}) {
+		// New names only: a record saved before the rule keeps being editable.
+		return fmt.Errorf("a credential name cannot contain \"__\" (it is how the store names a credential's secret)")
+	}
+	if err := s.internalReachRefusal(c); err != nil {
+		return err
+	}
 	switch c.Type {
 	case SecureCredBearer, SecureCredHeader, SecureCredQuery, SecureCredBasicAuth, SecureCredNone:
 	case SecureCredOAuth2:
@@ -946,6 +956,16 @@ func (s *SecureAPI) ResolveIn(name, user, agentID string) (SecureCredential, boo
 		// chose should mean their own key; before the global, because a
 		// colleague handing you a credential is the more specific answer.
 		if c, owners := s.resolveShared(name, user, agentID); len(owners) == 1 {
+			// A deployment credential of the same name that this user may
+			// use is not taken over by a lend. Lending needs no acceptance,
+			// so a lend named like it would have sent their calls (and their
+			// request bodies) through the lender's key and host instead.
+			if g, ok := s.Load(name); ok && s.UserMayUse(g, user) {
+				if _, seen := shadowNoted.LoadOrStore("lend\x00"+user+"\x00"+name, true); !seen {
+					Log("[secure_api] %s was lent a credential named %q by %s, the name of a deployment credential: using the deployment's", user, name, c.Owner)
+				}
+				return g, true
+			}
 			return c, true
 		} else if len(owners) > 1 {
 			// Two people lent this user a credential of the same name. Picking
@@ -1920,6 +1940,10 @@ func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, me
 			Type:              SecureCredNone,
 			AllowedURLPattern: "https://**",
 			Description:       "Synthesized unauthenticated dispatch: back-compat for tools authored before fetch_url subsumed this path.",
+			// The reach of a plain fetch, which is what it stands in for:
+			// "https://**" otherwise let an old api tool call gohort itself,
+			// the metadata address or the LAN.
+			publicOnly: true,
 		}
 		args := map[string]any{
 			"url":    urlStr,
@@ -1984,6 +2008,39 @@ func toolCallHeaderArgs(headers map[string]string) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// reachesInternal says whether requests through c may go to internal
+// addresses (loopback, private, link-local: gohort itself, the cloud metadata
+// address, the LAN). A deployment credential may: an administrator set it up,
+// often for exactly that (a firewall, a NAS). So may a personal one an
+// administrator owns. A personal credential anybody else owns may not, or
+// any signed-in user could point one at an internal service and have the
+// server make the request for them; and neither may the synthesized no_auth
+// credential old api tools use, which has the reach of a plain fetch.
+func (s *SecureAPI) reachesInternal(c SecureCredential) bool {
+	if c.publicOnly {
+		return false
+	}
+	return c.Owner == "" || UserIsAdmin(c.Owner)
+}
+
+// internalReachRefusal refuses saving a personal credential that names an
+// internal address when its owner may not reach one: said when it is set up,
+// rather than on its first call.
+func (s *SecureAPI) internalReachRefusal(c SecureCredential) error {
+	if s.reachesInternal(c) {
+		return nil
+	}
+	for _, u := range []string{c.BaseURL, c.AllowedURLPattern} {
+		if u = strings.TrimSpace(u); u == "" {
+			continue
+		}
+		if err := RefuseNonPublicHost(strings.ReplaceAll(u, "*", "x")); err != nil {
+			return fmt.Errorf("a personal credential can reach public addresses only (%v): an administrator sets up credentials for internal services", err)
+		}
+	}
+	return nil
 }
 
 // callerMayDispatch is WHO may spend this key, asked where every path meets.
@@ -2445,6 +2502,15 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// Client cap must match the context cap, or the shorter of the two wins
 	// and the override above is silently undone.
 	httpClient := &http.Client{Timeout: callTimeout, CheckRedirect: credentialRedirectCheck(c)}
+	if !s.reachesInternal(c) {
+		// Public addresses only, checked on the address actually dialled (a
+		// name that resolves inward, a DNS answer that changes, a redirect),
+		// not only on the URL as written.
+		if err := RefuseNonPublicHost(rawURL); err != nil {
+			return "", fmt.Errorf("%w: credential %q may reach public addresses only", err, c.Name)
+		}
+		httpClient.Transport = NewPublicHTTPClient().Transport
+	}
 	if c.InsecureSkipTLS {
 		// Per-credential opt-out of cert verification (self-signed / IP-addressed
 		// LAN appliances). Scoped to this credential's allow-listed host only.
@@ -3094,6 +3160,16 @@ func writeWorkspaceFile(absPath string, r io.Reader, maxBytes int64) (int64, err
 	return written, nil
 }
 
+// validCredName is a credential name: a tool-safe name with no "__". The
+// store keeps a credential's secret, password and per-user tokens under
+// "<name>__secret", "<name>__password", "<name>__usertok__<user>" and the
+// like, so a name containing "__" can land ON another credential's secret
+// and overwrite it (or read as it). "@" and ":" (a user's namespace) are
+// already refused by the tool-name rule.
+func validCredName(s string) bool {
+	return validToolNameStr(s) && !strings.Contains(s, "__")
+}
+
 // validToolNameStr matches the temptool name validator. Inlined here
 // to avoid an import cycle.
 func validToolNameStr(s string) bool {
@@ -3200,6 +3276,10 @@ func (s *SecureAPI) SetCredentialShares(owner, name string, readOnly, readWrite 
 	}
 	write := cleanShareList(readWrite, owner, nil)
 	read := cleanShareList(readOnly, owner, write)
+	if len(read)+len(write) > 0 && s.db.Get(secureAPITable, name, &SecureCredential{}) {
+		s.mu.Unlock()
+		return fmt.Errorf("the deployment has a credential named %q, so a lend of yours under that name would not reach anyone: rename yours to lend it", name)
+	}
 	// The policy is enforced where the lists are WRITTEN, which is here for
 	// every door: the guided flow, both pickers, the fan-out and the ledger.
 	// A flow that merely declined to OFFER a lend would be one refusal that
