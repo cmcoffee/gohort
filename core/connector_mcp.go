@@ -70,6 +70,12 @@ func (h remoteMCPHandler) Validate(c Connector) error {
 		if exists, _, _ := Secure().CredentialStatus(s.SecureCred); !exists {
 			return fmt.Errorf("no credential named %q: draft it first (draft_oauth_credential) and have the admin enable it in Admin > APIs", s.SecureCred)
 		}
+		// Its token is sent only inside the credential's allow-list, so a
+		// server outside it would fail on every call: say so now, where the
+		// admin approving it can see the mismatch.
+		if cred, ok := Secure().Load(s.SecureCred); ok && !urlAllowedByCredential(cred, s.URL) {
+			return fmt.Errorf("the MCP url %s is outside credential %q's allowed addresses (%s): its token is not sent there", s.URL, s.SecureCred, firstNonBlank(cred.BaseURL, cred.AllowedURLPattern))
+		}
 	case MCPAuthBearer:
 		return fmt.Errorf("bearer auth carries a static secret: add a bearer MCP server directly in Admin > MCP Servers, not via a connector")
 	default:
@@ -121,6 +127,10 @@ func (h remoteMCPHandler) Summary(c Connector) string {
 	url := s.URL
 	if url == "" {
 		url = "(no url)"
+	}
+	if s.AuthMode == string(MCPAuthSecure) && s.SecureCred != "" {
+		// Name the key it spends, for the admin approving it.
+		auth += " via credential " + s.SecureCred
 	}
 	return fmt.Sprintf("remote MCP server %s (auth: %s) → tools as %s.<tool>", url, auth, c.Name)
 }

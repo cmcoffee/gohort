@@ -628,6 +628,9 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		if !strings.HasPrefix(strings.ToLower(b), "https://") && !strings.HasPrefix(strings.ToLower(b), "http://") {
 			return fmt.Errorf("base_url must start with https:// or http://")
 		}
+		if why := baseURLProblem(b); why != "" {
+			return fmt.Errorf("base_url %s", why)
+		}
 	} else if !strings.HasPrefix(c.AllowedURLPattern, "https://") && !strings.HasPrefix(c.AllowedURLPattern, "http://") {
 		return fmt.Errorf("allowed_url_pattern must start with http:// or https://")
 	}
@@ -2187,6 +2190,10 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// URL allowlist check. THIS IS THE LINCHPIN. If the LLM somehow
 	// produces a URL outside the allowed pattern, we refuse — no
 	// header is ever attached.
+	if why := credentialURLTrick(rawURL); why != "" {
+		return "", s.refuse(c, sess, method, rawURL, fmt.Sprintf(
+			"url %q is not sent with credential %q: it has %s, which reads as one path to the allow-list and another to the server. Write the plain path", rawURL, c.Name, why))
+	}
 	if !urlAllowedByCredential(c, rawURL) {
 		// Render the SEMANTICS of an empty endpoint list, not the bare
 		// "[]" — models (and admins) reliably misread "endpoints=[]"
@@ -2232,22 +2239,6 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 
 	// Daily call cap: count successful (non-error) audit entries in
 	// the last 24h. Non-zero MaxCallsPerDay activates the cap.
-	if c.MaxCallsPerDay > 0 {
-		cutoff := time.Now().Add(-24 * time.Hour)
-		count := 0
-		for _, e := range s.LoadAudit(c.Owner, c.Name) {
-			if e.Timestamp.Before(cutoff) {
-				continue
-			}
-			if e.Error != "" {
-				continue // failed calls don't count toward the cap
-			}
-			count++
-		}
-		if count >= c.MaxCallsPerDay {
-			return "", fmt.Errorf("daily cap of %d reached for credential %q (counted %d successful calls in the last 24h): raise the cap in admin if this is legitimate", c.MaxCallsPerDay, c.Name, count)
-		}
-	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid url: %w", err)
@@ -2489,6 +2480,21 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if oauthBearer != "" {
 		redactList = append(redactList, oauthBearer)
 	}
+	// And each one as it appears once encoded: a query-param key sits in the
+	// request URL percent-encoded, and Go's transport errors quote that URL
+	// whole; a JSON body escapes "/" and "+". A key with any of those
+	// characters walked past a match on its raw form alone.
+	for _, sec := range append([]string(nil), redactList...) {
+		if sec == "" {
+			continue
+		}
+		enc, _ := json.Marshal(sec)
+		for _, v := range []string{url.QueryEscape(sec), url.PathEscape(sec), strings.Trim(string(enc), `"`), strings.ReplaceAll(sec, "/", `\/`)} {
+			if v != sec {
+				redactList = append(redactList, v)
+			}
+		}
+	}
 	redact := func(s string) string {
 		for _, sec := range redactList {
 			if sec == "" || len(sec) < 4 {
@@ -2517,6 +2523,18 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		tr := http.DefaultTransport.(*http.Transport).Clone()
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		httpClient.Transport = tr
+	}
+	// Counted on its own, not read off the audit ring: that keeps the last
+	// 50 entries by default, so a cap above 50 could never be reached. The
+	// call takes its place just before it is sent (two at once cannot both slip
+	// under the cap) and gives it back if it never reaches the server.
+	capReserved := false
+	if c.MaxCallsPerDay > 0 {
+		count, ok := s.reserveDailyCall(c)
+		if !ok {
+			return "", fmt.Errorf("daily cap of %d reached for credential %q (%d calls in the last 24h): raise the cap in admin if this is legitimate", c.MaxCallsPerDay, c.Name, count)
+		}
+		capReserved = true
 	}
 	resp, err := httpClient.Do(req)
 	if err == nil {
@@ -2558,6 +2576,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			// at the same cap, each retry told it was probably a blip.
 			return "", fmt.Errorf("%s did not respond within %s (timeout). That is a wait limit, not a sign the address, scheme, port or credential is wrong: do NOT tell the user to change them over a timeout. If this endpoint does real work per request (a generation, a render, a long report), a retry hits the same limit: raise the wait instead, with timeout_sec on the tool (api, toolbox or shell, up to 300s) or timeout= on a script's fetch_via/fetch_url call, and say so plainly if you cannot. If it is normally fast, it may be a momentary blip: retry once, and if it times out again, stop and report it", host, callTimeout)
 		}
+		if capReserved {
+			s.releaseDailyCall(c) // it never reached the server
+		}
 		return "", fmt.Errorf("request failed: %s", redact(err.Error()))
 	}
 	defer resp.Body.Close()
@@ -2587,7 +2608,19 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if saveTo != "" {
 		// Read with cap+1 so we can detect truncation. ResponseBytes
 		// in the audit reflects what we actually wrote.
-		limited := io.LimitReader(resp.Body, secureAPIMaxSaveBytes()+1)
+		var limited io.Reader = io.LimitReader(resp.Body, secureAPIMaxSaveBytes()+1)
+		if textualContentType(ct) {
+			// Text is redacted like a body the model reads: a reply that
+			// echoes the key (a debug route, a next-page link carrying
+			// ?api_key=) would otherwise put it in a file the agent, and a
+			// script whose key is meant to stay on the server, can open.
+			raw, rerr := io.ReadAll(limited)
+			if rerr == nil {
+				limited = strings.NewReader(redact(string(raw)))
+			} else {
+				limited = strings.NewReader("")
+			}
+		}
 		written, err := writeWorkspaceFile(savePath, limited, secureAPIMaxSaveBytes())
 		if err != nil {
 			auditEntry.Status = resp.StatusCode
@@ -2687,7 +2720,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		var anyVal interface{}
 		if json.Unmarshal(bodyBytes, &anyVal) == nil {
 			if pretty, err := json.MarshalIndent(anyVal, "", "  "); err == nil {
-				sb.Write(pretty)
+				// Redacted again: re-encoding undoes escapes, so a key the
+				// body carried escaped comes back out raw.
+				sb.WriteString(redact(string(pretty)))
 				if truncated {
 					sb.WriteString(secureAPICutNote)
 				}
@@ -3060,6 +3095,9 @@ func credentialRedirectCheck(c SecureCredential) func(*http.Request, []*http.Req
 // and falls back to the legacy single AllowedURLPattern for credentials that
 // predate the split.
 func urlAllowedByCredential(c SecureCredential, rawURL string) bool {
+	if credentialURLTrick(rawURL) != "" {
+		return false
+	}
 	if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
 		eps := c.AllowedEndpoints
 		if len(eps) == 0 {
@@ -3089,8 +3127,79 @@ func urlAllowedByCredential(c SecureCredential, rawURL string) bool {
 	return urlMatchesPattern(rawURL, c.AllowedURLPattern)
 }
 
+// urlMatchesPattern matches a URL against an allow or deny pattern: the whole
+// string by glob, and the HOST the URL actually names against the pattern's
+// host. The string match alone let a "*" in a pattern's host run on past it:
+// "https://*.corp.example/**" matched "https://evil.example?.corp.example/x",
+// whose host is evil.example.
 func urlMatchesPattern(u, pattern string) bool {
-	return globMatch(u, pattern)
+	if !globMatch(u, pattern) {
+		return false
+	}
+	hostPat := pattern
+	if i := strings.Index(hostPat, "://"); i >= 0 {
+		hostPat = hostPat[i+3:]
+	}
+	if i := strings.IndexByte(hostPat, '/'); i >= 0 {
+		hostPat = hostPat[:i]
+	}
+	if hostPat == "" || hostPat == "**" {
+		return true
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+	return globMatch(strings.ToLower(parsed.Host), strings.ToLower(hostPat))
+}
+
+// baseURLProblem says what is wrong with a credential's Base URL, or "": it
+// pins the one server the key goes to, so it is a plain address. A "*" in it
+// became a glob that matched other hosts, and a user name, query or fragment
+// has no meaning there.
+func baseURLProblem(b string) string {
+	if strings.ContainsAny(b, "*?#\\") {
+		return "must be a plain address, with no *, ?, # or backslash"
+	}
+	u, err := url.Parse(b)
+	if err != nil || u.Host == "" {
+		return "must be an address with a host, e.g. https://api.example.com"
+	}
+	if u.User != nil {
+		return "must not carry a user name or password (the credential supplies auth)"
+	}
+	return ""
+}
+
+// credentialURLTrick names what makes a URL unsafe to match against a
+// credential's allow and deny lists, or "" when nothing does. The lists match
+// the URL as written; a server resolves "..", "%2F" and "%2e" in the path,
+// drops a "#fragment" and treats a backslash its own way, so each of those can
+// read as an allowed path here and reach a different one there. Credentials in
+// the URL ("user@host") are refused too: auth comes from the credential.
+func credentialURLTrick(rawURL string) string {
+	if strings.ContainsAny(rawURL, "\\#") {
+		return "a backslash or a #fragment"
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "no http(s) host"
+	}
+	if u.User != nil {
+		return "a user name or password in it"
+	}
+	esc := strings.ToLower(u.EscapedPath())
+	for _, enc := range []string{"%2f", "%5c", "%2e"} {
+		if strings.Contains(esc, enc) {
+			return "an encoded / or ."
+		}
+	}
+	for _, seg := range strings.Split(u.Path, "/") {
+		if seg == "." || seg == ".." {
+			return "a . or .. path segment"
+		}
+	}
+	return ""
 }
 
 func globMatch(s, pattern string) bool {
@@ -3137,6 +3246,67 @@ func globMatch(s, pattern string) bool {
 		pi++
 	}
 	return si == len(s)
+}
+
+// secureAPICallCountTable holds each credential's calls per hour over the last
+// day, for its daily cap.
+const secureAPICallCountTable = "secure_api_call_counts"
+
+type dailyCallCount struct {
+	Hours map[int64]int // hours since the epoch -> calls in that hour
+}
+
+// reserveDailyCall counts one call against c's daily cap. It reports the
+// calls in the last 24 hours and false, without counting, when the cap is
+// already reached.
+func (s *SecureAPI) reserveDailyCall(c SecureCredential) (int, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := credStoreKey(c.Owner, c.Name)
+	var dc dailyCallCount
+	s.db.Get(secureAPICallCountTable, key, &dc)
+	hour := time.Now().Unix() / 3600
+	kept, total := map[int64]int{}, 0
+	for h, n := range dc.Hours {
+		if h > hour-24 {
+			kept[h] = n
+			total += n
+		}
+	}
+	if total >= c.MaxCallsPerDay {
+		return total, false
+	}
+	kept[hour]++
+	s.db.Set(secureAPICallCountTable, key, dailyCallCount{Hours: kept})
+	return total + 1, true
+}
+
+// releaseDailyCall gives back a call that never reached its server.
+func (s *SecureAPI) releaseDailyCall(c SecureCredential) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := credStoreKey(c.Owner, c.Name)
+	var dc dailyCallCount
+	if !s.db.Get(secureAPICallCountTable, key, &dc) {
+		return
+	}
+	hour := time.Now().Unix() / 3600
+	if dc.Hours[hour] > 0 {
+		dc.Hours[hour]--
+		s.db.Set(secureAPICallCountTable, key, dc)
+	}
+}
+
+// textualContentType reports whether a response is text a key could be read
+// out of (text/*, JSON, XML, JavaScript, form data), as opposed to binary.
+func textualContentType(ct string) bool {
+	ct = strings.ToLower(ct)
+	for _, t := range []string{"text/", "json", "xml", "javascript", "x-www-form-urlencoded", "csv", "yaml"} {
+		if strings.Contains(ct, t) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeWorkspaceFile streams r to absPath, capping at maxBytes. Returns

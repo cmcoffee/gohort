@@ -86,6 +86,10 @@ type SandboxHook struct {
 	// author's code, which could send it anywhere. Such a tool reaches a
 	// credential through fetch_via (the key stays on the server) or not at all.
 	ForeignTool bool
+	// handedOut holds the raw keys given to the script (secret:), so what it
+	// prints can be scrubbed of them (ScrubHandedOut).
+	handedOutMu sync.Mutex
+	handedOut   []string
 	// Calls counts the requests the script made, read after the run. A run
 	// killed at its timeout with none made never got as far as its service,
 	// and saying so is what stops an author raising the timeout again.
@@ -1052,6 +1056,9 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 		return
 	}
 	Log("[hook/secret] %q (type=%s, %dB) → script", name, cred.Type, len(secret))
+	h.handedOutMu.Lock()
+	h.handedOut = append(h.handedOut, secret)
+	h.handedOutMu.Unlock()
 	writeHookResult(conn, map[string]string{"secret": secret, "type": cred.Type})
 }
 
@@ -1830,4 +1837,27 @@ func init() {
 func credentialAsksEachCall(name, user string) bool {
 	c, ok := Secure().Resolve(name, user)
 	return ok && c.RequiresConfirm
+}
+
+// ScrubHandedOut replaces every raw key this hook gave the script, and its
+// URL- and JSON-encoded forms, with [REDACTED] in out.
+func (h *SandboxHook) ScrubHandedOut(out string) string {
+	if h == nil {
+		return out
+	}
+	h.handedOutMu.Lock()
+	keys := append([]string(nil), h.handedOut...)
+	h.handedOutMu.Unlock()
+	for _, k := range keys {
+		if len(k) < 4 {
+			continue
+		}
+		enc, _ := json.Marshal(k)
+		for _, v := range []string{k, neturl.QueryEscape(k), neturl.PathEscape(k), strings.Trim(string(enc), `"`)} {
+			if v != "" {
+				out = strings.ReplaceAll(out, v, "[REDACTED]")
+			}
+		}
+	}
+	return out
 }

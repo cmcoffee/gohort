@@ -312,6 +312,16 @@ func (m *MCPManager) Save(c MCPServerConfig, token string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// A server moved to another address keeps nothing it was given for the
+	// old one: its bearer token, OAuth client, and every user's OAuth token
+	// were issued for that server, and kept they would go to the new one on
+	// the next connect (a connector imported under a live server's name
+	// became a way to collect them).
+	var prev MCPServerConfig
+	if m.db.Get(mcpServersTable, c.Name, &prev) && credOrigin(prev.URL) != credOrigin(c.URL) {
+		m.forgetServerSecrets(c.Name)
+		Log("[mcp] server %q moved from %s to %s: its stored tokens were dropped", c.Name, credOrigin(prev.URL), credOrigin(c.URL))
+	}
 	m.db.Set(mcpServersTable, c.Name, c)
 	if c.AuthMode == MCPAuthBearer && strings.TrimSpace(token) != "" {
 		m.db.CryptSet(mcpServersTable, mcpTokenKey(c.Name), strings.TrimSpace(token))
@@ -337,11 +347,26 @@ func (m *MCPManager) Delete(name string) error {
 		cfg = MCPServerConfig{Name: name}
 	}
 	m.db.Unset(mcpServersTable, name)
-	m.db.Unset(mcpServersTable, mcpTokenKey(name))
 	m.db.Unset(mcpServersTable, mcpToolsKey(name))
-	m.db.Unset(mcpServersTable, mcpOAuthClientSecretKey(name))
+	m.forgetServerSecrets(name)
 	dropMCPToolGroup(cfg)
 	return nil
+}
+
+// forgetServerSecrets drops everything a server was given: its bearer token,
+// its OAuth client (config and secret) and every user's OAuth token. Delete
+// used to leave the OAuth config and the users' tokens behind, for the next
+// server created under the name. Callers hold m.mu.
+func (m *MCPManager) forgetServerSecrets(name string) {
+	m.db.Unset(mcpServersTable, mcpTokenKey(name))
+	m.db.Unset(mcpServersTable, mcpOAuthClientSecretKey(name))
+	m.db.Unset(mcpServersTable, mcpOAuthCfgKey(name))
+	prefix := mcpOAuthTokKey(name, "")
+	for _, k := range m.db.Keys(mcpServersTable) {
+		if strings.HasPrefix(k, prefix) {
+			m.db.Unset(mcpServersTable, k)
+		}
+	}
 }
 
 // dropMCPToolGroup removes the deleted server's category — but only while it

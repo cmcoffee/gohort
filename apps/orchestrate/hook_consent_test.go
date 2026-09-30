@@ -36,3 +36,20 @@ func TestConsentCoversEveryWayAToolReachesACredential(t *testing.T) {
 		}
 	}
 }
+
+// A key an agent stores is masked in everything that shows or keeps the call,
+// and the handler still receives it.
+func TestAStoredKeyIsNotShownInTheCall(t *testing.T) {
+	args := map[string]any{"name": "gh", "secret": "real-key-value"}
+	shown := maskSecretArgs("store_credential_secret", args)
+	if shown["secret"] == "real-key-value" || formatToolCall("store_credential_secret", shown) == formatToolCall("store_credential_secret", args) {
+		t.Errorf("the key is shown: %v", shown)
+	}
+	if args["secret"] != "real-key-value" {
+		t.Error("the handler's args were changed")
+	}
+	other := map[string]any{"secret": "x"}
+	if got := maskSecretArgs("some_tool", other); got["secret"] != "x" {
+		t.Error("only a tool that declares a secret argument is masked")
+	}
+}

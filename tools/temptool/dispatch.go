@@ -638,6 +638,12 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	})
 	Debug("[temptool] %q sandbox exit: dur=%s err=%v timedOut=%v outBytes=%d",
 		tt.Name, time.Since(tExec), res.Err, res.TimedOut, len(res.Output))
+	// A raw key handed to the script (secret:) does not come back out in what
+	// it printed: a traceback or a debug line quoting its own request is the
+	// usual way, and this output goes to the model and the session.
+	if hook != nil {
+		res.Output = hook.ScrubHandedOut(res.Output)
+	}
 	output := strings.TrimSpace(res.Output)
 
 	// Extract attachment markers from stdout and route them to the

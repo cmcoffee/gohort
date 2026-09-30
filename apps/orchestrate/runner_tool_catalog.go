@@ -797,8 +797,13 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 			// run the handler, snapshot attachments, and record the
 			// call for the toolLogPromptSection — only the user-
 			// facing emissions are skipped.
+			// What is shown and kept of the call: a secret argument (a key the
+			// agent is storing) is masked BEFORE the chip, the activity line
+			// and the record carry it to the browser, the replay buffer and
+			// the transcript. The handler still gets the real value.
+			shownArgs := maskSecretArgs(name, args)
 			hidden := hiddenToolChips[name]
-			callLabel := prefix + formatToolCall(name, args)
+			callLabel := prefix + formatToolCall(name, shownArgs)
 			if cached, ok := t.lookupToolCache(name, args); ok {
 				// Second+ re-serve of the same cached body → stub, not the body.
 				// See the cacheServes field comment: identical re-served bytes
@@ -824,7 +829,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 						"text": "♻ " + callLabel + " (cached)",
 					})
 					if msgID := t.ensureBubbleForTool(); msgID != "" {
-						callID := t.emitToolCall(msgID, name, args, " (cached)", prefix)
+						callID := t.emitToolCall(msgID, name, shownArgs, " (cached)", prefix)
 						t.emitToolResult(msgID, callID, name, cached, nil)
 					}
 				}
@@ -884,7 +889,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 					// refusal message so it renders as an error row.
 					t.recordToolCall(toolCallRecord{
 						Name: name,
-						Args: args,
+						Args: shownArgs,
 						Err:  msg,
 					})
 					return msg, nil
@@ -905,7 +910,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 						"text": "⛔ " + callLabel + " refused (no target chosen)",
 					})
 				}
-				t.recordToolCall(toolCallRecord{Name: name, Args: args, Err: triageRefusal})
+				t.recordToolCall(toolCallRecord{Name: name, Args: shownArgs, Err: triageRefusal})
 				return "", errors.New(triageRefusal)
 			}
 			var msgID, callID string
@@ -918,7 +923,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				})
 				msgID = t.ensureBubbleForTool()
 				if msgID != "" {
-					callID = t.emitToolCall(msgID, name, args, "", prefix)
+					callID = t.emitToolCall(msgID, name, shownArgs, "", prefix)
 				}
 			}
 			imgN, vidN, fileN := sessAttachmentCounts(sess)
@@ -968,7 +973,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 					out = spilled
 				}
 			}
-			rec := toolCallRecord{Name: name, Args: args, Result: out}
+			rec := toolCallRecord{Name: name, Args: shownArgs, Result: out}
 			if prefix != "" {
 				rec.Label = prefix + name
 			}

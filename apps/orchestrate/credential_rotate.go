@@ -136,3 +136,28 @@ func (T *OrchestrateApp) handleKeyReplacement(w http.ResponseWriter, r *http.Req
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// secretToolArgs names, per tool, the arguments that carry a secret, so they
+// are masked everywhere a call is shown or kept (see maskSecretArgs).
+var secretToolArgs = map[string][]string{
+	"store_credential_secret": {"secret"},
+}
+
+// maskSecretArgs returns args with any secret argument of the named tool
+// masked, as a copy; args itself is returned when the tool has none.
+func maskSecretArgs(name string, args map[string]any) map[string]any {
+	keys := secretToolArgs[name]
+	if len(keys) == 0 || args == nil {
+		return args
+	}
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		out[k] = v
+	}
+	for _, k := range keys {
+		if _, ok := out[k]; ok {
+			out[k] = "(secret: not shown)"
+		}
+	}
+	return out
+}

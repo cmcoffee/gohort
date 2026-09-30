@@ -189,7 +189,7 @@ func (s *SecureAPI) mintOAuthGrantCtx(ctx context.Context, c SecureCredential, s
 	if basicAuth && c.ClientID != "" {
 		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(c.ClientID+":"+secret)))
 	}
-	resp, err := NewBoundedHTTPClient().Do(req)
+	resp, err := tokenHTTPClient().Do(req)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("oauth token request to %s failed: %w", c.TokenURL, err)
 	}
@@ -284,12 +284,34 @@ func (s *SecureAPI) AuthorizeRequest(credName string, req *http.Request) error {
 	if c.Type != SecureCredOAuth2 {
 		return fmt.Errorf("secure-api credential %q is not oauth2", credName)
 	}
+	// The token goes only where the credential's own allow-list says it may:
+	// an MCP server entry could otherwise pair any URL with any OAuth
+	// credential and be handed its token.
+	if req == nil || req.URL == nil || !urlAllowedByCredential(c, req.URL.String()) {
+		u := ""
+		if req != nil && req.URL != nil {
+			u = req.URL.String()
+		}
+		return fmt.Errorf("secure-api credential %q does not cover %s: its token is not sent there (add the server to the credential's allowed endpoints)", credName, u)
+	}
 	secret, ok := s.loadSecret(credName)
 	if !ok || secret == "" || secret == "(pending)" {
 		return fmt.Errorf("secure-api credential %q has no secret set", credName)
 	}
 	_, err := s.oauthSetToken(c, secret, req)
 	return err
+}
+
+// tokenHTTPClient is the client for a token request: bounded, and it follows
+// no redirect. A token request carries the client secret, a password or a
+// refresh token, and a 307/308 re-sends that body to wherever it points,
+// plain http included; the token URL is the one place it is meant to go.
+func tokenHTTPClient() *http.Client {
+	c := NewBoundedHTTPClient()
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return fmt.Errorf("the token endpoint redirected to %s: a token request is not followed off its token URL (set the token URL to the address it redirects to)", req.URL.Host)
+	}
+	return c
 }
 
 // SaveOAuthDraft persists an oauth2 credential's CONFIG without a secret:
@@ -322,6 +344,11 @@ func (s *SecureAPI) SaveOAuthDraft(c SecureCredential) error {
 	}
 	if strings.TrimSpace(c.BaseURL) == "" && strings.TrimSpace(c.AllowedURLPattern) == "" {
 		return fmt.Errorf("draft needs a base_url (e.g. https://api.ebay.com) or an allowed_url_pattern")
+	}
+	if b := strings.TrimSpace(c.BaseURL); b != "" {
+		if why := baseURLProblem(b); why != "" {
+			return fmt.Errorf("base_url %s", why)
+		}
 	}
 	if c.Grant == OAuthGrantJWTBearer && strings.TrimSpace(c.JWTIssuer) == "" {
 		return fmt.Errorf("jwt_bearer draft needs jwt_issuer")
@@ -382,6 +409,11 @@ func (s *SecureAPI) SaveAPIDraft(c SecureCredential) error {
 	}
 	if strings.TrimSpace(c.BaseURL) == "" && strings.TrimSpace(c.AllowedURLPattern) == "" {
 		return fmt.Errorf("draft needs a base_url (e.g. https://192.168.0.1) or an allowed_url_pattern")
+	}
+	if b := strings.TrimSpace(c.BaseURL); b != "" {
+		if why := baseURLProblem(b); why != "" {
+			return fmt.Errorf("base_url %s", why)
+		}
 	}
 	c.Disabled = true // inert until the secret is added + enabled
 	s.mu.Lock()
