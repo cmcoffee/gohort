@@ -106,6 +106,13 @@ func (T *Account) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such OAuth integration", http.StatusNotFound)
 		return
 	}
+	// Not a credential somebody may not use, or one switched off (an imported
+	// draft lands disabled): either would send the person to its authorize
+	// page for a connection nothing can use.
+	if c.Disabled || !Secure().UserMayUse(c, user) {
+		http.Error(w, "this integration is not available to you", http.StatusForbidden)
+		return
+	}
 	authURL, err := Secure().OAuthStart(c, user, oauthCallbackURI(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

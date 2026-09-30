@@ -137,6 +137,12 @@ type SecureCredential struct {
 	// which deserialize to the zero value — keep their default-on
 	// behavior.
 	Disabled bool `json:"disabled,omitempty"`
+	// AdminDisabled and AdminLendLocked are an administrator's holds on a
+	// user's own credential: switched off, or its lending stopped. The owner
+	// can re-enable or re-lend their credential, so without these an admin's
+	// action lasted until the owner's next click. Only an admin clears them.
+	AdminDisabled   bool `json:"admin_disabled,omitempty"`
+	AdminLendLocked bool `json:"admin_lend_locked,omitempty"`
 	// Secured locks the credential to the tools that DECLARE it
 	// (hook_capabilities fetch_via:<name> / secret:<name>). A secured
 	// credential has no access-scope of its own — access is whatever the
@@ -652,6 +658,8 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		// credential's config can't silently re-enable or unsecure it.
 		c.Disabled = existing.Disabled
 		c.Secured = existing.Secured
+		c.AdminDisabled = existing.AdminDisabled
+		c.AdminLendLocked = existing.AdminLendLocked
 		// The share lists belong to SetCredentialShares for the same reason
 		// Disabled and Secured belong to their own setters: the upsert form
 		// does not carry them, so letting the body win would silently revoke
@@ -687,6 +695,19 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		if dropped := applyLendingPolicy(&c); len(dropped) > 0 {
 			Log("[secure_api] %q set credential %q to %q: %s no longer have it",
 				c.Owner, c.Name, lendingLabel(c.Lending), strings.Join(dropped, ", "))
+		}
+		// Tokens and per-person keys given for the old address do not travel
+		// to the new one: every user's refresh token and pasted key, and the
+		// cached machine token, would otherwise be sent to whatever host an
+		// edit named next. The people reconnect; the machine token re-mints.
+		if credDestinationMoved(existing, c) {
+			tokPrefix, secPrefix := secureCredUserTokenKey(key, ""), secureCredUserSecretKey(key, "")
+			for _, k := range s.db.Keys(secureAPITable) {
+				if strings.HasPrefix(k, tokPrefix) || strings.HasPrefix(k, secPrefix) {
+					s.db.Unset(secureAPITable, k)
+				}
+			}
+			s.db.Unset(secureAPITable, oauthTokenKey(key))
 		}
 	} else {
 		c.CreatedAt = time.Now()
@@ -927,7 +948,50 @@ func (s *SecureAPI) SetDisabledOwned(owner, name string, disabled bool) error {
 	if !s.db.Get(secureAPITable, key, &c) {
 		return fmt.Errorf("credential %q not found", name)
 	}
+	if !disabled && c.AdminDisabled {
+		return fmt.Errorf("an administrator switched credential %q off: ask them to enable it", name)
+	}
 	c.Disabled = disabled
+	s.db.Set(secureAPITable, key, c)
+	return nil
+}
+
+// AdminSetDisabledOwned is an administrator switching a user's own credential
+// off or on. Off holds until an administrator turns it on again: the owner's
+// own switch cannot.
+func (s *SecureAPI) AdminSetDisabledOwned(owner, name string, disabled bool) error {
+	return s.mutateOwned(owner, name, func(c *SecureCredential) {
+		c.Disabled, c.AdminDisabled = disabled, disabled
+	})
+}
+
+// AdminRevokeShares stops every lend of a user's credential and holds it
+// stopped: the owner cannot lend it again until an administrator allows it.
+func (s *SecureAPI) AdminRevokeShares(owner, name string) error {
+	if err := s.SetCredentialShares(owner, name, nil, nil); err != nil {
+		return err
+	}
+	return s.mutateOwned(owner, name, func(c *SecureCredential) { c.AdminLendLocked = true })
+}
+
+// AdminAllowLending lifts an administrator's hold on lending a credential.
+func (s *SecureAPI) AdminAllowLending(owner, name string) error {
+	return s.mutateOwned(owner, name, func(c *SecureCredential) { c.AdminLendLocked = false })
+}
+
+// mutateOwned is mutateCred for a user's own credential.
+func (s *SecureAPI) mutateOwned(owner, name string, fn func(*SecureCredential)) error {
+	if !s.ready() || strings.TrimSpace(owner) == "" || name == "" {
+		return fmt.Errorf("owner and name required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := credStoreKey(owner, name)
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, key, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	fn(&c)
 	s.db.Set(secureAPITable, key, c)
 	return nil
 }
@@ -1242,11 +1306,17 @@ func (s *SecureAPI) UserMayUse(c SecureCredential, user string) bool {
 // is legitimately bound — no approval step. toolName == "" (an unnamed caller:
 // run_local / persistent shell) skips the WHAT axis. (Name kept for history; it
 // now also gates the WHO axis for open creds.)
-func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string) error {
+func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string, agentID ...string) error {
 	// Resolve user-aware so the check runs against the credential the user actually
 	// dispatches through — a user's OWN same-named cred shadows a global one, and
-	// must not be false-denied against the global's grant.
-	c, ok := s.Resolve(credName, user)
+	// must not be false-denied against the global's grant. And agent-aware, as
+	// dispatch resolves: a lend scoped to one agent resolves only there, so
+	// checking without the agent could look at a different credential.
+	agent := ""
+	if len(agentID) > 0 {
+		agent = agentID[0]
+	}
+	c, ok := s.ResolveIn(credName, user, agent)
 	if !ok {
 		return nil
 	}
@@ -1280,6 +1350,14 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string) error
 		return fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED: an admin re-approves it in Admin > APIs to restore access", credName, toolName)
 	}
 	if !credSliceHas(c.ApprovedToolBindings, toolName) {
+		// A DEPLOYMENT key is bound to a new tool only by an administrator:
+		// anybody can author a tool that declares a credential, so binding on
+		// first dispatch made a handed-over key everybody's, one tool away
+		// (and a revoked binding came back under a new tool name). An admin's
+		// own run still binds, so authoring for the deployment stays one step.
+		if c.Owner == "" && !UserIsAdmin(user) {
+			return fmt.Errorf("credential %q is SECURED and tool %q is not bound to it yet: an administrator approves the binding in Admin > APIs", credName, toolName)
+		}
 		// Declaring-but-unrecorded (a tool authored before the binding record, or
 		// via a path that didn't record it): auto-bind it on first dispatch.
 		_ = s.ApproveToolBinding(credName, toolName)
@@ -1808,7 +1886,16 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 			if s.EffectiveSecured(cur, sessUsername(sess)) {
 				return "", fmt.Errorf("credential %q is now SECURED: it is reached only through the tools bound to it", c.Name)
 			}
-			return s.dispatch(cur, args, sess)
+			// The model's arguments, without dispatch internals ("__" keys:
+			// a raised timeout, the script read cap), which it could
+			// otherwise set on its own calls.
+			clean := make(map[string]any, len(args))
+			for k, v := range args {
+				if !strings.HasPrefix(k, "__") {
+					clean[k] = v
+				}
+			}
+			return s.dispatch(cur, clean, sess)
 		},
 	}
 }
@@ -2336,6 +2423,12 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	var connector *NetworkConnector
 	if sess != nil {
 		connector = sess.Network
+		// A session built for one call (a media upload) carries only the
+		// turn's context: read the turn's Private switch from it, or the
+		// upload went out on a turn with the network off.
+		if connector == nil && sess.Ctx != nil {
+			connector = NetworkConnectorFromContext(sess.Ctx)
+		}
 	}
 	// Network egress is OFF for this turn (Private mode). Fail fast with a CLEAR
 	// reason — otherwise the request cancels and surfaces as a generic "context
@@ -2386,11 +2479,18 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 
 	// Caller-supplied headers first; auth applied last so it can't
 	// be overridden.
+	// Where the methods are limited (the credential's own list, or a lend
+	// for reads), a method-override header is dropped: APIs that honour one
+	// turn a permitted GET or POST into the DELETE the limit refused.
+	methodsLimited := len(c.AllowedMethods) > 0 || readOnlyForUser(c, sessUsername(sess))
 	if hdrs, ok := args["request_headers"].(map[string]any); ok {
 		for k, v := range hdrs {
 			if str, ok := v.(string); ok {
 				lower := strings.ToLower(k)
 				if lower == "authorization" || lower == "proxy-authorization" {
+					continue
+				}
+				if methodsLimited && (lower == "x-http-method-override" || lower == "x-http-method" || lower == "x-method-override") {
 					continue
 				}
 				req.Header.Set(k, str)
@@ -3446,6 +3546,10 @@ func (s *SecureAPI) SetCredentialShares(owner, name string, readOnly, readWrite 
 	}
 	write := cleanShareList(readWrite, owner, nil)
 	read := cleanShareList(readOnly, owner, write)
+	if len(read)+len(write) > 0 && c.AdminLendLocked {
+		s.mu.Unlock()
+		return fmt.Errorf("an administrator stopped the lending of credential %q: ask them to allow it again", name)
+	}
 	if len(read)+len(write) > 0 && s.db.Get(secureAPITable, name, &SecureCredential{}) {
 		s.mu.Unlock()
 		return fmt.Errorf("the deployment has a credential named %q, so a lend of yours under that name would not reach anyone: rename yours to lend it", name)

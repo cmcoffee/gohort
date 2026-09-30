@@ -228,8 +228,14 @@ func TestEnforceSecuredBinding(t *testing.T) {
 		t.Fatalf("unnamed caller must pass: %v", err)
 	}
 
-	// Legacy declaring tool → grandfathered (allowed) + recorded approved.
-	if err := s.EnforceSecuredBinding("sec", "legacy", ""); err != nil {
+	// Legacy declaring tool → grandfathered (allowed) + recorded approved, on an
+	// ADMINISTRATOR's run: anybody else's unbound tool is refused, or any user
+	// could author their way onto a secured deployment key.
+	adminUsers(t, "root")
+	if err := s.EnforceSecuredBinding("sec", "legacy", "alice"); err == nil {
+		t.Fatal("a non-admin's unbound tool reached a secured deployment key")
+	}
+	if err := s.EnforceSecuredBinding("sec", "legacy", "root"); err != nil {
 		t.Fatalf("legacy declaring tool must be grandfathered: %v", err)
 	}
 	if !s.ToolBindingApproved("sec", "legacy") {

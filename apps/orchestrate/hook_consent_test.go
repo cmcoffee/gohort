@@ -1,6 +1,10 @@
 package orchestrate
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -51,5 +55,38 @@ func TestAStoredKeyIsNotShownInTheCall(t *testing.T) {
 	other := map[string]any{"secret": "x"}
 	if got := maskSecretArgs("some_tool", other); got["secret"] != "x" {
 		t.Error("only a tool that declares a secret argument is masked")
+	}
+}
+
+// check_credential shows a credential only to someone allowed it, and its
+// call history only as far as the caller's own calls (the owner or an
+// administrator sees all of them).
+func TestCheckCredentialShowsOnlyWhatTheCallerMaySee(t *testing.T) {
+	store := &DBase{Store: kvlite.MemStore()}
+	prev, prevRoot := AuthDB, RootDB
+	AuthDB = func() Database { return store }
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { AuthDB, RootDB = prev, prevRoot })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) }))
+	defer srv.Close()
+	Secure().Save(SecureCredential{Name: "team", Type: SecureCredBearer, BaseURL: srv.URL, AllowedUsers: []string{"bob", "carol"}}, "k")
+	if _, err := Secure().DispatchToolCall(&ToolSession{Username: "carol"}, "team", srv.URL+"/carols-secret-path", "GET", ""); err != nil {
+		t.Fatal(err)
+	}
+	check := func(user string) string {
+		out, err := checkCredentialToolDef(&chatTurn{user: user}).Handler(context.Background(), map[string]any{"name": "team", "all_dispatches": true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if out := check("alice"); !strings.Contains(out, "not shared") || strings.Contains(out, srv.URL) {
+		t.Errorf("alice, not allowed the key, was shown it: %s", out)
+	}
+	if out := check("bob"); strings.Contains(out, "carols-secret-path") {
+		t.Errorf("bob was shown carol's call: %s", out)
+	}
+	if out := check("carol"); !strings.Contains(out, "carols-secret-path") {
+		t.Errorf("carol sees her own call: %s", out)
 	}
 }

@@ -1036,7 +1036,15 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 		writeHookError(conn, fmt.Sprintf("credential %q is OAuth: its stored secret is the deployment's client secret, which is never handed to a script. Use fetch_via:%s", name, name))
 		return
 	}
-	if cred.Secured {
+	if cred.IsPerUser() {
+		// Each person connects their own key, and calls send THEIRS. The
+		// record's stored secret is only what the admin typed when creating
+		// it, which no call uses; handing it out gave every user who could
+		// reach the credential the admin's value.
+		writeHookError(conn, fmt.Sprintf("credential %q takes each person's own key: it is not handed to a script. Use fetch_via:%s, which sends your own key from the server", name, name))
+		return
+	}
+	if sec.EffectiveSecured(cred, owner) {
 		// Secured credentials NEVER hand out the raw secret — even to a bound
 		// tool — so the key can't be exfiltrated by tool code. Server-side
 		// dispatch only: use fetch_via, which applies auth on the server and
@@ -1101,7 +1109,7 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 	if h.Sess != nil {
 		securedUser = h.Sess.Username
 	}
-	if err := Secure().EnforceSecuredBinding(credName, h.ToolName, securedUser); err != nil {
+	if err := Secure().EnforceSecuredBinding(credName, h.ToolName, securedUser, sessAgentID(h.Sess)); err != nil {
 		Log("[hook/fetch_via] binding refused credential=%q tool=%q: %v", credName, h.ToolName, err)
 		writeHookError(conn, err.Error())
 		return

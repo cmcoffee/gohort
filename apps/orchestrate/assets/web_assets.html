@@ -1319,9 +1319,13 @@ select.ui-orch-intake-input {
       var wrap = el('div', {class: 'ui-orch-connect'});
       wrap.appendChild(el('div', {class: 'ui-orch-connect-icon'}, ['🔑']));
       var msg = el('div', {class: 'ui-orch-connect-body'});
-      msg.appendChild(el('div', {class: 'ui-orch-connect-title'}, ['Replace the key on "' + name + '"?']));
+      var deployment = data.scope === 'deployment';
+      msg.appendChild(el('div', {class: 'ui-orch-connect-title'}, [deployment
+        ? 'Replace the key on the deployment credential "' + name + '"?'
+        : 'Replace the key on your credential "' + name + '"?']));
       var note = el('div', {class: 'ui-orch-connect-sub'},
-        ['The assistant received a new key for this credential, which already has a working one. Nothing changes unless you approve; the new key is held for an hour and never shown here.']);
+        [(deployment ? 'This key is shared: everyone using "' + name + '" would use the new one. ' : '') +
+         'The assistant received a new key for this credential, which already has a working one. Nothing changes unless you approve; the new key is held for an hour and never shown here.']);
       msg.appendChild(note);
       wrap.appendChild(msg);
       var actions = el('div', {style: 'display:flex;gap:0.5rem;margin-top:0.55rem'});

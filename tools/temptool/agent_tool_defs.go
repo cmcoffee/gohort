@@ -518,6 +518,9 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			Required:    tt.Required,
 			Caps:        caps,
 			Category:    tt.Category, // the claimed grouping label rides onto the runtime def
+			// A script fetching through the hooks returns outside content,
+			// which is fenced like a network tool's (see FetchesExternal).
+			FetchesExternal: hooksFetch(tt.HookCapabilities),
 		},
 		// Confirm only for CONSEQUENTIAL temp tools — ones that reach a real
 		// endpoint (api mode / a credential), leave the sandbox (RawNetwork),
@@ -694,4 +697,15 @@ func toolRunFailure(out string, err error) (failed bool, why string) {
 		return true, ""
 	}
 	return false, ""
+}
+
+// hooksFetch reports whether hook capabilities let a script bring outside
+// content back: a fetch, a credentialed fetch, or a rendered page.
+func hooksFetch(caps []string) bool {
+	for _, c := range caps {
+		if c == "fetch" || c == "browse_page" || strings.HasPrefix(c, "fetch_via:") {
+			return true
+		}
+	}
+	return false
 }

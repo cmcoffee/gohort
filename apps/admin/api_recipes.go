@@ -67,11 +67,34 @@ func (a *AdminApp) registerRecipeRoutes(sub *http.ServeMux) {
 			return
 		}
 		var contains []string
+		// Where each credential the template installs sends its secret: the
+		// base URL (and token URL) the template fixed. A secret answer is
+		// asked for here, and the credential lands disabled, so this is the
+		// one place its destination can be seen before the key is typed in.
+		dest := map[string]string{}
 		for _, p := range rec.Bundle.Artifacts {
 			contains = append(contains, p.Name+" ("+p.Type+")")
+			if p.Type != "credential" {
+				continue
+			}
+			var c struct {
+				BaseURL, AllowedURLPattern, TokenURL string
+			}
+			var raw map[string]any
+			if json.Unmarshal(p.Recipe, &raw) == nil {
+				c.BaseURL, _ = raw["base_url"].(string)
+				c.AllowedURLPattern, _ = raw["allowed_url_pattern"].(string)
+				c.TokenURL, _ = raw["token_url"].(string)
+			}
+			d := firstNonBlankStr(c.BaseURL, c.AllowedURLPattern)
+			if c.TokenURL != "" {
+				d += " (tokens from " + c.TokenURL + ")"
+			}
+			dest[p.Name] = d
 		}
 		writeJSONOut(w, map[string]any{"id": rec.ID, "title": rec.Title, "description": rec.Description,
-			"setup_notes": rec.SetupNotes, "questions": rec.Questions, "contains": contains, "source": src})
+			"setup_notes": rec.SetupNotes, "questions": rec.Questions, "contains": contains, "source": src,
+			"destinations": dest})
 	})
 
 	// POST ?id= {answers}: add a template.
@@ -252,6 +275,15 @@ func (a *AdminApp) registerRecipeRoutes(sub *http.ServeMux) {
 		}
 		writeJSONOut(w, map[string]any{"ok": true, "message": fmt.Sprintf("Saved the template %q with %d question(s). Export it to share it.", rec.Title, len(rec.Questions))})
 	})
+}
+
+func firstNonBlankStr(vs ...string) string {
+	for _, v := range vs {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func writeJSONOut(w http.ResponseWriter, v any) {

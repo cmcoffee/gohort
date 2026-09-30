@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,7 +23,7 @@ func TestReplacingAWorkingKeyWaitsForApproval(t *testing.T) {
 	if err := Secure().SaveAPIDraft(SecureCredential{Name: "forge", Type: SecureCredBearer, BaseURL: "https://forge.example", Owner: user}); err != nil {
 		t.Fatal(err)
 	}
-	turn := &chatTurn{user: user}
+	turn := &chatTurn{user: user, sse: &sseWriter{live: &bytes.Buffer{}}}
 	current := func() string {
 		c, _ := Secure().LoadUser(user, "forge")
 		_, _, has := Secure().CredentialStatusOwned(user, c.Name)
@@ -59,6 +60,15 @@ func TestReplacingAWorkingKeyWaitsForApproval(t *testing.T) {
 	}
 	if _, held := takeKeyReplacement(user, "forge"); held {
 		t.Error("an answered replacement is not held any longer")
+	}
+
+	// With no chat to show the card in, nothing is held: nobody could answer.
+	quiet := &chatTurn{user: user}
+	if out, _ := quiet.storeAgentKey("forge", "another-key"); !strings.Contains(out, "no chat") {
+		t.Errorf("a run with no chat says the user sets it: %q", out)
+	}
+	if _, held := takeKeyReplacement(user, "forge"); held {
+		t.Error("a key was held for a card no one could see")
 	}
 
 	holdKeyReplacement(user, "forge", "late-key")

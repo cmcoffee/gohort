@@ -76,8 +76,18 @@ func (t *chatTurn) storeAgentKey(name, secret string) (string, error) {
 		}
 		return fmt.Sprintf("Key stored encrypted on credential %q: do NOT repeat the value in chat. %s Verify with check_credential(%q).", name, status, name), nil
 	case errors.Is(err, ErrCredentialHasKey):
+		_, yours := Secure().LoadUser(user, name)
+		if t == nil || t.sse == nil {
+			// No chat to show a card in (a delegated or background run):
+			// holding the key would wait on an answer nobody can give.
+			where := "Extensions > API credentials"
+			if !yours {
+				where = "Admin > Extensions > API Credentials"
+			}
+			return fmt.Sprintf("Credential %q already has a working key, so it was NOT replaced, and this run has no chat where the user could approve a replacement. Tell the user a new key was received and that they set it themselves in %s. Do not repeat the key.", name, where), nil
+		}
 		holdKeyReplacement(user, name, secret)
-		t.emitKeyReplacementCard(name)
+		t.emitKeyReplacementCard(name, !yours)
 		return fmt.Sprintf("Credential %q already has a working key, so it was NOT replaced. A card in the chat asks the user to approve replacing it with the one you received (held server-side for an hour; the card never shows it). Do not call store_credential_secret again for %q, and do not repeat the key: tell the user why the key should change and wait for their answer.", name, name), nil
 	}
 	return "", err
@@ -85,12 +95,17 @@ func (t *chatTurn) storeAgentKey(name, secret string) (string, error) {
 
 // emitKeyReplacementCard asks the person to approve replacing a key. The card
 // names the credential only.
-func (t *chatTurn) emitKeyReplacementCard(name string) {
+func (t *chatTurn) emitKeyReplacementCard(name string, deployment bool) {
 	if t == nil || t.sse == nil {
 		return
 	}
 	id := "credrotate-" + name
 	data := map[string]string{"name": name}
+	if deployment {
+		// Whose key it is decides what approving means: the deployment's
+		// key reaches everyone using it, not only the person approving.
+		data["scope"] = "deployment"
+	}
 	t.sse.Send(map[string]any{"kind": "block", "type": "credential_rotate", "id": id, "title": name, "data": data})
 	if t.session != nil {
 		blk := UIBlock{Type: "credential_rotate", ID: id, Title: name, Data: data}

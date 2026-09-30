@@ -499,7 +499,16 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			// (Owner ""), and dispatch recorded the audit under that resolved
 			// owner — so the ledger read below must key on it, not on `owner`.
 			auditOwner := owner
+			// Whose calls the ledger below may show: all of them to the
+			// credential's owner or an administrator, otherwise only the
+			// caller's own. A borrower read the lender's history, and any
+			// user a restricted deployment key's, URLs and callers included.
+			seeAllCalls := UserIsAdmin(owner)
 			if c, ok := Secure().Resolve(name, owner); ok {
+				if !Secure().UserMayUse(c, owner) {
+					return fmt.Sprintf("Credential %q exists but is not shared with you: an admin grants access via Access in Admin > APIs. NOT READY for you.", name), nil
+				}
+				seeAllCalls = seeAllCalls || (c.Owner != "" && c.Owner == owner)
 				auditOwner = c.Owner
 				cfg = fmt.Sprintf("\nConfig (authoritative): type=%s", c.Type)
 				// Grant only means something on oauth2 — a leftover grant
@@ -539,6 +548,9 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 				var shown []SecureAPIAuditEntry
 				hidden := 0
 				for _, e := range audit {
+					if !seeAllCalls && e.DispatchedBy != owner {
+						continue
+					}
 					if allDispatches || e.Error != "" || e.Status < 200 || e.Status >= 300 {
 						shown = append(shown, e)
 					} else {
@@ -591,7 +603,9 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			// interrogates the user for an endpoint its own sibling tools already
 			// prove. A 4xx on a credential means WRONG PATH, not dead protocol.
 			var siblings []string
-			for _, pt := range LoadPersistentTempTools(RootDB, auditOwner) {
+			// The caller's own tools: a lent key's owner keeps theirs to
+			// themselves.
+			for _, pt := range LoadPersistentTempTools(RootDB, owner) {
 				tt := pt.Tool
 				if tt.Mode != TempToolModeAPI || !strings.EqualFold(strings.TrimSpace(tt.Credential), name) {
 					continue

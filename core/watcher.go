@@ -75,6 +75,16 @@ type WatchToolInvoker func(owner, agentID, toolName string, toolArgs map[string]
 
 var watchToolInvoker WatchToolInvoker
 
+// WatchCredentialScope returns the credentials an owner's agent has switched
+// off (its credential scope), for a watch polling on that agent's behalf.
+type WatchCredentialScope func(owner, agentID string) map[string]bool
+
+var watchCredentialScope WatchCredentialScope
+
+// RegisterWatchCredentialScope installs the agent credential-scope lookup the
+// watch paths apply. The app that owns agents registers it at startup.
+func RegisterWatchCredentialScope(fn WatchCredentialScope) { watchCredentialScope = fn }
+
 // RegisterWatchToolInvoker installs the owner-aware invoker. Call once at
 // startup. Optional — without it, watch monitors can only poll globally
 // registered tools + call_<cred> secure APIs.
@@ -91,7 +101,13 @@ func InvokeWatchTool(owner, agentID, toolName string, toolArgs map[string]any) (
 		// someone who may spend it: with no user, dispatch reaches only open
 		// credentials, and nothing asked whether the owner was allowed this
 		// one or the agent had switched it off.
-		return invokeCredentialPoll(&ToolSession{Username: owner, AgentID: agentID}, toolName, toolArgs)
+		sess := &ToolSession{Username: owner, AgentID: agentID}
+		if watchCredentialScope != nil && agentID != "" {
+			// And as the agent: a credential it has switched off stays off
+			// for its polls too.
+			sess.DeniedCredentials = watchCredentialScope(owner, agentID)
+		}
+		return invokeCredentialPoll(sess, toolName, toolArgs)
 	}
 	if watchToolInvoker != nil {
 		out, err := watchToolInvoker(owner, agentID, toolName, toolArgs)

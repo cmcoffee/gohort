@@ -84,7 +84,7 @@ type toolResultPolicy struct {
 func toolResultPolicyFor(agent AgentRecord, tl Tool) toolResultPolicy {
 	scan := resolveScanScope(agent, tl)
 	return toolResultPolicy{
-		fence:      toolCarriesNetworkCap(tl) && !tl.TrustedOutput,
+		fence:      (toolCarriesNetworkCap(tl) || tl.FetchesExternal) && !tl.TrustedOutput,
 		scan:       scan,
 		block:      scan && resolveScanBlocks(agent, tl),
 		appealable: scan && agent.ScanAppealable,
@@ -114,7 +114,7 @@ func resolveScanScope(agent AgentRecord, tl Tool) bool {
 	if nameListed(agent.ScanToolsSkip, name) {
 		return false
 	}
-	if toolCarriesNetworkCap(tl) && !tl.TrustedOutput {
+	if (toolCarriesNetworkCap(tl) || tl.FetchesExternal) && !tl.TrustedOutput {
 		return true
 	}
 	return nameListed(agent.ScanToolsAdd, name)

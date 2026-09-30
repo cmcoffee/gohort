@@ -121,13 +121,15 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 				LentTo      string `json:"lent_to,omitempty"`
 				Lent        bool   `json:"lent"`
 				LendsWrites bool   `json:"lends_writes"`
+				LendLocked  bool   `json:"lend_locked"`
 			}
 			rows := []row{}
 			for _, c := range Secure().ListAllUserOwned() {
 				rows = append(rows, row{ID: c.Owner + "/" + c.Name, Owner: c.Owner, Name: c.Name, Type: c.Type, Disabled: c.Disabled, Secured: c.Secured,
 					LentTo:      describeLend(c),
 					Lent:        len(c.SharedReadOnly)+len(c.SharedReadWrite) > 0,
-					LendsWrites: len(c.SharedReadWrite) > 0})
+					LendsWrites: len(c.SharedReadWrite) > 0,
+					LendLocked:  c.AdminLendLocked})
 			}
 			sort.Slice(rows, func(i, j int) bool {
 				if rows[i].Owner != rows[j].Owner {
@@ -146,18 +148,22 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 			}
 			var err error
 			switch r.URL.Query().Get("action") {
+			// The admin's actions HOLD: the owner's own switch cannot undo them
+			// (AdminDisabled / AdminLendLocked); only an admin action here can.
 			case "disable":
-				err = Secure().SetDisabledOwned(owner, name, true)
+				err = Secure().AdminSetDisabledOwned(owner, name, true)
 			case "enable":
-				err = Secure().SetDisabledOwned(owner, name, false)
+				err = Secure().AdminSetDisabledOwned(owner, name, false)
 			case "revoke_share":
 				// Both lists at once. An admin either accepts a lend or stops
 				// it; narrowing somebody's grant from writes to reads on their
 				// behalf would leave the owner believing they gave one thing
 				// and the borrower holding another.
-				err = Secure().SetCredentialShares(owner, name, nil, nil)
+				err = Secure().AdminRevokeShares(owner, name)
+			case "allow_share":
+				err = Secure().AdminAllowLending(owner, name)
 			default:
-				http.Error(w, "action must be enable|disable|revoke_share", http.StatusBadRequest)
+				http.Error(w, "action must be enable|disable|revoke_share|allow_share", http.StatusBadRequest)
 				return
 			}
 			if err != nil {

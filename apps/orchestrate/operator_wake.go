@@ -336,8 +336,20 @@ func registerOperatorWake(app *OrchestrateApp) {
 	// etc.) — InvokeWatcherTool can only reach globally-registered + secure-API
 	// tools. We rebuild the management toolset for the monitor's owner and
 	// dispatch the named tool; anything not found falls back to the global path.
+	// A watch runs for an agent: the credentials that agent has switched off
+	// (its credential scope, and any it may not use at all) stay off for it.
+	watchScope := func(owner, agentID string) map[string]bool {
+		if a, ok := loadAgent(UserDB(app.DB, owner), agentID); ok {
+			return credentialDenySet(a, owner)
+		}
+		return nil
+	}
+	RegisterWatchCredentialScope(watchScope)
 	RegisterWatchToolInvoker(func(owner, agentID, toolName string, toolArgs map[string]any) (string, error) {
-		sess := &ToolSession{Username: owner, DB: AuthDB()}
+		sess := &ToolSession{Username: owner, DB: AuthDB(), AgentID: agentID}
+		if agentID != "" {
+			sess.DeniedCredentials = watchScope(owner, agentID)
+		}
 		// Give the invoker session the owner's real workspace. Without it a
 		// SHELL/script temp tool (script_body + "python3 {workspace_dir}/x.py")
 		// bails every tick with "references {workspace_dir} but the session has

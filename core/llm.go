@@ -241,6 +241,13 @@ type Tool struct {
 	// suppressed. Tools whose PURPOSE is fetching external content (fetch_url,
 	// browse_page, api/toolbox temp tools) must NOT set this. Not serialized.
 	TrustedOutput bool `json:"-"`
+
+	// FetchesExternal marks a tool with no network capability of its own
+	// whose output still carries content from outside: a script that fetches
+	// through gohort's hooks (fetch, fetch_via, browse_page). The untrusted-
+	// content fence reads it as it reads CapNetwork; nothing else does, so
+	// the tool's reach and where it may run are unchanged. Not serialized.
+	FetchesExternal bool `json:"-"`
 }
 
 // RenderToolPromptFragments concatenates the Prompt fields of every

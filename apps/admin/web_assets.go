@@ -619,6 +619,10 @@ const templateInstallAction = `function(ctx){
           }
           body.appendChild(inp);
           if (q.help) body.appendChild(el('div', {style: 'font-size:0.78rem;color:var(--text-mute);margin-top:0.15rem', text: q.help}));
+          // A secret answer names where it will be sent: the credential's
+          // address, fixed by the template, before the key is typed in.
+          var dest = q.secret && q.credential && (rec.destinations || {})[q.credential];
+          if (dest) body.appendChild(el('div', {style: 'font-size:0.78rem;color:var(--text);margin-top:0.15rem', text: 'Sent only to ' + dest + ' (credential "' + q.credential + '").'}));
           inputs[q.name] = inp;
         });
         var out = el('div', {style: 'margin-top:0.7rem;font-size:0.85rem;white-space:pre-wrap'});

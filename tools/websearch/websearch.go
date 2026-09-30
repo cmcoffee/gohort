@@ -278,6 +278,10 @@ func (t *FetchURLTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 }
 
 func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, error) {
+	// Keys beginning "__" are dispatch internals (a raised timeout, the
+	// script read cap, an upload), set by gohort's own callers. From the
+	// model they are ignored, or it could lift the limits on its own calls.
+	args = modelArgs(args)
 	if sess != nil && !sess.NetworkAllowed() {
 		return "", fmt.Errorf("fetch_url refused: network is blocked for this turn (private mode is on)")
 	}
@@ -1953,4 +1957,16 @@ func decodePDFString(s string) string {
 		}
 	}
 	return out.String()
+}
+
+// modelArgs is a model's tool arguments without the dispatch internals (keys
+// beginning "__"), as a copy.
+func modelArgs(args map[string]any) map[string]any {
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		if !strings.HasPrefix(k, "__") {
+			out[k] = v
+		}
+	}
+	return out
 }
