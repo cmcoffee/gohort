@@ -30,9 +30,9 @@ jobs:
       GOWORK: "off"
       GOFLAGS: -mod=readonly
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -65,7 +65,9 @@ jobs:
       - name: Report failing tests
         if: failure()
         run: |
-          lines=$(grep -E -- '^(--- FAIL|FAIL|panic:)|_test\.go:[0-9]+:' test.log | head -80 || true)
+          # The lines after an assertion carry its reason (a subprocess's
+          # output, a diff), so each match brings a few with it.
+          lines=$(grep -E -A6 -- '^(--- FAIL|panic:)|_test\.go:[0-9]+:' test.log | grep -v '^ok ' | head -120 || true)
           [ -z "$lines" ] && lines="the tests failed without a --- FAIL line; see the Test step's log"
           msg=$(printf '%s' "$lines" | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
           echo "::error title=Failing tests::${msg}"

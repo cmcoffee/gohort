@@ -12,7 +12,11 @@ function makeEl() {
     addEventListener: function(n, f){ this._on[n] = f; },
   };
 }
-var harness = new Function('el','fetchJSON','showToast',
+// window is a parameter too: the file registers globals on it at load
+// (window.uiOpenRulesPanel), and with no window the whole file threw before
+// a single check ran. On node < 15 that throw was an unhandled rejection and
+// the process still exited 0, so the test passed without testing anything.
+var harness = new Function('el','fetchJSON','showToast','window',
   src + '\nreturn buildRevisionNav;');
 
 function build(opts) {
@@ -28,7 +32,8 @@ function build(opts) {
       fetchLog.push(url);
       return Promise.resolve(responses[url] !== undefined ? responses[url] : []);
     },
-    function(m){ toasts.push(m); }
+    function(m){ toasts.push(m); },
+    {}
   )(opts);
 }
 
@@ -38,6 +43,9 @@ function check(label, cond, extra) {
   else { fail++; console.log('FAIL ' + label + (extra ? '  ' + extra : '')); }
 }
 function tick() { return new Promise(function(r){ setImmediate(r); }); }
+
+// A throw inside the async body must fail the run on every node version.
+process.on('unhandledRejection', function(e) { console.log('FAIL unhandled: ' + (e && e.stack || e)); process.exit(1); });
 
 (async function() {
   // No listURL -> inert, and group is null so callers can append blindly.
