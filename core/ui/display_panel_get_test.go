@@ -22,7 +22,7 @@ func TestAPanelActionWithGETNavigates(t *testing.T) {
 	if len(window) > 2500 {
 		window = window[:2500]
 	}
-	if !strings.Contains(window, "window.location.href = act.url;") {
+	if !strings.Contains(window, "window.location.href = window.uiSafeURL(act.url);") {
 		t.Error("a GET panel action still fetches and discards the response")
 	}
 }

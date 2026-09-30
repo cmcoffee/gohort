@@ -220,7 +220,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// one). Keyed by the app's owner, so a shared app the owner still watches
 		// keeps its owner-side tracker running.
 		T.touchAppView(spec)
-		_ = ui.RenderPageJSON(w, isolateAppHTML(spec.Page), "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
+		_ = ui.RenderPageJSON(w, isolateAppHTML(spec.Page, T.WebPath()+"/"+slug+"/"), "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case rest == "_settings":
 		// The app's Settings page — a form over the tunables it declares.
 		T.handleSettingsPage(w, r, spec, user == ownerUser)
@@ -1441,14 +1441,81 @@ func (T *CustomApps) handleAsset(w http.ResponseWriter, r *http.Request, owner, 
 // and its assets. Nothing else in gohort.
 var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets/"}
 
-// isolateAppHTML marks every Card and Frame in an app's page as isolated.
+// navigationKeys name URLs the runtime follows as a link, never fetches.
+var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}
+
+// holdEndpointsInApp blanks any endpoint in one component's config that does
+// not resolve inside the app: keys ending in _url or _source, and source,
+// post_to, url and action_url unless their method makes them a link (GET,
+// open, redirect) or a client action's name (client). A blank method means
+// POST, as it does in the runtime.
+func holdEndpointsInApp(t map[string]any, appBase string) {
+	navMethod := func(k string) bool {
+		m, _ := t[k].(string)
+		switch strings.ToLower(strings.TrimSpace(m)) {
+		case "get", "client", "open", "redirect":
+			return true
+		}
+		return false
+	}
+	for k, v := range t {
+		u, ok := v.(string)
+		if !ok || u == "" || navigationKeys[k] {
+			continue
+		}
+		endpoint := k == "source" || k == "post_to" || k == "url" || strings.HasSuffix(k, "_url") || strings.HasSuffix(k, "_source") || strings.HasSuffix(k, "_url_base")
+		if !endpoint {
+			continue
+		}
+		if (k == "url" || k == "post_to") && navMethod("method") {
+			continue
+		}
+		if k == "action_url" && navMethod("action_method") {
+			continue
+		}
+		if !appRelative(u, appBase) {
+			t[k] = ""
+		}
+	}
+}
+
+// appRelative reports whether a URL resolves inside the app's own page
+// directory: relative (or an absolute path under appBase, the app's own
+// address), with no scheme and no "..", backslash or encoded separator or
+// dot to climb out with.
+func appRelative(u, appBase string) bool {
+	low := strings.ToLower(strings.TrimSpace(u))
+	if appBase != "" && strings.HasPrefix(low, appBase) {
+		low = strings.TrimPrefix(low, appBase)
+	}
+	if low == "" || strings.HasPrefix(low, "/") || strings.Contains(low, "\\") || strings.Contains(low, "..") {
+		return false
+	}
+	if i := strings.IndexAny(low, ":/?#"); i >= 0 && low[i] == ':' {
+		return false // a scheme
+	}
+	for _, enc := range []string{"%2f", "%5c", "%2e"} {
+		if strings.Contains(low, enc) {
+			return false
+		}
+	}
+	return true
+}
+
+// isolateAppHTML marks every Card and Frame in an app's page as isolated,
+// and turns off the page's other routes to raw HTML (see below). Links and
+// navigation are guarded in the runtime itself (uiSafeURL), for every page.
 // An app's page HTML is its author's, shown to whoever opens the app,
 // administrators included; on the gohort origin its script could act as the
 // viewer against every endpoint the viewer can reach. Isolated, it runs in a
 // sandbox with no origin and reaches only the app's own endpoints (see the
 // runtime's isolatedFrame). Rewritten at serve time, so every stored app,
 // old or new, is covered.
-func isolateAppHTML(page json.RawMessage) json.RawMessage {
+func isolateAppHTML(page json.RawMessage, base ...string) json.RawMessage {
+	appBase := ""
+	if len(base) > 0 {
+		appBase = strings.ToLower(base[0])
+	}
 	var v any
 	if len(page) == 0 || json.Unmarshal(page, &v) != nil {
 		return page
@@ -1461,6 +1528,21 @@ func isolateAppHTML(page json.RawMessage) json.RawMessage {
 				t["isolate"] = true
 				t["isolate_fetch"] = appOwnPaths
 			}
+			// The two other ways a page writes HTML on this origin, both on
+			// the document workbench: a record body taken as HTML, and a
+			// history preview endpoint whose reply is. In an app both come
+			// from the app's own records and endpoints, so a body is always
+			// rendered as markdown here and the HTML preview is not offered.
+			if _, ok := t["body_is_html"]; ok {
+				t["body_is_html"] = false
+			}
+			delete(t, "preview_url")
+			// Every endpoint the page fetches or posts to stays inside the
+			// app. The page runs as the viewer, so a button, form or table
+			// naming another gohort endpoint (an approval, a credential)
+			// acted there with the viewer's session on one click; an app
+			// reaches gohort through its own data sources and actions.
+			holdEndpointsInApp(t, appBase)
 			for _, e := range t {
 				walk(e)
 			}

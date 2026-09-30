@@ -1829,8 +1829,8 @@
       }
       var url = (action.url || '').replace('{id}',
         encodeURIComponent(activeSessionId || ''));
-      if (method === 'open')          { window.open(url, '_blank', 'noopener'); }
-      else if (method === 'redirect') { window.location.href = url; }
+      if (method === 'open')          { window.open(window.uiSafeURL(url), '_blank', 'noopener'); }
+      else if (method === 'redirect') { window.location.href = window.uiSafeURL(url); }
       else {
         fetchJSON(url, {method: 'POST'}).catch(function(err) {
           showToast('Failed: ' + (err && err.message || err));

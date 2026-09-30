@@ -451,7 +451,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		}
 		pageCode := "none"
 		if n := len(pageBrowserCode(spec)); n > 0 {
-			pageCode = fmt.Sprintf("%d block(s) of HTML or script that run in each viewer's browser, signed in as that viewer: read them under Show scripts", n)
+			pageCode = fmt.Sprintf("%d block(s) of HTML or script that run in each viewer's browser, isolated (no gohort session, only this app's own endpoints): read them under Show scripts", n)
 		}
 		writeJSON(w, map[string]any{
 			"sources":      len(spec.DataSources),
@@ -475,10 +475,11 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 			fmt.Fprintf(&b, "\n=== action: %s (%s) ===\ncapabilities: %s\n\n%s\n",
 				a.Name, firstNonEmptyText(a.Language, "python"), capsOrNone(a.Capabilities), a.Script)
 		}
-		// The page's own HTML and script. Not sandboxed: it runs in every
-		// viewer's browser, on this site, signed in as that viewer.
+		// The page's own HTML and script. It runs in each viewer's browser,
+		// in an isolated frame with no origin, reaching only the app's own
+		// endpoints (isolateAppHTML): not as the viewer on this site.
 		for i, code := range pageBrowserCode(spec) {
-			fmt.Fprintf(&b, "\n=== page code %d (runs in each viewer's browser, as the viewer) ===\n\n%s\n", i+1, code)
+			fmt.Fprintf(&b, "\n=== page code %d (runs in each viewer's browser, isolated: no gohort session, only this app's own endpoints) ===\n\n%s\n", i+1, code)
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte(b.String()))

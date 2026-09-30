@@ -56,6 +56,22 @@
     }
   }
 
+  // safeURL neutralizes a URL that would run script when followed or loaded
+  // (javascript:, vbscript:), reading the scheme the way a browser does:
+  // ignoring case and the whitespace and control characters it skips. Every
+  // link, frame source and navigation the runtime builds passes through it,
+  // since URLs arrive from page config and from data as often as from code,
+  // and one "javascript:" among them runs as whoever is looking at the page.
+  // Other schemes pass (data: is how downloads are offered; top-level data:
+  // navigation is blocked by browsers themselves).
+  function safeURL(u) {
+    if (u == null) return u;
+    var probe = String(u).replace(/[\u0000-\u0020\u007f-\u00a0]/g, '').toLowerCase();
+    if (probe.indexOf('javascript:') === 0 || probe.indexOf('vbscript:') === 0) return '#';
+    return u;
+  }
+  window.uiSafeURL = safeURL;
+
   function el(tag, opts, children) {
     var n = document.createElement(tag);
     if (opts) {
@@ -64,6 +80,7 @@
         else if (k === 'text') n.textContent = opts[k];
         else if (k === 'html') n.innerHTML = opts[k];
         else if (k.indexOf('on') === 0) n.addEventListener(k.slice(2), opts[k]);
+        else if (k === 'href' || k === 'src') n.setAttribute(k, safeURL(opts[k]));
         else n.setAttribute(k, opts[k]);
       }
     }
@@ -524,13 +541,13 @@
   window.uiGoTo = function(dest) {
     try {
       var probe = document.createElement('a');
-      probe.href = dest;
+      probe.href = safeURL(dest);
       if (probe.pathname + probe.search === location.pathname + location.search) {
         location.replace(dest);
         return;
       }
     } catch (_) {}
-    location.href = dest;
+    location.href = safeURL(dest);
   };
 
   window.uiRegisterClientAction = function(name, fn) {
@@ -1103,7 +1120,7 @@
     }
     popBtn.addEventListener('click', function() {
       try {
-        if (state.url) { window.open(state.url, '_blank'); return; }
+        if (state.url) { window.open(safeURL(state.url), '_blank'); return; }
         var blob = new Blob([state.html || ''], {type: 'text/html'});
         window.open(URL.createObjectURL(blob), '_blank');
       } catch (_) {}

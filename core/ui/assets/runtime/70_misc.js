@@ -6,7 +6,7 @@
     if (cfg.action_label && cfg.action_url) {
       var btn = el('button', {class: 'ui-empty-action'}, [cfg.action_label]);
       btn.addEventListener('click', function() {
-        if ((cfg.action_method || 'GET').toUpperCase() === 'GET') { window.location.href = cfg.action_url; return; }
+        if ((cfg.action_method || 'GET').toUpperCase() === 'GET') { window.location.href = window.uiSafeURL(cfg.action_url); return; }
         fetch(cfg.action_url, {method: cfg.action_method}).then(function(){ location.reload(); });
       });
       wrap.appendChild(btn);
@@ -420,7 +420,7 @@
         return;
       }
       if (a.kind === 'download') {
-        window.open(url, '_blank');
+        window.open(window.uiSafeURL(url), '_blank');
         return;
       }
       // A macro: put the prompt in the chat composer and give the user the
@@ -1049,10 +1049,20 @@
     var f = document.createElement('iframe');
     f.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-pointer-lock');
     var allowed = (cfg.isolate_fetch || []).map(String);
+    // permitted is checked on the URL as the BROWSER will fetch it, not as
+    // written: the parser turns "%2e%2e" into "..", a backslash into "/", and
+    // resolves dot segments, so a string test for ".." let "data/%2e%2e/..."
+    // and "data\\..\\..." walk out of the app to any gohort endpoint, with
+    // the viewer's session. Encoded separators and dots are refused outright:
+    // the server resolves those in its own way.
     function permitted(u) {
-      if (/^[a-z][a-z0-9+.-]*:/i.test(u) || u.indexOf('//') === 0 || u.charAt(0) === '/') return false;
-      if (u.split(/[?#]/)[0].split('/').indexOf('..') >= 0) return false;
-      return allowed.some(function(pre) { return pre && u.indexOf(pre) === 0; });
+      if (/^[a-z][a-z0-9+.-]*:/i.test(u) || u.indexOf('//') === 0 || u.charAt(0) === '/' || u.indexOf('\\') >= 0) return false;
+      var base, res;
+      try { base = new URL('.', location.href); res = new URL(u, location.href); } catch (_) { return false; }
+      if (res.origin !== location.origin || res.pathname.indexOf(base.pathname) !== 0) return false;
+      if (/%2f|%5c|%2e/i.test(res.pathname)) return false;
+      var rel = res.pathname.slice(base.pathname.length);
+      return allowed.some(function(pre) { return pre && rel.indexOf(pre) === 0; });
     }
     window.addEventListener('message', function(e) {
       if (e.source !== f.contentWindow || !e.data) return;

@@ -106,7 +106,7 @@ func TestARowLinkAndACellLinkAgree(t *testing.T) {
 	}
 	rowBranch := src[i : i+1200]
 	// The row navigates in place and only opens a tab on a modifier click.
-	if !strings.Contains(rowBranch, "window.location.href = href") {
+	if !strings.Contains(rowBranch, "window.location.href = window.uiSafeURL(href)") {
 		t.Error("RowLink no longer navigates in place")
 	}
 	if !strings.Contains(rowBranch, "newTab") {

@@ -88,7 +88,7 @@
     //                — this is the supported path for any
     //                app-specific flow.
     //   "post"     → POST to URL with {id} substituted
-    //   "open"     → window.open(URL, _blank)
+    //   "open"     → window.open(window.uiSafeURL(URL), _blank)
     //   "redirect" → set window.location.href
     //   "builtin"  → legacy: invokes a hard-coded named flow that
     //                lives in this file. New code should use
@@ -191,8 +191,8 @@
           return;
         }
         var url = (action.url || '').replace('{id}', encodeURIComponent(currentID || ''));
-        if (method === 'open')          { window.open(url, '_blank', 'noopener'); }
-        else if (method === 'redirect') { window.location.href = url; }
+        if (method === 'open')          { window.open(window.uiSafeURL(url), '_blank', 'noopener'); }
+        else if (method === 'redirect') { window.location.href = window.uiSafeURL(url); }
         else {
           fetchJSON(url, {method: 'POST'}).catch(function(err){
             showToast('Failed: ' + err.message);
@@ -235,9 +235,9 @@
           }
           var url = (action.url || '').replace('{id}', encodeURIComponent(currentID || ''));
           if (method === 'open') {
-            window.open(url, '_blank', 'noopener');
+            window.open(window.uiSafeURL(url), '_blank', 'noopener');
           } else if (method === 'redirect') {
-            window.location.href = url;
+            window.location.href = window.uiSafeURL(url);
           } else {
             // POST (default). No payload — the action URL itself
             // encodes whatever the server needs.

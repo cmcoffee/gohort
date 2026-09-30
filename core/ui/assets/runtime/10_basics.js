@@ -390,8 +390,8 @@
               // Never steal a click meant for a control in the row.
               if (ev.target.closest('button, a, input, select, textarea, label')) return;
               if (ev.defaultPrevented) return;
-              if (newTab) window.open(href, '_blank', 'noopener');
-              else window.location.href = href;
+              if (newTab) window.open(window.uiSafeURL(href), '_blank', 'noopener');
+              else window.location.href = window.uiSafeURL(href);
             }
             row.addEventListener('click', function(ev) {
               follow(ev, ev.metaKey || ev.ctrlKey || ev.shiftKey);
@@ -412,7 +412,7 @@
             row.addEventListener('keydown', function(ev) {
               if (ev.key !== 'Enter') return;
               if (ev.target !== row) return; // a focused control handles its own keys
-              window.location.href = href;
+              window.location.href = window.uiSafeURL(href);
             });
           })(String(rowHref));
         }
@@ -591,8 +591,8 @@
             var dest = url;
             if (act.redirect_url) dest = substitute(act.redirect_url, rec);
             var target = act.redirect_target || '_self';
-            if (target === '_self') window.location.href = dest;
-            else window.open(dest, target);
+            if (target === '_self') window.location.href = window.uiSafeURL(dest);
+            else window.open(window.uiSafeURL(dest), target);
             return;
           }
           // Optimistic mode — hide the row immediately so the user
@@ -634,7 +634,7 @@
                 var dest = substitute(act.redirect_url, resp || {});
                 var target = act.redirect_target || '_blank';
                 if (target === '_self') window.uiGoTo(dest);
-                else window.open(dest, target);
+                else window.open(window.uiSafeURL(dest), target);
                 reload(true);
                 return;
               }
@@ -3714,7 +3714,7 @@
               var dest = substitute(cfg.redirect_url, resp || {});
               var target = cfg.redirect_target || '_self';
               if (target === '_self') window.uiGoTo(dest);
-              else window.open(dest, target);
+              else window.open(window.uiSafeURL(dest), target);
             } else if (ctx && typeof ctx.__closeModal === 'function') {
               // A submit-mode form inside a ModalButton: the submit button IS the
               // commit, so dismiss the dialog on success (the invalidate above has
@@ -3963,7 +3963,7 @@
                 // broken. The sibling path has always navigated; this one
                 // fetched whatever method it was given.
                 if ((act.method || 'POST').toUpperCase() === 'GET') {
-                  window.location.href = act.url;
+                  window.location.href = window.uiSafeURL(act.url);
                   return;
                 }
                 btn.disabled = true;
@@ -4593,10 +4593,14 @@
         hover.style.cursor = 'crosshair';
         // Build the tooltip body — headline (date + cost), then the
         // optional breakdown rows in a compact two-column layout.
+        // Every piece is escaped: the values are the data's, and the tip is
+        // written as HTML, so a record carrying markup would otherwise run
+        // on the page as whoever is looking at the chart.
+        var tipEsc = function(x) { return String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
         var buildTip = function() {
           var parts = [];
-          parts.push('<div class="ui-chart-tip-h">' + fmtX(p[cfg.x_field]) + '</div>');
-          parts.push('<div class="ui-chart-tip-y">' + fmtY(v) + '</div>');
+          parts.push('<div class="ui-chart-tip-h">' + tipEsc(fmtX(p[cfg.x_field])) + '</div>');
+          parts.push('<div class="ui-chart-tip-y">' + tipEsc(fmtY(v)) + '</div>');
           if (cfg.breakdown && cfg.breakdown.length) {
             parts.push('<div class="ui-chart-tip-rows">');
             cfg.breakdown.forEach(function(pair) {
@@ -4605,8 +4609,8 @@
               var fv = fmt(rawV, pair.format);
               parts.push(
                 '<div class="ui-chart-tip-row">' +
-                  '<span class="ui-chart-tip-label">' + pair.label + '</span>' +
-                  '<span class="ui-chart-tip-val' + (pair.mono ? ' mono' : '') + '">' + fv + '</span>' +
+                  '<span class="ui-chart-tip-label">' + tipEsc(pair.label) + '</span>' +
+                  '<span class="ui-chart-tip-val' + (pair.mono ? ' mono' : '') + '">' + tipEsc(fv) + '</span>' +
                 '</div>'
               );
             });
@@ -5182,7 +5186,7 @@
           else console.error('toolbar: no handler for client action ' + url);
           return;
         }
-        if (method.toUpperCase() === 'GET') { window.location.href = url; return; }
+        if (method.toUpperCase() === 'GET') { window.location.href = window.uiSafeURL(url); return; }
         fetch(url, {method: method, headers: {'Content-Type': 'application/json'}, body: '{}'})
           .catch(function(err){ console.error('toolbar action failed: ' + err.message); });
       }}, [a.label || '?']);
