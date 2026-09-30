@@ -1011,12 +1011,19 @@ func TestAnUnattributedCallIsNotAttributedToTheOwner(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cred := SecureCredential{Name: "own_api", Type: SecureCredNone, Owner: "alice",
+	// A personal key is not spent by a call that runs as no one at all.
+	own := SecureCredential{Name: "own_api", Type: SecureCredNone, Owner: "alice",
+		AllowedURLPattern: imageHostPattern(srv.URL)}
+	if _, err := Secure().dispatch(own, map[string]any{"url": srv.URL + "/ping", "method": "GET"}, nil); err == nil {
+		t.Fatal("a sessionless call spent alice's personal key")
+	}
+	// An open deployment credential is, and the row names nobody.
+	cred := SecureCredential{Name: "open_api", Type: SecureCredNone,
 		AllowedURLPattern: imageHostPattern(srv.URL)}
 	if _, err := Secure().dispatch(cred, map[string]any{"url": srv.URL + "/ping", "method": "GET"}, nil); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	got := Secure().LoadAudit("alice", "own_api")
+	got := Secure().LoadAudit("", "open_api")
 	if len(got) != 1 {
 		t.Fatalf("expected one row, got %+v", got)
 	}

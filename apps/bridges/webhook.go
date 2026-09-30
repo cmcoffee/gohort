@@ -60,7 +60,7 @@ type webhookProvider interface {
 	// extract parses inbound messages from a verified event body. It may call the
 	// service's API (spec.Credential) to resolve a message the notification only
 	// references (Graph). Return (nil, nil) to ignore an irrelevant event.
-	extract(body []byte, spec RestMessagingSpec) ([]hookRequest, error)
+	extract(body []byte, spec RestMessagingSpec, owner string) ([]hookRequest, error)
 	// autoSecret returns a secret to generate + store at materialize (Graph
 	// clientState) with generated=true, or ("", false) when the admin must set it.
 	autoSecret() (secret string, generated bool)
@@ -136,7 +136,7 @@ func (T *Bridges) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	reqs, err := prov.extract(body, spec)
+	reqs, err := prov.extract(body, spec, c.Owner)
 	if err != nil {
 		Warn("[bridges] webhook %q extract failed: %v", name, err)
 		w.WriteHeader(http.StatusAccepted) // ack; don't make the provider retry a bad payload
@@ -247,7 +247,7 @@ func (slackProvider) verify(r *http.Request, body []byte, secret string, _ RestM
 // extract pulls a single user message from a Slack event_callback. It DROPS the
 // bridge's own outbound (bot_id set) — critical to avoid a reply→event→reply loop
 // — plus edits/joins/other subtypes and non-message events.
-func (slackProvider) extract(body []byte, _ RestMessagingSpec) ([]hookRequest, error) {
+func (slackProvider) extract(body []byte, _ RestMessagingSpec, _ string) ([]hookRequest, error) {
 	var p struct {
 		Type  string `json:"type"`
 		Event struct {
@@ -322,7 +322,7 @@ func (graphProvider) verify(_ *http.Request, body []byte, secret string, _ RestM
 // extract fetches each referenced message (the notification carries only a
 // resource path, not the body) and maps it with the connector's teams-style
 // dot-paths.
-func (graphProvider) extract(body []byte, spec RestMessagingSpec) ([]hookRequest, error) {
+func (graphProvider) extract(body []byte, spec RestMessagingSpec, owner string) ([]hookRequest, error) {
 	var p struct {
 		Value []struct {
 			Resource string `json:"resource"`
@@ -338,7 +338,7 @@ func (graphProvider) extract(body []byte, spec RestMessagingSpec) ([]hookRequest
 			continue
 		}
 		url := "https://graph.microsoft.com/v1.0/" + strings.TrimPrefix(v.Resource, "/")
-		respBody, status, err := authedRequest(spec.Credential, "GET", url, "")
+		respBody, status, err := authedRequest(owner, spec.Credential, "GET", url, "")
 		if err != nil || status >= 300 {
 			Warn("[bridges] graph webhook resource fetch %s → err=%v status=%d", url, err, status)
 			continue
@@ -474,7 +474,7 @@ func (T *Bridges) graphEnsureSubscription(c Connector, spec RestMessagingSpec) (
 	if sub.ID != "" {
 		// Renew in place first.
 		body, _ := json.Marshal(map[string]any{"expirationDateTime": exp})
-		_, status, err := authedRequest(spec.Credential, "PATCH", graphBase+"subscriptions/"+sub.ID, string(body))
+		_, status, err := authedRequest(c.Owner, spec.Credential, "PATCH", graphBase+"subscriptions/"+sub.ID, string(body))
 		if err == nil && status < 300 {
 			sub.ExpiresAt = exp
 			T.setWebhookSub(c.Name, sub)
@@ -490,7 +490,7 @@ func (T *Bridges) graphEnsureSubscription(c Connector, spec RestMessagingSpec) (
 		"expirationDateTime": exp,
 		"clientState":        clientState,
 	})
-	respBody, status, err := authedRequest(spec.Credential, "POST", graphBase+"subscriptions", string(body))
+	respBody, status, err := authedRequest(c.Owner, spec.Credential, "POST", graphBase+"subscriptions", string(body))
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -518,7 +518,7 @@ func (T *Bridges) graphDeleteSubscription(c Connector, spec RestMessagingSpec) {
 	if sub.ID == "" {
 		return
 	}
-	_, status, err := authedRequest(spec.Credential, "DELETE", graphBase+"subscriptions/"+sub.ID, "")
+	_, status, err := authedRequest(c.Owner, spec.Credential, "DELETE", graphBase+"subscriptions/"+sub.ID, "")
 	Log("[bridges] graph webhook %q subscription %s deleted (status=%d err=%v)", c.Name, sub.ID, status, err)
 	T.DB.Unset(webhookSubTable, c.Name)
 }

@@ -178,7 +178,7 @@ func (T *Bridges) pollOnce(ctx context.Context, c Connector, spec RestMessagingS
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		body, status, err := authedRequest(spec.Credential, method, pollURL, spec.Body)
+		body, status, err := authedRequest(c.Owner, spec.Credential, method, pollURL, spec.Body)
 		if err != nil {
 			return err
 		}
@@ -258,7 +258,7 @@ func (T *Bridges) deliverOutbound(ctx context.Context, spec RestMessagingSpec, o
 		}
 		sendURL := strings.ReplaceAll(spec.SendURL, "{chat_id}", it.ChatID)
 		reqBody := renderSendBody(spec.SendBody, it.ChatID, it.Text)
-		_, status, err := authedRequest(spec.Credential, method, sendURL, reqBody)
+		_, status, err := authedRequest(owner, spec.Credential, method, sendURL, reqBody)
 		if err != nil || status >= 300 {
 			Warn("[bridges] messaging send failed (svc=%s chat=%s): err=%v status=%d, re-queued %d item(s)",
 				spec.Service, it.ChatID, err, status, len(items)-i)
@@ -283,7 +283,7 @@ func (T *Bridges) probeMessaging(c Connector) (string, error) {
 	if cur := T.getPollCursor(c.Name); cur.NextURL != "" {
 		pollURL = cur.NextURL
 	}
-	body, status, err := authedRequest(spec.Credential, firstNonEmpty(spec.Method, "GET"), pollURL, spec.Body)
+	body, status, err := authedRequest(c.Owner, spec.Credential, firstNonEmpty(spec.Method, "GET"), pollURL, spec.Body)
 	if err != nil {
 		return "", err
 	}
@@ -465,8 +465,12 @@ func (T *Bridges) setPollCursor(name string, c pollCursor) {
 // and secret redaction all apply. dispatch returns an LLM-formatted string ("HTTP
 // <status> <text>\n<pretty-json>"); parseDispatchResult splits it back to a status
 // + raw body for the poller to parse.
-func authedRequest(cred, method, rawURL, body string) (string, int, error) {
-	out, err := Secure().DispatchToolCall(nil, cred, rawURL, method, body)
+//
+// owner is the connector's owner: the request runs as them, so the key is
+// spent by someone allowed to spend it (with no user, dispatch reaches only
+// open credentials).
+func authedRequest(owner, cred, method, rawURL, body string) (string, int, error) {
+	out, err := Secure().DispatchToolCall(&ToolSession{Username: owner}, cred, rawURL, method, body)
 	if err != nil {
 		return "", 0, err
 	}

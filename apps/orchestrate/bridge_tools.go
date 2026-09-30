@@ -263,9 +263,12 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 		// source verifiably works (hard-fail), so a disabled/secretless credential
 		// is a precondition to finish first — not a pending bridge that silently
 		// fails on a schedule.
-		exists, enabled, hasSecret := Secure().CredentialStatus(cred)
+		exists, enabled, hasSecret := Secure().CredentialStatusOwned(owner, cred)
 		if !exists {
 			return "", fmt.Errorf("no API credential named %q: draft one first with draft_api_credential or draft_oauth_credential, then have the admin enable it in Admin > APIs", cred)
+		}
+		if err := Secure().PollMayUse(owner, cred); err != nil {
+			return "", err
 		}
 		if !enabled || !hasSecret {
 			return "", fmt.Errorf("credential %q isn't live yet (enabled=%v, secret set=%v): a bridge is only created once its source verifiably works. Have the admin finish it in Admin > APIs, then create the bridge", cred, enabled, hasSecret)

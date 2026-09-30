@@ -456,7 +456,10 @@ func failedRuns(runs []RunRecord, now time.Time, n int) []RunRecord {
 }
 
 // runCountLabel counts today and the past week, which is the pair that says
-// whether anything is happening and whether that is normal.
+// whether anything is happening and whether that is normal. The ledger holds
+// what ran ON ITS OWN (schedules, monitors, triggers), not chats, so the label
+// says "background": "No runs this week" beside a chat just held read as
+// nothing having happened at all. Chats show under Spend.
 func runCountLabel(runs []RunRecord, now time.Time) string {
 	day := now.AddDate(0, 0, -1)
 	week := now.AddDate(0, 0, -7)
@@ -470,9 +473,9 @@ func runCountLabel(runs []RunRecord, now time.Time) string {
 		}
 	}
 	if seven == 0 {
-		return "No runs this week"
+		return "No background runs this week"
 	}
-	return fmt.Sprintf("%d run(s) in 24h - %d in 7 days", today, seven)
+	return fmt.Sprintf("%d background run(s) in 24h - %d in 7 days", today, seven)
 }
 
 // hasRecentFailure reports whether the pill above is counting anything, which
@@ -515,9 +518,9 @@ func runHealthStatus(runs []RunRecord, now time.Time) string {
 // lastRunLabel says when anything last ran, in the owner's own zone.
 func lastRunLabel(runs []RunRecord, loc *time.Location) string {
 	if len(runs) == 0 {
-		return "nothing has run yet"
+		return "no schedule, monitor or trigger has run yet (chats are counted under Spend)"
 	}
-	return "last run " + runs[0].Started.In(loc).Format("Jan 2 15:04")
+	return "last background run " + runs[0].Started.In(loc).Format("Jan 2 15:04")
 }
 
 // standingWorkLabel counts the three kinds of standing work in one phrase,

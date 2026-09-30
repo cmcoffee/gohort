@@ -334,7 +334,7 @@ func TestOverviewCardsCarrySectionsAndRunMarkers(t *testing.T) {
 // often opened on an agent that has barely run.
 func TestOverviewLabelsAtTheEdges(t *testing.T) {
 	now := time.Now()
-	if got := runCountLabel(nil, now); got != "No runs this week" {
+	if got := runCountLabel(nil, now); got != "No background runs this week" {
 		t.Errorf("empty ledger label = %q", got)
 	}
 	if got := standingWorkLabel(0, 0, 0); got != "No standing work" {
@@ -343,7 +343,7 @@ func TestOverviewLabelsAtTheEdges(t *testing.T) {
 	if got := standingWorkLabel(2, 0, 1); got != "2 schedule(s) - 1 recurring task(s)" {
 		t.Errorf("standing label should name only the kinds that exist, got %q", got)
 	}
-	if got := lastRunLabel(nil, time.UTC); got != "nothing has run yet" {
+	if got := lastRunLabel(nil, time.UTC); got != "no schedule, monitor or trigger has run yet (chats are counted under Spend)" {
 		t.Errorf("empty last-run label = %q", got)
 	}
 
@@ -353,7 +353,7 @@ func TestOverviewLabelsAtTheEdges(t *testing.T) {
 		{Status: RunOK, Started: now.AddDate(0, 0, -3)},
 		{Status: RunOK, Started: now.AddDate(0, 0, -30)}, // outside both windows
 	}
-	if got := runCountLabel(runs, now); got != "2 run(s) in 24h - 3 in 7 days" {
+	if got := runCountLabel(runs, now); got != "2 background run(s) in 24h - 3 in 7 days" {
 		t.Errorf("run count label = %q", got)
 	}
 	// Something in flight outranks something that already failed: one is still

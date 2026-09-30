@@ -179,6 +179,10 @@ func (h restMessagingHandler) Validate(c Connector) error {
 	if exists, _, _ := Secure().CredentialStatus(s.Credential); !exists {
 		return fmt.Errorf("no credential named %q: draft it first (draft_oauth_credential) and have the admin enable it", s.Credential)
 	}
+	// Its requests run as the owner, so the owner must be allowed the key.
+	if cr, ok := Secure().Resolve(s.Credential, c.Owner); ok && !Secure().UserMayUse(cr, c.Owner) {
+		return fmt.Errorf("credential %q is not shared with %s, whose connector this is: an admin grants access via Access in Admin > APIs", s.Credential, c.Owner)
+	}
 	if s.WebhookProvider != "" {
 		// PUSH mode: the provider owns inbound (handshake + verify + extraction), so
 		// poll_url and the poll-side map aren't required. Outbound (send_url) is.

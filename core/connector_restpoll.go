@@ -67,8 +67,13 @@ func (h restPollHandler) Validate(c Connector) error {
 	if s.Credential == "" {
 		return fmt.Errorf("credential is required (a registered SecureAPI credential name)")
 	}
-	if exists, _, _ := Secure().CredentialStatus(s.Credential); !exists {
+	if exists, _, _ := Secure().CredentialStatusOwned(c.Owner, s.Credential); !exists {
 		return fmt.Errorf("no credential named %q: draft it first (draft_api_credential / draft_oauth_credential) and have the admin enable it", s.Credential)
+	}
+	// It goes live on create (AutoApprove), so it is held to what its owner
+	// may spend when it is made, not only on each fire.
+	if err := Secure().PollMayUse(c.Owner, s.Credential); err != nil {
+		return err
 	}
 	if !strings.HasPrefix(s.URL, "https://") && !strings.HasPrefix(s.URL, "http://") {
 		return fmt.Errorf("url must be http(s)")

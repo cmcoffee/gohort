@@ -1659,6 +1659,12 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 				// alongside the admin's.
 				continue
 			}
+			// Only keys this user may spend, and not ones the agent has
+			// switched off: dispatch refuses both, and a tool that can only
+			// fail should not be offered (Builder gets every credential tool).
+			if !s.UserMayUse(c, sessUser) || sess.CredentialDenied(c.Name) {
+				continue
+			}
 			// SecureCredNone (the bootstrapped "no_auth" credential) is
 			// the policy storage for the bare fetch_url tool — operators
 			// tune its AllowedURLPattern / rate limit / audit verbosity to
@@ -1768,7 +1774,18 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 		},
 		NeedsConfirm: c.RequiresConfirm,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			return s.dispatch(c, args, sess)
+			// Resolved again per call, not the record captured when the
+			// catalog was built: a lend revoked or narrowed, a credential
+			// secured or given an Access list mid-conversation, applies to
+			// the next call rather than the next turn.
+			cur, ok := s.ResolveIn(c.Name, sessUsername(sess), sessAgentID(sess))
+			if !ok || cur.Owner != c.Owner {
+				return "", fmt.Errorf("credential %q changed since this conversation's tools were built: retry, the next turn has the current one", c.Name)
+			}
+			if s.EffectiveSecured(cur, sessUsername(sess)) {
+				return "", fmt.Errorf("credential %q is now SECURED: it is reached only through the tools bound to it", c.Name)
+			}
+			return s.dispatch(cur, args, sess)
 		},
 	}
 }
@@ -1969,6 +1986,51 @@ func toolCallHeaderArgs(headers map[string]string) map[string]any {
 	return out
 }
 
+// callerMayDispatch is WHO may spend this key, asked where every path meets.
+// It used to be asked only in the tool wrappers (api tools, fetch_via), so a
+// path that went around them spent keys its caller was never given: the
+// fetch_url_<cred> catalog tools, standing polls with no user at all, and an
+// agent whose scope had turned the credential off. The session's user must be
+// allowed the credential (open, named in its Access list, their own, or lent
+// to them) and the agent must not have it switched off. A call with no user
+// reaches only open credentials. A credential synthesized in-process for one
+// call (inlineSecret: a media upload's configured key) has no record to ask.
+func (s *SecureAPI) callerMayDispatch(c SecureCredential, sess *ToolSession) error {
+	if c.inlineSecret != "" {
+		return nil
+	}
+	user := sessUsername(sess)
+	if !s.UserMayUse(c, user) {
+		if user == "" {
+			return fmt.Errorf("credential %q is limited to named people, and this call runs as no one: it cannot use it", c.Name)
+		}
+		return fmt.Errorf("credential %q is not shared with you: an admin grants access via Access in Admin > APIs", c.Name)
+	}
+	if sess.CredentialDenied(c.Name) {
+		return fmt.Errorf("credential %q is switched off for this agent (its credential scope)", c.Name)
+	}
+	return nil
+}
+
+// PollMayUse says whether owner may set a STANDING poll on a credential (the
+// bridge tool, a rest_poll connector): both go live with no approval, so they
+// are held to what the owner may spend, and a SECURED credential is refused,
+// since it is reached only through the tools bound to it and a poll is not one.
+// Checked when the poll is made; dispatch asks again on every fire.
+func (s *SecureAPI) PollMayUse(owner, name string) error {
+	c, ok := s.Resolve(name, owner)
+	if !ok {
+		return fmt.Errorf("no API credential named %q", name)
+	}
+	if !s.UserMayUse(c, owner) {
+		return fmt.Errorf("credential %q is not shared with you: an admin grants access via Access in Admin > APIs", name)
+	}
+	if s.EffectiveSecured(c, owner) {
+		return fmt.Errorf("credential %q is SECURED: a standing poll cannot use it; poll through a tool bound to it instead", name)
+	}
+	return nil
+}
+
 // dispatch is the handler logic for one credential's tool. Validates
 // the URL, reads the encrypted secret, builds the request with auth
 // attached, executes, and either returns the response body as text
@@ -1989,6 +2051,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// Disabled is the hard kill switch.
 	if c.Disabled {
 		return "", fmt.Errorf("credential %q is disabled", c.Name)
+	}
+	if err := s.callerMayDispatch(c, sess); err != nil {
+		return "", err
 	}
 	rawURL := strings.TrimSpace(StringArg(args, "url"))
 	if rawURL == "" {
@@ -2638,9 +2703,18 @@ func (s *SecureAPI) AutoRouteCredential(rawURL string, user ...string) (string, 
 			return name, err
 		}
 	}
+	who := ""
+	if len(user) > 0 {
+		who = strings.TrimSpace(user[0])
+	}
 	var covering []string
 	for _, c := range s.List() {
-		if c.Secured {
+		if !s.UserMayUse(c, who) {
+			// Not this user's key to spend: the host reads as uncovered, so a
+			// plain fetch goes out without it rather than failing on access.
+			continue
+		}
+		if s.EffectiveSecured(c, who) {
 			// Secured credentials are reachable ONLY through the tools that
 			// declare them — never via the fetch_url auto-route. Skipping here
 			// means a covered host reads as "not credential-covered", so the
@@ -2680,7 +2754,7 @@ func (s *SecureAPI) AutoRouteCredential(rawURL string, user ...string) (string, 
 func (s *SecureAPI) autoRouteOwn(rawURL, user string) (string, error) {
 	var covering []string
 	for _, c := range s.ListUser(user) {
-		if c.Secured {
+		if s.EffectiveSecured(c, user) {
 			continue // reachable only through the tools that declare it, as above
 		}
 		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
@@ -2717,7 +2791,7 @@ func (s *SecureAPI) DispatchToolCallArgs(sess *ToolSession, credName string, arg
 	}
 	// Resolve in the session user's namespace: their OWN credential shadows a
 	// global one of the same name. Nil session → global only.
-	c, ok := s.Resolve(credName, sessUsername(sess))
+	c, ok := s.ResolveIn(credName, sessUsername(sess), sessAgentID(sess))
 	if !ok {
 		return "", fmt.Errorf("credential %q not registered", credName)
 	}

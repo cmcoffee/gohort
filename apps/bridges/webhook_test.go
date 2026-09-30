@@ -93,7 +93,7 @@ func TestSlackExtractFiltering(t *testing.T) {
 		{"empty text", `{"type":"event_callback","event":{"type":"message","channel":"C1","user":"U1","text":"  ","ts":"1.4"}}`, 0},
 	}
 	for _, tc := range cases {
-		got, err := (slackProvider{}).extract([]byte(tc.body), RestMessagingSpec{})
+		got, err := (slackProvider{}).extract([]byte(tc.body), RestMessagingSpec{}, "")
 		if err != nil {
 			t.Errorf("%s: %v", tc.name, err)
 			continue
@@ -103,7 +103,7 @@ func TestSlackExtractFiltering(t *testing.T) {
 		}
 	}
 	// The mapped user message carries the right fields.
-	msgs, _ := (slackProvider{}).extract([]byte(cases[0].body), RestMessagingSpec{})
+	msgs, _ := (slackProvider{}).extract([]byte(cases[0].body), RestMessagingSpec{}, "")
 	if len(msgs) == 1 && (msgs[0].ChatID != "C1" || msgs[0].Handle != "U1" || msgs[0].Text != "hi" || msgs[0].MsgID != "1.1") {
 		t.Errorf("mismapped: %+v", msgs[0])
 	}

@@ -46,11 +46,7 @@ func InvokeWatcherTool(toolName string, toolArgs map[string]any) (string, error)
 		return "", fmt.Errorf("empty tool name")
 	}
 	if strings.HasPrefix(toolName, "call_") {
-		credName := strings.TrimPrefix(toolName, "call_")
-		urlStr := StringArg(toolArgs, "url")
-		method := StringArg(toolArgs, "method")
-		body := StringArg(toolArgs, "body")
-		return Secure().DispatchToolCall(nil, credName, urlStr, method, body)
+		return invokeCredentialPoll(nil, toolName, toolArgs)
 	}
 	t, ok := LookupChatTool(toolName)
 	if !ok {
@@ -90,6 +86,13 @@ func RegisterWatchToolInvoker(fn WatchToolInvoker) { watchToolInvoker = fn }
 // call_<cred> secure APIs). agentID is the monitor's WakeAgent, needed to build
 // per-agent channel tools; pass "" when not agent-scoped.
 func InvokeWatchTool(owner, agentID, toolName string, toolArgs map[string]any) (string, error) {
+	if strings.HasPrefix(toolName, "call_") {
+		// Run as the monitor's owner and agent, so the key is spent by
+		// someone who may spend it: with no user, dispatch reaches only open
+		// credentials, and nothing asked whether the owner was allowed this
+		// one or the agent had switched it off.
+		return invokeCredentialPoll(&ToolSession{Username: owner, AgentID: agentID}, toolName, toolArgs)
+	}
 	if watchToolInvoker != nil {
 		out, err := watchToolInvoker(owner, agentID, toolName, toolArgs)
 		if !errors.Is(err, ErrWatchToolNotHandled) {
@@ -97,6 +100,17 @@ func InvokeWatchTool(owner, agentID, toolName string, toolArgs map[string]any) (
 		}
 	}
 	return InvokeWatcherTool(toolName, toolArgs)
+}
+
+// invokeCredentialPoll is one standing poll through a credential (call_<name>).
+// A SECURED credential is refused: it is reached only through the tools bound
+// to it, and a poll is not one of them.
+func invokeCredentialPoll(sess *ToolSession, toolName string, toolArgs map[string]any) (string, error) {
+	credName := strings.TrimPrefix(toolName, "call_")
+	if c, ok := Secure().ResolveIn(credName, sessUsername(sess), sessAgentID(sess)); ok && Secure().EffectiveSecured(c, sessUsername(sess)) {
+		return "", fmt.Errorf("credential %q is SECURED: a standing poll cannot use it; poll through a tool bound to it instead", credName)
+	}
+	return Secure().DispatchToolCall(sess, credName, StringArg(toolArgs, "url"), StringArg(toolArgs, "method"), StringArg(toolArgs, "body"))
 }
 
 func sha256Sum(s string) string {

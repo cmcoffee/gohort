@@ -92,7 +92,7 @@ func (genericProvider) checkedChallenge(w http.ResponseWriter, body []byte, spec
 
 // extract reads the push's messages with the spec's list_path and map; a push
 // that is one message (no list_path, an object) is read as a list of one.
-func (genericProvider) extract(body []byte, spec RestMessagingSpec) ([]hookRequest, error) {
+func (genericProvider) extract(body []byte, spec RestMessagingSpec, _ string) ([]hookRequest, error) {
 	var root any
 	if err := json.Unmarshal(body, &root); err != nil {
 		return nil, fmt.Errorf("the push is not JSON: %w", err)

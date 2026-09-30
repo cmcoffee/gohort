@@ -73,7 +73,7 @@ func TestGenericWebhookChecksAToken(t *testing.T) {
 func TestGenericWebhookReadsAndSkips(t *testing.T) {
 	spec := genericSpec(RestMessagingWebhook{Verify: "token", TokenPath: "token", ChallengePath: "challenge"})
 	spec.Skip = []RestMessagingSkip{{Path: "from", Values: []string{"GOHORT"}}, {Path: "system"}}
-	msgs, err := (genericProvider{}).extract([]byte(`{"id":"1","room":{"id":"r"},"from":"ann","text":"hi"}`), spec)
+	msgs, err := (genericProvider{}).extract([]byte(`{"id":"1","room":{"id":"r"},"from":"ann","text":"hi"}`), spec, "")
 	if err != nil || len(msgs) != 1 || msgs[0].ChatID != "r" || msgs[0].Handle != "ann" || msgs[0].Text != "hi" {
 		t.Fatalf("one message read by its paths: %+v %v", msgs, err)
 	}
@@ -81,15 +81,15 @@ func TestGenericWebhookReadsAndSkips(t *testing.T) {
 		`{"room":{"id":"r"},"from":"gohort","text":"my own reply"}`,
 		`{"room":{"id":"r"},"from":"ann","text":"joined","system":true}`,
 	} {
-		if msgs, _ := (genericProvider{}).extract([]byte(body), spec); len(msgs) != 0 {
+		if msgs, _ := (genericProvider{}).extract([]byte(body), spec, ""); len(msgs) != 0 {
 			t.Errorf("skipped: %s", body)
 		}
 	}
-	if msgs, _ := (genericProvider{}).extract([]byte(`{"room":{"id":"r"},"from":"ann","text":"x","system":false}`), spec); len(msgs) != 1 {
+	if msgs, _ := (genericProvider{}).extract([]byte(`{"room":{"id":"r"},"from":"ann","text":"x","system":false}`), spec, ""); len(msgs) != 1 {
 		t.Error("a false flag is not a match")
 	}
 	spec.ListPath = "events"
-	if msgs, _ := (genericProvider{}).extract([]byte(`{"events":[{"room":{"id":"a"},"text":"1"},{"room":{"id":"b"},"text":"2"}]}`), spec); len(msgs) != 2 {
+	if msgs, _ := (genericProvider{}).extract([]byte(`{"events":[{"room":{"id":"a"},"text":"1"},{"room":{"id":"b"},"text":"2"}]}`), spec, ""); len(msgs) != 2 {
 		t.Errorf("a list of messages: %+v", msgs)
 	}
 
