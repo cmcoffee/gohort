@@ -2741,28 +2741,86 @@ func sessUsername(sess *ToolSession) string {
 	return sess.Username
 }
 
-// SetCredentialSecret stores (or overwrites) the encrypted secret of
-// an existing credential without touching its config or enablement.
-// This is the write-only vault path for keys an agent legitimately
-// RECEIVES mid-flow (a self-registration response, a rotation): the
-// key goes straight into the store instead of being echoed into the
-// chat for a human to copy-paste into Admin > APIs. Enablement stays
-// an admin decision.
-func (s *SecureAPI) SetCredentialSecret(name, secret string) error {
+// ErrCredentialHasKey is StoreAgentSecret refusing a credential that already
+// has its key: an agent may land a FIRST key, never replace a working one on
+// its own. A replacement goes through the person's approval (ReplaceSecret).
+const ErrCredentialHasKey = Error("the credential already has a key")
+
+// agentSecretTarget resolves the credential an agent acting for user may write
+// a key into: the user's own of that name, else (for an admin only) the
+// deployment's. It returns the record and the store key its secret lives at.
+func (s *SecureAPI) agentSecretTarget(user string, admin bool, name, secret string) (SecureCredential, string, error) {
 	if !s.ready() {
-		return fmt.Errorf("secure-api store not initialized")
+		return SecureCredential{}, "", fmt.Errorf("secure-api store not initialized")
 	}
 	name = strings.TrimSpace(name)
-	if _, ok := s.Load(name); !ok {
-		return fmt.Errorf("credential %q not registered: draft it first", name)
+	switch strings.TrimSpace(secret) {
+	case "":
+		return SecureCredential{}, "", fmt.Errorf("refusing to store an empty secret")
+	case "(pending)", "(none)":
+		// The store's own placeholders: writing one reads as "no key", which
+		// would unset a working credential while looking like a store.
+		return SecureCredential{}, "", fmt.Errorf("refusing to store %q: that is a placeholder, not a key", strings.TrimSpace(secret))
 	}
-	if strings.TrimSpace(secret) == "" {
-		return fmt.Errorf("refusing to store an empty secret")
+	c, ok := s.LoadUser(user, name)
+	if !ok {
+		g, gok := s.Load(name)
+		if !gok {
+			return SecureCredential{}, "", fmt.Errorf("credential %q not registered: draft it first", name)
+		}
+		if !admin {
+			return SecureCredential{}, "", fmt.Errorf("credential %q belongs to the deployment: only an administrator sets its key (Admin > Extensions > API Credentials)", name)
+		}
+		c = g
+	}
+	if c.IsPerUser() {
+		return SecureCredential{}, "", fmt.Errorf("credential %q takes each person's own key: it is set on the Account page (Connected accounts)", name)
+	}
+	if c.Type == SecureCredNone {
+		return SecureCredential{}, "", fmt.Errorf("credential %q is no-auth: it carries no key", name)
+	}
+	return c, credStoreKey(c.Owner, c.Name), nil
+}
+
+// StoreAgentSecret lands a key an agent RECEIVED mid-flow (a self-registration
+// response) in a credential that has none yet, instead of the key being
+// echoed into the chat. It never replaces a working key: that returns
+// ErrCredentialHasKey, and the person approves a replacement (ReplaceSecret).
+// Enablement is untouched. The lock is here, in the store, so it holds for
+// whichever agent or tool asks.
+func (s *SecureAPI) StoreAgentSecret(user string, admin bool, name, secret string) error {
+	c, key, err := s.agentSecretTarget(user, admin, name, secret)
+	if err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.db.CryptSet(secureAPITable, secureCredSecretKey(name), secret)
-	Log("[secure_api] credential %q secret updated via SetCredentialSecret", name)
+	// Fails closed: a store that cannot answer may be holding a working key,
+	// and "not found" is not evidence that it is not.
+	cur, readable, found := s.readSecretAt(key)
+	if !readable {
+		return fmt.Errorf("could not read credential %q's current key right now, so nothing was written: retry", c.Name)
+	}
+	if found && strings.TrimSpace(cur) != "" && cur != "(pending)" {
+		return ErrCredentialHasKey
+	}
+	s.db.CryptSet(secureAPITable, secureCredSecretKey(key), secret)
+	Log("[secure_api] %s: an agent stored the first key for credential %q", user, c.Name)
+	return nil
+}
+
+// ReplaceSecret overwrites a credential's key once the person has approved
+// the replacement: the same reach as StoreAgentSecret (their own, or the
+// deployment's for an admin), without the has-a-key refusal.
+func (s *SecureAPI) ReplaceSecret(user string, admin bool, name, secret string) error {
+	c, key, err := s.agentSecretTarget(user, admin, name, secret)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.CryptSet(secureAPITable, secureCredSecretKey(key), secret)
+	Log("[secure_api] %s approved replacing the key of credential %q", user, c.Name)
 	return nil
 }
 

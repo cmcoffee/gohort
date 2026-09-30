@@ -1309,6 +1309,55 @@ select.ui-orch-intake-input {
       return {wrap: wrap, body: null};
     });
 
+    // Key replacement card: an agent received a new key for a credential
+    // that already has a working one. The store refused to overwrite it, and
+    // holds the new key server-side for an hour; this card names the
+    // credential only (never the key) and the person decides.
+    window.uiRegisterBlockRenderer('credential_rotate', function(d) {
+      var data = d.data || {};
+      var name = String(data.name || d.title || '');
+      var wrap = el('div', {class: 'ui-orch-connect'});
+      wrap.appendChild(el('div', {class: 'ui-orch-connect-icon'}, ['🔑']));
+      var msg = el('div', {class: 'ui-orch-connect-body'});
+      msg.appendChild(el('div', {class: 'ui-orch-connect-title'}, ['Replace the key on "' + name + '"?']));
+      var note = el('div', {class: 'ui-orch-connect-sub'},
+        ['The assistant received a new key for this credential, which already has a working one. Nothing changes unless you approve; the new key is held for an hour and never shown here.']);
+      msg.appendChild(note);
+      wrap.appendChild(msg);
+      var actions = el('div', {style: 'display:flex;gap:0.5rem;margin-top:0.55rem'});
+      var approve = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Replace the key']);
+      var keep = el('button', {class: 'ui-orch-connect-btn', type: 'button',
+        style: 'background:transparent;border:1px solid var(--border);color:var(--text-mute)'}, ['Keep the current key']);
+      actions.appendChild(approve);
+      actions.appendChild(keep);
+      wrap.appendChild(actions);
+      function settle(text, record) {
+        wrap.classList.add('connected');
+        if (actions.parentNode) actions.remove();
+        note.textContent = text;
+        if (record) window.uiResolveBlock(d.id, text);
+      }
+      if (d.resolved) {
+        settle(String(d.resolved), false);
+        return {wrap: wrap, body: null};
+      }
+      function answer(yes) {
+        approve.disabled = true; keep.disabled = true;
+        fetch('api/console/credential-key/replace', {
+          method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name, approve: yes})
+        })
+          .then(function(r) { return r.text().then(function(t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); }); })
+          .then(function() { settle(yes ? 'Replaced: the credential now uses the new key.' : 'Kept the current key; the new one was discarded.', true); })
+          .catch(function(err) {
+            approve.disabled = false; keep.disabled = false;
+            window.uiAlert('Could not ' + (yes ? 'replace' : 'discard') + ' the key: ' + String(err && err.message || err));
+          });
+      }
+      approve.addEventListener('click', function() { answer(true); });
+      keep.addEventListener('click', function() { answer(false); });
+      return {wrap: wrap, body: null};
+    });
+
     // Credential setup card — emitted when Builder drafts a DISABLED
     // API credential (draft_api_credential / draft_oauth_credential).
     // The Set up button opens a modal whose form POSTs the secret

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"bytes"
 	"encoding/json"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -1834,5 +1835,52 @@ func TestUnfinishedPersonalDraftDoesNotShadowAWorkingCredential(t *testing.T) {
 	}
 	if c, _ := s.Resolve("other", "alice"); c.Owner != "alice" {
 		t.Errorf("no deployment credential of that name: the draft stands: %+v", c)
+	}
+}
+
+// An agent may land a credential's FIRST key but never replace a working one:
+// that is refused in the store, whichever agent asks. A replacement is written
+// only through ReplaceSecret (the person's approval). The store's placeholders
+// are not keys, a deployment credential's key is an administrator's to set,
+// and a key goes where the credential lives.
+func TestAgentsCannotOverwriteAWorkingKey(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	if err := s.SaveAPIDraft(SecureCredential{Name: "forge", Type: SecureCredBearer, BaseURL: "https://forge.example", Owner: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	key := func() string { v, _ := s.loadSecret(credStoreKey("alice", "forge")); return v }
+
+	for _, bad := range []string{"", "  ", "(pending)", "(none)"} {
+		if err := s.StoreAgentSecret("alice", false, "forge", bad); err == nil {
+			t.Errorf("%q is not a key", bad)
+		}
+	}
+	if err := s.StoreAgentSecret("alice", false, "forge", "first-key"); err != nil || key() != "first-key" {
+		t.Fatalf("the first key lands in the empty draft: %v %q", err, key())
+	}
+	if err := s.StoreAgentSecret("alice", false, "forge", "stale-key"); !errors.Is(err, ErrCredentialHasKey) || key() != "first-key" {
+		t.Fatalf("a working key is not replaced: %v %q", err, key())
+	}
+	if err := s.ReplaceSecret("alice", false, "forge", "(pending)"); err == nil || key() != "first-key" {
+		t.Errorf("an approved replacement is still not a placeholder: %v %q", err, key())
+	}
+	if err := s.ReplaceSecret("alice", false, "forge", "rotated-key"); err != nil || key() != "rotated-key" {
+		t.Errorf("an approved replacement is written: %v %q", err, key())
+	}
+
+	if err := s.SaveAPIDraft(SecureCredential{Name: "shared", Type: SecureCredBearer, BaseURL: "https://shared.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StoreAgentSecret("alice", false, "shared", "k"); err == nil || !strings.Contains(err.Error(), "administrator") {
+		t.Errorf("a non-admin's agent cannot key a deployment credential: %v", err)
+	}
+	if err := s.StoreAgentSecret("root", true, "shared", "deploy-key"); err != nil {
+		t.Errorf("an administrator's agent can land its first key: %v", err)
+	}
+	if err := s.StoreAgentSecret("root", true, "shared", "other"); !errors.Is(err, ErrCredentialHasKey) {
+		t.Errorf("and cannot replace it either: %v", err)
+	}
+	if err := s.StoreAgentSecret("alice", false, "missing", "k"); err == nil {
+		t.Error("a credential that does not exist is not created")
 	}
 }

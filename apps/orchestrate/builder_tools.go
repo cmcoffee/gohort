@@ -141,7 +141,7 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// store_credential_secret — write-only vault landing for keys
 		// received mid-flow (self-registration, rotation), so they go
 		// into the credential instead of into the chat.
-		storeCredentialSecretToolDef(),
+		storeCredentialSecretToolDef(credTurn),
 		// check_credential — verify a drafted credential is now enabled +
 		// secret-set (owner-aware, so a user's own My-API-credentials entry is
 		// found) BEFORE wiring a tool to it. Builder lacked this, so it kept
@@ -433,20 +433,16 @@ func updateAPICredentialToolDef(t *chatTurn) AgentToolDef {
 	}
 }
 
-// storeCredentialSecretToolDef is the write-only vault path for keys
-// an agent legitimately RECEIVES mid-flow — a self-registration
-// response, a provider's rotation reply. Without it the observed
-// behavior is the worst of both worlds: the model echoes the key into
-// the chat ("paste this in Admin > APIs: <key>") AND keeps using its
-// in-context copy inline via fetch_url until it goes stale
-// (CredentialAuthGuard now blocks that second half; this tool is the
-// sanctioned landing for the first). Storing is write-only and never
-// enables anything — enablement stays with the admin.
-func storeCredentialSecretToolDef() AgentToolDef {
+// storeCredentialSecretToolDef is the write-only vault path for a key an
+// agent legitimately RECEIVES mid-flow (a self-registration response), so it
+// goes into the credential instead of into the chat. It lands a FIRST key
+// only: a credential that already has one is locked in the store, and a
+// genuine rotation asks the user to approve it (credential_rotate.go).
+func storeCredentialSecretToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "store_credential_secret",
-			Description: "Store an API key/token you just RECEIVED during a flow (a self-registration response, a key rotation) straight into an existing credential's encrypted vault: INSTEAD of printing it in chat or asking the user to copy-paste it. Overwrites any previously stored secret (that is how a rotation lands). Does NOT enable the credential; a new one still needs the admin to enable it. After storing: verify with check_credential, then dispatch through the credential (an agent calls the fetch_url_<name> tool; a script calls fetch_via(\"<name>\", ...) with hook_capabilities fetch_via:<name>), never keep using the raw key inline, and NEVER echo the value into your reply.",
+			Description: "Store an API key/token you just RECEIVED during a flow (e.g. a self-registration response) into an existing credential's encrypted vault, INSTEAD of printing it in chat or asking the user to copy-paste it. It fills a credential that has NO key yet. A credential that already has a working key is not changed: the user is shown a card to approve the replacement, and you wait for their answer. Reaches the user's own credentials (an administrator's also reach the deployment's). Does NOT enable anything. After storing: verify with check_credential, then dispatch through the credential (an agent calls fetch_url_<name>; a script calls fetch_via(\"<name>\", ...) with hook_capabilities fetch_via:<name>). Never keep using the raw key inline, and NEVER echo the value into your reply.",
 			Parameters: map[string]ToolParam{
 				"name":   {Type: "string", Description: "The credential to store into (must already exist: draft_api_credential / draft_oauth_credential first)."},
 				"secret": {Type: "string", Description: "The secret value exactly as received. Stored encrypted, write-only: it cannot be read back."},
@@ -454,19 +450,11 @@ func storeCredentialSecretToolDef() AgentToolDef {
 			Required: []string{"name", "secret"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			name := strings.TrimSpace(stringArg(args, "name"))
-			if err := Secure().SetCredentialSecret(name, stringArg(args, "secret")); err != nil {
-				return "", err
-			}
+			out, err := t.storeAgentKey(strings.TrimSpace(stringArg(args, "name")), stringArg(args, "secret"))
 			// Keep the raw value out of the persisted tool-call record
 			// (args are recorded after the handler runs).
 			args["secret"] = "(stored server-side: write-only)"
-			_, enabled, _ := Secure().CredentialStatus(name)
-			status := "The credential still needs the admin to ENABLE it (setup card / Admin > APIs) before dispatch works."
-			if enabled {
-				status = "The credential is enabled: dispatch through it now (fetch_url_" + name + " or your wrapped tool)."
-			}
-			return fmt.Sprintf("Secret stored encrypted on credential %q: do NOT repeat the value in chat. %s Verify with check_credential(%q).", name, status, name), nil
+			return out, err
 		},
 	}
 }

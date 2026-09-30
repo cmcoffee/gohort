@@ -55,4 +55,17 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test -count=1 ./...
+        run: |
+          set -o pipefail
+          go test -count=1 ./... 2>&1 | tee test.log
+
+      # A job's log is readable only when signed in; its annotations are
+      # public. So a failure's lines go into one annotation, where anyone
+      # (or a script without a token) can see which test failed and why.
+      - name: Report failing tests
+        if: failure()
+        run: |
+          lines=$(grep -E -- '^(--- FAIL|FAIL|panic:)|_test\.go:[0-9]+:' test.log | head -80 || true)
+          [ -z "$lines" ] && lines="the tests failed without a --- FAIL line; see the Test step's log"
+          msg=$(printf '%s' "$lines" | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+          echo "::error title=Failing tests::${msg}"

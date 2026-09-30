@@ -228,6 +228,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/approvals/always", w(T.handleApprovalAlways))
 	T.HandleFunc("/api/console/approvals/deny", w(T.handleApprovalDeny))
 	T.HandleFunc("/api/console/credential-update/apply", w(T.handleCredentialUpdateApply))
+	T.HandleFunc("/api/console/credential-key/replace", w(T.handleKeyReplacement))
 	T.HandleFunc("/api/console/channel/clear", T.handleChannelClear)
 	T.HandleFunc("/api/console/channel/compact", T.handleChannelCompact)
 	T.HandleFunc("/api/console/grants", T.handleConsoleGrants)
