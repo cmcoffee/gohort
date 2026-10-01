@@ -1279,7 +1279,7 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 			topic := normalizeTopic(stringArg(args, "topic"))
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 			defer cancel()
-			hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeCuratedOnly), t.agent.ID, topic, query, t.embedQuery(ctx, query), k, scopeSkills, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
+			hits := t.searchOwnKnowledge(ctx, topic, query, t.embedQuery(ctx, query), k, scopeSkills, ChunkScopeCuratedOnly)
 			rawHits := len(hits)
 			hits = aboveRelevanceFloor(hits)
 			dropped := rawHits - len(hits)
@@ -1526,7 +1526,7 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 	topic := normalizeTopic(stringArg(args, "topic"))
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
-	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeDerivedOnly), t.agent.ID, topic, query, t.embedQuery(ctx, query), k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	hits := t.searchOwnKnowledge(ctx, topic, query, t.embedQuery(ctx, query), k, t.skillsActive, ChunkScopeDerivedOnly)
 	rawHits := len(hits)
 	filtered := aboveRelevanceFloor(hits)
 	// THE recency pass for findings — the same one unified recall's [finding]
@@ -1675,7 +1675,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		}
 	}
 
-	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeDerivedOnly), t.agent.ID, topic, query, qVec, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	hits := t.searchOwnKnowledge(ctx, topic, query, qVec, k, t.skillsActive, ChunkScopeDerivedOnly)
 	hits = aboveRelevanceFloor(hits)
 	seen := map[string]bool{}
 	var findings []string

@@ -422,6 +422,13 @@ type ChannelInbound struct {
 	// groups). Either may be empty; the recipient key derives from whichever is set.
 	ChatID           string
 	Handle           string
+	// FromOwner is the TRANSPORT's verdict that the channel owner sent this,
+	// set only by the bridge that received it, which knows its service: an
+	// iMessage the owner sent from their own device arrives with no handle,
+	// while on any other service an empty handle is only a sender it could
+	// not name (an app, a bot, a webhook). Everything downstream asks this
+	// rather than reading ownership off the handle.
+	FromOwner bool
 	SenderName       string   // the inbound message's author display name (falls back to handle) — the per-message sender in the transcript
 	ConversationName string   // the conversation/room display name (the title editable on the transport side) — names the session
 	Roster           []string // known participant display names for a GROUP conversation, so the agent is handed who-is-here up front instead of having to call list_members. Empty for 1:1 chats or unknown rosters.

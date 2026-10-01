@@ -89,7 +89,7 @@ func (t *chatTurn) runPipelineSubAgent(ctx context.Context, sysPrompt, userMsg s
 		SystemPrompt:        sysPrompt,
 		Tools:               tools,
 		MaxRounds:           maxRounds,
-		Confirm:             func(name, args string) bool { return true },
+		Confirm:             t.runConfirm(t.agent.ID, subSess),
 		GuardrailCheck:      t.guardrailEnforcer().Check,
 		GuardrailActionGate: t.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     t.guardrailEnforcer().Halted,

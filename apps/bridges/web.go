@@ -532,6 +532,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		SessionID:        sessionID,
 		ChatID:           chatID,
 		Handle:           handle,
+		FromOwner:        messagingLinkImpl{T: T}.ownsBridge(ch.Owner) && T.isOwnerHandleFor(svc, handle),
 		SenderName:       sender,
 		ConversationName: firstNonEmpty(req.ConversationName, sender),
 		Roster:           T.rosterNames(activeChatID),

@@ -1374,7 +1374,9 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		MaxRounds:           resolveMaxWorkerRounds(target),
 		ThinkBudget:         target.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Effort:              target.Effort,      // per-agent level; a budget above wins
-		Confirm:             func(name, args string) bool { return true },
+		// Asked of whoever is watching the calling turn; with nobody
+		// watching, queued for the owner (see runConfirm).
+		Confirm:             t.runConfirm(target.ID, subSess),
 		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,

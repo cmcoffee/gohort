@@ -28,6 +28,7 @@ package orchestrate
 // about their own agent.
 
 import (
+	"context"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -68,13 +69,10 @@ func (t *chatTurn) memoryScope() memoryScope {
 // Empty for the owner's own run, for a seed (the framework has no namespace to
 // read), and in a clean room.
 //
-// NOT empty for a channel inbound, although its identity is synthetic. A
-// channel run is "phantom:<chatID>", whose own namespace is blank by
-// construction, and an agent put on a channel with no access to what it knows
-// is the useless version of itself. That was already the behaviour and it is
-// the right one: putting the agent on a channel IS the decision to let that
-// channel reach it. The three switches govern it there too, which is new, and
-// is the first time an owner could say otherwise.
+// Empty for a channel inbound too, which now runs AS the owner's account: its
+// own namespace is the owner's. The three switches still govern a stranger on
+// the channel, through ownLayerShared/searchOwnKnowledge below rather than
+// through this underlay.
 func (t *chatTurn) memoryUnderlay() string {
 	if t == nil || t.incognitoSession() {
 		return ""
@@ -87,6 +85,38 @@ func (t *chatTurn) memoryUnderlay() string {
 		return ""
 	}
 	return owner
+}
+
+// strangerOnChannel reports a channel run whose sender the bridge did not
+// recognize as the owner. Such a run executes AS the owner's account, so the
+// underlay below is empty and the three share switches never applied to it:
+// the owner's facts, cortex and derived memory reached whoever messaged.
+func (t *chatTurn) strangerOnChannel() bool {
+	return t != nil && t.requesterChannel != "" && !t.requesterOwnerHandle
+}
+
+// ownLayerShared reports whether one of the owner's own memory layers reaches
+// this turn: always for the owner, and for a stranger on a channel only when
+// the owner turned that layer's sharing on, the same switches somebody using
+// a shared copy of the agent meets.
+func (t *chatTurn) ownLayerShared(key string) bool {
+	return !t.strangerOnChannel() || settingIsOn(RootDB, t.agent, key)
+}
+
+// searchOwnKnowledge searches the agent's knowledge for this turn, narrowed for
+// a stranger on a channel when the owner did not share the derived (reference)
+// layer: a search of derived memory finds nothing, and a search of everything
+// finds only curated documents.
+func (t *chatTurn) searchOwnKnowledge(ctx context.Context, topic, query string, qVec []float32, k int, skills []SkillRecord, scope ChunkScope) []SearchHit {
+	if !t.ownLayerShared(defaultShareReference) {
+		switch scope {
+		case ChunkScopeDerivedOnly:
+			return nil
+		case ChunkScopeAll:
+			scope = ChunkScopeCuratedOnly
+		}
+	}
+	return searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(scope), t.agent.ID, topic, query, qVec, k, skills, t.agent.AttachedCollections, scope)
 }
 
 // readsOwnerCortex reports whether this turn's prompt carries the owner's

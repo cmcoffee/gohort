@@ -313,7 +313,7 @@ func (pr *planRun) assemblePrompt() {
 				pr.sys += cortexContextBlock(odb, t.agent.ID)
 				t.cortexReports = cortexContextLines(odb, t.agent.ID)
 			}
-		case t.session.ID != cortexSessionID(t.agent.ID):
+		case t.session.ID != cortexSessionID(t.agent.ID) && t.ownLayerShared(defaultShareCortex):
 			pr.sys += cortexContextBlock(t.udb, t.agent.ID)
 			t.cortexReports = cortexContextLines(t.udb, t.agent.ID)
 		}

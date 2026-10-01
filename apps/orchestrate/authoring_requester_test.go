@@ -22,17 +22,6 @@ func (l ownerHandleLink) IsOwnerHandle(owner, handle string) bool {
 	return owner == l.owner && handle == l.handle
 }
 
-// selfClearingLink is the iMessage shape: the daemon clears the handle on the
-// owner's own messages, and the bridge counts an empty handle as the owner.
-type selfClearingLink struct {
-	MessagingLink
-	owner string
-}
-
-func (l selfClearingLink) IsOwnerHandle(owner, handle string) bool {
-	return owner == l.owner && handle == ""
-}
-
 func withOwnerHandleLink(t *testing.T, owner, handle string) {
 	prev, _ := ActiveMessagingLink()
 	RegisterMessagingLink(ownerHandleLink{owner: owner, handle: handle})
@@ -47,10 +36,11 @@ func TestChannelSenderIsOwnerOnlyByTheTransportHandle(t *testing.T) {
 		want bool
 	}{
 		{"a scheduled fire names no sender", AgentSyncRun{}, true},
-		{"the owner's own phone", AgentSyncRun{Kind: "channel", SenderHandle: "+15550100"}, true},
+		{"the owner's own phone, as the bridge saw it", AgentSyncRun{Kind: "channel", SenderHandle: "+15550100", SenderIsOwner: true}, true},
 		{"a contact in the group", AgentSyncRun{Kind: "channel", SenderHandle: "+15550199"}, false},
 		{"a contact calling themselves the owner", AgentSyncRun{Kind: "channel", SenderHandle: "+15550199", MessageSender: "owner"}, false},
 		{"a channel message with no handle", AgentSyncRun{Kind: "channel"}, false},
+		{"the owner's handle, but the bridge did not say so", AgentSyncRun{Kind: "channel", SenderHandle: "+15550100"}, false},
 	}
 	for _, c := range cases {
 		if got := channelSenderIsOwner("owner", c.run); got != c.want {
@@ -59,18 +49,16 @@ func TestChannelSenderIsOwnerOnlyByTheTransportHandle(t *testing.T) {
 	}
 }
 
-// The owner's own group-chat message arrives with the handle cleared, and the
-// bridge says that is the owner. The check asked nothing and refused the
-// owner's own request to have something built.
+// The owner's own iMessage arrives with the handle cleared. The bridge, which
+// knows the service, says that is the owner (SenderIsOwner); nothing reads
+// ownership off an empty handle, which on any other service is a sender
+// nobody could name.
 func TestTheOwnersOwnMessageWithAClearedHandleIsTheOwner(t *testing.T) {
-	prev, _ := ActiveMessagingLink()
-	RegisterMessagingLink(selfClearingLink{owner: "owner"})
-	t.Cleanup(func() { RegisterMessagingLink(prev) })
-	if !channelSenderIsOwner("owner", AgentSyncRun{Kind: "channel", SenderHandle: ""}) {
-		t.Error("the bridge counts a cleared handle as the owner, and the check must ask it")
+	if !channelSenderIsOwner("owner", AgentSyncRun{Kind: "channel", SenderHandle: "", SenderIsOwner: true}) {
+		t.Error("the bridge's verdict that the owner sent it is the answer")
 	}
-	if channelSenderIsOwner("owner", AgentSyncRun{Kind: "channel", SenderHandle: "+15550199"}) {
-		t.Error("a contact's handle is still not the owner")
+	if channelSenderIsOwner("owner", AgentSyncRun{Kind: "channel", SenderHandle: ""}) {
+		t.Error("an empty handle the bridge did not vouch for is not the owner")
 	}
 }
 
@@ -79,10 +67,26 @@ func TestAChannelHandleIsNotTheOwnerWithNoBridgeToAsk(t *testing.T) {
 	RegisterMessagingLink(nil)
 	t.Cleanup(func() { RegisterMessagingLink(prev) })
 	if channelSenderIsOwner("owner", AgentSyncRun{Kind: "channel", SenderHandle: "+15550100"}) {
-		t.Error("with no bridge to compare against, a handle cannot be shown to be the owner's")
+		t.Error("with no bridge verdict, a handle cannot be shown to be the owner's")
 	}
 	if channelSenderIsOwner("owner", AgentSyncRun{Kind: "channel"}) {
 		t.Error("with no bridge, an empty handle cannot be shown to be the owner's either")
+	}
+}
+
+// A channel run executes as the owner's account, so the guardrails' owner test
+// reads the bridge's verdict on the sender, not the account.
+func TestAChannelSenderIsNotTheOwnerBecauseTheRunIs(t *testing.T) {
+	stranger := &chatTurn{user: "owner", ownerUser: "owner", requesterChannel: "channel"}
+	if stranger.requester().Owner {
+		t.Error("a stranger on a channel was told to the guardrails as the owner")
+	}
+	owner := &chatTurn{user: "owner", ownerUser: "owner", requesterChannel: "channel", requesterOwnerHandle: true}
+	if !owner.requester().Owner {
+		t.Error("the owner on their own channel is the owner")
+	}
+	if !(&chatTurn{user: "owner", ownerUser: "owner"}).requester().Owner {
+		t.Error("the owner's own web or scheduled run is the owner")
 	}
 }
 

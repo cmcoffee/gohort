@@ -131,7 +131,13 @@ func (t *chatTurn) requester() requesterIdentity {
 	// cannot distinguish the owner's phone from a stranger's — and treating the
 	// owner as a stranger on their own device shut them out of their own
 	// audience-scoped rules.
-	owner := t.ownerUser == "" || t.ownerUser == t.user || t.requesterOwnerHandle
+	// A channel inbound runs AS the owner's account whoever sent it, so the
+	// identity test below would call every sender the owner: for a channel run
+	// only the bridge's verdict on the sender counts.
+	owner := t.requesterOwnerHandle
+	if t.requesterChannel == "" {
+		owner = owner || t.ownerUser == "" || t.ownerUser == t.user
+	}
 	who := requesterIdentity{
 		Owner:   owner,
 		Name:    strings.TrimSpace(t.requesterName),

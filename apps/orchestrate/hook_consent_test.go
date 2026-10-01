@@ -2,6 +2,8 @@ package orchestrate
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -147,5 +149,82 @@ func TestConfirmWritesInChat(t *testing.T) {
 	}
 	if gate("fetch_url_tracker", "method: DELETE\nurl: https://tracker.example/x") {
 		t.Error("a write went through with nobody asked")
+	}
+}
+
+// A run nobody is watching (a channel message, a delegated or pipeline run
+// with no viewer) asks through the owner's unattended gate: a call the
+// credential asks about is queued, not let through, and the owner's
+// ask-before mark on a tool is honoured. These runs used to approve
+// everything.
+func TestUnwatchedRunsUseTheOwnersGate(t *testing.T) {
+	store := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return store }
+	t.Cleanup(func() { AuthDB = prev })
+	if err := Secure().Save(SecureCredential{Name: "bank", Type: SecureCredBearer, BaseURL: "https://bank.example", RequiresConfirm: true}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	app := &OrchestrateApp{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
+	sess := &ToolSession{Username: "alice"}
+	sess.TempTools = []*TempTool{{Name: "asks", Mode: TempToolModeShell, ConfirmInChat: true}, {Name: "plain", Mode: TempToolModeShell}}
+	turn := &chatTurn{app: app, user: "alice"}
+	gate := turn.runConfirm("agent1", sess)
+	if gate("fetch_url_bank", "url: https://bank.example/x") {
+		t.Error("a call its credential asks about went through with nobody watching")
+	}
+	if gate("asks", "") {
+		t.Error("a tool marked ask-before-every-call went through with nobody watching")
+	}
+	if !gate("plain", "") {
+		t.Error("an ordinary tool was stopped")
+	}
+	if (&chatTurn{user: "alice"}).runConfirm("agent1", sess)("plain", "") {
+		t.Error("with no app to queue with, a run refuses rather than approves")
+	}
+}
+
+// No run path may hand the agent loop a Confirm that approves everything:
+// that is how channel, wake, delegated and pipeline runs ignored every
+// confirmation setting.
+func TestNoRunApprovesEverything(t *testing.T) {
+	files, _ := filepath.Glob("*.go")
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(src), "Confirm:") && strings.Contains(string(src), "func(name, args string) bool { return true }") {
+			t.Errorf("%s hands the agent loop a Confirm that approves everything", f)
+		}
+	}
+}
+
+// A stranger on a channel meets the owner's share switches: the run executes
+// as the owner's account, so without them the owner's saved facts reached
+// whoever messaged. Saved facts are off by default; cortex and reference are
+// on by default. The owner on their own channel sees everything.
+func TestAStrangerOnAChannelMeetsTheShareSwitches(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	agent := AgentRecord{ID: "a1", Owner: "owner"}
+	stranger := &chatTurn{user: "owner", ownerUser: "owner", agent: agent, requesterChannel: "channel"}
+	if stranger.ownLayerShared(defaultShareNotes) {
+		t.Error("a stranger got the owner's saved facts, which are not shared by default")
+	}
+	if !stranger.ownLayerShared(defaultShareCortex) || !stranger.ownLayerShared(defaultShareReference) {
+		t.Error("cortex and reference are shared by default")
+	}
+	owner := &chatTurn{user: "owner", ownerUser: "owner", agent: agent, requesterChannel: "channel", requesterOwnerHandle: true}
+	if !owner.ownLayerShared(defaultShareNotes) {
+		t.Error("the owner on their own channel sees their own facts")
+	}
+	web := &chatTurn{user: "owner", ownerUser: "owner", agent: agent}
+	if !web.ownLayerShared(defaultShareNotes) {
+		t.Error("the owner's own web run sees their own facts")
 	}
 }

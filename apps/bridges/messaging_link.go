@@ -125,7 +125,10 @@ func (p messagingLinkImpl) OwnerHandle(owner string) (string, bool) {
 // handle on a native is_from_me iMessage. That is correct for this bridge and is
 // exactly the sort of detail a caller reimplementing the check would miss.
 func (p messagingLinkImpl) IsOwnerHandle(owner, handle string) bool {
-	if !p.ownsBridge(owner) {
+	// Not an empty handle: this seam has no service to tell iMessage's
+	// cleared handle from a sender nobody could name. A channel inbound
+	// carries the bridge's own verdict instead (ChannelInbound.FromOwner).
+	if !p.ownsBridge(owner) || strings.TrimSpace(handle) == "" {
 		return false
 	}
 	return p.T.isOwnerHandle(handle)

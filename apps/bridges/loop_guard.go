@@ -309,6 +309,18 @@ func (T *Bridges) isOwnerHandle(handle string) bool {
 	return normalizeIdentity(handle) == normalizeIdentity(self)
 }
 
+// isOwnerHandleFor is isOwnerHandle with the service known: an empty handle is
+// the owner only on iMessage, where the daemon clears it on the owner's own
+// messages. Elsewhere (a Teams post from an app, a Slack bot, a webhook with
+// no sender field) it is somebody the transport could not name, and counting
+// them as the owner handed them the owner's carve-outs and tools.
+func (T *Bridges) isOwnerHandleFor(service, handle string) bool {
+	if strings.TrimSpace(handle) == "" {
+		return strings.EqualFold(strings.TrimSpace(service), "imessage")
+	}
+	return T.isOwnerHandle(handle)
+}
+
 // noteOutbound records that we sent this text into this conversation, so the
 // copy that comes back is recognizable as ours. Called from the single outbound
 // chokepoint (enqueueOutbox) with the FINAL text.

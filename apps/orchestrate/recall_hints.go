@@ -93,12 +93,10 @@ func (t *chatTurn) renderRecallHints(userMsg string) string {
 	threshold := RecallHintThreshold()
 
 	knStart := time.Now()
-	kn := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeCuratedOnly), t.agent.ID,
-		generalTopic, q, qVec, max*3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
+	kn := t.searchOwnKnowledge(ctx, generalTopic, q, qVec, max*3, t.skillsActive, ChunkScopeCuratedOnly)
 	knMS := time.Since(knStart)
 	memStart := time.Now()
-	mem := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeDerivedOnly), t.agent.ID,
-		generalTopic, q, qVec, max*3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	mem := t.searchOwnKnowledge(ctx, generalTopic, q, qVec, max*3, t.skillsActive, ChunkScopeDerivedOnly)
 	memMS := time.Since(memStart)
 
 	// Auto-promote: the single opt-in to automatic RAG. Curated hits at or above

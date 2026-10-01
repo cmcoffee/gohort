@@ -399,7 +399,12 @@ func (t *chatTurn) facts() []MemoryFact {
 	if t.incognitoSession() {
 		return nil
 	}
-	own := ListMemoryFacts(t.udb, factsNamespace(t.agent.ID))
+	var own []MemoryFact
+	// The owner's own saved facts reach a stranger on a channel only when the
+	// owner shares them (memory_scope.go): the run is the owner's account.
+	if t.ownLayerShared(defaultShareNotes) {
+		own = ListMemoryFacts(t.udb, factsNamespace(t.agent.ID))
+	}
 	// The owner's saved notes, underneath, when they turned that on. This is
 	// the one layer that has never travelled, so it is the one switch that
 	// grants rather than withholds: see AgentRecord.ShareMemoryExplicit.

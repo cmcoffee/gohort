@@ -52,15 +52,19 @@ func nonOwnerRequester(ctx context.Context) bool {
 // monitor wake, a delegation) has no sender to classify and answers true;
 // its requester, if any, is already on the context.
 //
-// A channel inbound ALWAYS goes to the bridge, empty handle included. The
-// iMessage daemon clears the handle on the owner's own messages (is_from_me),
-// and the bridge's comparison counts that as the owner; answering "not the
-// owner" here before asking it refused the owner's own group-chat request to
-// have something built. With no bridge to ask, nobody can be shown to be the
-// owner, so the answer is no.
+// A channel inbound carries the bridge's own verdict (SenderIsOwner, from
+// ChannelInbound.FromOwner), made where the service is known: the iMessage
+// daemon clears the handle on the owner's own messages (is_from_me), so an
+// empty handle is the owner there and a sender nobody could name anywhere
+// else. Read off the handle here, an empty one counted as the owner on every
+// service: a Teams post from an app, a Slack bot, a webhook.
 func channelSenderIsOwner(agentOwner string, run AgentSyncRun) bool {
+	if run.Kind == "channel" {
+		// The bridge decided, knowing its service (ChannelInbound.FromOwner).
+		return run.SenderIsOwner
+	}
 	h := strings.TrimSpace(run.SenderHandle)
-	if h == "" && run.Kind != "channel" {
+	if h == "" {
 		return true
 	}
 	link, ok := ActiveMessagingLink()

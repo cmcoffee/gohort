@@ -100,10 +100,10 @@ func channelSurfaceContext(in ChannelInbound) string {
 	// Said here rather than left to the memory rules, because there is nothing
 	// in memory yet — this is the only moment the claim exists.
 	speaker := ""
-	if h := strings.TrimSpace(in.Handle); h != "" {
-		if link, ok := ActiveMessagingLink(); !ok || !link.IsOwnerHandle(in.Owner, h) {
-			speaker = chFirst(in.SenderName, "the sender")
-		}
+	if !in.FromOwner {
+		// Anyone but the owner as the bridge saw it, a sender it could not
+		// name included: their claims are theirs, not established facts.
+		speaker = chFirst(in.SenderName, "the sender")
 	}
 	claims := channelClaimsClause(speaker)
 	// Binding scope: a whole-service binding (empty Address) sees EVERY chat on
@@ -400,6 +400,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			Title:         title,
 			MessageSender: in.SenderName,
 			SenderHandle:  in.Handle, // transport attribution; recognizes the owner's own phone
+			SenderIsOwner: in.FromOwner,
 			Message:       in.Text + videoNote + attachNote,
 			Images:        images,
 			Interactive:   true, // a real person is texting — no delegation marker

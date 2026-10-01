@@ -275,7 +275,7 @@ func autonomousNoUnattendedSet(udb Database, agentID string) map[string]bool {
 // what the owner explicitly marked as gated. The rule itself is
 // autonomousToolAllowed; this is the half that has a queue to write to.
 func (g *autonomousGate) confirm(name, args string) bool {
-	if g.allows(name) && !g.writeWaitsForOwner(name, args) {
+	if g.allows(name) && !g.writeWaitsForOwner(name, args) && !g.ownerAsksFirst(name) {
 		return true
 	}
 	// Marked never-unattended: refuse, and do NOT queue. A queue asks the owner
@@ -292,6 +292,26 @@ func (g *autonomousGate) confirm(name, args string) bool {
 		return false
 	}
 	g.queue(name, args)
+	return false
+}
+
+// ownerAsksFirst reports whether the owner asked to be consulted before every
+// call of this tool (the tool's own ConfirmInChat, or the owner's ask mark for
+// this agent). With nobody watching, that is a queued approval, not a pass;
+// a sub-agent under its parent's authority, or a tool the owner approved for
+// unattended runs, is already answered.
+func (g *autonomousGate) ownerAsksFirst(name string) bool {
+	if g.subAgent || g.auto[name] {
+		return false
+	}
+	if tt, _ := toolForCall(g.sess, name); tt != nil && tt.ConfirmInChat {
+		return true
+	}
+	if AuthDB != nil {
+		if db := AuthDB(); db != nil && UserToolAsksInChat(db, g.owner, g.agentID, name) {
+			return true
+		}
+	}
 	return false
 }
 

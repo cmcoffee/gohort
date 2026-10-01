@@ -189,6 +189,27 @@ func toolCredentials(tt TempTool) []string {
 	return out
 }
 
+// runConfirm is the Confirm for a run this turn starts on agentID's behalf (a
+// delegated agent, a pipeline stage). With someone watching this turn it asks
+// them, as the turn's own calls are asked; with nobody watching it is the
+// owner's unattended gate, which queues the call for approval. These runs
+// used to approve every call, so a credential that asks first, "confirm
+// writes" and the owner's ask-before marks had no effect on them.
+func (t *chatTurn) runConfirm(agentID string, sess *ToolSession) func(name, args string) bool {
+	if t != nil && t.sse != nil {
+		return t.confirmFuncFor(sess)
+	}
+	if t == nil || t.app == nil {
+		// No app to queue with: refuse rather than approve.
+		return func(string, string) bool { return false }
+	}
+	_, owner := t.ownerView()
+	if owner == "" {
+		owner = t.user
+	}
+	return t.app.newAutonomousGate(owner, agentID, sess).confirm
+}
+
 // confirmFuncFor builds the AgentLoopConfig.Confirm hook for this
 // turn's loops (orchestrator and workers share it). Policy: escalate
 // ONLY when the tool dispatches through a credential whose admin

@@ -1121,6 +1121,10 @@ type AgentSyncRun struct {
 	// ("don't discuss pay with anyone but me") refused them there. Empty for
 	// dispatch / web / scheduled runs.
 	SenderHandle string
+	// SenderIsOwner is the bridge's verdict that the channel owner sent this
+	// (ChannelInbound.FromOwner). A channel run's owner check reads it, and
+	// nothing else: the run executes as the owner's account whoever sent it.
+	SenderIsOwner bool
 	// MessageSender, when set, is stored as THIS message's author (ChatMessage
 	// .Sender). Channel rooms pass the inbound contact's display name so a
 	// GROUP thread renders real who-said-what — each inbound carries its own
@@ -1716,18 +1720,19 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// this is the other half of it.
 	subTurn.beginDispatchDiag(target.ID, subSessionID)
 	subTurn.noteAuthoringWithheld(authoringWithheld)
-	// The owner texting their own agent runs as phantom:<chatID> exactly like a
-	// stranger does, so without this they are an "outside party" on their own
-	// phone and their own carve-outs shut them out. Decided on the TRANSPORT
-	// handle via the bridge's own comparison — never on MessageSender, which is
-	// the sender's to choose and would let anyone claim to be the owner by
-	// renaming themselves.
+	// A channel run executes as the owner's account whoever sent the message,
+	// so the account says nothing about who is asking. The bridge's verdict on
+	// the TRANSPORT sender does (run.SenderIsOwner, made where the service is
+	// known) — never MessageSender, which is the sender's to choose and would
+	// let anyone claim to be the owner by renaming themselves.
 	if h := strings.TrimSpace(run.SenderHandle); h != "" || run.Kind == "channel" {
 		// Kept raw as well as classified: the boolean answers "is this the
 		// owner", and an authorized-identities roster has to be matched against
 		// the handle itself. Same source, same trust level, still never content.
 		subTurn.requesterHandle = h
-		if link, ok := ActiveMessagingLink(); ok && link.IsOwnerHandle(agentOwner, h) {
+		if run.Kind == "channel" {
+			subTurn.requesterOwnerHandle = run.SenderIsOwner
+		} else if link, ok := ActiveMessagingLink(); ok && link.IsOwnerHandle(agentOwner, h) {
 			subTurn.requesterOwnerHandle = true
 		}
 		// The same three facts on the SESSION, for tools rather than guardrails.
@@ -1946,7 +1951,12 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// repeatedly, against the same thread. Keyed to the thread so what
 		// keeps failing in one conversation is not held against another.
 		FailureMemoryKey:    failureMemoryKey(target.ID, run.SubSessionID),
-		Confirm:             func(name, args string) bool { return true },
+		// A channel inbound, a monitor wake, an MCP call: nobody is watching
+		// this run, so a call the credential, the owner's mark or "confirm
+		// writes" asks about is queued for the owner rather than let through.
+		// This used to approve everything, which left every one of those
+		// settings without effect on exactly the runs a stranger can start.
+		Confirm:             T.newAutonomousGate(agentOwner, target.ID, subSess).confirm,
 		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,
