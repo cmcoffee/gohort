@@ -346,13 +346,13 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// with it, and a conversation that already belongs to someone else must
 	// not take another user's messages.
 	owner := T.ownerOr(key.Owner)
-	if c, ok := T.getConvo(activeChatID); ok && !inboundMayWrite(c, owner, svc) {
+	if c, ok := T.getConvo(owner, activeChatID); ok && !inboundMayWrite(c, owner) {
 		Log("[bridges] inbound on %s via %q (owner %q) dropped: that conversation belongs to another user", activeChatID, key.Name, owner)
 		return
 	}
 
 	// Dedup — a connector may re-deliver; only act once.
-	if T.seenMessage(activeChatID, msgID) {
+	if T.seenMessage(owner, activeChatID, msgID) {
 		return
 	}
 	// The id dedupe above has nothing to key on when a delivery carries no
@@ -376,12 +376,12 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// chats read by who-said-it, not by phone number). Computed once here and
 	// reused for the agent dispatch below — nothing between mutates the convo's
 	// members, so a second resolve would return the same value.
-	sender := T.resolveSender(activeChatID, req.Handle, req.DisplayName)
+	sender := T.resolveSender(owner, activeChatID, req.Handle, req.DisplayName)
 	// Record it at the time it was SENT, not the time it reached us. storeMessage
 	// falls back to now() for a connector that supplies nothing, which is what
 	// every inbound used to get — so replayed history read as having just arrived
 	// in the thread view too, not only to the agent.
-	T.storeMessage(StoredMessage{
+	T.storeMessage(owner, StoredMessage{
 		ID: firstNonEmpty(msgID, newToken()[:12]), ChatID: activeChatID, Role: "user",
 		Handle: req.Handle, DisplayName: sender,
 		Text: req.Text, Timestamp: strings.TrimSpace(req.Timestamp),
@@ -427,7 +427,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// to a member handle of THIS group, migrate it to the stable chat id once —
 	// then it routes for everyone, no manual reconnect.
 	if !found && isGroupChat(activeChatID) {
-		if c, ok := T.getConvo(activeChatID); ok && len(c.Members) > 0 {
+		if c, ok := T.getConvo(owner, activeChatID); ok && len(c.Members) > 0 {
 			memberHandle := map[string]bool{}
 			for _, m := range c.Members {
 				if m.Handle != "" {
@@ -439,8 +439,21 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 					}
 				}
 			}
+			// A member's handle with a one-to-one thread of its own is that
+			// person's channel, not a stale group binding: re-stamping it
+			// would hand their channel to the group.
+			oneToOne := map[string]bool{}
+			for _, cv := range T.convosFor(owner, ownerIsAdmin(owner)) {
+				if !isGroupChat(cv.ChatID) {
+					for _, id := range append([]string{cv.Handle, chatHandle(cv.ChatID)}, cv.AliasHandles...) {
+						if id = strings.TrimSpace(id); id != "" {
+							oneToOne[id] = true
+						}
+					}
+				}
+			}
 			for _, cand := range ListChannels(RootDB, owner) {
-				if cand.Service == svc && cand.Address != "" && memberHandle[cand.Address] {
+				if cand.Service == svc && cand.Address != "" && memberHandle[cand.Address] && !oneToOne[cand.Address] {
 					cand.Address = activeChatID
 					SaveChannel(RootDB, cand)
 					// Keep the FIRST match as the active channel for this message,
@@ -535,7 +548,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		FromOwner:        messagingLinkImpl{T: T}.ownsBridge(ch.Owner) && T.isOwnerHandleFor(svc, handle),
 		SenderName:       sender,
 		ConversationName: firstNonEmpty(req.ConversationName, sender),
-		Roster:           T.rosterNames(activeChatID),
+		Roster:           T.rosterNames(owner, activeChatID),
 		Text:             text,
 		Images:           images,
 		Videos:           videos,
@@ -553,6 +566,12 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// a message the gatekeeper declines, and costs no model call.
 	if !ch.Answers(in.FromOwner, handle) {
 		Log("[bridges] channel %q answers %s only: inbound from %q recorded, not answered", ch.Name, ch.Senders, handle)
+		RecordChannelSilent(in)
+		return
+	}
+	// How often anyone but the owner may wake an agent (wake_budget.go).
+	if ok, whose := T.mayWake(key, owner, svc, chatID, handle, in.FromOwner); !ok {
+		Log("[bridges] %s wake budget is spent for the minute: inbound from %q on channel %q recorded, not answered", whose, handle, ch.Name)
 		RecordChannelSilent(in)
 		return
 	}
@@ -611,7 +630,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 			// cortex/session instead of stranding it in an outbox nothing drains.
 			Log("[bridges] channel %q reply overflowed to agent cortex/session (no output path for svc=%s)", ch.Name, svc)
 		}
-		T.storeMessage(StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: reply.Text})
+		T.storeMessage(owner, StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: reply.Text})
 	}()
 }
 

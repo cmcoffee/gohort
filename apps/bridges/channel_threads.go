@@ -40,7 +40,7 @@ func (c channelThreadsImpl) Members(owner, chatID string) []ChannelMember {
 	}
 	// syncMembersFromHistory derives the full roster from the stored thread
 	// (catches anyone who messaged but wasn't captured live), then returns it.
-	conv := c.T.syncMembersFromHistory(chatID)
+	conv := c.T.syncMembersFromHistory(owner, chatID)
 	out := make([]ChannelMember, 0, len(conv.Members))
 	for _, m := range conv.Members {
 		if m.Handle == "" {
@@ -59,7 +59,7 @@ func (c channelThreadsImpl) Messages(owner, chatID string, limit int) []ChannelL
 		limit = 30
 	}
 	var out []ChannelLine
-	for _, m := range c.T.recentMessages(chatID, limit) {
+	for _, m := range c.T.recentMessages(owner, chatID, limit) {
 		out = append(out, ChannelLine{
 			Role:      m.Role,
 			Sender:    m.DisplayName,
@@ -87,7 +87,7 @@ func (c channelThreadsImpl) SearchMessages(owner, chatID, query string, limit in
 	// take the TAIL — the newest mentions are the ones "last thing about X"
 	// wants, and a capped-head scan would return the oldest instead.
 	var hits []StoredMessage
-	for _, m := range c.T.recentMessages(chatID, 0) {
+	for _, m := range c.T.recentMessages(owner, chatID, 0) {
 		if strings.Contains(strings.ToLower(m.Text), query) {
 			hits = append(hits, m)
 		}
@@ -123,7 +123,7 @@ func (c channelThreadsImpl) DeliverMedia(owner, service, chatID, handle, text, a
 	// A chat on record must be this owner's: sending into another user's
 	// conversation would also write into their stored thread below. A chat id
 	// with no record is a fresh chat and goes through.
-	cv, known := c.T.getConvo(chatID)
+	cv, known := c.T.getConvo(owner, chatID)
 	if known && chatID != "" && !convoVisibleTo(cv, owner, admin) {
 		return fmt.Errorf("no conversation %q for this user", chatID)
 	}
@@ -153,6 +153,6 @@ func (c channelThreadsImpl) DeliverMedia(owner, service, chatID, handle, text, a
 	}
 	c.T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: text, Images: images, Videos: videos, Agent: agentName, Owner: owner, Type: "reply"})
 	// Mirror the outbound into the thread store so the dashboard + read_chat see it.
-	c.T.storeMessage(StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: text})
+	c.T.storeMessage(owner, StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: text})
 	return nil
 }

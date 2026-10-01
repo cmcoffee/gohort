@@ -5922,7 +5922,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-chat-side-ren { visibility: visible; }
 }
 @media (pointer: coarse) {
-  .ui-agent-msg-act { min-height: 36px; padding: 0.35rem 0.8rem; font-size: 0.8rem; }
+  /* Compact, as on desktop, with just enough height to land a thumb: a
+   * message carries five or six of these, and at full tap size the row
+   * outweighed the reply it sits under. */
+  .ui-agent-msg-act { min-height: 30px; padding: 0.15rem 0.5rem; font-size: 0.74rem; line-height: 1.2; }
   .ui-chat-side-del, .ui-chat-side-ren { width: 2.25rem; height: 2.25rem; }
   .ui-chat-side-ren { right: 2.7rem; }
   .ui-chat-side-item.ui-chat-side-item-renable { padding-right: 5.2rem; }

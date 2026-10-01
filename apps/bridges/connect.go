@@ -118,7 +118,7 @@ func (T *Bridges) handleIncomingConvos(w http.ResponseWriter, r *http.Request) {
 		// Show the last message so a contact is recognizable at a glance (the
 		// "dropdown of contacts with their last message").
 		desc := ServiceDisplayName(c.Service)
-		if msgs := T.recentMessages(c.ChatID, 1); len(msgs) > 0 {
+		if msgs := T.recentMessages(c.Owner, c.ChatID, 1); len(msgs) > 0 {
 			if t := strings.TrimSpace(msgs[len(msgs)-1].Text); t != "" {
 				desc = truncateText(t, 80)
 			}
@@ -173,11 +173,7 @@ func (T *Bridges) handleAddConvo(w http.ResponseWriter, r *http.Request) {
 		svc := firstNonEmpty(strings.TrimSpace(req.Service), "imessage")
 		// A new entry is the caller's. One already on record must be theirs
 		// too; another user's reads as not found, same as every chat_id path.
-		c, exists := T.getConvo(handle)
-		if exists && !convoVisibleTo(c, user, admin) {
-			http.Error(w, "conversation not found", http.StatusNotFound)
-			return
-		}
+		c, exists := T.getConvo(user, handle)
 		if !exists {
 			c.Owner = user
 		}

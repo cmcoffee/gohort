@@ -30,13 +30,14 @@ func (T *Bridges) handleConvInfo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "chat_id required", http.StatusBadRequest)
 		return
 	}
-	if _, ok := T.convoFor(chatID, user, RequestIsAdmin(r)); !ok {
+	found, ok := T.convoFor(chatID, user, RequestIsAdmin(r))
+	if !ok {
 		http.Error(w, "conversation not found", http.StatusNotFound)
 		return
 	}
 	// Harvest participants from the thread so the roster is complete even for
 	// senders we didn't learn live (derive-on-read, like phantom).
-	c := T.syncMembersFromHistory(chatID)
+	c := T.syncMembersFromHistory(found.Owner, chatID)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(c)
 }
@@ -67,7 +68,7 @@ func (T *Bridges) handleConvUpdate(w http.ResponseWriter, r *http.Request) {
 	// DELETE removes the conversation (and its thread) — used when folding a
 	// duplicate into another chat via an alias handle.
 	if r.Method == http.MethodDelete {
-		T.deleteConvo(chatID)
+		T.deleteConvo(c.Owner, chatID)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"removed": true})
 		return
@@ -114,11 +115,12 @@ func (T *Bridges) handleMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "chat_id required", http.StatusBadRequest)
 		return
 	}
-	if _, ok := T.convoFor(chatID, user, RequestIsAdmin(r)); !ok {
+	c, ok := T.convoFor(chatID, user, RequestIsAdmin(r))
+	if !ok {
 		http.Error(w, "conversation not found", http.StatusNotFound)
 		return
 	}
-	msgs := T.recentMessages(chatID, 50)
+	msgs := T.recentMessages(c.Owner, chatID, 50)
 	if msgs == nil {
 		msgs = []StoredMessage{}
 	}

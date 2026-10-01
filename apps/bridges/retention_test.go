@@ -19,33 +19,33 @@ func stamp(age time.Duration) string {
 // leak into another chat's thread.
 func TestThreadReadsAreScopedToTheirChat(t *testing.T) {
 	T := newRetentionBridges()
-	T.storeMessage(StoredMessage{ID: "1", ChatID: "chatA", Role: "user", Text: "from A", Timestamp: stamp(time.Minute)})
-	T.storeMessage(StoredMessage{ID: "2", ChatID: "chatB", Role: "user", Text: "from B", Timestamp: stamp(time.Minute)})
+	T.storeMessage("", StoredMessage{ID: "1", ChatID: "chatA", Role: "user", Text: "from A", Timestamp: stamp(time.Minute)})
+	T.storeMessage("", StoredMessage{ID: "2", ChatID: "chatB", Role: "user", Text: "from B", Timestamp: stamp(time.Minute)})
 
-	got := T.recentMessages("chatA", 0)
+	got := T.recentMessages("", "chatA", 0)
 	if len(got) != 1 || got[0].Text != "from A" {
 		t.Fatalf("chatA should hold exactly its own message, got %+v", got)
 	}
 	// A chat id that is a PREFIX of another keeps its own thread. The old flat
 	// layout got this right (it matched on "chatID:", so "chat:" never caught
 	// "chatA:1"); this pins the property so the per-chat layout keeps it.
-	T.storeMessage(StoredMessage{ID: "3", ChatID: "chat", Role: "user", Text: "short id", Timestamp: stamp(time.Minute)})
-	if got := T.recentMessages("chat", 0); len(got) != 1 || got[0].Text != "short id" {
+	T.storeMessage("", StoredMessage{ID: "3", ChatID: "chat", Role: "user", Text: "short id", Timestamp: stamp(time.Minute)})
+	if got := T.recentMessages("", "chat", 0); len(got) != 1 || got[0].Text != "short id" {
 		t.Errorf("a chat id that prefixes another must keep a separate thread, got %+v", got)
 	}
 }
 
 func TestDeletingAConversationDropsItsThread(t *testing.T) {
 	T := newRetentionBridges()
-	T.storeMessage(StoredMessage{ID: "1", ChatID: "gone", Role: "user", Text: "bye", Timestamp: stamp(time.Minute)})
-	T.storeMessage(StoredMessage{ID: "1", ChatID: "kept", Role: "user", Text: "still here", Timestamp: stamp(time.Minute)})
+	T.storeMessage("", StoredMessage{ID: "1", ChatID: "gone", Role: "user", Text: "bye", Timestamp: stamp(time.Minute)})
+	T.storeMessage("", StoredMessage{ID: "1", ChatID: "kept", Role: "user", Text: "still here", Timestamp: stamp(time.Minute)})
 
-	T.deleteConvo("gone")
+	T.deleteConvo("", "gone")
 
-	if got := T.recentMessages("gone", 0); len(got) != 0 {
+	if got := T.recentMessages("", "gone", 0); len(got) != 0 {
 		t.Errorf("the deleted conversation's messages should be gone, got %+v", got)
 	}
-	if got := T.recentMessages("kept", 0); len(got) != 1 {
+	if got := T.recentMessages("", "kept", 0); len(got) != 1 {
 		t.Errorf("deleting one conversation must not touch another, got %+v", got)
 	}
 }
@@ -53,12 +53,12 @@ func TestDeletingAConversationDropsItsThread(t *testing.T) {
 // Messages older than the retention window go; recent ones stay.
 func TestOldMessagesExpire(t *testing.T) {
 	T := newRetentionBridges()
-	T.storeMessage(StoredMessage{ID: "old", ChatID: "c", Role: "user", Text: "ancient", Timestamp: stamp(messageRetention + 24*time.Hour)})
-	T.storeMessage(StoredMessage{ID: "new", ChatID: "c", Role: "user", Text: "recent", Timestamp: stamp(time.Hour)})
+	T.storeMessage("", StoredMessage{ID: "old", ChatID: "c", Role: "user", Text: "ancient", Timestamp: stamp(messageRetention + 24*time.Hour)})
+	T.storeMessage("", StoredMessage{ID: "new", ChatID: "c", Role: "user", Text: "recent", Timestamp: stamp(time.Hour)})
 
 	T.sweepRetention()
 
-	got := T.recentMessages("c", 0)
+	got := T.recentMessages("", "c", 0)
 	if len(got) != 1 || got[0].Text != "recent" {
 		t.Fatalf("only the recent message should survive, got %+v", got)
 	}
@@ -72,7 +72,7 @@ func TestUndatedMessagesAreKept(t *testing.T) {
 
 	T.sweepRetention()
 
-	if got := T.recentMessages("c", 0); len(got) != 1 {
+	if got := T.recentMessages("", "c", 0); len(got) != 1 {
 		t.Errorf("a message with an unparseable timestamp must be kept, got %+v", got)
 	}
 }
@@ -85,14 +85,14 @@ func TestBusyChatIsTrimmedToTheCap(t *testing.T) {
 	for i := 0; i < total; i++ {
 		// Oldest first: index 0 is the furthest back, so the last ones written
 		// are the newest and must be the ones kept.
-		T.storeMessage(StoredMessage{
+		T.storeMessage("", StoredMessage{
 			ID: string(rune('a'+i%26)) + time.Duration(i).String(), ChatID: "busy", Role: "user",
 			Text: "msg", Timestamp: stamp(time.Duration(total-i) * time.Minute),
 		})
 	}
 	T.sweepRetention()
 
-	got := T.recentMessages("busy", 0)
+	got := T.recentMessages("", "busy", 0)
 	if len(got) > maxMessagesPerChat {
 		t.Errorf("chat should be trimmed to %d, got %d", maxMessagesPerChat, len(got))
 	}
@@ -111,10 +111,10 @@ func TestBusyChatIsTrimmedToTheCap(t *testing.T) {
 // keep suppressing its message.
 func TestDedupKeysExpire(t *testing.T) {
 	T := newRetentionBridges()
-	if T.seenMessage("c", "m1") {
+	if T.seenMessage("", "c", "m1") {
 		t.Fatal("a message seen for the first time must not report as a duplicate")
 	}
-	if !T.seenMessage("c", "m1") {
+	if !T.seenMessage("", "c", "m1") {
 		t.Fatal("the same message must report as a duplicate while its key lives")
 	}
 
@@ -122,7 +122,7 @@ func TestDedupKeysExpire(t *testing.T) {
 	T.DB.Set(seenMsgTable, "c:m1", time.Now().Add(-seenRetention-time.Hour).UTC().Format(time.RFC3339))
 	T.sweepRetention()
 
-	if T.seenMessage("c", "m1") {
+	if T.seenMessage("", "c", "m1") {
 		t.Error("an expired dedup key must no longer suppress its message")
 	}
 }
@@ -145,7 +145,7 @@ func TestLegacyMessagesMigrate(t *testing.T) {
 
 	T.migrateFlatMessages()
 
-	got := T.recentMessages("chatA", 0)
+	got := T.recentMessages("", "chatA", 0)
 	if len(got) != 2 {
 		t.Fatalf("both legacy messages should have migrated, got %+v", got)
 	}
@@ -154,7 +154,7 @@ func TestLegacyMessagesMigrate(t *testing.T) {
 	}
 	// Running it again must be a no-op, not a duplication.
 	T.migrateFlatMessages()
-	if got := T.recentMessages("chatA", 0); len(got) != 2 {
+	if got := T.recentMessages("", "chatA", 0); len(got) != 2 {
 		t.Errorf("migration must be idempotent, got %d messages", len(got))
 	}
 }
@@ -180,10 +180,10 @@ func TestLegacyDedupTableIsDroppedNotRead(t *testing.T) {
 	T.sweepRetention()
 
 	// Dedup still works going forward.
-	if T.seenMessage("chat", "3") {
+	if T.seenMessage("", "chat", "3") {
 		t.Error("a fresh message must not report as already seen")
 	}
-	if !T.seenMessage("chat", "3") {
+	if !T.seenMessage("", "chat", "3") {
 		t.Error("dedup must work after the legacy table is dropped")
 	}
 }

@@ -124,9 +124,35 @@ type Convo struct {
 	Owner string `json:"owner,omitempty"`
 }
 
-func (T *Bridges) getConvo(chatID string) (Convo, bool) {
+// scopedConvoPrefix starts the store key of a user's copy of a chat id that
+// another user recorded first.
+const scopedConvoPrefix = "~u:"
+
+// convoKey is where owner's conversation chatID is stored. A chat id is not
+// unique across users: two people texting the same contact over iMessage
+// share it. The first to record one keeps the bare chat id (every record from
+// before this rule is there, so nothing moves); anyone else's copy lives under
+// a key of their own, so one user's thread neither blocks nor reads another's.
+// An ownerless record is the administrator's to take, as inboundMayWrite says.
+func (T *Bridges) convoKey(owner, chatID string) string {
+	if owner == "" || chatID == "" {
+		return chatID
+	}
+	scoped := scopedConvoPrefix + owner + ":" + chatID
 	var c Convo
-	ok := T.DB.Get(convosTable, chatID, &c)
+	if T.DB.Get(convosTable, scoped, &c) {
+		return scoped
+	}
+	if !T.DB.Get(convosTable, chatID, &c) || c.Owner == owner || c.Owner == "" && ownerIsAdmin(owner) {
+		return chatID
+	}
+	return scoped
+}
+
+// getConvo loads owner's conversation chatID.
+func (T *Bridges) getConvo(owner, chatID string) (Convo, bool) {
+	var c Convo
+	ok := T.DB.Get(convosTable, T.convoKey(owner, chatID), &c)
 	return c, ok
 }
 
@@ -157,7 +183,12 @@ func ownerIsAdmin(owner string) bool {
 // convoFor loads a conversation for user. Missing and not-yours are the same
 // answer, so a caller probing chat ids learns nothing about other users'.
 func (T *Bridges) convoFor(chatID, user string, admin bool) (Convo, bool) {
-	c, ok := T.getConvo(chatID)
+	c, ok := T.getConvo(user, chatID)
+	if !ok && admin {
+		// An administrator also manages the ownerless records from before
+		// conversations had owners, which sit at the bare chat id.
+		ok = T.DB.Get(convosTable, chatID, &c)
+	}
 	if !ok || !convoVisibleTo(c, user, admin) {
 		return Convo{}, false
 	}
@@ -175,41 +206,38 @@ func (T *Bridges) convosFor(user string, admin bool) []Convo {
 	return out
 }
 
-// inboundMayWrite reports whether an inbound authenticated as owner on svc may
-// record into the stored conversation c. Another user's conversation is never
-// writable. An ownerless (pre-ownership) one is taken by an admin, or by the
-// owner of a key or connector for the SAME service when that service is not the
-// generic "api": minting those keys and approving those connectors is an
-// administrator's call, so the traffic is genuinely theirs. A generic api key
-// any user can mint names its own chat ids, and must not be able to claim an
-// old conversation by guessing one.
-func inboundMayWrite(c Convo, owner, svc string) bool {
+// inboundMayWrite reports whether an inbound authenticated as owner may record
+// into the stored conversation c. Another user's conversation is never
+// writable. An ownerless one predates ownership and is the administrator's: a
+// connector key, including a desktop's that any user's machine negotiates,
+// does not make its traffic someone else's old thread. (convoKey gives anyone
+// else's copy of the chat id a key of its own, so nothing is dropped.)
+func inboundMayWrite(c Convo, owner string) bool {
 	switch {
 	case c.Owner == owner:
 		return true
 	case c.Owner != "":
 		return false
-	case owner == "" || ownerIsAdmin(owner):
-		return true
 	}
-	return svc != "api" && c.Service == svc
+	return owner == "" || ownerIsAdmin(owner)
 }
 
 func (T *Bridges) saveConvo(c Convo) {
 	if c.ChatID != "" {
-		T.DB.Set(convosTable, c.ChatID, c)
+		T.DB.Set(convosTable, T.convoKey(c.Owner, c.ChatID), c)
 	}
 }
 
-// deleteConvo removes a conversation and its stored thread — used when folding a
-// duplicate chat into another (its id added as an alias on the keeper).
-func (T *Bridges) deleteConvo(chatID string) {
+// deleteConvo removes owner's conversation and its stored thread — used when
+// folding a duplicate chat into another (its id added as an alias on the keeper).
+func (T *Bridges) deleteConvo(owner, chatID string) {
 	if chatID == "" {
 		return
 	}
-	T.DB.Unset(convosTable, chatID)
+	key := T.convoKey(owner, chatID)
+	T.DB.Unset(convosTable, key)
 	// One Drop instead of a walk over every message in every conversation.
-	T.DB.Drop(chatMessagesTable(chatID))
+	T.DB.Drop(chatMessagesTable(key))
 }
 
 // isGroupChat reports whether a chat id is a group room. iMessage marks the
@@ -253,11 +281,14 @@ func (T *Bridges) inboundIdentities(owner, svc, chatID, handle string) []string 
 			seen[s] = true
 		}
 	}
-	add(handle)
 	add(chatID)
 	add(chatHandle(chatID))
 	// A group inbound never clusters by member — match it by its own chat id.
+	// Not by the sender's handle either: that is the address of the sender's
+	// one-to-one channel, whose agent would wake on the group's message and
+	// answer into the group.
 	if !isGroupChat(chatID) {
+		add(handle)
 		// Alias closure over 1:1 conversations. Repeat until the cluster stops
 		// growing so transitive links (A↔B, B↔C) all collapse. Bounded by the
 		// convo count; trivial at personal-assistant scale.
@@ -310,7 +341,7 @@ func (T *Bridges) upsertConvo(owner, service, chatID, handle, senderName, convoN
 	if strings.TrimSpace(chatID) == "" {
 		return
 	}
-	c, _ := T.getConvo(chatID)
+	c, _ := T.getConvo(owner, chatID)
 	c.ChatID = chatID
 	if c.Owner == "" {
 		c.Owner = owner
@@ -383,8 +414,8 @@ func contains(ss []string, s string) bool {
 // handle that's ever sent becomes a member (carrying any name seen) — so the
 // roster is complete even for senders we didn't catch live. Derive-on-read,
 // mirroring phantom. Returns the (possibly updated, persisted) Convo.
-func (T *Bridges) syncMembersFromHistory(chatID string) Convo {
-	c, _ := T.getConvo(chatID)
+func (T *Bridges) syncMembersFromHistory(owner, chatID string) Convo {
+	c, _ := T.getConvo(owner, chatID)
 	c.ChatID = chatID
 	// A CONVERSATION ALIAS handle is an alternate id for the CHAT itself (a
 	// folded-in duplicate reachable via another phone/email), NOT a person — so
@@ -414,12 +445,15 @@ func (T *Bridges) syncMembersFromHistory(chatID string) Convo {
 	}
 	c.Members = kept
 	before := len(c.Members)
-	for _, m := range T.recentMessages(chatID, 0) { // 0 = entire thread
+	for _, m := range T.recentMessages(owner, chatID, 0) { // 0 = entire thread
 		if m.Role == "user" && strings.TrimSpace(m.Handle) != "" && !isAlias(m.Handle) {
 			c.Members = upsertMember(c.Members, m.Handle, m.DisplayName)
 		}
 	}
 	if changed || len(c.Members) != before {
+		if c.Owner == "" {
+			c.Owner = owner
+		}
 		T.saveConvo(c)
 	}
 	return c
@@ -438,22 +472,23 @@ type StoredMessage struct {
 	Timestamp   string `json:"timestamp"`
 }
 
-func (T *Bridges) storeMessage(m StoredMessage) {
+// storeMessage keeps a message in owner's copy of its conversation.
+func (T *Bridges) storeMessage(owner string, m StoredMessage) {
 	if m.ChatID == "" || m.ID == "" || strings.TrimSpace(m.Text) == "" {
 		return
 	}
 	if m.Timestamp == "" {
 		m.Timestamp = now()
 	}
-	T.DB.Set(chatMessagesTable(m.ChatID), m.ID, m)
+	T.DB.Set(chatMessagesTable(T.convoKey(owner, m.ChatID)), m.ID, m)
 }
 
 // recentMessages returns a conversation's last n messages, oldest first (n<=0
 // for the whole thread). Reads only this chat's table — see retention.go for why
 // the transcript is stored per chat rather than in one flat table.
-func (T *Bridges) recentMessages(chatID string, n int) []StoredMessage {
+func (T *Bridges) recentMessages(owner, chatID string, n int) []StoredMessage {
 	var out []StoredMessage
-	table := chatMessagesTable(chatID)
+	table := chatMessagesTable(T.convoKey(owner, chatID))
 	for _, k := range T.DB.Keys(table) {
 		var m StoredMessage
 		if T.DB.Get(table, k, &m) {
@@ -528,7 +563,8 @@ func (T *Bridges) listBridgeKeys(owner string) []BridgeKey {
 	return out
 }
 
-// bridgeKeyOwner resolves a bridge-key secret to its owner username, READ-ONLY
+// bridgeKeyOwner resolves a desktop (iMessage) bridge-key secret to its owner
+// username, READ-ONLY
 // — no LastSeen stamp, no desktop-record creation. Registered as a core
 // API-key validator (RegisterAPIKeyValidator) so userFromAPIKey and
 // DesktopClientUser resolve bridge keys; those run on the hot path (every
@@ -552,11 +588,49 @@ func (T *Bridges) bridgeKeyOwner(secret string) (string, bool) {
 		if !T.DB.Get(bridgeKeysTable, id, &k) || k.Owner == "" {
 			continue
 		}
-		if subtle.ConstantTimeCompare([]byte(k.Key), []byte(secret)) == 1 {
+		// Only the desktop's iMessage bridge stands in for its owner beyond
+		// the bridge hook: that daemon is what this validator exists for. A
+		// key minted for a Telegram poller or pasted into a webhook sender is
+		// a credential for that one connector, and must not open the desktop
+		// tool bridge, the LLM API or the model proxy as its owner.
+		if subtle.ConstantTimeCompare([]byte(k.Key), []byte(secret)) == 1 && desktopBridgeService(k.Service) {
 			owner, found = k.Owner, true
 		}
 	}
 	return owner, found
+}
+
+// userHasBridges reports whether user may use this app: an administrator, an
+// account granted /bridges, or anyone on a single-user deployment. The
+// request-free form of UserHasAppAccess, for a caller holding a key.
+func userHasBridges(user string) bool {
+	if AuthDB == nil {
+		return true
+	}
+	db := AuthDB()
+	if db == nil || !AuthHasUsers(db) {
+		return true
+	}
+	u, ok := AuthGetUser(db, user)
+	if !ok {
+		return false
+	}
+	if u.Admin {
+		return true
+	}
+	for _, p := range AuthResolveUserApps(db, u) {
+		if p == "/bridges" || strings.HasPrefix(p, "/bridges/") {
+			return true
+		}
+	}
+	return false
+}
+
+// desktopBridgeService reports whether a bridge key's service is the one the
+// desktop daemon speaks (an unset service is the iMessage default).
+func desktopBridgeService(service string) bool {
+	svc := strings.TrimSpace(service)
+	return svc == "" || strings.EqualFold(svc, "imessage")
 }
 
 // bridgeKeyRevoker destroys a departing user's bridge keys. Core cannot know
@@ -614,6 +688,13 @@ func (T *Bridges) validateBridgeKey(secret string) (BridgeKey, bool) {
 	// first sight) so the desktop bridge shows in the dashboard and has its own
 	// enable switch like any other bridge.
 	if user, ok := LookupDesktopKey(secret); ok && user != "" {
+		// Every account's desktop negotiates a key, so the key alone says
+		// only that this is someone's machine. It becomes an iMessage bridge
+		// for a user the deployment lets use Bridges, never for anyone else.
+		if !userHasBridges(user) {
+			Debug("[bridges] desktop key of %s refused as an iMessage bridge: the account has no Bridges access", user)
+			return BridgeKey{}, false
+		}
 		return T.desktopServiceBridge(user), true
 	}
 	return BridgeKey{}, false
@@ -837,11 +918,11 @@ func (T *Bridges) drainOutbox(service, owner string) []OutboxItem {
 
 // seenMessage reports whether this inbound was already processed, recording it
 // if not. Keeps a connector's at-least-once delivery from double-firing agents.
-func (T *Bridges) seenMessage(chatID, msgID string) bool {
+func (T *Bridges) seenMessage(owner, chatID, msgID string) bool {
 	if msgID == "" {
 		return false
 	}
-	key := chatID + ":" + msgID
+	key := T.convoKey(owner, chatID) + ":" + msgID
 	var at string
 	if T.DB.Get(seenMsgTable, key, &at) {
 		return true
@@ -860,7 +941,7 @@ func (T *Bridges) seenMessage(chatID, msgID string) bool {
 // aliases), else the raw handle. upsertConvo learns names onto the Convo's
 // Members, and the user can override them in the member editor — so group
 // transcripts read by person, not by phone number.
-func (T *Bridges) resolveSender(chatID, handle, fresh string) string {
+func (T *Bridges) resolveSender(owner, chatID, handle, fresh string) string {
 	fresh = strings.TrimSpace(fresh)
 	if handle = strings.TrimSpace(handle); handle == "" {
 		// Empty handle = the owner's own message (the daemon clears it for
@@ -879,7 +960,7 @@ func (T *Bridges) resolveSender(chatID, handle, fresh string) string {
 	// per-message display name, so one handle reads as ONE name across messages
 	// even when the connector sends inconsistent display names. The fresh name
 	// and raw handle are fallbacks only.
-	if c, ok := T.getConvo(chatID); ok {
+	if c, ok := T.getConvo(owner, chatID); ok {
 		for _, m := range c.Members {
 			// Case-insensitive match, symmetric with the recipient side
 			// (ResolveRecipient/chatIDForHandle use containsFold/EqualFold): an
@@ -900,11 +981,11 @@ func (T *Bridges) resolveSender(chatID, handle, fresh string) string {
 // participants, to hand the agent as the up-front roster (see ChannelInbound.
 // Roster). Names fall back to the handle; duplicates are dropped. Returns nil for
 // 1:1 chats (the single other party is already the sender) or an unknown convo.
-func (T *Bridges) rosterNames(chatID string) []string {
+func (T *Bridges) rosterNames(owner, chatID string) []string {
 	if !isGroupChat(chatID) {
 		return nil
 	}
-	c, ok := T.getConvo(chatID)
+	c, ok := T.getConvo(owner, chatID)
 	if !ok {
 		return nil
 	}

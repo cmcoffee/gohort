@@ -70,10 +70,11 @@ func (p messagingLinkImpl) ReadChat(owner, chatID string, limit int) ([]Messagin
 	if !p.ownsBridge(owner) {
 		return out, nil
 	}
-	if _, ok := p.convo(owner, chatID); !ok {
+	c, ok := p.convo(owner, chatID)
+	if !ok {
 		return out, nil
 	}
-	for _, m := range p.T.recentMessages(chatID, limit) { // oldest first
+	for _, m := range p.T.recentMessages(c.Owner, chatID, limit) { // oldest first
 		out = append(out, MessagingChatMessage{
 			FromMe: m.Role == "assistant",
 			Text:   m.Text,

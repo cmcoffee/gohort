@@ -32,9 +32,9 @@ func newOwnershipFixture(t *testing.T) *ownershipFixture {
 
 	T := &Bridges{AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
 	T.saveConvo(Convo{ChatID: "chat-alice", Service: "imessage", Owner: "alice", Added: true, DisplayName: "Alice's friend"})
-	T.storeMessage(StoredMessage{ID: "m1", ChatID: "chat-alice", Role: "user", Text: "alice's secret"})
+	T.storeMessage("", StoredMessage{ID: "m1", ChatID: "chat-alice", Role: "user", Text: "alice's secret"})
 	T.saveConvo(Convo{ChatID: "chat-legacy", Service: "imessage", Added: true})
-	T.storeMessage(StoredMessage{ID: "m2", ChatID: "chat-legacy", Role: "user", Text: "old thread"})
+	T.storeMessage("", StoredMessage{ID: "m2", ChatID: "chat-legacy", Role: "user", Text: "old thread"})
 	return &ownershipFixture{T: T, adb: adb}
 }
 
@@ -90,7 +90,6 @@ func TestBobCannotReachAlicesConversation(t *testing.T) {
 		{"rename", http.MethodPatch, "/api/conversation/chat-alice", `{"display_name":"mine now"}`, f.T.handleConvUpdate},
 		{"delete", http.MethodDelete, "/api/conversation/chat-alice", "", f.T.handleConvUpdate},
 		{"add", http.MethodPost, "/api/add-convo?chat_id=chat-alice", "", f.T.handleAddConvo},
-		{"add-by-handle", http.MethodPost, "/api/add-convo", `{"handle":"chat-alice"}`, f.T.handleAddConvo},
 		{"connect", http.MethodPost, "/api/connect-channel?chat_id=chat-alice", "", f.T.handleConnectChannel},
 	}
 	for _, d := range denied {
@@ -105,23 +104,32 @@ func TestBobCannotReachAlicesConversation(t *testing.T) {
 	if f.listed(t, "bob", "chat-alice") {
 		t.Error("alice's conversation shows in bob's list")
 	}
-	c, ok := f.T.getConvo("chat-alice")
+
+	// Adding the same id by hand starts bob's OWN thread under it: a chat id
+	// is not unique across users. It is a separate record, empty of hers.
+	if w := f.call("bob", http.MethodPost, "/api/add-convo", `{"handle":"chat-alice"}`, f.T.handleAddConvo); w.Code != http.StatusOK {
+		t.Errorf("bob adding his own copy of the id: %d %s", w.Code, w.Body.String())
+	}
+	if w := f.call("bob", http.MethodGet, "/api/messages/chat-alice", "", f.T.handleMessages); strings.Contains(w.Body.String(), "secret") {
+		t.Errorf("bob's copy of the id shows alice's thread: %s", w.Body.String())
+	}
+	c, ok := f.T.getConvo("", "chat-alice")
 	if !ok || c.DisplayName != "Alice's friend" || c.Owner != "alice" {
 		t.Fatalf("bob's requests changed alice's conversation: ok=%v %+v", ok, c)
 	}
 
 	// The agent-facing seam is scoped the same way.
 	ct := channelThreadsImpl{T: f.T}
-	for _, th := range ct.Threads("bob") {
-		if th.ChatID == "chat-alice" {
-			t.Error("alice's chat in bob's agent thread list")
-		}
-	}
 	if msgs := ct.Messages("bob", "chat-alice", 10); len(msgs) != 0 {
 		t.Errorf("bob's agent read alice's thread: %+v", msgs)
 	}
-	if err := ct.Deliver("bob", "imessage", "chat-alice", "", "hi from bob", "", nil); err == nil {
-		t.Error("bob's agent sent into alice's conversation")
+	if err := ct.Deliver("bob", "imessage", "chat-alice", "", "hi from bob", "", nil); err != nil {
+		t.Errorf("bob's agent sending into his own copy: %v", err)
+	}
+	for _, m := range f.T.recentMessages("alice", "chat-alice", 0) {
+		if strings.Contains(m.Text, "from bob") {
+			t.Error("bob's agent wrote into alice's thread")
+		}
 	}
 }
 
@@ -146,7 +154,7 @@ func TestLegacyOwnerlessConversationIsAdminOnly(t *testing.T) {
 		t.Errorf("admin read alice's owned conversation: %d", w.Code)
 	}
 	// Viewing does not rewrite the legacy record's owner.
-	if c, _ := f.T.getConvo("chat-legacy"); c.Owner != "" {
+	if c, _ := f.T.getConvo("", "chat-legacy"); c.Owner != "" {
 		t.Errorf("legacy conversation was stamped on read: %q", c.Owner)
 	}
 }
@@ -198,25 +206,64 @@ func TestInboundStampsOwnerAndRefusesAnotherUsersKey(t *testing.T) {
 	bob := BridgeKey{Owner: "bob", Service: "imessage", Name: "bob-mac"}
 
 	f.T.ingestInbound(alice, hookRequest{ChatID: "chat-new", Handle: "+15550100", Text: "hello", MsgID: "n1"})
-	c, ok := f.T.getConvo("chat-new")
+	c, ok := f.T.getConvo("", "chat-new")
 	if !ok || c.Owner != "alice" {
 		t.Fatalf("first inbound did not stamp the key's owner: ok=%v %+v", ok, c)
 	}
 
 	f.T.ingestInbound(bob, hookRequest{ChatID: "chat-new", Handle: "+15550199", Text: "injected", MsgID: "n2"})
-	for _, m := range f.T.recentMessages("chat-new", 0) {
+	for _, m := range f.T.recentMessages("", "chat-new", 0) {
 		if strings.Contains(m.Text, "injected") {
 			t.Fatal("bob's key wrote into alice's conversation")
 		}
 	}
-	if c, _ := f.T.getConvo("chat-new"); c.Owner != "alice" || len(c.Members) != 1 {
+	if c, _ := f.T.getConvo("", "chat-new"); c.Owner != "alice" || len(c.Members) != 1 {
 		t.Fatalf("bob's inbound changed alice's conversation: %+v", c)
 	}
 
 	// A generic api key, which any user may mint, does not claim a legacy
 	// conversation by naming its chat id.
 	f.T.ingestInbound(BridgeKey{Owner: "bob", Service: "api"}, hookRequest{ChatID: "chat-legacy", Text: "claim", MsgID: "n3"})
-	if c, _ := f.T.getConvo("chat-legacy"); c.Owner != "" {
+	if c, _ := f.T.getConvo("", "chat-legacy"); c.Owner != "" {
 		t.Fatalf("an api key claimed a legacy conversation: %q", c.Owner)
+	}
+}
+
+// A chat id is not unique across users: two people texting the same contact
+// share it. Each keeps a thread of their own, the first one where it always
+// was, and neither drops, reads or claims the other's.
+func TestTwoUsersShareAChatIDWithoutSharingAThread(t *testing.T) {
+	f := newOwnershipFixture(t)
+	alice := BridgeKey{Owner: "alice", Service: "imessage", Name: "alice-mac"}
+	bob := BridgeKey{Owner: "bob", Service: "imessage", Name: "bob-mac"}
+
+	f.T.ingestInbound(alice, hookRequest{ChatID: "any;-;+15550100", Handle: "+15550100", Text: "to alice", MsgID: "a1"})
+	f.T.ingestInbound(bob, hookRequest{ChatID: "any;-;+15550100", Handle: "+15550100", Text: "to bob", MsgID: "b1"})
+
+	thread := func(user string) string {
+		var b strings.Builder
+		for _, m := range f.T.recentMessages(user, "any;-;+15550100", 0) {
+			b.WriteString(m.Text + "\n")
+		}
+		return b.String()
+	}
+	if got := thread("alice"); !strings.Contains(got, "to alice") || strings.Contains(got, "to bob") {
+		t.Errorf("alice's thread: %q", got)
+	}
+	if got := thread("bob"); !strings.Contains(got, "to bob") || strings.Contains(got, "to alice") {
+		t.Errorf("bob's thread: %q (his message was dropped or mixed in)", got)
+	}
+	if c, ok := f.T.getConvo("", "any;-;+15550100"); !ok || c.Owner != "alice" {
+		t.Errorf("the first recorder's thread moved: %+v", c)
+	}
+	if w := f.call("bob", http.MethodGet, "/api/messages/any;-;+15550100", "", f.T.handleMessages); w.Code != http.StatusOK || strings.Contains(w.Body.String(), "to alice") {
+		t.Errorf("bob's view of the chat: %d %s", w.Code, w.Body.String())
+	}
+
+	// A connector key of the conversation's own service, a desktop's included,
+	// does not make an ownerless thread a non-admin's.
+	f.T.ingestInbound(bob, hookRequest{ChatID: "chat-legacy", Text: "mine now", MsgID: "b2"})
+	if c, _ := f.T.getConvo("", "chat-legacy"); c.Owner != "" {
+		t.Errorf("a non-admin's imessage key claimed the legacy conversation: %q", c.Owner)
 	}
 }
