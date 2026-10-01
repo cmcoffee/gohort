@@ -26,13 +26,60 @@ import (
 
 type nonOwnerRequesterKey struct{}
 
+// nonOwnerMark is what a non-owner's work carries: the conversation the
+// request came from, when it came over a channel, so a reply there is still
+// a reply.
+type nonOwnerMark struct{ origin string }
+
 // withNonOwnerRequester marks ctx as work somebody other than the agent's
-// owner started. The mark only ever narrows: nothing clears it.
-func withNonOwnerRequester(ctx context.Context) context.Context {
+// owner started, from origin (a recipient key, operatorRecipientKey) when
+// known. The mark only ever narrows: nothing clears it, and the first origin
+// stays.
+func withNonOwnerRequester(ctx context.Context, origin ...string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return context.WithValue(ctx, nonOwnerRequesterKey{}, true)
+	if m, ok := ctx.Value(nonOwnerRequesterKey{}).(nonOwnerMark); ok {
+		if m.origin != "" || len(origin) == 0 {
+			return ctx
+		}
+	}
+	m := nonOwnerMark{}
+	if len(origin) > 0 {
+		m.origin = strings.TrimSpace(origin[0])
+	}
+	return context.WithValue(ctx, nonOwnerRequesterKey{}, m)
+}
+
+// carryNonOwnerRequester puts from's mark, origin included, on to: for work
+// handed to a context of its own.
+func carryNonOwnerRequester(from, to context.Context) context.Context {
+	if !nonOwnerRequester(from) {
+		return to
+	}
+	return withNonOwnerRequester(to, requestOrigin(from))
+}
+
+// requestOrigin is the conversation a non-owner's request came from, or "".
+func requestOrigin(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	m, _ := ctx.Value(nonOwnerRequesterKey{}).(nonOwnerMark)
+	return m.origin
+}
+
+// standingGrantApplies reports whether a standing approval (an "Always allow"
+// recipient, an authorized-sender grant) sends to recip without asking. Those
+// are the owner's say-so for the owner's own asks. When someone else started
+// the work, only the conversation they wrote from is answered on them; a
+// message anywhere else waits for the owner.
+func standingGrantApplies(ctx context.Context, recip string) bool {
+	if !nonOwnerRequester(ctx) {
+		return true
+	}
+	o := requestOrigin(ctx)
+	return o != "" && o == recip
 }
 
 // nonOwnerRequester reports whether a non-owner started this work, at this
@@ -41,8 +88,8 @@ func nonOwnerRequester(ctx context.Context) bool {
 	if ctx == nil {
 		return false
 	}
-	v, _ := ctx.Value(nonOwnerRequesterKey{}).(bool)
-	return v
+	_, ok := ctx.Value(nonOwnerRequesterKey{}).(nonOwnerMark)
+	return ok
 }
 
 // channelSenderIsOwner classifies a run's sender the way the dispatch path

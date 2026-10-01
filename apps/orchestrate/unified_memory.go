@@ -799,6 +799,9 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 				return "", t.refuseDurableMemoryInCleanRoom("nothing deleted",
 					"a deletion would outlive the conversation that asked for it, and cannot be undone")
 			}
+			if err := t.strangerMayNotForget(); err != nil {
+				return "", err
+			}
 			id := strings.TrimSpace(stringArg(args, "id"))
 			if id == "" {
 				// Query-mode: bulk finding delete, same engine as the legacy

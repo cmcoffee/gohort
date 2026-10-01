@@ -67,6 +67,11 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 			Caps:     []Capability{CapRead, CapWrite},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			// A task set up here fires later as the owner's: someone else on a
+			// channel cannot leave one behind (ownerOnlyFleetTools).
+			if nonOwnerRequester(ctx) {
+				return "Not done: recurring tasks are the owner's to manage, and this request came from someone else on a channel. Tell them it needs the owner.", nil
+			}
 			switch strings.ToLower(strings.TrimSpace(stringArg(args, "action"))) {
 			case "schedule":
 				return t.recurringSchedule(args)

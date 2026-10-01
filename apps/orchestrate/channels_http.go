@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/messaging"
 )
 
 // handleChannels manages an agent's attached messaging Channels. Phase 1 is
@@ -79,6 +80,11 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			Gatekeeper  string `json:"gatekeeper"`
 			TagOverride string `json:"tag_override"` // per-channel outbound name-tag override ("" = inherit)
 			TagDisabled bool   `json:"tag_disabled"` // disable the outbound name tag on this channel
+			// Who the channel answers. Pointers: a save that does not carry
+			// them keeps what the channel has, so a caller that predates them
+			// cannot open a closed channel by leaving them out.
+			Senders        *string   `json:"senders"`
+			AllowedHandles *[]string `json:"allowed_handles"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -102,6 +108,7 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			ch.Gatekeeper = strings.TrimSpace(req.Gatekeeper)
 			ch.TagOverride = strings.TrimSpace(req.TagOverride)
 			ch.TagDisabled = req.TagDisabled
+			applyChannelSenders(&ch, req.Senders, req.AllowedHandles)
 			if a := strings.TrimSpace(req.AgentID); a != "" {
 				ch.AgentID = a
 				T.ensureAgentCortex(user, a) // re-pointed: the new agent gets a cortex too
@@ -136,6 +143,7 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			TagDisabled: req.TagDisabled,
 			Created:     time.Now().UTC().Format(time.RFC3339),
 		}
+		applyChannelSenders(&ch, req.Senders, req.AllowedHandles)
 		SaveChannel(RootDB, ch)
 		// A channel relays into its agent's cortex (the conversation thread), so
 		// attaching one implies cortex — turn it on if it isn't already.
@@ -156,6 +164,26 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// applyChannelSenders sets who a channel answers from a save, where given.
+// The handle list is kept trimmed and without blanks.
+func applyChannelSenders(ch *Channel, senders *string, handles *[]string) {
+	if senders != nil {
+		ch.Senders = strings.ToLower(strings.TrimSpace(*senders))
+		if ch.Senders == messaging.SendersAnyone {
+			ch.Senders = ""
+		}
+	}
+	if handles != nil {
+		var kept []string
+		for _, h := range *handles {
+			if h = strings.TrimSpace(h); h != "" {
+				kept = append(kept, h)
+			}
+		}
+		ch.AllowedHandles = kept
 	}
 }
 

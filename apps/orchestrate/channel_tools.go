@@ -231,6 +231,26 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 		return "", "", false
 	}
 
+	// visible: a request someone else started reads only the conversation it
+	// came from; the owner's other chats on the channel stay the owner's
+	// (standingGrantApplies).
+	visible := func(ctx context.Context, t ChannelThreadInfo) bool {
+		return standingGrantApplies(ctx, operatorRecipientKey(t.ChatID, t.Handle))
+	}
+	// readable finds chatID among the threads this request may read.
+	readable := func(ctx context.Context, chatID string) error {
+		for _, t := range scopedThreads() {
+			if t.ChatID != chatID {
+				continue
+			}
+			if !visible(ctx, t) {
+				return fmt.Errorf("chat %q is not readable on this request: someone other than the owner asked, and only the conversation they wrote from is open to them", chatID)
+			}
+			return nil
+		}
+		return fmt.Errorf("no chat %q on your channels: use a chat_id from list_chats", chatID)
+	}
+
 	tools := []AgentToolDef{
 		{
 			Tool: Tool{
@@ -243,7 +263,12 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				if limit <= 0 {
 					limit = 20
 				}
-				threads := scopedThreads()
+				var threads []ChannelThreadInfo
+				for _, t := range scopedThreads() {
+					if visible(ctx, t) {
+						threads = append(threads, t)
+					}
+				}
 				if len(threads) == 0 {
 					return "No conversations on your channels yet.", nil
 				}
@@ -282,15 +307,8 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 					return "", fmt.Errorf("chat_id is required")
 				}
 				// Enforce scope — only chats on this agent's channels are readable.
-				ok := false
-				for _, t := range scopedThreads() {
-					if t.ChatID == chatID {
-						ok = true
-						break
-					}
-				}
-				if !ok {
-					return "", fmt.Errorf("no chat %q on your channels: use a chat_id from list_chats", chatID)
+				if err := readable(ctx, chatID); err != nil {
+					return "", err
 				}
 				msgs := ct.Messages(owner, chatID, oArgInt(args, "limit"))
 				if len(msgs) == 0 {
@@ -343,15 +361,8 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				if chatID == "" {
 					return "", fmt.Errorf("chat_id is required")
 				}
-				ok := false
-				for _, t := range scopedThreads() {
-					if t.ChatID == chatID {
-						ok = true
-						break
-					}
-				}
-				if !ok {
-					return "", fmt.Errorf("no chat %q on your channels: use a chat_id from list_chats", chatID)
+				if err := readable(ctx, chatID); err != nil {
+					return "", err
 				}
 				members := ct.Members(owner, chatID)
 				if len(members) == 0 {
@@ -413,7 +424,10 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 					}
 					return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
 				}
-				if IsContactPreAuthorized(RootDB, owner, agentID, recip) {
+				// A standing approval is the owner's say-so for the owner's own
+				// asks, not for someone else's (standingGrantApplies).
+				standing := standingGrantApplies(ctx, recip)
+				if standing && IsContactPreAuthorized(RootDB, owner, agentID, recip) {
 					if _, err := operatorDeliverMedia(owner, agentID, chatID, handle, text, images, videos); err != nil {
 						return "", err
 					}
@@ -425,7 +439,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				// Authorized sender: this agent — or a parent it's owned by — may
 				// deliver to this channel (inherited down the ownership chain). Send
 				// without queuing; the grant is the approval.
-				if channelSenderAuthorized(UserDB(orchestrateBaseDB, owner), owner, chatID, handle, agentID) {
+				if standing && channelSenderAuthorized(UserDB(orchestrateBaseDB, owner), owner, chatID, handle, agentID) {
 					if _, err := operatorDeliverMedia(owner, agentID, chatID, handle, text, images, videos); err != nil {
 						return "", err
 					}
@@ -486,28 +500,18 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 					line ChannelLine
 				}
 				var hits []hit
+				if chatID != "" {
+					if err := readable(ctx, chatID); err != nil {
+						return "", err
+					}
+				}
 				for _, t := range scopedThreads() {
-					if chatID != "" && t.ChatID != chatID {
+					if (chatID != "" && t.ChatID != chatID) || !visible(ctx, t) {
 						continue
 					}
 					name := chFirst(t.DisplayName, t.Handle, t.ChatID)
 					for _, ln := range searcher.SearchMessages(owner, t.ChatID, query, limit) {
 						hits = append(hits, hit{chat: name, line: ln})
-					}
-				}
-				if chatID != "" && len(hits) == 0 {
-					// Distinguish "no matches" from "not your chat" — the scope
-					// filter above silently skips a chat_id outside the agent's
-					// channels, and that must not read as an empty history.
-					inScope := false
-					for _, t := range scopedThreads() {
-						if t.ChatID == chatID {
-							inScope = true
-							break
-						}
-					}
-					if !inScope {
-						return "", fmt.Errorf("no chat %q on your channels: use a chat_id from list_chats", chatID)
 					}
 				}
 				if len(hits) == 0 {

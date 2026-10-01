@@ -1189,7 +1189,7 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	if VectorDB != nil && !semanticDedupRan && t.findingExactDuplicate(content) {
 		return fmt.Sprintf("Already saved (deduped): this exact finding is already in Memory. Skipping: retrieve it via %s.", memRecallPhrase()), nil
 	}
-	reportID := ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
+	reportID := ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, t.attributedToSpeaker(content))
 	// A finding about something that happened on a date is dated, so it can
 	// age out of recall hints instead of being offered as news for good.
 	if kind, at := provenance.ClassifyMemKind(content, time.Now()); kind == provenance.MemKindEvent && reportID != "" && VectorDB != nil {
@@ -1584,6 +1584,9 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 // their ids so the delete that follows is by id. The admin per-agent wipe in
 // the Memory modal is the path for bulk reset.
 func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
+	if err := t.strangerMayNotForget(); err != nil {
+		return "", err
+	}
 	explicitID := strings.TrimSpace(stringArg(args, "id"))
 	query := strings.TrimSpace(stringArg(args, "query"))
 	if explicitID == "" && query == "" {

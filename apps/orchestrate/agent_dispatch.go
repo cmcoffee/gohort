@@ -1477,7 +1477,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// it starts, so a delegation cannot launder the sender away
 	// (authoring_requester.go).
 	if !channelSenderIsOwner(agentOwner, run) {
-		ctx = withNonOwnerRequester(ctx)
+		ctx = withNonOwnerRequester(ctx, run.ReplyAuthorizedKey)
 	}
 	if T == nil || T.LLM == nil {
 		return AgentSyncResult{}, errors.New("orchestrate runtime not initialized")

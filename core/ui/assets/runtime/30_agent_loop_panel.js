@@ -5358,6 +5358,21 @@
       tagOverIn.value = ch.tag_override || '';
       var tagDisIn = el('input', {type: 'checkbox'});
       if (ch.tag_disabled) tagDisIn.checked = true;
+      // Who the channel answers. Anyone else's message is recorded, not
+      // answered; the owner is always answered. Handles are one per line.
+      var sendSel = el('select', {class: 'ui-modal-input'});
+      [['anyone', 'Anyone who writes'], ['listed', 'The owner and the handles below'], ['owner', 'The owner only']].forEach(function(o) {
+        var opt = el('option', {value: o[0]}, [o[1]]);
+        if ((ch.senders || 'anyone') === o[0]) opt.selected = true;
+        sendSel.appendChild(opt);
+      });
+      var handlesIn = el('textarea', {class: 'ui-modal-input', rows: '3',
+        placeholder: 'One phone number, email or user id per line'});
+      handlesIn.value = (ch.allowed_handles || []).join('\n');
+      var handlesField = railFieldLabel('Answered handles', handlesIn);
+      function syncHandles() { handlesField.hidden = sendSel.value !== 'listed'; }
+      sendSel.addEventListener('change', syncHandles);
+      syncHandles();
       var gkEditor = railRulesEditor(ch.gatekeeper);
       // Bound-agent picker — only on EDIT, to RE-POINT an existing channel at a
       // different agent. On ADD there's no selector: a new channel binds to the
@@ -5386,6 +5401,8 @@
       body.appendChild(el('label', {style: 'display:flex;align-items:center;gap:0.4rem;margin:0.5rem 0',
         title: 'On: an inbound message wakes the agent to read and reply. Off: the message is recorded but the agent stays asleep on this channel.'},
         [arIn, el('span', {}, ['Wake on message'])]));
+      body.appendChild(railFieldLabel('Answers', sendSel));
+      body.appendChild(handlesField);
       body.appendChild(railFieldLabel('Gatekeeper rules', gkEditor.el));
       // Reset to default — swaps the rules above for the app's canonical wake
       // rule (source of truth is Go; text arrives via cfg). The user can still
@@ -5404,7 +5421,9 @@
       var saveB = el('button', {class: 'ui-btn-primary', onclick: function() {
         var payload = {id: ch.id || '', name: nameIn.value.trim(), description: descIn.value.trim(),
           direction: dirSel.value, auto_reply: arIn.checked, gatekeeper: gkEditor.getValue(),
-          tag_override: tagOverIn.value.trim(), tag_disabled: tagDisIn.checked};
+          tag_override: tagOverIn.value.trim(), tag_disabled: tagDisIn.checked,
+          senders: sendSel.value,
+          allowed_handles: handlesIn.value.split('\n').map(function(h) { return h.trim(); }).filter(Boolean)};
         if (isEdit && cfg.channel_agents_url && agentSel.value) payload.agent_id = agentSel.value;
         fetchJSON(substituteExtras(cfg.channel_save_url), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)})
           .then(function() { try { dlg.close(); } catch (e) {} dlg.remove(); loadChannels(); })

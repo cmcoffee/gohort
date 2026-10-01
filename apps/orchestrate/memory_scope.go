@@ -29,6 +29,7 @@ package orchestrate
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -93,6 +94,38 @@ func (t *chatTurn) memoryUnderlay() string {
 // the owner's facts, cortex and derived memory reached whoever messaged.
 func (t *chatTurn) strangerOnChannel() bool {
 	return t != nil && t.requesterChannel != "" && !t.requesterOwnerHandle
+}
+
+// strangerMayNotForget refuses a deletion from the owner's memory on the word
+// of someone else on a channel, or returns nil. Their own notes are attributed
+// to them; the owner's are not theirs to remove.
+func (t *chatTurn) strangerMayNotForget() error {
+	if !t.strangerOnChannel() {
+		return nil
+	}
+	return errors.New("nothing deleted: this request came from someone other than the owner on a channel, and only the owner removes what is remembered")
+}
+
+// attributedToSpeaker prefixes a finding saved on a stranger's word with who
+// said it, so a later recall reads it as that person's claim rather than the
+// owner's or the agent's own (a pinned note carries the same as Speaker
+// fields). Unchanged for the owner.
+func (t *chatTurn) attributedToSpeaker(content string) string {
+	if !t.strangerOnChannel() {
+		return content
+	}
+	who := strings.TrimSpace(t.requesterName)
+	if h := strings.TrimSpace(t.requesterHandle); h != "" && h != who {
+		if who == "" {
+			who = h
+		} else {
+			who += " (" + h + ")"
+		}
+	}
+	if who == "" {
+		who = "someone on " + t.requesterChannel
+	}
+	return "Said by " + who + ", not the owner: " + content
 }
 
 // ownLayerShared reports whether one of the owner's own memory layers reaches

@@ -1572,10 +1572,7 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			// The detached session's context is its own, so the requester is
 			// carried across by hand: a handoff must not launder a non-owner's
 			// request into one the owner made (authoring_requester.go).
-			runCtx := d.Context()
-			if nonOwnerRequester(t.ctx) {
-				runCtx = withNonOwnerRequester(runCtx)
-			}
+			runCtx := carryNonOwnerRequester(t.ctx, d.Context())
 			res, rerr := t.app.RunAgentSyncContinuingRich(runCtx, AgentSyncRun{
 				AgentOwner: t.user, RuntimeUser: t.user, AgentKey: target.ID,
 				SubSessionID: "dispatch:" + t.chatSessionID() + ":" + target.ID,

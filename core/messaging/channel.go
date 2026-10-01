@@ -66,6 +66,13 @@ type Channel struct {
 	// transport evaluates it before spinning up the bound agent, and skips
 	// the run on a no. Empty = no per-channel rule (the overall still applies).
 	Gatekeeper string `json:"gatekeeper,omitempty"`
+	// Senders is who on this channel the agent answers: "" or "anyone" (every
+	// sender), "listed" (the owner and the handles in AllowedHandles), or
+	// "owner" (the owner only). Anyone else's message is recorded, not
+	// answered, like one the gatekeeper declines. Decided on the transport's
+	// handle, never the display name; an unknown value answers the owner only.
+	Senders        string   `json:"senders,omitempty"`
+	AllowedHandles []string `json:"allowed_handles,omitempty"`
 	// AgentBound marks a channel the bound AGENT created via its own
 	// request_thread_binding (owner-approved), as opposed to an
 	// owner-configured channel. Only AgentBound channels may be toggled
@@ -85,6 +92,69 @@ type Channel struct {
 }
 
 // Channel flow directions (Channel.Direction).
+// Senders values (Channel.Senders).
+const (
+	SendersAnyone = "anyone"
+	SendersListed = "listed"
+	SendersOwner  = "owner"
+)
+
+// Answers reports whether the agent on this channel answers a sender: the
+// owner always, anyone else as Senders says.
+func (c Channel) Answers(fromOwner bool, handle string) bool {
+	if fromOwner {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Senders)) {
+	case "", SendersAnyone:
+		return true
+	case SendersListed:
+		for _, h := range c.AllowedHandles {
+			if sameHandle(h, handle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sameHandle compares two transport handles as written by people: case and
+// phone punctuation aside, and a number with its country code against the
+// same number without it.
+func sameHandle(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.ToLower(strings.TrimSpace(s))
+		return strings.NewReplacer(" ", "", "-", "", "(", "", ")", "", "\t", "").Replace(s)
+	}
+	a, b = norm(a), norm(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	digits := func(s string) (string, bool) {
+		s = strings.TrimPrefix(s, "+")
+		for _, r := range s {
+			if r < '0' || r > '9' {
+				return "", false
+			}
+		}
+		return s, len(s) >= 7
+	}
+	da, okA := digits(a)
+	db, okB := digits(b)
+	if !okA || !okB {
+		return false
+	}
+	if len(da) > len(db) {
+		da, db = db, da
+	}
+	// The shorter is the longer without its country code (at most three
+	// digits), never any shorter tail.
+	return len(db)-len(da) <= 3 && len(da) >= 10 && strings.HasSuffix(db, da)
+}
+
 const (
 	DirectionInbound       = "inbound"       // input only; agent processes, no reply on this surface
 	DirectionBidirectional = "bidirectional" // input + reply on the same surface (default)

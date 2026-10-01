@@ -549,6 +549,13 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 			}
 		},
 	}
+	// Who this channel answers: someone it does not is recorded, the same as
+	// a message the gatekeeper declines, and costs no model call.
+	if !ch.Answers(in.FromOwner, handle) {
+		Log("[bridges] channel %q answers %s only: inbound from %q recorded, not answered", ch.Name, ch.Senders, handle)
+		RecordChannelSilent(in)
+		return
+	}
 	go func() {
 		// Wake-rule gatekeeper: master (admin) + per-channel rules decide whether
 		// this inbound wakes the agent. It was already recorded above for history;

@@ -866,7 +866,39 @@ func findAgentBoundChannel(owner, agentID, to string) (Channel, bool) {
 	return Channel{}, false
 }
 
+// ownerOnlyFleetTools are the operator tools that set up work which runs later
+// with the owner's authority (standing jobs, monitors), change who is let in
+// (sender grants, thread bindings), or read the owner's own fleet and run
+// history. Someone else on a channel can ask the agent things; they cannot
+// have it do these on their word (nonOwnerRequester).
+var ownerOnlyFleetTools = map[string]bool{
+	"create_standing_agent": true, "run_standing_now": true, "set_standing_paused": true, "delete_standing_agent": true,
+	"create_event_monitor": true, "delete_event_monitor": true,
+	"authorize_channel_sender": true,
+	"request_thread_binding":   true, "set_thread_wake": true, "release_thread_binding": true,
+	"list_standing_agents": true, "list_event_monitors": true, "list_runs": true, "inspect_run": true,
+	// Its wake runs as the owner's, with a note written on the stranger's word.
+	"await_result": true,
+}
+
 func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
+	tools := operatorManagementToolDefs(sess, agentID)
+	for i := range tools {
+		if !ownerOnlyFleetTools[tools[i].Tool.Name] {
+			continue
+		}
+		name, h := tools[i].Tool.Name, tools[i].Handler
+		tools[i].Handler = func(ctx context.Context, args map[string]any) (string, error) {
+			if nonOwnerRequester(ctx) {
+				return fmt.Sprintf("Not done: %s is the owner's to use, and this request came from someone else on a channel. Tell them it needs the owner, who can do it themselves or ask you directly.", name), nil
+			}
+			return h(ctx, args)
+		}
+	}
+	return tools
+}
+
+func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDef {
 	owner := ""
 	if sess != nil {
 		owner = sess.Username
@@ -914,7 +946,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// controllerAgentID is the agent doing the delegating — passed
 					// so the delegate can address the channels its delegator
 					// reaches instead of handing text back up to be relayed.
-					dctx := sess.ContextWithNetworkConnector(sess.Context())
+					dctx := carryNonOwnerRequester(ctx, sess.ContextWithNetworkConnector(sess.Context()))
 					rec := RunDelegation(dctx, RootDB, owner, agent, brief, controllerAgentID)
 					if rec.Status == RunFailed {
 						return fmt.Sprintf("Delegated to %q but it failed: %s", agent, rec.Err), nil
@@ -1700,8 +1732,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					}
 					return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
 				}
-				// Pre-authorized recipient: send immediately, skip the queue.
-				if IsContactPreAuthorized(RootDB, owner, agentID, recip) {
+				// Pre-authorized recipient: send immediately, skip the queue,
+				// unless someone else's request is reaching past where they wrote.
+				standing := standingGrantApplies(ctx, recip)
+				if standing && IsContactPreAuthorized(RootDB, owner, agentID, recip) {
 					if _, err := operatorDeliverMedia(owner, agentID, rec.ChatID, rec.Handle, text, images, videos); err != nil {
 						return "", err
 					}
@@ -1714,7 +1748,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// right to deliver to its channel, OR this agent is a sub-agent of one
 				// that may (inherited down the ownership chain). Send without queuing —
 				// the grant is the approval.
-				if channelSenderAuthorized(UserDB(orchestrateBaseDB, owner), owner, rec.ChatID, rec.Handle, agentID) {
+				if standing && channelSenderAuthorized(UserDB(orchestrateBaseDB, owner), owner, rec.ChatID, rec.Handle, agentID) {
 					if _, err := operatorDeliverMedia(owner, agentID, rec.ChatID, rec.Handle, text, images, videos); err != nil {
 						return "", err
 					}

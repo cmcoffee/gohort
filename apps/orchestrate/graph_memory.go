@@ -201,6 +201,9 @@ func (t *chatTurn) forgetGraphToolDef() AgentToolDef {
 			Caps: []Capability{CapWrite},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			if err := t.strangerMayNotForget(); err != nil {
+				return "", err
+			}
 			ns := factsNamespace(t.agent.ID)
 			subject := strings.TrimSpace(stringArg(args, "subject"))
 			relation := strings.TrimSpace(stringArg(args, "relation"))
