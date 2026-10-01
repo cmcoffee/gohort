@@ -619,6 +619,13 @@ func imageSpaceSession(t *testing.T) *ToolSession {
 	saved := imageDir
 	SetImageDir(t.TempDir())
 	t.Cleanup(func() { imageDir = saved })
+	// The record-time caption runs in the background in production, and
+	// writes its sidecar into the image directory when it finishes. A test
+	// with an LLM on its session could end first, and t.TempDir's cleanup
+	// then failed with "directory not empty" as the caption landed
+	// (TestKeepStoresBothTiers, now and then under the full parallel run).
+	// Inline, the caption is done before the test is.
+	captionInline(t)
 	return &ToolSession{Username: "alice", WorkspaceDir: t.TempDir()}
 }
 
