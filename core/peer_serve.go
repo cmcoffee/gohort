@@ -370,6 +370,11 @@ func HandlePeerEmbeddings(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r, release, ok := peerHold(w, r, k, PeerCapEmbeddings)
+	if !ok {
+		return
+	}
+	defer release()
 	// Refuse to relay. If this instance is itself borrowing embeddings from a
 	// peer, serving them onward makes A→B→A a loop that neither side can see,
 	// and the failure is a hang rather than an error. Chaining could be made

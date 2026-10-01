@@ -178,6 +178,23 @@ func revokeUserDesktopKeys(user string) int {
 	return n
 }
 
+// revokeUserPeerKeys disables the peer keys a user issued, and the tokens
+// handed out under them. Disabled rather than deleted, as SetPeerKeyDisabled
+// does for an operator, so the record of what was issued to whom survives.
+func revokeUserPeerKeys(user string) int {
+	if RootDB == nil || user == "" {
+		return 0
+	}
+	n := 0
+	for _, id := range RootDB.Keys(peerKeysTable) {
+		var pk PeerKey
+		if RootDB.Get(peerKeysTable, id, &pk) && pk.Owner == user && !pk.Disabled && SetPeerKeyDisabled(id, true) {
+			n++
+		}
+	}
+	return n
+}
+
 // RevokeUserCredentials destroys every credential that authenticates as user,
 // across core's own stores and every registered app revoker. Returns a count
 // per kind, for the caller's audit line.
@@ -201,6 +218,9 @@ func RevokeUserCredentials(db Database, user string) map[string]int {
 	}
 	if n := revokeUserDesktopKeys(user); n > 0 {
 		out["desktop keys"] = n
+	}
+	if n := revokeUserPeerKeys(user); n > 0 {
+		out["peer keys"] = n
 	}
 	if n := Secure().RevokeUserTokens(user); n > 0 {
 		out["connected accounts"] = n

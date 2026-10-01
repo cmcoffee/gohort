@@ -151,6 +151,11 @@ func HandlePeerSearch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r, release, ok := peerHold(w, r, k, PeerCapSearch)
+	if !ok {
+		return
+	}
+	defer release()
 	if !peerCapRateAllow(k.ID, PeerCapSearch, peerSearchRatePerMin) {
 		w.Header().Set("Retry-After", "60")
 		peerDeny(w, http.StatusTooManyRequests, fmt.Sprintf(
@@ -246,6 +251,11 @@ func HandlePeerBrowse(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r, release, ok := peerHold(w, r, k, PeerCapBrowse)
+	if !ok {
+		return
+	}
+	defer release()
 	if BrowserFetchFunc == nil {
 		peerDeny(w, http.StatusServiceUnavailable, "this build has no browser linked")
 		return

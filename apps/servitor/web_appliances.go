@@ -122,12 +122,29 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			req.PeerName = strings.TrimSpace(req.PeerName)
 			req.RemoteID = strings.TrimSpace(req.RemoteID)
 			isRemote = true
+			// The peer's grant is this DEPLOYMENT's: an administrator set it
+			// up, and the far side handed it a shell on that system. A record
+			// pointing at it gives whoever owns the record that shell, so only
+			// an administrator makes one (and may share it, as with any system).
+			if !servitorIsAdmin(r) {
+				http.Error(w, "a remote system runs commands through this deployment's peer link, so only an admin can create or change one", http.StatusForbidden)
+				return
+			}
 			if req.PeerName == "" || req.RemoteID == "" {
 				http.Error(w, "a remote system needs a peer and the appliance id on that peer", http.StatusBadRequest)
 				return
 			}
-			if _, ok := GetRemotePeer(req.PeerName); !ok {
+			peer, ok := GetRemotePeer(req.PeerName)
+			if !ok {
 				http.Error(w, fmt.Sprintf("no peer named %q is registered: add it under Peers first", req.PeerName), http.StatusBadRequest)
+				return
+			}
+			offered := false
+			for _, inv := range peer.Investigable {
+				offered = offered || inv.ID == req.RemoteID
+			}
+			if !offered {
+				http.Error(w, fmt.Sprintf("%s does not offer a system with id %q to this instance: pick one from the list it advertises (refresh the peer if it was just granted)", req.PeerName, req.RemoteID), http.StatusBadRequest)
 				return
 			}
 			if req.Name == "" {

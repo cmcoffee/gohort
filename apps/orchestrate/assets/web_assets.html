@@ -8818,14 +8818,14 @@ select.ui-orch-intake-input {
             .then(function() { mark(ctx, ''); toast('Taken back.'); })
             .catch(function(e) { toast('Could not take it back: ' + (e && e.message || e)); });
         }
-        window.uiRegisterBubbleAction({role: 'assistant', label: '\uD83D\uDC4D', title: 'A good reply: keep it as an example (press again to take it back)',
+        window.uiRegisterBubbleAction({role: 'assistant', group: 'rating', label: '\uD83D\uDC4D', title: 'A good reply: keep it as an example (press again to take it back)',
           active: function(ctx) { return ctx.bubble.dataset.orchFlag === 'up'; },
           onclick: function(ctx) {
             if (ctx.bubble.dataset.orchFlag === 'up') { undo(ctx); return; }
             send(ctx, 'up', '').then(function(d) { toast(d.message || 'Kept.'); })
               .catch(function(e) { toast('Could not save it: ' + (e && e.message || e)); });
           }});
-        window.uiRegisterBubbleAction({role: 'assistant', label: '\uD83D\uDC4E', title: 'Something is wrong with this reply: tell the admin what (press again to take it back)',
+        window.uiRegisterBubbleAction({role: 'assistant', group: 'rating', label: '\uD83D\uDC4E', title: 'Something is wrong with this reply: tell the admin what (press again to take it back)',
           active: function(ctx) { return ctx.bubble.dataset.orchFlag === 'down'; },
           onclick: function(ctx) {
             if (ctx.bubble.dataset.orchFlag === 'down') { undo(ctx); return; }

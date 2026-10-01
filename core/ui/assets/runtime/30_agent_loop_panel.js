@@ -2453,7 +2453,9 @@
     // Each registered action gets appended after the built-ins. The
     // action object is { role, label, title?, danger?, onclick(ctx) }
     // where ctx = { bubble, getText() }. role must be 'user' or
-    // 'assistant'. Action buttons get re-rendered every time the
+    // 'assistant'. Optional group: consecutive actions with the same group
+    // wrap as one unit, so a pair (a rating's two halves) never splits
+    // across lines on a narrow screen. Action buttons get re-rendered every time the
     // bubble's action bar is rebuilt (initial render + after Edit
     // commit), so registering once on page load is enough.
     var bubbleActionRegistry = {user: [], assistant: []};
@@ -2503,15 +2505,25 @@
         // state itself is shown on the message (uiSetMessageBadge).
         var on = false;
         try { on = typeof act.active === 'function' && !!act.active(ctx); } catch (e) {}
+        var label = String(act.label || 'Action');
+        // A one-glyph label (an emoji) needs no text-button padding.
+        var glyph = Array.from(label).length <= 2;
         var btn = el('button', {
-          class: 'ui-agent-msg-act' + (act.danger ? ' danger' : '') + (on ? ' active' : ''),
+          class: 'ui-agent-msg-act' + (act.danger ? ' danger' : '') + (on ? ' active' : '') + (glyph ? ' glyph' : ''),
           title: act.title || act.label || '',
           'aria-pressed': on ? 'true' : 'false',
           onclick: function() {
             try { act.onclick(ctx); } catch (e) { /* isolate */ }
           },
-        }, [act.label || 'Action']);
-        bar.appendChild(btn);
+        }, [label]);
+        if (!act.group) { bar.appendChild(btn); return; }
+        var last = bar.lastElementChild;
+        if (!last || !last.classList.contains('ui-agent-msg-act-group') || last.dataset.group !== String(act.group)) {
+          last = el('span', {class: 'ui-agent-msg-act-group'});
+          last.dataset.group = String(act.group);
+          bar.appendChild(last);
+        }
+        last.appendChild(btn);
       });
     }
 

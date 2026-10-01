@@ -4767,6 +4767,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* An action that is ON for this message (a rating given) shows pressed in
  * the hover bar; the verdict itself sits on the message (.ui-agent-msg-badge). */
 .ui-agent-msg-act.active { color: var(--accent); border-color: var(--accent); background: var(--bg-2); }
+/* Actions an app grouped wrap as one unit (uiRegisterBubbleAction group). */
+.ui-agent-msg-act-group { display: inline-flex; gap: 0.35rem; flex-wrap: nowrap; }
+.ui-agent-msg-act.glyph { padding-left: 0.4rem; padding-right: 0.4rem; }
 /* A verdict on the message, at its head, with a matching edge on the bubble. */
 .ui-agent-msg-badge {
   align-self: flex-start;
@@ -5926,6 +5929,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
    * message carries five or six of these, and at full tap size the row
    * outweighed the reply it sits under. */
   .ui-agent-msg-act { min-height: 30px; padding: 0.15rem 0.5rem; font-size: 0.74rem; line-height: 1.2; }
+  .ui-agent-msg-act.glyph { padding-left: 0.4rem; padding-right: 0.4rem; }
   .ui-chat-side-del, .ui-chat-side-ren { width: 2.25rem; height: 2.25rem; }
   .ui-chat-side-ren { right: 2.7rem; }
   .ui-chat-side-item.ui-chat-side-item-renable { padding-right: 5.2rem; }

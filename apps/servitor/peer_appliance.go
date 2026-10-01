@@ -118,6 +118,11 @@ func firstNonEmptyStr(a, b string) string {
 // behaves like one reached directly.
 func peerExecFor(ctx context.Context, a Appliance) func(string) (string, error) {
 	return func(cmd string) (string, error) {
+		// A record made before only administrators could make one keeps no
+		// shell its owner was never meant to have.
+		if o := strings.TrimSpace(a.Owner); o != "" && !UserIsAdmin(o) {
+			return "", fmt.Errorf("this remote system was set up by %s, who is not an administrator: a remote system runs through the deployment's peer link, so an administrator has to recreate it", o)
+		}
 		peer, ok := GetRemotePeer(a.PeerName)
 		if !ok {
 			return "", fmt.Errorf("peer %q is not registered on this instance: add it under Peers, or delete this system", a.PeerName)

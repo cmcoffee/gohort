@@ -66,6 +66,11 @@ func HandlePeerTranscribe(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r, release, ok := peerHold(w, r, k, PeerCapTranscribe)
+	if !ok {
+		return
+	}
+	defer release()
 	// Refuse to relay, exactly as embeddings does. If this instance is itself
 	// borrowing transcription from a peer, serving it onward makes A→B→A a loop
 	// neither side can see, and the failure is a hang rather than an error.

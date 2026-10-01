@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 // RateLimiter counts events per key within a rolling window.
@@ -100,18 +102,21 @@ func (r *RateLimiter) Allow(key string) bool {
 	return true
 }
 
-// RequestSource identifies a caller for rate limiting: the TCP peer address,
-// never a header.
+// RequestSource identifies a caller for rate limiting: the client address as
+// netgate.ClientIP reads it, which believes a forwarding header ONLY from a
+// trusted proxy (loopback, or one the admin listed).
 //
-// X-Forwarded-For is deliberately ignored. It is caller-supplied, so honoring
-// it lets one source present a fresh identity per request and walk around the
-// very limit being imposed — which is the difference between a limiter and the
-// appearance of one. Behind a reverse proxy every caller shares the proxy's
-// address, which throttles harder rather than less, and that is the safe
-// direction to be wrong in.
+// Never a header a client can set for itself: that would let one source
+// present a fresh identity per request and walk around the limit. But not the
+// bare TCP address either: behind a reverse proxy every caller shares the
+// proxy's, so one source failing its way to the limit locked out every other
+// caller, which made the limiter a way to deny service.
 func RequestSource(r *http.Request) string {
 	if r == nil {
 		return ""
+	}
+	if ip := netgate.ClientIP(r); ip != nil {
+		return ip.String()
 	}
 	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
 	if err != nil || host == "" {

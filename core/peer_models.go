@@ -35,6 +35,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -283,6 +284,11 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r, held, ok := peerHold(w, r, k, PeerCapModels)
+	if !ok {
+		return
+	}
+	defer held()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, peerModelMaxBody))
 	if err != nil {
 		peerDeny(w, http.StatusBadRequest, "could not read the request body: "+err.Error())
@@ -318,6 +324,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 			body = patched
 		}
 	}
+	body = clampPeerModelBody(body)
 
 	// Queue behind the SAME serializer local turns use, labelled as this peer.
 	//
@@ -486,6 +493,43 @@ func patchJSONModel(body []byte, model string) ([]byte, error) {
 	}
 	m["model"] = enc
 	return json.Marshal(m)
+}
+
+// peerMaxTokens bounds one peer generation. A peer borrows this instance's
+// model; an unbounded max_tokens holds the shared slot for as long as the
+// model will run, and n>1 multiplies the work behind one request.
+const peerMaxTokens = 16384
+
+// clampPeerModelBody holds a peer's request inside those bounds, rewriting
+// only when something is over. The body is otherwise passed through as sent.
+func clampPeerModelBody(body []byte) []byte {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(body, &m) != nil {
+		return body
+	}
+	changed := false
+	for _, f := range []string{"max_tokens", "max_completion_tokens", "num_predict"} {
+		var n float64
+		if raw, ok := m[f]; ok && json.Unmarshal(raw, &n) == nil && (n > peerMaxTokens || n < 0) {
+			m[f] = json.RawMessage(strconv.Itoa(peerMaxTokens))
+			changed = true
+		}
+	}
+	if raw, ok := m["n"]; ok {
+		var n float64
+		if json.Unmarshal(raw, &n) == nil && n > 1 {
+			m["n"] = json.RawMessage("1")
+			changed = true
+		}
+	}
+	if !changed {
+		return body
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 // --- consuming half ----------------------------------------------------------

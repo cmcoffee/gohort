@@ -96,6 +96,11 @@ func HandlePeerImageRender(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r, release, ok := peerHold(w, r, k, PeerCapImages)
+	if !ok {
+		return
+	}
+	defer release()
 	// Several base64 source images can outgrow the server-wide default body
 	// cap, so this route takes the larger figure it has always allowed.
 	netgate.RaiseBodyLimit(r, 128<<20)

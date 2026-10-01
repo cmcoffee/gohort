@@ -25,6 +25,7 @@
 package core
 
 import (
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"net/http"
@@ -367,7 +368,28 @@ func LookupPeerKey(secret string) (PeerKey, bool) {
 	if ok && found.Disabled {
 		return found, false
 	}
+	// A key issued by an account that no longer exists answers for nobody.
+	// Deletion disables it (revokeUserPeerKeys); this holds for one issued by
+	// an account removed before that did.
+	if ok && !peerKeyOwnerExists(found.Owner) {
+		return found, false
+	}
 	return found, ok
+}
+
+// peerKeyOwnerExists reports whether a peer key's issuing account is still
+// there. A key with no owner, or a deployment with no accounts, passes.
+func peerKeyOwnerExists(owner string) bool {
+	owner = strings.TrimSpace(owner)
+	if owner == "" || AuthDB == nil {
+		return true
+	}
+	db := AuthDB()
+	if db == nil || !AuthHasUsers(db) {
+		return true
+	}
+	_, ok := AuthGetUser(db, owner)
+	return ok
 }
 
 // SetPeerKeyDisabled revokes (or restores) a key without discarding its record,
@@ -386,6 +408,9 @@ func SetPeerKeyDisabled(id string, disabled bool) bool {
 	// disabled key kept working for the life of its access token, which is the
 	// gap between "revoked" on screen and revoked in fact.
 	if disabled {
+		if n := cancelPeerLive(id); n > 0 {
+			Log("[peer] key %q disabled: stopped %d request(s) in flight", pk.Label, n)
+		}
 		if n := RevokePeerGrantTokens(id); n > 0 {
 			Log("[peer] key %q disabled: revoked %d issued token(s)", pk.Label, n)
 		}
@@ -566,14 +591,9 @@ type peerFailWindow struct {
 	n     int
 }
 
-// peerRequestSource identifies the caller for throttling: the TCP peer address,
-// never a header.
-//
-// X-Forwarded-For is deliberately ignored. It is caller-controlled, so honoring
-// it would let one source present a fresh identity per request and walk around
-// the very limit this imposes. Behind a reverse proxy every peer therefore
-// shares the proxy's address — which is the safe direction: it throttles
-// harder, never less.
+// peerRequestSource identifies the caller for throttling: the client address
+// RequestSource reads, which believes forwarding headers only from a trusted
+// proxy.
 func peerRequestSource(r *http.Request) string { return RequestSource(r) }
 
 // peerSourceThrottled reports whether this source has spent its failure
@@ -622,4 +642,81 @@ func peerNoteAuthFailure(r *http.Request) {
 		// is the flood it is trying to cause.
 		Log("[peer] %s has failed authentication %d times in a minute: refusing further attempts without a lookup", src, w.n)
 	}
+}
+
+// --- in-flight work per key ---------------------------------------------------
+
+// peerConcurrency is how many requests of one capability a single key may have
+// running at once. The rate limit counts calls per minute; it says nothing
+// about a key starting ten investigations that each run for ten minutes, or
+// twenty renders that each hold the GPU. Bounded per capability, because a
+// search is cheap and an investigation dials a host and plans for minutes.
+var peerConcurrency = map[string]int{
+	PeerCapInvestigate: 2, PeerCapExec: 4, PeerCapBrowse: 3, PeerCapImages: 2,
+	PeerCapTranscribe: 2, PeerCapModels: 4, PeerCapEmbeddings: 8, PeerCapSearch: 4, PeerCapKnowledge: 4,
+}
+
+type peerLiveReq struct{ cancel context.CancelFunc }
+
+var (
+	peerLiveMu sync.Mutex
+	peerLive   = map[string]map[*peerLiveReq]string{} // key id -> request -> capability
+)
+
+// peerHold admits one request of k's capability when the key has room for
+// it, and returns the request carrying a context that ends with it OR when the
+// key is revoked (cancelPeerLive): a stream that started before the operator
+// pressed Disable stops with the key rather than running to its end. Returns
+// false having written the response.
+func peerHold(w http.ResponseWriter, r *http.Request, k PeerKey, capability string) (*http.Request, func(), bool) {
+	limit := peerConcurrency[capability]
+	if limit <= 0 {
+		limit = 4
+	}
+	id := k.ID
+	if id == "" {
+		id = "label:" + k.Label
+	}
+	peerLiveMu.Lock()
+	n := 0
+	for _, c := range peerLive[id] {
+		if c == capability {
+			n++
+		}
+	}
+	if n >= limit {
+		peerLiveMu.Unlock()
+		w.Header().Set("Retry-After", "30")
+		peerDeny(w, http.StatusTooManyRequests, fmt.Sprintf("this key already has %d %s request(s) running, the most it may have at once: wait for one to finish", n, capability))
+		return r, func() {}, false
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	h := &peerLiveReq{cancel: cancel}
+	if peerLive[id] == nil {
+		peerLive[id] = map[*peerLiveReq]string{}
+	}
+	peerLive[id][h] = capability
+	peerLiveMu.Unlock()
+	release := func() {
+		peerLiveMu.Lock()
+		delete(peerLive[id], h)
+		if len(peerLive[id]) == 0 {
+			delete(peerLive, id)
+		}
+		peerLiveMu.Unlock()
+		cancel()
+	}
+	return r.WithContext(ctx), release, true
+}
+
+// cancelPeerLive stops every request a key has running.
+func cancelPeerLive(id string) int {
+	peerLiveMu.Lock()
+	defer peerLiveMu.Unlock()
+	n := 0
+	for h := range peerLive[id] {
+		h.cancel()
+		n++
+	}
+	return n
 }

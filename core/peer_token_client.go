@@ -27,7 +27,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -627,10 +629,17 @@ func (t *peerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	// Found it, so any standing "no such peer" warning is stale.
 	warnPeerResolveOnce("transport:"+t.name, "")
+	// The credential goes to the peer's own address and nowhere else. A
+	// redirect is a second trip through here with the new URL, and without
+	// this the key was re-attached for whatever host the peer named.
+	if !peerSameOrigin(p.BaseURL, req.URL) {
+		return nil, fmt.Errorf("peer %q: refusing to send its credential to %s, which is not the peer's address (%s)", t.name, req.URL.Redacted(), p.BaseURL)
+	}
 	first := req.Clone(req.Context())
 	setPeerAuth(first, PeerCredentialNow(req.Context(), p))
 	resp, err := base.RoundTrip(first)
 	if err != nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		capPeerBody(resp)
 		return resp, err
 	}
 
@@ -647,8 +656,63 @@ func (t *peerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// the connection is never reused.
 	drainAndClose(resp)
 	setPeerAuth(retry, cred)
-	return base.RoundTrip(retry)
+	resp, err = base.RoundTrip(retry)
+	capPeerBody(resp)
+	return resp, err
 }
+
+// peerSameOrigin reports whether u is at the peer's address: same scheme,
+// host and port as its base URL.
+func peerSameOrigin(baseURL string, u *url.URL) bool {
+	b, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || u == nil || b.Host == "" {
+		return false
+	}
+	port := func(x *url.URL) string {
+		if p := x.Port(); p != "" {
+			return p
+		}
+		if strings.EqualFold(x.Scheme, "http") {
+			return "80"
+		}
+		return "443"
+	}
+	return strings.EqualFold(b.Scheme, u.Scheme) && strings.EqualFold(b.Hostname(), u.Hostname()) && port(b) == port(u)
+}
+
+// peerMaxResponse bounds one peer response. Generous, since a render comes
+// back inline as base64 and a transcription carries its audio's text, but
+// finite: a peer is another machine, and an endless body would otherwise be
+// read into memory by whichever caller asked.
+const peerMaxResponse = 64 << 20
+
+// capPeerBody makes a peer response fail once it passes peerMaxResponse,
+// rather than be read whole however large it grows.
+func capPeerBody(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	resp.Body = &cappedBody{rc: resp.Body, left: peerMaxResponse}
+}
+
+type cappedBody struct {
+	rc   io.ReadCloser
+	left int64
+}
+
+func (c *cappedBody) Read(p []byte) (int, error) {
+	if c.left <= 0 {
+		return 0, fmt.Errorf("peer response is larger than %d MB: stopped reading", peerMaxResponse>>20)
+	}
+	if int64(len(p)) > c.left {
+		p = p[:c.left]
+	}
+	n, err := c.rc.Read(p)
+	c.left -= int64(n)
+	return n, err
+}
+
+func (c *cappedBody) Close() error { return c.rc.Close() }
 
 // setPeerAuth attaches a peer credential, overwriting whatever the caller put
 // there. Callers that build an OpenAI-shaped request set their own

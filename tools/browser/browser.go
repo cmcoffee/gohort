@@ -124,6 +124,15 @@ func (t *BrowsePageTool) launch() {
 		// only one gohort process owns this profile.
 		clearStaleSingleton(profileDir)
 
+		// The browser's only way out (dial_guard.go). Without it Chromium
+		// dials whatever a page names, the LAN included.
+		guard, gerr := startDialGuard(&dialGuard{})
+		if gerr != nil {
+			t.initErr = fmt.Errorf("starting the browser's network guard: %w", gerr)
+			Log("[browser] %v", t.initErr)
+			return
+		}
+
 		// Chromium's own sandbox is what contains a renderer exploit from a
 		// page somebody asked the agent to read; without it that exploit runs
 		// as the gohort process. It is used whenever it can be: root cannot
@@ -136,6 +145,12 @@ func (t *BrowsePageTool) launch() {
 				NoSandbox(noSandbox).
 				Set("disable-gpu").
 				Set("disable-dev-shm-usage").
+				Proxy("http://"+guard).
+				// Chromium never proxies loopback unless told to; told, so
+				// 127.0.0.1 meets the guard like any other address.
+				Set("proxy-bypass-list", "<-loopback>").
+				// WebRTC's UDP would leave without the proxy.
+				Set("force-webrtc-ip-handling-policy", "disable_non_proxied_udp").
 				UserDataDir(profileDir).
 				Launch()
 		}

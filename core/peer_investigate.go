@@ -68,6 +68,11 @@ func HandlePeerInvestigate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r, release, ok := peerHold(w, r, k, PeerCapInvestigate)
+	if !ok {
+		return
+	}
+	defer release()
 	if PeerInvestigateFunc == nil {
 		peerDeny(w, http.StatusServiceUnavailable, "this instance has no investigator wired")
 		return
@@ -277,6 +282,11 @@ func HandlePeerKnowledge(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r, release, ok := peerHold(w, r, k, PeerCapKnowledge)
+	if !ok {
+		return
+	}
+	defer release()
 	if PeerKnowledgeFunc == nil {
 		peerDeny(w, http.StatusServiceUnavailable, "this instance serves no gathered knowledge")
 		return
@@ -410,6 +420,11 @@ func HandlePeerExec(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r, release, ok := peerHold(w, r, k, PeerCapExec)
+	if !ok {
+		return
+	}
+	defer release()
 	if PeerExecFunc == nil {
 		peerDeny(w, http.StatusServiceUnavailable, "this instance offers no command transport")
 		return
