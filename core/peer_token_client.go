@@ -200,8 +200,10 @@ func storePeerTokens(name string, t peerTokens) {
 	if RootDB == nil {
 		return
 	}
+	peerRecordMu.Lock()
 	var p RemotePeer
 	if !RootDB.Get(remotePeersTable, key, &p) {
+		peerRecordMu.Unlock()
 		return
 	}
 	p.AccessToken, p.RefreshToken = t.Access, t.Refresh
@@ -209,7 +211,8 @@ func storePeerTokens(name string, t peerTokens) {
 	if !t.Expires.IsZero() {
 		p.AccessExpires = t.Expires.Format(time.RFC3339)
 	}
-	RootDB.Set(remotePeersTable, key, p)
+	RootDB.CryptSet(remotePeersTable, key, p)
+	peerRecordMu.Unlock()
 	InvalidatePeerResolution()
 	republishPeerImageCredential(p)
 }

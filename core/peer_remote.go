@@ -19,12 +19,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 // remotePeersTable holds RemotePeer records in RootDB, keyed by Name.
@@ -148,13 +152,21 @@ func ProbeRemotePeer(ctx context.Context, baseURL, key string) (PeerManifest, er
 	if strings.TrimSpace(key) == "" {
 		return PeerManifest{}, fmt.Errorf("a peer key is required: mint one in the OTHER instance's Resource Sharing settings")
 	}
+	if err := peerPlainHTTPRefusal(base); err != nil {
+		return PeerManifest{}, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/peer/manifest", nil)
 	if err != nil {
 		return PeerManifest{}, err
 	}
 	req.Header.Set(peerKeyHeader, strings.TrimSpace(key))
 
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	// No redirects: the key rides a header of our own, which Go carries to a
+	// redirect's new host, so following one handed the key to wherever the
+	// address pointed.
+	resp, err := (&http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}).Do(req)
 	if err != nil {
 		return PeerManifest{}, fmt.Errorf("could not reach %s: %w", base, err)
 	}
@@ -269,6 +281,41 @@ func servesCap(m PeerManifest, cap string) bool {
 	return false
 }
 
+// peerPlainHTTPRefusal refuses an http:// peer address on the public
+// internet, where its key and everything sent with it cross in clear text. A
+// peer on the local network (an address, or a name resolving only to private
+// addresses) may use http, which is the ordinary home-lab setup.
+func peerPlainHTTPRefusal(base string) error {
+	u, err := url.Parse(base)
+	if err != nil || !strings.EqualFold(u.Scheme, "http") || !peerHostIsPublic(base) {
+		return nil
+	}
+	return fmt.Errorf("%s is a public address: use https:// for it, since a peer key over plain http crosses the internet in clear text", u.Hostname())
+}
+
+// peerHostIsPublic reports whether a peer's address reaches past the local
+// network: a public address, or a name resolving to one. A name that does not
+// resolve answers false; the probe is what reports an unreachable peer.
+func peerHostIsPublic(base string) bool {
+	u, err := url.Parse(strings.TrimSpace(base))
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	host := u.Hostname()
+	ips := []net.IP{net.ParseIP(host)}
+	if ips[0] == nil {
+		if ips, err = net.LookupIP(host); err != nil || len(ips) == 0 {
+			return false
+		}
+	}
+	for _, ip := range ips {
+		if !sourcehooks.NonPublicIP(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 // SaveRemotePeer validates, probes and stores a peer. The probe is not
 // optional: a peer saved without one would sit in the picker looking usable
 // and fail at the first embed, at which point the cause is three screens away.
@@ -279,6 +326,13 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	name = strings.TrimSpace(strings.ToLower(name))
 	if !remotePeerNameRE.MatchString(name) {
 		return RemotePeer{}, fmt.Errorf("name must be lowercase letters, digits, - or _ (got %q)", name)
+	}
+	// Two names that differ only in - and _ share a credential name, and the
+	// second peer's key would replace the first's.
+	for _, other := range ListRemotePeers() {
+		if other.Name != name && peerCredentialName(other.Name) == peerCredentialName(name) {
+			return RemotePeer{}, fmt.Errorf("the name %q is too close to the existing peer %q (they differ only in - and _): pick another", name, other.Name)
+		}
 	}
 	m, err := ProbeRemotePeer(ctx, baseURL, key)
 	if err != nil {
@@ -311,7 +365,7 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	// offers rendering and then does not appear in the picker is indisputably
 	// broken from the operator's side.
 	syncPeerImages(&p, m.Images)
-	RootDB.Set(remotePeersTable, name, p)
+	RootDB.CryptSet(remotePeersTable, name, p)
 	// Anything resolving through this peer picks the new record up now rather
 	// than at the end of the TTL — an operator who just pasted a rotated key
 	// should not have to wonder whether it took.
@@ -323,7 +377,7 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	if p.UseTokens {
 		if terr := EnsurePeerToken(ctx, p); terr != nil {
 			p.LastError = terr.Error()
-			RootDB.Set(remotePeersTable, name, p)
+			RootDB.CryptSet(remotePeersTable, name, p)
 			InvalidatePeerResolution()
 			return p, fmt.Errorf("paired with %s but could not obtain a credential: %w", p.BaseURL, terr)
 		}
@@ -385,13 +439,33 @@ func UpdateRemotePeerKey(ctx context.Context, name, key string) (RemotePeer, err
 	// below finds the credential already there — which is the right answer
 	// arriving by the other door.
 	p.Key = strings.TrimSpace(key)
-	RootDB.Set(remotePeersTable, name, p)
+	RootDB.CryptSet(remotePeersTable, name, p)
 	InvalidatePeerResolution()
 	clearPeerTokens(name)
 	// Through SaveRemotePeer, not a field write: the new code has to be probed,
 	// exchanged and have its capabilities re-read, because a re-issued key is
 	// commonly a re-scoped one too.
 	return SaveRemotePeer(ctx, name, p.BaseURL, key)
+}
+
+// peerRecordMu serializes read-modify-write of a stored peer record between a
+// refresh (which holds a copy across a slow probe) and a token renewal (which
+// writes the credential fields).
+var peerRecordMu sync.Mutex
+
+// saveRefreshedPeer writes a refreshed record keeping the CREDENTIAL fields
+// the store holds now. A renewal that landed during the probe wrote newer
+// tokens; writing back the copy read before it restored a refresh token the
+// far side had already consumed, and the next renewal presented it, which the
+// far side reads as a stolen token and answers by disabling the grant.
+func saveRefreshedPeer(p RemotePeer) {
+	peerRecordMu.Lock()
+	defer peerRecordMu.Unlock()
+	var cur RemotePeer
+	if RootDB.Get(remotePeersTable, p.Name, &cur) {
+		p.AccessToken, p.RefreshToken, p.AccessExpires = cur.AccessToken, cur.RefreshToken, cur.AccessExpires
+	}
+	RootDB.CryptSet(remotePeersTable, p.Name, p)
 }
 
 // RefreshRemotePeer re-probes a stored peer and records what came back,
@@ -416,7 +490,7 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	p.LastChecked = time.Now().Format(time.RFC3339)
 	if err != nil {
 		p.LastError = err.Error()
-		RootDB.Set(remotePeersTable, p.Name, p)
+		saveRefreshedPeer(p)
 		InvalidatePeerResolution()
 		return p, err
 	}
@@ -449,7 +523,7 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	// A grant revoked on the far side stops offering a renderer here at the
 	// next check, rather than leaving a backend in the picker that 403s.
 	syncPeerImages(&p, m.Images)
-	RootDB.Set(remotePeersTable, p.Name, p)
+	saveRefreshedPeer(p)
 	InvalidatePeerResolution()
 	// A peer that has just been switched onto the token flow by its own
 	// manifest has no credential yet. Obtained here rather than left to the

@@ -1545,6 +1545,10 @@ type ChatMessage struct {
 	// title alone can't, since many contacts share one room). Empty on plain
 	// web sessions, where the anonymous you/assistant bubbles are correct.
 	Sender string `json:"sender,omitempty"`
+	// SenderHandle is the transport's attribution of an inbound message, which
+	// the sender cannot choose, kept beside Sender, which they can. Anything
+	// that decides by WHO wrote a message reads this one.
+	SenderHandle string `json:"sender_handle,omitempty"`
 
 	// Mark is a per-message badge the PANEL renders and the APP defines: a
 	// glyph at the head of the message, a tooltip, and a client action on

@@ -21,6 +21,7 @@
 package core
 
 import (
+	"crypto/sha256"
 	"context"
 	"encoding/json"
 	"errors"
@@ -545,7 +546,12 @@ func truncateForAudit(cmd string) string {
 	cmd = strings.ReplaceAll(cmd, "\r", "")
 	cmd = strings.ReplaceAll(cmd, "\n", "\\n")
 	if len(cmd) > auditCommandMax {
-		return cmd[:auditCommandMax] + fmt.Sprintf("… (%d bytes total)", len(cmd))
+		// Head AND tail, and a fingerprint of the whole. Keeping only the
+		// head let a peer pad a command with harmless text and put what it
+		// actually ran past the cut, where the log never showed it.
+		sum := sha256.Sum256([]byte(cmd))
+		head, tail := cmd[:auditCommandMax*3/5], cmd[len(cmd)-auditCommandMax*2/5:]
+		return fmt.Sprintf("%s … %s (%d bytes total, sha256 %x)", head, tail, len(cmd), sum[:8])
 	}
 	return cmd
 }

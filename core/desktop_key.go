@@ -14,6 +14,7 @@
 package core
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -104,17 +105,25 @@ func LookupDesktopKey(secret string) (string, bool) {
 	if RootDB == nil || secret == "" {
 		return "", false
 	}
+	// Constant-time and no early exit, as bridge and peer keys are matched:
+	// == and a return on the first hit tell a guesser through timing how
+	// much of a key was right and where in the table it sat.
 	n := 0
+	var match DesktopKey
+	matchID := ""
 	for _, id := range RootDB.Keys(desktopKeyTable) {
 		var dk DesktopKey
 		if RootDB.Get(desktopKeyTable, id, &dk) {
 			n++
-			if dk.Key == secret {
-				dk.LastSeen = time.Now().Format(time.RFC3339)
-				RootDB.Set(desktopKeyTable, id, dk)
-				return dk.Owner, true
+			if subtle.ConstantTimeCompare([]byte(dk.Key), []byte(secret)) == 1 {
+				match, matchID = dk, id
 			}
 		}
+	}
+	if matchID != "" {
+		match.LastSeen = time.Now().Format(time.RFC3339)
+		RootDB.Set(desktopKeyTable, matchID, match)
+		return match.Owner, true
 	}
 	// No match — log the received key + how many keys ARE stored, so a 401
 	// reveals "stale key vs empty store vs wrong store" at a glance.

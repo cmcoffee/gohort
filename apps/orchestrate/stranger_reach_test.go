@@ -138,3 +138,19 @@ func TestAStrangersMemoryIsAttributedAndCannotForget(t *testing.T) {
 		t.Error("a web run may not forget")
 	}
 }
+
+// The gatekeeper's follow-up bypass recognises the person by the transport's
+// handle: a sender who takes another's display name does not take their turn.
+func TestAFollowUpIsRecognisedByHandleNotName(t *testing.T) {
+	msgs := []ChatMessage{
+		{Role: "user", Sender: "Alice", SenderHandle: "+15550100", Content: "q"},
+		{Role: "assistant", Content: "a"},
+	}
+	if h, ok := lastUserSender(msgs); !ok || h != "+15550100" {
+		t.Errorf("the last speaker's handle: %q %v", h, ok)
+	}
+	legacy := []ChatMessage{{Role: "user", Sender: "Alice", Content: "q"}, {Role: "assistant", Content: "a"}}
+	if h, _ := lastUserSender(legacy); h != "" {
+		t.Errorf("a turn recorded without a handle matched by name: %q", h)
+	}
+}

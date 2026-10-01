@@ -263,7 +263,7 @@ func MintPeerKey(label string, caps []string, ratePerMin int) (PeerKey, error) {
 		RatePerM: ratePerMin,
 		Created:  time.Now().Format(time.RFC3339),
 	}
-	RootDB.Set(peerKeysTable, pk.ID, pk)
+	RootDB.CryptSet(peerKeysTable, pk.ID, pk)
 	Log("[peer] minted key for %q granting %s", pk.Label, strings.Join(pk.Caps, ", "))
 	return pk, nil
 }
@@ -322,7 +322,7 @@ func SetPeerKeyCaps(id string, caps []string) (PeerKey, error) {
 	}
 	was := strings.Join(pk.Caps, ", ")
 	pk.Caps = clean
-	RootDB.Set(peerKeysTable, id, pk)
+	RootDB.CryptSet(peerKeysTable, id, pk)
 	Log("[peer] key %q re-granted: %s -> %s", pk.Label, was, strings.Join(clean, ", "))
 	return pk, nil
 }
@@ -403,7 +403,7 @@ func SetPeerKeyDisabled(id string, disabled bool) bool {
 		return false
 	}
 	pk.Disabled = disabled
-	RootDB.Set(peerKeysTable, id, pk)
+	RootDB.CryptSet(peerKeysTable, id, pk)
 	// Revocation has to reach credentials already handed out. Without this a
 	// disabled key kept working for the life of its access token, which is the
 	// gap between "revoked" on screen and revoked in fact.
@@ -482,7 +482,7 @@ func touchPeerKey(k PeerKey) {
 	}
 	cur.LastSeen = time.Now().Format(time.RFC3339)
 	cur.Calls++
-	RootDB.Set(peerKeysTable, cur.ID, cur)
+	RootDB.CryptSet(peerKeysTable, cur.ID, cur)
 }
 
 // SetPeerKeyScope sets WHOSE appliances an investigate grant reaches and WHICH
@@ -546,7 +546,7 @@ func SetPeerKeyScope(id, owner string, appliances []string) (PeerKey, error) {
 		}
 	}
 	pk.Owner, pk.Appliances = owner, clean
-	RootDB.Set(peerKeysTable, id, pk)
+	RootDB.CryptSet(peerKeysTable, id, pk)
 	Log("[peer] key %q scope set: owner=%q appliances=%d", pk.Label, owner, len(clean))
 	return pk, nil
 }

@@ -198,6 +198,14 @@ func provisionPeerImages(p RemotePeer, backends []PeerImageBackend) ([]string, e
 			made = append(made, c.Name)
 			continue
 		}
+		// Names are derived ("peer-" + peer + "-" + backend), and the backend
+		// half is the far side's to choose: peer "a" advertising "b-c" lands on
+		// peer "a-b"'s backend "c". A connector that is not this peer's, or not
+		// a peer connector at all, is left alone.
+		if existed && !peerOwnsConnector(cur, credName) {
+			Warn("[peer] %q advertises backend %q, whose connector name %q is already taken by something else: skipped", p.Name, b.Name, c.Name)
+			continue
+		}
 		if err := SaveConnector(RootDB, c); err != nil {
 			return made, fmt.Errorf("creating backend %q: %w", c.Name, err)
 		}
@@ -212,6 +220,19 @@ func provisionPeerImages(p RemotePeer, backends []PeerImageBackend) ([]string, e
 		Log("[peer] %q contributed %d image backend(s): %s", p.Name, len(wrote), strings.Join(wrote, ", "))
 	}
 	return made, nil
+}
+
+// peerOwnsConnector reports whether an existing connector is one this peer's
+// provisioning wrote: a rest_image connector authenticating with its
+// credential.
+func peerOwnsConnector(c Connector, credName string) bool {
+	if c.Kind != RestImageConnectorKind {
+		return false
+	}
+	var spec struct {
+		Credential string `json:"credential"`
+	}
+	return json.Unmarshal(c.Spec, &spec) == nil && spec.Credential == credName
 }
 
 // teardownPeerImages removes what provisionPeerImages created.

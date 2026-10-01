@@ -33,6 +33,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/jwcrypt"
 )
 
 const botConvTable = "bridges_bot_conversations" // conversation id → botConv
@@ -75,6 +76,7 @@ type botActivity struct {
 	ID         string `json:"id"`
 	Timestamp  string `json:"timestamp"`
 	ServiceURL string `json:"serviceUrl"`
+	ChannelID  string `json:"channelId"`
 	Text       string `json:"text"`
 	From       struct {
 		ID          string `json:"id"`
@@ -213,7 +215,8 @@ func (T *Bridges) handleBotActivity(w http.ResponseWriter, r *http.Request) {
 	}
 	// The audience check is the load-bearing half: Bot Framework signs for every
 	// bot in the world, and what makes a token OURS is that it names our app id.
-	if _, err := BotFrameworkVerifier().Verify(r.Context(), token, spec.AppID); err != nil {
+	claims, err := BotFrameworkVerifier().Verify(r.Context(), token, spec.AppID)
+	if err != nil {
 		Warn("[bridges] bot %q rejected an activity: %v", name, err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -230,6 +233,15 @@ func (T *Bridges) handleBotActivity(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(body, &a); err != nil {
 		Warn("[bridges] bot %q got an unparseable activity: %v", name, err)
 		w.WriteHeader(http.StatusAccepted) // ack; a retry would not parse either
+		return
+	}
+
+	// The token must be FOR this activity, not only for this bot: Microsoft
+	// signs the serviceUrl it means replies to go to, and a key it publishes
+	// says which channels it may sign for.
+	if err := T.botTokenFitsActivity(r.Context(), token, claims, a); err != nil {
+		Warn("[bridges] bot %q rejected an activity: %v", name, err)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -256,6 +268,43 @@ func (T *Bridges) handleBotActivity(w http.ResponseWriter, r *http.Request) {
 	key := BridgeKey{Owner: c.Owner, Service: spec.Service, Enabled: true, Name: c.Name}
 	T.ingestInbound(key, *req)
 	w.WriteHeader(http.StatusOK)
+}
+
+// botTokenFitsActivity holds a verified token to the activity it came with,
+// as Bot Framework's own rules require: its serviceurl claim names the
+// activity's serviceUrl, and the signing key's endorsements, when published,
+// include the activity's channel. Without the first, a token minted for one
+// conversation's reply address carried an activity pointing replies (and the
+// bot's credential) somewhere else.
+func (T *Bridges) botTokenFitsActivity(ctx context.Context, token string, claims jwcrypt.Claims, a botActivity) error {
+	if want, ok := claims["serviceurl"].(string); ok && strings.TrimSpace(want) != "" {
+		if !strings.EqualFold(strings.TrimRight(strings.TrimSpace(want), "/"), strings.TrimRight(strings.TrimSpace(a.ServiceURL), "/")) {
+			return fmt.Errorf("the token is for serviceUrl %q, the activity names %q", want, a.ServiceURL)
+		}
+	}
+	hdr, err := jwcrypt.DecodeJWTHeader(token)
+	if err != nil || hdr.KeyID == "" {
+		return nil
+	}
+	key, ok := BotFrameworkVerifier().KeyByID(ctx, hdr.KeyID)
+	if !ok || key == nil {
+		return nil
+	}
+	raw, ok := key.Extra["endorsements"]
+	if !ok {
+		return nil
+	}
+	var endorsed []string
+	if json.Unmarshal(raw, &endorsed) != nil {
+		return fmt.Errorf("the signing key's endorsements are unreadable")
+	}
+	ch := strings.TrimSpace(a.ChannelID)
+	for _, e := range endorsed {
+		if strings.EqualFold(strings.TrimSpace(e), ch) {
+			return nil
+		}
+	}
+	return fmt.Errorf("the signing key is not endorsed for channel %q", ch)
 }
 
 // rememberBotConv records where and how to answer this conversation, refusing a

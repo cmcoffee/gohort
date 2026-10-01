@@ -151,7 +151,7 @@ func TestReuseOutsideTheGraceWindowKillsTheFamily(t *testing.T) {
 		t.Fatal("the consumed refresh token was deleted — reuse would read as an unknown token")
 	}
 	stored.ConsumedAt = time.Now().Add(-peerRefreshGrace - time.Minute)
-	RootDB.Set(peerRefreshTable, first.RefreshToken, stored)
+	storePeerToken(peerRefreshTable, first.RefreshToken, stored)
 
 	_, code, msg := exchange(t, refreshBody(first.RefreshToken))
 	if code != http.StatusUnauthorized {

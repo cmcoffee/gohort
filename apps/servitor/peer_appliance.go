@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -41,6 +42,14 @@ func (T *Servitor) registerPeerInvestigation() {
 	// read-only. A second implementation here would be the place the two
 	// silently diverged on what "read-only" means.
 	PeerInvestigateFunc = func(ctx context.Context, user, applianceID, question string) (string, error) {
+		// A stub is not investigated on a peer's behalf for the reason exec
+		// refuses one: the investigation would run its commands through THIS
+		// instance's link onward, for a key the far instance never issued.
+		if udb := UserDB(T.DB, user); udb != nil {
+			if a, _, _, ok := T.resolveAppliance(user, udb, applianceID); ok && strings.TrimSpace(a.PeerName) != "" {
+				return "", fmt.Errorf("%q is itself a remote system here: investigations are not relayed onward", a.Name)
+			}
+		}
 		return T.InvestigateSync(ctx, user, applianceID, question)
 	}
 
@@ -93,7 +102,13 @@ func peerApplianceDesc(a Appliance) string {
 	case "workspace":
 		return fmt.Sprintf("%d members", len(a.Members))
 	case "command":
-		return a.Command
+		// The program only. The full line can carry arguments the operator
+		// never meant to publish (a token, an internal path), and the far side
+		// needs a label, not the invocation.
+		if f := strings.Fields(a.Command); len(f) > 0 {
+			return "local command: " + filepath.Base(f[0])
+		}
+		return "local command"
 	}
 	return a.Host
 }

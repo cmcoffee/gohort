@@ -125,10 +125,11 @@ func (app *OrchestrateApp) recordChannelSilent(in ChannelInbound) {
 			s.Title = firstNonEmptyStr(in.ConversationName, in.SenderName)
 		}
 		s.Messages = append(s.Messages, ChatMessage{
-			Role:    "user",
-			Content: in.Text,
-			Created: time.Now(),
-			Sender:  in.SenderName,
+			Role:         "user",
+			Content:      in.Text,
+			Created:      time.Now(),
+			Sender:       in.SenderName,
+			SenderHandle: strings.TrimSpace(in.Handle),
 		})
 		if _, err := saveChatSession(db, s); err != nil {
 			Log("[channel.silent] WARN failed to record silent inbound agent=%s sub=%s: %v", in.AgentID, sessionID, err)

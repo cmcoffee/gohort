@@ -89,3 +89,16 @@ func TestTheWakeBudgetStopsAFlood(t *testing.T) {
 		}
 	}
 }
+
+// A chat id is written into a send URL as one component, never as structure.
+func TestAChatIDCannotRewriteTheSendURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"-100123":       "-100123",
+		"../admin?x=1&": "..%2Fadmin%3Fx%3D1%26",
+		"a b@c.example": "a%20b%40c.example",
+	} {
+		if got := urlComponent(in); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+}

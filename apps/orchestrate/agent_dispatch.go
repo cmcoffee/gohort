@@ -1437,7 +1437,7 @@ func storedRunInput(run AgentSyncRun, text string, now time.Time) ChatMessage {
 			ReportFrom: from, ReportKind: strings.TrimSpace(run.InputReportKind),
 		}
 	}
-	return ChatMessage{Role: "user", Content: text, Created: now, Sender: run.MessageSender}
+	return ChatMessage{Role: "user", Content: text, Created: now, Sender: run.MessageSender, SenderHandle: strings.TrimSpace(run.SenderHandle)}
 }
 
 // cappedEventText trims an event to what is worth keeping, and SAYS it trimmed.

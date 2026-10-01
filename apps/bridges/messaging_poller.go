@@ -256,7 +256,7 @@ func (T *Bridges) deliverOutbound(ctx context.Context, spec RestMessagingSpec, o
 		if strings.TrimSpace(it.Text) == "" {
 			continue
 		}
-		sendURL := strings.ReplaceAll(spec.SendURL, "{chat_id}", it.ChatID)
+		sendURL := strings.ReplaceAll(spec.SendURL, "{chat_id}", urlComponent(it.ChatID))
 		reqBody := renderSendBody(spec.SendBody, it.ChatID, it.Text)
 		_, status, err := authedRequest(owner, spec.Credential, method, sendURL, reqBody)
 		if err != nil || status >= 300 {
@@ -268,6 +268,14 @@ func (T *Bridges) deliverOutbound(ctx context.Context, spec RestMessagingSpec, o
 			return
 		}
 	}
+}
+
+// urlComponent escapes a value for any position in a URL, path or query. A
+// chat id comes from the transport and, on a generic webhook, from whoever
+// posted; written raw into send_url, "../" or "?x=&" in one rewrote where the
+// credential's request went.
+func urlComponent(v string) string {
+	return strings.ReplaceAll(url.QueryEscape(v), "+", "%20")
 }
 
 // probeMessaging does ONE poll + maps the first message and returns a preview,

@@ -65,14 +65,15 @@ func (app *OrchestrateApp) channelGatekeeperAllow(ctx context.Context, in Channe
 	// The sender check matters in GROUP rooms: after the agent answers Alice it is
 	// still "last speaker", but a first-time message from Bob must NOT ride the
 	// bypass — it still has to face the wake rules. In a 1:1 the sender always
-	// matches, so this is a no-op there. Compare on the resolved sender name
-	// (ChatMessage.Sender is set from the same in.SenderName resolution),
-	// case-insensitively; an empty/unknown sender falls through to the rules.
+	// matches, so this is a no-op there. Compared on the transport HANDLE, not
+	// the display name: a name is the sender's to choose, so Bob renaming
+	// himself "Alice" rode Alice's bypass. A previous turn recorded without a
+	// handle falls through to the rules.
 	if in.Handle != "" && sessionID != "" {
 		if sess, ok := loadChatSession(udb, in.AgentID, sessionID); ok {
 			if n := len(sess.Messages); n > 0 && sess.Messages[n-1].Role == "assistant" {
 				if prev, ok := lastUserSender(sess.Messages); ok &&
-					in.SenderName != "" && strings.EqualFold(strings.TrimSpace(prev), strings.TrimSpace(in.SenderName)) {
+					prev != "" && strings.EqualFold(prev, strings.TrimSpace(in.Handle)) {
 					Log("[gatekeeper] bypass: follow-up from %s, who the agent last replied to (chat=%s)", chFirst(in.SenderName, in.Handle), in.ChatID)
 					return true
 				}
@@ -178,14 +179,15 @@ func mergeWakeRules(master, perChannel string) string {
 	return b.String()
 }
 
-// lastUserSender returns the Sender of the most recent user turn in the thread
-// (skipping trailing assistant replies), plus whether one was found. The
-// turn-taking bypass uses it to confirm a new inbound is a follow-up from the
-// SAME person the agent was conversing with, not a fresh sender in a group room.
+// lastUserSender returns the transport handle of the most recent user turn in
+// the thread (skipping trailing assistant replies), plus whether one was found.
+// The turn-taking bypass uses it to confirm a new inbound is a follow-up from
+// the SAME person the agent was conversing with, not a fresh sender in a group
+// room.
 func lastUserSender(msgs []ChatMessage) (string, bool) {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == "user" {
-			return msgs[i].Sender, true
+			return strings.TrimSpace(msgs[i].SenderHandle), true
 		}
 	}
 	return "", false
