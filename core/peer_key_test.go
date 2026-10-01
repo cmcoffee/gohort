@@ -300,8 +300,26 @@ func anUnservedCap(t *testing.T) string {
 
 // peerTestDB points RootDB at a fresh store and restores it afterwards, since
 // the peer key store is process-global.
+// resetPeerAuthThrottle clears the per-source failed-authentication counts for
+// a test, before it and after it. Every httptest request comes from the same
+// fake address (192.0.2.1), and the peer tests fail authentication on purpose;
+// the counts are process-wide and last a minute, so a run that repeats the
+// tests (-count, or enough of them back to back) crossed the limit and every
+// later request was answered 429 instead of whatever the test was checking.
+func resetPeerAuthThrottle(t *testing.T) {
+	t.Helper()
+	reset := func() {
+		peerAuthFailMu.Lock()
+		peerAuthFails = map[string]*peerFailWindow{}
+		peerAuthFailMu.Unlock()
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
 func peerTestDB(t *testing.T) {
 	t.Helper()
+	resetPeerAuthThrottle(t)
 	prev := RootDB
 	t.Cleanup(func() { RootDB = prev })
 	RootDB = &DBase{Store: kvlite.MemStore()}

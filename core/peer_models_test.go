@@ -18,6 +18,7 @@ import (
 // peerModelDB gives a test a scratch auth store and restores the globals.
 func peerModelDB(t *testing.T) Database {
 	t.Helper()
+	resetPeerAuthThrottle(t)
 	prevRoot, prevAuth := RootDB, AuthDB
 	prevSecure := secureAPIInstance
 	t.Cleanup(func() {

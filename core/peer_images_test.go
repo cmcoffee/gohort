@@ -13,6 +13,7 @@ import (
 
 func peerImageDB(t *testing.T) {
 	t.Helper()
+	resetPeerAuthThrottle(t)
 	prevRoot, prevAuth := RootDB, AuthDB
 	// Secure() caches its store on first use, so the instance is reset too —
 	// otherwise a store from an earlier test leaks into this one.
