@@ -83,7 +83,13 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		// ?app=<mount> narrows the table to the stages that app has claimed,
+		// for its pane on the Apps tab. Same rows, same keys, same POST: the
+		// app view is a filter over this table, never a store of its own.
 		stages := ListRouteStages()
+		if app := strings.TrimSpace(r.URL.Query().Get("app")); app != "" {
+			stages = RouteStagesForApp(app)
+		}
 		out := make([]stageEntry, len(stages))
 		for i, s := range stages {
 			val := ""

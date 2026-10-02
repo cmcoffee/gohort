@@ -41,19 +41,36 @@ func (a *AdminApp) appsTabSections() []ui.Section {
 			Subtitle: rw.path,
 			Group:    AppsTabGroup,
 			Wide:     true,
-			Body: ui.DisplayPanel{
-				Source: "api/app-summary?path=" + rw.path,
-				Pairs: []ui.DisplayPair{
-					{Label: "Path", Field: "path", Mono: true},
-					{Label: "State", Field: "state", StatusField: "state_severity"},
-					{Label: "What it is", Field: "desc"},
-					{Label: "Who can open it", Field: "access"},
-					{Label: "Its own controls", Field: "controls"},
-				},
-			},
+			Body:     appPaneBody(rw.path),
 		})
 	}
 	return out
+}
+
+// appPaneBody is one app's pane: what it is, then the controls it has claimed.
+//
+// The summary comes first and stands alone for an app that claims nothing,
+// because that is the true answer for it. Claimed routing follows as the same
+// table the LLMs tab shows, filtered to this app and writing the same keys; a
+// change here tells the LLMs tab, so neither view contradicts the other.
+func appPaneBody(path string) ui.Component {
+	summary := ui.DisplayPanel{
+		Source: "api/app-summary?path=" + path,
+		Pairs: []ui.DisplayPair{
+			{Label: "Path", Field: "path", Mono: true},
+			{Label: "State", Field: "state", StatusField: "state_severity"},
+			{Label: "What it is", Field: "desc"},
+			{Label: "Who can open it", Field: "access"},
+			{Label: "Its own controls", Field: "controls"},
+		},
+	}
+	if len(RouteStagesForApp(path)) == 0 {
+		return summary
+	}
+	return ui.Stack{Children: []ui.Component{
+		summary,
+		routingTable(path, []string{"api/routing"}),
+	}}
 }
 
 // appIsHidden mirrors the dashboard's rule: an app that opts out of being
@@ -281,7 +298,10 @@ func describeAppAccess(db Database, path string) string {
 func describeAppControls(r *http.Request, path string) string {
 	var parts []string
 	if n := len(RouteStagesForApp(path)); n > 0 {
-		parts = append(parts, plural(n, "routing dial"))
+		// Set from the table below, and the same dials as LLMs > LLM Routing:
+		// said here so a change in one place is not mistaken for a second,
+		// app-local setting.
+		parts = append(parts, plural(n, "routing dial")+" (below; also on LLMs > LLM Routing)")
 	}
 	if n := len(TunablesForApp(path)); n > 0 {
 		parts = append(parts, plural(n, "tunable"))

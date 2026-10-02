@@ -1,6 +1,7 @@
 package admin
 
 import (
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -151,6 +152,9 @@ func (a *AdminApp) llmSections() []ui.Section {
 				"That pin exists because the lead is normally remote. If it is not, the pin costs you the better reasoner on exactly the work that needs it most.",
 			Body: ui.FormPanel{
 				Source: "api/llm-privacy",
+				// The toggle changes which tiers a private stage may take, so
+				// every routing table on the page has to re-ask.
+				Invalidate: append([]string{"api/routing"}, appRoutingSources()...),
 				Fields: []ui.FormField{
 					{Field: "all_private", Label: "All LLMs are private", Type: "toggle",
 						Help: "OFF (the default): private stages stay on the worker, always. " +
@@ -166,52 +170,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 			Title:    "LLM Routing",
 			Subtitle: "Pick which tier handles each pipeline stage, and whether it reasons.",
 			Detail:   "\"lead\" uses the precision (remote) LLM; \"worker\" uses the local model; the \"(thinking)\" variant of either enables extended reasoning on that tier.\n\nTier and thinking are independent: a stage escalated to lead keeps thinking only if you pick \"lead (thinking)\". Budget caps thinking tokens for that stage, where 0 is the stage default.\n\nA private stage cannot route to lead unless Model Privacy is turned on above.",
-			Body: ui.Table{
-				Source: "api/routing",
-				RowKey: "key",
-				Columns: []ui.Col{
-					{Field: "label", Flex: 1},
-					{Field: "group", Mute: true},
-				},
-				RowActions: []ui.RowAction{
-					{
-						Type:   "select",
-						Field:  "value",
-						PostTo: "api/routing",
-						Method: "POST",
-						Width:  "10rem",
-						Options: []ui.SelectOption{
-							{Value: "lead", Label: "Lead"},
-							{Value: "lead (thinking)", Label: "Lead (Thinking)"},
-							{Value: "worker", Label: "Worker"},
-							{Value: "worker (thinking)", Label: "Worker (Thinking)"},
-						},
-						// Hide the lead options when the stage is
-						// private — private stages can't escalate. BOTH
-						// lead values, or the private row would offer an
-						// escalation the server then refuses.
-						FilterOptionsIf: "private",
-						FilterOptions:   "lead,lead (thinking)",
-						// Mark the option matching the stage's
-						// out-of-the-box Default with an asterisk
-						// so operators can tell at a glance what
-						// the registered default is even when
-						// they've overridden it.
-						DefaultField: "default",
-					},
-					{
-						Type:   "number",
-						Field:  "think_budget",
-						Label:  "budget",
-						PostTo: "api/routing",
-						Method: "POST",
-						Min:    0,
-						Max:    65536,
-						Width:  "7rem",
-					},
-				},
-				EmptyText: "No routing stages registered.",
-			},
+			Body:     routingTable("", appRoutingSources()),
 		},
 		{
 			Title:    "Ollama Proxy",
@@ -316,4 +275,92 @@ func effortMaxField() ui.FormField {
 			{Value: "high", Label: "High"}},
 		Help:   "The most effort any call on this tier may use, whatever an agent asks for.",
 		Detail: "Caps effort levels only. An explicit token budget is not an effort level; on llama.cpp the thinking budget above remains its ceiling."}
+}
+
+// routingTable is the tier-and-budget table, over every stage or over the
+// stages one app has claimed.
+//
+// One builder for both views so they cannot drift: the LLMs tab and an app's
+// pane on the Apps tab show the same control, writing the same key through the
+// same POST. invalidate names the OTHER views of those rows, because a select
+// does not reload anything on its own and a tier set in one place must not be
+// contradicted by the other a tab-click later.
+func routingTable(app string, invalidate []string) ui.Table {
+	source := "api/routing"
+	cols := []ui.Col{
+		{Field: "label", Flex: 1},
+		{Field: "group", Mute: true},
+	}
+	empty := "No routing stages registered."
+	if app != "" {
+		source = routingSourceForApp(app)
+		// Every row here is this app's, so the group column would only repeat
+		// the section heading.
+		cols = []ui.Col{{Field: "label", Label: "Routing stage", Flex: 1}}
+		empty = "This app has claimed no routing stages."
+	}
+	return ui.Table{
+		Source:  source,
+		RowKey:  "key",
+		Columns: cols,
+		RowActions: []ui.RowAction{
+			{
+				Type:   "select",
+				Field:  "value",
+				PostTo: "api/routing",
+				Method: "POST",
+				Width:  "10rem",
+				Options: []ui.SelectOption{
+					{Value: "lead", Label: "Lead"},
+					{Value: "lead (thinking)", Label: "Lead (Thinking)"},
+					{Value: "worker", Label: "Worker"},
+					{Value: "worker (thinking)", Label: "Worker (Thinking)"},
+				},
+				// Hide the lead options when the stage is
+				// private — private stages can't escalate. BOTH
+				// lead values, or the private row would offer an
+				// escalation the server then refuses.
+				FilterOptionsIf: "private",
+				FilterOptions:   "lead,lead (thinking)",
+				// Mark the option matching the stage's
+				// out-of-the-box Default with an asterisk
+				// so operators can tell at a glance what
+				// the registered default is even when
+				// they've overridden it.
+				DefaultField: "default",
+				Invalidate:   invalidate,
+			},
+			{
+				Type:       "number",
+				Field:      "think_budget",
+				Label:      "budget",
+				PostTo:     "api/routing",
+				Method:     "POST",
+				Min:        0,
+				Max:        65536,
+				Width:      "7rem",
+				Invalidate: invalidate,
+			},
+		},
+		EmptyText: empty,
+	}
+}
+
+// routingSourceForApp is the source of one app's routing table. Named so the
+// table and the invalidation lists cannot disagree on its spelling — a source
+// that differs by one character is a table that never refreshes.
+func routingSourceForApp(app string) string {
+	return "api/routing?app=" + app
+}
+
+// appRoutingSources lists every app routing table the Apps tab will render,
+// for the views that must tell them a row changed.
+func appRoutingSources() []string {
+	var out []string
+	for _, rw := range listableApps() {
+		if len(RouteStagesForApp(rw.path)) > 0 {
+			out = append(out, routingSourceForApp(rw.path))
+		}
+	}
+	return out
 }

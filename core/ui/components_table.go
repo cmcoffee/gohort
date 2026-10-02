@@ -256,6 +256,11 @@ type RowAction struct {
 	// the page. Installing from a catalog writes connectors, tools,
 	// credentials and skills — every one of them a section of its own,
 	// and the point of the install is that you then go and review them.
+	//
+	// The in-place controls (select, number) honour it too, and they are
+	// the exception to the first sentence: they do NOT reload their own
+	// table, since the control already shows the new value. Name here the
+	// other tables that render the same rows, or they keep the old one.
 	Invalidate []string `json:"invalidate,omitempty"`
 }
 

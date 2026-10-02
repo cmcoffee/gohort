@@ -107,9 +107,37 @@ func TestARowActionCanRefreshWhatItChangedElsewhere(t *testing.T) {
 	// After the row's own reload and its source rebroadcast, not instead
 	// of them: the row still changed, and sibling tables on the same
 	// source still need to hear about it.
-	own := strings.Index(basics, "window.uiInvalidate(cfg.source);")
-	other := strings.Index(basics, "window.uiInvalidate(act.invalidate);")
+	//
+	// Searched from the button branch: the in-place controls (select,
+	// number) fire act.invalidate too, from a helper defined earlier in the
+	// file, and they deliberately skip their own reload.
+	btn := strings.Index(basics, "act.type === 'button'")
+	if btn < 0 {
+		t.Fatal("button row action branch not found")
+	}
+	own := strings.Index(basics[btn:], "window.uiInvalidate(cfg.source);")
+	other := strings.Index(basics[btn:], "window.uiInvalidate(act.invalidate);")
 	if own < 0 || other < 0 || other < own {
 		t.Error("an action's own table and its siblings must still refresh first")
+	}
+}
+
+// The in-place controls save without reloading their table, so another table
+// showing the same rows (one filtered view of a list beside the full list)
+// keeps the old value unless the control says what else to refetch.
+func TestInPlaceRowControlsRefreshTheirOtherViews(t *testing.T) {
+	basics := mustRuntimePart(t, "10_basics.js")
+	for _, branch := range []string{"act.type === 'select'", "act.type === 'number'"} {
+		at := strings.Index(basics, branch)
+		if at < 0 {
+			t.Fatalf("%s branch not found", branch)
+		}
+		next := strings.Index(basics[at+len(branch):], "} else if (act.type ===")
+		if next < 0 {
+			t.Fatalf("end of %s branch not found", branch)
+		}
+		if !strings.Contains(basics[at:at+len(branch)+next], "invalidateElsewhere(act)") {
+			t.Errorf("%s saves without telling its other views", branch)
+		}
 	}
 }

@@ -152,7 +152,7 @@ func TestAnUnservedPathResolvesToNothing(t *testing.T) {
 func TestASectionAsksAboutTheAppItNames(t *testing.T) {
 	a := &AdminApp{}
 	for _, sec := range a.appsTabSections() {
-		dp, ok := sec.Body.(ui.DisplayPanel)
+		dp, ok := paneSummary(sec.Body)
 		if !ok {
 			continue
 		}
@@ -160,6 +160,16 @@ func TestASectionAsksAboutTheAppItNames(t *testing.T) {
 			t.Errorf("section %q sources %q, want %q", sec.Title, dp.Source, want)
 		}
 	}
+}
+
+// paneSummary finds the summary panel in an app pane, which is the whole body
+// for an app that claims nothing and the first child for one that does.
+func paneSummary(body ui.Component) (ui.DisplayPanel, bool) {
+	if st, ok := body.(ui.Stack); ok && len(st.Children) > 0 {
+		body = st.Children[0]
+	}
+	dp, ok := body.(ui.DisplayPanel)
+	return dp, ok
 }
 
 // fakeWebApp is the shape an ordinary app arrives in: registered as an App that

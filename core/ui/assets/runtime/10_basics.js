@@ -421,6 +421,15 @@
       });
     }
 
+    // invalidateElsewhere tells the OTHER views of a row that an in-place
+    // control (select, number) saved. Only act.invalidate, never this table's
+    // own source: these controls already show the new value, and reloading
+    // the table under them would re-render the row the operator is still
+    // working in and drop their focus on the next field.
+    function invalidateElsewhere(act) {
+      if (act.invalidate && act.invalidate.length) window.uiInvalidate(act.invalidate);
+    }
+
     function appendAction(parent, act, ai, rec, rowKey, rowEl) {
       // Conditional rendering: skip when only_if field is falsy or
       // when hide_if field is truthy. Either gate alone is enough.
@@ -496,7 +505,8 @@
           fetchJSON(url, {
             method: act.method || 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body)
-          }).catch(function(err){ showToast('Save failed: ' + err.message); });
+          }).then(function(){ invalidateElsewhere(act); })
+            .catch(function(err){ showToast('Save failed: ' + err.message); });
           rec[act.field] = sel.value;
         });
         parent.appendChild(sel);
@@ -555,7 +565,8 @@
           fetchJSON(url, {
             method: act.method || 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body)
-          }).catch(function(err){ showToast('Save failed: ' + err.message); });
+          }).then(function(){ invalidateElsewhere(act); })
+            .catch(function(err){ showToast('Save failed: ' + err.message); });
           rec[act.field] = n;
         });
         parent.appendChild(ninput);

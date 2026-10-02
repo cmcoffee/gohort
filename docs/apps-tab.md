@@ -1,7 +1,9 @@
 # The Apps Tab: admin organised by subject, not only by mechanism
 
 Status: the list, the per-app summary rows and the availability switch are
-built; gathering each app's own controls onto its pane is still design/target.
+built, and each app's pane shows the route stages it has claimed (the LLM
+Routing table filtered by `?app=`, writing the same keys). Tunables and
+contributed sections on the pane are still design/target.
 
 Admin is organised by MECHANISM. Everything configurable about techwriter is
 spread across three tabs: its tier in **LLMs** (a route stage), its knobs in
