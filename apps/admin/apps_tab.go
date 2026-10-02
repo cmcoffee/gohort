@@ -51,8 +51,9 @@ func (a *AdminApp) appsTabSections() []ui.Section {
 //
 // The summary comes first and stands alone for an app that claims nothing,
 // because that is the true answer for it. Claimed routing follows as the same
-// table the LLMs tab shows, filtered to this app and writing the same keys; a
-// change here tells the LLMs tab, so neither view contradicts the other.
+// table the LLMs tab shows, then claimed knobs as the same fields the Tuning
+// tab shows, each filtered to this app and writing the same keys; a change in
+// either place reaches the other, so neither view contradicts the other.
 func appPaneBody(path string) ui.Component {
 	summary := ui.DisplayPanel{
 		Source: "api/app-summary?path=" + path,
@@ -64,13 +65,17 @@ func appPaneBody(path string) ui.Component {
 			{Label: "Its own controls", Field: "controls"},
 		},
 	}
-	if len(RouteStagesForApp(path)) == 0 {
+	children := []ui.Component{summary}
+	if len(RouteStagesForApp(path)) > 0 {
+		children = append(children, routingTable(path, []string{"api/routing"}))
+	}
+	if form := appTuningForm(path); form != nil {
+		children = append(children, *form)
+	}
+	if len(children) == 1 {
 		return summary
 	}
-	return ui.Stack{Children: []ui.Component{
-		summary,
-		routingTable(path, []string{"api/routing"}),
-	}}
+	return ui.Stack{Children: children}
 }
 
 // appIsHidden mirrors the dashboard's rule: an app that opts out of being
@@ -304,7 +309,7 @@ func describeAppControls(r *http.Request, path string) string {
 		parts = append(parts, plural(n, "routing dial")+" (below; also on LLMs > LLM Routing)")
 	}
 	if n := len(TunablesForApp(path)); n > 0 {
-		parts = append(parts, plural(n, "tunable"))
+		parts = append(parts, plural(n, "tunable")+" (below; also on Tuning)")
 	}
 	if n := len(AdminSectionEntriesForApp(r, path)); n > 0 {
 		parts = append(parts, plural(n, "settings panel"))

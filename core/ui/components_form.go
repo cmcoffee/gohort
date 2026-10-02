@@ -135,8 +135,10 @@ type FormPanel struct {
 	// ResetURL — when set, renders a "Revert to defaults" button. Click
 	// confirms, POSTs to this URL (the server clears the stored overrides so
 	// the fields fall back to their code/config defaults), then re-loads the
-	// form from Source to show the reverted values. Domain-agnostic: the app
-	// supplies the URL and decides what "default" means server-side.
+	// form from Source to show the reverted values, and announces the change
+	// the way a save does (Source, PostURL and Invalidate) so other views of
+	// those values follow. Domain-agnostic: the app supplies the URL and
+	// decides what "default" means server-side.
 	ResetURL string `json:"reset_url,omitempty"`
 	// ResetLabel — button text for the reset affordance. Defaults to
 	// "Revert to defaults" when ResetURL is set and this is empty.
@@ -164,6 +166,18 @@ type FormPanel struct {
 	// an "add" form in a modal whose result should appear in the table
 	// behind it without a manual reload.
 	Invalidate []string `json:"invalidate,omitempty"`
+	// RefreshOn names OTHER sources whose invalidation should reload this
+	// form, for a form that shares its values with another view of them: a
+	// filtered form beside the full one, both writing the same keys. Without
+	// it a form loads once and then shows the value from before an edit made
+	// in the other view, which looks right and is not.
+	//
+	// Matched EXACTLY, unlike Card.RefreshOn's prefix: two forms over one
+	// record usually differ only by a query string, and a prefix would have
+	// each form reload on its own saves. A form is never reloaded while
+	// focus is inside it; the reload waits until focus leaves, so a value
+	// is not replaced under the person typing it.
+	RefreshOn []string `json:"refresh_on,omitempty"`
 	// OnSuccess names a client action (registered with
 	// window.uiRegisterClientAction) called after a successful submit,
 	// with {response, form, ctx}. The response is the server's decoded

@@ -122,6 +122,17 @@ func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	// ?app=<mount> is one app's pane on the Apps tab: only the knobs that app
+	// claimed, at the same effective values the full record reports.
+	if app := strings.TrimSpace(r.URL.Query().Get("app")); app != "" {
+		resp := map[string]any{}
+		for _, s := range TunablesForApp(app) {
+			resp[s.Key] = tunableWireValue(s)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
 	var allow_signup, ollama_proxy_enabled bool
 	var session_days, session_absolute_days, max_attempts, lockout_minutes, ollama_proxy_port, fetch_cache_quota_mb int
 	var service_name, external_url, notify_from string
@@ -232,13 +243,18 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	// Tunables — effective values (stored override or spec default), generated
 	// from the registry so a newly-registered knob surfaces here automatically.
 	for _, s := range AllTunableSpecs() {
-		if s.Kind == KindBool {
-			resp[s.Key] = TunableEffectiveValue(s.Key) != 0 // toggle reads a bool
-		} else {
-			resp[s.Key] = TunableEffectiveValue(s.Key)
-		}
+		resp[s.Key] = tunableWireValue(s)
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+// tunableWireValue is a knob's effective value as a form reads it: a bool for a
+// toggle, otherwise the number.
+func tunableWireValue(s TunableSpec) any {
+	if s.Kind == KindBool {
+		return TunableEffectiveValue(s.Key) != 0
+	}
+	return TunableEffectiveValue(s.Key)
 }
 
 func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -276,6 +292,19 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	current := AuthCurrentUser(r)
+	// ?app=<mount> is an app's pane saving: it may set that app's knobs and
+	// nothing else. Without this the address would read as scoped while still
+	// accepting every site setting, which is a promise the URL makes and the
+	// handler would not keep.
+	if app := strings.TrimSpace(r.URL.Query().Get("app")); app != "" {
+		var generic map[string]any
+		if json.Unmarshal(raw, &generic) == nil && a.applyTunables(generic, TunablesForApp(app), current) {
+			InvalidateTunables()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+		return
+	}
 	if req.AllowSignup != nil {
 		a.db.Set(WebTable, "allow_signup", *req.AllowSignup)
 		Log("[admin] user %q set allow_signup=%v", current, *req.AllowSignup)
@@ -410,54 +439,59 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	// to the default is stored as no value at all (which also clears a pin
 	// the old behaviour left behind).
 	var generic map[string]any
-	if json.Unmarshal(raw, &generic) == nil {
-		tuned := false
-		for _, s := range AllTunableSpecs() {
-			v, ok := generic[s.Key]
-			if !ok {
-				continue
-			}
-			// Numbers decode as float64; a KindBool toggle POSTs true/false.
-			var f float64
-			switch val := v.(type) {
-			case float64:
-				f = val
-			case bool:
-				if s.Kind != KindBool {
-					continue // a bool for a non-bool knob is malformed; ignore
-				}
-				if val {
-					f = 1
-				}
-			default:
-				continue
-			}
-			if f < s.Min || f > s.Max {
-				continue
-			}
-			var stored float64
-			has := a.db.Get(WebTable, s.Key, &stored)
-			if f == s.Default {
-				if has {
-					a.db.Unset(WebTable, s.Key)
-					Log("[admin] user %q set %s back to its default (%g)", current, s.Key, f)
-					tuned = true
-				}
-				continue
-			}
-			if has && stored == f {
-				continue
-			}
-			a.db.Set(WebTable, s.Key, f)
-			Log("[admin] user %q set %s=%g", current, s.Key, f)
-			tuned = true
-		}
-		if tuned {
-			InvalidateTunables()
-		}
+	if json.Unmarshal(raw, &generic) == nil && a.applyTunables(generic, AllTunableSpecs(), current) {
+		InvalidateTunables()
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+// applyTunables stores the knobs in generic that specs names, validated against
+// each spec, and reports whether anything changed. The caller invalidates the
+// cache once.
+func (a *AdminApp) applyTunables(generic map[string]any, specs []TunableSpec, current string) bool {
+	tuned := false
+	for _, s := range specs {
+		v, ok := generic[s.Key]
+		if !ok {
+			continue
+		}
+		// Numbers decode as float64; a KindBool toggle POSTs true/false.
+		var f float64
+		switch val := v.(type) {
+		case float64:
+			f = val
+		case bool:
+			if s.Kind != KindBool {
+				continue // a bool for a non-bool knob is malformed; ignore
+			}
+			if val {
+				f = 1
+			}
+		default:
+			continue
+		}
+		if f < s.Min || f > s.Max {
+			continue
+		}
+		var stored float64
+		has := a.db.Get(WebTable, s.Key, &stored)
+		if f == s.Default {
+			if has {
+				a.db.Unset(WebTable, s.Key)
+				Log("[admin] user %q set %s back to its default (%g)", current, s.Key, f)
+				tuned = true
+			}
+			continue
+		}
+		if has && stored == f {
+			continue
+		}
+		a.db.Set(WebTable, s.Key, f)
+		Log("[admin] user %q set %s=%g", current, s.Key, f)
+		tuned = true
+	}
+	return tuned
 }
 
 // handleResetTunables clears every retrieval/limit tunable override so the
@@ -470,7 +504,21 @@ func (a *AdminApp) handleResetTunables(w http.ResponseWriter, r *http.Request) {
 	}
 	// Optional ?category=X scopes the revert to one section's knobs; absent,
 	// every tunable resets. Either way the getters fall back to spec defaults.
+	//
+	// ?app=X scopes it to the knobs that app claimed instead, for its pane on
+	// the Apps tab. Checked first and never combined with the unscoped case: an
+	// app with no claims must revert nothing, not fall through to everything.
 	cat := r.URL.Query().Get("category")
+	if app := strings.TrimSpace(r.URL.Query().Get("app")); app != "" {
+		for _, s := range TunablesForApp(app) {
+			a.db.Unset(WebTable, s.Key)
+		}
+		InvalidateTunables()
+		Log("[admin] user %q reverted tunables to defaults (app=%q)", AuthCurrentUser(r), app)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
+		return
+	}
 	for _, s := range AllTunableSpecs() {
 		if cat == "" || s.Category == cat {
 			a.db.Unset(WebTable, s.Key)

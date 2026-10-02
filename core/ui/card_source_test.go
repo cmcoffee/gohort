@@ -141,3 +141,35 @@ func TestInPlaceRowControlsRefreshTheirOtherViews(t *testing.T) {
 		}
 	}
 }
+
+// A form showing values another view also edits reloads when that view saves,
+// but never on its own saves and never under somebody typing in it.
+func TestFormRefreshOnIsExactAndWaitsForFocus(t *testing.T) {
+	b, _ := json.Marshal(FormPanel{Source: "api/s?app=/x", RefreshOn: []string{"api/s"}})
+	if !strings.Contains(string(b), `"refresh_on":["api/s"]`) {
+		t.Errorf("refresh_on not serialised:\n%s", b)
+	}
+	basics := mustRuntimePart(t, "10_basics.js")
+	at := strings.Index(basics, "components.form_panel = function")
+	if at < 0 {
+		t.Fatal("form_panel not found")
+	}
+	form := basics[at:]
+	if end := strings.Index(form[1:], "\n  components."); end > 0 {
+		form = form[:end+1]
+	}
+	for _, want := range []string{
+		"cfg.refresh_on.some(function(s) { return sources.indexOf(s) >= 0; })", // exact, not prefix
+		"wrap.contains(document.activeElement)",                                // focus guard
+		"reloadPending",                                                        // deferred, not dropped
+	} {
+		if !strings.Contains(form, want) {
+			t.Errorf("form_panel runtime missing %q", want)
+		}
+	}
+	// A revert changes the record, so it announces like a save does.
+	reset := strings.Index(form, "function appendResetRow")
+	if reset < 0 || !strings.Contains(form[reset:reset+2000], "window.uiInvalidateSaved(cfg);") {
+		t.Error("a revert does not tell the other views of the record")
+	}
+}

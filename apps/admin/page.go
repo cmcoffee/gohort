@@ -32,42 +32,19 @@ func toggleLabel(label string) string { return boolOffSuffixRE.ReplaceAllString(
 func buildTunableSections() []ui.Section {
 	var order []string
 	byCat := map[string][]ui.FormField{}
+	// The app panes showing knobs from each category: those forms write the
+	// same keys, so this category's form reloads when one of them saves.
+	paneSources := map[string][]string{}
+	seenPane := map[string]bool{}
 	for _, s := range AllTunableSpecs() {
 		if _, seen := byCat[s.Category]; !seen {
 			order = append(order, s.Category)
 		}
-		// Bool knobs render as a real toggle, not a 0/1 number field.
-		if s.Kind == KindBool {
-			byCat[s.Category] = append(byCat[s.Category], ui.FormField{
-				Field:  s.Key,
-				Label:  toggleLabel(s.Label),
-				Type:   "toggle",
-				Help:   s.Help,
-				Detail: s.Detail,
-			})
-			continue
+		byCat[s.Category] = append(byCat[s.Category], tunableField(s))
+		if s.App != "" && isListableApp(s.App) && !seenPane[s.Category+"\x00"+s.App] {
+			seenPane[s.Category+"\x00"+s.App] = true
+			paneSources[s.Category] = append(paneSources[s.Category], tuningSourceForApp(s.App))
 		}
-		unit := ""
-		switch s.Kind {
-		case KindSeconds:
-			unit = " (seconds)"
-		case KindMinutes:
-			unit = " (minutes)"
-		case KindHours:
-			unit = " (hours)"
-		case KindDays:
-			unit = " (days)"
-		}
-		byCat[s.Category] = append(byCat[s.Category], ui.FormField{
-			Field:    s.Key,
-			Label:    s.Label + unit,
-			Type:     "number",
-			Help:     s.Help,
-			Detail:   s.Detail,
-			Min:      int(s.Min),
-			Max:      int(s.Max),
-			Decimals: s.Decimals,
-		})
 	}
 	// One category per SECTION, so the framework's SectionNav renders the Tuning
 	// tab as a compact left-rail side-index of areas (Network Timeouts, Limits,
@@ -90,10 +67,95 @@ func buildTunableSections() []ui.Section {
 				ResetLabel:   "Revert to defaults",
 				ResetConfirm: "Revert the " + cat + " settings to their built-in defaults?",
 				Fields:       byCat[cat],
+				RefreshOn:    paneSources[cat],
 			},
 		})
 	}
 	return out
+}
+
+// tunableField is one knob as a form field: a toggle for a bool, otherwise a
+// bounded number labelled with its unit. Shared by the Tuning tab and an app's
+// pane on the Apps tab, so the two show the same control for the same key.
+func tunableField(s TunableSpec) ui.FormField {
+	// Bool knobs render as a real toggle, not a 0/1 number field.
+	if s.Kind == KindBool {
+		return ui.FormField{
+			Field:  s.Key,
+			Label:  toggleLabel(s.Label),
+			Type:   "toggle",
+			Help:   s.Help,
+			Detail: s.Detail,
+		}
+	}
+	unit := ""
+	switch s.Kind {
+	case KindSeconds:
+		unit = " (seconds)"
+	case KindMinutes:
+		unit = " (minutes)"
+	case KindHours:
+		unit = " (hours)"
+	case KindDays:
+		unit = " (days)"
+	}
+	return ui.FormField{
+		Field:    s.Key,
+		Label:    s.Label + unit,
+		Type:     "number",
+		Help:     s.Help,
+		Detail:   s.Detail,
+		Min:      int(s.Min),
+		Max:      int(s.Max),
+		Decimals: s.Decimals,
+	}
+}
+
+// tuningSourceForApp is the source of one app's tuning form. Named so the form
+// and every RefreshOn naming it agree on the spelling: RefreshOn matches
+// exactly, and a source off by one character is a form that never refreshes.
+func tuningSourceForApp(app string) string {
+	return "api/settings?app=" + app
+}
+
+// appTuningForm is the knobs one app has claimed, as a form over the same keys
+// the Tuning tab writes. Nil when the app has claimed none.
+//
+// Headed by category because an app's knobs still span subjects (orchestrate
+// has limits, timeouts and memory knobs), and the category is what each one is
+// called on the Tuning tab, which is the other place an operator will look.
+func appTuningForm(app string) *ui.FormPanel {
+	specs := TunablesForApp(app)
+	if len(specs) == 0 {
+		return nil
+	}
+	var order []string
+	byCat := map[string][]ui.FormField{}
+	for _, s := range specs {
+		if _, seen := byCat[s.Category]; !seen {
+			order = append(order, s.Category)
+		}
+		byCat[s.Category] = append(byCat[s.Category], tunableField(s))
+	}
+	var fields []ui.FormField
+	for _, cat := range order {
+		fields = append(fields, ui.FormField{Type: "header", Label: cat})
+		fields = append(fields, byCat[cat]...)
+	}
+	// Saves go to the app's own source rather than api/settings: a save
+	// announces its target, and this form listens for api/settings, so posting
+	// there would have it reload after every one of its own edits. The server
+	// takes only this app's knobs at that address.
+	return &ui.FormPanel{
+		Source:       tuningSourceForApp(app),
+		Method:       settingsSaveMethod,
+		ResetURL:     "api/settings/reset-tunables?app=" + url.QueryEscape(app),
+		ResetLabel:   "Revert to defaults",
+		ResetConfirm: "Revert this app's tuning to its built-in defaults? Its routing is not affected.",
+		Fields:       fields,
+		// The Tuning tab's category forms save to api/settings.
+		RefreshOn: []string{"api/settings"},
+	}
 }
 
 // sourceHookFormTemplates turns the built-in SourceHookTemplates into

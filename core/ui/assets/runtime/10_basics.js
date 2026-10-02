@@ -3654,7 +3654,13 @@
           var orig = resetBtn.textContent;
           resetBtn.textContent = 'Reverting…';
           fetch(cfg.reset_url, {method: 'POST'})
-            .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); load(); })
+            .then(function(r){
+              if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
+              load();
+              // A revert changes the record as much as a save does, so it
+              // tells the other views of it the same way.
+              window.uiInvalidateSaved(cfg);
+            })
             .catch(function(err){ showToast('Revert failed: ' + (err && err.message || err)); })
             .then(function(){ resetBtn.disabled = false; resetBtn.textContent = orig; });
         });
@@ -3941,6 +3947,30 @@
       } else {
         render();
       }
+    }
+    // RefreshOn — reload when ANOTHER view of these values saves. Exact
+    // match, so this form's own saves never reload it. Deferred while focus
+    // is inside the form: a reload re-renders every field, and doing that
+    // under somebody mid-edit replaces what they are typing.
+    if (Array.isArray(cfg.refresh_on) && cfg.refresh_on.length) {
+      var reloadPending = false;
+      window.addEventListener('ui-data-changed', function(ev) {
+        var sources = (ev.detail && ev.detail.sources) || [];
+        var hit = cfg.refresh_on.some(function(s) { return sources.indexOf(s) >= 0; });
+        if (!hit) return;
+        if (wrap.contains(document.activeElement)) { reloadPending = true; return; }
+        load();
+      });
+      wrap.addEventListener('focusout', function() {
+        if (!reloadPending) return;
+        // focusout fires before the next field takes focus; wait a tick so
+        // moving between this form's own fields is not mistaken for leaving.
+        setTimeout(function() {
+          if (!reloadPending || wrap.contains(document.activeElement)) return;
+          reloadPending = false;
+          load();
+        }, 0);
+      });
     }
     load();
     return wrap;
