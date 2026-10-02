@@ -55,9 +55,9 @@ func TestRoutingFiltersToAnAppsClaimedStages(t *testing.T) {
 func TestAppPaneCarriesItsRoutingTable(t *testing.T) {
 	RegisterRouteStage(RouteStage{Key: "app.panebody.a", Label: "A", App: "/panebody"})
 
-	st, ok := appPaneBody("/panebody").(ui.Stack)
+	st, ok := appPaneBody(nil, "/panebody").(ui.Stack)
 	if !ok || len(st.Children) != 2 {
-		t.Fatalf("an app with claimed routing should get summary + table, got %#v", appPaneBody("/panebody"))
+		t.Fatalf("an app with claimed routing should get summary + table, got %#v", appPaneBody(nil, "/panebody"))
 	}
 	tbl, ok := st.Children[1].(ui.Table)
 	if !ok {
@@ -78,8 +78,8 @@ func TestAppPaneCarriesItsRoutingTable(t *testing.T) {
 
 	// And an app that claims nothing gets the summary alone: no empty table
 	// implying there is something to set.
-	if _, ok := appPaneBody("/claims-nothing").(ui.DisplayPanel); !ok {
-		t.Errorf("unclaimed pane = %T, want the bare summary", appPaneBody("/claims-nothing"))
+	if _, ok := appPaneBody(nil, "/claims-nothing").(ui.DisplayPanel); !ok {
+		t.Errorf("unclaimed pane = %T, want the bare summary", appPaneBody(nil, "/claims-nothing"))
 	}
 }
 

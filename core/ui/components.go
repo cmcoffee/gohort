@@ -27,6 +27,23 @@ func SectionSlug(title string) string {
 	return strings.TrimRight(b.String(), "-")
 }
 
+// SectionOnTab addresses a section on a TABBED page by its tab as well as its
+// title: "#<tab>/<section>", or "#<tab>/" when title is empty. The slash stays
+// in the tab-only form: without it the address is a bare slug and is resolved
+// the ambiguous way this exists to avoid.
+//
+// A bare "#<section>" is ambiguous once two tabs hold sections with the same
+// title (an app's own row on one tab, the settings panel it contributes on
+// another, both carrying the app's name), and the page resolves an ambiguous
+// slug to the tab already open. Naming the tab removes the guess; an empty
+// title is how a link reaches a tab whose only section has no title to name.
+func SectionOnTab(tab, title string) string {
+	if title == "" {
+		return "#" + SectionSlug(tab) + "/"
+	}
+	return "#" + SectionSlug(tab) + "/" + SectionSlug(title)
+}
+
 // BadgeMapping maps a value (typically a boolean) to a labeled badge
 // for the "badge" Col type. The first match (by deep equality on
 // Value) wins; if nothing matches, the field value is rendered with

@@ -84,7 +84,7 @@ func TestSwitchboardWithholdsTheWayBack(t *testing.T) {
 // per-app cards below it are reference, not the control.
 func TestAvailabilitySectionLeadsTheAppsTab(t *testing.T) {
 	a := &AdminApp{}
-	secs := a.appsTabSections()
+	secs := a.appsTabSections(httptest.NewRequest("GET", "/admin", nil))
 	if len(secs) == 0 || secs[0].Title != "Enabled apps" {
 		t.Fatalf("the Apps tab must lead with the switchboard, got %v", sectionTitles(secs))
 	}
@@ -126,12 +126,13 @@ func TestEveryListedAppCanBeResolved(t *testing.T) {
 	// and the shape the broken lookup could not see. Without it this binary has
 	// no apps and the check passes by having nothing to check.
 	RegisterApp(fakeWebApp{path: "/sectionsourcetest"})
-	rows := listableApps()
+	req := httptest.NewRequest("GET", "/admin", nil)
+	rows := paneApps(req)
 	if len(rows) == 0 {
 		t.Fatal("no apps listed — this test would pass vacuously")
 	}
 	for _, rw := range rows {
-		if findListedApp(rw.path) == nil {
+		if findPaneApp(req, rw.path) == nil {
 			t.Errorf("the tab lists %q (%s) but the summary lookup cannot resolve it — that row renders a 404",
 				rw.name, rw.path)
 		}
@@ -141,7 +142,7 @@ func TestEveryListedAppCanBeResolved(t *testing.T) {
 // A path nothing serves still has to come back nil, or the 404 the handler owes
 // the caller never happens.
 func TestAnUnservedPathResolvesToNothing(t *testing.T) {
-	if findListedApp("/nothing-serves-this") != nil {
+	if findPaneApp(httptest.NewRequest("GET", "/admin", nil), "/nothing-serves-this") != nil {
 		t.Error("an unserved path must not resolve")
 	}
 }
@@ -151,7 +152,7 @@ func TestAnUnservedPathResolvesToNothing(t *testing.T) {
 // worse than the 404 was: it looks right.
 func TestASectionAsksAboutTheAppItNames(t *testing.T) {
 	a := &AdminApp{}
-	for _, sec := range a.appsTabSections() {
+	for _, sec := range a.appsTabSections(httptest.NewRequest("GET", "/admin", nil)) {
 		dp, ok := paneSummary(sec.Body)
 		if !ok {
 			continue
@@ -211,7 +212,7 @@ func TestEveryAdminSectionSourceIsRoutable(t *testing.T) {
 	a.RegisterRoutes(mux, "/admin")
 
 	var secs []ui.Section
-	secs = append(secs, a.appsTabSections()...)
+	secs = append(secs, a.appsTabSections(httptest.NewRequest("GET", "/admin", nil))...)
 	secs = append(secs, a.extensionsSections()...)
 	secs = append(secs, a.skillsSections()...)
 	secs = append(secs, a.capabilitiesSections()...)

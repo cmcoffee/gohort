@@ -286,7 +286,10 @@
     function secnavSlug(title) {
       return String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
-  function buildSecNav(mountEl, secs) {
+  // groupSlug is the slug of the tab this rail sits on (undefined for a
+  // page-level rail), so a "#<tab>/<section>" address is answered only by the
+  // rail on the tab it names (see ui.SectionOnTab).
+  function buildSecNav(mountEl, secs, groupSlug) {
     var rail = el('div', {class: 'ui-secnav-rail'});
     var content = el('div', {class: 'ui-secnav-content'});
     mountEl.appendChild(el('div', {class: 'ui-secnav'}, [rail, content]));
@@ -327,7 +330,14 @@
     // button walking earlier sections.
     function activateHash() {
       var want = window.location.hash.replace(/^#/, '');
-      if (!want) { activate(0); return; }
+      var slash = want.indexOf('/');
+      if (slash >= 0) {
+        // Another tab's address is not this rail's to answer: acting on it
+        // would quietly move this rail to a same-titled section of its own.
+        if (groupSlug != null && secnavSlug(want.slice(0, slash)) !== groupSlug) return;
+        want = want.slice(slash + 1);
+      }
+      if (!want) { if (slash < 0) activate(0); return; }
       var si = slugs.indexOf(secnavSlug(want));
       if (si >= 0) activate(si);
     }
@@ -354,10 +364,44 @@
     // initial_tab opens the page on a tab by its name, for a shortcut that
     // means one part of the page (the first tab otherwise).
     var first = Math.max(0, order.indexOf(cfg.initial_tab || ''));
+    var activeTab = first;
+    var tabButtons = [];
+    function selectTab(idx) {
+      activeTab = idx;
+      for (var i = 0; i < panels.length; i++) panels[i].classList.toggle('ui-tab-hidden', i !== idx);
+      for (var j = 0; j < tabButtons.length; j++) tabButtons[j].classList.toggle('active', j === idx);
+    }
+    // Which tabs hold a section of each slug, so #<slug> can reach a section
+    // on ANOTHER tab. Each tab's rail already answers the hash for its own
+    // sections; without this the answer was given on a hidden tab and the
+    // link appeared to do nothing. A slug the open tab holds keeps it open.
+    var tabsBySlug = {}, tabBySlug = {};
+    order.forEach(function(g, idx) {
+      tabBySlug[secnavSlug(g)] = idx;
+      secByGroup[g].forEach(function(s) {
+        var sl = secnavSlug(s.title);
+        if (!sl) return;
+        (tabsBySlug[sl] = tabsBySlug[sl] || []).push(idx);
+      });
+    });
+    function tabForHash() {
+      var raw = window.location.hash.replace(/^#/, '');
+      var slash = raw.indexOf('/');
+      if (slash >= 0) {
+        // "#<tab>/<section>" names its tab, so there is nothing to guess.
+        var ti = tabBySlug[secnavSlug(raw.slice(0, slash))];
+        if (ti != null && ti !== activeTab) selectTab(ti);
+        return;
+      }
+      var want = secnavSlug(raw);
+      var tabs = want && tabsBySlug[want];
+      if (!tabs || tabs.indexOf(activeTab) >= 0) return;
+      selectTab(tabs[0]);
+    }
     order.forEach(function(g, idx) {
       var panel = el('div', {class: 'ui-tabpanel' + (idx === first ? '' : ' ui-tab-hidden')});
       if (secNav && secByGroup[g].length > 1) {
-        buildSecNav(panel, secByGroup[g]);
+        buildSecNav(panel, secByGroup[g], secnavSlug(g));
       } else {
         var host = panel;
         if (inGrid) { host = el('div', {class: 'ui-section-grid'}); panel.appendChild(host); }
@@ -365,15 +409,13 @@
       }
       panels.push(panel);
       var btn = el('button', {type: 'button', class: 'ui-tab' + (idx === first ? ' active' : '')}, [g]);
-      btn.addEventListener('click', function() {
-        for (var i = 0; i < panels.length; i++) panels[i].classList.toggle('ui-tab-hidden', i !== idx);
-        var tabs = tabbar.querySelectorAll('.ui-tab');
-        for (var j = 0; j < tabs.length; j++) tabs[j].classList.remove('active');
-        btn.classList.add('active');
-      });
+      btn.addEventListener('click', function() { selectTab(idx); });
+      tabButtons.push(btn);
       tabbar.appendChild(btn);
       root.appendChild(panel);
     });
+    window.addEventListener('hashchange', tabForHash);
+    tabForHash();
   } else if (secNav && (cfg.sections || []).length > 1) {
     // Page-level side-nav: no top tabs (a single conceptual area), just one
     // rail of all sections. Fits a flat management surface better than a long

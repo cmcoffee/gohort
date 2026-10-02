@@ -86,21 +86,18 @@ func TestTheMaintenanceGroupsAreOnTheMaintenanceTab(t *testing.T) {
 	}
 }
 
-// adminSectionMaps reads the two maps out of the page source. Read rather than
-// exported, because making them package-level to test them is a change to the
-// thing under test.
+// adminSectionMaps returns the section-to-tab map and the tab ranks. The map is
+// package-level (the Apps tab names those tabs in its links), so it is read
+// directly; the ranks are still local to the page handler and are read out of
+// its source, because making them package-level to test them is a change to
+// the thing under test.
 func adminSectionMaps(t *testing.T) (map[string]string, map[string]int) {
 	t.Helper()
 	src := readAdminPageSource(t)
-	groups := map[string]string{}
-	i := strings.Index(src, "sectionGroup := map[string]string{")
-	j := strings.Index(src[i:], "\n\t}")
-	for _, m := range pairRe.FindAllStringSubmatch(src[i:i+j], -1) {
-		groups[m[1]] = m[2]
-	}
+	groups := sectionGroup
 	ranks := map[string]int{}
-	i = strings.Index(src, "groupRank := map[string]int{")
-	j = strings.Index(src[i:], "}\n")
+	i := strings.Index(src, "groupRank := map[string]int{")
+	j := strings.Index(src[i:], "}\n")
 	for _, m := range rankRe.FindAllStringSubmatch(src[i:i+j], -1) {
 		ranks[m[1]] = 0
 	}
@@ -110,12 +107,9 @@ func adminSectionMaps(t *testing.T) (map[string]string, map[string]int) {
 	return groups, ranks
 }
 
-var (
-	pairRe = regexp.MustCompile(`"([^"]+)"\s*:\s*"([^"]+)"`)
-	rankRe = regexp.MustCompile(`"([^"]+)"\s*:\s*\d+`)
-)
+var rankRe = regexp.MustCompile(`"([^"]+)"\s*:\s*\d+`)
 
-// readAdminPageSource returns page.go, where both maps live.
+// readAdminPageSource returns page.go, where the rank map lives.
 func readAdminPageSource(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile("page.go")

@@ -122,6 +122,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// registration, which ServeMux answers with a panic at startup.
 	sub.HandleFunc("/api/app-switches", a.handleApps)
 	sub.HandleFunc("/api/app-summary", a.handleAppSummary)
+	sub.HandleFunc("/api/app-panels", a.handleAppPanels)
 
 	// The rest of the API, one file per area. Each register*Routes lives in
 	// api_<area>.go beside the handlers it wires; registration order does

@@ -325,7 +325,8 @@
           // a cell would escape and show as literal text. Guard the scheme so a
           // javascript:/data: URL in the data can't become a clickable link.
           var href = col.link ? lookup(rec, col.link) : null;
-          if (href != null && /^(https?:\/\/|\/)/.test(String(href))) {
+          // "#section" too: a fragment can carry no scheme.
+          if (href != null && /^(https?:\/\/|\/|#)/.test(String(href))) {
             var a = el('a', {href: String(href), class: 'ui-table-link'});
             // A link INTO this deployment navigates in place; only one that
             // leaves it opens a tab.

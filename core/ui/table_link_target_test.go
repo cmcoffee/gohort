@@ -122,3 +122,37 @@ func TestARowLinkAndACellLinkAgree(t *testing.T) {
 		t.Error("the cell link no longer asks whether the destination leaves the app")
 	}
 }
+
+// A cell can link to a section of the page it is on, and a tabbed page opens
+// the tab holding that section: a link answered only on a hidden tab looks
+// like a link that does nothing.
+func TestAFragmentLinkReachesASectionOnAnotherTab(t *testing.T) {
+	basics := readRuntimeFile(t, "10_basics.js")
+	if !strings.Contains(basics, `/^(https?:\/\/|\/|#)/.test(String(href))`) {
+		t.Error("a cell link to #section is not rendered as a link")
+	}
+	epi := readRuntimeFile(t, "99_epilogue.js")
+	for _, want := range []string{
+		"window.addEventListener('hashchange', tabForHash);",
+		"tabs.indexOf(activeTab) >= 0", // a slug the open tab holds keeps it open
+		// "#tab/section": only the named tab's rail answers it.
+		"secnavSlug(want.slice(0, slash)) !== groupSlug",
+		"buildSecNav(panel, secByGroup[g], secnavSlug(g));",
+	} {
+		if !strings.Contains(epi, want) {
+			t.Errorf("tabbed page missing %q", want)
+		}
+	}
+}
+
+// The server builds tab-qualified addresses the way the page reads them.
+func TestSectionOnTab(t *testing.T) {
+	for _, c := range []struct{ tab, title, want string }{
+		{"Settings", "Mail server", "#settings/mail-server"},
+		{"Editor", "", "#editor/"}, // the slash keeps it unambiguous
+	} {
+		if got := SectionOnTab(c.tab, c.title); got != c.want {
+			t.Errorf("SectionOnTab(%q, %q) = %q, want %q", c.tab, c.title, got, c.want)
+		}
+	}
+}

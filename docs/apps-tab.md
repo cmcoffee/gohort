@@ -4,7 +4,8 @@ Status: the list, the per-app summary rows and the availability switch are
 built, and each app's pane shows the route stages and tunables it has claimed
 (the LLM Routing table and the Tuning fields, filtered by `?app=` and writing
 the same keys; the scoped settings address also saves and reverts only that
-app's knobs). Contributed sections on the pane are still design/target.
+app's knobs) and LINKS to the admin sections it contributes on other tabs.
+Hidden apps that claim controls have a pane but no switch.
 
 Admin is organised by MECHANISM. Everything configurable about techwriter is
 spread across three tabs: its tier in **LLMs** (a route stage), its knobs in
@@ -130,9 +131,30 @@ same control the LLMs tab shows, writing the same key.
 
 **Its tunables**, same.
 
-**Its contributed section**, if it registered one. This is the one that gets
-interesting: `filestore`, `publish` and `prompts` each contribute a section
-today, and those are precisely "settings for this app" wearing a tab name.
+**Its contributed sections**, as LINKS, never rendered a second time. A
+contributed section is a whole surface (a queue, an editor, its own client
+actions), and two live copies of one on a page are two editors over one
+record. Each link names the tab the section is filed on (the same
+`sectionTab` rule the page applies) and opens it there with a tab-qualified
+address, `#<tab>/<section>` (`ui.SectionOnTab`): an app's pane and its panel
+usually share the app's name, and a bare `#<slug>` resolves to the tab already
+open, which is the pane. An untitled section (the prompt-block editor) is
+addressed by its tab alone, `#<tab>/`. A section already on the Apps tab is
+not linked: it sits in this rail already.
+
+## Hidden apps with a pane
+
+`filestore`, `publish` and `prompts` are `WebHidden()`, so the switchboard
+leaves them out, and it still does: switching off plumbing other apps stand on
+is the trap that exclusion exists for. But they exist mostly to be configured,
+so "what can I change about this app" is exactly the question a pane answers.
+A pane is not a switch. So a hidden app that has claimed a control on another
+tab gets a pane, says in its state line that it is always on and why there is
+no switch, and stays off the switchboard and out of the enable endpoint.
+
+A hidden app whose only claim is a section already on the Apps tab
+(`publish`) gets no pane: that section is its row, and a pane beside it with
+the same name would be two entries for one thing.
 
 **Nothing else.** An app with no declared controls renders identity and access
 and stops. That is a true statement about it, and a truer one than a page of
@@ -231,7 +253,11 @@ apps' pages, which the duplicate-claim test catches.
   silently dropped, because a typo there is a control that vanishes
 - two apps cannot claim the same control key
 - a custom app's controls do not render for a compiled app, and vice versa
-- a hidden app (`WebHidden()`) and `/admin` are absent from the list
+- `/admin` is absent from the list; a hidden app (`WebHidden()`) is absent
+  from the switchboard and the enable endpoint, and has a pane only when it
+  claims a control on another tab
+- a contributed section is linked from the pane, never rendered into it, and
+  the link names the tab the page actually files it on
 
 ## Rollout
 

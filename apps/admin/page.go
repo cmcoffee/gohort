@@ -16,6 +16,80 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// sectionGroup is the top tab for each of admin's own sections, by TITLE.
+// Tab order follows first appearance in the Sections slice, so the order of
+// these groups is set by section order. Read through sectionTab.
+var sectionGroup = map[string]string{
+	"System Status": "System", "Site Settings": "System",
+	"Users": "System", "Add account": "System", "Default Apps": "System",
+	"App Groups": "System",
+
+	"Cost History (Last 30 Days)": "Costs", "Cost by source": "Costs", "Prices": "Costs",
+
+	"Worker LLM": "LLMs", "Lead LLM": "LLMs", "LLM Routing": "LLMs", "Model Privacy": "LLMs",
+	"Ollama Proxy": "LLMs", "Agent Loop Tuning": "LLMs",
+	"Local Model Scheduler": "LLMs",
+
+	"Embeddings":                "Capabilities",
+	"Audio Transcription (STT)": "Capabilities", "Image Generation": "Capabilities",
+	"Resource Sharing": "Capabilities", "Peers": "Capabilities", "Shared With": "Capabilities",
+	"Web Search": "Capabilities", "Mail (SMTP)": "System",
+	"Network Timeouts": "Tuning",
+
+	"Templates": "Extensions", "Import and export": "Extensions",
+
+	// Pluggable integrations you ADD — grouped under Extensions (vs Capabilities,
+	// which are configured features like Image Generation / STT).
+	"API Credentials": "Extensions", "MCP Servers": "Extensions", "Connectors": "Extensions",
+	"Source Hooks": "Extensions", "Persistent Tools (Pending)": "Extensions",
+	"Global Tools": "Extensions", "Agent-Scoped Tools": "Extensions", "Orphaned Tools": "Extensions",
+	"Tool Groups": "Extensions",
+	"Skills":      "Extensions", "Pipelines": "Extensions",
+
+	"Agent Capabilities: Outward & Spending": "Agents",
+
+	"Scheduled Tasks": "Maintenance", "Maintenance": "Maintenance",
+	"Migrations": "Maintenance", "Vector Index": "Maintenance",
+	"Database Browser": "Maintenance",
+	// The three maintenance groups. They were absent from this map, so
+	// they kept the empty Group that means "General" and sat on a tab of
+	// their own away from the Maintenance ones — which also made their
+	// being collapsed read as arbitrary rather than as "the rarely-used
+	// ones are closed", which is the rule they were written under.
+	"Reclaim space": "Maintenance", "Reports": "Maintenance",
+	"Housekeeping": "Maintenance",
+	// Also unmapped, and landing in General for the same reason.
+	"Channel Wake Rules": "System", "Feature Access": "System",
+	"System Dependencies": "Capabilities", "Page Rendering (Browser)": "Capabilities",
+	"MCP Tools (exposed to external clients)": "Extensions", "Bridges": "Extensions",
+	"Categories": "Extensions",
+
+	// Who owns what, across every kind of owned thing. Six sections that
+	// are one subject, which is a tab rather than six strays in General.
+	"Rules":                  "Governance",
+	"User-owned credentials": "Governance", "Global tools": "Governance",
+	"User-owned agents": "Governance", "User-owned pipelines": "Governance",
+	"User-owned machines": "Governance", "Pending promotions": "Governance",
+}
+
+// sectionTab is the tab a section lands on: its entry in sectionGroup, else
+// the Group it declared. Empty stays empty, which the page renders as General.
+//
+// The map keys on TITLE, and an Apps row's title is an app's NAME — which
+// nobody here chose and which could one day be "Catalog" or "Skills". A
+// collision would yank that app's row onto another tab, where it would read as
+// the app having vanished. Sections that have already declared the Apps group
+// keep it.
+func sectionTab(title, declared string) string {
+	if declared == AppsTabGroup {
+		return declared
+	}
+	if g, ok := sectionGroup[title]; ok {
+		return g
+	}
+	return declared
+}
+
 // boolOffSuffixRE matches a trailing "(0 = off)"-style parenthetical. On a bool
 // tunable that renders as a toggle, the 0/1 convention is redundant noise, so the
 // admin UI strips it from the label. Left intact on number knobs, where "0 = off"
@@ -251,64 +325,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	} {
 		page.Sections = append(page.Sections, build()...)
 	}
-	// Category for each section's top tab, and which sections span the
-	// full grid width (tables, the cost chart, multi-pane Stacks, the DB
-	// browser) vs the narrow config forms that pack two-up. Kept here in
-	// one place so the section literals above stay uncluttered and the
-	// layout reads at a glance. Tab order follows first appearance in the
-	// Sections slice, so the order of these groups is set by section order.
-	sectionGroup := map[string]string{
-		"System Status": "System", "Site Settings": "System",
-		"Users": "System", "Add account": "System", "Default Apps": "System",
-		"App Groups": "System",
-
-		"Cost History (Last 30 Days)": "Costs", "Cost by source": "Costs", "Prices": "Costs",
-
-		"Worker LLM": "LLMs", "Lead LLM": "LLMs", "LLM Routing": "LLMs", "Model Privacy": "LLMs",
-		"Ollama Proxy": "LLMs", "Agent Loop Tuning": "LLMs",
-		"Local Model Scheduler": "LLMs",
-
-		"Embeddings":                "Capabilities",
-		"Audio Transcription (STT)": "Capabilities", "Image Generation": "Capabilities",
-		"Resource Sharing": "Capabilities", "Peers": "Capabilities", "Shared With": "Capabilities",
-		"Web Search": "Capabilities", "Mail (SMTP)": "System",
-		"Network Timeouts": "Tuning",
-
-		"Templates": "Extensions", "Import and export": "Extensions",
-
-		// Pluggable integrations you ADD — grouped under Extensions (vs Capabilities,
-		// which are configured features like Image Generation / STT).
-		"API Credentials": "Extensions", "MCP Servers": "Extensions", "Connectors": "Extensions",
-		"Source Hooks": "Extensions", "Persistent Tools (Pending)": "Extensions",
-		"Global Tools": "Extensions", "Agent-Scoped Tools": "Extensions", "Orphaned Tools": "Extensions",
-		"Tool Groups": "Extensions",
-		"Skills":      "Extensions", "Pipelines": "Extensions",
-
-		"Agent Capabilities: Outward & Spending": "Agents",
-
-		"Scheduled Tasks": "Maintenance", "Maintenance": "Maintenance",
-		"Migrations": "Maintenance", "Vector Index": "Maintenance",
-		"Database Browser": "Maintenance",
-		// The three maintenance groups. They were absent from this map, so
-		// they kept the empty Group that means "General" and sat on a tab of
-		// their own away from the Maintenance ones — which also made their
-		// being collapsed read as arbitrary rather than as "the rarely-used
-		// ones are closed", which is the rule they were written under.
-		"Reclaim space": "Maintenance", "Reports": "Maintenance",
-		"Housekeeping": "Maintenance",
-		// Also unmapped, and landing in General for the same reason.
-		"Channel Wake Rules": "System", "Feature Access": "System",
-		"System Dependencies": "Capabilities", "Page Rendering (Browser)": "Capabilities",
-		"MCP Tools (exposed to external clients)": "Extensions", "Bridges": "Extensions",
-		"Categories": "Extensions",
-
-		// Who owns what, across every kind of owned thing. Six sections that
-		// are one subject, which is a tab rather than six strays in General.
-		"Rules":                  "Governance",
-		"User-owned credentials": "Governance", "Global tools": "Governance",
-		"User-owned agents": "Governance", "User-owned pipelines": "Governance",
-		"User-owned machines": "Governance", "Pending promotions": "Governance",
-	}
+	// Which sections span the full grid width (tables, the cost chart,
+	// multi-pane Stacks, the DB browser) vs the narrow config forms that pack
+	// two-up. The tab each section lands on is sectionTab, at package level
+	// because the Apps tab names those tabs in its links.
 	wideSections := map[string]bool{
 		"System Status": true, "Users": true, "LLM Routing": true,
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
@@ -338,7 +358,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// The Apps tab: one row per compiled app. Custom apps land on the SAME tab
 	// through the runtime section source below, which is why this is appended
 	// first — compiled apps, then whatever people have authored.
-	page.Sections = append(page.Sections, a.appsTabSections()...)
+	page.Sections = append(page.Sections, a.appsTabSections(r)...)
 	// App-contributed admin sections — framework tuning that belongs in admin
 	// (e.g. the prompt-block editor), self-registered via core so admin doesn't
 	// import the app. Each carries its own Group/Wide; its Head brings any
@@ -354,9 +374,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		// "Skills". A collision would yank that app's row onto another tab,
 		// where it would read as the app having vanished. Sections that have
 		// already declared this group keep it.
-		if g, ok := sectionGroup[t]; ok && page.Sections[i].Group != AppsTabGroup {
-			page.Sections[i].Group = g
-		}
+		page.Sections[i].Group = sectionTab(t, page.Sections[i].Group)
 		if wideSections[t] {
 			page.Sections[i].Wide = true
 		}

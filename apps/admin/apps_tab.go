@@ -30,9 +30,9 @@ import (
 const AppsTabGroup = "Apps"
 
 // appsTabSections builds the availability switchboard plus one section per
-// COMPILED app.
-func (a *AdminApp) appsTabSections() []ui.Section {
-	rows := listableApps()
+// COMPILED app that has a pane (see paneApps).
+func (a *AdminApp) appsTabSections(r *http.Request) []ui.Section {
+	rows := paneApps(r)
 	out := make([]ui.Section, 0, len(rows)+1)
 	out = append(out, appsAvailabilitySection())
 	for _, rw := range rows {
@@ -41,10 +41,41 @@ func (a *AdminApp) appsTabSections() []ui.Section {
 			Subtitle: rw.path,
 			Group:    AppsTabGroup,
 			Wide:     true,
-			Body:     appPaneBody(rw.path),
+			Body:     appPaneBody(r, rw.path),
 		})
 	}
 	return out
+}
+
+// paneApps is every app that gets a pane: each app on the switchboard, plus
+// each HIDDEN app that has claimed a control.
+//
+// Hidden apps are kept off the switchboard because switching off the plumbing
+// other apps stand on is a trap (see listableApps), and that still holds. But
+// several of them exist mostly to be configured (the prompt-block editor, the
+// file store, publishing destinations), so "what can I change about this app"
+// is exactly the question their pane answers. A pane is not a switch, so
+// listing them here costs nothing the switchboard was protecting. A hidden app
+// that claims nothing stays out: it has nothing an operator could look for.
+func paneApps(r *http.Request) []appRow {
+	rows := listableApps()
+	for _, wa := range AllWebApps() {
+		if wa.WebPath() == "/admin" || !appIsHidden(wa) || !claimsAnything(r, wa.WebPath()) {
+			continue
+		}
+		rows = append(rows, appRow{path: wa.WebPath(), name: wa.WebName(), desc: wa.WebDesc(), hidden: true})
+	}
+	sort.Slice(rows, func(i, j int) bool { return strings.ToLower(rows[i].name) < strings.ToLower(rows[j].name) })
+	return rows
+}
+
+// claimsAnything reports whether an app has claimed a route stage, a tunable or
+// an admin section on another tab. A section already on the Apps tab does not
+// count: it is the app's settings in this rail already, and a pane beside it
+// with the same name would be a second entry for one thing.
+func claimsAnything(r *http.Request, path string) bool {
+	return len(RouteStagesForApp(path)) > 0 || len(TunablesForApp(path)) > 0 ||
+		len(panelsElsewhere(r, path)) > 0
 }
 
 // appPaneBody is one app's pane: what it is, then the controls it has claimed.
@@ -54,7 +85,7 @@ func (a *AdminApp) appsTabSections() []ui.Section {
 // table the LLMs tab shows, then claimed knobs as the same fields the Tuning
 // tab shows, each filtered to this app and writing the same keys; a change in
 // either place reaches the other, so neither view contradicts the other.
-func appPaneBody(path string) ui.Component {
+func appPaneBody(r *http.Request, path string) ui.Component {
 	summary := ui.DisplayPanel{
 		Source: "api/app-summary?path=" + path,
 		Pairs: []ui.DisplayPair{
@@ -72,6 +103,20 @@ func appPaneBody(path string) ui.Component {
 	if form := appTuningForm(path); form != nil {
 		children = append(children, *form)
 	}
+	// Panels are LINKED, not rendered here. A contributed section is a whole
+	// surface, often with state and client actions of its own, and two live
+	// copies of one on a page is two editors over one record. The link opens
+	// it on the tab it already lives on.
+	if len(panelsElsewhere(r, path)) > 0 {
+		children = append(children, ui.Table{
+			Source: appPanelsSource(path),
+			RowKey: "href",
+			Columns: []ui.Col{
+				{Field: "title", Label: "Settings panel", Link: "href", Flex: 1},
+				{Field: "tab", Label: "On tab", Mute: true},
+			},
+		})
+	}
 	if len(children) == 1 {
 		return summary
 	}
@@ -88,8 +133,11 @@ func appIsHidden(wa WebApp) bool {
 }
 
 // appRow is one administrable app: what it is called, where it is mounted,
-// and what it says it does.
-type appRow struct{ path, name, desc string }
+// and what it says it does. hidden marks an app that has a pane but no switch.
+type appRow struct {
+	path, name, desc string
+	hidden           bool
+}
 
 // listableApps enumerates the compiled apps this tab administers, by name.
 //
@@ -214,25 +262,6 @@ func isListableApp(path string) bool {
 	return false
 }
 
-// findListedApp resolves the app a section on this tab is about.
-//
-// A named function so the thing that BUILDS the sections and the thing that
-// ANSWERS them can be checked against each other. They disagreed: sections came
-// from AllWebApps and the lookup read the direct-registration registry, which
-// holds the admin panel and nothing else — and the admin panel is the one app
-// listableApps excludes. Every section on the tab rendered a 404 under a
-// correct heading, on every deployment.
-//
-// Nil when nothing serves that path, which is the caller's 404.
-func findListedApp(path string) WebApp {
-	for _, wa := range AllWebApps() {
-		if wa.WebPath() == path {
-			return wa
-		}
-	}
-	return nil
-}
-
 // handleAppSummary answers one app's row.
 //
 // Live rather than baked into the section, so the access line is true when it
@@ -243,7 +272,7 @@ func (a *AdminApp) handleAppSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
-	app := findListedApp(path)
+	app := findPaneApp(r, path)
 	if app == nil {
 		http.NotFound(w, r)
 		return
@@ -252,7 +281,11 @@ func (a *AdminApp) handleAppSummary(w http.ResponseWriter, r *http.Request) {
 	// state_severity colours the state line: core/ui has no way to know which
 	// of two words is the bad news, so the server says.
 	state, severity := "Enabled", "ok"
-	if !AppEnabled(a.db, path) {
+	switch {
+	case appIsHidden(app):
+		// Said outright, so the missing switch above reads as deliberate.
+		state = "Always on: part of the framework other apps use, so it has no switch"
+	case !AppEnabled(a.db, path):
 		state, severity = "Disabled: its pages and API answer 503", "bad"
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -311,8 +344,8 @@ func describeAppControls(r *http.Request, path string) string {
 	if n := len(TunablesForApp(path)); n > 0 {
 		parts = append(parts, plural(n, "tunable")+" (below; also on Tuning)")
 	}
-	if n := len(AdminSectionEntriesForApp(r, path)); n > 0 {
-		parts = append(parts, plural(n, "settings panel"))
+	if n := len(panelsElsewhere(r, path)); n > 0 {
+		parts = append(parts, plural(n, "settings panel")+" (linked below)")
 	}
 	if len(parts) == 0 {
 		return "none declared: anything this app configures still lives on the LLMs, Tuning and Extensions tabs"
@@ -325,4 +358,86 @@ func plural(n int, noun string) string {
 		return "1 " + noun
 	}
 	return strconv.Itoa(n) + " " + noun + "s"
+}
+
+// findPaneApp resolves the app a section on this tab is about, hidden ones
+// with a pane included.
+//
+// A named function so the thing that BUILDS the sections and the thing that
+// ANSWERS them can be checked against each other. They disagreed: sections came
+// from AllWebApps and the lookup read the direct-registration registry, which
+// holds the admin panel and nothing else — and the admin panel is the one app
+// listableApps excludes. Every section on the tab rendered a 404 under a
+// correct heading, on every deployment. It resolves through paneApps for the
+// same reason: the list the sections are built from is the list it answers.
+//
+// Nil when no pane is for that path, which is the caller's 404.
+func findPaneApp(r *http.Request, path string) WebApp {
+	for _, rw := range paneApps(r) {
+		if rw.path != path {
+			continue
+		}
+		for _, wa := range AllWebApps() {
+			if wa.WebPath() == path {
+				return wa
+			}
+		}
+	}
+	return nil
+}
+
+// appPanelsSource is the source of one app's panel links. Named once so the
+// table and the routability test agree on it.
+func appPanelsSource(path string) string {
+	return "api/app-panels?path=" + path
+}
+
+// handleAppPanels lists the admin sections an app has claimed on other tabs,
+// each with the tab it lands on and a link that opens it there.
+//
+// The tab comes from sectionTab, the same rule the page applies when it files
+// the section, so the link cannot name one tab while the section sits on
+// another. The link names the tab as well as the section (ui.SectionOnTab):
+// an app's pane and its panel usually share the app's name, and a bare slug
+// would resolve to the pane the link is on.
+func (a *AdminApp) handleAppPanels(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	type panel struct {
+		Title string `json:"title"`
+		Tab   string `json:"tab"`
+		Href  string `json:"href"`
+	}
+	out := []panel{}
+	for _, e := range panelsElsewhere(r, path) {
+		tab := sectionTab(e.Section.Title, e.Section.Group)
+		if tab == "" {
+			tab = "General"
+		}
+		// An untitled section is the only thing on its tab (the prompt-block
+		// editor), so the tab's name is what it is called and the tab alone
+		// is its address.
+		title := e.Section.Title
+		if title == "" {
+			title = tab
+		}
+		out = append(out, panel{Title: title, Tab: tab, Href: ui.SectionOnTab(tab, e.Section.Title)})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// panelsElsewhere is the admin sections an app has claimed that live on some
+// OTHER tab. One already on the Apps tab is in this tab's own rail beside the
+// pane, so there is nothing to link to and nothing to reach.
+func panelsElsewhere(r *http.Request, path string) []AdminSectionEntry {
+	var out []AdminSectionEntry
+	for _, e := range AdminSectionEntriesForApp(r, path) {
+		if sectionTab(e.Section.Title, e.Section.Group) != AppsTabGroup {
+			out = append(out, e)
+		}
+	}
+	return out
 }
