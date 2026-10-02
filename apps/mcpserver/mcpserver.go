@@ -189,10 +189,17 @@ func (T *MCPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 //     unscoped key, grandfathered by AllowsFeature)
 //
 // A session-cookie or bridge-key request has no account token and skips tier
-// 3: those are the user themselves or an admin-minted bridge key, not a scoped
-// personal token.
+// 3, and cannot call a tool either (tools/call requires an account token).
+//
+// Its own resolution, not the desktop bridge's: that one also demands the
+// "desktop" scope on a personal token, so a key scoped to MCP alone was
+// refused, and the way through was to tick "Desktop bridge", which let the
+// same key open the desktop tool bridge as well.
 func (T *MCPServer) authorize(r *http.Request, action string) (owner, refusal string, status int) {
-	owner = DesktopBridgeUserOf(r)
+	owner = AuthCurrentUser(r)
+	if owner == "" {
+		owner = APIKeyUser(r)
+	}
 	if owner == "" {
 		Log("[mcpserver] %s REJECTED: no valid X-API-Key (mint a bridge key in Bridges admin)", action)
 		return "", "Unauthorized: this endpoint needs a valid gohort personal access token in the X-API-Key header. Create one on your Account page (/account) and put it in the connector config.", http.StatusUnauthorized

@@ -566,7 +566,7 @@ func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			if !SetAccountTokenScope(user, id, &body.Scope) {
+			if !SetAccountTokenScope(user, id, T.grantableScope(user, &body.Scope)) {
 				http.Error(w, "token not found", http.StatusNotFound)
 				return
 			}
@@ -588,6 +588,7 @@ func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
 		if scope == nil {
 			scope = &TokenScope{}
 		}
+		scope = T.grantableScope(user, scope)
 		var ttl time.Duration
 		if req.ExpiresDays > 0 {
 			ttl = time.Duration(req.ExpiresDays) * 24 * time.Hour
@@ -604,6 +605,39 @@ func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// grantableScope keeps only what the scope editor offers this user: features
+// the admin permits them, and targets from their own grantable list. The
+// editor never shows anything else, but the save took whatever was posted, so
+// a key could name another user's agent or a feature the admin had withheld.
+func (T *Account) grantableScope(user string, scope *TokenScope) *TokenScope {
+	if scope == nil {
+		return nil
+	}
+	out := *scope
+	feats := map[string]bool{}
+	for _, f := range ShareableFeatures() {
+		if FeatureAllowedForUser(RootDB, f.Key, user) {
+			feats[f.Key] = true
+		}
+	}
+	targets := map[string]bool{}
+	for _, t := range ListExternalTargets(T.DB, user) {
+		targets[t.Value] = true
+	}
+	out.Features, out.Targets = nil, nil
+	for _, f := range scope.Features {
+		if feats[strings.TrimSpace(f)] {
+			out.Features = append(out.Features, strings.TrimSpace(f))
+		}
+	}
+	for _, t := range scope.Targets {
+		if targets[strings.TrimSpace(t)] {
+			out.Targets = append(out.Targets, strings.TrimSpace(t))
+		}
+	}
+	return &out
 }
 
 // handleTokenTargets feeds the per-key scope editor: which FEATURES this user

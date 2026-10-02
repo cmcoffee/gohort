@@ -234,3 +234,30 @@ func TestOnlyAShareableAgentIsIndexed(t *testing.T) {
 		t.Errorf("a sub-agent was shared: %+v", got)
 	}
 }
+
+// A shared agent's "never unattended" marks are its owner's restriction: run
+// unattended by the person it was shared with, they still hold.
+func TestASharedAgentKeepsItsOwnersUnattendedMarks(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	rec := AgentRecord{ID: "a1", Owner: "alice", Name: "Mailer", OrchestratorPrompt: "mail",
+		AllowedUsers: []string{"bob"}, NoUnattendedTools: []string{"send_email"}}
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	g := app.newAutonomousGate("bob", "a1", nil)
+	if !g.noUnattended["send_email"] {
+		t.Error("bob's unattended run of alice's agent dropped her never-unattended mark")
+	}
+}
+
+// A key's explicit grant reaches its owner's own agents, never an agent
+// someone else shared with them (that one needs ITS owner to expose it).
+func TestAKeyGrantCoversOnlyOwnAgents(t *testing.T) {
+	if !ownAgentFor(AgentRecord{Owner: "alice"}, "alice") || !ownAgentFor(AgentRecord{}, "alice") {
+		t.Error("an own agent is not covered")
+	}
+	if ownAgentFor(AgentRecord{Owner: "bob"}, "alice") {
+		t.Error("another owner's shared agent is covered by alice's key grant")
+	}
+}

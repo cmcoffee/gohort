@@ -93,10 +93,23 @@ func (app *OrchestrateApp) newAutonomousGate(owner, agentID string, sess *ToolSe
 	if rec, ok := loadAgent(udb, agentID); ok {
 		sub = strings.TrimSpace(rec.OwnedBy) != ""
 	}
+	noUnattended := autonomousNoUnattendedSet(udb, agentID)
+	// An agent someone SHARED with this runner lives in its owner's store, not
+	// the runner's, so its "never unattended" marks were read from a store that
+	// does not hold it and came back empty. They are the owner's restriction
+	// and travel with the agent; the runner's own marks still add to them.
+	for _, a := range SharedAgentsFor(app.DB, owner) {
+		if a.ID == agentID && strings.TrimSpace(a.Owner) != "" && a.Owner != owner {
+			for t := range autonomousNoUnattendedSet(UserDB(app.DB, a.Owner), agentID) {
+				noUnattended[t] = true
+			}
+			break
+		}
+	}
 	return &autonomousGate{
 		app: app, owner: owner, agentID: agentID, subAgent: sub,
 		auto:         autonomousApprovedSet(udb, agentID),
-		noUnattended: autonomousNoUnattendedSet(udb, agentID),
+		noUnattended: noUnattended,
 		sess:         sess,
 	}
 }

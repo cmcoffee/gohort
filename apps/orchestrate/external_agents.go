@@ -111,10 +111,18 @@ func ResolveExternalAgentGranted(db Database, owner, key string, granted func(ca
 	if !ok {
 		return "", false
 	}
-	if externallyReachable(a, owner) || (granted != nil && granted("agent:"+a.ID)) {
+	if externallyReachable(a, owner) || (granted != nil && granted("agent:"+a.ID) && ownAgentFor(a, owner)) {
 		return a.ID, true
 	}
 	return "", false
+}
+
+// ownAgentFor reports whether a is owner's own agent. A key's explicit grant
+// is its owner's consent, which covers their own agents and no one else's: an
+// agent somebody shared with them reaches a key only when ITS owner exposed it.
+func ownAgentFor(a AgentRecord, owner string) bool {
+	o := strings.TrimSpace(a.Owner)
+	return o == "" || o == owner || o == seedOwner
 }
 
 // ExternalChannelTarget is a live conversation an external caller can join: the

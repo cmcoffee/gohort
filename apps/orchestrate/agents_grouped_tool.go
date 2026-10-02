@@ -1368,12 +1368,12 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		RoundToolFilter: subTurn.machineToolFilter(),
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply:      gDecline,
-		SystemPrompt:        sysPrompt,
-		Tools:               tools,
-		MaxRounds:           resolveMaxWorkerRounds(target),
-		ThinkBudget:         target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Effort:              target.Effort,      // per-agent level; a budget above wins
+		PreEmptedReply: gDecline,
+		SystemPrompt:   sysPrompt,
+		Tools:          tools,
+		MaxRounds:      resolveMaxWorkerRounds(target),
+		ThinkBudget:    target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Effort:         target.Effort,      // per-agent level; a budget above wins
 		// Asked of whoever is watching the calling turn; with nobody
 		// watching, queued for the owner (see runConfirm).
 		Confirm:             t.runConfirm(target.ID, subSess),

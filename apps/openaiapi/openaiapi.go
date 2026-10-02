@@ -182,6 +182,14 @@ func canonicalTier(m string) string {
 // gateFeature applies gates 1 and 2. Returns false (and writes a 403) when the
 // request may not use the endpoint.
 func (T *OpenAIAPI) gateFeature(w http.ResponseWriter, user string, token *AccountToken) bool {
+	// A personal access token only. A desktop key (negotiated by the user's
+	// machine, never expiring) and an iMessage bridge key also resolve to a
+	// user, but they carry no scope, so on /v1 they were a full, unscoped key
+	// to every model, agent and channel the user exposes.
+	if token == nil {
+		writeErr(w, http.StatusForbidden, "the OpenAI /v1 endpoint takes a personal access token from /account (Account > API keys): desktop and bridge keys are not API keys")
+		return false
+	}
 	if !FeatureAllowedForUser(RootDB, OpenAIFeatureKey, user) {
 		writeErr(w, http.StatusForbidden, "the OpenAI /v1 endpoint is not enabled for your account: ask an admin to grant it under Feature Access")
 		return false
@@ -664,8 +672,8 @@ func (T *OpenAIAPI) runAgentTurn(w http.ResponseWriter, r *http.Request, t agent
 		// A real person is on the other end, so this is not a headless
 		// agent-to-agent dispatch: no DELEGATED-INVOCATION preamble, and
 		// follow-up questions are answerable.
-		Interactive:          true,
-		SystemPromptOverride: t.system,
+		Interactive:   true,
+		CallerContext: t.system,
 	}
 	// Thinking off. A caller on this endpoint is waiting on a response — often
 	// out loud — and reasoning tokens are invisible to them: the stream stays

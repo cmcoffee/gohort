@@ -171,3 +171,28 @@ func TestProxyServerHasHeaderTimeoutAndBodyCap(t *testing.T) {
 		t.Errorf("a body over the cap was read in full: %d", w.Code)
 	}
 }
+
+// From off the box the proxy wants what /v1 wants: a personal token scoped for
+// model access. A desktop key, or a token scoped to something else, is refused.
+func TestTheProxyWantsAModelScopedToken(t *testing.T) {
+	prevRoot, prevAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return RootDB }
+	t.Cleanup(func() { RootDB, AuthDB = prevRoot, prevAuth })
+	desktop, _ := MintDesktopKey("alice")
+	mcpOnly := MintAccountTokenScoped("alice", "mcp", &TokenScope{Features: []string{"mcp"}})
+	models := MintAccountTokenScoped("alice", "models", &TokenScope{Features: []string{inferenceFeatureKey}})
+
+	p := &ollamaProxy{}
+	try := func(key string) bool {
+		r := from("203.0.113.9:5555")
+		r.Header.Set("X-API-Key", key)
+		return p.allow(httptest.NewRecorder(), r)
+	}
+	if try(desktop) || try(mcpOnly.Token) {
+		t.Error("a key not scoped for model access used the proxy")
+	}
+	if !try(models.Token) {
+		t.Error("a model-scoped token was refused")
+	}
+}
