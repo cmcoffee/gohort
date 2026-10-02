@@ -99,6 +99,54 @@ func isPublicPath(path string) bool {
 	return false
 }
 
+// hostCannotBeRebound reports whether a request's Host names something a
+// third-party site cannot point at this machine: an IP address, localhost, a
+// single-label name or a local-only suffix, or the configured dashboard host.
+// A rebinding attack needs a name its author controls, which is a public,
+// dotted domain.
+func hostCannotBeRebound(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]."))
+	if host == "" || net.ParseIP(host) != nil || host == "localhost" || !strings.Contains(host, ".") {
+		return true
+	}
+	for _, sfx := range []string{".localhost", ".local", ".lan", ".home.arpa", ".internal", ".localdomain"} {
+		if strings.HasSuffix(host, sfx) {
+			return true
+		}
+	}
+	if u, err := url.Parse(DashboardURL()); err == nil && strings.EqualFold(u.Hostname(), host) {
+		return true
+	}
+	return false
+}
+
+// isPublicRequest is isPublicPath for a request, read the way the router
+// reads it. The gate matched the DECODED path while the router matches the
+// escaped one and does not clean %2e%2e or %2f, so a path like
+// /<public prefix>%2f..%2f<anything> passed as public here and was routed
+// somewhere else entirely. Public means public in both readings, with no dot
+// segments: a public endpoint never needs one, and refusing only sends the
+// request through the login check.
+func isPublicRequest(r *http.Request) bool {
+	p := r.URL.Path
+	if !isPublicPath(p) {
+		return false
+	}
+	if raw := r.URL.RawPath; raw != "" && !isPublicPath(raw) {
+		return false
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
 // authSession tracks an active login session.
 type authSession struct {
 	User    string `json:"user"`
@@ -143,14 +191,57 @@ func lockoutDuration() time.Duration {
 	return 15 * time.Minute
 }
 
-// recordFailedLogin increments the failure count for an IP and locks
-// it out if the threshold is reached. Returns true if the IP is now locked.
+// lockoutSources caps the tracking map; past it, entries whose window has
+// passed are swept, so every new address a guesser uses is not kept forever.
+const lockoutSources = 4096
+
+// loginLockKeys are the counters a failed login charges: the source address,
+// with an IPv6 address taken as its /64 (one host holds the whole block, so
+// counting single addresses gave it unlimited fresh ones), and the account,
+// so guesses spread across many addresses still meet a limit. The account's
+// threshold is higher (accountAttemptsFactor): it is there to stop a
+// distributed guess, and set at the address limit it would hand anyone a way
+// to lock the owner out.
+func loginLockKeys(ip net.IP, username string) []string {
+	src := ""
+	if ip != nil {
+		src = ip.String()
+		if ip.To4() == nil {
+			src = ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+		}
+	}
+	keys := []string{src}
+	if u := strings.ToLower(strings.TrimSpace(username)); u != "" {
+		keys = append(keys, "acct:"+u)
+	}
+	return keys
+}
+
+const accountAttemptsFactor = 4
+
+func attemptsFor(key string) int {
+	if strings.HasPrefix(key, "acct:") {
+		return maxAttempts() * accountAttemptsFactor
+	}
+	return maxAttempts()
+}
+
+// recordFailedLogin increments the failure count for a key and locks it out
+// if the threshold is reached. Returns true if the key is now locked.
 func recordFailedLogin(ip string) bool {
 	lockoutMu.Lock()
 	defer lockoutMu.Unlock()
 
 	entry, ok := lockouts[ip]
 	if !ok {
+		if len(lockouts) >= lockoutSources {
+			for k, e := range lockouts {
+				if e.Locked.IsZero() && time.Since(e.LastFail) >= lockoutDuration() ||
+					!e.Locked.IsZero() && time.Since(e.Locked) >= lockoutDuration() {
+					delete(lockouts, k)
+				}
+			}
+		}
 		entry = &lockoutEntry{}
 		lockouts[ip] = entry
 	}
@@ -168,7 +259,7 @@ func recordFailedLogin(ip string) bool {
 	entry.Attempts++
 	entry.LastFail = time.Now()
 
-	if entry.Attempts >= maxAttempts() {
+	if entry.Attempts >= attemptsFor(ip) {
 		entry.Locked = time.Now()
 		return true
 	}
@@ -218,23 +309,45 @@ type resetToken struct {
 
 // createResetToken generates a password reset token for a user and
 // stores it in the database. Returns the token string.
+//
+// Stored under a hash of the token, as sessions are: the link in the mail is
+// the credential, and a database read must not hand out working ones.
 func createResetToken(db Database, username string) string {
 	token := generateToken()
-	db.Set(AuthResetTable, token, resetToken{
+	db.Set(AuthResetTable, sessionStoreKey(token), resetToken{
 		Username: username,
 		Expires:  time.Now().Add(resetTokenExpiry()).Unix(),
 	})
 	return token
 }
 
+// loadResetToken reads a token's record, moving one stored under the raw
+// token (issued before tokens were hashed) to its hashed key. A presented
+// value that is itself a stored key is refused.
+func loadResetToken(db Database, token string) (resetToken, bool) {
+	var rt resetToken
+	if token == "" || strings.HasPrefix(token, "sha256:") {
+		return rt, false
+	}
+	if db.Get(AuthResetTable, sessionStoreKey(token), &rt) {
+		return rt, true
+	}
+	if !db.Get(AuthResetTable, token, &rt) {
+		return rt, false
+	}
+	db.Set(AuthResetTable, sessionStoreKey(token), rt)
+	db.Unset(AuthResetTable, token)
+	return rt, true
+}
+
 // validateResetToken checks a reset token and returns the username if valid.
 func validateResetToken(db Database, token string) (string, bool) {
-	var rt resetToken
-	if !db.Get(AuthResetTable, token, &rt) {
+	rt, ok := loadResetToken(db, token)
+	if !ok {
 		return "", false
 	}
 	if time.Now().Unix() >= rt.Expires {
-		db.Unset(AuthResetTable, token)
+		db.Unset(AuthResetTable, sessionStoreKey(token))
 		return "", false
 	}
 	return rt.Username, true
@@ -244,7 +357,7 @@ func validateResetToken(db Database, token string) (string, bool) {
 func consumeResetToken(db Database, token string) (string, bool) {
 	username, ok := validateResetToken(db, token)
 	if ok {
-		db.Unset(AuthResetTable, token)
+		db.Unset(AuthResetTable, sessionStoreKey(token))
 	}
 	return username, ok
 }
@@ -1067,6 +1180,9 @@ func AuthChangePassword(db Database, username, currentPassword, newPassword stri
 	if n := revokeUserSessionsExcept(db, username, keepToken); n > 0 {
 		Log("[auth] password changed for %q: ended %d other session(s)", username, n)
 	}
+	// A reset link still outstanding is a way back in with a password the
+	// owner no longer uses.
+	revokeUserResetTokens(db, username)
 	return true
 }
 
@@ -1095,6 +1211,9 @@ func AuthAdminSetPassword(db Database, username, newPassword string) bool {
 	if n := AuthRevokeUserSessions(db, username); n > 0 {
 		Log("[auth] password set for %q: ended %d session(s)", username, n)
 	}
+	// Every other reset link goes too: one used, or an admin's reset, settles
+	// the password, and the rest would each reopen it.
+	revokeUserResetTokens(db, username)
 	return true
 }
 
@@ -1480,7 +1599,7 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		}
 
 		// Public paths registered by apps (handle their own auth).
-		if isPublicPath(r.URL.Path) {
+		if isPublicRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1566,8 +1685,15 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 			}
 		}
 
-		// If no users configured, pass through.
+		// If no users configured, pass through, for a Host the visitor could
+		// not have been steered to. With no accounts every request is trusted,
+		// so a web page the operator visits could otherwise point its own
+		// domain at this machine (DNS rebinding) and drive the instance.
 		if !AuthHasUsers(db) {
+			if !hostCannotBeRebound(r.Host) {
+				http.Error(w, "this instance has no accounts yet, so it only answers on an IP address, a local name, or its configured dashboard address: open it that way, or create an account first", http.StatusForbidden)
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1691,19 +1817,27 @@ func LoginHandler(db Database) http.HandlerFunc {
 			username := strings.TrimSpace(r.FormValue("username"))
 			password := r.FormValue("password")
 			ip := ClientIP(r).String()
+			keys := loginLockKeys(ClientIP(r), username)
 
 			// Check lockout before attempting auth.
-			if isLockedOut(ip) {
-				Log("[auth] locked out IP %s attempted login as %q", ip, username)
-				serveLoginPage(w, fmt.Sprintf("Too many failed attempts. Try again in %d minutes.", int(lockoutDuration().Minutes())))
-				return
+			for _, k := range keys {
+				if isLockedOut(k) {
+					Log("[auth] locked out (%s) attempted login as %q from %s", k, username, ip)
+					serveLoginPage(w, fmt.Sprintf("Too many failed attempts. Try again in %d minutes.", int(lockoutDuration().Minutes())))
+					return
+				}
 			}
 
 			if !AuthCheckPassword(db, username, password) {
 				Log("[auth] failed login attempt for user %q from %s", username, ip)
-				locked := recordFailedLogin(ip)
+				locked := false
+				for _, k := range keys {
+					if recordFailedLogin(k) {
+						locked = true
+						Log("[auth] %s locked out after %d failed attempts", k, attemptsFor(k))
+					}
+				}
 				if locked {
-					Log("[auth] IP %s locked out after %d failed attempts", ip, maxAttempts())
 					serveLoginPage(w, fmt.Sprintf("Too many failed attempts. Try again in %d minutes.", int(lockoutDuration().Minutes())))
 				} else {
 					serveLoginPage(w, "Invalid username or password.")
@@ -1717,7 +1851,9 @@ func LoginHandler(db Database) http.HandlerFunc {
 				return
 			}
 
-			clearLockout(ip)
+			for _, k := range keys {
+				clearLockout(k)
+			}
 			token := AuthCreateSession(db, username)
 			http.SetCookie(w, &http.Cookie{
 				Name:     auth_cookie_name,
@@ -1789,6 +1925,12 @@ func SignupHandler(db Database) http.HandlerFunc {
 			serveSignupPage(w, "")
 
 		case http.MethodPost:
+			// Bounded per address: each signup mails the administrators, and
+			// "already exists" answers whether an account does.
+			if !signupPerSource.Allow(RequestSource(r)) {
+				serveSignupPage(w, "Too many sign-up attempts from this address. Try again later.")
+				return
+			}
 			r.ParseForm()
 			email := strings.TrimSpace(r.FormValue("email"))
 			password := r.FormValue("password")
@@ -1951,6 +2093,14 @@ func serveSignupPage(w http.ResponseWriter, errMsg string) {
 }
 
 // ForgotHandler serves the forgot password page (GET) and sends reset emails (POST).
+// Ceilings on the logged-out account endpoints. Generous for a person,
+// tight against a script.
+var (
+	forgotPerSource  = NewRateLimiter(5, 10*time.Minute)
+	forgotPerAccount = NewRateLimiter(3, time.Hour)
+	signupPerSource  = NewRateLimiter(5, time.Hour)
+)
+
 func ForgotHandler(db Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -1961,12 +2111,22 @@ func ForgotHandler(db Database) http.HandlerFunc {
 			r.ParseForm()
 			email := strings.TrimSpace(r.FormValue("email"))
 
-			// Always show success to avoid email enumeration.
+			// Bounded per address and per account: each request otherwise
+			// mailed the account again, without limit, from anyone.
+			src := RequestSource(r)
+			if !forgotPerSource.Allow(src) || (email != "" && !forgotPerAccount.Allow(strings.ToLower(email))) {
+				Log("[auth] password reset requests for %q from %s over the limit: none sent", email, src)
+				serveForgotPage(w, "If an account exists with that email, a reset link has been sent.", true)
+				return
+			}
+			// Always show success to avoid email enumeration. The mail goes
+			// out in the background, so an existing account does not answer
+			// measurably slower than a missing one.
 			if email != "" && isValidEmail(email) {
 				if user, ok := AuthGetUser(db, email); ok && !user.Pending {
 					token := createResetToken(db, email)
 					link := DashboardURL() + "/reset?token=" + token
-					SendNotification(email,
+					go SendNotification(email,
 						"["+ServiceName()+"] Password Reset",
 						fmt.Sprintf("A password reset was requested for your account on %s.\n\nReset your password:\n\n%s\n\nThis link expires in 1 hour. If you did not request this, ignore this email.\n", DashboardURL(), link))
 					Log("[auth] password reset requested for %q from %s", email, ClientIP(r))

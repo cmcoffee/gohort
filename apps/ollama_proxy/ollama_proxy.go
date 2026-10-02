@@ -291,6 +291,13 @@ func (p *ollamaProxy) handleOllama(w http.ResponseWriter, r *http.Request, backe
 			http.Error(w, "read error", http.StatusBadRequest)
 			return
 		}
+		if !callerIsAdmin(r) {
+			var ok bool
+			if bodyBytes, ok = holdToLentModel(bodyBytes, model); !ok {
+				http.Error(w, "this proxy lends the deployment's model (\""+virtualModel+"\"); other installed models are not offered", http.StatusForbidden)
+				return
+			}
+		}
 		tag = virtualModelTag(bodyBytes)
 		bodyBytes = rewriteModel(bodyBytes, virtualModel, model)
 		bodyBytes = injectNumCtx(bodyBytes, numCtx)
@@ -735,6 +742,43 @@ func injectOptions(data []byte, key string, value any) []byte {
 		return data
 	}
 	return out
+}
+
+// callerIsAdmin reports whether the request carries an administrator's key.
+// Loopback without a key is admitted to the client paths but cannot prove it.
+func callerIsAdmin(r *http.Request) bool {
+	user := APIKeyUser(r)
+	return user != "" && UserIsAdmin(user)
+}
+
+// holdToLentModel keeps a non-administrator's request to the model this proxy
+// lends: one naming any other installed model is refused, since loading it
+// evicts the deployment's own, and a keep_alive is dropped, since keep_alive:0
+// unloads the model gohort is working with on every call. Reports false to
+// refuse. A body without a model (or not JSON) passes as it came.
+func holdToLentModel(data []byte, lent string) ([]byte, bool) {
+	var obj map[string]json.RawMessage
+	if len(data) == 0 || json.Unmarshal(data, &obj) != nil {
+		return data, true
+	}
+	if raw, ok := obj["model"]; ok {
+		var m string
+		if json.Unmarshal(raw, &m) == nil {
+			m = strings.TrimSpace(m)
+			if m != "" && m != lent && m != virtualModel && !strings.HasPrefix(m, virtualModel+":") && !strings.HasPrefix(m, virtualModel+"-") {
+				return data, false
+			}
+		}
+	}
+	if _, ok := obj["keep_alive"]; !ok {
+		return data, true
+	}
+	delete(obj, "keep_alive")
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return data, true
+	}
+	return out, true
 }
 
 func rewriteModel(data []byte, from, to string) []byte {

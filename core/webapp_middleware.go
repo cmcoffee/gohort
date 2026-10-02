@@ -303,10 +303,39 @@ func accessLogMiddleware(next http.Handler) http.Handler {
 // out first, because this line goes to a file that outlives the request, and a
 // credential in a URL is a credential in every log that URL touches.
 func accessLogPath(r *http.Request) string {
+	path := redactPathSecrets(r.URL.Path)
 	if raw := r.URL.RawQuery; raw != "" {
-		return r.URL.Path + "?" + redactQuerySecrets(raw)
+		return path + "?" + redactQuerySecrets(raw)
 	}
-	return r.URL.Path
+	return path
+}
+
+// redactPathSecrets replaces any path segment that is a long run of hex, the
+// shape of a capability token carried in the path itself (a webhook monitor's
+// /api/operator/event/<token>), where query redaction never looks. Ids with
+// dashes (UUIDs) and short hex are left alone.
+func redactPathSecrets(path string) string {
+	segs := strings.Split(path, "/")
+	changed := false
+	for i, seg := range segs {
+		if len(seg) >= 32 && isHexString(seg) {
+			segs[i] = "REDACTED"
+			changed = true
+		}
+	}
+	if !changed {
+		return path
+	}
+	return strings.Join(segs, "/")
+}
+
+func isHexString(s string) bool {
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // secretQueryParams names query parameters whose VALUES must never reach a

@@ -46,6 +46,7 @@ import (
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 // OpenAIFeatureKey is the shareable-feature id gating the /v1 endpoint. The
@@ -274,7 +275,7 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 	if allow("lead") {
 		data = append(data, map[string]any{"id": "lead", "object": "model", "owned_by": "gohort"})
 	}
-	for _, a := range orchestrate.ExternalAgents(T.DB, user) {
+	for _, a := range orchestrate.ExternalAgents(T.agentStore(), user) {
 		// App-owned agents live behind their app's FEATURE checkbox, not the
 		// per-target scope: list them on the feature alone (denied ones drop),
 		// mirroring gateTarget's app bypass.
@@ -308,6 +309,13 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"object": "list", "data": data})
 }
 
+// Per-user ceilings on chat completions: generous for an integration and a
+// person talking to it, tight against a loop.
+var (
+	v1PerMinute = NewRateLimiter(60, time.Minute)
+	v1InFlight  = netgate.NewInFlight(4)
+)
+
 func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "POST only")
@@ -323,6 +331,21 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 	if !T.gateFeature(w, user, token) {
 		return
 	}
+	// Bounded per user: how often a request may start, and how many may run
+	// at once. Each is a model call or a full agent turn, on the deployment's
+	// models and the owner's budget.
+	if !v1PerMinute.Allow(user) {
+		w.Header().Set("Retry-After", "60")
+		writeErr(w, http.StatusTooManyRequests, "too many requests this minute for this account: slow down")
+		return
+	}
+	release, ok := v1InFlight.Acquire(user)
+	if !ok {
+		w.Header().Set("Retry-After", "10")
+		writeErr(w, http.StatusTooManyRequests, "this account already has the most requests it may run at once: wait for one to finish")
+		return
+	}
+	defer release()
 	var req chatReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad request body: "+err.Error())
@@ -358,7 +381,7 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 	if agentKey, isAgent := strings.CutPrefix(target, "agent:"); isAgent {
 		agentKey = strings.TrimSpace(agentKey)
 		canon := "agent:" + agentKey
-		if id, ok := orchestrate.ResolveExternalAgentGranted(T.DB, user, agentKey, tokenGrant(token)); ok {
+		if id, ok := orchestrate.ResolveExternalAgentGranted(T.agentStore(), user, agentKey, tokenGrant(token)); ok {
 			canon = "agent:" + id
 		}
 		if !gateTarget(w, user, token, canon) {
@@ -388,7 +411,7 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 				return
 			}
 		}
-		if id, ok := orchestrate.ResolveExternalAgentGranted(T.DB, user, target, tokenGrant(token)); ok {
+		if id, ok := orchestrate.ResolveExternalAgentGranted(T.agentStore(), user, target, tokenGrant(token)); ok {
 			if !gateTarget(w, user, token, "agent:"+id) {
 				return
 			}
@@ -492,7 +515,7 @@ func (T *OpenAIAPI) serveAgent(w http.ResponseWriter, r *http.Request, user, age
 		writeErr(w, http.StatusServiceUnavailable, "the orchestrate app is not mounted, so agents can't be reached")
 		return
 	}
-	resolved, ok := orchestrate.ResolveExternalAgent(T.DB, user, agentKey)
+	resolved, ok := orchestrate.ResolveExternalAgentGranted(T.agentStore(), user, agentKey, tokenGrant(AccountTokenFromRequest(r)))
 	if !ok {
 		writeErr(w, http.StatusNotFound, fmt.Sprintf("no agent %q reachable for this account: check the id, and turn on \"Reachable over MCP\" on that agent (the same switch governs this endpoint)", agentKey))
 		return
@@ -751,17 +774,25 @@ const agentTurnTimeout = 3 * time.Minute
 // supplies its own call id gets one continuing thread for that call; without
 // one, every request would start fresh and the agent would have no memory of
 // what it just said.
+//
+// Under the KEY that made the call: two integrations of one owner each keep
+// their own threads, and one key cannot name its way into another's by
+// sending the same session id.
 func sessionKey(r *http.Request, req chatReq) string {
+	ns := "ext:"
+	if tok := AccountTokenFromRequest(r); tok != nil && tok.ID != "" {
+		ns = "ext:" + tok.ID + ":"
+	}
 	if h := strings.TrimSpace(r.Header.Get("X-Session-Id")); h != "" {
-		return "ext:" + h
+		return ns + h
 	}
 	if req.Call.ID != "" {
-		return "ext:" + req.Call.ID
+		return ns + req.Call.ID
 	}
 	if req.User != "" {
-		return "ext:" + req.User
+		return ns + req.User
 	}
-	return "ext:default"
+	return ns + "default"
 }
 
 // sentences splits a reply into TTS-friendly chunks. Deliberately crude: the
@@ -895,6 +926,15 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 // findOrchestrate resolves the registered OrchestrateApp so agent-routed
 // requests can dispatch. Cached after first hit.
 var cachedOrch *orchestrate.OrchestrateApp
+
+// agentStore is where agents live: orchestrate's store, not this app's own
+// bucket, which holds none, so an owner's own agents never resolved here.
+func (T *OpenAIAPI) agentStore() Database {
+	if o := findOrchestrate(); o != nil && o.DB != nil {
+		return o.DB
+	}
+	return T.DB
+}
 
 func findOrchestrate() *orchestrate.OrchestrateApp {
 	if cachedOrch != nil {

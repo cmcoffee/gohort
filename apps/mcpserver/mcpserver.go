@@ -32,6 +32,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -197,6 +198,14 @@ func (T *MCPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 // same key open the desktop tool bridge as well.
 func (T *MCPServer) authorize(r *http.Request, action string) (owner, refusal string, status int) {
 	owner = AuthCurrentUser(r)
+	// /mcp is a public path, so the login gate's Origin check never ran for
+	// it: a cookie-authenticated write from another site rode SameSite=Lax
+	// alone. A cookie caller writes from this site or not at all; MCP
+	// clients send a key and are unaffected.
+	if owner != "" && IsStateChangingMethod(r.Method) && !SameOriginRequest(r) {
+		Log("[mcpserver] %s REJECTED: cross-site request carrying the session cookie", action)
+		return "", "Forbidden: cross-site request.", http.StatusForbidden
+	}
 	if owner == "" {
 		owner = APIKeyUser(r)
 	}
@@ -329,6 +338,17 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		// scope. Names, because the question is always about one tool.
 		scopeNote := "unauthenticated request: full list"
 		if tok := AccountTokenFromRequest(r); tok != nil {
+			// An app's tools are listed only for an owner who may use the app,
+			// matching the refusal tools/call gives.
+			kept := defs[:0]
+			for _, d := range defs {
+				name, _ := d["name"].(string)
+				if spec, ok := LookupMCPTool(name); ok && !userMayUseApp(tok.Owner, spec.App) {
+					continue
+				}
+				kept = append(kept, d)
+			}
+			defs = kept
 			before := len(defs)
 			defs = allowedToolDefs(defs, tok)
 			switch {
@@ -527,7 +547,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 		text, err := T.listAgents(owner, token)
 		return text, nil, err
 	case "recent_results":
-		text, err := T.recentResults(owner, p.Arguments)
+		text, err := T.recentResults(owner, token, p.Arguments)
 		return text, nil, err
 	default:
 		// App-contributed tools registered via core.RegisterMCPTool. They run
@@ -537,6 +557,12 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 		if spec, ok := LookupMCPTool(p.Name); ok {
 			if !MCPAppToolExposed(p.Name) {
 				return "", nil, fmt.Errorf("tool %q is not exposed over MCP: enable it in Admin → MCP Tools", p.Name)
+			}
+			// The tool is the app's, so it runs for whoever may use the app,
+			// as the app's own pages would: not for someone the admin has not
+			// granted it, and not while it is switched off.
+			if !userMayUseApp(owner, spec.App) {
+				return "", nil, fmt.Errorf("tool %q belongs to an app your account cannot use (or that is switched off)", p.Name)
 			}
 			text, err := spec.Handler(ctx, owner, p.Arguments)
 			return text, nil, err
@@ -553,6 +579,38 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 		}
 		return "", nil, fmt.Errorf("unknown tool %q, this server exposes: %s. An agent's own tools (image, web_search, …) are not callable here; ask the agent to use them via ask_agent", p.Name, strings.Join(have, ", "))
 	}
+}
+
+// userMayUseApp reports whether user may use the app at path: switched on,
+// and the user an administrator, granted it, or on a deployment with no
+// accounts. An empty path is not an app gate.
+func userMayUseApp(user, path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return true
+	}
+	if !AppEnabledHere(path) {
+		return false
+	}
+	if AuthDB == nil {
+		return true
+	}
+	db := AuthDB()
+	if db == nil || !AuthHasUsers(db) {
+		return true
+	}
+	u, ok := AuthGetUser(db, user)
+	if !ok {
+		return false
+	}
+	if u.Admin {
+		return true
+	}
+	for _, p := range AuthResolveUserApps(db, u) {
+		if p == path || strings.HasPrefix(p, path+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // listAgents answers "which agent should I ask?" — the question ask_agent's
@@ -594,11 +652,25 @@ func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error
 	return b.String(), nil
 }
 
+// Per-user ceilings on ask_agent, each call a full agent turn.
+var (
+	askPerMinute = NewRateLimiter(30, time.Minute)
+	askInFlight  = netgate.NewInFlight(3)
+)
+
 func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountToken, args map[string]any) (string, []string, error) {
 	msg, _ := args["message"].(string)
 	if strings.TrimSpace(msg) == "" {
 		return "", nil, fmt.Errorf("message is required")
 	}
+	if !askPerMinute.Allow(owner) {
+		return "", nil, fmt.Errorf("too many ask_agent calls this minute for this account: slow down")
+	}
+	release, ok := askInFlight.Acquire(owner)
+	if !ok {
+		return "", nil, fmt.Errorf("this account already has the most agent turns it may run at once over MCP: wait for one to finish")
+	}
+	defer release()
 	agent, _ := args["agent"].(string)
 	if strings.TrimSpace(agent) == "" {
 		agent = defaultAgent
@@ -638,10 +710,17 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	// Synchronous: blocks until the agent finishes, returns its reply. Exactly
 	// the MCP tools/call contract. SenderName attributes the turn to the
 	// external caller in the transcript.
+	// One thread per KEY: two clients of one owner each keep their own, and
+	// a key narrowed to some agents does not read what another key's turns
+	// left in a shared one.
+	session := mcpSession
+	if token != nil && token.ID != "" {
+		session = mcpSession + ":" + token.ID
+	}
 	reply, err := RunChannelAgent(ctx, ChannelInbound{
 		Owner:      owner,
 		AgentID:    agent,
-		SessionID:  mcpSession,
+		SessionID:  session,
 		SenderName: "Claude Desktop",
 		Text:       msg,
 	})
@@ -657,7 +736,10 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	return text, reply.Images, nil
 }
 
-func (T *MCPServer) recentResults(owner string, args map[string]any) (string, error) {
+// recentResults lists the owner's recent runs. A key narrowed to particular
+// agents sees only those agents' runs: the owner's whole run history is wider
+// than the key was given.
+func (T *MCPServer) recentResults(owner string, token *AccountToken, args map[string]any) (string, error) {
 	f := RunFilter{Limit: 20}
 	if n, ok := args["limit"].(float64); ok && n > 0 {
 		f.Limit = int(n)
@@ -666,6 +748,21 @@ func (T *MCPServer) recentResults(owner string, args map[string]any) (string, er
 		f.Since = time.Now().Add(-time.Duration(h) * time.Hour)
 	}
 	runs := ListRuns(RootDB, owner, f)
+	if token != nil && token.Scope != nil {
+		narrowed := false
+		for _, t := range token.Scope.Targets {
+			narrowed = narrowed || strings.HasPrefix(t, "agent:")
+		}
+		if narrowed {
+			kept := runs[:0]
+			for _, rr := range runs {
+				if rr.Subject != "" && token.ExplicitTarget(rr.Subject) {
+					kept = append(kept, rr)
+				}
+			}
+			runs = kept
+		}
+	}
 	if len(runs) == 0 {
 		return "No recent runs.", nil
 	}

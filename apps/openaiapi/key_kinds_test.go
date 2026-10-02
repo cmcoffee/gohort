@@ -49,3 +49,22 @@ func TestACallersSystemMessageDoesNotReplaceTheAgent(t *testing.T) {
 		t.Error("/v1 hands a request's system message to the agent as a prompt override")
 	}
 }
+
+// Threads are kept per key: two keys sending the same session id do not land
+// in one thread.
+func TestV1ThreadsArePerKey(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	a := MintAccountTokenScoped("alice", "voice", &TokenScope{})
+	b := MintAccountTokenScoped("alice", "bot", &TokenScope{})
+	key := func(secret string) string {
+		r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		r.Header.Set("X-API-Key", secret)
+		r.Header.Set("X-Session-Id", "same")
+		return sessionKey(r, chatReq{})
+	}
+	if key(a.Token) == key(b.Token) {
+		t.Error("two keys share a thread by naming the same session id")
+	}
+}

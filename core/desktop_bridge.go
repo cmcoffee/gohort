@@ -46,6 +46,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/cmcoffee/gohort/core/notices"
 )
 
 // desktopInvokeDeadline caps how long an LLM tool call can wait
@@ -166,7 +168,10 @@ type desktopInstallMsg struct {
 // desktopClient is one live connection from a gohort-desktop.
 type desktopClient struct {
 	user string
-	conn *websocket.Conn
+	// source is the client address it connected from (RequestSource), so a
+	// second connection can be told apart from the same machine reconnecting.
+	source string
+	conn   *websocket.Conn
 
 	mu       sync.Mutex
 	tools    []DesktopToolDescriptor
@@ -397,8 +402,28 @@ func HandleDesktopBridge(userOf func(r *http.Request) string) http.HandlerFunc {
 		}
 		client := &desktopClient{
 			user:    user,
+			source:  RequestSource(r),
 			conn:    conn,
 			pending: map[string]chan resultMsg{},
+		}
+		// Bounded frames. A tool result can carry a screenshot, so the
+		// ceiling is generous, but any key holder could otherwise send one
+		// frame big enough to exhaust memory.
+		conn.SetReadLimit(desktopMaxFrame)
+		// The newest connection takes every from_client_* call and receives
+		// installs, so a second connection while one is live is either a
+		// second machine of the owner's or someone holding their key. Only
+		// the owner can tell which, so they are told.
+		if prior := desktopReg.clientsFor(user); len(prior) > 0 && !desktopSameSource(prior, client.source) {
+			Warn("[desktop-bridge] user=%s: another desktop connected from %s while %d was already connected; it now takes desktop tool calls", user, r.RemoteAddr, len(prior))
+			if RootDB != nil {
+				notices.Record(RootDB, notices.Notice{
+					Owner: user, Kind: notices.KindReport,
+					Title: "Another desktop connection took over your desktop tools",
+					Body: "A second gohort-desktop connection signed in with your key while one was already connected, and desktop tool calls now go to it. " +
+						"If that was you opening the app on another machine, nothing needs doing. If not, rotate your desktop key and any personal access token with the Desktop bridge scope on your Account page.",
+				})
+			}
 		}
 		desktopReg.add(client)
 		Log("[desktop-bridge] connected user=%s remote=%s", user, r.RemoteAddr)
@@ -428,6 +453,20 @@ func HandleDesktopBridge(userOf func(r *http.Request) string) http.HandlerFunc {
 		client.readPump()
 	}
 }
+
+// desktopSameSource reports whether every live connection came from source:
+// the same machine reconnecting before its old connection timed out.
+func desktopSameSource(clients []*desktopClient, source string) bool {
+	for _, c := range clients {
+		if c.source != source {
+			return false
+		}
+	}
+	return true
+}
+
+// desktopMaxFrame bounds one message from a desktop client.
+const desktopMaxFrame = 32 << 20
 
 func (c *desktopClient) pingLoop(stop <-chan struct{}) {
 	t := time.NewTicker(desktopPingInterval())

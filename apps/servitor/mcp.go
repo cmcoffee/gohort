@@ -21,12 +21,14 @@ import (
 
 func registerServitorMCPTools() {
 	RegisterMCPTool(MCPToolSpec{
+		App:         "/servitor",
 		Name:        "servitor_list_systems",
 		Description: "List the user's Servitor systems (id, name, host, type): the appliances Servitor has knowledge about. Read-only; never returns credentials.",
 		InputSchema: map[string]any{"type": "object"},
 		Handler:     servitorMCPListSystems,
 	})
 	RegisterMCPTool(MCPToolSpec{
+		App:         "/servitor",
 		Name:        "servitor_search_facts",
 		Description: "Search the facts Servitor has gathered about the user's systems (keys, values, tags). This is Servitor's accumulated knowledge: use it to answer questions about how a system is configured. Optionally narrow to one system by name or id.",
 		InputSchema: map[string]any{
@@ -40,6 +42,7 @@ func registerServitorMCPTools() {
 		Handler: servitorMCPSearchFacts,
 	})
 	RegisterMCPTool(MCPToolSpec{
+		App:         "/servitor",
 		Name:        "servitor_system_facts",
 		Description: "Return every fact Servitor knows about one system. Pass the system id from servitor_list_systems.",
 		InputSchema: map[string]any{

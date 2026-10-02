@@ -102,6 +102,19 @@ func (r *RateLimiter) Allow(key string) bool {
 	return true
 }
 
+// Spent reports whether key has used its allowance for the current window,
+// WITHOUT recording an event: for a caller that must refuse before doing the
+// work a failure would be counted for.
+func (r *RateLimiter) Spent(key string) bool {
+	if r == nil || r.limit <= 0 || key == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w := r.windows[key]
+	return w != nil && time.Since(w.start) < r.window && w.n >= r.limit
+}
+
 // RequestSource identifies a caller for rate limiting: the client address as
 // netgate.ClientIP reads it, which believes a forwarding header ONLY from a
 // trusted proxy (loopback, or one the admin listed).

@@ -96,6 +96,12 @@ func revokeUserSessionsExcept(db Database, user, keep string) int {
 	if db == nil || user == "" {
 		return 0
 	}
+	// Held across the store sweep as well as the cache sweep: a sliding
+	// renewal saves under the same lock and only when the record is still
+	// there (saveRenewedAuthSession), so a renewal racing this cannot write a
+	// revoked session back.
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
 	n := 0
 	for _, token := range db.Keys(AuthSessionTable) {
 		// Stored keys are hashes (a raw token only on a record from before
@@ -112,7 +118,6 @@ func revokeUserSessionsExcept(db Database, user, keep string) int {
 	// Sweep the cache by value rather than by the tokens just collected: an
 	// entry can be cached without a matching store record (a concurrent
 	// delete), and leaving that one behind is exactly the case this is for.
-	sessionMu.Lock()
 	for token, s := range sessionCache {
 		if keep != "" && token == keep {
 			continue
@@ -121,7 +126,6 @@ func revokeUserSessionsExcept(db Database, user, keep string) int {
 			delete(sessionCache, token)
 		}
 	}
-	sessionMu.Unlock()
 	return n
 }
 
@@ -195,6 +199,30 @@ func revokeUserPeerKeys(user string) int {
 	return n
 }
 
+// revokeUserEventMonitors clears the webhook tokens of user's monitors and
+// pauses every one of them, keeping the records for an administrator to
+// reassign. A webhook URL is a credential that wakes an agent and spends on
+// its behalf, and a poll left running spends for nobody.
+func revokeUserEventMonitors(user string) int {
+	if RootDB == nil || user == "" {
+		return 0
+	}
+	n := 0
+	for _, m := range ListEventMonitors(RootDB, user) {
+		if m.Token == "" && m.Paused {
+			continue
+		}
+		m.Token, m.Paused = "", true
+		if m.SchedulerID != "" {
+			UnscheduleTask(m.SchedulerID)
+			m.SchedulerID = ""
+		}
+		SaveEventMonitor(RootDB, m)
+		n++
+	}
+	return n
+}
+
 // RevokeUserCredentials destroys every credential that authenticates as user,
 // across core's own stores and every registered app revoker. Returns a count
 // per kind, for the caller's audit line.
@@ -221,6 +249,9 @@ func RevokeUserCredentials(db Database, user string) map[string]int {
 	}
 	if n := revokeUserPeerKeys(user); n > 0 {
 		out["peer keys"] = n
+	}
+	if n := revokeUserEventMonitors(user); n > 0 {
+		out["event monitors"] = n
 	}
 	if n := Secure().RevokeUserTokens(user); n > 0 {
 		out["connected accounts"] = n

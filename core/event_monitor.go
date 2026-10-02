@@ -493,6 +493,12 @@ func FindEventMonitorByToken(db Database, token string) (EventMonitor, bool) {
 			found, ok = m, true
 		}
 	}
+	// A monitor whose owner's account is gone answers for nobody, like a key
+	// of theirs would (revokeUserEventMonitors clears the token on deletion;
+	// this holds for one deleted before that did).
+	if ok && !peerKeyOwnerExists(found.Owner) {
+		return EventMonitor{}, false
+	}
 	return found, ok
 }
 
@@ -2071,13 +2077,60 @@ func ValidCompareOp(op string) bool {
 
 // FireEventMonitor wakes the Operator for a webhook event. Public so the
 // webhook HTTP handler (orchestrate) can call it.
+//
+// One fire per monitor at a time. Posts that arrive while one runs are held
+// and delivered together as the next fire, so a burst costs one more turn,
+// not one each, and none of them is lost. A monitor that has used its fires
+// fires no more, checked here, before the turn, rather than only counted after
+// it, which let concurrent posts all pass a bound meant to stop them.
 func FireEventMonitor(ctx context.Context, db Database, m EventMonitor, summary string) {
-	if cur, ok := GetEventMonitor(db, m.Owner, m.Name); ok {
-		cur.LastFired = time.Now()
-		SaveEventMonitor(db, cur)
+	key := m.Owner + "\x00" + m.Name
+	eventFireMu.Lock()
+	if _, busy := eventFiring[key]; busy {
+		q := eventFiring[key]
+		if len(q) < eventFireQueueMax {
+			eventFiring[key] = append(q, summary)
+		} else {
+			Log("[event] %s/%s is busy and already holds %d posts: this one recorded only in the log", m.Owner, m.Name, len(q))
+		}
+		eventFireMu.Unlock()
+		return
 	}
-	fireWake(ctx, db, m.Owner, m.Name, summary, "event")
+	eventFiring[key] = nil
+	eventFireMu.Unlock()
+	for {
+		if cur, ok := GetEventMonitor(db, m.Owner, m.Name); ok {
+			if cur.firedOut() || cur.Paused {
+				break
+			}
+			cur.LastFired = time.Now()
+			SaveEventMonitor(db, cur)
+		}
+		fireWake(ctx, db, m.Owner, m.Name, summary, "event")
+		eventFireMu.Lock()
+		held := eventFiring[key]
+		eventFiring[key] = nil
+		eventFireMu.Unlock()
+		if len(held) == 0 {
+			break
+		}
+		summary = fmt.Sprintf("%d posts arrived while the last one was handled:\n\n%s", len(held), strings.Join(held, "\n\n---\n\n"))
+	}
+	eventFireMu.Lock()
+	delete(eventFiring, key)
+	eventFireMu.Unlock()
 }
+
+// eventFiring holds, per monitor with a fire running, the posts waiting for
+// it to finish.
+var (
+	eventFireMu sync.Mutex
+	eventFiring = map[string][]string{}
+)
+
+// eventFireQueueMax bounds what one busy monitor holds; the per-minute post
+// limit keeps it from being reached in ordinary use.
+const eventFireQueueMax = 20
 
 // fireWake invokes the registered waker and records the fire to the run-ledger
 // so it shows in the Operator's Activity feed.

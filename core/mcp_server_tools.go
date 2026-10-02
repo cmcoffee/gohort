@@ -24,6 +24,10 @@ type MCPToolSpec struct {
 	Description string         // shown to the MCP client; say what it does + when to use it
 	InputSchema map[string]any // JSON Schema object for the arguments (nil ⇒ no args)
 	Handler     MCPToolHandler
+	// App is the web path of the app that owns the tool ("/servitor"). The
+	// server runs the tool only for a user who may use that app and only while
+	// the app is switched on; "" means no app gate.
+	App string
 }
 
 var (

@@ -196,3 +196,19 @@ func TestTheProxyWantsAModelScopedToken(t *testing.T) {
 		t.Error("a model-scoped token was refused")
 	}
 }
+
+// A non-admin request stays on the model the proxy lends and cannot unload it.
+func TestTheProxyHoldsCallersToTheLentModel(t *testing.T) {
+	if _, ok := holdToLentModel([]byte(`{"model":"other-model:7b","prompt":"x"}`), "qwen3"); ok {
+		t.Error("another installed model was offered")
+	}
+	out, ok := holdToLentModel([]byte(`{"model":"gohort","keep_alive":0}`), "qwen3")
+	if !ok || strings.Contains(string(out), "keep_alive") {
+		t.Errorf("keep_alive reached the backend: %s %v", out, ok)
+	}
+	for _, m := range []string{"gohort:no-think", "qwen3"} {
+		if _, ok := holdToLentModel([]byte(`{"model":"`+m+`"}`), "qwen3"); !ok {
+			t.Errorf("%s was refused", m)
+		}
+	}
+}

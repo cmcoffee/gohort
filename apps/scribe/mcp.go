@@ -18,12 +18,14 @@ import (
 
 func registerGuidesMCPTools() {
 	RegisterMCPTool(MCPToolSpec{
+		App:         "/scribe",
 		Name:        "guides_list",
 		Description: "List the user's Scribe documents (id, title, subtitle, and whether each is a guide with sections or a single-body article), newest first. Use the returned id with guides_read / guides_add_section.",
 		InputSchema: map[string]any{"type": "object"},
 		Handler:     guidesMCPList,
 	})
 	RegisterMCPTool(MCPToolSpec{
+		App:         "/scribe",
 		Name:        "guides_read",
 		Description: "Read a document as Markdown (a guide: title, subtitle and every section in order; an article: title and body). Pass the id from guides_list.",
 		InputSchema: map[string]any{
@@ -36,6 +38,7 @@ func registerGuidesMCPTools() {
 		Handler: guidesMCPRead,
 	})
 	RegisterMCPTool(MCPToolSpec{
+		App:         "/scribe",
 		Name:        "guides_create",
 		Description: "Create a new, empty guide and return its id. Add content afterward with guides_add_section.",
 		InputSchema: map[string]any{
@@ -49,6 +52,7 @@ func registerGuidesMCPTools() {
 		Handler: guidesMCPCreate,
 	})
 	RegisterMCPTool(MCPToolSpec{
+		App:         "/scribe",
 		Name:        "guides_add_section",
 		Description: "Append a section to a GUIDE. The markdown is the section BODY (don't repeat the title in it); use sub-headings (### …), lists, and fenced code blocks for structure. Articles have no sections and are refused.",
 		InputSchema: map[string]any{

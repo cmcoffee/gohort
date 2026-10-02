@@ -62,6 +62,24 @@ func monitorWakeMessage(m EventMonitor, monitorName, summary, brief string) stri
 	return msg
 }
 
+// monitorWakeWait bounds how long a wake waits for a busy thread before it
+// runs anyway: long enough for an ordinary turn, short enough that an event is
+// not held for a session somebody left mid-run.
+const monitorWakeWait = 5 * time.Minute
+
+// waitForIdleSession returns once owner's session has no run in progress, the
+// wait is up, or ctx ends.
+func (app *OrchestrateApp) waitForIdleSession(ctx context.Context, owner, session string, max time.Duration) {
+	deadline := time.Now().Add(max)
+	for app.runsRegistry().BySession(owner, session) != nil && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
 // webhookPayloadFence quotes a webhook's posted text for the model behind a
 // boundary the text cannot contain, so nothing in it can close the quote and
 // speak as the instruction.
@@ -320,6 +338,10 @@ func registerOperatorWake(app *OrchestrateApp) {
 			// lever, and marked on the context so this fire carries the
 			// MONITOR's notes rather than the agent's own block.
 			tnotes := monitorTaskNotes(m)
+			// A run in a session replaces the one already running there. A
+			// wake landing in the thread the owner is typing in would stop
+			// their turn mid-reply, so it waits for the thread instead.
+			app.waitForIdleSession(ctx, owner, wakeTarget, monitorWakeWait)
 			if _, err := app.RunAgentSyncContinuingRich(withTaskNotes(ctx, tnotes), AgentSyncRun{
 				AgentOwner: owner, RuntimeUser: owner, AgentKey: wakeAgent,
 				SubSessionID: wakeTarget, Message: msg,
@@ -518,6 +540,13 @@ func (T *OrchestrateApp) handleOperatorEvent(w http.ResponseWriter, r *http.Requ
 	token := r.URL.Path[i+len(marker):]
 	if token == "" || strings.Contains(token, "/") {
 		http.NotFound(w, r)
+		return
+	}
+	// A source that has spent its failures is refused BEFORE the lookup, which
+	// scans and decodes every monitor of every user: refusing after it still
+	// bought the scan each time.
+	if operatorEventFailures.Spent(RequestSource(r)) {
+		TooManyRequests(w, time.Minute, "too many failed attempts from this address")
 		return
 	}
 	m, ok := FindEventMonitorByToken(RootDB, token)

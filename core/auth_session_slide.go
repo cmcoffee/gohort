@@ -118,7 +118,9 @@ func authValidateSessionSliding(db Database, w http.ResponseWriter, r *http.Requ
 		return user, ok
 	}
 	sess.Expires = next
-	saveAuthSession(db, token, sess)
+	if !saveRenewedAuthSession(db, token, sess) {
+		return "", false // revoked while this request was renewing it
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth_cookie_name,
 		Value:    token,
@@ -145,6 +147,21 @@ func loadAuthSession(db Database, token string) (authSession, bool) {
 		return *cached, true
 	}
 	return loadStoredSession(db, token)
+}
+
+// saveRenewedAuthSession is saveAuthSession for a renewal: it writes only
+// while the session still exists, under the lock revocation holds, so a
+// session revoked between this request's read and its write stays revoked.
+func saveRenewedAuthSession(db Database, token string, sess authSession) bool {
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
+	var cur authSession
+	if !db.Get(AuthSessionTable, sessionStoreKey(token), &cur) {
+		return false
+	}
+	db.Set(AuthSessionTable, sessionStoreKey(token), sess)
+	sessionCache[token] = &sess
+	return true
 }
 
 // saveAuthSession persists a session record and refreshes the cache entry.
