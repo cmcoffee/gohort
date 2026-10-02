@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -1638,7 +1639,7 @@ func writeForbidden(w http.ResponseWriter, r *http.Request, app_path string) {
 	body := fmt.Sprintf(`    <h1>Access denied</h1>
     <p>Your account does not have access to <code>%s</code>.</p>
     <p>Contact an administrator if you need access.</p>
-    <p><a href="/">Return to dashboard</a></p>`, app_path)
+    <p><a href="/">Return to dashboard</a></p>`, html.EscapeString(app_path))
 	fmt.Fprint(w, authPageHTML("Access denied", body))
 }
 
@@ -1922,7 +1923,7 @@ func authPageHTML(title, body string) string {
 func serveSignupPage(w http.ResponseWriter, errMsg string) {
 	error_html := ""
 	if errMsg != "" {
-		error_html = fmt.Sprintf(`<div class="error">%s</div>`, errMsg)
+		error_html = fmt.Sprintf(`<div class="error">%s</div>`, html.EscapeString(errMsg))
 	}
 
 	body := `    <div class="ascii-logo">Gohort</div>
@@ -1943,10 +1944,10 @@ func serveSignupPage(w http.ResponseWriter, errMsg string) {
       <button type="submit">Create Account</button>
     </form>
     <a class="alt-link" href="/login">Already have an account? Sign in</a>`
-	html := authPageHTML("Gohort - Sign Up", body)
+	page := authPageHTML("Gohort - Sign Up", body)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, html)
+	fmt.Fprint(w, page)
 }
 
 // ForgotHandler serves the forgot password page (GET) and sends reset emails (POST).
@@ -1990,8 +1991,10 @@ func ResetHandler(db Database) http.HandlerFunc {
 
 		switch r.Method {
 		case http.MethodGet:
+			// An invalid token gets no form, so nothing the URL carried is
+			// written back into the page.
 			if _, ok := validateResetToken(db, token); !ok {
-				serveResetPage(w, token, "This reset link is invalid or has expired.")
+				serveResetPage(w, "", "This reset link is invalid or has expired.")
 				return
 			}
 			serveResetPage(w, token, "")
@@ -2003,7 +2006,7 @@ func ResetHandler(db Database) http.HandlerFunc {
 
 			username, ok := consumeResetToken(db, token)
 			if !ok {
-				serveResetPage(w, token, "This reset link is invalid or has expired.")
+				serveResetPage(w, "", "This reset link is invalid or has expired.")
 				return
 			}
 			if len(password) < 6 {
@@ -2044,7 +2047,7 @@ func serveForgotPage(w http.ResponseWriter, msg string, success bool) {
 		if success {
 			class = "success"
 		}
-		msg_html = fmt.Sprintf(`<div class="%s">%s</div>`, class, msg)
+		msg_html = fmt.Sprintf(`<div class="%s">%s</div>`, class, html.EscapeString(msg))
 	}
 
 	body := `    <h2>Forgot Password</h2>
@@ -2057,16 +2060,16 @@ func serveForgotPage(w http.ResponseWriter, msg string, success bool) {
       <button type="submit">Send Reset Link</button>
     </form>
     <a class="alt-link" href="/login">Back to login</a>`
-	html := authPageHTML("Forgot Password", body)
+	page := authPageHTML("Forgot Password", body)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, html)
+	fmt.Fprint(w, page)
 }
 
 func serveResetPage(w http.ResponseWriter, token string, errMsg string) {
 	error_html := ""
 	if errMsg != "" {
-		error_html = fmt.Sprintf(`<div class="error">%s</div>`, errMsg)
+		error_html = fmt.Sprintf(`<div class="error">%s</div>`, html.EscapeString(errMsg))
 	}
 	// If token is empty (expired/invalid), don't show the form.
 	form_html := ""
@@ -2082,17 +2085,17 @@ func serveResetPage(w http.ResponseWriter, token string, errMsg string) {
         <input type="password" id="confirm" name="confirm" autocomplete="new-password">
       </div>
       <button type="submit">Reset Password</button>
-    </form>`, token)
+    </form>`, html.EscapeString(url.QueryEscape(token)))
 	}
 
 	body := `    <h2>Reset Password</h2>
     ` + error_html + `
     ` + form_html + `
     <a class="alt-link" href="/login">Back to login</a>`
-	html := authPageHTML("Reset Password", body)
+	page := authPageHTML("Reset Password", body)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, html)
+	fmt.Fprint(w, page)
 }
 
 // signupEnabled reports whether self-service signup is currently allowed.
@@ -2105,7 +2108,7 @@ func signupEnabled() bool {
 func serveLoginPage(w http.ResponseWriter, errMsg string) {
 	error_html := ""
 	if errMsg != "" {
-		error_html = fmt.Sprintf(`<div class="error">%s</div>`, errMsg)
+		error_html = fmt.Sprintf(`<div class="error">%s</div>`, html.EscapeString(errMsg))
 	}
 	links := `<a class="alt-link" href="/forgot">Forgot password?</a>`
 	if signupEnabled() {
@@ -2126,9 +2129,9 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
       <button type="submit">Sign In</button>
     </form>
     ` + links
-	html := authPageHTML("Gohort - Login", body)
+	page := authPageHTML("Gohort - Login", body)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, html)
+	fmt.Fprint(w, page)
 }
 
 // --- Setup Menu Integration ---

@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"html"
 	"net/http"
 	"sort"
 	"strings"
@@ -587,6 +588,6 @@ func writeAppDisabled(w http.ResponseWriter, r *http.Request, app_path string) {
 	body := fmt.Sprintf(`    <h1>App unavailable</h1>
     <p><code>%s</code> has been switched off by an administrator.</p>
     <p>It can be switched back on from the Apps tab of the administrator panel.</p>
-    <p><a href="/">Return to dashboard</a></p>`, app_path)
+    <p><a href="/">Return to dashboard</a></p>`, html.EscapeString(app_path))
 	fmt.Fprint(w, authPageHTML("App unavailable", body))
 }

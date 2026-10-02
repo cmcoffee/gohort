@@ -182,7 +182,7 @@ func canonicalTier(m string) string {
 // gateFeature applies gates 1 and 2. Returns false (and writes a 403) when the
 // request may not use the endpoint.
 func (T *OpenAIAPI) gateFeature(w http.ResponseWriter, user string, token *AccountToken) bool {
-	if !FeatureAllowedForUser(T.DB, OpenAIFeatureKey, user) {
+	if !FeatureAllowedForUser(RootDB, OpenAIFeatureKey, user) {
 		writeErr(w, http.StatusForbidden, "the OpenAI /v1 endpoint is not enabled for your account: ask an admin to grant it under Feature Access")
 		return false
 	}
@@ -230,7 +230,7 @@ func (T *OpenAIAPI) gateAppTarget(w http.ResponseWriter, user string, token *Acc
 	if !strings.HasPrefix(canonical, "agent:") {
 		return true
 	}
-	ok, msg := KeyAllowsAppAgent(T.DB, user, token, strings.TrimPrefix(canonical, "agent:"))
+	ok, msg := KeyAllowsAppAgent(RootDB, user, token, strings.TrimPrefix(canonical, "agent:"))
 	if !ok {
 		writeErr(w, http.StatusForbidden, msg)
 		Log("[openai_api] %s: app-feature gate denied target %q: %s", user, canonical, msg)
@@ -271,7 +271,7 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 		// per-target scope: list them on the feature alone (denied ones drop),
 		// mirroring gateTarget's app bypass.
 		if k := AppFeatureKeyForAgent(a.ID); k != "" {
-			if ok, _ := KeyAllowsAppAgent(T.DB, user, token, a.ID); ok {
+			if ok, _ := KeyAllowsAppAgent(RootDB, user, token, a.ID); ok {
 				data = append(data, map[string]any{
 					"id": "agent:" + a.ID, "object": "model", "owned_by": "gohort",
 					"description": a.Name,

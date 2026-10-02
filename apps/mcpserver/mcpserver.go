@@ -197,7 +197,7 @@ func (T *MCPServer) authorize(r *http.Request, action string) (owner, refusal st
 		Log("[mcpserver] %s REJECTED: no valid X-API-Key (mint a bridge key in Bridges admin)", action)
 		return "", "Unauthorized: this endpoint needs a valid gohort personal access token in the X-API-Key header. Create one on your Account page (/account) and put it in the connector config.", http.StatusUnauthorized
 	}
-	if !FeatureAllowedForUser(T.DB, MCPFeatureKey, owner) {
+	if !FeatureAllowedForUser(RootDB, MCPFeatureKey, owner) {
 		Log("[mcpserver] %s REJECTED: admin policy denies MCP for user=%s", action, owner)
 		return "", "Forbidden: an admin has not enabled MCP access for your account (Admin > Feature Access).", http.StatusForbidden
 	}
@@ -625,7 +625,7 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	// needs the app enabled for this user (admin) AND on this key (user scope).
 	// No-op for ordinary agents; nil token (session/bridge-key auth) skips the
 	// key tier, same as the endpoint-level mcp gate.
-	if ok, msg := KeyAllowsAppAgent(T.DB, owner, token, agent); !ok {
+	if ok, msg := KeyAllowsAppAgent(RootDB, owner, token, agent); !ok {
 		return "", nil, fmt.Errorf("%s", msg)
 	}
 	// Synchronous: blocks until the agent finishes, returns its reply. Exactly

@@ -623,7 +623,7 @@ func (T *Account) handleTokenTargets(w http.ResponseWriter, r *http.Request) {
 	}
 	feats := []feat{}
 	for _, f := range ShareableFeatures() {
-		if FeatureAllowedForUser(T.DB, f.Key, user) {
+		if FeatureAllowedForUser(RootDB, f.Key, user) {
 			feats = append(feats, feat{Key: f.Key, Label: f.Label})
 		}
 	}

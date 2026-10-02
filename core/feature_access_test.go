@@ -1,11 +1,14 @@
 package core
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
-	"github.com/cmcoffee/snugforge/kvlite"
 	"github.com/cmcoffee/gohort/core/appagents"
-	"strings"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 func TestFeatureAllowedForUser(t *testing.T) {
@@ -96,4 +99,25 @@ func TestKeyAllowsAppAgent(t *testing.T) {
 	if ok, _ := KeyAllowsAppAgent(db, "alice", tok2, "test-app-agent-x"); ok {
 		t.Fatal("admin allow-list without alice must deny")
 	}
+}
+
+// The admin keeps feature policies in the root store. An app that reads one
+// through its own bucket (T.DB is a bucket of the root store) finds nothing,
+// and nothing reads as "everyone": that is how /v1 and MCP ignored every
+// admin restriction. Every policy read in an app names the root store.
+func TestAppsReadFeaturePoliciesFromTheRootStore(t *testing.T) {
+	call := regexp.MustCompile(`(FeatureAllowedForUser|KeyAllowsAppAgent|LoadFeaturePolicy|SetFeatureAllowedUsers)\(\s*([^,]+),`)
+	ok := map[string]bool{"RootDB": true, "AuthDB()": true, "a.db": true}
+	filepath.WalkDir("../apps", func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, _ := os.ReadFile(path)
+		for _, m := range call.FindAllStringSubmatch(string(src), -1) {
+			if !ok[strings.TrimSpace(m[2])] {
+				t.Errorf("%s: %s(%s, ...) reads a feature policy outside the root store", path, m[1], m[2])
+			}
+		}
+		return nil
+	})
 }

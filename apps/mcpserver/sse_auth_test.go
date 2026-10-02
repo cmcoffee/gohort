@@ -14,15 +14,19 @@ import (
 )
 
 func TestSSEStreamNeedsTheSameAuthAsToolsCall(t *testing.T) {
-	prevAuth := AuthDB
+	// Laid out as in production: the auth store IS the root store, and the
+	// app gets a bucket of it. A policy set where the admin sets it has to be
+	// read here, which an app reading its own bucket never did.
+	prevAuth, prevRoot := AuthDB, RootDB
 	authDB := &DBase{Store: kvlite.MemStore()}
 	AuthSetUser(authDB, "user-a", "pw-a-123", false)
 	AuthDB = func() Database { return authDB }
-	t.Cleanup(func() { AuthDB = prevAuth })
+	RootDB = authDB
+	t.Cleanup(func() { AuthDB, RootDB = prevAuth, prevRoot })
 	token := AuthCreateSession(authDB, "user-a")
 
 	app := &MCPServer{}
-	app.DB = &DBase{Store: kvlite.MemStore()}
+	app.DB = authDB.Bucket("mcpserver")
 
 	open := func(withCookie bool) *httptest.ResponseRecorder {
 		// The stream runs until the client leaves; leave after a moment so an
@@ -48,7 +52,7 @@ func TestSSEStreamNeedsTheSameAuthAsToolsCall(t *testing.T) {
 	}
 
 	// An admin who has not enabled MCP for this user closes the stream too.
-	SetFeatureAllowedUsers(app.DB, MCPFeatureKey, []string{"someone-else"})
+	SetFeatureAllowedUsers(AuthDB(), MCPFeatureKey, []string{"someone-else"})
 	if w := open(true); w.Code != http.StatusForbidden {
 		t.Errorf("an SSE stream for a user MCP is not enabled for: status %d, want 403", w.Code)
 	}
