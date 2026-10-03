@@ -33,7 +33,40 @@ func init() {
 	// self-registered here rather than surfaced as an agent-facing hub app. The
 	// app's routes below still serve the editor; WebHidden keeps it off the
 	// dashboard and there's no HubTab, so it's reached only from admin.
-	RegisterAdminSection(AdminSectionEntry{Section: promptsAdminSection(), Head: promptsHeadHTML(), App: "/prompts"})
+	//
+	// Built per request rather than once here, so an action another package
+	// adds from its own init (RegisterEditorAction) is on the toolbar: that
+	// init can run after this one.
+	RegisterAdminSectionSource(func(*http.Request) []AdminSectionEntry {
+		return []AdminSectionEntry{{Section: promptsAdminSection(), Head: promptsHeadHTML(), App: "/prompts"}}
+	})
+}
+
+// EditorAction is a toolbar button another package adds to the Prompt
+// overrides editor: the button, and the head script that registers its client
+// action (window.uiRegisterClientAction), which is handed the editor handle.
+type EditorAction struct {
+	Action ui.ToolbarAction
+	Head   string
+}
+
+var (
+	editorActionsMu sync.Mutex
+	editorActions   []EditorAction
+)
+
+// RegisterEditorAction adds a button to the editor's toolbar, before "Revert
+// to default". Call from an init().
+func RegisterEditorAction(a EditorAction) {
+	editorActionsMu.Lock()
+	defer editorActionsMu.Unlock()
+	editorActions = append(editorActions, a)
+}
+
+func registeredEditorActions() []EditorAction {
+	editorActionsMu.Lock()
+	defer editorActionsMu.Unlock()
+	return append([]EditorAction(nil), editorActions...)
 }
 
 // PromptsApp is the app entry point. Embedding AppCore wires in shared state
@@ -205,6 +238,16 @@ func (T *PromptsApp) handlePage(w http.ResponseWriter, r *http.Request) {
 // /prompts page AND embedded in the admin page, which serves from a different
 // path (relative "api/..." would resolve against /admin there).
 func promptsEditor() ui.ArticleEditor {
+	ed := promptsEditorBase()
+	for _, a := range registeredEditorActions() {
+		ed.Actions = append(ed.Actions, a.Action)
+	}
+	ed.Actions = append(ed.Actions, ui.ToolbarAction{Label: "Revert to default", Title: "Discard the override and restore the shipped default text",
+		Method: "client", URL: "prompts_revert"})
+	return ed
+}
+
+func promptsEditorBase() ui.ArticleEditor {
 	return ui.ArticleEditor{
 		ListURL:          "/prompts/api/list",
 		LoadURL:          "/prompts/api/load?id={id}",
@@ -239,8 +282,6 @@ func promptsEditor() ui.ArticleEditor {
 				Method: "client", URL: "prompts_optimize"},
 			{Label: "Read it back", Title: "The worker and the lead each say what this block tells them to do, side by side: for a tool, when they would reach for it. Each reads the wording it would be sent.",
 				Method: "client", URL: "prompts_read_back"},
-			{Label: "Revert to default", Title: "Discard the override and restore the shipped default text",
-				Method: "client", URL: "prompts_revert"},
 		},
 		// Whole-list action lives on the list header, not the per-block toolbar.
 		ListActions: []ui.ToolbarAction{
@@ -704,7 +745,15 @@ func (T *PromptsApp) handleOptimizeStatus(w http.ResponseWriter, r *http.Request
 func promptsHeadHTML() string {
 	return "<style>" + editor.DiffCSS() + "</style>" +
 		"<script>" + editor.UtilsJS() + editor.DiffJS() + "</script>" +
-		promptsHead
+		promptsHead + editorActionHeads()
+}
+
+func editorActionHeads() string {
+	var b strings.Builder
+	for _, a := range registeredEditorActions() {
+		b.WriteString(a.Head)
+	}
+	return b.String()
 }
 
 const promptsHead = `<script>

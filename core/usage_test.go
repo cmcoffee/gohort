@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // Usage recording at the LLM HANDLE, not just at the chat wrappers.
@@ -333,5 +334,56 @@ func TestUnclaimedSearchCallsNeverNegative(t *testing.T) {
 	u.ClaimSearchCalls(-3) // ignored
 	if got := u.UnclaimedSearchCalls(9); got != 4 {
 		t.Errorf("expected 9-5=4, got %d", got)
+	}
+}
+
+// People first: someone's call through the handle counts as use of the tier
+// it reaches, for a while after it ends too; a call the gate says is yielding
+// work does not, and the gate can hold it back.
+func TestYieldingWorkWaitsAndPeoplesCallsCount(t *testing.T) {
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", Repeat: true}}}
+	withSharedLLMs(t, worker, nil)
+	llm := ReloadableWorkerLLM()
+	msgs := []Message{{Role: "user", Content: "hi"}}
+
+	modelUseMu.Lock()
+	modelUses = map[LLMTier]*modelUse{}
+	modelUseMu.Unlock()
+	type bg struct{}
+	background := context.WithValue(context.Background(), bg{}, true)
+	held := errors.New("held")
+	holding := false
+	var told []LLMTier
+	SetYieldGate(func(ctx context.Context, tier LLMTier) (bool, error) {
+		told = append(told, tier)
+		if ctx.Value(bg{}) == nil {
+			return false, nil
+		}
+		if holding {
+			return true, held
+		}
+		return true, nil
+	})
+	t.Cleanup(func() { SetYieldGate(nil) })
+
+	if _, err := llm.Chat(background, msgs); err != nil {
+		t.Fatal(err)
+	}
+	if ModelInUse(WORKER, time.Minute) {
+		t.Fatal("yielding work counted as someone's use")
+	}
+	// The lead handle with no lead reaches the worker, and counts there.
+	if _, err := ReloadableLeadLLM().ChatStream(context.Background(), msgs, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if !ModelInUse(WORKER, time.Minute) || ModelInUse(WORKER, 0) || ModelInUse(LEAD, time.Minute) {
+		t.Fatal("someone's call should count against the tier it reached, for the quiet spell after it and not past it")
+	}
+	holding = true
+	if _, err := llm.Chat(background, msgs); !errors.Is(err, held) {
+		t.Fatalf("the gate did not hold the call back: %v", err)
+	}
+	if len(told) != 3 || told[1] != WORKER {
+		t.Fatalf("the gate was told %v", told)
 	}
 }

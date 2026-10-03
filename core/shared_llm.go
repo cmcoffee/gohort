@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/cmcoffee/gohort/core/prompts"
 )
@@ -245,6 +246,11 @@ func (r reloadableLLM) Chat(ctx context.Context, messages []Message, opts ...Cha
 	if llm == nil {
 		return nil, errors.New("no LLM configured")
 	}
+	done, err := r.beginModelUse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	resp, err := llm.Chat(ctx, messages, r.withTierText(opts)...)
 	r.record(ctx, resp)
 	r.noteLeadHealth(ctx, err)
@@ -256,10 +262,87 @@ func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handl
 	if llm == nil {
 		return nil, errors.New("no LLM configured")
 	}
+	done, err := r.beginModelUse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	resp, err := llm.ChatStream(ctx, messages, handler, r.withTierText(opts)...)
 	r.record(ctx, resp)
 	r.noteLeadHealth(ctx, err)
 	return resp, err
+}
+
+// People first.
+//
+// Some work can wait: an Optimize run spends hours of a model on builds of its
+// own, and someone asking a question meanwhile should not queue behind it. The
+// gate (SetYieldGate) sees every call through these handles before it goes
+// out, holds back the ones made for such work while people need the model, and
+// says which they are. Every other call is someone's, and is counted against
+// the tier it reaches, so the waiting work can see that its model is in use
+// (ModelInUse). A call already out runs to its end.
+type modelUse struct {
+	now  int
+	last time.Time
+}
+
+var (
+	modelUseMu sync.Mutex
+	modelUses  = map[LLMTier]*modelUse{}
+	yieldGate  func(ctx context.Context, tier LLMTier) (yielding bool, err error)
+)
+
+// SetYieldGate sets what every call through the shared handles passes before
+// it goes out, told the tier it reaches. For work that gives way it blocks
+// while people need the model and answers yielding, which keeps the call out
+// of the count; an error stops the call. nil removes it.
+func SetYieldGate(fn func(ctx context.Context, tier LLMTier) (yielding bool, err error)) {
+	modelUseMu.Lock()
+	yieldGate = fn
+	modelUseMu.Unlock()
+}
+
+// ModelInUse says whether someone's call to tier is out now, or ended within
+// quiet: a turn makes its calls with tool work between them, and work that
+// resumed in every gap would be in the way of each next call.
+func ModelInUse(tier LLMTier, quiet time.Duration) bool {
+	modelUseMu.Lock()
+	defer modelUseMu.Unlock()
+	u := modelUses[tier]
+	return u != nil && (u.now > 0 || (!u.last.IsZero() && time.Since(u.last) < quiet))
+}
+
+// beginModelUse passes a call through the gate and counts it when it is
+// someone's. done ends it.
+func (r reloadableLLM) beginModelUse(ctx context.Context) (done func(), err error) {
+	tier := r.serving()
+	modelUseMu.Lock()
+	gate := yieldGate
+	modelUseMu.Unlock()
+	yielding := false
+	if gate != nil {
+		if yielding, err = gate(ctx, tier); err != nil {
+			return nil, err
+		}
+	}
+	if yielding {
+		return func() {}, nil
+	}
+	modelUseMu.Lock()
+	u := modelUses[tier]
+	if u == nil {
+		u = &modelUse{}
+		modelUses[tier] = u
+	}
+	u.now++
+	modelUseMu.Unlock()
+	return func() {
+		modelUseMu.Lock()
+		u.now--
+		u.last = time.Now()
+		modelUseMu.Unlock()
+	}, nil
 }
 
 // record credits the call to whichever tier this handle serves. Runs on the

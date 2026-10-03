@@ -316,7 +316,13 @@ const (
 	// the browsing and the fetches, were the only ones that could not be
 	// stopped on. The mark is keyed by NAME now, which is what lets any tool
 	// carry it, and reading it needs a function rather than a struct field.
-	coreExportCeiling = 2264
+	// 2266: SetYieldGate and ModelInUse, people first at the shared LLM
+	// handle. Background work that spends a model for hours (Optimize) has to
+	// see that someone is using it and hold its calls back, and the handle is
+	// the one place every call passes. Two exports, not four: the gate itself
+	// says which calls are the waiting work, so core carries no marker of its
+	// own for it.
+	coreExportCeiling = 2266
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a
