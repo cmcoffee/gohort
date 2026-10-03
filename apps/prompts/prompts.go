@@ -28,7 +28,7 @@ import (
 func init() {
 	RegisterApp(new(PromptsApp))
 	// Editing the framework prompt blocks is deployment tuning, not agent
-	// behavior — so the editor lives inside the admin UI (the "Optimization" tab),
+	// behavior — so the editor lives inside the admin UI (the "Prompts" tab),
 	// self-registered here rather than surfaced as an agent-facing hub app. The
 	// app's routes below still serve the editor; WebHidden keeps it off the
 	// dashboard and there's no HubTab, so it's reached only from admin.
@@ -73,9 +73,10 @@ func (T *PromptsApp) WebPath() string { return "/prompts" }
 func (T *PromptsApp) WebName() string { return EditorTitle }
 
 // AdminTab is the admin tab the prompt editor lives on, and what other apps
-// put their sections beside it under: everything that changes what the
-// models are told, by hand or by Optimize.
-const AdminTab = "Optimization"
+// put their sections beside it under: changing what the models are told, by
+// hand, for something specific. Optimizing a model as a whole lives with the
+// model, on the LLMs tab.
+const AdminTab = "Prompts"
 
 // EditorTitle names the editor's section on that tab: the overrides of the
 // shipped prompt blocks, beside sections other apps add (Optimize, per-tier
@@ -242,7 +243,7 @@ func promptsEditor() ui.ArticleEditor {
 	}
 }
 
-// promptsAdminSection wraps the editor as a full-width section on the admin "Optimization" tab — the
+// promptsAdminSection wraps the editor as a full-width section on the admin "Prompts" tab — the
 // primary home for prompt tuning (see RegisterAdminSection in init).
 func promptsAdminSection() ui.Section {
 	return ui.Section{
@@ -672,7 +673,7 @@ func (T *PromptsApp) handleOptimizeStatus(w http.ResponseWriter, r *http.Request
 // click to revert in the revisions panel. App-specific behavior injected via
 // ExtraHeadHTML per the core/ui domain-agnostic rule.
 // promptsHeadHTML is the page head for both surfaces this editor appears
-// on: the standalone /prompts page and the admin "Optimization" tab.
+// on: the standalone /prompts page and the admin "Prompts" tab.
 //
 // It carries the shared inline-diff helper (core/editor) alongside this
 // app's client actions. The editor proposes rewrites in chat-edit mode,

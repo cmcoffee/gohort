@@ -25,22 +25,26 @@ scorecard. A prompt is changed, by hand or by a proposer model, and the suite
 runs again. A change is kept only when the scorecard says it helped, and only
 reaches the live deployment when an admin promotes it.
 
-## Using it: one button
+## Using it: one click per model
 
-On the admin **Optimization** tab, beside **Prompt overrides** (the editor
-where every edited prompt block lives), the section **Optimize for a model**
-is the whole surface: pick the worker or the lead, press **Optimize**. It
-builds the suite with that model in a sandbox, rewords what it got wrong,
-keeps what builds better without getting worse on tasks it never saw, and
-when it ends applies what it kept as that model's own wording, each change a
-revision. **Undo** takes the whole run back. While it runs, the progress
-line and "What it is doing" say where it is, and the run sits in the live
-indicator and on the Monitor page like any other work using the models.
+A model's prompts are part of the model: optimizing one lives with it, on
+the admin **LLMs** tab, under **Optimize**. There is a row for the worker
+and, when there is a separate one, for the lead, each named by its model,
+each with an **Optimize** button. A press builds the suite with that model
+in a sandbox, rewords what it got wrong, keeps what builds better without
+getting worse on tasks it never saw, and when it ends applies what it kept
+as that model's own wording, each change a revision. **Undo** takes the
+whole run back. The wording remembers the model it was fitted to; when the
+model behind a tier changes, its row says so. While it runs, the row's
+progress and "What it is doing" say where it is, and the run sits in the
+live indicator and on the Monitor page like any other work using the
+models.
 
-Everything below the button is behind **Details** (`/tuning/details`): the
-settings (rounds, hours, spend, builds per task, start point), every run
-with its rounds, builds, scorecard and the judge's pairs to calibrate, and
-the suite. The rest of this document describes that machinery.
+The **Prompts** tab is for hand edits to something specific: **Prompt
+overrides** is the editor. Everything below the button is behind
+**Details** (`/tuning/details`): the settings, every run with its rounds,
+builds, scorecard and the judge's pairs to calibrate, and the suite. The
+rest of this document describes that machinery.
 
 ## What this is not
 
