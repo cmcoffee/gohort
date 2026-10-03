@@ -70,8 +70,20 @@ lead what the open block tells them to do (for a tool's description, when
 they would reach for it first; for a parameter's, what they would put in
 it), each reading the wording it would be sent, and shows the two readings
 side by side. It is the quick look while editing: a reading is what a model
-says it understood, a probe is what it does. Everything below the button is
-behind **Details** (`/tuning/details`): the settings, every run with its rounds,
+says it understood, a probe is what it does. Its **Probe** runs a choice probe
+there and then: Builder is given a request (your own, or one of the suite's,
+those that want the open block's tool first) in a sandbox holding live's
+wording with the open block as it is on screen, and stopped at the first
+thing it reaches to build, for the worker and the lead side by side.
+
+A run gives way to people. While someone else is using the model it tunes
+(a call out, or one in the last 30 seconds), its calls wait at the shared LLM
+handle's gate (`core.SetYieldGate`, `core.ModelInUse`) and its sandboxes are
+told to pause; it picks up where it was when they are done. A call already
+out runs to its end. Paused time does not count against a build's budget, a
+probe's, or the session's hours, and the row says it is paused. A Probe from
+the editor does not pause: someone is waiting on it. Everything below the
+button is behind **Details** (`/tuning/details`): the settings, every run with its rounds,
 builds, scorecard and the judge's pairs to calibrate, and the suite. The
 rest of this document describes that machinery.
 
