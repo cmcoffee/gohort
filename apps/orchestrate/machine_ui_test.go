@@ -688,7 +688,7 @@ func TestTheMapRedrawsWhenAStepChangesShape(t *testing.T) {
 // tab, so renaming it without a rebuild leaves both showing the old one.
 func TestTheMachinesOwnFieldsKeepThePageTrue(t *testing.T) {
 	_, _, _, def := editorFixture(t)
-	raw, _ := json.Marshal(metaPanel(def, "api/machines/"+def.ID))
+	raw, _ := json.Marshal(metaPanel(def, "api/machines/"+def.ID, editorCatalog{}))
 	meta := string(raw)
 	if !strings.Contains(meta, `"reload_on_change":true`) {
 		t.Error("renaming the machine should rebuild the page it titles")

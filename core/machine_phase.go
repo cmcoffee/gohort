@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"strings"
+	"sync"
 )
 
 // PhaseWorker returns the default PhaseRunner: a transient phase runs as
@@ -36,8 +37,131 @@ func (T *AppCore) PhaseWorkerConfirm(catalog []AgentToolDef, confirm func(name, 
 		// user's actual turn, and the latency it adds is paid before
 		// anyone sees a word. Authors opt in per phase.
 		think := PhaseThink(ph, false)
-		return T.runWorkerStageConfirm(ctx, prompt, PhaseTools(ph, catalog), think, len(ph.ModelOutput()) > 0, PhaseTier(ph), confirm)
+		tools := PhaseTools(ph, catalog)
+		if offersSkip(ph) {
+			tools = append(tools, skipStepTool())
+		}
+		return T.runWorkerStageConfirm(ctx, prompt, tools, think, len(ph.ModelOutput()) > 0, PhaseTier(ph), confirm)
 	}
+}
+
+// skipStepToolName is the way out a model-run step is handed: "this step
+// does not apply to what I was given".
+//
+// It exists because a step that reaches tools had two moves and both were
+// wrong when the step did not fit the run: call the tool it was pointed at
+// anyway, with whatever arguments it could invent, or improvise with some
+// other tool. Both produce a result that reads like the step's real work.
+// A skip is visible instead: the reason lands in the run's notes, the step's
+// result is marked, and the machine moves on to the step's Next.
+const skipStepToolName = "skip_step"
+
+// offersSkip reports whether a step gets the way out: it runs its own model
+// with tools, and its author did not mark it required. A step that reaches no
+// tools has nothing to call wrongly, a step another runner does (an agent, a
+// pipeline, a child machine, one tool) is not running this model, and a
+// resident step converses rather than runs.
+func offersSkip(ph MachinePhase) bool {
+	return !ph.Required && !ph.Resident && !ph.hasRunner() && PhaseReach(ph) != ReachNone
+}
+
+func skipStepTool() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name: skipStepToolName,
+			Description: "End this step as NOT APPLICABLE, with the reason. Use it only when the step genuinely does not fit what you were given: " +
+				"the thing it acts on is absent, or no tool you have does what it asks. Do not use it to avoid work the step can do. " +
+				"Nothing the step would have produced is recorded, the reason is, and the run moves on to the next step.",
+			Parameters: map[string]ToolParam{
+				"reason": {Type: "string", Description: "Why this step does not apply, in one sentence."},
+			},
+			Required: []string{"reason"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			reason, _ := args["reason"].(string)
+			if !SkipStep(ctx, reason) {
+				return "", Error("skip_step only works inside a machine step")
+			}
+			return "Step skipped. Stop here and write nothing more.", nil
+		},
+	}
+}
+
+type phaseVarsKey struct{}
+
+// StepVars returns the variables of the machine step running on ctx: its
+// input, what the step before it handed on, the opening message, who and
+// when. A step runner that templates anything beyond the prompt it was handed
+// templates with these, so {input} and {prev} mean the same there as in the
+// prompt. False outside a machine step.
+func StepVars(ctx context.Context) (PhaseVars, bool) {
+	if ctx == nil {
+		return PhaseVars{}, false
+	}
+	v, ok := ctx.Value(phaseVarsKey{}).(PhaseVars)
+	return v, ok
+}
+
+type skipSlotKey struct{}
+
+type skipSlot struct {
+	mu     sync.Mutex
+	reason string
+	set    bool
+}
+
+// withSkipSlot gives one step's run somewhere to report that it does not
+// apply, and returns how to read it afterwards.
+func withSkipSlot(ctx context.Context) (context.Context, func() (string, bool)) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s := &skipSlot{}
+	return context.WithValue(ctx, skipSlotKey{}, s), func() (string, bool) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.reason, s.set
+	}
+}
+
+// SkipStep ends the machine step running on ctx as not applicable, for the
+// reason given, and reports whether there was a step to end. The step's
+// runner calls it and returns; the machine records the skip, passes the
+// step's input through as its result, and moves on to the step's Next. A
+// runner that is not running a machine step gets false and should fail
+// rather than pretend.
+func SkipStep(ctx context.Context, reason string) bool {
+	if ctx == nil {
+		return false
+	}
+	s, _ := ctx.Value(skipSlotKey{}).(*skipSlot)
+	if s == nil {
+		return false
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "no reason given"
+	}
+	s.mu.Lock()
+	if !s.set {
+		s.reason, s.set = reason, true
+	}
+	s.mu.Unlock()
+	return true
+}
+
+// skipRequested reports whether the step on ctx has already been skipped.
+func skipRequested(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	s, _ := ctx.Value(skipSlotKey{}).(*skipSlot)
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.set
 }
 
 // CompleteTurn closes a turn the host has finished running, advancing
@@ -148,8 +272,29 @@ func (T *AppCore) runPhase(ctx context.Context, def MachineDef, ph MachinePhase,
 	// One composition, shared with the editor's preview, so what an
 	// author is shown is what the model is sent.
 	prompt := def.phasePrompt(ph, st, v)
+	// The step's own variables ride the context, for a runner that templates
+	// more than the prompt: a tool step's arguments. It used to rebuild them
+	// with no input and with the composed prompt as {prev}, so {input} in a
+	// tool step's arguments was empty on every run.
+	sv := v
+	sv.Step, sv.Machine = ph.Name, chooseStr(v.Machine, def.Name)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = context.WithValue(ctx, phaseVarsKey{}, sv)
 	out := ph.ModelOutput()
-	call := func(p string) (string, error) { return run(ctx, ph, p) }
+	// A step that skipped is finished: no decode of what it said, no repair
+	// call to make it say something decodable. The walk reads the skip.
+	call := func(p string) (string, error) {
+		if skipRequested(ctx) {
+			return "", Error("step skipped")
+		}
+		text, err := run(ctx, ph, p)
+		if skipRequested(ctx) {
+			return "", Error("step skipped")
+		}
+		return text, err
+	}
 
 	// A step that asks the model for nothing and says nothing is a step
 	// that pins values. Calling anyway would buy a paragraph nobody

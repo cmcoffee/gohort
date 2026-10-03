@@ -163,6 +163,13 @@ type TempTool struct {
 	// repair. A set of read tools authored for one system is precisely what
 	// somebody asks Builder to fix.
 	BoundOnly bool `json:"bound_only,omitempty"`
+	// NoUnattended is the owner's "never without somebody watching" for this
+	// tool, wherever it would run: a scheduled agent, an unattended machine, a
+	// pipeline stage, a dispatch. The per-agent marks (AgentRecord's
+	// NoUnattendedTools) say it for one agent; this says it for the tool, which
+	// is the only place it can be said for a machine run that has no agent.
+	// It does not hide the tool: in a conversation it runs as it always did.
+	NoUnattended bool `json:"no_unattended,omitempty"`
 	// Template records the tool template that authored this tool (provenance),
 	// so it can be reconfigured through the same template later — the tool-side
 	// analog of Connector.Template. Empty for hand-authored tools.

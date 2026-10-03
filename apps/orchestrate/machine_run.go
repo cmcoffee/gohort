@@ -60,7 +60,7 @@ func (T *OrchestrateApp) handleMachineRuns(w http.ResponseWriter, r *http.Reques
 			"Use Try it to rehearse it, or attach it to an agent and talk to it.", http.StatusBadRequest)
 		return
 	}
-	if probs := def.Problems(); len(probs) > 0 && sub == "stream" {
+	if probs := machineRunProblems(udb, user, def); len(probs) > 0 && sub == "stream" {
 		http.Error(w, "this machine will not run yet: "+probs[0]+" ("+strconv.Itoa(len(probs))+" outstanding). Its checklist lists them.",
 			http.StatusBadRequest)
 		return
@@ -88,11 +88,7 @@ func (T *OrchestrateApp) handleMachineRuns(w http.ResponseWriter, r *http.Reques
 // framework's decisions as status lines — so a long run is watchable
 // rather than a spinner that eventually returns everything at once.
 func (T *OrchestrateApp) runMachineStreaming(ctx context.Context, def MachineDef, user, input string, sink PipelineSink) (string, error) {
-	sess := &ToolSession{Username: user, DB: AuthDB()}
-	catalog, err := GetAgentToolsWithSession(sess, availableWorkerToolNames()...)
-	if err != nil {
-		Log("[orchestrate.machines] run %q: tool catalog partly unresolved for user=%q: %v", def.Name, user, err)
-	}
+	catalog := machineRunCatalog(UserDB(T.DB, user), user, "", def).Tools
 	cache := NewRunToolCache()
 	cur := &MachineCursor{}
 	// The full host, not the bare worker: a step that delegates, runs a
@@ -150,6 +146,23 @@ func (T *OrchestrateApp) runMachineStreaming(ctx context.Context, def MachineDef
 	Log("[orchestrate.machines] user=%q ran %q → finished at %s after %d step(s), %d cached tool call(s)",
 		user, def.Name, final.Name, len(cur.Log)+1, cache.Hits())
 	return out, nil
+}
+
+// PublicRunMachine is one unattended run with nobody watching: the same walk
+// the machine's Run panel makes, its narration dropped, its result returned.
+// For a caller outside this package that needs a machine's ANSWER, such as a
+// grader checking what a built machine does with an input.
+func (T *OrchestrateApp) PublicRunMachine(ctx context.Context, def MachineDef, user, input string) (string, error) {
+	return T.runMachineStreaming(ctx, def, user, input, func(PipelineEvent) {})
+}
+
+// PublicMachineStore is the store an owner's machines live in, the one the
+// machine pages and tools read.
+func PublicMachineStore(owner string) Database {
+	if orchestrateBaseDB == nil {
+		return nil
+	}
+	return UserDB(orchestrateBaseDB, owner)
 }
 
 // machineRunPanel is the framework's run surface, pointed at this machine.

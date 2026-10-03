@@ -1134,7 +1134,7 @@ func toolDefinitionChanged(a, b TempTool) bool {
 // withoutGovernance clears the flags an owner sets ON a tool rather than IN
 // it, leaving what the tool does.
 func withoutGovernance(t TempTool) TempTool {
-	t.Locked, t.Disabled, t.BuilderOnly, t.BoundOnly = false, false, false, false
+	t.Locked, t.Disabled, t.BuilderOnly, t.BoundOnly, t.NoUnattended = false, false, false, false, false
 	t.Trial, t.TrialSince, t.ConfirmInChat = false, time.Time{}, false
 	return t
 }
@@ -1204,6 +1204,7 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 		next.Tool.Disabled = approved[i].Tool.Disabled
 		next.Tool.BuilderOnly = approved[i].Tool.BuilderOnly
 		next.Tool.BoundOnly = approved[i].Tool.BoundOnly
+		next.Tool.NoUnattended = approved[i].Tool.NoUnattended
 		// CONFIRMATION is one of these flags and was missing from the list.
 		//
 		// Trial says nobody has vouched for the tool yet, and clearing it is a

@@ -255,7 +255,7 @@ func (t *chatTurn) machineDispatchGate(args map[string]any) (MachineDef, string,
 	// Validate() this is not a defensive check against an old record. It is the
 	// common case, and it is the same list the Run button and the schedule
 	// refuse on, so the three cannot disagree about whether a machine can run.
-	if probs := def.Problems(); len(probs) > 0 {
+	if probs := machineRunProblems(t.udb, t.user, def); len(probs) > 0 {
 		return MachineDef{}, "", fmt.Errorf("machine %q will not run yet: %s (%d outstanding). Its page lists them; do not retry until they are fixed",
 			def.Name, probs[0], len(probs))
 	}
@@ -402,11 +402,7 @@ func (t *chatTurn) runDetachedMachine(d *ToolSession, def MachineDef, msg string
 // authority does not, and a shared machine that ran against its owner's
 // credentials would be exactly the thing peer-sharing promises it is not.
 func (t *chatTurn) runDispatchedMachine(ctx context.Context, def MachineDef, msg string, note func(kind, detail string)) (string, error) {
-	sess := &ToolSession{Username: t.user, DB: AuthDB()}
-	catalog, err := GetAgentToolsWithSession(sess, availableWorkerToolNames()...)
-	if err != nil {
-		Log("[orchestrate.machines] dispatch of %q: tool catalog partly unresolved for %q: %v", def.Name, t.user, err)
-	}
+	catalog := machineRunCatalog(UserDB(t.app.DB, t.user), t.user, t.agent.ID, def).Tools
 	cache := NewRunToolCache()
 	cur := &MachineCursor{}
 	// The full host, so a dispatched machine's delegating / pipeline / child

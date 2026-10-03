@@ -115,7 +115,7 @@ func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(w http.ResponseWrite
 			http.StatusBadRequest)
 		return
 	}
-	if probs := def.Problems(); len(probs) > 0 {
+	if probs := machineRunProblems(UserDB(T.DB, user), user, def); len(probs) > 0 {
 		http.Error(w, "that machine will not run yet: "+probs[0], http.StatusBadRequest)
 		return
 	}

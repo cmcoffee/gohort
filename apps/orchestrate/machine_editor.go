@@ -81,11 +81,11 @@ func machineEditorSpec(def MachineDef, cat editorCatalog) map[string]any {
 		// button. The menu and the diagram were right and the bodies
 		// under them were not, which is a worse failure than either being
 		// wrong on its own — it teaches that the structure means nothing.
-		"meta":   metaPanel(def, base),
+		"meta":   metaPanel(def, base, cat),
 		"phases": phasePanels(def, base, cat),
 		"add":    addPanel(def, base),
 		"components": []any{
-			metaPanel(def, base),
+			metaPanel(def, base, cat),
 			ui.Stack{Children: phasePanels(def, base, cat)},
 			addPanel(def, base),
 		},
@@ -94,7 +94,7 @@ func machineEditorSpec(def MachineDef, cat editorCatalog) map[string]any {
 
 // metaPanel is the machine's own fields — name, when to use it, where a
 // conversation starts.
-func metaPanel(def MachineDef, base string) ui.FormPanel {
+func metaPanel(def MachineDef, base string, cat editorCatalog) ui.FormPanel {
 	return ui.FormPanel{
 		Source:  base + "/meta",
 		PostURL: base + "/meta",
@@ -134,6 +134,13 @@ func metaPanel(def MachineDef, base string) ui.FormPanel {
 				Detail: "OFF, a conversation settles: the steps before the waiting one run on the first message, and every later message goes straight to the step it landed in. That is right for intake and then a conversation. " +
 					"ON, each message is judged again from the top, and what the previous message was routed to is cleared first, so it cannot leak into this answer. Lists that build up across a run (accumulators) are kept. " +
 					"A job that runs unattended has no messages, so this does nothing there."},
+			{Field: "deny", Type: "checklist", Label: "Never in any step",
+				Options:     toolChecklistOptions(cat.tools, def.Deny),
+				Placeholder: "(no tools to offer)",
+				Help:        "Tools no step of this machine may reach, wherever it runs.",
+				Detail: "A run with nobody watching (its Run button, a schedule, a pipeline stage) reaches your own tools the way an agent does, " +
+					"except ones turned off, marked never to run unattended, or behind a credential that asks before every call. " +
+					"This takes a tool away from the whole machine; each step's own \"Never in this step\" takes one away from that step."},
 		},
 	}
 }
@@ -755,6 +762,11 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			Detail: "On, this is where a conversation lives, and the sections below change to match. Off, the step runs, records what it establishes, and passes straight on within the same turn.\n\nA machine needs at least one step with this on, or a turn has nowhere to finish."},
 	}
 	if !p.Resident {
+		fields = append(fields, ui.FormField{Field: "required", Type: "toggle", Label: "Never skip this step",
+			Help: "ON: the step does its work or the run fails. OFF (the default): it may be skipped as not applicable, and the run moves on to its next.",
+			Detail: "A step that runs its own model with tools can say it does not apply (nothing to act on, no tool that fits) instead of forcing a call, " +
+				"and a tool step whose argument comes out empty is skipped rather than called with a blank. Either way the reason is kept with the run. " +
+				"Turn this on where skipping would leave the result wrong."})
 		// Filed WITH the kind toggle, because it is the same class of
 		// question: both reshape the form rather than fill it in. A
 		// delegate takes over the model, the reasoning and the tools —
@@ -1248,6 +1260,7 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 			"name": def.Name, "description": def.Description,
 			"start": def.StartPhase(), "unattended": def.Unattended,
 			"route_each_message": def.RouteEachMessage,
+			"deny":               def.Deny,
 		})
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		var body map[string]any
@@ -1269,6 +1282,9 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 		}
 		if _, ok := body["route_each_message"]; ok {
 			def.RouteEachMessage = BoolArg(body, "route_each_message")
+		}
+		if _, ok := body["deny"]; ok {
+			def.Deny = stringSliceFromArgs(body, "deny")
 		}
 		// Saved even when it does not validate. This is an editor: a
 		// machine half-built is the normal state while somebody is
@@ -1483,6 +1499,9 @@ func applyPhaseEdit(ph *MachinePhase, body map[string]any) {
 	if _, ok := body["resident"]; ok {
 		ph.Resident = BoolArg(body, "resident")
 	}
+	if _, ok := body["required"]; ok {
+		ph.Required = BoolArg(body, "required")
+	}
 	if v, ok := str("tool"); ok {
 		ph.Tool = v
 	}
@@ -1629,7 +1648,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 	}
 	return map[string]any{
 		"name": p.Name, "desc": p.Desc, "prompt": p.Prompt,
-		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
+		"resident": p.Resident, "required": p.Required, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
 		"pipeline": p.Pipeline, "machine": p.Machine, "accumulates": accumulatorRows(p),
 		"guard": p.Guard, "guard_to": p.GuardTo, "reply_with": p.ReplyWith,
 		"think": p.Think, "reach": PhaseReach(p), "tools": p.Tools, "deny": p.Deny, "output": rows,

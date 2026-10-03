@@ -787,7 +787,7 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 func tempToolDefEqual(a, b TempTool) bool {
 	neutralize := func(t TempTool) TempTool {
 		t.Locked, t.Disabled, t.BuilderOnly, t.Trial = false, false, false, false
-		t.TrialSince = time.Time{}
+		t.TrialSince, t.NoUnattended = time.Time{}, false
 		return t
 	}
 	return reflect.DeepEqual(neutralize(a), neutralize(b))

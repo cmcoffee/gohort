@@ -31,6 +31,13 @@ import (
 type PhaseResult struct {
 	Text   string         `json:"text,omitempty"`
 	Fields map[string]any `json:"fields,omitempty"`
+	// Skipped marks a step that ran and found it did not apply (SkipStep).
+	// Its Text is what it was handed, passed through unchanged, so a later
+	// {state:STEP} still reads something and the run's result, when the
+	// skipped step was the last, is what the step before it produced. No
+	// Fields: a step that did not apply established nothing.
+	Skipped    bool   `json:"skipped,omitempty"`
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 // MachineState is the blackboard: one entry per phase that has run,
@@ -330,19 +337,31 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 			return ph, stopBudget, nil
 		}
 
-		text, fields, err := T.runPhase(ctx, def, ph, vars, cur.State, run, note)
-		if err != nil {
-			return MachinePhase{}, stopBudget, err
-		}
-		cur.State[ph.Name] = PhaseResult{Text: text, Fields: fields}
-		// The working set, immediately after this phase's own entry, so a
-		// later phase reading {state:answers} sees this contribution too.
-		def.accumulate(ph, fields, cur.State, note)
-		vars.Prev = text
+		stepCtx, skipped := withSkipSlot(ctx)
+		text, fields, err := T.runPhase(stepCtx, def, ph, vars, cur.State, run, note)
+		var next, why string
+		if reason, ok := skipped(); ok {
+			// The step said it does not apply. Whatever error the abandoned
+			// call left behind is the skip's, not a failure: a declared-output
+			// step that stops to skip has no JSON to decode, and reporting that
+			// as the step failing would make the escape hatch a crash.
+			cur.State[ph.Name] = PhaseResult{Text: vars.Prev, Skipped: true, SkipReason: reason}
+			next, why = strings.TrimSpace(ph.Next), "step "+ph.Name+" did not apply"
+			note("machine_step_skipped", "step "+ph.Name+" did not apply: "+reason+"; moving on to "+chooseStr(next, "the end of the run"))
+		} else {
+			if err != nil {
+				return MachinePhase{}, stopBudget, err
+			}
+			cur.State[ph.Name] = PhaseResult{Text: text, Fields: fields}
+			// The working set, immediately after this phase's own entry, so a
+			// later phase reading {state:answers} sees this contribution too.
+			def.accumulate(ph, fields, cur.State, note)
+			vars.Prev = text
 
-		next, why := def.NextPhase(ph, fields)
-		if why != "" {
-			note("machine_route_fallback", why)
+			next, why = def.NextPhase(ph, fields)
+			if why != "" {
+				note("machine_route_fallback", why)
+			}
 		}
 		// A step that hands off nowhere ENDS an unattended run, and the
 		// step we just ran is the result. The conversational path treats

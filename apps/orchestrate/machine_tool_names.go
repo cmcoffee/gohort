@@ -288,6 +288,7 @@ func didYouMeanTool(name string, known map[string]bool) string {
 // how a check added in one place quietly failed to exist in the others.
 func machineChecklist(udb Database, user string, def MachineDef) []string {
 	out := append(def.Problems(), unknownPhaseToolFindings(udb, user, def)...)
+	out = append(out, toolStepFindings(udb, user, def)...)
 	return append(out, machineReachConflicts(user, def)...)
 }
 

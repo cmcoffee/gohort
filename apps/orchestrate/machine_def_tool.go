@@ -70,6 +70,12 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 					Items:       &ToolParam{Type: "string"},
 				},
 				"resident": {Type: "boolean", Description: "(update_phase) true: the conversation waits in this step and its reply goes to the person. false: it passes on to its next or choices."},
+				"required": {Type: "boolean", Description: "(update_phase) true: this step is never skipped as not applicable; it does its work or the run fails. For a step whose absence would make the result wrong."},
+				"machine_deny": {
+					Type:        "array",
+					Description: "(create / update) Tool names NO step of this machine may reach, wherever it runs. Omit to leave as is; [] clears.",
+					Items:       &ToolParam{Type: "string"},
+				},
 				"phases": {
 					Type:        "array",
 					Description: "(create/update/validate) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself, do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output: their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"all\" for everything the agent has, \"read\", \"none\"; unset, a transient phase naming no tools reaches NOTHING and every other phase reaches everything; prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last, the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\", OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins, {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
@@ -111,7 +117,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 }
 
 const machineHelpText = `machine actions:
-- create  {name, description?, start?, route_each_message?, phases:[...], attach_to_agents?:[names]}, author a machine.
+- create  {name, description?, start?, route_each_message?, machine_deny?:[tools], phases:[...], attach_to_agents?:[names]}, author a machine.
 - update  {name|id, ...}: revise in place (same id, attachments stay). REPLACES the phase list.
 - validate {phases:[...]} or {name|id}: check WITHOUT writing. Reports what would refuse the save,
            tool names that resolve to nothing, and steps whose agent cannot reach what they name.
@@ -202,6 +208,16 @@ tool       a tool this step CALLS DIRECTLY, with "args", and no model runs at al
            call to decide to do the only thing it could do. Args are templated ({input}, {prev},
            {state:PHASE.field}), a placeholder fills a VALUE and can never become a key. A runner
            like agent/pipeline/machine, so it excludes them, and it cannot be resident.
+           {state:STEP.field} reads only fields STEP declares: a tool step whose JSON result a
+           later step needs declares "output" fields, and they are decoded from what the tool
+           returned. An argument whose placeholder comes out EMPTY skips the step as not
+           applicable (the run moves on to next) instead of calling the tool with a blank.
+           Unattended runs reach the owner's own tools, except those turned off, marked never
+           unattended, or behind a credential that asks before every call; validate says which.
+required   true = never skipped. A step that runs its own model with tools is otherwise given
+           skip_step, to say it does not apply (nothing to act on, no tool that fits) rather than
+           force a call; it moves on to next. Mark required where skipping would make the result
+           wrong. machine_deny on the machine removes tools from every step, wherever it runs.
 reach      how much of the agent's catalog this phase may touch: "all" = all of it, "read" = only
            tools that read (nothing that writes, runs a command, or reaches the network), "none" =
            nothing, which is right for a phase that only decides or reshapes what it was given.
@@ -383,6 +399,9 @@ func (t *chatTurn) machineDraftFromArgs(args map[string]any, isUpdate bool) (mac
 	}
 	if v, present := args["route_each_message"]; present {
 		def.RouteEachMessage = v == true || strings.EqualFold(strings.TrimSpace(fmt.Sprint(v)), "true")
+	}
+	if _, present := args["machine_deny"]; present {
+		def.Deny = mapStrList(args, "machine_deny")
 	}
 	if len(phases) > 0 {
 		def.Phases = phases
@@ -972,6 +991,11 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 		ph.Resident = on
 		changed = append(changed, fmt.Sprintf("resident = %v", on))
 	}
+	if v, present := args["required"]; present {
+		on := v == true || strings.EqualFold(strings.TrimSpace(fmt.Sprint(v)), "true")
+		ph.Required = on
+		changed = append(changed, fmt.Sprintf("required = %v", on))
+	}
 
 	if len(changed) == 0 {
 		return "", errors.New("nothing to change: name at least one field (" + strings.Join(updatePhaseFieldNames, ", ") + "). " +
@@ -1152,6 +1176,7 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			Think:     normalizePhaseThink(m["think"]),
 			Output:    fields,
 			Resident:  mapBool(m, "resident"),
+			Required:  mapBool(m, "required"),
 			Next:      strings.TrimSpace(mapStr(m, "next")),
 			ReplyWith: strings.TrimSpace(mapStr(m, "reply_with")),
 			NextFrom:  strings.TrimSpace(mapStr(m, "next_from")),
@@ -1215,7 +1240,7 @@ func previewText(s string, max int) string {
 
 // updatePhaseFieldNames is what update_phase writes, in the order it says so.
 var updatePhaseFieldNames = []string{
-	"prompt", "desc", "think", "model", "next", "choices", "resident", "reply_with",
+	"prompt", "desc", "think", "model", "next", "choices", "resident", "required", "reply_with",
 	"guard", "guard_to", "tools", "deny", "reach",
 }
 
@@ -1241,7 +1266,7 @@ func unknownUpdatePhaseKeys(args map[string]any) []string {
 var machinePhaseKeys = map[string]bool{
 	"name": true, "desc": true, "prompt": true, "tool": true, "args": true,
 	"reach": true, "tools": true, "deny": true, "model": true, "think": true,
-	"output": true, "resident": true, "reply_with": true, "next": true, "next_from": true,
+	"output": true, "resident": true, "required": true, "reply_with": true, "next": true, "next_from": true,
 	"choices": true, "guard": true, "guard_to": true, "exits_to": true,
 	"keep": true, "agent": true, "pipeline": true, "machine": true,
 	"accumulates": true,

@@ -450,6 +450,9 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Disabled    bool `json:"disabled"`     // off for every agent
 			BuilderOnly bool `json:"builder_only"` // exposed to Builder only
 			BoundOnly   bool `json:"bound_only"`   // hidden from agents; usable only where bound
+			// Never runs without somebody watching: refused on schedules and
+			// unattended machine runs, normal in a conversation.
+			NoUnattended bool `json:"no_unattended"`
 			// Promotion (publish-to-catalog) request state for this tool.
 			Requested  bool `json:"requested"`   // a promotion request is pending admin review
 			CanRequest bool `json:"can_request"` // eligible to request: not already shared, none pending
@@ -529,7 +532,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				Credential: p.Tool.Credential, Category: p.Tool.Category,
 				Missing: missing, Shared: p.Shared, LastUsed: last,
 				SharedWith: sharedWithSummary(p.SharedWith),
-				Locked:     p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly,
+				Locked:     p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly, NoUnattended: p.Tool.NoUnattended,
 				Requested: !p.Shared && pending, CanRequest: !p.Shared && !pending,
 				Pool: true, Deletable: true, DisableOK: true,
 				Group: "All Agents (Global tools)",
@@ -1944,6 +1947,9 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "builder_only", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Builder-only", Color: "warning"},
 					}},
+					{Field: "no_unattended", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Never unattended", Color: "info"},
+					}},
 					// Session drafts are the one row type here that is NOT kept —
 					// badge it plainly rather than letting it read as pool membership.
 					{Field: "session", Type: "badge", Badges: []ui.BadgeMapping{
@@ -2533,9 +2539,9 @@ func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request
 		// whole pool by identity); this is the one Builder-shaped control that
 		// is real. Prepended AFTER the fallback above so the "no items → offer
 		// re-home targets" trigger keeps meaning what it says.
-		builderOnly, boundOnly := false, false
+		builderOnly, boundOnly, noUnattended := false, false, false
 		if row, ok := UserToolByName(db, user, name); ok {
-			builderOnly, boundOnly = row.Tool.BuilderOnly, row.Tool.BoundOnly
+			builderOnly, boundOnly, noUnattended = row.Tool.BuilderOnly, row.Tool.BoundOnly, row.Tool.NoUnattended
 		}
 		if builderOnly {
 			// While Builder-only is ON, the selector below it is dead weight:
@@ -2564,6 +2570,10 @@ func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request
 		items = append([]pill{
 			{Key: "builder_only", Label: "Builder-only (authoring)", On: builderOnly},
 			{Key: "bound_only", Label: "Bound targets only", On: boundOnly},
+			// Not an access statement like the two above (the tool stays on every
+			// agent it is on); it says WHEN it may run, and it is the only place
+			// that can be said for a machine run with no agent behind it.
+			{Key: "never_unattended", Label: "Never run unattended", On: noUnattended},
 		}, items...)
 		out["primary"] = map[string]any{"label": "All my agents", "on": found && st.Global}
 		switch {
@@ -2623,7 +2633,7 @@ func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request
 		// falling through would look up an AGENT by that name and report
 		// `agent "bound_only" not found` — a pill that renders, posts, and fails
 		// on a lookup it was never meant to reach.
-		if target == "builder_only" || target == "bound_only" {
+		if target == "builder_only" || target == "bound_only" || target == "never_unattended" {
 			row, ok := UserToolByName(db, user, name)
 			if !ok {
 				// An ORPHAN — a committed tool that lost its agent — is not in
@@ -2655,15 +2665,19 @@ func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request
 				http.Error(w, "tool not found", http.StatusNotFound)
 				return
 			}
-			if target == "builder_only" {
+			switch target {
+			case "builder_only":
 				row.Tool.BuilderOnly = body.On
-			} else {
+			case "bound_only":
 				row.Tool.BoundOnly = body.On
+			default:
+				row.Tool.NoUnattended = body.On
 			}
 			// Mutually exclusive: one reserves a tool for authoring, the other
 			// says it belongs to whatever binds it. Holding both would leave the
-			// selector describing a state no filter produces.
-			if body.On {
+			// selector describing a state no filter produces. Never-unattended
+			// is about when, not who, and sits beside either.
+			if body.On && target != "never_unattended" {
 				if target == "builder_only" {
 					row.Tool.BoundOnly = false
 				} else {

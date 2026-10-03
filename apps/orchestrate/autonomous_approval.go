@@ -106,6 +106,13 @@ func (app *OrchestrateApp) newAutonomousGate(owner, agentID string, sess *ToolSe
 			break
 		}
 	}
+	// The owner's per-tool mark, which says it for every agent at once and is
+	// the only way to say it for a tool no agent record lists.
+	for _, p := range LoadPersistentTempTools(app.DB, owner) { // resolves to the tool store itself
+		if p.Tool.NoUnattended {
+			noUnattended[p.Tool.Name] = true
+		}
+	}
 	return &autonomousGate{
 		app: app, owner: owner, agentID: agentID, subAgent: sub,
 		auto:         autonomousApprovedSet(udb, agentID),

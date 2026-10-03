@@ -1190,11 +1190,15 @@ func (T *AppCore) runWorkerStageConfirm(ctx context.Context, prompt string, tool
 	// Narrowed to pre_action by stageCheck: this stage can ACT, and an action
 	// gate is the only guard that prevents rather than redacts.
 	guards := stageGuardrails(ctx)
+	// RoundAbortTools: a machine step that skips is done, so nothing else in
+	// that round runs and the loop ends. Harmless elsewhere, where no such
+	// tool exists.
 	resp, _, err := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: prompt}}, AgentLoopConfig{
 		Tools:             tools,
 		Tier:              tier,
 		MaxRounds:         pipelineStageMaxRounds,
 		Confirm:           confirm,
+		RoundAbortTools:   []string{skipStepToolName},
 		GuardrailCheck:    guards.stageCheck(),
 		GuardrailHalted:   guards.Halted,
 		GuardrailReject:   guards.Reject,

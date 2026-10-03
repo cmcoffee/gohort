@@ -1539,7 +1539,7 @@ func TestRemovingAStepFromTheEditorLeavesNoComplaint(t *testing.T) {
 // agents, so the promise was also already true.
 func TestTheMetaFormOffersNothingInert(t *testing.T) {
 	_, _, _, def := editorFixture(t)
-	raw, _ := json.Marshal(metaPanel(def, "api/machines/"+def.ID))
+	raw, _ := json.Marshal(metaPanel(def, "api/machines/"+def.ID, editorCatalog{}))
 	form := string(raw)
 	if strings.Contains(form, `"field":"global"`) {
 		t.Error("a toggle nothing reads should not be offered")
@@ -1972,7 +1972,7 @@ func TestStepControlsHideWhereTheRunnerIgnoresThem(t *testing.T) {
 		t.Errorf("a stored guard_to must stay visible so it can be cleared, got %q", got)
 	}
 
-	for _, f := range metaPanel(def, "api/machines/x").Fields {
+	for _, f := range metaPanel(def, "api/machines/x", editorCatalog{}).Fields {
 		if f.Field == "route_each_message" && f.ShowWhen != "!unattended" {
 			t.Errorf("route_each_message does nothing on a job, got %q", f.ShowWhen)
 		}

@@ -517,6 +517,14 @@ func (t *chatTurn) machineCatalog(ph MachinePhase) []AgentToolDef {
 		// answered from the corpus, because a dispatched run has no session
 		// and therefore no machine.
 		pool = append(pool, t.corpusToolDefs()...)
+		// The machine's own deny list holds in a conversation too, not only
+		// on the doors with nobody watching.
+		// (Read from the session: the steps run before t.machine is set.)
+		if t.cursorThread() != nil {
+			if def, ok := t.sessionMachine(); ok {
+				pool = applyMachineDeny(def, pool, nil)
+			}
+		}
 		// Prefixed so the activity pane reads as what it is: work done
 		// inside a step, before the turn's own answer began.
 		t.machineTools = t.wrapToolsForActivity(sess, pool, t.agent, "↳ [step] ")

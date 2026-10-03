@@ -577,11 +577,7 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 
 	// The owner's pool, narrowed per step by each step's own Tools list.
-	sess := &ToolSession{Username: sa.Owner, DB: AuthDB()}
-	catalog, err := GetAgentToolsWithSession(sess, availableWorkerToolNames()...)
-	if err != nil {
-		Log("[orchestrate.standing] machine %q: tool catalog partly unresolved for %q: %v", def.Name, sa.Owner, err)
-	}
+	catalog := machineRunCatalog(UserDB(app.DB, sa.Owner), sa.Owner, "", def).Tools
 	cache := NewRunToolCache()
 	catalog = WrapToolsWithRunCache(cache, catalog)
 

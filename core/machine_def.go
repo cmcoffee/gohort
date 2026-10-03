@@ -122,6 +122,13 @@ type MachineDef struct {
 	// A conversational setting: an unattended run has no messages to route.
 	RouteEachMessage bool `json:"route_each_message,omitempty"`
 
+	// Deny names tools no step of this machine may reach, wherever it runs:
+	// its Run panel, a schedule, a pipeline stage, a dispatch, or a
+	// conversation. A machine run with no agent behind it reaches its owner's
+	// tools the way an agent with no allow-list does, and this is how an
+	// author takes one away from the whole machine rather than step by step.
+	Deny []string `json:"deny,omitempty"`
+
 	// AllowedUsers is the peer-share recipient set: which OTHER users of
 	// this deployment may read and run this machine. Empty (the default,
 	// and what every machine was before this) means private to the owner.
@@ -436,6 +443,14 @@ type MachinePhase struct {
 	// rather than this phase's, which is what lets many phases build one
 	// working set.
 	Accumulates []MachineAccumulator `json:"accumulates,omitempty"`
+
+	// Required removes the step's way out. Normally a step that runs its own
+	// model with tools may report that it does not apply (SkipStep), and a
+	// tool step whose templated argument comes out empty is skipped rather
+	// than called with a blank; either way the machine moves on to Next. A
+	// required step is never skipped: it does its work or the run fails,
+	// which is what a step whose absence would make the result wrong wants.
+	Required bool `json:"required,omitempty"`
 }
 
 // MayExitTo reports whether change_phase may move a conversation from

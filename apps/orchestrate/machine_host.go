@@ -27,6 +27,7 @@ package orchestrate
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -203,11 +204,31 @@ func (h *machineHost) runToolPhase(ctx context.Context, ph MachinePhase, tool, p
 	// earlier one worked out — {input}, {prev}, {state:PHASE.field}. {prev}
 	// carries what the step before this one handed on, which is the argument a
 	// tool step most often wants.
-	vars := PhaseVars{MachineTurn: h.machineTurn("")}
-	vars.Prev = prompt
+	vars, ok := StepVars(ctx)
+	if !ok {
+		vars = PhaseVars{MachineTurn: h.machineTurn("")}
+		vars.Prev = prompt
+	}
 	args := make(map[string]any, len(ph.Args))
+	var blank []string
 	for k, tmpl := range ph.Args {
-		args[k] = ResolvePhaseTemplate(tmpl, vars, h.blackboard())
+		v := ResolvePhaseTemplate(tmpl, vars, h.blackboard())
+		args[k] = v
+		// A templated argument that came out empty: what it was meant to carry
+		// never arrived (the earlier step found nothing, the input had no such
+		// part). Calling the tool anyway hands it a blank and reports whatever
+		// a blank gets back as this step's work.
+		if strings.Contains(tmpl, "{") && strings.TrimSpace(v) == "" {
+			blank = append(blank, k)
+		}
+	}
+	if len(blank) > 0 {
+		sort.Strings(blank)
+		why := "its " + strings.Join(blank, ", ") + " came out empty, so there was nothing to call " + tool + " with"
+		if ph.Required || !SkipStep(ctx, why) {
+			return "", Error("step " + ph.Name + ": " + why)
+		}
+		return "", nil
 	}
 	if ctx.Err() != nil {
 		return "", ctx.Err()

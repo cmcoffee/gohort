@@ -39,17 +39,12 @@ func (T *OrchestrateApp) pipelineMachineRunner(owner string) PipelineMachineRunn
 			return "", nil, Error("machine " + strconv.Quote(def.Name) +
 				" converses rather than runs: it has a step that waits for a person, and a stage has nobody waiting in it")
 		}
-		if probs := def.Problems(); len(probs) > 0 {
+		if probs := machineRunProblems(UserDB(T.DB, owner), owner, def); len(probs) > 0 {
 			return "", nil, Error("machine " + strconv.Quote(def.Name) + " will not run yet: " + probs[0] +
 				" (" + strconv.Itoa(len(probs)) + " outstanding)")
 		}
 
-		sess := &ToolSession{Username: owner, DB: AuthDB()}
-		catalog, err := GetAgentToolsWithSession(sess, availableWorkerToolNames()...)
-		if err != nil {
-			Log("[orchestrate.pipelines] machine stage %q: tool catalog partly unresolved for %q: %v", def.Name, owner, err)
-		}
-		catalog = WrapToolsWithRunCache(NewRunToolCache(), catalog)
+		catalog := WrapToolsWithRunCache(NewRunToolCache(), machineRunCatalog(UserDB(T.DB, owner), owner, "", def).Tools)
 		cur := &MachineCursor{}
 		// A stage has no turn to hang a diagnostic on, so the child's
 		// breadcrumbs go to the log rather than being dropped: they are how
