@@ -198,6 +198,9 @@ Per task, per variant, per tier:
 - deterministic pass rate over the N runs, with the spread between runs
 - judge win rate against the baseline variant (ties shown)
 - cost: rounds, tokens, wall time
+- friction: the tools each build called, by name (a machine task answered
+  with pipeline calls shows here before any grade says why), and the calls
+  that came back an error, averaged per task
 - tries to green and the failure classes hit (the build ledger's own
   vocabulary, so suite and production read the same way)
 - reply guards and correction checks that fired
@@ -387,11 +390,12 @@ fourth is not.
    per task, passed of graded, the spread between repeats, minutes, tries to
    green, out of time, harness errors, and a line with the train and
    held-out pass rates and the mean spread. Run 2 reads the spread here.
-4. **The suite is three tasks, all train.** Held-out is empty, so "held-out
-   did not get worse" is always true and the overfitting guard does nothing,
-   and three tasks is far below the floor of twenty (15 train, 5 held-out)
-   the open questions set before the proposer is trusted. Runs 1 to 3 do
-   not need it; run 4 does.
+4. **The suite was three tasks, all train.** Closed: twenty tasks, fifteen
+   train and five held out, aimed at the friction of the framework and
+   authoring tools (tool wrappers with real APIs' quirks, python shell
+   tools, apps whose data sources compute the thing asked for, machines
+   chaining tools, one where Builder must build the tool first). See the
+   suite's README.
 5. **Setup.** The deployment builds with the tuning app registered (the
    blank import in the machine-local `private.go`), a lead model that is not
    the worker (the judge refuses otherwise), the lead's price set under
