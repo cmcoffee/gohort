@@ -13,7 +13,7 @@ Fine-tuning, with the prompts as the weights.
 | Fine-tuning | Prompt tuning |
 |---|---|
 | training data | a suite of build tasks with known-good outcomes |
-| weights | the prompt blocks and Builder's own prompt, per tier |
+| weights | the prompt blocks, Builder's own prompt, and the descriptions of the framework and authoring tools, per tier |
 | loss | graders scoring what Builder actually built |
 | optimizer | a proposer that edits prompt blocks from the failures |
 | validation set | held-out tasks the proposer never sees |
@@ -242,6 +242,33 @@ accepted candidate. It never promotes. Promotion is an admin action on the
 winning variant: each changed block gets a Prompts-page revision tagged
 `Via: "tuned"` with the scorecard linked, so it is revertible the same way
 every other edit is.
+
+## Tool descriptions are weights too
+
+How Builder builds is decided as much by the descriptions of the tools it
+builds with as by its prompt: when to make a machine and when a pipeline,
+what a tool definition needs before it is done. So the shipped framework and
+authoring tools' descriptions are blocks, keyed `tool.<name>`, on the Prompts
+page beside the rest (`core/prompts/tool_desc.go`, the names in
+`apps/orchestrate/tunable_tools.go`). Each block's text is the description
+the code ships, seen the first time the tool goes out and remembered across
+restarts; an edit, for every tier or for one, replaces the description in
+every call that offers the tool, at the same handle the per-tier swap uses.
+
+- **Authoring is everything Builder authors with,** a test keeping the list
+  equal to what it is handed, plus `app_def`, `pipeline` and `machine`.
+  Framework is the turn plumbing it plans, builds and verifies through.
+- **A user's own tools are never blocks.** Their descriptions are theirs.
+- **A description built per caller is left alone.** The `agents` tool has a
+  read-only variant for Builder; `plan_set` carries the agent's budget. Those
+  are not listed, and any listed tool whose description keeps changing
+  between calls drops out of the editable set with a log line saying so,
+  since one edit would overwrite what each caller was meant to read.
+- **Tool level only, for now.** Parameter descriptions carry much of the how
+  (app_def's sections and data sources), and are the next thing to open up.
+
+The proposer is told that a `tool.` block is the description of that tool,
+to be edited when a failure is a wrong choice of tool or a wrong use of one.
 
 ## Per-tier profiles
 

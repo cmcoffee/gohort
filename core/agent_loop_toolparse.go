@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 // ParseTextToolCall attempts to extract a tool call from text content when the
@@ -563,7 +565,14 @@ func BuildToolPrompt(tools []AgentToolDef) string {
 	var b strings.Builder
 	b.WriteString("\n\nYou have access to the following tools:\n\n")
 	for _, td := range tools {
-		b.WriteString(fmt.Sprintf("### %s\n%s\n", td.Tool.Name, td.Tool.Description))
+		// A shipped tool's edited description, for every tier: the
+		// handle swaps in a tier's own wording, as it does for any block.
+		desc := td.Tool.Description
+		if prompts.TunableToolGroup(td.Tool.Name) != "" {
+			prompts.ObserveToolDescription(td.Tool.Name, desc)
+			desc = EffectivePromptText(prompts.ToolBlockKey(td.Tool.Name), desc)
+		}
+		b.WriteString(fmt.Sprintf("### %s\n%s\n", td.Tool.Name, desc))
 		if len(td.Tool.Parameters) > 0 {
 			b.WriteString("Parameters:\n")
 			for name, p := range td.Tool.Parameters {

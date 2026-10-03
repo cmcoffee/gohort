@@ -56,6 +56,9 @@ func tierRef(tier, key string) string { return tier + "|" + key }
 // shared text has to be findable and this has to fill only the placeholders
 // the shared text fills.
 func tierTextProblem(b PromptBlock, text string) string {
+	if strings.HasPrefix(b.Key, prompts.ToolBlockPrefix) {
+		return "" // a tool's description is replaced whole, by the tool's name
+	}
 	shared := EffectivePromptText(b.Key, b.Text)
 	if why := prompts.TierTextPlaceable(b.Key, shared); why != "" {
 		return "This block cannot be worded per tier: " + why + "."

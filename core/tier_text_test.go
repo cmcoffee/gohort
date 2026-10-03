@@ -72,3 +72,32 @@ func TestTierTextFollowsTheTierThatAnswers(t *testing.T) {
 		t.Fatalf("a worker call got the lead's words: %q", got)
 	}
 }
+
+// A shipped tool's edited description goes out in the calls the edit is for,
+// per tier, and the caller's own tool list is not changed by it.
+func TestToolDescriptionEditsGoOut(t *testing.T) {
+	SetPromptOverrideDB(tierTextStore{})
+	prompts.RegisterTunableTools(prompts.ToolGroupAuthoring, "test_handle_tool")
+	prompts.SetPromptTierOverride(prompts.TierLead, prompts.ToolBlockKey("test_handle_tool"), "lead wording", "")
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	t.Cleanup(func() { SetSharedLLMs(prevW, prevL); SetPromptOverrideDB(nil) })
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "w", OutputTokens: 1, Repeat: true}}}
+	lead := &FakeLLM{Turns: []FakeTurn{{Content: "l", OutputTokens: 1, Repeat: true}}}
+	SetSharedLLMs(worker, lead)
+	app := &AppCore{LLM: ReloadableWorkerLLM(), LeadLLM: ReloadableLeadLLM()}
+	tools := []Tool{{Name: "test_handle_tool", Description: "shipped wording"}, {Name: "my_own", Description: "mine"}}
+	msgs := []Message{{Role: "user", Content: "hi"}}
+
+	app.LeadChat(context.Background(), msgs, WithTools(tools))
+	app.WorkerChat(context.Background(), msgs, WithTools(tools))
+	lt, wt := lead.Config(0).Tools, worker.Config(0).Tools
+	if lt[0].Description != "lead wording" || lt[1].Description != "mine" {
+		t.Fatalf("lead tools = %+v", lt)
+	}
+	if wt[0].Description != "shipped wording" {
+		t.Fatalf("worker tools = %+v", wt)
+	}
+	if tools[0].Description != "shipped wording" {
+		t.Fatal("the caller's tool list was changed")
+	}
+}

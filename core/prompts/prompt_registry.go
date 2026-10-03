@@ -38,6 +38,27 @@ func RegisterPromptBlock(b PromptBlock) {
 	promptBlocks = append(promptBlocks, b)
 }
 
+// upsertPromptBlock registers b, or replaces the block with its key when
+// that block's text, title or category differs. Reports whether anything
+// changed.
+func upsertPromptBlock(b PromptBlock) bool {
+	b.Builtin = true
+	promptBlockMu.Lock()
+	defer promptBlockMu.Unlock()
+	for i, have := range promptBlocks {
+		if have.Key != b.Key {
+			continue
+		}
+		if have.Text == b.Text && have.Title == b.Title && have.Category == b.Category {
+			return false
+		}
+		promptBlocks[i] = b
+		return true
+	}
+	promptBlocks = append(promptBlocks, b)
+	return true
+}
+
 // AllPromptBlocks returns a copy of the registered blocks in registration order.
 func AllPromptBlocks() []PromptBlock {
 	promptBlockMu.Lock()
@@ -68,6 +89,9 @@ func SetPromptOverrideDB(db Store) {
 	promptOverrideMu.Lock()
 	promptOverrideDB = db
 	promptOverrideMu.Unlock()
+	if db != nil {
+		loadObservedTools(db, tunableToolNames())
+	}
 	tierTextChanged()
 }
 

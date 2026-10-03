@@ -296,7 +296,34 @@ func (r reloadableLLM) withTierText(opts []ChatOption) []ChatOption {
 	}
 	return append(append([]ChatOption{}, opts...), func(c *ChatConfig) {
 		c.SystemPrompt = prompts.ApplyTierText(tier, c.SystemPrompt)
+		c.Tools = tunedToolDescriptions(tier, c.Tools)
 	})
+}
+
+// tunedToolDescriptions applies the edits to shipped tools' descriptions
+// (prompts.ToolDescriptionFor), recording each shipped description as its
+// block on the way. A copy, never the caller's slice: the same tool list
+// goes out on the next call, and to the other tier.
+func tunedToolDescriptions(tier string, tools []Tool) []Tool {
+	var out []Tool
+	for i, t := range tools {
+		if prompts.TunableToolGroup(t.Name) == "" {
+			continue
+		}
+		prompts.ObserveToolDescription(t.Name, t.Description)
+		desc := prompts.ToolDescriptionFor(tier, t.Name, t.Description)
+		if desc == t.Description {
+			continue
+		}
+		if out == nil {
+			out = append([]Tool(nil), tools...)
+		}
+		out[i].Description = desc
+	}
+	if out == nil {
+		return tools
+	}
+	return out
 }
 
 // noteLeadHealth records whether the LEAD tier is answering, from the calls
@@ -394,4 +421,10 @@ func PromptToolsMode() (mode bool, ok bool) {
 	promptToolsMu.RLock()
 	defer promptToolsMu.RUnlock()
 	return promptToolsMode, promptToolsSet
+}
+
+func init() {
+	prompts.SetUnstableToolLogger(func(name string) {
+		Log("[prompts] the %q tool's description changes from call to call (built per caller), so edits to it are not applied and it is left as the code builds it", name)
+	})
 }

@@ -183,6 +183,9 @@ func swapFirst(system, shared, own string) (string, bool) {
 // TierTextPlaceable says why a block's text could not be found in a prompt
 // to be swapped for a tier's own, or "" when it can.
 func TierTextPlaceable(key, text string) string {
+	if strings.HasPrefix(key, ToolBlockPrefix) {
+		return "" // replaced whole, by the tool's name (tool_desc.go)
+	}
 	tierMu.Lock()
 	render := tierRenders[key]
 	tierMu.Unlock()
