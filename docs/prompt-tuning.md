@@ -34,6 +34,15 @@ most, about four hours, for trying it or after a model change) and
 **extended** (the overnight run, as far as the settings on Details allow).
 Both work the same way:
 
+- **Probe first.** Before a task is built, Builder is given its request and
+  its real turn is stopped at its first authoring call, without making it
+  (`core.WithToolProbe`, `/sandbox/probe`): which tool it reached for, with
+  which settings. Each probe is asked twice. A task's probes are its own
+  (`probes` in task.json), or one from its request and kind: a tool wants
+  `tool_def`, an app `app_def`, an unattended machine `machine` with
+  `unattended: true`. A wrong reach is fixed against the probes, seconds a
+  check, before a build spends minutes finding it out. What is checked is
+  what Builder did first, not what it says it would do.
 - **Fix as it goes.** Each train task is built once. A failure is read by
   the lead as the framework's (a tool that cannot express what was asked, a
   broken platform check, the harness) or the wording's. The framework's is
