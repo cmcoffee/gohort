@@ -45,6 +45,11 @@ type ActionList struct {
 	// non-empty for the WHOLE run, including before the action has said
 	// anything, or a page opened mid-run shows an idle row. {"outcome": "..."}
 	// with no progress is how the last run ended.
+	//
+	// An action that only STARTS long work answers its POST with
+	// {"running": true} (and an optional "message"): the row then keeps its
+	// spinner and polls this source until an outcome arrives, instead of
+	// reading "done" the moment the start returns.
 	ProgressSource string `json:"progress_source,omitempty"`
 
 	// Invalidate — data sources to refresh after a successful action.

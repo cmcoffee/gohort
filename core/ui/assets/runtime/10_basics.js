@@ -4979,6 +4979,19 @@
             var run = showRunning(Date.now(), null);
             fetchJSON(url, {method: cfg.method || 'POST'}).then(function(r) {
               run.stop();
+              // {running: true}: the action STARTED work that outlives this
+              // request (a job of minutes or hours). Its return is not its
+              // end, so keep the spinner and poll the progress source until an
+              // outcome arrives, exactly as a page arriving mid-run would.
+              if (r && typeof r === 'object' && r.running && purl) {
+                if (r.message) showToast(r.message);
+                showRunning(Date.now(), function(outcome) {
+                  if (running) running.stop();
+                  status.textContent = outcome;
+                  if (cfg.invalidate) window.uiInvalidate(cfg.invalidate);
+                });
+                return;
+              }
               // Prefer an explicit {message}; else surface a {fixed}/{removed}
               // digit; else a bare "done".
               if (r && typeof r === 'object' && r.message) {
