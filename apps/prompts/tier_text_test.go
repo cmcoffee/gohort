@@ -109,3 +109,11 @@ func TestTierTextKeepsTheBlocksPlaceholders(t *testing.T) {
 		t.Fatalf("rows = %+v", rows)
 	}
 }
+
+// The editor's section on the admin tab has a title: an untitled section is
+// "Section 1" in the tab's rail.
+func TestTheEditorSectionIsNamed(t *testing.T) {
+	if s := promptsAdminSection(); s.Title != EditorTitle || s.Group != AdminTab {
+		t.Fatalf("editor section: title %q, group %q", s.Title, s.Group)
+	}
+}

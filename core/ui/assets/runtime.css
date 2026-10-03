@@ -2209,15 +2209,18 @@ select:-webkit-autofill {
 
 /* --- ActionList --- */
 .ui-actionlist { display: flex; flex-direction: column; gap: 0.4rem; }
+/* Wraps, so a long running status (a progress line of a long job) drops to
+   a line of its own under the text instead of squeezing the label and
+   description into a column one word wide. */
 .ui-actionlist-row {
-  display: flex; align-items: center; gap: 0.7rem;
+  display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
   padding: 0.55rem 0.5rem;
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
 }
-.ui-actionlist-text { flex: 1; min-width: 0; }
+.ui-actionlist-text { flex: 1 1 16rem; min-width: 0; }
 .ui-actionlist-label { font-size: 0.92rem; color: var(--text); }
 .ui-actionlist-desc  { font-size: 0.78rem; color: var(--text-mute); margin-top: 0.15rem; }
-.ui-actionlist-status { font-size: 0.78rem; color: var(--text-mute); min-width: 4rem; text-align: right; }
+.ui-actionlist-status { font-size: 0.78rem; color: var(--text-mute); min-width: 4rem; max-width: 100%; text-align: right; overflow-wrap: anywhere; }
 .ui-actionlist-empty { color: var(--text-mute); font-size: 0.9rem; padding: 0.5rem 0; }
 
 /* --- JSONView --- */

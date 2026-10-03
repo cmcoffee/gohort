@@ -28,7 +28,7 @@ import (
 func init() {
 	RegisterApp(new(PromptsApp))
 	// Editing the framework prompt blocks is deployment tuning, not agent
-	// behavior — so the editor lives inside the admin UI (a "Prompts" tab),
+	// behavior — so the editor lives inside the admin UI (the "Optimization" tab),
 	// self-registered here rather than surfaced as an agent-facing hub app. The
 	// app's routes below still serve the editor; WebHidden keeps it off the
 	// dashboard and there's no HubTab, so it's reached only from admin.
@@ -70,7 +70,18 @@ func (T *PromptsApp) Main() error {
 // --- core.WebApp interface ---------------------------------------------------
 
 func (T *PromptsApp) WebPath() string { return "/prompts" }
-func (T *PromptsApp) WebName() string { return "Prompts" }
+func (T *PromptsApp) WebName() string { return EditorTitle }
+
+// AdminTab is the admin tab the prompt editor lives on, and what other apps
+// put their sections beside it under: everything that changes what the
+// models are told, by hand or by Optimize.
+const AdminTab = "Optimization"
+
+// EditorTitle names the editor's section on that tab: the overrides of the
+// shipped prompt blocks, beside sections other apps add (Optimize, per-tier
+// text).
+const EditorTitle = "Prompt overrides"
+
 func (T *PromptsApp) WebDesc() string {
 	return "Edit the framework prompt blocks that shape agent behavior."
 }
@@ -172,7 +183,7 @@ func (T *PromptsApp) handlePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page := ui.Page{
-		Title:     "Prompts",
+		Title:     EditorTitle,
 		ShowTitle: true,
 		BackURL:   "/",
 		MaxWidth:  "100%", // editor-centric, fill the viewport
@@ -231,11 +242,12 @@ func promptsEditor() ui.ArticleEditor {
 	}
 }
 
-// promptsAdminSection wraps the editor as a full-width admin "Prompts" tab — the
+// promptsAdminSection wraps the editor as a full-width section on the admin "Optimization" tab — the
 // primary home for prompt tuning (see RegisterAdminSection in init).
 func promptsAdminSection() ui.Section {
 	return ui.Section{
-		Group:    "Prompts",
+		Group:    AdminTab,
+		Title:    EditorTitle,
 		Wide:     true,
 		NoChrome: true,
 		Body:     promptsEditor(),
@@ -660,7 +672,7 @@ func (T *PromptsApp) handleOptimizeStatus(w http.ResponseWriter, r *http.Request
 // click to revert in the revisions panel. App-specific behavior injected via
 // ExtraHeadHTML per the core/ui domain-agnostic rule.
 // promptsHeadHTML is the page head for both surfaces this editor appears
-// on: the standalone /prompts page and the admin "Prompts" tab.
+// on: the standalone /prompts page and the admin "Optimization" tab.
 //
 // It carries the shared inline-diff helper (core/editor) alongside this
 // app's client actions. The editor proposes rewrites in chat-edit mode,

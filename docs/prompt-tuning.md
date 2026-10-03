@@ -25,6 +25,23 @@ scorecard. A prompt is changed, by hand or by a proposer model, and the suite
 runs again. A change is kept only when the scorecard says it helped, and only
 reaches the live deployment when an admin promotes it.
 
+## Using it: one button
+
+On the admin **Optimization** tab, beside **Prompt overrides** (the editor
+where every edited prompt block lives), the section **Optimize for a model**
+is the whole surface: pick the worker or the lead, press **Optimize**. It
+builds the suite with that model in a sandbox, rewords what it got wrong,
+keeps what builds better without getting worse on tasks it never saw, and
+when it ends applies what it kept as that model's own wording, each change a
+revision. **Undo** takes the whole run back. While it runs, the progress
+line and "What it is doing" say where it is, and the run sits in the live
+indicator and on the Monitor page like any other work using the models.
+
+Everything below the button is behind **Details** (`/tuning/details`): the
+settings (rounds, hours, spend, builds per task, start point), every run
+with its rounds, builds, scorecard and the judge's pairs to calibrate, and
+the suite. The rest of this document describes that machinery.
+
 ## What this is not
 
 **Not the Evals app.** Evals (removed in v0.7.219) graded an agent's REPLIES to

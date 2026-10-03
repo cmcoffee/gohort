@@ -64,7 +64,7 @@ func TestEveryGroupIsRanked(t *testing.T) {
 	// title here: the Apps tab rows, and the app-contributed sections that
 	// register themselves through core (AdminSectionEntriesFor) so admin does
 	// not import the app.
-	used := map[string]bool{"Apps": true, "Prompts": true}
+	used := map[string]bool{"Apps": true, "Optimization": true}
 	for _, g := range groups {
 		used[g] = true
 	}

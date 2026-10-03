@@ -230,7 +230,7 @@ func tierTextSection() ui.Section {
 	editAction := ui.ModalAction("Edit", edit)
 	editAction.Width = "900px"
 	return ui.Section{
-		Group:    "Prompts",
+		Group:    AdminTab,
 		Title:    "Per-tier text",
 		Subtitle: "A block worded differently for the lead and for the worker. Only for a block with evidence that the two models want different words.",
 		Detail: "A tier reads its own text here when it has one, else the block's text from the editor above, else what gohort ships. " +

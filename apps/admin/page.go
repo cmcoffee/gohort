@@ -390,7 +390,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// above has to appear here. "Tools" is deliberately absent now: the tool
 	// sections all live under Extensions, and a rank for a tab nothing lands on
 	// is a tab that never appears.
-	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Governance": 5, "Extensions": 6, "Apps": 7, "Tuning": 8, "Prompts": 9, "Maintenance": 10}
+	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Governance": 5, "Extensions": 6, "Apps": 7, "Tuning": 8, "Optimization": 9, "Maintenance": 10}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
 		return groupRank[page.Sections[i].Group] < groupRank[page.Sections[j].Group]
 	})
