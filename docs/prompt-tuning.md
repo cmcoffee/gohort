@@ -28,12 +28,27 @@ reaches the live deployment when an admin promotes it.
 ## Using it: one click per model
 
 A model's prompts are part of the model: optimizing one lives with it, on
-the admin **LLMs** tab, under **Optimize**. There is a row for the worker
-and, when there is a separate one, for the lead, each named by its model,
-each with an **Optimize** button. A press builds the suite with that model
-in a sandbox, rewords what it got wrong, keeps what builds better without
-getting worse on tasks it never saw, and when it ends applies what it kept
-as that model's own wording, each change a revision. **Undo** takes the
+the admin **LLMs** tab, under **Optimize**. Each model (the worker, and the
+lead when there is a separate one) has two rows: **quick** (two passes at
+most, about four hours, for trying it or after a model change) and
+**extended** (the overnight run, as far as the settings on Details allow).
+Both work the same way:
+
+- **Fix as it goes.** Each train task is built once. A failure is read by
+  the lead as the framework's (a tool that cannot express what was asked, a
+  broken platform check, the harness) or the wording's. The framework's is
+  reported at once and the task set aside, since no prompt can fix it; the
+  run's result lists them under **Set aside**. The wording's gets one edit,
+  and that task alone is built again with it, twice at most; the edit is
+  kept if the task now passes.
+- **Confirm end to end.** After a pass, the whole suite runs, held out
+  included, on what the pass kept. It stays only if more train builds pass
+  and neither split got worse; if not, the pass's edits are taken back one
+  at a time to find the one that hurt, and failing that the pass is dropped.
+
+When the run ends it applies what it kept as that model's own wording, each
+change a revision. The older way, the whole suite around every single edit,
+is still on Details as "rounds". **Undo** takes the
 whole run back. The wording remembers the model it was fitted to; when the
 model behind a tier changes, its row says so. While it runs, the row's
 progress and "What it is doing" say where it is, and the run sits in the
