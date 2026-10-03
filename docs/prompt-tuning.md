@@ -89,7 +89,16 @@ handle's gate (`core.SetYieldGate`, `core.ModelInUse`) and its sandboxes are
 told to pause; it picks up where it was when they are done. A call already
 out runs to its end. Paused time does not count against a build's budget, a
 probe's, or the session's hours, and the row says it is paused. A Probe from
-the editor does not pause: someone is waiting on it. Everything below the
+the editor does not pause: someone is waiting on it.
+
+A restart does not lose a run. Ninety seconds after the server starts, the
+newest run, if a restart cut it off in the last day, is picked up where it
+was: from its last confirmed point, the pass it was in done again from its
+start, its best's suite run reused, its set-aside tasks still set aside,
+and its spend carried over. The time it lay stopped does not count against
+its hours. A run of rounds is finished instead, and what it had confirmed is
+applied. One that cannot be picked up (another run going, the model behind
+its tier changed) says why, and its row offers Resume. Everything below the
 button is behind **Details** (`/tuning/details`): the settings, every run with its rounds,
 builds, scorecard and the judge's pairs to calibrate, and the suite. The
 rest of this document describes that machinery.
