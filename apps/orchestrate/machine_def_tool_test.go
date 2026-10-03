@@ -776,3 +776,32 @@ func TestMachineTool_CreateRefusesATakenName(t *testing.T) {
 		t.Errorf("still one machine, got %d", n)
 	}
 }
+
+// Unattended is a machine-level switch the tool sets, so a machine Builder
+// authors can run on its own: the editor page had the only switch, and asked
+// for an unattended machine Builder built a pipeline or an agent instead.
+// A resident step in one is refused, with the reason.
+func TestTheToolSetsUnattended(t *testing.T) {
+	turn := machineToolFixture(t)
+	steps := []any{
+		map[string]any{"name": "locate", "desc": "Look the place up", "prompt": "Find {input}", "next": "report",
+			"output": []any{map[string]any{"name": "lat", "type": "number"}}},
+		map[string]any{"name": "report", "desc": "Say what was found", "prompt": "Report {state:locate.lat}."},
+	}
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"name": "Runner", "phases": steps, "unattended": true}, false); err != nil {
+		t.Fatal(err)
+	}
+	if def, _ := turn.findMachine(map[string]any{"name": "Runner"}); !def.Unattended {
+		t.Fatal("create should set unattended")
+	}
+	if _, err := turn.machineCreateOrUpdate(map[string]any{"name": "Runner", "description": "runs"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if def, _ := turn.findMachine(map[string]any{"name": "Runner"}); !def.Unattended {
+		t.Error("an update that does not mention it must leave it on")
+	}
+	_, err := turn.machineCreateOrUpdate(map[string]any{"name": "Talker", "phases": toolPhases(), "unattended": true}, false)
+	if err == nil || !strings.Contains(err.Error(), "unattended") {
+		t.Fatalf("a resident step in an unattended machine should be refused with the reason: %v", err)
+	}
+}

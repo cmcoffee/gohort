@@ -35,8 +35,12 @@ import (
 type dialGuard struct {
 	// allowed decides an address after resolution; nil means public only.
 	allowed func(net.IP) bool
-	tr      *http.Transport
-	once    sync.Once
+	// also admits one more address by IP and port, checked first: the page
+	// check's guard lets in exactly the dashboard it was sent to check, and
+	// nothing else on loopback.
+	also func(ip net.IP, port string) bool
+	tr   *http.Transport
+	once sync.Once
 }
 
 func (g *dialGuard) permits(ip net.IP) bool {
@@ -52,9 +56,12 @@ func (g *dialGuard) dial(ctx context.Context, network, address string) (net.Conn
 		Timeout:   15 * time.Second,
 		KeepAlive: 30 * time.Second,
 		Control: func(_, addr string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(addr)
+			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
 				return err
+			}
+			if ip := net.ParseIP(host); ip != nil && g.also != nil && g.also(ip, port) {
+				return nil
 			}
 			if ip := net.ParseIP(host); ip == nil || !g.permits(ip) {
 				return fmt.Errorf("refusing to connect to non-public address %s", host)
@@ -142,11 +149,18 @@ func (g *dialGuard) tunnel(w http.ResponseWriter, r *http.Request) {
 
 // startDialGuard serves g on a loopback port and returns its address.
 func startDialGuard(g *dialGuard) (string, error) {
+	addr, _, err := serveDialGuard(g)
+	return addr, err
+}
+
+// serveDialGuard is startDialGuard with a way to stop it, for a guard that
+// lives as long as one task.
+func serveDialGuard(g *dialGuard) (string, func(), error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	srv := &http.Server{Handler: g, ReadHeaderTimeout: 30 * time.Second}
 	go srv.Serve(ln)
-	return ln.Addr().String(), nil
+	return ln.Addr().String(), func() { srv.Close() }, nil
 }

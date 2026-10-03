@@ -57,3 +57,42 @@ func TestTheBrowserCannotReachThePrivateNetwork(t *testing.T) {
 		t.Errorf("an allowed address was not forwarded: %q", body)
 	}
 }
+
+// A page check's guard admits exactly the dashboard address it was sent to
+// check, and still refuses every other private address, another port on
+// loopback included: the shared guard refused the dashboard too, so every
+// check of this server's own pages came back a 502.
+func TestAPageCheckReachesOnlyItsOwnPage(t *testing.T) {
+	dashboard := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "the app page") }))
+	defer dashboard.Close()
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "something else") }))
+	defer other.Close()
+
+	also, err := onlyAddress(dashboard.URL + "/apps/x/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, stop, err := serveDialGuard(&dialGuard{also: also})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	proxied := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: addr})}}
+
+	resp, err := proxied.Get(dashboard.URL + "/apps/x/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "the app page" {
+		t.Fatalf("the checked page was not reached: %d %q", resp.StatusCode, body)
+	}
+	if resp, err := proxied.Get(other.URL); err == nil {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if strings.Contains(string(body), "something else") {
+			t.Fatal("another loopback port was reached through the page check's guard")
+		}
+	}
+}

@@ -35,7 +35,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "machine",
-			Description: "Author phase machines: workflows an agent LIVES IN across a conversation. The session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, validate, list, get, delete.\n\n`update` REPLACES the whole phase list; to change one field of one step use `update_phase`. Run `validate` first: a refused `update` stores NOTHING.\n\nUse a machine when a conversation should work out what is asked once and then settle into that frame, or when EVERY message must take a path (route it, hand some kinds to another agent): then set route_each_message and give the routing step its choices. Use a PIPELINE for work that runs start-to-finish and returns a result, and neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call**: an unattached machine does nothing. Call action=\"help\" for the full spec.",
+			Description: "Author phase machines: workflows an agent LIVES IN across a conversation. The session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, validate, list, get, delete.\n\n`update` REPLACES the whole phase list; to change one field of one step use `update_phase`. Run `validate` first: a refused `update` stores NOTHING.\n\nUse a machine when a conversation should work out what is asked once and then settle into that frame, or when EVERY message must take a path (route it, hand some kinds to another agent): then set route_each_message and give the routing step its choices. Set unattended: true for a machine that RUNS start to finish with nobody in the conversation, given an input and returning its last step's result: it may have no resident step, and it is what a request for an \"unattended machine\" means. Use a PIPELINE for a fixed recipe of model stages that returns a result, and neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call**: an unattached machine does nothing. Call action=\"help\" for the full spec.",
 			Parameters: map[string]ToolParam{
 				"action":      {Type: "string", Description: "One of: create | update | update_phase | list | get | repair | delete | help."},
 				"name":        {Type: "string", Description: "Machine name. Required for create; get/update/repair/delete also accept the id."},
@@ -63,6 +63,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"guard":              {Type: "string", Description: "(update_phase) Plain-language condition that moves the conversation out of this step."},
 				"guard_to":           {Type: "string", Description: "(update_phase) Where the guard sends it."},
 				"route_each_message": {Type: "boolean", Description: "(create / update) true: every new message starts at the first step, wherever the last one left off, with the last message's step results cleared. For a machine whose job is ROUTING each message. Omit to leave it as it is."},
+				"unattended":         {Type: "boolean", Description: "(create / update) true: the machine RUNS rather than converses. Started with an input, it walks its steps until one hands off nowhere, and that step's result is the run's result. No step may be resident (nobody is there to answer). This is what lets it run from a schedule, the Run button, another machine or a dispatch. Omit to leave it as it is."},
 				"reply_with":         {Type: "string", Description: "(update_phase) On a step the conversation waits in: a template that IS the reply, sent with no model call, e.g. {state:ComedianDelegate}. For relaying what an earlier step produced. null clears it."},
 				"choices": {
 					Type:        "array",
@@ -117,7 +118,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 }
 
 const machineHelpText = `machine actions:
-- create  {name, description?, start?, route_each_message?, machine_deny?:[tools], phases:[...], attach_to_agents?:[names]}, author a machine.
+- create  {name, description?, start?, route_each_message?, unattended?, machine_deny?:[tools], phases:[...], attach_to_agents?:[names]}, author a machine.
 - update  {name|id, ...}: revise in place (same id, attachments stay). REPLACES the phase list.
 - validate {phases:[...]} or {name|id}: check WITHOUT writing. Reports what would refuse the save,
            tool names that resolve to nothing, and steps whose agent cannot reach what they name.
@@ -145,6 +146,12 @@ message must be judged and sent somewhere (humor to one agent, the rest answered
 route_each_message: true and each new message starts at the first step again, with the previous
 message's results cleared; no step's next has to point back. Those decisions are NOT chat
 history: they are state, so turn 8 is not re-reading turn 1's reasoning.
+
+An UNATTENDED machine is the third shape: set unattended: true and it RUNS instead of conversing.
+It is started with an input ({input}), walks its steps until one hands off nowhere, and that last
+step's result is the run's result. No step may be resident. Tool steps chain cheaply: each declares
+the output fields a later step reads as {state:STEP.field}. It runs from the Run button, a schedule,
+another machine's step or a dispatch, and attach_to_agents is not needed for that.
 
 === PHASE FIELDS ===
 name       unique label; also the key others read as {state:NAME}. No dots.
@@ -399,6 +406,12 @@ func (t *chatTurn) machineDraftFromArgs(args map[string]any, isUpdate bool) (mac
 	}
 	if v, present := args["route_each_message"]; present {
 		def.RouteEachMessage = v == true || strings.EqualFold(strings.TrimSpace(fmt.Sprint(v)), "true")
+	}
+	// The editor page had the only switch for this, so a machine Builder
+	// authored could never run on its own: asked for an unattended machine,
+	// it built a pipeline or an agent instead.
+	if v, present := args["unattended"]; present {
+		def.Unattended = v == true || strings.EqualFold(strings.TrimSpace(fmt.Sprint(v)), "true")
 	}
 	if _, present := args["machine_deny"]; present {
 		def.Deny = mapStrList(args, "machine_deny")

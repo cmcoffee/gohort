@@ -7,6 +7,8 @@ package browser
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -64,11 +66,18 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 	t.mu.Unlock()
 
 	// A throwaway context per call, as in fetchImpl: no cookies or storage
-	// carried between users of the one shared profile.
-	inc, err := b.Incognito()
+	// carried between users of the one shared profile. And behind a guard of
+	// its own: the shared one refuses every non-public address, the
+	// dashboard on loopback included, so since the guard arrived every check
+	// of this server's own pages came back a 502 (an app's verify could
+	// never pass). This one admits exactly the address being checked, and
+	// otherwise refuses what the shared one refuses; the agents' browsing
+	// keeps the shared guard.
+	inc, stop, err := t.checkContext(b, target)
 	if err != nil {
 		return nil, fmt.Errorf("creating browser context: %w", err)
 	}
+	defer stop()
 	defer inc.Close()
 	page, err := inc.Page(proto.TargetCreateTarget{})
 	if err != nil {
@@ -256,4 +265,48 @@ func remoteObjText(o *proto.RuntimeRemoteObject) string {
 		return o.Description
 	}
 	return o.Value.String()
+}
+
+// checkContext is a browser context for one page check, proxied through a
+// guard that admits the checked page's own host and port as well as what
+// the shared guard admits. stop ends that guard.
+func (t *BrowsePageTool) checkContext(b *rod.Browser, target string) (*rod.Browser, func(), error) {
+	also, err := onlyAddress(target)
+	if err != nil {
+		return nil, nil, err
+	}
+	guard, stop, err := serveDialGuard(&dialGuard{also: also})
+	if err != nil {
+		return nil, nil, err
+	}
+	res, err := proto.TargetCreateBrowserContext{ProxyServer: "http://" + guard, ProxyBypassList: "<-loopback>"}.Call(b)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	ctx := *b
+	ctx.BrowserContextID = res.BrowserContextID
+	return &ctx, stop, nil
+}
+
+// onlyAddress admits the host and port target names, and nothing else.
+func onlyAddress(target string) (func(ip net.IP, port string) bool, error) {
+	u, err := url.Parse(target)
+	if err != nil {
+		return nil, err
+	}
+	port := u.Port()
+	if port == "" {
+		port = "80"
+		if u.Scheme == "https" {
+			port = "443"
+		}
+	}
+	want := net.ParseIP(u.Hostname())
+	if want == nil && u.Hostname() == "localhost" {
+		want = net.IPv4(127, 0, 0, 1)
+	}
+	return func(ip net.IP, p string) bool {
+		return want != nil && p == port && ip.Equal(want)
+	}, nil
 }
