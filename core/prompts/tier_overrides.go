@@ -65,6 +65,7 @@ func SetPromptTierOverride(tier, key, text, model string) {
 	if db == nil || !validTier(tier) {
 		return
 	}
+	defer tierTextChanged()
 	if strings.TrimSpace(text) == "" {
 		db.Unset(OverrideTable, tierOverrideKey(tier, key))
 		return
@@ -77,6 +78,7 @@ func SetPromptTierOverride(tier, key, text, model string) {
 func ClearPromptTierOverride(tier, key string) {
 	if db := promptOverrideStore(); db != nil && validTier(tier) {
 		db.Unset(OverrideTable, tierOverrideKey(tier, key))
+		tierTextChanged()
 	}
 }
 

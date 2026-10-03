@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"sync"
+
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 // Process-wide default worker and lead LLM references. Set at startup by the
@@ -243,7 +245,7 @@ func (r reloadableLLM) Chat(ctx context.Context, messages []Message, opts ...Cha
 	if llm == nil {
 		return nil, errors.New("no LLM configured")
 	}
-	resp, err := llm.Chat(ctx, messages, opts...)
+	resp, err := llm.Chat(ctx, messages, r.withTierText(opts)...)
 	r.record(ctx, resp)
 	r.noteLeadHealth(ctx, err)
 	return resp, err
@@ -254,7 +256,7 @@ func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handl
 	if llm == nil {
 		return nil, errors.New("no LLM configured")
 	}
-	resp, err := llm.ChatStream(ctx, messages, handler, opts...)
+	resp, err := llm.ChatStream(ctx, messages, handler, r.withTierText(opts)...)
 	r.record(ctx, resp)
 	r.noteLeadHealth(ctx, err)
 	return resp, err
@@ -270,11 +272,31 @@ func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handl
 // model with the cloud lead rates still filled in — would price every escalated
 // call at lead rates and invent a bill.
 func (r reloadableLLM) record(ctx context.Context, resp *Response) {
-	tier := WORKER
+	RecordUsage(ctx, r.serving(), resp)
+}
+
+// serving is the tier this handle reaches right now.
+func (r reloadableLLM) serving() LLMTier {
 	if r.lead && SharedLeadLLM() != nil {
-		tier = LEAD
+		return LEAD
 	}
-	RecordUsage(ctx, tier, resp)
+	return WORKER
+}
+
+// withTierText adds, last, the swap of each prompt block's shared text for
+// the serving tier's own (prompts.ApplyTierText). Here and not where the
+// prompt is assembled, because this is the first point the tier is final:
+// every reroute from lead to worker (denied, routed, failed, empty,
+// de-escalated, forced final) arrives through the worker handle and so gets
+// the worker's words, whatever the caller built the prompt for.
+func (r reloadableLLM) withTierText(opts []ChatOption) []ChatOption {
+	tier := prompts.TierWorker
+	if r.serving() == LEAD {
+		tier = prompts.TierLead
+	}
+	return append(append([]ChatOption{}, opts...), func(c *ChatConfig) {
+		c.SystemPrompt = prompts.ApplyTierText(tier, c.SystemPrompt)
+	})
 }
 
 // noteLeadHealth records whether the LEAD tier is answering, from the calls

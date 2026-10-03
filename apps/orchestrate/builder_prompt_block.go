@@ -16,6 +16,7 @@ package orchestrate
 
 import (
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 // BuilderPromptKey is the prompt-registry key for Builder's instructions.
@@ -35,6 +36,9 @@ func init() {
 			Text:     rec.OrchestratorPrompt,
 		})
 	}
+	// Builder's text reaches a prompt with its placeholders expanded, and it
+	// ends with one, so a tier's own wording is found and swapped as expanded.
+	prompts.RegisterTierRender(BuilderPromptKey, expandSeedSnippets)
 }
 
 // builderPrompt is the raw prompt Builder runs with: the operator's edit when

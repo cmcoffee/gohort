@@ -126,6 +126,7 @@ func (T *PromptsApp) Routes() {
 	T.HandleFunc("/api/revision", T.adminGated(T.handleRevLoad))                   // GET  ?revid= -> {body}
 	T.HandleFunc("/api/optimize-all", T.adminGated(T.handleOptimizeAll))           // POST -> starts a background pass
 	T.HandleFunc("/api/optimize-all/status", T.adminGated(T.handleOptimizeStatus)) // GET  -> {optimizing, done, total}
+	T.tierRoutes()
 }
 
 // lookupBlock finds a registered block by key — the guard that keeps the write

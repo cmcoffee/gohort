@@ -252,54 +252,50 @@ measured rather than guessed.
 
 - **Resolution: tier, then all tiers, then the shipped default**, exactly as
   reply guard settings resolve (`replyguard.Resolve`).
-- **A block forks only on evidence.** It stays shared until a variant wins on
-  one tier and loses on the other. Two copies of every prompt maintained for
-  no measured reason is the outcome to avoid.
+- **A block forks only on evidence.** The evidence is which tier an edit was
+  measured on: an edit that won on the worker is the worker's own wording,
+  and the lead keeps the shared text it was never tested against. The
+  shared wording changes only from a routed session or by hand. Two copies
+  of every prompt maintained for no measured reason is the outcome to avoid.
 - **A tier's text remembers the model it was tuned on.** When the model behind
   a tier changes, the admin page says the tier's tuned prompts were fitted to
   another model and offers a suite run. Reply guards already do this.
-- **Fallback rebuilds the prompt.** The prompt is assembled before the call
-  and the tier is almost always known by then from routing. When a lead call
-  falls back to the worker, the prompt is re-assembled for the worker rather
-  than sending one tuned for another model, and the run's prompt digest
-  records which tier's text it actually carried.
-- **Mixed turns are already per loop.** A lead plan with worker steps builds a
-  prompt per loop, so each gets its own tier's text; the scorecard credits
-  each tier for the rounds it served.
+- **The tier's words are chosen where the call is answered.** A prompt is
+  assembled before the tier is final, and a lead call can still end up on
+  the worker (the lead is denied, a route stage says worker, the lead fails
+  or comes back empty, a loop de-escalates, a forced final answer). So the
+  assembler keeps writing the shared text, and the reloadable LLM handle,
+  the one place every call passes through and the first that knows which
+  tier is answering, swaps each block's shared text for that tier's own
+  (`prompts.ApplyTierText`). A fallback to the worker goes through the
+  worker handle and carries the worker's words without rebuilding anything.
+- **Placeholders carry over.** A block written with `{rounds}` is found by
+  its plain text whatever the placeholder was filled with, and the tier's
+  text gets the same value. A block that reaches the prompt rendered
+  (Builder's `{{placeholders}}`) registers its renderer
+  (`prompts.RegisterTierRender`) and is swapped as rendered. A tier text
+  naming a placeholder the block does not fill is refused on every way in.
+  The tools directive, filled per call and ending in the fill, is the one
+  block that cannot be worded per tier.
+- **A swap that cannot be made leaves the shared text.** A tier never gets
+  less than every tier gets. The Per-tier text section shows when each
+  tier text last went out, so one that never reaches a prompt is visible.
+- **Mixed turns are already per loop.** A lead plan with worker steps sends
+  each call through its own tier's handle, so each gets its own words.
+- **A session pinned to one tier writes that tier's words.** It measured no
+  other, so its kept edits are that tier's own text, and promoting them puts
+  them in Per-tier text, leaving the shared wording alone. A routed session
+  edits the shared wording. A lead-pinned sandbox serves both of its tiers
+  with the lead's model, so the lead's words go to both there.
 - **Lead tuning has the judge problem.** The lead cannot fairly judge its own
   builds. Lead runs lean on the deterministic graders and on the owner's
   pairwise picks, with a judge from another provider when one is configured.
 
-This part touches the LIVE server: `EffectivePromptText` gains a tier
-argument, read at the nine sites. It is the last stage, because it is only
-worth doing once the suite shows a block that wants to differ.
-
-## What can be tuned
-
-- Every block in the prompt registry (`core/prompts`): the agent loop
-  clauses, the framework blocks in `apps/orchestrate/framework_prompts.go`,
-  the global rules and style.
-- Builder's own instructions: the `seed-builder` prompt is a registry block
-  (`agent.builder`) holding the raw document. An edit replaces it and its
-  `{{placeholders}}` are still expanded afterwards, so it is editable on the
-  Prompts tab, tunable in a variant and promotable like any other block.
-- **Not yet:** tool help text (`app_def`'s and `tool_def`'s help, the tool
-  descriptions). It is compiled in. Moving the parts Builder leans on into the
-  registry is its own step, taken when a scorecard shows the help text is
-  where the failures are.
-
-## Integrity
-
-- The deterministic graders are the gate. The judge only breaks ties between
-  passing builds.
-- The proposer reads grader verdicts, judge reasons and transcripts. Every
-  transcript byte came from Builder, the framework or a fixture the suite
-  authors wrote; no run reaches the outside network, so nothing a stranger
-  wrote can steer a prompt edit that every user's agents will later read.
-- The judge and the graders are not parameters.
-- Held-out tasks are never shown to the proposer, and the held-out score is
-  shown beside every train score.
-- Nothing reaches the live Prompts page without an admin promoting it.
+Not covered: the prompt viewer and the run digest show the shared text, and
+calls that do not go through the reloadable handles (the CLI, a model an
+agent names directly) get the shared text. This touches the LIVE server:
+every model call's system prompt passes through the swap, which is a no-op
+while no tier text is set.
 
 ## Order of work
 

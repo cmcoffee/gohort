@@ -68,6 +68,7 @@ func SetPromptOverrideDB(db Store) {
 	promptOverrideMu.Lock()
 	promptOverrideDB = db
 	promptOverrideMu.Unlock()
+	tierTextChanged()
 }
 
 func promptOverrideStore() Store {
@@ -94,6 +95,7 @@ func SetPromptOverride(key, text string) {
 	if db := promptOverrideStore(); db != nil {
 		db.Set(OverrideTable, promptOverridePrefix+key, text)
 	}
+	tierTextChanged()
 }
 
 // ClearPromptOverride removes an operator override, restoring the default.
@@ -101,6 +103,7 @@ func ClearPromptOverride(key string) {
 	if db := promptOverrideStore(); db != nil {
 		db.Unset(OverrideTable, promptOverridePrefix+key)
 	}
+	tierTextChanged()
 }
 
 // EffectivePromptText returns the operator override for a block key when one is
