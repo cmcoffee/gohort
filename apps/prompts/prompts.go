@@ -12,6 +12,7 @@ package prompts
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -302,29 +303,55 @@ func (T *PromptsApp) handleSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown block", http.StatusNotFound)
 		return
 	}
+	via := "edit"
+	if strings.TrimSpace(rec.Via) == "optimize" {
+		via = "optimize"
+	}
+	T.applyEdit(b, rec.Body, via, "")
+	writeJSON(w, map[string]any{"ok": true, "ID": b.Key})
+}
+
+// applyEdit sets a block's live text, snapshotting what it replaced so the
+// change can be undone. The one way a block changes, so a save here and a
+// promotion from elsewhere leave the same history.
+func (T *PromptsApp) applyEdit(b PromptBlock, body, via, note string) {
 	// Snapshot the PRE-edit text as a revision so this change is reversible —
 	// but only when it actually changes the effective text (no redundant snaps).
 	prior := EffectivePromptText(b.Key, b.Text)
-	clearing := strings.TrimSpace(rec.Body) == "" || rec.Body == b.Text
+	clearing := strings.TrimSpace(body) == "" || body == b.Text
 	newEffective := b.Text
 	if !clearing {
-		newEffective = rec.Body
+		newEffective = body
 	}
 	if newEffective != prior {
-		via := "edit"
-		if strings.TrimSpace(rec.Via) == "optimize" {
-			via = "optimize"
-		}
-		T.snapshotRevision(b.Key, prior, via)
+		T.snapshotRevision(b.Key, prior, via, note)
 	}
 	// Blank or identical-to-default edits clear the override rather than
 	// persisting a redundant copy — so "edited back to the default" reverts.
 	if clearing {
 		ClearPromptOverride(b.Key)
 	} else {
-		SetPromptOverride(b.Key, rec.Body)
+		SetPromptOverride(b.Key, body)
 	}
-	writeJSON(w, map[string]any{"ok": true, "ID": b.Key})
+}
+
+// ApplyBlockEdit changes a block's live text from outside this app, through
+// the same path a save here takes: the replaced text becomes a revision on
+// this page, revertible like any other. via labels it ("tuned" for a
+// promotion from the tuning harness) and note says where it came from.
+// Empty body, or the shipped text, clears the block back to its default.
+func ApplyBlockEdit(key, body, via, note string) error {
+	b, ok := lookupBlock(strings.TrimSpace(key))
+	if !ok {
+		return fmt.Errorf("no prompt block %q", key)
+	}
+	for _, a := range RegisteredApps() {
+		if p, ok := a.(*PromptsApp); ok {
+			p.applyEdit(b, body, via, note)
+			return nil
+		}
+	}
+	return fmt.Errorf("the prompts app is not running")
 }
 
 // --- revisions ---------------------------------------------------------------
@@ -359,17 +386,21 @@ type promptRevision struct {
 	Date  string `json:"date"`
 	Body  string `json:"body"`
 	// Via records HOW the change that superseded this snapshot was made —
-	// "edit" (a manual save) or "optimize" (the model rewrite). Lets the
-	// revision navigator flag which snapshot is the pre-Optimize one to
-	// restore, the main reason to keep revisions at all.
+	// "edit" (a manual save), "optimize" (the model rewrite) or "tuned" (a
+	// variant promoted from the tuning harness). Lets the revision navigator
+	// flag which snapshot is the one to restore, the main reason to keep
+	// revisions at all.
 	Via string `json:"via,omitempty"`
+	// Note says where a change came from when that is not obvious: for a
+	// tuned one, the variant and the score that earned it.
+	Note string `json:"note,omitempty"`
 }
 
 // snapshotRevision stores `text` as a revision of blockKey and prunes to the
 // most recent (per the operator's revision-history setting). revID is a
 // nanosecond timestamp (URL-safe
 // digits), so lexical order == chronological order.
-func (T *PromptsApp) snapshotRevision(blockKey, text, via string) {
+func (T *PromptsApp) snapshotRevision(blockKey, text, via, note string) {
 	if T.DB == nil {
 		return
 	}
@@ -379,6 +410,7 @@ func (T *PromptsApp) snapshotRevision(blockKey, text, via string) {
 		Date:  time.Now().Format("2006-01-02 15:04"),
 		Body:  text,
 		Via:   via,
+		Note:  note,
 	})
 	var ids []string
 	for _, k := range T.DB.Keys(promptRevTable) {
@@ -436,8 +468,14 @@ func (T *PromptsApp) handleRevList(w http.ResponseWriter, r *http.Request) {
 		sort.Sort(sort.Reverse(sort.StringSlice(ids))) // newest first
 		for _, k := range ids {
 			label := "edited"
-			if byID[k].Via == "optimize" {
+			switch byID[k].Via {
+			case "optimize":
 				label = "optimized"
+			case "tuned":
+				label = "tuned"
+				if n := strings.TrimSpace(byID[k].Note); n != "" {
+					label += ": " + n
+				}
 			}
 			out = append(out, map[string]any{"id": k, "date": byID[k].Date, "label": label})
 		}
@@ -585,7 +623,7 @@ func (T *PromptsApp) handleOptimizeAll(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				Log("[prompts] optimize-all: %s failed: %v", b.Key, err)
 			} else if out != "" && out != current {
-				T.snapshotRevision(b.Key, current, "optimize")
+				T.snapshotRevision(b.Key, current, "optimize", "")
 				if out == b.Text {
 					ClearPromptOverride(b.Key)
 				} else {
