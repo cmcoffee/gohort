@@ -288,8 +288,18 @@ measured rather than guessed.
   edits the shared wording. A lead-pinned sandbox serves both of its tiers
   with the lead's model, so the lead's words go to both there.
 - **Lead tuning has the judge problem.** The lead cannot fairly judge its own
-  builds. Lead runs lean on the deterministic graders and on the owner's
-  pairwise picks, with a judge from another provider when one is configured.
+  builds. A session that builds on the lead (pinned to it, or routed) runs
+  with no judge and says so on each round; it leans on the deterministic
+  graders and on the owner's pairwise picks.
+- **Lead tuning has a spending cap.** Every session carries a meter: what
+  its sandboxes spent, read from each sandbox after every build, and what
+  its proposer and judge spent here, priced at the deployment's Prices. A
+  round that would pass the cap (judged by what the starting measurement
+  cost) is not started, and a run that passes it anyway is stopped where it
+  stands. A session that can build on the lead does not start without a
+  price on the lead, since the meter would read every lead call as free.
+  The sandbox's spend is also added to the live server's usage, so the
+  Cost History shows it: the money is this deployment's.
 
 Not covered: the prompt viewer and the run digest show the shared text, and
 calls that do not go through the reloadable handles (the CLI, a model an
