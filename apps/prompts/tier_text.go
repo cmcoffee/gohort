@@ -1,41 +1,33 @@
 package prompts
 
-// Per-tier text: a block worded differently for the lead and for the worker.
+// A block's wording per model: the worker's and the lead's.
 //
-// The exception, not the rule. A block stays one text for both tiers until
-// there is evidence the two models want different words (the tuning harness
-// is how a deployment gets that evidence). So this is its own small section
-// under the editor, listing the blocks that have split, rather than two more
-// text boxes on every block.
+// The editor shows every block in three versions: what both models read,
+// and each model's own. A model reads its own wording when it has one, else
+// the shared text, so a block is split only where something put a split
+// there: Optimize, when it finds wording that builds better on one model,
+// or a hand edit to one model's version. Saving a model's version back to
+// the shared text, or empty, removes the split.
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/prompts"
-	"github.com/cmcoffee/gohort/core/sections"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-func init() {
-	RegisterAdminSectionSource(func(r *http.Request) []sections.AdminSectionEntry {
-		if !RequestIsAdmin(r) {
-			return nil
-		}
-		return []sections.AdminSectionEntry{{App: "/prompts", Section: tierTextSection()}}
-	})
-}
+// The editor's versions. "all" is the shared text.
+const variantAll = "all"
 
-func (T *PromptsApp) tierRoutes() {
-	T.HandleFunc("/api/tier", T.adminGated(T.handleTierList))        // GET -> rows
-	T.HandleFunc("/api/tier/add", T.adminGated(T.handleTierAdd))     // POST {block, tier, text}
-	T.HandleFunc("/api/tier/one", T.adminGated(T.handleTierOne))     // GET/POST ?ref=tier|key {text}
-	T.HandleFunc("/api/tier/remove", T.adminGated(T.handleTierDrop)) // POST ?ref=
+func editorVariants() []ui.SelectOption {
+	return []ui.SelectOption{
+		{Value: variantAll, Label: "Both models", Help: "What every model reads, unless it has its own wording."},
+		{Value: prompts.TierWorker, Label: "Worker", Help: "The worker's own wording. Saving the shared text here removes it."},
+		{Value: prompts.TierLead, Label: "Lead", Help: "The lead's own wording. Saving the shared text here removes it."},
+	}
 }
 
 // tierModel is what a tier runs now, as configured: the lead falls back to
@@ -48,7 +40,14 @@ func tierModel(tier string) string {
 	return worker
 }
 
-func tierRef(tier, key string) string { return tier + "|" + key }
+// shortModel is a model as people name it, without the address it is served
+// from ("local/qwen at http://..." is "local/qwen").
+func shortModel(s string) string {
+	if i := strings.Index(s, " at "); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
 
 // tierTextProblem says why text cannot be a tier's own wording for block b,
 // or "" when it can. The swap into a prompt is made on the way out, by
@@ -61,7 +60,7 @@ func tierTextProblem(b PromptBlock, text string) string {
 	}
 	shared := EffectivePromptText(b.Key, b.Text)
 	if why := prompts.TierTextPlaceable(b.Key, shared); why != "" {
-		return "This block cannot be worded per tier: " + why + "."
+		return "This block cannot be worded per model: " + why + "."
 	}
 	if why := prompts.TierPlaceholderProblem(shared, text); why != "" {
 		return "This text " + why + "."
@@ -69,9 +68,9 @@ func tierTextProblem(b PromptBlock, text string) string {
 	return ""
 }
 
-// ApplyTierEdit sets a tier's own text for a block from outside this page (a
-// promotion from the tuning harness), stamped with the model the tier runs
-// now. Empty text removes it, so the tier reads the block's text again.
+// ApplyTierEdit sets a tier's own text for a block from outside the editor
+// (Optimize), stamped with the model the tier runs now. Empty text removes
+// it, so the tier reads the block's text again.
 func ApplyTierEdit(tier, key, text string) error {
 	if tier != prompts.TierLead && tier != prompts.TierWorker {
 		return fmt.Errorf("a tier is lead or worker, not %q", tier)
@@ -85,193 +84,86 @@ func ApplyTierEdit(tier, key, text string) error {
 			return fmt.Errorf("%s", why)
 		}
 	}
-	prompts.SetPromptTierOverride(tier, key, text, tierModel(tier))
+	prompts.SetPromptTierOverrideBy(tier, key, text, tierModel(tier), "tuned")
 	return nil
 }
 
-func (T *PromptsApp) handleTierList(w http.ResponseWriter, r *http.Request) {
-	type row struct {
-		Ref   string    `json:"ref"`
-		Block string    `json:"block"`
-		Title string    `json:"title"`
-		Tier  string    `json:"tier"`
-		Model string    `json:"model"`
-		Stale bool      `json:"stale"`
-		Set   time.Time `json:"set"`
-		// Used is when this text last went out to its tier, since the
-		// server started; Unused says it has not, so a text that never
-		// reaches a prompt is visible rather than assumed in effect.
-		Used    *time.Time `json:"used,omitempty"`
-		Unused  bool       `json:"unused"`
-		Preview string     `json:"preview"`
-	}
-	out := []row{}
-	for _, b := range AllPromptBlocks() {
-		for _, tier := range prompts.Tiers() {
-			o, ok := prompts.PromptTierOverride(tier, b.Key)
-			if !ok {
-				continue
+// variantText is block b's text in one version, and a line saying where it
+// came from.
+func variantText(b PromptBlock, variant string) (body, note string) {
+	shared := EffectivePromptText(b.Key, b.Text)
+	tier := variant
+	if tier != prompts.TierWorker && tier != prompts.TierLead {
+		var own []string
+		for _, t := range prompts.Tiers() {
+			if _, ok := prompts.PromptTierOverride(t, b.Key); ok {
+				own = append(own, "the "+t)
 			}
-			rw := row{Ref: tierRef(tier, b.Key), Block: b.Key, Title: b.Title, Tier: tier,
-				Model: o.Model, Stale: prompts.TierOverrideStale(tier, b.Key, tierModel(tier)), Set: o.At,
-				Preview: oneLine(o.Text, 160)}
-			if at := prompts.TierTextApplied(tier, b.Key); !at.IsZero() {
-				rw.Used = &at
-			} else {
-				rw.Unused = true
-			}
-			out = append(out, rw)
 		}
+		note = "What every model reads."
+		if len(own) > 0 {
+			note = "What every model reads, except " + strings.Join(own, " and ") + ", which has its own wording."
+		}
+		return shared, note
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Title+out[i].Tier < out[j].Title+out[j].Tier })
-	writeJSON(w, out)
-}
-
-// handleTierAdd gives a tier its own text for a block. GET is the form's
-// starting values.
-func (T *PromptsApp) handleTierAdd(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, map[string]any{"block": "", "tier": prompts.TierWorker})
-		return
+	if tier == prompts.TierLead && !LeadIsDistinct() {
+		note = "There is no separate lead model, so the worker serves the lead's calls and reads the worker's version. "
 	}
-	var body struct {
-		Block string `json:"block"`
-		Tier  string `json:"tier"`
-		Text  string `json:"text"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	b, ok := lookupBlock(body.Block)
+	o, ok := prompts.PromptTierOverride(tier, b.Key)
 	if !ok {
-		http.Error(w, "pick a block", http.StatusBadRequest)
-		return
+		return shared, note + "The " + tier + " reads the shared wording. Save a change here to give it its own."
 	}
-	if body.Tier != prompts.TierLead && body.Tier != prompts.TierWorker {
-		http.Error(w, "pick the lead or the worker", http.StatusBadRequest)
-		return
+	who := "by hand"
+	if o.Via == "tuned" {
+		who = "by Optimize"
 	}
-	text := body.Text
-	if strings.TrimSpace(text) == "" {
-		// Start the tier from what it reads now, so the split begins as a copy
-		// to change rather than as an empty block that silences it.
-		text = prompts.EffectivePromptTextFor(body.Tier, b.Key, b.Text)
+	note += "The " + tier + "'s own wording, written " + who
+	if !o.At.IsZero() {
+		note += " " + o.At.Format("Jan 2")
 	}
-	if why := tierTextProblem(b, text); why != "" {
-		http.Error(w, why, http.StatusBadRequest)
-		return
+	if m := shortModel(o.Model); m != "" {
+		note += " for " + m
 	}
-	prompts.SetPromptTierOverride(body.Tier, b.Key, text, tierModel(body.Tier))
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-// handleTierOne reads or rewrites one tier's text. ?ref=tier|key.
-func (T *PromptsApp) handleTierOne(w http.ResponseWriter, r *http.Request) {
-	tier, key, _ := strings.Cut(r.URL.Query().Get("ref"), "|")
-	b, ok := lookupBlock(key)
-	if !ok {
-		http.Error(w, "no such block", http.StatusNotFound)
-		return
+	note += "."
+	if prompts.TierOverrideStale(tier, b.Key, tierModel(tier)) {
+		note += " The " + tier + " now runs " + shortModel(tierModel(tier)) + ": it was fitted to another model."
 	}
-	if r.Method == http.MethodPost {
-		var body struct {
-			Text string `json:"text"`
+	// Whether it reaches the model at all: a block in no prompt the tier is
+	// sent is wording nothing reads. A tool's description is replaced by
+	// name and not counted here.
+	if !strings.HasPrefix(b.Key, prompts.ToolBlockPrefix) {
+		if at := prompts.TierTextApplied(tier, b.Key); !at.IsZero() {
+			note += " Last sent " + at.Format("Jan 2 15:04") + "."
+		} else {
+			note += " Not sent to the " + tier + " since the server started."
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+	}
+	return o.Text, note
+}
+
+// saveVariant writes block b's text in one version. A model's version saved
+// as the shared text, or empty, stops being its own.
+func (T *PromptsApp) saveVariant(b PromptBlock, variant, body string) error {
+	tier := variant
+	shared := EffectivePromptText(b.Key, b.Text)
+	prior, _ := variantText(b, tier)
+	clearing := strings.TrimSpace(body) == "" || body == shared
+	if !clearing {
+		if why := tierTextProblem(b, body); why != "" {
+			return fmt.Errorf("%s", why)
 		}
-		if strings.TrimSpace(body.Text) != "" {
-			if why := tierTextProblem(b, body.Text); why != "" {
-				http.Error(w, why, http.StatusBadRequest)
-				return
-			}
-		}
-		prompts.SetPromptTierOverride(tier, b.Key, body.Text, tierModel(tier))
 	}
-	o, _ := prompts.PromptTierOverride(tier, b.Key)
-	writeJSON(w, map[string]any{"text": o.Text, "all_tiers": EffectivePromptText(b.Key, b.Text), "model": o.Model})
-}
-
-func (T *PromptsApp) handleTierDrop(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
+	next := shared
+	if !clearing {
+		next = body
 	}
-	tier, key, _ := strings.Cut(r.URL.Query().Get("ref"), "|")
-	prompts.ClearPromptTierOverride(tier, key)
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func oneLine(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > n {
-		return string(r[:n]) + "…"
+	if next != prior {
+		T.snapshotRevision(b.Key, prior, "edit", "the "+tier+"'s wording, "+time.Now().Format("Jan 2 15:04"))
 	}
-	return s
-}
-
-const tierSource = "/prompts/api/tier"
-
-func tierTextSection() ui.Section {
-	var blocks []ui.SelectOption
-	for _, b := range AllPromptBlocks() {
-		blocks = append(blocks, ui.SelectOption{Value: b.Key, Label: chFirst(b.Category, "Other") + ": " + b.Title})
+	if clearing {
+		prompts.ClearPromptTierOverride(tier, b.Key)
+		return nil
 	}
-	sort.Slice(blocks, func(i, j int) bool { return blocks[i].Label < blocks[j].Label })
-	tiers := []ui.SelectOption{{Value: prompts.TierWorker, Label: "The worker"}, {Value: prompts.TierLead, Label: "The lead"}}
-	edit := ui.FormPanel{Source: "/prompts/api/tier/one?ref={ref}", PostURL: "/prompts/api/tier/one?ref={ref}",
-		Invalidate: []string{tierSource},
-		Fields: []ui.FormField{
-			{Field: "text", Type: "textarea", Rows: 18, Label: "This tier's text"},
-			{Field: "all_tiers", Type: "readonly", Label: "What every other tier reads"},
-		}}
-	editAction := ui.ModalAction("Edit", edit)
-	editAction.Width = "900px"
-	return ui.Section{
-		Group:    AdminTab,
-		Title:    "Per-tier text",
-		Subtitle: "A block worded differently for the lead and for the worker. Only for a block with evidence that the two models want different words.",
-		Detail: "A tier reads its own text here when it has one, else the block's text from the editor above, else what gohort ships. " +
-			"Each one remembers the model its tier was running when it was written, and is flagged when that tier now runs a different model: " +
-			"words fitted to one model are a guess for the next.\n\n" +
-			"Adding one starts it as a copy of what the tier reads now; edit it from its row.\n\n" +
-			"The tier's wording is put in at the moment a call goes out, once it is known which model is answering: a lead call that falls back to the worker carries the worker's wording. " +
-			"Last used says when that last happened since the server started. A text never used is one whose block is in no prompt that tier was sent. " +
-			"Keep the block's placeholders, like {rounds}: they are filled with the same values. The prompt viewer shows the shared text, not the tier's.",
-		Wide: true,
-		Body: ui.Stack{Children: []ui.Component{
-			ui.FormPanel{Source: "/prompts/api/tier/add", PostURL: "/prompts/api/tier/add", SubmitLabel: "Add",
-				Invalidate: []string{tierSource},
-				Fields: []ui.FormField{
-					{Field: "block", Type: "select", Label: "Block", Options: blocks},
-					{Field: "tier", Type: "select", Label: "Tier", Options: tiers},
-				}},
-			ui.Table{Source: tierSource, RowKey: "ref",
-				Columns: []ui.Col{
-					{Field: "title", Label: "Block", Flex: 3},
-					{Field: "tier", Label: "Tier"},
-					{Field: "stale", Label: "", Type: "badge", Badges: []ui.BadgeMapping{{Value: true, Label: "model changed", Color: "warning"}}},
-					{Field: "model", Label: "Written for", Flex: 2, Mute: true},
-					{Field: "set", Label: "Set", Format: "reltime", Mute: true},
-					{Field: "used", Label: "Last used", Format: "reltime", Mute: true},
-					{Field: "unused", Label: "", Type: "badge", Badges: []ui.BadgeMapping{{Value: true, Label: "not used yet", Color: "mute"}}},
-					{Field: "preview", Label: "", Flex: 5, Mute: true, Line: 2},
-				},
-				RowActions: []ui.RowAction{
-					editAction,
-					{Type: "button", Label: "Remove", Variant: "danger", Compact: true, PostTo: "/prompts/api/tier/remove?ref={ref}",
-						Confirm: "Remove this tier's own text? The tier reads the block's text from the editor again."},
-				},
-				EmptyText: "No block has a tier-specific text. Every tier reads the editor's text."},
-		}},
-	}
-}
-
-func chFirst(a, b string) string {
-	if strings.TrimSpace(a) != "" {
-		return a
-	}
-	return b
+	prompts.SetPromptTierOverrideBy(tier, b.Key, body, tierModel(tier), "edit")
+	return nil
 }

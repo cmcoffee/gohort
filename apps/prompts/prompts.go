@@ -22,6 +22,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/editor"
+	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -138,7 +139,6 @@ func (T *PromptsApp) Routes() {
 	T.HandleFunc("/api/revision", T.adminGated(T.handleRevLoad))                   // GET  ?revid= -> {body}
 	T.HandleFunc("/api/optimize-all", T.adminGated(T.handleOptimizeAll))           // POST -> starts a background pass
 	T.HandleFunc("/api/optimize-all/status", T.adminGated(T.handleOptimizeStatus)) // GET  -> {optimizing, done, total}
-	T.tierRoutes()
 }
 
 // lookupBlock finds a registered block by key — the guard that keeps the write
@@ -220,6 +220,10 @@ func promptsEditor() ui.ArticleEditor {
 		NoSearch:         true,      // small fixed list — search is noise
 		NoCollapse:       true,      // the list IS the page here; hiding it buys nothing
 		TitleReadOnly:    true,      // a block's name is its key — edit the body, not the name
+		// Each block in three versions: what both models read, and each
+		// model's own wording (tier_text.go).
+		Variants:         editorVariants(),
+		VariantNoteField: "variant_note",
 		EmptyText:        "Select a prompt block on the left to view and edit it.",
 		PlaceholderTitle: "Block name",
 		PlaceholderBody:  "The block's effective text: edit to override the shipped default; clear (or match the default) to revert.",
@@ -291,11 +295,13 @@ func (T *PromptsApp) handleLoad(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown block", http.StatusNotFound)
 		return
 	}
+	body, note := variantText(b, r.URL.Query().Get("variant"))
 	writeJSON(w, map[string]any{
-		"ID":      b.Key,
-		"Subject": b.Title,
-		"Body":    EffectivePromptText(key, b.Text),
-		"Date":    b.Category + " - Gate: " + b.Gate,
+		"ID":           b.Key,
+		"Subject":      b.Title,
+		"Body":         body,
+		"Date":         b.Category + " - Gate: " + b.Gate,
+		"variant_note": note,
 	})
 }
 
@@ -307,6 +313,9 @@ func (T *PromptsApp) handleSave(w http.ResponseWriter, r *http.Request) {
 		ID   string `json:"ID"`
 		Body string `json:"Body"`
 		Via  string `json:"Via"` // "optimize" from the Optimize action; else a manual edit
+		// Variant is the version saved: "worker" or "lead" for that model's
+		// own wording, else the shared text.
+		Variant string `json:"variant"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
 		http.Error(w, "bad body", http.StatusBadRequest)
@@ -315,6 +324,14 @@ func (T *PromptsApp) handleSave(w http.ResponseWriter, r *http.Request) {
 	b, ok := lookupBlock(strings.TrimSpace(rec.ID))
 	if !ok {
 		http.Error(w, "unknown block", http.StatusNotFound)
+		return
+	}
+	if v := strings.TrimSpace(rec.Variant); v == prompts.TierWorker || v == prompts.TierLead {
+		if err := T.saveVariant(b, v, rec.Body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "ID": b.Key})
 		return
 	}
 	via := "edit"

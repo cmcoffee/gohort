@@ -36,6 +36,9 @@ type TierOverride struct {
 	// setter did not know.
 	Model string    `json:"model,omitempty"`
 	At    time.Time `json:"at"`
+	// Via says who wrote it: "tuned" for Optimize, "edit" by hand, "" when
+	// the writer did not say.
+	Via string `json:"via,omitempty"`
 }
 
 // A prefix of its own, so no block key can collide with a tier key.
@@ -61,6 +64,12 @@ func PromptTierOverride(tier, key string) (TierOverride, bool) {
 // SetPromptTierOverride gives a tier its own text for a block. model is what
 // the tier runs now. Empty text clears it.
 func SetPromptTierOverride(tier, key, text, model string) {
+	SetPromptTierOverrideBy(tier, key, text, model, "")
+}
+
+// SetPromptTierOverrideBy is SetPromptTierOverride saying who wrote it
+// (TierOverride.Via).
+func SetPromptTierOverrideBy(tier, key, text, model, via string) {
 	db := promptOverrideStore()
 	if db == nil || !validTier(tier) {
 		return
@@ -70,7 +79,7 @@ func SetPromptTierOverride(tier, key, text, model string) {
 		db.Unset(OverrideTable, tierOverrideKey(tier, key))
 		return
 	}
-	db.Set(OverrideTable, tierOverrideKey(tier, key), TierOverride{Text: text, Model: strings.TrimSpace(model), At: time.Now()})
+	db.Set(OverrideTable, tierOverrideKey(tier, key), TierOverride{Text: text, Model: strings.TrimSpace(model), At: time.Now(), Via: via})
 }
 
 // ClearPromptTierOverride drops a tier's own text, so the tier follows the

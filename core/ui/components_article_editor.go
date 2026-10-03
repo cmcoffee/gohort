@@ -120,6 +120,16 @@ type ArticleEditor struct {
 	// dispatch as Actions; they just live with the list, not the editor.
 	ListActions []ToolbarAction `json:"list_actions,omitempty"`
 
+	// Variants offers each record in more than one version, as a switch
+	// above the body: the same text worded for different readers, say. The
+	// chosen value rides on the load URL as variant=<value> and in the saved
+	// record as "variant"; the editor opens on the first. What a version is,
+	// and what saving one means, is the app's. VariantNoteField names a field
+	// of the loaded record shown beside the switch (default "variant_note"):
+	// where this version's text came from, or that it has none of its own.
+	Variants         []SelectOption `json:"variants,omitempty"`
+	VariantNoteField string         `json:"variant_note_field,omitempty"`
+
 	// Actions is the declarative toolbar — list of buttons rendered
 	// between the title input and the "More ▾" popover. Each entry
 	// dispatches by Method: "client" runs an app-registered callback,

@@ -12,66 +12,107 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// Adding a tier's text starts it as a copy of what the tier reads now and
-// stamps the tier's model; a model swap flags it; edit and remove work.
-func TestPerTierText(t *testing.T) {
+func variantWorld(t *testing.T) (*PromptsApp, PromptBlock) {
+	t.Helper()
 	SetPromptOverrideDB(&DBase{Store: kvlite.MemStore()})
 	t.Cleanup(func() { SetPromptOverrideDB(nil) })
 	prevW, prevL := LiveLLMs()
-	SetLiveLLMs("llama.cpp/qwen", "gemini/flash")
+	SetLiveLLMs("local/qwen at http://host.test/v1/", "cloud/flash")
 	t.Cleanup(func() { SetLiveLLMs(prevW, prevL) })
-	b := AllPromptBlocks()[0]
-	SetPromptOverride(b.Key, "everyone reads this")
+	// An admin signed in: the handlers read who is asking.
+	root := &DBase{Store: kvlite.MemStore()}
+	prevAuth := AuthDB
+	AuthDB = func() Database { return root }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	AuthSetUser(root, "admin", "pw", true)
+	adminCookie = AuthCreateSession(root, "admin")
 	app := &PromptsApp{}
-	call := func(h http.HandlerFunc, method, url, body string) *httptest.ResponseRecorder {
-		rec := httptest.NewRecorder()
-		h(rec, httptest.NewRequest(method, url, strings.NewReader(body)))
-		return rec
+	app.DB = root.Bucket("prompts")
+	return app, AllPromptBlocks()[0]
+}
+
+var adminCookie string
+
+func asAdmin(r *http.Request) *http.Request {
+	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: adminCookie})
+	return r
+}
+
+func loadVariant(t *testing.T, app *PromptsApp, key, variant string) (body, note string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	app.handleLoad(rec, asAdmin(httptest.NewRequest(http.MethodGet, "/x?id="+key+"&variant="+variant, nil)))
+	var out struct {
+		Body string `json:"Body"`
+		Note string `json:"variant_note"`
 	}
-	if rec := call(app.handleTierAdd, http.MethodPost, "/x", `{"block":"`+b.Key+`","tier":"worker"}`); rec.Code != 200 {
-		t.Fatalf("add answered %d %s", rec.Code, rec.Body.String())
+	json.NewDecoder(rec.Body).Decode(&out)
+	return out.Body, out.Note
+}
+
+func saveVariant(t *testing.T, app *PromptsApp, key, variant, body string) int {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]string{"ID": key, "Body": body, "variant": variant})
+	rec := httptest.NewRecorder()
+	app.handleSave(rec, asAdmin(httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(string(raw)))))
+	return rec.Code
+}
+
+// The editor shows each block as both models read it and as each model's
+// own: a model with none reads the shared text, a save to its version gives
+// it its own (stamped with its model, written by hand), and saving the
+// shared text back removes the split.
+func TestEachModelHasItsOwnVersionInTheEditor(t *testing.T) {
+	app, b := variantWorld(t)
+	SetPromptOverride(b.Key, "everyone reads this")
+
+	if body, note := loadVariant(t, app, b.Key, "worker"); body != "everyone reads this" || !strings.Contains(note, "reads the shared wording") {
+		t.Fatalf("worker before: %q / %q", body, note)
 	}
-	o, ok := prompts.PromptTierOverride(prompts.TierWorker, b.Key)
-	if !ok || o.Text != "everyone reads this" || o.Model != "llama.cpp/qwen" {
-		t.Fatalf("added %+v", o)
+	if code := saveVariant(t, app, b.Key, "worker", "the worker's own words"); code != 200 {
+		t.Fatalf("save answered %d", code)
 	}
-	if rec := call(app.handleTierAdd, http.MethodPost, "/x", `{"block":"`+b.Key+`","tier":"both"}`); rec.Code != http.StatusBadRequest {
-		t.Fatalf("an unknown tier answered %d", rec.Code)
+	o, ok := prompts.PromptTierOverride("worker", b.Key)
+	if !ok || o.Text != "the worker's own words" || o.Model != "local/qwen at http://host.test/v1/" || o.Via != "edit" {
+		t.Fatalf("worker override = %+v", o)
 	}
-	ref := "worker|" + b.Key
-	call(app.handleTierOne, http.MethodPost, "/x?ref="+ref, `{"text":"the worker's own words"}`)
-	if got := prompts.EffectivePromptTextFor(prompts.TierWorker, b.Key, b.Text); got != "the worker's own words" {
-		t.Fatalf("worker reads %q", got)
+	if got, _ := PromptOverride(b.Key); got != "everyone reads this" {
+		t.Fatalf("the shared text moved: %q", got)
 	}
-	SetLiveLLMs("llama.cpp/qwen-next", "gemini/flash")
-	var rows []struct {
-		Ref   string `json:"ref"`
-		Stale bool   `json:"stale"`
+	if body, note := loadVariant(t, app, b.Key, "worker"); body != "the worker's own words" || !strings.Contains(note, "written by hand") || !strings.Contains(note, "for local/qwen.") {
+		t.Fatalf("worker after: %q / %q", body, note)
 	}
-	json.NewDecoder(call(app.handleTierList, http.MethodGet, "/x", "").Body).Decode(&rows)
-	if len(rows) != 1 || rows[0].Ref != ref || !rows[0].Stale {
-		t.Fatalf("rows = %+v", rows)
+	if _, note := loadVariant(t, app, b.Key, "all"); !strings.Contains(note, "except the worker") {
+		t.Fatalf("shared note = %q", note)
 	}
-	call(app.handleTierDrop, http.MethodPost, "/x?ref="+ref, "")
-	if got := prompts.EffectivePromptTextFor(prompts.TierWorker, b.Key, b.Text); got != "everyone reads this" {
-		t.Fatalf("after remove the worker reads %q", got)
+	if code := saveVariant(t, app, b.Key, "worker", "everyone reads this"); code != 200 {
+		t.Fatalf("save back answered %d", code)
+	}
+	if _, ok := prompts.PromptTierOverride("worker", b.Key); ok {
+		t.Fatal("saving the shared text back left the split")
 	}
 }
 
-// The per-tier dialog names its row's field; {row_key} is never filled.
-func TestTierSectionFillsFromTheRow(t *testing.T) {
-	raw, _ := json.Marshal(tierTextSection())
-	if strings.Contains(string(raw), "{row_key}") || !strings.Contains(string(raw), "ref={ref}") {
-		t.Fatal("the per-tier edit dialog does not take its row from the row's ref")
+// Optimize's wording says so, and says when the model behind the tier has
+// changed since it was written.
+func TestTheEditorSaysWhoWroteAModelsWording(t *testing.T) {
+	app, b := variantWorld(t)
+	if err := ApplyTierEdit("lead", b.Key, "lead words"); err != nil {
+		t.Fatal(err)
+	}
+	if _, note := loadVariant(t, app, b.Key, "lead"); !strings.Contains(note, "written by Optimize") || !strings.Contains(note, "for cloud/flash.") {
+		t.Fatalf("lead note = %q", note)
+	}
+	SetLiveLLMs("local/qwen", "cloud/pro")
+	if _, note := loadVariant(t, app, b.Key, "lead"); !strings.Contains(note, "now runs cloud/pro") {
+		t.Fatalf("stale note = %q", note)
 	}
 }
 
-// A tier's text that names a placeholder the block does not fill is refused
-// on every way in, since it would reach the model as a raw {name}; a fresh
-// text is listed as not used yet.
-func TestTierTextKeepsTheBlocksPlaceholders(t *testing.T) {
-	SetPromptOverrideDB(&DBase{Store: kvlite.MemStore()})
-	t.Cleanup(func() { SetPromptOverrideDB(nil) })
+// A model's wording that names a placeholder the block does not fill is
+// refused: it would reach the model as a raw {name}.
+func TestAModelsWordingKeepsTheBlocksPlaceholders(t *testing.T) {
+	app, _ := variantWorld(t)
 	var b PromptBlock
 	for _, x := range AllPromptBlocks() {
 		if strings.Contains(x.Text, "{rounds}") {
@@ -81,38 +122,24 @@ func TestTierTextKeepsTheBlocksPlaceholders(t *testing.T) {
 	if b.Key == "" {
 		t.Skip("no registered block has a {rounds} placeholder")
 	}
-	app := &PromptsApp{}
-	call := func(h http.HandlerFunc, method, url, body string) *httptest.ResponseRecorder {
-		rec := httptest.NewRecorder()
-		h(rec, httptest.NewRequest(method, url, strings.NewReader(body)))
-		return rec
-	}
-	if rec := call(app.handleTierAdd, http.MethodPost, "/x", `{"block":"`+b.Key+`","tier":"lead"}`); rec.Code != 200 {
-		t.Fatalf("add answered %d %s", rec.Code, rec.Body.String())
-	}
-	ref := "lead|" + b.Key
-	if rec := call(app.handleTierOne, http.MethodPost, "/x?ref="+ref, `{"text":"Stop after {limit} rounds."}`); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "{limit}") {
-		t.Fatalf("an unfillable placeholder answered %d %s", rec.Code, rec.Body.String())
+	if code := saveVariant(t, app, b.Key, "lead", "Stop after {limit} rounds."); code != http.StatusBadRequest {
+		t.Fatalf("an unfillable placeholder answered %d", code)
 	}
 	if err := ApplyTierEdit(prompts.TierLead, b.Key, "Stop after {limit} rounds."); err == nil {
-		t.Fatal("a promotion took an unfillable placeholder")
+		t.Fatal("Optimize could write an unfillable placeholder")
 	}
-	if rec := call(app.handleTierOne, http.MethodPost, "/x?ref="+ref, `{"text":"At most {rounds} rounds, then answer."}`); rec.Code != 200 {
-		t.Fatalf("a text keeping the placeholder answered %d %s", rec.Code, rec.Body.String())
-	}
-	var rows []struct {
-		Ref    string `json:"ref"`
-		Unused bool   `json:"unused"`
-	}
-	json.NewDecoder(call(app.handleTierList, http.MethodGet, "/x", "").Body).Decode(&rows)
-	if len(rows) != 1 || !rows[0].Unused {
-		t.Fatalf("rows = %+v", rows)
+	if code := saveVariant(t, app, b.Key, "lead", "At most {rounds} rounds, then answer."); code != 200 {
+		t.Fatalf("a text keeping the placeholder answered %d", code)
 	}
 }
 
-// The editor's section on the admin tab has a title: an untitled section is
-// "Section 1" in the tab's rail.
-func TestTheEditorSectionIsNamed(t *testing.T) {
+// The editor offers the three versions, and its section on the admin tab
+// has a title: untitled, the tab's rail calls it "Section 1".
+func TestTheEditorOffersEachModel(t *testing.T) {
+	ed := promptsEditor()
+	if len(ed.Variants) != 3 || ed.Variants[0].Value != "all" || ed.VariantNoteField != "variant_note" {
+		t.Fatalf("variants = %+v", ed.Variants)
+	}
 	if s := promptsAdminSection(); s.Title != EditorTitle || s.Group != AdminTab {
 		t.Fatalf("editor section: title %q, group %q", s.Title, s.Group)
 	}

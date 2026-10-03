@@ -308,6 +308,45 @@
     mergePanel.style.display = 'none';
     main.appendChild(mergePanel);
 
+    // Variants: each record in more than one version (worded for different
+    // readers, say), as a switch above the body. The chosen one rides on the
+    // load URL as variant= and in the saved record as "variant"; what a
+    // version is, and what saving one means, is the app's.
+    var variants = Array.isArray(cfg.variants) ? cfg.variants : [];
+    var currentVariant = variants.length ? variants[0].value : '';
+    var variantNote = el('span', {class: 'ui-tw-variant-note'});
+    var variantNoteF = cfg.variant_note_field || 'variant_note';
+    if (variants.length > 1) {
+      var variantBar = el('div', {class: 'ui-tw-variants'});
+      var variantBtns = [];
+      variants.forEach(function(v) {
+        var vb = el('button', {type: 'button', title: v.help || '',
+          class: 'ui-tw-variant' + (v.value === currentVariant ? ' active' : '')}, [v.label || v.value]);
+        vb.addEventListener('click', async function() {
+          if (v.value === currentVariant) return;
+          if (currentID && editorValue() !== lastSavedBody &&
+              !(await window.uiConfirm('Discard the unsaved changes to this version?'))) return;
+          currentVariant = v.value;
+          variantBtns.forEach(function(x) { x.classList.toggle('active', x === vb); });
+          if (currentID) openArticle(currentID);
+        });
+        variantBtns.push(vb);
+        variantBar.appendChild(vb);
+      });
+      variantBar.appendChild(variantNote);
+      main.appendChild(variantBar);
+    }
+    function withVariant(url) {
+      if (!variants.length) return url;
+      return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'variant=' + encodeURIComponent(currentVariant);
+    }
+    function refreshVariantNote() {
+      if (!variants.length || !currentID) { variantNote.textContent = ''; return; }
+      fetchJSON(withVariant(cfg.load_url.replace('{id}', encodeURIComponent(currentID)))).then(function(rec) {
+        variantNote.textContent = (rec && rec[variantNoteF]) || '';
+      }).catch(function(){});
+    }
+
     // Optional image preview row (hidden until a generated image arrives).
     var imageRow = el('div', {class: 'ui-tw-image-row'});
     imageRow.style.display = 'none';
@@ -632,8 +671,9 @@
         loadList();
         return;
       }
-      var url = cfg.load_url.replace('{id}', encodeURIComponent(id));
+      var url = withVariant(cfg.load_url.replace('{id}', encodeURIComponent(id)));
       fetchJSON(url).then(function(rec) {
+        variantNote.textContent = (variants.length && rec[variantNoteF]) || '';
         titleInput.value = rec[subjectF] || '';
         docSetValue(rec[bodyF] || '');
         lastSavedSubject = titleInput.value;
@@ -664,6 +704,7 @@
       if (extra && typeof extra === 'object') {
         for (var ek in extra) record[ek] = extra[ek];
       }
+      if (variants.length) record.variant = currentVariant;
       saveBtn.disabled = true;
       savedTag.textContent = 'saving…';
       fetchJSON(cfg.save_url, {
@@ -678,6 +719,7 @@
         mobileTitle.textContent = subject || 'Untitled';
         loadList();
         revNav.reload(currentID);
+        refreshVariantNote();
       }).catch(function(err) {
         saveBtn.disabled = false;
         savedTag.textContent = '';

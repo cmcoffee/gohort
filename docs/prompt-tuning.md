@@ -329,14 +329,14 @@ measured rather than guessed.
   The tools directive, filled per call and ending in the fill, is the one
   block that cannot be worded per tier.
 - **A swap that cannot be made leaves the shared text.** A tier never gets
-  less than every tier gets. The Per-tier text section shows when each
-  tier text last went out, so one that never reaches a prompt is visible.
+  less than every tier gets. The editor's note on a model's version says
+  when it last went out, so wording that never reaches a prompt is visible.
 - **Mixed turns are already per loop.** A lead plan with worker steps sends
   each call through its own tier's handle, so each gets its own words.
 - **A session pinned to one tier writes that tier's words.** It measured no
-  other, so its kept edits are that tier's own text, and promoting them puts
-  them in Per-tier text, leaving the shared wording alone. A routed session
-  edits the shared wording. A lead-pinned sandbox serves both of its tiers
+  other, so its kept edits are that tier's own text, applied as that model's
+  own wording (the editor shows it under the model's version), leaving the
+  shared wording alone. A routed session edits the shared wording. A lead-pinned sandbox serves both of its tiers
   with the lead's model, so the lead's words go to both there.
 - **Lead tuning has the judge problem.** The lead cannot fairly judge its own
   builds. A session that builds on the lead (pinned to it, or routed) runs
