@@ -68,6 +68,11 @@ func safeInvoke(ctx context.Context, name string, handler ToolHandlerFunc, args 
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	// A probe stops the run at the call it is watching for, before the call
+	// is made (tool_probe.go).
+	if p := toolProbeFrom(ctx); p != nil && p.observe(name, args) {
+		return probeStoppedText, nil
+	}
 	output, err = handler(ctx, args)
 	// Strip the framework mark unconditionally: whether or not an app wrapper
 	// read it, it must never reach the model. This is the one place every tool
