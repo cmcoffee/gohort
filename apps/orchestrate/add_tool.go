@@ -169,9 +169,6 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		if !ok {
 			return "", fmt.Errorf("add_tool: no agent named or id'd %q in your fleet, call agents(action=\"list\") to see the exact names", key)
 		}
-		if msg := agentEditRefusal(found, sess.Username); msg != "" {
-			return "", errors.New("add_tool: " + msg)
-		}
 		target = found
 	} else {
 		focusedID := loadAuthoringInProgress(sess.DB, sess.ChatSessionID)
@@ -183,6 +180,13 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 			return "", fmt.Errorf("add_tool: focused agent %q is gone from storage, re-call get_agent on a valid agent to reset focus, or pass agent=\"<name or id>\"", focusedID)
 		}
 		target = found
+	}
+	// Both ways of naming the target, not only the explicit one: the focus
+	// path had no check at all, so an agent opened with agents(action="get")
+	// could be re-equipped however it was locked.
+	if msg := agentChangeGate(sess.AskInChat, sess.DB, &target, sess.Username,
+		fmt.Sprintf("attach a new tool %q", strings.TrimSpace(stringArg(args, "name")))); msg != "" {
+		return "", errors.New("add_tool: " + msg)
 	}
 	// App agents have a CLOSED, code-declared kit: their tools come from the
 	// owning app (spec AllowedTools + what the app wires), never from the

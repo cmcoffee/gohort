@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -596,9 +597,9 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if sess == nil || sess.Username == "" || sess.DB == nil {
 		return "", errors.New("update_agent requires authenticated session")
 	}
-	id := strings.TrimSpace(fmt.Sprint(args["id"]))
-	if id == "" {
-		return "", errors.New("id is required")
+	id, err := agentTargetArg(args, "update_agent")
+	if err != nil {
+		return "", err
 	}
 	// By id or by name, the same resolution agents(action="get") uses. The
 	// model reads an agent by name and then names it again here; an id-only
@@ -617,7 +618,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		return "", fmt.Errorf("agent %q is not yours: clone it first to customize", id)
 	}
 	// LOCK — no editing another agent's sub-agent (see agentMutationLock).
-	if msg := agentMutationLock(existing, sess); msg != "" {
+	if msg := agentMutationLock(&existing, sess, "update its settings ("+strings.Join(sortedArgKeys(args, "id"), ", ")+")"); msg != "" {
 		return "", errors.New(msg)
 	}
 	// What the agent could do before this update, so the privileges card can
@@ -629,6 +630,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// how the far end happens to be written is one refactor from being wrong.
 	priorLimits := existing
 	priorLimits.ActionQuotas = maps.Clone(existing.ActionQuotas)
+	priorFields := agentFieldValues(existing)
 	mergeAgentArgs(&existing, args)
 	// An agent may tighten its own ceilings and not raise them. See
 	// keepEnforcementTight: the Limits tab calls these ceilings the framework
@@ -649,6 +651,16 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// reference going stale at session end.
 	copiedTools := autoCopySessionToolsForAgent(sess, &existing)
 	copied := len(copiedTools)
+	// A call that changes nothing must SAY so. It used to report
+	// AGENT_UPDATED ok and order the turn to end, so a call that re-sent only
+	// the name the agent already had read as the whole edit landing: the model
+	// stopped, and told the user a description and prompt had changed that
+	// were never sent.
+	changed := changedAgentFields(priorFields, agentFieldValues(existing))
+	if len(changed) == 0 && len(inlineTools) == 0 && copied == 0 && len(raised) == 0 {
+		return fmt.Sprintf("NOTHING CHANGED on %q (id=%s): every field this call set already had that value (it set: %s). To change the agent, pass the fields you want changed with their NEW values in the same call, e.g. description, orchestrator_prompt, rules. Nothing was saved, so the edit you meant to make has NOT happened yet; do not report it as done.",
+			existing.Name, existing.ID, chFirst(strings.Join(sortedArgKeys(args, "id", "agent"), ", "), "no fields")), nil
+	}
 	saved, err := saveAgent(sess.DB, existing)
 	if err != nil {
 		return "", err
@@ -689,9 +701,11 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// Same check as create: an update is where a tool name goes stale,
 	// because the allowlist is rewritten while the tools it references
 	// were authored somewhere else.
+	// Changed names the fields that actually moved, so the summary the model
+	// writes next is of this call and not of what it meant to send.
 	return fmt.Sprintf(
-		"AGENT_UPDATED ok. id=%s name=%q.%s%s DONE: reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
-		saved.ID, saved.Name, verifyHint, unresolvedToolNote(sess.DB, saved)+promptToolGapNote(sess.DB, saved), b,
+		"AGENT_UPDATED ok. id=%s name=%q. Changed: %s.%s%s DONE: reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
+		saved.ID, saved.Name, chFirst(strings.Join(changed, ", "), "its tools only"), verifyHint, unresolvedToolNote(sess.DB, saved)+promptToolGapNote(sess.DB, saved), b,
 	), nil
 }
 
@@ -717,11 +731,11 @@ func (cloneAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 	if sess == nil || sess.Username == "" || sess.DB == nil {
 		return "", errors.New("clone_agent requires authenticated session")
 	}
-	id := strings.TrimSpace(fmt.Sprint(args["id"]))
-	if id == "" {
-		return "", errors.New("id is required")
+	id, err := agentTargetArg(args, "clone_agent")
+	if err != nil {
+		return "", err
 	}
-	newName := strings.TrimSpace(fmt.Sprint(args["name"]))
+	newName := strings.TrimSpace(stringArg(args, "name"))
 	// LLM-initiated clone preserves the source's OwnedBy (no promotion).
 	// Promotion (sub-agent → top-level) is a deliberate user choice
 	// available only via the chat UI's Clone button prompt.
@@ -768,9 +782,9 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if sess == nil || sess.Username == "" || sess.DB == nil {
 		return "", errors.New("delete_agent requires authenticated session")
 	}
-	id := strings.TrimSpace(fmt.Sprint(args["id"]))
-	if id == "" {
-		return "", errors.New("id is required")
+	id, err := agentTargetArg(args, "delete_agent")
+	if err != nil {
+		return "", err
 	}
 	// LOCK — an agent may only delete a sub-agent IT owns (target.OwnedBy ==
 	// caller). Another agent's sub-agent is off-limits to tools; only its owner
@@ -785,7 +799,7 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		return "", err
 	}
 	if ok {
-		if msg := agentMutationLock(target, sess); msg != "" {
+		if msg := agentMutationLock(&target, sess, "delete it"); msg != "" {
 			return "", errors.New(msg)
 		}
 		id = target.ID
@@ -817,17 +831,66 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 // agent's sub-agent is rejected — only its owner or the human can. Returns "" to
 // allow, or a refusal message. The human dashboard never calls this (it deletes
 // via deleteAgent directly), so it stays unrestricted.
-func agentMutationLock(target AgentRecord, sess *ToolSession) string {
-	// Explicit per-agent lock — the user marked this agent protected, so NO agent
-	// may edit or delete it; only the human (dashboard/editor) can.
-	if target.Locked {
-		return fmt.Sprintf("can't modify %q: it's locked; only the user can change it (from the agent editor)", target.ID)
-	}
+//
+// change says what the call would do, for the card a locked target raises.
+// The sub-agent rule is checked first: it holds whatever the person answers,
+// so asking them about the lock on a target that rule refuses anyway would be
+// a question whose yes changes nothing.
+func agentMutationLock(target *AgentRecord, sess *ToolSession, change string) string {
 	caller := strings.TrimSpace(sess.DispatchParentAgentID)
 	if target.OwnedBy != "" && target.OwnedBy != caller {
 		return fmt.Sprintf("can't modify %q: it belongs to another agent; only its owner or the user (from the dashboard) can change it", target.ID)
 	}
-	return ""
+	return agentLockGate(sess.AskInChat, sess.DB, target, change)
+}
+
+// Answers on the locked-agent card. Named once: agentLockGate offers them and
+// matches on them.
+const (
+	lockAllowOnce = "Allow this change"
+	lockUnlock    = "Unlock agent"
+)
+
+// agentLockGate decides a tool write to a locked agent. "" means go ahead.
+//
+// The user locked the agent so that no agent changes it without them, which
+// is a decision about THEIR say-so, not a rule that holds whatever they say.
+// So a write to one asks them, in the conversation, with three answers: allow
+// this one change (the lock stays on, and the next change asks again), unlock
+// the agent (lock off, then this change), or deny. With nobody watching (a
+// scheduled or unattended run, ask == nil) there is nobody to waive it, and the
+// write is refused as it always was.
+//
+// Unlocking writes through setAgentLocked, the lock's one door, and clears
+// target.Locked so the caller's copy agrees with the store. The caller's save
+// keeps whatever the store holds either way (saveAgent preserves Locked).
+//
+// Every tool path that writes an agent record goes through this: update and
+// delete via agentMutationLock, everything that attaches something TO an agent
+// via agentChangeGate.
+func agentLockGate(ask func(prompt, detail string, yes []string) string, db Database, target *AgentRecord, change string) string {
+	if target == nil || !target.Locked {
+		return ""
+	}
+	name := chFirst(target.Name, target.ID)
+	if ask == nil {
+		return fmt.Sprintf("can't modify %q: it's locked, and only the user can approve changing it; nobody is watching this run to ask. Tell the user, who can approve it from a chat or unlock it in the agent editor.", name)
+	}
+	prompt := fmt.Sprintf("🔒 %s is locked. An agent wants to change it.", name)
+	detail := "Change: " + change + "\n\n" + lockAllowOnce + " lets only this change through and keeps it locked. " +
+		lockUnlock + " turns the lock off, so later changes go through without asking."
+	switch ask(prompt, detail, []string{lockAllowOnce, lockUnlock}) {
+	case lockAllowOnce:
+		return ""
+	case lockUnlock:
+		saved, err := setAgentLocked(db, *target, false)
+		if err != nil {
+			return fmt.Sprintf("can't modify %q: the user chose to unlock it, but unlocking failed: %v", name, err)
+		}
+		*target = saved
+		return ""
+	}
+	return fmt.Sprintf("can't modify %q: it's locked, and the user declined this change (%s). Do not retry it or work around it; it stays as it is.", name, change)
 }
 
 // --- shared param + merge helpers -----------------------------------------
@@ -1476,4 +1539,71 @@ func floatFromArgs(args map[string]any, key string) float64 {
 		}
 	}
 	return 0
+}
+
+// sortedArgKeys names the fields a call sets, minus skip, for a one-line
+// summary of what it would change.
+func sortedArgKeys(args map[string]any, skip ...string) []string {
+	out := make([]string, 0, len(args))
+	for k := range args {
+		if !slices.Contains(skip, k) {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// agentTargetArg reads which agent an update/clone/delete call names: id, or
+// agent, which is what agents() and add_tool call the same thing.
+//
+// Read with stringArg, never fmt.Sprint: a missing key Sprints as "<nil>", which
+// is not empty, so the required check passed and "<nil>" was looked up as an
+// agent's NAME. The model was told agent "<nil>" did not exist, could not see
+// that it had passed nothing, and spent a session theorising about authoring
+// focus instead of adding the id.
+func agentTargetArg(args map[string]any, tool string) (string, error) {
+	id := strings.TrimSpace(firstNonBlank(stringArg(args, "id"), stringArg(args, "agent")))
+	if id == "" {
+		return "", fmt.Errorf("%s needs id: the agent's id or exact name, e.g. id=\"TechHelper\" (agents(action=\"list\") shows them). It does not act on whatever agent you last opened. Nothing was changed", tool)
+	}
+	return id, nil
+}
+
+// agentFieldValues is a record's fields by their JSON names, for telling which
+// ones an update moved. Updated is left out: the save stamps it whatever else
+// happened.
+func agentFieldValues(a AgentRecord) map[string]string {
+	raw, err := json.Marshal(a)
+	if err != nil {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		if k != "updated" {
+			out[k] = string(v)
+		}
+	}
+	return out
+}
+
+// changedAgentFields lists the fields whose values differ, sorted.
+func changedAgentFields(before, after map[string]string) []string {
+	var out []string
+	for k, v := range after {
+		if before[k] != v {
+			out = append(out, k)
+		}
+	}
+	for k := range before {
+		if _, ok := after[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

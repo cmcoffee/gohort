@@ -201,6 +201,9 @@ func SharedAgentsFor(db Database, user string) []AgentRecord {
 // Only another USER's record is refused. A framework seed is deliberately
 // shadow-cloned per user, and an unowned record predates ownership, so both
 // keep behaving exactly as they did.
+//
+// Ownership only. The lock is agentChangeGate's, because the person can waive
+// it on the spot and a share is not theirs to waive.
 func agentEditRefusal(a AgentRecord, user string) string {
 	owner := strings.TrimSpace(a.Owner)
 	if owner == "" || owner == seedOwner || owner == strings.TrimSpace(user) {
@@ -208,4 +211,26 @@ func agentEditRefusal(a AgentRecord, user string) string {
 	}
 	return chFirst(a.Name, a.ID) + " belongs to " + owner + " and was shared with you to run, not to change. " +
 		"Duplicate it first if you want a version of your own"
+}
+
+// agentChangeGate is the check every tool runs before it attaches something TO
+// an agent (a tool, skill, machine, pipeline, a bulletin board). Another user's
+// agent is refused outright: a share is not this person's to waive. A locked
+// one asks them (agentLockGate). "" means go ahead; target is updated if they
+// chose to unlock it.
+func agentChangeGate(ask func(prompt, detail string, yes []string) string, db Database, target *AgentRecord, user, change string) string {
+	if msg := agentEditRefusal(*target, user); msg != "" {
+		return msg
+	}
+	return agentLockGate(ask, db, target, change)
+}
+
+// chatAsker is this turn's question card, or nil with nobody watching, which
+// agentLockGate reads as a no. Mirrors ToolSession.AskInChat, which is only
+// wired on a turn with a live viewer.
+func (t *chatTurn) chatAsker() func(prompt, detail string, yes []string) string {
+	if t == nil || t.sse == nil {
+		return nil
+	}
+	return t.askInChat
 }

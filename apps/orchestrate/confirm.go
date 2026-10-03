@@ -66,6 +66,10 @@ type pendingToolConfirm struct {
 	// true, and only the waiter is in a position to persist the grant (it
 	// holds the turn's store and the grant it offered).
 	answer chan string
+	// allows names the button values that mean yes, for a card whose buttons
+	// are not the allow/always pair. Nil means that pair, which is every card
+	// but the ones askInChat raises.
+	allows map[string]bool
 }
 
 // toolConfirms holds the in-flight escalations by card id. Package-
@@ -432,22 +436,6 @@ type toolConfirmRequest struct {
 // session owner answers. Returns false (deny) when no interactive
 // viewer is attached, on timeout, or on an explicit Deny.
 func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
-	if t == nil || t.sse == nil {
-		Log("[orchestrate.confirm] %s stopped: %s, and this run has no interactive viewer, denied (fail closed)", req.tool, req.because)
-		if t != nil {
-			t.turnDiag("tool-denied", fmt.Sprintf("%s was not run: %s, and this run had no interactive viewer to ask, denied fail-closed.", req.tool, req.because))
-		}
-		return false
-	}
-	detail := req.detail
-	if len(detail) > 600 {
-		detail = detail[:600] + "…"
-	}
-	id := "toolconfirm-" + UUIDv4()[:8]
-	p := &pendingToolConfirm{user: t.user, ch: make(chan bool, 1), answer: make(chan string, 1)}
-	toolConfirms.Store(id, p)
-	defer toolConfirms.Delete(id)
-
 	actions := []map[string]any{{"label": "Allow once", "value": "allow"}}
 	// The standing-grant button sits between allow-once and deny, and says
 	// what it would allow rather than "always" on its own — the user is
@@ -456,6 +444,64 @@ func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 		actions = append(actions, map[string]any{"label": req.grantLabel, "value": "always"})
 	}
 	actions = append(actions, map[string]any{"label": "Deny", "value": "deny", "variant": "danger"})
+	picked, ok := t.parkConfirm(req, actions, nil)
+	if !ok {
+		return false
+	}
+	// Persist the standing grant only when the user picked THAT button.
+	if picked == "always" && req.grant != nil {
+		saved := saveToolGrant(t.udb, *req.grant)
+		t.turnDiag("tool-grant", fmt.Sprintf("You allowed %s from now on in this scope. Revoke it under Permissions.", firstNonBlank(saved.Label, req.tool)))
+	}
+	return true
+}
+
+// askInChat puts a question card in the conversation and parks until the
+// person answers: one button per entry in yes, then Deny. Returns the label of
+// the yes they picked, or "" for Deny, a timeout, or no one watching, so ""
+// always means "do not". The generic form of escalateToolConfirm, for a tool
+// whose question is not "may this call run" (ToolSession.AskInChat).
+func (t *chatTurn) askInChat(prompt, detail string, yes []string) string {
+	actions := make([]map[string]any, 0, len(yes)+1)
+	allows := make(map[string]bool, len(yes))
+	for i, label := range yes {
+		v := fmt.Sprintf("yes%d", i)
+		actions = append(actions, map[string]any{"label": label, "value": v})
+		allows[v] = true
+	}
+	actions = append(actions, map[string]any{"label": "Deny", "value": "deny", "variant": "danger"})
+	picked, ok := t.parkConfirm(toolConfirmRequest{tool: "a question", prompt: prompt, detail: detail, because: prompt}, actions, allows)
+	if !ok {
+		return ""
+	}
+	for i, label := range yes {
+		if picked == fmt.Sprintf("yes%d", i) {
+			return label
+		}
+	}
+	return ""
+}
+
+// parkConfirm renders a card with actions and parks until it is answered.
+// Returns the picked value and whether it is a yes (allows, or allow/always
+// when nil). False with no viewer attached, on timeout, or on a no; each of
+// those leaves a breadcrumb and settles the card in the event stream.
+func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any, allows map[string]bool) (string, bool) {
+	if t == nil || t.sse == nil {
+		Log("[orchestrate.confirm] %s stopped: %s, and this run has no interactive viewer, denied (fail closed)", req.tool, req.because)
+		if t != nil {
+			t.turnDiag("tool-denied", fmt.Sprintf("%s was not run: %s, and this run had no interactive viewer to ask, denied fail-closed.", req.tool, req.because))
+		}
+		return "", false
+	}
+	detail := req.detail
+	if len(detail) > 600 {
+		detail = detail[:600] + "…"
+	}
+	id := "toolconfirm-" + UUIDv4()[:8]
+	p := &pendingToolConfirm{user: t.user, ch: make(chan bool, 1), answer: make(chan string, 1), allows: allows}
+	toolConfirms.Store(id, p)
+	defer toolConfirms.Delete(id)
 
 	t.sse.Send(map[string]any{
 		"kind":    "confirm",
@@ -469,9 +515,8 @@ func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 		if !v {
 			t.turnDiag("tool-denied", fmt.Sprintf("You denied the %s call (%s).", req.tool, req.because))
 			t.sendConfirmResolved(id, false)
-			return false
+			return "", false
 		}
-		// Persist the standing grant only when the user picked THAT button.
 		// Reading the answer non-blockingly: the resolver always writes it
 		// before signalling, but a nil-answer pending (an older in-flight
 		// card across a rebuild) must not park the loop forever.
@@ -480,14 +525,20 @@ func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 		case picked = <-p.answer:
 		default:
 		}
-		if picked == "always" && req.grant != nil {
-			saved := saveToolGrant(t.udb, *req.grant)
-			t.sendConfirmResolvedLabel(id, "allow", req.grantLabel)
-			t.turnDiag("tool-grant", fmt.Sprintf("You allowed %s from now on in this scope. Revoke it under Permissions.", firstNonBlank(saved.Label, req.tool)))
-			return true
+		// The stamp is the button's own label, except a plain allow, which
+		// has always stamped "Allowed".
+		if picked == "" || picked == "allow" {
+			t.sendConfirmResolved(id, true)
+		} else {
+			label := picked
+			for _, a := range actions {
+				if a["value"] == picked {
+					label = fmt.Sprint(a["label"])
+				}
+			}
+			t.sendConfirmResolvedLabel(id, "allow", label)
 		}
-		t.sendConfirmResolved(id, true)
-		return true
+		return picked, true
 	case <-time.After(toolConfirmTimeout):
 		Log("[orchestrate.confirm] approval for %s (%s) timed out after %s: denied", req.tool, req.because, toolConfirmTimeout)
 		// Breadcrumb + a persistent in-conversation note. The silent version
@@ -499,7 +550,7 @@ func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 		t.sse.Send(map[string]any{"kind": "status_note",
 			"text": fmt.Sprintf("⏱ Approval for %s timed out after %s, so the call was denied.", req.tool, toolConfirmTimeout)})
 		t.sendConfirmResolvedLabel(id, "deny", "Timed out")
-		return false
+		return "", false
 	}
 }
 
@@ -564,15 +615,23 @@ func (T *OrchestrateApp) resolveToolConfirm(w http.ResponseWriter, r *http.Reque
 	// Delete before signalling so a double-click can't send twice
 	// (both channels are buffered 1; the waiter also deletes on its way out).
 	toolConfirms.Delete(strings.TrimSpace(req.ID))
-	value := strings.TrimSpace(req.Value)
+	p.resolve(strings.TrimSpace(req.Value))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// resolve hands the parked waiter the button that was clicked.
+func (p *pendingToolConfirm) resolve(value string) {
 	// The answer goes FIRST: the waiter reads it non-blockingly the instant
 	// ch releases it, so writing them the other way round would race a
 	// standing grant into being dropped as an allow-once.
 	if p.answer != nil {
 		p.answer <- value
 	}
-	p.ch <- (value == "allow" || value == "always")
-	w.WriteHeader(http.StatusNoContent)
+	allowed := value == "allow" || value == "always"
+	if p.allows != nil {
+		allowed = p.allows[value]
+	}
+	p.ch <- allowed
 }
 
 // PublicHandleConfirm is the landing an app routes its AgentLoopPanel's

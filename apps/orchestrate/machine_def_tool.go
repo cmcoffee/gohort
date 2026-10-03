@@ -694,12 +694,14 @@ func (t *chatTurn) attachMachineToAgents(raw any, machineID string) (attached, u
 			}
 			continue
 		}
-		if msg := agentEditRefusal(ag, t.user); msg != "" {
-			unknown = append(unknown, key+" ("+msg+")")
-			continue
-		}
 		if ag.Machine == machineID {
 			attached = append(attached, chFirst(ag.Name, ag.ID))
+			continue
+		}
+		// After the no-op check: an agent already on this machine has nothing
+		// to approve.
+		if msg := agentChangeGate(t.chatAsker(), t.udb, &ag, t.user, fmt.Sprintf("run it as machine %q", machineID)); msg != "" {
+			unknown = append(unknown, key+" ("+msg+")")
 			continue
 		}
 		ag.Machine = machineID

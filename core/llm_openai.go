@@ -1219,14 +1219,24 @@ func buildOAITools(tools []Tool) []oaiTool {
 func parseOAIToolCalls(calls []oaiToolCallMsg) []ToolCall {
 	var out []ToolCall
 	for _, tc := range calls {
-		args := make(map[string]any)
-		var raw map[string]interface{}
-		if json.Unmarshal([]byte(tc.Function.Arguments), &raw) == nil {
-			args = parseToolArgs(raw)
-		}
-		out = append(out, ToolCall{ID: tc.ID, Name: tc.Function.Name, Args: args})
+		args, argsErr := decodeOAIToolArgs(tc.Function.Arguments)
+		out = append(out, ToolCall{ID: tc.ID, Name: tc.Function.Name, Args: args, ArgsError: argsErr})
 	}
 	return out
+}
+
+// decodeOAIToolArgs reads a tool call's arguments string. Blank is a call with
+// no arguments. Anything else that does not parse is reported, not swallowed:
+// it used to become an empty map, and the tool ran as if called with nothing.
+func decodeOAIToolArgs(s string) (map[string]any, string) {
+	if strings.TrimSpace(s) == "" {
+		return map[string]any{}, ""
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+		return map[string]any{}, fmt.Sprintf("%v (%d bytes received)", err, len(s))
+	}
+	return parseToolArgs(raw), ""
 }
 
 // snoopOAIRequest logs the outbound HTTP request details via Trace.
@@ -2339,15 +2349,12 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 
 	var toolCalls []ToolCall
 	for _, b := range toolCallBuilders {
-		args := make(map[string]any)
-		var raw map[string]interface{}
-		if json.Unmarshal([]byte(b.args.String()), &raw) == nil {
-			args = parseToolArgs(raw)
-		}
+		args, argsErr := decodeOAIToolArgs(b.args.String())
 		toolCalls = append(toolCalls, ToolCall{
-			ID:   b.id,
-			Name: b.name.String(),
-			Args: args,
+			ID:        b.id,
+			Name:      b.name.String(),
+			Args:      args,
+			ArgsError: argsErr,
 		})
 	}
 

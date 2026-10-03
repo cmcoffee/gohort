@@ -7,6 +7,7 @@ package orchestrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -82,6 +83,15 @@ func bulletinsToolDef(t *chatTurn) AgentToolDef {
 				ag, why := t.ownAgentByNameOrID(key)
 				if ag.ID == "" {
 					return "", fmt.Errorf("%s", chFirst(why, "no agent named "+key))
+				}
+				// Both actions change the agent: follow rewrites what arrives on
+				// its turns, allow_poster hands it a post_bulletin tool.
+				change := fmt.Sprintf("%s bulletin board %q", chIf(on, "follow", "stop following"), board.Name)
+				if strings.EqualFold(stringArg(args, "action"), "allow_poster") {
+					change = fmt.Sprintf("%s post to bulletin board %q", chIf(on, "let it", "stop it being able to"), board.Name)
+				}
+				if msg := agentChangeGate(t.chatAsker(), t.udb, &ag, t.user, change); msg != "" {
+					return "", errors.New(msg)
 				}
 				if strings.EqualFold(stringArg(args, "action"), "allow_poster") {
 					board.Posters = removeString(board.Posters, ag.ID)

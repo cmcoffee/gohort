@@ -3436,6 +3436,20 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			lr.rs.toolErrors++
 			continue
 		}
+		// Arguments that could not be read: not run. Run with the empty map
+		// they decoded to, the tool answers about a call nobody made, and the
+		// model hunts for the fault in the tool instead of in its JSON.
+		if tc.ArgsError != "" {
+			Log("[agent_loop] round %d: %s not run: its arguments were not valid JSON: %s", lr.round, tc.Name, tc.ArgsError)
+			lr.emitDiag("tool-args-unreadable", fmt.Sprintf("%s was not run: its arguments were not valid JSON (%s).", tc.Name, tc.ArgsError))
+			lr.rs.results[i] = ToolResult{ID: tc.ID, IsError: true, Content: fmt.Sprintf(
+				"Error: %s did NOT run and nothing changed: the arguments you sent were not valid JSON (%s). "+
+					"Send the call again with valid JSON: escape double quotes and newlines inside string values. "+
+					"If a value is very long, the reply may have been cut off before the JSON closed: send the long field in its own, shorter call.",
+				tc.Name, tc.ArgsError)}
+			lr.rs.toolErrors++
+			continue
+		}
 
 		// Guardrail pre-action gate: before a CONSEQUENTIAL tool call
 		// (the NeedsConfirm set — sends, posts, deletes, spends) runs, an

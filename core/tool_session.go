@@ -127,6 +127,16 @@ type ToolSession struct {
 	// don't mutate after.
 	PrivilegePrompt func(agentID, agentName string, data map[string]string)
 
+	// AskInChat, if set, puts a question card in the conversation and BLOCKS
+	// until the person answers: one button per label in yes, then Deny. It
+	// returns the label they picked, or "" for Deny, a timeout, or nobody
+	// watching, so "" always means "do not". For a tool that hits something
+	// the person can waive on the spot (an agent they locked) rather than a
+	// rule that holds whatever they say. Nil ⇒ no live viewer: the tool must
+	// treat that as a no. Must be safe to call from a tool goroutine — set
+	// once at session creation, don't mutate after.
+	AskInChat func(prompt, detail string, yes []string) string
+
 	// SubAgentRunner spawns a one-shot sub-agent loop for tools that
 	// need to dispatch their OWN LLM round (today: pipeline-mode
 	// temp tools). Apps wire this on session creation; nil means

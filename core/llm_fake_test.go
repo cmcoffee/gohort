@@ -257,3 +257,52 @@ func TestFakeStreamsNothingWhenAFailedTurnHasNoChunks(t *testing.T) {
 		t.Errorf("a failed call streamed %q", got)
 	}
 }
+
+// Arguments the model sent but that are not valid JSON are reported, and the
+// call does not run. They used to decode to an empty map and the tool ran with
+// nothing, so an update with a long prompt containing one stray quote arrived
+// as update_agent({}) and answered "agent <nil> not found".
+func TestUnreadableToolArgumentsAreReportedNotRunEmpty(t *testing.T) {
+	args, why := decodeOAIToolArgs(`{"id":"a1","prompt":"say "hi" now"}`)
+	if why == "" || len(args) != 0 {
+		t.Fatalf("broken JSON decoded silently: args=%v why=%q", args, why)
+	}
+	if args, why := decodeOAIToolArgs("  "); why != "" || args == nil {
+		t.Errorf("no arguments is a valid call: args=%v why=%q", args, why)
+	}
+	if args, why := decodeOAIToolArgs(`{"id":"a1"}`); why != "" || args["id"] != "a1" {
+		t.Errorf("valid JSON: args=%v why=%q", args, why)
+	}
+	var msg oaiToolCallMsg
+	msg.ID, msg.Function.Name, msg.Function.Arguments = "1", "update_agent", `{"id":"a1","prompt":"cut off`
+	if calls := parseOAIToolCalls([]oaiToolCallMsg{msg}); calls[0].ArgsError == "" {
+		t.Errorf("a call cut off mid-arguments carried no error: %+v", calls[0])
+	}
+
+	def := PipelineDef{Stages: []PipelineStage{
+		{Name: "reach_out", Kind: StageWorker, Prompt: "contact {input}", Tools: []string{"send_message"}},
+	}}
+	var ran bool
+	fake := &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "send_message", Args: map[string]any{}, ArgsError: "unexpected end of JSON input"}}},
+		{Content: "resent it properly", Repeat: true},
+	}}
+	app := &AppCore{LLM: fake}
+	if _, err := app.executePipelineDef(context.Background(), def, "x", nil, nil, confirmingTool(&ran)); err != nil {
+		t.Fatal(err)
+	}
+	if ran {
+		t.Fatal("a call whose arguments could not be read ran anyway")
+	}
+	var told bool
+	for _, m := range fake.Sent(1) {
+		for _, r := range m.ToolResults {
+			if strings.Contains(r.Content, "did NOT run") && strings.Contains(r.Content, "not valid JSON") {
+				told = true
+			}
+		}
+	}
+	if !told {
+		t.Errorf("the model was not told its arguments were unreadable: %+v", fake.Sent(1))
+	}
+}

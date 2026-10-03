@@ -426,13 +426,13 @@ func attachSkillToAgents(sess *ToolSession, raw any, skillID string) (attached, 
 			unknown = append(unknown, key)
 			continue
 		}
-		if msg := agentEditRefusal(ag, sess.Username); msg != "" {
-			unknown = append(unknown, key+" ("+msg+")")
-			continue
-		}
 		label := chFirst(ag.Name, ag.ID)
 		if slices.Contains(ag.AllowedSkills, skillID) {
 			attached = append(attached, label)
+			continue
+		}
+		if msg := agentChangeGate(sess.AskInChat, sess.DB, &ag, sess.Username, fmt.Sprintf("attach skill %q", skillID)); msg != "" {
+			unknown = append(unknown, key+" ("+msg+")")
 			continue
 		}
 		ag.AllowedSkills = append(ag.AllowedSkills, skillID)

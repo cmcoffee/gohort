@@ -60,8 +60,21 @@ func TestEveryAttachToolChecksOwnership(t *testing.T) {
 		if !strings.Contains(src, "findAgentByNameOrID(") {
 			continue // no longer resolves an agent at all
 		}
-		if !strings.Contains(src, "agentEditRefusal(") {
-			t.Errorf("%s resolves an agent by name (which finds shared ones) and never checks whether it is the caller's to change", file)
+		// agentChangeGate runs agentEditRefusal, then the lock.
+		if !strings.Contains(src, "agentChangeGate(") {
+			t.Errorf("%s resolves an agent by name (which finds shared ones) and never checks whether it is the caller's to change, or whether it is locked", file)
+		}
+	}
+	// The own-agent resolver too: it skips shared agents, so ownership is not
+	// its question, but the lock still is (bulletins wires boards with it).
+	for _, file := range []string{"bulletins_tool.go", "machine_def_tool.go"} {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("reading %s: %v", file, err)
+		}
+		src := string(raw)
+		if strings.Contains(src, "ownAgentByNameOrID(") && !strings.Contains(src, "agentChangeGate(") {
+			t.Errorf("%s resolves one of the caller's agents and never checks whether it is locked", file)
 		}
 	}
 }

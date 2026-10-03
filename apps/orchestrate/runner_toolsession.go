@@ -389,6 +389,9 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 			"data":  data,
 		})
 	}
+	// A blocking question card, for a tool that hits something the person can
+	// waive on the spot (agentChangeGate: an agent they locked).
+	sess.AskInChat = t.askInChat
 	// Inline privileges card — what an agent an authoring tool just saved may
 	// now do, editable in place. Persisted as a UIBlock (like the credential
 	// card) so it replays with the session, and upserted per agent so a build

@@ -113,7 +113,7 @@ func collectionsListTool() ChatTool {
 			if sess == nil || sess.DB == nil || sess.Username == "" {
 				return "", errors.New("collections: requires authenticated session")
 			}
-			id := strings.TrimSpace(fmt.Sprint(args["id"]))
+			id := strings.TrimSpace(stringArg(args, "id"))
 			if id == "" {
 				return "", errors.New("id is required")
 			}

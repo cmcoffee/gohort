@@ -403,6 +403,13 @@ type ToolCall struct {
 	ID   string         `json:"id"`
 	Name string         `json:"name"`
 	Args map[string]any `json:"args"`
+	// ArgsError is set when the model sent arguments that could not be read
+	// (not valid JSON: an unescaped quote, a reply cut off mid-value). Args is
+	// then empty, and the call must NOT run: run with no arguments, a tool
+	// answers about a call the model never meant ("agent not found"), and the
+	// model goes looking for the cause everywhere except its own JSON. The
+	// agent loop refuses the call and says why.
+	ArgsError string `json:"args_error,omitempty"`
 }
 
 // parseToolArgs converts a raw JSON map into a tool argument map.

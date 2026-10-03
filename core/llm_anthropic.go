@@ -907,8 +907,12 @@ func (a *anthStreamState) feed(data []byte) {
 			bs := &a.blocks[event.Index]
 			if bs.blockType == "tool_use" {
 				args, err := decodeToolInput(json.RawMessage(bs.inputBuf.String()))
+				argsErr := ""
 				if err != nil {
 					Warn("[anthropic]: tool %q: %v", bs.name, err)
+					// Reported on the call, so the loop refuses it rather than
+					// running it with the empty map (see ToolCall.ArgsError).
+					argsErr = fmt.Sprintf("%v (%d bytes received)", err, bs.inputBuf.Len())
 				}
 				if len(args) == 0 {
 					// blockType matters: input_json_delta is only accumulated
@@ -919,7 +923,7 @@ func (a *anthStreamState) feed(data []byte) {
 					Debug("[anthropic]: tool %q called with NO arguments; blockType=%q accumulated=%q",
 						bs.name, bs.blockType, truncateRunes(bs.inputBuf.String(), 300))
 				}
-				a.toolCalls = append(a.toolCalls, ToolCall{ID: bs.id, Name: bs.name, Args: args})
+				a.toolCalls = append(a.toolCalls, ToolCall{ID: bs.id, Name: bs.name, Args: args, ArgsError: argsErr})
 			}
 		}
 	case "message_delta":
