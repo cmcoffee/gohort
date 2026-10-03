@@ -47,7 +47,14 @@ Both work the same way:
   the lead as the framework's (a tool that cannot express what was asked, a
   broken platform check, the harness) or the wording's. The framework's is
   reported at once and the task set aside, since no prompt can fix it; the
-  run's result lists them under **Set aside**. The wording's gets one edit,
+  run's result lists them under **Set aside**. **Copy findings** on the
+  run's row puts them on the clipboard, each with the build behind it (the
+  request, the checks that failed, what Builder said and did), for whoever
+  fixes the code. **Re-check** on a finding builds that task again on what
+  is live now, on the run's model, and says whether it passes now, still
+  fails as the framework's, or now reads as the wording's; one at a time,
+  and not while Optimize runs, since they build in the same place. The
+  wording's gets one edit,
   and that task alone is built again with it, twice at most; the edit is
   kept if the task now passes.
 - **Confirm end to end.** After a pass, the whole suite runs, held out
