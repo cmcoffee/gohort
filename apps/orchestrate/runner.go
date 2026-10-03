@@ -46,6 +46,9 @@ type planRun struct {
 	// reason, so budget-tuning and drift-pattern questions have data to
 	// look at.
 	telem *turnTelemetry
+	// stamp marks this turn's tool tests and app verifies in the build
+	// ledger with the model that ran them (build_ledger.go).
+	stamp *buildStamper
 
 	// Prompt. triggerMsg is the newest user message, hoisted because the
 	// phase machine runs ON it before there is a persona to put its findings
@@ -172,6 +175,7 @@ func (t *chatTurn) newPlanRun(msgs []ChatMessage) *planRun {
 		t:          t,
 		msgs:       msgs,
 		telem:      newTurnTelemetry(),
+		stamp:      newBuildStamper(t.chatSessionID()),
 		maxSteps:   resolveMaxPlanSteps(t.agent),
 		holdStream: agentHasOutputGuardrail(t.agent),
 		produced:   new(deliveryWatch),
@@ -1202,6 +1206,7 @@ func (pr *planRun) streamHandler(chunk string) {
 func (pr *planRun) onStepHandler(info StepInfo) {
 	t := pr.t
 	pr.telem.record(info)
+	pr.stamp.step(info)
 	pr.produced.note(info.ToolCalls)
 	// Tool-only round with no text and no lazy-bubble: nothing
 	// to finalize, nothing visible. (Tool calls in that round
@@ -2182,6 +2187,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		ToolFallbackResolver: t.lazyToolFallback,
 		Stream:               pr.streamHandler,
 		OnStep:               pr.onStepHandler,
+		OnPromptDigest:       pr.stamp.digest,
 		OnRoundStart:         pr.onRoundStartHandler,
 		// Route the loop's silent correction guards into this session's ⚠
 		// diagnostics trail, so a re-prompt the framework issued on the user's

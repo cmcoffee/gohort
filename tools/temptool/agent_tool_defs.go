@@ -603,24 +603,52 @@ func recordCleanRun(sess *ToolSession, tt *TempTool, out string, err error) {
 	if err != nil || sess == nil || tt == nil {
 		return
 	}
-	switch effectiveTempToolMode(*tt) {
+	if rc := CheckRun(*tt, out); rc.Known && rc.OK {
+		RecordToolVerification(sess, tt.Name, true, "")
+	}
+}
+
+// RunCheck is what a direct run's output says about whether the tool worked.
+type RunCheck struct {
+	// Known is false when the output cannot say: an api tool whose
+	// response_pipe or extract replaced the status line, or a mode with no
+	// run signal of its own (pipeline, toolbox).
+	Known bool
+	OK    bool
+	// Class is the build-ledger failure kind; Why says it in words the
+	// author can act on. Both empty when OK.
+	Class string
+	Why   string
+}
+
+// CheckRun reads a run that returned no error for whether it actually
+// worked. Dispatch hands a shell tool's non-zero exit and an api tool's
+// error status back as OUTPUT, not as an error, so a caller that checks only
+// err calls a script that died on line 1, or a 404, a success. Shared by
+// every surface that counts a run as verification, so they agree on what a
+// clean run is.
+func CheckRun(tt TempTool, out string) RunCheck {
+	switch effectiveTempToolMode(tt) {
 	case TempToolModeShell:
-		if shellRunFailed(out) || shellRunHollow(out) != "" {
-			return
+		if shellRunFailed(out) {
+			return RunCheck{Known: true, Class: "run-exit", Why: "the script exited non-zero or timed out"}
 		}
+		if why := shellRunHollow(out); why != "" {
+			return RunCheck{Known: true, Class: "run-hollow", Why: "it exited 0, but " + why}
+		}
+		return RunCheck{Known: true, OK: true}
 	case TempToolModeAPI:
 		// A pipe or an extract replaces the status line, so the result
 		// cannot say whether the call succeeded.
 		if tt.ResponsePipe != "" || tt.ResponseExtract != nil {
-			return
+			return RunCheck{}
 		}
 		if status, _ := splitStatusLine(out); !isStatus2xx(status) {
-			return
+			return RunCheck{Known: true, Class: "live-status", Why: "the call did not return a 2xx status"}
 		}
-	default:
-		return
+		return RunCheck{Known: true, OK: true}
 	}
-	RecordToolVerification(sess, tt.Name, true, "")
+	return RunCheck{}
 }
 
 // adviseOnFailure adds the host's advice (ToolSession.ToolFailureAdvice) to a

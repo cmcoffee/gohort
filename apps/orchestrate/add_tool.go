@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/buildledger"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -369,10 +370,28 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	if len(testArgs) > 0 {
 		copy := tt
 		out, dispatchErr := temptool.DispatchTempToolDirect(sess, &copy, testArgs)
+		// The ledger gets its own words, not dispatchErr's: the error can
+		// carry the endpoint's response, and nothing from the far side of a
+		// call belongs in a record that prompt lessons are drafted from.
+		outcome := buildledger.Outcome{Owner: sess.Username, Session: sess.ChatSessionID, Agent: sess.AgentID,
+			Kind: buildledger.KindTool, Target: tt.Name, Via: "add_tool test_args", Verdict: buildledger.Pass}
 		if dispatchErr != nil {
+			outcome.Verdict, outcome.Classes, outcome.Detail = buildledger.Fail, []string{"run-error"}, "verification call returned an error"
+			buildledger.Record(outcome)
 			RecordToolVerification(sess, tt.Name, false, fmt.Sprintf("verification call failed: %v", dispatchErr))
 			return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. Verification call with test_args FAILED: %v. Re-call add_tool with the same name to fix the template (re-state every field: partial updates aren't supported). Once it returns a sensible result you're done.", tt.Name, mode, verb, target.Name, dispatchErr), nil
 		}
+		// No error is not a pass: a shell tool's non-zero exit and an api
+		// tool's error status come back as output. Read before, this said
+		// "succeeded" over a script that died on line 1.
+		if rc := temptool.CheckRun(copy, out); rc.Known && !rc.OK {
+			outcome.Verdict, outcome.Classes, outcome.Detail = buildledger.Fail, []string{rc.Class}, rc.Why
+			buildledger.Record(outcome)
+			RecordToolVerification(sess, tt.Name, false, "verification call failed: "+rc.Why)
+			trimmed := SpillOutput(strings.TrimSpace(out), 1200, "read_output")
+			return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. Verification call with test_args FAILED: %s. Output:\n\n%s\n\nRe-call add_tool with the same name to fix it (re-state every field: partial updates aren't supported), and do not call the tool done until a verification call passes.", tt.Name, mode, verb, target.Name, rc.Why, trimmed), nil
+		}
+		buildledger.Record(outcome)
 		RecordToolVerification(sess, tt.Name, true, "")
 		// A verification call's body is a preview — the point is that it
 		// worked — but an author checking WHAT came back should not have to

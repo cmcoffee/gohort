@@ -13,6 +13,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/buildledger"
 )
 
 // testGrouped verifies an api/toolbox tool end-to-end BEFORE it ships:
@@ -47,6 +48,28 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	noteTestOutcome(sess, name, err != nil || strings.Contains(out, "RESULT: FAILED") || strings.Contains(out, "endpoint(s) FAILED"))
 	return out, err
+}
+
+// recordTestOutcome puts a test run in the build ledger, beside the session
+// standing RecordToolVerification keeps. The two answer different questions:
+// the standing is what this tool is NOW, replaced on every run; the ledger
+// keeps every run, so how many it took to get green survives the pass. A
+// repeat served from the test cache is not a run and never reaches here.
+func recordTestOutcome(sess *ToolSession, name string, v buildledger.Verdict, classes []string, detail string) {
+	if sess == nil {
+		return
+	}
+	buildledger.Record(buildledger.Outcome{
+		Owner:   sessUser(sess),
+		Session: sess.ChatSessionID,
+		Agent:   sess.AgentID,
+		Kind:    buildledger.KindTool,
+		Target:  name,
+		Via:     "tool_def test",
+		Verdict: v,
+		Classes: classes,
+		Detail:  detail,
+	})
 }
 
 // maxFailedTestsPerTurn is how many failed tests of one tool a turn may run
@@ -147,6 +170,9 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 		b.WriteString("(network is blocked this turn: running OFFLINE checks only; read endpoints are not live-probed.)\n\n")
 	}
 	failCount, writeManual, emptyRead, gatedManual := 0, 0, 0, 0
+	// The failure kinds this run found, for the build ledger. One token per
+	// kind of check, never the endpoint's own words.
+	var failClasses []string
 
 	for _, ep := range endpoints {
 		method := strings.ToUpper(strings.TrimSpace(ep.Method))
@@ -166,7 +192,11 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 
 		var lines []string
 		epFail := false
-		fail := func(f string, a ...any) { lines = append(lines, "FAIL  "+fmt.Sprintf(f, a...)); epFail = true }
+		fail := func(class, f string, a ...any) {
+			lines = append(lines, "FAIL  "+fmt.Sprintf(f, a...))
+			epFail = true
+			failClasses = append(failClasses, class)
+		}
 		pass := func(f string, a ...any) { lines = append(lines, "ok    "+fmt.Sprintf(f, a...)) }
 		note := func(f string, a ...any) { lines = append(lines, "note  "+fmt.Sprintf(f, a...)) }
 
@@ -182,9 +212,9 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 		}
 		if len(unref) > 0 {
 			if ep.BodyTemplate == "" && !isRead {
-				fail("required param(s) %v are sent NOWHERE: this %s action has no body_template, so the API never receives them (the exact cause of a 400 like \"content must be a string\"). Add a body_template, e.g. {\"content\": {content}}.", unref, method)
+				fail("unsent-param", "required param(s) %v are sent NOWHERE: this %s action has no body_template, so the API never receives them (the exact cause of a 400 like \"content must be a string\"). Add a body_template, e.g. {\"content\": {content}}.", unref, method)
 			} else {
-				fail("required param(s) %v appear in neither url_template nor body_template: the API will never receive them.", unref)
+				fail("unsent-param", "required param(s) %v appear in neither url_template nor body_template: the API will never receive them.", unref)
 			}
 		} else {
 			pass("all required params are wired into the url/body templates")
@@ -207,14 +237,14 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 			if coversRequired(sample, ep.Required) {
 				if rawBody {
 					if _, err := substituteRaw(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
-						fail("body_template render failed: %v", err)
+						fail("body-render", "body_template render failed: %v", err)
 					} else {
 						pass("body_template renders (raw, %s: no JSON validation)", epCT)
 					}
 				} else if body, err := substituteJSON(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
-					fail("body_template render failed: %v", err)
+					fail("body-render", "body_template render failed: %v", err)
 				} else if jerr := json.Unmarshal([]byte(body), new(any)); jerr != nil {
-					fail("body_template produced INVALID JSON: %v, rendered body: %s. (For an XML/non-JSON API set content_type, e.g. \"application/xml\", so the body is sent RAW.)", jerr, oneLine(body, 200))
+					fail("body-invalid-json", "body_template produced INVALID JSON: %v, rendered body: %s. (For an XML/non-JSON API set content_type, e.g. \"application/xml\", so the body is sent RAW.)", jerr, oneLine(body, 200))
 				} else {
 					pass("body_template renders valid JSON")
 				}
@@ -226,7 +256,7 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 		// C. response_pipe compiles (catches a broken jq/awk filter).
 		if ep.ResponsePipe != "" {
 			if serr := pipeCompileError(ep.ResponsePipe, sess); serr != "" {
-				fail("response_pipe has a syntax/compile error: %s", serr)
+				fail("pipe-compile", "response_pipe has a syntax/compile error: %s", serr)
 			} else {
 				pass("response_pipe compiles")
 			}
@@ -245,14 +275,14 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 				status, body, derr := liveProbe(sess, tt.Credential, ep, sample)
 				switch {
 				case derr != nil:
-					fail("live probe errored: %v", derr)
+					fail("live-error", "live probe errored: %v", derr)
 				case !isStatus2xx(status):
-					fail("live call returned %q (want 2xx), body: %s", status, oneLine(body, 200))
+					fail("live-status", "live call returned %q (want 2xx), body: %s", status, oneLine(body, 200))
 				default:
 					pass("live %s returned %q", method, status)
 					if ep.ResponsePipe != "" {
 						if perr := runPipeAgainst(ep.ResponsePipe, body, sess); perr != "" {
-							fail("response_pipe failed on the REAL response body (shape mismatch: e.g. the filter expects .posts[] but the body is a bare array): %s", perr)
+							fail("pipe-shape", "response_pipe failed on the REAL response body (shape mismatch: e.g. the filter expects .posts[] but the body is a bare array): %s", perr)
 						} else {
 							pass("response_pipe runs clean on the real response")
 						}
@@ -299,6 +329,24 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 	// a FAIL obviously doesn't, and neither does "all automated checks passed
 	// but N write endpoints still need a manual call" — an unfired write
 	// endpoint is exactly the untested grenade this action exists to catch.
+	var unproven []string
+	if gatedManual > 0 {
+		unproven = append(unproven, "needs-confirm")
+	}
+	if writeManual > 0 {
+		unproven = append(unproven, "write-unfired")
+	}
+	if emptyRead > 0 {
+		unproven = append(unproven, "read-empty")
+	}
+	switch {
+	case failCount > 0:
+		recordTestOutcome(sess, name, buildledger.Fail, failClasses, fmt.Sprintf("%d of %d endpoint(s) failed", failCount, len(endpoints)))
+	case len(unproven) > 0:
+		recordTestOutcome(sess, name, buildledger.Unproven, unproven, "checks passed; not every endpoint was proven live")
+	default:
+		recordTestOutcome(sess, name, buildledger.Pass, nil, "")
+	}
 	switch {
 	case failCount > 0:
 		RecordToolVerification(sess, name, false, fmt.Sprintf("%d of %d endpoint(s) FAILED verification", failCount, len(endpoints)))
@@ -359,8 +407,13 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 	}
 
 	var lines []string
+	var failClasses []string
 	failed := false
-	fail := func(f string, a ...any) { lines = append(lines, "FAIL  "+fmt.Sprintf(f, a...)); failed = true }
+	fail := func(class, f string, a ...any) {
+		lines = append(lines, "FAIL  "+fmt.Sprintf(f, a...))
+		failed = true
+		failClasses = append(failClasses, class)
+	}
 	pass := func(f string, a ...any) { lines = append(lines, "ok    "+fmt.Sprintf(f, a...)) }
 	note := func(f string, a ...any) { lines = append(lines, "note  "+fmt.Sprintf(f, a...)) }
 
@@ -374,7 +427,7 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 		case !checked:
 			note("script_body not syntax-checked (no checker available for this language): the live run is the only proof")
 		case problem != "":
-			fail("script_body has a SYNTAX ERROR, every dispatch dies before the tool does any work: %s", problem)
+			fail("syntax", "script_body has a SYNTAX ERROR, every dispatch dies before the tool does any work: %s", problem)
 		default:
 			pass("script_body parses clean (%s)", lang)
 		}
@@ -419,7 +472,7 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 			if !scriptCallsHook(body, hc.call) || hookCapabilityDeclared(tt.HookCapabilities, hc.capability) {
 				continue
 			}
-			fail("script_body calls %s() but hook_capabilities does not include %q, that call is refused at dispatch (\"method not granted\"), and the script fails on whatever it does with the result. Add %q to hook_capabilities.",
+			fail("undeclared-hook", "script_body calls %s() but hook_capabilities does not include %q, that call is refused at dispatch (\"method not granted\"), and the script fails on whatever it does with the result. Add %q to hook_capabilities.",
 				hc.call, hc.capability, hc.capability)
 		}
 	}
@@ -439,11 +492,11 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 		out, derr := DispatchTempToolDirect(sess, &tt, sample)
 		switch {
 		case derr != nil:
-			fail("live run FAILED: %v", derr)
+			fail("run-error", "live run FAILED: %v", derr)
 		case shellRunFailed(out):
-			fail("live run returned a non-zero exit / timeout: %s", oneLine(out, 300))
+			fail("run-exit", "live run returned a non-zero exit / timeout: %s", oneLine(out, 300))
 		case shellRunHollow(out) != "":
-			fail("live run exited 0, but %s", shellRunHollow(out))
+			fail("run-hollow", "live run exited 0, but %s", shellRunHollow(out))
 		default:
 			pass("live run succeeded, output: %s", oneLine(out, 200))
 		}
@@ -463,6 +516,18 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 	}
 	b.WriteByte('\n')
 
+	switch {
+	case failed:
+		recordTestOutcome(sess, tt.Name, buildledger.Fail, failClasses, "shell tool failed verification")
+	case gated:
+		recordTestOutcome(sess, tt.Name, buildledger.Unproven, []string{"needs-confirm"}, "not run: the tool asks before each call")
+	case !ran && sample == nil:
+		recordTestOutcome(sess, tt.Name, buildledger.Unproven, []string{"no-cases"}, "not run: tested without cases")
+	case !ran:
+		recordTestOutcome(sess, tt.Name, buildledger.Unproven, []string{"case-missing-required"}, "not run: the case did not cover every required param")
+	default:
+		recordTestOutcome(sess, tt.Name, buildledger.Pass, nil, "")
+	}
 	switch {
 	case failed:
 		RecordToolVerification(sess, tt.Name, false, "shell tool failed verification")

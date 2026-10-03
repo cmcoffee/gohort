@@ -164,6 +164,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/reply-guards/clear", w(T.handleReplyGuardClear))
 	T.HandleFunc("/api/console/reply-flags", T.handleReplyFlags)
 	T.HandleFunc("/api/console/reply-flags/status", w(T.handleReplyFlagStatus))
+	// Every tool test and app verify, per target (build_ledger.go). Admin
+	// only, read-only.
+	T.HandleFunc("/api/console/build-outcomes", T.handleBuildOutcomes)
 	// Drafting guards from flagged replies (reply_guard_drafts.go).
 	T.HandleFunc("/api/console/reply-guards/draft", w(T.handleGuardDraft))
 	T.HandleFunc("/api/console/reply-guards/authored", T.handleAuthoredGuards)

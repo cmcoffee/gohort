@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/buildledger"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -115,6 +116,8 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	}
 	var b strings.Builder
 	failures := 0
+	// What kind of failure each one was, for the build ledger.
+	var classes []string
 	// The revision stamp ties this report to ONE saved spec: a verify
 	// issued alongside an update in the same round checks the OLD
 	// revision, and without the stamp its findings read as if the fix
@@ -132,6 +135,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	if ref := strings.TrimSpace(spec.PipelineID); ref != "" {
 		if def, ok := t.app.LookupAppPipeline(t.user, ref); !ok {
 			failures++
+			classes = append(classes, "pipeline-unbound")
 			fmt.Fprintf(&b, "FAIL binding: pipeline_id %q resolves to nothing. The page will render and Start will fail; author the pipeline first (pipeline action=list shows yours), then update the app.\n\n", ref)
 		} else {
 			fmt.Fprintf(&b, "OK   binding: pipeline_id resolves to %q (%d stage(s)).\n\n", def.Name, len(def.Stages))
@@ -146,6 +150,9 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		}
 		report, _, _, fail := t.checkScripts(spec, true, sample, mapArg(args["params"]))
 		failures += fail
+		if fail > 0 {
+			classes = append(classes, "script-fail")
+		}
 		fmt.Fprintf(&b, "Script checks:\n%s\n", strings.TrimSpace(report))
 		for _, w := range appSampleFieldWarnings(spec.RecordFields, sample) {
 			b.WriteString(w + "\n")
@@ -160,6 +167,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	if html := appSpecHTMLText(spec); html != "" {
 		if dangling := jsDanglingCalls(html); len(dangling) > 0 {
 			failures++
+			classes = append(classes, "dangling-call")
 			fmt.Fprintf(&b, "Code check:\nFAIL the page calls code it never defines: %s\nThese parse fine and the page below may well load clean, the failure happens when someone actually USES the app. Restore the missing functions (app_def action=\"replace_function\") or drop the calls.\n\n", appNameList(dangling, 12))
 		} else {
 			b.WriteString("Code check: OK, every function the page calls is defined somewhere in it.\n\n")
@@ -196,17 +204,21 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		});
 	}`
 	rep, err := CheckPageAsUser(RootDB, t.user, "/apps/"+spec.Slug+"/", probe)
+	pageCheckBroke := false
 	if err != nil {
 		failures++
+		pageCheckBroke = true
 		fmt.Fprintf(&b, "Page check: COULD NOT RUN, %v\n", err)
 	} else {
 		b.WriteString("Page check (headless browser, JS executed):\n")
 		for _, e := range rep.PageErrors {
 			failures++
+			classes = append(classes, "js-exception")
 			fmt.Fprintf(&b, "FAIL uncaught JS exception: %s\n", e)
 		}
 		for _, e := range rep.ConsoleErrors {
 			failures++
+			classes = append(classes, "console-error")
 			fmt.Fprintf(&b, "FAIL console error: %s\n", e)
 		}
 		for _, e := range rep.FailedRequests {
@@ -215,6 +227,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 				continue
 			}
 			failures++
+			classes = append(classes, "failed-request")
 			fmt.Fprintf(&b, "FAIL request: %s\n", e)
 		}
 		// Positive per-data-source confirmation: the page must have
@@ -250,6 +263,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 				fmt.Fprintf(&b, "WARN data source %q: the page DID request %s but the response had not arrived when the check ended. The wiring is correct; the SCRIPT IS SLOW (a script that makes many sequential fetch_url calls takes that long on every page load). Reduce the calls or accept slow loads: do NOT change the section wiring.\n", ds.Name, endpoint)
 			case status == 0:
 				failures++
+				classes = append(classes, "source-unwired")
 				fmt.Fprintf(&b, "FAIL data source %q: the page NEVER fetched %s; no section is wired to it. Set source_script:%q on the table/display that should render it, or (from an html section's script), call fetch(%q) (plain relative fetch; there is no client-side gohort object in app pages).\n", ds.Name, endpoint, ds.Name, "data/"+ds.Name)
 			case status >= 400:
 				// Already counted via FailedRequests above; this line
@@ -273,9 +287,11 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			switch {
 			case pr.Sections == 0:
 				failures++
+				classes = append(classes, "render-blank")
 				b.WriteString("FAIL render: no sections mounted; the page is blank.\n")
 			case expected > 0 && pr.Sections < expected:
 				failures++
+				classes = append(classes, "render-partial")
 				fmt.Fprintf(&b, "FAIL render: only %d of %d sections mounted; a section config is likely invalid.\n", pr.Sections, expected)
 			default:
 				fmt.Fprintf(&b, "OK   render: %d section(s) mounted (%d table(s)).\n", pr.Sections, pr.Tables)
@@ -294,6 +310,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			// one.
 			if pr.BodyChars < 40 && pr.Visuals == 0 && pr.Panels == 0 && len(pr.EmptyTexts) == 0 {
 				failures++
+				classes = append(classes, "render-empty")
 				fmt.Fprintf(&b, "FAIL render: page body is nearly empty (%d chars of text, nothing drawn).\n", pr.BodyChars)
 			}
 			if pr.Panels > 0 {
@@ -307,6 +324,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			}
 		} else {
 			failures++
+			classes = append(classes, "runtime-not-booted")
 			b.WriteString("FAIL render: the DOM probe returned nothing; the page runtime likely never booted.\n")
 		}
 	}
@@ -321,6 +339,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		summary = fmt.Sprintf("FAIL: %d problem(s)", failures)
 	}
 	spec.RecordVerify(failures == 0, summary)
+	t.recordAppVerify(spec.Slug, failures, classes, pageCheckBroke)
 	if failures > 0 {
 		fmt.Fprintf(&b, "\nVERDICT: FAIL, %d problem(s) above. Fix with app_def action=update and run verify again. Do NOT tell the user the app is ready.", failures)
 	} else {
@@ -537,4 +556,21 @@ func intsToStrings(in []int) []string {
 		out = append(out, strconv.Itoa(v))
 	}
 	return out
+}
+
+// recordAppVerify puts a verify run in the build ledger. A run whose only
+// failure was the page check itself not running (no browser, a budget guard)
+// found nothing wrong with the app, so it is unproven rather than failed: the
+// ledger is evidence about how apps get built, and an outage is not.
+func (t *chatTurn) recordAppVerify(slug string, failures int, classes []string, pageCheckBroke bool) {
+	o := buildledger.Outcome{Owner: t.user, Session: t.chatSessionID(), Agent: t.agent.ID,
+		Kind: buildledger.KindApp, Target: slug, Via: "app_def verify", Verdict: buildledger.Pass}
+	switch {
+	case failures == 0:
+	case pageCheckBroke && len(classes) == 0:
+		o.Verdict, o.Classes, o.Detail = buildledger.Unproven, []string{"page-check-unavailable"}, "the page check could not run"
+	default:
+		o.Verdict, o.Classes, o.Detail = buildledger.Fail, classes, fmt.Sprintf("%d problem(s)", failures)
+	}
+	buildledger.Record(o)
 }

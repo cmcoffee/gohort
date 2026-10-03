@@ -26,6 +26,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// runPlan. Each worker step gets its own round budget and its own
 	// telem; the summary log fires when the step exits.
 	telem := newTurnTelemetry()
+	stamp := newBuildStamper(t.chatSessionID())
 	defer func() {
 		softCap := resolveMaxWorkerRounds(t.agent)
 		hardCap := softCap
@@ -404,7 +405,9 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// OnStep feeds telemetry — rounds, tool calls, dup-args
 		// fingerprints. Summary log fires from the deferred block at
 		// the top of runWorkerStep.
-		OnStep: func(info StepInfo) { telem.record(info) },
+		OnStep: func(info StepInfo) { telem.record(info); stamp.step(info) },
+		// The step's prompt clauses, for the build ledger's stamps.
+		OnPromptDigest: stamp.digest,
 		// Soft-cap enforcement for explorer-mode agents: pass hardCap
 		// as MaxRounds upfront, then stop early at softCap UNLESS the
 		// LLM has flipped explorerMode via enter_explorer_mode. For
