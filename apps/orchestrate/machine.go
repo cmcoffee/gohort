@@ -501,6 +501,9 @@ func (t *chatTurn) machineCatalog(ph MachinePhase) []AgentToolDef {
 		// the thing it was sent to fetch. The step that goes and looks is
 		// the whole reason a step names tools at all, and the things it
 		// looks IN are attachments.
+		// And the owner's own tools, which reach the turn by a path of
+		// their own (withOwnTools says why).
+		pool = t.withOwnTools(sess, pool)
 		pool = append(pool, t.buildAttachedSourceToolDefs(sess)...)
 		pool = append(pool, t.buildAttachedPipelineToolDefs()...)
 		// And the agent's own CORPUS, for exactly the reason above. The

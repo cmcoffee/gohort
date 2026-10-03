@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 // resolveWorkerTools builds the agent's effective tool surface for
@@ -1061,4 +1062,34 @@ func (t *chatTurn) withheldToolActions() []string {
 		id = parent.OwnedBy
 	}
 	return out
+}
+
+// withOwnTools adds to a pool resolveWorkerTools built the custom tools this
+// turn's agent reaches: the owner's own, what they adopted, the agent's kit,
+// less any whose credential the agent may not use. resolveWorkerTools holds
+// the REGISTERED tools only, and the turn's own catalog gets the custom ones
+// by a separate path (setupCustomTools), so a sub-run built from it alone (a
+// pipeline run inline, a machine step) could not call the owner's tools. A
+// pipeline Builder built over the owner's "geo" failed every test run with
+// "tool geo is not available to this pipeline" while geo sat in Builder's own
+// catalog. Found by the tuning suite's machine task.
+func (t *chatTurn) withOwnTools(sess *ToolSession, pool []AgentToolDef) []AgentToolDef {
+	poolDB, poolUser := t.ownerView()
+	t.loadAgentTempTools(sess, poolUser, poolDB)
+	have := make(map[string]bool, len(pool))
+	for _, td := range pool {
+		have[td.Tool.Name] = true
+	}
+	deny := credentialDenySet(t.agent, sess.Username)
+	for _, td := range temptool.BuildAgentToolDefs(sess) {
+		if have[td.Tool.Name] {
+			continue // a registered tool owns the name, as it does on the turn
+		}
+		if lt := sess.LookupTempTool(td.Tool.Name); lt != nil && deny[lt.Credential] {
+			continue
+		}
+		have[td.Tool.Name] = true
+		pool = append(pool, td)
+	}
+	return pool
 }
