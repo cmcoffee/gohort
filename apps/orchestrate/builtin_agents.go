@@ -170,6 +170,12 @@ var (
 // slice this does not name. An aliased slice would be a bug nobody could
 // reproduce: one agent's edit changing a different agent's tools.
 func copySeedRecord(rec AgentRecord) AgentRecord {
+	if rec.ID == "seed-builder" {
+		// Builder's prompt is a prompt block (builder_prompt_block.go): an
+		// operator's edit replaces the raw document, and the snippets are
+		// expanded after, so they stay live either way.
+		rec.OrchestratorPrompt = builderPrompt(rec.OrchestratorPrompt)
+	}
 	rec.OrchestratorPrompt = expandSeedSnippets(rec.OrchestratorPrompt)
 	rec.AllowedTools = append([]string(nil), rec.AllowedTools...)
 	rec.Triggers = append([]string(nil), rec.Triggers...)

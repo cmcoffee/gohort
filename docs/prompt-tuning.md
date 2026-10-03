@@ -138,9 +138,12 @@ by all of it.
 
 ## Running
 
-The harness lives in the live server (an admin page, not a CLI), starts the
-sandbox, and drives it over HTTP: one headless Builder dispatch per task per
-repeat, the tier pinned with the loop's `TierOverride`. Each task runs N times
+The harness lives in the live server, as sections on the admin Prompts tab
+beside the prompt-block editor (editing prompts and measuring them are one
+job), starts the sandbox, and drives it over HTTP: Builder is given each
+task through the ordinary chat endpoint, the harness answering its
+confirmation cards as a person would, and the tier is pinned by the
+sandbox's LLM settings. Each task runs N times
 (default 3 on the worker, 1-2 on the lead) because one run of a
 non-deterministic model is an anecdote.
 
@@ -276,7 +279,10 @@ worth doing once the suite shows a block that wants to differ.
 - Every block in the prompt registry (`core/prompts`): the agent loop
   clauses, the framework blocks in `apps/orchestrate/framework_prompts.go`,
   the global rules and style.
-- Builder's `OrchestratorPrompt` on the `seed-builder` agent.
+- Builder's own instructions: the `seed-builder` prompt is a registry block
+  (`agent.builder`) holding the raw document. An edit replaces it and its
+  `{{placeholders}}` are still expanded afterwards, so it is editable on the
+  Prompts tab, tunable in a variant and promotable like any other block.
 - **Not yet:** tool help text (`app_def`'s and `tool_def`'s help, the tool
   descriptions). It is compiled in. Moving the parts Builder leans on into the
   registry is its own step, taken when a scorecard shows the help text is
