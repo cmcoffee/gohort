@@ -108,6 +108,8 @@
       getTitle: function()    { return titleInput.value; },
       setTitle: function(s)   { titleInput.value = s == null ? '' : String(s); },
       getID:    function()    { return currentID; },
+      // The open version when the host gave Variants, else ''.
+      getVariant: function()  { return currentVariant || ''; },
       getImage: function()    { return currentImageURL; },
       setImage: function(url) { showImage(url); },
       save:     function(extra) { saveArticle(extra); },
