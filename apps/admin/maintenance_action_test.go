@@ -12,6 +12,7 @@ package admin
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -44,5 +45,21 @@ func TestMaintenanceRowsCarryAKeyField(t *testing.T) {
 	}
 	if _, ok := rows[0]["Key"]; !ok {
 		t.Fatalf("rows carry no \"Key\" field, so {Key} cannot substitute: %v", rows[0])
+	}
+}
+
+// Every maintenance row can be stopped while it runs: the list names the
+// cancel endpoint by the same {Key}, and the endpoint is registered.
+func TestMaintenanceRowsCanBeStopped(t *testing.T) {
+	page := adminPageSource(t)
+	if !strings.Contains(page, `CancelTo: "api/maintenance/cancel?key={Key}"`) {
+		t.Error("the maintenance list offers no Stop")
+	}
+	raw, err := os.ReadFile("api_maintenance.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api := string(raw); !strings.Contains(api, `"/api/maintenance/cancel"`) || !strings.Contains(api, "CancelMaintenance(") {
+		t.Error("no cancel endpoint calls CancelMaintenance")
 	}
 }

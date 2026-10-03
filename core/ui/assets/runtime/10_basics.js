@@ -4935,8 +4935,32 @@
           // A spinner, not an ellipsis: a run that takes minutes has to look
           // alive, and a static "…" is indistinguishable from a hung one.
           var running = null; // {stop} while a run is being shown here
+          // Stop, beside the spinner while a run is shown, when the list
+          // names where to send it. Anything long enough to watch is long
+          // enough to stop. It only asks: the run's own ending (its POST
+          // returning, or an outcome on the progress source) clears the row.
+          var stopBtn = null;
+          if (cfg.cancel_to) {
+            stopBtn = el('button', {class: 'ui-row-btn', type: 'button', onclick: function() {
+              stopBtn.disabled = true;
+              stopBtn.textContent = 'Stopping';
+              fetchJSON(substitute(cfg.cancel_to, item), {method: 'POST'}).then(function(r) {
+                if (r && r.message) showToast(r.message);
+              }).catch(function(err) {
+                stopBtn.disabled = false;
+                stopBtn.textContent = 'Stop';
+                showToast('Failed: ' + err.message);
+              });
+            }}, ['Stop']);
+            stopBtn.style.display = 'none';
+          }
           function showRunning(sinceMs, onDone, firstNote) {
             if (running) return running;
+            if (stopBtn) {
+              stopBtn.disabled = false;
+              stopBtn.textContent = 'Stop';
+              stopBtn.style.display = '';
+            }
             // firstNote: what the arrival probe already read, so a rejoined
             // row says where the run is at once rather than "working" until
             // the first poll lands.
@@ -4969,6 +4993,7 @@
               if (poll) clearInterval(poll);
               running = null;
               btn.disabled = false;
+              if (stopBtn) stopBtn.style.display = 'none';
             }};
             return running;
           }
@@ -5045,7 +5070,7 @@
               // volatile and hides the part that is news.
               (histField && item[histField]) ? el('div', {class: 'ui-actionlist-history'}, [item[histField]]) : null,
             ]),
-            status, btn,
+            status, stopBtn, btn,
           ]);
           wrap.appendChild(row);
         });

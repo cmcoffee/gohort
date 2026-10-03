@@ -192,6 +192,8 @@ func maintenanceList(group, empty string) ui.ActionList {
 		// A pass that walks the whole store takes minutes; this is where it
 		// says how far along it is (see core.ReportMaintenanceProgress).
 		ProgressSource: "api/maintenance/progress?key={Key}",
+		// And anything long enough to watch is long enough to stop.
+		CancelTo: "api/maintenance/cancel?key={Key}",
 	}
 }
 

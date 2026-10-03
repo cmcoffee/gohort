@@ -51,6 +51,12 @@ type ActionList struct {
 	// spinner and polls this source until an outcome arrives, instead of
 	// reading "done" the moment the start returns.
 	ProgressSource string `json:"progress_source,omitempty"`
+	// CancelTo is where a Stop button POSTs while an action is running,
+	// with the same {field} substitution: shown beside the spinner, from the
+	// press or from a page that rejoins a run already going. The run's own
+	// ending (its POST returning, or an outcome on ProgressSource) is still
+	// what clears the row. Empty = no Stop.
+	CancelTo string `json:"cancel_to,omitempty"`
 
 	// Invalidate — data sources to refresh after a successful action.
 	// Matched against other components' Source so a sibling Table

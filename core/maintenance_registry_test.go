@@ -124,3 +124,47 @@ func TestAPanickingMaintenancePassReleasesItsKey(t *testing.T) {
 		t.Errorf("a pass that panicked claimed an outcome: %q", got)
 	}
 }
+
+// A running pass can be stopped: it ends at its next check of its context,
+// and how it ended reads "stopped", not "finished". Nothing running, nothing
+// to stop.
+func TestAMaintenancePassCanBeStopped(t *testing.T) {
+	saved := maintenanceFuncs
+	t.Cleanup(func() { maintenanceFuncs = saved })
+
+	const key = "test_stoppable_pass"
+	if CancelMaintenance(key) {
+		t.Fatal("stopped a pass that was not running")
+	}
+	RegisterMaintenanceFunc("Housekeeping", key, "Long pass", "Walks until told to stop.",
+		func(ctx context.Context) int {
+			n := 0
+			for ctx.Err() == nil {
+				n++
+				ReportMaintenanceProgress(ctx, "walking")
+				time.Sleep(5 * time.Millisecond)
+			}
+			ReportMaintenanceOutcome(ctx, "walked a while")
+			return n
+		})
+	done := make(chan int, 1)
+	go func() { done <- RunMaintenanceFunc(context.Background(), key) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for MaintenanceProgress(key) != "walking" {
+		if time.Now().After(deadline) {
+			t.Fatal("the pass never started")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !CancelMaintenance(key) {
+		t.Fatal("could not stop a running pass")
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the pass did not stop")
+	}
+	if got := MaintenanceOutcome(key); got != "stopped: walked a while" {
+		t.Fatalf("a stopped pass ended reading %q", got)
+	}
+}

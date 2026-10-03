@@ -50,6 +50,25 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 		})
 	})
 
+	// Stop a running pass. It ends at its next check of its context and its
+	// outcome reads "stopped"; the press that started it gets its count back
+	// as usual.
+	sub.HandleFunc("/api/maintenance/cancel", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		msg := "Nothing is running there."
+		if CancelMaintenance(r.URL.Query().Get("key")) {
+			msg = "Stopping: it ends at its next step."
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": msg})
+	})
+
 	// List registered maintenance functions (GET) or run one by key (POST ?key=<key>).
 	sub.HandleFunc("/api/maintenance", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {

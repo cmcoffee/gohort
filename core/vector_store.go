@@ -1165,6 +1165,11 @@ type maintenanceRun struct {
 	started time.Time
 	n       int           // the count, set before over is closed
 	over    chan struct{} // closed when the pass returns (or panics)
+	// cancel stops the pass, and stopped says somebody asked: a pass ends
+	// at its next check of the context, and its outcome then reads as
+	// stopped rather than finished.
+	cancel  context.CancelFunc
+	stopped bool
 }
 
 // maintenanceOutcome is how a finished pass ended, kept for a while after it
@@ -1244,6 +1249,22 @@ func MaintenanceOutcome(key string) string {
 	return o.line
 }
 
+// CancelMaintenance asks the running pass of key to stop, and says whether
+// one was running. The pass stops at its next check of its context: anything
+// long enough to watch is long enough to stop, and every pass that walks a
+// store checks it as it goes. Its outcome reads "stopped".
+func CancelMaintenance(key string) bool {
+	maintenanceProgress.mu.Lock()
+	defer maintenanceProgress.mu.Unlock()
+	run := maintenanceProgress.running[key]
+	if run == nil || run.cancel == nil {
+		return false
+	}
+	run.stopped = true
+	run.cancel()
+	return true
+}
+
 // startMaintenanceRun claims key for one pass. When a pass of that key is
 // already in flight it returns that run and false: the caller waits on it
 // instead of starting another.
@@ -1278,8 +1299,12 @@ func finishMaintenanceProgress(key string, run *maintenanceRun, returned bool) {
 		if line == "" {
 			line = fmt.Sprintf("%d record(s) changed", run.n)
 		}
+		ended := "finished: "
+		if run.stopped {
+			ended = "stopped: "
+		}
 		maintenanceProgress.done[key] = maintenanceOutcome{
-			line: "finished: " + line,
+			line: ended + line,
 			at:   time.Now(),
 		}
 	}
@@ -1316,6 +1341,11 @@ func RunMaintenanceFunc(ctx context.Context, key string) int {
 		// The key on the context is what lets a pass report progress
 		// without every pass's signature knowing about progress.
 		ctx = context.WithValue(ctx, maintenanceKeyCtx{}, key)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		maintenanceProgress.mu.Lock()
+		run.cancel = cancel
+		maintenanceProgress.mu.Unlock()
 		run.n = m.Run(ctx)
 		returned = true
 		return run.n
