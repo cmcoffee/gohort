@@ -65,8 +65,13 @@ live indicator and on the Monitor page like any other work using the
 models.
 
 The **Prompts** tab is for hand edits to something specific: **Prompt
-overrides** is the editor. Everything below the button is behind
-**Details** (`/tuning/details`): the settings, every run with its rounds,
+overrides** is the editor. Its **Read it back** asks the worker and the
+lead what the open block tells them to do (for a tool's description, when
+they would reach for it first; for a parameter's, what they would put in
+it), each reading the wording it would be sent, and shows the two readings
+side by side. It is the quick look while editing: a reading is what a model
+says it understood, a probe is what it does. Everything below the button is
+behind **Details** (`/tuning/details`): the settings, every run with its rounds,
 builds, scorecard and the judge's pairs to calibrate, and the suite. The
 rest of this document describes that machinery.
 
