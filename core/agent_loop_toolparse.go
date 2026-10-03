@@ -583,7 +583,12 @@ func BuildToolPrompt(tools []AgentToolDef) string {
 						break
 					}
 				}
-				b.WriteString(fmt.Sprintf("  - %s (%s%s): %s\n", name, p.Type, req, p.Description))
+				pd := p.Description
+				if prompts.TunableToolGroup(td.Tool.Name) != "" {
+					prompts.ObserveToolParamDescription(td.Tool.Name, name, pd)
+					pd = EffectivePromptText(prompts.ToolParamBlockKey(td.Tool.Name, name), pd)
+				}
+				b.WriteString(fmt.Sprintf("  - %s (%s%s): %s\n", name, p.Type, req, pd))
 			}
 		}
 		b.WriteString("\n")

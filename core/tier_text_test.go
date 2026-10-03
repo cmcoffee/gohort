@@ -101,3 +101,27 @@ func TestToolDescriptionEditsGoOut(t *testing.T) {
 		t.Fatal("the caller's tool list was changed")
 	}
 }
+
+// A shipped tool's parameter edits go out in the calls they are for, and the
+// caller's parameter map is not changed by them.
+func TestToolParameterEditsGoOut(t *testing.T) {
+	SetPromptOverrideDB(tierTextStore{})
+	prompts.RegisterTunableTools(prompts.ToolGroupAuthoring, "test_param_tool")
+	prompts.SetPromptTierOverride(prompts.TierWorker, prompts.ToolParamBlockKey("test_param_tool", "phases"), "worker phases wording", "")
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	t.Cleanup(func() { SetSharedLLMs(prevW, prevL); SetPromptOverrideDB(nil) })
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "w", OutputTokens: 1, Repeat: true}}}
+	SetSharedLLMs(worker, nil)
+	app := &AppCore{LLM: ReloadableWorkerLLM()}
+	params := map[string]ToolParam{"phases": {Type: "array", Description: "shipped phases"}, "name": {Type: "string", Description: "the name"}}
+	tools := []Tool{{Name: "test_param_tool", Description: "a tool", Parameters: params}}
+
+	app.WorkerChat(context.Background(), []Message{{Role: "user", Content: "hi"}}, WithTools(tools))
+	got := worker.Config(0).Tools[0].Parameters
+	if got["phases"].Description != "worker phases wording" || got["name"].Description != "the name" {
+		t.Fatalf("parameters sent = %+v", got)
+	}
+	if params["phases"].Description != "shipped phases" {
+		t.Fatal("the caller's parameter map was changed")
+	}
+}

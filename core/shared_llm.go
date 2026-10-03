@@ -301,9 +301,10 @@ func (r reloadableLLM) withTierText(opts []ChatOption) []ChatOption {
 }
 
 // tunedToolDescriptions applies the edits to shipped tools' descriptions
-// (prompts.ToolDescriptionFor), recording each shipped description as its
-// block on the way. A copy, never the caller's slice: the same tool list
-// goes out on the next call, and to the other tier.
+// and their parameters' (prompts.ToolDescriptionFor and
+// ToolParamDescriptionFor), recording each shipped description as its block
+// on the way. A copy, never the caller's slice or parameter maps: the same
+// tool list goes out on the next call, and to the other tier.
 func tunedToolDescriptions(tier string, tools []Tool) []Tool {
 	var out []Tool
 	for i, t := range tools {
@@ -312,13 +313,32 @@ func tunedToolDescriptions(tier string, tools []Tool) []Tool {
 		}
 		prompts.ObserveToolDescription(t.Name, t.Description)
 		desc := prompts.ToolDescriptionFor(tier, t.Name, t.Description)
-		if desc == t.Description {
+		var params map[string]ToolParam
+		for name, p := range t.Parameters {
+			prompts.ObserveToolParamDescription(t.Name, name, p.Description)
+			pd := prompts.ToolParamDescriptionFor(tier, t.Name, name, p.Description)
+			if pd == p.Description {
+				continue
+			}
+			if params == nil {
+				params = make(map[string]ToolParam, len(t.Parameters))
+				for k, v := range t.Parameters {
+					params[k] = v
+				}
+			}
+			p.Description = pd
+			params[name] = p
+		}
+		if desc == t.Description && params == nil {
 			continue
 		}
 		if out == nil {
 			out = append([]Tool(nil), tools...)
 		}
 		out[i].Description = desc
+		if params != nil {
+			out[i].Parameters = params
+		}
 	}
 	if out == nil {
 		return tools

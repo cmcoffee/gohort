@@ -62,3 +62,36 @@ func TestAToolBuiltPerCallerIsLeftAlone(t *testing.T) {
 		t.Fatalf("an edit still applied: %q", got)
 	}
 }
+
+// A named tool's parameters are blocks too: each recorded as it ships and
+// listed so it comes back after a restart, each editable for every model or
+// one, and a parameter of a tool not named is never touched.
+func TestToolParameterDescriptionsAreBlocks(t *testing.T) {
+	store := jsonStore{}
+	SetPromptOverrideDB(store)
+	t.Cleanup(func() { SetPromptOverrideDB(nil) })
+	RegisterTunableTools(ToolGroupAuthoring, "test_app_def")
+
+	ObserveToolParamDescription("test_app_def", "sections", "Ordered sections.")
+	ObserveToolParamDescription("someones_tool", "q", "theirs")
+	key := ToolParamBlockKey("test_app_def", "sections")
+	var found, foreign bool
+	for _, b := range AllPromptBlocks() {
+		found = found || (b.Key == key && b.Text == "Ordered sections." && b.Title == "test_app_def: sections")
+		foreign = foreign || b.Key == ToolParamBlockKey("someones_tool", "q")
+	}
+	if !found || foreign {
+		t.Fatalf("found %v, foreign %v", found, foreign)
+	}
+	var index []string
+	if !store.Get(OverrideTable, observedIndexKey, &index) || !tierHas(index, key) {
+		t.Fatalf("index = %v", index)
+	}
+	SetPromptTierOverride(TierLead, key, "Sections, in order, each with a kind.", "")
+	if got := ToolParamDescriptionFor(TierLead, "test_app_def", "sections", "Ordered sections."); got != "Sections, in order, each with a kind." {
+		t.Fatalf("lead reads %q", got)
+	}
+	if got := ToolParamDescriptionFor(TierWorker, "test_app_def", "sections", "Ordered sections."); got != "Ordered sections." {
+		t.Fatalf("worker reads %q", got)
+	}
+}

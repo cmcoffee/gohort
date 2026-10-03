@@ -288,11 +288,18 @@ every call that offers the tool, at the same handle the per-tier swap uses.
   are not listed, and any listed tool whose description keeps changing
   between calls drops out of the editable set with a log line saying so,
   since one edit would overwrite what each caller was meant to read.
-- **Tool level only, for now.** Parameter descriptions carry much of the how
-  (app_def's sections and data sources), and are the next thing to open up.
+- **Parameters too.** Each top-level parameter of a named tool is a block of
+  its own, `tool.<name>.<param>`: the parameter descriptions carry much of
+  the how (app_def's sections and data sources, a machine's phases). They
+  are recorded and listed the same way, so they come back after a restart,
+  and edited per model the same way. Nested properties are left as the code
+  builds them. The proposer is shown a parameter's block only when its tool
+  appears in the builds that failed, since there are hundreds of them.
 
-The proposer is told that a `tool.` block is the description of that tool,
-to be edited when a failure is a wrong choice of tool or a wrong use of one.
+The proposer is told that a `tool.<name>` block is the description of that
+tool, to be edited when a failure is a wrong choice of tool, and a
+`tool.<name>.<param>` block a parameter's, when the tool was right and the
+call was filled in wrong.
 
 ## Per-tier profiles
 
