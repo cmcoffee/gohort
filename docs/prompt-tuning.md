@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.332). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.333). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -628,7 +628,10 @@ blocking ones were the harness's, not the platform's:
   meant), delegation to one's own agent needing approval (intended; machine
   run is the way to try one now), the fx fixture's 422 for pairs it does not
   know (sandbox only), and one verification report missing an endpoint
-  (cause not proven).
+  (the reviewer's own misread: each tool result in its transcript was clipped
+  to 600 characters, and tool_def test's output opens with a 360-character
+  untrusted-content fence, so it saw one endpoint of two. The reviewer's copy
+  now tags the fence in a few words and keeps 1200 characters a result).
 
 Next: rebuild and restart, run Reset edited prompt blocks once, Re-check the
 fixed components, then a second report.
@@ -656,9 +659,7 @@ fixed components, then a second report.
   about why: it blamed the platform's verification, and the fault was the
   harness's own checks. A component it files under grader or page check is
   read as the harness's first.
-- **Left open from the first report.** A verification report that listed one
-  of two endpoints (likely a stale pool copy shadowing the edited tool, not
-  proven); fetch_url's refusal not naming the credential that covers the
+- **Left open from the first report.** fetch_url's refusal not naming the credential that covers the
   host; the record of a write fired by hand lives in memory only, so
   a restart forgets it and the next test asks for the call again.
 - **Whether the friction report becomes a periodic check.** It is run by
