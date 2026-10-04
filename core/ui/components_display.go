@@ -195,3 +195,37 @@ func (b BarChart) MarshalJSON() ([]byte, error) {
 		alias
 	}{"bar_chart", alias(b)})
 }
+
+// StageTracker shows where a long job is: every stage in order, each marked
+// done, running, pending, failed or skipped, with a count and a line of
+// detail; the stage running can carry items of its own (a task within a
+// pass); then what the job is doing now and the last thing worth noticing.
+// Polled from Source, so a page that arrives mid-run shows the same thing.
+//
+// Source returns:
+//
+//	{"title": "...", "running": true, "elapsed": "41m", "meta": "$0.82",
+//	 "note": "paused: someone is using the worker",
+//	 "stages": [{"label": "...", "state": "done|running|pending|failed|skipped",
+//	             "count": "17 of 40", "detail": "...",
+//	             "items": [{"label": "...", "state": "...", "detail": "..."}]}],
+//	 "now": "...", "last": "...", "outcome": "how it ended, when not running"}
+//
+// An empty object (no stages) shows EmptyText. A single progress line is
+// what this replaces: it says what is happening but not where in the whole
+// that is, or how much is left.
+type StageTracker struct {
+	Source    string `json:"source"`
+	RefreshMS int    `json:"refresh_ms,omitempty"` // default 2000
+	EmptyText string `json:"empty_text,omitempty"`
+}
+
+func (StageTracker) componentType() string { return "stage_tracker" }
+
+func (s StageTracker) MarshalJSON() ([]byte, error) {
+	type alias StageTracker
+	return json.Marshal(struct {
+		Type string `json:"type"`
+		alias
+	}{"stage_tracker", alias(s)})
+}

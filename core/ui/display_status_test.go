@@ -106,3 +106,17 @@ func TestARowToggleRedrawsItsRow(t *testing.T) {
 		t.Error("a refused change no longer restores the record, so the row keeps the value the server rejected")
 	}
 }
+
+// A StageTracker goes out as its own component, with a renderer in the runtime.
+func TestStageTrackerIsAComponent(t *testing.T) {
+	raw, err := json.Marshal(StageTracker{Source: "/x/stages", EmptyText: "idle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"type":"stage_tracker"`) || !strings.Contains(string(raw), `"source":"/x/stages"`) {
+		t.Fatalf("marshalled as %s", raw)
+	}
+	if !strings.Contains(runtimeJSSource(t), "components.stage_tracker = function") {
+		t.Fatal("no runtime renderer for stage_tracker")
+	}
+}
