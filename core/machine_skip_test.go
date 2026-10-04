@@ -8,8 +8,9 @@ import (
 
 // A step that reports it does not apply is recorded as skipped, passes what
 // it was handed through as its result, leaves a note saying why, and the run
-// moves on to the step's Next. When the skipped step is the last, the run's
-// result is what the step before it produced.
+// moves on to the step's Next. When the skipped step is the last, the run
+// FAILS, naming the step and why: passing the step before it off as the run's
+// answer reported a raw lookup result as a finished run.
 func TestASkippedStepPassesThroughAndMovesOn(t *testing.T) {
 	def := MachineDef{Name: "m", Start: "a", Unattended: true, Phases: []MachinePhase{
 		{Name: "a", Prompt: "find", Next: "b"},
@@ -33,14 +34,14 @@ func TestASkippedStepPassesThroughAndMovesOn(t *testing.T) {
 	cur := &MachineCursor{}
 	final, text, err := new(AppCore).RunUnattended(context.Background(), def, cur, MachineTurn{Input: "go"}, run,
 		func(kind, detail string) { notes = append(notes, kind+": "+detail) })
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "the last step, c, did not apply (nothing to c)") {
+		t.Fatalf("a run that ended on a skipped step reported %v; it has no result of its own", err)
 	}
 	if strings.Join(ran, ",") != "a,b,c" {
 		t.Fatalf("ran %v; a skip moves on to the step's next", ran)
 	}
 	if final.Name != "c" || text != "the finding" {
-		t.Fatalf("finished at %s with %q; want c, passing a's result through", final.Name, text)
+		t.Fatalf("finished at %s with %q; want c, with a's result kept as the partial", final.Name, text)
 	}
 	b := cur.State["b"]
 	if !b.Skipped || b.SkipReason != "nothing to b" || b.Text != "the finding" || b.Fields != nil {

@@ -201,6 +201,17 @@ func (T *AppCore) RunUnattended(ctx context.Context, def MachineDef, cur *Machin
 	text := cur.State[final.Name].Text
 	switch stop {
 	case stopTerminal:
+		// A skipped step passes its input through as its result, which is
+		// right mid-run and wrong at the end: the run would report the step
+		// BEFORE it as the answer, raw, and call that a success. Observed: a
+		// lookup's bare {"id": ...} returned as a finished run's result. The
+		// text still rides along, so a caller can show it as what the run had
+		// produced, labelled as partial.
+		if res := cur.State[final.Name]; res.Skipped {
+			return final, text, Error("machine " + def.Name + ": the last step, " + final.Name +
+				", did not apply (" + chooseStr(strings.TrimSpace(res.SkipReason), "no reason given") +
+				"), so the run has no result of its own")
+		}
 		return final, text, nil
 	case stopResident:
 		// Validate reports this at save time; reaching it live means the

@@ -7,13 +7,17 @@
 //	create / update — author a machine (name, description, start, phases[])
 //	list            — see the user's machines
 //	get             — read one machine's full definition
+//	run             — run an UNATTENDED machine once, here, on an input
 //	delete          — remove one
 //
-// There is no `run`. A machine has nowhere to run outside a session: it
-// runs when a turn arrives on an agent that points at it. That is the
-// difference between this and a pipeline, and it is why attach_to_agents
-// matters more here than there — an unattached machine does nothing at
-// all, where an unattached pipeline is at least runnable on demand.
+// A conversational machine has nowhere to run outside a session: it runs
+// when a turn arrives on an agent that points at it, which is why
+// attach_to_agents matters more here than on a pipeline. An unattended one
+// RUNS, and run is how its author tries it. Without it Builder had no way to
+// try a machine it had just built: agents(run) only lists what was
+// dispatchable when the turn started, and the detours it reached for (a
+// one-off schedule, a wrapping pipeline) either never reported back or had
+// no machine runner at all.
 //
 // See docs/agent-machines.md.
 
@@ -35,11 +39,12 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "machine",
-			Description: "Author phase machines: workflows an agent LIVES IN across a conversation. The session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, validate, list, get, delete.\n\n`update` REPLACES the whole phase list; to change one field of one step use `update_phase`. Run `validate` first: a refused `update` stores NOTHING.\n\nUse a machine when a conversation should work out what is asked once and then settle into that frame, or when EVERY message must take a path (route it, hand some kinds to another agent): then set route_each_message and give the routing step its choices. Set unattended: true for a machine that RUNS start to finish with nobody in the conversation, given an input and returning its last step's result: it may have no resident step, and it is what a request for an \"unattended machine\" means. Use a PIPELINE for a fixed recipe of model stages that returns a result, and neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call**: an unattached machine does nothing. Call action=\"help\" for the full spec.",
+			Description: "Author phase machines: workflows an agent LIVES IN across a conversation. The session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, validate, run, list, get, delete.\n\n`update` REPLACES the whole phase list; to change one field of one step use `update_phase`. Run `validate` first: a refused `update` stores NOTHING.\n\nUse a machine when a conversation should work out what is asked once and then settle into that frame, or when EVERY message must take a path (route it, hand some kinds to another agent): then set route_each_message and give the routing step its choices. Set unattended: true for a machine that RUNS start to finish with nobody in the conversation, given an input and returning its last step's result: it may have no resident step, and it is what a request for an \"unattended machine\" means. Try one you built with action=\"run\", name and input (the person's example). Use a PIPELINE for a fixed recipe of model stages that returns a result, and neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call**: an unattached machine does nothing. Call action=\"help\" for the full spec.",
 			Parameters: map[string]ToolParam{
-				"action":      {Type: "string", Description: "One of: create | update | update_phase | list | get | repair | delete | help."},
-				"name":        {Type: "string", Description: "Machine name. Required for create; get/update/repair/delete also accept the id."},
-				"id":          {Type: "string", Description: "(update/get/delete) Machine id, if you have it instead of the name."},
+				"action":      {Type: "string", Description: "One of: create | update | update_phase | validate | run | list | get | repair | delete | help."},
+				"name":        {Type: "string", Description: "Machine name. Required for create; get/update/run/repair/delete also accept the id."},
+				"id":          {Type: "string", Description: "(update/get/run/delete) Machine id, if you have it instead of the name."},
+				"input":       {Type: "string", Description: "(run) What the run is started with, read as {input}. Pass the example the person gave, as they would."},
 				"description": {Type: "string", Description: "(create/update) One-line summary of what the machine is for."},
 				"start":       {Type: "string", Description: "(create/update) Name of the phase a fresh session enters. Defaults to the first phase in the list."},
 				"full":        {Type: "boolean", Description: "(get) When true, return every phase's full prompt. Default false previews them to save context."},
@@ -89,7 +94,10 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				},
 			},
 			Required: []string{"action"},
-			Caps:     []Capability{CapRead},
+			// CapNetwork: run walks the machine's steps, and a step's tools,
+			// delegates and pipelines can reach the network. Tagged so private
+			// mode filters it, as the pipeline tool is for the same reason.
+			Caps: []Capability{CapRead, CapNetwork},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
@@ -108,10 +116,12 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				return t.machineValidate(args)
 			case "repair":
 				return t.machineRepair(args)
+			case "run", "try":
+				return t.machineRun(args)
 			case "help", "":
 				return machineHelpText, nil
 			default:
-				return "", fmt.Errorf("unknown action %q: use create | update | update_phase | validate | list | get | repair | delete | help", action)
+				return "", fmt.Errorf("unknown action %q: use create | update | update_phase | validate | run | list | get | repair | delete | help", action)
 			}
 		},
 	}
@@ -126,6 +136,10 @@ const machineHelpText = `machine actions:
            Worth doing before any update, because a refused update stores nothing at all.
 - list, your machines: [{id, name, description, phases, start}].
 - get     {name|id, full?:true}, one machine's definition.
+- run     {name|id, input}: run an UNATTENDED machine once, here, and get its result (or where it
+           stopped and what it had produced). This is how to try one you just built: build it,
+           then run it on the person's own example and read the result before calling it done.
+           A conversational machine is not run; attach it to an agent and talk to that agent.
 - repair  {name|id}: settle the findings with exactly one right answer (references to steps that
            are gone, a field filled from a variable but declared as a number). Anything with two
            defensible answers is left alone and still reported.
@@ -150,8 +164,9 @@ history: they are state, so turn 8 is not re-reading turn 1's reasoning.
 An UNATTENDED machine is the third shape: set unattended: true and it RUNS instead of conversing.
 It is started with an input ({input}), walks its steps until one hands off nowhere, and that last
 step's result is the run's result. No step may be resident. Tool steps chain cheaply: each declares
-the output fields a later step reads as {state:STEP.field}. It runs from the Run button, a schedule,
-another machine's step or a dispatch, and attach_to_agents is not needed for that.
+the output fields a later step reads as {state:STEP.field}. It runs from action="run", the Run
+button, a schedule, another machine's step or a dispatch, and attach_to_agents is not needed for
+that. Build it, then machine(action="run", name, input) to try it with the person's example.
 
 === PHASE FIELDS ===
 name       unique label; also the key others read as {state:NAME}. No dots.
@@ -902,6 +917,15 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	// handle used to be dropped while the reply said "Updated", so an author
 	// who set resident or a branch condition was told it had worked.
 	if unknown := unknownUpdatePhaseKeys(args); len(unknown) > 0 {
+		// Fields that belong to the MACHINE get their own answer: they are
+		// valid, just not here, and the generic refusal read as though they
+		// were misspelled. Refused rather than half-applied, so a reply never
+		// says "Updated" about a call that set only some of what it carried.
+		if machineLevel := machineLevelKeys(unknown); len(machineLevel) > 0 {
+			return "", errors.New("nothing was saved: " + strings.Join(machineLevel, ", ") + " belong(s) to the whole machine, not one step, and is set with " +
+				"action=\"update\" (name, plus just those fields: the phases are kept when you send none). " +
+				"Drop " + strings.Join(unknown, ", ") + " from this update_phase call and send it again for the step's own fields.")
+		}
 		return "", errors.New("update_phase does not change " + strings.Join(unknown, ", ") + ", so nothing was saved. " +
 			"It changes: " + strings.Join(updatePhaseFieldNames, ", ") + ". " +
 			"A step branches with choices (the steps it may pick between), not a condition field. " +
@@ -1053,6 +1077,106 @@ func (t *chatTurn) machineRepair(args map[string]any) (string, error) {
 			len(probs), strings.Join(probs, "\n- "))
 	}
 	return out + t.machineFindingsNote(saved), nil
+}
+
+// machineRun runs one unattended machine to the end, inside this turn, and
+// returns its result.
+//
+// The same run a kind=machine stage gets (runOwnedMachine): the owner's
+// catalog, the full host, the same refusals. What this adds is what a caller
+// in a turn owes: the warden on the way in and out, the approval question a
+// narrowed agent is asked before a recipe reaches other agents, and a live
+// run the Monitor can Stop. It runs on the turn's context because its answer
+// is this tool call's result: once the turn is gone nobody is waiting for it.
+// runTimeout is the ceiling the Run button has, for the same reason.
+func (t *chatTurn) machineRun(args map[string]any) (string, error) {
+	def, ok := t.findMachine(args)
+	if !ok {
+		return "", errors.New("no machine found by that name or id: machine(action=\"list\") shows what you have")
+	}
+	if !def.Unattended {
+		return "", errors.New(machineNotRunnableMessage(def))
+	}
+	input := strings.TrimSpace(stringArg(args, "input"))
+	if input == "" {
+		return "", errors.New("input is required to run a machine: pass what the run starts with, such as the example the person gave")
+	}
+	// Asked before anything is spent, and in full: a machine is routinely
+	// saved half-built, and one finding at a time is a round per finding.
+	if probs := machineRunProblems(t.udb, t.user, def); len(probs) > 0 {
+		return "", fmt.Errorf("machine %q will not run yet, %d thing(s) outstanding:\n- %s\nFix them with action=\"update_phase\" or \"update\" (action=\"repair\" settles the mechanical ones), then run it again",
+			def.Name, len(probs), strings.Join(probs, "\n- "))
+	}
+	if origin := t.dispatchOrigin; origin != nil && !origin.allowsMachine(def) {
+		return "", fmt.Errorf("machine %q was not run: you are running on behalf of %q, whose dispatch policy does not permit that machine. Report back that it is built and could not be tried from here", def.Name, origin.AgentName)
+	}
+	for _, prior := range dispatchedMachines(t.ctx) {
+		if prior == def.ID {
+			return "", fmt.Errorf("machine %q is already running above this call; a step of it cannot run it again", def.Name)
+		}
+	}
+	if err := t.guardMachineInput(t.ctx, def, input); err != nil {
+		return "", err
+	}
+	if err := t.confirmRecipeEdge("machine", def.ID, def.Name, machineReach(def)); err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(t.ctx, runTimeout)
+	defer cancel()
+	ctx, liveRun := t.app.runsRegistry().CreateCancellable(ctx, t.user, "", "")
+	liveRun.Describe("machine", machineRunLabel(t, def), truncateObs(input, 100)).
+		Parent(parentRunFromCtx(t.ctx))
+	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
+	ctx = withDispatchedMachine(ctx, def.ID)
+	ctx = withParentRun(ctx, liveRun.ID)
+	ctx = t.guardedRunContext(ctx)
+
+	note := func(kind, detail string) {
+		t.emitStatus("[" + def.Name + "] " + detail)
+		t.turnDiag(kind, detail)
+		Log("[orchestrate.machine %q] %s", def.Name, detail)
+	}
+	Log("[orchestrate.machines] %s running machine %q from the authoring tool (%d steps)", t.agent.ID, def.Name, len(def.Phases))
+	out, _, err := t.app.runOwnedMachine(ctx, t.user, def.ID, input, note)
+	if err != nil {
+		liveRun.Complete(RunStatusFailed)
+		msg := fmt.Sprintf("machine %q stopped: %v", def.Name, err)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			msg += fmt.Sprintf(" (it ran into the %s ceiling on a run)", runTimeout)
+		}
+		// What it had produced travels with the failure, judged like a
+		// result: nine steps of work are worth seeing, and seeing them is
+		// how the author tells which step to fix.
+		if partial, gerr := t.guardMachineOutput(t.ctx, def, strings.TrimSpace(out)); gerr == nil && partial != "" {
+			msg += "\n\nWhat it had produced before it stopped:\n" + partial
+		}
+		return "", errors.New(msg)
+	}
+	liveRun.Complete(RunStatusCompleted)
+	if out, err = t.guardMachineOutput(t.ctx, def, out); err != nil {
+		return "", err
+	}
+	return machineDispatchResult(def, out)
+}
+
+// machineNotRunnableMessage is the answer to run on a machine that converses.
+// It says both ways forward, because which one is right depends on what the
+// machine is for, and the author knows that where the framework does not.
+func machineNotRunnableMessage(def MachineDef) string {
+	msg := "machine " + strconv.Quote(def.Name) + " converses rather than runs, so there is no single run to start"
+	var waits []string
+	for _, p := range def.Phases {
+		if p.Resident {
+			waits = append(waits, strconv.Quote(p.Name))
+		}
+	}
+	if len(waits) > 0 {
+		msg += ": " + strings.Join(waits, ", ") + " wait(s) for the person"
+	}
+	return msg + ". If nobody converses with it (it takes an input and returns a result), make it unattended: " +
+		"action=\"update\" with unattended: true, no resident step, and next left empty on the step that produces the answer; then run it. " +
+		"If it does converse, try it by attaching it to an agent (attach_to_agents) and talking to that agent."
 }
 
 func (t *chatTurn) machineDelete(args map[string]any) (string, error) {
@@ -1257,6 +1381,24 @@ var updatePhaseFieldNames = []string{
 	"guard", "guard_to", "tools", "deny", "reach",
 }
 
+// machineLevelFieldNames are the create/update fields that describe the whole
+// machine, which update_phase is sometimes handed alongside a step's own.
+var machineLevelFieldNames = map[string]bool{
+	"machine_deny": true, "unattended": true, "route_each_message": true,
+	"start": true, "description": true, "attach_to_agents": true,
+}
+
+// machineLevelKeys picks the machine-level fields out of a list of keys.
+func machineLevelKeys(keys []string) []string {
+	var out []string
+	for _, k := range keys {
+		if machineLevelFieldNames[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // unknownUpdatePhaseKeys names the keys an update_phase call carries that it
 // neither writes nor uses to find the step.
 func unknownUpdatePhaseKeys(args map[string]any) []string {
@@ -1307,6 +1449,13 @@ func unknownPhaseKeysMessage(unknown []string) string {
 		switch strings.ToLower(k) {
 		case "when", "if", "else", "else_next", "then", "condition", "branch", "route", "routes", "on_true", "on_false":
 			return msg + " A step branches with choices (the steps it may pick between; it decides at run time) or next_from (one of its own string output fields holding a step name). There is no condition field."
+		case "kind", "type":
+			// A pipeline stage HAS a kind, so an author who has written one
+			// carries the habit over. Naming the fields that do the job is
+			// the whole answer; the generic list would leave them guessing
+			// which one replaces it.
+			return msg + " A machine step has no kind: what it runs is set by the field you fill. " +
+				"tool (with args) makes a tool step; agent, pipeline or machine delegates; none of them makes a model step."
 		}
 	}
 	names := make([]string, 0, len(machinePhaseKeys))

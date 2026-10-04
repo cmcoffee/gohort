@@ -1166,7 +1166,8 @@ func (d MachineDef) problems() []string {
 			"so the run has no result and would walk until it hits the "+strconv.Itoa(MaxUnattendedTransitions)+"-step ceiling. "+
 			"Leave \"then go to\" empty on the step that produces the answer.")
 	case !d.Unattended && resident == 0:
-		probs = append(probs, "no step waits for the person: a machine with nowhere for a turn to land is a pipeline, not a machine. Turn on \"the conversation waits here\" (resident) on the step that replies.")
+		probs = append(probs, "no step waits for the person: a machine with nowhere for a turn to land is a pipeline, not a machine. Turn on \"the conversation waits here\" (resident) on the step that replies. "+
+			unattendedInstead)
 	}
 	// Accumulators join the same namespaces phases live in, so
 	// {state:answers} and {state:answers.count} resolve like any other
@@ -1267,6 +1268,23 @@ func (d MachineDef) hasTerminalPhase() bool {
 	return false
 }
 
+// unattendedInstead is the other reading of a machine in which nobody is ever
+// waited on: not a conversation missing its reply step, but a run that was
+// never marked as one. Both refusals that fire on that shape offer it, because
+// a model building an unattended machine meets them first and each, alone,
+// points it at making the machine converse.
+const unattendedInstead = "If nobody converses with this machine (it takes an input and returns a result), set unattended: true on create/update instead."
+
+// anyResident reports whether some step waits for the person.
+func (d MachineDef) anyResident() bool {
+	for _, p := range d.Phases {
+		if p.Resident {
+			return true
+		}
+	}
+	return false
+}
+
 // residentNames lists the steps that wait, for a message that names them
 // rather than leaving somebody to find them.
 func residentNames(d MachineDef) []string {
@@ -1353,7 +1371,14 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		// but the finish line: the step that hands off nowhere is where
 		// the run stops and what it returns. The inverse rule (a run must
 		// HAVE one) is checked once for the machine, in problems().
-		probs = append(probs, "step "+name+" passes on but goes nowhere: a step the person never takes a turn in has to hand off somewhere. Set next, or list choices for it to decide between.")
+		msg := "step " + name + " passes on but goes nowhere: a step the person never takes a turn in has to hand off somewhere. Set next, or list choices for it to decide between."
+		// When no step waits for anybody, the step that goes nowhere is
+		// usually the finish line of a machine that was meant to run, and
+		// "set next" sends the author the wrong way round.
+		if !d.anyResident() {
+			msg += " " + unattendedInstead
+		}
+		probs = append(probs, msg)
 	}
 	if p.Resident && len(p.Output) > 0 {
 		// A resident phase's reply IS the user-facing message. Wrapping

@@ -147,8 +147,10 @@ func TestABlankToolArgumentSkipsTheStep(t *testing.T) {
 
 	calls = nil
 	out, cur, err := run("", def)
-	if err != nil {
-		t.Fatal(err)
+	// Both steps skip, so the run ends on a step that did not apply: that is
+	// a failure naming the step, not a success with nothing in it.
+	if err == nil || !strings.Contains(err.Error(), "the last step, more, did not apply") {
+		t.Fatalf("a run that ended on a skipped step reported %v", err)
 	}
 	if len(calls) != 0 {
 		t.Fatalf("the tool was called with a blank: %v", calls)

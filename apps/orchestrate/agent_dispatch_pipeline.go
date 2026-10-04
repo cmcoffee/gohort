@@ -411,7 +411,13 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 	}
 
 	Log("[orchestrate.agents.run] %s dispatching pipeline %q%s (%d stages)", t.agent.ID, def.Name, pipelineOwnerNote(t, def), len(def.Stages))
-	out, err := t.app.RunPipelineDefSync(ctx, def, msg, t.pipelineStageDispatch(), status)
+	// The hooks entry, so a kind=machine stage has a runner (see
+	// runPipelineDefInline). Stages run as this caller, agent and machine alike.
+	out, _, err := t.app.RunPipelineDefHooks(ctx, def, msg, PipelineHooks{
+		Dispatch: t.pipelineStageDispatch(),
+		Machine:  t.app.pipelineMachineRunner(t.user),
+		Status:   status,
+	})
 	if err != nil {
 		liveRun.Complete(RunStatusFailed)
 		return "", fmt.Errorf("pipeline %q failed: %w", def.Name, err)
@@ -459,7 +465,10 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 	Log("[orchestrate.agents.run] %s handed off pipeline %q%s (%d stages)", t.agent.ID, def.Name, pipelineOwnerNote(t, def), len(def.Stages))
 	// nil status: the live run above is what carries progress here, and the
 	// turn's status channel is closed.
-	out, err := t.app.RunPipelineDefSync(ctx, def, msg, t.pipelineStageDispatch(), nil)
+	out, _, err := t.app.RunPipelineDefHooks(ctx, def, msg, PipelineHooks{
+		Dispatch: t.pipelineStageDispatch(),
+		Machine:  t.app.pipelineMachineRunner(t.user),
+	})
 	if err != nil {
 		liveRun.Complete(RunStatusFailed)
 		return "", fmt.Errorf("pipeline %q failed: %w", def.Name, err)

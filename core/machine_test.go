@@ -1764,3 +1764,37 @@ func TestReplyWithBelongsToAWaitingStep(t *testing.T) {
 		t.Errorf("a passing step's reply_with and an unknown reference should both be reported:\n%s", probs)
 	}
 }
+
+// A machine in which nobody is ever waited on is, as often as not, a run that
+// was never marked as one. Both refusals that fire on that shape say so, or
+// each points a model building an unattended machine at making it converse.
+// A machine that does wait somewhere gets only the conversational advice.
+func TestAllTransientRefusalsOfferUnattended(t *testing.T) {
+	allTransient := MachineDef{Name: "m", Phases: []MachinePhase{
+		{Name: "a", Prompt: "x", Next: "b"},
+		{Name: "b", Prompt: "y"},
+	}}
+	var resident, deadEnd string
+	for _, p := range allTransient.Problems() {
+		switch {
+		case strings.Contains(p, "no step waits for the person"):
+			resident = p
+		case strings.Contains(p, "passes on but goes nowhere"):
+			deadEnd = p
+		}
+	}
+	for name, msg := range map[string]string{"no resident step": resident, "dead end": deadEnd} {
+		if !strings.Contains(msg, "set unattended: true on create/update instead") {
+			t.Errorf("%s: no word of unattended:\n%s", name, msg)
+		}
+	}
+
+	waits := MachineDef{Name: "m", Phases: []MachinePhase{
+		{Name: "a", Prompt: "x"},
+		{Name: "b", Prompt: "y", Resident: true},
+	}}
+	probs := strings.Join(waits.Problems(), "\n")
+	if !strings.Contains(probs, "passes on but goes nowhere") || strings.Contains(probs, "unattended") {
+		t.Errorf("a machine with a step that waits is a conversation; it should be told to set next:\n%s", probs)
+	}
+}

@@ -634,7 +634,15 @@ func (t *chatTurn) runPipelineDefInline(def PipelineDef, input string) (string, 
 	inheritedTools, _, _ := t.resolveWorkerTools(sess, false)
 	inheritedTools = t.withOwnTools(sess, inheritedTools)
 	wrappedTools := t.wrapToolsForActivity(sess, inheritedTools, t.agent, "↳ ["+def.Name+"] ")
-	out, err := t.app.RunPipelineDefSyncWithTools(ctx, def, input, dispatch, status, wrappedTools)
+	// Through the hooks entry so a kind=machine stage has a runner: the older
+	// entry has no slot for one, and a pipeline run from this tool refused
+	// every machine stage while the same pipeline ran from its page.
+	out, _, err := t.app.RunPipelineDefHooks(ctx, def, input, PipelineHooks{
+		Dispatch: dispatch,
+		Machine:  t.app.pipelineMachineRunner(t.user),
+		Status:   status,
+		Tools:    wrappedTools,
+	})
 	if err != nil {
 		return "", fmt.Errorf("pipeline %q failed: %w", def.Name, err)
 	}
@@ -748,7 +756,7 @@ func parsePipelineFields(stageNum int, raw any) ([]PipelineField, error) {
 			}
 			out = append(out, PipelineField{
 				Name:     strings.TrimSpace(mapStr(f, "name")),
-				Type:     PipelineFieldType(strings.ToLower(strings.TrimSpace(mapStr(f, "type")))),
+				Type:     normalizeFieldType(mapStr(f, "type")),
 				Desc:     mapStr(f, "desc"),
 				Fields:   nested,
 				Required: mapBool(f, "required"),
@@ -767,6 +775,31 @@ func parsePipelineFields(stageNum int, raw any) ([]PipelineField, error) {
 		}
 	}
 	return out, nil
+}
+
+// fieldTypeSynonyms maps the spellings a model reaches for, from JSON Schema
+// and from the languages it writes most, onto the five types the vocabulary
+// has. Each is unambiguous, so refusing one only cost the author a round to
+// learn a word: "array" was the usual guess and the validator said so.
+var fieldTypeSynonyms = map[string]PipelineFieldType{
+	"array":   FieldList,
+	"integer": FieldNumber,
+	"int":     FieldNumber,
+	"float":   FieldNumber,
+	"boolean": FieldBool,
+	"dict":    FieldObject,
+	"map":     FieldObject,
+}
+
+// normalizeFieldType lower-cases a declared output type and maps a synonym to
+// the type it means. Anything else passes through for Validate to reject by
+// name.
+func normalizeFieldType(raw string) PipelineFieldType {
+	t := strings.ToLower(strings.TrimSpace(raw))
+	if mapped, ok := fieldTypeSynonyms[t]; ok {
+		return mapped
+	}
+	return PipelineFieldType(t)
 }
 
 // mapInt reads an integer, tolerating the float form JSON decoding
