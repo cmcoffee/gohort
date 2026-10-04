@@ -73,3 +73,24 @@ func TestGeminiDropsEmptyTurns(t *testing.T) {
 		t.Fatalf("the empty model turn should drop and the two user turns merge: %s", raw)
 	}
 }
+
+// A system-role message goes to systemInstruction, after the configured system
+// prompt, and never into contents: Gemini answers a "system" turn with a 400,
+// which sent every judge and proposer that briefs by message to the worker.
+func TestGeminiSystemMessagesBecomeTheInstruction(t *testing.T) {
+	msgs := []Message{
+		{Role: "system", Content: "You review builds."},
+		{Role: "user", Content: "Here is one."},
+	}
+	if got := geminiSystemText("Be brief.", msgs); got != "Be brief.\n\nYou review builds." {
+		t.Fatalf("system text = %q", got)
+	}
+	if got := geminiSystemText("", msgs[1:]); got != "" {
+		t.Fatalf("no system text should be none, got %q", got)
+	}
+	for _, c := range (&geminiClient{}).buildMessages(msgs) {
+		if c.Role == "system" {
+			t.Fatal("a system turn went into contents")
+		}
+	}
+}

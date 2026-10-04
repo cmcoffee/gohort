@@ -264,6 +264,11 @@ func (c *geminiClient) buildMessages(messages []Message) []gemContent {
 			if strings.TrimSpace(m.Content) == "" {
 				continue
 			}
+			// System text goes in systemInstruction (geminiSystemText);
+			// contents takes only user and model turns.
+			if m.Role == "system" {
+				continue
+			}
 			role := m.Role
 			if role == "assistant" {
 				role = "model"
@@ -275,6 +280,25 @@ func (c *geminiClient) buildMessages(messages []Message) []gemContent {
 		}
 	}
 	return mergeAdjacentRoles(contents)
+}
+
+// geminiSystemText is a request's system instruction: the configured system
+// prompt, then the text of any system-role messages. Gemini takes system text
+// only as systemInstruction and answers a "system" turn in contents with a 400
+// ("Role 'system' is not supported"). Callers that pass their brief as a system
+// message rather than WithSystemPrompt (judges, proposers, reviewers) failed on
+// every call, and each fell back to the worker without anyone choosing it.
+func geminiSystemText(prompt string, messages []Message) string {
+	var parts []string
+	if strings.TrimSpace(prompt) != "" {
+		parts = append(parts, prompt)
+	}
+	for _, m := range messages {
+		if m.Role == "system" && strings.TrimSpace(m.Content) != "" {
+			parts = append(parts, m.Content)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // mergeAdjacentRoles folds consecutive contents of the same role into one, so
@@ -432,9 +456,9 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 			{Category: "HARM_CATEGORY_CIVIC_INTEGRITY", Threshold: "BLOCK_NONE"},
 		},
 	}
-	if cfg.SystemPrompt != "" {
+	if sys := geminiSystemText(cfg.SystemPrompt, messages); sys != "" {
 		payload.SystemInstruction = &gemContent{
-			Parts: []gemPart{{Text: cfg.SystemPrompt}},
+			Parts: []gemPart{{Text: sys}},
 		}
 	}
 	genCfg := &gemGenerationConfig{}
@@ -552,9 +576,9 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 			{Category: "HARM_CATEGORY_CIVIC_INTEGRITY", Threshold: "BLOCK_NONE"},
 		},
 	}
-	if cfg.SystemPrompt != "" {
+	if sys := geminiSystemText(cfg.SystemPrompt, messages); sys != "" {
 		payload.SystemInstruction = &gemContent{
-			Parts: []gemPart{{Text: cfg.SystemPrompt}},
+			Parts: []gemPart{{Text: sys}},
 		}
 	}
 	genCfg := &gemGenerationConfig{}
