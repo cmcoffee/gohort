@@ -232,9 +232,10 @@ by all of it.
 
 ## Running
 
-The harness lives in the live server, as sections on the admin Prompts tab
-beside the prompt-block editor (editing prompts and measuring them are one
-job), starts the sandbox, and drives it over HTTP: Builder is given each
+The harness lives in the live server: the Optimize section on the admin
+LLMs tab (the map and a row per model), Details behind it, and Read it back
+and Probe in the Prompt overrides editor on the Prompts tab. It starts the
+sandbox and drives it over HTTP: Builder is given each
 task through the ordinary chat endpoint, the harness answering its
 confirmation cards as a person would, and the tier is pinned by the
 sandbox's LLM settings. Each task runs N times
@@ -244,9 +245,9 @@ non-deterministic model is an anecdote.
 A suite run is long (a dozen tasks, three repeats, minutes each), so it
 follows the house rule for anything long: a moving indicator, "14 of 36 runs -
 9 passed - 41m", the run's own ending reported, a page that arrives mid-run
-rejoining it, the run on a context the request cannot cancel, and a Cancel
-button. `core.ReportMaintenanceProgress` and `ui.ActionList.ProgressSource`
-are the pieces.
+rejoining it, the run on a context the request cannot cancel, and a Stop
+button. `core.ReportMaintenanceProgress`, `ui.ActionList.ProgressSource` and
+`ui.ActionList.CancelTo` are the pieces.
 
 ## Graders
 
@@ -457,124 +458,122 @@ Each stage is useful alone and proves the next one is worth building.
    to differ.
 7. **Lead tuning**, with its spending cap.
 
+Built since, on top of those: tool and parameter descriptions as blocks;
+one-click Optimize per model with Undo; the focused mode (fix as it goes,
+confirm on the whole suite) in quick and extended runs; choice probes, and
+Read it back and Probe in the editor; findings set aside with Copy and
+Re-check; giving way to people and picking up after a restart; and the
+framework map, which comes first.
+
 The suite and harness also serve the self-fine-tune plan: the eval app that
 plan called "oracle" is this harness pointed at a LoRA adapter instead of a
 prompt variant.
 
 ## Live run plan
 
-All seven stages are built and none has run against a live deployment. The
-plan is a ladder: each run proves the harness can be trusted with the next,
-and each says what to look at before climbing. Every run is started by hand
-from Tune Builder on the admin Prompts tab, overnight, when nobody needs the
-worker.
+Everything is built and nothing has run against a live deployment. The plan
+is a ladder: each run proves the harness can be trusted with the next, and
+each says what to look at before climbing. Every run starts from the
+Optimize section on the admin LLMs tab. Runs give way to people using the
+model they build on, so they can run while the deployment is in use, only
+slower; overnight is still the natural time.
 
 ### Before the first run
 
-Gaps found while writing this plan. The first three are closed; the
-fourth is not.
-
-1. **The progress line went quiet for an hour.** During a round it read
-   "round 2 of 6 - running the suite on edit X" and nothing moved but the
-   clock. It now carries the suite run's own line after a colon: which
-   build of how many, how many passed, which task, what Builder is doing
-   (its turn, the confirmations answered), then the session's time and
-   spend.
-2. **A round was invisible until it ended.** The rounds list now leads with
-   the starting measurement and ends, while the session runs, with the
-   round in flight and the edit it is building with. Builds on any of them
-   lists each attempt as it finishes: pass or fail, the check that failed
-   in its own words, minutes, turns, spend, and behind Look what Builder
-   told the user and what it did. These tables refresh themselves, and hold
-   still while a row is open.
-3. **There was no scorecard view.** Builds also shows the run's scorecard:
-   per task, passed of graded, the spread between repeats, minutes, tries to
-   green, out of time, harness errors, and a line with the train and
-   held-out pass rates and the mean spread. Run 2 reads the spread here.
-4. **The suite was three tasks, all train.** Closed: twenty tasks, fifteen
-   train and five held out, aimed at the friction of the framework and
-   authoring tools (tool wrappers with real APIs' quirks, python shell
-   tools, apps whose data sources compute the thing asked for, machines
-   chaining tools, one where Builder must build the tool first). See the
-   suite's README.
-5. **Setup.** The deployment builds with the tuning app registered (the
+1. **Setup.** The deployment builds with the tuning app registered (the
    blank import in the machine-local `private.go`), a lead model that is not
-   the worker (the judge refuses otherwise), the lead's price set under
-   Prices, and room on the disk beside the workspaces for
+   the worker (the judge and the map's reviewer are the lead), the lead's
+   price set under Prices, and room on the disk beside the workspaces for
    `tuning-sandboxes` (one copy of the binary and a fresh data directory per
    run; anything older than a day is swept).
+2. **The suite.** Twenty tasks, fifteen train and five held out, aimed at
+   the friction of the framework and authoring tools. See the suite's
+   README. The visibility gaps found writing the first plan (a silent
+   progress line, rounds invisible until they ended, no scorecard) are
+   closed.
 
-### Run 1: smoke
+### Run 0: map the framework
 
-Worker, start from live, 1 build per task, 1 round, stop after 1 rejection,
-1 hour, $2.
+**Map framework issues**, before any tuning. Every task built twice on the
+worker, every build reviewed by the lead.
 
-Proves the sandbox starts, takes the LLM settings and the prompts, that
-Builder can be driven through the chat, that the checks grade, and that the
-session ends on its own and says how. Look at: the progress line moving
-through every phase; leaving the page and coming back mid-run (it must
-rejoin with the spinner); the round's Review opening with a before and
-after; Spent matching what Cost History gained; Stop cutting a second smoke
-run off cleanly; no `tuning-sandboxes` directory left behind once the
-session ends.
+Proves the sandbox starts, takes the LLM settings and the live prompts,
+that Builder can be driven, that the checks grade, and that a long run
+pauses for people, survives leaving the page, and stops on Stop. What it
+finds is the point: read the components the most tasks share, and Copy map
+to whoever fixes the platform. After each fix, rebuild and restart, then
+Re-check that component until it reads gone. Repeat the map once the
+widespread components are gone; tune only once a map turns up nothing a
+fix should handle. Look at, as well: whether the reviewer's framework and
+wording calls hold up when read against the evidence it quotes (it is the
+lead, uncalibrated), and that the map's spend matches what Cost History
+gained.
+
+### Run 1: a quick Optimize
+
+Worker, **Optimize** (quick: two passes, four hours, the cap from Details).
+
+The first real proposals. Look at: probes running before each build and
+their fixes; failures set aside as the framework's (each one is a gap the
+map missed, so Copy findings and Re-check them like a map's); each kept
+edit, and whether it names a general rule or the task it saw; the result
+applied as the worker's own wording, each block a revision in Prompt
+overrides; Undo putting live back; restarting the server mid-run and the
+run picking up where it was.
 
 ### Run 2: noise
 
-Worker, start from live, 5 builds per task, 1 round, $5.
+From Details: rounds mode, 5 builds per task, 1 round.
 
-The starting measurement is the point; the one round is incidental. Read
-the spread per task off the scorecard (gap 3). It decides how many builds
-per task a session needs and whether the two-standard-error test can ever
-call a change better on a suite this size. A task that passes 0 of 5 or 5
-of 5 every time tells the tuner nothing and is a candidate to rewrite; a
-task that flips between runs of the same prompts is the noise floor.
-Answers the open question on repeats.
+The starting measurement is the point. Read the spread per task off the
+scorecard. It decides how many builds per task a confirmation needs and
+whether the whole-suite check can call a change better on a suite this
+size. A task that passes 0 of 5 or 5 of 5 every time tells the tuner
+nothing and is a candidate to rewrite; one that flips between runs of the
+same prompts is the noise floor.
 
-### Run 3: one tuned round, reviewed
+### Run 3: overnight
 
-Worker, repeats from run 2, 3 rounds, $10.
+Worker, **Optimize overnight**, with the builds per confirmation from run 2.
+A kept edit that holds on held-out tasks is the first one worth keeping for
+good. Pick pairs in the judge's review so its agreement line means
+something.
 
-The first real proposals. Read each one: does the edit name a general rule
-or the task it saw? Pick pairs in Review so the judge's agreement line
-means something (ten picks is a start). Promote nothing from this run; the
-suite is too small for a gain on it to mean a gain at the job.
+### Run 4: the lead
 
-### Run 4: a session worth promoting
-
-Only once the suite has held-out tasks (gap 4). Worker, the default rounds,
-a cap sized from what run 2 spent per measurement. A kept edit that holds
-held-out is the first one worth promoting, and the first test of a
-promotion: the block shows up as a tuned revision on the Prompts page, as
-the worker's own wording when the session was pinned to the worker, and
-reverting it puts live back.
-
-### Run 5: the lead
-
-Lead, 1 build per task, a cap of about three measurements' worth at the
-lead's price. No judge (the judge is the lead), so the owner's picks carry
-the comparison. Watch for the cap stopping a round before it starts rather
-than in the middle, and for Spent agreeing with the provider's own bill.
+Lead, quick, one build per task, a cap of about three measurements' worth at
+the lead's price. No judge (the judge is the lead), so the checks and the
+owner's picks carry the comparison. Watch for the cap stopping a round
+before it starts rather than in the middle, and for Spent agreeing with the
+provider's own bill.
 
 ### Stop and look again if
 
-- the starting measurement and an unchanged rerun disagree by more than the
+- the map keeps finding a component after its fix (the fix missed, or the
+  reviewer is reading the wording's failures as the framework's);
+- a starting measurement and an unchanged rerun disagree by more than the
   spread from run 2 (the sandbox is not reproducible);
-- a build fails for the harness's reasons (sandbox errors, attempts left
-  out of the pass rate) more than the occasional once;
-- the proposer keeps choosing one block, or keeps writing the task back
-  into its rule;
+- builds fail for the harness's reasons more than the occasional once;
+- probes pass but the builds after them fail at the same choice (the probe
+  watches the wrong call);
+- the proposer keeps choosing one block, or keeps writing the task back into
+  its rule;
 - the judge's agreement with the owner's picks is near a coin toss;
 - Spent and Cost History disagree.
 
 ## Open questions
 
-- **How many repeats are enough?** Decided by measurement: run 2 of the
-  live run plan, five builds per task, sized from the spread.
-- **Suite size before the proposer is trusted.** A handful of tasks overfits
-  fast. A working floor of twenty, split 15/5, before stage 5?
+- **How many repeats are enough?** Decided by measurement: run 2.
+- **How far to trust the map's reviewer.** It is the lead, and nothing
+  calibrates its framework or wording calls yet. Reading its quoted evidence
+  is the check for now; owner picks on its calls, as the judge has, if it
+  misreads often.
+- **Whether the map becomes a periodic check.** It is a tool run by hand
+  while the platform is being got right. If maps keep finding real issues
+  after the first round of fixes, a scheduled map after each release would
+  catch regressions before tuning does.
 - **Where a task's expected output comes from for machines.** Hand-written for
-  now; a machine whose job is judgement may only be gradable by the judge,
-  which makes it a poor first task.
+  now; a machine whose job is judgement may only be gradable by the judge.
 - **Sandbox resources.** A second gohort plus headless Chrome for app checks
-  on the same box as the live server. The worker's slots are shared with live
-  traffic; suite runs probably belong overnight, scheduled.
+  on the same box as the live server. Runs give way to people on the model
+  they use, but the CPU and memory of the sandbox are not yielded.
