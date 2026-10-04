@@ -1339,6 +1339,36 @@
   // Object]". A field that is serialized, documented, and never read is the
   // shape this codebase keeps paying for; the fix is one renderer, not a
   // third subset.
+  // uiKeepBlockScroll carries the scroll position of a container's block
+  // pairs across a redraw: call it before the old content goes, and call what
+  // it returns once the new content is in. A refreshing panel rebuilt its
+  // blocks from scratch, so a reader scrolled into one was thrown back to the
+  // top on every tick. A follow block that was at its end (or is new) is
+  // taken to its end again.
+  function uiKeepBlockScroll(container) {
+    var kept = {};
+    container.querySelectorAll('pre[data-pair]').forEach(function(pr) {
+      kept[pr.getAttribute('data-pair')] = {
+        top: pr.scrollTop,
+        atEnd: pr.scrollHeight - pr.scrollTop - pr.clientHeight < 8
+      };
+    });
+    function apply() {
+      container.querySelectorAll('pre[data-pair]').forEach(function(pr) {
+        var k = kept[pr.getAttribute('data-pair')];
+        if (pr.hasAttribute('data-follow') && (!k || k.atEnd)) pr.scrollTop = pr.scrollHeight;
+        else if (k) pr.scrollTop = k.top;
+      });
+    }
+    return function() {
+      apply();
+      // Not laid out yet on a first render, so heights read zero: again
+      // once it is.
+      requestAnimationFrame(apply);
+    };
+  }
+  window.uiKeepBlockScroll = uiKeepBlockScroll;
+
   function uiDisplayPair(wrap, data, p) {
     // A LIST pair: the field is an array. Objects render from p.items
     // sub-pairs; scalars from a single sub-pair with an empty field.
@@ -1388,6 +1418,10 @@
       ]);
       var pre = el('pre', {class: 'ui-display-value-block'});
       pre.textContent = (value == null || value === '') ? '' : String(value);
+      // Named, so a panel that redraws can put the reader back where they
+      // were (uiKeepBlockScroll); follow pins it to the newest line.
+      pre.setAttribute('data-pair', p.field || p.label || '');
+      if (p.follow) pre.setAttribute('data-follow', '1');
       rowB.appendChild(pre);
       wrap.appendChild(rowB);
       return;

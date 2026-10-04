@@ -3981,9 +3981,11 @@
     var wrap = el('div', {class: 'ui-display'}, ['Loading…']);
     function reload() {
       fetchJSON(cfg.source).then(function(d) {
+        var restoreScroll = uiKeepBlockScroll(wrap);
         wrap.innerHTML = '';
         var data = d || {};
         (cfg.pairs || []).forEach(function(p) { uiDisplayPair(wrap, data, p); });
+        restoreScroll();
         // Action row — panel-level buttons rendered below the pairs.
         // Same URL templating + method + confirm semantics as toolbar
         // actions elsewhere; substituteRefs already resolved any row

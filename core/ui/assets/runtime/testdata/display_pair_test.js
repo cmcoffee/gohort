@@ -36,8 +36,11 @@ function fmt(v) { return v == null ? '' : String(v); }
 var sandbox = { el: el, fmt: fmt };
 var body = src.slice(src.indexOf('function lookup(obj, path)'));
 body = body.slice(0, body.indexOf('function showToast('));
-new Function('el', 'fmt', body + '; this.lookup = lookup; this.uiDisplayPair = uiDisplayPair;').call(sandbox, el, fmt);
+new Function('el', 'fmt', 'window', 'requestAnimationFrame',
+  body + '; this.lookup = lookup; this.uiDisplayPair = uiDisplayPair; this.uiKeepBlockScroll = uiKeepBlockScroll;')
+  .call(sandbox, el, fmt, {}, function(f) { f(); });
 var uiDisplayPair = sandbox.uiDisplayPair;
+var uiKeepBlockScroll = sandbox.uiKeepBlockScroll;
 
 // Flatten a rendered node to the text a reader would see.
 function textOf(n) {
@@ -87,5 +90,32 @@ var wrap5 = mkNode();
 uiDisplayPair(wrap5, { tool: { body: 'line one\nline two' } }, { label: 'Body', field: 'tool.body', block: true });
 ok(wrap5._kids[0].classList.contains('ui-display-row-block'), 'block pair needs its own row');
 ok(textOf(wrap5).indexOf('line two') >= 0, 'dotted path did not resolve: ' + textOf(wrap5));
+
+// A block pair is named for its field, and a follow pair says so.
+var fw = mkNode();
+uiDisplayPair(fw, { lines: 'one\ntwo' }, { label: 'Doing', field: 'lines', block: true, follow: true });
+var fpre = fw._kids[0]._kids[1];
+ok(fpre && fpre._attrs['data-pair'] === 'lines' && fpre._attrs['data-follow'] === '1', 'a follow block carries data-pair and data-follow');
+
+// A redraw keeps the reader's place: a follow block at its end goes to the new
+// end, one scrolled up stays put, a plain block keeps its offset.
+function mkPre(field, follow, top, height) {
+  return { scrollTop: top, scrollHeight: height, clientHeight: 100,
+    getAttribute: function(k) { return k === 'data-pair' ? field : null; },
+    hasAttribute: function(k) { return k === 'data-follow' && follow; } };
+}
+function mkBox(pres) { return { pres: pres, querySelectorAll: function() { return this.pres; } }; }
+var box = mkBox([mkPre('log', true, 300, 400), mkPre('read', true, 40, 400), mkPre('plain', false, 50, 400)]);
+var restore = uiKeepBlockScroll(box);
+box.pres = [mkPre('log', true, 0, 900), mkPre('read', true, 0, 900), mkPre('plain', false, 0, 900)];
+restore();
+ok(box.pres[0].scrollTop === 900, 'a follow block at its end follows to the new end, got ' + box.pres[0].scrollTop);
+ok(box.pres[1].scrollTop === 40, 'a follow block scrolled up is left where the reader was, got ' + box.pres[1].scrollTop);
+ok(box.pres[2].scrollTop === 50, 'a plain block keeps its offset across a redraw, got ' + box.pres[2].scrollTop);
+var fresh = mkBox([]);
+var r2 = uiKeepBlockScroll(fresh);
+fresh.pres = [mkPre('log', true, 0, 700)];
+r2();
+ok(fresh.pres[0].scrollTop === 700, 'a new follow block starts at its end');
 
 console.log(fails === 0 ? 'PASS' : (fails + ' failure(s)'));

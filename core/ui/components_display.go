@@ -39,6 +39,13 @@ type DisplayPair struct {
 	// newlines and scroll horizontally on overflow — script bodies,
 	// pipeline step dumps, full command_templates. Implies Mono.
 	Block bool `json:"block,omitempty"`
+	// Follow keeps a Block pair scrolled to its newest line, for a value
+	// that grows at the bottom (a running log, an activity feed): each
+	// refresh lands on the end, unless the reader has scrolled up to read,
+	// which it then leaves alone until they come back down. Without it a
+	// refreshing panel snapped back to the top every few seconds, so the
+	// line that just happened was always the one out of view.
+	Follow bool `json:"follow,omitempty"`
 	// Items, when set, renders the pair's Field as a LIST — the field
 	// must resolve to an array. For an array of OBJECTS each element is
 	// rendered from these sub-pairs (each sub-pair's Field is looked up
