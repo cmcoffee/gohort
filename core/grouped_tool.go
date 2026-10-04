@@ -62,7 +62,13 @@ type GroupedToolAction struct {
 // loop: without it a misspelled required param surfaces only as "requires
 // param X", the model never sees it sent "Xa", and it re-emits the same
 // wrong call.
-func (def *GroupedToolAction) typoHint(args map[string]any) string {
+//
+// sibling names the OTHER action a key belongs to, or "". It is asked
+// first: a key that is a real param of a neighbouring action is not a typo
+// at all, it is the right param sent with the wrong action, and guessing a
+// look-alike here produced "cases: did you mean hook_capabilities?" for a
+// call that belonged to action="test".
+func (def *GroupedToolAction) typoHint(action string, args map[string]any, sibling func(key string) string) string {
 	known := map[string]bool{"action": true, "_": true}
 	for k := range def.Params {
 		known[strings.ToLower(k)] = true
@@ -76,6 +82,12 @@ func (def *GroupedToolAction) typoHint(args map[string]any) string {
 	sort.Strings(unknown) // deterministic message across identical calls
 	var hints []string
 	for _, k := range unknown {
+		if sibling != nil {
+			if owner := sibling(k); owner != "" {
+				hints = append(hints, fmt.Sprintf("you supplied %q, which belongs to action=%q, not %q", k, owner, action))
+				continue
+			}
+		}
 		if near := def.nearestParamName(k); near != "" {
 			hints = append(hints, fmt.Sprintf("you supplied %q: did you mean %q?", k, near))
 		}
@@ -83,10 +95,25 @@ func (def *GroupedToolAction) typoHint(args map[string]any) string {
 	return strings.Join(hints, " ")
 }
 
+// NearestParamName is nearestParamName for callers outside core: a tool
+// that checks its own inputs against a param set (a test case's args, say)
+// and wants the same did-you-mean as a grouped tool's dispatch.
+func (def *GroupedToolAction) NearestParamName(key string) string {
+	return def.nearestParamName(key)
+}
+
 // nearestParamName returns the action's known param whose name most
 // closely matches the (unknown) supplied key, or "" when nothing is close
-// enough to be a confident typo. Reuses the same bigram-overlap heuristic
-// as nearestToolName, scoped to one action's param set.
+// enough to be a confident typo.
+//
+// Two ways to qualify, and nothing else does. A Dice coefficient of at
+// least 0.6 over character bigrams, which scores against BOTH names'
+// lengths: the old test counted only how much of the supplied key landed
+// in the candidate, so a short key matched any long name that happened to
+// contain two of its bigrams ("cases" -> "hook_capabilities", through
+// "ca" and "es"). Or a single edit or transposition, which Dice scores
+// low on short names: "titel" shares only two of its four bigrams with
+// "title", and is still plainly a typo of it.
 func (def *GroupedToolAction) nearestParamName(key string) string {
 	k := strings.ToLower(strings.TrimSpace(key))
 	if len(k) < 3 {
@@ -98,21 +125,93 @@ func (def *GroupedToolAction) nearestParamName(key string) string {
 	}
 	sort.Strings(names) // stable winner on ties → stable message
 	best := ""
-	bestScore := 0
+	bestScore := 0.0
 	for _, name := range names {
-		if score := bigramOverlap(k, strings.ToLower(name)); score > bestScore {
+		n := strings.ToLower(name)
+		score := bigramDice(k, n)
+		if score < 0.6 {
+			if !oneEditApart(k, n) {
+				continue
+			}
+			score = 0.6 // a single typo ranks with a strong overlap
+		}
+		if score > bestScore {
 			bestScore = score
 			best = name
 		}
 	}
-	// Require a strong overlap — at least 2 shared bigrams AND at least
-	// half the supplied key's bigrams landing in the candidate — so we
-	// only suggest on genuine near-misses, not on any param that happens
-	// to share a fragment.
-	if bestScore < 2 || bestScore*2 < len(k)-1 {
-		return ""
-	}
 	return best
+}
+
+// bigramDice is the Dice coefficient of two strings' character bigrams:
+// twice the shared bigrams over the total, each bigram matched at most once.
+// 1 for identical strings, 0 for nothing in common.
+func bigramDice(a, b string) float64 {
+	if len(a) < 2 || len(b) < 2 {
+		return 0
+	}
+	pool := map[string]int{}
+	for i := 0; i < len(b)-1; i++ {
+		pool[b[i:i+2]]++
+	}
+	shared := 0
+	for i := 0; i < len(a)-1; i++ {
+		if bg := a[i : i+2]; pool[bg] > 0 {
+			pool[bg]--
+			shared++
+		}
+	}
+	return float64(2*shared) / float64(len(a)-1+len(b)-1)
+}
+
+// oneEditApart reports whether a becomes b by one insertion, deletion,
+// substitution, or swap of two neighbouring characters.
+func oneEditApart(a, b string) bool {
+	if a == b {
+		return false
+	}
+	la, lb := len(a), len(b)
+	if la-lb > 1 || lb-la > 1 {
+		return false
+	}
+	i := 0
+	for i < la && i < lb && a[i] == b[i] {
+		i++
+	}
+	switch {
+	case la == lb:
+		if a[i+1:] == b[i+1:] {
+			return true // substitution
+		}
+		return i+1 < la && a[i] == b[i+1] && a[i+1] == b[i] && a[i+2:] == b[i+2:]
+	case la > lb:
+		return a[i+1:] == b[i:]
+	default:
+		return a[i:] == b[i+1:]
+	}
+}
+
+// siblingAction names an action other than self that declares key as a
+// param, or "" when none does. Sorted, so a key two actions share always
+// names the same one.
+func (g *GroupedTool) siblingAction(self, key string) string {
+	k := strings.ToLower(strings.TrimSpace(key))
+	names := make([]string, 0, len(g.actions))
+	for name := range g.actions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if name == self {
+			continue
+		}
+		for p := range g.actions[name].Params {
+			if strings.ToLower(p) == k {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 // GroupedTool implements ChatTool + SessionChatTool. Build via
@@ -521,7 +620,7 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 		// A missing required param is often a TYPO on that very param
 		// (submolt_name → submolta_name, comment_id → parent_id), not an
 		// omission. Name the near-miss so the correction is unmistakable.
-		if hint := def.typoHint(args); hint != "" {
+		if hint := def.typoHint(action, args, func(k string) string { return g.siblingAction(action, k) }); hint != "" {
 			parts = append(parts, hint)
 		}
 		return "", fmt.Errorf("action %q %s (call %q with action=\"help\" for the full param list; re-send the COMPLETE call: every required param in one go)", action, strings.Join(parts, " - "), g.name)

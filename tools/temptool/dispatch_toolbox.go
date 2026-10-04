@@ -54,6 +54,9 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 		}
 		inner[k] = v
 	}
+	// The action's declared defaults, for the same reason dispatchTempTool
+	// fills a plain tool's: the toolbox record itself declares no params.
+	inner = withParamDefaults(inner, act.Params)
 	// Synthesize a single-endpoint api-mode tool. Carries the parent's
 	// Credential + the action's URL/method/body/pipe + the action's
 	// declared params + required list. Name encodes both layers so the

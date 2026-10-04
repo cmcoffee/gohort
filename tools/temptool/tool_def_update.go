@@ -101,12 +101,18 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// it (unless an admin revoked it, which the guard respects). No pre-approval
 	// or edit re-review needed — access follows the tool's own scope.
 
-	// A toolbox has NO top-level url/body/method/etc — those are per-ACTION.
+	// A toolbox has NO top-level url/body/pipe/etc: those are per-ACTION.
 	// Passing one at the top level used to be silently ignored (the "I set
 	// body_template on the toolbox and nothing changed, so I tried again five
 	// times" trap). Reject with a redirect that shows the correct shape.
+	//
+	// params, method, content_type and headers are the exception, the same
+	// one create makes: at the top level they are shared by every action
+	// that does not set its own (see toolboxShared). They pass through to
+	// the create path below, which applies them and says which actions took
+	// them.
 	if existing.Mode == TempToolModeToolbox {
-		for _, f := range []string{"url_template", "command_template", "method", "body_template", "response_pipe", "script_body", "script_name", "params", "required"} {
+		for _, f := range []string{"url_template", "command_template", "body_template", "response_pipe", "script_body", "script_name", "required"} {
 			if _, present := args[f]; present {
 				return "", fmt.Errorf("%q is a PER-ACTION field on a toolbox, not a top-level one: setting it at the top level does nothing. Put it INSIDE the action: actions=[{name:\"<action>\", %s:...}]. Example fixing a reply body: actions=[{name:\"reply_to_comment\", body_template:{\"parent_id\": {comment_id}, \"content\": {content}}}] (unspecified fields on that action are preserved)", f, f)
 			}
@@ -238,6 +244,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// SHELLS OUT to syntax-check the script (py_compile / bash -n). That
 	// subprocess is the most likely place for a long stall — pair this line
 	// with the [sandbox] spawn/exit breadcrumbs to tell them apart.
+	merged[updatingArg] = true
 	stage = "create/persist (may syntax-check the script in a subprocess)"
 	Debug("[tool_def] update %q: entering create path after %s", name, time.Since(t0))
 	res, err := createGrouped(merged, sess)
@@ -257,7 +264,22 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "Updated " + name + " in place. " + res, nil
+	return updatedResult(name, res), nil
+}
+
+// updatedResult words an update's reply. The create path it re-runs reports
+// "Created ...", and under an "Updated X in place." prefix that read as two
+// different things having happened to the tool. A toolbox's create already
+// says "Updated" when it is an update (updatingArg); another mode's
+// "Created" becomes "Updated".
+func updatedResult(name, res string) string {
+	switch {
+	case strings.HasPrefix(res, "Updated "):
+		return res
+	case strings.HasPrefix(res, "Created "):
+		return "Updated " + strings.TrimPrefix(res, "Created ")
+	}
+	return "Updated " + name + " in place. " + res
 }
 
 // securedBindingCreds returns the set of SECURED credentials a tool binds — its

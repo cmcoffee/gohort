@@ -146,6 +146,12 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	if err != nil {
 		return raw, err
 	}
+	// Read the status now, while the raw response still carries it: a pipe or
+	// an extract below replaces it, and a write that worked has to be able to
+	// count as fired. See endpoint_runs.go.
+	if status, _ := splitStatusLine(raw); status != "" {
+		noteEndpointStatus(sess, tt, status)
+	}
 	// A job tool's response is a job to wait out, not the result.
 	if tt.Job != nil {
 		return runAPIJob(sess, tt, urlStr, raw)

@@ -94,3 +94,25 @@ func TestGeminiSystemMessagesBecomeTheInstruction(t *testing.T) {
 		}
 	}
 }
+
+// TestParamDefaultInSchema: a param's default reaches the schema the model
+// reads, so it can leave the param out knowing what it gets, and a param
+// with none carries no "default" key at all.
+func TestParamDefaultInSchema(t *testing.T) {
+	raw := buildToolParamsSchema(Tool{Parameters: map[string]ToolParam{
+		"limit": {Type: "integer", Description: "page size", Default: float64(20)},
+		"q":     {Type: "string", Description: "query"},
+	}})
+	var node struct {
+		Properties map[string]map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &node); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := node.Properties["limit"]["default"]; got != float64(20) {
+		t.Errorf("limit default = %v, want 20; schema %s", got, raw)
+	}
+	if _, has := node.Properties["q"]["default"]; has {
+		t.Errorf("q has no default and must not carry the key; schema %s", raw)
+	}
+}

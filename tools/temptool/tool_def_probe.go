@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -169,10 +170,39 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 	if !netOK {
 		b.WriteString("(network is blocked this turn: running OFFLINE checks only; read endpoints are not live-probed.)\n\n")
 	}
-	failCount, writeManual, emptyRead, gatedManual := 0, 0, 0, 0
+	failCount, writeManual, emptyRead, gatedManual, unprobedRead := 0, 0, 0, 0, 0
 	// The failure kinds this run found, for the build ledger. One token per
 	// kind of check, never the endpoint's own words.
 	var failClasses []string
+	// Dispatch names of the writes this run could not count as fired, for
+	// noteEndpointStatus to settle when a direct call fires them.
+	var unfired []string
+
+	// A case naming no endpoint was dropped without a word, so the endpoint
+	// it was written for ran with no case at all and the author read that as
+	// covered. Say so, and fail the run: what the case was meant to test
+	// never ran.
+	badCases := 0
+	{
+		known := make(map[string]bool, len(endpoints))
+		var names []string
+		for _, ep := range endpoints {
+			known[strings.ToLower(ep.Name)] = true
+			names = append(names, ep.Name)
+		}
+		var stray []string
+		for key := range cases {
+			if key != "" && !known[key] {
+				stray = append(stray, key)
+			}
+		}
+		sort.Strings(stray)
+		for _, key := range stray {
+			fmt.Fprintf(&b, "[FAIL] case action=%q: this tool has no endpoint by that name, so the case never ran. Endpoints: %s.\n\n", key, strings.Join(names, ", "))
+			failClasses = append(failClasses, "case-unknown-action")
+			badCases++
+		}
+	}
 
 	for _, ep := range endpoints {
 		method := strings.ToUpper(strings.TrimSpace(ep.Method))
@@ -185,13 +215,16 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 		// misclassified as a write, so verify refused to fire it and the model
 		// punted a manual call to the user for a plain read.
 		isRead := method == "GET" || method == "HEAD" || method == "REPORT" || method == "PROPFIND" || method == "SEARCH"
-		sample := cases[strings.ToLower(ep.Name)]
+		sample, labeled := cases[strings.ToLower(ep.Name)]
 		if sample == nil {
-			sample = cases[""] // single-api-tool convenience: unlabeled case
+			// Unlabeled case: meant for this endpoint when the tool is a
+			// single api tool, shared by every action of a toolbox.
+			sample = cases[""]
+			labeled = sample != nil && len(endpoints) == 1 && effectiveTempToolMode(tt) != TempToolModeToolbox
 		}
 
 		var lines []string
-		epFail := false
+		epFail, epUnproven := false, false
 		fail := func(class, f string, a ...any) {
 			lines = append(lines, "FAIL  "+fmt.Sprintf(f, a...))
 			epFail = true
@@ -199,6 +232,37 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 		}
 		pass := func(f string, a ...any) { lines = append(lines, "ok    "+fmt.Sprintf(f, a...)) }
 		note := func(f string, a ...any) { lines = append(lines, "note  "+fmt.Sprintf(f, a...)) }
+
+		// A case arg this endpoint does not declare never reaches the call:
+		// substitution only fills declared params. An optional param spelled
+		// wrong in a case was therefore just absent, the probe ran without
+		// it, and the endpoint PASSed with the value the author meant to test
+		// never sent. Fail the case and name the param it was probably meant
+		// to be. A shared unlabeled case on a toolbox is exempt: it is not
+		// written for any one action.
+		badCase := false
+		if labeled {
+			nearest := &GroupedToolAction{Params: ep.Params}
+			var keys []string
+			for k := range sample {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				if _, declared := lookupParamCI(ep.Params, k); declared {
+					continue
+				}
+				badCase = true
+				hint := "."
+				if near := nearest.NearestParamName(k); near != "" {
+					hint = fmt.Sprintf(": did you mean %q?", near)
+				}
+				fail("case-unknown-arg", "case arg %q is not a param of %s%s Declared: %s. Nothing was sent for this case; fix the case and re-run.", k, ep.Name, hint, strings.Join(sortedParamNames(ep.Params), ", "))
+			}
+		}
+		// Declared defaults fill what the case leaves out, as dispatch fills
+		// them for a real call, so the probe sends what the tool will send.
+		sample = withParamDefaults(sample, ep.Params)
 
 		// A. Every required param must be SENT somewhere. This is the
 		//    deterministic, offline catch for the "content must be a
@@ -234,7 +298,9 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 				epCT = tt.ContentType
 			}
 			rawBody := epCT != "" && !isJSONContentType(epCT)
-			if coversRequired(sample, ep.Required) {
+			if badCase {
+				// Reported above; rendering without the misnamed arg proves nothing.
+			} else if coversRequired(sample, ep.Required) {
 				if rawBody {
 					if _, err := substituteRaw(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
 						fail("body-render", "body_template render failed: %v", err)
@@ -266,11 +332,17 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 		//    real body. WRITE endpoints are never auto-fired.
 		if isRead {
 			switch {
+			case badCase:
+				// Reported above. Probing without the misnamed arg is the
+				// false PASS this check exists to stop.
 			case !netOK:
 				note("read endpoint NOT live-probed: network is blocked this turn (private mode); offline checks only")
+				unprobedRead++
+				epUnproven = true
 			case gated:
 				note("read endpoint NOT live-probed: this tool asks for confirmation before each call, and test does not fire it past that. Call %s directly once so the confirmation applies: a 2xx from that call counts as verified.", tt.Name)
 				gatedManual++
+				epUnproven = true
 			case coversRequired(sample, ep.Required):
 				status, body, derr := liveProbe(sess, tt.Credential, ep, sample)
 				switch {
@@ -305,17 +377,32 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 					}
 				}
 			default:
-				note("read endpoint NOT live-probed: no sample args for required %v (pass a case with real values to hit the live API)", ep.Required)
+				// Not a PASS: nothing proved this endpoint works, and a
+				// toolbox whose reads all went unprobed used to come out
+				// "all endpoints passed. Tool verified."
+				note("read endpoint NOT live-probed: no value for required %v. To probe it, pass cases=[{%sargs:{%s}}] with real values.", ep.Required, caseActionPrefix(tt, ep), sampleArgsHint(ep.Required))
+				unprobedRead++
+				epUnproven = true
 			}
+		} else if at, fired := endpointFired(sess, endpointTool(tt, ep)); fired {
+			// A direct call already answered 2xx, and the endpoint is the
+			// same one since. Re-running test used to set it back to
+			// "never fired".
+			pass("write endpoint answered a direct %s call with a 2xx at %s: counted as fired", method, at.Format("15:04:05"))
 		} else {
 			note("write endpoint NOT auto-fired: make ONE manual %s call and confirm a 2xx before calling this done", method)
 			writeManual++
+			epUnproven = true
+			unfired = append(unfired, endpointTool(tt, ep).Name)
 		}
 
 		verdict := "PASS"
-		if epFail {
+		switch {
+		case epFail:
 			verdict = "FAIL"
 			failCount++
+		case epUnproven:
+			verdict = "UNPROVEN"
 		}
 		fmt.Fprintf(&b, "[%s] %s (%s)\n", verdict, ep.Name, method)
 		for _, l := range lines {
@@ -339,9 +426,20 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 	if emptyRead > 0 {
 		unproven = append(unproven, "read-empty")
 	}
+	if unprobedRead > 0 {
+		unproven = append(unproven, "read-unprobed")
+	}
+	// Only writes stand between the tool and verified: a direct call that
+	// fires the last of them verifies it (noteEndpointStatus). Anything else
+	// still open needs another test, so no write is left waiting.
+	if failCount == 0 && badCases == 0 && len(unproven) == 1 && writeManual > 0 {
+		setUnfiredWrites(sess, name, unfired)
+	} else {
+		setUnfiredWrites(sess, name, nil)
+	}
 	switch {
-	case failCount > 0:
-		recordTestOutcome(sess, name, buildledger.Fail, failClasses, fmt.Sprintf("%d of %d endpoint(s) failed", failCount, len(endpoints)))
+	case failCount > 0 || badCases > 0:
+		recordTestOutcome(sess, name, buildledger.Fail, failClasses, fmt.Sprintf("%d of %d endpoint(s) failed, %d case(s) named no endpoint", failCount, len(endpoints), badCases))
 	case len(unproven) > 0:
 		recordTestOutcome(sess, name, buildledger.Unproven, unproven, "checks passed; not every endpoint was proven live")
 	default:
@@ -351,18 +449,31 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 	case failCount > 0:
 		RecordToolVerification(sess, name, false, fmt.Sprintf("%d of %d endpoint(s) FAILED verification", failCount, len(endpoints)))
 		fmt.Fprintf(&b, "RESULT: %d of %d endpoint(s) FAILED. Fix each with tool_def(action=\"update\", actions=[{name, ...}]) and re-run test until green. Do NOT call this tool done or hand it to a user while any endpoint is FAIL.", failCount, len(endpoints))
+	case badCases > 0:
+		RecordToolVerification(sess, name, false, fmt.Sprintf("%d test case(s) named no endpoint of the tool", badCases))
+		fmt.Fprintf(&b, "RESULT: FAILED. %d case(s) named no endpoint of this tool, so what they were written to test never ran. Fix each case's action to an endpoint name above and re-run.", badCases)
 	case gatedManual > 0:
 		RecordToolVerification(sess, name, false, fmt.Sprintf("%d read endpoint(s) not fired: the tool needs confirmation, so it needs one direct call", gatedManual))
 		b.WriteString("RESULT: offline checks passed. The tool asks for confirmation before each call, so test did not fire it: make one direct call, confirm it, and check for a 2xx.")
 	case writeManual > 0:
 		RecordToolVerification(sess, name, false, fmt.Sprintf("%d write endpoint(s) never fired: needs one manual live call each to confirm a 2xx", writeManual))
 		fmt.Fprintf(&b, "RESULT: all automated checks passed. %d write endpoint(s) still need ONE manual live call each: fire one, confirm a 2xx, then it's done.", writeManual)
+		if unprobedRead > 0 {
+			fmt.Fprintf(&b, " %d read endpoint(s) were never called either: pass a case for each (the UNPROVEN lines above say which args) and re-run.", unprobedRead)
+		}
 	case emptyRead > 0:
 		// Checks passed, but every read came back empty — the tool is
 		// UNPROVEN, not verified. Signing it off here is what let a list tool
 		// that could never return a row ship as "verified".
 		RecordToolVerification(sess, name, false, fmt.Sprintf("%d read endpoint(s) returned 2xx with zero records: not proven to return data", emptyRead))
 		fmt.Fprintf(&b, "RESULT: the request shape is valid, but %d read endpoint(s) came back EMPTY, nothing here proves the tool returns data. Point a case at a record you KNOW exists and re-run; if it is still empty, the query (filter, date range, headers) is wrong, not the plumbing.", emptyRead)
+	case unprobedRead > 0:
+		RecordToolVerification(sess, name, false, fmt.Sprintf("%d read endpoint(s) never live-probed", unprobedRead))
+		if !netOK {
+			fmt.Fprintf(&b, "RESULT: offline checks passed, but the network is blocked this turn, so %d read endpoint(s) were never called: the tool is NOT verified. Re-run test in a turn with the network on.", unprobedRead)
+		} else {
+			fmt.Fprintf(&b, "RESULT: offline checks passed, but %d read endpoint(s) were never called, so nothing proves they work: the tool is NOT verified. Pass a case for each (the UNPROVEN lines above say which args) and re-run.", unprobedRead)
+		}
 	default:
 		RecordToolVerification(sess, name, true, "")
 		b.WriteString("RESULT: all endpoints passed. Tool verified.")
@@ -404,6 +515,11 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 	sample := cases[strings.ToLower(tt.Name)]
 	if sample == nil {
 		sample = cases[""] // single-tool convenience: unlabeled case
+	}
+	// Defaults fill a case, never stand in for one: with no case at all the
+	// tool does not run, whatever its defaults would have made of it.
+	if sample != nil {
+		sample = withParamDefaults(sample, tt.Params)
 	}
 
 	var lines []string
@@ -745,6 +861,52 @@ func coversRequired(sample map[string]any, required []string) bool {
 	return true
 }
 
+// lookupParamCI finds a declared param by name, ignoring case, as dispatch
+// matches args to params.
+func lookupParamCI(params map[string]ToolParam, key string) (ToolParam, bool) {
+	if p, ok := params[key]; ok {
+		return p, true
+	}
+	for name, p := range params {
+		if strings.EqualFold(name, key) {
+			return p, true
+		}
+	}
+	return ToolParam{}, false
+}
+
+// sortedParamNames lists an endpoint's params for a report line, or "none".
+func sortedParamNames(params map[string]ToolParam) []string {
+	names := make([]string, 0, len(params))
+	for name := range params {
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return []string{"none"}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// caseActionPrefix is the `action:"x", ` a case needs to reach this endpoint:
+// empty for a single api tool, whose cases name no action.
+func caseActionPrefix(tt TempTool, ep TempToolAction) string {
+	if effectiveTempToolMode(tt) != TempToolModeToolbox {
+		return ""
+	}
+	return fmt.Sprintf("action:%q, ", ep.Name)
+}
+
+// sampleArgsHint renders required params as `a:"<a>", b:"<b>"` for a case
+// the author can copy.
+func sampleArgsHint(required []string) string {
+	parts := make([]string, 0, len(required))
+	for _, r := range required {
+		parts = append(parts, fmt.Sprintf("%s:\"<%s>\"", r, r))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // liveProbe dispatches an endpoint for real with its response_pipe
 // CLEARED, so the raw "HTTP <code>\n<body>" comes back for status
 // classification and for running the pipe separately against the true
@@ -918,6 +1080,8 @@ func rememberToolTest(sess *ToolSession, name, fp, out string) {
 // the tool back exactly as it was from answering with a stale result.
 func forgetToolTest(sess *ToolSession, name string) {
 	toolTestRunsMu.Lock()
-	defer toolTestRunsMu.Unlock()
 	delete(toolTestRuns, toolTestKey(sess, name))
+	toolTestRunsMu.Unlock()
+	// Writes the last test left waiting belong to the tool as it was then.
+	setUnfiredWrites(sess, name, nil)
 }

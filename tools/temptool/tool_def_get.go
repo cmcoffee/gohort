@@ -126,6 +126,12 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		return fmt.Sprintf("source: ORPHANED, this tool is NOT callable right now. Its last carrying agent (%s) was deleted, which removed the tool from every agent's catalog; the definition below survived. To make it callable again, re-home it (Admin › Orphaned Tools) or re-create it with action=\"create\" using the definition below. Tell the user it needs re-homing rather than working around it.\n%s",
 			former, string(body)), nil
 	}
+	// A built-in is not missing, it was never tool_def's to hold. "No tool
+	// found" about one the model can see in its catalog sent it searching
+	// every pool again, and then concluding the tool was gone.
+	if _, builtin := LookupChatTool(name); builtin || IsReservedToolName(name) {
+		return fmt.Sprintf("%q is a built-in framework tool, not one defined with tool_def, so there is no definition to read or edit here. Call it directly; its schema in your tool list is the whole interface.", name), nil
+	}
 	return "", fmt.Errorf("no tool found with name %q (checked active pool, pending queue, session drafts, live session tools, your other agents' bundled tools, and the orphan pool)", name)
 }
 
@@ -320,6 +326,12 @@ func unlandedUpdateWarning(sess *ToolSession, name string, args map[string]any) 
 	for _, f := range []string{"description", "url_template", "command_template", "method", "body_template", "content_type", "response_pipe", "response_extract", "category", "credential"} {
 		want, passed := args[f]
 		if !passed {
+			continue
+		}
+		// On a toolbox these are shared values that land on the actions, not
+		// the record's top level, and the create result already says which
+		// actions took them (toolboxShared.report).
+		if after.Mode == TempToolModeToolbox && (f == "method" || f == "content_type") {
 			continue
 		}
 		wantStr, isStr := want.(string)

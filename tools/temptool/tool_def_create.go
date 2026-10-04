@@ -302,6 +302,10 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	if len(actionsList) == 0 {
 		return "", fmt.Errorf("actions must contain at least one sub-action (a toolbox with no actions is just an unbuilt api tool: use mode=\"api\" instead)")
 	}
+	shared, err := readToolboxShared(args)
+	if err != nil {
+		return "", err
+	}
 	actions := make([]TempToolAction, 0, len(actionsList))
 	seen := make(map[string]bool, len(actionsList))
 	var scaffoldedActions []string // write actions we auto-gave a body_template
@@ -330,6 +334,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		if err != nil {
 			return "", fmt.Errorf("actions[%d] (%q): params: %w", i, actName, err)
 		}
+		actParams = shared.paramsFor(actName, actParams)
 		actRequired := stringSliceArg(m["required"])
 		// Distinguish "required omitted" (fall back to what the framework can
 		// PROVE is required — see defaultRequiredParams) from an EXPLICIT empty
@@ -349,7 +354,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 				}
 			}
 		}
-		method := strings.TrimSpace(StringArg(m, "method"))
+		method := shared.methodFor(actName, strings.TrimSpace(StringArg(m, "method")))
 		if method == "" {
 			method = "GET"
 		}
@@ -410,8 +415,8 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			URLTemplate:     urlTpl,
 			Method:          method,
 			BodyTemplate:    bodyTpl,
-			ContentType:     strings.TrimSpace(StringArg(m, "content_type")),
-			Headers:         stringMapArg(m, "headers"),
+			ContentType:     shared.contentTypeFor(actName, strings.TrimSpace(StringArg(m, "content_type"))),
+			Headers:         shared.headersFor(actName, stringMapArg(m, "headers")),
 			ResponsePipe:    strings.TrimSpace(StringArg(m, "response_pipe")),
 			ResponseExtract: ParseExtractSpec(m["response_extract"]),
 			Disabled:        BoolArg(m, "disabled"),
@@ -441,10 +446,151 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	_ = BoolArg(args, "persist") // ignored — same as other modes
 	msg := fmt.Sprintf("Created toolbox tool %q with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...).",
 		name, len(actions), actionNames(actions), name)
+	if BoolArg(args, updatingArg) {
+		msg = fmt.Sprintf("Updated toolbox %q in place with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...).",
+			name, len(actions), actionNames(actions), name)
+	}
+	if line := shared.report(); line != "" {
+		msg += " " + line
+	}
 	if len(scaffoldedActions) > 0 {
 		msg += fmt.Sprintf(" NOTE: for write action(s) %v I auto-added a body_template whose JSON keys are your PARAM NAMES, that is a GUESS at the API's body schema, not a verified fact. If the API expects different field names (a common case: it wants \"parent_id\" for a comment_id value), the live call will 4xx. Override with an explicit body_template via action=\"update\", mapping each value with its {param} placeholder: e.g. body_template={\"parent_id\": {comment_id}, \"content\": {content}}. Verify the field names against the API docs before relying on these actions.", scaffoldedActions)
 	}
 	return msg, nil
+}
+
+// updatingArg marks a create that is really update re-running the create
+// path, so the result says "Updated" and not "Created". Underscored like the
+// other internal keys, so no declared param collides.
+const updatingArg = "__updating"
+
+// toolboxShared is what a toolbox call put at the TOP level that belongs to
+// its actions: params, method, content_type and headers.
+//
+// Those were read per action only, so a model that declared params once at
+// the top, the way the tool's own create schema lists them, got
+// `url_template: placeholder {q} not in params` on every action, and rebuilt
+// the same call five to eleven times a build without learning why. A
+// top-level value is now shared: every action that does not set its own
+// takes it, and an action's own param or header of the same name wins.
+//
+// took records which actions took what, so the result can say so: an update
+// whose top-level value every action already overrides changes nothing, and
+// has to say that rather than look like it landed.
+type toolboxShared struct {
+	params      map[string]ToolParam
+	method      string
+	contentType string
+	headers     map[string]string
+	took        map[string][]string // field -> actions that took it
+}
+
+// readToolboxShared reads the top-level shared fields of a toolbox call.
+func readToolboxShared(args map[string]any) (*toolboxShared, error) {
+	params, err := parseParamsArg(args["params"])
+	if err != nil {
+		return nil, fmt.Errorf("params (top level, shared by every action): %w", err)
+	}
+	return &toolboxShared{
+		params:      params,
+		method:      strings.TrimSpace(StringArg(args, "method")),
+		contentType: strings.TrimSpace(StringArg(args, "content_type")),
+		headers:     stringMapArg(args, "headers"),
+		took:        map[string][]string{},
+	}, nil
+}
+
+func (ts *toolboxShared) note(field, action string) {
+	ts.took[field] = append(ts.took[field], action)
+}
+
+// paramsFor adds the shared params the action does not declare itself.
+func (ts *toolboxShared) paramsFor(action string, own map[string]ToolParam) map[string]ToolParam {
+	if len(ts.params) == 0 {
+		return own
+	}
+	out := make(map[string]ToolParam, len(own)+len(ts.params))
+	added := false
+	for name, p := range ts.params {
+		if _, mine := own[name]; !mine {
+			out[name] = p
+			added = true
+		}
+	}
+	for name, p := range own {
+		out[name] = p
+	}
+	if added {
+		ts.note("params", action)
+	}
+	return out
+}
+
+func (ts *toolboxShared) methodFor(action, own string) string {
+	if own != "" || ts.method == "" {
+		return own
+	}
+	ts.note("method", action)
+	return ts.method
+}
+
+func (ts *toolboxShared) contentTypeFor(action, own string) string {
+	if own != "" || ts.contentType == "" {
+		return own
+	}
+	ts.note("content_type", action)
+	return ts.contentType
+}
+
+// headersFor adds the shared headers the action does not set itself.
+func (ts *toolboxShared) headersFor(action string, own map[string]string) map[string]string {
+	if len(ts.headers) == 0 {
+		return own
+	}
+	out := make(map[string]string, len(own)+len(ts.headers))
+	added := false
+	for k, v := range ts.headers {
+		if _, mine := own[k]; !mine {
+			out[k] = v
+			added = true
+		}
+	}
+	for k, v := range own {
+		out[k] = v
+	}
+	if added {
+		ts.note("headers", action)
+	}
+	return out
+}
+
+// report is the one line the create result carries about the shared fields,
+// or "" when the call set none.
+func (ts *toolboxShared) report() string {
+	given := map[string]bool{
+		"params":       len(ts.params) > 0,
+		"method":       ts.method != "",
+		"content_type": ts.contentType != "",
+		"headers":      len(ts.headers) > 0,
+	}
+	var applied, unused []string
+	for _, f := range []string{"params", "method", "content_type", "headers"} {
+		switch {
+		case !given[f]:
+		case len(ts.took[f]) > 0:
+			applied = append(applied, fmt.Sprintf("%s to %s", f, strings.Join(ts.took[f], ", ")))
+		default:
+			unused = append(unused, f)
+		}
+	}
+	var parts []string
+	if len(applied) > 0 {
+		parts = append(parts, "Top-level values are shared by every action that does not set its own: applied "+strings.Join(applied, "; ")+".")
+	}
+	if len(unused) > 0 {
+		parts = append(parts, fmt.Sprintf("Top-level %s changed no action: every action sets its own. To change one action, pass actions=[{name, ...}].", strings.Join(unused, ", ")))
+	}
+	return strings.Join(parts, " ")
 }
 
 // scaffoldBodyTemplate builds a flat JSON body template carrying each param as

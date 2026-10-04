@@ -362,3 +362,58 @@ func TestOnlyTrackedToolsReportTheirOutcomes(t *testing.T) {
 		t.Fatalf("tracked = %v", seen)
 	}
 }
+
+// TestGroupedTool_NoLookAlikeForShortKey pins the scoring fix: "cases"
+// shares two bigrams with "hook_capabilities" ("ca", "es"), which the old
+// supplied-key-only overlap took for a near miss. Scored against both
+// lengths it is nowhere close, while real typos, including a stray digit
+// and a transposition, still resolve.
+func TestGroupedTool_NoLookAlikeForShortKey(t *testing.T) {
+	def := &GroupedToolAction{Params: map[string]ToolParam{
+		"description":       {Type: "string"},
+		"hook_capabilities": {Type: "array"},
+		"from_currency":     {Type: "string"},
+		"title":             {Type: "string"},
+	}}
+	if got := def.nearestParamName("cases"); got != "" {
+		t.Errorf("cases matched %q; want no suggestion", got)
+	}
+	for key, want := range map[string]string{
+		"from1_currency": "from_currency",
+		"titel":          "title",
+		"descripton":     "description",
+	} {
+		if got := def.NearestParamName(key); got != want {
+			t.Errorf("%s: got %q, want %q", key, got, want)
+		}
+	}
+}
+
+// TestGroupedTool_KeyOfSiblingActionNamed: a key that is a real param of
+// another action is named as that action's, not passed through a look-alike
+// guess. Observed: create called with cases (a param of test) was told
+// "did you mean hook_capabilities?".
+func TestGroupedTool_KeyOfSiblingActionNamed(t *testing.T) {
+	gt := NewGroupedTool("tool_def", "manage tools")
+	ok := func(map[string]any, *ToolSession) (string, error) { return "ok", nil }
+	gt.AddAction("create", &GroupedToolAction{
+		Params:   map[string]ToolParam{"description": {Type: "string"}, "hook_capabilities": {Type: "array"}},
+		Required: []string{"description"},
+		Handler:  ok,
+	})
+	gt.AddAction("test", &GroupedToolAction{
+		Params:  map[string]ToolParam{"cases": {Type: "array"}},
+		Handler: ok,
+	})
+	_, err := gt.Run(map[string]any{"action": "create", "cases": []any{}})
+	if err == nil {
+		t.Fatal("expected a missing-param error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `"cases", which belongs to action="test"`) {
+		t.Errorf("want the sibling action named; got: %s", msg)
+	}
+	if strings.Contains(msg, "hook_capabilities") {
+		t.Errorf("must not guess a look-alike for a sibling's param; got: %s", msg)
+	}
+}

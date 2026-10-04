@@ -797,6 +797,32 @@ Each action is structurally a single api-mode endpoint: same URL
 template substitution, same method/body_template/response_pipe
 semantics. The toolbox is a packaging primitive on top.
 
+Shared fields: params, method, content_type and headers may also be
+given at the TOP level, beside actions. A top-level value is shared
+by every action unless the action sets its own: an action's own
+param or header of the same name wins, and its own method or
+content_type replaces the shared one. The reply names which actions
+took each shared value. The same holds on action="update". Every
+other field (url_template, body_template, response_pipe, required)
+is per-action only.
+
+    tool_def(action="create", mode="toolbox", name="search_api",
+             description="Search and page a catalog.",
+             params={"limit": {"type": "integer",
+                               "description": "page size",
+                               "default": 20}},
+             actions=[
+               {name: "search",
+                url_template: "https://api.example.com/search?q={q}&limit={limit}",
+                params: {"q": {"type": "string"}}},
+               {name: "recent",
+                url_template: "https://api.example.com/recent?limit={limit}"}
+             ])
+
+A param's "default" is sent when the caller leaves the param out
+(or sends it empty), so an API that rejects a request without
+limit still gets one. A string, number or boolean.
+
 Why toolbox over N api-mode tools:
   * One catalog entry (the toolbox name) vs N (gh_get_user,
     gh_get_repo, ...). Much cleaner when the catalog is already

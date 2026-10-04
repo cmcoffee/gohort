@@ -204,6 +204,13 @@ func coerceToolParam(val any) (ToolParam, error) {
 		if p.Type == "" {
 			p.Type = "string" // object with a description but no type → default
 		}
+		if raw, set := t["default"]; set && raw != nil {
+			d, err := paramDefault(raw)
+			if err != nil {
+				return ToolParam{}, err
+			}
+			p.Default = d
+		}
 		return p, nil
 	case string:
 		if ct := canonicalParamType(t); ct != "" {
@@ -213,6 +220,86 @@ func coerceToolParam(val any) (ToolParam, error) {
 	default:
 		return ToolParam{Type: "string"}, nil // bool/number/null placeholder
 	}
+}
+
+// paramDefault checks a param's declared default. Kept, not dropped: it used
+// to vanish here, so an omitted optional param left the URL entirely and an
+// API that needed it answered 400 to every call that took the schema at its
+// word. Scalars only. The record is gob-encoded, and a list or an object in
+// an interface field would fail the whole save; nor does either have a
+// meaning in a URL or a single body field.
+func paramDefault(v any) (any, error) {
+	switch d := v.(type) {
+	case string, bool, float64:
+		return d, nil
+	case int:
+		return float64(d), nil
+	case int64:
+		return float64(d), nil
+	case json.Number:
+		f, err := d.Float64()
+		if err != nil {
+			return nil, fmt.Errorf("default %q is not a number", d.String())
+		}
+		return f, nil
+	}
+	return nil, fmt.Errorf("default must be a string, number or boolean (got %T)", v)
+}
+
+// withParamDefaults returns args with each declared default filled in for a
+// param the caller left out, sent as null, or sent as an empty string. args
+// itself is not modified; when nothing needs filling it comes back as is.
+// Matched case-insensitively, like every other arg lookup in dispatch, so a
+// "Limit" from the model is not mistaken for an omission.
+func withParamDefaults(args map[string]any, params map[string]ToolParam) map[string]any {
+	var out map[string]any
+	for name, p := range params {
+		if p.Default == nil {
+			continue
+		}
+		if v, ok := lookupArgCI(args, name); ok && v != nil {
+			if s, isStr := v.(string); !isStr || strings.TrimSpace(s) != "" {
+				continue
+			}
+		}
+		if out == nil {
+			out = make(map[string]any, len(args)+1)
+			for k, v := range args {
+				out[k] = v
+			}
+		}
+		for k := range out {
+			if strings.EqualFold(k, name) {
+				delete(out, k) // the empty one, under whatever casing it came in
+			}
+		}
+		out[name] = p.Default
+	}
+	if out == nil {
+		return args
+	}
+	return out
+}
+
+// undefaulted drops from a required list every param that declares a default.
+// Dispatch fills a default before it checks what is required, but the schema
+// and the grouped tool's own check run first: left in, a param with a default
+// is one the caller is told it must send and is refused for omitting, which
+// is exactly the call the default exists to make work.
+func undefaulted(required []string, params map[string]ToolParam) []string {
+	var out []string
+	dropped := false
+	for _, r := range required {
+		if p, ok := params[r]; ok && p.Default != nil {
+			dropped = true
+			continue
+		}
+		out = append(out, r)
+	}
+	if !dropped {
+		return required
+	}
+	return out
 }
 
 // canonicalParamType maps a loosely-specified type to one of the four supported

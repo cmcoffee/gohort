@@ -226,7 +226,7 @@ func perActionToolDef(sess *ToolSession, tt *TempTool, act TempToolAction) Agent
 			Name:        tt.Name + "_" + act.Name,
 			Description: desc,
 			Parameters:  act.Params,
-			Required:    act.Required,
+			Required:    undefaulted(act.Required, act.Params),
 			Caps:        []Capability{CapNetwork, CapExecute},
 			Category:    tt.Category, // expanded actions inherit the toolbox's claimed category
 		},
@@ -297,7 +297,7 @@ func newToolboxGroupedTool(tt *TempTool) *GroupedTool {
 		gt.AddAction(act.Name, &GroupedToolAction{
 			Description: act.Description,
 			Params:      act.Params,
-			Required:    liveRequired(act),
+			Required:    undefaulted(liveRequired(act), act.Params),
 			Caps:        []Capability{CapNetwork, CapExecute}, // api-mode + response_pipe
 			Handler: func(args map[string]any, s *ToolSession) (string, error) {
 				// Re-attach the action key so the toolbox dispatcher
@@ -520,7 +520,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			Name:        tt.Name,
 			Description: tt.Description + descSuffix,
 			Parameters:  tt.Params,
-			Required:    tt.Required,
+			Required:    undefaulted(tt.Required, tt.Params),
 			Caps:        caps,
 			Category:    tt.Category, // the claimed grouping label rides onto the runtime def
 			// A script fetching through the hooks returns outside content,
@@ -606,7 +606,13 @@ func recordCleanRun(sess *ToolSession, tt *TempTool, out string, err error) {
 	if err != nil || sess == nil || tt == nil {
 		return
 	}
-	if rc := CheckRun(*tt, out); rc.Known && rc.OK {
+	rc := CheckRun(*tt, out)
+	if !rc.Known && effectiveTempToolMode(*tt) == TempToolModeAPI {
+		// A pipe or an extract replaced the status line in the output, but
+		// dispatch read it first. See endpoint_runs.go.
+		rc.OK, rc.Known = lastCallSucceeded(sess, tt)
+	}
+	if rc.Known && rc.OK {
 		RecordToolVerification(sess, tt.Name, true, "")
 	}
 }

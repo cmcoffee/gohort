@@ -333,6 +333,13 @@ type ToolParam struct {
 	// where new ones appearing without ceremony is the whole point. See
 	// core/path_scope.go.
 	PathScope string `json:"path_scope,omitempty"`
+	// Default is the value an omitted optional param takes when the tool
+	// runs. Without it an optional query param the model leaves out drops
+	// out of the URL entirely, and an API that needs it (a page size, say)
+	// answers 400 to every call that took the schema at its word. A string,
+	// number or boolean only: the record is gob-encoded, and those are the
+	// types gob can carry in an interface without registration.
+	Default any `json:"default,omitempty"`
 }
 
 // buildParamSchema converts a ToolParam into a JSON Schema map suitable for
@@ -345,6 +352,12 @@ func buildParamSchema(p ToolParam) map[string]interface{} {
 	}
 	if len(p.Enum) > 0 {
 		schema["enum"] = p.Enum
+	}
+	// Shown so the model can leave the param out knowingly instead of
+	// guessing a value, or sending one only because it cannot tell what an
+	// omission does.
+	if p.Default != nil {
+		schema["default"] = p.Default
 	}
 	if p.Items != nil {
 		schema["items"] = buildParamSchema(*p.Items)

@@ -165,6 +165,11 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 	if sess == nil {
 		return "", fmt.Errorf("temp tool %q requires a session", tt.Name)
 	}
+	// Declared defaults first, so everything below (the required check, the
+	// cache key, url and body substitution) sees the call the tool will
+	// actually make. A toolbox declares its params per action; those are
+	// filled where the action is resolved.
+	args = withParamDefaults(args, tt.Params)
 	// Required-arg check (applies to both modes). Case-insensitive
 	// lookup: LLMs sometimes emit "URL" when the tool defines "url"
 	// (or vice versa), and we'd rather accept the call than block
