@@ -109,8 +109,13 @@ its row says so. While it runs, its stages show above "What it is doing"
 the live indicator and on the Monitor page like any other work using the
 models.
 
-The **Prompts** tab is for hand edits to something specific: **Prompt
-overrides** is the editor. Its **Check** asks the worker and the lead what
+Hand edits to something specific are in **Prompt overrides**, the editor
+below Optimize on the same LLMs tab: a model's prompts are part of the
+model, and a hand edit and Optimize write the same per-model wording. It
+opens on what both models read, with the Worker and Lead versions above, so
+a block is split only when a change is saved to one model's version; the
+block list marks each block a worker or lead reads its own wording in. Its
+**Check** asks the worker and the lead what
 the open block tells them to do (for a tool's description, when they would
 reach for it first; for a parameter's, what they would put in it), each
 reading the wording it would be sent, side by side. With the tuning harness
@@ -256,7 +261,7 @@ by all of it.
 The harness lives in the live server: the Optimize section on the admin
 LLMs tab (a row per model, and the latest friction report), Details behind
 it, the Friction report app at `/friction`, and Check in the Prompt
-overrides editor on the Prompts tab. It starts the
+overrides editor below Optimize. It starts the
 sandbox and drives it over HTTP: Builder is given each
 task through the ordinary chat endpoint, the harness answering its
 confirmation cards as a person would, and the tier is pinned by the
@@ -359,8 +364,8 @@ is, and Undo takes the whole run back at once.
 How Builder builds is decided as much by the descriptions of the tools it
 builds with as by its prompt: when to make a machine and when a pipeline,
 what a tool definition needs before it is done. So the shipped framework and
-authoring tools' descriptions are blocks, keyed `tool.<name>`, on the Prompts
-page beside the rest (`core/prompts/tool_desc.go`, the names in
+authoring tools' descriptions are blocks, keyed `tool.<name>`, in Prompt
+overrides beside the rest (`core/prompts/tool_desc.go`, the names in
 `apps/orchestrate/tunable_tools.go`). Each block's text is the description
 the code ships, seen the first time the tool goes out and remembered across
 restarts; an edit, for every tier or for one, replaces the description in
