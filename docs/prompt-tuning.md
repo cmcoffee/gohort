@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.352). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.353). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -418,6 +418,16 @@ every call that offers the tool, at the same handle the per-tier swap uses.
   are not listed, and any listed tool whose description keeps changing
   between calls drops out of the editable set with a log line saying so,
   since one edit would overwrite what each caller was meant to read.
+- **Only tools the suite measures for everyone who reads them.** A tool
+  other agents use for their own work (scheduling, run inspection, sessions,
+  fetching) is left out even when Builder misuses it during builds: the
+  suite measures Builder alone, so an edit fitted to "Builder should not
+  reach for this to try something" could change how every other agent uses
+  it, with nothing watching. Builder's misuse is fixed where only Builder
+  reads it, in its own prompt block, which Optimize already edits. Such a
+  tool joins the list once its own users have a suite (decided 2026-10-04,
+  after the first friction report showed create_standing_agent, list_runs,
+  inspect_run, open_session and fetch_url misused in builds).
 - **Parameters too.** Each top-level parameter of a named tool is a block of
   its own, `tool.<name>.<param>`: the parameter descriptions carry much of
   the how (app_def's sections and data sources, a machine's phases). They
@@ -430,6 +440,17 @@ The proposer is told that a `tool.<name>` block is the description of that
 tool, to be edited when a failure is a wrong choice of tool, and a
 `tool.<name>.<param>` block a parameter's, when the tool was right and the
 call was filled in wrong.
+
+**Shorter is rewarded, not just allowed.** Tool schemas and prompt blocks
+are about 44k tokens, some 82% of every Builder call, so a shorter block
+makes every turn of every agent faster and cheaper. The growth cap only
+stops prompts getting longer, and `compress` was only ever chosen to fix a
+failure. So after each confirmed pass a run trims: it shortens the longest
+blocks it may edit, builds the whole suite once more, and keeps the cuts
+only if no build is lost (no worse, rather than better), taking them back
+one at a time otherwise. A setting turns it off; it costs one more
+whole-suite run per pass and is skipped when the budget would not cover
+it. (Decided 2026-10-04; being built.)
 
 ## Per-tier profiles
 
