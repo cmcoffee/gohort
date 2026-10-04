@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs done** (v0.7.321). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.328). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -591,6 +591,40 @@ sandbox's own log is mirrored under `[tuning sandbox-N]`:
   of every call, the largest single schemas being the agent and tool
   authoring tools. Friction no wording fixes; a candidate for the first
   report's review.
+
+### The first friction report (2026-10-04)
+
+Report a1dcb6f6 on v0.7.320: 0 proven, 8 blocking, 15 friction; the worker
+passed 18 of 40 builds, the lead 11; six tasks nobody passed. Each item was
+checked in the code before anything changed, and the larger share of the
+blocking ones were the harness's, not the platform's:
+
+- **The graders, mostly.** A tool check called the built tool with its own
+  argument and action names, which no request tells the builder, so
+  city vs city_name, from vs from_currency, current vs get_current missed,
+  and the error was thrown away. App checks seeded number fields as text.
+  word_stats never named its JSON keys; c_to_f checked one formatting.
+  Fixed in the harness: arguments bind to the builder's names, numbers
+  seed as numbers, failures carry the error. The reviewer's most repeated
+  complaint, "verified: pass beside a failing check", was a misread: that
+  check is the builder's own last verification, and now says so.
+- **The platform, the rest** (v0.7.323-327): the never-worked guard told
+  the model a built-in tool was broken after five of its own validation
+  errors; toolbox top-level params, method and headers were ignored; a
+  param's default was dropped; a write fired by hand never counted; there
+  was no way to run an unattended machine from the turn, and a pipeline
+  run had no machine runner; a run ending on a skipped step returned the
+  step before it as the result; app verify said OK on an empty store; the
+  html JS check ran node 10 and refused modern syntax; a list argument
+  sent as a JSON string wiped what was stored; a credential refused its own
+  base URL.
+- **Left as found:** the machine "prompt asks for JSON" warnings (working as
+  meant), delegation to one's own agent needing approval (intended; machine
+  run is the way to try one now), the fx fixture's 422 for pairs it does not
+  know (sandbox only), and one verification report missing an endpoint
+  (cause not proven).
+
+Next: Re-check the fixed components, then a second report.
 
 ### Stop and look again if
 
