@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.346). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.347). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -29,6 +29,13 @@ ends, what it kept is applied as the one wording both models read, and Undo
 takes the run back.
 
 ## Map the framework first: the Friction report
+
+Two sources feed it (2026-10-04): a report written on purpose, and every
+Optimize run, whose failures read as the platform's are listed under
+**Seen while optimizing** as they happen. A run sees less (failed builds
+on the worker only, no known-good replay, on wording it was changing), so
+a report is still the check after a batch of fixes and the only one on the
+lead; Optimize's list is friction found as a by-product of runs done anyway.
 
 Tuning fits wording to what the platform lets the builder do. A tool that
 cannot do what was asked, a misleading error or a wrong check is not fixed
@@ -101,8 +108,10 @@ way:
 - **Fix as it goes.** Each train task is built once. A failure is read by
   the lead as the framework's (a tool that cannot express what was asked, a
   broken platform check, the harness) or the wording's. The framework's is
-  set aside, since no prompt can fix it, and listed on the run's row with
-  why; handing it over and re-checking it are the friction report's. The
+  set aside, since no prompt can fix it, and listed with why on the run's
+  row and on the friction page under **Seen while optimizing**, whose Copy
+  hands it over (and a report's Copy includes what was set aside after
+  it). Re-checking it is the friction report's. The
   wording's gets one edit, and that task alone is built again with it,
   twice at most; the edit is kept if the task now passes.
 - **Confirm end to end.** After a pass, the whole suite runs, held out
