@@ -1,6 +1,6 @@
 package prompts
 
-// Read it back: what a model takes a block to mean.
+// Check, its readings: what a model takes a block to mean.
 //
 // Wording that reads plainly to the person who wrote it can read otherwise to
 // the model it is for, and the first sign is usually a build that went wrong
@@ -10,8 +10,10 @@ package prompts
 // worker and the lead each read the wording they would be sent, so a split
 // block is read in both its versions, and the two readings sit side by side.
 //
-// A reading is what the model says it understood, not what it does: a choice
-// probe (Optimize) checks what it does. This is the quick look while editing.
+// A reading is what the model says it understood, not what it does. Check is
+// the quick look while editing; a section another package adds to it (the
+// tuning harness's probe of what Builder reaches for first) shows what it
+// does.
 
 import (
 	"encoding/json"

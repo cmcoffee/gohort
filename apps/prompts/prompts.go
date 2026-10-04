@@ -42,9 +42,14 @@ func init() {
 	})
 }
 
-// EditorAction is a toolbar button another package adds to the Prompt
-// overrides editor: the button, and the head script that registers its client
-// action (window.uiRegisterClientAction), which is handed the editor handle.
+// EditorAction is what another package adds to the Prompt overrides editor:
+// a toolbar button and the head script that registers its client action
+// (window.uiRegisterClientAction), which is handed the editor handle; or, with
+// no button (an empty Label), a head script alone. Such a script can add a
+// section to the Check dialog: push a function onto window.promptsCheckExtras
+// and it is called with (box, ctx) each time Check opens, box an element of
+// its own under the readings, ctx {editor, payload: {id, body, variant},
+// isOpen()} so it can stop its work when the dialog closes.
 type EditorAction struct {
 	Action ui.ToolbarAction
 	Head   string
@@ -240,7 +245,9 @@ func (T *PromptsApp) handlePage(w http.ResponseWriter, r *http.Request) {
 func promptsEditor() ui.ArticleEditor {
 	ed := promptsEditorBase()
 	for _, a := range registeredEditorActions() {
-		ed.Actions = append(ed.Actions, a.Action)
+		if a.Action.Label != "" {
+			ed.Actions = append(ed.Actions, a.Action)
+		}
 	}
 	ed.Actions = append(ed.Actions, ui.ToolbarAction{Label: "Revert to default", Title: "Discard the override and restore the shipped default text",
 		Method: "client", URL: "prompts_revert"})
@@ -280,8 +287,8 @@ func promptsEditorBase() ui.ArticleEditor {
 		Actions: []ui.ToolbarAction{
 			{Label: "Optimize", Title: "Let the model tighten this block: more concise and accurate, preserving every distinct instruction and lesson. The original is saved as a revision first, so you can revert.",
 				Method: "client", URL: "prompts_optimize"},
-			{Label: "Read it back", Title: "The worker and the lead each say what this block tells them to do, side by side: for a tool, when they would reach for it. Each reads the wording it would be sent.",
-				Method: "client", URL: "prompts_read_back"},
+			{Label: "Check", Title: "What the worker and the lead take this block to mean, side by side (for a tool, when they would reach for it), each reading the wording it would be sent.",
+				Method: "client", URL: "prompts_check"},
 		},
 		// Whole-list action lives on the list header, not the per-block toolbar.
 		ListActions: []ui.ToolbarAction{
@@ -816,9 +823,11 @@ const promptsHead = `<script>
       setTimeout(poll, 3000);
     }).catch(function(err){ ed.toast('Error: ' + (err && err.message || err)); });
   });
-  // Read it back: one column per model, each filled when its model answers.
+  // Check: what each model takes the block to mean, one column per model,
+  // each filled when its model answers; then any section another package
+  // added (window.promptsCheckExtras).
   // Closing the dialog cancels a reading still running.
-  window.uiRegisterClientAction('prompts_read_back', function(ctx) {
+  window.uiRegisterClientAction('prompts_check', function(ctx) {
     var ed = ctx.editor;
     var id = ed.getID();
     if (!id) { ed.toast('Select a block first'); return; }
@@ -833,8 +842,8 @@ const promptsHead = `<script>
       return e;
     }
     var m = window.uiOpenModal({
-      title: 'Read it back: ' + (ed.getTitle() || id),
-      subtitle: 'What each model takes this block to mean. A reading is what it says it understood; Optimize checks what it does.',
+      title: 'Check: ' + (ed.getTitle() || id),
+      subtitle: 'What each model takes this block to mean, in its own words.',
       width: '920px',
       mount: function(body) {
         var row = mk('div', 'display:flex;flex-wrap:wrap;gap:1rem;align-items:stretch');
@@ -848,6 +857,13 @@ const promptsHead = `<script>
           cols[tier] = {head: head, note: note, text: text, done: false};
         });
         body.appendChild(row);
+        (window.promptsCheckExtras || []).forEach(function(fn) {
+          var box = mk('div', 'margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border)');
+          body.appendChild(box);
+          try {
+            fn(box, {editor: ed, payload: payload, isOpen: function() { return !!m && document.body.contains(m.overlay); }});
+          } catch (e) { console.error('Check section failed:', e); }
+        });
       }
     });
     function tick() {
