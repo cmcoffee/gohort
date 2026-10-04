@@ -21,10 +21,10 @@ Fine-tuning, with the prompts as the weights.
 
 Builder is thrown at a fixed set of tasks (wrap this API, build this app, make
 this machine). Each task has graders Builder never sees. The run produces a
-scorecard. A prompt is changed, by hand or by a proposer model, and the suite
-runs again. A change is kept only when the scorecard says it helped; when
-the run ends, what it kept is applied as that model's own wording, each
-change a revision, and Undo takes the run back.
+scorecard. A prompt is changed by a proposer model, and the suite runs
+again. A change is kept only when the scorecard says it helped; when the run
+ends, what it kept is applied as that model's own wording, and Undo takes the
+run back.
 
 ## Map the framework first: the Friction report
 
@@ -101,30 +101,26 @@ way:
   and neither split got worse; if not, the pass's edits are taken back one
   at a time to find the one that hurt, and failing that the pass is dropped.
 
-When the run ends it applies what it kept as that model's own wording, each
-change a revision, and **Undo** takes the whole run back. The wording
+When the run ends it applies what it kept as that model's own wording, and
+**Undo** takes the whole run back; **Reset to shipped**, on the model's row
+while it has wording of its own, takes back every run on that model. The wording
 remembers the model it was fitted to; when the model behind a tier changes,
 its row says so. While it runs, its stages show above "What it is doing"
 (each pass, and in the pass running each task as it goes), and it sits in
 the live indicator and on the Monitor page like any other work using the
 models.
 
-Hand edits to something specific are in **Prompt overrides**, the editor
-below Optimize on the same LLMs tab: a model's prompts are part of the
-model, and a hand edit and Optimize write the same per-model wording. It
-opens on what both models read, with the Worker and Lead versions above, so
-a block is split only when a change is saved to one model's version; the
-block list marks each block a worker or lead reads its own wording in. Its
-**Check** asks the worker and the lead what
-the open block tells them to do (for a tool's description, when they would
-reach for it first; for a parameter's, what they would put in it), each
-reading the wording it would be sent, side by side. With the tuning harness
-running, Check has a second section: Builder is given a request (your own,
-or one of the suite's, those that want the open block's tool first) in a
-sandbox holding live's wording with the open block as it is on screen, and
-stopped at the first thing it reaches to build, for the worker and the lead
-side by side. A reading is what a model says it understood; a probe is what
-it does.
+A prompt changes in one of two ways: in the source, where the friction
+report's fixes land, or by Optimize, which measures what it keeps. There is
+no hand editor (v0.7.317): it measured nothing and froze each block it
+touched against every later change to what ships. What it saved is cleared
+by the maintenance pass **Reset edited prompt blocks** (Housekeeping), which
+logs each text first and leaves Optimize's wording alone.
+
+**Ask Builder**, on Details, gives Builder a request (your own, or one of
+the suite's) in a sandbox holding live's wording and stops it at the first
+thing it reaches to build, for the worker and the lead side by side: a quick
+look at what Builder does, before or after a run.
 
 A run gives way to people. While someone else is using the model it tunes
 (a call out, or one in the last 30 seconds), its calls wait at the shared LLM
@@ -132,7 +128,7 @@ handle's gate (`core.SetYieldGate`, `core.ModelInUse`) and its sandboxes are
 told to pause; it picks up where it was when they are done. A call already
 out runs to its end. Paused time does not count against a build's budget, a
 probe's, or the session's hours, and the row says it is paused. A probe from
-Check does not pause: someone is waiting on it.
+Ask Builder does not pause: someone is waiting on it.
 
 A restart does not lose a run. Ninety seconds after the server starts, the
 newest run, if a restart cut it off in the last day, is picked up where it
@@ -260,8 +256,7 @@ by all of it.
 
 The harness lives in the live server: the Optimize section on the admin
 LLMs tab (a row per model, and the latest friction report), Details behind
-it, the Friction report app at `/friction`, and Check in the Prompt
-overrides editor below Optimize. It starts the
+it with Ask Builder, and the Friction report app at `/friction`. It starts the
 sandbox and drives it over HTTP: Builder is given each
 task through the ordinary chat endpoint, the harness answering its
 confirmation cards as a person would, and the tier is pinned by the
@@ -355,9 +350,9 @@ A candidate is accepted only when all of these hold:
 
 A tuning run has a token and wall-clock budget and stops after N passes in a
 row with no edit that held. When it ends it applies what it kept: each
-changed block becomes that tier's own wording, written `Via: "tuned"` with a
-Prompts-page revision, so it is revertible the same way every other edit
-is, and Undo takes the whole run back at once.
+changed block becomes that tier's own wording, written `Via: "tuned"`, and
+Undo takes the whole run back at once from the run's own record of what it
+replaced.
 
 ## Tool descriptions are weights too
 
@@ -473,8 +468,8 @@ Each stage is useful alone and proves the next one is worth building.
 
 Built since, on top of those: tool and parameter descriptions as blocks;
 one-click Optimize per model with Undo; the focused mode (fix as it goes,
-confirm on the whole suite), now the only mode; choice probes, and Check in
-the editor; giving way to people and picking up after a restart; stages on
+confirm on the whole suite), now the only mode; choice probes, and Ask
+Builder on Details; giving way to people and picking up after a restart; stages on
 every long run; and the friction report, which comes first.
 
 The suite and harness also serve the self-fine-tune plan: the eval app that
@@ -531,8 +526,8 @@ The first real proposals. Look at: probes running before each build and
 their fixes; failures set aside as the framework's (each one is a gap the
 friction report missed, so write another report); each kept
 edit, and whether it names a general rule or the task it saw; the result
-applied as the worker's own wording, each block a revision in Prompt
-overrides; Undo putting live back; restarting the server mid-run and the
+applied as the worker's own wording; Undo and Reset to shipped putting live
+back; restarting the server mid-run and the
 run picking up where it was.
 
 ### Run 2: noise
