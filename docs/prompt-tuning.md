@@ -1,10 +1,12 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **design, nothing built.** The one piece that exists is the build
-ledger (v0.7.263, `core/buildledger`, Admin > Agents > Build outcomes), which
-records every tool test and app verify from real use. That is observation.
-This document is the other half: a controlled experiment that can change the
-prompts.
+Status: **built, first live runs done** (v0.7.319). The harness and the
+friction report are private (`private/tuning`, not in the release); the
+pieces they stand on (tool probes, the yield gate, per-tier wording, the
+stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
+Admin > Agents > Build outcomes) records every tool test and app verify from
+real use; that is observation. This is the other half: a controlled
+experiment that can change the prompts.
 
 ## The idea
 
@@ -400,7 +402,7 @@ measured rather than guessed.
 - **A block forks only on evidence.** The evidence is which tier an edit was
   measured on: an edit that won on the worker is the worker's own wording,
   and the lead keeps the shared text it was never tested against. The
-  shared wording changes only from a routed session or by hand. Two copies
+  shared wording changes only from a routed session or in the source. Two copies
   of every prompt maintained for no measured reason is the outcome to avoid.
 - **A tier's text remembers the model it was tuned on.** When the model behind
   a tier changes, the admin page says the tier's tuned prompts were fitted to
@@ -423,13 +425,13 @@ measured rather than guessed.
   The tools directive, filled per call and ending in the fill, is the one
   block that cannot be worded per tier.
 - **A swap that cannot be made leaves the shared text.** A tier never gets
-  less than every tier gets. The editor's note on a model's version says
-  when it last went out, so wording that never reaches a prompt is visible.
+  less than every tier gets. Each swap made is recorded per block
+  (`TierTextApplied`), so wording that never reaches a prompt can be found.
 - **Mixed turns are already per loop.** A lead plan with worker steps sends
   each call through its own tier's handle, so each gets its own words.
 - **A session pinned to one tier writes that tier's words.** It measured no
   other, so its kept edits are that tier's own text, applied as that model's
-  own wording (the editor shows it under the model's version), leaving the
+  own wording (What changed on the run shows it), leaving the
   shared wording alone. A routed session edits the shared wording. A lead-pinned sandbox serves both of its tiers
   with the lead's model, so the lead's words go to both there.
 - **Lead tuning has a spending cap.** Every session carries a meter: what
