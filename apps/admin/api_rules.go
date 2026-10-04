@@ -27,6 +27,7 @@ import (
 )
 
 func (a *AdminApp) registerRulesRoutes(sub *http.ServeMux) {
+	sub.HandleFunc("/api/rules-assist", a.handleRulesAssist)
 	sub.HandleFunc("/api/global-rules", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
 			return
@@ -179,11 +180,9 @@ func alwaysRulesForm() ui.FormPanel {
 			// What a breach does, per rule: the same three modes, and the
 			// same markers, as an agent's own guardrails, because every
 			// agent's guardrail check reads these lines with that parser.
-			RowModes:   alwaysRuleModes,
-			SuggestURL: "/prompts/api/assist",
-			AssistPrompt: "You write operator rules that bind an AI assistant's conduct: short imperative " +
-				"lines, one obligation each. State the boundary and what to do when a request would cross " +
-				"it. Be concrete about the behaviour, not aspirational about values. Do not use em-dashes.",
+			RowModes:     alwaysRuleModes,
+			SuggestURL:   "api/rules-assist",
+			AssistPrompt: alwaysAssistPrompt,
 		}, {
 			// The three settings below are read only when a global rule is
 			// judged, and the list ships empty, so they wait for a rule.
@@ -261,11 +260,8 @@ func styleRulesForm() ui.FormPanel {
 			Help: "How replies read, one rule per line. Delete a line to drop the rule. Some shipped rules are also " +
 				"enforced in code, so they hold even when the model ignores them; deleting such a line stops " +
 				"its enforcement too.",
-			SuggestURL: "/prompts/api/assist",
-			AssistPrompt: "You write house-style rules for an AI assistant: short imperative lines, " +
-				"one behaviour each. Name the tic concretely and say what to do instead. " +
-				"Where a word or character has a legitimate use, carve it out so the rule does not " +
-				"forbid that too. Do not use em-dashes.",
+			SuggestURL:   "api/rules-assist",
+			AssistPrompt: styleAssistPrompt,
 		}},
 	}
 }
