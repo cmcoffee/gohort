@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.328). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.332). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -630,7 +630,8 @@ blocking ones were the harness's, not the platform's:
   know (sandbox only), and one verification report missing an endpoint
   (cause not proven).
 
-Next: Re-check the fixed components, then a second report.
+Next: rebuild and restart, run Reset edited prompt blocks once, Re-check the
+fixed components, then a second report.
 
 ### Stop and look again if
 
