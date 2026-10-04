@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -91,7 +92,14 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	sections[idx]["html"] = next
 
 	if problems, checked := htmlScriptSyntaxProblems(t.sandboxCallerCtx(), next); checked && len(problems) > 0 {
-		return "", fmt.Errorf("that %s would break the page's JavaScript, so it was NOT applied, the app still serves the previous revision:\n- %s\n\nFix the replacement text and try again", verb, strings.Join(problems, "\n- "))
+		// Only what this edit introduced: a problem the page already had is not
+		// the patch's, and blaming it refused every later edit, the fix included.
+		if before, ok := htmlScriptSyntaxProblems(t.sandboxCallerCtx(), prior); ok {
+			problems = newScriptProblems(before, problems)
+		}
+		if len(problems) > 0 {
+			return "", fmt.Errorf("that %s would break the page's JavaScript, so it was NOT applied, the app still serves the previous revision:\n- %s\n\nFix the replacement text and try again", verb, strings.Join(problems, "\n- "))
+		}
 	}
 	if broke := jsNewDanglingCalls(prior, next); len(broke) > 0 {
 		return "", fmt.Errorf("that %s was NOT applied: it removes code the rest of the page still calls, which parses fine and then dies the moment the app runs. Nothing now defines: %s\n\nEither keep those definitions in your replacement text, or remove the calls to them as well. The app still serves the previous revision.",
@@ -220,4 +228,27 @@ func htmlSectionOrdinal(sections []map[string]any, idx int) int {
 		}
 	}
 	return 1
+}
+
+// scriptProblemPlace is the block number and line:col in a syntax problem,
+// which an edit above it shifts without changing the problem.
+var scriptProblemPlace = regexp.MustCompile(`script block \d+: |line \d+(:\d+)?`)
+
+// newScriptProblems is after without the problems before already had, compared
+// with their places taken out.
+func newScriptProblems(before, after []string) []string {
+	had := map[string]int{}
+	for _, p := range before {
+		had[scriptProblemPlace.ReplaceAllString(p, "")]++
+	}
+	var out []string
+	for _, p := range after {
+		k := scriptProblemPlace.ReplaceAllString(p, "")
+		if had[k] > 0 {
+			had[k]--
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }

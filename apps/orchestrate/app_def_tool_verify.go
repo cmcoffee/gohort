@@ -495,11 +495,17 @@ func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[
 					// disconnect. Pass (it's valid) but flag it loudly.
 					fmt.Fprintf(&b, "WARN %s: printed an EMPTY array though the app has %d saved record(s). The script is probably reading a query param (e.g. os.environ.get('city')) that is never set; read the saved entries from the `records` env var instead, e.g. recs = json.loads(os.environ.get('records','[]')).\n", label, len(recs))
 				} else {
-					fmt.Fprintf(&b, "OK   %s: printed a JSON array (%d item(s)); good for a table.\n", label, len(arr))
+					fmt.Fprintf(&b, "OK   %s: printed a JSON array (%d item(s)); good for a table.%s\n", label, len(arr), emptyStoreNote(recs))
 				}
+			} else if obj, isObj := v.(map[string]any); isObj && len(obj) == 1 && obj["error"] != nil {
+				// The script caught its own failure and printed it: valid JSON,
+				// and still a script that failed. OK here was the builder's cue
+				// to tell the user the app worked.
+				fail++
+				fmt.Fprintf(&b, "FAIL %s: printed an error: %s\n", label, truncate(fmt.Sprint(obj["error"]), 400))
 			} else {
 				pass++
-				fmt.Fprintf(&b, "OK   %s: printed a JSON object; good for a display (a table section needs a JSON array).\n", label)
+				fmt.Fprintf(&b, "OK   %s: printed a JSON object; good for a display (a table section needs a JSON array).%s\n", label, emptyStoreNote(recs))
 			}
 		case "action":
 			if _, isObj := v.(map[string]any); isObj {
@@ -573,4 +579,15 @@ func (t *chatTurn) recordAppVerify(slug string, failures int, classes []string, 
 		o.Verdict, o.Classes, o.Detail = buildledger.Fail, classes, fmt.Sprintf("%d problem(s)", failures)
 	}
 	buildledger.Record(o)
+}
+
+// emptyStoreNote says what an OK against no records proves: that the script
+// runs, not that its logic is right. A gradebook whose averages crashed on
+// the first real score passed here on an empty store, and the builder told
+// the user it was verified.
+func emptyStoreNote(recs []map[string]any) string {
+	if len(recs) > 0 {
+		return ""
+	}
+	return " That was against an EMPTY store, so it only shows the script runs: pass sample=[{...}] with a few records shaped like the form's to check its logic."
 }

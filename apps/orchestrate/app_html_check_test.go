@@ -155,3 +155,34 @@ Node.js v20.11.0`
 		t.Errorf("the error itself must survive: %q", got)
 	}
 }
+
+// A node too old for today's syntax gives no verdict rather than a false one:
+// node 10 called ?. and ?? syntax errors, and every later edit to a page
+// that used them was refused.
+func TestOldNodeGivesNoVerdict(t *testing.T) {
+	for v, old := range map[string]bool{"v10.24.0\n": true, "v13.14.0": true, "v14.0.0": false, "v22.3.1": false, "garbage": false} {
+		if got := nodeVersionTooOld(v); got != old {
+			t.Errorf("%q: too old = %v, want %v", v, got, old)
+		}
+	}
+}
+
+// A module script is not parsed: node --check reads CommonJS, where every
+// import is a syntax error.
+func TestHTMLScriptSyntaxSkipsModules(t *testing.T) {
+	problems, checked := htmlScriptSyntaxProblems(context.Background(), `<script type="module">import {x} from './x.js'; console.log(x?.y)</script>`)
+	if !checked || len(problems) != 0 {
+		t.Fatalf("a module block: %v, checked %v", problems, checked)
+	}
+}
+
+// A patch is blamed only for problems it introduced; one the page already had
+// is not its, even where an edit above it moved its line.
+func TestPatchBlamesOnlyNewProblems(t *testing.T) {
+	before := []string{"script block 1: line 3:5 SyntaxError: Unexpected token ."}
+	after := []string{"script block 1: line 7:5 SyntaxError: Unexpected token .", "script block 2: line 1:1 SyntaxError: Unexpected end of input"}
+	got := newScriptProblems(before, after)
+	if len(got) != 1 || !strings.Contains(got[0], "end of input") {
+		t.Fatalf("new problems = %v", got)
+	}
+}

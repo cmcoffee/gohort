@@ -508,3 +508,42 @@ func appSettings(raw any) (out []AppSetting, notes []string) {
 	}
 	return out, notes
 }
+
+// appArrayArg is a list argument (data_sources, actions, settings) as a JSON
+// array, from the shapes a model sends one in: an array, the same array as a
+// JSON string, or a single object meaning a list of one. ok is false for
+// anything else, with a note saying so: the parsers read a non-array as "none",
+// which on an update silently wiped every stored data source or action, and
+// the save then reported "no data sources" as if that had been asked for.
+func appArrayArg(raw any, field string) (arr []any, note string, ok bool) {
+	switch v := raw.(type) {
+	case []any:
+		return v, "", true
+	case map[string]any:
+		return []any{v}, "", true
+	case string:
+		var parsed any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(v)), &parsed); err == nil {
+			switch p := parsed.(type) {
+			case []any:
+				return p, "", true
+			case map[string]any:
+				return []any{p}, "", true
+			}
+		}
+	}
+	return nil, fmt.Sprintf("%s IGNORED: it must be an array of objects, got %s; what was stored before is kept", field, appArgShape(raw)), false
+}
+
+// appArgShape names a value's JSON shape for a note.
+func appArgShape(raw any) string {
+	switch raw.(type) {
+	case string:
+		return "a string that is not a JSON array"
+	case bool:
+		return "a boolean"
+	case float64, int:
+		return "a number"
+	}
+	return fmt.Sprintf("%T", raw)
+}

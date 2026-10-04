@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -75,8 +77,11 @@ func htmlScriptSyntaxProblems(ctx context.Context, html string) (problems []stri
 		}
 		if t := scriptTypeRE.FindStringSubmatch(attrs); t != nil {
 			switch strings.ToLower(t[1]) {
-			case "", "text/javascript", "application/javascript", "module":
+			case "", "text/javascript", "application/javascript":
 			default:
+				// A module (import/export, top-level await) is not a script to
+				// node --check, which parses CommonJS: every import read as a
+				// syntax error, so a valid module page could never be saved.
 				continue
 			}
 		}
@@ -114,6 +119,12 @@ func jsSyntaxProblem(ctx context.Context, dir string, index int, body string) (s
 	// the file doesn't parse, which is a far better verdict than pattern-
 	// matching the message. (Message matching got this wrong twice: node 10
 	// calls an invalid assignment target a ReferenceError, not a SyntaxError.)
+	if nodeTooOld() {
+		// Too old to know today's syntax: it calls ?. and ?? and class
+		// fields errors. No verdict beats a false one, which refused every
+		// later edit to a page that already used them.
+		return "", false
+	}
 	if problem, ok := nodeCheckDirect(ctx, path); ok {
 		return problem, true
 	}
@@ -144,6 +155,39 @@ func syntaxVerdict(out string) bool {
 		}
 	}
 	return false
+}
+
+// nodeMinMajor is the oldest node whose parser knows the syntax pages are
+// written in today: optional chaining and nullish coalescing landed in 14.
+const nodeMinMajor = 14
+
+var (
+	nodeVersionOnce sync.Once
+	nodeOld         bool
+)
+
+// nodeTooOld reports whether the local node is older than nodeMinMajor. No
+// node on PATH is not "too old": the sandbox path decides that case.
+func nodeTooOld() bool {
+	nodeVersionOnce.Do(func() {
+		bin, err := exec.LookPath("node")
+		if err != nil {
+			return
+		}
+		out, err := exec.Command(bin, "--version").Output()
+		if err != nil {
+			return
+		}
+		nodeOld = nodeVersionTooOld(string(out))
+	})
+	return nodeOld
+}
+
+// nodeVersionTooOld reads `node --version` ("v10.24.0").
+func nodeVersionTooOld(v string) bool {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	major, err := strconv.Atoi(strings.SplitN(v, ".", 2)[0])
+	return err == nil && major < nodeMinMajor
 }
 
 // nodeCheckDirect parses the file with the local node. Returns the problem

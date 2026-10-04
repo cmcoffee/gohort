@@ -119,23 +119,35 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// replaces the stored set on update (omit to keep existing).
 	var parseNotes []string
 	if raw, ok := args["data_sources"]; ok && raw != nil {
-		var notes []string
-		spec.DataSources, notes = appDataSources(raw)
-		parseNotes = append(parseNotes, notes...)
+		if arr, note, ok := appArrayArg(raw, "data_sources"); ok {
+			var notes []string
+			spec.DataSources, notes = appDataSources(arr)
+			parseNotes = append(parseNotes, notes...)
+		} else {
+			parseNotes = append(parseNotes, note)
+		}
 	}
 	// Script-backed actions (the write-side logic seam): buttons that run a
 	// script which returns records the framework persists.
 	if raw, ok := args["actions"]; ok && raw != nil {
-		var notes []string
-		spec.Actions, notes = appActionDefs(raw)
-		parseNotes = append(parseNotes, notes...)
+		if arr, note, ok := appArrayArg(raw, "actions"); ok {
+			var notes []string
+			spec.Actions, notes = appActionDefs(arr)
+			parseNotes = append(parseNotes, notes...)
+		} else {
+			parseNotes = append(parseNotes, note)
+		}
 	}
 	// Declared tunables: the framework renders their Settings page and hands
 	// them to every script as env vars. Passed wholesale replaces the list.
 	if raw, ok := args["settings"]; ok && raw != nil {
-		var notes []string
-		spec.Settings, notes = appSettings(raw)
-		parseNotes = append(parseNotes, notes...)
+		if arr, note, ok := appArrayArg(raw, "settings"); ok {
+			var notes []string
+			spec.Settings, notes = appSettings(arr)
+			parseNotes = append(parseNotes, notes...)
+		} else {
+			parseNotes = append(parseNotes, note)
+		}
 	}
 
 	// Build the Page from the declarative sections. On update with no sections
