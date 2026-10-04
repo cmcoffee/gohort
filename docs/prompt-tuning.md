@@ -25,21 +25,36 @@ scorecard. A prompt is changed, by hand or by a proposer model, and the suite
 runs again. A change is kept only when the scorecard says it helped, and only
 reaches the live deployment when an admin promotes it.
 
-## Map the framework first
+## Map the framework first: the Friction report
 
 Tuning fits wording to what the platform lets the builder do. A tool that
 cannot do what was asked, a misleading error or a wrong check is not fixed
-by wording, and tuning around it fits the wording to a bug. So the first row
-on the LLMs tab is **Map framework issues**: every task built twice on the
-worker with the wording as it is, nothing edited, and the lead reviewing
-every build, passing ones too (a pass that worked around a tool error is a
-framework problem). Each problem is read as the framework's, the wording's
-or the model's, with the transcript line that shows it. The framework's are
-grouped by component, the most widespread first; **Copy map** hands them
-over, and **Re-check** on a component builds its tasks again after a fix and
-says whether it is gone. The wording's and the model's are kept apart, for
-Optimize. It lives in the private harness: a tool for getting the platform
-right, run by hand, not part of the release.
+by wording, and tuning around it fits the wording to a bug. So before
+tuning, the platform is mapped, by a private admin app of its own,
+**Friction report** (`/friction`), which changes nothing and grounds each
+answer in something stronger than a model's opinion:
+
+1. **Known-good builds** are played first: a passing build's tool calls,
+   recorded, played back in a fresh sandbox by a script instead of a model,
+   through Builder's real loop, tools and checks. One that fails is the
+   platform broken, proven, by the call that failed or the grader.
+2. Every task is built **twice on the worker and twice on the lead** with
+   the wording as it is live, and the lead **reviews every build**, passing
+   ones too (a pass that worked around a tool error is still friction).
+3. A passing build that passes again when played becomes that task's
+   known-good build.
+4. Each task comes out **broken**, **not shown possible** (nothing passed on
+   either model: the strongest sign), **worker struggles**, or **ok**.
+   Problems group by component as **proven**, **blocking** (on a task
+   nothing could do) or **friction** (on tasks shown doable), with the
+   models each was seen on: friction both hit is the platform's.
+
+Each report is dated and versioned and compared with the one before (new,
+gone, still). **Copy report** hands it to whoever fixes the platform;
+**Re-check** on a component plays its known-good builds again or rebuilds
+its tasks, and says whether it is gone. The wording's and the model's
+problems are kept apart, for Optimize, whose section shows the latest
+report. Private: not part of the release.
 
 ## Using it: one click per model
 
@@ -463,7 +478,7 @@ one-click Optimize per model with Undo; the focused mode (fix as it goes,
 confirm on the whole suite) in quick and extended runs; choice probes, and
 Read it back and Probe in the editor; findings set aside with Copy and
 Re-check; giving way to people and picking up after a restart; and the
-framework map, which comes first.
+friction report, which comes first.
 
 The suite and harness also serve the self-fine-tune plan: the eval app that
 plan called "oracle" is this harness pointed at a LoRA adapter instead of a
@@ -492,22 +507,22 @@ slower; overnight is still the natural time.
    progress line, rounds invisible until they ended, no scorecard) are
    closed.
 
-### Run 0: map the framework
+### Run 0: a friction report
 
-**Map framework issues**, before any tuning. Every task built twice on the
-worker, every build reviewed by the lead.
+**Write report** in the Friction report app, before any tuning.
 
 Proves the sandbox starts, takes the LLM settings and the live prompts,
-that Builder can be driven, that the checks grade, and that a long run
-pauses for people, survives leaving the page, and stops on Stop. What it
-finds is the point: read the components the most tasks share, and Copy map
-to whoever fixes the platform. After each fix, rebuild and restart, then
-Re-check that component until it reads gone. Repeat the map once the
-widespread components are gone; tune only once a map turns up nothing a
-fix should handle. Look at, as well: whether the reviewer's framework and
-wording calls hold up when read against the evidence it quotes (it is the
-lead, uncalibrated), and that the map's spend matches what Cost History
-gained.
+that Builder can be driven on both models and played from a record, that
+the checks grade, and that a long run pauses for people, survives leaving
+the page, and stops on Stop. What it finds is the point: proven and
+blocking components first, then friction both models hit. Copy report to
+whoever fixes the platform; after each fix, rebuild and restart, then
+Re-check that component until it reads gone. Write another report once the
+proven and blocking components are gone, and tune only when a report turns
+up nothing a fix should handle. Look at, as well: whether the reviewer's
+framework and wording calls hold up against the evidence it quotes, and
+that Spent matches what Cost History gained (a lead run's sandbox books
+the lead's model as its worker; the harness reads it back as the lead's).
 
 ### Run 1: a quick Optimize
 
@@ -549,7 +564,7 @@ provider's own bill.
 
 ### Stop and look again if
 
-- the map keeps finding a component after its fix (the fix missed, or the
+- a report keeps finding a component after its fix (the fix missed, or the
   reviewer is reading the wording's failures as the framework's);
 - a starting measurement and an unchanged rerun disagree by more than the
   spread from run 2 (the sandbox is not reproducible);
@@ -564,14 +579,14 @@ provider's own bill.
 ## Open questions
 
 - **How many repeats are enough?** Decided by measurement: run 2.
-- **How far to trust the map's reviewer.** It is the lead, and nothing
-  calibrates its framework or wording calls yet. Reading its quoted evidence
-  is the check for now; owner picks on its calls, as the judge has, if it
+- **How far to trust the reviewer.** It is the lead, uncalibrated; the
+  known-good builds and the both-model builds now carry the weight, and its
+  calls sit beside them. Owner picks on its calls, as the judge has, if it
   misreads often.
-- **Whether the map becomes a periodic check.** It is a tool run by hand
-  while the platform is being got right. If maps keep finding real issues
-  after the first round of fixes, a scheduled map after each release would
-  catch regressions before tuning does.
+- **Whether the friction report becomes a periodic check.** It is run by
+  hand while the platform is being got right. If reports keep finding real
+  issues after the first round of fixes, a scheduled report after each
+  release would catch regressions before tuning does.
 - **Where a task's expected output comes from for machines.** Hand-written for
   now; a machine whose job is judgement may only be gradable by the judge.
 - **Sandbox resources.** A second gohort plus headless Chrome for app checks
