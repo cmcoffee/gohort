@@ -5,6 +5,7 @@ package filestore
 // removes.
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,11 +59,11 @@ func TestRetentionRemovesOnlyExpiredFolders(t *testing.T) {
 	when := time.Now().AddDate(0, 0, -400)
 	_ = os.Chtimes(loose, when, when)
 
-	list := FindExpiredBundles(app.DB)
+	list := FindExpiredBundles(context.Background(), app.DB)
 	if len(list) != 1 || list[0].Folder != "scan-old" {
 		t.Fatalf("expected only the old folder, got %+v", list)
 	}
-	if gone, _ := ReapExpiredBundles(app.DB); gone != 1 {
+	if gone, _ := ReapExpiredBundles(context.Background(), app.DB); gone != 1 {
 		t.Fatalf("expected one removal, got %d", gone)
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
@@ -84,10 +85,10 @@ func TestRetentionRemovesOnlyExpiredFolders(t *testing.T) {
 func TestNoWindowMeansNothingIsEverEligible(t *testing.T) {
 	app, root := retentionFixture(t, 0)
 	aged(t, root, "ancient", 4000)
-	if list := FindExpiredBundles(app.DB); len(list) != 0 {
+	if list := FindExpiredBundles(context.Background(), app.DB); len(list) != 0 {
 		t.Fatalf("a store with no retention window produced candidates: %+v", list)
 	}
-	if gone, _ := ReapExpiredBundles(app.DB); gone != 0 {
+	if gone, _ := ReapExpiredBundles(context.Background(), app.DB); gone != 0 {
 		t.Fatal("something was deleted from a store with no window")
 	}
 }
@@ -106,7 +107,7 @@ func TestRetentionRefusesToFollowASymlinkOut(t *testing.T) {
 	if err := os.Symlink(victim, filepath.Join(root, "sneaky")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	ReapExpiredBundles(app.DB)
+	ReapExpiredBundles(context.Background(), app.DB)
 	if _, err := os.Stat(victim); err != nil {
 		t.Fatal("a directory OUTSIDE the store was deleted through a symlink")
 	}
@@ -117,7 +118,7 @@ func TestRetentionRefusesToFollowASymlinkOut(t *testing.T) {
 func TestDryRunTextMatchesWhatWouldGo(t *testing.T) {
 	app, root := retentionFixture(t, 30)
 	aged(t, root, "scan-old", 90)
-	text := FormatExpiredBundles(FindExpiredBundles(app.DB))
+	text := FormatExpiredBundles(FindExpiredBundles(context.Background(), app.DB))
 	if !strings.Contains(text, "scan-old") || !strings.Contains(text, "1 folder(s)") {
 		t.Errorf("the report should name the folder and the count: %s", text)
 	}
@@ -146,5 +147,23 @@ func TestUploadGate(t *testing.T) {
 	}
 	if restricted.UploadsAllowedFor("bob", true) {
 		t.Error("not even an admin: membership decides reach, and reach gates upload")
+	}
+}
+
+// A stopped reap removes nothing, and a stopped dry run lists nothing past
+// where it stopped.
+func TestAStoppedBundleReapRemovesNothing(t *testing.T) {
+	app, root := retentionFixture(t, 30)
+	stale := aged(t, root, "old-bundle", 90)
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	if list := FindExpiredBundles(stopped, app.DB); len(list) != 0 {
+		t.Fatalf("a stopped dry run listed %d folder(s)", len(list))
+	}
+	if gone, _ := ReapExpiredBundles(stopped, app.DB); gone != 0 {
+		t.Fatalf("a stopped reap removed %d folder(s)", gone)
+	}
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatal("a stopped reap removed the folder")
 	}
 }

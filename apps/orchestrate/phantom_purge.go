@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -23,11 +24,22 @@ func init() {
 	)
 }
 
+// Stop is honoured between the three phases, not inside one: each is a
+// short walk, and a phase left half done is still what the next run
+// finishes, but there is no reason to leave one half done.
 func purgePhantomData(ctx context.Context) int {
 	if RootDB == nil {
 		return 0
 	}
 	count := 0
+	stopped := func(after string) bool {
+		if ctx.Err() == nil {
+			return false
+		}
+		ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped after %s, %d removed; running it again finishes the rest", after, count))
+		Log("[maintenance] purge_phantom_data: stopped after %s, removed %d", after, count)
+		return true
+	}
 
 	// 1. Orphaned phantom_* top-level tables + per-chat "phantom:" user scopes.
 	// AllTables() returns raw bucket names INCLUDING the \x1f-separated sub-store
@@ -58,6 +70,10 @@ func purgePhantomData(ctx context.Context) int {
 		count++
 	}
 
+	if stopped("the tables") {
+		return count
+	}
+
 	// 2. Orphaned phantom_chat scheduled triggers (per owner — they were created
 	// by real users targeting a phantom chat; no handler fires them now).
 	for _, u := range AuthListUsers(RootDB) {
@@ -67,6 +83,10 @@ func purgePhantomData(ctx context.Context) int {
 				count++
 			}
 		}
+	}
+
+	if stopped("the triggers") {
+		return count
 	}
 
 	// 3. Orphaned phantom.callback scheduled tasks (global, keyed by kind).

@@ -99,8 +99,9 @@ func folderBytes(dir string) int64 {
 
 // FindExpiredBundles lists every folder eligible for removal, oldest
 // first. Empty when no store has a retention window — which is the
-// default, and the state every store starts in.
-func FindExpiredBundles(db Database) []ExpiredBundle {
+// default, and the state every store starts in. A stopped ctx ends the walk
+// at the next folder, with what it found so far.
+func FindExpiredBundles(ctx context.Context, db Database) []ExpiredBundle {
 	if db == nil {
 		return nil
 	}
@@ -116,6 +117,9 @@ func FindExpiredBundles(db Database) []ExpiredBundle {
 			continue
 		}
 		for _, e := range entries {
+			if ctx.Err() != nil {
+				return out
+			}
 			if !e.IsDir() {
 				continue // loose files at the root are never touched
 			}
@@ -164,12 +168,20 @@ func FormatExpiredBundles(list []ExpiredBundle) string {
 }
 
 // ReapExpiredBundles removes exactly what FindExpiredBundles reports.
-// Returns how many folders went and how many bytes that reclaimed.
-func ReapExpiredBundles(db Database) (int, int64) {
-	list := FindExpiredBundles(db)
+// Returns how many folders went and how many bytes that reclaimed. A stopped
+// ctx removes nothing when it stops the walk, and otherwise ends the removing
+// at the next folder: each folder goes on its own.
+func ReapExpiredBundles(ctx context.Context, db Database) (int, int64) {
+	list := FindExpiredBundles(ctx, db)
+	if ctx.Err() != nil {
+		return 0, 0
+	}
 	var gone int
 	var freed int64
 	for _, c := range list {
+		if ctx.Err() != nil {
+			break
+		}
 		if err := os.RemoveAll(c.Path); err != nil {
 			Log("[filestore.retention] could not remove %s: %v", c.Path, err)
 			continue
@@ -196,7 +208,11 @@ func registerRetentionMaintenance(app *FileStoreApp) {
 			"A store with no window set never appears here, that is the default, and it means "+
 			"nothing in it is ever eligible.",
 		func(ctx context.Context) int {
-			list := FindExpiredBundles(app.DB)
+			list := FindExpiredBundles(ctx, app.DB)
+			if ctx.Err() != nil {
+				ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped part way, %d folder(s) found by then", len(list)))
+				return len(list)
+			}
 			if len(list) == 0 {
 				Log("[filestore.retention] nothing eligible")
 				return 0
@@ -212,14 +228,21 @@ func registerRetentionMaintenance(app *FileStoreApp) {
 			"newest content is past that store's retention window. Run the dry run first: it uses "+
 			"the same walk, so what it shows is what this removes. Not recoverable.",
 		func(ctx context.Context) int {
-			list := FindExpiredBundles(app.DB)
+			list := FindExpiredBundles(ctx, app.DB)
+			if ctx.Err() != nil {
+				ReportMaintenanceOutcome(ctx, "stopped before removing anything")
+				return 0
+			}
 			if len(list) == 0 {
 				Log("[filestore.retention] nothing eligible; nothing removed")
 				return 0
 			}
 			Log("[filestore.retention] removing %d folder(s):\n%s", len(list), FormatExpiredBundles(list))
-			gone, freed := ReapExpiredBundles(app.DB)
+			gone, freed := ReapExpiredBundles(ctx, app.DB)
 			Log("[filestore.retention] removed %d folder(s), reclaimed %s", gone, HumanSize(freed))
+			if ctx.Err() != nil {
+				ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped after removing %d folder(s), %s reclaimed", gone, HumanSize(freed)))
+			}
 			return gone
 		},
 	)
