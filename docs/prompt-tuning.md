@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.334). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.336). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -661,9 +661,11 @@ fixed components, then a second report.
   read as the harness's first. And a misread can be the harness's too: it
   judges a transcript the harness clipped, so before believing "X is missing
   from Y", check that Y reached it whole.
-- **Left open from the first report.** fetch_url's refusal not naming the credential that covers the
-  host; the record of a write fired by hand lives in memory only, so
-  a restart forgets it and the next test asks for the call again.
+- **Left open from the first report.** The record of a write fired by hand
+  lives in memory only, so a restart forgets it and the next test asks for
+  the call again. (fetch_url's private-host refusal now names the
+  credential on that host whose base path the URL left off, v0.7.335: the
+  builder had written the URL from the host alone.)
 - **Whether the friction report becomes a periodic check.** It is run by
   hand while the platform is being got right. If reports keep finding real
   issues after the first round of fixes, a scheduled report after each
