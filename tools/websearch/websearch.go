@@ -347,13 +347,15 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 	// covered by NO credential (covered ones auto-routed above), so the tool
 	// can't be used to probe the server's own internal services.
 	if host := parsed.Hostname(); host != "" {
+		private := false
 		if ip := net.ParseIP(host); ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-				return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
-			}
+			private = ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
 		}
 		if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
-			return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
+			private = true
+		}
+		if private {
+			return "", nonPublicRefusal(target, host, sess)
 		}
 	}
 
@@ -1973,4 +1975,17 @@ func modelArgs(args map[string]any) map[string]any {
 		}
 	}
 	return out
+}
+
+// nonPublicRefusal is the refusal for a private host no credential covers.
+// When one of the user's credentials is on that host under a base path the
+// URL left out, it says so: the usual cause is a URL written from the host
+// alone, and "non-public host" by itself sent the model looking elsewhere.
+func nonPublicRefusal(target, host string, sess *ToolSession) error {
+	if sess != nil {
+		if near := Secure().SameHostCredentials(target, sess.Username); len(near) > 0 {
+			return fmt.Errorf("refusing to fetch %s: no credential's base URL contains it, and an uncovered non-public host is not fetched. This host belongs to credential %s: a URL reaches it only when it starts with that base URL, path included", target, strings.Join(near, ", "))
+		}
+	}
+	return fmt.Errorf("refusing to fetch non-public host: %s", host)
 }

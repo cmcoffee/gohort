@@ -2905,7 +2905,7 @@ func CredentialAuthGuard(rawURL string, headers map[string]any) error {
 		if base == "" {
 			continue
 		}
-		if rawURL == base || strings.HasPrefix(rawURL, base+"/") {
+		if urlUnderBase(rawURL, base) {
 			return fmt.Errorf("refusing to send a raw auth header to %s: registered credential %q covers this host. Dispatch through the credential instead (the fetch_url_%s tool, or fetch_via(%q, url) in a script): the server injects the CURRENT stored secret, so calls keep working after a key rotation, and the key stays out of the conversation. If you hold a NEWER key than the stored one, save it with store_credential_secret(%q, <key>) first: never keep using an inline key", rawURL, c.Name, c.Name, c.Name, c.Name)
 		}
 	}
@@ -2964,7 +2964,7 @@ func (s *SecureAPI) AutoRouteCredential(rawURL string, user ...string) (string, 
 		if base == "" {
 			continue
 		}
-		if rawURL == base || strings.HasPrefix(rawURL, base+"/") {
+		if urlUnderBase(rawURL, base) {
 			covering = append(covering, c.Name)
 		}
 	}
@@ -2986,6 +2986,56 @@ func (s *SecureAPI) AutoRouteCredential(rawURL string, user ...string) (string, 
 	}
 }
 
+// urlUnderBase reports whether rawURL is base itself (with or without a
+// query) or a path under it.
+func urlUnderBase(rawURL, base string) bool {
+	return rawURL == base || strings.HasPrefix(rawURL, base+"/") || strings.HasPrefix(rawURL, base+"?")
+}
+
+// SameHostCredentials names the credentials this user may use whose base URL
+// is on rawURL's host but does not contain it, each as "name (base_url)", and
+// "name (secured: use fetch_url_name)" for one only its own tool reaches.
+//
+// For a refusal to say what was meant. Asked to wrap a service at a base
+// URL with a path, a model fetched the host with the path left off
+// (http://127.0.0.1:port/v1/tasks for a base of .../fixture/todo), which no
+// credential covers, and the refusal said only "non-public host": nothing
+// pointed at the credential it had been told about.
+func (s *SecureAPI) SameHostCredentials(rawURL, user string) []string {
+	if s == nil || !s.ready() {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(c SecureCredential) {
+		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+		b, err := url.Parse(base)
+		if base == "" || err != nil || seen[c.Name] || !strings.EqualFold(b.Host, u.Host) || urlUnderBase(rawURL, base) {
+			return
+		}
+		seen[c.Name] = true
+		if s.EffectiveSecured(c, user) {
+			out = append(out, fmt.Sprintf("%s (secured: use fetch_url_%s)", c.Name, c.Name))
+			return
+		}
+		out = append(out, fmt.Sprintf("%s (%s)", c.Name, base))
+	}
+	for _, c := range s.ListUser(user) {
+		add(c)
+	}
+	for _, c := range s.List() {
+		if s.UserMayUse(c, user) {
+			add(c)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // autoRouteOwn is AutoRouteCredential over one user's own credentials: the
 // name of the one that covers rawURL, an error when that cannot be done
 // cleanly, or ("", nil) when none of theirs covers it.
@@ -2996,7 +3046,7 @@ func (s *SecureAPI) autoRouteOwn(rawURL, user string) (string, error) {
 			continue // reachable only through the tools that declare it, as above
 		}
 		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
-		if base != "" && (rawURL == base || strings.HasPrefix(rawURL, base+"/")) {
+		if base != "" && urlUnderBase(rawURL, base) {
 			covering = append(covering, c.Name)
 		}
 	}

@@ -192,3 +192,25 @@ func TestACredentialAllowsItsOwnBaseURL(t *testing.T) {
 		}
 	}
 }
+
+// A URL on a credential's host but outside its base path is not covered, and
+// the credential is named so a refusal can say what was meant; a covered URL,
+// or one on another host, names none.
+func TestSameHostCredentialsNamesTheBaseTheURLMissed(t *testing.T) {
+	secureAPITestStore(t)
+	if err := Secure().Save(SecureCredential{Name: "todo", Type: SecureCredBearer, BaseURL: "http://127.0.0.1:37185/fixture/todo"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	got := Secure().SameHostCredentials("http://127.0.0.1:37185/v1/tasks?status=open", "")
+	if len(got) != 1 || got[0] != "todo (http://127.0.0.1:37185/fixture/todo)" {
+		t.Fatalf("near = %v", got)
+	}
+	for _, u := range []string{"http://127.0.0.1:37185/fixture/todo/v1/tasks", "http://127.0.0.1:37185/fixture/todo?status=open", "http://127.0.0.1:9999/v1/tasks"} {
+		if got := Secure().SameHostCredentials(u, ""); len(got) != 0 {
+			t.Errorf("%s named %v", u, got)
+		}
+	}
+	if name, err := Secure().AutoRouteCredential("http://127.0.0.1:37185/fixture/todo?status=open"); err != nil && !strings.Contains(err.Error(), "todo") || err == nil && name != "todo" {
+		t.Errorf("the base with a query is not routed to its credential: %q %v", name, err)
+	}
+}
