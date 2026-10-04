@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.342). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.343). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -25,8 +25,8 @@ Builder is thrown at a fixed set of tasks (wrap this API, build this app, make
 this machine). Each task has graders Builder never sees. The run produces a
 scorecard. A prompt is changed by a proposer model, and the suite runs
 again. A change is kept only when the scorecard says it helped; when the run
-ends, what it kept is applied as that model's own wording, and Undo takes the
-run back.
+ends, what it kept is applied as the one wording both models read, and Undo
+takes the run back.
 
 ## Map the framework first: the Friction report
 
@@ -278,7 +278,7 @@ by all of it.
 ## Running
 
 The harness lives in the live server: the Optimize section on the admin
-LLMs tab (a row per model, and the latest friction report), Details behind
+LLMs tab (one Optimize row, and the latest friction report), Details behind
 it with Ask Builder, and the Friction report app at `/friction`. It starts the
 sandbox and drives it over HTTP: Builder is given each
 task through the ordinary chat endpoint, the harness answering its
@@ -373,9 +373,8 @@ A candidate is accepted only when all of these hold:
 
 A tuning run has a token and wall-clock budget and stops after N passes in a
 row with no edit that held. When it ends it applies what it kept: each
-changed block becomes that tier's own wording, written `Via: "tuned"`, and
-Undo takes the whole run back at once from the run's own record of what it
-replaced.
+changed block's shared text, which both models read, and Undo takes the
+whole run back at once from the run's own record of what it replaced.
 
 ## Tool descriptions are weights too
 
@@ -402,7 +401,7 @@ every call that offers the tool, at the same handle the per-tier swap uses.
   its own, `tool.<name>.<param>`: the parameter descriptions carry much of
   the how (app_def's sections and data sources, a machine's phases). They
   are recorded and listed the same way, so they come back after a restart,
-  and edited per model the same way. Nested properties are left as the code
+  and tuned the same way. Nested properties are left as the code
   builds them. The proposer is shown a parameter's block only when its tool
   appears in the builds that failed, since there are hundreds of them.
 
@@ -497,7 +496,8 @@ Each stage is useful alone and proves the next one is worth building.
 7. **Lead tuning**, with its spending cap.
 
 Built since, on top of those: tool and parameter descriptions as blocks;
-one-click Optimize per model with Undo; the focused mode (fix as it goes,
+one-click Optimize with Undo (one run aimed at the worker since
+2026-10-04, per model before); the focused mode (fix as it goes,
 confirm on the whole suite), now the only mode; choice probes, and Ask
 Builder on Details; giving way to people and picking up after a restart; stages on
 every long run; and the friction report, which comes first.
@@ -560,7 +560,7 @@ The first real proposals. Look at: probes running before each build and
 their fixes; failures set aside as the framework's (each one is a gap the
 friction report missed, so write another report); each kept
 edit, and whether it names a general rule or the task it saw; the result
-applied as the worker's own wording; Undo and Reset to shipped putting live
+applied as the shared wording; Undo and Reset to shipped putting live
 back; restarting the server mid-run and the
 run picking up where it was.
 
