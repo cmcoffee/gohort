@@ -166,3 +166,29 @@ func TestAScriptDoesNotPrintAKeyItWasGiven(t *testing.T) {
 		t.Errorf("the key is in the output: %s", out)
 	}
 }
+
+// A credential with no endpoint list allows its base URL itself, with or
+// without a query, as well as everything under it; not a longer host or a
+// sibling path that only starts with the same text.
+func TestACredentialAllowsItsOwnBaseURL(t *testing.T) {
+	c := SecureCredential{Name: "jobs", BaseURL: "http://127.0.0.1:37185/fixture/jobs/"}
+	for _, u := range []string{
+		"http://127.0.0.1:37185/fixture/jobs",
+		"http://127.0.0.1:37185/fixture/jobs/",
+		"http://127.0.0.1:37185/fixture/jobs?q=nurse",
+		"http://127.0.0.1:37185/fixture/jobs/v1/jobs?q=nurse",
+	} {
+		if !urlAllowedByCredential(c, u) {
+			t.Errorf("%s was refused", u)
+		}
+	}
+	for _, u := range []string{
+		"http://127.0.0.1:37185/fixture/jobsx",
+		"http://127.0.0.1:37185/fixture",
+		"http://127.0.0.1:371850/fixture/jobs",
+	} {
+		if urlAllowedByCredential(c, u) {
+			t.Errorf("%s was allowed", u)
+		}
+	}
+}

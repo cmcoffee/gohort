@@ -3238,6 +3238,15 @@ func urlAllowedByCredential(c SecureCredential, rawURL string) bool {
 	if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
 		eps := c.AllowedEndpoints
 		if len(eps) == 0 {
+			// The base itself is under the base: a service whose one endpoint
+			// is its base URL (with or without a query) was refused here while
+			// the router sent fetch_url to this credential for it, and the
+			// refusal then blamed an endpoint list that is empty.
+			bare, _, _ := strings.Cut(rawURL, "#")
+			bare, _, _ = strings.Cut(bare, "?")
+			if strings.TrimRight(bare, "/") == base {
+				return true
+			}
 			return urlMatchesPattern(rawURL, base+"/**")
 		}
 		for _, ep := range eps {

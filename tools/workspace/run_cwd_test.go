@@ -121,3 +121,30 @@ func TestRunWithNoCwdIsUnchanged(t *testing.T) {
 		t.Errorf("want no WorkDir, got %q", got)
 	}
 }
+
+// "workspace" is where a command starts anyway: read as no root, not refused
+// as an unregistered one. With a folder, the refusal says how to get there.
+func TestRunCwdWorkspaceMeansNoRoot(t *testing.T) {
+	sess := &ToolSession{Username: "alice"}
+	for _, ref := range []string{"workspace", "Workspace", "."} {
+		got, err := resolveRunCwd(map[string]any{"cwd_root": ref}, sess)
+		if err != nil || got != "" {
+			t.Fatalf("cwd_root %q: %q, %v", ref, got, err)
+		}
+	}
+	_, err := resolveRunCwd(map[string]any{"cwd_root": "workspace", "cwd": "out"}, sess)
+	if err == nil || !strings.Contains(err.Error(), "cd out &&") {
+		t.Fatalf("a folder inside the workspace: %v", err)
+	}
+}
+
+// An unregistered root gets a plain refusal, not the generic constraint text
+// that told the model a source was missing and then to omit it.
+func TestRunCwdUnregisteredRootIsAPlainRefusal(t *testing.T) {
+	registerTestRoot(t, "testfiles", "bundles", "/srv/bundles")
+	sess := &ToolSession{Username: "alice"}
+	_, err := resolveRunCwd(map[string]any{"cwd_root": "files:missing"}, sess)
+	if err == nil || !strings.HasPrefix(err.Error(), `cwd_root "files:missing" is not a registered root.`) || strings.Contains(err.Error(), "Tell the person") {
+		t.Fatalf("refusal = %v", err)
+	}
+}

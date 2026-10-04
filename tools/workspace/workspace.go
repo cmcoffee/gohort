@@ -244,7 +244,7 @@ func init() {
 		Params: map[string]ToolParam{
 			"command":  {Type: "string", Description: "Shell command to execute. Standard sh -c semantics: pipes, redirects, quoting work normally."},
 			"env":      {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command, reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
-			"cwd_root": {Type: "string", Description: "Optional registered root to start the command in, as \"kind:name\" (e.g. \"files:support-bundles\"). Use when a binary must RUN AT the base of a folder it reads: it resolves its own inputs relative to the working directory. The folder stays READ-ONLY: the workspace is still the only writable path, so write output there. Omit to start in the workspace, which is almost always right. If you do not know what is registered, pass any value and the refusal lists them."},
+			"cwd_root": {Type: "string", Description: "Optional registered root to start the command in, as \"kind:name\" (e.g. \"files:support-bundles\"). Use when a binary must RUN AT the base of a folder it reads: it resolves its own inputs relative to the working directory. The folder stays READ-ONLY: the workspace is still the only writable path, so write output there. Omit to start in the workspace, which is almost always right; a refusal lists what is registered."},
 			"cwd":      {Type: "string", Description: "Folder inside cwd_root to start in, relative to that root. Omit, or pass \".\", to start at the base of the root itself."},
 		},
 		Required:     []string{"command"},
@@ -552,6 +552,16 @@ func handleRm(args map[string]any, sess *ToolSession) (string, error) {
 func resolveRunCwd(args map[string]any, sess *ToolSession) (string, error) {
 	ref := strings.TrimSpace(StringArg(args, "cwd_root"))
 	rel := strings.TrimSpace(StringArg(args, "cwd"))
+	// "workspace" is where a command starts anyway, and the guess a model makes
+	// for "start where you normally do". Read it as no root rather than as a
+	// root nobody registered, which answered with a refusal that contradicted
+	// itself (a constraint naming a missing source, then "omit it").
+	if strings.EqualFold(ref, "workspace") || ref == "." {
+		if rel != "" && rel != "." {
+			return "", fmt.Errorf("the command already starts in the workspace, so cwd_root %q is not needed; to start in a folder inside it, begin the command with cd %s && . Nothing ran.", ref, rel)
+		}
+		return "", nil
+	}
 	if ref == "" {
 		// A cwd without a root is the mistake worth naming: silently starting in
 		// the workspace would look like the folder was empty.
@@ -573,9 +583,22 @@ func resolveRunCwd(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	abs, err := ResolvePathScope(user, agentID, ref, rel)
 	if err != nil {
+		if !rootRegistered(user, ref) {
+			return "", fmt.Errorf("cwd_root %q is not a registered root. Nothing ran.%s", ref, knownRootsSuffix(sess))
+		}
 		return "", fmt.Errorf("%w%s", err, knownRootsSuffix(sess))
 	}
 	return abs, nil
+}
+
+// rootRegistered reports whether ref names one of the user's registered roots.
+func rootRegistered(user, ref string) bool {
+	for _, r := range PathScopeRoots(user) {
+		if r.Ref == ref {
+			return true
+		}
+	}
+	return false
 }
 
 // knownRootsSuffix names what IS registered, or says plainly that nothing is.
