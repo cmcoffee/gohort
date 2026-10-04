@@ -286,6 +286,9 @@ func newToolboxGroupedTool(tt *TempTool) *GroupedTool {
 	// a session export, a false provenance for long-lived tools).
 	gtDesc := tt.Description + fmt.Sprintf(" (toolbox: wraps credential %q with %d action(s); manage via tool_def)", tt.Credential, live)
 	gt := NewGroupedTool(tt.Name, gtDesc)
+	// The user wrote this definition, so a run of failures on one action says
+	// the definition is wrong: track it (core/tool_outcomes.go).
+	gt.SetTrackOutcomes(true)
 	for i := range tt.Actions {
 		if tt.Actions[i].Disabled {
 			continue // quarantined — not offered

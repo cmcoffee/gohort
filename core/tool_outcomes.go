@@ -60,11 +60,12 @@ func noteToolOutcome(sess *ToolSession, tool, action string, err error) string {
 // definition is wrong, so trying again with different arguments cannot help,
 // and the person who can fix it is the user. Without this the model has no way
 // to distinguish "I called it wrong" — worth another go — from "this has never
-// worked for anyone" — worth reporting. It had no way to tell, so it kept
+// worked for me" — worth reporting. Only tools whose definition the user wrote
+// are tracked (GroupedTool.SetTrackOutcomes). It had no way to tell, so it kept
 // guessing, hundreds of times.
 func ToolNeverWorkedHint(tool, action string, failures int) string {
 	return "\n\nSTOP RETRYING THIS. " + tool + "(action=\"" + action + "\") has now failed " +
-		strconv.Itoa(failures) + " times and has never once succeeded, for anyone, on any arguments. " +
+		strconv.Itoa(failures) + " times for you and has never once succeeded, on any arguments. " +
 		"That is a broken tool DEFINITION, not a mistake in your call, so re-sending it with different " +
 		"params cannot work. Do not try another route to the same thing either. Tell the user plainly " +
 		"that this action is broken and needs fixing (its params or its URL), then carry on with whatever " +

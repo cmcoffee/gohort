@@ -329,3 +329,36 @@ func TestAnUnambiguousCallWithNoActionRunsTheOnlyActionItFits(t *testing.T) {
 		}
 	}
 }
+
+// Only a tool whose definition the user wrote is tracked for "never worked".
+// A built-in authoring tool's failures are the caller's arguments, and telling
+// the model its definition is broken stops it fixing them: tool_def got
+// "STOP RETRYING THIS ... broken tool DEFINITION" on the model's own
+// validation errors, in a fresh sandbox where nothing had succeeded yet.
+func TestOnlyTrackedToolsReportTheirOutcomes(t *testing.T) {
+	var seen []string
+	prev := RecordToolOutcome
+	RecordToolOutcome = func(_ *ToolSession, tool, action string, err error) string {
+		seen = append(seen, tool+"."+action)
+		return " BROKEN"
+	}
+	t.Cleanup(func() { RecordToolOutcome = prev })
+	sess := &ToolSession{}
+
+	builtin := runHintTool()
+	if _, err := builtin.RunWithSession(map[string]any{"action": "get"}, sess); err == nil || strings.Contains(err.Error(), "BROKEN") {
+		t.Fatalf("a built-in tool's validation error = %v", err)
+	}
+	if len(seen) != 0 {
+		t.Fatalf("a built-in tool was tracked: %v", seen)
+	}
+
+	toolbox := runHintTool()
+	toolbox.SetTrackOutcomes(true)
+	if _, err := toolbox.RunWithSession(map[string]any{"action": "get"}, sess); err == nil || !strings.HasSuffix(err.Error(), "BROKEN") {
+		t.Fatalf("a tracked tool's error lost the advice: %v", err)
+	}
+	if len(seen) != 1 || seen[0] != "tool_def.get" {
+		t.Fatalf("tracked = %v", seen)
+	}
+}

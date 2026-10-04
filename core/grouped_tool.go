@@ -126,7 +126,20 @@ type GroupedTool struct {
 	serialFire bool
 	framework  bool
 	trusted    bool
+	// trackOutcomes reports each action's outcome to RecordToolOutcome, so
+	// an action that has never once worked is called broken. Off unless the
+	// tool's definition is the user's: see SetTrackOutcomes.
+	trackOutcomes bool
 }
+
+// SetTrackOutcomes has every call to this tool's actions reported to
+// RecordToolOutcome, which tells the model an action that keeps failing and
+// has never once worked is broken. For a tool whose DEFINITION the user wrote
+// (a toolbox), where a run of failures says the definition is wrong. Never for
+// a built-in tool: its definition is not the user's to fix, and for an
+// authoring tool like tool_def nearly every failure is the caller's arguments,
+// which a "broken definition" verdict tells the model to stop correcting.
+func (g *GroupedTool) SetTrackOutcomes(v bool) { g.trackOutcomes = v }
 
 // SetTrustedOutput marks this grouped tool's result as framework-generated
 // control / authoring output (not raw external content), suppressing the
@@ -490,6 +503,9 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 	// host is the only thing that knows this action has failed twenty times
 	// running and the model is the only thing that can stop calling it.
 	defer func() {
+		if !g.trackOutcomes {
+			return
+		}
 		if advice := noteToolOutcome(sess, g.name, action, err); advice != "" && err != nil {
 			err = fmt.Errorf("%w%s", err, advice)
 		}
