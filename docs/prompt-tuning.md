@@ -487,8 +487,9 @@ prompt variant.
 
 ## Live run plan
 
-Everything is built and nothing has run against a live deployment. The plan
-is a ladder: each run proves the harness can be trusted with the next, and
+Everything is built. Optimize first ran against the live deployment on
+2026-10-03 (see "What the first live runs showed" below); no friction report
+has run yet. The plan is a ladder: each run proves the harness can be trusted with the next, and
 each says what to look at before climbing. Every run starts from the
 Optimize section on the admin LLMs tab. Runs give way to people using the
 model they build on, so they can run while the deployment is in use, only
@@ -562,6 +563,37 @@ the lead's price. No judge (the judge is the lead), so the checks and the
 owner's picks carry the comparison. Watch for the cap stopping a round
 before it starts rather than in the middle, and for Spent agreeing with the
 provider's own bill.
+
+### What the first live runs showed (2026-10-03)
+
+Optimize ran for an evening on the worker, then on the lead, before the
+friction report existed. Read from the server's debug log, where each
+sandbox's own log is mirrored under `[tuning sandbox-N]`:
+
+- **Restarts were survived.** Two rebuilds cut the worker run off; it picked
+  itself up each time (and once by hand) where it was.
+- **Framework problems turned up before any wording did.** Two tasks were
+  set aside as the framework's (a check expecting a different invoice than
+  the fixture served; a verification check rejecting a correct tool chain),
+  and other failures pointed at the platform too (a URL template rejected
+  by `tool_def`, a machine failing inside a step). This is what the friction
+  report exists to sort out first.
+- **The lead never answered the lead's work.** Gemini rejected every call
+  that briefs by a system message ("Role 'system' is not supported"), so the
+  proposer, the diagnosis, the judge and the reviewer all fell back to the
+  worker without anyone choosing it. Fixed in the core Gemini client: system
+  messages go to its system instruction. Any run before v0.7.300 tuned with
+  the worker proposing.
+- **A lead run's spend read as the worker's.** Pinned to the lead, a sandbox
+  is given the lead's model as its worker, so it books every call as worker
+  tokens ("Worker tokens", tier=worker in its log, for calls that went to
+  the lead's model). The harness took that as it read, so the cap could not
+  stop a lead run and Cost History filed its spend as the worker's. The
+  harness now reads a lead-pinned sandbox's usage as the lead's.
+- **Tool schemas are most of Builder's prompt:** about 35k tokens, some 82%
+  of every call, the largest single schemas being the agent and tool
+  authoring tools. Friction no wording fixes; a candidate for the first
+  report's review.
 
 ### Stop and look again if
 
