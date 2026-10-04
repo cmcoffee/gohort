@@ -22,8 +22,9 @@ Fine-tuning, with the prompts as the weights.
 Builder is thrown at a fixed set of tasks (wrap this API, build this app, make
 this machine). Each task has graders Builder never sees. The run produces a
 scorecard. A prompt is changed, by hand or by a proposer model, and the suite
-runs again. A change is kept only when the scorecard says it helped, and only
-reaches the live deployment when an admin promotes it.
+runs again. A change is kept only when the scorecard says it helped; when
+the run ends, what it kept is applied as that model's own wording, each
+change a revision, and Undo takes the run back.
 
 ## Map the framework first: the Friction report
 
@@ -348,10 +349,10 @@ A candidate is accepted only when all of these hold:
    with more text, and every token is paid on every turn)
 
 A tuning run has a token and wall-clock budget and stops after N passes in a
-row with no edit that held. It never promotes. Promotion is an admin action on the
-winning variant: each changed block gets a Prompts-page revision tagged
-`Via: "tuned"` with the scorecard linked, so it is revertible the same way
-every other edit is.
+row with no edit that held. When it ends it applies what it kept: each
+changed block becomes that tier's own wording, written `Via: "tuned"` with a
+Prompts-page revision, so it is revertible the same way every other edit
+is, and Undo takes the whole run back at once.
 
 ## Tool descriptions are weights too
 
