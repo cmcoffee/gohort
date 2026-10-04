@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.347). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.348). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -83,8 +83,13 @@ The loop the report is for:
 ## Using it: one Optimize, aimed at the worker
 
 Optimizing lives with the models, on the admin **LLMs** tab, under
-**Optimize**: one row, one button (decided 2026-10-04; it was a row per
-model). A run builds on the **worker** and the **lead helps**: it proposes
+**Optimize**: one row, **Builder's wording**, one button (decided
+2026-10-04; it was a row per model). The page explains the process, not
+the models: what Optimize is for (improving the wording Builder works from
+by building real things with it, keeping only changes that make more
+builds pass), a run's five steps (build, read, fix, confirm, apply), and
+its limits, the spend cap at the admin Prices among them. Which model does
+what gets one sentence there; the detail is here. A run builds on the **worker** and the **lead helps**: it proposes
 the edits, reads the failures and reviews the builds. What it keeps is one
 wording that both models read. Why (the owner's reasoning): the worker is
 local and cheap, so its builds cost nothing but time, and it is the likely
