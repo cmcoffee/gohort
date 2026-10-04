@@ -448,6 +448,9 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 	if worker {
 		a.db.Get(table, "request_timeout_seconds", &reqTimeout)
 		out["request_timeout_seconds"] = reqTimeout
+		// Read-only, like _live: whose prompt wording governs here when the
+		// worker is a peer's model. Empty hides the field.
+		out["_peer_wording"] = peerWordingLine(provider)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)

@@ -18,6 +18,10 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(false),
 						Help:   "Local providers, ollama or llama.cpp, are the usual worker.",
 						Detail: "A peer offering inference appears here too, and its GPU runs the turns."},
+					// Shown only when there is something to say: a peer's model is
+					// tuned on that peer, and its wording governs here.
+					{Field: "_peer_wording", Type: "readonly", Label: "Prompt wording", ShowWhen: "_peer_wording",
+						Help: "A peer's model is tuned on that peer, and its wording is what this machine sends it."},
 					{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. qwen3.6-27b",
 						Help:   "Blank uses the provider default.",
 						Detail: "On AWS Bedrock, many accounts require a region-prefixed inference profile (us.anthropic.claude-opus-4-8) and deny the bare id."},
