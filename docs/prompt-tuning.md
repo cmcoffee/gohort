@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.353). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.354). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -450,7 +450,11 @@ blocks it may edit, builds the whole suite once more, and keeps the cuts
 only if no build is lost (no worse, rather than better), taking them back
 one at a time otherwise. A setting turns it off; it costs one more
 whole-suite run per pass and is skipped when the budget would not cover
-it. (Decided 2026-10-04; being built.)
+it. Built 2026-10-04 (private `trim.go`): the 3 longest blocks, skipping
+ones tried before or edited this pass; "no worse" (`noWorse`) means no
+split's verdict worse and no split passing fewer builds, so "no builds
+lost" is literal, at the price of a good cut sometimes dropped by one
+unlucky build. Setting **Shorten what it tunes** on Details, default on.
 
 ## Per-tier profiles
 
