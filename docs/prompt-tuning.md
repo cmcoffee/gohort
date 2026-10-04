@@ -281,8 +281,9 @@ button. `core.ReportMaintenanceProgress`, `ui.ActionList.ProgressSource` and
 also show their stages with `ui.StageTracker`: every stage in order, done,
 running, pending, failed or skipped with a count; the running pass's tasks
 one by one (probed, built, passed, set aside, fixed); what it is doing now
-and the last thing worth noticing. A single progress line said what was
-happening but not where in the whole that was.
+and the last thing worth noticing. Re-checks show theirs under the list they
+were started from. A single progress line said what was happening but not
+where in the whole that was.
 
 ## Graders
 
