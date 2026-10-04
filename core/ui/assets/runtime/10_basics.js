@@ -5079,6 +5079,14 @@
       }).catch(function(err){ wrap.textContent = 'Failed: ' + err.message; });
     }
     load();
+    // Refetch when something else on the page changes what the list says,
+    // as tables and display panels do: a setting saved beside the list (a
+    // form whose invalidate names this source) changes its rows' text, and
+    // without this the list kept describing the old setting until a reload.
+    window.addEventListener('ui-data-changed', function(ev) {
+      var sources = ev.detail && ev.detail.sources;
+      if (sources && cfg.source && sources.indexOf(cfg.source) >= 0) load();
+    });
     return wrap;
   };
 
