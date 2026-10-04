@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.340). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.342). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -133,8 +133,11 @@ prompt-block overrides to peers holding a models key, and the borrowing
 machine fetches them every few minutes, keeps the last copy if the peer is
 down, and reads them over its own. Only registered prompt blocks travel
 (tool descriptions included), never the admin's Style rules. Its Optimize
-row says the worker is tuned on the peer, and runs there. (Decided
-2026-10-04; being built.)
+row says the worker is tuned on the peer, and runs there. Built in
+v0.7.341: `GET /api/peer/v1/prompts` on the serving machine (models key
+and grant, advertised in the manifest), the peer layer in core/prompts
+read first by every override lookup including per-tier resolution, and
+`LocalPromptOverride` for what changes this machine's own text.
 
 **Ask Builder**, on Details, gives Builder a request (your own, or one of
 the suite's) in a sandbox holding live's wording and stops it at the first
