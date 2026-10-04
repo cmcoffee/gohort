@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs done** (v0.7.319). The harness and the
+Status: **built, first live runs done** (v0.7.321). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -501,6 +501,10 @@ slower; overnight is still the natural time.
    README. The visibility gaps found writing the first plan (a silent
    progress line, rounds invisible until they ended, no scorecard) are
    closed.
+3. **Live on what ships.** Anything saved in the old hand editor still
+   applies, and it would be measured as if it were the shipped text. Run
+   **Reset edited prompt blocks** (Admin > Maintenance > Housekeeping) once
+   after upgrading past v0.7.317; it logs each text it clears.
 
 ### Run 0: a friction report
 
