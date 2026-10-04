@@ -310,14 +310,10 @@ func (T *PromptsApp) handleList(w http.ResponseWriter, r *http.Request) {
 	for _, b := range AllPromptBlocks() {
 		subject := b.Title
 		date := b.Category
-		// Mark an overridden block with an icon rather than the word "edited":
-		// ✨ if its current text came from Tighten, ✎ if it was hand-edited.
+		// ✎ marks a block whose shared text differs from what shipped, however
+		// it was changed; the revisions say how.
 		if _, overridden := PromptOverride(b.Key); overridden {
-			if via := T.latestRevisionVia(b.Key); via == "tighten" || via == "optimize" {
-				subject += "  ✨"
-			} else {
-				subject += "  ✎"
-			}
+			subject += "  ✎"
 		}
 		row := map[string]any{"ID": b.Key, "Subject": subject, "Date": date}
 		// Which models read wording of their own here: the split Optimize (or
@@ -516,28 +512,6 @@ func (T *PromptsApp) snapshotRevision(blockKey, text, via, note string) {
 		T.DB.Unset(promptRevTable, ids[0])
 		ids = ids[1:]
 	}
-}
-
-// latestRevisionVia reports how a block's CURRENT override was produced —
-// "tighten" (or the older "optimize") or "edit". Every change snapshots the PRE-change text tagged with
-// the action that replaced it, so the NEWEST revision's Via describes the text
-// live now. "" when the block has no revisions. revID is a monotonic nanosecond
-// timestamp, so the lexically-greatest key is the newest.
-func (T *PromptsApp) latestRevisionVia(blockKey string) string {
-	if T.DB == nil {
-		return ""
-	}
-	newestID, via := "", ""
-	for _, k := range T.DB.Keys(promptRevTable) {
-		if k <= newestID {
-			continue
-		}
-		var rev promptRevision
-		if T.DB.Get(promptRevTable, k, &rev) && rev.Block == blockKey {
-			newestID, via = k, rev.Via
-		}
-	}
-	return via
 }
 
 func (T *PromptsApp) handleRevList(w http.ResponseWriter, r *http.Request) {
