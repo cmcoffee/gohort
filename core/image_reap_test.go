@@ -5,6 +5,7 @@ package core
 // unable to reach one rather than merely declining to.
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -70,10 +71,10 @@ func TestReapNeverTouchesKeptImages(t *testing.T) {
 		writeAged(t, filepath.Join(lib, name), fakeImageBytes, ancient)
 	}
 
-	if list := FindReapableImages(allImageReapWindows); len(list) != 0 {
+	if list := FindReapableImages(context.Background(), allImageReapWindows); len(list) != 0 {
 		t.Fatalf("kept images must be unreachable, got %d candidate(s): %+v", len(list), list)
 	}
-	if files, _ := ReapImages(allImageReapWindows); files != 0 {
+	if files, _ := ReapImages(context.Background(), allImageReapWindows); files != 0 {
 		t.Fatalf("reaped %d file(s) from a store holding only kept images", files)
 	}
 	for _, name := range decoys {
@@ -93,7 +94,7 @@ func TestReapDropsOldRingEntriesWithSidecars(t *testing.T) {
 		writeAged(t, filepath.Join(dir, ringSidecarPath(name)), fakeSidecarBytes, 0)
 	}
 
-	files, bytes := ReapImages(ImageReapWindows{Ring: 30 * 24 * time.Hour})
+	files, bytes := ReapImages(context.Background(), ImageReapWindows{Ring: 30 * 24 * time.Hour})
 	if files != 1 {
 		t.Fatalf("reaped %d file(s), want exactly the one past the window", files)
 	}
@@ -130,7 +131,7 @@ func TestReapIgnoresUnrecognizedNames(t *testing.T) {
 		writeAged(t, p, fakeImageBytes, old)
 	}
 
-	if list := FindReapableImages(allImageReapWindows); len(list) != 0 {
+	if list := FindReapableImages(context.Background(), allImageReapWindows); len(list) != 0 {
 		t.Fatalf("unrecognized names must never be candidates, got %+v", list)
 	}
 	for _, p := range strangers {
@@ -148,7 +149,7 @@ func TestReapDeliveredAttachmentsByAge(t *testing.T) {
 	writeAged(t, filepath.Join(dir, old), fakeImageBytes, 120*24*time.Hour)
 	writeAged(t, filepath.Join(dir, fresh), fakeImageBytes, 3*24*time.Hour)
 
-	if files, _ := ReapImages(ImageReapWindows{Delivered: 90 * 24 * time.Hour}); files != 1 {
+	if files, _ := ReapImages(context.Background(), ImageReapWindows{Delivered: 90 * 24 * time.Hour}); files != 1 {
 		t.Fatalf("reaped %d file(s), want 1", files)
 	}
 	if reapFileExists(filepath.Join(dir, old)) {
@@ -171,11 +172,11 @@ func TestReapOrphansReadTheRootOnly(t *testing.T) {
 	writeAged(t, nested, fakeImageBytes, 48*time.Hour)
 
 	w := ImageReapWindows{Orphan: 24 * time.Hour}
-	list := FindReapableImages(w)
+	list := FindReapableImages(context.Background(), w)
 	if len(list) != 1 || list[0].Name != orphan || list[0].Class != ImageReapOrphan {
 		t.Fatalf("candidates = %+v, want only the aged render at the root", list)
 	}
-	ReapImages(w)
+	ReapImages(context.Background(), w)
 	if reapFileExists(filepath.Join(base, orphan)) {
 		t.Error("the aged orphan survived")
 	}
@@ -199,12 +200,12 @@ func TestZeroWindowDisablesItsClass(t *testing.T) {
 	if none.Any() {
 		t.Fatal("an all-zero window set must report nothing eligible")
 	}
-	if files, _ := ReapImages(none); files != 0 {
+	if files, _ := ReapImages(context.Background(), none); files != 0 {
 		t.Fatalf("reaped %d file(s) with every window disabled", files)
 	}
 
 	// One class on, the other two off: only that class moves.
-	if files, _ := ReapImages(ImageReapWindows{Delivered: 30 * 24 * time.Hour}); files != 1 {
+	if files, _ := ReapImages(context.Background(), ImageReapWindows{Delivered: 30 * 24 * time.Hour}); files != 1 {
 		t.Fatalf("reaped %d file(s), want only the attachment", files)
 	}
 	if !reapFileExists(ring) || !reapFileExists(orphan) {
@@ -250,5 +251,24 @@ func TestDefaultWindowsAreLiveAndOrdered(t *testing.T) {
 	}
 	if reapWindowLabel(0) != "disabled" {
 		t.Error("a zero window must read as disabled rather than as 0s")
+	}
+}
+
+// A stopped image reap removes nothing, and a stopped dry run lists nothing
+// past the point it stopped.
+func TestAStoppedImageReapRemovesNothing(t *testing.T) {
+	base := imageReapStore(t)
+	dir := filepath.Join(base, "recent", "alice", "researcher")
+	old := ringName(40 * 24 * time.Hour)
+	writeAged(t, filepath.Join(dir, old), fakeImageBytes, 0)
+	w := ImageReapWindows{Ring: 30 * 24 * time.Hour}
+
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	if list := FindReapableImages(stopped, w); len(list) != 0 {
+		t.Fatalf("a stopped dry run listed %d file(s)", len(list))
+	}
+	if files, _ := ReapImages(stopped, w); files != 0 || !reapFileExists(filepath.Join(dir, old)) {
+		t.Fatalf("a stopped reap removed %d file(s)", files)
 	}
 }

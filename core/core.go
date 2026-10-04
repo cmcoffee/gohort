@@ -1045,7 +1045,7 @@ func init() {
 			"authoritative-domain cache (past their 30-day / 7-day TTLs). Lazy "+
 			"delete-on-read already reclaims entries that get re-queried after "+
 			"expiry; this reclaims the long tail that is never queried again.",
-		func(ctx context.Context) int { return sourcehooks.SweepHookCache() },
+		func(ctx context.Context) int { return sourcehooks.SweepHookCache(ctx) },
 	)
 
 	// promotion: reads two tunables; the registry (and so the admin surface

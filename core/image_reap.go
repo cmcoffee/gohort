@@ -139,7 +139,9 @@ var orphanImageRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 // not round-trip back to a directory -- and going by the directories means a
 // deleted user's leftovers are reclaimed too, which is otherwise a class of
 // bytes nothing on the system can ever reach.
-func FindReapableImages(w ImageReapWindows) []ImageReapCandidate {
+//
+// A stopped ctx ends the walk at the next directory, with what it found so far.
+func FindReapableImages(ctx context.Context, w ImageReapWindows) []ImageReapCandidate {
 	base := ImageDir()
 	if base == "" {
 		return nil
@@ -152,6 +154,9 @@ func FindReapableImages(w ImageReapWindows) []ImageReapCandidate {
 		for _, user := range imageStoreSubdirs(root) {
 			userDir := filepath.Join(root, user)
 			for _, agent := range imageStoreSubdirs(userDir) {
+				if ctx.Err() != nil {
+					return out
+				}
 				out = append(out, scanRingImages(filepath.Join(userDir, agent), user, agent, now, w.Ring)...)
 			}
 		}
@@ -159,10 +164,13 @@ func FindReapableImages(w ImageReapWindows) []ImageReapCandidate {
 	if w.Delivered > 0 {
 		root := filepath.Join(base, "delivered")
 		for _, user := range imageStoreSubdirs(root) {
+			if ctx.Err() != nil {
+				return out
+			}
 			out = append(out, scanDeliveredImages(filepath.Join(root, user), user, now, w.Delivered)...)
 		}
 	}
-	if w.Orphan > 0 {
+	if w.Orphan > 0 && ctx.Err() == nil {
 		out = append(out, scanOrphanImages(base, now, w.Orphan)...)
 	}
 
@@ -322,11 +330,19 @@ func ringSidecarPath(png string) string {
 // ReapImages removes what FindReapableImages reports and returns how many files
 // went and how many bytes came back. A file that will not delete is logged and
 // skipped: one unreadable entry is not a reason to abandon the rest, and the
-// next sweep tries it again.
-func ReapImages(w ImageReapWindows) (int, int64) {
+// next sweep tries it again. A stopped ctx removes nothing when it stops the
+// walk, and ends the removing at the next file.
+func ReapImages(ctx context.Context, w ImageReapWindows) (int, int64) {
 	var files int
 	var bytes int64
-	for _, c := range FindReapableImages(w) {
+	list := FindReapableImages(ctx, w)
+	if ctx.Err() != nil {
+		return 0, 0
+	}
+	for _, c := range list {
+		if ctx.Err() != nil {
+			break
+		}
 		if err := os.Remove(c.Path); err != nil {
 			Log("[image-reap] could not remove %s: %v", c.Path, err)
 			continue
@@ -435,7 +451,7 @@ func init() {
 		if !dueForImageReap(time.Now()) {
 			return nil
 		}
-		files, bytes := ReapImages(w)
+		files, bytes := ReapImages(ctx, w)
 		if files > 0 {
 			Log("[image-reap] removed %d file(s), reclaimed %s", files, HumanSize(bytes))
 		}
@@ -456,7 +472,11 @@ func init() {
 				Log("[image-reap] every window is disabled; nothing is eligible")
 				return 0
 			}
-			list := FindReapableImages(w)
+			list := FindReapableImages(ctx, w)
+			if ctx.Err() != nil {
+				ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped part way, %d file(s) found by then", len(list)))
+				return len(list)
+			}
 			if len(list) == 0 {
 				Log("[image-reap] nothing eligible")
 				return 0
@@ -476,14 +496,21 @@ func init() {
 				Log("[image-reap] every window is disabled; nothing removed")
 				return 0
 			}
-			list := FindReapableImages(w)
+			list := FindReapableImages(ctx, w)
+			if ctx.Err() != nil {
+				ReportMaintenanceOutcome(ctx, "stopped before removing anything")
+				return 0
+			}
 			if len(list) == 0 {
 				Log("[image-reap] nothing eligible; nothing removed")
 				return 0
 			}
 			Log("[image-reap] removing %d file(s):\n%s", len(list), FormatImageReapCandidates(list))
-			files, bytes := ReapImages(w)
+			files, bytes := ReapImages(ctx, w)
 			Log("[image-reap] removed %d file(s), reclaimed %s", files, HumanSize(bytes))
+			if ctx.Err() != nil {
+				ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped after removing %d file(s), %s reclaimed", files, HumanSize(bytes)))
+			}
 			return files
 		},
 	)

@@ -1,6 +1,7 @@
 package sourcehooks
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -917,8 +918,9 @@ func storeHookCache(hookName, query, result string) {
 // re-queried after they expire; this sweep reclaims the long tail of
 // entries that are never queried again, keeping the persistent cache
 // bounded the way the fetch_url cache stays bounded via its quota eviction.
-// Returns the number of entries removed.
-func SweepHookCache() int {
+// Returns the number of entries removed. A stopped ctx ends the sweep at the
+// next entry; each removal stands on its own.
+func SweepHookCache(ctx context.Context) int {
 	hookCacheMu.RLock()
 	db := hookCacheDB
 	ttl := hookCacheTTL
@@ -931,6 +933,9 @@ func SweepHookCache() int {
 	// Source-hook entries: empty (negative-cache) results expire on the
 	// shorter empty TTL, matching lookupHookCache.
 	for _, key := range db.Keys(hookCacheBucket) {
+		if ctx.Err() != nil {
+			return removed
+		}
 		var entry hookCacheEntry
 		if !db.Get(hookCacheBucket, key, &entry) {
 			continue
@@ -946,6 +951,9 @@ func SweepHookCache() int {
 	}
 	// Authoritative-domain entries: single TTL.
 	for _, key := range db.Keys(authDomainBucket) {
+		if ctx.Err() != nil {
+			return removed
+		}
 		var entry authDomainEntry
 		if !db.Get(authDomainBucket, key, &entry) {
 			continue
@@ -970,7 +978,7 @@ func StartHookCacheSweeper() {
 	hookCacheSweepOnce.Do(func() {
 		go func() {
 			for {
-				if n := SweepHookCache(); n > 0 {
+				if n := SweepHookCache(context.Background()); n > 0 {
 					nfo.Log("[cache] swept %d expired source-hook/auth-domain cache entries", n)
 				}
 				time.Sleep(24 * time.Hour)

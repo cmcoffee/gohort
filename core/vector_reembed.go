@@ -217,9 +217,16 @@ func RemoveUnusableChunks(ctx context.Context, db Database) int {
 	if db == nil {
 		return 0
 	}
+	// Once stopped, nothing more is chosen: the rest of the walk is over an
+	// in-memory snapshot and ends at once.
 	removed := DeleteChunksWhere(db, func(c EmbeddedChunk) bool {
-		return strings.TrimSpace(c.Text) == ""
+		return ctx.Err() == nil && strings.TrimSpace(c.Text) == ""
 	})
+	if ctx.Err() != nil {
+		ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped part way, %d unusable chunk(s) removed by then", removed))
+		Log("[vector-reembed] stopped; removed %d chunk(s) with no text", removed)
+		return removed
+	}
 	ReportMaintenanceOutcome(ctx, fmt.Sprintf("%d unusable chunk(s) removed", removed))
 	Log("[vector-reembed] removed %d chunk(s) with no text", removed)
 	return removed
