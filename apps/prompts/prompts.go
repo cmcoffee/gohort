@@ -10,7 +10,6 @@
 package prompts
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -78,23 +77,13 @@ func registeredEditorActions() []EditorAction {
 // (DB, flag set) and the LLM handles the chat pane uses.
 type PromptsApp struct {
 	AppCore
-	optimizeMu    sync.Mutex // guards the background Optimize-all run + its progress
-	optimizing    bool
-	optimizeDone  int
-	optimizeTotal int
 }
 
 // --- core.Agent interface ----------------------------------------------------
 
-// Pointer receivers, like every other app that holds non-copyable state
-// (OrchestrateApp, FileStoreApp). PromptsApp gained optimizeMu when the
-// Optimize-all background run landed, and these three kept the value receivers
-// they were written with — so each call copied the struct, mutex included.
-// go vet's copylocks flags it: copying a sync.Mutex yields a second lock that
-// guards nothing, and a copy made while the original is held starts out locked.
-// Harmless in these three (they read a constant and drop the copy) but the
-// pattern is one edit away from being load-bearing, and RegisterApp already
-// passes a pointer, so nothing outside had to change.
+// Pointer receivers, like every other app (OrchestrateApp, FileStoreApp):
+// RegisterApp passes a pointer, and a value receiver copies the struct on
+// every call, which go vet flags the moment it holds a lock.
 func (T *PromptsApp) Name() string         { return "prompts" }
 func (T *PromptsApp) SystemPrompt() string { return "" }
 func (T *PromptsApp) Desc() string {
@@ -176,12 +165,10 @@ func (T *PromptsApp) Routes() {
 	T.HandleFunc("/api/rules", T.adminGated(func(w http.ResponseWriter, r *http.Request) {
 		HandleDocRules(w, r, T.DB, "prompts")
 	}))
-	T.HandleFunc("/api/assist", T.adminGated(T.handleAssist))                      // POST {name, section, message, draft, history}
-	T.HandleFunc("/api/revisions", T.adminGated(T.handleRevList))                  // GET  ?id= -> [{id, date}]
-	T.HandleFunc("/api/revision", T.adminGated(T.handleRevLoad))                   // GET  ?revid= -> {body}
-	T.HandleFunc("/api/optimize-all", T.adminGated(T.handleOptimizeAll))           // POST -> starts a background pass
-	T.HandleFunc("/api/optimize-all/status", T.adminGated(T.handleOptimizeStatus)) // GET  -> {optimizing, done, total}
-	T.HandleFunc("/api/read_back", T.adminGated(T.handleReadBack))                 // POST {id, body, variant, tier} -> {model, wording, reading}
+	T.HandleFunc("/api/assist", T.adminGated(T.handleAssist))      // POST {name, section, message, draft, history}
+	T.HandleFunc("/api/revisions", T.adminGated(T.handleRevList))  // GET  ?id= -> [{id, date}]
+	T.HandleFunc("/api/revision", T.adminGated(T.handleRevLoad))   // GET  ?revid= -> {body}
+	T.HandleFunc("/api/read_back", T.adminGated(T.handleReadBack)) // POST {id, body, variant, tier} -> {model, wording, reading}
 }
 
 // lookupBlock finds a registered block by key — the guard that keeps the write
@@ -289,17 +276,12 @@ func promptsEditorBase() ui.ArticleEditor {
 		AssistURL: "/prompts/api/assist",
 		RulesURL:  "/prompts/api/rules",
 		Actions: []ui.ToolbarAction{
-			{Label: "Optimize", Title: "Let the model tighten this block: more concise and accurate, preserving every distinct instruction and lesson. The original is saved as a revision first, so you can revert.",
-				Method: "client", URL: "prompts_optimize"},
+			{Label: "Tighten", Title: "Let the model make this block more concise and accurate, keeping every distinct instruction and lesson. Not measured against builds (Optimize on this tab is); the original is kept as a revision, so you can revert.",
+				Method: "client", URL: "prompts_tighten"},
 			{Label: "Save for both", Title: "Save this text for both models: what the worker and the lead both read, replacing each one's own wording of this block.",
 				Method: "client", URL: "prompts_save_both"},
 			{Label: "Check", Title: "What the worker and the lead take this block to mean, side by side (for a tool, when they would reach for it), each reading the wording it would be sent.",
 				Method: "client", URL: "prompts_check"},
-		},
-		// Whole-list action lives on the list header, not the per-block toolbar.
-		ListActions: []ui.ToolbarAction{
-			{Label: "Optimize all", Title: "Run the tighten pass over every block in the background. Each block's current text is saved as a revision first, so any block is revertible.",
-				Method: "client", URL: "prompts_optimize_all"},
 		},
 	}
 }
@@ -329,9 +311,9 @@ func (T *PromptsApp) handleList(w http.ResponseWriter, r *http.Request) {
 		subject := b.Title
 		date := b.Category
 		// Mark an overridden block with an icon rather than the word "edited":
-		// ✨ if its current text came from an Optimize, ✎ if it was hand-edited.
+		// ✨ if its current text came from Tighten, ✎ if it was hand-edited.
 		if _, overridden := PromptOverride(b.Key); overridden {
-			if T.latestRevisionVia(b.Key) == "optimize" {
+			if via := T.latestRevisionVia(b.Key); via == "tighten" || via == "optimize" {
 				subject += "  ✨"
 			} else {
 				subject += "  ✎"
@@ -381,7 +363,7 @@ func (T *PromptsApp) handleSave(w http.ResponseWriter, r *http.Request) {
 	var rec struct {
 		ID   string `json:"ID"`
 		Body string `json:"Body"`
-		Via  string `json:"Via"` // "optimize" from the Optimize action; else a manual edit
+		Via  string `json:"Via"` // "tighten" from Tighten; else a manual edit
 		// Variant is the version saved: "worker" or "lead" for that model's
 		// own wording, else the shared text.
 		Variant string `json:"variant"`
@@ -412,8 +394,8 @@ func (T *PromptsApp) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	via := "edit"
-	if strings.TrimSpace(rec.Via) == "optimize" {
-		via = "optimize"
+	if v := strings.TrimSpace(rec.Via); v == "tighten" || v == "optimize" {
+		via = "tighten"
 	}
 	T.applyEdit(b, rec.Body, via, "")
 	writeJSON(w, map[string]any{"ok": true, "ID": b.Key})
@@ -494,7 +476,8 @@ type promptRevision struct {
 	Date  string `json:"date"`
 	Body  string `json:"body"`
 	// Via records HOW the change that superseded this snapshot was made —
-	// "edit" (a manual save), "optimize" (the model rewrite) or "tuned" (a
+	// "edit" (a manual save), "tighten" (the model rewrite; older revisions
+	// say "optimize") or "tuned" (a
 	// variant promoted from the tuning harness). Lets the revision navigator
 	// flag which snapshot is the one to restore, the main reason to keep
 	// revisions at all.
@@ -536,7 +519,7 @@ func (T *PromptsApp) snapshotRevision(blockKey, text, via, note string) {
 }
 
 // latestRevisionVia reports how a block's CURRENT override was produced —
-// "optimize" or "edit". Every change snapshots the PRE-change text tagged with
+// "tighten" (or the older "optimize") or "edit". Every change snapshots the PRE-change text tagged with
 // the action that replaced it, so the NEWEST revision's Via describes the text
 // live now. "" when the block has no revisions. revID is a monotonic nanosecond
 // timestamp, so the lexically-greatest key is the newest.
@@ -577,8 +560,8 @@ func (T *PromptsApp) handleRevList(w http.ResponseWriter, r *http.Request) {
 		for _, k := range ids {
 			label := "edited"
 			switch byID[k].Via {
-			case "optimize":
-				label = "optimized"
+			case "tighten", "optimize": // "optimize" is what Tighten was called before
+				label = "tightened"
 			case "tuned":
 				label = "tuned"
 				if n := strings.TrimSpace(byID[k].Note); n != "" {
@@ -690,95 +673,10 @@ func (T *PromptsApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// optimizeText runs the worker model on a block in edit mode with the canned
-// "more concise and accurate" brief and returns the revised text. Shared by the
-// single-block Optimize (via the chat endpoint) and the bulk pass below.
-func (T *PromptsApp) optimizeText(ctx context.Context, title, current string) (string, error) {
-	sys := "You refine a gohort FRAMEWORK PROMPT BLOCK: text injected into agents' system prompts to shape behavior. EDIT MODE: return ONLY the revised block text, no preamble or code fences. Be precise and terse; preserve every distinct instruction and every hard-won \"this burned us\" lesson; remove only redundancy and filler; no hedging or AI-tells."
-	ctxLine := "The block"
-	if s := strings.TrimSpace(title); s != "" {
-		ctxLine += " (" + s + ")"
-	}
-	msgs := []Message{
-		{Role: "system", Content: sys},
-		{Role: "user", Content: ctxLine + ":\n```\n" + current + "\n```\n\nMake this more concise and accurate. Return only the revised block text."},
-	}
-	resp, err := T.WorkerChat(ctx, msgs)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(resp.Content), nil
-}
-
-// handleOptimizeAll starts a background pass that optimizes every block. It runs
-// in a goroutine because N sequential LLM calls exceed an HTTP timeout; the
-// response returns immediately and the operator reloads to see results ("edited"
-// badges) appear. A guard prevents overlapping runs. Each block's prior text is
-// snapshotted as a revision first, so every result is individually revertible.
-func (T *PromptsApp) handleOptimizeAll(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	blocks := AllPromptBlocks()
-	T.optimizeMu.Lock()
-	if T.optimizing {
-		T.optimizeMu.Unlock()
-		writeJSON(w, map[string]any{"error": "an optimize-all run is already in progress"})
-		return
-	}
-	T.optimizing = true
-	T.optimizeDone = 0
-	T.optimizeTotal = len(blocks)
-	T.optimizeMu.Unlock()
-
-	go func() {
-		defer func() {
-			T.optimizeMu.Lock()
-			T.optimizing = false
-			T.optimizeMu.Unlock()
-		}()
-		ctx := context.Background()
-		n := 0
-		for _, b := range blocks {
-			current := EffectivePromptText(b.Key, b.Text)
-			out, err := T.optimizeText(ctx, b.Title, current)
-			if err != nil {
-				Log("[prompts] optimize-all: %s failed: %v", b.Key, err)
-			} else if out != "" && out != current {
-				T.snapshotRevision(b.Key, current, "optimize", "")
-				if out == b.Text {
-					ClearPromptOverride(b.Key)
-				} else {
-					SetPromptOverride(b.Key, out)
-				}
-				n++
-			}
-			T.optimizeMu.Lock()
-			T.optimizeDone++
-			T.optimizeMu.Unlock()
-		}
-		Log("[prompts] optimize-all: %d/%d blocks changed", n, len(blocks))
-	}()
-	writeJSON(w, map[string]any{"started": true, "total": len(blocks)})
-}
-
-// handleOptimizeStatus reports the background pass's progress so the client can
-// show live "N/M" feedback and refresh the list as blocks complete.
-func (T *PromptsApp) handleOptimizeStatus(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.optimizeMu.Lock()
-	resp := map[string]any{"optimizing": T.optimizing, "done": T.optimizeDone, "total": T.optimizeTotal}
-	T.optimizeMu.Unlock()
-	writeJSON(w, resp)
-}
-
-// promptsHead registers the "Optimize" toolbar action: it runs the worker model
-// on the current block in edit mode with a canned "more concise and accurate"
-// brief and applies the rewrite. ed.save() persists the pre-optimize text first,
-// so the snapshot-on-save captures it as a revision — a bad optimization is one
-// click to revert in the revisions panel. App-specific behavior injected via
+// promptsHead registers the editor's toolbar actions. Tighten runs the worker
+// model on the current block in edit mode with a canned "more concise and
+// accurate" brief and applies the rewrite; ed.save() persists the text first,
+// so the snapshot-on-save keeps it as a revision, one click to revert. App-specific behavior injected via
 // ExtraHeadHTML per the core/ui domain-agnostic rule.
 // promptsHeadHTML is the page head for both surfaces this editor appears
 // on: the standalone /prompts page and the admin LLMs tab.
@@ -814,12 +712,12 @@ const promptsHead = `<script>
   if (!window.uiRegisterClientAction) { setTimeout(register, 50); return; }
   if (window.__promptsActionsRegistered) return;
   window.__promptsActionsRegistered = true;
-  window.uiRegisterClientAction('prompts_optimize', function(ctx) {
+  window.uiRegisterClientAction('prompts_tighten', function(ctx) {
     var ed = ctx.editor;
     if (!ed.getBody().trim()) { ed.toast('Select a block first'); return; }
-    if (!ed.confirm('Optimize this block? The current text is saved as a revision first, then replaced with a tighter version the model produces. Use the revisions panel to revert.')) return;
+    if (!ed.confirm('Tighten this block? The current text is kept as a revision, then replaced with a tighter version the model writes. Nothing checks it against builds; the revisions panel reverts it.')) return;
     ed.save(); // persist current text; once the rewrite saves, this becomes the revert point
-    ed.busy(ctx.button, 'Optimizing...');
+    ed.busy(ctx.button, 'Tightening...');
     fetch('/prompts/api/chat', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
@@ -835,114 +733,13 @@ const promptsHead = `<script>
       if (d.error) { ed.toast('Error: ' + d.error); return; }
       if (d.content) {
         ed.setBody(d.content);
-        ed.save({via:'optimize'}); // optimized result; tags the pre-optimize snapshot as "optimized"
+        ed.save({via:'tighten'}); // tags the pre-tighten snapshot as "tightened"
         ed.reloadList();
-        ed.toast('Optimized. Original saved as a revision.');
+        ed.toast('Tightened. The original is kept as a revision.');
       } else {
         ed.toast('No rewrite produced');
       }
     }).catch(function(err){ ed.restore(ctx.button); ed.toast('Error: ' + (err && err.message || err)); });
-  });
-  window.uiRegisterClientAction('prompts_optimize_all', function(ctx) {
-    var ed = ctx.editor;
-    if (!ed.confirm('Optimize ALL blocks? Each block current text is saved as a revision first, then replaced with a tighter version. This runs in the background and may take a minute; revert any block from its revisions panel.')) return;
-    fetch('/prompts/api/optimize-all', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){
-      if (d && d.error) { ed.toast('Error: ' + d.error); return; }
-      ed.toast('Optimizing all ' + (d.total || '') + ' blocks - badges update as each finishes...');
-      var poll = function() {
-        fetch('/prompts/api/optimize-all/status').then(function(r){ return r.json(); }).then(function(s){
-          ed.reloadList();
-          if (s && s.optimizing) {
-            ed.toast('Optimizing ' + (s.done || 0) + '/' + (s.total || 0) + '...');
-            setTimeout(poll, 3000);
-          } else {
-            ed.toast('Optimize all complete (' + (s && s.done || 0) + '/' + (s && s.total || 0) + ' processed).');
-          }
-        }).catch(function(){ setTimeout(poll, 3000); });
-      };
-      setTimeout(poll, 3000);
-    }).catch(function(err){ ed.toast('Error: ' + (err && err.message || err)); });
-  });
-  // Check: what each model takes the block to mean, one column per model,
-  // each filled when its model answers; then any section another package
-  // added (window.promptsCheckExtras).
-  // Closing the dialog cancels a reading still running.
-  window.uiRegisterClientAction('prompts_check', function(ctx) {
-    var ed = ctx.editor;
-    var id = ed.getID();
-    if (!id) { ed.toast('Select a block first'); return; }
-    if (!ed.getBody().trim()) { ed.toast('The block is empty'); return; }
-    var payload = {id: id, body: ed.getBody(), variant: ed.getVariant ? ed.getVariant() : ''};
-    var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
-    var started = Date.now(), aborts = [], cols = {}, pending = 0, timer = null;
-    function mk(tag, style, text) {
-      var e = document.createElement(tag);
-      if (style) e.style.cssText = style;
-      if (text != null) e.textContent = text;
-      return e;
-    }
-    var m = window.uiOpenModal({
-      title: 'Check: ' + (ed.getTitle() || id),
-      subtitle: 'What each model takes this block to mean, in its own words.',
-      width: '920px',
-      mount: function(body) {
-        var row = mk('div', 'display:flex;flex-wrap:wrap;gap:1rem;align-items:stretch');
-        ['worker', 'lead'].forEach(function(tier) {
-          var col = mk('div', 'flex:1 1 280px;min-width:0;border:1px solid var(--border);border-radius:6px;padding:.75rem;display:flex;flex-direction:column;gap:.4rem');
-          var head = mk('div', 'font-weight:600', tier === 'worker' ? 'Worker' : 'Lead');
-          var note = mk('div', 'font-size:.85em;color:var(--text-mute,var(--text));opacity:.8');
-          var text = mk('div', 'white-space:pre-wrap;line-height:1.45', '');
-          col.appendChild(head); col.appendChild(note); col.appendChild(text);
-          row.appendChild(col);
-          cols[tier] = {head: head, note: note, text: text, done: false};
-        });
-        body.appendChild(row);
-        (window.promptsCheckExtras || []).forEach(function(fn) {
-          var box = mk('div', 'margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border)');
-          body.appendChild(box);
-          try {
-            fn(box, {editor: ed, payload: payload, isOpen: function() { return !!m && document.body.contains(m.overlay); }});
-          } catch (e) { console.error('Check section failed:', e); }
-        });
-      }
-    });
-    function tick() {
-      if (!document.body.contains(m.overlay)) {
-        clearInterval(timer);
-        aborts.forEach(function(a){ try { a.abort(); } catch (e) {} });
-        return;
-      }
-      var secs = Math.floor((Date.now() - started) / 1000);
-      var f = frames.charAt(Math.floor(Date.now() / 100) % frames.length);
-      Object.keys(cols).forEach(function(t) {
-        var c = cols[t];
-        if (!c.done) c.text.textContent = f + ' Reading' + (secs >= 3 ? ' - ' + secs + 's' : '');
-      });
-      if (!pending) clearInterval(timer);
-    }
-    timer = setInterval(tick, 100);
-    ['worker', 'lead'].forEach(function(tier) {
-      var c = cols[tier];
-      var ac = window.AbortController ? new AbortController() : null;
-      if (ac) aborts.push(ac);
-      pending++;
-      fetch('/prompts/api/read_back', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(Object.assign({tier: tier}, payload)),
-        signal: ac ? ac.signal : undefined
-      }).then(function(r){ return r.json(); }).then(function(d) {
-        d = d || {};
-        if (d.model) c.head.textContent = (tier === 'worker' ? 'Worker' : 'Lead') + ' - ' + d.model;
-        if (d.wording) c.note.textContent = 'Read ' + d.wording + ' in ' + Math.floor((Date.now() - started) / 1000) + 's.';
-        c.done = true;
-        if (d.skipped) { c.text.textContent = d.skipped; c.text.style.opacity = '.7'; }
-        else if (d.error) { c.text.textContent = 'Could not read it: ' + d.error; }
-        else { c.text.textContent = d.reading || 'No reading came back.'; }
-      }).catch(function(err) {
-        c.done = true;
-        if (!(err && err.name === 'AbortError')) c.text.textContent = 'Could not read it: ' + (err && err.message || err);
-      }).then(function(){ pending--; });
-    });
   });
   // Save for both: the open text becomes what both models read.
   window.uiRegisterClientAction('prompts_save_both', function(ctx) {
@@ -980,7 +777,7 @@ const promptsHead = `<script>
 // as TechWriter's and CodeWriter's, so the one shared workbench drives
 // all three.
 //
-// Distinct from Optimize, which is a single unattended tightening pass.
+// Distinct from Tighten, which is a single unattended tightening pass.
 // This is for the case where you want to talk about WHY a block says
 // what it says before changing it.
 func (T *PromptsApp) handleAssist(w http.ResponseWriter, r *http.Request) {
