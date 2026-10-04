@@ -25,7 +25,6 @@ import (
 	// yet. Comment this out to unmount it entirely.
 	_ "github.com/cmcoffee/gohort/apps/openaiapi"
 	_ "github.com/cmcoffee/gohort/apps/orchestrate"
-	_ "github.com/cmcoffee/gohort/apps/prompts"
 	// Outbound publishing: the destinations a finished document can go to
 	// (Confluence, a webhook) and the Publisher agent a writer app's Publish
 	// button opens. No dashboard card of its own.

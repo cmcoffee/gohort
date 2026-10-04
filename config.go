@@ -1239,7 +1239,7 @@ func init_database() {
 	// Wire the operator-set retrieval / limit tunables (admin Site Settings)
 	// to the main DB. Until this runs, every getter sits on its const fallback.
 	SetTunablesDB(global.db)
-	// Wire operator prompt-block overrides (edited on the Prompts page) to the
+	// Wire prompt-block overrides (Optimize's wording, the Style rules) to the
 	// main DB. Until this runs, every block sits on its in-code default.
 	SetPromptOverrideDB(global.db)
 
