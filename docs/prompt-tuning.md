@@ -618,6 +618,12 @@ blocking ones were the harness's, not the platform's:
   html JS check ran node 10 and refused modern syntax; a list argument
   sent as a JSON string wiped what was stored; a credential refused its own
   base URL.
+- **Builds leaked into later builds.** With no way to run a machine once,
+  Builder made standing agents on 30 and 60 second intervals to get one
+  run, and they fired for the rest of the run on the models every later
+  build was measured on. The sandbox now retires an earlier build's
+  standing agents and monitors when the next build begins (logged), and
+  create_standing_agent says it is not for one run (v0.7.330).
 - **Left as found:** the machine "prompt asks for JSON" warnings (working as
   meant), delegation to one's own agent needing approval (intended; machine
   run is the way to try one now), the fx fixture's 422 for pairs it does not
@@ -652,8 +658,7 @@ Next: Re-check the fixed components, then a second report.
 - **Left open from the first report.** A verification report that listed one
   of two endpoints (likely a stale pool copy shadowing the edited tool, not
   proven); fetch_url's refusal not naming the credential that covers the
-  host; a standing trigger in one sandbox firing order-status about every
-  32 seconds; the record of a write fired by hand lives in memory only, so
+  host; the record of a write fired by hand lives in memory only, so
   a restart forgets it and the next test asks for the call again.
 - **Whether the friction report becomes a periodic check.** It is run by
   hand while the platform is being got right. If reports keep finding real
