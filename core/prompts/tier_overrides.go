@@ -95,6 +95,10 @@ func ClearPromptTierOverride(tier, key string) {
 // the tier's own text, else the all-tiers override, else def. An empty or
 // unknown tier reads as all tiers, which is EffectivePromptText.
 func EffectivePromptTextFor(tier, key, def string) string {
+	// A governing peer's wording outranks a tier's own text here as well.
+	if s, ok := peerOverride(key); ok {
+		return s
+	}
 	if o, ok := PromptTierOverride(tier, key); ok {
 		return o.Text
 	}

@@ -59,7 +59,7 @@ func settlePromptWording(ctx context.Context, db Database) int {
 		}
 		ReportMaintenanceProgress(ctx, fmt.Sprintf("%d of %d blocks - %d changed", i+1, len(blocks), n))
 		// Hand edits first, so the fold below writes over nothing of them.
-		if text, ok := PromptOverride(b.Key); ok {
+		if text, ok := prompts.LocalPromptOverride(b.Key); ok { // this machine's own, not a peer's
 			Log("[admin] prompt block %s: hand-edited text cleared; it was:\n%s", b.Key, text)
 			ClearPromptOverride(b.Key)
 			cleared++

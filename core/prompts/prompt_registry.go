@@ -90,6 +90,7 @@ func SetPromptOverrideDB(db Store) {
 	if db != nil {
 		loadObservedTools(db, tunableToolNames())
 	}
+	loadPeerLayer(db)
 	tierTextChanged()
 }
 
@@ -99,8 +100,24 @@ func promptOverrideStore() Store {
 	return promptOverrideDB
 }
 
-// PromptOverride returns the operator override text for a block key, if set.
+// PromptOverride returns the override text for a block key, if set. When the
+// worker is a peer's model and that peer's wording has the key, the peer's
+// text wins over the local override: the model is tuned where it runs (see
+// peer_layer.go).
 func PromptOverride(key string) (string, bool) {
+	if s, ok := peerOverride(key); ok {
+		return s, true
+	}
+	return localPromptOverride(key)
+}
+
+// LocalPromptOverride is this machine's own override for a block key, under
+// any peer's wording. For what changes or clears this machine's own text
+// (a reset, a migration), which must not read the peer's wording as its own.
+func LocalPromptOverride(key string) (string, bool) { return localPromptOverride(key) }
+
+// localPromptOverride is this machine's own override for a block key.
+func localPromptOverride(key string) (string, bool) {
 	db := promptOverrideStore()
 	if db == nil {
 		return "", false
@@ -128,8 +145,9 @@ func ClearPromptOverride(key string) {
 	tierTextChanged()
 }
 
-// EffectivePromptText returns the operator override for a block key when one is
-// set, else def (the in-code default). This is what the prompt assembler
+// EffectivePromptText returns the override for a block key when one is set
+// (a governing peer's text first, then the local one), else def (the in-code
+// default). This is what the prompt assembler
 // injects, so an override changes the text agents receive.
 func EffectivePromptText(key, def string) string {
 	if s, ok := PromptOverride(key); ok {

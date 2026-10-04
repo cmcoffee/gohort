@@ -214,6 +214,11 @@ func swapsFor(tier string) []tierSwap {
 
 	built := map[string][]tierSwap{}
 	for _, b := range blocks {
+		// A governing peer's wording is what every tier reads: a tier's own
+		// text left on this machine does not get to shadow it.
+		if _, peer := peerOverride(b.Key); peer {
+			continue
+		}
 		for _, t := range Tiers() {
 			o, ok := PromptTierOverride(t, b.Key)
 			if !ok {

@@ -37,8 +37,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/snugforge/iotimeout"
 )
 
@@ -82,6 +84,9 @@ type PeerModelInfo struct {
 	Model    string `json:"model"`    // the model id to name in a request
 	Provider string `json:"provider"` // llama.cpp | ollama — what the far side should configure
 	Path     string `json:"path"`     // where to point an OpenAI-shaped client
+	// Prompts is where this instance's wording for its model is read. Absent
+	// from an older build, which a borrowing instance reads as "no wording".
+	Prompts string `json:"prompts,omitempty"`
 }
 
 // peerServableTier is one candidate tier plus the upstream to reach it.
@@ -158,6 +163,7 @@ func peerModelsInfo(path string) []PeerModelInfo {
 	for _, t := range peerServableTiers() {
 		out = append(out, PeerModelInfo{
 			Tier: t.Tier, Model: t.Model, Provider: t.Provider, Path: path,
+			Prompts: path + "/prompts",
 		})
 	}
 	return out
@@ -613,4 +619,208 @@ func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderCo
 	cfg.Endpoint = p.ModelsURL()
 	cfg.APIKey = PeerCredential(p)
 	return cfg, nil
+}
+
+// --- the model's wording -----------------------------------------------------
+//
+// A model is tuned where it runs. The tuning harness on the instance that
+// serves a model writes prompt-block overrides fitted to that model, and an
+// instance borrowing the model as its worker should send it the same words.
+// So the serving side publishes its block overrides next to the model, and the
+// borrowing side reads them and lets them govern (core/prompts/peer_layer.go).
+
+// peerPromptsBody is what GET /api/peer/v1/prompts answers.
+type peerPromptsBody struct {
+	Model  string            `json:"model"`
+	Blocks map[string]string `json:"blocks"`
+}
+
+// handlePeerPrompts serves GET /api/peer/v1/prompts: this instance's overrides
+// of its registered prompt blocks, for a peer whose worker is this instance's
+// model.
+//
+// Gated like /models, because the wording is only of use to a peer running
+// the model, and refused the same way when there is no model to lend. Only
+// registered blocks: the Style and global rules are this operator's own, and
+// per-tier text is fitted to this instance's tiers, not to a peer's.
+func handlePeerPrompts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		peerDeny(w, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	k, ok := peerAuthorize(w, r, PeerCapModels)
+	if !ok {
+		return
+	}
+	tiers := peerServableTiers()
+	if len(tiers) == 0 {
+		_, err := resolvePeerTier("")
+		peerDeny(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	out := peerPromptsBody{Model: tiers[0].Model, Blocks: prompts.SharedBlockOverrides()}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+	touchPeerKey(k)
+}
+
+const (
+	// peerPromptsRefresh is how often a borrowing instance re-reads its worker
+	// peer's wording. Tuning moves in hours, so minutes is fresh enough.
+	peerPromptsRefresh = 10 * time.Minute
+	// peerPromptsCheck is how often it looks at whether the worker is still
+	// that peer, so a saved worker config is followed within a minute without
+	// a hook in the save path. The look is two config reads.
+	peerPromptsCheck = time.Minute
+	// peerPromptsTimeout bounds one fetch. The answer is a few kilobytes.
+	peerPromptsTimeout = 30 * time.Second
+)
+
+// fetchPeerPrompts reads a peer's wording. A 404 is an older build that does
+// not publish any, which is an empty answer rather than a failure: it is the
+// truth about that peer, and keeping some earlier copy would not be.
+func fetchPeerPrompts(ctx context.Context, p RemotePeer) (peerPromptsBody, error) {
+	ctx, cancel := context.WithTimeout(ctx, peerPromptsTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.ModelsURL()+"/prompts", nil)
+	if err != nil {
+		return peerPromptsBody{}, err
+	}
+	resp, err := PeerClientFor(p, peerPromptsTimeout).Do(req)
+	if err != nil {
+		return peerPromptsBody{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return peerPromptsBody{}, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		msg := peerErrorBody(resp.Body)
+		if msg == "" {
+			msg = resp.Status
+		}
+		return peerPromptsBody{}, fmt.Errorf("answered %d: %s", resp.StatusCode, msg)
+	}
+	var out peerPromptsBody
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&out); err != nil {
+		return peerPromptsBody{}, fmt.Errorf("unreadable answer: %w", err)
+	}
+	return out, nil
+}
+
+// peerPromptSync keeps the peer layer in step with the worker's peer.
+type peerPromptSync struct {
+	mu      sync.Mutex
+	peer    string    // the peer the last look was for, "" when not a peer
+	last    time.Time // when that peer's wording was last asked for
+	failing bool      // in a failure streak that has been logged
+}
+
+var (
+	peerPrompts     peerPromptSync
+	peerPromptsOnce sync.Once
+)
+
+// workerPeerName is the peer the worker tier's provider names, or "". Read
+// from the stored config the way NewLLMFromConfig sees it, before resolution
+// rewrites "peer:<name>" to llama.cpp.
+func workerPeerName() string {
+	provider, _ := tierProviderEndpoint(LLMTable)
+	return peerNameFromProvider(provider)
+}
+
+// run looks once now and then every peerPromptsCheck, for the process's life.
+// Not on any request's context: the layer outlives every request.
+func (s *peerPromptSync) run() {
+	ctx := context.Background()
+	s.tick(ctx, time.Now())
+	t := time.NewTicker(peerPromptsCheck)
+	defer t.Stop()
+	for now := range t.C {
+		s.tick(ctx, now)
+	}
+}
+
+// tick fetches when the worker's peer changed or its wording is due a
+// refresh, and clears the layer when the worker is no longer a peer's model.
+func (s *peerPromptSync) tick(ctx context.Context, now time.Time) {
+	name := workerPeerName()
+	s.mu.Lock()
+	changed := name != s.peer
+	due := changed || now.Sub(s.last) >= peerPromptsRefresh
+	if due {
+		s.peer, s.last = name, now
+	}
+	if changed {
+		s.failing = false
+	}
+	s.mu.Unlock()
+	if !due {
+		return
+	}
+	if name == "" {
+		if prompts.ClearPeerPromptLayer() {
+			Log("[peer] the worker is no longer a peer's model, so this instance's own prompt wording governs again")
+		}
+		return
+	}
+	s.sync(ctx, name)
+}
+
+// sync fetches one peer's wording and puts it in force. On failure the last
+// copy stays, unless it came from a different peer: wording fitted to a model
+// this instance no longer runs is not a fallback worth keeping.
+func (s *peerPromptSync) sync(ctx context.Context, name string) {
+	var body peerPromptsBody
+	p, ok := GetRemotePeer(name)
+	err := fmt.Errorf("no peer named %q is registered", name)
+	if ok {
+		body, err = fetchPeerPrompts(ctx, p)
+	}
+	if err != nil {
+		if prompts.PeerPromptLayer().Source != name {
+			prompts.ClearPeerPromptLayer()
+		}
+		s.mu.Lock()
+		first := !s.failing
+		s.failing = true
+		s.mu.Unlock()
+		if first {
+			Log("[peer] prompts from %s: %v. Keeping the last wording it sent until it answers.", name, err)
+		}
+		return
+	}
+	s.mu.Lock()
+	recovered := s.failing
+	s.failing = false
+	s.mu.Unlock()
+	res := prompts.SetPeerPromptLayer(name, body.Model, time.Now(), body.Blocks)
+	if res.Changed || recovered {
+		Log("[peer] prompts from %s (%s): %d blocks%s", name, body.Model, res.Kept, peerPromptsSkipped(res))
+	}
+}
+
+// peerPromptsSkipped says what a refresh left out, or "" when nothing.
+func peerPromptsSkipped(res prompts.PeerLayerResult) string {
+	var parts []string
+	if n := len(res.Unknown); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d not registered here", n))
+	}
+	if n := len(res.Broken); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d naming a placeholder the block cannot fill", n))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ", skipped " + strings.Join(parts, " and ")
+}
+
+// Started by the scheduler, which runs only once the database and the peer
+// records are loaded. The reconciler fires every 30 minutes; the Once keeps it
+// to one loop.
+func init() {
+	RegisterReconciler("peer_prompts", func(context.Context) error {
+		peerPromptsOnce.Do(func() { go peerPrompts.run() })
+		return nil
+	})
 }

@@ -229,6 +229,10 @@ func ServeDashboard(addr string) error {
 	// a choice.
 	RegisterPublicPath("/api/peer/v1/models")
 	mux.HandleFunc("/api/peer/v1/models", HandlePeerModels)
+	// The prompt wording tuned here for the model it lends, read by a peer
+	// whose worker is that model.
+	RegisterPublicPath("/api/peer/v1/prompts")
+	mux.HandleFunc("/api/peer/v1/prompts", handlePeerPrompts)
 
 	// Credential exchange. Public like the rest of the peer surface, and
 	// unauthenticated in the peerAuthorize sense on purpose: the credential
