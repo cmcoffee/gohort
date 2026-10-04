@@ -843,3 +843,22 @@ func TestMonitorWakeWithoutAGoalSaysNothingAboutAttempts(t *testing.T) {
 		t.Errorf("a goalless monitor's wake turn carries objective text:\n%s", msg)
 	}
 }
+
+// A standing agent is not a way to run something once. Asked to try a machine,
+// Builder made standing agents on 30 and 60 second intervals that fired for
+// the rest of a run: the description says so up front, and the refusals a
+// model meets on that road (cron "once", no schedule) name the run tools.
+func TestStandingAgentsSayTheyAreNotForOneRun(t *testing.T) {
+	var desc string
+	for _, td := range operatorManagementTools(nil, "") {
+		if td.Tool.Name == "create_standing_agent" {
+			desc = td.Tool.Description
+		}
+	}
+	if !strings.Contains(desc, "NOT for running something once") || !strings.Contains(desc, `machine(action=\"run\"`) && !strings.Contains(desc, `machine(action="run"`) {
+		t.Errorf("the description does not route a one-off run away: %q", desc)
+	}
+	if !strings.Contains(standingNotOnce, `machine(action="run"`) || !strings.Contains(standingNotOnce, "until deleted") {
+		t.Errorf("the one-off refusal = %q", standingNotOnce)
+	}
+}

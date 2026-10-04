@@ -975,7 +975,7 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 		{
 			Tool: Tool{
 				Name:        "create_standing_agent",
-				Description: "Create a standing (scheduled) agent and start its schedule: the tool for work that RUNS on a clock and reports what it finds, whatever it finds. \"Every 5 minutes, fetch X and tell me the value\"; \"every morning, summarize the overnight alerts\". There is nothing to wait for: the schedule IS the trigger. (An event monitor is the opposite, it stays SILENT until something changes.) A job with a finish line is still this tool: `until` says what must be true for it to be DONE and `max_attempts` bounds the tries, which together are how \"done when you have read and reported it, stop after 2\" is expressed. agent_id must name an agent that already exists. Schedule it EITHER with cron (recurring at a wall-clock time, preferred for \"every day at HH:MM\") OR with interval_seconds + optional start_at (a specific first run, then a fixed interval).",
+				Description: "Create a standing (scheduled) agent and start its schedule: the tool for work that RUNS on a clock and reports what it finds, whatever it finds. \"Every 5 minutes, fetch X and tell me the value\"; \"every morning, summarize the overnight alerts\". There is nothing to wait for: the schedule IS the trigger. (An event monitor is the opposite, it stays SILENT until something changes.) A job with a finish line is still this tool: `until` says what must be true for it to be DONE and `max_attempts` bounds the tries, which together are how \"done when you have read and reported it, stop after 2\" is expressed. NOT for running something once to try it: a standing agent keeps firing on its schedule until it is deleted, so one made to get a single run goes on running. To try a machine you built, use machine(action=\"run\", name, input); to run an agent or pipeline once, agents(action=\"run\"). agent_id must name an agent that already exists. Schedule it EITHER with cron (recurring at a wall-clock time, preferred for \"every day at HH:MM\") OR with interval_seconds + optional start_at (a specific first run, then a fixed interval).",
 				Parameters: map[string]ToolParam{
 					"name":             {Type: "string", Description: "Short unique name for this standing job, e.g. \"daily-weather\"."},
 					"agent_id":         {Type: "string", Description: "Name or id of an existing agent to run. Give this OR pipeline_id, not both."},
@@ -1120,6 +1120,9 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 				switch {
 				case cron != "":
 					if _, err := NextCronOccurrence(cron, time.Now()); err != nil {
+						if strings.EqualFold(strings.TrimSpace(cron), "once") || strings.EqualFold(strings.TrimSpace(cron), "now") {
+							return "", errors.New(standingNotOnce)
+						}
 						return "", fmt.Errorf("invalid cron %q: %w", cron, err)
 					}
 					sa.Cron = cron
@@ -1133,7 +1136,7 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 						sa.StartAt = t
 					}
 				default:
-					return "", fmt.Errorf("provide a schedule: either cron, or interval_seconds (with optional start_at)")
+					return "", fmt.Errorf("provide a schedule: either cron, or interval_seconds (with optional start_at). %s", standingNotOnce)
 				}
 				SaveStandingAgent(RootDB, sa)
 				if err := ScheduleStandingAgent(RootDB, sa); err != nil {
@@ -2341,3 +2344,8 @@ func notifyOwnerToolDef(sess *ToolSession, owner, agentID, controllerAgentID str
 		},
 	}
 }
+
+// There is no one-off schedule, and asking for one is how a model trying
+// to run something once ends up making a recurring job: point it at the
+// tools that run once instead.
+const standingNotOnce = "A standing agent has no one-off schedule: it runs on its schedule until deleted. To run something once now, use machine(action=\"run\", name, input) for a machine, or agents(action=\"run\") for an agent or pipeline, and delete any standing agent made only to get one run."
