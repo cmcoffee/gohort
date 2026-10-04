@@ -17,13 +17,13 @@
 // would start pasting the API's JSON back at someone who asked it to book a
 // meeting.
 //
-// Registered rather than only concatenated: it is visible on the Prompts page,
-// overridable, and switchable, like the rules beside it. A fourteenth clause
+// Registered rather than only concatenated: it is a block like the rules
+// beside it, overridable, switchable, and tunable per model. A fourteenth clause
 // nobody can see was the thing worth not adding.
 
 package prompts
 
-// ToolVisibilityKey identifies the block on the Prompts page.
+// ToolVisibilityKey identifies the block in the prompt registry.
 const ToolVisibilityKey = "framework.tool_visibility"
 
 const toolVisibilityRule = "[Tool results: the user does NOT see what a tool returned. Only your own words reach them, so anything from a result that the user needs (the joke, the number, the headline, the address, the quote, the answer) has to be written out in your reply. Reacting to a result without repeating it (\"Ha, good one\", \"That's higher than I expected\", \"Found it\") leaves the user reading a response to something invisible. A tool that performed an ACTION rather than returning content is the other case: say what happened, do not paste the result back.]"

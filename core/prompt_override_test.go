@@ -6,8 +6,8 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// The override round-trip is what makes editing a block on the Prompts page
-// actually change what agents receive: EffectivePromptText returns the override
+// The override round-trip is what makes an override (Optimize's, or a Style
+// rule's) actually change what agents receive: EffectivePromptText returns the override
 // when set, the default otherwise, and clearing reverts.
 func TestPromptOverrideRoundTrip(t *testing.T) {
 	SetPromptOverrideDB(&DBase{Store: kvlite.MemStore()})

@@ -1,9 +1,9 @@
 // The house-style rules, declared where their transforms live.
 //
-// Each is registered as an operator-visible block AND bound to the transform
-// that guarantees it, in one place, so the sentence an agent is told and the
-// code that enforces it cannot drift apart. Turning either rule off on the
-// Prompts page stops both halves together.
+// Each is registered as a style rule AND bound to the transform that
+// guarantees it, in one place, so the sentence an agent is told and the code
+// that enforces it cannot drift apart. Dropping either rule from the admin
+// Style list stops both halves together.
 //
 // These are the two rules that are fully mechanical: the correct output is a
 // function of the wrong input, so they hold whether or not the model

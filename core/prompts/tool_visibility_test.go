@@ -6,9 +6,9 @@ import (
 )
 
 // The rule has to be VISIBLE, not merely present. Thirteen framework clauses
-// accumulated in the assembler with the Prompts page showing none of them, so a
+// accumulated in the assembler with no registry holding any of them, so a
 // new one that repeated that would be the wrong fix to the wrong problem.
-func TestToolVisibilityRuleIsOnThePromptsPage(t *testing.T) {
+func TestToolVisibilityRuleIsARegisteredBlock(t *testing.T) {
 	var found *PromptBlock
 	for _, b := range AllPromptBlocks() {
 		if b.Key == ToolVisibilityKey {

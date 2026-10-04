@@ -972,7 +972,7 @@ func (lr *loopRun) setupPrompt() {
 	// style rule is a sentence an operator adds or drops when they notice a tic,
 	// not a paragraph encoding an incident. The two shipped rules also carry
 	// transforms (StripFillerClassic, StripEmDashes) bound to the same keys, so
-	// turning one off on the Prompts page stops the sentence AND the transform
+	// dropping one from the admin Style list stops the sentence AND the transform
 	// together rather than leaving the prompt asking for something the code no
 	// longer does. Empty when every rule is off, and then nothing is added.
 	lr.addLeadClause(prompts.StyleKey, prompts.StyleClause())

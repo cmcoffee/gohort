@@ -213,9 +213,9 @@ func TestDispatchBriefHint(t *testing.T) {
 	}
 }
 
-// Every lifted framework block should be registered (with non-empty text) so it
-// shows up on the Prompts page. Catches a dropped reg() or an emptied const.
-func TestFrameworkBlocksRegisteredForPromptsPage(t *testing.T) {
+// Every lifted framework block should be registered (with non-empty text) so
+// overrides and tuning reach it. Catches a dropped reg() or an emptied const.
+func TestFrameworkBlocksAreRegistered(t *testing.T) {
 	have := map[string]core.PromptBlock{}
 	for _, b := range core.AllPromptBlocks() {
 		have[b.Key] = b
@@ -227,7 +227,7 @@ func TestFrameworkBlocksRegisteredForPromptsPage(t *testing.T) {
 	} {
 		b, ok := have[key]
 		if !ok {
-			t.Errorf("framework block %q not registered for the Prompts page", key)
+			t.Errorf("framework block %q is not registered", key)
 			continue
 		}
 		if strings.TrimSpace(b.Text) == "" {

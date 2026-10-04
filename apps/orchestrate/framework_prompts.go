@@ -223,7 +223,7 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 			return
 		}
 		b.WriteString("\n\n")
-		// Effective text = an operator override (edited on the Prompts page) when
+		// Effective text = an override (Optimize's wording, say) when
 		// set, else the in-code default. With no override configured it returns
 		// def, so this stays behavior-identical by default; keys match the
 		// registrations in framework_prompts_registry.go.
@@ -309,7 +309,7 @@ func IsFrameworkToolDef(td AgentToolDef) bool {
 // schemas in the same request; prompt-audit finding #1). Rather than hard-cut
 // it — the digest may be an accidental index the small models lean on — the
 // directive is now a TEMPLATE behind an operator-overridable prompt key, so the
-// slim variant can be A/B'd live from Prompt overrides (admin, LLMs) with no rebuild.
+// slim variant could be A/B'd live with no rebuild.
 // Placeholders:
 //
 //	{tool_list}  — the legacy bulleted "**name** — first-line-of-description"
@@ -332,8 +332,8 @@ func IsFrameworkToolDef(td AgentToolDef) bool {
 // nudge is kept word-for-word. What goes is only the first line of each
 // description — which is in the schema the model is already reading.
 //
-// Reverting is one edit in Prompt overrides (admin, LLMs), no rebuild: set
-// framework.tools_directive back to "## Tools available\n\n{tool_list}".
+// Reverting is one line here: set toolsDirectiveDefault back to
+// "## Tools available\n\n{tool_list}".
 // Do that if small-model tool SELECTION degrades — that is the half of
 // the A/B still unmeasured.
 const (

@@ -6,8 +6,8 @@ package prompts
 // descriptions of the tools it builds with, which say when to reach for a
 // machine and when for a pipeline, and the descriptions of their parameters,
 // which carry most of the how (what an app's sections may hold, how a
-// machine's phases hand off). Those lived in code, out of reach of the
-// Prompts page, per-model wording and Optimize. A shipped tool named here
+// machine's phases hand off). Those lived in code, out of reach of
+// overrides, per-model wording and Optimize. A shipped tool named here
 // becomes a block keyed "tool.<name>", and each of its parameters one keyed
 // "tool.<name>.<param>": the text is the description the code ships, seen
 // the first time the tool goes out to a model, and remembered so the block is

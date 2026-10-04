@@ -240,8 +240,7 @@ func (T *OrchestrateApp) handleDeploymentSettings(w http.ResponseWriter, r *http
 }
 
 // The admin surface, contributed through the section registry rather than by
-// the admin page importing this app - the same seam the prompt editor and the
-// file store use.
+// the admin page importing this app - the same seam the file store uses.
 func init() {
 	sections.RegisterAdminSection(sections.AdminSectionEntry{
 		App:     "/orchestrate",

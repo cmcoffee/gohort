@@ -2,8 +2,8 @@
 //
 // The descriptions Builder builds with decide as much about how it builds as
 // its prompt does: when a machine and when a pipeline, what makes a tool
-// definition done. Named here, each becomes a block on the Prompts page,
-// editable, worded per tier, and tunable by the tuning harness
+// definition done. Named here, each becomes a prompt block, worded per
+// tier and tunable by the tuning harness
 // (core/prompts/tool_desc.go).
 //
 // Authoring is every tool Builder authors with; a test keeps the list equal

@@ -30,7 +30,7 @@ func registeredBlock(t *testing.T, key string) PromptBlock {
 			return b
 		}
 	}
-	t.Fatalf("block %q is not registered: the Prompts page would omit it silently", key)
+	t.Fatalf("block %q is not registered: no override or tuning could reach it", key)
 	return PromptBlock{}
 }
 
@@ -136,9 +136,8 @@ func TestRoundBudgetCarriesTheTurnsNumber(t *testing.T) {
 	}
 }
 
-// An edit that removes the placeholder is refused rather than shipped. The
-// Prompts page can rewrite every block with an LLM in one pass, and a rewrite
-// that tidies {rounds} away leaves the model told it has "up to
+// An edit that removes the placeholder is refused rather than shipped. Optimize
+// rewrites blocks with a model, and a rewrite that tidies {rounds} away leaves the model told it has "up to
 // tool-execution rounds" in fluent prose nothing downstream would flag.
 func TestEditThatDropsThePlaceholderKeepsTheShippedWording(t *testing.T) {
 	withStore(t)

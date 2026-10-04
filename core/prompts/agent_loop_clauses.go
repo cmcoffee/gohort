@@ -3,8 +3,8 @@
 // core/agent_loop.go assembles every agent's system prompt, and until now the
 // behaviour blocks it appends were plain string concatenation: twelve
 // paragraphs, several of them encoding an incident, that no surface could show
-// and no operator could switch off. The Prompts page listed ten registered
-// blocks and omitted these, with nothing saying so — which is worse than
+// and no operator could switch off. The prompt editor of the time (since
+// removed) listed ten registered blocks and omitted these, with nothing saying so — which is worse than
 // listing none, because a partial list reads as complete. An operator asking
 // "what are my agents told?" got a confident, wrong answer.
 //
@@ -247,15 +247,14 @@ func RoundBudgetClause(maxRounds int) string {
 // expandClause fills a templated block's placeholder, and falls back to the
 // shipped wording when an edit has dropped it.
 //
-// The fallback is not pedantry. An operator edit reaches these through the same
-// text override as any other block, and the Prompts page also offers an
-// LLM rewrite pass over every block at once — a rewrite that "tidies away"
-// {rounds} leaves the model told it has "up to tool-execution rounds", and one
-// that drops {lookup} leaves the volatile-facts rule naming no way to check.
-// Both read as fluent prose, so nothing downstream would notice. Refusing the
-// broken text costs the operator their edit on that one block and keeps the
-// rule intact, which is the right way round for a clause that exists to stop
-// fabrication.
+// The fallback is not pedantry. Optimize's wording reaches these through the
+// same text override as any other block, and it is written by a model: a
+// rewrite that "tidies away" {rounds} leaves the model told it has "up to
+// tool-execution rounds", and one that drops {lookup} leaves the
+// volatile-facts rule naming no way to check. Both read as fluent prose, so
+// nothing downstream would notice. Refusing the broken text costs that one
+// block its edit and keeps the rule intact, which is the right way round for
+// a clause that exists to stop fabrication.
 //
 // Breadcrumbed once per key: a silent fallback would leave a person staring at
 // their edit on the page wondering why nothing changed.

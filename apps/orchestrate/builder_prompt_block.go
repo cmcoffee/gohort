@@ -2,10 +2,9 @@
 //
 // Builder's standing prompt lived only in its seed document, so the one set
 // of instructions that most decides how things get built was the one set an
-// operator could not reach: not on the Prompts page, and not in a tuning
-// variant. It is now a block like the framework's own, which makes it
-// editable on the Prompts page with a revision behind every change, tunable
-// in a variant, and promotable from the tuning harness.
+// operator could not reach: no override, and not in a tuning variant. It is
+// now a block like the framework's own, which makes it wordable per model,
+// tunable in a variant, and applied by the tuning harness.
 //
 // The block holds the RAW document, placeholders and all. The placeholders
 // ({{name}}) are expanded every time the prompt is read, after any override,

@@ -2,11 +2,10 @@ package orchestrate
 
 import . "github.com/cmcoffee/gohort/core"
 
-// Surface the capability-gated framework blocks (framework_prompts.go) on the
-// Prompts page. This is display metadata only — the injection path still reads
-// the constants directly; registering here just makes the otherwise-hidden text
-// visible to operators. When the RuleSet editing policy lands, the assembler
-// will read overrides keyed by these Keys.
+// Register the capability-gated framework blocks (framework_prompts.go). The
+// assembler reads each block's effective text by these Keys (an override when
+// one is set, else the const registered here), so a block registered here can
+// be worded per model and tuned by Optimize.
 func init() {
 	reg := func(key, title, category, gate, text string) {
 		RegisterPromptBlock(PromptBlock{Key: key, Title: title, Category: category, Gate: gate, Text: text})

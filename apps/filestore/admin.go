@@ -21,8 +21,7 @@ import (
 
 // Every URL here is ABSOLUTE. The section renders on the ADMIN page, not
 // on this app's own, so a relative "api/stores" resolves against /admin
-// and 404s. Same reason apps/prompts writes /prompts/api/... in its
-// admin section.
+// and 404s.
 func (T *FileStoreApp) adminSection() ui.Section {
 	return ui.Section{
 		Group:    "Files",
@@ -568,7 +567,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 // The trap it avoids: an app's T.DB is global.db.Bucket("<app>"), a
 // namespaced substore, so AuthIsAdmin(T.DB, r) finds no auth table and
 // refuses everyone. That is how this app failed the first time it was
-// clicked, and how the same call in apps/prompts silently did nothing.
+// clicked, and how the same call in the old prompt editor silently did nothing.
 func adminOnly(w http.ResponseWriter, r *http.Request) bool {
 	if RequestIsAdmin(r) {
 		return true
