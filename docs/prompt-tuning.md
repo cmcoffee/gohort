@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.350). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.352). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -98,9 +98,9 @@ money per call, and wording that helps the worker will likely already
 translate to it. Tuning the lead apart spent its paid builds on the model
 that needed it least. A run is
 quick by default (two passes at most, about four hours); the **Extended
-run** switch beside the button makes it take the limits on Details as they
+run** switch under the button makes it take the limits on Details as they
 are (named for what it is, not when to start it: it is the run to leave
-overnight). Details is linked beside it, so its settings are reachable
+overnight). Details is linked under it, so its settings are reachable
 before the first run. A run works one
 way:
 
