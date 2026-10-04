@@ -56,6 +56,20 @@ its tasks, and says whether it is gone. The wording's and the model's
 problems are kept apart, for Optimize, whose section shows the latest
 report. Private: not part of the release.
 
+The loop the report is for:
+
+1. The operator writes a report (**Write report**) and watches its stages.
+2. **Copy report** goes to whoever fixes the platform; in practice it is
+   pasted into a coding session, where the text carries everything needed
+   without access to the deployment: each component with every problem, the
+   quoted evidence, the requests behind it, and the task verdicts.
+3. The proven and blocking components are fixed first, then friction both
+   models hit; the operator rebuilds and restarts.
+4. **Re-check** on each fixed component until it reads gone.
+5. The next report, compared with the last, confirms the fixes held and
+   nothing new crept in. Tuning starts when a report turns up nothing a fix
+   should handle.
+
 ## Using it: one click per model
 
 A model's prompts are part of the model: optimizing one lives with it, on
