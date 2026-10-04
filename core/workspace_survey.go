@@ -80,20 +80,24 @@ var workspaceAgeBands = []struct {
 }
 
 // SurveyWorkspaces walks every user root and every per-agent workspace and
-// reports what is sitting in them. Read-only.
-func SurveyWorkspaces(db Database) []WorkspaceUsage {
+// reports what is sitting in them. Read-only. A stopped ctx ends the walk
+// where it is, with what it counted so far.
+func SurveyWorkspaces(ctx context.Context, db Database) []WorkspaceUsage {
 	base := WorkspacesDir()
 	if base == "" || db == nil {
 		return nil
 	}
 	var out []WorkspaceUsage
 	for _, u := range AuthListUsers(db) {
+		if ctx.Err() != nil {
+			break
+		}
 		user := strings.TrimSpace(u.Username)
 		if user == "" {
 			continue
 		}
 		regen := regenerableScriptNames(db, user)
-		if usage, ok := surveyOneWorkspace(filepath.Join(base, user), user, "", regen); ok {
+		if usage, ok := surveyOneWorkspace(ctx, filepath.Join(base, user), user, "", regen); ok {
 			out = append(out, usage)
 		}
 		agentsRoot := filepath.Join(base, AgentWorkspacesDirName, user)
@@ -102,10 +106,13 @@ func SurveyWorkspaces(db Database) []WorkspaceUsage {
 			continue
 		}
 		for _, e := range entries {
+			if ctx.Err() != nil {
+				break
+			}
 			if !e.IsDir() {
 				continue
 			}
-			if usage, ok := surveyOneWorkspace(filepath.Join(agentsRoot, e.Name()), user, e.Name(), regen); ok {
+			if usage, ok := surveyOneWorkspace(ctx, filepath.Join(agentsRoot, e.Name()), user, e.Name(), regen); ok {
 				out = append(out, usage)
 			}
 		}
@@ -132,7 +139,7 @@ func regenerableScriptNames(db Database, user string) map[string]bool {
 	return out
 }
 
-func surveyOneWorkspace(dir, user, agent string, regen map[string]bool) (WorkspaceUsage, bool) {
+func surveyOneWorkspace(ctx context.Context, dir, user, agent string, regen map[string]bool) (WorkspaceUsage, bool) {
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		return WorkspaceUsage{}, false
@@ -144,6 +151,9 @@ func surveyOneWorkspace(dir, user, agent string, regen map[string]bool) (Workspa
 	}
 	now := time.Now()
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return filepath.SkipAll // stopped: what was counted stands
+		}
 		if err != nil || d.IsDir() {
 			return nil //nolint:nilerr // an unreadable entry is not worth failing a survey
 		}
@@ -273,7 +283,15 @@ func init() {
 				Log("[workspace-usage] no users enumerated: the survey walks per-user roots, so it found nothing to look at")
 				return 0
 			}
-			list := SurveyWorkspaces(RootDB)
+			list := SurveyWorkspaces(ctx, RootDB)
+			if ctx.Err() != nil {
+				files := 0
+				for _, u := range list {
+					files += u.Files
+				}
+				ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped part way, %d file(s) in %d workspace(s) counted by then", files, len(list)))
+				return files
+			}
 			if len(list) == 0 {
 				Log("[workspace-usage] %d user(s), no files in any workspace", users)
 				return 0

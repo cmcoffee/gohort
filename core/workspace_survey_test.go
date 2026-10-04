@@ -7,6 +7,7 @@ package core
 // safely reclaim.
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,7 @@ func TestSurveyBucketsByAgeAndFindsTheLargest(t *testing.T) {
 	writeAged(t, filepath.Join(dir, "fresh.txt"), 128, time.Hour)
 	writeAged(t, filepath.Join(dir, ".attachments", "spill.txt"), 8192, 100*24*time.Hour)
 
-	u, ok := surveyOneWorkspace(dir, "alice", "", nil)
+	u, ok := surveyOneWorkspace(context.Background(), dir, "alice", "", nil)
 	if !ok {
 		t.Fatal("survey found nothing")
 	}
@@ -67,7 +68,7 @@ func TestSurveySeparatesRegenerableScripts(t *testing.T) {
 	writeAged(t, filepath.Join(dir, "get_market_data.py"), 1024, 30*24*time.Hour)
 	writeAged(t, filepath.Join(dir, "report.pdf"), 2048, 30*24*time.Hour)
 
-	u, _ := surveyOneWorkspace(dir, "alice", "", map[string]bool{"get_market_data.py": true})
+	u, _ := surveyOneWorkspace(context.Background(), dir, "alice", "", map[string]bool{"get_market_data.py": true})
 	if u.Regenerable != 1 || u.RegenerableBytes != 1024 {
 		t.Fatalf("regenerable = %d file(s) / %d bytes, want 1/1024", u.Regenerable, u.RegenerableBytes)
 	}
@@ -87,7 +88,7 @@ func TestSurveySeparatesRegenerableScripts(t *testing.T) {
 }
 
 func TestSurveyReportsNothingForAnEmptyTree(t *testing.T) {
-	if _, ok := surveyOneWorkspace(t.TempDir(), "alice", "", nil); ok {
+	if _, ok := surveyOneWorkspace(context.Background(), t.TempDir(), "alice", "", nil); ok {
 		t.Error("an empty workspace was reported as usage")
 	}
 	if FormatWorkspaceSurvey(nil) != "" {

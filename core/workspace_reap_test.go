@@ -4,11 +4,14 @@ package core
 // that is the side where a mistake is unrecoverable.
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 func TestReapTakesOnlyRecognizedArtifacts(t *testing.T) {
@@ -112,5 +115,34 @@ func TestReapReportNamesProducersAndProtection(t *testing.T) {
 	}
 	if FormatReapCandidates(nil) != "" {
 		t.Error("an empty plan must render empty")
+	}
+}
+
+// A stopped reap removes nothing it had not already removed, and a stopped
+// survey counts no further.
+func TestAStoppedReapOrSurveyGoesNoFurther(t *testing.T) {
+	base := t.TempDir()
+	prevDir := WorkspacesDir()
+	SetWorkspacesDir(base)
+	t.Cleanup(func() { SetWorkspacesDir(prevDir) })
+	root := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(root, "alice", "pw", false)
+	old := 30 * 24 * time.Hour
+	gen := filepath.Join(base, "alice", "gen-a.png")
+	writeAged(t, gen, 100, old)
+
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	if files, _ := ReapArtifacts(stopped, root, 14*24*time.Hour); files != 0 {
+		t.Fatalf("a stopped reap removed %d file(s)", files)
+	}
+	if _, err := os.Stat(gen); err != nil {
+		t.Fatal("a stopped reap removed the file")
+	}
+	if u, _ := surveyOneWorkspace(stopped, filepath.Join(base, "alice"), "alice", "", nil); u.Files != 0 {
+		t.Fatalf("a stopped survey counted %d file(s)", u.Files)
+	}
+	if files, _ := ReapArtifacts(context.Background(), root, 14*24*time.Hour); files != 1 {
+		t.Fatalf("an unstopped reap removed %d file(s), want 1", files)
 	}
 }

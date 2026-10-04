@@ -50,13 +50,17 @@ var workspaceRefPattern = regexp.MustCompile(`\{workspace_dir\}/([^\s"']+)`)
 
 // WorkspaceBoundTools surveys every user's persistent pool and returns the
 // tools that would not survive their workspace changing. db is the root store.
-func WorkspaceBoundTools(db Database) []WorkspaceBoundTool {
+// A stopped ctx ends the walk at the next user, with what it found so far.
+func WorkspaceBoundTools(ctx context.Context, db Database) []WorkspaceBoundTool {
 	if db == nil {
 		return nil
 	}
 	var out []WorkspaceBoundTool
 	seen := map[string]bool{} // owner+name, so the shared-pool walk can't double-report
 	for _, u := range AuthListUsers(db) {
+		if ctx.Err() != nil {
+			break
+		}
 		user := strings.TrimSpace(u.Username)
 		if user == "" {
 			continue
@@ -170,10 +174,21 @@ func init() {
 			users := AuthListUsers(RootDB)
 			tools := 0
 			for _, u := range users {
+				if ctx.Err() != nil {
+					ReportMaintenanceOutcome(ctx, "stopped while counting the tools, before the survey")
+					return 0
+				}
 				tools += len(LoadPersistentTempTools(UserDB(RootDB, strings.TrimSpace(u.Username)), strings.TrimSpace(u.Username)))
 			}
 			Log("[workspace-bound] scanning %d tool(s) across %d user(s)", tools, len(users))
-			list := WorkspaceBoundTools(RootDB)
+			list := WorkspaceBoundTools(ctx, RootDB)
+			if ctx.Err() != nil {
+				ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped part way, %d workspace-bound tool(s) found by then", len(list)))
+				if len(list) > 0 {
+					Log("[workspace-bound] stopped part way:\n%s", FormatWorkspaceBoundTools(list))
+				}
+				return len(list)
+			}
 			if len(list) == 0 {
 				Log("[workspace-bound] no tools depend on their authoring directory")
 				return 0

@@ -65,13 +65,17 @@ type ReapCandidate struct {
 
 // FindReapableArtifacts returns what a reap WOULD remove. Read-only, and the
 // same walk the reaper itself uses, so a dry run cannot disagree with the run.
-func FindReapableArtifacts(db Database, olderThan time.Duration) []ReapCandidate {
+// A stopped ctx ends the walk at the next user, with what it found so far.
+func FindReapableArtifacts(ctx context.Context, db Database, olderThan time.Duration) []ReapCandidate {
 	base := WorkspacesDir()
 	if base == "" || db == nil {
 		return nil
 	}
 	var out []ReapCandidate
 	for _, u := range AuthListUsers(db) {
+		if ctx.Err() != nil {
+			break
+		}
 		user := strings.TrimSpace(u.Username)
 		if user == "" {
 			continue
@@ -142,11 +146,20 @@ func artifactProducer(name string) (string, bool) {
 // ReapArtifacts removes what FindReapableArtifacts reports. Returns how many
 // files went and how many bytes came back. A file that fails to delete is
 // logged and skipped — one unreadable entry is not a reason to abandon the
-// rest, and the next run will try it again.
-func ReapArtifacts(db Database, olderThan time.Duration) (int, int64) {
+// rest, and the next run will try it again. A stopped ctx removes nothing
+// when it stops the walk, and ends the removing at the next file: each file
+// goes on its own, so what is left is what the next run takes.
+func ReapArtifacts(ctx context.Context, db Database, olderThan time.Duration) (int, int64) {
 	var files int
 	var bytes int64
-	for _, c := range FindReapableArtifacts(db, olderThan) {
+	list := FindReapableArtifacts(ctx, db, olderThan)
+	if ctx.Err() != nil {
+		return 0, 0
+	}
+	for _, c := range list {
+		if ctx.Err() != nil {
+			break
+		}
 		if err := os.Remove(c.Path); err != nil {
 			Log("[workspace-reap] could not remove %s: %v", c.Path, err)
 			continue
@@ -210,7 +223,11 @@ func init() {
 			"root, matching a known producer, older than the retention window. "+
 			"Subdirectories are never read, so app data is not a candidate. Deletes nothing.",
 		func(ctx context.Context) int {
-			list := FindReapableArtifacts(RootDB, ArtifactReapAge)
+			list := FindReapableArtifacts(ctx, RootDB, ArtifactReapAge)
+			if ctx.Err() != nil {
+				ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped part way, %d file(s) found by then", len(list)))
+				return len(list)
+			}
 			Log("[workspace-reap] dry run over %q, window %s", WorkspacesDir(), roundDuration(ArtifactReapAge))
 			if len(list) == 0 {
 				Log("[workspace-reap] nothing eligible")
@@ -227,14 +244,21 @@ func init() {
 			"videos at a workspace root, past the retention window. Run the dry run first "+
 			"- it uses the same walk, so what it shows is what this removes.",
 		func(ctx context.Context) int {
-			list := FindReapableArtifacts(RootDB, ArtifactReapAge)
+			list := FindReapableArtifacts(ctx, RootDB, ArtifactReapAge)
+			if ctx.Err() != nil {
+				ReportMaintenanceOutcome(ctx, "stopped before removing anything")
+				return 0
+			}
 			if len(list) == 0 {
 				Log("[workspace-reap] nothing eligible; nothing removed")
 				return 0
 			}
 			Log("[workspace-reap] removing %d file(s):\n%s", len(list), FormatReapCandidates(list))
-			files, bytes := ReapArtifacts(RootDB, ArtifactReapAge)
+			files, bytes := ReapArtifacts(ctx, RootDB, ArtifactReapAge)
 			Log("[workspace-reap] removed %d file(s), reclaimed %s", files, HumanSize(bytes))
+			if ctx.Err() != nil {
+				ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped after removing %d file(s), %s reclaimed", files, HumanSize(bytes)))
+			}
 			return files
 		},
 	)
