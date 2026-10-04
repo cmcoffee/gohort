@@ -263,7 +263,12 @@ follows the house rule for anything long: a moving indicator, "14 of 36 runs -
 9 passed - 41m", the run's own ending reported, a page that arrives mid-run
 rejoining it, the run on a context the request cannot cancel, and a Stop
 button. `core.ReportMaintenanceProgress`, `ui.ActionList.ProgressSource` and
-`ui.ActionList.CancelTo` are the pieces.
+`ui.ActionList.CancelTo` are the pieces. Optimize and the friction report
+also show their stages with `ui.StageTracker`: every stage in order, done,
+running, pending, failed or skipped with a count; the running pass's tasks
+one by one (probed, built, passed, set aside, fixed); what it is doing now
+and the last thing worth noticing. A single progress line said what was
+happening but not where in the whole that was.
 
 ## Graders
 
