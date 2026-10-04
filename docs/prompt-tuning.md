@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.343). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.344). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -79,10 +79,12 @@ Optimizing lives with the models, on the admin **LLMs** tab, under
 **Optimize**: one row, one button (decided 2026-10-04; it was a row per
 model). A run builds on the **worker** and the **lead helps**: it proposes
 the edits, reads the failures and reviews the builds. What it keeps is one
-wording that both models read. The worker is the model that fails builds;
-the lead is the stronger model and works with wording that helps the
-worker, so tuning it apart spent its builds, the paid ones, on little. A
-run is
+wording that both models read. Why (the owner's reasoning): the worker is
+local and cheap, so its builds cost nothing but time, and it is the likely
+cause of most friction; the lead is generally a larger model that costs
+money per call, and wording that helps the worker will likely already
+translate to it. Tuning the lead apart spent its paid builds on the model
+that needed it least. A run is
 quick by default (two passes at most, about four hours); **Run overnight**
 on Details makes it take the settings there as they are. A run works one
 way:
