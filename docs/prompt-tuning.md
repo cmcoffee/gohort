@@ -248,7 +248,8 @@ by all of it.
 ## Running
 
 The harness lives in the live server: the Optimize section on the admin
-LLMs tab (the map and a row per model), Details behind it, and Read it back
+LLMs tab (a row per model, and the latest friction report), Details behind
+it, the Friction report app at `/friction`, and Read it back
 and Probe in the Prompt overrides editor on the Prompts tab. It starts the
 sandbox and drives it over HTTP: Builder is given each
 task through the ordinary chat endpoint, the harness answering its
@@ -497,7 +498,7 @@ slower; overnight is still the natural time.
 
 1. **Setup.** The deployment builds with the tuning app registered (the
    blank import in the machine-local `private.go`), a lead model that is not
-   the worker (the judge and the map's reviewer are the lead), the lead's
+   the worker (the judge and the friction report's reviewer are the lead), the lead's
    price set under Prices, and room on the disk beside the workspaces for
    `tuning-sandboxes` (one copy of the binary and a fresh data directory per
    run; anything older than a day is swept).
@@ -530,7 +531,7 @@ Worker, **Optimize** (quick: two passes, four hours, the cap from Details).
 
 The first real proposals. Look at: probes running before each build and
 their fixes; failures set aside as the framework's (each one is a gap the
-map missed, so Copy findings and Re-check them like a map's); each kept
+friction report missed, so Copy findings and Re-check them); each kept
 edit, and whether it names a general rule or the task it saw; the result
 applied as the worker's own wording, each block a revision in Prompt
 overrides; Undo putting live back; restarting the server mid-run and the
