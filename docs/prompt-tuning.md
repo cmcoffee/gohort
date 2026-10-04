@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.348). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.350). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -97,8 +97,11 @@ cause of most friction; the lead is generally a larger model that costs
 money per call, and wording that helps the worker will likely already
 translate to it. Tuning the lead apart spent its paid builds on the model
 that needed it least. A run is
-quick by default (two passes at most, about four hours); **Run overnight**
-on Details makes it take the settings there as they are. A run works one
+quick by default (two passes at most, about four hours); the **Extended
+run** switch beside the button makes it take the limits on Details as they
+are (named for what it is, not when to start it: it is the run to leave
+overnight). Details is linked beside it, so its settings are reachable
+before the first run. A run works one
 way:
 
 - **Probe first.** Before a task is built, Builder is given its request and
@@ -584,7 +587,7 @@ run picking up where it was.
 
 ### Run 2: noise
 
-From Details: Run overnight on, 5 builds per task on the whole suite, 1
+Extended run on, and from Details: 5 builds per task on the whole suite, 1
 pass.
 
 The whole-suite measurement of where it starts is the point. Read the spread per task off the
@@ -594,9 +597,9 @@ size. A task that passes 0 of 5 or 5 of 5 every time tells the tuner
 nothing and is a candidate to rewrite; one that flips between runs of the
 same prompts is the noise floor.
 
-### Run 3: overnight
+### Run 3: extended
 
-Worker, **Optimize** with Run overnight on, and the builds per confirmation
+**Optimize** with Extended run on, and the builds per confirmation
 from run 2. A kept edit that holds on held-out tasks is the first one worth
 keeping for good.
 
