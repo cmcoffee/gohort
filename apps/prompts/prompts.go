@@ -291,6 +291,8 @@ func promptsEditorBase() ui.ArticleEditor {
 		Actions: []ui.ToolbarAction{
 			{Label: "Optimize", Title: "Let the model tighten this block: more concise and accurate, preserving every distinct instruction and lesson. The original is saved as a revision first, so you can revert.",
 				Method: "client", URL: "prompts_optimize"},
+			{Label: "Save for both", Title: "Save this text for both models: what the worker and the lead both read, replacing each one's own wording of this block.",
+				Method: "client", URL: "prompts_save_both"},
 			{Label: "Check", Title: "What the worker and the lead take this block to mean, side by side (for a tool, when they would reach for it), each reading the wording it would be sent.",
 				Method: "client", URL: "prompts_check"},
 		},
@@ -308,7 +310,7 @@ func promptsAdminSection() ui.Section {
 	return ui.Section{
 		Group:    AdminTab,
 		Title:    EditorTitle,
-		Subtitle: "Hand edits to the prompt blocks: what every model reads, or one model's own wording. A block marked worker or lead has its own wording for that model, from Optimize or a hand edit.",
+		Subtitle: "Hand edits to the prompt blocks. Each tab shows what that model reads; Save changes that model only, Save for both changes both. A block marked worker or lead has wording of its own for that model, from Optimize or a hand edit.",
 		Wide:     true,
 		Body:     promptsEditor(),
 	}
@@ -383,6 +385,9 @@ func (T *PromptsApp) handleSave(w http.ResponseWriter, r *http.Request) {
 		// Variant is the version saved: "worker" or "lead" for that model's
 		// own wording, else the shared text.
 		Variant string `json:"variant"`
+		// Both saves the text for both models: the shared text, with each
+		// model's own wording of the block dropped (Save for both).
+		Both bool `json:"both"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
 		http.Error(w, "bad body", http.StatusBadRequest)
@@ -391,6 +396,11 @@ func (T *PromptsApp) handleSave(w http.ResponseWriter, r *http.Request) {
 	b, ok := lookupBlock(strings.TrimSpace(rec.ID))
 	if !ok {
 		http.Error(w, "unknown block", http.StatusNotFound)
+		return
+	}
+	if rec.Both {
+		T.saveBoth(b, rec.Body)
+		writeJSON(w, map[string]any{"ok": true, "ID": b.Key})
 		return
 	}
 	if v := strings.TrimSpace(rec.Variant); v == prompts.TierWorker || v == prompts.TierLead {
@@ -603,8 +613,22 @@ func (T *PromptsApp) handleRevert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown block", http.StatusNotFound)
 		return
 	}
-	ClearPromptOverride(key)
+	b, _ := lookupBlock(key)
+	T.saveBoth(b, "")
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// saveBoth makes body what both models read: the shared text, and each
+// model's own wording of the block dropped, each change a revision. Empty
+// body puts both back on the shipped text (Revert to default).
+func (T *PromptsApp) saveBoth(b PromptBlock, body string) {
+	for _, tier := range []string{prompts.TierWorker, prompts.TierLead} {
+		if o, ok := prompts.PromptTierOverride(tier, b.Key); ok {
+			T.snapshotRevision(b.Key, o.Text, "edit", "the "+tier+"'s own wording, before both were set alike, "+time.Now().Format("Jan 2 15:04"))
+			prompts.ClearPromptTierOverride(tier, b.Key)
+		}
+	}
+	T.applyEdit(b, body, "edit", "")
 }
 
 // --- chat --------------------------------------------------------------------
@@ -920,15 +944,24 @@ const promptsHead = `<script>
       }).then(function(){ pending--; });
     });
   });
+  // Save for both: the open text becomes what both models read.
+  window.uiRegisterClientAction('prompts_save_both', function(ctx) {
+    var ed = ctx.editor;
+    if (!ed.getID()) { ed.toast('Select a block first'); return; }
+    if (!ed.confirm('Save this text for both models? Each model\'s own wording of this block is replaced by it, and kept as a revision.')) return;
+    ed.save({both: true});
+    ed.reloadList();
+    ed.toast('Saved for both models.');
+  });
   window.uiRegisterClientAction('prompts_revert', function(ctx) {
     var ed = ctx.editor;
     var id = ed.getID();
     if (!id) { ed.toast('Select a block first'); return; }
-    if (!ed.confirm('Revert this block to the shipped default? Your override is discarded.')) return;
+    if (!ed.confirm('Revert this block to the shipped text for both models? Every edit to it, and each model\'s own wording, is discarded; each is kept as a revision.')) return;
     ed.busy(ctx.button, 'Reverting...');
     fetch('/prompts/api/revert?id=' + encodeURIComponent(id), {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){
       if (d && d.error) { ed.restore(ctx.button); ed.toast('Error: ' + d.error); return; }
-      return fetch('/prompts/api/load?id=' + encodeURIComponent(id)).then(function(r){ return r.json(); }).then(function(rec){
+      return fetch('/prompts/api/load?id=' + encodeURIComponent(id) + '&variant=' + encodeURIComponent(ed.getVariant ? ed.getVariant() : '')).then(function(r){ return r.json(); }).then(function(rec){
         ed.restore(ctx.button);
         if (rec && typeof rec.Body === 'string') ed.setBody(rec.Body);
         ed.reloadList();

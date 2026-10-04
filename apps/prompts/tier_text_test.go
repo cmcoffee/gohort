@@ -66,7 +66,7 @@ func TestEachModelHasItsOwnVersionInTheEditor(t *testing.T) {
 	app, b := variantWorld(t)
 	SetPromptOverride(b.Key, "everyone reads this")
 
-	if body, note := loadVariant(t, app, b.Key, "worker"); body != "everyone reads this" || !strings.Contains(note, "reads the shared wording") {
+	if body, note := loadVariant(t, app, b.Key, "worker"); body != "everyone reads this" || !strings.Contains(note, "Unchanged for the worker") {
 		t.Fatalf("worker before: %q / %q", body, note)
 	}
 	if code := saveVariant(t, app, b.Key, "worker", "the worker's own words"); code != 200 {
@@ -79,7 +79,7 @@ func TestEachModelHasItsOwnVersionInTheEditor(t *testing.T) {
 	if got, _ := PromptOverride(b.Key); got != "everyone reads this" {
 		t.Fatalf("the shared text moved: %q", got)
 	}
-	if body, note := loadVariant(t, app, b.Key, "worker"); body != "the worker's own words" || !strings.Contains(note, "written by hand") || !strings.Contains(note, "for local/qwen.") {
+	if body, note := loadVariant(t, app, b.Key, "worker"); body != "the worker's own words" || !strings.Contains(note, "own wording: by hand") || !strings.Contains(note, "for local/qwen.") {
 		t.Fatalf("worker after: %q / %q", body, note)
 	}
 	if _, note := loadVariant(t, app, b.Key, "all"); !strings.Contains(note, "except the worker") {
@@ -100,7 +100,7 @@ func TestTheEditorSaysWhoWroteAModelsWording(t *testing.T) {
 	if err := ApplyTierEdit("lead", b.Key, "lead words"); err != nil {
 		t.Fatal(err)
 	}
-	if _, note := loadVariant(t, app, b.Key, "lead"); !strings.Contains(note, "written by Optimize") || !strings.Contains(note, "for cloud/flash.") {
+	if _, note := loadVariant(t, app, b.Key, "lead"); !strings.Contains(note, "own wording: from Optimize") || !strings.Contains(note, "for cloud/flash.") {
 		t.Fatalf("lead note = %q", note)
 	}
 	SetLiveLLMs("local/qwen", "cloud/pro")
@@ -133,11 +133,11 @@ func TestAModelsWordingKeepsTheBlocksPlaceholders(t *testing.T) {
 	}
 }
 
-// The editor offers the three versions, and its section on the admin tab
-// has a title: untitled, the tab's rail calls it "Section 1".
+// The editor has a tab per model, the worker's first, and its section on the
+// admin tab has a title: untitled, the tab's rail calls it "Section 1".
 func TestTheEditorOffersEachModel(t *testing.T) {
 	ed := promptsEditor()
-	if len(ed.Variants) != 3 || ed.Variants[0].Value != "all" || ed.VariantNoteField != "variant_note" {
+	if len(ed.Variants) != 2 || ed.Variants[0].Value != "worker" || ed.Variants[1].Value != "lead" || ed.VariantNoteField != "variant_note" {
 		t.Fatalf("variants = %+v", ed.Variants)
 	}
 	if s := promptsAdminSection(); s.Title != EditorTitle || s.Group != AdminTab {
@@ -179,5 +179,42 @@ func TestTheEditorLivesOnTheLLMsTab(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the editor registered no admin section")
+	}
+}
+
+// Save for both makes the text what both models read, dropping each model's
+// own wording; Revert to default puts both back on the shipped text. Each
+// dropped wording is kept as a revision.
+func TestSaveForBothAndRevertTreatBothModelsAlike(t *testing.T) {
+	app, b := variantWorld(t)
+	prompts.SetPromptTierOverrideBy("worker", b.Key, "worker words", "local/qwen", "tuned")
+	prompts.SetPromptTierOverrideBy("lead", b.Key, "lead words", "cloud/flash", "edit")
+
+	raw, _ := json.Marshal(map[string]any{"ID": b.Key, "Body": "both read this", "variant": "worker", "both": true})
+	rec := httptest.NewRecorder()
+	app.handleSave(rec, asAdmin(httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(string(raw)))))
+	if rec.Code != 200 {
+		t.Fatalf("save for both answered %d", rec.Code)
+	}
+	for _, tier := range []string{"worker", "lead"} {
+		if _, own := prompts.PromptTierOverride(tier, b.Key); own {
+			t.Fatalf("the %s kept its own wording", tier)
+		}
+		if body, note := loadVariant(t, app, b.Key, tier); body != "both read this" || !strings.Contains(note, "last saved for both") {
+			t.Fatalf("%s reads %q / %q", tier, body, note)
+		}
+	}
+
+	prompts.SetPromptTierOverrideBy("lead", b.Key, "lead again", "cloud/flash", "edit")
+	rec = httptest.NewRecorder()
+	app.handleRevert(rec, asAdmin(httptest.NewRequest(http.MethodPost, "/x?id="+b.Key, nil)))
+	if _, own := prompts.PromptTierOverride("lead", b.Key); own {
+		t.Fatal("revert left the lead's own wording")
+	}
+	if _, edited := PromptOverride(b.Key); edited {
+		t.Fatal("revert left the edit for both")
+	}
+	if body, note := loadVariant(t, app, b.Key, "worker"); body != b.Text || !strings.Contains(note, "Unchanged for the worker: the shipped text.") {
+		t.Fatalf("after revert the worker reads %q / %q", body, note)
 	}
 }

@@ -2,12 +2,13 @@ package prompts
 
 // A block's wording per model: the worker's and the lead's.
 //
-// The editor shows every block in three versions: what both models read,
-// and each model's own. A model reads its own wording when it has one, else
-// the shared text, so a block is split only where something put a split
-// there: Optimize, when it finds wording that builds better on one model,
-// or a hand edit to one model's version. Saving a model's version back to
-// the shared text, or empty, removes the split.
+// The editor has a tab per model, each showing exactly what that model reads:
+// its own wording when it has one, else the text both share (the shipped
+// text, or an edit saved for both). Saving in a tab changes that model only,
+// giving it its own wording; Save for both writes the text both read and
+// drops each model's own. Optimize writes a model's own wording the same way
+// a save in its tab does. Saving a model's version back to the shared text,
+// or empty, puts it back on the shared text.
 
 import (
 	"fmt"
@@ -19,14 +20,14 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// The editor's versions. "all" is the shared text.
+// variantAll names the shared text, for a load that asks for it (the tabs
+// are the models; nothing in the editor opens it).
 const variantAll = "all"
 
 func editorVariants() []ui.SelectOption {
 	return []ui.SelectOption{
-		{Value: variantAll, Label: "Both models", Help: "What every model reads, unless it has its own wording."},
-		{Value: prompts.TierWorker, Label: "Worker", Help: "The worker's own wording. Saving the shared text here removes it."},
-		{Value: prompts.TierLead, Label: "Lead", Help: "The lead's own wording. Saving the shared text here removes it."},
+		{Value: prompts.TierWorker, Label: "Worker", Help: "What the worker reads. Save changes it for the worker only."},
+		{Value: prompts.TierLead, Label: "Lead", Help: "What the lead reads. Save changes it for the lead only."},
 	}
 }
 
@@ -111,18 +112,21 @@ func variantText(b PromptBlock, variant string) (body, note string) {
 	}
 	o, ok := prompts.PromptTierOverride(tier, b.Key)
 	if !ok {
-		return shared, note + "The " + tier + " reads the shared wording. Save a change here to give it its own."
+		if _, edited := PromptOverride(b.Key); edited {
+			return shared, note + "Unchanged for the " + tier + " on its own: the text last saved for both."
+		}
+		return shared, note + "Unchanged for the " + tier + ": the shipped text."
 	}
 	who := "by hand"
 	if o.Via == "tuned" {
-		who = "by Optimize"
+		who = "from Optimize"
 	}
-	note += "The " + tier + "'s own wording, written " + who
+	note += "The " + tier + "'s own wording: " + who
 	if !o.At.IsZero() {
-		note += " " + o.At.Format("Jan 2")
+		note += ", " + o.At.Format("Jan 2")
 	}
 	if m := shortModel(o.Model); m != "" {
-		note += " for " + m
+		note += ", for " + m
 	}
 	note += "."
 	if prompts.TierOverrideStale(tier, b.Key, tierModel(tier)) {
