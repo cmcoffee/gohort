@@ -70,14 +70,14 @@ The loop the report is for:
    nothing new crept in. Tuning starts when a report turns up nothing a fix
    should handle.
 
-## Using it: one click per model
+## Using it: one button per model
 
 A model's prompts are part of the model: optimizing one lives with it, on
 the admin **LLMs** tab, under **Optimize**. Each model (the worker, and the
-lead when there is a separate one) has two rows: **quick** (two passes at
-most, about four hours, for trying it or after a model change) and
-**extended** (the overnight run, as far as the settings on Details allow).
-Both work the same way:
+lead when there is a separate one) has one row and one button. A run is
+quick by default (two passes at most, about four hours); **Run overnight**
+on Details makes it take the settings there as they are. A run works one
+way:
 
 - **Probe first.** Before a task is built, Builder is given its request and
   its real turn is stopped at its first authoring call, without making it
@@ -91,62 +91,54 @@ Both work the same way:
 - **Fix as it goes.** Each train task is built once. A failure is read by
   the lead as the framework's (a tool that cannot express what was asked, a
   broken platform check, the harness) or the wording's. The framework's is
-  reported at once and the task set aside, since no prompt can fix it; the
-  run's result lists them under **Set aside**. **Copy findings** on the
-  run's row puts them on the clipboard, each with the build behind it (the
-  request, the checks that failed, what Builder said and did), for whoever
-  fixes the code. **Re-check** on a finding builds that task again on what
-  is live now, on the run's model, and says whether it passes now, still
-  fails as the framework's, or now reads as the wording's; one at a time,
-  and not while Optimize runs, since they build in the same place. The
-  wording's gets one edit,
-  and that task alone is built again with it, twice at most; the edit is
-  kept if the task now passes.
+  set aside, since no prompt can fix it, and listed on the run's row with
+  why; handing it over and re-checking it are the friction report's. The
+  wording's gets one edit, and that task alone is built again with it,
+  twice at most; the edit is kept if the task now passes.
 - **Confirm end to end.** After a pass, the whole suite runs, held out
   included, on what the pass kept. It stays only if more train builds pass
   and neither split got worse; if not, the pass's edits are taken back one
   at a time to find the one that hurt, and failing that the pass is dropped.
 
 When the run ends it applies what it kept as that model's own wording, each
-change a revision. The older way, the whole suite around every single edit,
-is still on Details as "rounds". **Undo** takes the
-whole run back. The wording remembers the model it was fitted to; when the
-model behind a tier changes, its row says so. While it runs, the row's
-progress and "What it is doing" say where it is, and the run sits in the
-live indicator and on the Monitor page like any other work using the
+change a revision, and **Undo** takes the whole run back. The wording
+remembers the model it was fitted to; when the model behind a tier changes,
+its row says so. While it runs, its stages show above "What it is doing"
+(each pass, and in the pass running each task as it goes), and it sits in
+the live indicator and on the Monitor page like any other work using the
 models.
 
 The **Prompts** tab is for hand edits to something specific: **Prompt
-overrides** is the editor. Its **Read it back** asks the worker and the
-lead what the open block tells them to do (for a tool's description, when
-they would reach for it first; for a parameter's, what they would put in
-it), each reading the wording it would be sent, and shows the two readings
-side by side. It is the quick look while editing: a reading is what a model
-says it understood, a probe is what it does. Its **Probe** runs a choice probe
-there and then: Builder is given a request (your own, or one of the suite's,
-those that want the open block's tool first) in a sandbox holding live's
-wording with the open block as it is on screen, and stopped at the first
-thing it reaches to build, for the worker and the lead side by side.
+overrides** is the editor. Its **Check** asks the worker and the lead what
+the open block tells them to do (for a tool's description, when they would
+reach for it first; for a parameter's, what they would put in it), each
+reading the wording it would be sent, side by side. With the tuning harness
+running, Check has a second section: Builder is given a request (your own,
+or one of the suite's, those that want the open block's tool first) in a
+sandbox holding live's wording with the open block as it is on screen, and
+stopped at the first thing it reaches to build, for the worker and the lead
+side by side. A reading is what a model says it understood; a probe is what
+it does.
 
 A run gives way to people. While someone else is using the model it tunes
 (a call out, or one in the last 30 seconds), its calls wait at the shared LLM
 handle's gate (`core.SetYieldGate`, `core.ModelInUse`) and its sandboxes are
 told to pause; it picks up where it was when they are done. A call already
 out runs to its end. Paused time does not count against a build's budget, a
-probe's, or the session's hours, and the row says it is paused. A Probe from
-the editor does not pause: someone is waiting on it.
+probe's, or the session's hours, and the row says it is paused. A probe from
+Check does not pause: someone is waiting on it.
 
 A restart does not lose a run. Ninety seconds after the server starts, the
 newest run, if a restart cut it off in the last day, is picked up where it
 was: from its last confirmed point, the pass it was in done again from its
 start, its best's suite run reused, its set-aside tasks still set aside,
 and its spend carried over. The time it lay stopped does not count against
-its hours. A run of rounds is finished instead, and what it had confirmed is
-applied. One that cannot be picked up (another run going, the model behind
-its tier changed) says why, and its row offers Resume. Everything below the
-button is behind **Details** (`/tuning/details`): the settings, every run with its rounds,
-builds, scorecard and the judge's pairs to calibrate, and the suite. The
-rest of this document describes that machinery.
+its hours. One that cannot be picked up (another run going, the model
+behind its tier changed) says why, and its row offers Resume.
+
+**Details** (`/tuning/details`) holds the settings, every session's steps
+(each edit with why, before and after, and its builds and scorecard), and
+the suite. The rest of this document describes that machinery.
 
 ## What this is not
 
@@ -200,8 +192,7 @@ the exact suite revision it ran against.
      "expect": {"contains": ["18", "partly cloudy"]}},
     {"type": "tool_call", "action": "forecast", "args": {"city": "Oslo", "days": 3},
      "expect": {"json_len": 3}},
-    {"type": "verified_before_done"},
-    {"type": "judge", "rubric": "tool-description"}
+    {"type": "verified_before_done"}
   ]
 }
 ```
@@ -263,8 +254,8 @@ by all of it.
 
 The harness lives in the live server: the Optimize section on the admin
 LLMs tab (a row per model, and the latest friction report), Details behind
-it, the Friction report app at `/friction`, and Read it back
-and Probe in the Prompt overrides editor on the Prompts tab. It starts the
+it, the Friction report app at `/friction`, and Check in the Prompt
+overrides editor on the Prompts tab. It starts the
 sandbox and drives it over HTTP: Builder is given each
 task through the ordinary chat endpoint, the harness answering its
 confirmation cards as a person would, and the tier is pinned by the
@@ -298,37 +289,21 @@ where in the whole that was.
 
 A task passes only when every deterministic grader passes.
 
-### The LLM judge: scores what code cannot check
+### No LLM judge
 
-Whether an app is well designed rather than merely rendering; whether a tool's
-description would let another agent call it correctly; whether house
-conventions were followed. The judge never decides pass or fail.
-
-- **A different model judges.** The lead judges worker builds. A model grading
-  its own output prefers it, and an optimizer tuned against that preference
-  learns to please the judge.
-- **The judge is frozen for a tuning run.** Its prompt and rubrics are not
-  parameters. If they were, the cheapest improvement available to the
-  proposer would be a gentler judge.
-- **Pairwise, not absolute.** The judge sees two builds of the same task,
-  unlabelled, and picks one with a reason; then again with the order swapped.
-  A 1-10 score drifts between runs; a comparison holds.
-- **Instability is a tie.** A judge that flips when the order is swapped, or
-  across repeats, has not preferred anything. This deployment has watched a
-  judge reverse itself three times in 800 words with only the final verdict
-  kept; here the reversal is the data.
-- **Calibrated before it counts.** The owner's own verdicts are the labels:
-  pairwise picks made on the scorecard page, and the existing reply flags.
-  The judge's agreement rate with them is shown beside every judge column,
-  and a rubric with poor agreement is fixed before its scores are believed.
+An earlier version had a frozen, pairwise, calibrated LLM judge scoring what
+code cannot check (design, description quality), never deciding pass or
+fail. It only ever served the old rounds mode, and is gone with it: a
+focused run keeps or drops a pass on the deterministic checks across the
+whole suite, and the friction report's reviewer reads every build for what
+got in the way. Every grader a task declares decides.
 
 ## The scorecard
 
 Per task, per variant, per tier:
 
 - deterministic pass rate over the N runs, with the spread between runs
-- judge win rate against the baseline variant (ties shown)
-- cost: rounds, tokens, wall time
+- cost: tokens, wall time
 - friction: the tools each build called, by name (a machine task answered
   with pipeline calls shows here before any grade says why), and the calls
   that came back an error, averaged per task
@@ -352,8 +327,8 @@ tuning run.
 
 ## The proposer
 
-The lead model reads the train-split failures (grader verdicts, the judge's
-reasons, the transcript of the failing run) and proposes ONE targeted edit: a
+The lead model reads the train-split failures (grader verdicts and the
+transcript of the failing run) and proposes ONE targeted edit: a
 named block, a diff, and the failure it addresses. Not a rewrite of the whole
 prompt; a rewrite cannot be attributed and usually drops something.
 
@@ -365,14 +340,15 @@ Operators the proposer can choose from:
 
 A candidate is accepted only when all of these hold:
 
-1. the train deterministic pass rate rises by more than the run spread
-2. the held-out pass rate does not fall
-3. the judge win rate does not fall; judge points never buy back a lost pass
-4. the total prompt length stays under its cap (a model can always buy points
+1. the task it was made for passes with it (a probe fix: Builder reaches for
+   the right thing first)
+2. on the whole suite at the pass's end, more train builds pass and neither
+   split got worse
+3. the total prompt length stays under its cap (a model can always buy points
    with more text, and every token is paid on every turn)
 
-A tuning run has a token and wall-clock budget and stops after N rounds with no
-accepted candidate. It never promotes. Promotion is an admin action on the
+A tuning run has a token and wall-clock budget and stops after N passes in a
+row with no edit that held. It never promotes. Promotion is an admin action on the
 winning variant: each changed block gets a Prompts-page revision tagged
 `Via: "tuned"` with the scorecard linked, so it is revertible the same way
 every other edit is.
@@ -455,16 +431,10 @@ measured rather than guessed.
   own wording (the editor shows it under the model's version), leaving the
   shared wording alone. A routed session edits the shared wording. A lead-pinned sandbox serves both of its tiers
   with the lead's model, so the lead's words go to both there.
-- **Lead tuning has the judge problem.** The lead cannot fairly judge its own
-  builds. A session that builds on the lead (pinned to it, or routed) runs
-  with no judge and says so on each round; it leans on the deterministic
-  graders and on the owner's pairwise picks.
 - **Lead tuning has a spending cap.** Every session carries a meter: what
   its sandboxes spent, read from each sandbox after every build, and what
-  its proposer and judge spent here, priced at the deployment's Prices. A
-  round that would pass the cap (judged by what the starting measurement
-  cost) is not started, and a run that passes it anyway is stopped where it
-  stands. A session that can build on the lead does not start without a
+  its proposer and diagnosis spent here, priced at the deployment's Prices.
+  A run that passes the cap is stopped where it stands. A session that can build on the lead does not start without a
   price on the lead, since the meter would read every lead call as free.
   The sandbox's spend is also added to the live server's usage, so the
   Cost History shows it: the money is this deployment's.
@@ -487,7 +457,8 @@ Each stage is useful alone and proves the next one is worth building.
    spread is small enough to compare anything.
 3. **Manual tuning.** Variants authored by hand, run side by side, lineage,
    promotion. Proves a prompt edit moves a score.
-4. **The judge.** Pairwise, swapped, calibrated against the owner's picks.
+4. **The judge.** Pairwise, swapped, calibrated against the owner's picks
+   (since removed: it served only the rounds mode, also removed).
 5. **The proposer.** Targeted edits and compress, the acceptance rules, the
    budget.
 6. **Per-tier profiles** on the live server, once a block has shown it wants
@@ -496,10 +467,9 @@ Each stage is useful alone and proves the next one is worth building.
 
 Built since, on top of those: tool and parameter descriptions as blocks;
 one-click Optimize per model with Undo; the focused mode (fix as it goes,
-confirm on the whole suite) in quick and extended runs; choice probes, and
-Read it back and Probe in the editor; findings set aside with Copy and
-Re-check; giving way to people and picking up after a restart; and the
-friction report, which comes first.
+confirm on the whole suite), now the only mode; choice probes, and Check in
+the editor; giving way to people and picking up after a restart; stages on
+every long run; and the friction report, which comes first.
 
 The suite and harness also serve the self-fine-tune plan: the eval app that
 plan called "oracle" is this harness pointed at a LoRA adapter instead of a
@@ -519,7 +489,7 @@ slower; overnight is still the natural time.
 
 1. **Setup.** The deployment builds with the tuning app registered (the
    blank import in the machine-local `private.go`), a lead model that is not
-   the worker (the judge and the friction report's reviewer are the lead), the lead's
+   the worker (the friction report's reviewer and the run's diagnosis are the lead), the lead's
    price set under Prices, and room on the disk beside the workspaces for
    `tuning-sandboxes` (one copy of the binary and a fresh data directory per
    run; anything older than a day is swept).
@@ -548,11 +518,12 @@ the lead's model as its worker; the harness reads it back as the lead's).
 
 ### Run 1: a quick Optimize
 
-Worker, **Optimize** (quick: two passes, four hours, the cap from Details).
+Worker, **Optimize** (quick by default: two passes, four hours, the cap from
+Details).
 
 The first real proposals. Look at: probes running before each build and
 their fixes; failures set aside as the framework's (each one is a gap the
-friction report missed, so Copy findings and Re-check them); each kept
+friction report missed, so write another report); each kept
 edit, and whether it names a general rule or the task it saw; the result
 applied as the worker's own wording, each block a revision in Prompt
 overrides; Undo putting live back; restarting the server mid-run and the
@@ -560,9 +531,10 @@ run picking up where it was.
 
 ### Run 2: noise
 
-From Details: rounds mode, 5 builds per task, 1 round.
+From Details: Run overnight on, 5 builds per task on the whole suite, 1
+pass.
 
-The starting measurement is the point. Read the spread per task off the
+The whole-suite measurement of where it starts is the point. Read the spread per task off the
 scorecard. It decides how many builds per task a confirmation needs and
 whether the whole-suite check can call a change better on a suite this
 size. A task that passes 0 of 5 or 5 of 5 every time tells the tuner
@@ -571,17 +543,15 @@ same prompts is the noise floor.
 
 ### Run 3: overnight
 
-Worker, **Optimize overnight**, with the builds per confirmation from run 2.
-A kept edit that holds on held-out tasks is the first one worth keeping for
-good. Pick pairs in the judge's review so its agreement line means
-something.
+Worker, **Optimize** with Run overnight on, and the builds per confirmation
+from run 2. A kept edit that holds on held-out tasks is the first one worth
+keeping for good.
 
 ### Run 4: the lead
 
 Lead, quick, one build per task, a cap of about three measurements' worth at
-the lead's price. No judge (the judge is the lead), so the checks and the
-owner's picks carry the comparison. Watch for the cap stopping a round
-before it starts rather than in the middle, and for Spent agreeing with the
+the lead's price. Watch for the cap stopping the run, and for Spent agreeing
+with the
 provider's own bill.
 
 ### What the first live runs showed (2026-10-03)
@@ -626,7 +596,6 @@ sandbox's own log is mirrored under `[tuning sandbox-N]`:
   watches the wrong call);
 - the proposer keeps choosing one block, or keeps writing the task back into
   its rule;
-- the judge's agreement with the owner's picks is near a coin toss;
 - Spent and Cost History disagree.
 
 ## Open questions
@@ -634,14 +603,14 @@ sandbox's own log is mirrored under `[tuning sandbox-N]`:
 - **How many repeats are enough?** Decided by measurement: run 2.
 - **How far to trust the reviewer.** It is the lead, uncalibrated; the
   known-good builds and the both-model builds now carry the weight, and its
-  calls sit beside them. Owner picks on its calls, as the judge has, if it
-  misreads often.
+  calls sit beside them. Owner picks on its calls if it misreads often.
 - **Whether the friction report becomes a periodic check.** It is run by
   hand while the platform is being got right. If reports keep finding real
   issues after the first round of fixes, a scheduled report after each
   release would catch regressions before tuning does.
 - **Where a task's expected output comes from for machines.** Hand-written for
-  now; a machine whose job is judgement may only be gradable by the judge.
+  now; a machine whose job is judgement may only be gradable by reading it,
+  which makes it a poor task.
 - **Sandbox resources.** A second gohort plus headless Chrome for app checks
   on the same box as the live server. Runs give way to people on the model
   they use, but the CPU and memory of the sandbox are not yielded.
