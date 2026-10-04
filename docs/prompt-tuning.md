@@ -644,7 +644,17 @@ Next: Re-check the fixed components, then a second report.
 - **How many repeats are enough?** Decided by measurement: run 2.
 - **How far to trust the reviewer.** It is the lead, uncalibrated; the
   known-good builds and the both-model builds now carry the weight, and its
-  calls sit beside them. Owner picks on its calls if it misreads often.
+  calls sit beside them. Owner picks on its calls if it misreads often. On
+  the first report it was right that its "grader" group was broken, wrong
+  about why: it blamed the platform's verification, and the fault was the
+  harness's own checks. A component it files under grader or page check is
+  read as the harness's first.
+- **Left open from the first report.** A verification report that listed one
+  of two endpoints (likely a stale pool copy shadowing the edited tool, not
+  proven); fetch_url's refusal not naming the credential that covers the
+  host; a standing trigger in one sandbox firing order-status about every
+  32 seconds; the record of a write fired by hand lives in memory only, so
+  a restart forgets it and the next test asks for the call again.
 - **Whether the friction report becomes a periodic check.** It is run by
   hand while the platform is being got right. If reports keep finding real
   issues after the first round of fixes, a scheduled report after each
