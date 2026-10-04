@@ -20,7 +20,8 @@
   // opts:
   //   host        — the element to fill (the panel's side list)
   //   listURL     — GET, returns the array of records
-  //   idField / labelField / dateField — record field names
+  //   idField / labelField / dateField — record field names; a record's
+  //                 Badges (an array of short strings) show as pills by its label
   //   metaOf(rec) — optional extra shown before the relative time in the
   //                 row tooltip (the code editor puts the language there)
   //   emptyText   — copy for an empty list
@@ -34,6 +35,14 @@
   //                 select-mode; omit for a plain list
   //
   // Returns {reload, markActive}.
+  // docBadges is a record's badges as pills, or nothing.
+  function docBadges(list) {
+    if (!Array.isArray(list) || !list.length) return null;
+    return el('div', {class: 'ui-doc-badges'}, list.map(function(b) {
+      return el('span', {class: 'ui-badge info ui-doc-badge'}, [String(b)]);
+    }));
+  }
+
   function buildDocList(opts) {
     opts = opts || {};
     var host = opts.host;
@@ -140,6 +149,7 @@
           }, [
             el('div', {class: 'ui-chat-side-text'}, [
               el('div', {class: 'ui-chat-side-title'}, [label]),
+              docBadges(it.Badges || it.badges),
             ]),
           ]);
           row.dataset.id = String(id == null ? '' : id);

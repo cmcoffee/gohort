@@ -363,9 +363,13 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// (e.g. the prompt-block editor), self-registered via core so admin doesn't
 	// import the app. Each carries its own Group/Wide; its Head brings any
 	// client actions the section's controls need.
+	order := map[string]int{} // section title -> its Order within its tab
 	for _, e := range AdminSectionEntriesFor(r) {
 		page.Sections = append(page.Sections, e.Section)
 		page.ExtraHeadHTML += e.Head
+		if e.Order != 0 {
+			order[e.Section.Title] = e.Order
+		}
 	}
 	for i := range page.Sections {
 		t := page.Sections[i].Title
@@ -392,7 +396,11 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// is a tab that never appears.
 	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Governance": 5, "Extensions": 6, "Apps": 7, "Tuning": 8, "Prompts": 9, "Maintenance": 10}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
-		return groupRank[page.Sections[i].Group] < groupRank[page.Sections[j].Group]
+		gi, gj := groupRank[page.Sections[i].Group], groupRank[page.Sections[j].Group]
+		if gi != gj {
+			return gi < gj
+		}
+		return order[page.Sections[i].Title] < order[page.Sections[j].Title]
 	})
 	page.ServeHTTP(w, r)
 }

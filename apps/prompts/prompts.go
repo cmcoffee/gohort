@@ -29,7 +29,7 @@ import (
 func init() {
 	RegisterApp(new(PromptsApp))
 	// Editing the framework prompt blocks is deployment tuning, not agent
-	// behavior — so the editor lives inside the admin UI (the "Prompts" tab),
+	// behavior — so the editor lives inside the admin UI (the LLMs tab),
 	// self-registered here rather than surfaced as an agent-facing hub app. The
 	// app's routes below still serve the editor; WebHidden keeps it off the
 	// dashboard and there's no HubTab, so it's reached only from admin.
@@ -38,7 +38,7 @@ func init() {
 	// adds from its own init (RegisterEditorAction) is on the toolbar: that
 	// init can run after this one.
 	RegisterAdminSectionSource(func(*http.Request) []AdminSectionEntry {
-		return []AdminSectionEntry{{Section: promptsAdminSection(), Head: promptsHeadHTML(), App: "/prompts"}}
+		return []AdminSectionEntry{{Section: promptsAdminSection(), Head: promptsHeadHTML(), App: "/prompts", Order: editorOrder}}
 	})
 }
 
@@ -111,11 +111,15 @@ func (T *PromptsApp) Main() error {
 func (T *PromptsApp) WebPath() string { return "/prompts" }
 func (T *PromptsApp) WebName() string { return EditorTitle }
 
-// AdminTab is the admin tab the prompt editor lives on, and what other apps
-// put their sections beside it under: changing what the models are told, by
-// hand, for something specific. Optimizing a model as a whole lives with the
-// model, on the LLMs tab.
-const AdminTab = "Prompts"
+// AdminTab is the admin tab the prompt editor lives on: the LLMs tab, with the
+// models it prompts and their Optimize. A model's prompts are part of the
+// model; a hand edit and an Optimize write the same per-model wording, so
+// they live in the same place.
+const AdminTab = "LLMs"
+
+// editorOrder places the editor on that tab after Optimize, which registers
+// later than this package and so cannot be placed before it by init order.
+const editorOrder = 10
 
 // EditorTitle names the editor's section on that tab: the overrides of the
 // shipped prompt blocks, beside sections other apps add (Optimize, per-tier
@@ -298,14 +302,14 @@ func promptsEditorBase() ui.ArticleEditor {
 	}
 }
 
-// promptsAdminSection wraps the editor as a full-width section on the admin "Prompts" tab — the
-// primary home for prompt tuning (see RegisterAdminSection in init).
+// promptsAdminSection wraps the editor as a full-width section on the admin
+// LLMs tab, after Optimize (see the section source in init).
 func promptsAdminSection() ui.Section {
 	return ui.Section{
 		Group:    AdminTab,
 		Title:    EditorTitle,
+		Subtitle: "Hand edits to the prompt blocks: what every model reads, or one model's own wording. A block marked worker or lead has its own wording for that model, from Optimize or a hand edit.",
 		Wide:     true,
-		NoChrome: true,
 		Body:     promptsEditor(),
 	}
 }
@@ -331,7 +335,19 @@ func (T *PromptsApp) handleList(w http.ResponseWriter, r *http.Request) {
 				subject += "  ✎"
 			}
 		}
-		out = append(out, map[string]any{"ID": b.Key, "Subject": subject, "Date": date})
+		row := map[string]any{"ID": b.Key, "Subject": subject, "Date": date}
+		// Which models read wording of their own here: the split Optimize (or
+		// a hand edit to one model's version) made, visible in the list.
+		var own []string
+		for _, t := range []string{prompts.TierWorker, prompts.TierLead} {
+			if _, ok := prompts.PromptTierOverride(t, b.Key); ok {
+				own = append(own, t)
+			}
+		}
+		if len(own) > 0 {
+			row["Badges"] = own
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, out)
 }
@@ -741,7 +757,7 @@ func (T *PromptsApp) handleOptimizeStatus(w http.ResponseWriter, r *http.Request
 // click to revert in the revisions panel. App-specific behavior injected via
 // ExtraHeadHTML per the core/ui domain-agnostic rule.
 // promptsHeadHTML is the page head for both surfaces this editor appears
-// on: the standalone /prompts page and the admin "Prompts" tab.
+// on: the standalone /prompts page and the admin LLMs tab.
 //
 // It carries the shared inline-diff helper (core/editor) alongside this
 // app's client actions. The editor proposes rewrites in chat-edit mode,

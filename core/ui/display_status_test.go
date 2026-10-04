@@ -120,3 +120,11 @@ func TestStageTrackerIsAComponent(t *testing.T) {
 		t.Fatal("no runtime renderer for stage_tracker")
 	}
 }
+
+// Document lists draw a record's Badges beside its label.
+func TestDocumentListsDrawBadges(t *testing.T) {
+	js := runtimeJSSource(t)
+	if !strings.Contains(js, "docBadges(it.Badges || it.badges)") || !strings.Contains(js, "function docBadges(") {
+		t.Fatal("the document list does not draw a record's badges")
+	}
+}

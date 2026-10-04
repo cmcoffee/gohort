@@ -309,7 +309,7 @@ func IsFrameworkToolDef(td AgentToolDef) bool {
 // schemas in the same request; prompt-audit finding #1). Rather than hard-cut
 // it — the digest may be an accidental index the small models lean on — the
 // directive is now a TEMPLATE behind an operator-overridable prompt key, so the
-// slim variant can be A/B'd live from the admin Prompts page with no rebuild.
+// slim variant can be A/B'd live from Prompt overrides (admin, LLMs) with no rebuild.
 // Placeholders:
 //
 //	{tool_list}  — the legacy bulleted "**name** — first-line-of-description"
@@ -332,7 +332,7 @@ func IsFrameworkToolDef(td AgentToolDef) bool {
 // nudge is kept word-for-word. What goes is only the first line of each
 // description — which is in the schema the model is already reading.
 //
-// Reverting is one edit on the admin Prompts page, no rebuild: set
+// Reverting is one edit in Prompt overrides (admin, LLMs), no rebuild: set
 // framework.tools_directive back to "## Tools available\n\n{tool_list}".
 // Do that if small-model tool SELECTION degrades — that is the half of
 // the A/B still unmeasured.

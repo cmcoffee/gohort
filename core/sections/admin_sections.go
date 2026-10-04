@@ -25,6 +25,10 @@ type AdminSectionEntry struct {
 	// have one, the other, or both — the prompt-block editor lands under
 	// Extensions and belongs to the prompts app.
 	App string
+	// Order places the section within its tab: lower first, 0 by default,
+	// ties in registration order. For a section that must follow another an
+	// app registers, which init order alone cannot promise.
+	Order int
 }
 
 // AdminSectionSource contributes admin sections that vary at RUNTIME, the way

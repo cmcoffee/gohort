@@ -5990,3 +5990,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-stages-now b, .ui-stages-last b { color: var(--text-mute); font-weight: 600; margin-right: 0.35rem; }
 .ui-stages-last { color: var(--text-mute); }
 .ui-stages-empty { color: var(--text-mute); }
+
+/* document lists: a record's badges under its label */
+.ui-doc-badges { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.15rem; }
+.ui-doc-badge { font-size: 0.7rem; padding: 0 0.35rem; line-height: 1.4; }

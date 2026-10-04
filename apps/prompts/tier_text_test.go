@@ -144,3 +144,40 @@ func TestTheEditorOffersEachModel(t *testing.T) {
 		t.Fatalf("editor section: title %q, group %q", s.Title, s.Group)
 	}
 }
+
+// The block list marks which models read wording of their own.
+func TestTheListMarksEachModelsOwnWording(t *testing.T) {
+	app, b := variantWorld(t)
+	prompts.SetPromptTierOverrideBy("worker", b.Key, "the worker's own", "local/qwen", "tuned")
+	rec := httptest.NewRecorder()
+	app.handleList(rec, asAdmin(httptest.NewRequest(http.MethodGet, "/x", nil)))
+	var rows []map[string]any
+	json.NewDecoder(rec.Body).Decode(&rows)
+	for _, r := range rows {
+		badges, _ := r["Badges"].([]any)
+		if r["ID"] == b.Key {
+			if len(badges) != 1 || badges[0] != "worker" {
+				t.Fatalf("the split block's badges = %v", r["Badges"])
+			}
+		} else if len(badges) != 0 {
+			t.Fatalf("an unsplit block has badges: %v", r)
+		}
+	}
+}
+
+// The editor is on the LLMs tab, after Optimize, with a header of its own.
+func TestTheEditorLivesOnTheLLMsTab(t *testing.T) {
+	var found bool
+	for _, e := range AdminSectionEntriesFor(httptest.NewRequest(http.MethodGet, "/admin", nil)) {
+		if e.App != "/prompts" {
+			continue
+		}
+		found = true
+		if e.Section.Group != "LLMs" || e.Order <= 0 || e.Section.NoChrome || e.Section.Title != EditorTitle {
+			t.Fatalf("editor entry = group %q, order %d, nochrome %v, title %q", e.Section.Group, e.Order, e.Section.NoChrome, e.Section.Title)
+		}
+	}
+	if !found {
+		t.Fatal("the editor registered no admin section")
+	}
+}
