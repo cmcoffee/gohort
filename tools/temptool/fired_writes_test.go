@@ -3,6 +3,7 @@ package temptool
 import (
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -147,5 +148,25 @@ func TestGetBuiltinTool(t *testing.T) {
 	}
 	if !strings.Contains(out, "built-in framework tool") || !strings.Contains(out, "Call it directly") {
 		t.Errorf("got %q", out)
+	}
+}
+
+// A tool's waiting writes go with the runs they wait on: a set nobody came
+// back to is dropped after endpointRunTTL, like a recorded run.
+func TestWaitingWritesArePrunedWithTheRuns(t *testing.T) {
+	sess := &ToolSession{Username: "prune-owner"}
+	setUnfiredWrites(sess, "todo", []string{"todo.create_task"})
+	key := endpointRunKey(sess, "todo")
+	endpointRunsMu.Lock()
+	u := unfiredWrites[key]
+	u.at = time.Now().Add(-endpointRunTTL - time.Minute)
+	unfiredWrites[key] = u
+	endpointRuns[endpointRunKey(sess, "old")] = endpointRun{at: time.Now().Add(-endpointRunTTL - time.Minute)}
+	pruneEndpointRuns(time.Now())
+	_, waiting := unfiredWrites[key]
+	_, run := endpointRuns[endpointRunKey(sess, "old")]
+	endpointRunsMu.Unlock()
+	if waiting || run {
+		t.Fatalf("stale entries kept: waiting %v, run %v", waiting, run)
 	}
 }
