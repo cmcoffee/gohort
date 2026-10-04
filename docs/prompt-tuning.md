@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.337). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.340). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -73,11 +73,16 @@ The loop the report is for:
    nothing new crept in. Tuning starts when a report turns up nothing a fix
    should handle.
 
-## Using it: one button per model
+## Using it: one Optimize, aimed at the worker
 
-A model's prompts are part of the model: optimizing one lives with it, on
-the admin **LLMs** tab, under **Optimize**. Each model (the worker, and the
-lead when there is a separate one) has one row and one button. A run is
+Optimizing lives with the models, on the admin **LLMs** tab, under
+**Optimize**: one row, one button (decided 2026-10-04; it was a row per
+model). A run builds on the **worker** and the **lead helps**: it proposes
+the edits, reads the failures and reviews the builds. What it keeps is one
+wording that both models read. The worker is the model that fails builds;
+the lead is the stronger model and works with wording that helps the
+worker, so tuning it apart spent its builds, the paid ones, on little. A
+run is
 quick by default (two passes at most, about four hours); **Run overnight**
 on Details makes it take the settings there as they are. A run works one
 way:
@@ -103,11 +108,11 @@ way:
   and neither split got worse; if not, the pass's edits are taken back one
   at a time to find the one that hurt, and failing that the pass is dropped.
 
-When the run ends it applies what it kept as that model's own wording, and
-**Undo** takes the whole run back; **Reset to shipped**, on the model's row
-while it has wording of its own, takes back every run on that model. The wording
-remembers the model it was fitted to; when the model behind a tier changes,
-its row says so. While it runs, its stages show above "What it is doing"
+When the run ends it applies what it kept as the shared text, and **Undo**
+takes the whole run back; **Reset to shipped** takes back every run. The
+risk is an edit that helps the worker and hurts the lead, which a run no
+longer measures: the friction report still builds every task on both
+models, so a task the lead used to pass and no longer does shows there. While it runs, its stages show above "What it is doing"
 (each pass, and in the pass running each task as it goes), and it sits in
 the live indicator and on the Monitor page like any other work using the
 models.
@@ -115,13 +120,26 @@ models.
 A prompt changes in one of two ways: in the source, where the friction
 report's fixes land, or by Optimize, which measures what it keeps. There is
 no hand editor (v0.7.317): it measured nothing and froze each block it
-touched against every later change to what ships. What it saved is cleared
-by the maintenance pass **Reset edited prompt blocks** (Housekeeping), which
-logs each text first and leaves Optimize's wording alone.
+touched against every later change to what ships. **Settle prompt wording
+(once)** (Housekeeping, v0.7.339) clears what it saved, makes the worker's
+tuned per-model wording from earlier runs the shared text and drops the
+lead's, each text logged; it records that it ran and does nothing again,
+since after a one-wording run the shared text is Optimize's.
+
+**A borrowed worker takes its wording from where it is tuned.** When a
+machine's worker is a peer's model (an LLM tier set to `peer:<name>`), it
+reads that peer's tuned wording: the serving machine publishes its shared
+prompt-block overrides to peers holding a models key, and the borrowing
+machine fetches them every few minutes, keeps the last copy if the peer is
+down, and reads them over its own. Only registered prompt blocks travel
+(tool descriptions included), never the admin's Style rules. Its Optimize
+row says the worker is tuned on the peer, and runs there. (Decided
+2026-10-04; being built.)
 
 **Ask Builder**, on Details, gives Builder a request (your own, or one of
 the suite's) in a sandbox holding live's wording and stops it at the first
-thing it reaches to build, for the worker and the lead side by side: a quick
+thing it reaches to build, for the worker and the lead side by side (the
+lead's column is how a change aimed at the worker is checked on it): a quick
 look at what Builder does, before or after a run.
 
 A run gives way to people. While someone else is using the model it tunes
@@ -392,6 +410,13 @@ call was filled in wrong.
 
 ## Per-tier profiles
 
+**Superseded for Optimize (2026-10-04):** a run now writes one shared
+wording aimed at the worker (see "Using it"). The per-tier machinery below
+stays in core (a tier's own text, swapped in at the LLM handle) but nothing
+writes it now; Undo of an older run, Reset to shipped and Settle prompt
+wording clear what earlier runs left there. Kept as the record of what was
+built and why it was set aside.
+
 The same block can be tuned differently for the worker and the lead. This is
 the per-model prompt profile the framework was always missing: prompt
 discipline is model-dependent data, not a fixed floor, and the profile is
@@ -481,8 +506,8 @@ prompt variant.
 ## Live run plan
 
 Everything is built. Optimize first ran against the live deployment on
-2026-10-03 (see "What the first live runs showed" below); no friction report
-has run yet. The plan is a ladder: each run proves the harness can be trusted with the next, and
+2026-10-03 (see "What the first live runs showed" below); the first friction
+report ran the next night, and its fixes are in. The plan is a ladder: each run proves the harness can be trusted with the next, and
 each says what to look at before climbing. Every run starts from the
 Optimize section on the admin LLMs tab. Runs give way to people using the
 model they build on, so they can run while the deployment is in use, only
@@ -503,7 +528,7 @@ slower; overnight is still the natural time.
    closed.
 3. **Live on what ships.** Anything saved in the old hand editor still
    applies, and it would be measured as if it were the shipped text. Run
-   **Reset edited prompt blocks** (Admin > Maintenance > Housekeeping) once
+   **Settle prompt wording (once)** (Admin > Maintenance > Housekeeping)
    after upgrading past v0.7.317; it logs each text it clears.
 
 ### Run 0: a friction report
@@ -556,10 +581,10 @@ keeping for good.
 
 ### Run 4: the lead
 
-Lead, quick, one build per task, a cap of about three measurements' worth at
-the lead's price. Watch for the cap stopping the run, and for Spent agreeing
-with the
-provider's own bill.
+No longer a run of its own: the lead helps every run and is not tuned apart.
+Check it instead in the friction report after a run (tasks the lead passed
+before and fails now) and with Ask Builder's lead column. Watch Spent
+against the provider's bill on any run, since the lead's help is paid for.
 
 ### What the first live runs showed (2026-10-03)
 
@@ -633,7 +658,7 @@ blocking ones were the harness's, not the platform's:
   untrusted-content fence, so it saw one endpoint of two. The reviewer's copy
   now tags the fence in a few words and keeps 1200 characters a result).
 
-Next: rebuild and restart, run Reset edited prompt blocks once, Re-check the
+Next: rebuild and restart, run Settle prompt wording (once), Re-check the
 fixed components, then a second report.
 
 ### Stop and look again if
