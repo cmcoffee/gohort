@@ -25,6 +25,22 @@ scorecard. A prompt is changed, by hand or by a proposer model, and the suite
 runs again. A change is kept only when the scorecard says it helped, and only
 reaches the live deployment when an admin promotes it.
 
+## Map the framework first
+
+Tuning fits wording to what the platform lets the builder do. A tool that
+cannot do what was asked, a misleading error or a wrong check is not fixed
+by wording, and tuning around it fits the wording to a bug. So the first row
+on the LLMs tab is **Map framework issues**: every task built twice on the
+worker with the wording as it is, nothing edited, and the lead reviewing
+every build, passing ones too (a pass that worked around a tool error is a
+framework problem). Each problem is read as the framework's, the wording's
+or the model's, with the transcript line that shows it. The framework's are
+grouped by component, the most widespread first; **Copy map** hands them
+over, and **Re-check** on a component builds its tasks again after a fix and
+says whether it is gone. The wording's and the model's are kept apart, for
+Optimize. It lives in the private harness: a tool for getting the platform
+right, run by hand, not part of the release.
+
 ## Using it: one click per model
 
 A model's prompts are part of the model: optimizing one lives with it, on
