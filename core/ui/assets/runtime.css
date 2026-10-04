@@ -1697,7 +1697,10 @@ select:-webkit-autofill {
 /* Children of a row are laid out BY the row; a toolbar or button that
    still claims the full width pushes its siblings onto their own
    lines, which is the same vertical stack under a different class. */
-.ui-stack.row > * { width: auto; flex: 0 0 auto; }
+.ui-stack.row > * { width: auto; flex: 0 0 auto; max-width: 100%; }
+/* max-width: sized to its content, a child with a long line (a form's help
+   text) took that line's width and ran off a phone's screen; held to the
+   row's width, its text wraps instead. */
 
 .ui-rows-head {
   display: flex;
