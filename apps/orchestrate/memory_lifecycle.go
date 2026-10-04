@@ -124,7 +124,10 @@ func runMemoryLifecycle(ctx context.Context) int {
 		lifecycleForUser(ctx, u.Username, now, &lt)
 		lt.users++
 	}
-	lt.dated = dateEventFindings(now)
+	// The dating pass scans every chunk; once stopped it is not started.
+	if ctx.Err() == nil {
+		lt.dated = dateEventFindings(now)
+	}
 	line := fmt.Sprintf("Checked %d users: %d past event(s) moved to reference memory, %d open item(s) closed, %d finding(s) dated",
 		lt.users, lt.events, lt.closed, lt.dated)
 	if ctx.Err() != nil {
@@ -232,6 +235,12 @@ func moveEventToReference(ctx context.Context, udb Database, user, agentID strin
 	}
 	at := f.EventDate(f.Created)
 	text := pastTenseFinding(ctx, f.Note, at)
+	// Stopped while the note was being rewritten: the rewrite fell back to
+	// the raw note and the ingest would embed under a cancelled context, so
+	// the note is left where it is for the next run to move whole.
+	if ctx.Err() != nil {
+		return false
+	}
 	ictx, cancel := context.WithTimeout(ctx, knowledgeIngestTimeout())
 	defer cancel()
 	reportID := ingestAgentKnowledge(ictx, orchestrateBaseDB, user, agentID, "", "Past event", text)

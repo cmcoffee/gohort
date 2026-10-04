@@ -526,6 +526,11 @@ func (T *Scribe) RunCurator(ctx context.Context, user string) (CuratorRun, error
 		// failed run is not a run that did nothing, and the digest has to be
 		// able to tell those apart.
 		run.Error = err.Error()
+		if ctx.Err() != nil {
+			// Stopped, not broken: say so, so the digest does not read a
+			// person's Stop as the curator failing.
+			run.Error = "stopped before it finished; the findings it had not decided stay queued for the next run"
+		}
 		saveCuratorRun(udb, run)
 		return run, err
 	}

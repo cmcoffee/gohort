@@ -13,6 +13,7 @@ package scribe
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -165,6 +166,13 @@ func runCuratorForEveryone(ctx context.Context) int {
 	}
 	ran := 0
 	for _, u := range AuthListUsers(AuthDB()) {
+		// Stopped: no further user is started. Each would only open a run
+		// that fails at once on the cancelled context and leaves a failed
+		// record behind.
+		if ctx.Err() != nil {
+			ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped after %d run(s); the rest stay queued", ran))
+			break
+		}
 		if u.Username == "" {
 			continue
 		}
