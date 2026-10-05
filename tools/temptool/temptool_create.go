@@ -244,22 +244,19 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		return "", fmt.Errorf("command_template: %w", err)
 	}
 
-	required := stringSliceArg(args["required"])
 	// Omitted required → default all params required; an EXPLICIT [] → make
-	// all optional. Distinguish by presence (see the toolbox path).
-	if raw, present := args["required"]; !present || raw == nil {
-		// Default to all params required.
+	// all optional. Distinguish by presence (see the toolbox path). A param
+	// marked required: true in its own object joins either list.
+	required, explicit, err := readRequired(args, params)
+	if err != nil {
+		return "", err
+	}
+	if !explicit {
 		for k := range params {
 			required = append(required, k)
 		}
-	} else {
-		// Validate all listed required keys exist in params.
-		for _, r := range required {
-			if _, ok := params[r]; !ok {
-				return "", fmt.Errorf("required lists %q which is not in params", r)
-			}
-		}
 	}
+	required = unionNames(required, markedRequired(args["params"]))
 
 	tool := &TempTool{
 		Name:            name,

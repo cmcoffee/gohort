@@ -78,9 +78,9 @@ func BuildToolDef() *GroupedTool {
 		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL (JUST CALL IT**), it IS the act of creation and persists automatically with NO approval step; never ask the user's permission first or say an admin must register it. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\"...), without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool for local processing, DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) \"api\", a single HTTPS endpoint the framework can't already reach (credential=\"no_auth\" for public APIs, or a registered credential name); (b) \"toolbox\", MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, the moltbook social API), one catalog entry with action=\"<sub>\" dispatch sharing one credential. Toolboxes live ONLY here (`add_tool` can't build one); change a SINGLE action with action=\"update\" (actions=[{name...changed fields}]) rather than recreating; (c) \"shell\", local computation/parsing/scripting on data the caller passes in, NOT network fetches; (d) \"pipeline\", a deterministic chain of existing tools (e.g. fetch_url → your shell processor). For an adaptive multi-step LLM workflow author no tool at all: use the standalone pipeline tool. Do NOT wrap an HTTPS endpoint in a Python+urllib or curl script, that path is plagued by invented method names, homoglyph URL bugs, and JSON errors that don't exist in api/toolbox/pipeline mode. Required: name, description, mode, plus mode-specific fields, api: credential, url_template, method, params (optional body_template, response_pipe); toolbox: credential + actions[{name, description, url_template, params...}]; shell: command_template + params (script_body for non-trivial scripts); pipeline: pipeline_tools + pipeline_steps. Tools are immediately callable and persist across sessions: Builder's land in your user-wide pool (all your agents); every other agent's land on that agent's OWN record. Call action=\"help\" for the full spec + examples.",
 		Params: map[string]ToolParam{
 			"name":              {Type: "string", Description: "Tool name (snake_case, must not match an existing tool)."},
-			"description":       {Type: "string", Description: "What the tool does and when to reach for it, in ONE or TWO sentences. This line is re-sent on every turn for the life of the tool: no worked examples, no restating the params, no failure modes. Hard cap 500 characters."},
+			"description":       {Type: "string", Description: "(required) What the tool does and when to reach for it, in ONE or TWO sentences. This line is re-sent on every turn for the life of the tool: no worked examples, no restating the params, no failure modes. Hard cap 500 characters."},
 			"mode":              {Type: "string", Description: "\"api\" (one HTTPS endpoint) - \"toolbox\" (several endpoints under one name, action=\"<sub>\" dispatch) - \"shell\" (local script) - \"pipeline\" (chain existing tools). See action=\"help\"."},
-			"params":            {Type: "object", Description: "Object of {param: {type, description, default?}}. Types: string|integer|number|boolean|array|object. default is sent when the caller omits the param. Keep each description to one line: what the value is, plus the format only if it isn't obvious (cap 250 chars). On a toolbox, top-level params (and method, content_type, headers) are shared by every action unless the action sets its own. Full rules + coercion in action=\"help\"."},
+			"params":            {Type: "object", Description: "Object of {param: {type, description, default?}}. Types: string|integer|number|boolean|array|object. default is sent when the caller omits the param. Keep each description to one line: what the value is, plus the format only if it isn't obvious (cap 250 chars). On a toolbox, top-level params (and method, content_type, headers, required) are shared by every action unless the action sets its own. Full rules + coercion in action=\"help\"."},
 			"command_template":  {Type: "string", Description: "(shell) Shell command with {param} placeholders. Use script_body for anything non-trivial. See action=\"help\" for the sandbox fact sheet."},
 			"script_body":       {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only: no pip. See action=\"help\"."},
 			"script_name":       {Type: "string", Description: "(shell mode, optional) Filename for script_body. Defaults to \"script.py\". Match the script's language (e.g. \"run.sh\"): the extension drives interpreter selection when command_template is omitted."},
@@ -94,10 +94,11 @@ func BuildToolDef() *GroupedTool {
 			"response_extract":  {Type: "object", Description: responseExtractDesc},
 			"job":               {Type: "object", Description: jobDesc},
 			"category":          {Type: "string", Description: "Short grouping label for the tool catalog (e.g. \"Calendar\", \"Moltbook\")."},
-			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none."},
+			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none. A param can also be marked required: true in its own object. On a toolbox, a top-level list is shared by every action that sets none."},
 			"state_path":        {Type: "string", Description: "(shell, optional) Workspace subdirectory this tool may persist state in."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) Extra sandbox capabilities the script needs. See action=\"help\" for the list and when each applies."},
-			"test_args":         {Type: "object", Description: "(api/shell, optional) Sample {param: value} to run the saved tool with once, as action=\"test\" would; the result is added to this reply."},
+			"test_args":         {Type: "object", Description: "(optional) Sample {param: value} to run the saved tool with once, as action=\"test\" would; the result is added to this reply. On a toolbox, include action: the endpoint to run."},
+			"cases":             {Type: "array", Items: &ToolParam{Type: "object"}, Description: "(optional) Test cases to run the saved tool with, as action=\"test\" takes them: [{action?: \"<toolbox action>\", args: {param: value}}]. The result is added to this reply."},
 			"timeout_sec":       {Type: "integer", Description: "(api/toolbox/shell, optional) Seconds, up to 300, for a tool slower than the default cap: one request of an api/toolbox tool, or the whole run of a shell tool. A script's own fetch_via/fetch_url also takes timeout= for the call itself."},
 			"raw_network":       {Type: "boolean", Description: "(shell, advanced) Allow direct outbound network from the script instead of the gohort fetch shims. See action=\"help\" before using."},
 			"confirm_in_chat":   {Type: "boolean", Description: "Stop and ask the person watching before every call to this tool. Use for anything that changes something outside gohort and is worth a look before it happens: a post, a delete, a payment. In chat only: on a run with nobody watching the call is refused instead, since there is no one to ask."},
@@ -140,7 +141,10 @@ func BuildToolDef() *GroupedTool {
 				}},
 			"expand": {Type: "boolean", Description: "(toolbox) Surface each action as its own top-level <toolbox>_<action> tool instead of one collapsed tool. See action=\"help\"."},
 		},
-		Required: []string{"name", "description", "mode"},
+		// description is checked by the handler rather than here, so a toolbox
+		// that has descriptions only inside its actions can be told why those
+		// do not count (missingDescription).
+		Required: []string{"name", "mode"},
 		// Creating a tool is registry CRUD — it does not execute anything.
 		// The created tool, when invoked, carries its own caps (CapExecute
 		// for shell mode, CapNetwork for api mode) and is filtered at
@@ -154,6 +158,9 @@ func BuildToolDef() *GroupedTool {
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
+			}
+			if err := missingDescription(args); err != nil {
+				return "", err
 			}
 			// Enforced HERE rather than inside createGrouped: update
 			// round-trips a stored tool back through that function, and a
@@ -200,8 +207,8 @@ func BuildToolDef() *GroupedTool {
 			"actions":           {Type: "array", Description: "(toolbox) Action objects to UPSERT by name: same shape as create's actions (including optional `disabled` to quarantine/re-enable one action). Existing actions not listed here are kept as-is."},
 			"remove_actions":    {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(toolbox) Names of actions to remove."},
 			"expand":            {Type: "boolean", Description: "(toolbox) Surface each action as its own top-level <toolbox>_<action> tool instead of one collapsed tool. See action=\"help\"."},
-			"params":            {Type: "object", Description: "Object of {param: {type, description, default?}}. Types: string|integer|number|boolean|array|object. On a toolbox, top-level params (and method, content_type, headers) are shared by every action unless the action sets its own. Full rules + coercion in action=\"help\"."},
-			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none."},
+			"params":            {Type: "object", Description: "Object of {param: {type, description, default?}}. Types: string|integer|number|boolean|array|object. On a toolbox, top-level params (and method, content_type, headers, required) are shared by every action unless the action sets its own. Full rules + coercion in action=\"help\"."},
+			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none. A param can also be marked required: true in its own object. On a toolbox, a top-level list is shared by every action that sets none."},
 			"url_template":      {Type: "string", Description: "(api) New URL template."},
 			"command_template":  {Type: "string", Description: "(shell) Shell command with {param} placeholders. Use script_body for anything non-trivial. See action=\"help\" for the sandbox fact sheet."},
 			"method":            {Type: "string", Description: "(api) New HTTP method."},
@@ -214,7 +221,8 @@ func BuildToolDef() *GroupedTool {
 			"category":          {Type: "string", Description: "Short grouping label for the tool catalog (e.g. \"Calendar\", \"Moltbook\")."},
 			"script_body":       {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only: no pip. See action=\"help\"."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) REPLACES the declared sandbox capabilities, e.g. [\"fetch_via:<credential>\"]. Omit to keep the current ones."},
-			"test_args":         {Type: "object", Description: "(api/shell, optional) Sample {param: value} to run the edited tool with once, as action=\"test\" would; the result is added to this reply. An edit is untested until something runs it."},
+			"test_args":         {Type: "object", Description: "(optional) Sample {param: value} to run the edited tool with once, as action=\"test\" would; the result is added to this reply. On a toolbox, include action: the endpoint to run. An edit is untested until something runs it."},
+			"cases":             {Type: "array", Items: &ToolParam{Type: "object"}, Description: "(optional) Test cases to run the edited tool with, as action=\"test\" takes them: [{action?: \"<toolbox action>\", args: {param: value}}]. The result is added to this reply."},
 			"timeout_sec":       {Type: "integer", Description: "(api/toolbox/shell, optional) Seconds, up to 300: one request of an api/toolbox tool, or the whole run of a shell tool. Omit to keep the current value."},
 		},
 		Required:     []string{"name"},
@@ -297,35 +305,65 @@ func BuildToolDef() *GroupedTool {
 	return gt
 }
 
-// verifyWithTestArgs runs a tool just saved with the author's test_args, the
-// same run tool_def(action="test") makes, and folds the result into the save's
-// reply. test_args was documented for create and never read by create or
-// update, so it was dropped without a word: an update carrying test_args came
-// back with no verification in it, and the author reported the tool fixed. It
-// had never run. Without test_args the reply says the tool is untested.
+// verifyWithTestArgs runs a tool just saved with the author's test_args or
+// cases, the same run tool_def(action="test") makes, and folds the result into
+// the save's reply. test_args was documented for create and never read by
+// create or update, so it was dropped without a word: an update carrying
+// test_args came back with no verification in it, and the author reported the
+// tool fixed. It had never run. cases went the same way after that, and a
+// toolbox's test_args was refused even when it named its action. Without
+// either the reply says the tool is untested.
 func verifyWithTestArgs(args map[string]any, sess *ToolSession, out string) string {
 	name := strings.TrimSpace(StringArg(args, "name"))
+	rawCases, hasCases := args["cases"]
+	hasCases = hasCases && rawCases != nil
 	raw, present := args["test_args"]
-	if !present {
+	if !hasCases && !present {
 		return out + "\n\nNOT VERIFIED: nothing has run this version of " + name + ". Run tool_def(action=\"test\", name=\"" + name + "\", cases=[{action?, args:{...}}]) before saying it works (action names the endpoint of a toolbox)."
 	}
-	sample, ok := raw.(map[string]any)
-	if text, isText := raw.(string); isText {
-		ok = json.Unmarshal([]byte(text), &sample) == nil
+	testArgs := map[string]any{"name": name}
+	label := "cases"
+	if hasCases {
+		testArgs["cases"] = rawCases
+	} else {
+		label = "test_args"
+		sample, ok := raw.(map[string]any)
+		if text, isText := raw.(string); isText {
+			ok = json.Unmarshal([]byte(text), &sample) == nil
+		}
+		if !ok {
+			return out + "\n\ntest_args was not an object of {param: value}, so nothing ran and the tool is NOT verified. Run tool_def(action=\"test\", name=\"" + name + "\", cases=[{args:{...}}])."
+		}
+		if tt, found := loadExistingToolRecord(sess, name); found && tt.Mode == TempToolModeToolbox {
+			if act, _ := sample["action"].(string); strings.TrimSpace(act) == "" {
+				return out + "\n\ntest_args names no action, so a toolbox cannot be run with it and nothing ran: the tool is NOT verified. Pass test_args={action:\"<action>\", <param>: ...}, or run tool_def(action=\"test\", name=\"" + name + "\", cases=[{action:\"<action>\", args:{...}}])."
+			}
+		}
+		testArgs["test_args"] = sample
 	}
-	if !ok {
-		return out + "\n\ntest_args was not an object of {param: value}, so nothing ran and the tool is NOT verified. Run tool_def(action=\"test\", name=\"" + name + "\", cases=[{args:{...}}])."
-	}
-	if tt, found := loadExistingToolRecord(sess, name); found && tt.Mode == TempToolModeToolbox {
-		return out + "\n\ntest_args names no action, so a toolbox cannot be run with it and nothing ran: the tool is NOT verified. Run tool_def(action=\"test\", name=\"" + name + "\", cases=[{action:\"<action>\", args:{...}}])."
-	}
-	res, err := testGrouped(map[string]any{"name": name, "cases": []any{map[string]any{"args": sample}}}, sess)
+	res, err := testGrouped(testArgs, sess)
 	if err != nil {
-		return out + "\n\nVerification with test_args could not run (" + err.Error() + "): the tool is NOT verified."
+		return out + "\n\nVerification with " + label + " could not run (" + err.Error() + "): the tool is NOT verified."
 	}
 	// The run reaches a real endpoint or script, so what it reports back is
 	// fenced, as the test action fences it.
-	return out + "\n\nVerification with test_args:\n" + UntrustedToolResultFence + res
+	return out + "\n\nVerification with " + label + ":\n" + UntrustedToolResultFence + res
+}
+
+// missingDescription refuses a create with no top-level description. The
+// grouped tool's own required check said only "requires param(s)
+// \"description\"", and a builder that had written a description inside every
+// action read that as satisfied and sent the same call again. A toolbox is
+// told which description is missing.
+func missingDescription(args map[string]any) error {
+	if strings.TrimSpace(StringArg(args, "description")) != "" {
+		return nil
+	}
+	msg := `action "create" requires param(s) "description"`
+	if strings.TrimSpace(StringArg(args, "mode")) == TempToolModeToolbox || hasActions(args["actions"]) {
+		msg += `: a toolbox needs its own top-level description, beside name and mode. The ones inside actions describe each action`
+	}
+	return fmt.Errorf("%s (re-send the COMPLETE call with it)", msg)
 }
 
 func modeLabel(mode string) string {

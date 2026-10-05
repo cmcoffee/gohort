@@ -115,6 +115,16 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		return fmt.Sprintf(lockedToolMsg, name), nil
 	}
 	mode := strings.TrimSpace(StringArg(args, "mode"))
+	// Only a toolbox reads actions. The other modes dropped them without a
+	// word: actions=[...] with no mode answered "Created api tool", and the
+	// author went on to call actions that did not exist.
+	if mode != TempToolModeToolbox && hasActions(args["actions"]) {
+		shown := mode
+		if shown == "" {
+			shown = "shell (the default)"
+		}
+		return "", fmt.Errorf("actions are for mode=\"toolbox\", and this call's mode is %s, so they would be dropped. Pass mode=\"toolbox\" to build the actions, or leave actions out for a single %s tool. Nothing was created", shown, strings.TrimSuffix(shown, " (the default)"))
+	}
 	switch mode {
 	case "", TempToolModeShell:
 		// A shell tool has no credential to hold, and the field used to vanish
@@ -306,6 +316,9 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	if err != nil {
 		return "", err
 	}
+	// Names the top-level required list matched in at least one action, so
+	// a name that matched none is refused rather than dropped.
+	sharedRequiredUsed := map[string]bool{}
 	actions := make([]TempToolAction, 0, len(actionsList))
 	seen := make(map[string]bool, len(actionsList))
 	var scaffoldedActions []string // write actions we auto-gave a body_template
@@ -334,26 +347,32 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		if err != nil {
 			return "", fmt.Errorf("actions[%d] (%q): params: %w", i, actName, err)
 		}
+		ownParams := actParams
 		actParams = shared.paramsFor(actName, actParams)
-		actRequired := stringSliceArg(m["required"])
 		// Distinguish "required omitted" (fall back to what the framework can
 		// PROVE is required — see defaultRequiredParams) from an EXPLICIT empty
-		// array (nothing required at all). Both yield
-		// len==0 after stringSliceArg, so check presence: a non-nil value
-		// under "required" means the author specified it — honor even [].
+		// array (nothing required at all): a non-nil value under "required"
+		// means the author specified it: honor even [].
 		// Without this, `required: []` silently became "all required", which
 		// made optional params impossible (observed: a full 100-second thrash
 		// trying to make feed's limit/sort optional).
-		raw, present := m["required"]
-		if !present || raw == nil {
+		actRequired, explicit, err := readRequired(m, actParams)
+		if err != nil {
+			return "", fmt.Errorf("actions[%d] (%q): %w", i, actName, err)
+		}
+		if !explicit {
 			actRequired = defaultRequiredParams(urlTpl, actParams)
-		} else {
-			for _, r := range actRequired {
-				if _, ok := actParams[r]; !ok {
-					return "", fmt.Errorf("actions[%d] (%q): required lists %q which is not in params", i, actName, r)
-				}
+			// A top-level required list is shared like the other top-level
+			// fields: an action that sets none takes the names it has.
+			for _, r := range shared.requiredFor(actName, actParams) {
+				sharedRequiredUsed[r] = true
+				actRequired = unionNames(actRequired, []string{r})
 			}
 		}
+		// required: true inside a param's own object, on the action's params
+		// or on a top-level param the action inherited.
+		actRequired = unionNames(actRequired, markedRequired(m["params"]))
+		actRequired = unionNames(actRequired, shared.markedFor(ownParams))
 		method := shared.methodFor(actName, strings.TrimSpace(StringArg(m, "method")))
 		if method == "" {
 			method = "GET"
@@ -370,6 +389,16 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		//     ends the loop and the write actually works.
 		//   - a body_template exists but still misses them → a real key mismatch;
 		//     keep the actionable error so the author fixes the keys.
+		// The url's placeholders are checked before the path gate: a {branch}
+		// that is not declared at all was reported as "not required", which
+		// sent the author adding it to required, where it then failed as "not
+		// in params". Name the real problem first.
+		if err := validateTemplate(urlTpl, actParams); err != nil {
+			return "", fmt.Errorf("actions[%d] (%q): url_template: %w, every {placeholder} must name a declared param. If you removed a param, update the template in the same call", i, actName, err)
+		}
+		if err := urlActionFieldError(urlTpl); err != nil {
+			return "", fmt.Errorf("actions[%d] (%q): url_template: %w", i, actName, err)
+		}
 		if missing := pathPlaceholderParams(urlTpl, actRequired); len(missing) > 0 {
 			return "", fmt.Errorf("action %q: "+pathPlaceholderMsg, actName, missing, missing[0], missing[0])
 		}
@@ -399,9 +428,6 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		// content_type body would send the unresolved placeholder to the API
 		// verbatim. Validated AFTER scaffolding so the auto-built body is
 		// covered too.
-		if err := validateTemplate(urlTpl, actParams); err != nil {
-			return "", fmt.Errorf("actions[%d] (%q): url_template: %w, every {placeholder} must name a declared param. If you removed a param, update the template in the same call", i, actName, err)
-		}
 		if bodyTpl != "" {
 			if err := validateTemplate(bodyTpl, actParams); err != nil {
 				return "", fmt.Errorf("actions[%d] (%q): body_template: %w, every {placeholder} must name a declared param. If you removed a param, update the body_template in the same call (otherwise dispatch dies substituting the template)", i, actName, err)
@@ -421,6 +447,11 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			ResponseExtract: ParseExtractSpec(m["response_extract"]),
 			Disabled:        BoolArg(m, "disabled"),
 		})
+	}
+	for _, r := range shared.required {
+		if _, top := shared.params[r]; !top && !sharedRequiredUsed[r] {
+			return "", fmt.Errorf("required (top level) lists %q, which is not a param of any action that sets no required list of its own. Declare it in params, or put required inside the action that has it", r)
+		}
 	}
 	// Every action mints a "<toolbox>_<action>" catalog name, so the collision
 	// check waits until the action list is final and tests all of them at once.
@@ -482,7 +513,12 @@ type toolboxShared struct {
 	method      string
 	contentType string
 	headers     map[string]string
-	took        map[string][]string // field -> actions that took it
+	// required is the top-level required list, shared with every action that
+	// sets none of its own; marked is the top-level params marked
+	// required: true, which travel with the param to whichever action takes it.
+	required []string
+	marked   []string
+	took     map[string][]string // field -> actions that took it
 }
 
 // readToolboxShared reads the top-level shared fields of a toolbox call.
@@ -491,13 +527,46 @@ func readToolboxShared(args map[string]any) (*toolboxShared, error) {
 	if err != nil {
 		return nil, fmt.Errorf("params (top level, shared by every action): %w", err)
 	}
+	required, err := requiredListArg(args["required"])
+	if err != nil {
+		return nil, fmt.Errorf("required (top level, shared by every action that sets none): %w", err)
+	}
 	return &toolboxShared{
 		params:      params,
 		method:      strings.TrimSpace(StringArg(args, "method")),
 		contentType: strings.TrimSpace(StringArg(args, "content_type")),
 		headers:     stringMapArg(args, "headers"),
+		required:    required,
+		marked:      markedRequired(args["params"]),
 		took:        map[string][]string{},
 	}, nil
+}
+
+// requiredFor is the part of the top-level required list this action has a
+// param for. Called only for an action that sets no required list itself.
+func (ts *toolboxShared) requiredFor(action string, params map[string]ToolParam) []string {
+	var out []string
+	for _, r := range ts.required {
+		if _, ok := params[r]; ok {
+			out = append(out, r)
+		}
+	}
+	if len(out) > 0 {
+		ts.note("required", action)
+	}
+	return out
+}
+
+// markedFor is the top-level params marked required: true that the action
+// inherited, which is every one it does not declare itself.
+func (ts *toolboxShared) markedFor(own map[string]ToolParam) []string {
+	var out []string
+	for _, r := range ts.marked {
+		if _, mine := own[r]; !mine {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func (ts *toolboxShared) note(field, action string) {
@@ -572,9 +641,10 @@ func (ts *toolboxShared) report() string {
 		"method":       ts.method != "",
 		"content_type": ts.contentType != "",
 		"headers":      len(ts.headers) > 0,
+		"required":     len(ts.required) > 0,
 	}
 	var applied, unused []string
-	for _, f := range []string{"params", "method", "content_type", "headers"} {
+	for _, f := range []string{"params", "method", "content_type", "headers", "required"} {
 		switch {
 		case !given[f]:
 		case len(ts.took[f]) > 0:
@@ -774,4 +844,19 @@ func actionNames(actions []TempToolAction) []string {
 		out = append(out, a.Name)
 	}
 	return out
+}
+
+// hasActions reports whether a call carries any actions at all: a non-empty
+// list, or anything else that is not plainly empty.
+func hasActions(v any) bool {
+	switch a := v.(type) {
+	case nil:
+		return false
+	case []any:
+		return len(a) > 0
+	case string:
+		t := strings.TrimSpace(a)
+		return t != "" && t != "[]"
+	}
+	return true
 }

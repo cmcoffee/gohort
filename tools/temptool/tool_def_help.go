@@ -814,14 +814,16 @@ Each action is structurally a single api-mode endpoint: same URL
 template substitution, same method/body_template/response_pipe
 semantics. The toolbox is a packaging primitive on top.
 
-Shared fields: params, method, content_type and headers may also be
-given at the TOP level, beside actions. A top-level value is shared
-by every action unless the action sets its own: an action's own
-param or header of the same name wins, and its own method or
-content_type replaces the shared one. The reply names which actions
-took each shared value. The same holds on action="update". Every
-other field (url_template, body_template, response_pipe, required)
-is per-action only.
+Shared fields: params, method, content_type, headers and required may
+also be given at the TOP level, beside actions. A top-level value is
+shared by every action unless the action sets its own: an action's own
+param or header of the same name wins, its own method or content_type
+replaces the shared one, and an action with its own required list
+ignores the shared one. The reply names which actions took each shared
+value. The same holds on action="update", except required, which every
+saved action already carries: change it inside the action. Every other
+field (url_template, body_template, response_pipe) is per-action only.
+A param may also be marked required: true inside its own object.
 
     tool_def(action="create", mode="toolbox", name="search_api",
              description="Search and page a catalog.",

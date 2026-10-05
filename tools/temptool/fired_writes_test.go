@@ -48,7 +48,7 @@ func TestDirectWriteCountsAsFired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("test: %v", err)
 	}
-	if !strings.Contains(first, "[UNPROVEN] post") || !strings.Contains(first, "still need ONE manual live call") {
+	if !strings.Contains(first, "[UNPROVEN] post") || !strings.Contains(first, "still needs ONE manual live call") {
 		t.Fatalf("the write should be waiting on a direct call; report:\n%s", first)
 	}
 

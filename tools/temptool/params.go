@@ -348,6 +348,115 @@ func stringSliceArg(v any) []string {
 	return nil
 }
 
+// requiredListArg reads a `required` value. Models send it as a comma string
+// ("branch,card"), a JSON array inside a string, or true, besides the array
+// the schema asks for. stringSliceArg turned all of those into nil while the
+// key was present, which read as an explicit empty list: nothing required, and
+// the path gate then said "[branch] is not required" fourteen times in one
+// build. The strings are read as the list they spell; anything else is an
+// error naming the shape, never a silent empty list.
+func requiredListArg(v any) ([]string, error) {
+	switch t := v.(type) {
+	case nil, []string, []any:
+		return stringSliceArg(v), nil
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return nil, nil
+		}
+		if strings.HasPrefix(s, "[") {
+			var arr []any
+			if err := json.Unmarshal([]byte(s), &arr); err != nil {
+				return nil, fmt.Errorf("required: %q is not a JSON array of param names: pass a list like required=[\"branch\", \"card\"]", s)
+			}
+			return stringSliceArg(arr), nil
+		}
+		var out []string
+		for _, part := range strings.Split(s, ",") {
+			if part = strings.Trim(strings.TrimSpace(part), `"'`); part != "" {
+				out = append(out, part)
+			}
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("required must be a list of the param names a call cannot run without, like required=[\"branch\", \"card\"] (got %T %v). To mark a single param, put required: true inside that param's object", v, v)
+}
+
+// readRequired reads holder's required list and checks every name in it is a
+// declared param. explicit is false when no list was given, so the caller
+// falls back to its own default.
+func readRequired(holder map[string]any, params map[string]ToolParam) (list []string, explicit bool, err error) {
+	raw, present := holder["required"]
+	list, err = requiredListArg(raw)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, r := range list {
+		if _, ok := params[r]; !ok {
+			return nil, false, fmt.Errorf("required lists %q which is not in params", r)
+		}
+	}
+	return list, present && raw != nil, nil
+}
+
+// markedRequired returns the params whose own object says required: true, the
+// JSON Schema habit of marking each property. coerceToolParam keeps a param's
+// type and description only, so the mark was dropped and a path param the
+// author marked required came back "not required". The mark joins the
+// required list instead. Sorted, so the list is the same on every read.
+func markedRequired(rawParams any) []string {
+	if s, ok := rawParams.(string); ok {
+		var m map[string]any
+		if json.Unmarshal([]byte(s), &m) != nil {
+			return nil
+		}
+		rawParams = m
+	}
+	var out []string
+	add := func(name string, v any) {
+		pm, ok := v.(map[string]any)
+		if !ok {
+			return
+		}
+		switch r := pm["required"].(type) {
+		case bool:
+			if r {
+				out = append(out, name)
+			}
+		case string:
+			if strings.EqualFold(strings.TrimSpace(r), "true") {
+				out = append(out, name)
+			}
+		}
+	}
+	switch m := rawParams.(type) {
+	case map[string]any:
+		for k, v := range m {
+			add(k, v)
+		}
+	case map[string]ToolParam:
+		return nil // already typed: a mark could not have survived to here
+	}
+	sort.Strings(out)
+	return out
+}
+
+// unionNames is a followed by every name in b it does not already hold.
+func unionNames(a, b []string) []string {
+	if len(b) == 0 {
+		return a
+	}
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, n := range append(append([]string{}, a...), b...) {
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // validateTemplate scans cmd for `{name}` placeholders and ensures each
 // one names a known param. Catches the obvious "I forgot to add this
 // to params" mistake before the tool gets registered.

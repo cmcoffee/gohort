@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +35,19 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("no tool named %q: use action=\"list\" to see what exists", name)
 	}
+	cases, err := testCasesArg(args, effectiveTempToolMode(tt) == TempToolModeToolbox)
+	if err != nil {
+		return "", err
+	}
+	if cases != nil {
+		// A copy, so the caller's args are not rewritten under it.
+		withCases := make(map[string]any, len(args)+1)
+		for k, v := range args {
+			withCases[k] = v
+		}
+		withCases["cases"] = cases
+		args = withCases
+	}
 	fp := toolTestFingerprint(tt, args["cases"])
 	if !BoolArg(args, "rerun") {
 		if prev, seen := recentToolTest(sess, name, fp); seen {
@@ -57,6 +71,13 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 // keeps every run, so how many it took to get green survives the pass. A
 // repeat served from the test cache is not a run and never reaches here.
 func recordTestOutcome(sess *ToolSession, name string, v buildledger.Verdict, classes []string, detail string) {
+	recordToolOutcome(sess, name, "tool_def test", v, classes, detail)
+}
+
+// recordToolOutcome is recordTestOutcome with the source named, for a verdict
+// that did not come from a test run: a direct call that fired the last write
+// a test left waiting is a pass the graders have to see too.
+func recordToolOutcome(sess *ToolSession, name, via string, v buildledger.Verdict, classes []string, detail string) {
 	if sess == nil {
 		return
 	}
@@ -66,7 +87,7 @@ func recordTestOutcome(sess *ToolSession, name string, v buildledger.Verdict, cl
 		Agent:   sess.AgentID,
 		Kind:    buildledger.KindTool,
 		Target:  name,
-		Via:     "tool_def test",
+		Via:     via,
 		Verdict: v,
 		Classes: classes,
 		Detail:  detail,
@@ -347,17 +368,36 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 				status, body, derr := liveProbe(sess, tt.Credential, ep, sample)
 				switch {
 				case derr != nil:
-					fail("live-error", "live probe errored: %v", derr)
+					fail("live-error", "live probe errored: %v. Sent: %s", derr, probeRequestLine(tt.Credential, ep, sample))
+					noteProbeStatus(sess, endpointTool(tt, ep), false)
 				case !isStatus2xx(status):
-					fail("live-status", "live call returned %q (want 2xx), body: %s", status, oneLine(body, 200))
+					fail("live-status", "live call returned %q (want 2xx), body: %s. Sent: %s", status, oneLine(body, 200), probeRequestLine(tt.Credential, ep, sample))
+					noteProbeStatus(sess, endpointTool(tt, ep), false)
 				default:
-					pass("live %s returned %q", method, status)
+					// The body rides on the PASS line as it does on a FAIL: the
+					// author was asked for these results and had only a status
+					// to show the user.
+					if excerpt := oneLine(body, 300); excerpt != "" {
+						pass("live %s returned %q: %s", method, status, excerpt)
+					} else {
+						pass("live %s returned %q", method, status)
+					}
 					if ep.ResponsePipe != "" {
-						if perr := runPipeAgainst(ep.ResponsePipe, body, sess); perr != "" {
+						piped, perr := runPipeAgainst(ep.ResponsePipe, body, sess)
+						switch {
+						case perr != "":
 							fail("pipe-shape", "response_pipe failed on the REAL response body (shape mismatch: e.g. the filter expects .posts[] but the body is a bare array): %s", perr)
-						} else {
+						case pipeOutputEmpty(piped) && !emptyResultBody(body, ep):
+							// A jq path that names nothing runs clean and prints
+							// null, so "runs clean" passed a pipe that hands the
+							// caller nothing from a body full of data.
+							fail("pipe-empty", "response_pipe produced null (or nothing) from the real response: the path probably does not match its shape. Raw body: %s", oneLine(body, 300))
+						default:
 							pass("response_pipe runs clean on the real response")
 						}
+					}
+					if !epFail {
+						noteProbeStatus(sess, endpointTool(tt, ep), true)
 					}
 					// A 2xx that carried NO records is the single most
 					// misleading result this action can produce. It proves the
@@ -377,6 +417,17 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 					}
 				}
 			default:
+				// A read that answered 2xx for this same definition, on an
+				// earlier probe or a direct call, stays proven: a test whose
+				// cases cover another action says nothing new about it.
+				if at, ok, probe := endpointAnswered(sess, endpointTool(tt, ep)); ok {
+					from := "a direct call"
+					if probe {
+						from = "an earlier probe"
+					}
+					pass("read endpoint answered %s with a 2xx at %s for this same definition: kept from %s (pass a case to probe it again)", method, at.Format("15:04:05"), from)
+					break
+				}
 				// Not a PASS: nothing proved this endpoint works, and a
 				// toolbox whose reads all went unprobed used to come out
 				// "all endpoints passed. Tool verified."
@@ -457,9 +508,17 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 		b.WriteString("RESULT: offline checks passed. The tool asks for confirmation before each call, so test did not fire it: make one direct call, confirm it, and check for a 2xx.")
 	case writeManual > 0:
 		RecordToolVerification(sess, name, false, fmt.Sprintf("%d write endpoint(s) never fired: needs one manual live call each to confirm a 2xx", writeManual))
-		fmt.Fprintf(&b, "RESULT: all automated checks passed. %d write endpoint(s) still need ONE manual live call each: fire one, confirm a 2xx, then it's done.", writeManual)
+		// The verdict leads. "all automated checks passed" came first before,
+		// and builders read that much and reported the tool verified.
+		if writeManual == 1 {
+			b.WriteString("RESULT: not verified yet: 1 write endpoint still needs ONE manual live call: fire it, confirm a 2xx, and it counts.")
+		} else {
+			fmt.Fprintf(&b, "RESULT: not verified yet: %d write endpoints still need ONE manual live call each: fire each, confirm a 2xx, and it counts.", writeManual)
+		}
 		if unprobedRead > 0 {
 			fmt.Fprintf(&b, " %d read endpoint(s) were never called either: pass a case for each (the UNPROVEN lines above say which args) and re-run.", unprobedRead)
+		} else {
+			b.WriteString(" Everything else passed.")
 		}
 	case emptyRead > 0:
 		// Checks passed, but every read came back empty — the tool is
@@ -823,6 +882,83 @@ func stringMapArg(args map[string]any, key string) map[string]string {
 // parseTestCases normalizes the `cases` arg into action-name → args.
 // Each case is {action?: "<sub>", args: {...}}; a case with no action
 // is stored under "" for the single-api-tool convenience path.
+// testCasesArg reads the cases a test runs, from cases or, when there are
+// none, from test_args. test_args is what create and update take, and test
+// read only cases, so a test sent test_args ran with no case at all and said
+// nothing about it. On a toolbox, test_args.action names the endpoint and the
+// rest are its args. Nil when the call gave neither.
+func testCasesArg(args map[string]any, toolbox bool) ([]any, error) {
+	if raw, ok := args["cases"]; ok && raw != nil {
+		if text, isText := raw.(string); isText {
+			var list []any
+			if err := json.Unmarshal([]byte(text), &list); err != nil {
+				return nil, fmt.Errorf("cases must be an array of {action, args} objects: %q is not a JSON array", oneLine(text, 120))
+			}
+			raw = list
+		}
+		list, ok := raw.([]any)
+		if !ok {
+			return nil, fmt.Errorf("cases must be an array of {action, args} objects (got %T)", raw)
+		}
+		return normalizeTestCases(list, toolbox), nil
+	}
+	raw, ok := args["test_args"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	sample, ok := raw.(map[string]any)
+	if text, isText := raw.(string); isText {
+		ok = json.Unmarshal([]byte(text), &sample) == nil
+	}
+	if !ok {
+		return nil, fmt.Errorf("test_args must be an object of {param: value} (got %T)", raw)
+	}
+	return normalizeTestCases([]any{map[string]any{"args": sample}}, toolbox), nil
+}
+
+// normalizeTestCases settles the case shapes authors send besides the
+// documented {action, args}: "name" for the endpoint, and on a toolbox the
+// endpoint given as args.action, the way the tool itself is called. Both
+// became unlabeled cases, so the endpoint they were written for ran with
+// nothing. An api tool's param may really be called "action", so the lift is
+// for toolboxes only.
+func normalizeTestCases(list []any, toolbox bool) []any {
+	out := make([]any, 0, len(list))
+	for _, raw := range list {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			out = append(out, raw)
+			continue
+		}
+		c := make(map[string]any, len(m))
+		for k, v := range m {
+			c[k] = v
+		}
+		if strings.TrimSpace(StringArg(c, "action")) == "" {
+			if n := strings.TrimSpace(StringArg(c, "name")); n != "" {
+				c["action"] = n
+			}
+		}
+		if a, ok := c["args"].(map[string]any); ok && toolbox {
+			if act, isStr := a["action"].(string); isStr {
+				rest := make(map[string]any, len(a))
+				for k, v := range a {
+					if k != "action" {
+						rest[k] = v
+					}
+				}
+				c["args"] = rest
+				if strings.TrimSpace(StringArg(c, "action")) == "" {
+					c["action"] = act
+				}
+			}
+		}
+		delete(c, "name")
+		out = append(out, c)
+	}
+	return out
+}
+
 func parseTestCases(v any) map[string]map[string]any {
 	out := map[string]map[string]any{}
 	list, ok := v.([]any)
@@ -998,7 +1134,7 @@ func pipeCompileError(pipe string, sess *ToolSession) string {
 
 // runPipeAgainst runs a response_pipe against a real response body and
 // returns a non-empty message if it failed (bad filter, shape mismatch).
-func runPipeAgainst(pipe, body string, sess *ToolSession) string {
+func runPipeAgainst(pipe, body string, sess *ToolSession) (output, failure string) {
 	ctx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
 	defer cancel()
 	// Authoring-time checks are still sandboxed runs, so they carry the same
@@ -1008,12 +1144,88 @@ func runPipeAgainst(pipe, body string, sess *ToolSession) string {
 	ctx = sess.ContextWithSandboxCaller(ctx)
 	res := RunSandboxedShellPipe(ctx, pipe, body)
 	if res.TimedOut {
-		return "timed out"
+		return "", "timed out"
 	}
 	if res.Err != nil {
-		return oneLine(res.Output, 200)
+		return "", oneLine(res.Output, 200)
 	}
-	return ""
+	return res.Output, ""
+}
+
+// pipeOutputEmpty reports whether a pipe's output carries nothing: blank, or
+// only nulls and empty collections, one per line as jq prints them.
+func pipeOutputEmpty(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		switch strings.TrimSpace(line) {
+		case "", "null", "[]", "{}", `""`:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// probeRequestLine says what a failed probe sent: the method and the url as
+// rendered from the case, and the headers by name. A wrong header value or a
+// missing query param is invisible in a bare status, and the author retried
+// the same request blind. Values of headers that carry auth are withheld; the
+// credential's own auth is injected server-side and never shown.
+func probeRequestLine(cred string, ep TempToolAction, sample map[string]any) string {
+	method := strings.ToUpper(strings.TrimSpace(ep.Method))
+	if method == "" {
+		method = "GET"
+	}
+	inner := canonicalizeArgKeys(cloneArgs(sample), ep.Required, ep.Params)
+	target := ep.URLTemplate
+	if u, err := substituteURL(ep.URLTemplate, ep.Params, ep.Required, inner); err == nil {
+		target = u
+	}
+	// Path and query only, and a query value that carries auth (?api_key=)
+	// is withheld like an auth header.
+	if pu, err := url.Parse(target); err == nil && pu.Host != "" {
+		target = pu.EscapedPath()
+		if pu.RawQuery != "" {
+			pairs := strings.Split(pu.RawQuery, "&")
+			for i, pair := range pairs {
+				if k, _, found := strings.Cut(pair, "="); found && authHeaderName(k) {
+					pairs[i] = k + "=[redacted]"
+				}
+			}
+			target += "?" + strings.Join(pairs, "&")
+		}
+	}
+	line := method + " " + oneLine(target, 300)
+	if len(ep.Headers) > 0 {
+		names := make([]string, 0, len(ep.Headers))
+		for k := range ep.Headers {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		var hs []string
+		for _, k := range names {
+			if authHeaderName(k) {
+				hs = append(hs, k+": [redacted]")
+			} else {
+				hs = append(hs, k+": "+oneLine(ep.Headers[k], 80))
+			}
+		}
+		line += "; headers " + strings.Join(hs, ", ")
+	}
+	if c := strings.TrimSpace(cred); c != "" && c != "no_auth" {
+		line += fmt.Sprintf("; plus the auth credential %q adds", c)
+	}
+	return line
+}
+
+// authHeaderName reports whether a header's value is a secret by its name.
+func authHeaderName(name string) bool {
+	n := strings.ToLower(name)
+	for _, w := range []string{"auth", "key", "token", "secret", "cookie", "password", "signature", "session"} {
+		if strings.Contains(n, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // toolTestMemory is how long an identical test re-run returns the last result

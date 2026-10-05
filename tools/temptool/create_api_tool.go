@@ -142,26 +142,28 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	if err := validateTemplate(urlTpl, params); err != nil {
 		return "", fmt.Errorf("url_template: %w", err)
 	}
+	if err := urlActionFieldError(urlTpl); err != nil {
+		return "", fmt.Errorf("url_template: %w", err)
+	}
 	if bodyTpl != "" {
 		if err := validateTemplate(bodyTpl, params); err != nil {
 			return "", fmt.Errorf("body_template: %w", err)
 		}
 	}
 
-	required := stringSliceArg(args["required"])
 	// Omitted required → default all params required; an EXPLICIT [] → make
-	// all optional. Distinguish by presence (see the toolbox path).
-	if raw, present := args["required"]; !present || raw == nil {
+	// all optional. Distinguish by presence (see the toolbox path). A param
+	// marked required: true in its own object joins either list.
+	required, explicit, err := readRequired(args, params)
+	if err != nil {
+		return "", err
+	}
+	if !explicit {
 		for k := range params {
 			required = append(required, k)
 		}
-	} else {
-		for _, r := range required {
-			if _, ok := params[r]; !ok {
-				return "", fmt.Errorf("required lists %q which is not in params", r)
-			}
-		}
 	}
+	required = unionNames(required, markedRequired(args["params"]))
 	// Hard authoring gate (mirrors the toolbox path): a write action whose
 	// required param appears in neither the url_template nor the body_template
 	// sends it nowhere → a live 400 the author can't diagnose. Reject here.

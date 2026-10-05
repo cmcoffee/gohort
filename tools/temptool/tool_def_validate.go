@@ -1,6 +1,8 @@
 package temptool
 
 import (
+	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -109,4 +111,68 @@ func oneLine(s string, max int) string {
 		return s[:max] + "…"
 	}
 	return s
+}
+
+// urlActionFieldError refuses a url_template that carries the action's own
+// fields in its query string. Seen: "/v1/tasks?action=create_task&method=POST&
+// body_template=%7B...": the author packed the whole action into the url, so
+// the request went out as a GET with the body as a query value and never did
+// what the fields said.
+//
+// A key counts only when its value has the field's shape, since real APIs use
+// some of these names as query params: Last.fm and Flickr take ?method=<api
+// method>, Contentful ?content_type=<model id>, MediaWiki ?action=query. So
+// method counts as an HTTP verb, content_type as a media type, body as a JSON
+// document, and action only beside another field that counted.
+func urlActionFieldError(urlTpl string) error {
+	i := strings.IndexByte(urlTpl, '?')
+	if i < 0 {
+		return nil
+	}
+	query := urlTpl[i+1:]
+	if j := strings.IndexByte(query, '#'); j >= 0 {
+		query = query[:j]
+	}
+	var hits []string
+	hasAction := false
+	for _, pair := range strings.Split(query, "&") {
+		key, val, _ := strings.Cut(pair, "=")
+		if k, err := url.QueryUnescape(key); err == nil {
+			key = k
+		}
+		if v, err := url.QueryUnescape(val); err == nil {
+			val = v
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		val = strings.TrimSpace(val)
+		switch key {
+		case "action":
+			hasAction = true
+		case "method":
+			switch strings.ToUpper(val) {
+			case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD":
+				hits = append(hits, key)
+			}
+		case "content_type":
+			if strings.Contains(val, "/") {
+				hits = append(hits, key)
+			}
+		case "body":
+			if strings.HasPrefix(val, "{") || strings.HasPrefix(val, "[") {
+				hits = append(hits, key)
+			}
+		case "body_template", "headers":
+			hits = append(hits, key)
+		}
+	}
+	if len(hits) == 0 {
+		return nil
+	}
+	if hasAction {
+		hits = append([]string{"action"}, hits...)
+	}
+	if len(hits) == 1 {
+		return fmt.Errorf("%s is a field of the action, not part of the url: set it beside url_template, and keep only the endpoint's own query params in the url", hits[0])
+	}
+	return fmt.Errorf("%s are fields of the action, not part of the url: set them beside url_template, and keep only the endpoint's own query params in the url", strings.Join(hits, ", "))
 }

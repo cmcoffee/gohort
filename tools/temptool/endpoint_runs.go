@@ -4,11 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/buildledger"
 )
 
 // What a real call of an endpoint answered, kept so a write that worked can
@@ -35,9 +37,16 @@ import (
 // per session), and a call made after the restart is recorded fresh.
 // Persisting it would mean a stored "this worked" outliving the thing it was
 // about, for one call saved in a rare case.
+//
+// test's own live probe of a read is recorded here too (probe set), so a read
+// that answered 2xx stays proven on a later test whose cases leave it out.
+// Without it, a read that passed became UNPROVEN as soon as the author tested
+// a different action, and the tool could not reach verified by testing one
+// thing at a time.
 type endpointRun struct {
 	fingerprint string
 	ok          bool
+	probe       bool
 	at          time.Time
 }
 
@@ -143,19 +152,42 @@ func noteEndpointStatus(sess *ToolSession, tt *TempTool, statusLine string) {
 	if verified {
 		Log("[temptool] %q: last unfired write %q answered a direct call with %s; tool verified", parent, tt.Name, statusLine)
 		RecordToolVerification(sess, parent, true, "")
+		// The build ledger is what the graders and the verify status read,
+		// and the test that left this write waiting recorded it unproven. Without
+		// a pass here the log said verified while the ledger stayed red.
+		recordToolOutcome(sess, parent, "direct call", buildledger.Pass, nil,
+			fmt.Sprintf("direct call of %s answered 2xx (%s)", tt.Name, statusLine))
 	}
 }
 
 // endpointFired reports when the endpoint last answered a direct call with a
 // 2xx, if it did and has not been edited since.
 func endpointFired(sess *ToolSession, ep TempTool) (time.Time, bool) {
+	at, ok, _ := endpointAnswered(sess, ep)
+	return at, ok
+}
+
+// endpointAnswered is endpointFired that also says whether the 2xx came from
+// test's own probe rather than a direct call.
+func endpointAnswered(sess *ToolSession, ep TempTool) (at time.Time, ok, probe bool) {
 	endpointRunsMu.Lock()
 	defer endpointRunsMu.Unlock()
 	r, found := endpointRuns[endpointRunKey(sess, ep.Name)]
 	if !found || !r.ok || r.fingerprint != endpointFingerprint(&ep) || time.Since(r.at) > endpointRunTTL {
-		return time.Time{}, false
+		return time.Time{}, false, false
 	}
-	return r.at, true
+	return r.at, true, r.probe
+}
+
+// noteProbeStatus records what test's live probe of a read answered, under
+// the name a direct call of the same endpoint records by. A probe that failed
+// replaces an earlier pass: the endpoint is not proven any more.
+func noteProbeStatus(sess *ToolSession, ep TempTool, ok bool) {
+	endpointRunsMu.Lock()
+	defer endpointRunsMu.Unlock()
+	now := time.Now()
+	pruneEndpointRuns(now)
+	endpointRuns[endpointRunKey(sess, ep.Name)] = endpointRun{fingerprint: endpointFingerprint(&ep), ok: ok, probe: true, at: now}
 }
 
 // lastCallSucceeded reports whether the latest recorded call of tt answered

@@ -88,3 +88,36 @@ func TestCheckRunReadsTheOutputNotJustTheError(t *testing.T) {
 		}
 	}
 }
+
+// The builder fired the last waiting write by hand, the log said "tool
+// verified", and the ledger the graders read stayed red: only test wrote to
+// it. A direct 2xx of the last unfired write now closes the episode green.
+func TestDirectWriteGreensTheLedger(t *testing.T) {
+	buildledger.SetStore(&DBase{Store: kvlite.MemStore()})
+	defer buildledger.SetStore(nil)
+	f, sess := newFakeAPI(t, "tr")
+	if _, err := createGrouped(map[string]any{
+		"name": "translate", "description": "d", "mode": "toolbox", "credential": "tr",
+		"actions": []any{
+			map[string]any{"name": "post", "url_template": f.srv.URL + "/translate", "method": "POST",
+				"body_template": `{"text": {text}}`,
+				"params":        map[string]any{"text": map[string]any{"type": "string"}}},
+		},
+	}, sess); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := testGrouped(map[string]any{"name": "translate"}, sess); err != nil {
+		t.Fatalf("test: %v", err)
+	}
+	if rep := buildledger.Read(time.Time{}); rep.Green != 0 {
+		t.Fatalf("an unfired write must not be green yet: %+v", rep)
+	}
+	tt := sess.LookupTempTool("translate")
+	if _, err := dispatchTempTool(sess, tt, map[string]any{"action": "post", "text": "hola"}); err != nil {
+		t.Fatalf("direct call: %v", err)
+	}
+	rep := buildledger.Read(time.Time{})
+	if rep.Green != 1 || len(rep.Recent) != 1 || !rep.Recent[0].Green || rep.Recent[0].Target != "translate" {
+		t.Fatalf("the direct 2xx must close a green episode: %+v", rep)
+	}
+}
