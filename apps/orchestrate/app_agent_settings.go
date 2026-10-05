@@ -23,6 +23,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
@@ -52,65 +55,94 @@ func settableFields(fields []ui.FormField) map[string]bool {
 	return out
 }
 
-// appAgentSettingsPage is the page, with its data and reset at "settings/data"
-// and "settings/reset" relative to it (it is served at "<prefix>settings").
-func (T *OrchestrateApp) appAgentSettingsPage(rec AgentRecord, spec appagents.AppAgentSpec, back string) ui.Page {
-	app := chFirst(spec.OwningApp, "its app")
-	name := chFirst(rec.Name, spec.Name, rec.ID)
+// settingsAgents are the app agents an app's settings page covers, the chat's
+// own first: every app agent its app registered, then the ones it runs that
+// another app owns (AppChat.Agents). Only registered app agents, each once.
+func settingsAgents(chat AgentRecord, c AppChat) []appagents.AppAgentSpec {
+	spec, ok := appagents.AppAgentByID(chat.ID)
+	if !ok {
+		return nil
+	}
+	out := []appagents.AppAgentSpec{spec}
+	seen := map[string]bool{spec.ID: true}
+	var own []appagents.AppAgentSpec
+	for _, sp := range appagents.AppAgents() {
+		if !seen[sp.ID] && sp.OwningApp != "" && sp.OwningApp == spec.OwningApp {
+			own = append(own, sp)
+			seen[sp.ID] = true
+		}
+	}
+	sort.SliceStable(own, func(i, j int) bool { return own[i].Name < own[j].Name })
+	out = append(out, own...)
+	for _, id := range c.Agents {
+		if sp, ok := appagents.AppAgentByID(id); ok && !seen[id] {
+			out = append(out, sp)
+			seen[id] = true
+		}
+	}
+	return out
+}
+
+// appAgentSettingsPage is the page: a section for each agent the app runs,
+// each with its own form and Reset. Data and reset are at "settings/data"
+// and "settings/reset" relative to it (it is served at "<prefix>settings"),
+// with the agent in ?agent=.
+func (T *OrchestrateApp) appAgentSettingsPage(udb Database, agents []appagents.AppAgentSpec, back string) ui.Page {
+	if len(agents) == 0 {
+		return ui.Page{Title: "Agent settings", ShowTitle: true, BackURL: chFirst(back, "..")}
+	}
+	app := chFirst(agents[0].OwningApp, "This app")
 	var sections []ui.Section
-	var cur *ui.Section
-	var group []ui.FormField
-	flush := func() {
-		if cur != nil {
-			cur.Body = ui.FormPanel{Source: "settings/data", PostURL: "settings/data", Method: "PATCH", Fields: group}
-			sections = append(sections, *cur)
+	for _, sp := range agents {
+		rec, _ := loadAgent(udb, sp.ID)
+		name := chFirst(rec.Name, sp.Name, sp.ID)
+		owner := chFirst(sp.OwningApp, "its app")
+		q := "?agent=" + url.QueryEscape(sp.ID)
+		about := sp.Description
+		if owner != app {
+			about = strings.TrimSpace(about + " It belongs to " + owner + ": a change here applies wherever it runs.")
 		}
-		cur, group = nil, nil
-	}
-	for _, f := range T.appAgentSettingsFields(rec) {
-		if f.Type == "header" {
-			flush()
-			cur = &ui.Section{Title: f.Label, Subtitle: f.Help}
-			continue
-		}
-		group = append(group, f)
-	}
-	flush()
-	if len(sections) > 0 {
-		sections[0].Subtitle = name + " belongs to " + app + " and runs only here. These shape how it works; its prompt and tools are " + app + "'s. " + sections[0].Subtitle
-	}
-	sections = append(sections, ui.Section{
-		Title:    "Reset to default",
-		Subtitle: "Put " + name + " back as " + app + " set it up.",
-		Detail:   "Every setting changed here goes back, tool approvals and rules saved on it included. Its memory and conversations are kept.",
-		Body: ui.DisplayPanel{
-			Source: "settings/data",
-			Pairs:  []ui.DisplayPair{},
-			Actions: []ui.ToolbarAction{{
-				Label:   "Reset to default",
-				Method:  "POST",
-				URL:     "settings/reset",
-				Confirm: "Reset " + name + " to its defaults? Every setting changed on it goes back to what " + app + " set up. Its memory and conversations are kept.",
-				Variant: "danger",
+		sections = append(sections, ui.Section{
+			Title:    name,
+			Subtitle: about,
+			Body: ui.Stack{Children: []ui.Component{
+				ui.FormPanel{Source: "settings/data" + q, PostURL: "settings/data" + q, Method: "PATCH", Fields: T.appAgentSettingsFields(rec)},
+				ui.DisplayPanel{
+					Source: "settings/data" + q,
+					Pairs:  []ui.DisplayPair{},
+					Actions: []ui.ToolbarAction{{
+						Label:   "Reset " + name + " to default",
+						Method:  "POST",
+						URL:     "settings/reset" + q,
+						Confirm: "Reset " + name + " to its defaults? Every setting changed on it goes back to what " + owner + " set up, tool approvals and rules saved on it included. Its memory and conversations are kept.",
+						Variant: "danger",
+					}},
+				},
 			}},
-		},
-	})
+		})
+	}
+	title := app + " agents"
+	if len(agents) == 1 {
+		title = chFirst(agents[0].Name, "Agent") + " settings"
+	}
 	return ui.Page{
-		Title:     name + " settings",
-		ShowTitle: true,
-		BackURL:   chFirst(back, ".."),
-		MaxWidth:  "820px",
-		Sections:  sections,
+		Title:      title,
+		ShowTitle:  true,
+		BackURL:    chFirst(back, ".."),
+		MaxWidth:   "860px",
+		SectionNav: len(sections) > 1,
+		Sections:   sections,
 	}
 }
 
 // serveAppAgentSettings answers "settings", "settings/data" and
-// "settings/reset" for an app agent. Anything else that is not an app agent
-// (an exposed agent on the Agents app) has no settings here: those belong to
-// its owner, in orchestrate.
+// "settings/reset" for the app agents a chat's settings page covers
+// (settingsAgents). A chat whose agent is not an app agent (an exposed agent
+// on the Agents app) has no settings here: those belong to its owner, in
+// orchestrate.
 func (T *OrchestrateApp) serveAppAgentSettings(w http.ResponseWriter, r *http.Request, agent AgentRecord, c AppChat, sub string) {
-	spec, isApp := appagents.AppAgentByID(agent.ID)
-	if !isApp || !c.Settings {
+	agents := settingsAgents(agent, c)
+	if len(agents) == 0 || !c.Settings {
 		http.NotFound(w, r)
 		return
 	}
@@ -118,15 +150,30 @@ func (T *OrchestrateApp) serveAppAgentSettings(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	rec, ok := loadAgent(udb, agent.ID)
+	if sub == "settings" {
+		page := T.appAgentSettingsPage(udb, agents, c.Back)
+		page.ServeHTTP(w, r)
+		return
+	}
+	// Which agent: one this page covers, the chat's own when unnamed.
+	id := strings.TrimSpace(r.URL.Query().Get("agent"))
+	if id == "" {
+		id = agents[0].ID
+	}
+	covered := false
+	for _, sp := range agents {
+		covered = covered || sp.ID == id
+	}
+	if !covered {
+		http.NotFound(w, r)
+		return
+	}
+	rec, ok := loadAgent(udb, id)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 	switch sub {
-	case "settings":
-		page := T.appAgentSettingsPage(rec, spec, c.Back)
-		page.ServeHTTP(w, r)
 	case "settings/data":
 		allowed := settableFields(T.appAgentSettingsFields(rec))
 		switch r.Method {
@@ -146,7 +193,7 @@ func (T *OrchestrateApp) serveAppAgentSettings(w http.ResponseWriter, r *http.Re
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if err := resetAppAgent(udb, agent.ID); err != nil {
+		if err := resetAppAgent(udb, id); err != nil {
 			http.Error(w, "Not reset: "+err.Error(), http.StatusBadRequest)
 			return
 		}

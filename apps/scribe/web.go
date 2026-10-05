@@ -15,6 +15,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/gohort/apps/publish"
 )
 
 // activeTable holds the per-user "which guide is open" marker, so the co-author
@@ -1274,7 +1275,9 @@ func withoutToolNames(names []string, drop ...string) []string {
 // dispatchChat forwards cancel / session routes to orchestrate's PublicHandle*.
 // scribeChat is where the Guide Author chat is routed: orchestrate's own chat
 // endpoints, under chat/, with the open document as the session scope.
-var scribeChat = orchestrate.AppChat{Prefix: "chat/", Query: "guide={scope}", Settings: true, Back: "/scribe"}
+var scribeChat = orchestrate.AppChat{Prefix: "chat/", Query: "guide={scope}", Settings: true, Back: "/scribe",
+	// Its Publish button runs the Publishing app's Publisher.
+	Agents: []string{publish.PublisherAgentID}}
 
 func (T *Scribe) dispatchChat(w http.ResponseWriter, r *http.Request, path string) {
 	orch := findOrchestrate()

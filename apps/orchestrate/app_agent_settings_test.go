@@ -19,24 +19,36 @@ func TestAppAgentSettingsPage(t *testing.T) {
 	appagents.RegisterAppAgent(appagents.AppAgentSpec{
 		ID: "app-test-settings", Name: "Settled", OwningApp: "Zz Test", Hidden: true, Prompt: "x",
 	})
+	// The same app's second agent, and one owned elsewhere that it runs.
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-sibling", Name: "Sibling", OwningApp: "Zz Test", Hidden: true, Prompt: "x",
+	})
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-borrowed", Name: "Borrowed", OwningApp: "Yy Other", Hidden: true, Prompt: "x",
+	})
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-unrelated", Name: "Unrelated", OwningApp: "Xx Else", Hidden: true, Prompt: "x",
+	})
 	T, udb, _ := newTestOrchestrate(t)
 	agent, _ := loadAgent(udb, "app-test-settings")
-	c := AppChat{Prefix: "chat/", Settings: true, Back: "/zz"}
+	c := AppChat{Prefix: "chat/", Settings: true, Back: "/zz", Agents: []string{"app-test-borrowed"}}
 	serve := func(method, path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		req := asUser(httptest.NewRequest(method, "/"+path, strings.NewReader(body)), "alice")
-		if !T.ServeAppChat(rec, req, agent, c, path, "") {
+		route, _, _ := strings.Cut(path, "?") // an app routes on the path alone
+		if !T.ServeAppChat(rec, req, agent, c, route, "") {
 			t.Fatalf("%s %s was not answered", method, path)
 		}
 		return rec
 	}
 	page := serve("GET", "chat/settings", "").Body.String()
-	for _, want := range []string{"max_worker_rounds", "gap_check", "work_plan", "think_budget", "Reset to default", "settings/reset", "belongs to Zz Test", "/zz"} {
+	for _, want := range []string{"max_worker_rounds", "gap_check", "work_plan", "think_budget", "to default", "settings/reset", "/zz",
+		"Zz Test agents", "Settled", "Sibling", "Borrowed", "belongs to Yy Other", "agent=app-test-sibling"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the settings page is missing %q", want)
 		}
 	}
-	for _, not := range []string{"orchestrator_prompt", "\"triggers\"", "Delegation", "Intake form"} {
+	for _, not := range []string{"orchestrator_prompt", "\"triggers\"", "Delegation", "Intake form", "Unrelated"} {
 		if strings.Contains(page, not) {
 			t.Errorf("the settings page offers %q", not)
 		}
@@ -62,6 +74,20 @@ func TestAppAgentSettingsPage(t *testing.T) {
 	}
 	if rec := serve("POST", "chat/settings/reset", ""); rec.Code != 400 {
 		t.Fatal("a reset at defaults did not say so")
+	}
+	// Each agent on the page saves on its own; one the page does not cover
+	// is not reachable through it.
+	if rec := serve("PATCH", "chat/settings/data?agent=app-test-borrowed", `{"max_plan_steps": 3}`); rec.Code != 200 {
+		t.Fatalf("save borrowed = %d %s", rec.Code, rec.Body.String())
+	}
+	if got, _ := loadAgent(udb, "app-test-borrowed"); got.MaxPlanSteps != 3 {
+		t.Fatalf("borrowed plan steps = %d", got.MaxPlanSteps)
+	}
+	if got, _ := loadAgent(udb, "app-test-settings"); got.MaxPlanSteps == 3 {
+		t.Fatal("a save for one agent landed on another")
+	}
+	if rec := serve("PATCH", "chat/settings/data?agent=app-test-unrelated", `{"max_plan_steps": 3}`); rec.Code != 404 {
+		t.Fatalf("an agent outside the page was saved: %d", rec.Code)
 	}
 	// Not an app agent, or an app that did not ask for it: no settings here.
 	if rec := httptest.NewRecorder(); T.ServeAppChat(rec, asUser(httptest.NewRequest("GET", "/chat/settings", nil), "alice"), AgentRecord{ID: "mine"}, c, "chat/settings", "") && rec.Code != 404 {

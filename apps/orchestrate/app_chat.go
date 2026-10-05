@@ -38,6 +38,11 @@ type AppChat struct {
 	// page's back arrow goes, the app's page.
 	Settings bool
 	Back     string
+	// Agents are app agents this app runs that another app owns, listed on
+	// the settings page after its own: Scribe's Publish button runs the
+	// Publishing app's Publisher. The app's own agents (every app agent
+	// registered with the chat agent's OwningApp) are listed without this.
+	Agents []string
 }
 
 // appChatRuns is the run registry's path under an app. handleRunsDispatch
