@@ -2336,11 +2336,6 @@ select.ui-orch-intake-input {
           window.uiAlert('Security is not available here: use the Security button.');
         }
       });
-      // Fleet > App agents: the row is the agent, not the one in view.
-      window.uiRegisterClientAction('orchestrate_edit_app_agent', function(ctx) {
-        if (!ctx || !ctx.id) return;
-        window.location.href = 'agent/' + encodeURIComponent(ctx.id);
-      });
       window.uiRegisterClientAction('orchestrate_edit_agent', function() {
         var id = getAgentID();
         if (!id) { window.uiAlert('Pick an agent first.'); return; }
@@ -7852,13 +7847,10 @@ select.ui-orch-intake-input {
         // record removal.
         if (deleteBtn) {
           var asSeed = id && id.indexOf('seed-') === 0;
-          var asApp = !!(id && window.ORCH_APP_AGENTS && window.ORCH_APP_AGENTS[id]);
-          deleteBtn.textContent = asApp ? 'Reset' : (asSeed ? 'Revert' : 'Delete');
-          deleteBtn.title = asApp
-            ? 'Put this agent back as ' + window.ORCH_APP_AGENTS[id] + ' registered it. App agents cannot be deleted; memory and conversations are kept.'
-            : (asSeed
-              ? 'Discard your customizations and restore framework defaults for this seed agent.'
-              : 'Delete the active agent');
+          deleteBtn.textContent = asSeed ? 'Revert' : 'Delete';
+          deleteBtn.title = asSeed
+            ? 'Discard your customizations and restore framework defaults for this seed agent.'
+            : 'Delete the active agent';
         }
         // Builder lockdown — when the active agent is the Builder
         // seed, hide the chrome that would let a user edit it or
@@ -9033,17 +9025,6 @@ select.ui-orch-intake-input {
         var id = getAgentID();
         if (!id) { window.uiAlert('Pick an agent first.'); return; }
         var label = getAgentLabel() || id;
-        // An app agent is reset, never deleted: its app needs it.
-        var app = window.ORCH_APP_AGENTS && window.ORCH_APP_AGENTS[id];
-        if (app) {
-          if (!(await window.uiConfirm('Reset "' + label + '" to its defaults? Every setting changed on it goes back to what ' + app + ' registered. Its memory and conversations are kept.'))) return;
-          fetch('api/console/app-agents/reset?id=' + encodeURIComponent(id), {method: 'POST'}).then(function(r) {
-            if (!r.ok) return r.text().then(function(t) { window.uiAlert((t || ('HTTP ' + r.status)).trim()); });
-            refreshAgentDropdown();
-            refreshAgentCounts();
-          }).catch(function(err) { window.uiAlert('Reset failed: ' + (err && err.message || err)); });
-          return;
-        }
         var seed = isSeedAgentID(id);
         var msg = seed
           ? ('Revert "' + label + '" to framework defaults? Your customizations will be discarded; conversations are kept.')

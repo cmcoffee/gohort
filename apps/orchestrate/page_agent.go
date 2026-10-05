@@ -656,10 +656,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" {
 		backURL = "..?agent=" + url.QueryEscape(id)
 	}
-	// Opened from an app (its chat's Agent settings), back goes to the app.
-	if b := r.URL.Query().Get("back"); localBackPath(b) {
-		backURL = b
-	}
 	// Lock icon — a 🔒/🔓 toggle pinned to the top-right of the editor for any
 	// existing agent (seeds included — locking protects a seed shadow from being
 	// rewritten by another agent too). Toggling it persists immediately via
@@ -1243,12 +1239,6 @@ func shareSubtitleFor(a AgentRecord) string {
 		". They also need the admin's grant of the app; this list can only narrow it, never widen it."
 }
 
-// localBackPath says whether b is a path on this server to send the editor's
-// back arrow to: absolute, and not a scheme-relative or backslash path that a
-// browser would take to another host.
-func localBackPath(b string) bool {
-	return strings.HasPrefix(b, "/") && !strings.HasPrefix(b, "//") && !strings.HasPrefix(b, "/\\")
-}
 
 // budgetReasoningFields are the agent editor's Budgets and Reasoning sections:
 // how much a turn may spend, and how it reasons. Shared by the full editor
@@ -1315,58 +1305,23 @@ func (T *OrchestrateApp) budgetReasoningFields(editRec AgentRecord, leadModelLoc
 	}
 }
 
-// renderAppAgentEditor is the restricted view of an app agent (Scribe's Guide
-// Author, Servitor's investigator): the settings that shape how it works in
-// its app, and Reset to default. Nothing else.
-//
-// An app agent is its app's. It runs only inside the app, with the tools the
-// app hands it each turn, and is not dispatchable from outside it. So the
-// rest of the full editor does not apply: its prompt and description are the
-// app's (never applied from a person's copy anyway), and schedules, channels,
-// cortex, delegation, intake, publishing and sharing would each give it a way
-// to run somewhere it cannot work.
+// renderAppAgentEditor answers an app agent's editor URL. An app agent
+// (Scribe's Guide Author, Servitor's investigator) is set up in its app, beside
+// its chat (app_agent_settings.go), and orchestrate does not list it: the full
+// editor here would give it schedules, channels, delegation and the rest, each
+// a way to run it somewhere it cannot work. So the page says where to go.
 func (T *OrchestrateApp) renderAppAgentEditor(w http.ResponseWriter, r *http.Request, udb Database, id string, spec appagents.AppAgentSpec) {
-	rec, _ := loadAgent(udb, id)
 	app := chFirst(spec.OwningApp, "its app")
-	name := chFirst(rec.Name, spec.Name, id)
-	fields := T.budgetReasoningFields(rec, agentForcesPrivate(rec) && !AllLLMsPrivate())
-	for i := range fields {
-		fields[i].Collapsed = false // nothing here to hide: it is the whole page
-	}
-	intro := name + " belongs to " + app + " and runs only there. These shape how it works there; its prompt and tools are " + app + "'s."
-	sections := splitAgentFormSections(id, "../api/agents/"+id, fields, intro)
-	if len(sections) > 0 {
-		// The splitter names its first section after the identity fields it
-		// usually leads with; here it holds the budgets.
-		sections[0].Title = "Budgets"
-	}
-	sections = append(sections, ui.Section{
-		Title:    "Reset to default",
-		Subtitle: "Put " + name + " back as " + app + " registered it.",
-		Detail:   "Every setting changed here goes back, tool approvals and rules saved on it included. Its memory and conversations are kept.",
-		Body: ui.DisplayPanel{
-			Source: "../api/agents/" + id,
-			Pairs:  []ui.DisplayPair{},
-			Actions: []ui.ToolbarAction{{
-				Label:   "Reset to default",
-				Method:  "POST",
-				URL:     "../api/console/app-agents/reset?id=" + url.QueryEscape(id),
-				Confirm: "Reset " + name + " to its defaults? Every setting changed on it goes back to what " + app + " registered. Its memory and conversations are kept.",
-				Variant: "danger",
-			}},
-		},
-	})
-	backURL := ".."
-	if b := r.URL.Query().Get("back"); localBackPath(b) {
-		backURL = b
-	}
+	name := chFirst(spec.Name, id)
 	page := ui.Page{
-		Title:      name + " (" + app + ")",
-		ShowTitle:  true,
-		BackURL:    backURL,
-		MaxWidth:   "900px",
-		SectionNav: true,
-		Sections:   sections,
+		Title:     name,
+		ShowTitle: true,
+		BackURL:   "..",
+		MaxWidth:  "720px",
+		Sections: []ui.Section{{
+			Title:    "Set up in " + app,
+			Subtitle: name + " belongs to " + app + " and runs only there. Its settings are in " + app + ": Agent settings, beside its chat.",
+		}},
 	}
 	page.ServeHTTP(w, r)
 }

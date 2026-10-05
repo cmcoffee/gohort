@@ -562,7 +562,7 @@ func deleteAgentReporting(db Database, id, owner string) ([]string, error) {
 	// the person's copy AND drops its memory and knowledge. Reset to default
 	// (resetAppAgent) is the way back, and it keeps those.
 	if spec, isApp := appagents.AppAgentByID(id); isApp {
-		return nil, fmt.Errorf("%s belongs to %s and cannot be deleted; Reset to default (Agents, Fleet > App agents) puts it back as the app registered it", chFirst(spec.Name, id), chFirst(spec.OwningApp, "its app"))
+		return nil, fmt.Errorf("%s belongs to %s and cannot be deleted; Reset to default, in %s's Agent settings, puts it back as the app set it up", chFirst(spec.Name, id), chFirst(spec.OwningApp, "its app"), chFirst(spec.OwningApp, "its app"))
 	}
 	if isSeedID(id) {
 		// Shadow record (if any) is owned by the user; nothing to
