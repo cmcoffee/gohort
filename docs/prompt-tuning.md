@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.357). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.359). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -716,11 +716,15 @@ fixed components, then a second report.
 
 ### The second friction report (2026-10-04)
 
-Report 55151b1b on v0.7.353, copied while the lead's builds were still
-running, so the worker's half only: 23 of 40 builds passed, up from 18.
-The shell tasks went from none to all (the grader fixes) and every machine
-task passes at least once (machine run). What is left is mostly wrapping
-an API as a toolbox: books, fx, library, todo and translate passed none.
+Report 55151b1b on v0.7.353: the worker passed 23 of 40 builds (18 in the
+first report), the lead 30 of 40 (11), with no blocking component and no
+task that nothing could do (8 and 6 before). The lead nearly tripling
+with no tuning confirms its first-report failures were the harness; it
+also shows the one shared wording has not hurt it. The shell tasks went
+from none to all on the worker (the grader fixes) and every machine task
+passes at least once (machine run). What is left on the worker is mostly
+wrapping an API as a toolbox: books, fx, library, todo and translate
+passed none there, while the lead passed most of them.
 
 - **Harness, again** (private a25334c): an errored build kept no
   transcript, so its tool errors arrived with none of the calls; the
@@ -740,6 +744,15 @@ an API as a toolbox: books, fx, library, todo and translate passed none.
   test_args was ignored and create ignored cases; a passing read showed no
   data; method and body slipped into url_template unchecked; actions were
   dropped outside toolbox mode; a failed probe did not show what was sent.
+- **From the lead's half** (v0.7.358): a pipeline tool stage decoded the
+  untrusted fence's "[" as a JSON array, failing tools that answered with
+  exactly the declared object; reply_with on an unattended machine was
+  refused in conversation terms, so builds kept putting it back; a sample
+  that did not parse was run as no sample and reported OK. Four more
+  tool_def items went to the work in progress (a read that passed going
+  back to unproven on a re-test, a RESULT line that led with "passed"
+  while a write still waited, a response_pipe yielding nothing passing, the
+  toolbox's missing top-level description).
 - **Misreads:** the "wrong book" was the try-it ISBN's own (Dune), the
   read_output ids and the literal "..." and "N" arguments were the
   builder's own invention, the library tool had already been deleted.
