@@ -217,9 +217,13 @@ Top-level flags (work before or after a subcommand, kitebroker-style):
 
 The database's encrypted values (API keys, credential secrets, OAuth tokens)
 are encrypted under a padlock kept in `gohort.ini` as `[do_not_modify]
-db_locker`, made from random bytes on the first start. It is not tied to the
-machine: copy the data directory and its `gohort.ini` together and it opens
-anywhere. Back them up together, too.
+db_locker`. When that line is missing, the padlock is taken from the
+machine's first network (MAC) address, as every database before v0.7.365 was
+opened, and the line is saved, so from then on it comes from the ini: copy
+the data directory and its `gohort.ini` together and it opens anywhere. Back
+them up together, too. (Before v0.7.365 the line was never actually saved,
+so every start read the MAC; a machine with no network address gets random
+bytes.)
 
 If the padlock does not open a database (gohort.ini was replaced, its
 `db_locker` line was lost or edited, or the database came from another
