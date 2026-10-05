@@ -2336,6 +2336,11 @@ select.ui-orch-intake-input {
           window.uiAlert('Security is not available here: use the Security button.');
         }
       });
+      // Fleet > App agents: the row is the agent, not the one in view.
+      window.uiRegisterClientAction('orchestrate_edit_app_agent', function(ctx) {
+        if (!ctx || !ctx.id) return;
+        window.location.href = 'agent/' + encodeURIComponent(ctx.id);
+      });
       window.uiRegisterClientAction('orchestrate_edit_agent', function() {
         var id = getAgentID();
         if (!id) { window.uiAlert('Pick an agent first.'); return; }

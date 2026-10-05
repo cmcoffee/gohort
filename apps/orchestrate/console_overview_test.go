@@ -51,6 +51,8 @@ func TestNavMenusAreNamedAndScoped(t *testing.T) {
 		{"Runs", "Fleet"},
 		{"Spend", "Fleet"},
 		{"Guardrail blocks", "Fleet"},
+		// Every app's agents, hidden ones included, with Edit and Reset.
+		{"App agents", "Fleet"},
 		{"Broken tools", "Fleet"},
 	}
 	if len(entries) != len(want) {

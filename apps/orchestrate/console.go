@@ -138,6 +138,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 		})
 	})
 	T.HandleFunc("/api/console/agents", T.handleConsoleAgents)
+	// Fleet > App agents: every app's agents, with Reset to put one back.
+	T.HandleFunc("/api/console/app-agents", T.handleConsoleAppAgents)
+	T.HandleFunc("/api/console/app-agents/reset", w(T.handleConsoleAppAgentReset))
 	T.HandleFunc("/api/console/agents/delete", w(T.handleConsoleAgentDelete))
 	T.HandleFunc("/api/console/agents/pause", w(T.handleConsoleAgentPause))
 	T.HandleFunc("/api/console/agents/resume", w(T.handleConsoleAgentResume))

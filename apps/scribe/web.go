@@ -1274,7 +1274,7 @@ func withoutToolNames(names []string, drop ...string) []string {
 // dispatchChat forwards cancel / session routes to orchestrate's PublicHandle*.
 // scribeChat is where the Guide Author chat is routed: orchestrate's own chat
 // endpoints, under chat/, with the open document as the session scope.
-var scribeChat = orchestrate.AppChat{Prefix: "chat/", Query: "guide={scope}"}
+var scribeChat = orchestrate.AppChat{Prefix: "chat/", Query: "guide={scope}", AgentID: guideAgentID, Back: "/scribe"}
 
 func (T *Scribe) dispatchChat(w http.ResponseWriter, r *http.Request, path string) {
 	orch := findOrchestrate()

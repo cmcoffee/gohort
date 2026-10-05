@@ -676,6 +676,17 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// fifth failure in whichever thread tripped it. Forget clears
 						// one tally after the definition is fixed; a success clears it
 						// on its own.
+						// The agents apps bring with them (Scribe's Guide Author,
+						// Servitor's investigator), hidden ones included: the chat
+						// picker rightly leaves those out, since they run only with
+						// their app's tools, which left their settings with no
+						// editor anyone could find. Edit opens the ordinary editor;
+						// Reset puts one back as its app registered it.
+						{Label: "App agents", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/app-agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Edit", Method: "client", URL: "orchestrate_edit_app_agent"},
+							{Label: "Reset to default", Method: "POST", URL: "api/console/app-agents/reset", OnlyIf: "_customized", Variant: "danger",
+								Confirm: "Reset this agent to its defaults? Every setting changed on it goes back to what its app registered, tool approvals and rules saved on it included. Its memory and conversations are kept."},
+						}},
 						{Label: "Broken tools", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/broken-tools", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Forget", Method: "POST", URL: "api/console/broken-tools/forget", Confirm: "Forget this action's failure tally? It starts counting again from zero; if the definition is still wrong it will be back here after five more failures."},
 						}},

@@ -16,6 +16,7 @@ package orchestrate
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/cmcoffee/gohort/core/ui"
@@ -31,6 +32,11 @@ type AppChat struct {
 	// placeholders ("guide={scope}", "project_id={project_id}") so the
 	// session list follows what the app has open.
 	Query string
+	// AgentID, when set, puts "Agent settings" in the chat's toolbar: the
+	// agent's own editor in orchestrate (rounds, plan steps, gap detection,
+	// reasoning), with Back returning to Back.
+	AgentID string
+	Back    string
 }
 
 // appChatRuns is the run registry's path under an app. handleRunsDispatch
@@ -72,6 +78,14 @@ func (c AppChat) Panel(p ui.AgentLoopPanel) ui.AgentLoopPanel {
 	set(&p.BlockResolveURL, c.url("sessions/{id}/blocks/{block_id}/resolve"))
 	// A reload or a closed tab rejoins the turn still running.
 	set(&p.RunsURLBase, appChatRuns)
+	if c.AgentID != "" {
+		u := "/orchestrate/agent/" + url.PathEscape(c.AgentID)
+		if c.Back != "" {
+			u += "?back=" + url.QueryEscape(c.Back)
+		}
+		p.Actions = append(p.Actions, ui.ToolbarAction{Label: "Agent settings", Method: "redirect", URL: u,
+			Title: "This chat's agent: its rounds, plan steps, gap detection and reasoning. Reset to default is there too."})
+	}
 	return p
 }
 

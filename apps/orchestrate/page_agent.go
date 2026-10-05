@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -475,6 +476,26 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	//
 	// CREATE mode stays one POST form: there is no record to PATCH yet, and a
 	// new agent needs its fields submitted together with the templates picker.
+	// An app agent's prompt and description are its app's (frameworkOwnedSeedFields:
+	// a change to them is never applied), so they are not offered as fields
+	// to change. Everything else is the user's, layered over the app's
+	// definition, and Reset to default (below, and on Fleet > App agents)
+	// puts it back.
+	appSpec, isAppAgent := appagents.AppAgentByID(id)
+	if isAppAgent {
+		title = "Edit app agent"
+		kept := fields[:0:0]
+		for _, f := range fields {
+			if f.Field == "description" || f.Field == "orchestrator_prompt" {
+				continue
+			}
+			if f.Type == "header" && f.Label == "Persona" {
+				f.Help = "Its prompt comes from " + chFirst(appSpec.OwningApp, "its app") + ", like the tools it writes with: they are what make it work there."
+			}
+			kept = append(kept, f)
+		}
+		fields = kept
+	}
 	agentSection := ui.Section{
 		Title:    "Agent",
 		Subtitle: "Identity, prompts, and behavior.",
@@ -671,6 +692,27 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Reset to default for an app agent: its copy goes, and it reads as its app
+	// registered it. Memory and conversations stay (resetAppAgent).
+	if isAppAgent {
+		sections = append(sections, ui.Section{
+			Title:    "Reset to default",
+			Subtitle: "Put this agent back as " + chFirst(appSpec.OwningApp, "its app") + " registered it.",
+			Detail:   "Every setting changed here goes back, tool approvals and rules saved on it included. Its memory and conversations are kept.",
+			Body: ui.DisplayPanel{
+				Source: "../api/agents/" + id,
+				Pairs:  []ui.DisplayPair{},
+				Actions: []ui.ToolbarAction{{
+					Label:   "Reset to default",
+					Method:  "POST",
+					URL:     "../api/console/app-agents/reset?id=" + url.QueryEscape(id),
+					Confirm: "Reset this agent to its defaults? Every setting changed on it goes back to what its app registered. Its memory and conversations are kept.",
+					Variant: "danger",
+				}},
+			},
+		})
+	}
+
 	// Delete — the human's authoritative remove for any existing agent the editor
 	// is open on, INCLUDING a sub-agent reached via the picker (which agents
 	// can't delete once the cross-agent lock is in place). Non-seed only: seeds
@@ -702,8 +744,12 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// reopens on the agent the user was just editing instead of
 	// snapping to Chat. Empty id (create form) skips the param.
 	backURL := ".."
-	if id != "" {
+	if id != "" && !isAppAgent {
 		backURL = "..?agent=" + url.QueryEscape(id)
+	}
+	// Opened from an app (its chat's Agent settings), back goes to the app.
+	if b := r.URL.Query().Get("back"); localBackPath(b) {
+		backURL = b
 	}
 	// Lock icon — a 🔒/🔓 toggle pinned to the top-right of the editor for any
 	// existing agent (seeds included — locking protects a seed shadow from being
@@ -1286,4 +1332,11 @@ func shareSubtitleFor(a AgentRecord) string {
 	}
 	return "Published, and narrowed by you to " + strings.Join(a.AllowedUsers, ", ") +
 		". They also need the admin's grant of the app; this list can only narrow it, never widen it."
+}
+
+// localBackPath says whether b is a path on this server to send the editor's
+// back arrow to: absolute, and not a scheme-relative or backslash path that a
+// browser would take to another host.
+func localBackPath(b string) bool {
+	return strings.HasPrefix(b, "/") && !strings.HasPrefix(b, "//") && !strings.HasPrefix(b, "/\\")
 }
