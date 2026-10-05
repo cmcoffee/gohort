@@ -52,7 +52,7 @@ For the overview and quick start, see the [README](../README.md).
 - **Detached agent runs**: turns survive client disconnect. The HTTP request's context drives only the SSE delivery leg; the agent loop runs against an independent context and tees every frame into a per-run ring buffer. A reconnecting client picks up where it left off via `/api/runs/<id>/stream`. Active runs show a pulsing indicator on their session in the rail, and sessions with live background work (event-monitor watchers or in-flight dispatched agents) lift into an "Active" group at the top of the rail with a count badge, so ongoing work stays findable.
 - **Pipeline framework**, `RunPipelineAsync` / `RestorePipeline` for long-running tasks: session registration, persistent queue (survives restarts), per-app concurrency cap, completion notifications without duplicates.
 - **Mid-flight interjections**: queue notes via `/api/inject` while a turn is running; drained at per-step boundaries and folded into the next worker brief.
-- **Encrypted config + credentials**: AES-CFB kvlite database with hardware-locked storage; each credential carries a Base URL + add/remove allowed-endpoints allow-list, audit log, rate limits, and an optional per-credential TLS-skip for self-signed / IP-addressed LAN appliances.
+- **Encrypted config + credentials**: AES-CFB kvlite database whose padlock lives in `gohort.ini` (`[do_not_modify] db_locker`), not tied to the machine: the database and its ini travel together (see "The database padlock" below); each credential carries a Base URL + add/remove allowed-endpoints allow-list, audit log, rate limits, and an optional per-credential TLS-skip for self-signed / IP-addressed LAN appliances.
 - **Maintenance functions**: apps register one-shot repair operations (re-embed, migrate, dedupe); admin UI surfaces them as Run-button rows.
 
 ## Configure (web admin)
@@ -212,6 +212,25 @@ Top-level flags (work before or after a subcommand, kitebroker-style):
 | `--config <path>` | Override the INI lookup (default: `<binary-dir>/gohort.ini`) |
 | `--debug` / `--trace` / `--snoop` / `--serial` | Diagnostic modifiers |
 | `--version` | Show version |
+
+### The database padlock
+
+The database's encrypted values (API keys, credential secrets, OAuth tokens)
+are encrypted under a padlock kept in `gohort.ini` as `[do_not_modify]
+db_locker`, made from random bytes on the first start. It is not tied to the
+machine: copy the data directory and its `gohort.ini` together and it opens
+anywhere. Back them up together, too.
+
+If the padlock does not open a database (gohort.ini was replaced, its
+`db_locker` line was lost or edited, or the database came from another
+install), gohort refuses to start and says so. Two ways forward:
+
+- Put back the `gohort.ini` (or just its `db_locker` line) that goes with
+  the database. Nothing is lost.
+- Or start once with `GOHORT_RESET_SECRETS=1`. The database is first copied
+  to `<db>.before-reset-<time>`, then its encrypted values are cleared and
+  everything else is kept; the secrets have to be entered again. If the copy
+  fails, nothing is cleared.
 
 The `serve` subcommand starts the web dashboard and has its own flags:
 

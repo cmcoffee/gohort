@@ -74,7 +74,7 @@ membership without any of those being rebuilt.
 
 **The repo backend is the storage pattern to copy.**
 `apps/servitor/repo_backend.go` clones into tmpfs, ingests text files into the
-hardware-locked-encrypted `RepoFilesDB`, discards the plaintext clone, and
+padlock-encrypted `RepoFilesDB`, discards the plaintext clone, and
 serves `search_code` / `read_file` / `list_dir` by decrypting in memory. That is
 the shape a bundle store wants, with one difference noted under slice 3.
 
