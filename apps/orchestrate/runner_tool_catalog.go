@@ -772,19 +772,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 		// The injection SCAN rides the same wrap and defaults to the same set —
 		// see toolResultPolicyFor. Resolved once here rather than per call, so a
 		// turn with scanning off pays two bools and nothing else.
-		policy := toolResultPolicyFor(receiver, tools[i].Tool)
-		if policy.fence {
-			// Network-capable and not framework-authored: the same predicate
-			// that decides fencing decides what can carry data out. The tool's
-			// per-action caps ride along, so a grouped tool's local actions are
-			// not judged as if they were its network one.
-			t.noteOutboundTool(name, tools[i].Tool.ActionCaps, tools[i].Tool.OwnModelReach)
-		}
-		inner := orig
-		orig = func(ctx context.Context, args map[string]any) (string, error) {
-			out, err := inner(ctx, args)
-			return t.applyToolResultPolicy(name, policy, args, out, err)
-		}
+		orig = t.withToolResultPolicy(receiver, tools[i].Tool, orig)
 		tools[i].Handler = func(ctx context.Context, args map[string]any) (string, error) {
 			// Activity-pane cmd / inline tool_call go in parallel so
 			// both views work: apps with activity visible (servitor)
@@ -1092,4 +1080,22 @@ func (t *chatTurn) withOwnTools(sess *ToolSession, pool []AgentToolDef) []AgentT
 		pool = append(pool, td)
 	}
 	return pool
+}
+
+// withToolResultPolicy wraps h with receiver's tool-result policy for tl: the
+// untrusted-content fence and the injection scan (toolResultPolicyFor). A tool
+// that fences is also noted as able to carry data out: the same predicate that
+// decides fencing decides that, and the tool's per-action caps ride along, so a
+// grouped tool's local actions are not judged as if they were its network one.
+// Shared by orchestrate's own tool wrap and GuardAppLoop.
+func (t *chatTurn) withToolResultPolicy(receiver AgentRecord, tl Tool, h func(context.Context, map[string]any) (string, error)) func(context.Context, map[string]any) (string, error) {
+	policy := toolResultPolicyFor(receiver, tl)
+	if policy.fence {
+		t.noteOutboundTool(tl.Name, tl.ActionCaps, tl.OwnModelReach)
+	}
+	name := tl.Name
+	return func(ctx context.Context, args map[string]any) (string, error) {
+		out, err := h(ctx, args)
+		return t.applyToolResultPolicy(name, policy, args, out, err)
+	}
 }

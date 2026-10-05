@@ -138,7 +138,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 	emit(sid, probeEvent{Kind: "status", Text: "Validating stored knowledge against the new code…"})
 	userMsg := "Here is servitor's currently stored knowledge about this repository (docs and discrete facts). The code was just re-pulled. Verify each item against the CURRENT code: correct a stale doc with update_doc, correct a changed fact value with store_fact, and retire_fact any fact whose subject no longer exists. Leave accurate items untouched.\n\n" + claims.String()
 
-	resp, _, err := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: userMsg}}, AgentLoopConfig{
+	resp, _, err := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: userMsg}}, servitorGuard(ctx, user).Apply(AgentLoopConfig{
 		SystemPrompt:    buildRepoAuditPrompt(appliance),
 		Tools:           tools,
 		MaxRounds:       40,
@@ -147,7 +147,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 		MaskDebugOutput: true,
 		SerialTools:     true,
 		ChatOptions:     []ChatOption{WithThink(false)},
-	})
+	}))
 
 	if ctx.Err() != nil {
 		emit(sid, probeEvent{Kind: "status", Text: "Memory validation cancelled: any docs already corrected this run are kept."})

@@ -74,6 +74,7 @@ func normalizeTask(s string) string {
 // one function.
 func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string, appliance Appliance, confirm chan bool, messages []Message, udb Database, saveProfile bool) {
 	pr := &probeRun{T: T, ctx: ctx, id: id, userID: userID, ownerUser: ownerUser, appliance: appliance, confirm: confirm, messages: messages, udb: udb, saveProfile: saveProfile}
+	pr.guard = servitorGuard(ctx, userID)
 	// scratch is this run's private write location on the target (see scratch.go).
 	// Set once the transport is up; cleared if the directory can't be created, so
 	// the classifier falls back to gating every write.
@@ -134,6 +135,7 @@ type probeRun struct {
 	scratchCleanup   func()
 	ownerUDB         Database
 	a                *Servitor
+	guard            *orchestrate.AppLoopGuard // orchestrate's guardrails, on every loop this run makes (servitorGuard)
 	termPrompt       string
 	sessionFailures  []sessionFailure
 	cmdCount         map[string]int
@@ -1976,7 +1978,7 @@ func (pr *probeRun) mapProbeTool() probeAction {
 			withHeartbeat(pr.ctx, pr.id, "Probe: "+short, func() {
 				workerResp, _, workerErr = pr.a.RunAgentLoop(pr.ctx,
 					[]Message{{Role: "user", Content: msg.String()}},
-					AgentLoopConfig{
+					pr.guard.Apply(AgentLoopConfig{
 						// mapping=true: this is the reconnaissance pass, so the
 						// worker persists through failures rather than handing
 						// the first dead end back to the investigator.
@@ -1988,7 +1990,7 @@ func (pr *probeRun) mapProbeTool() probeAction {
 						MaskDebugOutput: true,
 						ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
 						SerialTools:     true,
-					},
+					}),
 				)
 			})
 			if workerErr != nil {
@@ -2189,7 +2191,7 @@ func (pr *probeRun) mapInvestigate() probeAction {
 	pr.m.stuckRoundCount = 0
 	pr.m.softNudgeFired = false
 	pr.m.firmNudgeFired = false
-	pr.m.invCfg = AgentLoopConfig{
+	pr.m.invCfg = pr.guard.Apply(AgentLoopConfig{
 		SystemPrompt: buildInvestigatorSystemPrompt(pr.appliance, pr.resolvedTools),
 		Tools:        pr.m.investigatorTools,
 		MaxRounds:    investigatorRoundBudget,
@@ -2213,7 +2215,7 @@ func (pr *probeRun) mapInvestigate() probeAction {
 		// legitimately names tools like store_fact when describing the
 		// code, so don't nudge it as if it meant to call them.
 		DisableToolMentionCorrection: pr.appliance.Type == "repo",
-	}
+	})
 	withHeartbeat(pr.ctx, pr.id, "Investigator", func() {
 		pr.m.invResp, pr.m.invHistory, pr.m.invErr = pr.a.RunAgentLoop(pr.ctx,
 			[]Message{{Role: "user", Content: pr.m.invMsg.String()}}, pr.m.invCfg)
@@ -2288,7 +2290,7 @@ func (pr *probeRun) mapSynthesize() probeAction {
 	withHeartbeat(pr.ctx, pr.id, "Synthesizing profile", func() {
 		pr.m.synthResp, _, pr.m.synthErr = pr.a.RunAgentLoop(pr.ctx,
 			[]Message{{Role: "user", Content: pr.m.synthMsg}},
-			AgentLoopConfig{
+			pr.guard.Apply(AgentLoopConfig{
 				SystemPrompt:    buildSynthesisSystemPrompt(pr.appliance),
 				Tools:           nil,
 				MaxRounds:       1,
@@ -2296,7 +2298,7 @@ func (pr *probeRun) mapSynthesize() probeAction {
 				TierOverride:    applianceTierOverride(pr.appliance.OrchestratorTier),
 				MaskDebugOutput: true,
 				ChatOptions:     []ChatOption{WithThink(false)},
-			},
+			}),
 		)
 	})
 	if pr.m.synthErr != nil && pr.ctx.Err() == nil {
@@ -2489,7 +2491,7 @@ func (pr *probeRun) chatProbeTool() probeAction {
 			withHeartbeat(pr.ctx, pr.id, "Worker: investigating", func() {
 				workerResp, _, err = pr.a.RunAgentLoop(pr.ctx,
 					[]Message{{Role: "user", Content: msg.String()}},
-					AgentLoopConfig{
+					pr.guard.Apply(AgentLoopConfig{
 						// mapping=false: a chat probe stops at the first dead end and
 						// lets the investigator pick the next angle.
 						SystemPrompt:    buildProbeWorkerPrompt(pr.appliance, pr.scratch, false, pr.resolvedTools),
@@ -2503,7 +2505,7 @@ func (pr *probeRun) chatProbeTool() probeAction {
 						// Repo workers read code that names their own tools; don't
 						// misread a description as an intended call.
 						DisableToolMentionCorrection: pr.appliance.Type == "repo",
-					},
+					}),
 				)
 			})
 			if err != nil {
@@ -2701,7 +2703,7 @@ func (pr *probeRun) chatAfter() probeAction {
 			if leadAnswer != "" {
 				cMsg.WriteString(fmt.Sprintf("## Investigator Summary\n\n%s\n", leadAnswer))
 			}
-			pr.a.RunAgentLoop(bgCtx, []Message{{Role: "user", Content: cMsg.String()}}, AgentLoopConfig{
+			pr.a.RunAgentLoop(bgCtx, []Message{{Role: "user", Content: cMsg.String()}}, servitorGuard(bgCtx, pr.userID).Apply(AgentLoopConfig{
 				SystemPrompt:    buildConsolidationPrompt(pr.appliance),
 				Tools:           []AgentToolDef{pr.c.read_doc_tool, pr.c.update_doc_tool, pr.store_fact_tool, pr.link_entities_tool, pr.record_discovery_tool, pr.record_technique_tool, pr.note_lesson_tool},
 				MaxRounds:       10,
@@ -2709,7 +2711,7 @@ func (pr *probeRun) chatAfter() probeAction {
 				TierOverride:    applianceTierOverride(pr.appliance.OrchestratorTier),
 				MaskDebugOutput: true,
 				ChatOptions:     []ChatOption{WithThink(false)},
-			})
+			}))
 			emit(pr.id, probeEvent{Kind: "status", Text: "Background: knowledge consolidated."})
 		}
 	}

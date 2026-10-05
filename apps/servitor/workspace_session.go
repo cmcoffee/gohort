@@ -76,7 +76,7 @@ func (T *Servitor) runWorkspaceSession(ctx context.Context, id, userID string, w
 	withHeartbeat(ctx, id, "Coordinator: working", func() {
 		resp, _, err = a.RunAgentLoop(ctx,
 			[]Message{{Role: "user", Content: buildScopedLeadMessage(messages)}},
-			AgentLoopConfig{
+			servitorGuard(ctx, userID).Apply(AgentLoopConfig{
 				SystemPrompt: leadPrompt,
 				Tools:        tools,
 				MaxRounds:    40,
@@ -89,7 +89,7 @@ func (T *Servitor) runWorkspaceSession(ctx context.Context, id, userID string, w
 				MaskDebugOutput: true,
 				ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(true)},
 				SerialTools:     true,
-			},
+			}),
 		)
 	})
 	if ctx.Err() != nil {

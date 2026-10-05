@@ -304,7 +304,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 	withHeartbeat(ctx, id, fmt.Sprintf("Mapping %s", command), func() {
 		resp, _, err = a.RunAgentLoop(ctx,
 			[]Message{{Role: "user", Content: taskMsg}},
-			AgentLoopConfig{
+			servitorGuard(ctx, userID).Apply(AgentLoopConfig{
 				SystemPrompt:    buildMapAppSystemPrompt(appliance, command, scratch),
 				Tools:           []AgentToolDef{run_tool, note_lesson_tool},
 				MaxRounds:       60,
@@ -312,7 +312,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 				TierOverride:    applianceTierOverride(appliance.WorkerTier),
 				MaskDebugOutput: true,
 				ChatOptions:     []ChatOption{WithThink(false)},
-			},
+			}),
 		)
 	})
 

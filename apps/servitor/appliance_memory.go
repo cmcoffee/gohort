@@ -90,6 +90,20 @@ var applianceMemoryModalScript = orchestrate.AgentMemoryModalScript("servitor_ap
 // at runtime, so cache after first hit).
 var cachedServitorOrch *orchestrate.OrchestrateApp
 
+// servitorGuard is orchestrate's guardrails for one Servitor run by user: the
+// deployment's Always rules, the investigator's own rules, the tool-result
+// fence and scan, and the tainted-action check (orchestrate.AppLoopGuard).
+// Servitor runs its own loops rather than orchestrate's runner, so without
+// this none of those saw an investigation. One per run, on that run's
+// context; nil (applying nothing) when orchestrate is not running.
+func servitorGuard(ctx context.Context, user string) *orchestrate.AppLoopGuard {
+	orch := servitorOrch()
+	if orch == nil {
+		return nil
+	}
+	return orch.AppLoopGuard(ctx, user, servitorInvestigatorAgentID)
+}
+
 func servitorOrch() *orchestrate.OrchestrateApp {
 	if cachedServitorOrch != nil {
 		return cachedServitorOrch
