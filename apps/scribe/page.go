@@ -168,7 +168,11 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 		RefreshOn: []string{"guides"},
 		ActiveURL: "chat/active",
 		// Right — the Guide Author chat (endpoints; WorkbenchPanel builds the panel).
-		Chat: ui.AgentLoopPanel{
+		// scribeChat fills in what this literal leaves out: edit and retry on
+		// a message, rename, rejoining a running turn after a reload, tool
+		// confirmations, question cards and the guard notices, the same as
+		// orchestrate's own chat.
+		Chat: scribeChat.Panel(ui.AgentLoopPanel{
 			// Past conversations. The endpoints behind these three have existed
 			// since the app shipped — every conversation with the Guide Author was
 			// already being written to the same store orchestrate uses — but the
@@ -215,7 +219,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			LockActivity: true,
 			EmptyText:    "Ask me to draft or revise: e.g. \"Add an introduction\", \"Expand the setup section\", or \"Rewrite this as a runbook.\"",
 			Placeholder:  "Ask the Guide Author…",
-		},
+		}),
 	}
 
 	page := ui.Page{

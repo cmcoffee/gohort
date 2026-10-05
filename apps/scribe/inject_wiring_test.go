@@ -30,10 +30,10 @@ func TestGuidesChatAcceptsMidFlightMessages(t *testing.T) {
 	if !strings.Contains(string(page), `InjectURL:    "chat/inject"`) {
 		t.Error("the Guide Author panel declares no InjectURL — a second thought will cancel the turn in progress")
 	}
-	if !strings.Contains(string(web), `case path == "chat/inject":`) {
+	// chat/inject is one of the endpoints orchestrate's AppChat answers
+	// (PublicHandleInject, the running turn's note queue); Scribe has to hand
+	// its chat/ paths there.
+	if !strings.Contains(string(web), "strings.HasPrefix(path, scribeChat.Prefix)") || !strings.Contains(string(web), "orch.ServeAppChat(") {
 		t.Error("nothing serves chat/inject, so the panel's mid-flight message 404s")
-	}
-	if !strings.Contains(string(web), "PublicHandleInject") {
-		t.Error("chat/inject must land on orchestrate's injection queue, which is where the running turn reads notes from")
 	}
 }

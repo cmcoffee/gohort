@@ -99,24 +99,12 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 		T.handleSetActive(w, r, udb)
 	case path == "chat/send":
 		T.handleChatSend(w, r, udb, user)
-	case path == "chat/cancel":
-		T.dispatchChat(w, r, "cancel", "")
-	case path == "chat/inject":
-		// A message typed while a turn is running joins that turn's note queue
-		// rather than starting a new one. Without this route the panel has
-		// nowhere to put it and falls back to its ordinary send, which tears
-		// down the running stream — which is what an author sees as "Could not
-		// complete this turn — cancelled" after asking for one more thing.
-		orch := findOrchestrate()
-		if orch == nil {
-			http.Error(w, "orchestrate is not initialized", http.StatusServiceUnavailable)
-			return
-		}
-		orch.PublicHandleInject(w, r)
-	case path == "chat/sessions":
-		T.dispatchChat(w, r, "sessions", "")
-	case strings.HasPrefix(path, "chat/sessions/"):
-		T.dispatchChat(w, r, "session-one", strings.TrimPrefix(path, "chat/sessions/"))
+	case strings.HasPrefix(path, scribeChat.Prefix) || strings.HasPrefix(path, "api/runs/"):
+		// Everything else the chat panel asks for: cancel, the mid-turn
+		// inject (a second thought joins the running turn instead of
+		// cancelling it), confirmations, sessions and their edit, rename,
+		// diagnostics and question cards, and rejoining a run.
+		T.dispatchChat(w, r, path)
 	default:
 		http.NotFound(w, r)
 	}
@@ -1284,7 +1272,11 @@ func withoutToolNames(names []string, drop ...string) []string {
 }
 
 // dispatchChat forwards cancel / session routes to orchestrate's PublicHandle*.
-func (T *Scribe) dispatchChat(w http.ResponseWriter, r *http.Request, kind, sid string) {
+// scribeChat is where the Guide Author chat is routed: orchestrate's own chat
+// endpoints, under chat/, with the open document as the session scope.
+var scribeChat = orchestrate.AppChat{Prefix: "chat/", Query: "guide={scope}"}
+
+func (T *Scribe) dispatchChat(w http.ResponseWriter, r *http.Request, path string) {
 	orch := findOrchestrate()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
@@ -1299,24 +1291,17 @@ func (T *Scribe) dispatchChat(w http.ResponseWriter, r *http.Request, kind, sid 
 		http.Error(w, "guide author agent unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	switch kind {
-	case "cancel":
-		orch.PublicHandleCancel(w, r, agent)
-	case "sessions":
-		// Scoped to the guide that is open. A flat list of every conversation
-		// ever had with the Guide Author is close to useless once the app has
-		// been used for a while: the sessions about THIS document are buried
-		// under the ones about the others.
-		//
-		// The id comes from the REQUEST. It used to come from the stored
-		// "current" guide, which the page POSTs on selection — one slot per
-		// user, written fire-and-forget, so the list could be fetched before
-		// the write landed and answer about the document you just left. The
-		// stored value stays as the fallback for a caller that sends nothing.
-		orch.PublicHandleSessionListFor(w, r, agent.ID, requestGuideID(r, udb))
-	case "session-one":
-		orch.PublicHandleSessionOne(w, r, agent.ID, sid)
-	default:
+	// The session list is scoped to the guide that is open. A flat list of
+	// every conversation ever had with the Guide Author is close to useless
+	// once the app has been used for a while: the sessions about THIS
+	// document are buried under the ones about the others.
+	//
+	// The id comes from the REQUEST. It used to come from the stored
+	// "current" guide, which the page POSTs on selection — one slot per
+	// user, written fire-and-forget, so the list could be fetched before the
+	// write landed and answer about the document you just left. The stored
+	// value stays as the fallback for a caller that sends nothing.
+	if !orch.ServeAppChat(w, r, agent, scribeChat, path, requestGuideID(r, udb)) {
 		http.NotFound(w, r)
 	}
 }

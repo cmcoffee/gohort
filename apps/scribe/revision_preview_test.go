@@ -75,7 +75,9 @@ func TestGuideAuthorSessionsAreReachable(t *testing.T) {
 		}
 	}
 	web := readSource(t, "web.go")
-	if !strings.Contains(web, `case path == "chat/sessions":`) || !strings.Contains(web, `strings.HasPrefix(path, "chat/sessions/")`) {
+	// Served by orchestrate's AppChat, which answers chat/sessions and
+	// chat/sessions/<id> for the paths Scribe hands it.
+	if !strings.Contains(web, "strings.HasPrefix(path, scribeChat.Prefix)") || !strings.Contains(web, "orch.ServeAppChat(") {
 		t.Error("the rail's URLs must be served, or every past session 404s")
 	}
 	// As a button, not a rail — the chat column has nothing to give a list.
