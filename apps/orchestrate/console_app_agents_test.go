@@ -127,33 +127,3 @@ func TestAppAgentsGroupApartInPickers(t *testing.T) {
 		}
 	}
 }
-
-// The chat picker offers every app agent, hidden ones included, so each can
-// be selected and set up; a hidden one's composer points at its app. What may
-// be someone's default agent still leaves the hidden ones out.
-func TestChatPickerOffersHiddenAppAgentsLocked(t *testing.T) {
-	appagents.RegisterAppAgent(appagents.AppAgentSpec{
-		ID: "app-test-inside", Name: "Inside", OwningApp: "Zz Test", Hidden: true, Prompt: "x",
-	})
-	all := []AgentRecord{{ID: "app-test-inside", Name: "Inside"}, {ID: "mine", Name: "Mine"}}
-	in := func(list []AgentRecord, id string) bool {
-		for _, a := range list {
-			if a.ID == id {
-				return true
-			}
-		}
-		return false
-	}
-	if !in(chatPickerAgents(all), "app-test-inside") || !in(chatPickerAgents(all), "mine") {
-		t.Fatal("the chat picker leaves out a hidden app agent")
-	}
-	if in(pickerAgents(all), "app-test-inside") {
-		t.Fatal("a hidden app agent became eligible as a default agent")
-	}
-	if lock := appAgentLocks()["app-test-inside"]; !strings.Contains(lock, "works inside Zz Test") {
-		t.Fatalf("lock = %q", lock)
-	}
-	if _, locked := appAgentLocks()["app-test-shown"]; locked {
-		t.Fatal("a visible app agent's composer was locked")
-	}
-}

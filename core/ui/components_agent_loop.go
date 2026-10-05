@@ -384,12 +384,6 @@ type AgentLoopPanel struct {
 	// composer's placeholder there; it falls back to RecordLockedText.
 	AltLocked     bool   `json:"alt_locked,omitempty"`
 	AltLockedText string `json:"alt_locked_text,omitempty"`
-	// LockedAgentsFlag names a window global the app sets to a map of agent
-	// id -> text: while that agent is selected (window.GOHORT_AGENT_ID) the
-	// composer is replaced by the text, in every session of it. For an agent
-	// that can be looked at and configured here but only talked to somewhere
-	// else. Question cards still answer. Empty = off.
-	LockedAgentsFlag string `json:"locked_agents_flag,omitempty"`
 
 	// Height overrides the panel's default size — any CSS length ("360px",
 	// "50vh"). The default fills the viewport, which is right for a page whose
