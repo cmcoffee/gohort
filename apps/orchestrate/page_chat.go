@@ -87,7 +87,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// pickerAgents drops the retired framework seeds (Builder stays) —
 	// the same filter every picker surface applies.
 	phases.mark("first-run checks")
-	grouped, cortexAgents, subAgentsByParent := agentPickerOptions(pickerAgents(agents))
+	grouped, cortexAgents, subAgentsByParent := agentPickerOptions(chatPickerAgents(agents))
 	phases.mark("picker options")
 	agentOpts = append(agentOpts, grouped...)
 
@@ -151,6 +151,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		appAgentApps[sp.ID] = chFirst(sp.OwningApp, "its app")
 	}
 	appAgentsJSON, _ := json.Marshal(appAgentApps)
+	appLocksJSON, _ := json.Marshal(appAgentLocks())
 	phases.mark("marshal head json")
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
@@ -158,6 +159,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(cortexAgentsJSON) +
 		";\nwindow.ORCH_RECORD_AGENTS = " + string(recordAgentsJSON) +
 		";\nwindow.ORCH_APP_AGENTS = " + string(appAgentsJSON) +
+		";\nwindow.ORCH_APP_LOCKED = " + string(appLocksJSON) +
 		";</script>\n<script>" + ArtifactClientJS + "</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
 
 	// Builder handoff: a ?builder_brief=<id> deep-link (from the send_to_builder
@@ -717,8 +719,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// arrives (channels, scheduled runs, wakes) and the agent's
 					// own notes. A session is where a person talks to the agent,
 					// and one of an agent that reads its cortex sees it anyway.
-					AltLocked:     true,
-					AltLockedText: "This is the agent's cortex: what reached it (messages, scheduled runs, monitor fires) and its own notes. It reads it on every turn. Start a new session to talk to it.",
+					AltLocked: true,
+					// A hidden app agent is picked here to set it up; it is
+					// talked to in its app (appAgentLocks).
+					LockedAgentsFlag: "ORCH_APP_LOCKED",
+					AltLockedText:    "This is the agent's cortex: what reached it (messages, scheduled runs, monitor fires) and its own notes. It reads it on every turn. Start a new session to talk to it.",
 					// "+ New ▾" offers a clean-room session. Picking it opens a
 					// fresh thread and arms incognito on the first send, so the
 					// runner stamps the session as a clean room at creation: no

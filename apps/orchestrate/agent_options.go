@@ -57,6 +57,36 @@ func pickerAgents(agents []AgentRecord) []AgentRecord {
 	return out
 }
 
+// chatPickerAgents is what the chat page's agent picker offers: pickerAgents
+// plus the app agents it leaves out for being Hidden. The chat picker is
+// where an agent is looked at and set up (Edit, Tools, Memory, Rules,
+// Security, its conversations), so every app agent belongs there, under its
+// app. A hidden one cannot work without its app's tools, so its composer is
+// locked with a pointer to the app (appAgentLocks). pickerAgents stays
+// without them: it also decides what may be someone's default agent.
+func chatPickerAgents(agents []AgentRecord) []AgentRecord {
+	out := pickerAgents(agents)
+	for _, a := range agents {
+		if hiddenAppAgent(a.ID) && a.OwnedBy == "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// appAgentLocks maps each hidden app agent to the line shown in place of the
+// composer while it is selected: it is talked to in its app.
+func appAgentLocks() map[string]string {
+	out := map[string]string{}
+	for _, sp := range appagents.AppAgents() {
+		if sp.Hidden {
+			app := chFirst(sp.OwningApp, "its app")
+			out[sp.ID] = chFirst(sp.Name, sp.ID) + " works inside " + app + ", with the tools " + app + " gives it: talk to it there. Its settings, tools, memory, rules and conversations are here."
+		}
+	}
+	return out
+}
+
 // agentPickerOptions builds the Agency agent-picker's GROUPED options — Built-in
 // / Conversation Agents / Specialized Agents / one group per owning app — plus
 // the cortex-session map and the sub-agents-by-parent map. The "— select agent —"
@@ -84,11 +114,9 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 		if isCloneOnlySeed(a.ID) {
 			continue
 		}
-		// App agents get their own per-app group; a Hidden app agent stays out.
+		// App agents get their own per-app group. Hidden ones are filtered
+		// (or not) by the caller: chatPickerAgents keeps them.
 		if spec, isApp := appagents.AppAgentByID(a.ID); isApp {
-			if a.Hidden {
-				continue
-			}
 			appAgents = append(appAgents, agentPickerRow{ID: a.ID, Name: a.Name, App: spec.OwningApp})
 		} else if ord, ok := agentPickerBuiltInOrder[a.ID]; ok {
 			builtIns = append(builtIns, agentPickerRow{ID: a.ID, Name: a.Name, Order: ord})
@@ -130,7 +158,7 @@ func (T *OrchestrateApp) handleAgentPickerOptions(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	agents := pickerAgents(listAgents(udb, user))
+	agents := chatPickerAgents(listAgents(udb, user))
 	opts, cortex, subs := agentPickerOptions(agents)
 	// The two Cortex maps ride along, so an agent Builder just created gets
 	// its Cortex row without a reload. They were only ever written into the

@@ -4922,14 +4922,21 @@
     // all, just a line saying where to talk instead; the input stays in the
     // page, hidden, because a question card answers through it.
     var lockNote = null;
+    // agentLockText is the app's reason the selected agent is not talked to
+    // here (cfg.locked_agents_flag), or ''.
+    function agentLockText(agentId) {
+      var m = cfg.locked_agents_flag && window[cfg.locked_agents_flag];
+      return (m && agentId && m[agentId]) ? String(m[agentId]) : '';
+    }
     function applyRecordLock(sid) {
       var agentId = window.GOHORT_AGENT_ID;
+      var agentLocked = agentLockText(agentId);
       var altLocked = !!(cfg.alt_locked && sid && sid === altPinnedSession(agentId));
-      recordLocked = altLocked || !!(sid && sid === recordPinnedSession(agentId));
+      recordLocked = !!agentLocked || altLocked || !!(sid && sid === recordPinnedSession(agentId));
       inputArea.disabled = recordLocked;
       sendBtn.disabled = recordLocked;
       inputArea.placeholder = cfg.placeholder || 'Ask something…';
-      var lockedText = (altLocked && cfg.alt_locked_text) || cfg.record_locked_text ||
+      var lockedText = agentLocked || (altLocked && cfg.alt_locked_text) || cfg.record_locked_text ||
         'This thread is a record. Start a new session to talk.';
       if (recordLocked && !lockNote && inputRow.parentNode) {
         lockNote = el('div', {class: 'ui-agent-locked-note'});
@@ -4940,6 +4947,11 @@
         lockNote.style.display = recordLocked ? '' : 'none';
       }
       inputRow.style.display = recordLocked ? 'none' : '';
+    }
+
+    // Selecting another agent can lock or unlock the composer by itself.
+    if (cfg.locked_agents_flag) {
+      window.addEventListener('gohort-agent-id-changed', function() { applyRecordLock(activeSessionId); });
     }
 
     // A question card answers through this rather than through the Send
