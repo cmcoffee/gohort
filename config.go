@@ -6,17 +6,19 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/buildledger"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/replyguard"
+	"github.com/cmcoffee/snugforge/kvlite"
+	"github.com/cmcoffee/snugforge/machineid"
 
 	"github.com/cmcoffee/snugforge/nfo"
 )
@@ -1102,6 +1104,18 @@ max_concurrent = 1
 # can access). Example: "10.0.0.0/8, 192.168.1.42"
 admin_allowed_ips =
 
+[database]
+# lock = portable (default): the database padlock is kept in this file
+#   under [do_not_modify], and the data directory opens anywhere alongside
+#   it. Keep this file with the data directory, and back them up together.
+# lock = machine: the database opens only on this machine. Its padlock
+#   comes from the operating system's install ID and is never stored. To
+#   move to new hardware: set portable here, start once on the old machine,
+#   move the data directory with this file, then set it back.
+# Switching re-wraps the database key in place on the next start. A
+# database no padlock here opens has its stored secrets cleared.
+lock = portable
+
 [paths]
 # Filesystem locations for runtime state. Empty values fall back
 # to the historical layout under the binary's directory:
@@ -1354,46 +1368,38 @@ func setupTraceFile(logs_dir string) {
 	nfo.SetFile(nfo.TRACE, tfile)
 }
 
-// resetSecretsEnv is the opt-in that lets a database whose padlock no longer
-// matches be opened by clearing its encrypted values.
-const resetSecretsEnv = "GOHORT_RESET_SECRETS"
-
-// SecureDatabase opens a database file. When the padlock does not open it,
-// it refuses, unless resetSecretsEnv is set to 1: then it copies the file
-// aside and clears the encrypted values so the rest opens.
-//
-// The reset used to be automatic. A padlock mismatch is almost never new
-// hardware: the padlock lives in gohort.ini, so it means that file was
-// replaced, or lost its db_locker line (a fresh one is then written that
-// can never open the old database). Resetting silently deleted every API
-// key, credential secret and OAuth token, with no copy, on a mistake that
-// putting the old ini back would have undone.
+// SecureDatabase opens a database file under the padlock the [database] lock
+// setting asks for (padlockPlan), moving one still under an older padlock to
+// it in place. When no padlock this machine has opens it, its encrypted
+// values (API keys, credential secrets, OAuth tokens) are cleared and the
+// rest opens, as gohort always did: the owner's choice, over refusing to
+// start or keeping copies.
 func SecureDatabase(file string) (Database, error) {
-	Debug("Opening database: %s.", file)
-	db, err := OpenDB(file, _unlock_db()[0:]...)
+	return secureDatabaseWith(file, currentPadlocks())
+}
+
+func secureDatabaseWith(file string, plan padlockPlan) (Database, error) {
+	Debug("Opening database: %s (lock = %s).", file, plan.mode)
+	st, note, err := kvlite.OpenRekeying(file, plan.target, plan.fallbacks, nil)
+	if note != "" {
+		// kvlite numbers the padlock it moved from; say which one it was.
+		for i, name := range plan.names {
+			note = strings.Replace(note, fmt.Sprintf("from padlock %d", i+1), "from its "+name+" padlock", 1)
+		}
+		Notice("Database %s: %s (lock = %s).", file, note, plan.mode)
+	}
+	if err == ErrBadPadlock {
+		Notice("Database %s: no padlock this machine has opens it (lock = %s), so its stored secrets (API keys, credential secrets, OAuth tokens) were cleared; everything else is kept. Re-enter them in the admin settings.", file, plan.mode)
+		if err := ResetDB(file); err != nil {
+			return nil, err
+		}
+		st, err = kvlite.Open(file, plan.target...)
+	}
 	if err != nil {
-		if err == ErrBadPadlock {
-			if strings.TrimSpace(os.Getenv(resetSecretsEnv)) != "1" {
-				return nil, padlockRefusal(file, _db_locker_created)
-			}
-			saved, cerr := copyAside(file, time.Now())
-			if cerr != nil {
-				return nil, fmt.Errorf("%s=1 asked to reset %s, but it could not be copied aside first, so nothing was cleared: %w", resetSecretsEnv, file, cerr)
-			}
-			Notice("Database %s: the padlock did not open it, and %s=1 cleared its stored secrets (API keys, credential secrets, tokens). Everything else is kept. The file as it was is at %s.", file, resetSecretsEnv, saved)
-			if err := ResetDB(file); err != nil {
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
-		db, err = OpenDB(file, _unlock_db()[0:]...)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	Debug("Database opened successfully.")
-	return db, nil
+	return &DBase{Store: st}, nil
 }
 
 // hashBytes computes the SHA256 hash of the input values.
@@ -1439,87 +1445,116 @@ func decrypt(input []byte, key []byte) (decoded []byte) {
 	return
 }
 
-// _db_locker_created is set when this start derived the padlock from the
-// machine's network address because gohort.ini had no db_locker line.
-var _db_locker_created bool
-
-// padlockRefusal is the error for a database the padlock does not open: what
-// happened, the likely cause, and the two ways forward.
-func padlockRefusal(file string, lockerCreated bool) error {
-	cause := "The padlock in gohort.ini ([do_not_modify] db_locker) does not open it. That usually means gohort.ini was replaced, or the database came from another install."
-	if lockerCreated {
-		cause = "gohort.ini has no [do_not_modify] db_locker line, so the padlock came from this machine's network address, and that does not open it: the database was made on another machine, or this machine's network address changed. The gohort.ini from where it was made (with its db_locker line) opens it."
-	}
-	return fmt.Errorf("refusing to open %s: %s\n\n"+
-		"To keep the stored secrets, put back the gohort.ini (or just its db_locker line) that goes with this database, then start again.\n\n"+
-		"To start over without them, start once with %s=1: the database is copied aside first, then its encrypted values (API keys, credential secrets, OAuth tokens) are cleared and everything else is kept.",
-		file, cause, resetSecretsEnv)
+// padlockPlan is the padlock databases should be under, and the ones they
+// may still be under from before (tried, in order, only to open and move
+// them).
+type padlockPlan struct {
+	target    []byte
+	fallbacks [][]byte
+	names     []string // what each fallback is, for the notice
+	mode      string   // machine | portable | network address
 }
 
-// copyAside copies file to file.before-reset-<time> and returns that path.
-func copyAside(file string, now time.Time) (string, error) {
-	dest := file + ".before-reset-" + now.Format("20060102-150405")
-	in, err := os.Open(file)
-	if err != nil {
-		return "", err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return "", err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(dest)
-		return "", err
-	}
-	if err := out.Close(); err != nil {
-		os.Remove(dest)
-		return "", err
-	}
-	return dest, nil
+var (
+	padlockOnce sync.Once
+	padlocks    padlockPlan
+)
+
+// currentPadlocks is this process's plan, worked out once.
+func currentPadlocks() padlockPlan {
+	padlockOnce.Do(func() {
+		var note string
+		padlocks, note = planPadlocks(&global.cfg, cfgFilePath(), machineid.ID, get_mac_addr())
+		if note != "" {
+			Notice("%s", note)
+		}
+	})
+	return padlocks
 }
 
-// _unlock_db recovers the database padlock from gohort.ini, or makes one.
+// planPadlocks decides the padlock from the [database] lock setting.
 //
-// With no db_locker line, the padlock is the first MAC address
-// net.Interfaces() returns: that is what every existing database was
-// opened with. cfg.Set only changes the in-memory store, and nothing saved
-// the [do_not_modify] section, so the "stored" padlock never reached the
-// file and every start re-derived it from the MAC. Switching that fallback
-// to random bytes (v0.7.363) gave each start a new padlock that opened no
-// existing database. So the MAC stays the source for a missing line, and
-// the line is now SAVED, so from then on the padlock comes from the ini and
-// the database moves with it, not with the machine. Random bytes only when
-// there is no MAC to read.
-func _unlock_db() []byte { return unlockDB(&global.cfg) }
+//   - portable (the default): random bytes kept in gohort.ini under
+//     [do_not_modify] db_locker; the data directory opens anywhere with that
+//     ini.
+//   - machine (opt-in): this machine's OS install identity, hashed for
+//     gohort (snugforge/machineid). Never stored: the database opens only on
+//     this machine. Not a MAC address: those reorder between starts.
+//
+// Before either, every database was under the first MAC address, so the MAC
+// stays a fallback for opening (and moving) an old one, never a target.
+// With no machine ID the lock is portable, said in note. The one case the
+// MAC stays the target: no machine ID AND the ini cannot be written, since
+// an unsaved random padlock is new every start and opens nothing (that is
+// how v0.7.363 lost every secret on a restart).
+func planPadlocks(store *ConfigStore, iniPath string, id func(string) ([]byte, error), mac []byte) (plan padlockPlan, note string) {
+	saved := savedPadlock(store)
+	mid, idErr := id(APPNAME)
+	lock := strings.ToLower(strings.TrimSpace(store.Get("database", "lock")))
+	if lock == "machine" {
+		if idErr == nil {
+			return padlockPlan{target: mid, fallbacks: [][]byte{saved, mac}, names: []string{"gohort.ini's saved", "network-address (MAC)"}, mode: "machine"}, ""
+		}
+		note = "lock = machine is set, but this machine has no usable machine ID, so the database is not machine-locked: its padlock is kept in gohort.ini instead (as with lock = portable)."
+	}
+	var others [][]byte
+	var otherNames []string
+	if idErr == nil {
+		others = append(others, mid)
+		otherNames = append(otherNames, "machine-ID")
+	}
+	others = append(others, mac)
+	otherNames = append(otherNames, "network-address (MAC)")
+	target, err := ensureSavedPadlock(store, iniPath, saved)
+	if err == nil {
+		return padlockPlan{target: target, fallbacks: append([][]byte{saved}, others...), names: append([]string{"gohort.ini's saved"}, otherNames...), mode: "portable"}, note
+	}
+	if len(mac) == 0 {
+		// Nothing stable to use at all; refusing at open says so.
+		return padlockPlan{target: saved, fallbacks: others, names: otherNames, mode: "portable"}, "Could not save a database padlock to " + iniPath + " (" + err.Error() + "), and this machine has no network address to fall back on."
+	}
+	return padlockPlan{target: mac, fallbacks: [][]byte{saved}, names: []string{"gohort.ini's saved"}, mode: "network address"},
+		"Could not save a database padlock to " + iniPath + " (" + err.Error() + "), so the database stays under this machine's network address until it can be."
+}
 
-// unlockDB is _unlock_db over a given config store.
-func unlockDB(store *ConfigStore) (padlock []byte) {
-	if dbs := store.Get("do_not_modify", "db_locker"); len(dbs) > 40 {
-		code := []byte(dbs[0:40])
-		db_lock_code := []byte(dbs[40:])
-		padlock = decrypt(db_lock_code, code)
-		return
+// savedPadlock is the padlock kept in the ini, or nil.
+func savedPadlock(store *ConfigStore) []byte {
+	dbs := store.Get("do_not_modify", "db_locker")
+	if len(dbs) <= 40 {
+		return nil
 	}
-	padlock = get_mac_addr()
-	if len(padlock) == 0 {
-		padlock = RandBytes(32)
+	return decrypt([]byte(dbs[40:]), []byte(dbs[0:40]))
+}
+
+// ensureSavedPadlock is the ini's padlock, made and SAVED if there is none.
+// cfg.Set alone only changes the copy in memory: the line the old code
+// "stored" never reached the file. The save is checked by reading the file
+// back, so a padlock that would be lost on restart is never used.
+func ensureSavedPadlock(store *ConfigStore, iniPath string, saved []byte) ([]byte, error) {
+	if saved != nil {
+		return saved, nil
 	}
-	_db_locker_created = true
+	padlock := RandBytes(32)
 	random := RandBytes(40)
-	db_lock_code := string(encrypt(padlock, random))
-	Critical(store.Set("do_not_modify", "db_locker", fmt.Sprintf("%s%s", string(random), db_lock_code)))
-	if err := store.Save("do_not_modify"); err != nil {
-		// Still opens: the MAC gives the same padlock next start, as it
-		// always has. Said, so an unwritable ini is not a surprise later.
-		Notice("Could not save the database padlock to %s (%v); it is read from this machine's network address until it can be.", cfgFilePath(), err)
+	line := string(random) + string(encrypt(padlock, random))
+	if err := store.Set("do_not_modify", "db_locker", line); err != nil {
+		return nil, err
 	}
-	return
+	if err := store.Save("do_not_modify"); err != nil {
+		store.Unset("do_not_modify", "db_locker")
+		return nil, err
+	}
+	raw, err := os.ReadFile(iniPath)
+	if err != nil || !strings.Contains(string(raw), line) {
+		store.Unset("do_not_modify", "db_locker")
+		return nil, fmt.Errorf("the padlock did not read back from the file")
+	}
+	return padlock, nil
 }
 
 // get_mac_addr is the first network interface's hardware address: the
-// padlock source for a database whose ini has no db_locker line.
+// padlock every database was under before machine IDs, kept as a fallback
+// to open and move them.
 func get_mac_addr() []byte {
 	ifaces, err := net.Interfaces()
 	if err != nil {

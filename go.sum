@@ -28,6 +28,8 @@ github.com/charmbracelet/x/term v0.2.1 h1:AQeHeLZ1OqSXhrAWpYUtZyX1T3zVxfpZuEQMIQ
 github.com/charmbracelet/x/term v0.2.1/go.mod h1:oQ4enTYFV7QN4m0i9mzHrViD7TQKvNEEkHUMCmsxdUg=
 github.com/cmcoffee/snugforge v0.3.1 h1:lDQ1lA9iXjIfFrHu/v8Rb5bgd9JNQj7cWBASqrYkiq0=
 github.com/cmcoffee/snugforge v0.3.1/go.mod h1:v3grJcl96XAeHU8OGgrMYn7hxuaz1KdtjKk33usdLCw=
+github.com/cmcoffee/snugforge v0.3.2 h1:zzOP/DQmRZ4EQErZbxJXwMzAla66mXd84nU5Dbu5ynE=
+github.com/cmcoffee/snugforge v0.3.2/go.mod h1:v3grJcl96XAeHU8OGgrMYn7hxuaz1KdtjKk33usdLCw=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

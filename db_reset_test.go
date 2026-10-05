@@ -1,91 +1,174 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cmcoffee/snugforge/cfg"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// A database the padlock does not open is refused, saying the likely cause
-// and both ways forward; a db_locker written this start is named as the
-// cause, since a new one never opens an existing database.
-func TestAPadlockMismatchIsRefusedWithAWayForward(t *testing.T) {
-	err := padlockRefusal("/data/gohort.db", false)
-	for _, want := range []string{"refusing to open /data/gohort.db", "gohort.ini was replaced", "put back the gohort.ini", resetSecretsEnv + "=1", "copied aside first"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("refusal lacks %q:\n%s", want, err)
-		}
+var (
+	fakeMAC = []byte{0x02, 0x42, 0xac, 0x11, 0x00, 0x02}
+	fakeID  = func(string) ([]byte, error) { return []byte("machine-id-for-gohort"), nil }
+	noID    = func(string) ([]byte, error) { return nil, errors.New("no machine id") }
+)
+
+// iniWith is an ini file holding body, and a store reading it.
+func iniWith(t *testing.T, body string) (*cfg.Store, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "gohort.ini")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if err := padlockRefusal("/data/gohort.db", true); !strings.Contains(err.Error(), "has no [do_not_modify] db_locker line") || !strings.Contains(err.Error(), "network address") {
-		t.Errorf("a missing line should be named as the cause:\n%s", err)
+	store := &cfg.Store{}
+	if err := store.File(path); err != nil {
+		t.Fatal(err)
+	}
+	return store, path
+}
+
+// lock = machine locks to the machine ID and writes nothing to the ini; the
+// old padlocks stay as fallbacks to open and move an existing database.
+func TestMachineLockUsesTheMachineID(t *testing.T) {
+	store, path := iniWith(t, "[web]\naddr = :8181\n[database]\nlock = machine\n")
+	plan, note := planPadlocks(store, path, fakeID, fakeMAC)
+	if plan.mode != "machine" || string(plan.target) != "machine-id-for-gohort" || note != "" {
+		t.Fatalf("plan %+v, note %q", plan, note)
+	}
+	if len(plan.fallbacks) != 2 || string(plan.fallbacks[1]) != string(fakeMAC) {
+		t.Fatalf("fallbacks = %v", plan.fallbacks)
+	}
+	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "db_locker") {
+		t.Fatal("a machine lock wrote a padlock to the ini")
 	}
 }
 
-// The reset copies the database aside before clearing anything, and never
-// overwrites an earlier copy.
-func TestTheDatabaseIsCopiedAsideFirst(t *testing.T) {
+// Portable, the default (no [database] section at all), keeps a random
+// padlock in the ini, SAVED and read back, so the next start (a new store
+// reading the file) gets the same one.
+func TestPortableIsTheDefaultAndSavesItsPadlock(t *testing.T) {
+	store, path := iniWith(t, "[web]\naddr = :8181\n")
+	plan, _ := planPadlocks(store, path, fakeID, fakeMAC)
+	if plan.mode != "portable" || len(plan.target) != 32 {
+		t.Fatalf("plan %+v", plan)
+	}
+	raw, _ := os.ReadFile(path)
+	if !strings.Contains(string(raw), "db_locker") || !strings.Contains(string(raw), "addr = :8181") {
+		t.Fatalf("not saved beside the rest:\n%s", raw)
+	}
+	again := &cfg.Store{}
+	again.File(path)
+	plan2, _ := planPadlocks(again, path, fakeID, fakeMAC)
+	if string(plan2.target) != string(plan.target) {
+		t.Fatal("the next start got a different padlock")
+	}
+}
+
+// No machine ID means portable, said; an ini that cannot be written then
+// keeps the MAC rather than an unsaved random padlock that opens nothing on
+// the next start.
+func TestNoMachineIDFallsBackSafely(t *testing.T) {
+	store, path := iniWith(t, "[database]\nlock = machine\n")
+	plan, note := planPadlocks(store, path, noID, fakeMAC)
+	if plan.mode != "portable" || !strings.Contains(note, "no usable machine ID") {
+		t.Fatalf("plan %+v note %q", plan, note)
+	}
+	unwritable := &cfg.Store{}
+	unwritable.File(filepath.Join(t.TempDir(), "missing-dir", "gohort.ini"))
+	unwritable.Set("database", "lock", "machine")
+	plan, note = planPadlocks(unwritable, filepath.Join(t.TempDir(), "missing-dir", "gohort.ini"), noID, fakeMAC)
+	if plan.mode != "network address" || string(plan.target) != string(fakeMAC) || !strings.Contains(note, "Could not save") {
+		t.Fatalf("unwritable ini: plan %+v note %q", plan, note)
+	}
+}
+
+// An existing database under the MAC (every database before machine IDs) is
+// copied aside, moved to the machine ID with its values intact, and then
+// opens with the machine ID alone; switching to portable moves it again.
+func TestAnExistingDatabaseMovesToTheMachineID(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "gohort.db")
-	if err := os.WriteFile(file, []byte("secrets inside"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Date(2026, 10, 4, 21, 30, 0, 0, time.UTC)
-	saved, err := copyAside(file, now)
+	st, err := kvlite.Open(file, fakeMAC...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved != file+".before-reset-20261004-213000" {
-		t.Fatalf("saved at %s", saved)
+	st.CryptSet("secrets", "api_key", "s3cr3t")
+	st.Close()
+
+	store, path := iniWith(t, "[database]\nlock = machine\n")
+	plan, _ := planPadlocks(store, path, fakeID, fakeMAC)
+	db, err := secureDatabaseWith(file, plan)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(saved); string(got) != "secrets inside" {
-		t.Fatalf("copy holds %q", got)
+	var v string
+	db.Get("secrets", "api_key", &v)
+	db.Close()
+	if v != "s3cr3t" {
+		t.Fatalf("secret after the move = %q", v)
 	}
-	if _, err := copyAside(file, now); err == nil {
-		t.Fatal("a second copy at the same time overwrote the first")
+	if copies, _ := filepath.Glob(file + ".*"); len(copies) != 0 {
+		t.Fatalf("copies made: %v", copies)
+	}
+	if _, err := kvlite.Open(file, fakeMAC...); err != kvlite.ErrBadPadlock {
+		t.Fatalf("the MAC still opens it: %v", err)
+	}
+	if st, err := kvlite.Open(file, []byte("machine-id-for-gohort")...); err != nil {
+		t.Fatalf("the machine ID does not open it: %v", err)
+	} else {
+		st.Close()
+	}
+
+	portable, ppath := iniWith(t, "[database]\nlock = portable\n")
+	pplan, _ := planPadlocks(portable, ppath, fakeID, fakeMAC)
+	db, err = secureDatabaseWith(file, pplan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = ""
+	db.Get("secrets", "api_key", &v)
+	db.Close()
+	if v != "s3cr3t" {
+		t.Fatalf("secret after moving to portable = %q", v)
+	}
+	if st, err := kvlite.Open(file, pplan.target...); err != nil {
+		t.Fatalf("the saved padlock does not open it: %v", err)
+	} else {
+		st.Close()
 	}
 }
 
-// An ini with no db_locker line gets the padlock every existing database was
-// opened with (the machine's MAC), and the line is SAVED to the file, so the
-// next start reads it from the ini rather than deriving it again: the
-// database moves with its ini, not with the machine. v0.7.363 gave each
-// start fresh random bytes that were never saved, and no existing database
-// opened.
-func TestAMissingPadlockLineIsTheMACAndIsSaved(t *testing.T) {
-	mac := get_mac_addr()
-	if len(mac) == 0 {
-		t.Skip("no network interface with a hardware address here")
-	}
-	dir := t.TempDir()
-	ini := filepath.Join(dir, "gohort.ini")
-	if err := os.WriteFile(ini, []byte("[web]\naddr = :8181\n"), 0o600); err != nil {
+// A database no padlock this machine has opens gets its secrets cleared and
+// opens, keeping its plain values, under the target padlock.
+func TestNoPadlockOpensItResets(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "gohort.db")
+	st, _ := kvlite.Open(file, []byte("somewhere-else")...)
+	st.CryptSet("secrets", "api_key", "lost")
+	st.Set("plain", "name", "kept")
+	st.Close()
+	store, path := iniWith(t, "[web]\n")
+	plan, _ := planPadlocks(store, path, fakeID, fakeMAC)
+	db, err := secureDatabaseWith(file, plan)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _db_locker_created = false })
-	store := &cfg.Store{}
-	if err := store.File(ini); err != nil {
-		t.Fatal(err)
+	var secret, name string
+	db.Get("secrets", "api_key", &secret)
+	db.Get("plain", "name", &name)
+	db.Close()
+	if secret != "" || name != "kept" {
+		t.Fatalf("secret %q, plain %q", secret, name)
 	}
-
-	got := unlockDB(store)
-	if string(got) != string(mac) {
-		t.Fatal("a missing db_locker line did not give the MAC padlock existing databases use")
+	if st, err := kvlite.Open(file, plan.target...); err != nil {
+		t.Fatalf("after the reset the target does not open it: %v", err)
+	} else {
+		st.Close()
 	}
-	raw, _ := os.ReadFile(ini)
-	if !strings.Contains(string(raw), "db_locker") || !strings.Contains(string(raw), "addr = :8181") {
-		t.Fatalf("the padlock was not saved beside the rest of the ini:\n%s", raw)
-	}
-
-	// The next start reads it back from the file.
-	store2 := &cfg.Store{}
-	if err := store2.File(ini); err != nil {
-		t.Fatal(err)
-	}
-	if again := unlockDB(store2); string(again) != string(mac) {
-		t.Fatal("the saved padlock did not read back as the same bytes")
+	if copies, _ := filepath.Glob(file + ".*"); len(copies) != 0 {
+		t.Fatalf("copies made: %v", copies)
 	}
 }
