@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"net"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -1181,7 +1181,7 @@ func init_database() {
 	// Dedicated vector store. Defaults to data_dir (co-located, same
 	// behavior as before); operators relocate it to local SSD via
 	// [paths] vector_dir when data_dir is on network storage. Opened
-	// with the same hardware-locked encryption as the main DB. The
+	// with the same padlocked encryption as the main DB. The
 	// startup migration (see core) copies existing shared chunks here
 	// on first boot after upgrade.
 	vector_dir := loadPath("vector_dir", data_dir)
@@ -1196,7 +1196,7 @@ func init_database() {
 	// Dedicated repo-file store — cloned+encrypted source for the repo
 	// browser. A bulk, re-clonable cache (thousands of files per repo), kept
 	// off the main DB and relocatable to local SSD via [paths] repo_dir.
-	// SecureDatabase gives hardware-locked at-rest encryption, so file bodies
+	// SecureDatabase gives padlocked at-rest encryption, so file bodies
 	// are encrypted on disk automatically.
 	repo_dir := loadPath("repo_dir", data_dir)
 	MkDir(repo_dir + "/")
@@ -1205,7 +1205,7 @@ func init_database() {
 	Critical(err)
 
 	// Dedicated evidence-bundle store — uploaded dumps and log archives,
-	// unpacked and ingested into hardware-locked encrypted storage. Split from
+	// unpacked and ingested into padlocked encrypted storage. Split from
 	// the repo store because a bundle is NOT re-clonable: it is the only copy of
 	// evidence someone handed us. Relocatable to local SSD via [paths]
 	// bundle_dir, which also hosts the staging area an upload streams into
@@ -1220,7 +1220,7 @@ func init_database() {
 	SetBulkStagingDir(FormatPath(bundle_dir + "/staging"))
 
 	// Per-app private databases (core.OpenAppDB): apps that opt in get their own
-	// dedicated, hardware-locked kvlite file — co-located in data_dir, same
+	// dedicated, padlocked kvlite file — co-located in data_dir, same
 	// at-rest encryption as the main DB — instead of a bucket of global.db. main
 	// owns the padlock + data dir, so it injects the concrete open here; core
 	// caches the handle per name.
@@ -1353,29 +1353,33 @@ func setupTraceFile(logs_dir string) {
 	nfo.SetFile(nfo.TRACE, tfile)
 }
 
-// get_mac_addr retrieves the MAC address of the network interface.
-func get_mac_addr() []byte {
-	ifaces, err := net.Interfaces()
-	Critical(err)
+// resetSecretsEnv is the opt-in that lets a database whose padlock no longer
+// matches be opened by clearing its encrypted values.
+const resetSecretsEnv = "GOHORT_RESET_SECRETS"
 
-	for _, v := range ifaces {
-		if len(v.HardwareAddr) == 0 {
-			continue
-		}
-		return v.HardwareAddr
-	}
-	return nil
-}
-
-// SecureDatabase opens a database file, handling potential decryption
-// or reset if hardware changes are detected.
+// SecureDatabase opens a database file. When the padlock does not open it,
+// it refuses, unless resetSecretsEnv is set to 1: then it copies the file
+// aside and clears the encrypted values so the rest opens.
+//
+// The reset used to be automatic. A padlock mismatch is almost never new
+// hardware: the padlock lives in gohort.ini, so it means that file was
+// replaced, or lost its db_locker line (a fresh one is then written that
+// can never open the old database). Resetting silently deleted every API
+// key, credential secret and OAuth token, with no copy, on a mistake that
+// putting the old ini back would have undone.
 func SecureDatabase(file string) (Database, error) {
-	Debug("Opening database: %s (mac_lock=%v).", file, _db_lock_status())
+	Debug("Opening database: %s.", file)
 	db, err := OpenDB(file, _unlock_db()[0:]...)
 	if err != nil {
 		if err == ErrBadPadlock {
-			Debug("Database padlock mismatch, hardware change detected; resetting DB.")
-			Notice("Hardware changes detected, you will need to reauthenticate.")
+			if strings.TrimSpace(os.Getenv(resetSecretsEnv)) != "1" {
+				return nil, padlockRefusal(file, _db_locker_created)
+			}
+			saved, cerr := copyAside(file, time.Now())
+			if cerr != nil {
+				return nil, fmt.Errorf("%s=1 asked to reset %s, but it could not be copied aside first, so nothing was cleared: %w", resetSecretsEnv, file, cerr)
+			}
+			Notice("Database %s: the padlock did not open it, and %s=1 cleared its stored secrets (API keys, credential secrets, tokens). Everything else is kept. The file as it was is at %s.", file, resetSecretsEnv, saved)
 			if err := ResetDB(file); err != nil {
 				return nil, err
 			}
@@ -1434,41 +1438,57 @@ func decrypt(input []byte, key []byte) (decoded []byte) {
 	return
 }
 
-// _db_lock_status checks if database locking is enabled.
-func _db_lock_status() bool {
-	if v := global.cfg.Get("do_not_modify", "db_locker"); len(v) > 0 {
-		return false
+// _db_locker_created is set when this start wrote a new db_locker, because
+// gohort.ini had none: a database that already existed cannot open with it.
+var _db_locker_created bool
+
+// padlockRefusal is the error for a database the padlock does not open: what
+// happened, the likely cause, and the two ways forward.
+func padlockRefusal(file string, lockerCreated bool) error {
+	cause := "The padlock in gohort.ini ([do_not_modify] db_locker) does not open it. That usually means gohort.ini was replaced, or the database came from another install."
+	if lockerCreated {
+		cause = "gohort.ini had no [do_not_modify] db_locker line, so a new one was written, and a new one never opens an existing database. The line was probably lost when gohort.ini was replaced or edited."
 	}
-	return true
+	return fmt.Errorf("refusing to open %s: %s\n\n"+
+		"To keep the stored secrets, put back the gohort.ini (or just its db_locker line) that goes with this database, then start again.\n\n"+
+		"To start over without them, start once with %s=1: the database is copied aside first, then its encrypted values (API keys, credential secrets, OAuth tokens) are cleared and everything else is kept.",
+		file, cause, resetSecretsEnv)
 }
 
-// _set_db_locker sets a database locker to prevent multiple instances.
-func _set_db_locker() {
-	if v := global.cfg.Get("do_not_modify", "db_locker"); len(v) > 0 {
-		global.cfg.Unset("do_not_modify", "db_locker")
-		return
-	} else {
-		mac := get_mac_addr()
-		random := RandBytes(40)
-		db_lock_code := string(encrypt(mac, random))
-		Critical(global.cfg.Set("do_not_modify", "db_locker", fmt.Sprintf("%s%s", string(random), db_lock_code)))
+// copyAside copies file to file.before-reset-<time> and returns that path.
+func copyAside(file string, now time.Time) (string, error) {
+	dest := file + ".before-reset-" + now.Format("20060102-150405")
+	in, err := os.Open(file)
+	if err != nil {
+		return "", err
 	}
-	return
+	defer in.Close()
+	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dest)
+		return "", err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(dest)
+		return "", err
+	}
+	return dest, nil
 }
 
-// _unlock_db decrypts or generates a database padlock.
+// _unlock_db recovers the database padlock from gohort.ini, or makes one.
 //
-// On first run (db_locker not yet stored), the current MAC is captured
-// AND immediately wrapped + persisted via the random-key trick so
-// subsequent restarts recover the same MAC bytes regardless of
-// net.Interfaces() enumeration order. Without this, get_mac_addr()
-// can return a different MAC each restart (Docker, libvirt, USB nics
-// shifting positions), and any value written via CryptSet under the
-// previous MAC fails to decrypt — the user-visible symptom is "my
-// secret survived this session but not the next restart."
-//
-// The wrapping is the same shape _set_db_locker uses (random || encrypt(mac, random)),
-// so existing tooling that toggles via that function still interoperates.
+// Not tied to the machine, on purpose. It used to start from the first MAC
+// address net.Interfaces() returned, but that changed between restarts
+// (Docker, libvirt, USB NICs moving), so the padlock was already stored in
+// the ini after the first start and never read from the hardware again: a
+// lock in name only, which only made a machine with no NIC fail oddly. A new
+// install now gets random bytes. The database and the ini go together: copy
+// both and it opens anywhere, lose the ini's db_locker line and it does not
+// open (SecureDatabase then refuses rather than clearing secrets).
 func _unlock_db() (padlock []byte) {
 	if dbs := global.cfg.Get("do_not_modify", "db_locker"); len(dbs) > 0 {
 		code := []byte(dbs[0:40])
@@ -1476,15 +1496,14 @@ func _unlock_db() (padlock []byte) {
 		padlock = decrypt(db_lock_code, code)
 		return
 	}
-	// First call ever — capture current MAC, wrap it, persist. From
-	// now on, the padlock is recovered from the wrapping regardless of
-	// what net.Interfaces() returns.
-	padlock = get_mac_addr()
-	if len(padlock) > 0 {
-		random := RandBytes(40)
-		db_lock_code := string(encrypt(padlock, random))
-		Critical(global.cfg.Set("do_not_modify", "db_locker", fmt.Sprintf("%s%s", string(random), db_lock_code)))
-	}
+	// First start: random bytes, wrapped and kept in the ini, in the same
+	// shape existing installs stored their MAC-derived padlock, so those
+	// keep opening exactly as before.
+	padlock = RandBytes(32)
+	_db_locker_created = true
+	random := RandBytes(40)
+	db_lock_code := string(encrypt(padlock, random))
+	Critical(global.cfg.Set("do_not_modify", "db_locker", fmt.Sprintf("%s%s", string(random), db_lock_code)))
 	return
 }
 

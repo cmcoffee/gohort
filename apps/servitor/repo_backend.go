@@ -1,5 +1,5 @@
 // repo_backend.go — the Type=="repo" backend: clone a git repository into
-// tmpfs, ingest its text files into the dedicated, hardware-locked-encrypted
+// tmpfs, ingest its text files into the dedicated, padlock-encrypted
 // RepoFilesDB, and discard the plaintext clone. Nothing but encrypted, derived
 // content persists at rest. Search/read decrypt in memory. This is the repo
 // target-type's equivalent of the SSH connection + exec path.

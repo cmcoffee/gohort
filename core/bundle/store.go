@@ -1,5 +1,5 @@
 // The store: uploaded evidence (a support dump, a log tarball, a diagnostic
-// capture) unpacked, ingested into a hardware-locked-encrypted key-value store,
+// capture) unpacked, ingested into a padlock-encrypted key-value store,
 // and read back by decrypting in memory. The staged plaintext is discarded once
 // ingest completes, so nothing but encrypted, derived content persists at rest.
 //

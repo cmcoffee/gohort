@@ -67,7 +67,7 @@ var (
 	// by the repo browser. It is a BULK, re-clonable cache — thousands of
 	// files per repo — so it is split off from RootDB to keep the main
 	// (often network-hosted) DB lean, and relocatable to fast local storage
-	// via [paths] repo_dir. Opened with the same hardware-locked at-rest
+	// via [paths] repo_dir. Opened with the same padlocked at-rest
 	// encryption as the other stores, so file bodies are encrypted on disk
 	// with no extra work; the plaintext clone lives only transiently in a
 	// tmpfs before ingest. Set at startup; nil when unset.
@@ -287,7 +287,7 @@ func OpenCache() Database {
 // By default every app shares the one global DB, namespaced by a Bucket keyed on
 // the app's name (see get_agentstore). An app that holds a lot of data, or wants
 // an isolated / independently relocatable / independently disposable store, can
-// instead ask for its OWN hardware-locked kvlite database FILE — the same shape
+// instead ask for its OWN padlocked kvlite database FILE — the same shape
 // as VectorDB / RepoFilesDB, which are dedicated stores split off the main one.
 //
 // Go apps opt in by implementing PrivateDBApp; the framework then hands them a
@@ -334,11 +334,11 @@ var (
 
 // SetPrivateDBOpener wires the concrete secure database open. main calls this
 // once at startup with a closure that builds the file path under the data dir
-// and opens it hardware-locked (SecureDatabase). Until wired, OpenAppDB returns
+// and opens it padlocked (SecureDatabase). Until wired, OpenAppDB returns
 // nil so callers fall back to the shared bucket.
 func SetPrivateDBOpener(fn func(name string) (Database, error)) { privateDBOpener = fn }
 
-// OpenAppDB returns the dedicated, hardware-locked kvlite database for the given
+// OpenAppDB returns the dedicated, padlocked kvlite database for the given
 // logical name, opened once and cached for the process lifetime (opening the
 // same file twice is unsafe). Returns nil when no opener is wired (e.g. a
 // non-serve context) or the open fails; callers must fall back to a shared

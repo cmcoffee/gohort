@@ -79,7 +79,7 @@ type AppSpec struct {
 	// default centered ~900px column. The author opts in for data-heavy surfaces
 	// (wide tables, dashboards). A workbench app is always full-width regardless.
 	FullWidth bool `json:"full_width,omitempty"`
-	// PrivateDB opts this app into its OWN dedicated, hardware-locked kvlite
+	// PrivateDB opts this app into its OWN dedicated, padlocked kvlite
 	// database file (via OpenCustomAppDB) instead of the shared customapps store.
 	// Its records live in an isolated, independently disposable file — the right
 	// choice for a data-heavy app. Opt-in per app, no migration: existing apps
