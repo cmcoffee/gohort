@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.361). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.362). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -711,8 +711,9 @@ blocking ones were the harness's, not the platform's:
   untrusted-content fence, so it saw one endpoint of two. The reviewer's copy
   now tags the fence in a few words and keeps 1200 characters a result).
 
-Next: rebuild and restart, run Settle prompt wording (once), Re-check the
-fixed components, then a second report.
+Next: rebuild and restart, run Settle prompt wording (once), then a third
+report to confirm the second's fixes (toolbox wrapping on the worker above
+all), then the first Optimize run.
 
 ### The second friction report (2026-10-04)
 
