@@ -26,6 +26,7 @@ import (
 //     the owner LINKED to this guide — so a reader can ask questions answered
 //     from the guide's own sources without being able to reach them directly or
 //     browse the owner's wider registry.
+//
 // ctx is the TURN's context, threaded in because the app-tools contract is a
 // plain []AgentToolDef built before the run exists — so a tool that dispatches
 // its own sub-run (servitor's investigate_<system>) has nothing to die with
@@ -86,6 +87,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	addSection := AgentToolDef{
 		Tool: Tool{
 			Name:        "add_section",
+			Caps:        []Capability{CapWrite},
 			Description: "Append a new section to the guide the user has OPEN. Provide the section title and its BODY as markdown (sub-headings as ###, lists, fenced code: do NOT repeat the title inside the body). Use this to add content the user asks for; it lands in the document and the viewer updates. Errors if no guide is open: ask the user to select or create one.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Title of the new section (shown as a numbered heading + in the table of contents)."},
@@ -113,6 +115,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	editSection := AgentToolDef{
 		Tool: Tool{
 			Name:        "edit_section",
+			Caps:        []Capability{CapWrite},
 			Description: "Replace the body of an EXISTING section in the open guide, matched by its title (case-insensitive). Provide the new markdown body. Use for revisions the user asks for (\"expand the install section\", \"fix the example in Setup\"). Errors if no guide is open or no section matches.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Title of the section to edit (must match an existing section)."},
@@ -149,6 +152,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	draftSection := AgentToolDef{
 		Tool: Tool{
 			Name:        "draft_section",
+			Caps:        []Capability{CapWrite},
 			Description: "Write a section GROUNDED in the guide's own backing. Unlike add_section (where YOU write the body), this tool DETERMINISTICALLY gathers material from BOTH the guide's knowledge collections AND every attached Source on this topic, then writes the section from that material and commits it: you do NOT need to call search_knowledge or pull_reference yourself first. Use this for any section that should be backed by the guide's attached knowledge/Sources. Provide the section title and a brief of what it should cover. If the section already exists, its body is replaced. Errors if the guide has no knowledge/Sources with anything on the topic, then use `research` (web) or add_section (write it yourself).",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Title of the section to write: created if new, re-drafted if it already exists."},
@@ -237,6 +241,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	deleteSection := AgentToolDef{
 		Tool: Tool{
 			Name:        "delete_section",
+			Caps:        []Capability{CapWrite},
 			Description: "Remove a section from the open guide, matched by its title (case-insensitive). Use when the user asks to drop or remove a section. This can't be undone from here, so only delete when the user clearly asked.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Title of the section to remove (must match an existing section)."},
@@ -265,6 +270,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	renameSection := AgentToolDef{
 		Tool: Tool{
 			Name:        "rename_section",
+			Caps:        []Capability{CapWrite},
 			Description: "Rename a section in the open guide (changes its heading + table-of-contents entry; the body is untouched). Match the existing section by its current title.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Current title of the section."},
@@ -296,6 +302,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	moveSection := AgentToolDef{
 		Tool: Tool{
 			Name:        "move_section",
+			Caps:        []Capability{CapWrite},
 			Description: "Reorder a section: move it to a 1-based position in the open guide (1 = first). Use to rearrange the document: e.g. move \"Troubleshooting\" to the end, or move \"Overview\" to position 1. Call list_sections first to see current positions.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Title of the section to move."},
@@ -337,7 +344,10 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	// it deliberately, not for every section.
 	research := AgentToolDef{
 		Tool: Tool{
-			Name:        "research",
+			Name: "research",
+			// Fetches the web: Private mode drops it, and what it returns is fenced
+			// and scanned like any other outside content.
+			Caps:        []Capability{CapNetwork},
 			Description: "Research a topic on the web before writing about it: searches, reads sources, and returns a cited synthesis (with a Sources list). Use this for accuracy-critical content (exact commands, flags, version numbers, API details), so the section is grounded in real sources rather than your own recollection. Then write the section with add_section, carrying the citations/links through. Takes tens of seconds; call it deliberately, not for trivial sections.",
 			Parameters: map[string]ToolParam{
 				"topic": {Type: "string", Description: "The specific thing to research: a focused question or subject, e.g. 'RKE2 agent join command and required ports' (not just 'Kubernetes')."},
@@ -351,7 +361,11 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			}
 			// seed-research resolves as a seed agent in the user's store. Run it
 			// synchronously and hand its cited synthesis back to the Guide Author.
-			out, err := orch.RunAgentSync(context.Background(), user, user, "seed-research", topic)
+			//
+			// On the TURN's context: the run reads whether it may go to the
+			// network from it, so a Private turn's research stayed online when
+			// this was context.Background(), and a Stop did not reach it.
+			out, err := orch.RunAgentSync(ctx, user, user, "seed-research", topic)
 			if err != nil {
 				return "", fmt.Errorf("research failed: %w", err)
 			}
@@ -377,8 +391,11 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	// no attached collections — it tells the agent to ask the user to attach some.
 	searchKnowledge := AgentToolDef{
 		Tool: Tool{
-			Name:        "search_knowledge",
-			Description: "Search the knowledge collections attached to the OPEN guide (the user's own curated documents) for passages relevant to a query, and return the best matches with their source labels. Use this BEFORE web research when the guide is about internal/private material the user has collected: it grounds the section in their own knowledge. If nothing is attached, it says so; then fall back to the `research` tool for public topics.",
+			Name: "search_knowledge",
+			// Returns documents, not the agent's own words: fenced and scanned as
+			// outside content, as a fetched page is.
+			FetchesExternal: true,
+			Description:     "Search the knowledge collections attached to the OPEN guide (the user's own curated documents) for passages relevant to a query, and return the best matches with their source labels. Use this BEFORE web research when the guide is about internal/private material the user has collected: it grounds the section in their own knowledge. If nothing is attached, it says so; then fall back to the `research` tool for public topics.",
 			Parameters: map[string]ToolParam{
 				"query": {Type: "string", Description: "What to look up: a focused question or topic, e.g. 'firewall failover configuration steps'."},
 			},
@@ -470,8 +487,11 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 
 	pullReference := AgentToolDef{
 		Tool: Tool{
-			Name:        "pull_reference",
-			Description: "Pull the knowledge for one reference item (from list_reference_sources) into your context so you can write a guide section GROUNDED in it: e.g. build a guide from a system's gathered facts (servitor) or from connected docs (Confluence). Provide the kind and item id from list_reference_sources, and a query describing what you're writing about: every source uses it to return the most relevant material (a system/servitor source searches its gathered knowledge, docs, and facts; a document source searches its content). Omit the query only when you want the source's full picture. Then write the section with add_section using only details the reference actually contains: do not invent specifics it doesn't include.",
+			Name: "pull_reference",
+			// Returns documents, not the agent's own words: fenced and scanned as
+			// outside content, as a fetched page is.
+			FetchesExternal: true,
+			Description:     "Pull the knowledge for one reference item (from list_reference_sources) into your context so you can write a guide section GROUNDED in it: e.g. build a guide from a system's gathered facts (servitor) or from connected docs (Confluence). Provide the kind and item id from list_reference_sources, and a query describing what you're writing about: every source uses it to return the most relevant material (a system/servitor source searches its gathered knowledge, docs, and facts; a document source searches its content). Omit the query only when you want the source's full picture. Then write the section with add_section using only details the reference actually contains: do not invent specifics it doesn't include.",
 			Parameters: map[string]ToolParam{
 				"kind":    {Type: "string", Description: "The source kind from list_reference_sources, e.g. \"system\" or \"mcp:confluence\"."},
 				"item_id": {Type: "string", Description: "The item id from list_reference_sources."},

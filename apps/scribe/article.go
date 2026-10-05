@@ -76,6 +76,7 @@ func (T *Scribe) articleTools(udb Database, user, pinned string, guideKit []Agen
 	writeArticle := AgentToolDef{
 		Tool: Tool{
 			Name:        "write_article",
+			Caps:        []Capability{CapWrite},
 			Description: "Replace the OPEN article's whole body with new markdown. Send the COMPLETE article every time (this is a replacement, not an append), keeping every command, fact and citation the user gave unless asked to change it. The viewer updates and the previous body is kept in History.",
 			Parameters: map[string]ToolParam{
 				"markdown": {Type: "string", Description: "The full article body as markdown (## headings, fenced code, lists). No top-level # title: the title is separate."},
@@ -104,6 +105,7 @@ func (T *Scribe) articleTools(udb Database, user, pinned string, guideKit []Agen
 	draftArticle := AgentToolDef{
 		Tool: Tool{
 			Name:        "draft_article",
+			Caps:        []Capability{CapWrite},
 			Description: "Write the OPEN article GROUNDED in its own backing. Deterministically gathers material from the article's knowledge collections AND every attached Source on the topic, then writes the whole body from that material and commits it: you do not gather first, it does. Give it a brief of what the article should cover. Errors if nothing attached has anything on the topic, then use `research` (web) or write it yourself with write_article.",
 			Parameters: map[string]ToolParam{
 				"instructions": {Type: "string", Description: "What the article should cover: the angle, scope, audience, and any specifics to include."},
