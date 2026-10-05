@@ -157,3 +157,25 @@ func TestAppAgentsGroupApartInPickers(t *testing.T) {
 		t.Fatalf("order = %q", groups)
 	}
 }
+
+// Every app agent's tool results are scanned, whatever its stored switch
+// says: the switch lived where app agents are not set up, and was off for
+// all of them. Anyone else's agent still follows its own switch.
+func TestAppAgentsScanToolResults(t *testing.T) {
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-scanned", Name: "Scanned", OwningApp: "Zz Test", Hidden: true, Prompt: "x",
+	})
+	web := Tool{Name: "research", Caps: []Capability{CapNetwork}}
+	if !toolResultPolicyFor(AgentRecord{ID: "app-test-scanned"}, web).scan {
+		t.Fatal("an app agent's web results are not scanned")
+	}
+	if toolResultPolicyFor(AgentRecord{ID: "mine"}, web).scan {
+		t.Fatal("an agent with scanning off was scanned")
+	}
+	if !toolResultPolicyFor(AgentRecord{ID: "mine", ScanToolResults: true}, web).scan {
+		t.Fatal("an agent with scanning on was not scanned")
+	}
+	if !toolResultPolicyFor(AgentRecord{ID: "app-test-scanned"}, web).fence {
+		t.Fatal("an app agent's web results are not fenced")
+	}
+}

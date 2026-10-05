@@ -104,7 +104,7 @@ func toolResultPolicyFor(agent AgentRecord, tl Tool) toolResultPolicy {
 // Names match case-insensitively and ignore surrounding space, because these
 // lists are typed by a person into a text field.
 func resolveScanScope(agent AgentRecord, tl Tool) bool {
-	if !agent.ScanToolResults {
+	if !scansToolResults(agent) {
 		return false
 	}
 	name := strings.TrimSpace(tl.Name)
@@ -363,7 +363,7 @@ func (t *chatTurn) recordScanDetection(agentID, tool string, v ToolScanVerdict) 
 // coverage of exactly the agents that need it most: the ones whose input is a
 // feed rather than a person.
 func scanCoveredToolNames(agent AgentRecord) []string {
-	if !agent.ScanToolResults {
+	if !scansToolResults(agent) {
 		return nil
 	}
 	allowAll := len(agent.AllowedTools) == 0 || nameListed(agent.AllowedTools, "*")
@@ -631,7 +631,20 @@ func sanitizeScanSources(in []string) []string {
 // On whenever scanning is on, unless the owner suspended it — see
 // AgentRecord.ScanTightenDisabled for why the flag is inverted.
 func scanTightens(agent AgentRecord) bool {
-	return agent.ScanToolResults && !agent.ScanTightenDisabled
+	return scansToolResults(agent) && !agent.ScanTightenDisabled
+}
+
+// scansToolResults reports whether this agent's tool results are scanned for
+// injected instructions: its owner turned it on, or it is an app agent.
+//
+// Every app agent scans, set by the framework and not by a switch. They are
+// the agents that read outside documents for a living (Scribe's Guide Author
+// pulls the web, Confluence and uploads into what it writes), and the switch
+// lived on orchestrate's Security page, which app agents are not set up on.
+// Left to a switch, it was off for all of them: scanning is enforcement, and
+// enforcement that waits for someone to find it fails open.
+func scansToolResults(agent AgentRecord) bool {
+	return agent.ScanToolResults || isAppAgent(agent.ID)
 }
 
 // taintTurn records what a detection told this agent to do.

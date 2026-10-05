@@ -61,7 +61,7 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			// protected the same way — NOT because it is a rule. It is not one:
 			// it needs no authored guardrail and "disabled" above does not
 			// suspend it. See docs/tool-result-scan.md.
-			"scan_tool_results": agent.ScanToolResults,
+			"scan_tool_results": scansToolResults(agent),
 			"scan_tools_add":    agent.ScanToolsAdd,
 			"scan_tools_skip":   agent.ScanToolsSkip,
 			// Resolved live against the registered catalog, never stored: a

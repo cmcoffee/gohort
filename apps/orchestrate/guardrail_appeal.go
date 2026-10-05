@@ -246,7 +246,7 @@ func agentHasContestableRule(agent AgentRecord) bool {
 	// A scan-appealable agent needs the same channel, for the same reason: the
 	// tool refuses unless something is actually pending, so mounting it costs a
 	// description and nothing else.
-	if agent.ScanToolResults && agent.ScanAppealable {
+	if scansToolResults(agent) && agent.ScanAppealable {
 		return true
 	}
 	for _, r := range guardrailRules(agent) {
