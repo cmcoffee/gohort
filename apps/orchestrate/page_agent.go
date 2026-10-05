@@ -127,6 +127,10 @@ func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request)
 // surface clean and prevent accidental misconfiguration. enforceSubAgentPosture
 // at loadAgent is the runtime safety net even if the UI ever leaks.
 func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
+	if spec, isApp := appagents.AppAgentByID(id); isApp {
+		T.renderAppAgentEditor(w, r, udb, id, spec)
+		return
+	}
 	source := ""
 	title := "New agent"
 	subAgent := false
@@ -226,63 +230,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// procedure layered on top of it per phase.
 		machineSelectField(udb, user),
 		bulletinsField(udb),
-		{Type: "header", Label: "Budgets", Collapsed: true,
-			Help: "How much compute the agent may spend per turn."},
-		{Field: "max_plan_steps", Type: "number", Label: "Max plan steps", Min: 1, Max: 12,
-			Placeholder: fmt.Sprintf("%d", defaultMaxPlanSteps),
-			Help:        fmt.Sprintf("How many steps the orchestrator may commit to per user turn. Leave blank for the default (%d) on general agents; raise for deep-research agents that need more decomposition; drop to 1-2 for snappy lookup agents.", defaultMaxPlanSteps),
-			SuggestURL:  "../api/agents/suggest"},
-		{Field: "max_worker_rounds", Type: "number", Label: "Max worker rounds per step", Min: 1, Max: maxWorkerRoundsCeiling,
-			Placeholder: fmt.Sprintf("%d", defaultMaxWorkerRounds),
-			Help:        fmt.Sprintf("How many LLM call + tool-execution cycles the worker may use for a single step. Each round is one model call. Leave blank for the default (%d); raise when the worker chains many tool calls (research with cross-references, or surveying a command before writing it down); lower for fast single-tool answers. Anything under %d is raised to %d: a cap too low to finish an action is worse than no cap.", defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds),
-			SuggestURL:  "../api/agents/suggest"},
-		// Hidden under a tracked plan: the gap pass reviews plan_set's steps,
-		// and a tracked plan replaces plan_set, so it would never fire.
-		{Field: "gap_check", Type: "toggle", Label: "Gap detection", ShowWhen: "!work_plan",
-			Help: "Post-plan review pass that fills structural gaps before synthesis. Worth it for research; off for chat."},
-		{Field: "work_plan", Type: "toggle", Label: "Tracked plan",
-			Help:   "The agent commits to a visible checklist and works it.",
-			Detail: "Each step is started, then closed with findings or marked blocked with a reason, and anything left unfinished is stated in the answer instead of quietly dropped. The checklist survives the turn, so a plan begun in one message is still the plan in the next.\n\nReplaces this agent's plan_set, which fans a single turn out to workers and ends the round. Worth it for work with several results that build on each other, overhead for questions one call answers."},
-		{Type: "header", Label: "Reasoning", Collapsed: true,
-			Help: "Override the LLM's reasoning mode for this agent's turns."},
-		// A set effort decides whether the agent reasons (thinkMode), so
-		// Think mode is only read while effort is left at its default.
-		{Field: "think", Type: "select", Label: "Think mode", ShowWhen: "!effort",
-			Options: []ui.SelectOption{
-				{Value: "auto", Label: "Auto: follow the deployment routing (" + currentAutoThinkLabel() + ")"},
-				{Value: "on", Label: "On: force reasoning for every turn"},
-				{Value: "off", Label: "Off: force no reasoning (faster)"},
-			},
-			Help:   "Whether this agent reasons before it answers.",
-			Detail: "Top-level conversational agents default On, because reasoning helps planners and synthesizers. Sub-agent specialists default Off, for faster lookups. Pick Auto only when you want the framework route to decide."},
-		// Shown while reasoning can be on: an effort level, or no effort and
-		// Think mode not off.
-		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
-			ShowWhen:    "effort:low|medium|high||!effort;think:!off",
-			Placeholder: "0",
-			Help:        "Max thinking tokens per LLM call. 0 inherits the deployment default (4096).",
-			Detail:      "The admin global budget is a hard ceiling, so this can only LOWER the budget, for snappier turns. A value above the ceiling is clamped. Only applies when Think is on."},
-		{Field: "effort", Type: "select", Label: "Effort",
-			Options: []ui.SelectOption{
-				{Value: "", Label: "Default: follow the model tier's setting"},
-				{Value: "off", Label: "Off: no reasoning"},
-				{Value: "low", Label: "Low"},
-				{Value: "medium", Label: "Medium"},
-				{Value: "high", Label: "High"},
-			},
-			Help:   "How hard this agent reasons. A think budget, if set, overrides it.",
-			Detail: "Each model gets its own dial: Claude's effort setting, OpenAI's reasoning effort, or a thinking budget sized for local models. When set, it also decides Think mode: Off means no reasoning, any other level means reasoning on. The admin's maximum effort for the model tier still caps it."},
-		// Which MODEL does the reasoning — a Reasoning setting, not an
-		// Autonomous-runs one. It sat under Autonomous runs purely by
-		// position (a header owns the fields until the next header), so it
-		// read as an unattended-run option when it governs every turn.
-		//
-		// Shown only when a distinct lead is actually wired (HasDistinctLead):
-		// otherwise it degrades straight back to the worker and the control
-		// would be a no-op. Hidden for ForcePrivate agents — their
-		// conversation must never leave for the remote lead model (gate 2).
-		leadModelField(T.HasDistinctLead() && !leadModelLocked),
-		consultLeadField(T.HasDistinctLead() && !leadModelLocked, editRec),
 		// Autonomous runs are NOT here. What this agent may do when nobody is
 		// present to click Approve is the Security page: the Unattended ladder
 		// on each tool, and the Limits tab for how much and how often.
@@ -305,6 +252,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// The ladder is the better shape for it too. A tool has three answers,
 		// not two independent checkboxes: runs, asks first, never.
 	}
+	// Budgets and Reasoning close the form; the app-agent editor shows only
+	// these (renderAppAgentEditor).
+	fields = append(fields, T.budgetReasoningFields(editRec, leadModelLocked)...)
 	// Sub-agent create flow (chat-toolbar Create → "sub-agent of X")
 	// bakes the parent ID into the form via a hidden field so the POST
 	// to /api/agents includes owned_by=<parent_id>. enforceSubAgentPosture
@@ -476,26 +426,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	//
 	// CREATE mode stays one POST form: there is no record to PATCH yet, and a
 	// new agent needs its fields submitted together with the templates picker.
-	// An app agent's prompt and description are its app's (frameworkOwnedSeedFields:
-	// a change to them is never applied), so they are not offered as fields
-	// to change. Everything else is the user's, layered over the app's
-	// definition, and Reset to default (below, and on Fleet > App agents)
-	// puts it back.
-	appSpec, isAppAgent := appagents.AppAgentByID(id)
-	if isAppAgent {
-		title = "Edit app agent"
-		kept := fields[:0:0]
-		for _, f := range fields {
-			if f.Field == "description" || f.Field == "orchestrator_prompt" {
-				continue
-			}
-			if f.Type == "header" && f.Label == "Persona" {
-				f.Help = "Its prompt comes from " + chFirst(appSpec.OwningApp, "its app") + ", like the tools it writes with: they are what make it work there."
-			}
-			kept = append(kept, f)
-		}
-		fields = kept
-	}
 	agentSection := ui.Section{
 		Title:    "Agent",
 		Subtitle: "Identity, prompts, and behavior.",
@@ -692,27 +622,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Reset to default for an app agent: its copy goes, and it reads as its app
-	// registered it. Memory and conversations stay (resetAppAgent).
-	if isAppAgent {
-		sections = append(sections, ui.Section{
-			Title:    "Reset to default",
-			Subtitle: "Put this agent back as " + chFirst(appSpec.OwningApp, "its app") + " registered it.",
-			Detail:   "Every setting changed here goes back, tool approvals and rules saved on it included. Its memory and conversations are kept.",
-			Body: ui.DisplayPanel{
-				Source: "../api/agents/" + id,
-				Pairs:  []ui.DisplayPair{},
-				Actions: []ui.ToolbarAction{{
-					Label:   "Reset to default",
-					Method:  "POST",
-					URL:     "../api/console/app-agents/reset?id=" + url.QueryEscape(id),
-					Confirm: "Reset this agent to its defaults? Every setting changed on it goes back to what its app registered. Its memory and conversations are kept.",
-					Variant: "danger",
-				}},
-			},
-		})
-	}
-
 	// Delete — the human's authoritative remove for any existing agent the editor
 	// is open on, INCLUDING a sub-agent reached via the picker (which agents
 	// can't delete once the cross-agent lock is in place). Non-seed only: seeds
@@ -744,7 +653,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// reopens on the agent the user was just editing instead of
 	// snapping to Chat. Empty id (create form) skips the param.
 	backURL := ".."
-	if id != "" && !isAppAgent {
+	if id != "" {
 		backURL = "..?agent=" + url.QueryEscape(id)
 	}
 	// Opened from an app (its chat's Agent settings), back goes to the app.
@@ -1339,4 +1248,125 @@ func shareSubtitleFor(a AgentRecord) string {
 // browser would take to another host.
 func localBackPath(b string) bool {
 	return strings.HasPrefix(b, "/") && !strings.HasPrefix(b, "//") && !strings.HasPrefix(b, "/\\")
+}
+
+// budgetReasoningFields are the agent editor's Budgets and Reasoning sections:
+// how much a turn may spend, and how it reasons. Shared by the full editor
+// and the app-agent editor, so the two cannot drift apart.
+func (T *OrchestrateApp) budgetReasoningFields(editRec AgentRecord, leadModelLocked bool) []ui.FormField {
+	return []ui.FormField{
+		{Type: "header", Label: "Budgets", Collapsed: true,
+			Help: "How much compute the agent may spend per turn."},
+		{Field: "max_plan_steps", Type: "number", Label: "Max plan steps", Min: 1, Max: 12,
+			Placeholder: fmt.Sprintf("%d", defaultMaxPlanSteps),
+			Help:        fmt.Sprintf("How many steps the orchestrator may commit to per user turn. Leave blank for the default (%d) on general agents; raise for deep-research agents that need more decomposition; drop to 1-2 for snappy lookup agents.", defaultMaxPlanSteps),
+			SuggestURL:  "../api/agents/suggest"},
+		{Field: "max_worker_rounds", Type: "number", Label: "Max worker rounds per step", Min: 1, Max: maxWorkerRoundsCeiling,
+			Placeholder: fmt.Sprintf("%d", defaultMaxWorkerRounds),
+			Help:        fmt.Sprintf("How many LLM call + tool-execution cycles the worker may use for a single step. Each round is one model call. Leave blank for the default (%d); raise when the worker chains many tool calls (research with cross-references, or surveying a command before writing it down); lower for fast single-tool answers. Anything under %d is raised to %d: a cap too low to finish an action is worse than no cap.", defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds),
+			SuggestURL:  "../api/agents/suggest"},
+		// Hidden under a tracked plan: the gap pass reviews plan_set's steps,
+		// and a tracked plan replaces plan_set, so it would never fire.
+		{Field: "gap_check", Type: "toggle", Label: "Gap detection", ShowWhen: "!work_plan",
+			Help: "Post-plan review pass that fills structural gaps before synthesis. Worth it for research; off for chat."},
+		{Field: "work_plan", Type: "toggle", Label: "Tracked plan",
+			Help:   "The agent commits to a visible checklist and works it.",
+			Detail: "Each step is started, then closed with findings or marked blocked with a reason, and anything left unfinished is stated in the answer instead of quietly dropped. The checklist survives the turn, so a plan begun in one message is still the plan in the next.\n\nReplaces this agent's plan_set, which fans a single turn out to workers and ends the round. Worth it for work with several results that build on each other, overhead for questions one call answers."},
+		{Type: "header", Label: "Reasoning", Collapsed: true,
+			Help: "Override the LLM's reasoning mode for this agent's turns."},
+		// A set effort decides whether the agent reasons (thinkMode), so
+		// Think mode is only read while effort is left at its default.
+		{Field: "think", Type: "select", Label: "Think mode", ShowWhen: "!effort",
+			Options: []ui.SelectOption{
+				{Value: "auto", Label: "Auto: follow the deployment routing (" + currentAutoThinkLabel() + ")"},
+				{Value: "on", Label: "On: force reasoning for every turn"},
+				{Value: "off", Label: "Off: force no reasoning (faster)"},
+			},
+			Help:   "Whether this agent reasons before it answers.",
+			Detail: "Top-level conversational agents default On, because reasoning helps planners and synthesizers. Sub-agent specialists default Off, for faster lookups. Pick Auto only when you want the framework route to decide."},
+		// Shown while reasoning can be on: an effort level, or no effort and
+		// Think mode not off.
+		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
+			ShowWhen:    "effort:low|medium|high||!effort;think:!off",
+			Placeholder: "0",
+			Help:        "Max thinking tokens per LLM call. 0 inherits the deployment default (4096).",
+			Detail:      "The admin global budget is a hard ceiling, so this can only LOWER the budget, for snappier turns. A value above the ceiling is clamped. Only applies when Think is on."},
+		{Field: "effort", Type: "select", Label: "Effort",
+			Options: []ui.SelectOption{
+				{Value: "", Label: "Default: follow the model tier's setting"},
+				{Value: "off", Label: "Off: no reasoning"},
+				{Value: "low", Label: "Low"},
+				{Value: "medium", Label: "Medium"},
+				{Value: "high", Label: "High"},
+			},
+			Help:   "How hard this agent reasons. A think budget, if set, overrides it.",
+			Detail: "Each model gets its own dial: Claude's effort setting, OpenAI's reasoning effort, or a thinking budget sized for local models. When set, it also decides Think mode: Off means no reasoning, any other level means reasoning on. The admin's maximum effort for the model tier still caps it."},
+		// Which MODEL does the reasoning — a Reasoning setting, not an
+		// Autonomous-runs one. It sat under Autonomous runs purely by
+		// position (a header owns the fields until the next header), so it
+		// read as an unattended-run option when it governs every turn.
+		//
+		// Shown only when a distinct lead is actually wired (HasDistinctLead):
+		// otherwise it degrades straight back to the worker and the control
+		// would be a no-op. Hidden for ForcePrivate agents — their
+		// conversation must never leave for the remote lead model (gate 2).
+		leadModelField(T.HasDistinctLead() && !leadModelLocked),
+		consultLeadField(T.HasDistinctLead() && !leadModelLocked, editRec),
+	}
+}
+
+// renderAppAgentEditor is the restricted view of an app agent (Scribe's Guide
+// Author, Servitor's investigator): the settings that shape how it works in
+// its app, and Reset to default. Nothing else.
+//
+// An app agent is its app's. It runs only inside the app, with the tools the
+// app hands it each turn, and is not dispatchable from outside it. So the
+// rest of the full editor does not apply: its prompt and description are the
+// app's (never applied from a person's copy anyway), and schedules, channels,
+// cortex, delegation, intake, publishing and sharing would each give it a way
+// to run somewhere it cannot work.
+func (T *OrchestrateApp) renderAppAgentEditor(w http.ResponseWriter, r *http.Request, udb Database, id string, spec appagents.AppAgentSpec) {
+	rec, _ := loadAgent(udb, id)
+	app := chFirst(spec.OwningApp, "its app")
+	name := chFirst(rec.Name, spec.Name, id)
+	fields := T.budgetReasoningFields(rec, agentForcesPrivate(rec) && !AllLLMsPrivate())
+	for i := range fields {
+		fields[i].Collapsed = false // nothing here to hide: it is the whole page
+	}
+	intro := name + " belongs to " + app + " and runs only there. These shape how it works there; its prompt and tools are " + app + "'s."
+	sections := splitAgentFormSections(id, "../api/agents/"+id, fields, intro)
+	if len(sections) > 0 {
+		// The splitter names its first section after the identity fields it
+		// usually leads with; here it holds the budgets.
+		sections[0].Title = "Budgets"
+	}
+	sections = append(sections, ui.Section{
+		Title:    "Reset to default",
+		Subtitle: "Put " + name + " back as " + app + " registered it.",
+		Detail:   "Every setting changed here goes back, tool approvals and rules saved on it included. Its memory and conversations are kept.",
+		Body: ui.DisplayPanel{
+			Source: "../api/agents/" + id,
+			Pairs:  []ui.DisplayPair{},
+			Actions: []ui.ToolbarAction{{
+				Label:   "Reset to default",
+				Method:  "POST",
+				URL:     "../api/console/app-agents/reset?id=" + url.QueryEscape(id),
+				Confirm: "Reset " + name + " to its defaults? Every setting changed on it goes back to what " + app + " registered. Its memory and conversations are kept.",
+				Variant: "danger",
+			}},
+		},
+	})
+	backURL := ".."
+	if b := r.URL.Query().Get("back"); localBackPath(b) {
+		backURL = b
+	}
+	page := ui.Page{
+		Title:      name + " (" + app + ")",
+		ShowTitle:  true,
+		BackURL:    backURL,
+		MaxWidth:   "900px",
+		SectionNav: true,
+		Sections:   sections,
+	}
+	page.ServeHTTP(w, r)
 }

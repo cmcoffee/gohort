@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
@@ -125,5 +126,31 @@ func TestAppAgentsGroupApartInPickers(t *testing.T) {
 		if o.Value == "mine" && strings.HasPrefix(o.Group, "App agents") {
 			t.Fatalf("an own agent landed in an app group: %q", o.Group)
 		}
+	}
+}
+
+// An app agent's editor is the restricted view: budgets, reasoning and
+// reset, and none of the surfaces that would let it run outside its app.
+func TestAppAgentEditorIsRestricted(t *testing.T) {
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-restricted", Name: "Restricted", OwningApp: "Zz Test", Hidden: true, Prompt: "x",
+	})
+	T := &OrchestrateApp{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
+	udb := UserDB(T.DB, "u")
+	rec := httptest.NewRecorder()
+	T.renderAgentEditor(rec, httptest.NewRequest("GET", "/agent/app-test-restricted?back=/zz", nil), "u", udb, "app-test-restricted")
+	page := rec.Body.String()
+	for _, want := range []string{"max_worker_rounds", "gap_check", "work_plan", "think_budget", "Reset to default", "app-agents/reset", "belongs to Zz Test"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the app-agent editor is missing %q", want)
+		}
+	}
+	for _, not := range []string{"orchestrator_prompt", "\"triggers\"", "capture_prompt", "Intake form", "Delegation", "Where it shows up", "Picture library", "Delete agent"} {
+		if strings.Contains(page, not) {
+			t.Errorf("the app-agent editor offers %q", not)
+		}
+	}
+	if !strings.Contains(page, "/zz") {
+		t.Error("back does not return to the app")
 	}
 }
