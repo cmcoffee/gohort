@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.354). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.355). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -126,6 +126,10 @@ way:
   included, on what the pass kept. It stays only if more train builds pass
   and neither split got worse; if not, the pass's edits are taken back one
   at a time to find the one that hurt, and failing that the pass is dropped.
+- **Trim.** After a pass is kept, the longest blocks it may edit are
+  shortened and the whole suite runs once more; the cuts stay only if no
+  build is lost (see "Tool descriptions are weights too"). Off on Details
+  with **Shorten what it tunes**; skipped when the budget would not cover it.
 
 When the run ends it applies what it kept as the shared text, and **Undo**
 takes the whole run back; **Reset to shipped** takes back every run. The
