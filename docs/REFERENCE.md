@@ -52,7 +52,7 @@ For the overview and quick start, see the [README](../README.md).
 - **Detached agent runs**: turns survive client disconnect. The HTTP request's context drives only the SSE delivery leg; the agent loop runs against an independent context and tees every frame into a per-run ring buffer. A reconnecting client picks up where it left off via `/api/runs/<id>/stream`. Active runs show a pulsing indicator on their session in the rail, and sessions with live background work (event-monitor watchers or in-flight dispatched agents) lift into an "Active" group at the top of the rail with a count badge, so ongoing work stays findable.
 - **Pipeline framework**, `RunPipelineAsync` / `RestorePipeline` for long-running tasks: session registration, persistent queue (survives restarts), per-app concurrency cap, completion notifications without duplicates.
 - **Mid-flight interjections**: queue notes via `/api/inject` while a turn is running; drained at per-step boundaries and folded into the next worker brief.
-- **Encrypted config + credentials**: AES-CFB kvlite database whose padlock lives in `gohort.ini` (`[do_not_modify] db_locker`), not tied to the machine: the database and its ini travel together (see "The database padlock" below); each credential carries a Base URL + add/remove allowed-endpoints allow-list, audit log, rate limits, and an optional per-credential TLS-skip for self-signed / IP-addressed LAN appliances.
+- **Encrypted config + credentials**: AES-CFB kvlite database whose padlock is kept in `gohort.ini` by default, or tied to the machine with `[database] lock = machine` (see "The database padlock" below); each credential carries a Base URL + add/remove allowed-endpoints allow-list, audit log, rate limits, and an optional per-credential TLS-skip for self-signed / IP-addressed LAN appliances.
 - **Maintenance functions**: apps register one-shot repair operations (re-embed, migrate, dedupe); admin UI surfaces them as Run-button rows.
 
 ## Configure (web admin)
@@ -216,25 +216,25 @@ Top-level flags (work before or after a subcommand, kitebroker-style):
 ### The database padlock
 
 The database's encrypted values (API keys, credential secrets, OAuth tokens)
-are encrypted under a padlock kept in `gohort.ini` as `[do_not_modify]
-db_locker`. When that line is missing, the padlock is taken from the
-machine's first network (MAC) address, as every database before v0.7.365 was
-opened, and the line is saved, so from then on it comes from the ini: copy
-the data directory and its `gohort.ini` together and it opens anywhere. Back
-them up together, too. (Before v0.7.365 the line was never actually saved,
-so every start read the MAC; a machine with no network address gets random
-bytes.)
+are under a padlock chosen by `[database] lock` in `gohort.ini`:
 
-If the padlock does not open a database (gohort.ini was replaced, its
-`db_locker` line was lost or edited, or the database came from another
-install), gohort refuses to start and says so. Two ways forward:
+- `lock = portable` (default): random bytes kept in `gohort.ini` under
+  `[do_not_modify] db_locker`, saved and read back from the file before use.
+  The data directory opens anywhere alongside that ini: move and back them up
+  together.
+- `lock = machine` (opt-in): the operating system's install ID
+  (`/etc/machine-id` on Linux and WSL2, `IOPlatformUUID` on macOS,
+  `MachineGuid` on Windows), hashed for gohort and never stored. The
+  database opens only on this machine. To move it: set `portable`, start once
+  on the old machine, move the data directory with its ini, set it back.
+  With no usable machine ID, gohort says so and stays portable.
 
-- Put back the `gohort.ini` (or just its `db_locker` line) that goes with
-  the database. Nothing is lost.
-- Or start once with `GOHORT_RESET_SECRETS=1`. The database is first copied
-  to `<db>.before-reset-<time>`, then its encrypted values are cleared and
-  everything else is kept; the secrets have to be entered again. If the copy
-  fails, nothing is cleared.
+Switching re-wraps the database key in place on the next start (the values
+are encrypted under a random key the padlock only wraps, so nothing is
+re-encrypted and no copy is made). A database still under the first MAC
+address, which every database before v0.7.367 used, is moved the same way.
+A database no padlock on this machine opens has its stored secrets cleared,
+with a notice, and everything else is kept.
 
 The `serve` subcommand starts the web dashboard and has its own flags:
 
