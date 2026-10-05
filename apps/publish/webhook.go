@@ -108,6 +108,10 @@ func webhookBody(cfg PublishConfig, req docs.PublishRequest) (string, string, er
 			"source_kind": req.Doc.SourceKind,
 			"source_id":   req.Doc.SourceID,
 			"external_id": req.ExternalID,
+			// The document's headings, its links to them and its table of
+			// contents, so a receiver can rebuild them its own way: the
+			// markdown's anchors are gohort's.
+			"nav": req.Nav,
 		})
 		if err != nil {
 			return "", "", err

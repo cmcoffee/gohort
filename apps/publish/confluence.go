@@ -103,7 +103,9 @@ func (d *confluenceDest) Targets(ctx context.Context, user string) ([]docs.Publi
 // instead of failing on a stale version.
 func (d *confluenceDest) Publish(ctx context.Context, user string, req docs.PublishRequest) (docs.PublishResult, error) {
 	cfg := d.app.config()
-	storage := MarkdownToConfluence(req.Doc.Markdown)
+	// Its links to its own sections and its table of contents, rebuilt the
+	// way Confluence does them (confluence_nav.go).
+	storage := confluenceNav(MarkdownToConfluence(req.Doc.Markdown), req.Nav)
 	if strings.TrimSpace(storage) == "" {
 		return docs.PublishResult{}, fmt.Errorf("the document is empty: there's nothing to publish")
 	}

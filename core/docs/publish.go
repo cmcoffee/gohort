@@ -64,6 +64,9 @@ type PublishRequest struct {
 	// PublishField): the category, visibility or space a person picked when
 	// publishing. Empty for a destination that asks nothing.
 	Answers map[string]string `json:"answers,omitempty"`
+	// Nav is the document's navigation within itself, which the destination
+	// rebuilds its own way (publish_nav.go). PublishDocument fills it.
+	Nav DocNav `json:"nav,omitempty"`
 }
 
 // PublishResult is where a document landed. ExternalID + Version are what a
@@ -223,6 +226,7 @@ func PublishDocument(ctx context.Context, user, kind string, req PublishRequest)
 	if strings.TrimSpace(req.Title) == "" {
 		return PublishResult{}, fmt.Errorf("a title is required")
 	}
+	req.Nav = AnalyzeNav(req.Doc.Markdown)
 	return d.Publish(ctx, user, req)
 }
 

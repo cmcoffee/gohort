@@ -194,6 +194,10 @@ func agentInstruction(a AgentDestination, req docs.PublishRequest) string {
 		b.WriteString("\n\nWhere: " + t)
 	}
 	b.WriteString("\n\nTitle: " + title)
+	// The document's links to its own sections, rebuilt the destination's way.
+	if nav := docs.NavInstruction(req.Nav); nav != "" {
+		b.WriteString("\n\n" + nav)
+	}
 	b.WriteString("\n\n---\n\n")
 	b.WriteString(req.Doc.Markdown)
 	return b.String()

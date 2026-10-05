@@ -191,6 +191,10 @@ func targetInstruction(t Target, req docs.PublishRequest) string {
 	if prev := strings.TrimSpace(req.ExternalID); prev != "" {
 		b.WriteString("\n\nThis document was published here before, at " + prev + ". Update that one rather than making a new one, if the API allows it.")
 	}
+	// The document's links to its own sections, rebuilt the destination's way.
+	if nav := docs.NavInstruction(req.Nav); nav != "" {
+		b.WriteString("\n\n" + nav)
+	}
 	b.WriteString("\n\n---\n\n")
 	b.WriteString(req.Doc.Markdown)
 	return b.String()
