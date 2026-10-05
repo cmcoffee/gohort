@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.359). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.361). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -737,7 +737,7 @@ passed none there, while the lead passed most of them.
   nonsense; naming no app or machine read as "not found"; "NO action
   buttons" was read as no edit buttons; tool_def help buried the toolbox
   shape under the shell notes.
-- **tool_def** (in progress): a write fired by hand reached the session's
+- **tool_def** (v0.7.360): a write fired by hand reached the session's
   verify record but never the build ledger, so translate and todo kept
   failing "verified" after doing it right; path params read as not
   required for several shapes a builder meant as required (14 times);
@@ -749,10 +749,11 @@ passed none there, while the lead passed most of them.
   exactly the declared object; reply_with on an unattended machine was
   refused in conversation terms, so builds kept putting it back; a sample
   that did not parse was run as no sample and reported OK. Four more
-  tool_def items went to the work in progress (a read that passed going
-  back to unproven on a re-test, a RESULT line that led with "passed"
-  while a write still waited, a response_pipe yielding nothing passing, the
-  toolbox's missing top-level description).
+  tool_def items went in with the rest in v0.7.360 (a read that passed
+  going back to unproven on a re-test, a RESULT line that led with
+  "passed" while a write still waited, a response_pipe yielding nothing
+  passing, the toolbox's missing top-level description). Every confirmed
+  item from the second report is now fixed.
 - **Misreads:** the "wrong book" was the try-it ISBN's own (Dune), the
   read_output ids and the literal "..." and "N" arguments were the
   builder's own invention, the library tool had already been deleted.
