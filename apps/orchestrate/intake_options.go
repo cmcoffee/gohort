@@ -63,7 +63,9 @@ func authoringTargets(udb Database, user, kind string) []intakeOption {
 		for _, a := range listAgents(udb, user) {
 			// Builder improves other agents, and a hidden agent is a template
 			// or internal seat rather than something the user runs.
-			if fleetHidden(a.ID) || isBuilderAgent(a.ID) || a.Hidden {
+			// An app agent's prompt is its app's, so it is not Builder's to
+			// improve: its settings are changed under Fleet > App agents.
+			if fleetHidden(a.ID) || isBuilderAgent(a.ID) || a.Hidden || isAppAgent(a.ID) {
 				continue
 			}
 			add(a.Name+" (id: "+a.ID+")", a.Name)

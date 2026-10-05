@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -95,5 +96,34 @@ func TestAppAgentsCannotBeDeleted(t *testing.T) {
 	}
 	if back, _ := loadAgent(udb, "app-test-kept"); back.MaxWorkerRounds != 30 {
 		t.Fatalf("the refused delete still changed the agent: rounds %d", back.MaxWorkerRounds)
+	}
+}
+
+// Every picker labels an app agent the same way, apart from the person's own
+// agents, and puts the app groups after everything else.
+func TestAppAgentsGroupApartInPickers(t *testing.T) {
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-shown", Name: "Shown", OwningApp: "Zz Test", Prompt: "x",
+	})
+	if g := agentGroup("app-test-shown", "Your agents"); g != "App agents: Zz Test" {
+		t.Fatalf("app agent group = %q", g)
+	}
+	if g := agentGroup("my-own-agent", "Your agents"); g != "Your agents" {
+		t.Fatalf("own agent group = %q", g)
+	}
+	groups := []string{"App agents: Zz Test", "Your agents", "App agents: Aa Test", "", "Your agents"}
+	sort.SliceStable(groups, func(i, j int) bool { return appGroupsLast(groups[i], groups[j]) })
+	want := []string{"Your agents", "", "Your agents", "App agents: Aa Test", "App agents: Zz Test"}
+	if strings.Join(groups, "|") != strings.Join(want, "|") {
+		t.Fatalf("order = %q", groups)
+	}
+	opts, _, _ := agentPickerOptions([]AgentRecord{{ID: "app-test-shown", Name: "Shown"}, {ID: "mine", Name: "Mine"}})
+	for _, o := range opts {
+		if o.Value == "app-test-shown" && o.Group != "App agents: Zz Test" {
+			t.Fatalf("chat picker group = %q", o.Group)
+		}
+		if o.Value == "mine" && strings.HasPrefix(o.Group, "App agents") {
+			t.Fatalf("an own agent landed in an app group: %q", o.Group)
+		}
 	}
 }

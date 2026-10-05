@@ -13,6 +13,7 @@
 package orchestrate
 
 import (
+	"strings"
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -29,6 +30,37 @@ import (
 func isAppAgent(id string) bool {
 	_, ok := appagents.AppAgentByID(id)
 	return ok
+}
+
+// appAgentGroup is the group an app agent shows under in every agent picker,
+// apart from the person's own agents: "App agents: Scribe". ok is false for
+// anything that is not an app agent. One label everywhere, so an app's agent
+// reads as the app's wherever it is offered, rather than as one more agent of
+// the user's that happens to sit in a group named after an app.
+func appAgentGroup(id string) (group string, ok bool) {
+	s, ok := appagents.AppAgentByID(id)
+	if !ok {
+		return "", false
+	}
+	return "App agents: " + chFirst(s.OwningApp, "other apps"), true
+}
+
+// agentGroup is appAgentGroup with the group a picker gives everything else.
+func agentGroup(id, others string) string {
+	if g, ok := appAgentGroup(id); ok {
+		return g
+	}
+	return others
+}
+
+// appGroupsLast orders picker groups: everything else first, keeping its
+// order, then the app groups by name. For sort.SliceStable.
+func appGroupsLast(a, b string) bool {
+	ia, ib := strings.HasPrefix(a, "App agents"), strings.HasPrefix(b, "App agents")
+	if ia != ib {
+		return ib
+	}
+	return ia && a < b
 }
 
 // hiddenAppAgent reports whether id is an app agent whose SPEC says Hidden.

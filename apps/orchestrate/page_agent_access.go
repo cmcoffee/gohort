@@ -21,6 +21,7 @@ package orchestrate
 import (
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -129,12 +130,16 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	// Everything this agent could be allowed to call, by name.
+	// The same agents every other picker offers (a hidden app agent, a
+	// clone-only template or a retired seed is not one to grant anything
+	// about), with an app's agents under their app rather than mixed in.
 	callable := []ui.SelectOption{}
 	for _, a := range listAgents(udb, user) {
-		if a.ID != agent.ID {
-			callable = append(callable, ui.SelectOption{Value: a.ID, Label: a.Name})
+		if a.ID != agent.ID && !fleetHidden(a.ID) {
+			callable = append(callable, ui.SelectOption{Value: a.ID, Label: a.Name, Group: agentGroup(a.ID, "Your agents")})
 		}
 	}
+	sort.SliceStable(callable, func(i, j int) bool { return appGroupsLast(callable[i].Group, callable[j].Group) })
 	policyChoice := permissionLadder()
 	promoteURL := T.WebPrefix() + "/api/console/permissions/promote?id={_id}"
 	narrowURL := T.WebPrefix() + "/api/console/permissions/narrow?id={_id}&agent=" + url.QueryEscape(agent.ID)
@@ -368,6 +373,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Subtitle: dispatchTargetSubtitle(effectiveDispatchMode(agent)),
 				Body: ui.ChipPicker{
 					OptionsSource: T.WebPrefix() + "/api/agents?role=dispatch-target&self=" + url.QueryEscape(agent.ID),
+					GroupByField:  "group",
 					RecordSource:  patchURL,
 					Field:         "allowed_dispatch_targets",
 					PostTo:        patchURL,
@@ -501,6 +507,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Subtitle: "Read only while the setting above is \"Only the agents I list\". Empty there means nothing reaches it, which is the same as No agent.",
 				Body: ui.ChipPicker{
 					OptionsSource: T.WebPrefix() + "/api/agents?role=dispatch-target&self=" + url.QueryEscape(agent.ID),
+					GroupByField:  "group",
 					RecordSource:  patchURL,
 					Field:         "allowed_callers",
 					PostTo:        patchURL,

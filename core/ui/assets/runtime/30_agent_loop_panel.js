@@ -431,7 +431,14 @@
                 .then(function(opts) {
                   status.remove();
                   if (!opts || !opts.length) { list.appendChild(el('div', {style: 'color:var(--text-mute,#999)'}, ['No options available.'])); return; }
+                  // Options may carry a group: a heading is drawn where it
+                  // changes, so the source decides the sections and their order.
+                  var lastGroup = '';
                   opts.forEach(function(opt) {
+                    if (opt.group && opt.group !== lastGroup) {
+                      lastGroup = opt.group;
+                      list.appendChild(el('div', {style: 'margin:0.5rem 0 0.1rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute,#999)'}, [opt.group]));
+                    }
                     var b = el('button', {type: 'button', class: 'ui-row-btn', style: 'text-align:left', onclick: function() {
                       var u = a.url + '?id=' + encodeURIComponent(rowActionID(a, row)) + '&agent=' + encodeURIComponent(agent) + '&value=' + encodeURIComponent(opt.value);
                       b.disabled = true;
@@ -5403,10 +5410,18 @@
         fetchJSON(substituteExtras(cfg.channel_agents_url)).then(function(list) {
           if (!Array.isArray(list)) list = [];
           agentSel.innerHTML = '';
+          // A record with a group goes under an optgroup of that name, in the
+          // order the source lists them.
+          var groups = {};
           list.forEach(function(a) {
             var opt = el('option', {value: a.id}, [a.name || a.id]);
             if (ch.agent_id && a.id === ch.agent_id) opt.selected = true;
-            agentSel.appendChild(opt);
+            if (!a.group) { agentSel.appendChild(opt); return; }
+            if (!groups[a.group]) {
+              groups[a.group] = el('optgroup', {label: a.group});
+              agentSel.appendChild(groups[a.group]);
+            }
+            groups[a.group].appendChild(opt);
           });
         }).catch(function() { agentField.style.display = 'none'; });
       }

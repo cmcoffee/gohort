@@ -117,11 +117,7 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 		opts = append(opts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Specialized Agents"})
 	}
 	for _, a := range appAgents {
-		group := a.App
-		if group == "" {
-			group = "App Agents"
-		}
-		opts = append(opts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: group})
+		opts = append(opts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: agentGroup(a.ID, "App agents")})
 	}
 	return opts, cortex, subs
 }

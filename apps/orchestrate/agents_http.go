@@ -59,16 +59,20 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			// Encoded to the three fields the picker reads (id / name /
 			// description), with the kind said out loud in the description so
 			// a reader can tell what they are ticking.
+			// group: the picker sections them (GroupByField), so an app's agent
+			// is not offered as one of the person's own.
 			out := make([]map[string]any, 0, len(agents))
 			for _, a := range agents {
-				out = append(out, map[string]any{"id": a.ID, "name": a.Name, "description": a.Description})
+				if !isAppAgent(a.ID) {
+					out = append(out, map[string]any{"id": a.ID, "name": a.Name, "description": a.Description, "group": "Agents"})
+				}
 			}
 			for _, d := range ListPipelineDefs(udb, user) {
 				desc := "Pipeline"
 				if s := strings.TrimSpace(d.Description); s != "" {
 					desc += " - " + s
 				}
-				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc})
+				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc, "group": "Pipelines"})
 			}
 			// Machines that RUN, for the same reason: they are dispatch
 			// targets, so a list that decides which targets are reachable has
@@ -83,13 +87,33 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				if s := strings.TrimSpace(d.Description); s != "" {
 					desc += " - " + s
 				}
-				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc})
+				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc, "group": "Machines"})
 			}
+			// App agents last, under their app.
+			var apps []map[string]any
+			for _, a := range agents {
+				if g, ok := appAgentGroup(a.ID); ok {
+					apps = append(apps, map[string]any{"id": a.ID, "name": a.Name, "description": a.Description, "group": g})
+				}
+			}
+			sort.SliceStable(apps, func(i, j int) bool { return apps[i]["group"].(string) < apps[j]["group"].(string) })
+			out = append(out, apps...)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(out)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(agents)
+		// The bare list feeds the channel re-point dropdown, which sections
+		// it by group: the person's agents, then each app's.
+		type listed struct {
+			AgentRecord
+			Group string `json:"group,omitempty"`
+		}
+		rows := make([]listed, 0, len(agents))
+		for _, a := range agents {
+			rows = append(rows, listed{AgentRecord: a, Group: agentGroup(a.ID, "Your agents")})
+		}
+		sort.SliceStable(rows, func(i, j int) bool { return appGroupsLast(rows[i].Group, rows[j].Group) })
+		_ = json.NewEncoder(w).Encode(rows)
 	case http.MethodPost:
 		// Read once, decode twice. The record decode is what saves; the
 		// key probe is what tells a field the caller OMITTED apart from a

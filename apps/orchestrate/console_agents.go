@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 	type opt struct {
 		Value string `json:"value"`
 		Label string `json:"label"`
+		Group string `json:"group,omitempty"`
 	}
 	opts := []opt{}
 	// A relink picker for a schedule that runs a PIPELINE must offer
@@ -101,8 +103,11 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 		if label == "" {
 			label = a.ID
 		}
-		opts = append(opts, opt{Value: a.ID, Label: label})
+		opts = append(opts, opt{Value: a.ID, Label: label, Group: agentGroup(a.ID, "Your agents")})
 	}
+	// Your own agents first, then each app's: the picker draws a heading
+	// where the group changes.
+	sort.SliceStable(opts, func(i, j int) bool { return appGroupsLast(opts[i].Group, opts[j].Group) })
 	writeJSON(w, opts)
 }
 
