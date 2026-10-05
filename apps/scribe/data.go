@@ -342,6 +342,17 @@ func sanitizeGuideArtifacts(md string) (string, bool) {
 	return cleaned, cleaned != strings.TrimSpace(md)
 }
 
+// modelText is section text a model wrote, as it is stored: with the stray
+// markup sanitizeGuideArtifacts removes. Every path where a model writes a
+// guide's text goes through it. A person's own edits do not, so a guide about
+// tool-call formats keeps its examples. A model that put its next tool call
+// inside the text it was writing, or copied one out of its material, would
+// otherwise have it saved and shown until an Audit cleaned it.
+func modelText(md string) string {
+	cleaned, _ := sanitizeGuideArtifacts(md)
+	return cleaned
+}
+
 func saveGuideRev(udb Database, g Guide, note string) Guide {
 	saved := saveGuide(udb, g)
 	var rl guideRevisions

@@ -96,7 +96,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 		SingleFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
-			md := strings.TrimSpace(fmt.Sprint(args["markdown"]))
+			md := modelText(fmt.Sprint(args["markdown"]))
 			if md == "" {
 				return "", fmt.Errorf("markdown is required: pass the section body")
 			}
@@ -123,7 +123,10 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 		SingleFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
-			md := strings.TrimSpace(fmt.Sprint(args["markdown"]))
+			md := modelText(fmt.Sprint(args["markdown"]))
+			if md == "" {
+				return "", fmt.Errorf("markdown is required: pass the new section body (use delete_section to remove a section)")
+			}
 			g, ownerUDB, _, ok := openGuide()
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
@@ -193,7 +196,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			if err != nil {
 				return "", fmt.Errorf("draft failed: %w", err)
 			}
-			md := strings.TrimSpace(resp.Content)
+			md := modelText(resp.Content)
 			if md == "" {
 				return "", fmt.Errorf("the draft came back empty")
 			}

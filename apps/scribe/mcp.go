@@ -151,7 +151,8 @@ func guidesMCPAddSection(_ context.Context, owner string, args map[string]any) (
 	if title == "" {
 		title = "New section"
 	}
-	g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: strings.TrimSpace(mcpStr(args, "markdown")), Order: g.nextOrder()})
+	// An MCP client is a model writing, like the co-author.
+	g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: modelText(mcpStr(args, "markdown")), Order: g.nextOrder()})
 	saveGuideRev(udb, g, "Added section (via MCP): "+title)
 	return fmt.Sprintf("Added section %q to guide %q.", title, g.Title), nil
 }

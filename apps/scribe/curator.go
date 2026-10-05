@@ -422,7 +422,7 @@ func (cs *curatorSession) createGuide(title string, findingIDs []string) (string
 	for _, f := range picked {
 		section := firstNonEmpty(strings.TrimSpace(f.Topic), "Finding")
 		g.Sections = append(g.Sections, Section{
-			ID: newID(), Title: section, Markdown: f.Content, Order: g.nextOrder(),
+			ID: newID(), Title: section, Markdown: modelText(f.Content), Order: g.nextOrder(),
 		})
 		g = saveGuideRev(cs.udb, g, "Added section (curator): "+section)
 		cs.record(CuratorEntry{
