@@ -1798,3 +1798,23 @@ func TestAllTransientRefusalsOfferUnattended(t *testing.T) {
 		t.Errorf("a machine with a step that waits is a conversation; it should be told to set next:\n%s", probs)
 	}
 }
+
+// reply_with on an unattended machine is refused in that machine's own
+// terms: its result is the last step's output.
+func TestReplyWithOnAnUnattendedMachineSaysWhy(t *testing.T) {
+	d := MachineDef{Name: "m", Unattended: true, Phases: []MachinePhase{
+		{Name: "only", Prompt: "Answer.", ReplyWith: "Here it is: {prev}"},
+	}}
+	var found bool
+	for _, p := range d.Problems() {
+		if strings.Contains(p, "not used in an unattended machine") {
+			found = true
+		}
+		if strings.Contains(p, "conversation waits in") {
+			t.Errorf("the conversational wording reached an unattended machine: %s", p)
+		}
+	}
+	if !found {
+		t.Fatalf("problems = %v", d.Problems())
+	}
+}

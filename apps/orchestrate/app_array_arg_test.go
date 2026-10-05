@@ -32,3 +32,20 @@ func TestAnEmptyStoreOKSaysWhatItProves(t *testing.T) {
 		t.Fatal("empty-store note")
 	}
 }
+
+// A sample that does not parse is refused, not run as no sample against an
+// empty store, which reported OK and tested nothing.
+func TestABrokenSampleIsRefused(t *testing.T) {
+	if _, err := appSampleRecords(`[{"item": "bolts", "quantity": 5}`); err == nil || !strings.Contains(err.Error(), "did not parse") {
+		t.Fatalf("truncated JSON: %v", err)
+	}
+	if recs, err := appSampleRecords(`[{"item": "bolts", "quantity": 5}]`); err != nil || len(recs) != 1 {
+		t.Fatalf("JSON string: %v %v", recs, err)
+	}
+	if recs, err := appSampleRecords(map[string]any{"item": "nuts"}); err != nil || len(recs) != 1 {
+		t.Fatalf("one object: %v %v", recs, err)
+	}
+	if recs, err := appSampleRecords(nil); err != nil || recs != nil {
+		t.Fatalf("no sample: %v %v", recs, err)
+	}
+}

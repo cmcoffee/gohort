@@ -67,3 +67,25 @@ func TestAStageAndAStepAgreeOnWhatAReachMeans(t *testing.T) {
 		}
 	}
 }
+
+// A tool stage decodes the answer, not what is wrapped around it: the
+// untrusted fence's "[" was read as a JSON array, so a tool that returned
+// exactly the declared object failed "reply was not a JSON object".
+func TestToolStageBodyUnwrapsTheAnswer(t *testing.T) {
+	wrapped := UntrustedToolResultFence + "[Sent through the \"geo\" credential: authenticated for you automatically.]\n\nHTTP 200 OK\n{\"lat\": 48.85, \"lon\": 2.35}"
+	body, err := toolStageBody(wrapped)
+	if err != nil || body != `{"lat": 48.85, "lon": 2.35}` {
+		t.Fatalf("body = %q, %v", body, err)
+	}
+	if fields, err := decodeStageOutput(body, []PipelineField{{Name: "lat", Type: "number"}}); err != nil || fields["lat"] == nil {
+		t.Fatalf("decoded = %v, %v", fields, err)
+	}
+	if _, err := toolStageBody("HTTP 404 Not Found\n{\"error\": \"unknown place\"}"); err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("a 404 should be the stage's error: %v", err)
+	}
+	for _, plain := range []string{`[1, 2]`, "[\n {\"a\": 1}\n]", `{"a": 1}`} {
+		if got, _ := toolStageBody(plain); got != plain {
+			t.Errorf("%q came back as %q", plain, got)
+		}
+	}
+}

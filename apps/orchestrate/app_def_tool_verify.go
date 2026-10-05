@@ -72,7 +72,10 @@ func (t *chatTurn) appDefTest(args map[string]any) (string, error) {
 	// the (often empty) live store, so the full form→record→data-source→output
 	// path is exercised with realistic input. `sample` is an array of objects
 	// keyed by the form's field names; `params` simulates query-param inputs.
-	sample := appSampleRecords(args["sample"])
+	sample, err := appSampleRecords(args["sample"])
+	if err != nil {
+		return "", err
+	}
 	params := mapArg(args["params"])
 	src := "stored"
 	if sample != nil {
@@ -142,7 +145,10 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	}
 
 	if len(spec.DataSources) > 0 || len(spec.Actions) > 0 {
-		sample := appSampleRecords(args["sample"])
+		sample, err := appSampleRecords(args["sample"])
+		if err != nil {
+			return "", err
+		}
 		if sample != nil {
 			spec.RecordSample(sample)
 			spec.Sample = sample
@@ -385,10 +391,27 @@ func mapArg(raw any) map[string]any {
 // example form submissions (objects keyed by form field name) — into records to
 // stand in for the live store. Returns nil when absent so checkScripts falls back
 // to the stored records.
-func appSampleRecords(raw any) []map[string]any {
-	arr, ok := raw.([]any)
-	if !ok || len(arr) == 0 {
-		return nil
+func appSampleRecords(raw any) ([]map[string]any, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	// The shapes a model sends a list in (an array, the array as a JSON
+	// string, one object). Anything else is refused: a sample that did not
+	// parse was run as no sample, against the empty store, and the report
+	// said OK, so four builds tested nothing and never knew.
+	arr, _, ok := appArrayArg(raw, "sample")
+	if !ok {
+		why := "it must be an array of records, e.g. [{\"item\": \"bolts\", \"quantity\": 5}]"
+		if str, isStr := raw.(string); isStr {
+			var probe any
+			if err := json.Unmarshal([]byte(strings.TrimSpace(str)), &probe); err != nil {
+				why += "; the JSON did not parse: " + err.Error()
+			}
+		}
+		return nil, fmt.Errorf("sample was not used, nothing ran: %s", why)
+	}
+	if len(arr) == 0 {
+		return nil, nil
 	}
 	out := make([]map[string]any, 0, len(arr))
 	for _, item := range arr {
@@ -397,9 +420,9 @@ func appSampleRecords(raw any) []map[string]any {
 		}
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, nil
 	}
-	return out
+	return out, nil
 }
 
 // checkScripts executes an app's script-backed components through the SAME runner

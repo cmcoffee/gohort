@@ -1477,7 +1477,13 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		probs = append(probs, err.Error())
 	}
 	if rw := strings.TrimSpace(p.ReplyWith); rw != "" {
-		if !p.Resident {
+		switch {
+		case d.Unattended:
+			// Said in the unattended machine's own terms: the refusal
+			// below talked about a conversation to a builder whose machine
+			// has none, and five builds put it back on the last step.
+			probs = append(probs, "step "+name+": reply_with is not used in an unattended machine: its result is the last step's output as it is. Drop reply_with, and shape the result with that step's prompt or output fields.")
+		case !p.Resident:
 			probs = append(probs, "step "+name+": reply_with is only valid on a step the conversation waits in (a step that passes on hands its result to the next step, not to the person). Put it on the step that replies.")
 		}
 		if err := doubleBraceProblem(name, "reply_with", rw); err != nil {

@@ -726,7 +726,10 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 				// other stage — decode it, but with no repair retry: there
 				// is no model to ask again, so a mismatch is the tool's
 				// contract being wrong, not a bad generation.
-				fields, err = decodeStageOutput(out, stage.ModelOutput())
+				var body string
+				if body, err = toolStageBody(out); err == nil {
+					fields, err = decodeStageOutput(body, stage.ModelOutput())
+				}
 				if err != nil {
 					err = Error("tool returned a result that does not match the declared output: " + err.Error())
 				}
@@ -969,6 +972,42 @@ func writeContractFields(b *strings.Builder, fields []PipelineField, indent stri
 			writeContractFields(b, f.Fields, indent+"    ")
 		}
 	}
+}
+
+// toolStageBody is a tool's output with what is wrapped around the answer
+// taken off: the untrusted-content fence, a bracketed routing note ("[Sent
+// through the ... credential ...]") and an api tool's "HTTP 200 OK" line.
+// Decoded as it came, the fence's opening "[" was read as the start of a
+// JSON array, and a tool that answered with exactly the declared object
+// failed "reply was not a JSON object". A status that is not 2xx is the
+// stage's error, saying what the service answered.
+func toolStageBody(out string) (string, error) {
+	body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(out), strings.TrimSpace(UntrustedToolResultFence)))
+	for strings.HasPrefix(body, "[") && !strings.HasPrefix(body, "[{") && !strings.HasPrefix(body, "[]") && !strings.HasPrefix(body, "[\"") {
+		end := strings.Index(body, "]")
+		nl := strings.Index(body, "\n")
+		if end < 0 || nl < 0 || end > nl {
+			break // a JSON array, not a note on its own line
+		}
+		body = strings.TrimSpace(body[nl+1:])
+	}
+	if strings.HasPrefix(body, "HTTP ") {
+		line, rest, _ := strings.Cut(body, "\n")
+		if f := strings.Fields(line); len(f) >= 2 && !strings.HasPrefix(f[1], "2") {
+			return "", Error("the tool's service answered " + strings.TrimSpace(line) + ": " + clipStageText(rest, 200))
+		}
+		body = strings.TrimSpace(rest)
+	}
+	return body, nil
+}
+
+// clipStageText is s on one line, at most n bytes.
+func clipStageText(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > n {
+		return s[:n] + " ..."
+	}
+	return s
 }
 
 // decodeStageOutput parses a stage reply against its declared fields.
