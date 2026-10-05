@@ -144,7 +144,7 @@ func (t *chatTurn) applySectionEdit(args map[string]any, reason string, mutate f
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app: check the slug (app_def action=list)")
+		return "", appNotFound(args, "")
 	}
 	current, err := appAuthoringSections(spec)
 	if err != nil {

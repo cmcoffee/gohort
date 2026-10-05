@@ -2,7 +2,6 @@ package orchestrate
 
 import (
 	"encoding/json"
-	"errors"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -32,7 +31,7 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app: check the slug (app_def action=list)")
+		return "", appNotFound(args, "")
 	}
 	records := appStoredRecords(t.user, spec)
 	// One script's body, on request. Bodies are omitted from the full view for

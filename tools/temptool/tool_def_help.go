@@ -17,11 +17,28 @@ var _ = json.Marshal
 const helpText = `tool_def: runtime tool builder
 
 Use this to define a wrapper around a shell command or an HTTP API
-call. Three modes: "shell", "api", and "pipeline". Pick by what you
-need to do, not by what's easier to write.
+call. Modes: "shell" (a command or script), "api" (one HTTP endpoint),
+"toolbox" (several endpoints of one API as one tool) and "pipeline".
+Pick by what you need to do, not by what's easier to write.
+
+WHERE TO READ (find the heading below):
+  - Wrapping an API with several endpoints: "toolbox mode"
+  - One HTTP endpoint: "api mode and response_pipe"
+  - A command or script: "SANDBOX FACT SHEET", then "AUTHORING A
+    SHELL-MODE TOOL"
+  - Before calling any tool done: "verify"
+
+A WRITE endpoint in a toolbox, the shape that goes wrong most:
+    actions=[{name: "create_task", method: "POST",
+              url_template: "/v1/tasks",
+              body_template: "{\"title\": {title}}",
+              params: {"title": {"type": "string"}},
+              required: ["title"]}]
+method, body_template, params and required are fields of the ACTION.
+Nothing but the path and query goes in url_template.
 
 ================================================================
-SANDBOX FACT SHEET: read this BEFORE authoring shell-mode tools
+SANDBOX FACT SHEET: shell mode only (skip it when wrapping an API)
 ================================================================
 
 The shell-mode sandbox is restrictive. The most common authoring

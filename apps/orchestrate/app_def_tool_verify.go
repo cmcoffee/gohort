@@ -2,7 +2,6 @@ package orchestrate
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -47,7 +46,7 @@ func (t *chatTurn) appDefDelete(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app to delete")
+		return "", appNotFound(args, "to delete")
 	}
 	DeleteAppSpec(t.user, spec.Slug)
 	return fmt.Sprintf("Deleted app %q (/apps/%s/).", spec.Name, spec.Slug), nil
@@ -64,7 +63,7 @@ func (t *chatTurn) appDefTest(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app to test: check the slug (app_def action=list)")
+		return "", appNotFound(args, "to test")
 	}
 	if len(spec.DataSources) == 0 && len(spec.Actions) == 0 {
 		return fmt.Sprintf("App %q has no script-backed components (data_sources or actions) to test: a plain form/table app uses the built-in record store and needs no script test.", spec.Name), nil
@@ -112,7 +111,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app to verify: check the slug (app_def action=list)")
+		return "", appNotFound(args, "to verify")
 	}
 	var b strings.Builder
 	failures := 0

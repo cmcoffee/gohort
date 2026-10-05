@@ -830,7 +830,7 @@ func (t *chatTurn) machineList() (string, error) {
 func (t *chatTurn) machineGet(args map[string]any) (string, error) {
 	def, ok := t.findMachine(args)
 	if !ok {
-		return "", errors.New("no machine found by that name or id: machine(action=\"list\") shows what you have")
+		return "", machineNotFound(args)
 	}
 	full := boolArg(args, "full")
 	view := struct {
@@ -895,7 +895,7 @@ func (t *chatTurn) machineGet(args map[string]any) (string, error) {
 func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	def, ok := t.findMachine(args)
 	if !ok {
-		return "", errors.New("no machine found by that name or id: machine(action=\"list\") shows what you have")
+		return "", machineNotFound(args)
 	}
 	want := strings.TrimSpace(stringArg(args, "phase"))
 	if want == "" {
@@ -1060,7 +1060,7 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 func (t *chatTurn) machineRepair(args map[string]any) (string, error) {
 	def, ok := t.findMachine(args)
 	if !ok {
-		return "", errors.New("no machine found by that name or id: machine(action=\"list\") shows what you have")
+		return "", machineNotFound(args)
 	}
 	fixed := def.Repair(RepairAll)
 	if len(fixed) == 0 {
@@ -1092,7 +1092,7 @@ func (t *chatTurn) machineRepair(args map[string]any) (string, error) {
 func (t *chatTurn) machineRun(args map[string]any) (string, error) {
 	def, ok := t.findMachine(args)
 	if !ok {
-		return "", errors.New("no machine found by that name or id: machine(action=\"list\") shows what you have")
+		return "", machineNotFound(args)
 	}
 	if !def.Unattended {
 		return "", errors.New(machineNotRunnableMessage(def))
@@ -1182,7 +1182,7 @@ func machineNotRunnableMessage(def MachineDef) string {
 func (t *chatTurn) machineDelete(args map[string]any) (string, error) {
 	def, ok := t.findMachine(args)
 	if !ok {
-		return "", errors.New("no machine found by that name or id")
+		return "", machineNotFound(args)
 	}
 	detached := detachMachineFromAgents(t.udb, t.user, def.ID)
 	DeleteMachineDef(t.udb, def.ID)
@@ -1297,6 +1297,9 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 		}
 		if unknown := unknownPhaseKeys(m); len(unknown) > 0 {
 			return nil, fmt.Errorf("phase %d (%s): %s", i+1, chFirst(strings.TrimSpace(mapStr(m, "name")), "unnamed"), unknownPhaseKeysMessage(unknown))
+		}
+		if why := nonStringNames(m); why != "" {
+			return nil, fmt.Errorf("phase %d (%s): %s", i+1, chFirst(strings.TrimSpace(mapStr(m, "name")), "unnamed"), why)
 		}
 		fields, err := parsePipelineFields(i+1, m["output"])
 		if err != nil {
@@ -1464,4 +1467,15 @@ func unknownPhaseKeysMessage(unknown []string) string {
 	}
 	sort.Strings(names)
 	return msg + " A step's fields are: " + strings.Join(names, ", ") + "."
+}
+
+// machineNotFound is the answer when findMachine finds nothing: that no
+// machine was named, when neither name nor id was given (the usual case,
+// and "not found" sent the builder looking for a machine that was there),
+// else that the named one does not exist.
+func machineNotFound(args map[string]any) error {
+	if strings.TrimSpace(stringArg(args, "name")) == "" && strings.TrimSpace(stringArg(args, "id")) == "" {
+		return errors.New("name (or id) is required: which machine? machine(action=\"list\") shows what you have")
+	}
+	return errors.New("no machine found by that name or id: machine(action=\"list\") shows what you have")
 }

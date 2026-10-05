@@ -64,9 +64,12 @@ func (t *chatTurn) appInventoryLine(spec AppSpec) string {
 			labels = append(labels, strconv.Quote(firstNonEmptyStr(a.Label, a.Name)))
 		}
 		sort.Strings(labels)
-		parts = append(parts, "action buttons: "+strings.Join(labels, ", "))
+		parts = append(parts, "script actions (buttons that run a script): "+strings.Join(labels, ", "))
 	} else {
-		parts = append(parts, "NO action buttons")
+		// "NO action buttons" read, to builders and reviewers alike, as no
+		// edit or delete buttons on an editable table; it only ever meant
+		// script-backed buttons.
+		parts = append(parts, "no script actions (buttons that run a script; a table's row edit/delete is separate)")
 	}
 
 	if n := len(spec.DataSources); n > 0 {

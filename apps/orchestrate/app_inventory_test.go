@@ -24,7 +24,7 @@ func TestInventoryNamesWhatIsAndIsNotThere(t *testing.T) {
 		t.Errorf("name the sections that exist, got:\n%s", line)
 	}
 	// The most over-claimed thing in three transcripts running.
-	if !strings.Contains(line, "NO action buttons") {
+	if !strings.Contains(line, "no script actions") {
 		t.Errorf("an app with no actions must say so in capitals — a save button was described on exactly this shape:\n%s", line)
 	}
 	// The binding cannot resolve without a store, and an unresolvable one has
@@ -60,7 +60,7 @@ func TestInventoryListsButtonsAndRepeatedSections(t *testing.T) {
 // empty list that reads as "fine".
 func TestInventoryIsBluntAboutAnEmptyApp(t *testing.T) {
 	line := (&chatTurn{}).appInventoryLine(AppSpec{Name: "Empty"})
-	if !strings.Contains(line, "NO sections") || !strings.Contains(line, "NO action buttons") {
+	if !strings.Contains(line, "NO sections") || !strings.Contains(line, "no script actions") {
 		t.Errorf("an empty app must read as empty, got:\n%s", line)
 	}
 }

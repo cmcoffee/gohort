@@ -22,7 +22,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), name))
 		existing, ok := LoadAppSpec(t.user, key)
 		if !ok {
-			return "", errors.New("no matching app to update: check the slug (app_def action=list)")
+			return "", appNotFound(args, "to update")
 		}
 		spec = existing
 		priorHTML = appSpecHTMLText(existing)

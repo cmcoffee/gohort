@@ -9,7 +9,6 @@ package orchestrate
 // 6KB and 3) and invisible in a list of dates.
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,7 +21,7 @@ func (t *chatTurn) appDefRevisions(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app: check the slug (app_def action=list)")
+		return "", appNotFound(args, "")
 	}
 	revs := ListAppRevisions(t.user, spec.Slug)
 	if len(revs) == 0 {
@@ -67,7 +66,7 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	current, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app: check the slug (app_def action=list)")
+		return "", appNotFound(args, "")
 	}
 	revs := ListAppRevisions(t.user, current.Slug)
 	if len(revs) == 0 {

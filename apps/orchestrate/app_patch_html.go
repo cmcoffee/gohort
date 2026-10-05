@@ -34,7 +34,7 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app: check the slug (app_def action=list)")
+		return "", appNotFound(args, "")
 	}
 	// A named script is the other edit surface (app_patch_script.go).
 	if strings.TrimSpace(stringArg(args, "script")) != "" {
@@ -251,4 +251,19 @@ func newScriptProblems(before, after []string) []string {
 		out = append(out, p)
 	}
 	return out
+}
+
+// appNotFound is the answer when an app_def action finds no app: that none
+// was named, when id, slug and name are all empty (the usual case: the
+// builder said which script or section but not which app, and "no matching
+// app" sent it checking a slug that was right), else that the named one does
+// not exist. what says what the action was for ("to verify"), or "".
+func appNotFound(args map[string]any, what string) error {
+	if firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")) == "" {
+		return errors.New("id is required: the app's slug (app_def action=list)")
+	}
+	if what != "" {
+		what = " " + what
+	}
+	return errors.New("no matching app" + what + ": check the slug (app_def action=list)")
 }

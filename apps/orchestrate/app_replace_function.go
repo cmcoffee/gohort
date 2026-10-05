@@ -32,7 +32,7 @@ func (t *chatTurn) appDefReplaceFunction(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app: check the slug (app_def action=list)")
+		return "", appNotFound(args, "")
 	}
 	if strings.TrimSpace(stringArg(args, "script")) != "" {
 		return t.appDefReplaceScriptFunction(args, spec)

@@ -686,6 +686,9 @@ func parsePipelineStages(raw any) ([]PipelineStage, error) {
 		if !ok {
 			return nil, fmt.Errorf("stage %d must be an object {name, kind, prompt, agent?}", i+1)
 		}
+		if why := nonStringNames(m); why != "" {
+			return nil, fmt.Errorf("stage %d (%s): %s", i+1, chFirst(strings.TrimSpace(mapStr(m, "name")), "unnamed"), why)
+		}
 		kind := PipelineStageKind(strings.ToLower(strings.TrimSpace(fmt.Sprint(mapStr(m, "kind")))))
 		if kind == "" {
 			kind = StageWorker
@@ -879,6 +882,31 @@ func mapBoolPtr(m map[string]any, key string) *bool {
 		return nil
 	}
 	return &b
+}
+
+// nonStringNames says why a step names its tool, agent, pipeline or machine
+// with something other than a name, or "" when each it sets is a string.
+// mapStr would have stringified it: a step whose tool was sent as
+// {"tool": "geo", "args": {...}, "next": "forecast"} was saved calling
+// "map[args:... tool:geo]", its args and next never read, and the save said
+// nothing until a run found no such tool.
+func nonStringNames(m map[string]any) string {
+	for _, key := range []string{"tool", "agent", "pipeline", "machine"} {
+		v, ok := m[key]
+		if !ok || v == nil {
+			continue
+		}
+		if _, isStr := v.(string); isStr {
+			continue
+		}
+		if key == "tool" {
+			if _, isObj := v.(map[string]any); isObj {
+				return `"tool" is the tool's NAME as a string, e.g. "tool": "geo"; put "args" and "next" beside it on the step, not inside it`
+			}
+		}
+		return fmt.Sprintf("%q is a NAME, a string, e.g. %q: %q", key, key, "its-name")
+	}
+	return ""
 }
 
 // mapStr pulls a string field from a decoded JSON object, coercing
