@@ -70,6 +70,12 @@ func (T *PublishApp) saveConfig(c PublishConfig) {
 	T.DB.Set(publishConfigTable, publishConfigKey, &c)
 }
 
+// setUpYourOwn is where a person goes when a destination cannot be used: a
+// publishing target of their own, through one of their own integrations. The
+// deployment's destinations are an admin's to set up, and pointing someone who
+// is not one at Admin > Publishing sent them somewhere they cannot act.
+const setUpYourOwn = "publish through a target of your own instead: make one in Extensions, Publishing targets, from one of your API or MCP integrations or one of your agents"
+
 // credentialUsable reports whether a named SecureAPI credential exists, is
 // enabled, and is reachable by this user — the single gate every destination's
 // Available() runs. The returned string is the reason it can't be used, phrased
@@ -77,7 +83,7 @@ func (T *PublishApp) saveConfig(c PublishConfig) {
 func credentialUsable(user, name string) (bool, string) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return false, "no credential is configured for it yet: an admin sets one in Admin > Publishing"
+		return false, "it is not set up on this deployment, so " + setUpYourOwn
 	}
 	s := Secure()
 	if s == nil {
@@ -85,7 +91,7 @@ func credentialUsable(user, name string) (bool, string) {
 	}
 	c, ok := s.Resolve(name, user)
 	if !ok {
-		return false, "its credential (" + name + ") no longer exists: an admin needs to re-point it in Admin > Publishing"
+		return false, "its credential (" + name + ") no longer exists, so " + setUpYourOwn
 	}
 	if c.Disabled {
 		return false, "its credential (" + name + ") is disabled"

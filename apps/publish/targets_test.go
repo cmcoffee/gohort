@@ -260,3 +260,17 @@ func TestThePublisherSeesTargetsByNameBeforeWhatItCannotUse(t *testing.T) {
 		t.Fatalf("the targets are still one anonymous entry:\n%s", out)
 	}
 }
+
+// A destination that cannot be used sends the person to a target of their
+// own, in Extensions, never to Admin > Publishing: that page is an admin's,
+// and the person reading the reason usually is not one.
+func TestUnavailableDestinationsPointAtYourOwnTargets(t *testing.T) {
+	app := &PublishApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	for name, d := range map[string]docs.PublishDestination{"confluence": &confluenceDest{app: app}, "webhook": &webhookDest{app: app}} {
+		ok, why := d.Available("erin")
+		if ok || !strings.Contains(why, "Extensions, Publishing targets") || strings.Contains(why, "Admin") {
+			t.Errorf("%s: available=%v why=%q", name, ok, why)
+		}
+	}
+}

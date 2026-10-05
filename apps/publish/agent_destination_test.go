@@ -126,13 +126,13 @@ func TestAgentDestinationExplainsWhyItIsUnavailable(t *testing.T) {
 
 	// Configured with no agent named.
 	app.saveConfig(PublishConfig{Agents: []AgentDestination{{Slug: "tickets", Label: "Ticket"}}})
-	if ok, why := d.Available("alice"); ok || !strings.Contains(why, "no agent is named") {
+	if ok, why := d.Available("alice"); ok || !strings.Contains(why, "no agent is named") || strings.Contains(why, "Admin > Publishing") {
 		t.Errorf("available=%v why=%q", ok, why)
 	}
 
 	// Deleted from the config entirely.
 	app.saveConfig(PublishConfig{})
-	if ok, why := d.Available("alice"); ok || !strings.Contains(why, "no longer configured") {
+	if ok, why := d.Available("alice"); ok || !strings.Contains(why, "no longer set up") || !strings.Contains(why, "Extensions, Publishing targets") {
 		t.Errorf("available=%v why=%q", ok, why)
 	}
 }

@@ -725,7 +725,7 @@ const guidePublishAction = `function(ctx){
             return el('a', {class:'guide-pub-link', href: d.targets_url, target:'_blank', rel:'noopener', text: label});
           }
           if (!d || (!d.configured && !targets.length)){
-            body.appendChild(el('p', {class:'guide-kn-intro', text:'Nowhere to publish yet. Make a publishing target from one of your API integrations or agents, or ask an admin to set up a destination in Admin, Publishing.'}));
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'Nowhere to publish yet. Make a publishing target of your own from one of your API or MCP integrations, or one of your agents.'}));
             var first = setupLink('Set up a publishing target in Extensions');
             if (first) body.appendChild(first);
             return;

@@ -36,7 +36,7 @@ func (d *webhookDest) Label() string {
 func (d *webhookDest) Available(user string) (bool, string) {
 	cfg := d.app.config()
 	if strings.TrimSpace(cfg.WebhookURL) == "" {
-		return false, "no webhook URL is configured: an admin sets one in Admin > Publishing"
+		return false, "no webhook address is set up on this deployment, so " + setUpYourOwn
 	}
 	return credentialUsable(user, cfg.WebhookCredential)
 }

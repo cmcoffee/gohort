@@ -51,7 +51,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			}
 			dests := docs.PublishDestinations(user)
 			if len(dests) == 0 {
-				return "", fmt.Errorf("no publish destinations are registered on this deployment: an admin configures them in Admin > Publishing")
+				return "", fmt.Errorf("there is nowhere to publish yet: %s", setUpYourOwn)
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "Document: %q\n\nDestinations:\n", doc.Doc.Title)
