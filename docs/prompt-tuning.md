@@ -1,6 +1,6 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.355). The harness and the
+Status: **built, first live runs and friction report done** (v0.7.357). The harness and the
 friction report are private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
@@ -713,6 +713,36 @@ blocking ones were the harness's, not the platform's:
 
 Next: rebuild and restart, run Settle prompt wording (once), Re-check the
 fixed components, then a second report.
+
+### The second friction report (2026-10-04)
+
+Report 55151b1b on v0.7.353, copied while the lead's builds were still
+running, so the worker's half only: 23 of 40 builds passed, up from 18.
+The shell tasks went from none to all (the grader fixes) and every machine
+task passes at least once (machine run). What is left is mostly wrapping
+an API as a toolbox: books, fx, library, todo and translate passed none.
+
+- **Harness, again** (private a25334c): an errored build kept no
+  transcript, so its tool errors arrived with none of the calls; the
+  grader matched actions by name only, so "book" never found get, lookup
+  or get_by_id (it now takes the one action that can take its arguments);
+  two fields sharing a word made a field look missing; the tide task
+  checked for a tool its request never asked for; the jobs fixture blamed
+  the header for a missing q.
+- **Platform** (v0.7.356): a step's tool sent as an object was saved as
+  nonsense; naming no app or machine read as "not found"; "NO action
+  buttons" was read as no edit buttons; tool_def help buried the toolbox
+  shape under the shell notes.
+- **tool_def** (in progress): a write fired by hand reached the session's
+  verify record but never the build ledger, so translate and todo kept
+  failing "verified" after doing it right; path params read as not
+  required for several shapes a builder meant as required (14 times);
+  test_args was ignored and create ignored cases; a passing read showed no
+  data; method and body slipped into url_template unchecked; actions were
+  dropped outside toolbox mode; a failed probe did not show what was sent.
+- **Misreads:** the "wrong book" was the try-it ISBN's own (Dune), the
+  read_output ids and the literal "..." and "N" arguments were the
+  builder's own invention, the library tool had already been deleted.
 
 ### Stop and look again if
 
