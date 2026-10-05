@@ -87,7 +87,7 @@ Optimizing lives with the models, on the admin **LLMs** tab, under
 2026-10-04; it was a row per model). The page explains the process, not
 the models: what Optimize is for (improving the wording Builder works from
 by building real things with it, keeping only changes that make more
-builds pass), a run's five steps (build, read, fix, confirm, apply), and
+builds pass), a run's six steps (tighten, build, read, fix, confirm, apply), and
 its limits, the spend cap at the admin Prices among them. Which model does
 what gets one sentence there; the detail is here. A run builds on the **worker** and the **lead helps**: it proposes
 the edits, reads the failures and reviews the builds. What it keeps is one
@@ -104,6 +104,15 @@ overnight). Details is linked under it, so its settings are reachable
 before the first run. A run works one
 way:
 
+- **Tighten first.** Before anything is fixed, the 6 longest blocks are
+  said in fewer words by the lead and the whole suite runs once on all the
+  cuts together; they stay only if no build is lost (see "Tool descriptions
+  are weights too"). First, so every build after runs on the shorter
+  wording, each one cheaper, and the fixes are written into the short text
+  instead of being cut back out of it by a trim that follows. Once per
+  run, quick or extended, with no take-backs. On by default; off on Details
+  with **Tighten first**; skipped, and said, when the budget or hours left
+  would not cover the run.
 - **Probe first.** Before a task is built, Builder is given its request and
   its real turn is stopped at its first authoring call, without making it
   (`core.WithToolProbe`, `/sandbox/probe`): which tool it reached for, with
@@ -126,10 +135,6 @@ way:
   included, on what the pass kept. It stays only if more train builds pass
   and neither split got worse; if not, the pass's edits are taken back one
   at a time to find the one that hurt, and failing that the pass is dropped.
-- **Trim.** After a pass is kept, the longest blocks it may edit are
-  shortened and the whole suite runs once more; the cuts stay only if no
-  build is lost (see "Tool descriptions are weights too"). Off on Details
-  with **Shorten what it tunes**; skipped when the budget would not cover it.
 
 When the run ends it applies what it kept as the shared text, and **Undo**
 takes the whole run back; **Reset to shipped** takes back every run. The
@@ -208,9 +213,10 @@ from (a failure kind that keeps recurring in production is a task worth
 writing) and where a promoted change is checked afterwards (did tries-to-green
 on that kind actually drop?).
 
-**Not the Optimize button.** Optimize rewrites a block to be shorter with no
-idea whether the result works. Here, a shortening is one more proposal and has
-to pass the suite like any other.
+**Not a rewrite for length alone.** The per-block Optimize (later Tighten)
+button in the old prompt editor shortened a block with no idea whether the
+result still worked, and went with the editor. Here a shortening has to hold
+up on the whole suite like any other change.
 
 ## Defaults decided
 
@@ -449,16 +455,24 @@ call was filled in wrong.
 are about 44k tokens, some 82% of every Builder call, so a shorter block
 makes every turn of every agent faster and cheaper. The growth cap only
 stops prompts getting longer, and `compress` was only ever chosen to fix a
-failure. So after each confirmed pass a run trims: it shortens the longest
-blocks it may edit, builds the whole suite once more, and keeps the cuts
-only if no build is lost (no worse, rather than better), taking them back
-one at a time otherwise. A setting turns it off; it costs one more
-whole-suite run per pass and is skipped when the budget would not cover
-it. Built 2026-10-04 (private `trim.go`): the 3 longest blocks, skipping
-ones tried before or edited this pass; "no worse" (`noWorse`) means no
-split's verdict worse and no split passing fewer builds, so "no builds
-lost" is literal, at the price of a good cut sometimes dropped by one
-unlucky build. Setting **Shorten what it tunes** on Details, default on.
+failure. So a run tightens first: before any fix it shortens the longest
+blocks, builds the whole suite once on the cuts, and keeps them only if no
+build is lost (no worse, rather than better). A batch that loses a build
+is dropped whole. "No worse" (`noWorse`) means no split's verdict worse and
+no split passing fewer builds, so "no builds lost" is literal, at the price
+of a good cut sometimes dropped by one unlucky build.
+
+History (private `trim.go`): built 2026-10-04 as a trim after each
+confirmed pass, the 3 longest blocks, taking cuts back one at a time when a
+batch lost a build. Moved first on 2026-10-05 (`a20ccdb`): the 6 longest,
+before the first pass, so the fixes land in the short wording. Made the
+only trim, with no take-backs, the same day (`1543bb8`), after the first
+extended run showed what whole suites cost (see "The first extended run").
+The start is measured only when there are cuts to judge, and the budget is
+checked again once it is, since that is the first suite whose cost is
+known. A restart that cut the tightening off before its suite tries those
+blocks again (`tightenedFirst`). Setting **Tighten first** on Details,
+default on.
 
 ## Per-tier profiles
 
@@ -758,6 +772,33 @@ passed none there, while the lead passed most of them.
 - **Misreads:** the "wrong book" was the try-it ISBN's own (Dune), the
   read_output ids and the literal "..." and "N" arguments were the
   builder's own invention, the library tool had already been deleted.
+
+### The first extended run (2026-10-05)
+
+Started 2026-10-04 21:56 on the 21:50 build (trim after each pass, with
+take-backs), and it never got past pass 1. Not a hang: an extended whole
+suite is 20 tasks at 3 builds each, 60 builds, and took 1.5 to 2.3 hours
+each time. Pass 1's one-task builds took 1.5 hours (22:05 to 23:31); then,
+from the log:
+
+| Whole suite | What it was | Passed |
+|---|---|---|
+| 23:32 | measuring the start | 39 of 60 |
+| 01:05 | confirming pass 1's fixes, rejected | 41 of 60 |
+| 02:55 | one fix taken back, rejected | 39 of 60 |
+| 04:26 | another fix taken back, kept | 47 of 60 |
+| 05:59 | the trim after the pass, rejected | 38 of 60 |
+| 08:17 | one cut taken back | |
+
+A pass could spend seven whole suites, more than 12 hours holds, and the
+tighten-first stage as first built would have added up to four more ahead
+of it. Fixed in `1543bb8`: tightening once, with no take-backs, and no trim
+after a pass, so the most an extended run spends before pass 2 is five
+suites (start, cuts, confirm, two fix take-backs). Fix take-backs stayed:
+the kept one at 04:26 was the run's best result.
+
+The lesson for anything added to a run: count the whole suites a pass can
+spend against the hours. On the extended run each is roughly two hours.
 
 ### Stop and look again if
 
