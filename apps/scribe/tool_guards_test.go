@@ -20,8 +20,21 @@ func TestScribeToolsDeclareWhatTheyDo(t *testing.T) {
 	T := &Scribe{AppCore: AppCore{DB: root}}
 	orch := &orchestrate.OrchestrateApp{AppCore: AppCore{DB: root}}
 	tools := map[string]Tool{}
+	defs := map[string]AgentToolDef{}
 	for _, td := range T.coauthorTools(coauthorScope{Ctx: context.Background(), UDB: udb, Orch: orch, User: "u", CanEdit: true}) {
 		tools[td.Tool.Name] = td.Tool
+		defs[td.Tool.Name] = td
+	}
+	// Deleting a section asks, every time; nothing else here does, since
+	// every other change is one edit away from undone and the curator makes
+	// them unattended.
+	if c := defs["delete_section"].Confirmation; !c.Asks() || !c.NeverRemember {
+		t.Error("delete_section takes a section away without asking")
+	}
+	for _, n := range []string{"add_section", "edit_section", "draft_section"} {
+		if defs[n].Confirmation.Asks() || defs[n].NeedsConfirm {
+			t.Errorf("%s asks first, which would stop the curator's unattended edits", n)
+		}
 	}
 	has := func(tl Tool, c Capability) bool {
 		for _, x := range tl.Caps {

@@ -248,6 +248,17 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			},
 			Required: []string{"section_title"},
 		},
+		// Asks the person first: removing a section is the one change here
+		// that takes their content away. The card names the section, and a
+		// standing "always allow" is not offered, since each delete is a
+		// decision about different text. Fails closed when nobody is there to
+		// ask: the curator's scheduled runs cannot delete sections (it edits
+		// and supersedes them instead).
+		Confirmation: &ToolConfirmation{
+			Prompt:        "Delete this section from the guide? It can be brought back from the guide's History.",
+			Scope:         "scribe-delete-section",
+			NeverRemember: true,
+		},
 		SingleFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
