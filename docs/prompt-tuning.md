@@ -104,15 +104,15 @@ overnight). Details is linked under it, so its settings are reachable
 before the first run. A run works one
 way:
 
-- **Tighten first.** Before anything is fixed, the 6 longest blocks are
-  said in fewer words by the lead and the whole suite runs once on all the
-  cuts together; they stay only if no build is lost (see "Tool descriptions
-  are weights too"). First, so every build after runs on the shorter
-  wording, each one cheaper, and the fixes are written into the short text
-  instead of being cut back out of it by a trim that follows. Once per
-  run, quick or extended, with no take-backs. On by default; off on Details
-  with **Tighten first**; skipped, and said, when the budget or hours left
-  would not cover the run.
+- **Tighten first.** Before anything is fixed, the lead says the 6 longest
+  blocks in fewer words, which takes minutes; nothing is built for it. The
+  passes build on the shorter wording, each build cheaper, and the fixes
+  are written into the short text instead of being cut back out of it by a
+  trim that follows. Pass 1's confirm judges the cuts along with its fixes;
+  if it disagrees, the cuts are taken back first, as one. A pass that kept
+  no fix judges them alone, by no build lost (see "Tool descriptions are
+  weights too"). Once per run, quick or extended. On by default; off on
+  Details with **Tighten first**.
 - **Probe first.** Before a task is built, Builder is given its request and
   its real turn is stopped at its first authoring call, without making it
   (`core.WithToolProbe`, `/sandbox/probe`): which tool it reached for, with
@@ -456,9 +456,10 @@ are about 44k tokens, some 82% of every Builder call, so a shorter block
 makes every turn of every agent faster and cheaper. The growth cap only
 stops prompts getting longer, and `compress` was only ever chosen to fix a
 failure. So a run tightens first: before any fix it shortens the longest
-blocks, builds the whole suite once on the cuts, and keeps them only if no
-build is lost (no worse, rather than better). A batch that loses a build
-is dropped whole. "No worse" (`noWorse`) means no split's verdict worse and
+blocks, and the first whole suite the run builds anyway judges them. Kept
+with a pass's fixes when that confirm agrees; taken back first, as one,
+when it does not; and judged alone, no worse rather than better, when the
+pass kept no fix. "No worse" (`noWorse`) means no split's verdict worse and
 no split passing fewer builds, so "no builds lost" is literal, at the price
 of a good cut sometimes dropped by one unlucky build.
 
@@ -468,10 +469,16 @@ batch lost a build. Moved first on 2026-10-05 (`a20ccdb`): the 6 longest,
 before the first pass, so the fixes land in the short wording. Made the
 only trim, with no take-backs, the same day (`1543bb8`), after the first
 extended run showed what whole suites cost (see "The first extended run").
-The start is measured only when there are cuts to judge, and the budget is
-checked again once it is, since that is the first suite whose cost is
-known. A restart that cut the tightening off before its suite tries those
-blocks again (`tightenedFirst`). Setting **Tighten first** on Details,
+Then made to build nothing of its own (`c68c2fa`): its judging suite was an
+hour on a quick run and two on an extended one, for a minute of the lead's
+work, and pass 1's confirm runs a whole suite anyway. Taking the cuts back
+first uses one of the confirm's two take-backs, so the newest fix gets the
+second and the one before it none; the cuts are the cheapest thing in a
+pass to give up. A cut block a fix has since edited keeps the fix. Judged
+alone, the budget is checked once the start is measured, the first suite
+whose cost is known. A restart during tightening tries those blocks again (`tightenedFirst`);
+one after it loses the variant the cuts were in, and they are marked not
+checked, as they are when a run ends before judging them. Setting **Tighten first** on Details,
 default on.
 
 ## Per-tier profiles
@@ -792,9 +799,10 @@ from the log:
 
 A pass could spend seven whole suites, more than 12 hours holds, and the
 tighten-first stage as first built would have added up to four more ahead
-of it. Fixed in `1543bb8`: tightening once, with no take-backs, and no trim
-after a pass, so the most an extended run spends before pass 2 is five
-suites (start, cuts, confirm, two fix take-backs). Fix take-backs stayed:
+of it. Fixed in `1543bb8`: tightening once and no trim after a pass, then
+in `c68c2fa` tightening building nothing of its own, so the most an
+extended run spends before pass 2 is four suites (start, confirm, and two
+take-backs, the cuts' and a fix's). Fix take-backs stayed:
 the kept one at 04:26 was the run's best result.
 
 The lesson for anything added to a run: count the whole suites a pass can
