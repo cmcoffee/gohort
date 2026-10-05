@@ -75,3 +75,25 @@ func TestAppAgentSettingsLink(t *testing.T) {
 		t.Fatalf("no agent, yet actions = %+v", p.Actions)
 	}
 }
+
+// An app agent cannot be deleted by any path that goes through the agent
+// delete (the editor, the API, Builder's tool): that path reverts a seed AND
+// drops its memory. The person's copy stays until Reset is used.
+func TestAppAgentsCannotBeDeleted(t *testing.T) {
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-kept", Name: "Kept", OwningApp: "Zz Test", Hidden: true, Prompt: "x",
+	})
+	udb := UserDB(&DBase{Store: kvlite.MemStore()}, "u")
+	rec, _ := loadAgent(udb, "app-test-kept")
+	rec.MaxWorkerRounds, rec.Owner = 30, "u"
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatal(err)
+	}
+	err := deleteAgent(udb, "app-test-kept", "u")
+	if err == nil || !strings.Contains(err.Error(), "cannot be deleted") || !strings.Contains(err.Error(), "Reset to default") {
+		t.Fatalf("delete of an app agent = %v", err)
+	}
+	if back, _ := loadAgent(udb, "app-test-kept"); back.MaxWorkerRounds != 30 {
+		t.Fatalf("the refused delete still changed the agent: rounds %d", back.MaxWorkerRounds)
+	}
+}

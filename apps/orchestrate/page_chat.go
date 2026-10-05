@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -143,12 +144,20 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// Every other agent's cortex is a RECORD: kept for the owner, not read by
 	// the agent, pinned at the top of its sessions and opened read-only.
 	recordAgentsJSON, _ := json.Marshal(recordAgentsFor(pickerAgents(agents), cortexAgents))
+	// App agents by id -> owning app: the Agent menu offers Reset for these,
+	// never Delete (deleteAgentReporting refuses them).
+	appAgentApps := map[string]string{}
+	for _, sp := range appagents.AppAgents() {
+		appAgentApps[sp.ID] = chFirst(sp.OwningApp, "its app")
+	}
+	appAgentsJSON, _ := json.Marshal(appAgentApps)
 	phases.mark("marshal head json")
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
 		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
 		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(cortexAgentsJSON) +
 		";\nwindow.ORCH_RECORD_AGENTS = " + string(recordAgentsJSON) +
+		";\nwindow.ORCH_APP_AGENTS = " + string(appAgentsJSON) +
 		";</script>\n<script>" + ArtifactClientJS + "</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
 
 	// Builder handoff: a ?builder_brief=<id> deep-link (from the send_to_builder

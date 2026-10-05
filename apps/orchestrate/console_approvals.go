@@ -307,7 +307,9 @@ func (T *OrchestrateApp) handleApprovalDeny(w http.ResponseWriter, r *http.Reque
 	// held agent so it doesn't linger dormant (PendingApproval) forever.
 	a, found := GetAuthorization(RootDB, user, id)
 	if found && a.Action == "activate_sub_agent" {
-		deleteAgent(udb, user, a.Agent)
+		// (id, owner): the arguments were the other way round, so the draft
+		// was looked up under the user's name, never found, and stayed.
+		deleteAgent(udb, a.Agent, user)
 	}
 	// A denied delegation is news to the agent that asked, which otherwise
 	// goes on telling the user it is waiting for approval.

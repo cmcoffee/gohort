@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/revisions"
 )
@@ -556,6 +557,13 @@ func deleteAgent(db Database, id, owner string) error {
 // it — inventing a shell invocation for a tool that no longer existed. A
 // delete that removes capability has to say which capability it removed.
 func deleteAgentReporting(db Database, id, owner string) ([]string, error) {
+	// An app agent is its app's: Scribe cannot write a guide without its
+	// Guide Author. Deleting it went down the seed path below, which reverts
+	// the person's copy AND drops its memory and knowledge. Reset to default
+	// (resetAppAgent) is the way back, and it keeps those.
+	if spec, isApp := appagents.AppAgentByID(id); isApp {
+		return nil, fmt.Errorf("%s belongs to %s and cannot be deleted; Reset to default (Agents, Fleet > App agents) puts it back as the app registered it", chFirst(spec.Name, id), chFirst(spec.OwningApp, "its app"))
+	}
 	if isSeedID(id) {
 		// Shadow record (if any) is owned by the user; nothing to
 		// guard since the user is mutating their own copy.
