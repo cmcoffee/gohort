@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -1438,8 +1439,8 @@ func decrypt(input []byte, key []byte) (decoded []byte) {
 	return
 }
 
-// _db_locker_created is set when this start wrote a new db_locker, because
-// gohort.ini had none: a database that already existed cannot open with it.
+// _db_locker_created is set when this start derived the padlock from the
+// machine's network address because gohort.ini had no db_locker line.
 var _db_locker_created bool
 
 // padlockRefusal is the error for a database the padlock does not open: what
@@ -1447,7 +1448,7 @@ var _db_locker_created bool
 func padlockRefusal(file string, lockerCreated bool) error {
 	cause := "The padlock in gohort.ini ([do_not_modify] db_locker) does not open it. That usually means gohort.ini was replaced, or the database came from another install."
 	if lockerCreated {
-		cause = "gohort.ini had no [do_not_modify] db_locker line, so a new one was written, and a new one never opens an existing database. The line was probably lost when gohort.ini was replaced or edited."
+		cause = "gohort.ini has no [do_not_modify] db_locker line, so the padlock came from this machine's network address, and that does not open it: the database was made on another machine, or this machine's network address changed. The gohort.ini from where it was made (with its db_locker line) opens it."
 	}
 	return fmt.Errorf("refusing to open %s: %s\n\n"+
 		"To keep the stored secrets, put back the gohort.ini (or just its db_locker line) that goes with this database, then start again.\n\n"+
@@ -1481,30 +1482,56 @@ func copyAside(file string, now time.Time) (string, error) {
 
 // _unlock_db recovers the database padlock from gohort.ini, or makes one.
 //
-// Not tied to the machine, on purpose. It used to start from the first MAC
-// address net.Interfaces() returned, but that changed between restarts
-// (Docker, libvirt, USB NICs moving), so the padlock was already stored in
-// the ini after the first start and never read from the hardware again: a
-// lock in name only, which only made a machine with no NIC fail oddly. A new
-// install now gets random bytes. The database and the ini go together: copy
-// both and it opens anywhere, lose the ini's db_locker line and it does not
-// open (SecureDatabase then refuses rather than clearing secrets).
-func _unlock_db() (padlock []byte) {
-	if dbs := global.cfg.Get("do_not_modify", "db_locker"); len(dbs) > 0 {
+// With no db_locker line, the padlock is the first MAC address
+// net.Interfaces() returns: that is what every existing database was
+// opened with. cfg.Set only changes the in-memory store, and nothing saved
+// the [do_not_modify] section, so the "stored" padlock never reached the
+// file and every start re-derived it from the MAC. Switching that fallback
+// to random bytes (v0.7.363) gave each start a new padlock that opened no
+// existing database. So the MAC stays the source for a missing line, and
+// the line is now SAVED, so from then on the padlock comes from the ini and
+// the database moves with it, not with the machine. Random bytes only when
+// there is no MAC to read.
+func _unlock_db() []byte { return unlockDB(&global.cfg) }
+
+// unlockDB is _unlock_db over a given config store.
+func unlockDB(store *ConfigStore) (padlock []byte) {
+	if dbs := store.Get("do_not_modify", "db_locker"); len(dbs) > 40 {
 		code := []byte(dbs[0:40])
 		db_lock_code := []byte(dbs[40:])
 		padlock = decrypt(db_lock_code, code)
 		return
 	}
-	// First start: random bytes, wrapped and kept in the ini, in the same
-	// shape existing installs stored their MAC-derived padlock, so those
-	// keep opening exactly as before.
-	padlock = RandBytes(32)
+	padlock = get_mac_addr()
+	if len(padlock) == 0 {
+		padlock = RandBytes(32)
+	}
 	_db_locker_created = true
 	random := RandBytes(40)
 	db_lock_code := string(encrypt(padlock, random))
-	Critical(global.cfg.Set("do_not_modify", "db_locker", fmt.Sprintf("%s%s", string(random), db_lock_code)))
+	Critical(store.Set("do_not_modify", "db_locker", fmt.Sprintf("%s%s", string(random), db_lock_code)))
+	if err := store.Save("do_not_modify"); err != nil {
+		// Still opens: the MAC gives the same padlock next start, as it
+		// always has. Said, so an unwritable ini is not a surprise later.
+		Notice("Could not save the database padlock to %s (%v); it is read from this machine's network address until it can be.", cfgFilePath(), err)
+	}
 	return
+}
+
+// get_mac_addr is the first network interface's hardware address: the
+// padlock source for a database whose ini has no db_locker line.
+func get_mac_addr() []byte {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	for _, v := range ifaces {
+		if len(v.HardwareAddr) == 0 {
+			continue
+		}
+		return v.HardwareAddr
+	}
+	return nil
 }
 
 // enable_debug enables debug output to stdout.
