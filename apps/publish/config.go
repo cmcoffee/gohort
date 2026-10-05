@@ -32,11 +32,6 @@ type PublishConfig struct {
 	// ConfluenceBaseURL overrides the credential's own BaseURL for building
 	// page links. Usually empty: the credential already pins the site.
 	ConfluenceBaseURL string `json:"confluence_base_url,omitempty"`
-	// ConfluenceMCP publishes through an MCP server's tools (an Atlassian MCP
-	// connection) instead of the REST API, for a deployment that connected
-	// Atlassian that way and has no API credential for it. Used only when
-	// ConfluenceCredential is empty: the credential is the direct path.
-	ConfluenceMCP string `json:"confluence_mcp,omitempty"`
 
 	// Webhook — the flexible catch-all: POST the document somewhere.
 	WebhookCredential string `json:"webhook_credential,omitempty"`
@@ -124,7 +119,6 @@ func (T *PublishApp) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		in.ConfluenceCredential = strings.TrimSpace(in.ConfluenceCredential)
 		in.ConfluenceBaseURL = strings.TrimRight(strings.TrimSpace(in.ConfluenceBaseURL), "/")
-		in.ConfluenceMCP = strings.TrimSpace(in.ConfluenceMCP)
 		in.WebhookCredential = strings.TrimSpace(in.WebhookCredential)
 		in.WebhookURL = strings.TrimSpace(in.WebhookURL)
 		in.WebhookFormat = strings.TrimSpace(in.WebhookFormat)
@@ -170,7 +164,7 @@ func adminSection(r *http.Request) ui.Section {
 		Group:    "Apps",
 		Title:    "Publishing",
 		Subtitle: "Where a finished document can be published from a writer app's Publish button.",
-		Detail:   "Each destination points at a SecureAPI credential, which is what actually holds the secret and what an admin can disable to cut off publishing entirely. Confluence can go through an MCP server instead (an Atlassian MCP connection). A destination with neither is not offered.",
+		Detail:   "Each destination points at a SecureAPI credential, which is what actually holds the secret and what an admin can disable to cut off publishing entirely. A destination with no credential is not offered.",
 		Body: ui.FormPanel{
 			Source:      "/publish/api/config",
 			SubmitLabel: "Save publishing settings",
@@ -180,16 +174,6 @@ func adminSection(r *http.Request) ui.Section {
 					Placeholder: "name of a SecureAPI credential",
 					Help:        "The credential used to create and update pages.",
 					Detail:      "Its Base URL should be the Confluence site, for example https://acme.atlassian.net, and its allowed endpoints must include /wiki/api/v2/**. Set the credential's scope to per-user if each person should publish as themselves.",
-				},
-				// Without an API credential, Confluence can publish through an
-				// MCP server's tools: a deployment that connected Atlassian as an
-				// MCP server has no REST credential to name.
-				{
-					Field: "confluence_mcp", Label: "Or publish to Confluence through", Type: "select",
-					ShowWhen: "!confluence_credential",
-					Options:  confluenceMCPChoices(),
-					Help:     "An MCP server connected to Confluence, such as the Atlassian MCP, used when no credential is named above.",
-					Detail:   "Only servers that are switched on and offer their tools to agents are listed. A publish holds only that server's tools, without any that delete, remove or archive, and asks for the space in the Publish dialog. With a per-user server, each person publishes as themselves once they have connected their account.",
 				},
 				// A destination with no credential is not offered at all, so
 				// the rest of its settings wait until one is named.
@@ -286,37 +270,4 @@ func agentNameChoices(user string) []ui.SelectOption {
 		out = append(out, ui.SelectOption{Value: name, Label: name})
 	}
 	return out
-}
-
-// confluenceMCPChoices are the MCP servers Confluence can publish through:
-// switched on and offering their tools to agents, which is what the publish
-// run uses. The first choice is none.
-func confluenceMCPChoices() []ui.SelectOption {
-	out := []ui.SelectOption{{Value: "", Label: "No MCP server"}}
-	for _, m := range MCP().List() {
-		if m.Enabled && m.ExposeTools {
-			out = append(out, ui.SelectOption{Value: m.Name, Label: m.Name + " (MCP server)"})
-		}
-	}
-	return out
-}
-
-// mcpUsable reports whether user can publish through the MCP server named,
-// and the reason when not, phrased for the person who reads it in chat.
-func mcpUsable(user, server string) (bool, string) {
-	cfg, ok := MCP().Load(server)
-	switch {
-	case !ok:
-		return false, "its MCP server (" + server + ") no longer exists: an admin needs to re-point it in Admin > Publishing"
-	case !cfg.Enabled:
-		return false, "its MCP server (" + server + ") is switched off"
-	case !cfg.ExposeTools:
-		return false, "its MCP server (" + server + ") does not offer its tools to agents: an admin turns that on where the server is set up"
-	case !MCP().Connected(user, server):
-		if cfg.AuthMode == MCPAuthOAuth {
-			return false, "you haven't connected your account to " + server + " yet: do that on your Account page, under Connected accounts"
-		}
-		return false, "its MCP server (" + server + ") is not connected right now"
-	}
-	return true, ""
 }
