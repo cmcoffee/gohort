@@ -378,6 +378,13 @@ You write a *bridge* in a `chat_endpoints.go` that:
 
 User-and-assistant message thread, optionally with tools and attachments. Use `ui.ChatPanel`. See `apps/chat/` for the reference.
 
+**A chat that runs on an agent** (the agent plans, calls tools, and the app hands it tools that write into the app's own data, as Scribe's Guide Author does): use `ui.AgentLoopPanel` and let orchestrate run the turns.
+
+1. Register the agent with `appagents.RegisterAppAgent` (an `AppAgentSpec`: id, owning app, prompt, allowed tools; `Hidden: true` when it only makes sense inside your app). Each user gets their own copy layered over your definition, editable in Agents under **Fleet > App agents**, with **Reset to default** to put it back.
+2. Send through `orch.PublicHandleSendWithAppTools(w, r, agent, tools)`, with the agent from `orch.LookupAppAgent(user, id)` and your tools as `[]AgentToolDef`.
+3. Wire everything else with `orchestrate.AppChat`. `chat.Panel(ui.AgentLoopPanel{...})` fills in every endpoint you leave empty (edit and retry on a message, rename, rejoining a running turn after a reload, tool confirmations, question cards, guard notices), and `orch.ServeAppChat(w, r, agent, chat, path, scope)` answers them. Set `AgentID` and `Back` to put "Agent settings" in the chat's toolbar. Do not hand-wire these URLs: a URL left off is a control that is silently missing, which is how apps drifted apart before this existed. `apps/scribe/web.go` (`scribeChat`) is the reference.
+4. **Declare what each tool does.** The guards act on declarations, not names: `Caps: []Capability{CapNetwork}` for a tool that reaches the network (Private mode drops it; its output is fenced and scanned), `FetchesExternal: true` for one that returns outside documents without a network capability of its own, `CapWrite` for one that changes stored data. A tool that declares nothing gets none of that. A handler that starts its own run passes the handler's `ctx` along, never `context.Background()`, or Private mode and Stop do not reach it.
+
 ### 4. Live-watch page
 
 Tracking an in-flight pipeline that was kicked off elsewhere. Use `ui.PipelineWatchPanel`. See `private/blogger/page.go`'s `handleBloggerWatchPage` for an example.
