@@ -55,12 +55,37 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "Document: %q\n\nDestinations:\n", doc.Doc.Title)
-			for _, d := range dests {
-				if d.Available {
-					fmt.Fprintf(&b, "- %s (destination id: %s), available\n", d.Label, d.Kind)
-				} else {
-					fmt.Fprintf(&b, "- %s (destination id: %s), NOT available: %s\n", d.Label, d.Kind, d.Reason)
+			// The person's own publishing targets, each by name with its own
+			// destination id. Listed as one "Your publishing targets" entry, a
+			// target named for Confluence sat beside the deployment's
+			// Confluence destination, which reads NOT available when no admin
+			// set it up, and the request "publish to my Confluence target"
+			// went to the unconfigured one and came back as not configured.
+			for _, sp := range docs.PublishTargetSpecs(ctx, user) {
+				if strings.HasPrefix(sp.Kind, TargetKindPrefix) {
+					fmt.Fprintf(&b, "- %s (destination id: %s), available, one of this person's own publishing targets", sp.Target.Title, sp.Kind)
+					if sp.Target.Desc != "" {
+						fmt.Fprintf(&b, ": %s", sp.Target.Desc)
+					}
+					b.WriteString("\n")
 				}
+			}
+			for _, d := range dests {
+				if d.Available && d.Kind != TargetKindPrefix {
+					fmt.Fprintf(&b, "- %s (destination id: %s), available\n", d.Label, d.Kind)
+				}
+			}
+			// What cannot be used comes last, said as such: its reason is for
+			// the person when nothing above fits, never a reason to give up on
+			// a destination above that does.
+			var off []string
+			for _, d := range dests {
+				if !d.Available && d.Kind != TargetKindPrefix {
+					off = append(off, fmt.Sprintf("- %s (destination id: %s): %s", d.Label, d.Kind, d.Reason))
+				}
+			}
+			if len(off) > 0 {
+				b.WriteString("\nNot available, do not publish to these:\n" + strings.Join(off, "\n") + "\n")
 			}
 			if len(doc.Records) == 0 {
 				b.WriteString("\nThis document has not been published anywhere yet.\n")

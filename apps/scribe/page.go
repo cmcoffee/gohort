@@ -843,7 +843,7 @@ const guidePublishAction = `function(ctx){
               targets.forEach(function(t){
                 var b = el('button', {class:'guide-pub-target'}, [el('strong', {text: t.target.title}),
                   el('span', {class:'guide-pub-mute', text: t.target.desc ? ' - ' + t.target.desc : ''})]);
-                b.addEventListener('click', function(){ openChat('Publish this guide to my publishing target "' + t.target.title + '".'); });
+                b.addEventListener('click', function(){ openChat('Publish this guide to my publishing target "' + t.target.title + '" (destination id: ' + t.kind + ').'); });
                 view.appendChild(b);
               });
             } else {

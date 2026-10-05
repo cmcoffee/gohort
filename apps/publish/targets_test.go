@@ -222,3 +222,41 @@ func TestThePublisherPublishesToATargetWithItsAnswers(t *testing.T) {
 		t.Errorf("an update reuses the answers and points at the page it made:\n%s", gotInstr)
 	}
 }
+
+// The Publisher sees each of the person's targets by name with its own
+// destination id, ahead of everything else, and the destinations it cannot
+// use last, said as such. As one "Your publishing targets" entry beside the
+// deployment's unconfigured Confluence, "publish to my Confluence target"
+// went to Confluence and came back as not configured.
+func TestThePublisherSeesTargetsByNameBeforeWhatItCannotUse(t *testing.T) {
+	app := &PublishApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	tgt, err := normalizeTarget(Target{Label: "Team Confluence", Desc: "Atlassian, through MCP", Credential: docs.MCPIntegrationPrefix + "atlassian", Instructions: "Create a page."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt.ID = "tc"
+	app.targetsDB("dana").Set(targetTable, tgt.ID, tgt)
+	docs.RegisterPublishDestination(&targetsDest{app: app})
+	docs.RegisterPublishDestination(&confluenceDest{app: app}) // no credential: not available
+	open := func() (Document, bool) {
+		return Document{Doc: docs.PublishDoc{Title: "Runbook", Markdown: "# Runbook"}}, true
+	}
+	tools := map[string]AgentToolDef{}
+	for _, td := range BuildPublishTools(context.Background(), "dana", open) {
+		tools[td.Tool.Name] = td
+	}
+	out, err := tools["list_publish_destinations"].Handler(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine := strings.Index(out, "Team Confluence (destination id: target:tc), available")
+	off := strings.Index(out, "Not available, do not publish to these:")
+	builtin := strings.Index(out, "Confluence (destination id: confluence):")
+	if mine < 0 || off < 0 || builtin < 0 || !(mine < off && off < builtin) {
+		t.Fatalf("the target must come first by name, the unconfigured Confluence last as unusable:\n%s", out)
+	}
+	if strings.Contains(out, "Your publishing targets (destination id: target:)") {
+		t.Fatalf("the targets are still one anonymous entry:\n%s", out)
+	}
+}
