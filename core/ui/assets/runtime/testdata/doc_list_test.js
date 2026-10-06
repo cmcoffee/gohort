@@ -41,7 +41,8 @@ function build(opts) {
     function(tag, attrs, kids) {
       var n = mkNode(attrs && attrs.class);
       if (attrs) { for (var k in attrs) { if (k==='onclick') n._on.click=attrs[k]; else if (k!=='class') n._attrs[k]=attrs[k]; } }
-      if (kids) kids.forEach(function(k){ if (typeof k!=='string') n._kids.push(k); else n.textContent += k; });
+      // Skips null like the real el(): an optional child is passed as null.
+      if (kids) kids.forEach(function(k){ if (k == null) return; if (typeof k!=='string') n._kids.push(k); else n.textContent += k; });
       return n;
     },
     function(url, o) { fetchLog.push((o&&o.method||'GET')+' '+url);
