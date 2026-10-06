@@ -1020,7 +1020,7 @@ window.__peerKeyShowOnce = function(label, key) {
       wrap.style.cssText = 'display:flex;flex-direction:column;gap:0.6rem';
       var code = document.createElement('code');
       code.textContent = key;
-      code.style.cssText = 'font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.82rem;' +
+      code.style.cssText = 'font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(--fs-sm, 0.82rem);' +
         'word-break:break-all;padding:0.6rem 0.7rem;border:1px solid var(--accent);border-radius:8px;background:var(--bg-2)';
       var copy = document.createElement('button');
       copy.className = 'ui-row-btn';

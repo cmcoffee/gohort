@@ -83,24 +83,23 @@ const agentMemoryModalTemplate = `<script>
       function modeBtn(label, mode, title) {
         var b = document.createElement('button');
         b.type = 'button'; b.textContent = label; b.title = title; b._mode = mode;
-        b.style.cssText = 'padding:0.3rem 0.6rem;border:1px solid var(--border);border-radius:4px;font-size:0.76rem;cursor:pointer;background:var(--bg-1);color:var(--text-mute)';
+        b.className = 'ui-row-btn ui-btn-sm';
         b.onclick = function() { searchMode = mode; styleModeBtns(); if (searchInput.value.trim()) runMemSearch(); };
         return b;
       }
       var grepBtn = modeBtn('Stored text', 'grep', 'Literal search of everything stored: facts, findings, knowledge, cortex observations, working notes.');
       var recallBtn = modeBtn('Recall preview', 'recall', 'Run the agent’s own recall pipeline for this query and show exactly what a turn would inject, ranked.');
       function styleModeBtns() {
+        // The chosen mode reads as the toolkit's primary button.
         [grepBtn, recallBtn].forEach(function(b) {
-          var on = b._mode === searchMode;
-          b.style.background = on ? 'var(--accent, #6366f1)' : 'var(--bg-1)';
-          b.style.color = on ? '#fff' : 'var(--text-mute)';
+          b.classList.toggle('primary', b._mode === searchMode);
         });
       }
       styleModeBtns();
       searchRow.appendChild(grepBtn); searchRow.appendChild(recallBtn);
       searchSection.appendChild(searchRow);
       var searchHelp = document.createElement('p');
-      searchHelp.style.cssText = 'margin:0.35rem 0 0;color:var(--text-mute);font-size:0.78rem';
+      searchHelp.style.cssText = 'margin:0.35rem 0 0;color:var(--text-mute);font-size:var(--fs-xs, 0.78rem)';
       searchHelp.textContent = 'Find memories steering this agent. “Stored text” greps every layer; “Recall preview” shows what the agent actually sees for a query.';
       searchSection.appendChild(searchHelp);
       var searchResults = document.createElement('div');
@@ -120,7 +119,7 @@ const agentMemoryModalTemplate = `<script>
         var items = (d && d.items) || [];
         if (!items.length) {
           var empty = document.createElement('div');
-          empty.style.cssText = 'color:var(--text-mute);font-style:italic;font-size:0.82rem;padding:0.3rem 0;white-space:pre-wrap';
+          empty.style.cssText = 'color:var(--text-mute);font-style:italic;font-size:var(--fs-sm, 0.82rem);padding:0.3rem 0;white-space:pre-wrap';
           empty.textContent = (d && d.note) ? d.note : 'No matches.';
           searchResults.appendChild(empty);
           return;
@@ -130,7 +129,7 @@ const agentMemoryModalTemplate = `<script>
           row.style.cssText = 'display:flex;gap:0.5rem;align-items:flex-start;padding:0.4rem 0;border-bottom:1px solid var(--border)';
           row.appendChild(layerChip(item.layer));
           var col = document.createElement('div');
-          col.style.cssText = 'flex:1;font-size:0.82rem;line-height:1.4;min-width:0';
+          col.style.cssText = 'flex:1;font-size:var(--fs-sm, 0.82rem);line-height:1.4;min-width:0';
           if (item.title) {
             var tt = document.createElement('div');
             tt.style.fontWeight = '600'; tt.textContent = item.title;
@@ -142,7 +141,7 @@ const agentMemoryModalTemplate = `<script>
           col.appendChild(tx);
           if (item.date || item.note) {
             var meta = document.createElement('div');
-            meta.style.cssText = 'color:var(--text-mute);font-size:0.7rem;margin-top:0.1rem';
+            meta.style.cssText = 'color:var(--text-mute);font-size:var(--fs-2xs, 0.7rem);margin-top:0.1rem';
             meta.textContent = [item.date, item.note].filter(Boolean).join(' - ');
             col.appendChild(meta);
           }
@@ -152,7 +151,7 @@ const agentMemoryModalTemplate = `<script>
             del.type = 'button';
             del.textContent = String.fromCharCode(215);
             del.title = 'Delete this memory (' + item.id + ')';
-            del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:1rem;padding:0 0.4rem;align-self:flex-start';
+            del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:var(--fs-lg, 1rem);padding:0 0.4rem;align-self:flex-start';
             del.onclick = function() {
               window.uiConfirm('Delete this ' + item.layer + ' memory?\n\n' + (item.text || item.title || item.id).slice(0, 200)).then(function(ok) {
                 if (!ok) return;
@@ -172,14 +171,14 @@ const agentMemoryModalTemplate = `<script>
         if (!q || memSearchBusy) return;
         memSearchBusy = true;
         searchResults.style.display = '';
-        searchResults.innerHTML = '<div style="color:var(--text-mute);font-style:italic;font-size:0.82rem;padding:0.3rem 0">Searching…</div>';
+        searchResults.innerHTML = '<div style="color:var(--text-mute);font-style:italic;font-size:var(--fs-sm, 0.82rem);padding:0.3rem 0">Searching…</div>';
         fetch(MEMBASE + 'memsearch?q=' + encodeURIComponent(q) + '&mode=' + searchMode)
           .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
           .then(renderMemSearch)
           .catch(function(err) {
             searchResults.innerHTML = '';
             var e = document.createElement('div');
-            e.style.cssText = 'color:var(--danger,#ff7b72);font-size:0.82rem;padding:0.3rem 0';
+            e.style.cssText = 'color:var(--danger,#ff7b72);font-size:var(--fs-sm, 0.82rem);padding:0.3rem 0';
             e.textContent = 'Search failed: ' + (err && err.message || err);
             searchResults.appendChild(e);
           })
@@ -201,7 +200,7 @@ const agentMemoryModalTemplate = `<script>
           inp.addEventListener('input', function(){ arr[idx] = inp.value; });
           var del = document.createElement('button');
           del.textContent = String.fromCharCode(215);
-          del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:1rem;padding:0 0.4rem';
+          del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:var(--fs-lg, 1rem);padding:0 0.4rem';
           del.addEventListener('click', function(){ arr.splice(idx, 1); renderRowList(container, arr, addLabel, emptyText); });
           row.appendChild(inp); row.appendChild(del);
           container.appendChild(row);
@@ -209,13 +208,13 @@ const agentMemoryModalTemplate = `<script>
         if (arr.length === 0) {
           var emp = document.createElement('div');
           emp.textContent = emptyText;
-          emp.style.cssText = 'color:var(--text-mute);font-size:0.78rem;font-style:italic;padding:0.2rem 0';
+          emp.style.cssText = 'color:var(--text-mute);font-size:var(--fs-xs, 0.78rem);font-style:italic;padding:0.2rem 0';
           container.appendChild(emp);
         }
         var add = document.createElement('button');
         add.type = 'button';
         add.className = 'ui-row-btn';
-        add.style.cssText = 'align-self:flex-start;font-size:0.78rem;padding:0.25rem 0.6rem;margin-top:0.2rem';
+        add.style.cssText = 'align-self:flex-start;font-size:var(--fs-xs, 0.78rem);padding:0.25rem 0.6rem;margin-top:0.2rem';
         add.textContent = addLabel;
         add.addEventListener('click', function() {
           arr.push('');
@@ -238,7 +237,7 @@ const agentMemoryModalTemplate = `<script>
       auditTitle.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
       auditWrap.appendChild(auditTitle);
       var auditIntro = document.createElement('p');
-      auditIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.83rem';
+      auditIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:var(--fs-sm, 0.83rem)';
       auditIntro.textContent = 'Entries that name something no longer there, or that record work instead of state. Remove deletes the entry a finding is about, after you confirm; Ignore sets a finding aside until the text behind it changes.';
       auditWrap.appendChild(auditIntro);
       var auditList = document.createElement('div');
@@ -257,7 +256,7 @@ const agentMemoryModalTemplate = `<script>
       movesTitle.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
       movesWrap.appendChild(movesTitle);
       var movesIntro = document.createElement('p');
-      movesIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.83rem';
+      movesIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:var(--fs-sm, 0.83rem)';
       movesIntro.textContent = 'Past events moved to reference memory, where search still finds them, and open items closed after going unanswered. Undo puts one back in the saved notes.';
       movesWrap.appendChild(movesIntro);
       var movesList = document.createElement('div');
@@ -275,19 +274,19 @@ const agentMemoryModalTemplate = `<script>
           var meta = document.createElement('div');
           meta.style.cssText = 'flex:1;min-width:0';
           var what = document.createElement('div');
-          what.style.cssText = 'font-size:0.78rem;font-weight:600;color:var(--text)';
+          what.style.cssText = 'font-size:var(--fs-xs, 0.78rem);font-weight:600;color:var(--text)';
           var when = mv.at ? new Date(mv.at).toLocaleDateString() : '';
           what.textContent = (mv.kind === 'past_event' ? 'Past event, moved to reference memory' : 'Open item, closed as not pursued') + (when ? ' - ' + when : '');
           meta.appendChild(what);
           var q = document.createElement('div');
-          q.style.cssText = 'font-size:0.78rem;color:var(--text);opacity:0.85;white-space:pre-wrap;word-break:break-word;margin-top:0.15rem';
+          q.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text);opacity:0.85;white-space:pre-wrap;word-break:break-word;margin-top:0.15rem';
           q.textContent = '“' + (mv.note || '') + '”';
           meta.appendChild(q);
           row.appendChild(meta);
           var undo = document.createElement('button');
           undo.type = 'button';
           undo.className = 'ui-row-btn compact';
-          undo.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.5rem;min-width:0;flex:0 0 auto';
+          undo.style.cssText = 'font-size:var(--fs-xs, 0.78rem);padding:0.25rem 0.5rem;min-width:0;flex:0 0 auto';
           undo.textContent = 'Undo';
           undo.title = 'Put it back in the saved notes';
           undo.addEventListener('click', function() {
@@ -332,8 +331,7 @@ const agentMemoryModalTemplate = `<script>
       function auditButton(label, title, onClick) {
         var b = document.createElement('button');
         b.type = 'button';
-        b.className = 'ui-row-btn compact';
-        b.style.cssText = 'font-size:0.76rem;padding:0.2rem 0.5rem;min-width:0;min-height:0';
+        b.className = 'ui-row-btn ui-btn-sm';
         b.textContent = label;
         b.title = title;
         b.addEventListener('click', function() { onClick(b); });
@@ -348,16 +346,16 @@ const agentMemoryModalTemplate = `<script>
           var row = document.createElement('div');
           row.style.cssText = 'border-left:2px solid var(--danger,#ff7b72);padding-left:0.55rem';
           var where = document.createElement('div');
-          where.style.cssText = 'font-size:0.78rem;font-weight:600;color:var(--text)';
+          where.style.cssText = 'font-size:var(--fs-xs, 0.78rem);font-weight:600;color:var(--text)';
           where.textContent = f.layer;
           row.appendChild(where);
           var why = document.createElement('div');
-          why.style.cssText = 'font-size:0.82rem;color:var(--text-mute);margin:0.1rem 0';
+          why.style.cssText = 'font-size:var(--fs-sm, 0.82rem);color:var(--text-mute);margin:0.1rem 0';
           why.textContent = f.detail;
           row.appendChild(why);
           if (f.quote) {
             var q = document.createElement('div');
-            q.style.cssText = 'font-size:0.78rem;color:var(--text);opacity:0.85;white-space:pre-wrap;word-break:break-word;margin-top:0.15rem';
+            q.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text);opacity:0.85;white-space:pre-wrap;word-break:break-word;margin-top:0.15rem';
             q.textContent = '“' + f.quote + '”';
             row.appendChild(q);
           }
@@ -375,14 +373,14 @@ const agentMemoryModalTemplate = `<script>
         // Ignored findings stay in view, quieter, each with its way back.
         if (ignored.length) {
           var ih = document.createElement('div');
-          ih.style.cssText = 'font-size:0.76rem;color:var(--text-mute);margin-top:0.35rem';
+          ih.style.cssText = 'font-size:var(--fs-xs, 0.76rem);color:var(--text-mute);margin-top:0.35rem';
           ih.textContent = 'Ignored (' + ignored.length + ')';
           auditList.appendChild(ih);
           ignored.forEach(function(f) {
             var row = document.createElement('div');
             row.style.cssText = 'display:flex;align-items:flex-start;gap:0.5rem;border-left:2px solid var(--border);padding-left:0.55rem;opacity:0.75';
             var txt = document.createElement('div');
-            txt.style.cssText = 'flex:1;min-width:0;font-size:0.78rem;color:var(--text-mute);word-break:break-word';
+            txt.style.cssText = 'flex:1;min-width:0;font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);word-break:break-word';
             txt.textContent = f.layer + ': ' + (f.quote ? '“' + f.quote + '”' : f.detail);
             row.appendChild(txt);
             row.appendChild(auditButton('Restore', 'Show this finding again', function(b) { actOnAudit('restore', f, b); }));
@@ -400,7 +398,7 @@ const agentMemoryModalTemplate = `<script>
       factsTitle.textContent = 'Saved facts';
       factsWrap.appendChild(factsTitle);
       var factsIntro = document.createElement('p');
-      factsIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.85rem';
+      factsIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:var(--fs-sm, 0.85rem)';
       factsIntro.textContent = 'Short notes auto-injected into every system prompt. Remove anything wrong or stale.';
       factsWrap.appendChild(factsIntro);
       var factsList = document.createElement('div');
@@ -431,32 +429,32 @@ const agentMemoryModalTemplate = `<script>
       notesTitle.textContent = 'Working notes';
       notesHeader.appendChild(notesTitle);
       var notesMeta = document.createElement('div');
-      notesMeta.style.cssText = 'color:var(--text-mute);font-size:0.75rem';
+      notesMeta.style.cssText = 'color:var(--text-mute);font-size:var(--fs-xs, 0.75rem)';
       notesHeader.appendChild(notesMeta);
       notesWrap.appendChild(notesHeader);
       var notesIntro = document.createElement('p');
-      notesIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.85rem';
+      notesIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:var(--fs-sm, 0.85rem)';
       notesIntro.textContent = 'The agent keeps its own running state here and rewrites it as work moves. Trim anything stale, especially a parked tool call ("pending task: some_tool with x=y"), which it cannot make from a note and will try to work around.';
       notesWrap.appendChild(notesIntro);
       var notesArea = document.createElement('textarea');
       notesArea.rows = 5;
       notesArea.spellcheck = false;
-      notesArea.style.cssText = 'width:100%;box-sizing:border-box;font:inherit;font-size:0.82rem;line-height:1.4;padding:0.45rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-1);color:var(--text);resize:vertical';
+      notesArea.style.cssText = 'width:100%;box-sizing:border-box;font:inherit;font-size:var(--fs-sm, 0.82rem);line-height:1.4;padding:0.45rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-1);color:var(--text);resize:vertical';
       notesWrap.appendChild(notesArea);
       var notesBar = document.createElement('div');
       notesBar.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-top:0.4rem';
       var notesSave = document.createElement('button');
       notesSave.type = 'button';
-      notesSave.style.cssText = 'padding:0.2rem 0.6rem;background:var(--accent,#6366f1);border:1px solid var(--accent,#6366f1);border-radius:4px;color:#fff;font-size:0.76rem;cursor:pointer';
+      notesSave.className = 'ui-row-btn primary ui-btn-sm';
       notesSave.textContent = 'Save';
       notesBar.appendChild(notesSave);
       var notesClear = document.createElement('button');
       notesClear.type = 'button';
-      notesClear.style.cssText = 'padding:0.2rem 0.55rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px;color:var(--danger,#ff7b72);font-size:0.74rem;cursor:pointer';
+      notesClear.className = 'ui-row-btn danger ui-btn-sm';
       notesClear.textContent = 'Clear';
       notesBar.appendChild(notesClear);
       var notesStatus = document.createElement('span');
-      notesStatus.style.cssText = 'color:var(--text-mute);font-size:0.76rem';
+      notesStatus.style.cssText = 'color:var(--text-mute);font-size:var(--fs-xs, 0.76rem)';
       notesBar.appendChild(notesStatus);
       notesWrap.appendChild(notesBar);
       // What each register costs. The agent names its own sections and one of
@@ -465,7 +463,7 @@ const agentMemoryModalTemplate = `<script>
       // refreshed on load and after each save, so this and the refusal the
       // agent gets quote the same number rather than two parsers' opinions.
       var notesSizes = document.createElement('div');
-      notesSizes.style.cssText = 'margin-top:0.35rem;color:var(--text-mute);font-size:0.74rem';
+      notesSizes.style.cssText = 'margin-top:0.35rem;color:var(--text-mute);font-size:var(--fs-xs, 0.74rem)';
       notesWrap.appendChild(notesSizes);
       body.appendChild(notesWrap);
 
@@ -554,13 +552,13 @@ const agentMemoryModalTemplate = `<script>
       inferredHeader.appendChild(inferredTitle);
       var wipeBtn = document.createElement('button');
       wipeBtn.type = 'button';
-      wipeBtn.style.cssText = 'padding:0.2rem 0.55rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px;color:var(--danger,#ff7b72);font-size:0.74rem;cursor:pointer';
+      wipeBtn.className = 'ui-row-btn danger ui-btn-sm';
       wipeBtn.textContent = 'Wipe all';
       wipeBtn.disabled = true;
       inferredHeader.appendChild(wipeBtn);
       inferredWrap.appendChild(inferredHeader);
       var inferredIntro = document.createElement('p');
-      inferredIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.85rem';
+      inferredIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:var(--fs-sm, 0.85rem)';
       inferredIntro.textContent = 'Vector-grown chunks from memory_save + synthesis auto-ingest. Searchable by similarity, not always in prompt. Delete individual entries that drifted, or wipe all if recall is biasing the agent toward stale patterns.';
       inferredWrap.appendChild(inferredIntro);
       var inferredList = document.createElement('div');
@@ -579,7 +577,7 @@ const agentMemoryModalTemplate = `<script>
       graphTitle.textContent = 'Graph Memory';
       graphWrap.appendChild(graphTitle);
       var graphIntro = document.createElement('div');
-      graphIntro.style.cssText = 'color:var(--text-mute);font-size:0.8rem;margin-bottom:0.5rem';
+      graphIntro.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.8rem);margin-bottom:0.5rem';
       graphIntro.textContent = 'Entities and relationships this agent has recorded about you. Delete an entity (with its links) or a single relationship to prune what it remembers.';
       graphWrap.appendChild(graphIntro);
       var graphList = document.createElement('div');
@@ -604,7 +602,7 @@ const agentMemoryModalTemplate = `<script>
           var row = document.createElement('div');
           row.style.cssText = 'display:flex;align-items:flex-start;gap:0.5rem;padding:0.4rem 0;border-bottom:1px solid var(--border)';
           var col = document.createElement('div');
-          col.style.cssText = 'flex:1;font-size:0.85rem;line-height:1.4';
+          col.style.cssText = 'flex:1;font-size:var(--fs-sm, 0.85rem);line-height:1.4';
           var head = document.createElement('div');
           var nm = document.createElement('span');
           nm.style.fontWeight = '600';
@@ -612,21 +610,21 @@ const agentMemoryModalTemplate = `<script>
           head.appendChild(nm);
           if (e.kind) {
             var kd = document.createElement('span');
-            kd.style.cssText = 'color:var(--text-mute);font-size:0.74rem;margin-left:0.35rem';
+            kd.style.cssText = 'color:var(--text-mute);font-size:var(--fs-xs, 0.74rem);margin-left:0.35rem';
             kd.textContent = '(' + e.kind + ')';
             head.appendChild(kd);
           }
           col.appendChild(head);
           if (e.aliases && e.aliases.length) {
             var al = document.createElement('div');
-            al.style.cssText = 'color:var(--text-mute);font-size:0.72rem';
+            al.style.cssText = 'color:var(--text-mute);font-size:var(--fs-2xs, 0.72rem)';
             al.textContent = 'aka ' + e.aliases.join(', ');
             col.appendChild(al);
           }
           if (e.attrs) {
             Object.keys(e.attrs).sort().forEach(function(k) {
               var at = document.createElement('div');
-              at.style.cssText = 'color:var(--text-mute);font-size:0.74rem';
+              at.style.cssText = 'color:var(--text-mute);font-size:var(--fs-xs, 0.74rem)';
               at.textContent = k + ': ' + e.attrs[k];
               col.appendChild(at);
             });
@@ -639,7 +637,7 @@ const agentMemoryModalTemplate = `<script>
             lbl.textContent = String.fromCharCode(8594) + ' ' + ed.rel + ' ' + (ed.to_name || ed.to) + (ed.note ? ' (' + ed.note + ')' : '');
             er.appendChild(lbl);
             var edel = document.createElement('span');
-            edel.style.cssText = 'cursor:pointer;color:var(--text-mute);font-size:0.85rem';
+            edel.style.cssText = 'cursor:pointer;color:var(--text-mute);font-size:var(--fs-sm, 0.85rem)';
             edel.textContent = String.fromCharCode(215);
             edel.title = 'Remove this relationship';
             edel.onclick = function() {
@@ -654,7 +652,7 @@ const agentMemoryModalTemplate = `<script>
           });
           var del = document.createElement('button');
           del.type = 'button';
-          del.style.cssText = 'padding:0.15rem 0.45rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px;color:var(--danger,#ff7b72);font-size:0.85rem;cursor:pointer;flex:0 0 auto';
+          del.className = 'ui-row-btn danger ui-btn-sm';
           del.textContent = String.fromCharCode(215);
           del.title = 'Delete this entity and all its relationships';
           del.onclick = function() {
@@ -676,7 +674,7 @@ const agentMemoryModalTemplate = `<script>
         wipeBtn.disabled = !items || !items.length;
         if (!items || !items.length) {
           var emp = document.createElement('div');
-          emp.style.cssText = 'color:var(--text-mute);font-size:0.78rem;font-style:italic;padding:0.2rem 0';
+          emp.style.cssText = 'color:var(--text-mute);font-size:var(--fs-xs, 0.78rem);font-style:italic;padding:0.2rem 0';
           emp.textContent = 'No memory entries yet. memory_save findings will appear here once the agent decides something is worth remembering.';
           inferredList.appendChild(emp);
           return;
@@ -685,12 +683,12 @@ const agentMemoryModalTemplate = `<script>
           var row = document.createElement('div');
           row.style.cssText = 'display:flex;gap:0.4rem;align-items:flex-start;padding:0.35rem 0;border-bottom:1px solid var(--border)';
           var col = document.createElement('div');
-          col.style.cssText = 'flex:1;font-size:0.85rem;line-height:1.4';
+          col.style.cssText = 'flex:1;font-size:var(--fs-sm, 0.85rem);line-height:1.4';
           // Collapsed by default (match Agency): the topic line is the disclosure
           // trigger; the chunk text stays hidden until clicked, so the list reads
           // as a scannable set of topics even with many entries.
           var topic = document.createElement('div');
-          topic.style.cssText = 'color:var(--text-mute);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;user-select:none';
+          topic.style.cssText = 'color:var(--text-mute);font-size:var(--fs-2xs, 0.7rem);text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;user-select:none';
           var topicCaret = document.createElement('span');
           topicCaret.style.cssText = 'display:inline-block;margin-right:0.4rem;transition:transform 0.15s';
           topicCaret.textContent = String.fromCharCode(9656); // ▸
@@ -710,7 +708,7 @@ const agentMemoryModalTemplate = `<script>
           del.type = 'button';
           del.textContent = String.fromCharCode(215);
           del.title = 'Delete this entry';
-          del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:1rem;padding:0 0.4rem;align-self:flex-start';
+          del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:var(--fs-lg, 1rem);padding:0 0.4rem;align-self:flex-start';
           del.addEventListener('click', function() {
             window.uiConfirm('Delete this Reference Memory entry?').then(function(ok) {
               if (!ok) return;

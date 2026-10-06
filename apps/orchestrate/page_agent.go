@@ -765,17 +765,17 @@ func agentLockIconHTML(id string, locked bool) string {
 // not one line in whichever box happened to be focused.
 func agentAssistHTML(id string) string {
 	return fmt.Sprintf(`<style>
-#agent-assist{cursor:pointer;border:none;background:none;font-size:1.05rem;line-height:1;opacity:.85;padding:0 .2rem}
+#agent-assist{cursor:pointer;border:none;background:none;font-size:var(--fs-lg, 1.05rem);line-height:1;opacity:.85;padding:0 .2rem}
 #agent-assist:hover{opacity:1;transform:scale(1.1)}
 #agent-assist[disabled]{opacity:.4;cursor:wait}
 .aa-log{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.75rem;max-height:38vh;overflow-y:auto}
-.aa-msg{padding:.45rem .6rem;border-radius:6px;font-size:.9rem;line-height:1.45;white-space:pre-wrap}
+.aa-msg{padding:.45rem .6rem;border-radius:6px;font-size:var(--fs-md, .9rem);line-height:1.45;white-space:pre-wrap}
 .aa-you{background:var(--bg-2);align-self:flex-end;max-width:85%%}
 .aa-them{background:var(--bg-2);border-left:3px solid var(--accent,#6366f1)}
 .aa-change{border:1px solid var(--border);border-radius:6px;padding:.5rem .6rem;margin:.4rem 0;background:var(--bg-2)}
 .aa-change label{display:flex;gap:.5rem;align-items:baseline;cursor:pointer;font-weight:600}
-.aa-why{font-size:.85rem;opacity:.8;margin:.2rem 0 .35rem 1.4rem}
-.aa-val{margin-left:1.4rem;font-size:.85rem;white-space:pre-wrap;max-height:9rem;overflow:auto;padding:.4rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px}
+.aa-why{font-size:var(--fs-sm, .85rem);opacity:.8;margin:.2rem 0 .35rem 1.4rem}
+.aa-val{margin-left:1.4rem;font-size:var(--fs-sm, .85rem);white-space:pre-wrap;max-height:9rem;overflow:auto;padding:.4rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px}
 .aa-row{display:flex;gap:.5rem;align-items:flex-end}
 .aa-row textarea{flex:1;min-height:3.2rem;resize:vertical}
 </style>

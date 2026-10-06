@@ -2019,37 +2019,37 @@ func authPageHTML(title, body string) string {
     -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
   }
   h1 { color: var(--danger); font-size: 1.4rem; margin-bottom: 0.75rem; }
-  h2 { font-size: 1.1rem; color: var(--text-hi); margin-bottom: 1rem; }
+  h2 { font-size: var(--fs-xl, 1.1rem); color: var(--text-hi); margin-bottom: 1rem; }
   p { margin: 8px 0; line-height: 1.5; }
   a { color: var(--accent); }
   code { background: var(--bg-0); padding: 2px 6px; border-radius: 4px; }
   .form-group { margin-bottom: 1rem; }
-  label { display: block; font-size: 0.85rem; color: var(--text-mute); margin-bottom: 0.3rem; }
+  label { display: block; font-size: var(--fs-sm, 0.85rem); color: var(--text-mute); margin-bottom: 0.3rem; }
   input[type="text"], input[type="email"], input[type="password"] {
     width: 100%; padding: 0.6rem 0.8rem; background: var(--bg-0);
     border: 1px solid var(--border); border-radius: 6px; color: var(--text);
-    font-size: 0.95rem; transition: border-color 0.2s;
+    font-size: var(--fs-lg, 0.95rem); transition: border-color 0.2s;
   }
   input:focus { outline: none; border-color: var(--accent); }
   button {
     width: 100%; padding: 0.7rem; background: var(--accent); border: 1px solid var(--accent);
-    border-radius: 6px; color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer;
+    border-radius: 6px; color: #fff; font-size: var(--fs-lg, 0.95rem); font-weight: 600; cursor: pointer;
     transition: filter 0.2s;
   }
   button:hover { filter: brightness(1.08); }
   .error {
     background: color-mix(in srgb, var(--danger) 18%, transparent);
     border: 1px solid var(--danger); border-radius: 6px;
-    padding: 0.5rem 0.8rem; margin-bottom: 1rem; color: var(--danger); font-size: 0.85rem;
+    padding: 0.5rem 0.8rem; margin-bottom: 1rem; color: var(--danger); font-size: var(--fs-sm, 0.85rem);
   }
   .success {
     background: color-mix(in srgb, var(--success) 18%, transparent);
     border: 1px solid var(--success); border-radius: 6px;
-    padding: 0.5rem 0.8rem; margin-bottom: 1rem; color: var(--success); font-size: 0.85rem;
+    padding: 0.5rem 0.8rem; margin-bottom: 1rem; color: var(--success); font-size: var(--fs-sm, 0.85rem);
   }
   .alt-link {
     display: block; text-align: center; margin-top: 1rem;
-    font-size: 0.85rem; color: var(--accent); text-decoration: none;
+    font-size: var(--fs-sm, 0.85rem); color: var(--accent); text-decoration: none;
   }
   .alt-link:hover { text-decoration: underline; }
 </style>

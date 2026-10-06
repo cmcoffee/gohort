@@ -826,7 +826,13 @@
     var dlg = document.createElement('div');
     dlg.className = 'ui-modal-box';
     if (opts.width) dlg.style.maxWidth = opts.width;
+    // A dialog to assistive technology, and the page behind it inert to it.
+    dlg.setAttribute('role', 'dialog');
+    dlg.setAttribute('aria-modal', 'true');
     overlay.appendChild(dlg);
+    // Where focus was, so closing hands it back: a keyboard user returns to
+    // the button that opened the dialog, not to the top of the page.
+    var opener = document.activeElement;
     var released = false;
     function close() {
       // A view inside the dialog can own a BACK step. While one is showing,
@@ -846,16 +852,34 @@
       overlay.remove();
       document.removeEventListener('keydown', onKey);
       if (!released) { released = true; window.uiReleaseModalZ(); }
+      if (opener && opener.focus && document.body.contains(opener)) {
+        try { opener.focus({preventScroll: true}); } catch (_) {}
+      }
+    }
+    function focusables() {
+      var all = dlg.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+      return Array.prototype.filter.call(all, function(n) { return n.offsetParent !== null; });
     }
     // Escape closes the TOP dialog only. Each open modal registers its
     // own listener, so without this every one of them closed at once —
     // cancelling a picker took the form that opened it with it.
+    // Tab, the same way: it cycles inside the TOP dialog, rather than walking
+    // out into the page behind the scrim, where nothing can be seen or used.
     function onKey(ev) {
-      if (ev.key !== 'Escape') return;
+      if (ev.key !== 'Escape' && ev.key !== 'Tab') return;
       var mine = Number(overlay.style.zIndex) || 0;
       var others = document.querySelectorAll('[data-ui-modal]');
       for (var i = 0; i < others.length; i++) {
         if ((Number(others[i].style.zIndex) || 0) > mine) return; // something is above us
+      }
+      if (ev.key === 'Tab') {
+        var f = focusables();
+        if (!f.length) { ev.preventDefault(); return; }
+        var first = f[0], last = f[f.length - 1], at = document.activeElement;
+        if (!dlg.contains(at)) { ev.preventDefault(); first.focus(); }
+        else if (ev.shiftKey && at === first) { ev.preventDefault(); last.focus(); }
+        else if (!ev.shiftKey && at === last) { ev.preventDefault(); first.focus(); }
+        return;
       }
       ev.stopPropagation();
       close();
@@ -865,6 +889,8 @@
     if (opts.title) {
       var h = document.createElement('h3');
       h.className = 'ui-modal-title';
+      h.id = 'ui-modal-title-' + overlay.style.zIndex;
+      dlg.setAttribute('aria-labelledby', h.id);
       h.textContent = opts.title;
       dlg.appendChild(h);
     }
@@ -907,6 +933,22 @@
         console.error('uiOpenModal mount failed:', e);
       }
     }
+    // Focus moves in once the content is there: the first field, else the
+    // main button. On a touch screen the dialog itself, so opening one does
+    // not throw up the keyboard over what it says.
+    setTimeout(function() {
+      if (!overlay.isConnected || dlg.contains(document.activeElement)) return;
+      var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      var target = null;
+      if (!coarse) {
+        var f = focusables();
+        target = dlg.querySelector('[autofocus]') ||
+          f.filter(function(n) { return /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName); })[0] ||
+          api.primaryButton || f[0] || null;
+      }
+      if (!target) { dlg.tabIndex = -1; target = dlg; }
+      try { target.focus({preventScroll: true}); } catch (_) {}
+    }, 0);
     return api;
   };
 
@@ -982,7 +1024,7 @@
     var hdr = document.createElement('div');
     hdr.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.8rem;padding-top:calc(0.5rem + env(safe-area-inset-top, 0px));border-bottom:1px solid var(--border);flex:0 0 auto';
     var ttl = document.createElement('div');
-    ttl.style.cssText = 'flex:1 1 auto;min-width:0;font-size:0.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    ttl.style.cssText = 'flex:1 1 auto;min-width:0;font-size:var(--fs-sm, 0.85rem);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
     var popBtn = document.createElement('button');
     popBtn.type = 'button'; popBtn.className = 'ui-row-btn'; popBtn.textContent = '↗';
     popBtn.title = 'Open in a new tab';
@@ -1182,7 +1224,7 @@
       'border:1px solid var(--border);border-left:3px solid var(--accent, #6366f1);border-radius:6px;background:var(--bg-1)';
     var icon = document.createElement('span');
     var label = document.createElement('div');
-    label.style.cssText = 'flex:1 1 auto;min-width:0;font-size:0.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    label.style.cssText = 'flex:1 1 auto;min-width:0;font-size:var(--fs-sm, 0.85rem);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
     var btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'ui-row-btn'; btn.textContent = 'Open';
     btn.addEventListener('click', function() { window.uiOpenArtifactPane(paneOpts()); });
@@ -1226,11 +1268,11 @@
     var icon = document.createElement('span');
     icon.textContent = '🔗';
     var label = document.createElement('div');
-    label.style.cssText = 'flex:1 1 auto;min-width:0;font-size:0.85rem;overflow:hidden';
+    label.style.cssText = 'flex:1 1 auto;min-width:0;font-size:var(--fs-sm, 0.85rem);overflow:hidden';
     var title = document.createElement('div');
     title.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
     var note = document.createElement('div');
-    note.style.cssText = 'font-size:0.78rem;color:var(--text-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    note.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
     label.appendChild(title); label.appendChild(note);
     var a = document.createElement('a');
     a.className = 'ui-row-btn';
@@ -1474,7 +1516,7 @@
     // the backdrop — so a submit that failed inside a modal reset its
     // button and said nothing anybody could see, which reads as a
     // button that does nothing.
-    t.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--bg-2);border:1px solid var(--border);color:var(--text);padding:0.6rem 1rem;border-radius:8px;z-index:9000;box-shadow:0 4px 12px rgba(0,0,0,0.4);font-size:0.85rem;';
+    t.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--bg-2);border:1px solid var(--border);color:var(--text);padding:0.6rem 1rem;border-radius:8px;z-index:9000;box-shadow:0 4px 12px rgba(0,0,0,0.4);font-size:var(--fs-sm, 0.85rem);';
     document.body.appendChild(t);
     setTimeout(function(){ t.remove(); }, 2500);
   }

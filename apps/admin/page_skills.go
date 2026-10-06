@@ -61,7 +61,7 @@ func (a *AdminApp) skillsSections() []ui.Section {
 							// actually available. Posts independently of
 							// the FormPanel above (the chip click immediately
 							// updates the record).
-							ui.Card{HTML: `<div style="font-size:0.78rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em">Allowed tools</div><div style="font-size:0.75rem;color:#6e7681">Tools the LLM may call while this skill is active. Skills with no selection inherit the agent's normal tool set.</div>`},
+							ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:#8b949e;text-transform:uppercase;letter-spacing:0.04em">Allowed tools</div><div style="font-size:var(--fs-xs, 0.75rem);color:#6e7681">Tools the LLM may call while this skill is active. Skills with no selection inherit the agent's normal tool set.</div>`},
 							ui.ChipPicker{
 								OptionsSource: "api/tool-groups/registry",
 								RecordSource:  "api/skills/{id}",
@@ -82,7 +82,7 @@ func (a *AdminApp) skillsSections() []ui.Section {
 							// list endpoint lives at api/collections
 							// (admin-side read view; create/edit/delete
 							// happens on the Knowledge surface).
-							ui.Card{HTML: `<div style="font-size:0.78rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em">Attached collections</div><div style="font-size:0.75rem;color:#6e7681">Document Collections merged into RAG recall while this skill is active. Manage the collections themselves on the Knowledge page.</div>`},
+							ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:#8b949e;text-transform:uppercase;letter-spacing:0.04em">Attached collections</div><div style="font-size:var(--fs-xs, 0.75rem);color:#6e7681">Document Collections merged into RAG recall while this skill is active. Manage the collections themselves on the Knowledge page.</div>`},
 							ui.ChipPicker{
 								OptionsSource: "api/collections",
 								RecordSource:  "api/skills/{id}",

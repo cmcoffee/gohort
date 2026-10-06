@@ -339,17 +339,17 @@ const userAdminHTML = `<div class="uadm">
 </div>
 <style>
 .uadm { display:flex; flex-direction:column; gap:0.5rem; max-width:26rem; }
-.uadm-in { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:0.9rem; }
-.uadm-chk { display:flex; align-items:center; gap:0.4rem; font-size:0.85rem; color:var(--text); }
-.uadm-methods { display:flex; flex-direction:column; gap:0.25rem; font-size:0.85rem; color:var(--text-mute); }
+.uadm-in { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-md, 0.9rem); }
+.uadm-chk { display:flex; align-items:center; gap:0.4rem; font-size:var(--fs-sm, 0.85rem); color:var(--text); }
+.uadm-methods { display:flex; flex-direction:column; gap:0.25rem; font-size:var(--fs-sm, 0.85rem); color:var(--text-mute); }
 .uadm-methods label { display:flex; align-items:center; gap:0.4rem; }
 .uadm-row { display:flex; align-items:center; gap:0.6rem; margin-top:0.2rem; }
-.uadm-msg { font-size:0.82rem; }
+.uadm-msg { font-size:var(--fs-sm, 0.82rem); }
 .uadm-msg.ok { color:var(--success); }
 .uadm-msg.err { color:var(--danger); }
 .uadm-link { border:1px solid var(--accent); border-radius:8px; padding:0.55rem 0.7rem; background:var(--bg-2); display:flex; flex-direction:column; gap:0.35rem; }
-.uadm-link-lbl { font-size:0.78rem; color:var(--text-mute); }
-.uadm-link code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.78rem; color:var(--text); word-break:break-all; }
+.uadm-link-lbl { font-size:var(--fs-xs, 0.78rem); color:var(--text-mute); }
+.uadm-link code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:var(--fs-xs, 0.78rem); color:var(--text); word-break:break-all; }
 .uadm-link button { align-self:flex-start; }
 </style>
 <script>

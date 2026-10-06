@@ -13,14 +13,14 @@ const adminUsersCSS = `
 .admu-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.45); display:flex; align-items:center; justify-content:center; z-index:1000; }
 .admu-card { background:var(--bg-1); border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; width:min(30rem,92vw); display:flex; flex-direction:column; gap:0.55rem; }
 .admu-title { font-weight:600; color:var(--text-hi); }
-.admu-opt { display:flex; align-items:center; gap:0.4rem; font-size:0.9rem; color:var(--text); }
+.admu-opt { display:flex; align-items:center; gap:0.4rem; font-size:var(--fs-md, 0.9rem); color:var(--text); }
 .admu-in { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; }
 .admu-row { display:flex; gap:0.5rem; margin-top:0.3rem; }
-.admu-msg { font-size:0.82rem; }
+.admu-msg { font-size:var(--fs-sm, 0.82rem); }
 .admu-msg.ok { color:var(--success); }
 .admu-msg.err { color:var(--danger); }
 .admu-link { border:1px solid var(--accent); border-radius:8px; padding:0.5rem 0.65rem; background:var(--bg-2); display:flex; flex-direction:column; gap:0.35rem; }
-.admu-link code { font-family:ui-monospace,Menlo,monospace; font-size:0.78rem; color:var(--text); word-break:break-all; }
+.admu-link code { font-family:ui-monospace,Menlo,monospace; font-size:var(--fs-xs, 0.78rem); color:var(--text); word-break:break-all; }
 .admu-link button { align-self:flex-start; }`
 
 // adminUsersModalJS defines the shared helpers (el, openModal) for the reset-
@@ -112,7 +112,7 @@ function __artifactExport(query, filename){
 (function(){
   function build(){
     var label = document.createElement('label');
-    label.style.cssText = 'display:inline-flex;align-items:center;gap:0.4rem;font-size:0.82rem;color:var(--text-mute);margin:0 0 0.6rem';
+    label.style.cssText = 'display:inline-flex;align-items:center;gap:0.4rem;font-size:var(--fs-sm, 0.82rem);color:var(--text-mute);margin:0 0 0.6rem';
     var cb = document.createElement('input');
     cb.type = 'checkbox'; cb.id = 'artifact-include-deps'; cb.checked = true;
     var span = document.createElement('span');
@@ -350,9 +350,9 @@ const connectorWebhookAction = `function(ctx){
   var el = window.uiEl;
   var url = location.origin + '/bridges/api/webhook/' + encodeURIComponent(r.name);
   window.uiOpenSimpleModal({title: 'Webhook: ' + r.name, width: '600px', mount: function(body, dlg){
-    function note(text){ body.appendChild(el('p', {style: 'margin:0 0 0.6rem;font-size:0.86rem;line-height:1.45;color:var(--text-mute)', text: text})); }
+    function note(text){ body.appendChild(el('p', {style: 'margin:0 0 0.6rem;font-size:var(--fs-sm, 0.86rem);line-height:1.45;color:var(--text-mute)', text: text})); }
     note('Give the service this address to send its pushes to. It must be able to reach this gohort.');
-    var addr = el('input', {class: 'ui-input', type: 'text', readonly: 'readonly', value: url, style: 'width:100%;box-sizing:border-box;font-family:var(--mono, monospace);font-size:0.8rem'});
+    var addr = el('input', {class: 'ui-input', type: 'text', readonly: 'readonly', value: url, style: 'width:100%;box-sizing:border-box;font-family:var(--mono, monospace);font-size:var(--fs-sm, 0.8rem)'});
     addr.addEventListener('focus', function(){ addr.select(); });
     var copy = el('button', {class: 'ui-row-btn', text: 'Copy'});
     copy.addEventListener('click', function(){
@@ -366,7 +366,7 @@ const connectorWebhookAction = `function(ctx){
       : 'Every push is checked against the secret below (the service calls it a signing secret or a token). Setting it replaces the one kept now; it is stored encrypted and never shown again.');
     var inp = el('input', {class: 'ui-input', type: 'password', autocomplete: 'off', placeholder: 'Secret or token', style: 'width:100%;box-sizing:border-box'});
     body.appendChild(inp);
-    var out = el('div', {style: 'margin-top:0.6rem;font-size:0.85rem;min-height:1.1em'});
+    var out = el('div', {style: 'margin-top:0.6rem;font-size:var(--fs-sm, 0.85rem);min-height:1.1em'});
     var save = el('button', {class: 'ui-row-btn', text: 'Set secret'});
     save.addEventListener('click', function(){
       var v = inp.value.trim();
@@ -595,13 +595,13 @@ const templateInstallAction = `function(ctx){
     .then(function(res){ return res.text().then(function(t){ if(!res.ok) throw new Error(t || ('HTTP ' + res.status)); return JSON.parse(t); }); })
     .then(function(rec){
       window.uiOpenSimpleModal({title: 'Add ' + (rec.title || r.title), width: '600px', mount: function(body, dlg){
-        function note(text, style){ body.appendChild(el('p', {style: 'margin:0 0 0.6rem;font-size:0.86rem;line-height:1.45;' + (style || 'color:var(--text-mute)'), text: text})); }
+        function note(text, style){ body.appendChild(el('p', {style: 'margin:0 0 0.6rem;font-size:var(--fs-sm, 0.86rem);line-height:1.45;' + (style || 'color:var(--text-mute)'), text: text})); }
         if (rec.description) note(rec.description, 'color:var(--text)');
         if (rec.setup_notes) note(rec.setup_notes);
         if ((rec.contains || []).length) note('Adds: ' + rec.contains.join(', ') + '. Everything lands as a draft for review.');
         var inputs = {};
         (rec.questions || []).forEach(function(q){
-          var lab = el('div', {style: 'font-weight:600;font-size:0.85rem;margin:0.6rem 0 0.2rem'}, [q.label + (q.required ? ' *' : '')]);
+          var lab = el('div', {style: 'font-weight:600;font-size:var(--fs-sm, 0.85rem);margin:0.6rem 0 0.2rem'}, [q.label + (q.required ? ' *' : '')]);
           body.appendChild(lab);
           var inp;
           if ((q.options || []).length) {
@@ -609,7 +609,7 @@ const templateInstallAction = `function(ctx){
             q.options.forEach(function(o){ inp.appendChild(el('option', {value: o, text: o})); });
             if (q.default) inp.value = q.default;
           } else if (q.kind === 'long') {
-            inp = el('textarea', {class: 'ui-input', rows: '8', spellcheck: 'false', style: 'width:100%;box-sizing:border-box;font-family:var(--mono, monospace);font-size:0.8rem'});
+            inp = el('textarea', {class: 'ui-input', rows: '8', spellcheck: 'false', style: 'width:100%;box-sizing:border-box;font-family:var(--mono, monospace);font-size:var(--fs-sm, 0.8rem)'});
             if (q.default) inp.value = q.default;
           } else {
             inp = el('input', {class: 'ui-input', type: q.secret ? 'password' : 'text', autocomplete: 'off', style: 'width:100%;box-sizing:border-box'});
@@ -618,14 +618,14 @@ const templateInstallAction = `function(ctx){
             if (q.kind === 'http_url') inp.placeholder = 'http://';
           }
           body.appendChild(inp);
-          if (q.help) body.appendChild(el('div', {style: 'font-size:0.78rem;color:var(--text-mute);margin-top:0.15rem', text: q.help}));
+          if (q.help) body.appendChild(el('div', {style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin-top:0.15rem', text: q.help}));
           // A secret answer names where it will be sent: the credential's
           // address, fixed by the template, before the key is typed in.
           var dest = q.secret && q.credential && (rec.destinations || {})[q.credential];
-          if (dest) body.appendChild(el('div', {style: 'font-size:0.78rem;color:var(--text);margin-top:0.15rem', text: 'Sent only to ' + dest + ' (credential "' + q.credential + '").'}));
+          if (dest) body.appendChild(el('div', {style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text);margin-top:0.15rem', text: 'Sent only to ' + dest + ' (credential "' + q.credential + '").'}));
           inputs[q.name] = inp;
         });
-        var out = el('div', {style: 'margin-top:0.7rem;font-size:0.85rem;white-space:pre-wrap'});
+        var out = el('div', {style: 'margin-top:0.7rem;font-size:var(--fs-sm, 0.85rem);white-space:pre-wrap'});
         var go = el('button', {class: 'ui-row-btn', text: 'Add'});
         go.addEventListener('click', function(){
           var answers = {};

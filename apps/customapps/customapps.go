@@ -523,7 +523,7 @@ const shareModalScript = `<script>
     var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!checked;
     top.appendChild(cb); top.appendChild(document.createTextNode(label));
     var h = document.createElement('div');
-    h.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin:0.25rem 0 0 1.6rem;line-height:1.4';
+    h.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin:0.25rem 0 0 1.6rem;line-height:1.4';
     h.textContent = help;
     wrap.appendChild(top); wrap.appendChild(h);
     wrap.help = h;
@@ -557,7 +557,7 @@ const shareModalScript = `<script>
       var lines = (rec.status_lines || '').split('\n').filter(function(l){ return l; });
       if (lines.length) {
         var status = document.createElement('div');
-        status.style.cssText = 'margin:0 0 0.9rem;padding:0.55rem 0.7rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);font-size:0.8rem;line-height:1.5;color:var(--text-mute)';
+        status.style.cssText = 'margin:0 0 0.9rem;padding:0.55rem 0.7rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);font-size:var(--fs-sm, 0.8rem);line-height:1.5;color:var(--text-mute)';
         lines.forEach(function(l){ var d = document.createElement('div'); d.textContent = l; status.appendChild(d); });
         body.appendChild(status);
       }

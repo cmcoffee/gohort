@@ -244,7 +244,7 @@ const backChromeCSS = `
   display: inline-flex; align-items: center; justify-content: center;
   width: 32px; height: 32px; border-radius: 6px;
   background: #161b22; border: 1px solid #30363d;
-  color: #8b949e; text-decoration: none; font-size: 1rem;
+  color: #8b949e; text-decoration: none; font-size: var(--fs-lg, 1rem);
   transition: border-color 0.2s, color 0.2s, background 0.2s;
 }
 #dashboard-back:hover { border-color: #58a6ff; color: #f0f6fc; background: #1c2128; }

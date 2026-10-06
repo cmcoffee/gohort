@@ -297,6 +297,11 @@
     function activate(si) {
       for (var k = 0; k < subPanels.length; k++) subPanels[k].classList.toggle('ui-tab-hidden', k !== si);
       for (var m = 0; m < items.length; m++) items[m].classList.toggle('active', m === si);
+      // On a phone the rail is one sideways-scrolling row; keep the open
+      // section in view there (a deep link can open one past the edge).
+      if (items[si] && rail.scrollWidth > rail.clientWidth && items[si].scrollIntoView) {
+        items[si].scrollIntoView({block: 'nearest', inline: 'nearest'});
+      }
     }
     secs.forEach(function(s, si) {
       var sp = el('div', {class: 'ui-secnav-panel' + (si === 0 ? '' : ' ui-tab-hidden')});

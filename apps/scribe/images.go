@@ -151,6 +151,13 @@ func inlineGuideImages(g Guide, udb Database) Guide {
 		s.Markdown = inlineImageRefs(s.Markdown, udb)
 		out.Sections[i] = s
 	}
+	// The header image too, when it is an uploaded picture.
+	if ref := guideImageRefRE.FindStringSubmatch(g.ImageURL); ref != nil {
+		var img guideImage
+		if udb.Get(guideImagesTable, guideImageKey(ref[1], ref[2]), &img) && guideImageTypes[img.Mime] {
+			out.ImageURL = "data:" + img.Mime + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
+		}
+	}
 	return out
 }
 
@@ -183,6 +190,9 @@ func deleteGuideImages(udb Database, guideID string) {
 	}
 }
 
+// dataImageURLRE matches an embedded raster on its own (a header image URL).
+var dataImageURLRE = regexp.MustCompile(`^data:image/(?:png|jpeg|gif|webp);base64,([A-Za-z0-9+/=]+)$`)
+
 // dataImageMarkdownRE matches a markdown image whose URL is an embedded raster.
 var dataImageMarkdownRE = regexp.MustCompile(`(!\[[^\]\n]*\]\()data:image/(?:png|jpeg|gif|webp);base64,([A-Za-z0-9+/=]+)(\))`)
 
@@ -195,6 +205,16 @@ var dataImageMarkdownRE = regexp.MustCompile(`(!\[[^\]\n]*\]\()data:image/(?:png
 func (T *Scribe) storeEmbeddedImages(g *Guide, udb Database) {
 	if udb == nil || g.ID == "" {
 		return
+	}
+	// The header image the same way: a bundle carries an uploaded one embedded.
+	if m := dataImageURLRE.FindStringSubmatch(g.ImageURL); m != nil {
+		if data, err := base64.StdEncoding.DecodeString(m[1]); err == nil && len(data) > 0 && len(data) <= maxGuideImageBytes {
+			if mime := http.DetectContentType(data); guideImageTypes[mime] {
+				imgID := newID()
+				udb.Set(guideImagesTable, guideImageKey(g.ID, imgID), guideImage{Mime: mime, Data: data, Created: now()})
+				g.ImageURL = T.guideImagePath(g.ID, imgID)
+			}
+		}
 	}
 	for i := range g.Sections {
 		g.Sections[i].Markdown = dataImageMarkdownRE.ReplaceAllStringFunc(g.Sections[i].Markdown, func(m string) string {

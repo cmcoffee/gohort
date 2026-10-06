@@ -121,7 +121,7 @@ func (T *HelloAgent) handlePage(w http.ResponseWriter, r *http.Request) {
 		// the handler body opens the shared ui.uiOpenModal primitive. No app
 		// writes a <script> blob or an overlay by hand.
 		Head: ui.NewHead().
-			CSS(`.hello-greet-note{color:var(--text-mute);font-size:0.85rem;line-height:1.5}`).
+			CSS(`.hello-greet-note{color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);line-height:1.5}`).
 			ClientAction("hello_greet", helloGreetJS),
 		Footer:    "AgentLoopPanel demo →",
 		FooterURL: "agent",

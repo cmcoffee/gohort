@@ -202,15 +202,15 @@ func databaseBrowserCard() ui.Card {
 <style>
 .dbb { display:flex; gap:0.75rem; margin-top:0.25rem; min-height:200px; }
 .dbb-pane { display:flex; flex-direction:column; min-width:0; }
-.dbb-label { font-size:0.72rem; color:var(--text-mute,#8b949e); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.35rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dbb-label { font-size:var(--fs-2xs, 0.72rem); color:var(--text-mute,#8b949e); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.35rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .dbb-list { background:var(--bg-0,#0d1117); border:1px solid var(--border,#30363d); border-radius:6px; overflow-y:auto; max-height:380px; flex:1; }
-.dbb-item { padding:0.35rem 0.6rem; font-size:0.8rem; color:var(--text,#c9d1d9); border-bottom:1px solid #161b22; cursor:pointer; word-break:break-all; line-height:1.4; }
+.dbb-item { padding:0.35rem 0.6rem; font-size:var(--fs-sm, 0.8rem); color:var(--text,#c9d1d9); border-bottom:1px solid #161b22; cursor:pointer; word-break:break-all; line-height:1.4; }
 .dbb-item:last-child { border-bottom:none; }
 .dbb-item:hover { background:#21262d; }
 .dbb-item.active { background:#1f3047; color:#79c0ff; }
-.dbb-empty { padding:0.5rem 0.6rem; font-size:0.8rem; color:#8b949e; font-style:italic; }
+.dbb-empty { padding:0.5rem 0.6rem; font-size:var(--fs-sm, 0.8rem); color:#8b949e; font-style:italic; }
 @media (max-width:700px) { .dbb { flex-direction:column; } .dbb-pane { width:auto !important; } .dbb-list { max-height:220px; } }
-.dbb-record { background:var(--bg-0,#0d1117); border:1px solid var(--border,#30363d); border-radius:6px; padding:0.6rem 0.75rem; overflow:auto; max-height:380px; font-size:0.78rem; color:var(--text,#c9d1d9); margin:0; white-space:pre; font-family:monospace; line-height:1.5; }
+.dbb-record { background:var(--bg-0,#0d1117); border:1px solid var(--border,#30363d); border-radius:6px; padding:0.6rem 0.75rem; overflow:auto; max-height:380px; font-size:var(--fs-xs, 0.78rem); color:var(--text,#c9d1d9); margin:0; white-space:pre; font-family:monospace; line-height:1.5; }
 </style>
 <div class="dbb">
   <div class="dbb-pane" style="width:180px;flex-shrink:0">

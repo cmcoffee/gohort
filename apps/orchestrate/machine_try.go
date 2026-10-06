@@ -394,7 +394,7 @@ const machineTryJS = `function(ctx) {
     if (style) e.setAttribute('style', style);
     return e;
   }
-  var MUTE = 'color:var(--text-mute);font-size:0.82rem';
+  var MUTE = 'color:var(--text-mute);font-size:var(--fs-sm, 0.82rem)';
   var HEAD = 'font-weight:600;margin:0.75rem 0 0.25rem';
 
   function list(items, style) {
@@ -407,7 +407,7 @@ const machineTryJS = `function(ctx) {
     if (d.cursor) out.dataset.cursor = JSON.stringify(d.cursor);
     turn.textContent = '';
     turn.appendChild(el('div', 'Turn ' + turnNo + ': “' + msg + '”',
-      'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem'));
+      'font-size:var(--fs-sm, 0.8rem);color:var(--text-mute);margin-bottom:0.25rem'));
     if (d.blocked) {
       turn.appendChild(el('div', d.note, 'font-weight:600'));
       turn.appendChild(list(d.checklist || []));
@@ -439,14 +439,14 @@ const machineTryJS = `function(ctx) {
     if (steps.length) {
       turn.appendChild(el('div', 'The blackboard now holds', HEAD));
       steps.forEach(function(name) {
-        turn.appendChild(el('div', name, 'font-weight:600;margin-top:0.4rem;font-size:0.85rem'));
+        turn.appendChild(el('div', name, 'font-weight:600;margin-top:0.4rem;font-size:var(--fs-sm, 0.85rem)'));
         var fields = state[name] || {};
         var rows = Object.keys(fields).map(function(k) {
           var v = fields[k];
           if (v && typeof v === 'object') v = JSON.stringify(v);
           return k + ': ' + v;
         });
-        turn.appendChild(rows.length ? list(rows, 'font-size:0.85rem')
+        turn.appendChild(rows.length ? list(rows, 'font-size:var(--fs-sm, 0.85rem)')
                                      : el('div', '(nothing)', MUTE));
       });
     }
@@ -460,7 +460,7 @@ const machineTryJS = `function(ctx) {
       reach.forEach(function(r) {
         var head = r.step + ': ' + (r.summary ? r.summary
           : (r.reach === 'read' ? 'read-only, ' : '') + r.count + ' tool' + (r.count === 1 ? '' : 's'));
-        turn.appendChild(el('div', head, 'font-weight:600;margin-top:0.4rem;font-size:0.85rem'));
+        turn.appendChild(el('div', head, 'font-weight:600;margin-top:0.4rem;font-size:var(--fs-sm, 0.85rem)'));
         if ((r.tools || []).length) {
           turn.appendChild(el('div', r.tools.join(', '), MUTE + ';margin-left:0.2rem'));
         }
@@ -468,7 +468,7 @@ const machineTryJS = `function(ctx) {
         // fix rather than as a turnDiag on somebody's first real message.
         if ((r.missing || []).length) {
           turn.appendChild(el('div', '⚠ names it asks for and would not get: ' + r.missing.join(', '),
-            'color:var(--danger);font-size:0.82rem;margin-left:0.2rem'));
+            'color:var(--danger);font-size:var(--fs-sm, 0.82rem);margin-left:0.2rem'));
         }
       });
       if (d.reach_note) turn.appendChild(el('div', d.reach_note, MUTE + ';margin-top:0.4rem'));
@@ -476,7 +476,7 @@ const machineTryJS = `function(ctx) {
 
     if ((d.notes || []).length) {
       turn.appendChild(el('div', 'Decisions the framework took for you', HEAD));
-      turn.appendChild(list(d.notes, 'font-size:0.85rem'));
+      turn.appendChild(list(d.notes, 'font-size:var(--fs-sm, 0.85rem)'));
     }
     if (d.caveat) turn.appendChild(el('div', d.caveat, MUTE + ';margin-top:0.75rem'));
   }

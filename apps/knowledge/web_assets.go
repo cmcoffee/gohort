@@ -24,18 +24,18 @@ const documentsListBody = `
 const documentsListAssets = `<style>
 .docs-page { padding: 0.5rem; }
 .docs-hdr { display: flex; align-items: flex-start; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
-.docs-intro { flex: 1; min-width: 260px; margin: 0; color: var(--text-mute); font-size: 0.88rem; line-height: 1.45; }
-.docs-status { font-size: 0.8rem; color: var(--text-mute); margin-bottom: 0.6rem; min-height: 1.2em; }
+.docs-intro { flex: 1; min-width: 260px; margin: 0; color: var(--text-mute); font-size: var(--fs-md, 0.88rem); line-height: 1.45; }
+.docs-status { font-size: var(--fs-sm, 0.8rem); color: var(--text-mute); margin-bottom: 0.6rem; min-height: 1.2em; }
 .docs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.7rem; }
 .docs-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; display: flex; flex-direction: column; gap: 0.4rem; cursor: pointer; transition: border-color 0.15s; }
 .docs-card:hover { border-color: var(--accent, #56d364); }
-.docs-card-name { font-weight: 600; color: var(--text); font-size: 1rem; }
-.docs-card-desc { color: var(--text-mute); font-size: 0.78rem; line-height: 1.4; min-height: 1.2em; }
-.docs-card-meta { display: flex; gap: 0.8rem; font-size: 0.72rem; color: var(--text-mute); margin-top: auto; padding-top: 0.4rem; border-top: 1px solid var(--border); }
+.docs-card-name { font-weight: 600; color: var(--text); font-size: var(--fs-lg, 1rem); }
+.docs-card-desc { color: var(--text-mute); font-size: var(--fs-xs, 0.78rem); line-height: 1.4; min-height: 1.2em; }
+.docs-card-meta { display: flex; gap: 0.8rem; font-size: var(--fs-2xs, 0.72rem); color: var(--text-mute); margin-top: auto; padding-top: 0.4rem; border-top: 1px solid var(--border); }
 .docs-card-meta span { display: inline-flex; align-items: center; gap: 0.2rem; }
 .docs-empty { color: var(--text-mute); font-style: italic; padding: 2rem; text-align: center; border: 1px dashed var(--border); border-radius: 8px; }
 .docs-modal-form { display: flex; flex-direction: column; gap: 0.5rem; }
-.docs-modal-form label { font-size: 0.82rem; color: var(--text); font-weight: 600; }
+.docs-modal-form label { font-size: var(--fs-sm, 0.82rem); color: var(--text); font-weight: 600; }
 .docs-modal-form input, .docs-modal-form textarea { background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 0.4rem 0.6rem; font: inherit; }
 .docs-modal-form textarea { min-height: 4rem; resize: vertical; }
 </style>
@@ -153,7 +153,7 @@ const documentsListAssets = `<style>
     draftBtn.type = 'button'; draftBtn.className = 'ui-row-btn';
     draftBtn.textContent = 'Draft with AI';
     var draftStatus = document.createElement('span');
-    draftStatus.style.cssText = 'font-size:0.72rem;color:var(--text-mute)';
+    draftStatus.style.cssText = 'font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)';
     draftRow.appendChild(draftBtn); draftRow.appendChild(draftStatus);
     form.appendChild(draftRow);
 
@@ -252,33 +252,33 @@ const documentsDetailBody = `
   <div class="docs-section">
     <div class="docs-section-title">Auto-fill from web</div>
     <div class="docs-section-help">Seeds this collection from the web using the name + description above. Skips URLs already pulled. The settings below shape which candidates get in.</div>
-    <label style="display:block;font-size:0.82rem;font-weight:600;color:var(--text);margin-top:0.6rem">Filter rules / hints (optional)</label>
-    <div class="docs-section-help" style="margin-top:0.15rem;font-size:0.74rem">Rules bias the generated search queries (e.g. "2026 edition", "official sources only") and, when the LLM judge is on, also drop candidates that don't match.</div>
+    <label style="display:block;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text);margin-top:0.6rem">Filter rules / hints (optional)</label>
+    <div class="docs-section-help" style="margin-top:0.15rem;font-size:var(--fs-xs, 0.74rem)">Rules bias the generated search queries (e.g. "2026 edition", "official sources only") and, when the LLM judge is on, also drop candidates that don't match.</div>
     <div id="docs-filter-rules-list" style="display:flex;flex-direction:column;gap:0.3rem;margin:0.4rem 0"></div>
     <div style="display:flex;align-items:center;gap:0.4rem">
       <input id="docs-filter-rules-input" type="text" placeholder="Add a rule (e.g. &quot;Prefer 2026 edition&quot; or &quot;Skip blog posts&quot;)"
-        style="flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.55rem;font:inherit;font-size:0.85rem">
+        style="flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.55rem;font:inherit;font-size:var(--fs-sm, 0.85rem)">
       <button id="docs-filter-rules-add" class="ui-row-btn" disabled>+ Add</button>
-      <span id="docs-filter-rules-status" style="font-size:0.72rem;color:var(--text-mute)"></span>
+      <span id="docs-filter-rules-status" style="font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)"></span>
     </div>
-    <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;color:var(--text);margin:0.6rem 0 0">
+    <label style="display:flex;align-items:center;gap:0.5rem;font-size:var(--fs-sm, 0.85rem);color:var(--text);margin:0.6rem 0 0">
       <input id="docs-classify-toggle" type="checkbox">
       <span>Also run an LLM judge on each candidate (extra ~1 LLM call per doc)</span>
-      <span id="docs-classify-status" style="font-size:0.72rem;color:var(--text-mute);margin-left:0.3rem"></span>
+      <span id="docs-classify-status" style="font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute);margin-left:0.3rem"></span>
     </label>
     <div class="docs-upload-row" style="margin-top:0.8rem;align-items:center;gap:0.5rem;padding-top:0.6rem;border-top:1px solid var(--border)">
       <button id="docs-autofill" class="ui-row-btn primary">Auto-fill from web</button>
-      <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.82rem;color:var(--text-mute)">
+      <label style="display:flex;align-items:center;gap:0.35rem;font-size:var(--fs-sm, 0.82rem);color:var(--text-mute)">
         <span>up to</span>
         <input id="docs-autofill-max" type="number" min="1" max="50" value="10"
-          style="width:4rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.25rem 0.4rem;font:inherit;font-size:0.85rem">
+          style="width:4rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.25rem 0.4rem;font:inherit;font-size:var(--fs-sm, 0.85rem)">
         <span>documents</span>
       </label>
       <span id="docs-autofill-status"></span>
     </div>
     <div class="docs-upload-row" style="margin-top:0.8rem;align-items:center;gap:0.5rem;padding-top:0.6rem;border-top:1px solid var(--border);flex-wrap:wrap">
       <input id="docs-research-topic" type="text" placeholder="Research a topic (cited synthesis): e.g. RKE2 agent join + ports"
-        style="flex:1;min-width:16rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font:inherit;font-size:0.85rem">
+        style="flex:1;min-width:16rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font:inherit;font-size:var(--fs-sm, 0.85rem)">
       <button id="docs-research" class="ui-row-btn">Research &amp; add</button>
       <span id="docs-research-status"></span>
     </div>
@@ -288,12 +288,12 @@ const documentsDetailBody = `
     <div class="docs-section-title" style="display:flex;align-items:center;gap:0.6rem">
       <span>Documents</span>
       <button id="docs-audit" class="ui-row-btn" style="margin-left:auto;font-weight:600" title="Check the oldest documents for staleness with cited web research">Audit</button>
-      <span id="docs-audit-status" style="font-size:0.74rem;color:var(--text-mute)"></span>
+      <span id="docs-audit-status" style="font-size:var(--fs-xs, 0.74rem);color:var(--text-mute)"></span>
     </div>
     <div id="docs-bulk-bar" style="display:none;align-items:center;gap:0.6rem;padding:0.4rem 0.6rem;background:var(--bg-2);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
-      <span id="docs-bulk-count" style="font-size:0.82rem;color:var(--text);font-weight:600"></span>
+      <span id="docs-bulk-count" style="font-size:var(--fs-sm, 0.82rem);color:var(--text);font-weight:600"></span>
       <button id="docs-bulk-delete" class="ui-row-btn danger">Remove selected</button>
-      <span id="docs-bulk-status" style="font-size:0.74rem;color:var(--text-mute);margin-left:auto"></span>
+      <span id="docs-bulk-status" style="font-size:var(--fs-xs, 0.74rem);color:var(--text-mute);margin-left:auto"></span>
     </div>
     <div id="docs-sources"></div>
   </div>
@@ -314,28 +314,28 @@ const documentsDetailAssets = `<style>
 .docs-detail-hdr { padding-bottom: 0.8rem; border-bottom: 1px solid var(--border); }
 .docs-detail-name { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem; }
 .docs-detail-name span { font-size: 1.3rem; font-weight: 600; color: var(--text); flex: 1; min-width: 200px; }
-.docs-detail-desc { color: var(--text-mute); font-size: 0.88rem; line-height: 1.45; margin-bottom: 0.5rem; }
+.docs-detail-desc { color: var(--text-mute); font-size: var(--fs-md, 0.88rem); line-height: 1.45; margin-bottom: 0.5rem; }
 .docs-desc-wrap { margin-bottom: 0.5rem; }
-.docs-detail-desc-edit { width: 100%; min-height: 4.5rem; resize: vertical; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem 0.6rem; font: inherit; font-size: 0.85rem; line-height: 1.45; }
+.docs-detail-desc-edit { width: 100%; min-height: 4.5rem; resize: vertical; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem 0.6rem; font: inherit; font-size: var(--fs-sm, 0.85rem); line-height: 1.45; }
 .docs-detail-desc-edit:focus { border-color: var(--accent, #56d364); outline: none; }
 .docs-desc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
-.docs-desc-actions span { font-size: 0.74rem; color: var(--text-mute); }
-.docs-detail-meta { font-size: 0.74rem; color: var(--text-mute); display: flex; gap: 1rem; }
+.docs-desc-actions span { font-size: var(--fs-xs, 0.74rem); color: var(--text-mute); }
+.docs-detail-meta { font-size: var(--fs-xs, 0.74rem); color: var(--text-mute); display: flex; gap: 1rem; }
 .docs-section { background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; }
 .docs-section-title { font-weight: 600; color: var(--text); margin-bottom: 0.4rem; }
-.docs-section-help { font-size: 0.74rem; color: var(--text-mute); margin-bottom: 0.5rem; }
+.docs-section-help { font-size: var(--fs-xs, 0.74rem); color: var(--text-mute); margin-bottom: 0.5rem; }
 .docs-upload-row, .docs-search-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-.docs-upload-row input[type=file] { flex: 1; min-width: 0; font-size: 0.85rem; }
-.docs-upload-row span { font-size: 0.74rem; color: var(--text-mute); }
+.docs-upload-row input[type=file] { flex: 1; min-width: 0; font-size: var(--fs-sm, 0.85rem); }
+.docs-upload-row span { font-size: var(--fs-xs, 0.74rem); color: var(--text-mute); }
 .docs-search-row input { flex: 1; min-width: 0; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 0.4rem 0.6rem; font: inherit; }
 #docs-sources, #docs-hits, #docs-agents { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.4rem; }
-.docs-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px; font-size: 0.84rem; }
+.docs-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px; font-size: var(--fs-sm, 0.84rem); }
 .docs-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.docs-row-meta { color: var(--text-mute); font-size: 0.72rem; }
+.docs-row-meta { color: var(--text-mute); font-size: var(--fs-2xs, 0.72rem); }
 .docs-hit { padding: 0.6rem; background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px; }
-.docs-hit-section { font-weight: 600; color: var(--text); margin-bottom: 0.3rem; font-size: 0.85rem; }
-.docs-hit-text { color: var(--text-mute); font-size: 0.82rem; line-height: 1.45; white-space: pre-wrap; }
-.docs-empty { color: var(--text-mute); font-style: italic; padding: 0.4rem 0; font-size: 0.84rem; }
+.docs-hit-section { font-weight: 600; color: var(--text); margin-bottom: 0.3rem; font-size: var(--fs-sm, 0.85rem); }
+.docs-hit-text { color: var(--text-mute); font-size: var(--fs-sm, 0.82rem); line-height: 1.45; white-space: pre-wrap; }
+.docs-empty { color: var(--text-mute); font-style: italic; padding: 0.4rem 0; font-size: var(--fs-sm, 0.84rem); }
 .docs-agent-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.3rem 0.5rem; }
 .docs-agent-row label { flex: 1; cursor: pointer; }
 </style>
@@ -404,14 +404,14 @@ const documentsDetailAssets = `<style>
     var items = parseRules(raw);
     if (items.length === 0) {
       var emp = document.createElement('div');
-      emp.style.cssText = 'font-size:0.78rem;color:var(--text-mute);font-style:italic';
+      emp.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);font-style:italic';
       emp.textContent = '(no rules yet: judge will decide purely from the collection description)';
       host.appendChild(emp);
       return;
     }
     items.forEach(function(text, idx) {
       var row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:0.4rem;padding:0.3rem 0.55rem;background:var(--bg-0);border:1px solid var(--border);border-radius:4px;font-size:0.82rem';
+      row.style.cssText = 'display:flex;align-items:center;gap:0.4rem;padding:0.3rem 0.55rem;background:var(--bg-0);border:1px solid var(--border);border-radius:4px;font-size:var(--fs-sm, 0.82rem)';
       var bullet = document.createElement('span');
       bullet.textContent = '•';
       bullet.style.cssText = 'color:var(--text-mute);min-width:0.7rem';
@@ -421,7 +421,7 @@ const documentsDetailAssets = `<style>
       var del = document.createElement('button');
       del.type = 'button';
       del.className = 'ui-row-btn';
-      del.style.cssText = 'color:var(--danger,#ff7b72);font-size:0.72rem;padding:0.15rem 0.45rem';
+      del.style.cssText = 'color:var(--danger,#ff7b72);font-size:var(--fs-2xs, 0.72rem);padding:0.15rem 0.45rem';
       del.textContent = '✕';
       del.title = 'Remove this rule';
       del.addEventListener('click', function() {
@@ -603,7 +603,7 @@ const documentsDetailAssets = `<style>
         // unchecked when any row is unchecked, fully checked
         // only when all rows are in selectedSources.
         var header = document.createElement('div');
-        header.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.2rem 0.55rem;font-size:0.78rem;color:var(--text-mute)';
+        header.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.2rem 0.55rem;font-size:var(--fs-xs, 0.78rem);color:var(--text-mute)';
         var allCb = document.createElement('input');
         allCb.type = 'checkbox';
         allCb.title = 'Select all';
@@ -650,7 +650,7 @@ const documentsDetailAssets = `<style>
           var meta = document.createElement('span'); meta.className = 'docs-row-meta';
           meta.textContent = (s.chunks || 0) + ' chunk' + (s.chunks === 1 ? '' : 's');
           var del = document.createElement('button'); del.className = 'ui-row-btn';
-          del.style.cssText = 'color:var(--danger,#ff7b72);font-size:0.78rem;padding:0.2rem 0.5rem';
+          del.style.cssText = 'color:var(--danger,#ff7b72);font-size:var(--fs-xs, 0.78rem);padding:0.2rem 0.5rem';
           del.textContent = 'Remove';
           del.onclick = async function() {
             if (!(await window.uiConfirm('Remove ' + nm.textContent + ' from this collection?'))) return;
@@ -821,7 +821,7 @@ const documentsDetailAssets = `<style>
     inpX.style.minHeight = '16rem';
     form.appendChild(inpX);
     var hint = document.createElement('div');
-    hint.style.cssText = 'font-size:0.74rem;color:var(--text-mute);margin-top:0.3rem';
+    hint.style.cssText = 'font-size:var(--fs-xs, 0.74rem);color:var(--text-mute);margin-top:0.3rem';
     form.appendChild(hint);
     function describe() {
       var v = inpX.value.trim();

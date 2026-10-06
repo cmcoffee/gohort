@@ -201,7 +201,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
      running, and no motion at all under prefers-reduced-motion. */
   .ascii-logo {
     font-family: 'SF Mono', ui-monospace, Menlo, Consolas, 'Liberation Mono', monospace;
-    font-size: 1rem; line-height: 1; white-space: pre; letter-spacing: 0;
+    font-size: var(--fs-lg, 1rem); line-height: 1; white-space: pre; letter-spacing: 0;
     margin-bottom: 0.9rem; text-align: left;
   }
   .ascii-logo .r0 { color: var(--text-hi, #f0f6fc); }
@@ -228,8 +228,8 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   @media (prefers-reduced-motion: reduce) {
     .ascii-logo .sq, .ascii-logo .lt { animation: none !important; }
   }
-  @media (max-width: 640px) { .ascii-logo { font-size: 0.74rem; } }
-  .subtitle { color: var(--text-mute, #8b949e); margin-bottom: 3rem; font-size: 1rem; }
+  @media (max-width: 640px) { .ascii-logo { font-size: var(--fs-xs, 0.74rem); } }
+  .subtitle { color: var(--text-mute, #8b949e); margin-bottom: 3rem; font-size: var(--fs-lg, 1rem); }
   /* A notice is a thing to DO, so it reads as one: an accent edge, the
      sentence, and the button that resolves it. Sized to the grid so it sits
      with the cards rather than floating over them. */
@@ -238,11 +238,11 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
     padding: 0.85rem 1.1rem; border-radius: 8px;
     background: rgba(99,102,241,0.10); border: 1px solid rgba(99,102,241,0.35);
-    color: var(--text, #c9d1d9); font-size: 0.95rem; line-height: 1.5;
+    color: var(--text, #c9d1d9); font-size: var(--fs-lg, 0.95rem); line-height: 1.5;
   }
   .notice span { flex: 1; min-width: 14rem; }
   .notice-act {
-    flex: 0 0 auto; text-decoration: none; font-weight: 600; font-size: 0.9rem;
+    flex: 0 0 auto; text-decoration: none; font-weight: 600; font-size: var(--fs-md, 0.9rem);
     padding: 0.45rem 0.9rem; border-radius: 6px;
     background: var(--accent, #6366f1); color: var(--text-on-accent, #fff);
   }
@@ -262,7 +262,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   }
   .card:hover { border-color: var(--accent, #58a6ff); transform: translateY(-2px); }
   .card-name { font-size: 1.25rem; font-weight: 600; color: var(--text-hi, #f0f6fc); margin-bottom: 0.5rem; }
-  .card-desc { font-size: 0.9rem; color: var(--text-mute, #8b949e); line-height: 1.4; }
+  .card-desc { font-size: var(--fs-md, 0.9rem); color: var(--text-mute, #8b949e); line-height: 1.4; }
   /* Featured hero card: the primary entry point. Spans the full grid
      width and is larger so it stands apart by SIZE, not color (a blue
      border reads as a hover/selected state and is confusing here). */
@@ -278,7 +278,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
      four of them its one line of description would run the width of the
      screen. A line that long is measurably harder to read, and the card looks
      empty rather than generous. */
-  .card.featured .card-desc { font-size: 1.02rem; max-width: 62ch; }
+  .card.featured .card-desc { font-size: var(--fs-lg, 1.02rem); max-width: 62ch; }
   /* Wide card: spans the full grid row at the REGULAR card height (a
      "double" button). Used for a bottom utility entry like Administrator. */
   .card.wide { grid-column: 1 / -1; }
@@ -293,7 +293,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     padding: 1rem 1rem 1.25rem;
   }
   .cluster-head {
-    font-size: 0.78rem; font-weight: 600; letter-spacing: 0.08em;
+    font-size: var(--fs-xs, 0.78rem); font-weight: 600; letter-spacing: 0.08em;
     text-transform: uppercase; color: var(--text-mute, #8b949e); margin-bottom: 0.9rem;
   }
   .cluster-grid {
@@ -310,7 +310,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   #live-panel {
     width: 100%; max-width: var(--dash-w); margin-top: 2rem;
   }
-  #live-panel h3 { color: var(--text-mute, #8b949e); font-size: 0.9rem; margin-bottom: 0.75rem; cursor: pointer; }
+  #live-panel h3 { color: var(--text-mute, #8b949e); font-size: var(--fs-md, 0.9rem); margin-bottom: 0.75rem; cursor: pointer; }
   #live-panel h3:hover { color: var(--text, #c9d1d9); }
   /* A row is a flex LINE THAT MAY BECOME TWO, and every part of that is load
      bearing. In the 320px rail (and on a handset) an app badge, a state badge
@@ -328,12 +328,12 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     gap: 0.35rem 0.75rem;
     padding: 0.6rem 0.8rem; background: var(--bg-1, #161b22); border: 1px solid var(--border, #21262d);
     border-radius: 6px; margin-bottom: 0.4rem; cursor: pointer;
-    text-decoration: none; color: var(--text, #c9d1d9); font-size: 0.85rem;
+    text-decoration: none; color: var(--text, #c9d1d9); font-size: var(--fs-sm, 0.85rem);
   }
   .live-item:hover { border-color: var(--border, #30363d); }
   .live-badge {
     flex: 0 0 auto;
-    font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 4px;
+    font-size: var(--fs-2xs, 0.7rem); padding: 0.15rem 0.4rem; border-radius: 4px;
     font-weight: 600; white-space: nowrap;
   }
   .live-badge.running { background: var(--success); color: #fff; }
@@ -346,13 +346,13 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   }
   .live-status {
     flex: 0 1 auto; min-width: 0; margin-left: auto; text-align: right;
-    color: var(--text-mute, #8b949e); font-size: 0.8rem;
+    color: var(--text-mute, #8b949e); font-size: var(--fs-sm, 0.8rem);
     overflow-wrap: anywhere; line-height: 1.35;
   }
   .auth-bar {
     position: fixed; top: 12px; right: 12px; z-index: 9999;
     display: flex; align-items: center; gap: 0.6rem;
-    font-size: 0.8rem;
+    font-size: var(--fs-sm, 0.8rem);
     max-width: calc(100vw - 64px); /* leave room for the dashboard-back icon at top-left */
   }
   .auth-user {
@@ -471,16 +471,16 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     border-radius: 0.5rem; padding: 0.4rem; text-align: left;
   }
   .notify-panel.open { display: block; }
-  .notify-empty { padding: 0.9rem; color: var(--text-mute, #999); font-size: 0.85rem; }
+  .notify-empty { padding: 0.9rem; color: var(--text-mute, #999); font-size: var(--fs-sm, 0.85rem); }
   .notify-item { padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); }
   .notify-item:last-child { border-bottom: 0; }
   .notify-item.unread { background: color-mix(in srgb, var(--accent, #6366f1) 8%, transparent); }
-  .notify-title { font-size: 0.85rem; color: var(--text-hi); }
-  .notify-body { font-size: 0.78rem; color: var(--text-mute, #999); margin-top: 0.2rem; }
-  .notify-meta { font-size: 0.7rem; color: var(--text-mute, #999); margin-top: 0.25rem; display: flex; gap: 0.5rem; }
-  .notify-meta button { background: none; border: 0; color: var(--accent, #6366f1); cursor: pointer; font-size: 0.7rem; padding: 0; }
+  .notify-title { font-size: var(--fs-sm, 0.85rem); color: var(--text-hi); }
+  .notify-body { font-size: var(--fs-xs, 0.78rem); color: var(--text-mute, #999); margin-top: 0.2rem; }
+  .notify-meta { font-size: var(--fs-2xs, 0.7rem); color: var(--text-mute, #999); margin-top: 0.25rem; display: flex; gap: 0.5rem; }
+  .notify-meta button { background: none; border: 0; color: var(--accent, #6366f1); cursor: pointer; font-size: var(--fs-2xs, 0.7rem); padding: 0; }
   .notify-head { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0.6rem; }
-  .notify-head button { background: none; border: 0; color: var(--accent, #6366f1); cursor: pointer; font-size: 0.72rem; padding: 0; }
+  .notify-head button { background: none; border: 0; color: var(--accent, #6366f1); cursor: pointer; font-size: var(--fs-2xs, 0.72rem); padding: 0; }
 </style>
 </head>
 <body>
@@ -522,7 +522,7 @@ function refreshLive() {
     document.getElementById('logo').classList.toggle('running',
       items.some(function(it) { return !it.queued; }));
     if (items.length === 0) {
-      list.innerHTML = '<div style="color:var(--text-mute);padding:0.5rem;font-size:0.85rem">No active sessions.</div>';
+      list.innerHTML = '<div style="color:var(--text-mute);padding:0.5rem;font-size:var(--fs-sm, 0.85rem)">No active sessions.</div>';
       return;
     }
     items.sort(function(a, b) {

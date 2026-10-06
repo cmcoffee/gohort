@@ -177,7 +177,7 @@ func (a *AdminApp) setupWizardPage() ui.Page {
 // No backticks — this lives in a Go raw string.
 func setupSkipLinkHTML() string {
 	return `<style>
-#setup-skip-link{font-size:0.78rem;color:var(--text-mute);text-decoration:none;align-self:center;margin-left:.7rem;border:1px solid var(--border);border-radius:999px;padding:.2rem .65rem;white-space:nowrap}
+#setup-skip-link{font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-decoration:none;align-self:center;margin-left:.7rem;border:1px solid var(--border);border-radius:999px;padding:.2rem .65rem;white-space:nowrap}
 #setup-skip-link:hover{color:var(--accent);border-color:var(--accent)}
 </style>
 <script>

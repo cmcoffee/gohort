@@ -452,7 +452,7 @@ const intakeFormAssets = `<style>
   padding: 0;
 }
 .ui-orch-intake-header {
-  font-size: 0.85rem;
+  font-size: var(--fs-sm, 0.85rem);
   color: var(--text-mute);
   margin-bottom: 0.7rem;
 }
@@ -461,7 +461,7 @@ const intakeFormAssets = `<style>
   margin-bottom: 0.7rem;
 }
 .ui-orch-intake-label {
-  font-size: 0.78rem; font-weight: 600;
+  font-size: var(--fs-xs, 0.78rem); font-weight: 600;
   color: var(--text-hi);
 }
 .ui-orch-intake-input {
@@ -471,7 +471,7 @@ const intakeFormAssets = `<style>
 }
 .ui-orch-intake-textarea { resize: vertical; min-height: 3.2rem; }
 .ui-orch-intake-help {
-  font-size: 0.75rem; color: var(--text-mute);
+  font-size: var(--fs-xs, 0.75rem); color: var(--text-mute);
 }
 .ui-orch-intake-actions {
   display: flex; flex-wrap: wrap; justify-content: flex-end; margin-top: 0.5rem;
@@ -482,7 +482,7 @@ const intakeFormAssets = `<style>
   display: flex; flex-wrap: wrap; gap: 0.4rem;
 }
 .ui-orch-intake-button {
-  padding: 0.35rem 0.8rem; font-size: 0.85rem;
+  padding: 0.35rem 0.8rem; font-size: var(--fs-sm, 0.85rem);
 }
 /* History-view state: buttons disabled inside the user bubble after
  * submit. .selected highlights the choice the user actually made;
@@ -525,12 +525,12 @@ const intakeFormAssets = `<style>
 }
 .ui-orch-intake-result-row { display: contents; }
 .ui-orch-intake-result-label {
-  color: var(--text-mute); font-size: 0.78rem;
+  color: var(--text-mute); font-size: var(--fs-xs, 0.78rem);
   font-weight: 600; padding-top: 0.05rem;
   text-transform: uppercase; letter-spacing: 0.04em;
 }
 .ui-orch-intake-result-value {
-  color: var(--text-hi); font-size: 0.9rem;
+  color: var(--text-hi); font-size: var(--fs-md, 0.9rem);
   white-space: pre-wrap; word-wrap: break-word;
   border-left: 2px solid var(--border);
   padding-left: 0.7rem;
@@ -938,7 +938,7 @@ const dashboardBarCSS = `<style>
 .ui-agent-actions button {
   min-width: 0 !important; min-height: 0 !important;
   padding: 0.2rem 0.55rem !important;
-  font-size: 0.75rem !important;
+  font-size: var(--fs-xs, 0.75rem) !important;
   border-radius: 6px !important;
   background: transparent !important;
 }
@@ -1075,7 +1075,7 @@ const docsModalScript = `<script>
       oh.textContent = 'Your documents';
       ownWrap.appendChild(oh);
       var ohHelp = document.createElement('div');
-      ohHelp.style.cssText = 'font-size:0.74rem;color:var(--text-mute);line-height:1.45;margin-bottom:0.5rem';
+      ohHelp.style.cssText = 'font-size:var(--fs-xs, 0.74rem);color:var(--text-mute);line-height:1.45;margin-bottom:0.5rem';
       ohHelp.textContent = 'Files you’ve uploaded for this agent. Private to you: other users on the same agent don’t see them. Searched in RAG alongside any collections this agent has attached.';
       ownWrap.appendChild(ohHelp);
       var upRow = document.createElement('div');
@@ -1084,14 +1084,14 @@ const docsModalScript = `<script>
       // Must cover every format core/media/document_extract.go handles; a
       // narrower picker makes a supported file look unsupported.
       upInp.accept = '.pdf,.docx,.doc,.txt,.md,.log,.csv,.json,.yaml,.yml,.html,.htm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/json,text/plain,text/markdown,text/csv,text/html';
-      upInp.style.cssText = 'flex:1;min-width:0;font-size:0.8rem';
+      upInp.style.cssText = 'flex:1;min-width:0;font-size:var(--fs-sm, 0.8rem)';
       var upBtn = document.createElement('button'); upBtn.type = 'button'; upBtn.className = 'ui-row-btn primary';
-      upBtn.style.cssText = 'padding:0.3rem 0.7rem;font-size:0.8rem';
+      upBtn.style.cssText = 'padding:0.3rem 0.7rem;font-size:var(--fs-sm, 0.8rem)';
       upBtn.textContent = 'Upload';
       upBtn.disabled = true;
       upInp.addEventListener('change', function(){ upBtn.disabled = !(upInp.files && upInp.files[0]); });
       var upStatus = document.createElement('span');
-      upStatus.style.cssText = 'font-size:0.72rem;color:var(--text-mute)';
+      upStatus.style.cssText = 'font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)';
       upRow.appendChild(upInp); upRow.appendChild(upBtn); upRow.appendChild(upStatus);
       ownWrap.appendChild(upRow);
       var ownList = document.createElement('div');
@@ -1106,23 +1106,23 @@ const docsModalScript = `<script>
             var sources = (d && d.sources) || [];
             if (sources.length === 0) {
               var emp = document.createElement('div');
-              emp.style.cssText = 'font-size:0.74rem;color:var(--text-mute);font-style:italic';
+              emp.style.cssText = 'font-size:var(--fs-xs, 0.74rem);color:var(--text-mute);font-style:italic';
               emp.textContent = '(no documents uploaded yet)';
               ownList.appendChild(emp);
               return;
             }
             sources.forEach(function(s) {
               var row = document.createElement('div');
-              row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.5rem;background:var(--bg-0);border:1px solid var(--border);border-radius:4px;font-size:0.8rem';
+              row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.5rem;background:var(--bg-0);border:1px solid var(--border);border-radius:4px;font-size:var(--fs-sm, 0.8rem)';
               var nm = document.createElement('span');
               nm.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
               nm.textContent = (s.name || s.id || '(unnamed)').replace(/^#+\s*/, '');
               nm.title = nm.textContent;
               var meta = document.createElement('span');
-              meta.style.cssText = 'color:var(--text-mute);font-size:0.7rem';
+              meta.style.cssText = 'color:var(--text-mute);font-size:var(--fs-2xs, 0.7rem)';
               meta.textContent = (s.chunks || 0) + ' chunk' + (s.chunks === 1 ? '' : 's');
               var del = document.createElement('button'); del.type = 'button'; del.className = 'ui-row-btn';
-              del.style.cssText = 'color:var(--danger,#ff7b72);font-size:0.74rem;padding:0.2rem 0.5rem';
+              del.style.cssText = 'color:var(--danger,#ff7b72);font-size:var(--fs-xs, 0.74rem);padding:0.2rem 0.5rem';
               del.textContent = 'Remove';
               del.onclick = function() {
                 window.uiConfirm('Remove ' + nm.textContent + ' from your documents?').then(function(ok) {

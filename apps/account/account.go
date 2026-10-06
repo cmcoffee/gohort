@@ -734,9 +734,9 @@ const passwordHTML = `<div class="acct-pw">
 </div>
 <style>
 .acct-pw { display:flex; flex-direction:column; gap:0.5rem; max-width:22rem; }
-.acct-pw-input { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:0.9rem; }
+.acct-pw-input { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-md, 0.9rem); }
 .acct-pw-row { display:flex; align-items:center; gap:0.6rem; }
-.acct-pw-msg { font-size:0.82rem; }
+.acct-pw-msg { font-size:var(--fs-sm, 0.82rem); }
 .acct-pw-msg.ok { color:var(--success); }
 .acct-pw-msg.err { color:var(--danger); }
 </style>
@@ -775,25 +775,25 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 .acct-tok { border:1px solid var(--border); border-radius:8px; padding:0.55rem 0.75rem; display:flex; align-items:center; gap:0.6rem; }
 .acct-tok-meta { flex:1; min-width:0; }
 .acct-tok-name { font-weight:600; color:var(--text); }
-.acct-tok-sub { font-size:0.75rem; color:var(--text-mute); margin-top:0.1rem; }
+.acct-tok-sub { font-size:var(--fs-xs, 0.75rem); color:var(--text-mute); margin-top:0.1rem; }
 .acct-tok-code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-.acct-tok-btn { cursor:pointer; background:var(--bg-2); color:var(--text-mute); border:1px solid var(--border); border-radius:6px; padding:0.3rem 0.7rem; font:inherit; font-size:0.8rem; }
+.acct-tok-btn { cursor:pointer; background:var(--bg-2); color:var(--text-mute); border:1px solid var(--border); border-radius:6px; padding:0.3rem 0.7rem; font:inherit; font-size:var(--fs-sm, 0.8rem); }
 .acct-tok-btn:hover { color:var(--danger); border-color:var(--danger); }
 .acct-tok-newrow { display:flex; gap:0.4rem; margin-top:0.3rem; }
-.acct-tok-input { flex:1; background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:0.85rem; }
+.acct-tok-input { flex:1; background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-sm, 0.85rem); }
 .acct-tok-create { cursor:pointer; background:var(--accent); color:#fff; border:0; border-radius:6px; padding:0.4rem 0.9rem; font:inherit; font-weight:600; }
 .acct-tok-create:disabled { opacity:0.6; cursor:default; }
 .acct-tok-reveal { border:1px solid var(--accent); border-radius:8px; padding:0.7rem 0.8rem; background:var(--bg-2); }
-.acct-tok-reveal code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.82rem; color:var(--text); word-break:break-all; display:block; margin-top:0.3rem; }
+.acct-tok-reveal code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:var(--fs-sm, 0.82rem); color:var(--text); word-break:break-all; display:block; margin-top:0.3rem; }
 .acct-tok-empty { color:var(--text-mute); font-style:italic; padding:0.4rem 0; }
 .acct-tok-badge { font-size:0.66rem; font-weight:600; padding:0.08rem 0.45rem; border-radius:999px; margin-left:0.4rem; }
 .acct-tok-badge.warn { background:rgba(220,160,40,0.18); color:#c88a1e; }
 .acct-tok-scope { border:1px solid var(--border); border-radius:8px; padding:0.6rem 0.75rem; margin-top:0.35rem; background:var(--bg-2); display:flex; flex-direction:column; gap:0.5rem; }
-.acct-tok-scope h4 { margin:0; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.03em; color:var(--text-mute); }
+.acct-tok-scope h4 { margin:0; font-size:var(--fs-2xs, 0.72rem); text-transform:uppercase; letter-spacing:0.03em; color:var(--text-mute); }
 .acct-tok-scope-grp { display:flex; flex-direction:column; gap:0.2rem; }
-.acct-tok-chk { display:flex; align-items:center; gap:0.45rem; font-size:0.83rem; color:var(--text); }
+.acct-tok-chk { display:flex; align-items:center; gap:0.45rem; font-size:var(--fs-sm, 0.83rem); color:var(--text); }
 .acct-tok-chk input { margin:0; }
-.acct-tok-scope-note { font-size:0.75rem; color:var(--text-mute); font-style:italic; }
+.acct-tok-scope-note { font-size:var(--fs-xs, 0.75rem); color:var(--text-mute); font-style:italic; }
 .acct-tok-scope-actions { display:flex;flex-wrap:wrap; gap:0.5rem; align-items:center; }
 </style>
 <script>

@@ -201,3 +201,35 @@ func TestRuntimeUsesNoNativeDialogs(t *testing.T) {
 		}
 	}
 }
+
+// The shared modal behaves like a dialog for a keyboard and a screen reader:
+// it says it is one, focus moves in when it opens, Tab stays inside the top
+// one, and closing hands focus back to whatever opened it.
+func TestModalKeepsKeyboardFocus(t *testing.T) {
+	src := readRuntimeFile(t, "00_prelude.js")
+	i := strings.Index(src, "window.uiOpenModal = function(opts) {")
+	j := strings.Index(src, "window.uiOpenSimpleModal = function(opts) {")
+	if i < 0 || j < 0 {
+		t.Fatal("could not bound uiOpenModal")
+	}
+	fn := src[i:j]
+	for _, want := range []string{
+		"dlg.setAttribute('role', 'dialog');",
+		"dlg.setAttribute('aria-modal', 'true');",
+		"dlg.setAttribute('aria-labelledby', h.id);",
+		"var opener = document.activeElement;",
+		"opener.focus({preventScroll: true})",
+		"if (ev.key === 'Tab') {",
+		"window.matchMedia('(pointer: coarse)')",
+	} {
+		if !strings.Contains(fn, want) {
+			t.Errorf("uiOpenModal lost %q", want)
+		}
+	}
+	// Tab is handled only for the TOP dialog, the same check Escape uses.
+	tab := strings.Index(fn, "if (ev.key === 'Tab') {")
+	top := strings.Index(fn, "if ((Number(others[i].style.zIndex) || 0) > mine) return;")
+	if top < 0 || tab < top {
+		t.Error("the Tab trap must sit behind the topmost-dialog check")
+	}
+}

@@ -1056,7 +1056,7 @@ func machinePageBlock(udb Database, user string, def MachineDef, name string) (s
 const machineMapCSS = `
 .machine-map { padding: 0.3rem 0.5rem; }
 .machine-map-cap {
-  font-size: 0.72rem; letter-spacing: 0.04em;
+  font-size: var(--fs-2xs, 0.72rem); letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--text-mute);
   text-align: center;
 }
@@ -1074,7 +1074,7 @@ const machineMapCSS = `
 .machine-findings > li { margin: 0 0 0.5rem 0; line-height: 1.5; }
 .machine-findings > li:last-child { margin-bottom: 0; }
 .machine-findings-count {
-  font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase;
+  font-size: var(--fs-2xs, 0.72rem); letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--text-mute); margin-bottom: 0.4rem;
 }
 .machine-findings-none { color: var(--text-mute); }
@@ -1087,7 +1087,7 @@ const machineMapCSS = `
    restate it. */
 .machine-finding-rewrite {
   display: inline-block; margin-left: 0.25rem; padding: 0.05rem 0.45rem;
-  font: inherit; font-size: 0.74rem; cursor: pointer;
+  font: inherit; font-size: var(--fs-xs, 0.74rem); cursor: pointer;
   color: var(--accent, #6366f1); background: transparent;
   border: 1px solid var(--accent, #6366f1); border-radius: 999px;
   white-space: nowrap;

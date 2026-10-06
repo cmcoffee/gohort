@@ -2316,7 +2316,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 									// back on each flip: a chip is a decision, and
 									// making it wait for a Save button underneath a
 									// long form is how it gets lost.
-									ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Allowed tools</div><div style="font-size:0.75rem;color:var(--text-mute)">Tools the assistant may call while this skill is in use. None selected means it uses whatever the agent already has.</div>`},
+									ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Allowed tools</div><div style="font-size:var(--fs-xs, 0.75rem);color:var(--text-mute)">Tools the assistant may call while this skill is in use. None selected means it uses whatever the agent already has.</div>`},
 									ui.ChipPicker{
 										OptionsSource: "api/skill-tools",
 										RecordSource:  "api/skills?id={id}",
@@ -2327,7 +2327,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 										LabelField:    "name",
 										DescField:     "description",
 									},
-									ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Attached collections</div><div style="font-size:0.75rem;color:var(--text-mute)">Document collections this skill can search. They stay out of scope on turns the skill is not in use.</div>`},
+									ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Attached collections</div><div style="font-size:var(--fs-xs, 0.75rem);color:var(--text-mute)">Document collections this skill can search. They stay out of scope on turns the skill is not in use.</div>`},
 									ui.ChipPicker{
 										OptionsSource: "api/skill-collections",
 										RecordSource:  "api/skills?id={id}",
@@ -2342,7 +2342,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 									// anything to the whole deployment is an
 									// administrator's decision; who you hand a skill to
 									// is yours.
-									ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Shared with</div><div style="font-size:0.75rem;color:var(--text-mute)">Other users who may use this skill. Empty means private to you. They get the behaviour, not the authorship: it activates on their turns and they cannot edit or delete it. Bundled tools do not travel, because that would run your code in their session. Attached collections do travel as references, and each resolves only for someone who can already read it.</div>`},
+									ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Shared with</div><div style="font-size:var(--fs-xs, 0.75rem);color:var(--text-mute)">Other users who may use this skill. Empty means private to you. They get the behaviour, not the authorship: it activates on their turns and they cannot edit or delete it. Bundled tools do not travel, because that would run your code in their session. Attached collections do travel as references, and each resolves only for someone who can already read it.</div>`},
 									ui.ACLPicker(ui.ACLPickerConfig{
 										OptionsSource: "api/user-candidates",
 										RecordSource:  "api/skills?id={id}",

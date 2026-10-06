@@ -308,7 +308,7 @@
             vals.forEach(function(item) {
               var chip = el('span', {text: String(item)});
               chip.style.cssText = 'display:inline-block;margin:0.1rem 0.22rem 0.1rem 0;padding:0.1rem 0.5rem;' +
-                'border:1px solid var(--border,#3a3a4a);border-radius:999px;font-size:0.74rem;color:var(--text-mute,#999);white-space:nowrap';
+                'border:1px solid var(--border,#3a3a4a);border-radius:999px;font-size:var(--fs-xs, 0.74rem);color:var(--text-mute,#999);white-space:nowrap';
               pc.appendChild(chip);
             });
             cellHost(col).appendChild(pc);
@@ -1572,7 +1572,7 @@
         var roVal = (f.field && current[f.field] !== undefined && current[f.field] !== null)
           ? String(current[f.field]) : '';
         var ro = el('div', {class: 'ui-form-readonly'}, [roVal]);
-        ro.style.cssText = 'white-space:pre-wrap;font-size:0.8rem;line-height:1.5;'
+        ro.style.cssText = 'white-space:pre-wrap;font-size:var(--fs-sm, 0.8rem);line-height:1.5;'
           + 'color:var(--text-mute);background:var(--bg-sunk,rgba(127,127,127,0.06));'
           + 'border:1px solid var(--border);border-radius:0.4rem;padding:0.5rem 0.6rem';
         fieldWrap.appendChild(ro);
@@ -1675,7 +1675,7 @@
           // would have used so it reads identically — just not editable here.
           var rows = f.rows || 8;
           var previewEl = el('div', {class: 'ui-form-preview'});
-          previewEl.style.cssText = 'max-height:' + (rows * 1.5) + 'rem;overflow-y:auto;padding:0.5rem 0.6rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-1);color:var(--text);font-size:0.82rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-overflow-scrolling:touch';
+          previewEl.style.cssText = 'max-height:' + (rows * 1.5) + 'rem;overflow-y:auto;padding:0.5rem 0.6rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-1);color:var(--text);font-size:var(--fs-sm, 0.82rem);line-height:1.5;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-overflow-scrolling:touch';
           function refreshPreview() {
             var v = input.value || '';
             if (v.trim() === '') {
@@ -1936,7 +1936,7 @@
           body.innerHTML = '';
           if (rowsVal.length === 0) {
             body.appendChild(el('div', {
-              style: 'color:var(--text-mute);font-style:italic;font-size:0.78rem;padding:0.3rem 0',
+              style: 'color:var(--text-mute);font-style:italic;font-size:var(--fs-xs, 0.78rem);padding:0.3rem 0',
               text: f.placeholder || '(none yet)',
             }));
           }
@@ -1976,7 +1976,7 @@
                   }
                 });
                 ctl = el('div', {
-                  style: 'padding:0.35rem 0.1rem;font-size:0.85rem;color:var(--text-mute)',
+                  style: 'padding:0.35rem 0.1rem;font-size:var(--fs-sm, 0.85rem);color:var(--text-mute)',
                   text: shown,
                 });
                 ctl.title = c.help || c.label || c.field;
@@ -2589,7 +2589,7 @@
         if (checkOpts.length > 15) {
           filterBox = el('input', {type: 'text', class: 'ui-input ui-checklist-filter',
             placeholder: 'Filter…', 'aria-label': 'Filter the list'});
-          filterBox.style.cssText = 'flex:1;min-width:8rem;font-size:0.8rem;padding:0.2rem 0.5rem';
+          filterBox.style.cssText = 'flex:1;min-width:8rem;font-size:var(--fs-sm, 0.8rem);padding:0.2rem 0.5rem';
           filterBox.addEventListener('input', function() {
             var q = filterBox.value.trim().toLowerCase();
             rowIndex.forEach(function(e) {
@@ -2767,7 +2767,7 @@
         var fileField = el('input', {type: 'file', class: 'ui-form-file-input'});
         if (f.accept) fileField.accept = f.accept;
         var fileName = el('span', {class: 'ui-form-file-name',
-          style: 'margin-left:0.5rem;font-size:0.8rem;color:var(--text-mute)'});
+          style: 'margin-left:0.5rem;font-size:var(--fs-sm, 0.8rem);color:var(--text-mute)'});
         fileField.addEventListener('change', function(){
           var file = fileField.files && fileField.files[0];
           if (!file) { fileName.textContent = ''; save(f.field, ''); return; }
@@ -3463,7 +3463,7 @@
         var testBtn = el('button', {class: 'ui-row-btn', type: 'button'},
           [cfg.test_label || 'Test connectivity']);
         var testResult = el('span', {class: 'ui-form-test-result',
-          style: 'font-size:0.78rem;color:var(--text-mute)'});
+          style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute)'});
         // While a test is in flight the button IS the cancel: a wrong host or
         // a dead port used to mean staring at "Testing…" until the server's
         // timeout gave up, with nothing to click. Aborting the request also
@@ -3559,15 +3559,15 @@
             function renderList() {
               body.textContent = '';
               if (!entries.length) {
-                body.appendChild(el('div', {style: 'color:var(--text-mute);font-size:0.85rem'},
+                body.appendChild(el('div', {style: 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem)'},
                   [(d && d.empty) || 'Nothing kept yet.']));
                 return;
               }
               entries.forEach(function(e) {
                 var card = el('div', {style: 'border:1px solid var(--border);border-radius:5px;padding:0.6rem 0.7rem;margin-bottom:0.5rem'});
-                card.appendChild(el('div', {style: 'font-weight:600;font-size:0.88rem'}, [e.title || '']));
+                card.appendChild(el('div', {style: 'font-weight:600;font-size:var(--fs-md, 0.88rem)'}, [e.title || '']));
                 if (e.detail) {
-                  card.appendChild(el('div', {style: 'color:var(--text-mute);font-size:0.8rem;margin-top:0.15rem'}, [e.detail]));
+                  card.appendChild(el('div', {style: 'color:var(--text-mute);font-size:var(--fs-sm, 0.8rem);margin-top:0.15rem'}, [e.detail]));
                 }
                 var acts = el('div', {style: 'display:flex;gap:0.4rem;margin-top:0.5rem;flex-wrap:wrap'});
                 (e.actions || []).forEach(function(a) {
@@ -3586,10 +3586,10 @@
               backBtn.addEventListener('click', back);
               head.appendChild(backBtn);
               if (view.title) {
-                head.appendChild(el('div', {style: 'font-weight:600;font-size:0.88rem'}, [view.title]));
+                head.appendChild(el('div', {style: 'font-weight:600;font-size:var(--fs-md, 0.88rem)'}, [view.title]));
               }
               body.appendChild(head);
-              body.appendChild(el('pre', {style: 'white-space:pre-wrap;word-break:break-word;font-size:0.8rem;line-height:1.5;margin:0;background:var(--bg-0);border:1px solid var(--border);border-radius:5px;padding:0.6rem;max-height:52vh;overflow:auto'},
+              body.appendChild(el('pre', {style: 'white-space:pre-wrap;word-break:break-word;font-size:var(--fs-sm, 0.8rem);line-height:1.5;margin:0;background:var(--bg-0);border:1px solid var(--border);border-radius:5px;padding:0.6rem;max-height:52vh;overflow:auto'},
                 [view.text || '']));
             }
             // An entry's url is resolved against the HISTORY url rather than
@@ -3680,7 +3680,7 @@
         // `warnings` array, when present and non-empty, tints the note so an
         // import that leaves an unmet reference reads as a caution, not a clean
         // success.
-        var msgEl = el('div', {class: 'ui-form-msg', style: 'display:none;white-space:pre-wrap;margin-top:0.5rem;padding:0.5rem 0.7rem;border-left:3px solid var(--border);border-radius:4px;font-size:0.85rem;line-height:1.45;background:var(--bg-1)'});
+        var msgEl = el('div', {class: 'ui-form-msg', style: 'display:none;white-space:pre-wrap;margin-top:0.5rem;padding:0.5rem 0.7rem;border-left:3px solid var(--border);border-radius:4px;font-size:var(--fs-sm, 0.85rem);line-height:1.45;background:var(--bg-1)'});
         submitBtn.addEventListener('click', function() {
           // The wizard's guard validates required fields across every
           // visible step (and jumps to the first offender) before the

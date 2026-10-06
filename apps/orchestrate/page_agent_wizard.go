@@ -542,7 +542,7 @@ func needsFirstRunSetup(agents []AgentRecord, user string) bool {
 // /agent/new. No backticks (lives in a Go raw string); plain quotes only.
 func wizardAdvancedLinkHTML() string {
 	return `<style>
-#agent-adv-link{font-size:0.78rem;color:var(--text-mute);text-decoration:none;align-self:center;margin-left:.7rem;border:1px solid var(--border);border-radius:999px;padding:.2rem .65rem;white-space:nowrap}
+#agent-adv-link{font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-decoration:none;align-self:center;margin-left:.7rem;border:1px solid var(--border);border-radius:999px;padding:.2rem .65rem;white-space:nowrap}
 #agent-adv-link:hover{color:var(--accent);border-color:var(--accent)}
 </style>
 <script>
@@ -577,7 +577,7 @@ func wizardSkipLinkHTML(hasShared bool) string {
 		title = "Skip the guided setup and open the agents other users shared with you"
 	}
 	return fmt.Sprintf(`<style>
-#agent-skip-link{font-size:0.78rem;color:var(--accent);text-decoration:none;align-self:center;margin-left:.55rem;border:1px solid var(--accent);border-radius:999px;padding:.2rem .65rem;white-space:nowrap;opacity:.9}
+#agent-skip-link{font-size:var(--fs-xs, 0.78rem);color:var(--accent);text-decoration:none;align-self:center;margin-left:.55rem;border:1px solid var(--accent);border-radius:999px;padding:.2rem .65rem;white-space:nowrap;opacity:.9}
 #agent-skip-link:hover{opacity:1}
 </style>
 <script>
@@ -1057,13 +1057,13 @@ func wizardDescribeHTML() string {
 	return `<style>
 #wiz-describe{margin:0 0 1rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
 #wiz-describe .ui-btn{white-space:nowrap}
-.wd-hint{font-size:.85rem;opacity:.75}
+.wd-hint{font-size:var(--fs-sm, .85rem);opacity:.75}
 .wd-card{border:1px solid var(--border);border-radius:6px;padding:.7rem .8rem;margin:.6rem 0;background:var(--bg-2)}
-.wd-card h4{margin:0 0 .2rem;font-size:1rem}
-.wd-sum{font-size:.9rem;opacity:.9;margin:0 0 .5rem}
-.wd-pts{margin:0;padding-left:1.1rem;font-size:.88rem;line-height:1.5}
+.wd-card h4{margin:0 0 .2rem;font-size:var(--fs-lg, 1rem)}
+.wd-sum{font-size:var(--fs-md, .9rem);opacity:.9;margin:0 0 .5rem}
+.wd-pts{margin:0;padding-left:1.1rem;font-size:var(--fs-md, .88rem);line-height:1.5}
 .wd-ask{margin:.7rem 0}
-.wd-ask label{display:block;font-size:.9rem;margin-bottom:.25rem}
+.wd-ask label{display:block;font-size:var(--fs-md, .9rem);margin-bottom:.25rem}
 .wd-ask input{width:100%;box-sizing:border-box}
 .wd-row{display:flex;gap:.5rem;align-items:flex-end;margin-top:.5rem}
 .wd-row textarea{flex:1;min-height:3.4rem;resize:vertical}

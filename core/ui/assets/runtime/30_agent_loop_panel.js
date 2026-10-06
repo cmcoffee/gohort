@@ -28,7 +28,7 @@
         v.forEach(function(item, i) {
           var card = el('div', {style: 'border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:6px;padding:0.4rem 0.6rem;margin:0.3rem 0;background:var(--bg-2, rgba(127,127,127,0.05))'});
           if (item && typeof item === 'object' && !Array.isArray(item)) {
-            card.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.72rem;margin-bottom:0.2rem'}, [String(i + 1)]));
+            card.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:var(--fs-2xs, 0.72rem);margin-bottom:0.2rem'}, [String(i + 1)]));
             renderDetailValue(card, item, depth + 1);
           } else {
             renderDetailValue(card, item, depth + 1);
@@ -43,7 +43,7 @@
           var val = v[k];
           if (val == null || val === '' || (Array.isArray(val) && !val.length)) return;
           var row = el('div', {style: 'margin:0.35rem 0'});
-          row.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.74rem;margin-bottom:0.1rem'}, [k]));
+          row.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:var(--fs-xs, 0.74rem);margin-bottom:0.1rem'}, [k]));
           renderDetailValue(row, val, depth + 1);
           container.appendChild(row);
         });
@@ -51,9 +51,9 @@
       }
       var s = String(v);
       if (s.length > 80 || s.indexOf('\n') >= 0) {
-        container.appendChild(el('pre', {style: 'white-space:pre-wrap;word-break:break-word;margin:0;font-size:0.8rem;max-height:320px;overflow:auto;background:var(--bg-1, rgba(127,127,127,0.1));padding:0.45rem;border-radius:4px'}, [s]));
+        container.appendChild(el('pre', {style: 'white-space:pre-wrap;word-break:break-word;margin:0;font-size:var(--fs-sm, 0.8rem);max-height:320px;overflow:auto;background:var(--bg-1, rgba(127,127,127,0.1));padding:0.45rem;border-radius:4px'}, [s]));
       } else {
-        container.appendChild(el('div', {style: 'font-size:0.85rem;word-break:break-word'}, [s]));
+        container.appendChild(el('div', {style: 'font-size:var(--fs-sm, 0.85rem);word-break:break-word'}, [s]));
       }
     }
 
@@ -423,7 +423,7 @@
             // it is refused.
             if (row && row._id) src += '&row=' + encodeURIComponent(row._id);
             window.uiOpenSimpleModal({title: a.picker_title || a.label, width: '420px', mount: function(body, dlg) {
-              var status = el('div', {style: 'color:var(--text-mute,#999);font-size:0.85rem;padding:0.3rem 0'}, [uiLoading()]);
+              var status = el('div', {style: 'color:var(--text-mute,#999);font-size:var(--fs-sm, 0.85rem);padding:0.3rem 0'}, [uiLoading()]);
               var list = el('div', {style: 'display:flex;flex-direction:column;gap:0.35rem;margin-top:0.4rem'});
               body.appendChild(status); body.appendChild(list);
               fetch(src, {credentials: 'same-origin'})
@@ -437,7 +437,7 @@
                   opts.forEach(function(opt) {
                     if (opt.group && opt.group !== lastGroup) {
                       lastGroup = opt.group;
-                      list.appendChild(el('div', {style: 'margin:0.5rem 0 0.1rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute,#999)'}, [opt.group]));
+                      list.appendChild(el('div', {style: 'margin:0.5rem 0 0.1rem;font-size:var(--fs-2xs, 0.68rem);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute,#999)'}, [opt.group]));
                     }
                     var b = el('button', {type: 'button', class: 'ui-row-btn', style: 'text-align:left', onclick: function() {
                       var u = a.url + '?id=' + encodeURIComponent(rowActionID(a, row)) + '&agent=' + encodeURIComponent(agent) + '&value=' + encodeURIComponent(opt.value);
@@ -445,7 +445,7 @@
                       fetch(u, {method: a.method || 'POST', credentials: 'same-origin'})
                         .then(function(r) { if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); })
                         .then(function() { try { dlg.close(); } catch(e){} if (reload) reload(); })
-                        .catch(function(err) { b.disabled = false; list.appendChild(el('div', {style: 'color:var(--danger,#e5484d);font-size:0.8rem'}, ['Failed: ' + err.message])); });
+                        .catch(function(err) { b.disabled = false; list.appendChild(el('div', {style: 'color:var(--danger,#e5484d);font-size:var(--fs-sm, 0.8rem)'}, ['Failed: ' + err.message])); });
                     }}, [opt.label || opt.value]);
                     list.appendChild(b);
                   });
@@ -507,7 +507,7 @@
                     mount: function(body) {
                       var empty = data == null || (typeof data === 'object' && !Object.keys(data).length);
                       if (empty) {
-                        body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.85rem'}, ['Nothing to show: this record is gone or empty.']));
+                        body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:var(--fs-sm, 0.85rem)'}, ['Nothing to show: this record is gone or empty.']));
                         return;
                       }
                       renderDetailValue(body, data, 0);
@@ -530,7 +530,7 @@
               // view) instead of one list per menu entry.
               if (row._section && row._section !== lastSection) {
                 lastSection = row._section;
-                host.appendChild(el('div', {style: 'margin:0.9rem 0 0.35rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute, #999)'}, [row._section]));
+                host.appendChild(el('div', {style: 'margin:0.9rem 0 0.35rem;font-size:var(--fs-2xs, 0.68rem);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute, #999)'}, [row._section]));
               }
               // Each row's OWN visible keys, not the first row's: a view that
               // groups several kinds of thing has a different shape per section,
@@ -556,13 +556,13 @@
                 var s = (v == null) ? '' : String(v);
                 if (!s) return;
                 if (ki === 0) {
-                  info.appendChild(el('span', {style: 'font-weight:600;font-size:0.9rem'}, [s]));
+                  info.appendChild(el('span', {style: 'font-weight:600;font-size:var(--fs-md, 0.9rem)'}, [s]));
                 } else if (k === 'Status') {
                   var pend = /pending/i.test(s);
                   info.appendChild(el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.42rem;border-radius:999px;font-weight:700;align-self:center;' +
                     (pend ? 'background:var(--accent, #4a9eff);color:#fff' : 'background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)')}, [s]));
                 } else {
-                  info.appendChild(el('span', {style: 'color:var(--text-mute, #999);font-size:0.78rem;word-break:break-word'}, [s]));
+                  info.appendChild(el('span', {style: 'color:var(--text-mute, #999);font-size:var(--fs-xs, 0.78rem);word-break:break-word'}, [s]));
                 }
               });
               card.appendChild(info);
@@ -581,7 +581,7 @@
                 segOpts.forEach(function(opt, oi) {
                   var active = String(row[item.state_field]) === String(opt.value);
                   var segBtn = el('button', {type: 'button',
-                    style: 'padding:0.22rem 0.6rem;border:none;' + (oi ? 'border-left:1px solid var(--border, rgba(127,127,127,0.35));' : '') + 'cursor:pointer;font:inherit;font-size:0.73rem;white-space:nowrap;' +
+                    style: 'padding:0.22rem 0.6rem;border:none;' + (oi ? 'border-left:1px solid var(--border, rgba(127,127,127,0.35));' : '') + 'cursor:pointer;font:inherit;font-size:var(--fs-2xs, 0.73rem);white-space:nowrap;' +
                       (active ? 'background:var(--accent, #4a9eff);color:#fff;font-weight:600' : 'background:transparent;color:var(--text-mute, #999)'),
                     onclick: function(ev) {
                       if (ev) ev.stopPropagation();
@@ -613,7 +613,7 @@
           // Columns = the row's keys minus any "_"-prefixed (hidden, e.g. _id).
           var cols = Object.keys(rows[0]).filter(function(k) { return k.charAt(0) !== '_'; });
           var actions = (item && item.row_actions) || [];
-          var tbl = el('table', {style: 'width:100%;border-collapse:collapse;font-size:0.9rem'});
+          var tbl = el('table', {style: 'width:100%;border-collapse:collapse;font-size:var(--fs-md, 0.9rem)'});
           var hr = el('tr');
           cols.forEach(function(c) {
             hr.appendChild(el('th', {style: 'text-align:left;padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3));color:var(--text-mute, #999)'}, [c]));
@@ -664,8 +664,8 @@
               var dtr = el('tr', {style: 'display:none'});
               var dtd = el('td', {colspan: String(cols.length + (actions.length ? 1 : 0)), style: 'padding:0.3rem 0.6rem 0.7rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));background:var(--bg-2, rgba(127,127,127,0.06))'});
               longCols.forEach(function(c) {
-                dtd.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.8rem;margin:0.4rem 0 0.15rem'}, [c]));
-                dtd.appendChild(el('pre', {style: 'white-space:pre-wrap;margin:0;font-size:0.82rem;max-height:340px;overflow:auto;background:var(--bg-1, rgba(127,127,127,0.1));padding:0.45rem;border-radius:4px'}, [String(row[c] == null ? '' : row[c])]));
+                dtd.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:var(--fs-sm, 0.8rem);margin:0.4rem 0 0.15rem'}, [c]));
+                dtd.appendChild(el('pre', {style: 'white-space:pre-wrap;margin:0;font-size:var(--fs-sm, 0.82rem);max-height:340px;overflow:auto;background:var(--bg-1, rgba(127,127,127,0.1));padding:0.45rem;border-radius:4px'}, [String(row[c] == null ? '' : row[c])]));
               });
               dtr.appendChild(dtd);
               tbl.appendChild(dtr);
@@ -770,7 +770,7 @@
             // the reader hid it. Say which and give the way back, or a filtered
             // page is indistinguishable from an empty one.
             var back = el('button', {type: 'button', class: 'ui-row-btn',
-              style: 'padding:0.15rem 0.55rem;font-size:0.74rem',
+              style: 'padding:0.15rem 0.55rem;font-size:var(--fs-xs, 0.74rem)',
               onclick: function() {
                 chosen = filters.map(function() { return 0; });
                 query = '';
@@ -798,7 +798,7 @@
           }
           filters.forEach(function(f, fi) {
             if (f.label) {
-              bar.appendChild(el('span', {style: 'font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-mute, #999)'}, [f.label]));
+              bar.appendChild(el('span', {style: 'font-size:var(--fs-2xs, 0.72rem);text-transform:uppercase;letter-spacing:0.05em;color:var(--text-mute, #999)'}, [f.label]));
             }
             // TABS, not chips. A filter group is mutually exclusive with its
             // first option as the default, which is what a tab bar is, and the
@@ -910,12 +910,12 @@
           text = parts.length ? ('Filtered: ' + parts.join(', ')) : 'Filtered';
         }
         var back = el('button', {type: 'button', class: 'ui-row-btn',
-          style: 'padding:0.15rem 0.55rem;font-size:0.74rem;flex:0 0 auto',
+          style: 'padding:0.15rem 0.55rem;font-size:var(--fs-xs, 0.74rem);flex:0 0 auto',
           onclick: function() { selectOrchNav(idx); }}, ['Show all']);
         var bar = el('div', {style: 'display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;' +
           'margin:0 0 0.5rem;padding:0.35rem 0.6rem;border:1px solid var(--accent, #4a9eff);' +
           'border-radius:6px;background:color-mix(in srgb, var(--accent) 8%, transparent)'}, [
-            el('span', {style: 'flex:1 1 auto;min-width:0;font-size:0.78rem;color:var(--text, inherit)'}, [text]),
+            el('span', {style: 'flex:1 1 auto;min-width:0;font-size:var(--fs-xs, 0.78rem);color:var(--text, inherit)'}, [text]),
             back,
           ]);
         if (orchView.firstChild) orchView.insertBefore(bar, orchView.firstChild);
@@ -1218,7 +1218,7 @@
         var b;
         if (item.topbar) {
           var tAccent = 'var(--accent)';
-          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.15rem;text-align:center;padding:0.02rem 0.4rem;border-radius:999px;font-size:0.68rem;font-weight:700;background:' + tAccent + ';color:var(--text-on-accent, #fff)'}, ['']);
+          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.15rem;text-align:center;padding:0.02rem 0.4rem;border-radius:999px;font-size:var(--fs-2xs, 0.68rem);font-weight:700;background:' + tAccent + ';color:var(--text-on-accent, #fff)'}, ['']);
           b = el('button', {type: 'button', class: 'ui-row-btn', title: item.subtitle || item.label,
             // Border stated inline rather than left to .ui-row-btn: this
             // control sits in its own table cell, outside .ui-agent-actions,
@@ -1231,10 +1231,10 @@
               // Glyph and count share the top line so the count reads as the
               // queue's depth; the label sits under it like a toolbar tile.
               el('div', {style: 'display:flex;align-items:center;gap:0.3rem'}, [
-                el('span', {style: 'color:' + tAccent + ';font-size:1.05rem'}, [item.icon || '•']),
+                el('span', {style: 'color:' + tAccent + ';font-size:var(--fs-lg, 1.05rem)'}, [item.icon || '•']),
                 badge,
               ]),
-              el('span', {style: 'font-size:0.72rem;opacity:0.85;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]),
+              el('span', {style: 'font-size:var(--fs-2xs, 0.72rem);opacity:0.85;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]),
             ]);
           navTopbarEl.appendChild(b);
         } else if (item.pinned) {
@@ -1251,14 +1251,14 @@
           // the edge it lines up with the other rows and can be scanned down
           // the column. The gap stays as a minimum for a label long enough to
           // reach it.
-          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.3rem;text-align:center;padding:0.05rem 0.45rem;border-radius:999px;font-size:0.7rem;font-weight:700;background:' + pAccent + ';color:var(--text-on-accent, #fff);flex:0 0 auto;margin-left:auto'}, ['']);
+          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.3rem;text-align:center;padding:0.05rem 0.45rem;border-radius:999px;font-size:var(--fs-2xs, 0.7rem);font-weight:700;background:' + pAccent + ';color:var(--text-on-accent, #fff);flex:0 0 auto;margin-left:auto'}, ['']);
           var ptitle = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;white-space:nowrap;overflow:hidden;width:100%'}, [plabel, badge]);
           var pbody = [ptitle];
           if (item.subtitle) {
-            pbody.push(el('div', {style: 'font-size:0.74rem;color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.subtitle]));
+            pbody.push(el('div', {style: 'font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.subtitle]));
           }
           var pkids = [
-            el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:0.95rem;color:' + pAccent}, [item.icon || '•']),
+            el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:var(--fs-lg, 0.95rem);color:' + pAccent}, [item.icon || '•']),
             el('div', {style: 'flex:1;min-width:0'}, pbody),
           ];
           // Transparent border by default (reserves the space, no layout shift);
@@ -1300,7 +1300,7 @@
             label.style.color = ac;
             label.style.fontSize = '0.85rem';
           } else if (item.source) {
-            badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.2rem;text-align:center;padding:0.05rem 0.4rem;border-radius:999px;font-size:0.75rem;background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)'}, ['']);
+            badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.2rem;text-align:center;padding:0.05rem 0.4rem;border-radius:999px;font-size:var(--fs-xs, 0.75rem);background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)'}, ['']);
             kids.push(badge);
           }
           b = el('button', {type: 'button', class: 'ui-channel-row',
@@ -1627,19 +1627,19 @@
           mount: function(body) {
             var empty = data == null || (typeof data === 'object' && !Object.keys(data).length);
             if (empty) {
-              body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.85rem'}, ['Nothing to show.']));
+              body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:var(--fs-sm, 0.85rem)'}, ['Nothing to show.']));
             } else {
               renderDetailValue(body, data, 0);
             }
             var actions = (s.actions || []);
             if (!actions.length) return;
             var bar = el('div', {style: 'display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-top:0.9rem;padding-top:0.6rem;border-top:1px solid var(--border, rgba(127,127,127,0.25))'});
-            var status = el('span', {style: 'color:var(--text-mute, #999);font-size:0.78rem'});
+            var status = el('span', {style: 'color:var(--text-mute, #999);font-size:var(--fs-xs, 0.78rem)'});
             actions.forEach(function(a) {
               var group = el('span', {style: 'display:inline-flex;gap:0.35rem;align-items:center'});
               var select = null;
               if (a.options_url) {
-                select = el('select', {style: 'font:inherit;font-size:0.8rem;padding:0.15rem 0.3rem;border:1px solid var(--border, rgba(127,127,127,0.35));border-radius:4px;background:var(--bg-1);color:var(--text)'});
+                select = el('select', {style: 'font:inherit;font-size:var(--fs-sm, 0.8rem);padding:0.15rem 0.3rem;border:1px solid var(--border, rgba(127,127,127,0.35));border-radius:4px;background:var(--bg-1);color:var(--text)'});
                 fetchJSON(a.options_url).then(function(opts) {
                   (opts || []).forEach(function(o) {
                     var opt = el('option', {value: String(o.value)}, [String(o.label || o.value)]);
@@ -1670,7 +1670,7 @@
       }).catch(function() {});
     }
     if (cfg.status_url) {
-      statusPill = el('span', {class: 'ui-status-pill', style: 'display:none;font-size:0.72rem;padding:0.15rem 0.5rem;border:1px solid var(--border);border-radius:999px;white-space:nowrap;align-self:center',
+      statusPill = el('span', {class: 'ui-status-pill', style: 'display:none;font-size:var(--fs-2xs, 0.72rem);padding:0.15rem 0.5rem;border:1px solid var(--border);border-radius:999px;white-space:nowrap;align-self:center',
         onclick: function() { openStatusDetail(statusLast); }});
       actionsBar.appendChild(statusPill);
     }
@@ -1746,15 +1746,15 @@
             actions: modalActions,
             mount: function(body) {
               if (!list.length) {
-                body.appendChild(el('div', {style: 'color:var(--text-mute);font-size:0.85rem'},
+                body.appendChild(el('div', {style: 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem)'},
                   ['Nothing to report: no guard has intervened in this session.']));
                 return;
               }
               list.forEach(function(e) {
-                var row = el('div', {style: 'padding:0.5rem 0;border-bottom:1px solid var(--border);font-size:0.82rem;line-height:1.45'});
+                var row = el('div', {style: 'padding:0.5rem 0;border-bottom:1px solid var(--border);font-size:var(--fs-sm, 0.82rem);line-height:1.45'});
                 var when = '';
                 try { when = e.at ? new Date(e.at).toLocaleString() : ''; } catch (_) {}
-                row.appendChild(el('div', {style: 'color:var(--text-mute);font-size:0.72rem;margin-bottom:0.15rem'},
+                row.appendChild(el('div', {style: 'color:var(--text-mute);font-size:var(--fs-2xs, 0.72rem);margin-bottom:0.15rem'},
                   [when + (e.kind ? ' - ' + e.kind : '')]));
                 row.appendChild(el('div', {style: 'white-space:pre-wrap;word-break:break-word'}, [e.detail || '']));
                 body.appendChild(row);
@@ -5288,7 +5288,7 @@
     // railFieldLabel — a small labeled wrapper for a form input in the modal.
     function railFieldLabel(lbl, input) {
       return el('div', {style: 'margin:0.4rem 0'}, [
-        el('div', {style: 'font-size:0.7rem;color:var(--text-mute);margin-bottom:0.15rem'}, [lbl]),
+        el('div', {style: 'font-size:var(--fs-2xs, 0.7rem);color:var(--text-mute);margin-bottom:0.15rem'}, [lbl]),
         input,
       ]);
     }
@@ -5798,10 +5798,10 @@
                 style: 'width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);flex:0 0 auto'}, ['']));
             }
             var chKids = [
-              el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:0.95rem;color:' + gold}, [isRecord ? '📋' : '🧠']),
+              el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:var(--fs-lg, 0.95rem);color:' + gold}, [isRecord ? '📋' : '🧠']),
               el('div', {style: 'flex:1;min-width:0'}, [
                 titleLine,
-                el('div', {style: 'font-size:0.74rem;color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},
+                el('div', {style: 'font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},
                   [isRecord ? (cfg.record_hint || 'what reached this agent') : 'standing thread']),
               ]),
             ];

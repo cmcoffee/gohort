@@ -15,30 +15,30 @@ package scribe
 // framework's theme tokens so it follows light/dark without its own palette.
 const guideCuratorCSS = `
 .gc-head { display:flex; align-items:baseline; gap:0.6rem; flex-wrap:wrap; margin-bottom:0.8rem; }
-.gc-pending { color: var(--text-mute); font-size:0.85rem; }
+.gc-pending { color: var(--text-mute); font-size:var(--fs-sm, 0.85rem); }
 .gc-run { border:1px solid var(--border); border-radius:8px; padding:0.7rem 0.8rem; margin-bottom:0.7rem; }
 .gc-run-top { display:flex; align-items:baseline; gap:0.5rem; flex-wrap:wrap; }
-.gc-age { color: var(--text-mute); font-size:0.8rem; }
-.gc-summary { margin:0.5rem 0 0.6rem; font-size:0.9rem; }
-.gc-err { color: var(--danger, #d9534f); font-size:0.85rem; margin:0.3rem 0; }
-.gc-warn { color: var(--danger, #d9534f); font-size:0.8rem; margin:0.3rem 0; }
+.gc-age { color: var(--text-mute); font-size:var(--fs-sm, 0.8rem); }
+.gc-summary { margin:0.5rem 0 0.6rem; font-size:var(--fs-md, 0.9rem); }
+.gc-err { color: var(--danger, #d9534f); font-size:var(--fs-sm, 0.85rem); margin:0.3rem 0; }
+.gc-warn { color: var(--danger, #d9534f); font-size:var(--fs-sm, 0.8rem); margin:0.3rem 0; }
 .gc-entry { border-top:1px solid var(--border); padding:0.5rem 0; display:flex; gap:0.6rem; align-items:flex-start; }
 .gc-entry:last-child { padding-bottom:0; }
 .gc-body { flex:1 1 auto; min-width:0; }
-.gc-topic { font-size:0.9rem; }
-.gc-meta { color: var(--text-mute); font-size:0.78rem; margin-top:0.15rem; }
-.gc-note { font-size:0.83rem; margin-top:0.25rem; }
+.gc-topic { font-size:var(--fs-md, 0.9rem); }
+.gc-meta { color: var(--text-mute); font-size:var(--fs-xs, 0.78rem); margin-top:0.15rem; }
+.gc-note { font-size:var(--fs-sm, 0.83rem); margin-top:0.25rem; }
 .gc-replaced { margin-top:0.4rem; }
-.gc-replaced summary { cursor:pointer; color: var(--text-mute); font-size:0.8rem; }
+.gc-replaced summary { cursor:pointer; color: var(--text-mute); font-size:var(--fs-sm, 0.8rem); }
 .gc-replaced pre { white-space:pre-wrap; word-break:break-word; background:var(--bg-0);
-  border:1px solid var(--border); border-radius:6px; padding:0.5rem; font-size:0.8rem; margin:0.35rem 0 0; }
-.gc-pill { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.03em; padding:0.12rem 0.4rem;
+  border:1px solid var(--border); border-radius:6px; padding:0.5rem; font-size:var(--fs-sm, 0.8rem); margin:0.35rem 0 0; }
+.gc-pill { font-size:var(--fs-2xs, 0.7rem); text-transform:uppercase; letter-spacing:0.03em; padding:0.12rem 0.4rem;
   border-radius:4px; border:1px solid var(--border); white-space:nowrap; }
 .gc-placed, .gc-created { border-color: var(--accent, #6366f1); }
 .gc-superseded, .gc-contradiction { border-color: var(--danger, #d9534f); }
 .gc-undone { opacity:0.55; }
-.gc-blocked { color: var(--text-mute); font-size:0.75rem; white-space:nowrap; }
-.gc-empty { color: var(--text-mute); font-size:0.9rem; }
+.gc-blocked { color: var(--text-mute); font-size:var(--fs-xs, 0.75rem); white-space:nowrap; }
+.gc-empty { color: var(--text-mute); font-size:var(--fs-md, 0.9rem); }
 `
 
 // guideCuratorAction is the 'guides_curator' client action behind the Curator

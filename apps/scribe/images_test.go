@@ -77,3 +77,29 @@ func TestImageAltFromFileName(t *testing.T) {
 		}
 	}
 }
+
+// An uploaded header image travels the same way: embedded on the way out,
+// stored again on the way in.
+func TestHeaderImageTravels(t *testing.T) {
+	udb := UserDB(&DBase{Store: kvlite.MemStore()}, "u")
+	T := &Scribe{}
+	udb.Set(guideImagesTable, guideImageKey("g1", "h"), guideImage{Mime: "image/png", Data: tinyPNG})
+	g := Guide{ID: "g1", ImageURL: T.guideImagePath("g1", "h")}
+	out := inlineGuideImages(g, udb)
+	if !strings.HasPrefix(out.ImageURL, "data:image/png;base64,") {
+		t.Fatalf("header image not embedded: %q", out.ImageURL)
+	}
+	if !strings.Contains(renderGuideMarkdown(out), "data:image/png;base64,") {
+		t.Error("the markdown export should carry the embedded header image")
+	}
+	in := Guide{ID: "g2", ImageURL: out.ImageURL}
+	T.storeEmbeddedImages(&in, udb)
+	if !strings.HasPrefix(in.ImageURL, "/scribe/img?g=g2&i=") {
+		t.Errorf("embedded header image not stored: %q", in.ImageURL)
+	}
+	// A plain remote URL is the user's own choice and is left alone.
+	remote := Guide{ID: "g3", ImageURL: "https://img.example/banner.png"}
+	if inlineGuideImages(remote, udb).ImageURL != remote.ImageURL {
+		t.Error("a remote header URL should pass through untouched")
+	}
+}

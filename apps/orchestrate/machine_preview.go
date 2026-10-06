@@ -134,7 +134,7 @@ func phasePreview(def MachineDef, p MachinePhase) ui.Component {
 	block, note := phasePreviewParts(def, p)
 	return ui.Card{HTML: `<details class="ui-card" style="opacity:0.75" data-preview-step="` + HTMLEscape(p.Name) + `">` +
 		`<summary style="cursor:pointer;font-weight:600">What this step actually receives</summary>` +
-		`<p data-preview-note style="font-size:0.8rem;color:var(--text-mute);margin:0.5rem 0">` + HTMLEscape(note) + `</p>` +
-		`<pre data-preview-body style="white-space:pre-wrap;font-size:0.76rem;line-height:1.5;overflow-x:auto;color:var(--text-mute)">` +
+		`<p data-preview-note style="font-size:var(--fs-sm, 0.8rem);color:var(--text-mute);margin:0.5rem 0">` + HTMLEscape(note) + `</p>` +
+		`<pre data-preview-body style="white-space:pre-wrap;font-size:var(--fs-xs, 0.76rem);line-height:1.5;overflow-x:auto;color:var(--text-mute)">` +
 		HTMLEscape(block) + `</pre></details>`}
 }

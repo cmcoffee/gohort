@@ -259,10 +259,10 @@
             // would put one app's navigation into a shared component. The panel
             // says they exist and are not yours; finding them is the host's job.
             h.textContent = 'Also in force everywhere, set by this deployment';
-            h.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin-bottom:0.25rem';
+            h.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin-bottom:0.25rem';
             var pre = document.createElement('div');
             pre.textContent = inh;
-            pre.style.cssText = 'white-space:pre-wrap;font-size:0.82rem;line-height:1.5;color:var(--text-mute);background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:0.5rem 0.7rem;max-height:22vh;overflow:auto';
+            pre.style.cssText = 'white-space:pre-wrap;font-size:var(--fs-sm, 0.82rem);line-height:1.5;color:var(--text-mute);background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:0.5rem 0.7rem;max-height:22vh;overflow:auto';
             inherited.appendChild(h); inherited.appendChild(pre);
             inherited.style.display = 'block';
           }

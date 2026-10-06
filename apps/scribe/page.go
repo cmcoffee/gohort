@@ -350,27 +350,61 @@ const scribeImageAction = `function(ctx){
           showPreview(d.image_url);
           body.appendChild(preview);
           var status = el('div', {class:'guide-kn-intro'});
+          // Working: the shared spinner with seconds, since generating can run
+          // a while and a static word cannot be told from a stall.
+          function busy(label){ status.textContent = ''; status.appendChild(window.uiLoading ? window.uiLoading(label) : document.createTextNode(label + '…')); }
           var row = el('div', {class:'guide-edit-actions scribe-img-actions'});
           var gen = el('button', {class:'ui-row-btn primary', text:'Generate from title'});
           if (!d.can_generate) { gen.disabled = true; gen.title = 'Image generation is not configured on this deployment'; }
-          var urlIn = el('input', {type:'text', placeholder:'…or paste an image URL'});
+          var urlIn = el('input', {type:'text', placeholder:'…or paste an image URL, or a screenshot'});
           var use = el('button', {class:'ui-row-btn', text:'Use URL'});
           var rm = el('button', {class:'ui-row-btn', text:'Remove'});
+          var up = el('button', {class:'ui-row-btn', text:'Upload'});
           function post(payload, label){
-            status.textContent = label;
-            gen.disabled = true; use.disabled = true; rm.disabled = true;
+            busy(label);
+            gen.disabled = true; use.disabled = true; rm.disabled = true; up.disabled = true;
             return fetch('image?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
               .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return JSON.parse(t); }); })
               .then(function(res){ status.textContent = ''; showPreview(res.image_url); ctx.refresh(); })
               .catch(function(err){ status.textContent = ''; window.uiAlert('Could not set the image: ' + (err && err.message || err)); })
-              .then(function(){ gen.disabled = !d.can_generate; use.disabled = false; rm.disabled = false; });
+              .then(function(){ gen.disabled = !d.can_generate; use.disabled = false; rm.disabled = false; up.disabled = false; });
           }
-          gen.addEventListener('click', function(){ post({generate: true}, 'Generating…'); });
-          use.addEventListener('click', function(){ if (urlIn.value.trim()) post({url: urlIn.value.trim()}, 'Saving…'); });
+          // A picture of your own: stored with the guide like one pasted into
+          // its body, then made the header. From a file, or pasted straight
+          // into this dialog (a screenshot on the clipboard).
+          function uploadFile(f){
+            if (!f || !/^image\//.test(f.type || '')) return;
+            var fd = new FormData();
+            fd.append('file', f, f.name || 'image.png');
+            busy('Uploading');
+            fetch('images?' + qp, {method:'POST', credentials:'same-origin', body: fd})
+              .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return JSON.parse(t); }); })
+              .then(function(res){ post({url: res.url}, 'Saving'); })
+              .catch(function(err){ status.textContent = ''; window.uiAlert('Could not upload the image: ' + (err && err.message || err)); });
+          }
+          up.addEventListener('click', function(){
+            var input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/png,image/jpeg,image/gif,image/webp';
+            input.addEventListener('change', function(){ uploadFile(input.files && input.files[0]); });
+            input.click();
+          });
+          body.addEventListener('paste', function(ev){
+            var items = (ev.clipboardData && ev.clipboardData.items) || [];
+            for (var i = 0; i < items.length; i++) {
+              if (items[i].kind === 'file' && /^image\//.test(items[i].type || '')) {
+                ev.preventDefault();
+                uploadFile(items[i].getAsFile());
+                return;
+              }
+            }
+          });
+          gen.addEventListener('click', function(){ post({generate: true}, 'Generating'); });
+          use.addEventListener('click', function(){ if (urlIn.value.trim()) post({url: urlIn.value.trim()}, 'Saving'); });
           rm.addEventListener('click', function(){
             fetch('image?' + qp, {method:'DELETE', credentials:'same-origin'}).then(function(){ showPreview(''); ctx.refresh(); });
           });
-          row.appendChild(gen); row.appendChild(rm);
+          row.appendChild(gen); row.appendChild(up); row.appendChild(rm);
           body.appendChild(row);
           body.appendChild(el('div', {class:'scribe-img-url'}, [urlIn, use]));
           body.appendChild(status);
@@ -393,13 +427,13 @@ const scribeImageCSS = `.guide-doc-image { display: block; width: 100%; max-heig
 const guideDocCSS = `<style>
 .guide-doc { max-width: 760px; margin: 0 auto; padding: 0.5rem 0 3rem; }
 .guide-doc-head h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 0.3rem; color: var(--text-hi); }
-.guide-doc-sub { font-size: 1.02rem; color: var(--text-mute); margin: 0 0 1.4rem; }
+.guide-doc-sub { font-size: var(--fs-lg, 1.02rem); color: var(--text-mute); margin: 0 0 1.4rem; }
 .guide-doc-empty { color: var(--text-mute); font-style: italic; padding: 1rem 0; }
 .guide-toc {
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
   padding: 0.9rem 1.1rem; margin: 0 0 2rem;
 }
-.guide-toc-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-mute); margin-bottom: 0.5rem; }
+.guide-toc-title { font-size: var(--fs-2xs, 0.72rem); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-mute); margin-bottom: 0.5rem; }
 .guide-toc ol { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.25rem; }
 .guide-toc a { color: var(--accent); text-decoration: none; }
 .guide-toc a:hover { text-decoration: underline; }
@@ -409,15 +443,15 @@ const guideDocCSS = `<style>
   border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; margin: 0 0 0.9rem;
 }
 .guide-section-num { color: var(--text-mute); font-weight: 600; margin-right: 0.3rem; }
-.guide-section-body { font-size: 0.95rem; line-height: 1.65; color: var(--text); }
+.guide-section-body { font-size: var(--fs-lg, 0.95rem); line-height: 1.65; color: var(--text); }
 .guide-section-body img { display: block; max-width: 100%; height: auto; margin: 0.9rem 0; border: 1px solid var(--border); border-radius: 8px; }
-.guide-section-body h3 { font-size: 1.08rem; color: var(--text-hi); margin: 1.3rem 0 0.5rem; }
-.guide-section-body h4 { font-size: 0.98rem; color: var(--text-hi); margin: 1.1rem 0 0.4rem; }
-.guide-section-body h5 { font-size: 0.9rem; color: var(--text-hi); margin: 1rem 0 0.35rem; }
-.guide-section-body h6 { font-size: 0.85rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.9rem 0 0.3rem; }
+.guide-section-body h3 { font-size: var(--fs-xl, 1.08rem); color: var(--text-hi); margin: 1.3rem 0 0.5rem; }
+.guide-section-body h4 { font-size: var(--fs-lg, 0.98rem); color: var(--text-hi); margin: 1.1rem 0 0.4rem; }
+.guide-section-body h5 { font-size: var(--fs-md, 0.9rem); color: var(--text-hi); margin: 1rem 0 0.35rem; }
+.guide-section-body h6 { font-size: var(--fs-sm, 0.85rem); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.9rem 0 0.3rem; }
 .guide-section-body pre {
   background: var(--bg-0); border: 1px solid var(--border); border-radius: 8px;
-  padding: 0.8rem 1rem; overflow-x: auto; font-size: 0.86rem;
+  padding: 0.8rem 1rem; overflow-x: auto; font-size: var(--fs-sm, 0.86rem);
 }
 .guide-section-body code { font-size: 0.88em; }
 .guide-section-body :not(pre) > code { background: var(--bg-2); padding: 0.1rem 0.35rem; border-radius: 4px; }
@@ -428,12 +462,12 @@ const guideDocCSS = `<style>
 .guide-section-body th, .guide-section-body td { border: 1px solid var(--border); padding: 0.4rem 0.7rem; text-align: left; }
 @media (max-width: 700px) {
   .guide-doc-head h1 { font-size: 1.55rem; }
-  .guide-doc-sub { font-size: 0.95rem; }
+  .guide-doc-sub { font-size: var(--fs-lg, 0.95rem); }
   .guide-toc { padding: 0.7rem 0.85rem; margin-bottom: 1.4rem; }
   .guide-section { margin-bottom: 1.6rem; }
   .guide-section > h2 { font-size: 1.18rem; }
-  .guide-section-body { font-size: 0.92rem; }
-  .guide-section-body pre { font-size: 0.8rem; padding: 0.7rem 0.8rem; }
+  .guide-section-body { font-size: var(--fs-md, 0.92rem); }
+  .guide-section-body pre { font-size: var(--fs-sm, 0.8rem); padding: 0.7rem 0.8rem; }
   /* Let wide tables scroll instead of forcing the page wider than the viewport. */
   .guide-section-body table { display: block; overflow-x: auto; max-width: 100%; }
 }
@@ -441,13 +475,13 @@ const guideDocCSS = `<style>
 /* Reading an earlier version (History -> View). The whole point of the screen is
    the section that is GONE, so it gets the accent and everything else recedes. */
 .guide-rev-banner { background: var(--surface-2, rgba(99,102,241,0.06)); border: 1px solid var(--border); border-left: 3px solid #6366f1; border-radius: 6px; padding: 0.7rem 0.9rem; margin-bottom: 1.4rem; }
-.guide-rev-head { font-size: 0.9rem; font-weight: 600; }
-.guide-rev-sub { font-size: 0.8rem; color: var(--text-mute); margin-top: 0.35rem; }
-.guide-rev-list { margin: 0.45rem 0 0; padding-left: 1.1rem; font-size: 0.85rem; }
+.guide-rev-head { font-size: var(--fs-md, 0.9rem); font-weight: 600; }
+.guide-rev-sub { font-size: var(--fs-sm, 0.8rem); color: var(--text-mute); margin-top: 0.35rem; }
+.guide-rev-list { margin: 0.45rem 0 0; padding-left: 1.1rem; font-size: var(--fs-sm, 0.85rem); }
 .guide-rev-list a { color: #6366f1; }
 .guide-rev .guide-section { opacity: 0.62; }
 .guide-rev .guide-section-gone { opacity: 1; border-left: 3px solid #6366f1; padding-left: 0.9rem; }
-.guide-rev-tag { display: inline-block; font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; color: #6366f1; font-weight: 600; margin-bottom: 0.3rem; }
+.guide-rev-tag { display: inline-block; font-size: var(--fs-2xs, 0.68rem); letter-spacing: 0.04em; text-transform: uppercase; color: #6366f1; font-weight: 600; margin-bottom: 0.3rem; }
 </style>`
 
 // guideSectionCtrlCSS styles the inline per-section controls (hover-revealed),
@@ -462,7 +496,7 @@ const guideSectionCtrlCSS = `<style>
 .guide-sec-btn {
   cursor: pointer; background: var(--bg-2); color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 6px; padding: 0.12rem 0.45rem;
-  font-size: 0.74rem; font-weight: 600; line-height: 1.4;
+  font-size: var(--fs-xs, 0.74rem); font-weight: 600; line-height: 1.4;
 }
 .guide-sec-btn:hover { color: var(--accent); border-color: var(--accent); }
 .guide-sec-del:hover { color: var(--danger); border-color: var(--danger); }
@@ -470,17 +504,17 @@ const guideSectionCtrlCSS = `<style>
 .guide-add-btn {
   cursor: pointer; background: transparent; color: var(--text-mute);
   border: 1px dashed var(--border); border-radius: 8px; padding: 0.5rem 1rem;
-  font-size: 0.85rem; font-weight: 600; width: 100%;
+  font-size: var(--fs-sm, 0.85rem); font-weight: 600; width: 100%;
 }
 .guide-add-btn:hover { color: var(--accent); border-color: var(--accent); }
 .guide-add-link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
 .guide-edit-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.8rem; }
-.guide-edit-field label { font-size: 0.78rem; font-weight: 600; color: var(--text-mute); }
+.guide-edit-field label { font-size: var(--fs-xs, 0.78rem); font-weight: 600; color: var(--text-mute); }
 .guide-edit-field input, .guide-edit-field textarea {
   background: var(--bg-0); color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; padding: 0.45rem 0.6rem; font: inherit; font-size: 0.9rem;
+  border-radius: 6px; padding: 0.45rem 0.6rem; font: inherit; font-size: var(--fs-md, 0.9rem);
 }
-.guide-edit-field textarea { min-height: 16rem; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+.guide-edit-field textarea { min-height: 16rem; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-sm, 0.85rem); }
 /* The section editor is where the writing actually happens, so its body field
    takes the whole modal rather than a fixed 16rem box with the rest of the
    dialog empty beneath it. The modal card is already a flex column capped at
@@ -618,7 +652,7 @@ const guideKnowledgeAction = `function(ctx){
 // Settings modal. The knowledge + sources pickers now render via the shared
 // core/ui chip_picker (attach mode), which owns its own styling. Injected via
 // ui.Head.CSS.
-const guideKnowledgeCSS = `.guide-kn-intro { color: var(--text-mute); font-size: 0.88rem; margin: 0 0 0.9rem; }`
+const guideKnowledgeCSS = `.guide-kn-intro { color: var(--text-mute); font-size: var(--fs-md, 0.88rem); margin: 0 0 0.9rem; }`
 
 // guideSourcesAction is the 'guides_sources' client action behind the Sources
 // toolbar button: a modal that attaches/detaches cross-app reference sources
@@ -705,10 +739,10 @@ const guideSettingsAction = `function(ctx){
 }`
 
 // guideSettingsCSS styles the settings/sharing modal rows.
-const guideSettingsCSS = `.guide-share-row { display: flex; align-items: center; gap: 0.55rem; cursor: pointer; padding: 0.5rem 0; font-size: 0.92rem; color: var(--text-hi); }
+const guideSettingsCSS = `.guide-share-row { display: flex; align-items: center; gap: 0.55rem; cursor: pointer; padding: 0.5rem 0; font-size: var(--fs-md, 0.92rem); color: var(--text-hi); }
 .guide-share-modes { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.2rem 0 0.3rem 1.6rem; }
-.guide-share-mode { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.88rem; color: var(--text); }
-.guide-set-head { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-mute); font-weight: 700; margin: 0.9rem 0 0.2rem; border-top: 1px solid var(--border); padding-top: 0.7rem; }`
+.guide-share-mode { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: var(--fs-md, 0.88rem); color: var(--text); }
+.guide-set-head { font-size: var(--fs-2xs, 0.72rem); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-mute); font-weight: 700; margin: 0.9rem 0 0.2rem; border-top: 1px solid var(--border); padding-top: 0.7rem; }`
 
 // guidePublishAction is the 'guides_publish' client action behind the Publish
 // toolbar button. It opens the Publisher agent in a modal rather than a form:
@@ -891,15 +925,15 @@ const guidePublishAction = `function(ctx){
 // Publisher chat a fixed height inside the modal, so the modal doesn't grow as
 // the conversation does.
 const guidePublishCSS = `.guide-pub-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.7rem; margin-bottom: 0.5rem; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; }
-.guide-pub-where { flex: 1; font-size: 0.9rem; color: var(--text-hi); }
+.guide-pub-where { flex: 1; font-size: var(--fs-md, 0.9rem); color: var(--text-hi); }
 .guide-pub-mute { color: var(--text-mute); font-weight: 400; }
-.guide-pub-link { color: var(--accent); font-size: 0.85rem; text-decoration: none; }
+.guide-pub-link { color: var(--accent); font-size: var(--fs-sm, 0.85rem); text-decoration: none; }
 .guide-pub-link:hover { text-decoration: underline; }
 .guide-pub-target { display: flex; gap: 0.3rem; align-items: baseline; width: 100%; text-align: left; padding: 0.6rem 0.8rem; margin-bottom: 0.45rem; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text-hi); cursor: pointer; font: inherit; }
 .guide-pub-target:hover { border-color: var(--accent); }
 .guide-pub-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
-.guide-pub-status { font-size: 0.95rem; color: var(--text-hi); padding: 0.6rem 0; }
-.guide-pub-steps { margin: 0 0 0.6rem; padding-left: 1.4rem; max-height: 16rem; overflow-y: auto; font-size: 0.8rem; line-height: 1.45; color: var(--text); font-family: var(--mono, ui-monospace, monospace); word-break: break-word; }
+.guide-pub-status { font-size: var(--fs-lg, 0.95rem); color: var(--text-hi); padding: 0.6rem 0; }
+.guide-pub-steps { margin: 0 0 0.6rem; padding-left: 1.4rem; max-height: 16rem; overflow-y: auto; font-size: var(--fs-sm, 0.8rem); line-height: 1.45; color: var(--text); font-family: var(--mono, ui-monospace, monospace); word-break: break-word; }
 .guide-pub-steps li { margin: 0.1rem 0; }
 .guide-pub-ok { color: var(--ok, #3fb950); }
 .guide-pub-fail { color: var(--danger, #f85149); }

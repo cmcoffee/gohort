@@ -180,6 +180,9 @@ select:-webkit-autofill {
 .ui-agent-msg-file-row, .ui-cw-chat-h, .ui-cw-rev-group {
   --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm);
 }
+/* Opt-in dense size for a button, or a container of them, outside the
+ * surfaces above: class="ui-row-btn ui-btn-sm". */
+.ui-btn-sm { --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm); }
 :is(.ui-chat-new, .ui-chat-side-btn, .ui-chat-mode, .ui-agent-mode, .ui-cw-ctx-btn,
     .ui-cw-list-btn, .ui-checklist-toolbtn, .ui-form-suggest-btn) {
   display: inline-flex; align-items: center; justify-content: center;
@@ -559,9 +562,21 @@ select:-webkit-autofill {
   background: var(--accent-soft, color-mix(in srgb, var(--accent) 16%, transparent));
   border-color: var(--accent, #4a9eff); color: var(--text);
 }
+/* Phone: one row that scrolls sideways, the way the hub tabs do. Wrapped, a
+ * tab's six or eight sections stacked into two or three rows of pills above
+ * the content. A nested entry cannot indent in a row, so it says so with a
+ * marker instead of the rail's guide line. */
 @media (max-width: 720px) {
   .ui-secnav { flex-direction: column; gap: 0.6rem; }
-  .ui-secnav-rail { flex-basis: auto; flex-direction: row; flex-wrap: wrap; position: static; }
+  .ui-secnav-rail {
+    flex-basis: auto; flex-direction: row; flex-wrap: nowrap; position: static;
+    align-self: stretch; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; gap: 0.25rem;
+  }
+  .ui-secnav-rail::-webkit-scrollbar { height: 0; }
+  .ui-secnav-item { flex: 0 0 auto; white-space: nowrap; }
+  .ui-secnav-item.nested { padding-left: 0.7rem !important; }
+  .ui-secnav-item.nested::before { position: static; content: "\21B3\00a0"; border: 0; color: var(--text-mute); }
 }
 /* The title, then its ⓘ, then whatever the right slot holds.
  *
@@ -6070,3 +6085,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* document lists: a record's badges under its label */
 .ui-doc-badges { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.15rem; }
 .ui-doc-badge { font-size: var(--fs-2xs); padding: 0 0.35rem; line-height: 1.4; }
+/* The dialog box takes focus itself on a touch screen (uiOpenModal); it is
+ * not a control, so no focus ring. */
+.ui-modal-box:focus { outline: none; }

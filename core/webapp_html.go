@@ -15,7 +15,7 @@ const liveRibbonCSS = `
 #webui-live-ribbon {
   position: fixed; top: 0; right: 5px; max-width: 360px; margin: 0.5rem;
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
-  padding: 0.3rem 0.6rem; font-size: 0.8rem; color: var(--text-mute);
+  padding: 0.3rem 0.6rem; font-size: var(--fs-sm, 0.8rem); color: var(--text-mute);
   box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 9999; display: none;
 }
 @media (max-width: 640px) {
@@ -26,11 +26,11 @@ const liveRibbonCSS = `
        at top:0 right:5; they're on opposite sides and don't
        collide even when the ribbon has items. */
     max-width: calc(100vw - 60px);
-    font-size: 0.75rem;
+    font-size: var(--fs-xs, 0.75rem);
   }
 }
 #webui-live-ribbon h4 {
-  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+  font-size: var(--fs-xs, 0.75rem); text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--text-mute); margin: 0; cursor: pointer;
   display: flex; align-items: center; gap: 0.4rem;
 }
@@ -148,7 +148,7 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 			`display:inline-flex;align-items:center;justify-content:center;` +
 			`width:32px;height:32px;border-radius:6px;` +
 			`background:#161b22;border:1px solid #30363d;` +
-			`color:#8b949e;text-decoration:none;font-size:1rem;` +
+			`color:#8b949e;text-decoration:none;font-size:var(--fs-lg, 1rem);` +
 			`transition:border-color 0.2s,color 0.2s,background 0.2s;` +
 			`" onclick="if(typeof window.drillBackHandler==='function'){window.drillBackHandler();return false;}return true;"` +
 			` onmouseover="this.style.borderColor='#58a6ff';this.style.color='#f0f6fc';this.style.background='#1c2128'"` +

@@ -643,7 +643,7 @@ func init() {
 // subheading labels one table among several in a section: a table carries no
 // heading of its own to say which question it answers.
 func subheading(text string) ui.Card {
-	return ui.Card{HTML: `<div style="font-size:0.74rem;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-mute);margin:0.9rem 0 0.25rem">` +
+	return ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.74rem);letter-spacing:0.05em;text-transform:uppercase;color:var(--text-mute);margin:0.9rem 0 0.25rem">` +
 		html.EscapeString(text) + `</div>`}
 }
 

@@ -557,7 +557,7 @@ const draftedGuardsHead = `<script>
       var rec = ctx.record || {};
       if (!window.uiOpenSimpleModal) return;
       window.uiOpenSimpleModal({title: 'Redraft ' + (rec.name || 'this guard'), width: '560px', mount: function(body, dlg) {
-        body.appendChild(el('p', {style: 'margin:0 0 0.6rem;color:var(--text-mute);font-size:0.88rem;line-height:1.45',
+        body.appendChild(el('p', {style: 'margin:0 0 0.6rem;color:var(--text-mute);font-size:var(--fs-md, 0.88rem);line-height:1.45',
           text: 'Say what to change. The drafter sees its last draft, how it tested, and your note.'}));
         var ta = el('textarea', {class: 'ui-input', rows: '4', style: 'width:100%;box-sizing:border-box',
           placeholder: 'It also catches short replies that are fine. Only fire when the turn made no tool call.'});
@@ -593,7 +593,7 @@ const draftedGuardsHead = `<script>
       var title = String(rec.group || 'Guard').replace(/ · customized$/, '') + ' · ' + (rec.scope_label || '');
       window.uiOpenSimpleModal({title: title, width: '620px', mount: function(body, dlg) {
         function label(text, hint) {
-          var l = el('div', {style: 'font-weight:600;font-size:0.85rem;margin:0.7rem 0 0.25rem'}, [text]);
+          var l = el('div', {style: 'font-weight:600;font-size:var(--fs-sm, 0.85rem);margin:0.7rem 0 0.25rem'}, [text]);
           if (hint) l.appendChild(el('span', {style: 'font-weight:400;color:var(--text-mute);margin-left:0.4rem', text: hint}));
           body.appendChild(l);
         }
@@ -610,15 +610,15 @@ const draftedGuardsHead = `<script>
           ta = el('textarea', {class: 'ui-input', rows: '5', style: 'width:100%;box-sizing:border-box'});
           ta.value = rec.note_value || '';
           body.appendChild(ta);
-          body.appendChild(el('div', {style: 'font-size:0.78rem;color:var(--text-mute);margin-top:0.2rem',
+          body.appendChild(el('div', {style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin-top:0.2rem',
             text: 'Leave it as it is, or empty it, to follow ' + above + '.'}));
         } else {
           label('What the model is told', 'written from the reply it caught, so it cannot be replaced');
-          body.appendChild(el('div', {style: 'font-size:0.85rem;color:var(--text-mute);white-space:pre-wrap', text: rec.note_value || ''}));
+          body.appendChild(el('div', {style: 'font-size:var(--fs-sm, 0.85rem);color:var(--text-mute);white-space:pre-wrap', text: rec.note_value || ''}));
         }
         if (rec._authored) {
           label('Checks', 'JSON, every check must hold; empty follows ' + above);
-          cj = el('textarea', {class: 'ui-input', rows: '8', style: 'width:100%;box-sizing:border-box;font-family:var(--font-mono,monospace);font-size:0.8rem'});
+          cj = el('textarea', {class: 'ui-input', rows: '8', style: 'width:100%;box-sizing:border-box;font-family:var(--font-mono,monospace);font-size:var(--fs-sm, 0.8rem)'});
           cj.value = rec.checks_own ? (rec.checks_json || '') : '';
           if (!rec.checks_own) cj.placeholder = rec.checks_json || '';
           body.appendChild(cj);

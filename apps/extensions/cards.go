@@ -14,15 +14,15 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
 .acct-conn { border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.8rem; }
 .acct-conn-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
 .acct-conn-name { font-weight: 600; color: var(--text); flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.acct-conn-kind { font-size: 0.7rem; color: var(--text-mute); border: 1px solid var(--border); border-radius: 999px; padding: 0.05rem 0.45rem; }
-.acct-conn-badge { font-size: 0.7rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; }
+.acct-conn-kind { font-size: var(--fs-2xs, 0.7rem); color: var(--text-mute); border: 1px solid var(--border); border-radius: 999px; padding: 0.05rem 0.45rem; }
+.acct-conn-badge { font-size: var(--fs-2xs, 0.7rem); font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; }
 .acct-conn-badge.on { background: color-mix(in srgb, var(--success) 22%, transparent); color: var(--success); }
 .acct-conn-badge.off { background: var(--bg-2); color: var(--text-mute); }
-.acct-conn-desc { font-size: 0.82rem; color: var(--text-mute); margin-bottom: 0.5rem; }
+.acct-conn-desc { font-size: var(--fs-sm, 0.82rem); color: var(--text-mute); margin-bottom: 0.5rem; }
 .acct-conn-row { display: flex; gap: 0.4rem; align-items: center; }
-.acct-conn-row input { flex: 1; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.35rem 0.5rem; font: inherit; font-size: 0.85rem; }
+.acct-conn-row input { flex: 1; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.35rem 0.5rem; font: inherit; font-size: var(--fs-sm, 0.85rem); }
 .acct-conns-empty { color: var(--text-mute); font-style: italic; padding: 0.5rem 0; }
-.acct-conn-lock { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-mute); cursor: pointer; }
+.acct-conn-lock { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; font-size: var(--fs-sm, 0.8rem); color: var(--text-mute); cursor: pointer; }
 .acct-conn-lock input { cursor: pointer; }
 .acct-conn-lock input:disabled { cursor: default; }
 </style>

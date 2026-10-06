@@ -28,7 +28,7 @@
     var border = on ? 'var(--accent,#6366f1)' : (partial ? 'var(--accent,#6366f1)' : 'var(--border,#3a3a4a)');
     var color = on ? '#fff' : (partial ? 'var(--accent,#6366f1)' : 'var(--text,#cfd0d8)');
     b.style.cssText =
-      'border-radius:999px;padding:0.28rem 0.75rem;margin:0.18rem;font-size:0.8rem;' +
+      'border-radius:999px;padding:0.28rem 0.75rem;margin:0.18rem;font-size:var(--fs-sm, 0.8rem);' +
       'cursor:pointer;transition:background 0.12s,border-color 0.12s;border:1px ' +
       (partial && !on ? 'dashed ' : 'solid ') + border + ';background:' +
       (on ? 'var(--accent,#6366f1)' : 'transparent') + ';color:' + color +
@@ -60,14 +60,14 @@
     function render() {
       container.innerHTML = '';
       var loading = document.createElement('div');
-      loading.style.cssText = 'color:var(--text-mute,#888);font-size:0.82rem;padding:0.4rem 0';
+      loading.style.cssText = 'color:var(--text-mute,#888);font-size:var(--fs-sm, 0.82rem);padding:0.4rem 0';
       loading.textContent = ''; loading.appendChild(uiLoading());
       container.appendChild(loading);
       Promise.resolve(opts.load()).then(function (state) {
         container.innerHTML = '';
         if (state.note) {
           var n = document.createElement('div');
-          n.style.cssText = 'color:var(--text-mute,#888);font-size:0.8rem;margin:0 0 0.5rem 0;line-height:1.4';
+          n.style.cssText = 'color:var(--text-mute,#888);font-size:var(--fs-sm, 0.8rem);margin:0 0 0.5rem 0;line-height:1.4';
           n.textContent = state.note;
           container.appendChild(n);
         }
@@ -93,7 +93,7 @@
           more.type = 'button';
           more.style.cssText =
             'border:none;background:none;color:var(--text-mute,#888);cursor:pointer;' +
-            'font-size:0.78rem;padding:0.28rem 0.4rem;text-decoration:underline dotted';
+            'font-size:var(--fs-xs, 0.78rem);padding:0.28rem 0.4rem;text-decoration:underline dotted';
           more.textContent = '▸ Per-item overrides (' + items.length + ')';
           more.addEventListener('click', function () { itemsExpanded = true; render(); });
           top.appendChild(more);
@@ -128,7 +128,7 @@
         });
         if (!items.length && !state.primary) {
           var empty = document.createElement('div');
-          empty.style.cssText = 'color:var(--text-mute,#888);font-size:0.82rem';
+          empty.style.cssText = 'color:var(--text-mute,#888);font-size:var(--fs-sm, 0.82rem)';
           empty.textContent = '(nothing to configure)';
           top.appendChild(empty);
         }
@@ -136,7 +136,7 @@
       }).catch(function (err) {
         container.innerHTML = '';
         var e = document.createElement('div');
-        e.style.cssText = 'color:var(--danger,#e5534b);font-size:0.82rem';
+        e.style.cssText = 'color:var(--danger,#e5534b);font-size:var(--fs-sm, 0.82rem)';
         e.textContent = 'Could not load scope: ' + (err && err.message || err);
         container.appendChild(e);
       });

@@ -580,9 +580,9 @@ func adminOnly(w http.ResponseWriter, r *http.Request) bool {
 // panel stacks four subjects that used to be four separate expanders, and
 // without headings they read as one long form.
 func folderPanelHeading(title, blurb string) string {
-	h := `<h3 style="margin:1.3rem 0 0.2rem;font-size:0.95rem">` + HTMLEscape(title) + `</h3>`
+	h := `<h3 style="margin:1.3rem 0 0.2rem;font-size:var(--fs-lg, 0.95rem)">` + HTMLEscape(title) + `</h3>`
 	if strings.TrimSpace(blurb) != "" {
-		h += `<p style="margin:0 0 0.6rem;font-size:0.8rem;opacity:0.72;max-width:62ch">` + HTMLEscape(blurb) + `</p>`
+		h += `<p style="margin:0 0 0.6rem;font-size:var(--fs-sm, 0.8rem);opacity:0.72;max-width:62ch">` + HTMLEscape(blurb) + `</p>`
 	}
 	return h
 }

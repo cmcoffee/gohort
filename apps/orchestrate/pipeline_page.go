@@ -791,17 +791,17 @@ func chIf(cond bool, yes, no string) string {
 // keep in step.
 const pipelineStageCSS = `
 .pipeline-stage-prompt {
-  white-space: pre-wrap; line-height: 1.5; font-size: 0.88rem;
+  white-space: pre-wrap; line-height: 1.5; font-size: var(--fs-md, 0.88rem);
 }
 .pipeline-stage-facts {
-  margin-top: 0.5rem; font-size: 0.78rem; color: var(--text-mute);
+  margin-top: 0.5rem; font-size: var(--fs-xs, 0.78rem); color: var(--text-mute);
 }
 /* The map, same shape and rules as the machine editor's: centred while
    it fits, scrolling from its left edge (where the first stage is) when
    it does not. */
 .machine-map { padding: 0.3rem 0.5rem; }
 .machine-map-cap {
-  font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase;
+  font-size: var(--fs-2xs, 0.72rem); letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--text-mute); text-align: center;
 }
 .machine-map-body {
@@ -949,7 +949,7 @@ func planHTML(def PipelineDef) string {
 			}
 			b.WriteString(`<span class="ui-mute"> - ` + calls + ` call` + HTMLEscape(pluralOf(s.Max)) + `</span>`)
 		}
-		b.WriteString(`<div class="ui-mute" style="font-size:0.82rem">`)
+		b.WriteString(`<div class="ui-mute" style="font-size:var(--fs-sm, 0.82rem)">`)
 		if len(s.Reads) == 0 && s.Kind != StageTool && s.Kind != StageBranch {
 			// The finding, stated where the shape is being read rather than
 			// filed away in a checklist somebody opens separately.
