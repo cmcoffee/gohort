@@ -94,6 +94,13 @@ type PipelinePanel struct {
 	// "session", "id", and "run" so legacy links keep working.
 	DeepLinkParam string `json:"deep_link_param,omitempty"`
 
+	// StartParam — query-string key whose value fills the panel's topic
+	// field on load (the prefill target: the first textarea, else the first
+	// field), with focus on Start. How another page hands a topic over:
+	// "/app/?start=<topic>". Filled, not submitted: a link anyone can write
+	// must not launch a run for whoever opens it.
+	StartParam string `json:"start_param,omitempty"`
+
 	// Actions render as a toolbar above the transcript and only
 	// appear when a session is loaded (live or saved). Each action
 	// is a labeled button bound to a URL that fires on click.

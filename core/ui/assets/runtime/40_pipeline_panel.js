@@ -1582,6 +1582,24 @@
         if (cfg.reconnect_url) tryReconnect(sid);
         else openSession(sid, {guessed: true});
       }
+      // A topic handed over from another page (cfg.start_param): fill the
+      // topic field and put focus on Start. Not submitted, so a link cannot
+      // launch a run on its own; Enter starts it.
+      var startVal = (!sid && cfg.start_param) ? params.get(cfg.start_param) : '';
+      if (startVal) {
+        var startField = cfg.prefill_target || (function() {
+          for (var i = 0; i < (cfg.fields || []).length; i++) {
+            if (cfg.fields[i].type === 'textarea') return cfg.fields[i].name;
+          }
+          return cfg.fields && cfg.fields[0] && cfg.fields[0].name;
+        })();
+        var startInput = formInputs[startField];
+        if (startInput) {
+          startInput.value = startVal;
+          startInput.dispatchEvent(new Event('input', {bubbles: true}));
+          if (submitBtn && submitBtn.focus) submitBtn.focus();
+        }
+      }
     } catch (_) {}
 
     return wrap;
