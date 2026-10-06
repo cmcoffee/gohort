@@ -80,6 +80,11 @@ type WorkbenchPanel struct {
 	SaveURL      string `json:"save_url,omitempty"`      // POST (upsert) the modified record; default = ListURL
 	// Right — chat (typically an AgentLoopPanel or single ChatPanel). Mounted as-is.
 	Chat Component `json:"-"`
+	// ViewerLabel and ChatLabel name the viewer and the chat on a phone, where
+	// the two are shown one at a time behind a switch rather than stacked
+	// (defaults "Document" and "Assistant").
+	ViewerLabel string `json:"viewer_label,omitempty"`
+	ChatLabel   string `json:"chat_label,omitempty"`
 }
 
 // WorkbenchAction is one button in a WorkbenchPanel's viewer toolbar, acting on

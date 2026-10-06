@@ -155,6 +155,53 @@
     var wbClose = el('button', {class: 'ui-wb-close', title: 'Close', onclick: drawer.closeDrawer}, ['✕']);
     head.insertBefore(wbClose, head.firstChild);
 
+    // Phone: the viewer and the chat one at a time. Stacked, each got a sliver
+    // of a small screen and neither was readable; a switch in the drawer header
+    // gives the chosen one the full height. The switch only shows <=700px, so
+    // on a wider screen both columns stay side by side and data-view is inert.
+    // A reply landing in the hidden chat lights a dot on its tab.
+    var viewBtn = el('button', {type: 'button', class: 'ui-wb-view', role: 'tab'}, [cfg.viewer_label || 'Document']);
+    var chatBtn = el('button', {type: 'button', class: 'ui-wb-view', role: 'tab'},
+      [cfg.chat_label || 'Assistant', el('span', {class: 'ui-wb-view-dot', 'aria-hidden': 'true'})]);
+    function showPane(which) {
+      root.setAttribute('data-view', which);
+      viewBtn.classList.toggle('active', which === 'viewer');
+      chatBtn.classList.toggle('active', which === 'chat');
+      viewBtn.setAttribute('aria-selected', which === 'viewer' ? 'true' : 'false');
+      chatBtn.setAttribute('aria-selected', which === 'chat' ? 'true' : 'false');
+      if (which === 'chat') {
+        chatBtn.classList.remove('unread');
+        repliesSeen = right.querySelectorAll(REPLY_SEL).length;
+        repliesArmed = true;
+      }
+      // The pane coming back was display:none and measured nothing; let the
+      // full-height sizing run again now that it has a box.
+      window.dispatchEvent(new Event('resize'));
+    }
+    viewBtn.addEventListener('click', function() { showPane('viewer'); });
+    chatBtn.addEventListener('click', function() { showPane('chat'); });
+    root.setAttribute('data-view', 'viewer');
+    viewBtn.classList.add('active');
+    viewBtn.setAttribute('aria-selected', 'true');
+    chatBtn.setAttribute('aria-selected', 'false');
+    drawer.mobileHdr.appendChild(el('div', {class: 'ui-wb-views', role: 'tablist'}, [viewBtn, chatBtn]));
+    // Counted, not "anything changed": a ticking timer or a relative time in
+    // the transcript would otherwise keep the dot lit for good.
+    var REPLY_SEL = '.ui-agent-msg-assistant:not(.ui-agent-thinking), .ui-agent-msg-failed';
+    // Armed by the first visit to the chat: before that, what arrives is the
+    // conversation's history loading, not a reply to anything you asked here.
+    var repliesSeen = 0, repliesArmed = false;
+    if (window.MutationObserver) {
+      new MutationObserver(function() {
+        var n = right.querySelectorAll(REPLY_SEL).length;
+        // offsetParent is null only while the chat is hidden by the switch.
+        if (repliesArmed && n > repliesSeen && right.offsetParent === null && root.getAttribute('data-view') === 'viewer') {
+          chatBtn.classList.add('unread');
+        }
+        if (right.offsetParent !== null) repliesSeen = n;
+      }).observe(right, {childList: true, subtree: true});
+    }
+
     root.appendChild(drawer.mobileHdr);
     root.appendChild(left);
     root.appendChild(center);
@@ -682,6 +729,7 @@
             loadViewer(id);
             drawer.mobileTitle.textContent = label;
             drawer.closeDrawer();
+            showPane('viewer');
           });
           if (delURL) {
             var del = el('button', {class: 'ui-wb-item-del', title: 'Delete', text: '×'});

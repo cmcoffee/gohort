@@ -145,7 +145,7 @@ select:-webkit-autofill {
     .ui-chat-side-btn, .ui-chat-mode, .ui-chat-iconbtn, .ui-agent-mode,
     .ui-agent-msg-act, .ui-cw-ctx-btn, .ui-cw-list-btn, .ui-checklist-toolbtn,
     .ui-form-suggest-btn, .ui-rules-edit-btn, .ui-agent-earlier-btn,
-    .ui-back-link, .ui-page-tab, .ui-seg):focus-visible {
+    .ui-back-link, .ui-page-tab, .ui-seg, .ui-wb-view):focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 /* The dense size: chrome inside a panel header or a toolbar, and the quiet
@@ -664,8 +664,9 @@ select:-webkit-autofill {
  * whole workbench spreading (a max-width on .ui-wb), not to keep inflating one
  * column. */
 .ui-wb-chat   { flex: 0 0 clamp(380px, calc(54vw - 398px), 820px); }
-/* Mobile-only ✕ in the list header (closes the drawer). */
-.ui-wb-close { display: none; }
+/* Mobile-only ✕ in the list header (closes the drawer), and the phone's
+ * viewer/chat switch. */
+.ui-wb-close, .ui-wb-views { display: none; }
 /* Tablet: soften the fixed side-column widths so the viewer keeps room.
  * Also neutralize the agent panel's standalone-page mobile rules here —
  * they pin its grid to a full viewport (100dvh) and unclamp its root,
@@ -697,7 +698,27 @@ select:-webkit-autofill {
   }
   .ui-wb-list.open { transform: translateX(0); }
   .ui-wb-viewer { flex: 1 1 0; min-height: 0; }
-  .ui-wb-chat   { flex: 0 0 42%; min-height: 0; }
+  .ui-wb-chat   { flex: 1 1 0; min-height: 0; }
+  /* One pane at a time, picked by the switch in the drawer header. */
+  .ui-wb[data-view="viewer"] > .ui-wb-chat { display: none; }
+  .ui-wb[data-view="chat"] > .ui-wb-viewer { display: none; }
+  .ui-wb-views {
+    display: inline-flex; flex: 0 0 auto;
+    border: 1px solid var(--border); border-radius: var(--btn-radius); overflow: hidden;
+  }
+  .ui-wb-view {
+    position: relative; min-height: 36px; padding: 0 0.7rem;
+    background: transparent; color: var(--text-mute); border: 0;
+    font-family: inherit; font-size: var(--btn-fs-sm); cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ui-wb-view + .ui-wb-view { border-left: 1px solid var(--border); }
+  .ui-wb-view.active { background: var(--accent); color: var(--text-on-accent, #fff); font-weight: 600; }
+  .ui-wb-view-dot {
+    display: none; position: absolute; top: 5px; right: 5px;
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  }
+  .ui-wb-view.unread .ui-wb-view-dot { display: block; }
   .ui-wb-viewer-body { padding: 0.9rem 1rem; }
   .ui-wb-close {
     display: inline-flex; align-items: center; justify-content: center;
