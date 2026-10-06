@@ -652,6 +652,9 @@ select:-webkit-autofill {
 .ui-loading.now { animation: none; opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .ui-loading { animation: none; opacity: 1; } }
 
+/* A textarea taking a dropped picture (uiImagePaste). */
+.ui-drop-target { outline: 2px dashed var(--accent); outline-offset: -4px; }
+
 /* --- Pane switch (makePaneSwitch) ---
  * A panel with two panes (a document and its assistant, say) shows one at a
  * time on a phone, picked from a switch in its mobile header. Wider screens

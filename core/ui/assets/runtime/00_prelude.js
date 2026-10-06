@@ -1665,6 +1665,97 @@
   }
   window.uiLoading = uiLoading;
 
+  // uiImagePaste(textarea, uploadURL) — pictures into a markdown textarea.
+  // Paste a screenshot or drop an image file and it uploads (POST multipart
+  // "file" to uploadURL, which answers {markdown}) and lands as markdown where
+  // the cursor was. A placeholder holds the spot while it uploads, so typing on
+  // does not lose the position, and is removed if the upload fails. Returns
+  // {pick()}, a file picker into the same flow: a phone has no screenshot on
+  // the clipboard to paste.
+  var imagePasteSeq = 0;
+  function uiImagePaste(ta, uploadURL) {
+    function changed() { ta.dispatchEvent(new Event('input', {bubbles: true})); }
+    function insertAt(text) {
+      var v = ta.value, start = ta.selectionStart || 0, end = ta.selectionEnd || 0;
+      var before = v.substring(0, start), after = v.substring(end);
+      // An image is its own paragraph: blank lines around it, not glued
+      // to the text the cursor was in.
+      var lead = !before ? '' : /\n\n$/.test(before) ? '' : /\n$/.test(before) ? '\n' : '\n\n';
+      var trail = !after ? '' : /^\n\n/.test(after) ? '' : /^\n/.test(after) ? '\n' : '\n\n';
+      ta.value = before + lead + text + trail + after;
+      ta.selectionStart = ta.selectionEnd = (before + lead + text).length;
+      changed();
+    }
+    function replaceToken(token, text) {
+      var i = ta.value.indexOf(token);
+      if (i < 0) return;
+      ta.value = ta.value.slice(0, i) + text + ta.value.slice(i + token.length);
+      changed();
+    }
+    function upload(file) {
+      if (!file || !/^image\//.test(file.type || '')) return;
+      var token = '![Uploading image ' + (++imagePasteSeq) + '\u2026]()';
+      insertAt(token);
+      var fd = new FormData();
+      fd.append('file', file, file.name || 'image.png');
+      fetch(uploadURL, {method: 'POST', credentials: 'same-origin', body: fd})
+        .then(function(r) {
+          if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+          return r.json();
+        })
+        .then(function(d) { replaceToken(token, (d && d.markdown) || ''); })
+        .catch(function(err) {
+          replaceToken(token, '');
+          window.uiAlert('Could not add the image: ' + ((err && err.message) || err));
+        });
+    }
+    function imageFiles(list) {
+      return Array.prototype.filter.call(list || [], function(f) { return f && /^image\//.test(f.type || ''); });
+    }
+    ta.addEventListener('paste', function(ev) {
+      var items = (ev.clipboardData && ev.clipboardData.items) || [];
+      var files = [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file' && /^image\//.test(items[i].type || '')) {
+          var f = items[i].getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (!files.length) return;
+      ev.preventDefault();
+      files.forEach(upload);
+    });
+    function dragHasFiles(ev) {
+      var types = (ev.dataTransfer && ev.dataTransfer.types) || [];
+      return Array.prototype.indexOf.call(types, 'Files') >= 0;
+    }
+    ta.addEventListener('dragover', function(ev) {
+      if (!dragHasFiles(ev)) return;
+      ev.preventDefault();
+      ta.classList.add('ui-drop-target');
+    });
+    ta.addEventListener('dragleave', function() { ta.classList.remove('ui-drop-target'); });
+    ta.addEventListener('drop', function(ev) {
+      ta.classList.remove('ui-drop-target');
+      var files = imageFiles(ev.dataTransfer && ev.dataTransfer.files);
+      if (!files.length) return;
+      ev.preventDefault();
+      ta.focus();
+      files.forEach(upload);
+    });
+    return {
+      pick: function() {
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/png,image/jpeg,image/gif,image/webp';
+        input.multiple = true;
+        input.addEventListener('change', function() { imageFiles(input.files).forEach(upload); });
+        input.click();
+      },
+    };
+  }
+  window.uiImagePaste = uiImagePaste;
+
   // makePaneSwitch — on a phone, a panel's panes one at a time behind a switch
   // in its mobile header, instead of stacked into slivers where neither is
   // readable. opts.panes is [{key, label, els: [elements]}], the first shown by

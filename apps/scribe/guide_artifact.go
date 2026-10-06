@@ -130,7 +130,9 @@ func (a *guideArtifact) ExportArtifact(_ Database, name, owner string) (json.Raw
 	if !ok {
 		return nil, fmt.Errorf("no guide %q for user %q", name, owner)
 	}
-	return json.Marshal(portableFrom(g))
+	// Lossless means the pictures too: they travel embedded and land back in
+	// the store on import (storeEmbeddedImages).
+	return json.Marshal(portableFrom(inlineGuideImages(g, a.store(owner))))
 }
 
 func (a *guideArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner string) (string, string, error) {
@@ -171,6 +173,9 @@ func (a *guideArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner
 	}
 	// A bundle exported while articles existed lands as a guide like any other.
 	g.upgradeLegacyArticle()
+	if a.app != nil {
+		a.app.storeEmbeddedImages(&g, udb)
+	}
 	saveGuideRev(udb, g, "Imported")
 	return title, "", nil
 }

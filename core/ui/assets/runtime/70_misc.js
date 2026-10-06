@@ -275,7 +275,18 @@
       var save = el('button', {class: 'ui-row-btn primary', text: 'Save'});
       var cancel = el('button', {class: 'ui-row-btn', text: 'Cancel'});
       var status = el('span', {class: 'ui-wb-edit-status'});
-      row.appendChild(save); row.appendChild(cancel); row.appendChild(status);
+      row.appendChild(save); row.appendChild(cancel);
+      // Pictures: paste a screenshot or drop a file into the page, or pick
+      // one (a phone has no screenshot to paste). Lands as markdown at the
+      // cursor.
+      if (cfg.image_upload_url && window.uiImagePaste) {
+        var pics = window.uiImagePaste(ta, cfg.image_upload_url.replace('{id}', encodeURIComponent(selectedId)));
+        var addImg = el('button', {class: 'ui-row-btn', type: 'button', text: 'Add image'});
+        addImg.addEventListener('click', function() { pics.pick(); });
+        row.appendChild(addImg);
+        status.textContent = 'Paste or drop a screenshot to add it.';
+      }
+      row.appendChild(status);
       wrap.appendChild(ta); wrap.appendChild(row);
       viewerBody.appendChild(wrap);
       editorTA = ta;

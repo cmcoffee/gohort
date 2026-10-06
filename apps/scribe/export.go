@@ -19,11 +19,13 @@ import (
 func (T *Scribe) handleExport(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
-	g, _, _, _, found := T.resolve(r, udb, user, id)
+	g, ownerUDB, _, _, found := T.resolve(r, udb, user, id)
 	if !found {
 		http.NotFound(w, r)
 		return
 	}
+	// An exported file stands alone, so its pictures travel inside it.
+	g = inlineGuideImages(g, ownerUDB)
 	name := sanitizeFilename(firstNonEmpty(g.Title, "guide"))
 	switch format {
 	case "pdf":
@@ -185,6 +187,7 @@ body { margin: 0; background: #f6f7f9; color: #1f2328; font: 16px/1.65 -apple-sy
 .guide-section-body h4 { font-size: 1.02rem; color: #0b1320; margin: 1.1rem 0 0.4rem; }
 .guide-section-body h5, .guide-section-body h6 { font-size: 0.92rem; color: #30363d; margin: 1rem 0 0.35rem; }
 .guide-section-body pre { background: #0d1117; color: #e6edf3; border-radius: 8px; padding: 0.9rem 1.1rem; overflow-x: auto; font-size: 0.86rem; }
+.guide-section-body img { display: block; max-width: 100%; height: auto; margin: 0.9rem 0; border: 1px solid #d6dae0; border-radius: 8px; }
 .guide-section-body :not(pre) > code { background: #eaeef2; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em; }
 .guide-section-body blockquote { border-left: 3px solid #d6dae0; margin: 0.9rem 0; padding: 0.2rem 0 0.2rem 1rem; color: #59636e; }
 .guide-section-body table { border-collapse: collapse; margin: 0.9rem 0; }

@@ -70,6 +70,9 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 		EditURL:    "body?id={id}",
 		EditField:  "markdown",
 		EditLabel:  "Edit all",
+		// Pictures pasted, dropped or picked in the editor: stored with the
+		// guide and inserted as markdown (images.go).
+		ImageUploadURL: "images?id={id}",
 		EmptyIcon:  "📖",
 		EmptyTitle: "Nothing selected",
 		EmptyHint:  "Pick a document on the left, or create one. Then ask the assistant to draft it, or write it yourself.",
@@ -407,6 +410,7 @@ const guideDocCSS = `<style>
 }
 .guide-section-num { color: var(--text-mute); font-weight: 600; margin-right: 0.3rem; }
 .guide-section-body { font-size: 0.95rem; line-height: 1.65; color: var(--text); }
+.guide-section-body img { display: block; max-width: 100%; height: auto; margin: 0.9rem 0; border: 1px solid var(--border); border-radius: 8px; }
 .guide-section-body h3 { font-size: 1.08rem; color: var(--text-hi); margin: 1.3rem 0 0.5rem; }
 .guide-section-body h4 { font-size: 0.98rem; color: var(--text-hi); margin: 1.1rem 0 0.4rem; }
 .guide-section-body h5 { font-size: 0.9rem; color: var(--text-hi); margin: 1rem 0 0.35rem; }
@@ -484,7 +488,8 @@ const guideSectionCtrlCSS = `<style>
    kept as the floor for a short viewport, where the body scrolls instead. */
 .guide-edit-field.guide-edit-grow { flex: 1 1 auto; min-height: 0; margin-bottom: 0; }
 .guide-edit-field.guide-edit-grow textarea { flex: 1 1 auto; min-height: min(24rem, 40vh); }
-.guide-edit-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
+.guide-edit-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
+.guide-edit-hint { margin-right: auto; font-size: var(--fs-xs, 0.78rem); color: var(--text-mute); }
 /* Touch devices have no hover, so the hover-revealed section controls would be
    unreachable: keep them visible there, and drop them out of the heading overlap
    onto their own right-aligned row on narrow screens. */
@@ -532,7 +537,7 @@ const guideSectionCode = `(function(){
     var cls = 'guide-edit-field' + (grow ? ' guide-edit-grow' : '');
     return {wrap: el('div', {class:cls}, [el('label', {text: label}), ta]), input: ta};
   }
-  function openEditor(title, t0, m0, onSave){
+  function openEditor(title, t0, m0, onSave, gid){
     if (!window.uiOpenSimpleModal) return;
     window.uiOpenSimpleModal({title: title, width:'min(1100px, 94vw)', mount: function(body, dlg){
       var tf = fieldText('Section title', t0);
@@ -540,6 +545,14 @@ const guideSectionCode = `(function(){
       body.appendChild(tf.wrap); body.appendChild(mf.wrap);
       var save = el('button', {class:'ui-row-btn primary', text:'Save'});
       var actions = el('div', {class:'guide-edit-actions'}, [save]);
+      // Pictures: paste a screenshot or drop a file into the body, or pick one.
+      if (gid && window.uiImagePaste){
+        var pics = window.uiImagePaste(mf.input, 'images?id=' + encodeURIComponent(gid));
+        var addImg = el('button', {class:'ui-row-btn', type:'button', text:'Add image'});
+        addImg.addEventListener('click', function(){ pics.pick(); });
+        actions.insertBefore(addImg, save);
+        actions.insertBefore(el('span', {class:'guide-edit-hint', text:'Paste or drop a screenshot to add it.'}), addImg);
+      }
       body.appendChild(actions);
       save.addEventListener('click', function(){
         save.disabled = true; save.textContent = 'Saving…';
@@ -562,10 +575,10 @@ const guideSectionCode = `(function(){
     var gp = 'guide=' + encodeURIComponent(gid);
     var sp = sid ? '&section=' + encodeURIComponent(sid) : '';
     if (act === 'add'){
-      openEditor('Add section', '', '', function(t, m){ return jpost('section/add?' + gp, {title:t, markdown:m}); });
+      openEditor('Add section', '', '', function(t, m){ return jpost('section/add?' + gp, {title:t, markdown:m}); }, gid);
     } else if (act === 'edit'){
       fetch('section?' + gp + sp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(s){
-        openEditor('Edit section', s.title || '', s.markdown || '', function(t, m){ return jpost('section?' + gp + sp, {title:t, markdown:m}); });
+        openEditor('Edit section', s.title || '', s.markdown || '', function(t, m){ return jpost('section?' + gp + sp, {title:t, markdown:m}); }, gid);
       });
     } else if (act === 'delete'){
       window.uiConfirm('Delete this section? You can restore it from History.').then(function(ok){

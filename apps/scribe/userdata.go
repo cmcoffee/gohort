@@ -4,6 +4,7 @@ package scribe
 
 import (
 	"errors"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -13,9 +14,9 @@ type scribeUserData struct {
 }
 
 // scribeUserTables are the per-user tables that hold what a user wrote: the
-// documents and their revision trails. The active-document marker and rules
-// are conveniences, not content, and are left behind.
-var scribeUserTables = []string{guidesTable, revisionsTable}
+// documents, their revision trails and their pictures. The active-document
+// marker and rules are conveniences, not content, and are left behind.
+var scribeUserTables = []string{guidesTable, revisionsTable, guideImagesTable}
 
 func (h *scribeUserData) AppName() string { return "scribe" }
 
@@ -54,6 +55,18 @@ func (h *scribeUserData) Reassign(from, to string) error {
 		if src.Get(revisionsTable, k, &rl) {
 			dst.Set(revisionsTable, k, rl)
 			src.Unset(revisionsTable, k)
+		}
+		// The guide's pictures go with it, or its new owner's copy shows
+		// broken images.
+		for _, ik := range src.Keys(guideImagesTable) {
+			if !strings.HasPrefix(ik, k+"/") {
+				continue
+			}
+			var img guideImage
+			if src.Get(guideImagesTable, ik, &img) {
+				dst.Set(guideImagesTable, ik, img)
+				src.Unset(guideImagesTable, ik)
+			}
 		}
 		if g.Shared {
 			SetSharedOwner(h.app.DB, sharedGuidesIndex, g.ID, to, true)

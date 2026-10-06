@@ -53,6 +53,10 @@ type WorkbenchPanel struct {
 	EditURL   string `json:"edit_url,omitempty"`
 	EditField string `json:"edit_field,omitempty"` // default "markdown"
 	EditLabel string `json:"edit_label,omitempty"` // toggle text (default "Edit")
+	// ImageUploadURL, with {id} for the open record, takes pictures pasted or
+	// dropped into the edit textarea (and an Add image button for a file):
+	// POST multipart "file", answering {markdown} to insert at the cursor.
+	ImageUploadURL string `json:"image_upload_url,omitempty"`
 	// ViewerActions render as a button row above the document — actions on the
 	// SELECTED record (export, history, audit, …). Generic: any workbench can add
 	// per-document actions without core knowing what they do.

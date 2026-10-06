@@ -292,6 +292,7 @@ func listGuides(udb Database) []Guide {
 func deleteGuide(udb Database, owner, id string) {
 	udb.Unset(guidesTable, id)
 	udb.Unset(revisionsTable, id)
+	deleteGuideImages(udb, id)
 	// Vacuum the guide's auto-research collection (metadata + its chunks in
 	// VectorDB) so deleting a guide doesn't leave an orphaned collection behind.
 	DeleteCollection(UserDB(CollectionsDB(), owner), VectorDB, owner, guideCollectionID(id))

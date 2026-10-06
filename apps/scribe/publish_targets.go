@@ -165,7 +165,7 @@ func (T *Scribe) handlePublishTo(w http.ResponseWriter, r *http.Request, udb Dat
 	prev, _ := docs.FindPublishRecord(g.Published, spec.Kind)
 	runPublishJob(r, g, ownerUDB, user, spec.Kind, spec.Target.Title,
 		docs.PublishRequest{
-			Target: spec.Target.ID, Title: title, Doc: publishDoc(g), Answers: body.Answers,
+			Target: spec.Target.ID, Title: title, Doc: publishDoc(g, ownerUDB), Answers: body.Answers,
 			ExternalID: prev.ExternalID, Version: prev.Version,
 		},
 		docs.PublishRecord{Kind: spec.Kind, Target: spec.Target.ID, TargetTitle: spec.Target.Title, Title: title, Answers: body.Answers})

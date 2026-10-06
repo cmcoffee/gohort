@@ -25,8 +25,11 @@ import (
 
 // publishDoc renders a guide as the document a destination receives: the same
 // assembled markdown the Markdown export produces, plus the standalone HTML for
-// destinations that would rather have it rendered.
-func publishDoc(g Guide) docs.PublishDoc {
+// destinations that would rather have it rendered. udb is the guide owner's
+// store, where its pictures are.
+func publishDoc(g Guide, udb Database) docs.PublishDoc {
+	// The destination cannot reach /scribe/img, so pictures travel inside.
+	g = inlineGuideImages(g, udb)
 	brand, siteName := docBranding()
 	return docs.PublishDoc{
 		Title:      firstNonEmpty(g.Title, "Untitled guide"),
@@ -59,7 +62,7 @@ func (T *Scribe) openPublishDocument(r *http.Request, udb Database, user string)
 		return publish.Document{}, false
 	}
 	return publish.Document{
-		Doc:     publishDoc(g),
+		Doc:     publishDoc(g, ownerUDB),
 		Records: g.Published,
 		Save: func(rec docs.PublishRecord) error {
 			// Re-read before writing: the publish call took a network round
@@ -195,7 +198,7 @@ func (T *Scribe) handleRepublish(w http.ResponseWriter, r *http.Request, udb Dat
 	runPublishJob(r, g, ownerUDB, user, kind, where, docs.PublishRequest{
 		Target:     prev.Target,
 		Title:      prev.Title,
-		Doc:        publishDoc(g),
+		Doc:        publishDoc(g, ownerUDB),
 		ExternalID: prev.ExternalID,
 		Version:    prev.Version,
 		Answers:    prev.Answers,
