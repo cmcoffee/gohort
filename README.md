@@ -1,10 +1,20 @@
-```
-      ____       _                _
-     / ___| ___ | |__   ___  _ __| |_
-    | |  _ / _ \| '_ \ / _ \| '__| __|
-    | |_| | (_) | | | | (_) | |  | |_
-     \____|\___/|_| |_|\___/|_|   \__|
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/logo-light.svg">
+    <img alt="gohort" src="docs/images/logo-light.svg" width="369">
+  </picture>
+</p>
+
+<!-- The same logo as text, for anyone reading this file raw:
+
+  ███      ████  ███  █   █  ███  ████  █████
+  ███     █     █   █ █   █ █   █ █   █   █
+          █  ██ █   █ █████ █   █ ████    █
+███ ███   █   █ █   █ █   █ █   █ █  █    █
+███ ███    ███   ███  █   █  ███  █   █   █
+
+-->
 
 # Gohort: deputies, not tools
 
