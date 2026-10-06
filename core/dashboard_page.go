@@ -188,21 +188,47 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     display: flex; flex-direction: column; align-items: center;
     padding: 80px 20px;
   }
-  /* The masthead: the favicon's three squares in block characters beside the
-     name in box-drawing letters. Left-aligned inside a centred block, because
-     centring each line on its own slides rows of unequal length against each
-     other. Sized so its 33 columns fit a 360px phone at 1rem. */
+  /* The masthead: the mark (the favicon's three squares) in front of GOHORT,
+     both in block letters five rows tall. Left-aligned inside a centred block,
+     because centring each line on its own slides rows of unequal length
+     against each other. Each row steps from bright to muted, like a lit sign.
+     45 columns, sized to fit a 360px phone. (The mark standing in for the O's
+     read as GAHART: a square over two is an A.)
+
+     It builds itself once on load (the squares drop in, then the letters fill
+     in around them), and while sessions are running the marks are the
+     dashboard's heartbeat: their squares light in turn. Still when nothing is
+     running, and no motion at all under prefers-reduced-motion. */
   .ascii-logo {
     font-family: 'SF Mono', ui-monospace, Menlo, Consolas, 'Liberation Mono', monospace;
-    font-size: 1.25rem; line-height: 1; white-space: pre; letter-spacing: 0;
-    margin-bottom: 0.75rem; text-align: left;
-    background: linear-gradient(180deg, #f0f6fc 10%, #8b949e 110%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-size: 1rem; line-height: 1; white-space: pre; letter-spacing: 0;
+    margin-bottom: 0.9rem; text-align: left;
   }
-  .ascii-logo .m1 { -webkit-text-fill-color: var(--accent, #6366f1); }
-  .ascii-logo .m2 { -webkit-text-fill-color: color-mix(in srgb, var(--accent, #6366f1) 55%, var(--bg-0, #0d1117)); }
-  @media (max-width: 640px) { .ascii-logo { font-size: 1rem; } }
+  .ascii-logo .r0 { color: var(--text-hi, #f0f6fc); }
+  .ascii-logo .r1 { color: color-mix(in srgb, var(--text-hi, #f0f6fc) 78%, var(--text-mute, #8b949e)); }
+  .ascii-logo .r2 { color: color-mix(in srgb, var(--text-hi, #f0f6fc) 56%, var(--text-mute, #8b949e)); }
+  .ascii-logo .r3 { color: color-mix(in srgb, var(--text-hi, #f0f6fc) 34%, var(--text-mute, #8b949e)); }
+  .ascii-logo .r4 { color: var(--text-mute, #8b949e); }
+  .ascii-logo .s1 { color: var(--accent, #6366f1); }
+  .ascii-logo .s2, .ascii-logo .s3 { color: color-mix(in srgb, var(--accent, #6366f1) 55%, var(--bg-0, #0d1117)); }
+  .ascii-logo .sq, .ascii-logo .lt { display: inline-block; }
+  .ascii-logo.play .sq { animation: logo-drop 0.42s cubic-bezier(.2,.9,.3,1.25) backwards; }
+  .ascii-logo.play .s2 { animation-delay: 0.16s; }
+  .ascii-logo.play .s3 { animation-delay: 0.32s; }
+  .ascii-logo.play .lt { animation: logo-rise 0.5s ease-out backwards; animation-delay: calc(0.6s + var(--i) * 90ms); }
+  .ascii-logo.running:not(.play) .sq { animation: logo-beat 1.5s ease-in-out infinite; }
+  .ascii-logo.running:not(.play) .s3 { animation-delay: 0.5s; }
+  .ascii-logo.running:not(.play) .s2 { animation-delay: 1s; }
+  @keyframes logo-drop { from { opacity: 0; transform: translateY(-0.9em) scale(0.6); } }
+  @keyframes logo-rise { from { opacity: 0; transform: translateY(0.25em); filter: blur(2px); } }
+  @keyframes logo-beat {
+    0%, 55%, 100% { color: color-mix(in srgb, var(--accent, #6366f1) 45%, var(--bg-0, #0d1117)); }
+    20% { color: var(--accent-hi, #818cf8); text-shadow: 0 0 0.5em color-mix(in srgb, var(--accent, #6366f1) 60%, transparent); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ascii-logo .sq, .ascii-logo .lt { animation: none !important; }
+  }
+  @media (max-width: 640px) { .ascii-logo { font-size: 0.74rem; } }
   .subtitle { color: #8b949e; margin-bottom: 3rem; font-size: 1rem; }
   /* A notice is a thing to DO, so it reads as one: an accent edge, the
      sentence, and the button that resolves it. Sized to the grid so it sits
@@ -417,7 +443,6 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   .card:hover, .auth-link:hover, .live-item:hover { border-color: var(--accent); }
   .auth-link:hover { color: var(--text-hi); }
   .live-badge.running { background: var(--success); }
-  .ascii-logo { background: linear-gradient(180deg, var(--text-hi) 10%, var(--text-mute) 110%); -webkit-background-clip: text; background-clip: text; }
   /* A bell that is always lit is a bell nobody reads. Muted until there is
      something unread, and then it carries the number. */
   .bell {
@@ -460,11 +485,11 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 </head>
 <body>
   %AUTH%
-  <div class="ascii-logo"><span class="m1">    ████    </span>
-<span class="m1">    ████    </span>   ╔═╗╔═╗╦ ╦╔═╗╦═╗╔╦╗
-<span class="m2">▄▄▄▄    ▄▄▄▄</span>   ║ ╦║ ║╠═╣║ ║╠╦╝ ║ 
-<span class="m2">████    ████</span>   ╚═╝╚═╝╩ ╩╚═╝╩╚═ ╩ 
-<span class="m2">▀▀▀▀    ▀▀▀▀</span></div>
+  <div class="ascii-logo play" id="logo" role="img" aria-label="gohort"><span class="r0"><span class="mk">  <span class="sq s1">███</span>  </span>   <span class="lt" style="--i:0"> ████</span> <span class="lt" style="--i:1"> ███ </span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3"> ███ </span> <span class="lt" style="--i:4">████ </span> <span class="lt" style="--i:5">█████</span></span>
+<span class="r1"><span class="mk">  <span class="sq s1">███</span>  </span>   <span class="lt" style="--i:0">█    </span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">  █  </span></span>
+<span class="r2"><span class="mk">       </span>   <span class="lt" style="--i:0">█  ██</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█████</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">████ </span> <span class="lt" style="--i:5">  █  </span></span>
+<span class="r3"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0">█   █</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">█  █ </span> <span class="lt" style="--i:5">  █  </span></span>
+<span class="r4"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0"> ███ </span> <span class="lt" style="--i:1"> ███ </span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3"> ███ </span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">  █  </span></span></div>
   <p class="subtitle">Agent Dashboard</p>
   %NOTICES%
   <div class="grid">%CARDS%</div>
@@ -493,6 +518,9 @@ function refreshLive() {
     // and every child turns one logical operation into several noisy
     // rows on the dashboard.
     items = (items || []).filter(function(it) { return !it.spawned; });
+    // The logo's heartbeat: on while anything is actually running.
+    document.getElementById('logo').classList.toggle('running',
+      items.some(function(it) { return !it.queued; }));
     if (items.length === 0) {
       list.innerHTML = '<div style="color:#484f58;padding:0.5rem;font-size:0.85rem">No active sessions.</div>';
       return;
@@ -516,6 +544,8 @@ function refreshLive() {
     list.innerHTML = html;
   });
 }
+// The masthead builds itself once, then hands its squares to the heartbeat.
+setTimeout(function() { document.getElementById('logo').classList.remove('play'); }, 1800);
 refreshLive();
 setInterval(refreshLive, 10000);
 </script>
