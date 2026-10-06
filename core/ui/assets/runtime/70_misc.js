@@ -69,7 +69,7 @@
     var center = el('div', {class: 'ui-wb-col ui-wb-viewer'});
     // Optional per-document action toolbar (export / history / audit). Buttons
     // act on the selected record; disabled until one is selected.
-    var actionBar = null;
+    var actionBar = null, moreMenu = null;
     if ((cfg.viewer_actions && cfg.viewer_actions.length) || cfg.edit_url) {
       actionBar = el('div', {class: 'ui-wb-actions'});
       // The Edit toggle leads the bar: it changes what the rest of the bar acts
@@ -99,6 +99,51 @@
         actionBar.appendChild(b);
       });
       center.appendChild(actionBar);
+
+      // Phone: one row. Wrapped, a long toolbar took four or five rows and
+      // half the screen above the document. Below 700px the bar keeps the
+      // buttons that fit, in order, and the rest move into a More menu at the
+      // end of the row. The buttons themselves move (not copies), so their
+      // handlers and their enabled state go with them; wider screens get
+      // everything back in the bar.
+      var moreWrap = el('div', {class: 'ui-wb-action-wrap ui-wb-more'});
+      var moreBtn = el('button', {type: 'button', class: 'ui-wb-action-btn', 'data-ui-lib-action': '1',
+        title: 'More actions'}, ['More ▾']);
+      moreMenu = el('div', {class: 'ui-wb-menu ui-wb-more-menu'});
+      var moreAnchor = window.uiAnchorMenu(moreBtn, moreMenu, {align: 'right', display: 'flex'});
+      moreWrap.appendChild(moreBtn);
+      var barItems = Array.prototype.slice.call(actionBar.children);
+      actionBar.appendChild(moreWrap);
+      moreWrap.style.display = 'none';
+      moreBtn.addEventListener('click', function(ev) { ev.stopPropagation(); moreAnchor.toggle(); });
+      // An item's own handler runs first; then the menu gets out of the way.
+      moreMenu.addEventListener('click', function() { moreAnchor.close(); });
+      document.addEventListener('click', function(ev) {
+        if (moreAnchor.isOpen() && !moreWrap.contains(ev.target) && !moreMenu.contains(ev.target)) moreAnchor.close();
+      });
+      var narrow = window.matchMedia ? window.matchMedia('(max-width: 700px)') : null;
+      var fitQueued = false;
+      function fitActions() {
+        fitQueued = false;
+        barItems.forEach(function(it) { actionBar.insertBefore(it, moreWrap); });
+        moreWrap.style.display = 'none';
+        // Hidden (the chat is showing) measures zero; fit again once shown.
+        if (!narrow || !narrow.matches || !actionBar.clientWidth) { moreAnchor.close(); return; }
+        if (actionBar.scrollWidth <= actionBar.clientWidth) return;
+        moreWrap.style.display = '';
+        for (var i = barItems.length - 1; i >= 1 && actionBar.scrollWidth > actionBar.clientWidth; i--) {
+          moreMenu.insertBefore(barItems[i], moreMenu.firstChild);
+        }
+      }
+      function queueFit() {
+        if (fitQueued) return;
+        fitQueued = true;
+        if (window.requestAnimationFrame) window.requestAnimationFrame(fitActions);
+        else setTimeout(fitActions, 16);
+      }
+      if (window.ResizeObserver) new ResizeObserver(queueFit).observe(center);
+      window.addEventListener('resize', queueFit);
+      queueFit();
     }
     var viewerBody = el('div', {class: 'ui-wb-viewer-body'});
     center.appendChild(viewerBody);
@@ -231,7 +276,8 @@
     function setActionsEnabled(on) {
       // Record-scoped buttons live in BOTH the viewer toolbar and the list header
       // (e.g. Edit next to New) — toggle both so they enable/disable together.
-      var scopes = [actionBar, headActions];
+      // On a phone some of them sit in the toolbar's More menu instead.
+      var scopes = [actionBar, headActions, moreMenu];
       for (var s = 0; s < scopes.length; s++) {
         if (!scopes[s]) continue;
         var btns = scopes[s].querySelectorAll('.ui-wb-action-btn');
@@ -335,7 +381,10 @@
     function buildActionMenu(a) {
       var wrap = el('div', {class: 'ui-wb-action-wrap'});
       var trigger = el('button', {class: 'ui-wb-action-btn', text: (a.label || 'More') + ' ▾'});
-      trigger.disabled = true;
+      // A library menu (Scope on the menu) is usable with nothing open, and its
+      // items inherit that scope unless they set their own.
+      if (a.scope === 'library') trigger.setAttribute('data-ui-lib-action', '1');
+      else trigger.disabled = true;
       var menu = el('div', {class: 'ui-wb-menu'});
       // Anchored on the body: inside its column (overflow: hidden) the menu
       // was clipped wherever it ran past the column's edge.
@@ -347,7 +396,13 @@
       function onDocClick(ev) { if (!wrap.contains(ev.target) && !menu.contains(ev.target)) closeMenu(); }
       (a.children || []).forEach(function(child) {
         var item = el('button', {class: 'ui-wb-menu-item', text: child.label});
-        item.addEventListener('click', function() { closeMenu(); runViewerAction(child, trigger); });
+        var run = child;
+        if (!child.scope && a.scope) {
+          run = {};
+          for (var k in child) if (Object.prototype.hasOwnProperty.call(child, k)) run[k] = child[k];
+          run.scope = a.scope;
+        }
+        item.addEventListener('click', function() { closeMenu(); runViewerAction(run, trigger); });
         menu.appendChild(item);
       });
       trigger.addEventListener('click', function(ev) {
@@ -366,7 +421,10 @@
     // runViewerAction dispatches a viewer toolbar button against the open record.
     // An optional a.confirm gates the action behind the themed uiConfirm modal.
     function runViewerAction(a, btn) {
-      if (!selectedId) return;
+      // A library action is about the collection, so it runs with nothing open.
+      // This check used to stop every action without a selection, which left
+      // library buttons enabled (Scope lifted the gating) but doing nothing.
+      if (!selectedId && a.scope !== 'library') return;
       if (a.confirm) {
         window.uiConfirm(a.confirm).then(function(ok) { if (ok) doViewerAction(a, btn); });
         return;

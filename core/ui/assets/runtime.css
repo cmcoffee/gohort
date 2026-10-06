@@ -733,6 +733,9 @@ select:-webkit-autofill {
   }
   .ui-wb-view.unread .ui-wb-view-dot { display: block; }
   .ui-wb-viewer-body { padding: 0.9rem 1rem; }
+  /* One row; what does not fit moves into the bar's More menu (the runtime
+   * measures and moves it). */
+  .ui-wb-actions { flex-wrap: nowrap; overflow: hidden; }
   .ui-wb-close {
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; color: var(--text-mute);
@@ -788,6 +791,14 @@ select:-webkit-autofill {
  * of sub-actions (e.g. Export → HTML / PDF / Markdown) so related toolbar
  * buttons collapse into one. Generic: any WorkbenchAction with children uses it. */
 .ui-wb-action-wrap { position: relative; display: inline-flex; }
+/* A toolbar button that moved into the phone's More menu reads as a menu
+ * item there, not as a button floating in a list. */
+.ui-wb-more-menu .ui-wb-action-btn {
+  width: 100%; justify-content: flex-start; text-align: left;
+  border-color: transparent; background: transparent;
+}
+.ui-wb-more-menu .ui-wb-action-btn:hover:not(:disabled) { background: var(--bg-2); border-color: transparent; }
+.ui-wb-more-menu .ui-wb-action-wrap { display: flex; }
 /* Placed by uiAnchorMenu, so nothing here positions it. */
 .ui-wb-menu {
   min-width: 160px; max-width: calc(100vw - 8px);

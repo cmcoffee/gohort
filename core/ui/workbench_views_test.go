@@ -48,3 +48,28 @@ func TestWorkbenchPhoneShowsOnePaneAtATime(t *testing.T) {
 		t.Error("picking an item should land on the viewer")
 	}
 }
+
+// On a phone the viewer toolbar keeps one row and moves what does not fit into
+// a More menu. The moved buttons must still follow the selection, which is
+// only true if the enable pass looks in the menu as well as the bar.
+func TestWorkbenchToolbarOverflowsOnAPhone(t *testing.T) {
+	js := readRuntimeFile(t, "70_misc.js")
+	for _, want := range []string{
+		"class: 'ui-wb-action-wrap ui-wb-more'",
+		"window.matchMedia('(max-width: 700px)')",
+		"var scopes = [actionBar, headActions, moreMenu];",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("workbench toolbar overflow lost %q", want)
+		}
+	}
+	// The More button is never disabled by the selection, or an empty
+	// workbench on a phone could not reach its library actions.
+	if !regexp.MustCompile(`moreBtn = el\('button', \{[^}]*'data-ui-lib-action': '1'`).MatchString(js) {
+		t.Error("the More button must be exempt from selection gating")
+	}
+	phone := regexp.MustCompile(`(?s)@media \(max-width: 700px\) \{\s*\.ui-wb \{.*?\n\}`).FindString(runtimeCSS)
+	if !strings.Contains(phone, ".ui-wb-actions { flex-wrap: nowrap; overflow: hidden; }") {
+		t.Error("on a phone the toolbar must hold one row for the overflow to measure against")
+	}
+}

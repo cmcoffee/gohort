@@ -145,11 +145,17 @@ func TestLibraryActionsDoNotFollowTheSelection(t *testing.T) {
 			t.Errorf("%s is about the library, so it must be library-scoped or it greys out with nothing selected", lbl)
 		}
 	}
-	// Rules moved to the viewer bar and must still not be gated there — the
-	// whole point of the scope is that placement and gating are separate.
+	// Rules is about every document, so it sits with the library controls.
+	// Among the per-document buttons it read as one of them, and looked broken
+	// for staying lit with nothing open.
+	list := between(t, page, "ListActions: []ui.WorkbenchAction{", "\n\t\t},")
 	viewer := between(t, page, "ViewerActions: []ui.WorkbenchAction{", "\n\t\t},")
-	if !strings.Contains(viewer, `"Rules"`) {
-		t.Error("Rules is tuned while reading what the agent wrote; it belongs in the viewer bar")
+	if !strings.Contains(list, `"Rules"`) || strings.Contains(viewer, `"Rules"`) {
+		t.Error("Rules belongs in the list header with the library controls, not the document toolbar")
+	}
+	// Both imports create a document, so they share one library menu.
+	if !regexp.MustCompile(`\{Label: "Import", Kind: "menu", Scope: "library"`).MatchString(list) {
+		t.Error("the two imports should be one library-scoped Import menu")
 	}
 }
 

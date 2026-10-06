@@ -65,10 +65,15 @@ func TestLibraryActionsAreNotGatedOnASelection(t *testing.T) {
 	if !strings.Contains(src, "if (a.scope === 'library') b.setAttribute('data-ui-lib-action', '1');") {
 		t.Error("a library-scoped action is still built disabled like a record one")
 	}
-	// Both build sites — the list header and the viewer bar — or a library
-	// action is ungated in one bar and dead in the other.
-	if n := strings.Count(src, "a.scope === 'library'"); n != 2 {
-		t.Errorf("the scope is honoured at %d of the 2 action build sites", n)
+	// Every build site — the list header, the viewer bar and a menu's
+	// trigger — or a library action is ungated in one place and dead in another.
+	if n := strings.Count(src, "a.scope === 'library'"); n != 3 {
+		t.Errorf("the scope is honoured at %d of the 3 action build sites", n)
+	}
+	// Ungated is not enough: the click must run too. The dispatcher used to
+	// return on no selection, so library buttons were lit and did nothing.
+	if !strings.Contains(src, "if (!selectedId && a.scope !== 'library') return;") {
+		t.Error("a library action must run with nothing selected, not just look enabled")
 	}
 	if !strings.Contains(src, "if (btns[i].hasAttribute('data-ui-lib-action')) continue;") {
 		t.Error("the selection toggle still greys out library actions")

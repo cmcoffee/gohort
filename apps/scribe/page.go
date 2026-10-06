@@ -50,10 +50,19 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 		// gating made it unclickable on an empty library, which is precisely the
 		// library you would be importing into.
 		ListActions: []ui.WorkbenchAction{
-			{Label: "Import", Kind: "client", URL: "scribe_import", Scope: "library"},
-			// The lossless door: a bundle (from Export > Bundle, or a whole
-			// account export) through the shared preview-then-import flow.
-			{Label: "Import bundle", Kind: "client", URL: "scribe_import_bundle", Scope: "library"},
+			// Both create a new document; neither touches the open one, so one
+			// library menu holds them.
+			{Label: "Import", Kind: "menu", Scope: "library", Children: []ui.WorkbenchAction{
+				{Label: "HTML page", Kind: "client", URL: "scribe_import"},
+				// The lossless door: a bundle (from Export > Bundle, or a whole
+				// account export) through the shared preview-then-import flow.
+				{Label: "Bundle", Kind: "client", URL: "scribe_import_bundle"},
+			}},
+			// The house style the Guide Author writes under. It is about every
+			// document, not the open one, so it sits with the library controls
+			// rather than among the per-document buttons, where it read as one of
+			// them.
+			{Label: "Rules", Kind: "client", URL: "scribe_rules", Scope: "library"},
 		},
 		// Center — the rendered document (server HTML: title + ToC + sections,
 		// or title + image + body).
@@ -88,12 +97,6 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// of what acts on it, rather than in the list header where it read as
 			// a control over the library.
 			{Label: "Settings", Kind: "client", URL: "guides_settings"},
-			// The house style the Guide Author writes under. It is tuned while
-			// you read what the agent just produced, so it belongs where you are
-			// when that happens. Library-scoped: it is about every document, not
-			// the open one, so it stays usable with nothing selected even though
-			// it sits among controls that do not.
-			{Label: "Rules", Kind: "client", URL: "scribe_rules", Scope: "library"},
 			{Label: "Publish", Kind: "client", URL: "guides_publish"},
 			{Label: "Image", Kind: "client", URL: "scribe_image"},
 			{Label: "Sources", Kind: "client", URL: "guides_sources"},

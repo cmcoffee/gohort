@@ -74,7 +74,12 @@ global.document = {
   addEventListener: function() {}, removeEventListener: function() {}, body: node('body'),
   querySelector: function() { return null; }, querySelectorAll: function() { return []; },
 };
-global.window = {addEventListener: function(k, fn) { (global.winOn = global.winOn || {})[k] = fn; }};
+global.window = {addEventListener: function(k, fn) { (global.winOn = global.winOn || {})[k] = fn; },
+  uiAnchorMenu: function() {
+    var open = false;
+    return {open: function() { open = true; }, close: function() { open = false; },
+            toggle: function() { open = !open; }, isOpen: function() { return open; }};
+  }};
 function el(tag, attrs, kids) {
   var n = node(tag);
   Object.keys(attrs || {}).forEach(function(k) {
