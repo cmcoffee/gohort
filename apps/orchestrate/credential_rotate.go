@@ -70,7 +70,7 @@ func (t *chatTurn) storeAgentKey(name, secret string) (string, error) {
 	switch {
 	case err == nil:
 		_, enabled, _ := Secure().CredentialStatusOwned(user, name)
-		status := "It still needs to be ENABLED (the setup card, or Extensions > API credentials) before calls go through."
+		status := "It still needs to be ENABLED (the setup card, or Extensions > APIs) before calls go through."
 		if enabled {
 			status = "The credential is enabled: dispatch through it now (fetch_url_" + name + " or your wrapped tool)."
 		}
@@ -80,7 +80,7 @@ func (t *chatTurn) storeAgentKey(name, secret string) (string, error) {
 		if t == nil || t.sse == nil {
 			// No chat to show a card in (a delegated or background run):
 			// holding the key would wait on an answer nobody can give.
-			where := "Extensions > API credentials"
+			where := "Extensions > Connected accounts"
 			if !yours {
 				where = "Admin > Extensions > API Credentials"
 			}

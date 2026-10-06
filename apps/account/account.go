@@ -250,7 +250,11 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 		// SecureAPI per-user credentials + per-user OAuth MCP servers, rendered
 		// in one panel. MCP entries carry Kind="mcp" + a ConnectURL so the panel
 		// routes their Connect/Disconnect to the MCP endpoints.
+		// The deployment's per-user integrations, then the user's own API
+		// credentials (their configuration lives under APIs; their
+		// key lives here, with every other key and sign-in), then MCP servers.
 		conns := Secure().PerUserConnectionsFor(user)
+		conns = append(conns, Secure().OwnConnectionsFor(user)...)
 		conns = append(conns, MCP().PerUserOAuthConnectionsFor(user)...)
 		if conns == nil {
 			conns = []PerUserConnection{}
@@ -261,6 +265,9 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 			Name       string `json:"name"`
 			Secret     string `json:"secret"`
 			Disconnect bool   `json:"disconnect"`
+			// Kind "own" is one of the user's own credentials, which can share
+			// a name with a deployment one, so the panel says which it means.
+			Kind string `json:"kind"`
 			// A POINTER so "absent" and "off" are different things: a save
 			// that says nothing about the lock must not read as a request to
 			// unlock, which is the shape that loses a setting nobody touched.
@@ -268,6 +275,29 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		// The user's own credential: only its key is set here. Its
+		// configuration, reach and lending stay under APIs.
+		if body.Kind == ConnKindOwn {
+			if body.Secured != nil {
+				http.Error(w, "this credential's reach is set under APIs", http.StatusBadRequest)
+				return
+			}
+			// Only an explicit Disconnect removes the key. A blank save is a
+			// mistake to refuse, not a request to wipe what is stored.
+			secret := body.Secret
+			if body.Disconnect {
+				secret = ""
+			} else if strings.TrimSpace(secret) == "" {
+				http.Error(w, "paste a key to save", http.StatusBadRequest)
+				return
+			}
+			if err := Secure().SetOwnedSecret(user, body.Name, secret); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		// MCP oauth server: only Disconnect flows through here (Connect goes via

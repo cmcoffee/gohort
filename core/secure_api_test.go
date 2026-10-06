@@ -1919,3 +1919,74 @@ func adminUsers(t *testing.T, users ...string) {
 	AuthDB = func() Database { return adb }
 	t.Cleanup(func() { AuthDB = prev })
 }
+
+// A credential's key lives under Connected accounts and its configuration under
+// API credentials. The Connected-accounts side of a user's OWN credentials
+// lists what takes a key, sets or clears only the key, and finishing a draft
+// there switches it on just as finishing it from the edit form does.
+func TestOwnCredentialKeyLivesUnderConnectedAccounts(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	if err := s.Save(SecureCredential{Name: "github", Owner: "alice", Type: SecureCredBearer,
+		BaseURL: "https://api.github.test", Description: "Repos"}, "tok-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(SecureCredential{Name: "weather", Owner: "alice", Type: SecureCredNone,
+		BaseURL: "https://wx.test"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveAPIDraft(SecureCredential{Name: "cal", Owner: "alice", Type: SecureCredBasicAuth,
+		BaseURL: "https://cal.test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	conns := map[string]PerUserConnection{}
+	for _, c := range s.OwnConnectionsFor("alice") {
+		conns[c.Name] = c
+	}
+	if _, ok := conns["weather"]; ok {
+		t.Error("a public API takes no key and has nothing to connect")
+	}
+	if c := conns["github"]; !c.Connected || c.Kind != ConnKindOwn || c.Description != "Repos" {
+		t.Errorf("github should list as an own, connected credential: %+v", c)
+	}
+	if c := conns["cal"]; c.Connected {
+		t.Error("an unfinished draft has no key yet")
+	}
+	if len(s.OwnConnectionsFor("bob")) != 0 {
+		t.Error("another user's credentials leaked into bob's connections")
+	}
+
+	// Replacing the key leaves the configuration alone.
+	if err := s.SetOwnedSecret("alice", "github", "tok-2"); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := s.LoadUser("alice", "github"); c.BaseURL != "https://api.github.test" || c.Description != "Repos" {
+		t.Errorf("setting the key changed the configuration: %+v", c)
+	}
+	if sec, _ := s.loadSecret(credStoreKey("alice", "github")); sec != "tok-2" {
+		t.Errorf("key not replaced: %q", sec)
+	}
+
+	// Finishing the draft from here switches it on.
+	if err := s.SetOwnedSecret("alice", "cal", "alice:pw"); err != nil {
+		t.Fatal(err)
+	}
+	if _, enabled, has := s.CredentialStatusOwned("alice", "cal"); !enabled || !has {
+		t.Errorf("a draft given its key should be live: enabled=%v has=%v", enabled, has)
+	}
+
+	// Clearing removes only the key; the credential stays configured.
+	if err := s.SetOwnedSecret("alice", "github", ""); err != nil {
+		t.Fatal(err)
+	}
+	if exists, _, has := s.CredentialStatusOwned("alice", "github"); !exists || has {
+		t.Errorf("clearing should keep the credential and drop its key: exists=%v has=%v", exists, has)
+	}
+
+	if err := s.SetOwnedSecret("alice", "weather", "x"); err == nil {
+		t.Error("a public API should refuse a key")
+	}
+	if err := s.SetOwnedSecret("bob", "github", "x"); err == nil {
+		t.Error("bob must not reach alice's credential")
+	}
+}

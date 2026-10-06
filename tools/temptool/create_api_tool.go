@@ -112,7 +112,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	// this keeps create-time validation consistent with it.
 	cr, ok := Secure().Resolve(credName, sess.Username)
 	if !ok {
-		return "", fmt.Errorf("credential %q is not registered. Register it in Extensions > API credentials (or Admin > APIs for a shared one), then enable it", credName)
+		return "", fmt.Errorf("credential %q is not registered. Register it in Extensions > APIs (or Admin > APIs for a shared one), then enable it", credName)
 	}
 	// A secured credential auto-binds to any tool that declares it (api-mode
 	// dispatches server-side; secret never exposed) — no approval step, access

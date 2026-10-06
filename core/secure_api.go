@@ -1070,7 +1070,7 @@ func (s *SecureAPI) workingGlobalBehindDraft(own SecureCredential, user, name st
 		return SecureCredential{}, false
 	}
 	if _, seen := shadowNoted.LoadOrStore(user+"\x00"+name, true); !seen {
-		Log("[secure_api] %s has an unfinished personal credential %q with no key; using the deployment's working %q instead (delete the personal one under Extensions > API credentials)", user, name, name)
+		Log("[secure_api] %s has an unfinished personal credential %q with no key; using the deployment's working %q instead (delete the personal one under Extensions > APIs)", user, name, name)
 	}
 	return g, true
 }
@@ -1118,6 +1118,74 @@ func (s *SecureAPI) PerUserConnectionsFor(user string) []PerUserConnection {
 		})
 	}
 	return out
+}
+
+// A credential has two halves, and the Extensions page keeps them apart: its
+// CONFIGURATION (what the API is, how the key attaches, which agents may reach
+// it, who it is lent to) lives under API credentials, and its KEY lives under
+// Connected accounts beside every other key and sign-in the user holds. These
+// two methods are the Connected-accounts side of a user's OWN credentials; the
+// deployment's per-user ones go through PerUserConnectionsFor and
+// SaveUserSecret.
+
+// ConnKindOwn marks a PerUserConnection that is one of the user's own
+// credentials. A user-owned and a deployment credential may share a name (they
+// live in different namespaces), so the panel sends the kind back with a save
+// and the handler routes on it.
+const ConnKindOwn = "own"
+
+// OwnConnectionsFor lists a user's own credentials that take a key, each with
+// whether one is stored. A no-auth credential has nothing to connect and is
+// left out.
+func (s *SecureAPI) OwnConnectionsFor(user string) []PerUserConnection {
+	var out []PerUserConnection
+	for _, c := range s.ListUser(user) {
+		if c.Type == SecureCredNone {
+			continue
+		}
+		_, _, has := s.CredentialStatusOwned(user, c.Name)
+		out = append(out, PerUserConnection{
+			Name:        c.Name,
+			Description: c.Description,
+			Connected:   has,
+			Kind:        ConnKindOwn,
+			Secured:     c.Secured,
+		})
+	}
+	return out
+}
+
+// SetOwnedSecret sets the key on one of the user's own credentials, or clears
+// it when secret is blank, leaving the configuration alone. Saving a key onto
+// an unfinished draft (disabled, no key yet) also switches it on, the same as
+// finishing it from the edit form does: otherwise the key saves and the
+// credential stays silently off.
+func (s *SecureAPI) SetOwnedSecret(owner, name, secret string) error {
+	if !s.ready() {
+		return fmt.Errorf("secure-api store not initialized (AuthDB unset)")
+	}
+	c, ok := s.LoadUser(owner, name)
+	if !ok {
+		return fmt.Errorf("no such credential")
+	}
+	if c.Type == SecureCredNone {
+		return fmt.Errorf("%s is a public API and takes no key", name)
+	}
+	c.Owner = owner
+	if strings.TrimSpace(secret) == "" {
+		s.mu.Lock()
+		s.db.Unset(secureAPITable, secureCredSecretKey(credStoreKey(owner, name)))
+		s.mu.Unlock()
+		return nil
+	}
+	_, wasEnabled, hadSecret := s.CredentialStatusOwned(owner, name)
+	if err := s.Save(c, secret); err != nil {
+		return err
+	}
+	if !wasEnabled && !hadSecret {
+		return s.SetDisabledOwned(owner, name, false)
+	}
+	return nil
 }
 
 // ListWithPending is List() plus the computed "needs secret" flag on each
@@ -1701,7 +1769,7 @@ func (s *SecureAPI) NotReady(owner, name string) string {
 	}
 	if _, _, hasSecret := s.CredentialStatusOwned(owner, name); !hasSecret {
 		if c.Owner != "" {
-			return fmt.Sprintf("its credential %q has no key yet (the user sets it under Extensions > API credentials)", c.Name)
+			return fmt.Sprintf("its credential %q has no key yet (the user sets it under Extensions > Connected accounts)", c.Name)
 		}
 		return fmt.Sprintf("its credential %q has no key yet (an administrator sets it under Admin > Extensions > API Credentials)", c.Name)
 	}
@@ -3057,10 +3125,10 @@ func (s *SecureAPI) autoRouteOwn(rawURL, user string) (string, error) {
 		name := covering[0]
 		_, enabled, hasSecret := s.CredentialStatusOwned(user, name)
 		if !enabled {
-			return "", fmt.Errorf("this host is covered by your credential %q, but it's DISABLED: fetch_url will not send unauthenticated to a credential-covered host. Enable it in Extensions > API credentials, then retry", name)
+			return "", fmt.Errorf("this host is covered by your credential %q, but it's DISABLED: fetch_url will not send unauthenticated to a credential-covered host. Enable it in Extensions > APIs, then retry", name)
 		}
 		if !hasSecret {
-			return "", fmt.Errorf("this host is covered by your credential %q, but no secret is set: paste the key in Extensions > API credentials, then retry. fetch_url will not send unauthenticated to a credential-covered host", name)
+			return "", fmt.Errorf("this host is covered by your credential %q, but no secret is set: paste the key in Extensions > Connected accounts, then retry. fetch_url will not send unauthenticated to a credential-covered host", name)
 		}
 		return name, nil
 	}

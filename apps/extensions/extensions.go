@@ -1578,6 +1578,24 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 // admin credential form, trimmed to the simple key-based types (no OAuth2, which
 // stays admin-managed). Type-specific inputs collapse via ShowWhen; the secret is
 // a password that stays blank on edit (leaving it blank keeps the stored value).
+// credentialEditFields is the edit form: the configuration only. A credential's
+// key is changed or removed under Connected accounts, beside every other key
+// and sign-in the user holds, so the edit form names where it went instead of
+// offering a second door to it. The add form keeps the key field, so setting an
+// API up is still one step.
+func credentialEditFields() []ui.FormField {
+	var out []ui.FormField
+	for _, f := range credentialFormFields() {
+		if f.Field == "secret" {
+			out = append(out, ui.FormField{Type: "header", Label: "Key", ShowWhen: f.ShowWhen,
+				Help: "Change or remove this API's key under Connected accounts."})
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 func credentialFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Label: "Name", Placeholder: "github_api", Help: "snake_case. Becomes fetch_url_<name> for your agents. Re-using a name updates that credential."},
@@ -1713,689 +1731,706 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	}
 	sections := []ui.Section{
 		{
-			Title:    "API credentials",
-			Wide:     true,
-			Subtitle: "API keys you own and manage yourself.",
-			Detail: "They live in your namespace: no other user can reach them, and they never appear on the admin page." +
-				"By default every one of your agents gets a fetch_url_<name> tool for each; turn on \"Only tools that declare it\" to narrow a credential to the tools you build for it. " +
-				"Secrets are stored encrypted and never shown to the assistant.",
+			Title: "APIs",
+			Wide:  true,
 			Body: ui.Stack{Children: []ui.Component{
-				ui.Table{
-					Source: "api/credentials",
-					RowKey: "name",
-					Columns: []ui.Col{
-						{Field: "name", Flex: 1},
-						{Field: "type", Mute: true},
-						{Field: "base_url", Label: "Base URL", Mute: true, Flex: 2},
-						// Which credentials are open to every agent is the fact
-						// this page exists to let someone control, so it belongs
-						// in the list rather than one edit form at a time.
-						{Field: "secured", Label: "Reach", Type: "badge", Badges: []ui.BadgeMapping{
-							{Value: true, Label: "Tools only", Color: "success"},
-							{Value: false, Label: "All my agents", Color: "warning"},
-						}},
-						{Field: "lending_label", Label: "Lending", Mute: true},
-						{Field: "shared_summary", Label: "Shared", Mute: true},
-						{Field: "handover_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-							{Value: true, Label: "Handover pending", Color: "warning"},
-						}},
-						// A draft never finished: its tools fail until the key
-						// is set, so the list says so rather than "Active".
-						{Field: "needs_key", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-							{Value: true, Label: "Needs its key", Color: "warning"},
-						}},
-						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
-							{Value: true, Label: "Disabled", Color: "danger"},
-							{Value: false, Label: "Active", Color: "success"},
-						}},
-					},
-					RowActions: []ui.RowAction{
-						ui.Expand("Edit", ui.FormPanel{
-							Source:      "api/credentials?name={name}",
-							PostURL:     "api/credentials",
-							SubmitLabel: "Save changes",
-							Fields:      credentialFormFields(),
-						}),
-						// Mute/unmute without editing — a disabled credential drops
-						// out of the agent tool catalog until re-enabled.
-						{Type: "button", Label: "Disable", Method: "POST",
-							PostTo:     "api/credentials?action=disable&name={name}",
-							HideIf:     "disabled",
-							Optimistic: true},
-						{Type: "button", Label: "Enable", Method: "POST",
-							PostTo:     "api/credentials?action=enable&name={name}",
-							OnlyIf:     "disabled",
-							Optimistic: true},
-						// Two grants, two pickers, because the risk is not the
-						// same on both sides. Lending a key for reads hands
-						// somebody data they could have asked you for. Lending
-						// one that writes means the page, the ticket and the
-						// comment all say YOU did it, and nothing downstream can
-						// tell otherwise — so it is a separate decision, made
-						// deliberately, and not a checkbox on the first one.
-						// The other half of lending a key: what went out through
-						// it, and who sent it. An owner answerable for calls made
-						// under their name needs the one record that tells the
-						// two apart.
-						ui.Expand("Recent calls", ui.Table{
-							Source: "api/credentials?audit={name}",
-							RowKey: "when",
+				ui.Subsection{
+					Title:    "Your APIs",
+					Subtitle: "The APIs you set up yourself: what each one is and which of your agents may use it. Its key lives under Connected accounts.",
+					Detail: "They live in your namespace: no other user can reach them, and they never appear on the admin page. " +
+						"By default every one of your agents gets a fetch_url_<name> tool for each; turn on \"Only tools that declare it\" to narrow a credential to the tools you build for it. " +
+						"You can paste a key when you add one; after that, change or remove it under Connected accounts. A credential marked \"Needs its key\" is waiting for one there. " +
+						"Keys are stored encrypted and never shown to the assistant.",
+					Body: ui.Stack{Children: []ui.Component{
+						ui.Table{
+							Source: "api/credentials",
+							RowKey: "name",
 							Columns: []ui.Col{
-								{Field: "when", Label: "When", Flex: 1},
-								{Field: "who", Label: "Who", Flex: 1},
-								{Field: "method", Label: "Method", Mute: true},
-								{Field: "url", Label: "URL", Flex: 3, Mute: true},
-								{Field: "outcome", Label: "Outcome", Flex: 1},
+								{Field: "name", Flex: 1},
+								{Field: "type", Mute: true},
+								{Field: "base_url", Label: "Base URL", Mute: true, Flex: 2},
+								// Which credentials are open to every agent is the fact
+								// this page exists to let someone control, so it belongs
+								// in the list rather than one edit form at a time.
+								{Field: "secured", Label: "Reach", Type: "badge", Badges: []ui.BadgeMapping{
+									{Value: true, Label: "Tools only", Color: "success"},
+									{Value: false, Label: "All my agents", Color: "warning"},
+								}},
+								{Field: "lending_label", Label: "Lending", Mute: true},
+								{Field: "shared_summary", Label: "Shared", Mute: true},
+								{Field: "handover_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+									{Value: true, Label: "Handover pending", Color: "warning"},
+								}},
+								// A draft never finished: its tools fail until the key
+								// is set, so the list says so rather than "Active".
+								{Field: "needs_key", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+									{Value: true, Label: "Needs its key", Color: "warning"},
+								}},
+								{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
+									{Value: true, Label: "Disabled", Color: "danger"},
+									{Value: false, Label: "Active", Color: "success"},
+								}},
 							},
-							EmptyText: "Nothing has been sent through this credential yet.",
-						}),
-						// Each share action shows only where the lending policy
-						// allows it: reads unless it is Nobody, writes only for
-						// Readers and writers (or not decided).
-						ui.ExpandIf("Share for reads", "", "_lend_none", ui.ACLPicker(ui.ACLPickerConfig{
-							OptionsSource: "api/user-candidates",
-							RecordSource:  "api/credentials?name={name}",
-							Field:         "shared_read_only",
-							PostTo:        "api/credentials?action=share&name={name}",
-							Method:        "POST",
-							Noun:          "user",
-							Intro: "They can read through your key: GET and HEAD, nothing else. " +
-								"Your own use of it is unchanged. Every call is logged with their name against it.",
-							EmptyText:  "No other users to share with yet.",
-							Invalidate: []string{"api/credentials"},
-						})),
-						ui.ExpandIf("Share for writes", "_lend_write", "", ui.ACLPicker(ui.ACLPickerConfig{
-							OptionsSource: "api/user-candidates",
-							RecordSource:  "api/credentials?name={name}",
-							Field:         "shared_read_write",
-							PostTo:        "api/credentials?action=share&name={name}",
-							Method:        "POST",
-							Noun:          "user",
-							Intro: "They can write through your key, and what they write arrives as YOU: " +
-								"the page says you edited it, the ticket says you commented. " +
-								"The ledger records who actually made each call, which is the only place the two can be told apart. Share this with people you would let post under your name.",
-							EmptyText:  "No other users to share with yet.",
-							Invalidate: []string{"api/credentials"},
-						})),
-						// Handing it over is a different ask from lending it, and
-						// the form says so before the ask rather than after. Sharing
-						// widens who may use something that stays yours; this ends
-						// the ownership, and there is no way back from it that is
-						// the former owner's to take.
-						ui.ModalActionIf("Hand to the deployment", "can_hand_over", "", ui.FormPanel{
-							SubmitLabel: "Ask an admin",
-							PostURL:     "api/promotions?kind=credential&name={name}",
-							Fields: []ui.FormField{
-								{Type: "header", Label: "This stops being your credential",
-									Help: "It becomes the deployment's, and taking it back is not yours to do.",
-									Detail: "Sharing widens who may use a key that stays yours. This ends the ownership: the secret moves into the deployment's namespace and the credential lands SECURED, which means it has no user list at all — it is reachable only through the tools bound to it, and you reach it the same way everybody else does.\n\n" +
-										"That is what lets a tuned agent be handed over as a resource rather than as a copy somebody has to reassemble: the key underneath belongs to the work instead of to a person.\n\n" +
-										"The tools that already dispatch through it become its bindings. A tool that is still yours alone stays yours alone, so share each one from Tools for your colleagues to reach the key through it. Any tool that took the raw key into a script stops working, because a secured credential never hands the secret out.\n\n" +
-										"Anyone you lent this key to loses their lend, and an admin has to agree before any of it happens."},
-								{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
-									Placeholder: "What is this key for, and who needs to reach it?"},
+							RowActions: []ui.RowAction{
+								ui.Expand("Edit", ui.FormPanel{
+									Source:      "api/credentials?name={name}",
+									PostURL:     "api/credentials",
+									SubmitLabel: "Save changes",
+									Fields:      credentialEditFields(),
+								}),
+								// Mute/unmute without editing — a disabled credential drops
+								// out of the agent tool catalog until re-enabled.
+								{Type: "button", Label: "Disable", Method: "POST",
+									PostTo:     "api/credentials?action=disable&name={name}",
+									HideIf:     "disabled",
+									Optimistic: true},
+								{Type: "button", Label: "Enable", Method: "POST",
+									PostTo:     "api/credentials?action=enable&name={name}",
+									OnlyIf:     "disabled",
+									Optimistic: true},
+								// Two grants, two pickers, because the risk is not the
+								// same on both sides. Lending a key for reads hands
+								// somebody data they could have asked you for. Lending
+								// one that writes means the page, the ticket and the
+								// comment all say YOU did it, and nothing downstream can
+								// tell otherwise — so it is a separate decision, made
+								// deliberately, and not a checkbox on the first one.
+								// The other half of lending a key: what went out through
+								// it, and who sent it. An owner answerable for calls made
+								// under their name needs the one record that tells the
+								// two apart.
+								ui.Expand("Recent calls", ui.Table{
+									Source: "api/credentials?audit={name}",
+									RowKey: "when",
+									Columns: []ui.Col{
+										{Field: "when", Label: "When", Flex: 1},
+										{Field: "who", Label: "Who", Flex: 1},
+										{Field: "method", Label: "Method", Mute: true},
+										{Field: "url", Label: "URL", Flex: 3, Mute: true},
+										{Field: "outcome", Label: "Outcome", Flex: 1},
+									},
+									EmptyText: "Nothing has been sent through this credential yet.",
+								}),
+								// Each share action shows only where the lending policy
+								// allows it: reads unless it is Nobody, writes only for
+								// Readers and writers (or not decided).
+								ui.ExpandIf("Share for reads", "", "_lend_none", ui.ACLPicker(ui.ACLPickerConfig{
+									OptionsSource: "api/user-candidates",
+									RecordSource:  "api/credentials?name={name}",
+									Field:         "shared_read_only",
+									PostTo:        "api/credentials?action=share&name={name}",
+									Method:        "POST",
+									Noun:          "user",
+									Intro: "They can read through your key: GET and HEAD, nothing else. " +
+										"Your own use of it is unchanged. Every call is logged with their name against it.",
+									EmptyText:  "No other users to share with yet.",
+									Invalidate: []string{"api/credentials"},
+								})),
+								ui.ExpandIf("Share for writes", "_lend_write", "", ui.ACLPicker(ui.ACLPickerConfig{
+									OptionsSource: "api/user-candidates",
+									RecordSource:  "api/credentials?name={name}",
+									Field:         "shared_read_write",
+									PostTo:        "api/credentials?action=share&name={name}",
+									Method:        "POST",
+									Noun:          "user",
+									Intro: "They can write through your key, and what they write arrives as YOU: " +
+										"the page says you edited it, the ticket says you commented. " +
+										"The ledger records who actually made each call, which is the only place the two can be told apart. Share this with people you would let post under your name.",
+									EmptyText:  "No other users to share with yet.",
+									Invalidate: []string{"api/credentials"},
+								})),
+								// Handing it over is a different ask from lending it, and
+								// the form says so before the ask rather than after. Sharing
+								// widens who may use something that stays yours; this ends
+								// the ownership, and there is no way back from it that is
+								// the former owner's to take.
+								ui.ModalActionIf("Hand to the deployment", "can_hand_over", "", ui.FormPanel{
+									SubmitLabel: "Ask an admin",
+									PostURL:     "api/promotions?kind=credential&name={name}",
+									Fields: []ui.FormField{
+										{Type: "header", Label: "This stops being your credential",
+											Help: "It becomes the deployment's, and taking it back is not yours to do.",
+											Detail: "Sharing widens who may use a key that stays yours. This ends the ownership: the secret moves into the deployment's namespace and the credential lands SECURED, which means it has no user list at all — it is reachable only through the tools bound to it, and you reach it the same way everybody else does.\n\n" +
+												"That is what lets a tuned agent be handed over as a resource rather than as a copy somebody has to reassemble: the key underneath belongs to the work instead of to a person.\n\n" +
+												"The tools that already dispatch through it become its bindings. A tool that is still yours alone stays yours alone, so share each one from Tools for your colleagues to reach the key through it. Any tool that took the raw key into a script stops working, because a secured credential never hands the secret out.\n\n" +
+												"Anyone you lent this key to loses their lend, and an admin has to agree before any of it happens."},
+										{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
+											Placeholder: "What is this key for, and who needs to reach it?"},
+									},
+									Invalidate: []string{"api/credentials"},
+								}),
+								{Type: "button", Label: "Delete", Method: "DELETE",
+									PostTo:     "api/credentials?name={name}",
+									Variant:    "danger",
+									Confirm:    "Delete this credential? Agents and tools using it stop working, and anyone you shared it with loses it.",
+									Optimistic: true},
 							},
-							Invalidate: []string{"api/credentials"},
-						}),
-						{Type: "button", Label: "Delete", Method: "DELETE",
-							PostTo:     "api/credentials?name={name}",
-							Variant:    "danger",
-							Confirm:    "Delete this credential? Agents and tools using it stop working, and anyone you shared it with loses it.",
-							Optimistic: true},
-					},
-					EmptyText: "No credentials yet. Add one to let your agents call an API as you.",
+							EmptyText: "No credentials yet. Add one to let your agents call an API as you.",
+						},
+						ui.ModalButton{
+							Label:    "Add credential",
+							Title:    "Add API credential",
+							Subtitle: "Pick a type. Bearer / header / query / basic attach a static secret; \"No auth\" is for a public API.",
+							Variant:  "primary",
+							Width:    "560px",
+							Body: ui.FormPanel{
+								PostURL:     "api/credentials",
+								SubmitLabel: "Create credential",
+								Fields:      credentialFormFields(),
+							},
+						},
+					}},
 				},
-				ui.ModalButton{
-					Label:    "Add credential",
-					Title:    "Add API credential",
-					Subtitle: "Pick a type. Bearer / header / query / basic attach a static secret; \"No auth\" is for a public API.",
-					Variant:  "primary",
-					Width:    "560px",
-					Body: ui.FormPanel{
-						PostURL:     "api/credentials",
-						SubmitLabel: "Create credential",
-						Fields:      credentialFormFields(),
+				ui.Subsection{
+					Title:    "Shared with you",
+					Subtitle: "Keys other people lent you.",
+					Detail: "You never see the secret. Each one appears to your agents as a fetch_url_<name> tool, and a key of your own with the same name wins over a lent one. " +
+						"Reads-only means GET and HEAD; anything else is refused and the refusal is recorded. " +
+						"Where the grant includes writes, what you send arrives at the far end as the person who lent it, under their name.",
+					Body: ui.Table{
+						Source: "api/credentials?lent=1",
+						RowKey: "name",
+						Columns: []ui.Col{
+							{Field: "name", Flex: 1},
+							{Field: "owner", Label: "Lent by"},
+							{Field: "grant", Label: "You may", Flex: 1},
+							{Field: "tool", Label: "Tool", Mute: true, Flex: 1},
+							{Field: "base_url", Label: "Base URL", Mute: true, Flex: 2},
+						},
+						EmptyText: "Nobody has shared a credential with you.",
 					},
 				},
 			}},
-		},
-		{
-			Title:    "Shared with you",
-			Wide:     true,
-			Subtitle: "Keys other people lent you.",
-			Detail: "You never see the secret. Each one appears to your agents as a fetch_url_<name> tool, and a key of your own with the same name wins over a lent one. " +
-				"Reads-only means GET and HEAD; anything else is refused and the refusal is recorded. " +
-				"Where the grant includes writes, what you send arrives at the far end as the person who lent it, under their name.",
-			Body: ui.Table{
-				Source: "api/credentials?lent=1",
-				RowKey: "name",
-				Columns: []ui.Col{
-					{Field: "name", Flex: 1},
-					{Field: "owner", Label: "Lent by"},
-					{Field: "grant", Label: "You may", Flex: 1},
-					{Field: "tool", Label: "Tool", Mute: true, Flex: 1},
-					{Field: "base_url", Label: "Base URL", Mute: true, Flex: 2},
-				},
-				EmptyText: "Nobody has shared a credential with you.",
-			},
 		},
 		{
 			Title:    "Connected accounts",
 			Wide:     true,
-			Subtitle: "Integrations you authorize with your own account, reading or writing as you.",
-			Detail:   "Your key is stored encrypted and is never shown to the assistant.",
+			Subtitle: "Every key and sign-in your integrations use: connect, replace a key, or reconnect here.",
+			Detail: "Two kinds sit here. Your own APIs, set up under APIs, show the key each one uses. " +
+				"Integrations your admin offers you connect with your own account, reading or writing as you. " +
+				"Keys are stored encrypted and never shown to the assistant.",
 			Body:     ui.Card{HTML: connectionsHTML},
 		},
 		{
-			Title:    "Tools",
-			Subtitle: "Everything built for you, grouped by category.",
-			Detail:   "The category is the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table: open one and tick its tools. Tools that have not claimed one sit under \"Uncategorized\".\n\nThe Agents column says who can use each tool, where blank means your global pool and every agent, and Access is where you change that.\n\nA tool of yours in the deployment catalog runs for everyone else as the version an administrator approved. Your edits change your own copy; Request update asks for them to become the next version.\n\nTools the assistant authored but nobody has vouched for are badged Unconfirmed, and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
-			// Tools first, then the categories that head them. Categories used to
-			// be their own rail section, which put the fix one navigation away
-			// from the problem: you read "Uncategorized" in this table and had to
-			// leave the page to do anything about it. A category exists only to be
-			// a heading in the list above it, so it belongs under that list.
-			Body: ui.Stack{Children: []ui.Component{importToolbar("Bring in tools or skills somebody exported"), ui.Table{
-				Source:            "api/tools",
-				RowKey:            "key",
-				Search:            true,
-				SearchPlaceholder: "Filter tools by name, agent, category…",
-				// Rows arrive pre-ordered and grouped by CATEGORY (see the
-				// regroup pass in the GET handler), with the lifecycle buckets —
-				// legacy session drafts, then orphans — sorted last. "What is
-				// this tool for?" is how a forty-row list is actually read;
-				// "which agent has it?" is the Agents column. Grouping follows
-				// record order, so the server owns it.
-				GroupBy: "group",
-				Columns: []ui.Col{
-					// Tool names run long (create_apple_calendar_event) and this row
-					// carries several status badges, so give the name the largest
-					// share and keep the mute description narrow — otherwise the name
-					// ellipsizes.
-					{Field: "name", Flex: 3},
-					{Field: "category", Label: "Category", Mute: true},
-					{Field: "mode", Mute: true},
-					{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "In the catalog", Color: "info"},
-					}},
-					// Which version everybody else runs, and whether this copy
-					// has moved on from it.
-					{Field: "release", Label: "", Mute: true, Flex: 1},
-					{Field: "shared_with", Label: "", Mute: true, Flex: 1},
-					{Field: "requested", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Publish requested", Color: "warning"},
-					}},
-					{Field: "update_requested", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Update requested", Color: "warning"},
-					}},
-					{Field: "conflict", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Name conflict", Color: "danger"},
-					}},
-					{Field: "shadows", Label: "", Mute: true, Flex: 1},
-					{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "⚠ missing", Color: "danger"},
-					}},
-					{Field: "locked", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "🔒 Locked", Color: "info"},
-					}},
-					{Field: "disabled", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Disabled", Color: "danger"},
-					}},
-					{Field: "bound_only", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Bound only", Color: "info"},
-					}},
-					{Field: "builder_only", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Builder-only", Color: "warning"},
-					}},
-					{Field: "no_unattended", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Never unattended", Color: "info"},
-					}},
-					// Session drafts are the one row type here that is NOT kept —
-					// badge it plainly rather than letting it read as pool membership.
-					{Field: "session", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Session draft", Color: "warning"},
-					}},
-					{Field: "agent_tool", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "On agent", Color: "info"},
-					}},
-					{Field: "orphan", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Orphaned", Color: "danger"},
-					}},
-					{Field: "trial", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Unconfirmed", Color: "warning"},
-					}},
-					// Which agents a scoped tool is on. Blank for pool tools (every
-					// agent) and orphans (none) — the group heading already says so.
-					{Field: "agent_list", Label: "Agents", Mute: true, Flex: 1},
-					{Field: "description", Mute: true, Flex: 1},
-				},
-				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Export", Method: "client",
-						PostTo: "export_tool", OnlyIf: "exportable"},
-					// View the full tool definition (read parity with the admin's
-					// tool RecordView, scoped to the user's own pool). Source fetches
-					// the single record so heavy fields (script body, command
-					// template, actions) don't bloat the list payload.
-					ui.ExpandIf("View", "", "", ui.RecordView{
-						Source: "api/tools?name={name}",
-						Pairs: []ui.DisplayPair{
-							{Label: "Name", Field: "name", Mono: true},
-							{Label: "Category", Field: "category"},
-							{Label: "Description", Field: "description"},
-							{Label: "Mode", Field: "mode"},
-							{Label: "Method", Field: "method", Mono: true},
-							{Label: "Command / URL template", Field: "command_template", Mono: true, Block: true},
-							{Label: "Body template", Field: "body_template", Mono: true, Block: true},
-							{Label: "Script name", Field: "script_name", Mono: true},
-							{Label: "Script body", Field: "script_body", Block: true},
-							{Label: "Credential", Field: "credential", Mono: true},
-							{Label: "Response pipe", Field: "response_pipe", Mono: true, Block: true},
-							// Toolbox-mode tools bundle several endpoints under one
-							// name — list each sub-action. Empty for non-toolbox tools.
-							{Label: "Actions", Field: "actions", Items: []ui.DisplayPair{
-								{Field: "name", Mono: true},
-								{Label: "method", Field: "method", Mono: true},
-								{Label: "url", Field: "url_template", Mono: true},
-								{Label: "desc", Field: "description"},
+			Title: "Tools",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.Subsection{
+					Title:    "Your tools",
+					Subtitle: "Everything built for you, grouped by category.",
+					Detail:   "The category is the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table: open one and tick its tools. Tools that have not claimed one sit under \"Uncategorized\".\n\nThe Agents column says who can use each tool, where blank means your global pool and every agent, and Access is where you change that.\n\nA tool of yours in the deployment catalog runs for everyone else as the version an administrator approved. Your edits change your own copy; Request update asks for them to become the next version.\n\nTools the assistant authored but nobody has vouched for are badged Unconfirmed, and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
+					// Tools first, then the categories that head them. Categories used to
+					// be their own rail section, which put the fix one navigation away
+					// from the problem: you read "Uncategorized" in this table and had to
+					// leave the page to do anything about it. A category exists only to be
+					// a heading in the list above it, so it belongs under that list.
+					Body: ui.Stack{Children: []ui.Component{importToolbar("Bring in tools or skills somebody exported"), ui.Table{
+						Source:            "api/tools",
+						RowKey:            "key",
+						Search:            true,
+						SearchPlaceholder: "Filter tools by name, agent, category…",
+						// Rows arrive pre-ordered and grouped by CATEGORY (see the
+						// regroup pass in the GET handler), with the lifecycle buckets —
+						// legacy session drafts, then orphans — sorted last. "What is
+						// this tool for?" is how a forty-row list is actually read;
+						// "which agent has it?" is the Agents column. Grouping follows
+						// record order, so the server owns it.
+						GroupBy: "group",
+						Columns: []ui.Col{
+							// Tool names run long (create_apple_calendar_event) and this row
+							// carries several status badges, so give the name the largest
+							// share and keep the mute description narrow — otherwise the name
+							// ellipsizes.
+							{Field: "name", Flex: 3},
+							{Field: "category", Label: "Category", Mute: true},
+							{Field: "mode", Mute: true},
+							{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "In the catalog", Color: "info"},
 							}},
+							// Which version everybody else runs, and whether this copy
+							// has moved on from it.
+							{Field: "release", Label: "", Mute: true, Flex: 1},
+							{Field: "shared_with", Label: "", Mute: true, Flex: 1},
+							{Field: "requested", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Publish requested", Color: "warning"},
+							}},
+							{Field: "update_requested", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Update requested", Color: "warning"},
+							}},
+							{Field: "conflict", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Name conflict", Color: "danger"},
+							}},
+							{Field: "shadows", Label: "", Mute: true, Flex: 1},
+							{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "⚠ missing", Color: "danger"},
+							}},
+							{Field: "locked", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "🔒 Locked", Color: "info"},
+							}},
+							{Field: "disabled", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Disabled", Color: "danger"},
+							}},
+							{Field: "bound_only", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Bound only", Color: "info"},
+							}},
+							{Field: "builder_only", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Builder-only", Color: "warning"},
+							}},
+							{Field: "no_unattended", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Never unattended", Color: "info"},
+							}},
+							// Session drafts are the one row type here that is NOT kept —
+							// badge it plainly rather than letting it read as pool membership.
+							{Field: "session", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Session draft", Color: "warning"},
+							}},
+							{Field: "agent_tool", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "On agent", Color: "info"},
+							}},
+							{Field: "orphan", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Orphaned", Color: "danger"},
+							}},
+							{Field: "trial", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Unconfirmed", Color: "warning"},
+							}},
+							// Which agents a scoped tool is on. Blank for pool tools (every
+							// agent) and orphans (none) — the group heading already says so.
+							{Field: "agent_list", Label: "Agents", Mute: true, Flex: 1},
+							{Field: "description", Mute: true, Flex: 1},
 						},
-					}),
-					// (Set category moved out of the rows: the Categories section's
-					// category-first picker is the assignment surface — one list to
-					// tick beats opening forty rows, and two surfaces for one label
-					// invited the "Calendar" vs "calendars" split. The set_category
-					// API action stays for Builder and compatibility.)
-					// Request to publish — ask an admin to Share this tool to the
-					// deployment-wide catalog. Only when it isn't already shared and
-					// has no request pending (can_request).
-					// The owner's own rung, beside the request for the wider one.
-					// Handing somebody a tool is yours to do; putting it in the
-					// deployment catalog is an admin's.
-					ui.ExpandIf("Share with users", "pool", "", ui.ACLPicker(ui.ACLPickerConfig{
-						OptionsSource: "api/user-candidates",
-						RecordSource:  "api/tools?share={name}",
-						Field:         "shared_with",
-						PostTo:        "api/tools?action=share&name={name}",
-						Method:        "POST",
-						Noun:          "user",
-						Intro: "They can take this tool into their own catalog, and it runs in THEIR session against their own credentials. " +
-							"Nothing loads for their agents until they take it: a share is an offer, not a push.",
-						EmptyText:  "No other users to share with yet.",
-						Invalidate: []string{"api/tools"},
-					})),
-					ui.ModalActionIf("Request to publish", "can_request", "", ui.FormPanel{
-						SubmitLabel: "Send request",
-						PostURL:     "api/promotions?kind=tool&name={name}",
-						Fields: []ui.FormField{
-							{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
-								Placeholder: "Why should this tool be in the shared catalog?"},
+						RowActions: []ui.RowAction{
+							{Type: "button", Label: "Export", Method: "client",
+								PostTo: "export_tool", OnlyIf: "exportable"},
+							// View the full tool definition (read parity with the admin's
+							// tool RecordView, scoped to the user's own pool). Source fetches
+							// the single record so heavy fields (script body, command
+							// template, actions) don't bloat the list payload.
+							ui.ExpandIf("View", "", "", ui.RecordView{
+								Source: "api/tools?name={name}",
+								Pairs: []ui.DisplayPair{
+									{Label: "Name", Field: "name", Mono: true},
+									{Label: "Category", Field: "category"},
+									{Label: "Description", Field: "description"},
+									{Label: "Mode", Field: "mode"},
+									{Label: "Method", Field: "method", Mono: true},
+									{Label: "Command / URL template", Field: "command_template", Mono: true, Block: true},
+									{Label: "Body template", Field: "body_template", Mono: true, Block: true},
+									{Label: "Script name", Field: "script_name", Mono: true},
+									{Label: "Script body", Field: "script_body", Block: true},
+									{Label: "Credential", Field: "credential", Mono: true},
+									{Label: "Response pipe", Field: "response_pipe", Mono: true, Block: true},
+									// Toolbox-mode tools bundle several endpoints under one
+									// name — list each sub-action. Empty for non-toolbox tools.
+									{Label: "Actions", Field: "actions", Items: []ui.DisplayPair{
+										{Field: "name", Mono: true},
+										{Label: "method", Field: "method", Mono: true},
+										{Label: "url", Field: "url_template", Mono: true},
+										{Label: "desc", Field: "description"},
+									}},
+								},
+							}),
+							// (Set category moved out of the rows: the Categories section's
+							// category-first picker is the assignment surface — one list to
+							// tick beats opening forty rows, and two surfaces for one label
+							// invited the "Calendar" vs "calendars" split. The set_category
+							// API action stays for Builder and compatibility.)
+							// Request to publish — ask an admin to Share this tool to the
+							// deployment-wide catalog. Only when it isn't already shared and
+							// has no request pending (can_request).
+							// The owner's own rung, beside the request for the wider one.
+							// Handing somebody a tool is yours to do; putting it in the
+							// deployment catalog is an admin's.
+							ui.ExpandIf("Share with users", "pool", "", ui.ACLPicker(ui.ACLPickerConfig{
+								OptionsSource: "api/user-candidates",
+								RecordSource:  "api/tools?share={name}",
+								Field:         "shared_with",
+								PostTo:        "api/tools?action=share&name={name}",
+								Method:        "POST",
+								Noun:          "user",
+								Intro: "They can take this tool into their own catalog, and it runs in THEIR session against their own credentials. " +
+									"Nothing loads for their agents until they take it: a share is an offer, not a push.",
+								EmptyText:  "No other users to share with yet.",
+								Invalidate: []string{"api/tools"},
+							})),
+							ui.ModalActionIf("Request to publish", "can_request", "", ui.FormPanel{
+								SubmitLabel: "Send request",
+								PostURL:     "api/promotions?kind=tool&name={name}",
+								Fields: []ui.FormField{
+									{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
+										Placeholder: "Why should this tool be in the shared catalog?"},
+								},
+								Invalidate: []string{"api/tools"},
+							}),
+							// A published tool's edits reach only its owner's agents;
+							// everyone else runs the approved version. These say what
+							// changed and ask for it to become the next version, which
+							// an admin reviews against the same diff.
+							ui.ExpandIf("What changed", "differs", "", ui.RecordView{
+								Pairs: []ui.DisplayPair{
+									{Label: "Published version -> your copy", Field: "diff", Block: true},
+								},
+							}),
+							ui.ModalActionIf("Request update", "can_update", "", ui.FormPanel{
+								SubmitLabel: "Send request",
+								PostURL:     "api/promotions?kind=tool&name={name}",
+								Fields: []ui.FormField{
+									{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
+										Placeholder: "What changed, and why everyone should get it?"},
+								},
+								Invalidate: []string{"api/tools"},
+							}),
+							{Type: "button", Label: "Withdraw", Method: "POST",
+								PostTo:  "api/tools?action=withdraw&name={name}",
+								OnlyIf:  "shared",
+								Confirm: "Take this tool out of the deployment catalog? Everyone who added it stops loading it. You keep your own copy.",
+								Variant: "danger"},
+							// Session drafts: keep moves the tool into the pool (where every
+							// control above starts applying); discard throws it away. Both
+							// only appear on draft rows, and every pool-only action below is
+							// hidden from them — a draft has no pool record to lock, disable,
+							// publish or delete, so those would just fail confusingly.
+							// Access — which of the user's OWN agents can use this tool,
+							// with "All my agents" as one more chip (the user-wide pool).
+							// The same control serves a session draft: picking anything is
+							// what KEEPS it, so a draft doesn't need its own verb.
+							// Access — the pill list: "All my agents" (the shared pool every
+							// agent draws from) plus one pill per agent the user owns.
+							// Same control the admin page used to carry, now where it
+							// belongs: an admin has no business choosing which of your
+							// agents load your own tool.
+							{Type: "button", Label: "Access", Method: "client",
+								PostTo: "tool_access_pills"},
+							// Confirm — vouch for a tool the assistant authored. Only on
+							// unconfirmed rows; it clears the mark without moving the tool.
+							{Type: "button", Label: "Confirm", Method: "POST",
+								PostTo:     "api/tools?action=confirm&name={name}",
+								OnlyIf:     "trial",
+								Optimistic: true},
+							{Type: "button", Label: "Discard", Method: "POST",
+								PostTo:     "api/tools?action=drop_draft&name={name}&session_id={session_id}",
+								OnlyIf:     "session",
+								Confirm:    "Discard this draft? It disappears from the chat session that built it.",
+								Variant:    "danger",
+								Optimistic: true},
+							// Lock freezes the definition — the assistant can't modify or
+							// delete a locked tool (unlock first). Running is unaffected.
+							{Type: "button", Label: "Lock", Method: "POST",
+								PostTo: "api/tools?action=lock&name={name}", HideIf: "locked", OnlyIf: "pool"},
+							{Type: "button", Label: "Unlock", Method: "POST",
+								PostTo: "api/tools?action=unlock&name={name}", OnlyIf: "locked"},
+							// Disable hides the tool from every agent's catalog (Builder still
+							// loads it to test/fix). Enable restores it.
+							{Type: "button", Label: "Disable", Method: "POST",
+								PostTo: "api/tools?action=disable&name={name}", HideIf: "disabled", OnlyIf: "disable_ok"},
+							{Type: "button", Label: "Enable", Method: "POST",
+								PostTo: "api/tools?action=enable&name={name}", OnlyIf: "disabled"},
+							// Builder-only moved into the Access modal (a pill alongside the
+							// other access controls) — it is an access statement, and two
+							// surfaces for one flag is how toggles fight each other. The
+							// row badge stays as the at-a-glance state; the API actions
+							// stay for compatibility.
+							// Delete is hidden while locked — unlock first.
+							{Type: "button", Label: "Delete", Method: "DELETE",
+								PostTo:     "api/tools?name={name}",
+								Variant:    "danger",
+								HideIf:     "locked",
+								OnlyIf:     "deletable",
+								Confirm:    "Delete this tool? Agents using it lose it.",
+								Optimistic: true},
 						},
-						Invalidate: []string{"api/tools"},
-					}),
-					// A published tool's edits reach only its owner's agents;
-					// everyone else runs the approved version. These say what
-					// changed and ask for it to become the next version, which
-					// an admin reviews against the same diff.
-					ui.ExpandIf("What changed", "differs", "", ui.RecordView{
-						Pairs: []ui.DisplayPair{
-							{Label: "Published version -> your copy", Field: "diff", Block: true},
-						},
-					}),
-					ui.ModalActionIf("Request update", "can_update", "", ui.FormPanel{
-						SubmitLabel: "Send request",
-						PostURL:     "api/promotions?kind=tool&name={name}",
-						Fields: []ui.FormField{
-							{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
-								Placeholder: "What changed, and why everyone should get it?"},
-						},
-						Invalidate: []string{"api/tools"},
-					}),
-					{Type: "button", Label: "Withdraw", Method: "POST",
-						PostTo:  "api/tools?action=withdraw&name={name}",
-						OnlyIf:  "shared",
-						Confirm: "Take this tool out of the deployment catalog? Everyone who added it stops loading it. You keep your own copy.",
-						Variant: "danger"},
-					// Session drafts: keep moves the tool into the pool (where every
-					// control above starts applying); discard throws it away. Both
-					// only appear on draft rows, and every pool-only action below is
-					// hidden from them — a draft has no pool record to lock, disable,
-					// publish or delete, so those would just fail confusingly.
-					// Access — which of the user's OWN agents can use this tool,
-					// with "All my agents" as one more chip (the user-wide pool).
-					// The same control serves a session draft: picking anything is
-					// what KEEPS it, so a draft doesn't need its own verb.
-					// Access — the pill list: "All my agents" (the shared pool every
-					// agent draws from) plus one pill per agent the user owns.
-					// Same control the admin page used to carry, now where it
-					// belongs: an admin has no business choosing which of your
-					// agents load your own tool.
-					{Type: "button", Label: "Access", Method: "client",
-						PostTo: "tool_access_pills"},
-					// Confirm — vouch for a tool the assistant authored. Only on
-					// unconfirmed rows; it clears the mark without moving the tool.
-					{Type: "button", Label: "Confirm", Method: "POST",
-						PostTo:     "api/tools?action=confirm&name={name}",
-						OnlyIf:     "trial",
-						Optimistic: true},
-					{Type: "button", Label: "Discard", Method: "POST",
-						PostTo:     "api/tools?action=drop_draft&name={name}&session_id={session_id}",
-						OnlyIf:     "session",
-						Confirm:    "Discard this draft? It disappears from the chat session that built it.",
-						Variant:    "danger",
-						Optimistic: true},
-					// Lock freezes the definition — the assistant can't modify or
-					// delete a locked tool (unlock first). Running is unaffected.
-					{Type: "button", Label: "Lock", Method: "POST",
-						PostTo: "api/tools?action=lock&name={name}", HideIf: "locked", OnlyIf: "pool"},
-					{Type: "button", Label: "Unlock", Method: "POST",
-						PostTo: "api/tools?action=unlock&name={name}", OnlyIf: "locked"},
-					// Disable hides the tool from every agent's catalog (Builder still
-					// loads it to test/fix). Enable restores it.
-					{Type: "button", Label: "Disable", Method: "POST",
-						PostTo: "api/tools?action=disable&name={name}", HideIf: "disabled", OnlyIf: "disable_ok"},
-					{Type: "button", Label: "Enable", Method: "POST",
-						PostTo: "api/tools?action=enable&name={name}", OnlyIf: "disabled"},
-					// Builder-only moved into the Access modal (a pill alongside the
-					// other access controls) — it is an access statement, and two
-					// surfaces for one flag is how toggles fight each other. The
-					// row badge stays as the at-a-glance state; the API actions
-					// stay for compatibility.
-					// Delete is hidden while locked — unlock first.
-					{Type: "button", Label: "Delete", Method: "DELETE",
-						PostTo:     "api/tools?name={name}",
-						Variant:    "danger",
-						HideIf:     "locked",
-						OnlyIf:     "deletable",
-						Confirm:    "Delete this tool? Agents using it lose it.",
-						Optimistic: true},
-				},
-				EmptyText: "No tools yet. Ask the assistant in chat to build one for you.",
-			},
-				// Sub-heading for the categories block. Card is the escape hatch for
-				// a heading the framework doesn't model; it borrows the two section
-				// classes so this reads as a section within the section rather than
-				// a stray second table.
-				ui.Card{HTML: `<div class="ui-section-h" style="margin-top:1.6rem">Categories</div>` +
-					`<div class="ui-section-sub">The headings used above, and the same ones the tool picker and each app's tool list use. ` +
-					`Open one to tick the tools that belong in it, or start a new one and fill it in the same step. ` +
-					`A tool holds one category, so filing it here moves it out of wherever it was.</div>`},
-				ui.Table{
-					Source: "api/tool-categories",
-					RowKey: "name",
-					Columns: []ui.Col{
-						{Field: "name", Flex: 1},
-						// The members ARE the category — show the names as pills
-						// rather than a count plus a comma-joined mutter. A count
-						// column earns its place when the list is too long to show;
-						// these lists are a handful of tools, and the names answer
-						// the only question anyone brings here ("what's in it?").
-						{Field: "tools", Label: "Members", Flex: 3, Type: "pills"},
+						EmptyText: "No tools yet. Ask the assistant in chat to build one for you.",
 					},
-					RowActions: []ui.RowAction{
-						// Category-first assignment: the whole point. Picking from
-						// one list beats opening each tool and setting a label.
-						ui.Expand("Choose tools", ui.ACLPicker(ui.ACLPickerConfig{
-							OptionsSource: "api/tool-categories?options=1",
-							RecordSource:  "api/tool-categories?name={name}",
-							Field:         "tools",
-							PostTo:        "api/tool-categories?name={name}",
-							Noun:          "tool",
-							Intro:         "Tick the tools that belong under this heading. Unticking one clears its category: it does not delete anything.",
-							EmptyText:     "You have no tools yet.",
-							// Filing a tool changes the heading it sits under in the
-							// table above, which is now on screen at the same time.
-							Invalidate: []string{"api/tools", "api/tool-categories"},
-						})),
-					},
-					EmptyText: "No categories yet. Add one below and tick the tools that belong in it.",
-				},
-				ui.ModalButton{
-					Label:    "Add category",
-					Title:    "New category",
-					Subtitle: "Name it, then tick the tools that belong in it. A category exists because tools point at it: an empty one has nothing to show.",
-					Width:    "560px",
-					Body: ui.FormPanel{
-						// The name is a field of this form, so it travels in the body.
-						PostURL:     "api/tool-categories",
-						SubmitLabel: "Create category",
-						Fields: []ui.FormField{
-							{Field: "name", Type: "text", Label: "Category name",
-								Placeholder: "e.g. Calendar, Moltbook, Research",
-								Suggestions: knownToolCategories(AuthDB(), user),
-								Help:        "Reuse an existing name to add to that category, or type a new one."},
-							// Ticked, not typed: these are tools that already
-							// exist, and a name that misses files nothing under
-							// the category — which then does not appear at all,
-							// because a category exists only where tools point
-							// at it. The failure is a category that seems not to
-							// have saved.
-							{Field: "tools", Type: "checklist", Label: "Tools",
-								Options:     userToolCheckOptions(user),
-								Placeholder: "(you have no tools to file yet)",
-								Help:        "Tick what belongs under this heading. At least one.",
-								Detail:      "A category with nothing pointing at it has nothing to show. You can change the set later from Choose tools."},
+						// Sub-heading for the categories block. Card is the escape hatch for
+						// a heading the framework doesn't model; it borrows the two section
+						// classes so this reads as a section within the section rather than
+						// a stray second table.
+						ui.Card{HTML: `<div class="ui-section-h" style="margin-top:1.6rem">Categories</div>` +
+							`<div class="ui-section-sub">The headings used above, and the same ones the tool picker and each app's tool list use. ` +
+							`Open one to tick the tools that belong in it, or start a new one and fill it in the same step. ` +
+							`A tool holds one category, so filing it here moves it out of wherever it was.</div>`},
+						ui.Table{
+							Source: "api/tool-categories",
+							RowKey: "name",
+							Columns: []ui.Col{
+								{Field: "name", Flex: 1},
+								// The members ARE the category — show the names as pills
+								// rather than a count plus a comma-joined mutter. A count
+								// column earns its place when the list is too long to show;
+								// these lists are a handful of tools, and the names answer
+								// the only question anyone brings here ("what's in it?").
+								{Field: "tools", Label: "Members", Flex: 3, Type: "pills"},
+							},
+							RowActions: []ui.RowAction{
+								// Category-first assignment: the whole point. Picking from
+								// one list beats opening each tool and setting a label.
+								ui.Expand("Choose tools", ui.ACLPicker(ui.ACLPickerConfig{
+									OptionsSource: "api/tool-categories?options=1",
+									RecordSource:  "api/tool-categories?name={name}",
+									Field:         "tools",
+									PostTo:        "api/tool-categories?name={name}",
+									Noun:          "tool",
+									Intro:         "Tick the tools that belong under this heading. Unticking one clears its category: it does not delete anything.",
+									EmptyText:     "You have no tools yet.",
+									// Filing a tool changes the heading it sits under in the
+									// table above, which is now on screen at the same time.
+									Invalidate: []string{"api/tools", "api/tool-categories"},
+								})),
+							},
+							EmptyText: "No categories yet. Add one below and tick the tools that belong in it.",
 						},
-						Invalidate: []string{"api/tool-categories", "api/tools"},
+						ui.ModalButton{
+							Label:    "Add category",
+							Title:    "New category",
+							Subtitle: "Name it, then tick the tools that belong in it. A category exists because tools point at it: an empty one has nothing to show.",
+							Width:    "560px",
+							Body: ui.FormPanel{
+								// The name is a field of this form, so it travels in the body.
+								PostURL:     "api/tool-categories",
+								SubmitLabel: "Create category",
+								Fields: []ui.FormField{
+									{Field: "name", Type: "text", Label: "Category name",
+										Placeholder: "e.g. Calendar, Moltbook, Research",
+										Suggestions: knownToolCategories(AuthDB(), user),
+										Help:        "Reuse an existing name to add to that category, or type a new one."},
+									// Ticked, not typed: these are tools that already
+									// exist, and a name that misses files nothing under
+									// the category — which then does not appear at all,
+									// because a category exists only where tools point
+									// at it. The failure is a category that seems not to
+									// have saved.
+									{Field: "tools", Type: "checklist", Label: "Tools",
+										Options:     userToolCheckOptions(user),
+										Placeholder: "(you have no tools to file yet)",
+										Help:        "Tick what belongs under this heading. At least one.",
+										Detail:      "A category with nothing pointing at it has nothing to show. You can change the set later from Choose tools."},
+								},
+								Invalidate: []string{"api/tool-categories", "api/tools"},
+							},
+						},
+					}},
+				},
+				ui.Subsection{
+					Title:    "Global tools",
+					Subtitle: "Shared tools your deployment publishes.",
+					Detail: "Add the ones you want and they become available to your agents; remove any you do not use.\n\n" +
+						"A published tool runs as the version an administrator approved, and a new version reaches you when one is approved. " +
+						"A tool a colleague shared with you runs as the copy you added: when they change it, the row says an update is available, and nothing changes for you until you accept it.",
+					Body: ui.Table{
+						Source: "api/global-tools",
+						RowKey: "key",
+						Columns: []ui.Col{
+							{Field: "name", Flex: 1},
+							{Field: "mode", Mute: true},
+							{Field: "version", Label: "Version", Mute: true},
+							{Field: "adopted", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Added", Color: "success"},
+							}},
+							{Field: "update_available", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Update available", Color: "warning"},
+							}},
+							{Field: "shadowed", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Shadowed by your own tool", Color: "warning"},
+							}},
+							{Field: "from", Label: "From", Mute: true},
+							{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "⚠ missing", Color: "danger"},
+							}},
+							{Field: "description", Mute: true, Flex: 2},
+						},
+						RowActions: []ui.RowAction{
+							{Type: "button", Label: "Add", Method: "POST",
+								PostTo:     "api/global-tools?name={name}&owner={owner}&adopt=true",
+								HideIf:     "adopted",
+								Optimistic: true},
+							{Type: "button", Label: "Remove", Method: "POST",
+								PostTo:     "api/global-tools?name={name}&adopt=false",
+								OnlyIf:     "adopted",
+								Optimistic: true},
+							// A colleague's newer definition: read it, then take it or
+							// keep running the copy already added.
+							ui.ExpandIf("What changed", "update_available", "", ui.RecordView{
+								Pairs: []ui.DisplayPair{
+									{Label: "Your copy -> theirs now", Field: "diff", Block: true},
+								},
+							}),
+							{Type: "button", Label: "Accept update", Method: "POST",
+								PostTo:  "api/global-tools?name={name}&owner={owner}&adopt=true",
+								OnlyIf:  "update_available",
+								Confirm: "Switch to their current version of this tool? Your agents run it from now on."},
+						},
+						EmptyText: "No global tools published yet. When your deployment shares one, it appears here to add.",
 					},
 				},
 			}},
 		},
 		{
-			Title:    "Skills",
-			Subtitle: "Behavior packs your agents draw on.",
-			Detail: "A skill is instructions the assistant applies when its triggers or description match the turn. Author or edit one right here (name, triggers, instructions, the tools it may call and the collections it may search), or ask Builder in Agents for skills that ship their own code.\n\n" +
-				"Open a skill to give it a playbook: conditional rules (\"establish Y first; if yes do Z, if no do U\") that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.\n\n" +
-				"A skill reaches other people on three rungs: yours alone, shared with people you name, or published to the whole deployment. The first two are your own call; the third is an admin's, and a skill you published is listed here with a Deployment-wide badge and a Take back button.",
+			Title: "Skills",
 			Body: ui.Stack{Children: []ui.Component{
-				importToolbar("Bring in skills or tools somebody exported"),
-				ui.Table{
-					Source: "api/skills",
-					RowKey: "id",
-					Columns: []ui.Col{
-						{Field: "name", Flex: 1},
-						{Field: "description", Mute: true, Flex: 2},
-						{Field: "triggers", Label: "Triggers", Mute: true},
-						// How many conditional rules this skill carries, and the
-						// way into them: the count is the link.
-						{Field: "playbook", Label: "Playbook", Link: "playbook_url", Mute: true},
-						{Field: "published", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-							{Value: true, Label: "Deployment-wide", Color: "info"},
-						}},
-						{Field: "publish_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-							{Value: true, Label: "Publish requested", Color: "warning"},
-						}},
-						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
-							{Value: true, Label: "Disabled", Color: "danger"},
-							{Value: false, Label: "Active", Color: "success"},
-						}},
-					},
-					RowActions: []ui.RowAction{
-						// Edit the skill's behavior fields. Source prefills; the id
-						// rides in the PostURL so the handler load-then-mutates
-						// (preserving any Builder-authored tools/grants).
-						ui.Expand("Edit", ui.Stack{Children: []ui.Component{
-							ui.FormPanel{
-								Source:      "api/skills?id={id}&view=form",
-								PostURL:     "api/skills?id={id}",
-								SubmitLabel: "Save skill",
+				ui.Subsection{
+					Title:    "Your skills",
+					Subtitle: "Behavior packs your agents draw on.",
+					Detail: "A skill is instructions the assistant applies when its triggers or description match the turn. Author or edit one right here (name, triggers, instructions, the tools it may call and the collections it may search), or ask Builder in Agents for skills that ship their own code.\n\n" +
+						"Open a skill to give it a playbook: conditional rules (\"establish Y first; if yes do Z, if no do U\") that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.\n\n" +
+						"A skill reaches other people on three rungs: yours alone, shared with people you name, or published to the whole deployment. The first two are your own call; the third is an admin's, and a skill you published is listed here with a Deployment-wide badge and a Take back button.",
+					Body: ui.Stack{Children: []ui.Component{
+						importToolbar("Bring in skills or tools somebody exported"),
+						ui.Table{
+							Source: "api/skills",
+							RowKey: "id",
+							Columns: []ui.Col{
+								{Field: "name", Flex: 1},
+								{Field: "description", Mute: true, Flex: 2},
+								{Field: "triggers", Label: "Triggers", Mute: true},
+								// How many conditional rules this skill carries, and the
+								// way into them: the count is the link.
+								{Field: "playbook", Label: "Playbook", Link: "playbook_url", Mute: true},
+								{Field: "published", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+									{Value: true, Label: "Deployment-wide", Color: "info"},
+								}},
+								{Field: "publish_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+									{Value: true, Label: "Publish requested", Color: "warning"},
+								}},
+								{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
+									{Value: true, Label: "Disabled", Color: "danger"},
+									{Value: false, Label: "Active", Color: "success"},
+								}},
+							},
+							RowActions: []ui.RowAction{
+								// Edit the skill's behavior fields. Source prefills; the id
+								// rides in the PostURL so the handler load-then-mutates
+								// (preserving any Builder-authored tools/grants).
+								ui.Expand("Edit", ui.Stack{Children: []ui.Component{
+									ui.FormPanel{
+										Source:      "api/skills?id={id}&view=form",
+										PostURL:     "api/skills?id={id}",
+										SubmitLabel: "Save skill",
+										Fields:      userSkillFormFields(),
+										Invalidate:  []string{"api/skills"},
+										// The last few edits, with a read-only preview
+										// of each. {id} is filled in when the row
+										// expands, the same as the urls above it.
+										HistoryURL:   "api/skills/{id}/revisions",
+										HistoryLabel: "Version history",
+									},
+									// The two grants, as pickers rather than typed
+									// names. Their own controls, posting the record
+									// back on each flip: a chip is a decision, and
+									// making it wait for a Save button underneath a
+									// long form is how it gets lost.
+									ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Allowed tools</div><div style="font-size:0.75rem;color:var(--text-mute)">Tools the assistant may call while this skill is in use. None selected means it uses whatever the agent already has.</div>`},
+									ui.ChipPicker{
+										OptionsSource: "api/skill-tools",
+										RecordSource:  "api/skills?id={id}",
+										Field:         "allowed_tools",
+										PostTo:        "api/skills?id={id}",
+										Method:        "PATCH",
+										NameField:     "name",
+										LabelField:    "name",
+										DescField:     "description",
+									},
+									ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Attached collections</div><div style="font-size:0.75rem;color:var(--text-mute)">Document collections this skill can search. They stay out of scope on turns the skill is not in use.</div>`},
+									ui.ChipPicker{
+										OptionsSource: "api/skill-collections",
+										RecordSource:  "api/skills?id={id}",
+										Field:         "attached_collections",
+										PostTo:        "api/skills?id={id}",
+										Method:        "PATCH",
+										NameField:     "id",
+										LabelField:    "name",
+										DescField:     "description",
+									},
+									// Peer sharing: named people, not everybody. Widening
+									// anything to the whole deployment is an
+									// administrator's decision; who you hand a skill to
+									// is yours.
+									ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Shared with</div><div style="font-size:0.75rem;color:var(--text-mute)">Other users who may use this skill. Empty means private to you. They get the behaviour, not the authorship: it activates on their turns and they cannot edit or delete it. Bundled tools do not travel, because that would run your code in their session. Attached collections do travel as references, and each resolves only for someone who can already read it.</div>`},
+									ui.ACLPicker(ui.ACLPickerConfig{
+										OptionsSource: "api/user-candidates",
+										RecordSource:  "api/skills?id={id}",
+										Field:         "allowed_users",
+										PostTo:        "api/skills?id={id}",
+										Method:        "PATCH",
+										Noun:          "user",
+										Intro:         "Users who may use this skill.",
+										EmptyText:     "No other users to share with yet.",
+									}),
+								}}),
+								// A published skill lives in the deployment's list, not the
+								// user's own, so the per-user export cannot reach it.
+								{Type: "button", Label: "Export", Method: "client",
+									PostTo: "export_skill", HideIf: "published"},
+								{Type: "button", Label: "Disable", Method: "POST",
+									PostTo:     "api/skills?action=disable&id={id}",
+									HideIf:     "disabled",
+									Optimistic: true},
+								{Type: "button", Label: "Enable", Method: "POST",
+									PostTo:     "api/skills?action=enable&id={id}",
+									OnlyIf:     "disabled",
+									Optimistic: true},
+								// The third rung. Sharing to named people is the author's
+								// own call; reaching every account in the deployment is
+								// an administrator's.
+								ui.ModalActionIf("Publish deployment-wide", "can_publish", "", ui.FormPanel{
+									SubmitLabel: "Ask an admin",
+									PostURL:     "api/promotions?kind=skill&name={name}",
+									Fields: []ui.FormField{
+										{Type: "header", Label: "Everybody's turns, not just yours",
+											Help: "It stays yours to edit and to take back, and an admin decides whether it goes out.",
+											Detail: "A published skill moves out of your own list into the deployment's, where the classifier can activate it on any user's turn. Your name stays on it, you keep editing it, and Take back returns it to you without asking anybody.\n\n" +
+												"Its bundled tools do not go with it. Everything true of that for one recipient is more true for every account at once: it would run your scripts in every session in the deployment, under each person's own credentials, skipping the rung a tool has to pass to reach even one other user.\n\n" +
+												"Attached collections travel as references and resolve for whoever can already read them, so promote the collection too if everybody is meant to have it. Anyone you had shared this with keeps it by having it deployment-wide instead."},
+										{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
+											Placeholder: "Who is this for, and when should it fire?"},
+									},
+									Invalidate: []string{"api/skills"},
+								}),
+								{Type: "button", Label: "Take back", Method: "POST",
+									PostTo:     "api/skills?action=unpublish&id={id}",
+									OnlyIf:     "published",
+									Confirm:    "Take this skill back from the deployment? It returns to your own skills and stops activating on other people's turns.",
+									Optimistic: true},
+								{Type: "button", Label: "Delete", Method: "DELETE",
+									PostTo:     "api/skills?id={id}",
+									Variant:    "danger",
+									HideIf:     "published",
+									Confirm:    "Delete this skill? The definition is gone for good.",
+									Optimistic: true},
+							},
+							EmptyText: "No skills yet. Add one below, or ask Builder in Agents to author one for you.",
+						},
+						ui.ModalButton{
+							Label:    "Add skill",
+							Title:    "New skill",
+							Subtitle: "A behavior pack: instructions your agents apply when the triggers match. For a skill that ships code or grants tools, use Builder instead.",
+							Variant:  "primary",
+							Width:    "640px",
+							Body: ui.FormPanel{
+								PostURL:     "api/skills",
+								SubmitLabel: "Create skill",
 								Fields:      userSkillFormFields(),
 								Invalidate:  []string{"api/skills"},
-								// The last few edits, with a read-only preview
-								// of each. {id} is filled in when the row
-								// expands, the same as the urls above it.
-								HistoryURL:   "api/skills/{id}/revisions",
-								HistoryLabel: "Version history",
 							},
-							// The two grants, as pickers rather than typed
-							// names. Their own controls, posting the record
-							// back on each flip: a chip is a decision, and
-							// making it wait for a Save button underneath a
-							// long form is how it gets lost.
-							ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Allowed tools</div><div style="font-size:0.75rem;color:var(--text-mute)">Tools the assistant may call while this skill is in use. None selected means it uses whatever the agent already has.</div>`},
-							ui.ChipPicker{
-								OptionsSource: "api/skill-tools",
-								RecordSource:  "api/skills?id={id}",
-								Field:         "allowed_tools",
-								PostTo:        "api/skills?id={id}",
-								Method:        "PATCH",
-								NameField:     "name",
-								LabelField:    "name",
-								DescField:     "description",
-							},
-							ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Attached collections</div><div style="font-size:0.75rem;color:var(--text-mute)">Document collections this skill can search. They stay out of scope on turns the skill is not in use.</div>`},
-							ui.ChipPicker{
-								OptionsSource: "api/skill-collections",
-								RecordSource:  "api/skills?id={id}",
-								Field:         "attached_collections",
-								PostTo:        "api/skills?id={id}",
-								Method:        "PATCH",
-								NameField:     "id",
-								LabelField:    "name",
-								DescField:     "description",
-							},
-							// Peer sharing: named people, not everybody. Widening
-							// anything to the whole deployment is an
-							// administrator's decision; who you hand a skill to
-							// is yours.
-							ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Shared with</div><div style="font-size:0.75rem;color:var(--text-mute)">Other users who may use this skill. Empty means private to you. They get the behaviour, not the authorship: it activates on their turns and they cannot edit or delete it. Bundled tools do not travel, because that would run your code in their session. Attached collections do travel as references, and each resolves only for someone who can already read it.</div>`},
-							ui.ACLPicker(ui.ACLPickerConfig{
-								OptionsSource: "api/user-candidates",
-								RecordSource:  "api/skills?id={id}",
-								Field:         "allowed_users",
-								PostTo:        "api/skills?id={id}",
-								Method:        "PATCH",
-								Noun:          "user",
-								Intro:         "Users who may use this skill.",
-								EmptyText:     "No other users to share with yet.",
-							}),
-						}}),
-						// A published skill lives in the deployment's list, not the
-						// user's own, so the per-user export cannot reach it.
-						{Type: "button", Label: "Export", Method: "client",
-							PostTo: "export_skill", HideIf: "published"},
-						{Type: "button", Label: "Disable", Method: "POST",
-							PostTo:     "api/skills?action=disable&id={id}",
-							HideIf:     "disabled",
-							Optimistic: true},
-						{Type: "button", Label: "Enable", Method: "POST",
-							PostTo:     "api/skills?action=enable&id={id}",
-							OnlyIf:     "disabled",
-							Optimistic: true},
-						// The third rung. Sharing to named people is the author's
-						// own call; reaching every account in the deployment is
-						// an administrator's.
-						ui.ModalActionIf("Publish deployment-wide", "can_publish", "", ui.FormPanel{
-							SubmitLabel: "Ask an admin",
-							PostURL:     "api/promotions?kind=skill&name={name}",
-							Fields: []ui.FormField{
-								{Type: "header", Label: "Everybody's turns, not just yours",
-									Help: "It stays yours to edit and to take back, and an admin decides whether it goes out.",
-									Detail: "A published skill moves out of your own list into the deployment's, where the classifier can activate it on any user's turn. Your name stays on it, you keep editing it, and Take back returns it to you without asking anybody.\n\n" +
-										"Its bundled tools do not go with it. Everything true of that for one recipient is more true for every account at once: it would run your scripts in every session in the deployment, under each person's own credentials, skipping the rung a tool has to pass to reach even one other user.\n\n" +
-										"Attached collections travel as references and resolve for whoever can already read them, so promote the collection too if everybody is meant to have it. Anyone you had shared this with keeps it by having it deployment-wide instead."},
-								{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
-									Placeholder: "Who is this for, and when should it fire?"},
-							},
-							Invalidate: []string{"api/skills"},
-						}),
-						{Type: "button", Label: "Take back", Method: "POST",
-							PostTo:     "api/skills?action=unpublish&id={id}",
-							OnlyIf:     "published",
-							Confirm:    "Take this skill back from the deployment? It returns to your own skills and stops activating on other people's turns.",
-							Optimistic: true},
-						{Type: "button", Label: "Delete", Method: "DELETE",
-							PostTo:     "api/skills?id={id}",
-							Variant:    "danger",
-							HideIf:     "published",
-							Confirm:    "Delete this skill? The definition is gone for good.",
-							Optimistic: true},
-					},
-					EmptyText: "No skills yet. Add one below, or ask Builder in Agents to author one for you.",
+						},
+					}},
 				},
-				ui.ModalButton{
-					Label:    "Add skill",
-					Title:    "New skill",
-					Subtitle: "A behavior pack: instructions your agents apply when the triggers match. For a skill that ships code or grants tools, use Builder instead.",
-					Variant:  "primary",
-					Width:    "640px",
-					Body: ui.FormPanel{
-						PostURL:     "api/skills",
-						SubmitLabel: "Create skill",
-						Fields:      userSkillFormFields(),
-						Invalidate:  []string{"api/skills"},
+				ui.Subsection{
+					Title:    "Published by your deployment",
+					Subtitle: "Behaviour packs that apply to everybody, including you.",
+					Detail: "These activate on your turns when their triggers match, the same as your own, whether or not you went looking for them. A skill of your own with the same name is tried first.\n\n" +
+						"They carry no code: a published skill's bundled tools stay with its author. Its attached collections are references, and each one only answers for people who can already read it.\n\n" +
+						"An author publishes one by asking an admin; the ones you published are listed with your own skills above, where you can edit or take them back.",
+					Body: ui.Table{
+						Source: "api/skills?deployment=1",
+						RowKey: "id",
+						Columns: []ui.Col{
+							{Field: "name", Flex: 1},
+							{Field: "description", Mute: true, Flex: 2},
+							{Field: "triggers", Label: "Triggers", Mute: true},
+							{Field: "updated", Label: "Updated", Mute: true},
+						},
+						EmptyText: "The deployment publishes no skills.",
 					},
 				},
 			}},
-		},
-		{
-			Title:    "Skills the deployment publishes",
-			Subtitle: "Behaviour packs that apply to everybody, including you.",
-			Detail: "These activate on your turns when their triggers match, the same as your own, whether or not you went looking for them. A skill of your own with the same name is tried first.\n\n" +
-				"They carry no code: a published skill's bundled tools stay with its author. Its attached collections are references, and each one only answers for people who can already read it.\n\n" +
-				"An author publishes one by asking an admin; the ones you published are listed with your own skills above, where you can edit or take them back.",
-			Body: ui.Table{
-				Source: "api/skills?deployment=1",
-				RowKey: "id",
-				Columns: []ui.Col{
-					{Field: "name", Flex: 1},
-					{Field: "description", Mute: true, Flex: 2},
-					{Field: "triggers", Label: "Triggers", Mute: true},
-					{Field: "updated", Label: "Updated", Mute: true},
-				},
-				EmptyText: "The deployment publishes no skills.",
-			},
-		},
-		{
-			Title:    "Global tools",
-			Subtitle: "Shared tools your deployment publishes.",
-			Detail: "Add the ones you want and they become available to your agents; remove any you do not use.\n\n" +
-				"A published tool runs as the version an administrator approved, and a new version reaches you when one is approved. " +
-				"A tool a colleague shared with you runs as the copy you added: when they change it, the row says an update is available, and nothing changes for you until you accept it.",
-			Body: ui.Table{
-				Source: "api/global-tools",
-				RowKey: "key",
-				Columns: []ui.Col{
-					{Field: "name", Flex: 1},
-					{Field: "mode", Mute: true},
-					{Field: "version", Label: "Version", Mute: true},
-					{Field: "adopted", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Added", Color: "success"},
-					}},
-					{Field: "update_available", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Update available", Color: "warning"},
-					}},
-					{Field: "shadowed", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Shadowed by your own tool", Color: "warning"},
-					}},
-					{Field: "from", Label: "From", Mute: true},
-					{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "⚠ missing", Color: "danger"},
-					}},
-					{Field: "description", Mute: true, Flex: 2},
-				},
-				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Add", Method: "POST",
-						PostTo:     "api/global-tools?name={name}&owner={owner}&adopt=true",
-						HideIf:     "adopted",
-						Optimistic: true},
-					{Type: "button", Label: "Remove", Method: "POST",
-						PostTo:     "api/global-tools?name={name}&adopt=false",
-						OnlyIf:     "adopted",
-						Optimistic: true},
-					// A colleague's newer definition: read it, then take it or
-					// keep running the copy already added.
-					ui.ExpandIf("What changed", "update_available", "", ui.RecordView{
-						Pairs: []ui.DisplayPair{
-							{Label: "Your copy -> theirs now", Field: "diff", Block: true},
-						},
-					}),
-					{Type: "button", Label: "Accept update", Method: "POST",
-						PostTo:  "api/global-tools?name={name}&owner={owner}&adopt=true",
-						OnlyIf:  "update_available",
-						Confirm: "Switch to their current version of this tool? Your agents run it from now on."},
-				},
-				EmptyText: "No global tools published yet. When your deployment shares one, it appears here to add.",
-			},
 		},
 	}
 	// App-contributed sections (core/sections). Extensions is where a

@@ -214,6 +214,7 @@ behind, which is worse than not having one, so it was retired.
 | A settings form auto-saving on blur | `ui.FormPanel` |
 | A guided multi-step create flow (wizard with Back/Next) | `ui.FormPanel` with `Steps` (see below) |
 | A labeled key-value display (read-only) | `ui.DisplayPanel` |
+| Two related lists in one section (your own, and the ones shared with you) | `ui.Stack` of `ui.Subsection`s, each with its own Title / Subtitle / Detail / Body |
 | A chat with sessions sidebar | `ui.ChatPanel` |
 | A pipeline: submit a job, watch SSE blocks stream in, view past runs | `ui.PipelinePanel` (with a bridge that emits `block`/`chunk`/`status` events) |
 | A live-watch page for an in-flight pipeline (separate from submit) | `ui.PipelineWatchPanel` |

@@ -5145,6 +5145,19 @@
     return wrap;
   };
 
+  // subsection — a headed part of a section (see ui.Subsection): its title,
+  // an optional subtitle and info detail, then its body.
+  components.subsection = function(cfg, ctx) {
+    var wrap = el('div', {class: 'ui-subsection'});
+    wrap.appendChild(el('div', {class: 'ui-subsection-h'}, [
+      el('span', {text: cfg.title || ''}),
+      window.uiInfoIcon(cfg.detail),
+    ]));
+    if (cfg.subtitle) wrap.appendChild(el('div', {class: 'ui-section-sub'}, [cfg.subtitle]));
+    if (cfg.body) mountComponent(cfg.body, wrap, ctx);
+    return wrap;
+  };
+
   // button — a single action button that POSTs to an endpoint. The
   // standalone-component form of a row-action button, so it can sit inside a
   // Stack / Expand panel. When mounted in a row expander, ctx is the row

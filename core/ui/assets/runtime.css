@@ -581,6 +581,14 @@ select:-webkit-autofill {
   /* Long subtitles wrap onto multiple lines; never truncate. */
   white-space: normal; overflow-wrap: break-word;
 }
+/* A headed part of a section (ui.Subsection). Its title reads one step above
+ * the section's small uppercase label, and a hairline divides it from the part
+ * before it. */
+.ui-subsection + .ui-subsection { margin-top: 0.8rem; padding-top: 1.1rem; border-top: 1px solid var(--border); }
+.ui-subsection-h {
+  display: flex; align-items: center; flex-wrap: wrap;
+  margin: 0 0 0.5rem; font-size: 0.95rem; font-weight: 600; color: var(--text-hi);
+}
 /* Heading for a NO-CHROME section (chat / pipeline / workbench panels). It sits
  * above the panel rather than inside a card, so it supplies the padding the
  * card would have given it and nothing else — the panel's own layout, which is

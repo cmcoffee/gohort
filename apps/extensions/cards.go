@@ -13,7 +13,8 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
 .acct-conns { display: flex; flex-direction: column; gap: 0.6rem; }
 .acct-conn { border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.8rem; }
 .acct-conn-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
-.acct-conn-name { font-weight: 600; color: var(--text); flex: 1; }
+.acct-conn-name { font-weight: 600; color: var(--text); flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.acct-conn-kind { font-size: 0.7rem; color: var(--text-mute); border: 1px solid var(--border); border-radius: 999px; padding: 0.05rem 0.45rem; }
 .acct-conn-badge { font-size: 0.7rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; }
 .acct-conn-badge.on { background: color-mix(in srgb, var(--success) 22%, transparent); color: var(--success); }
 .acct-conn-badge.off { background: var(--bg-2); color: var(--text-mute); }
@@ -36,18 +37,24 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
   function post(body, btn){
     btn.disabled = true; var orig = btn.textContent; btn.textContent = '…';
     return fetch(API, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
-      .then(function(r){ if(!r.ok && r.status!==204) return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); load(); })
+      .then(function(r){ if(!r.ok && r.status!==204) return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); load();
+        // An own credential's "Needs its key" badge sits in the API list above.
+        if (window.uiInvalidate) window.uiInvalidate('api/credentials'); })
       .catch(function(e){ btn.disabled=false; btn.textContent=orig; alert('Failed: '+(e&&e.message||e)); });
   }
-  function save(name, secret, btn){ return post({name:name, secret:secret}, btn); }
-  function disconnect(name, btn){ return post({name:name, disconnect:true}, btn); }
+  // kind rides along: one of your own credentials can share a name with one
+  // the deployment offers, and the server needs to know which key to touch.
+  function save(c, secret, btn){ return post({name:c.name, kind:c.kind||'', secret:secret}, btn); }
+  function disconnect(c, btn){ return post({name:c.name, kind:c.kind||'', disconnect:true}, btn); }
   function load(){
     fetch(API, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(list){
       box.innerHTML = '';
-      if (!list || !list.length){ box.appendChild(el('div',{class:'acct-conns-empty',text:'No per-user integrations available yet. When your admin enables one, it appears here to connect with your own account.'})); return; }
+      if (!list || !list.length){ box.appendChild(el('div',{class:'acct-conns-empty',text:'Nothing to connect yet. An API you add under APIs appears here for its key, and so does any integration your admin offers for you to sign in to.'})); return; }
       list.forEach(function(c){
         var badge = el('span', {class:'acct-conn-badge '+(c.connected?'on':'off'), text: c.connected?'Connected':'Not connected'});
-        var head = el('div', {class:'acct-conn-head'}, [el('span',{class:'acct-conn-name',text:c.name}), badge]);
+        var head = el('div', {class:'acct-conn-head'}, [el('span',{class:'acct-conn-name',text:c.name})]);
+        if (c.kind === 'own') head.appendChild(el('span',{class:'acct-conn-kind',text:'Your API', title:'Configured under APIs'}));
+        head.appendChild(badge);
         var card = el('div', {class:'acct-conn'}, [head]);
         if (c.description) card.appendChild(el('div',{class:'acct-conn-desc',text:c.description}));
         var row = el('div', {class:'acct-conn-row'});
@@ -65,17 +72,17 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
           }
           if (c.connected){
             var d2 = el('button', {class:'ui-row-btn', text:'Disconnect'});
-            d2.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your authorization is removed.')) return; disconnect(c.name, d2); });
+            d2.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your authorization is removed.')) return; disconnect(c, d2); });
             row.appendChild(d2);
           }
         } else {
           var inp = el('input', {type:'password', placeholder: c.connected?'Replace your key…':'Paste your key / token'});
           var saveBtn = el('button', {class:'ui-row-btn primary', text: c.connected?'Update':'Connect'});
-          saveBtn.addEventListener('click', function(){ var v=inp.value.trim(); if(!v){ inp.focus(); return; } save(c.name, v, saveBtn); });
+          saveBtn.addEventListener('click', function(){ var v=inp.value.trim(); if(!v){ inp.focus(); return; } save(c, v, saveBtn); });
           row.appendChild(inp); row.appendChild(saveBtn);
           if (c.connected){
             var dis = el('button', {class:'ui-row-btn', text:'Disconnect'});
-            dis.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your stored key is removed.')) return; disconnect(c.name, dis); });
+            dis.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your stored key is removed.')) return; disconnect(c, dis); });
             row.appendChild(dis);
           }
         }
@@ -84,8 +91,9 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
         // generic call tool that can spend this credential. Shown only once
         // there is a key to protect, and frozen when an admin has locked it
         // for the deployment: you may keep your own lock on, never lift
-        // theirs.
-        if (c.connected){
+        // theirs. Your own API's reach is part of its configuration, so it is
+        // set under APIs rather than here.
+        if (c.connected && c.kind !== 'own'){
           var lockWrap = el('label', {class:'acct-conn-lock'});
           var lock = el('input', {type:'checkbox'});
           lock.checked = !!c.secured;

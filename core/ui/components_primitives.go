@@ -150,6 +150,34 @@ func (s Stack) MarshalJSON() ([]byte, error) {
 	}{"stack", s.Items, s.Row})
 }
 
+// Subsection is a headed part of a section: a title, an optional one-line
+// subtitle and info-icon detail, and a body. For a section that holds two
+// related lists (your own and the ones shared with you, say), so they read as
+// two parts of one place instead of two places in the navigation. Put them in
+// a Stack.
+type Subsection struct {
+	Title    string    `json:"title"`
+	Subtitle string    `json:"subtitle,omitempty"`
+	Detail   string    `json:"detail,omitempty"`
+	Body     Component `json:"-"`
+}
+
+func (Subsection) componentType() string { return "subsection" }
+
+func (s Subsection) MarshalJSON() ([]byte, error) {
+	var body json.RawMessage
+	if s.Body != nil {
+		body = marshalComponent(s.Body)
+	}
+	return json.Marshal(struct {
+		Type     string          `json:"type"`
+		Title    string          `json:"title"`
+		Subtitle string          `json:"subtitle,omitempty"`
+		Detail   string          `json:"detail,omitempty"`
+		Body     json.RawMessage `json:"body,omitempty"`
+	}{"subsection", s.Title, s.Subtitle, s.Detail, body})
+}
+
 // Card is a free-form container that just renders raw HTML. Use
 // sparingly — escape hatch for things the framework doesn't model yet.
 //

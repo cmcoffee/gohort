@@ -73,3 +73,21 @@ func TestWorkbenchToolbarOverflowsOnAPhone(t *testing.T) {
 		t.Error("on a phone the toolbar must hold one row for the overflow to measure against")
 	}
 }
+
+// A Subsection carries its title, subtitle, detail and body to the renderer.
+func TestSubsectionMarshalsItsParts(t *testing.T) {
+	b, err := Subsection{Title: "Shared with you", Subtitle: "Lent to you.", Detail: "More.",
+		Body: Stack{}}.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	for _, want := range []string{`"type":"subsection"`, `"title":"Shared with you"`, `"subtitle":"Lent to you."`, `"detail":"More."`, `"body":{"type":"stack"`} {
+		if !strings.Contains(js, want) {
+			t.Errorf("subsection JSON lost %s: %s", want, js)
+		}
+	}
+	if !strings.Contains(readRuntimeFile(t, "10_basics.js"), "components.subsection = function(cfg, ctx)") {
+		t.Error("no renderer for subsection")
+	}
+}

@@ -33,3 +33,33 @@ func TestEveryAccountCallIsARegisteredRoute(t *testing.T) {
 		}
 	}
 }
+
+// A user's own API credential has its key set under Connected accounts. The
+// handler routes on kind (an own credential may share a name with a
+// deployment one), refuses a blank save rather than reading it as a wipe, and
+// leaves the credential's reach to APIs, where its configuration is.
+func TestOwnCredentialKeysRouteByKind(t *testing.T) {
+	b, err := os.ReadFile("account.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	for _, want := range []string{
+		"conns = append(conns, Secure().OwnConnectionsFor(user)...)",
+		"if body.Kind == ConnKindOwn {",
+		`http.Error(w, "paste a key to save", http.StatusBadRequest)`,
+		`http.Error(w, "this credential's reach is set under APIs", http.StatusBadRequest)`,
+		"Secure().SetOwnedSecret(user, body.Name, secret)",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("connections handler lost %q", want)
+		}
+	}
+	// The own branch must run before the deployment lookup, or a name both
+	// kinds share would set the deployment credential's key instead.
+	own := strings.Index(src, "if body.Kind == ConnKindOwn {")
+	dep := strings.Index(src, "c, found := Secure().Load(body.Name)")
+	if own < 0 || dep < 0 || own > dep {
+		t.Error("the own-credential branch must come before the deployment lookup")
+	}
+}
