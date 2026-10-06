@@ -221,17 +221,25 @@ select:-webkit-autofill {
 }
 /* On a page with tabs, the left group takes a fixed width, so the tabs after
  * it start at the same place on every app: 22rem from the bar's edge, less the
- * bar's padding and the gap. It can shrink, and the title gives way with an
- * ellipsis; the tabs never draw over it. They used to be positioned
- * absolutely at that offset, which overlapped the title whenever the left group
- * ran wider than the offset (a large phone held sideways, a long title). */
+ * bar's padding and the gap. The tabs take only the room left over, so it is
+ * the tab strip that scrolls, never the title that gets covered.
+ *
+ * On a phone there is no room for both on one line, and sharing it is what
+ * drew the tabs over the arrows and the mark: the left group shrank narrower
+ * than its own fixed contents and they spilled out under the tab strip. So the
+ * bar wraps, and the tabs take a full-width row of their own below. */
 @media (min-width: 701px) {
   .ui-page-header:has(> .ui-page-tabs) > .ui-page-header-left { flex: 0 1 20.45rem; }
+  .ui-page-header > .ui-page-tabs { flex: 1 1 0; }
+}
+@media (max-width: 700px) {
+  .ui-page-header:has(> .ui-page-tabs) { flex-wrap: wrap; row-gap: 0.35rem; }
+  .ui-page-header > .ui-page-tabs { order: 3; flex: 1 0 100%; }
 }
 /* The two header chevrons: ‹ to the page you came from, « to the dashboard.
  * Grouped tight so they read as one control with two aims rather than as two
  * unrelated links. */
-.ui-back-group { display: inline-flex; align-items: center; gap: 0.25rem; }
+.ui-back-group { display: inline-flex; align-items: center; gap: 0.25rem; flex-shrink: 0; }
 .ui-back-link {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 1.9rem;
@@ -259,8 +267,7 @@ select:-webkit-autofill {
   display: flex; align-items: center; gap: 0.15rem;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
   /* In the flow after the left group, which holds them at a fixed offset (see
-   * .ui-page-header-left). Shrinks before anything else on the bar, and scrolls
-   * sideways when the tabs do not fit. */
+   * .ui-page-header-left). Scrolls sideways when the tabs do not fit. */
   flex: 0 1 auto; min-width: 0;
 }
 .ui-page-tabs::-webkit-scrollbar { height: 0; }
@@ -275,7 +282,8 @@ select:-webkit-autofill {
 .ui-page-tab:hover { color: var(--text); background: var(--bg-2); }
 .ui-page-tab.active { color: var(--text); background: var(--bg-2); font-weight: 600; }
 @media (max-width: 700px) {
-  .ui-page-tab { min-height: var(--tap); padding: 0.5rem 0.7rem; }
+  /* Their own row now, so a thumb-height that does not double the bar. */
+  .ui-page-tab { min-height: 2.25rem; padding: 0.4rem 0.7rem; }
 }
 /* Live-sessions pill — pinned to the right of the page header (margin-left:auto).
  * Hidden when no sessions are active so the header stays clean
