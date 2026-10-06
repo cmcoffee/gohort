@@ -148,6 +148,19 @@ select:-webkit-autofill {
     .ui-back-link, .ui-page-tab, .ui-seg, .ui-wb-view):focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
+/* Fields share the buttons' corner (set on each field's own rule), and a
+ * single-line one stands at the button height, so a field with a button
+ * beside it (a search box and Go, a key and Generate) lines up instead of
+ * sitting a few pixels short. Zero specificity: a field that sets its own
+ * height still wins. */
+:where(.ui-table-search, .ui-row-select, .ui-row-number, .ui-filter-search,
+       .ui-keys-form input, .ui-apikey-input, .ui-rules-input, .ui-sec-title-input,
+       .ui-modal-input:not(textarea), .ui-pl-input:not(textarea), .ui-cw-lang,
+       .ui-cw-modal-box input[type="text"], .ui-form-input:not(textarea),
+       .ui-form-select, .ui-ask-input:not(textarea), .ui-mem-row input,
+       .ui-mem-aliasrow input) {
+  min-height: var(--btn-h);
+}
 /* The dense size: chrome inside a panel header or a toolbar, and the quiet
  * one-word controls that share a row with them. */
 .ui-table-group-foot, .ui-bulk-bar, .ui-pl-actions, .ui-pl-modal-h-actions,
@@ -396,12 +409,12 @@ select:-webkit-autofill {
   border-radius: 6px; border: 1px solid var(--border);
   background: var(--bg-2);
 }
-.ui-live-item.running .ui-live-state { background: rgba(63, 185, 80, 0.18); color: var(--success); }
-.ui-live-item.queued .ui-live-state  { background: rgba(227, 179, 65, 0.18); color: var(--warning); }
+.ui-live-item.running .ui-live-state { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
+.ui-live-item.queued .ui-live-state  { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
 /* Wins over .running above — a background row IS running, it just did not wait
    to be asked, and that is the more useful of the two things to say. */
 .ui-live-item .ui-live-state.background {
-  background: rgba(99, 102, 241, 0.18); color: var(--ui-live-background, #6366f1);
+  background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--ui-live-background, #6366f1);
 }
 /* What the work is DOING — "scheduled - round 2 - web_search". Right-aligned
    and muted: it is the detail you read after deciding the row is the one you
@@ -503,7 +516,7 @@ select:-webkit-autofill {
 }
 .ui-tab:hover { color: var(--text); border-color: var(--text-mute); }
 .ui-tab.active {
-  background: var(--accent-soft, rgba(74,158,255,0.16));
+  background: var(--accent-soft, color-mix(in srgb, var(--accent) 16%, transparent));
   border-color: var(--accent, #4a9eff); color: var(--text);
 }
 .ui-tab-hidden { display: none; }
@@ -531,7 +544,7 @@ select:-webkit-autofill {
   border-left: 2px solid var(--border);
 }
 .ui-secnav-item.active {
-  background: var(--accent-soft, rgba(74,158,255,0.16));
+  background: var(--accent-soft, color-mix(in srgb, var(--accent) 16%, transparent));
   border-color: var(--accent, #4a9eff); color: var(--text);
 }
 @media (max-width: 720px) {
@@ -756,7 +769,7 @@ select:-webkit-autofill {
 }
 .ui-wb-item-label { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ui-wb-item:hover { background: var(--bg-2); }
-.ui-wb-item.active { background: var(--accent); color: #fff; }
+.ui-wb-item.active { background: var(--accent); color: var(--text-on-accent, #fff); }
 .ui-wb-item-del {
   flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
   color: var(--text-mute); font-size: 1.1rem; line-height: 1; padding: 0 0.2rem;
@@ -764,7 +777,7 @@ select:-webkit-autofill {
 }
 .ui-wb-item:hover .ui-wb-item-del { opacity: 0.7; }
 .ui-wb-item-del:hover { opacity: 1; color: var(--danger); }
-.ui-wb-item.active .ui-wb-item-del { color: #fff; }
+.ui-wb-item.active .ui-wb-item-del { color: var(--text-on-accent, #fff); }
 .ui-wb-coauthor-btn { margin-top: 0.5rem; }
 .ui-wb-list-empty { padding: 0.8rem 0.6rem; color: var(--text-mute); font-size: 0.82rem; font-style: italic; }
 .ui-wb-actions {
@@ -775,9 +788,9 @@ select:-webkit-autofill {
  * of sub-actions (e.g. Export → HTML / PDF / Markdown) so related toolbar
  * buttons collapse into one. Generic: any WorkbenchAction with children uses it. */
 .ui-wb-action-wrap { position: relative; display: inline-flex; }
+/* Placed by uiAnchorMenu, so nothing here positions it. */
 .ui-wb-menu {
-  position: absolute; top: calc(100% + 4px); left: 0;
-  min-width: 160px; z-index: 50;
+  min-width: 160px; max-width: calc(100vw - 8px);
   background: var(--bg-1); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   padding: 0.25rem; display: flex; flex-direction: column;
@@ -939,7 +952,7 @@ select:-webkit-autofill {
   width: 100%; box-sizing: border-box;
   margin-bottom: 0.6rem;
   padding: 0.45rem 0.6rem;
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--btn-radius);
   color: var(--text); font-size: 0.9rem; font-family: inherit;
   outline: none; transition: border-color 0.1s ease;
   -webkit-appearance: none; appearance: none;
@@ -1025,7 +1038,7 @@ select:-webkit-autofill {
   flex-shrink: 0;
   padding: 0.35rem 0.45rem;
   background: var(--bg-1); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   font-size: 0.85rem; font-family: inherit; outline: none;
   -webkit-appearance: none; appearance: none;
 }
@@ -1063,19 +1076,19 @@ select:-webkit-autofill {
   text-transform: uppercase; letter-spacing: 0.04em;
   border: 1px solid var(--border); background: var(--bg-0);
 }
-.ui-badge.success { color: var(--success); border-color: #2e5e3a; background: #122017; }
-.ui-badge.warning { color: var(--warning); border-color: #463b1f; background: #2a2218; }
-.ui-badge.danger  { color: var(--danger); border-color: #5a2929; background: #2a1b1b; }
+.ui-badge.success { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.ui-badge.warning { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, transparent); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.ui-badge.danger  { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .ui-badge.mute    { color: var(--text-mute); border-color: var(--border); background: var(--bg-0); }
-.ui-badge.accent  { color: var(--accent-hi); border-color: #2a3f5f; background: #16203a; }
+.ui-badge.accent  { color: var(--accent-hi); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 /* Status dot — boolean status indicator without the pill chrome.
  * Uses the same badge color tokens for consistency: success = green,
  * warning = yellow, danger = red, mute = grey. Inline-flex so it
  * vertically centers next to text in tight table cells. */
 .ui-dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; vertical-align: middle; }
-.ui-dot.success { background: var(--success); box-shadow: 0 0 0 1px #2e5e3a inset; }
-.ui-dot.warning { background: var(--warning); box-shadow: 0 0 0 1px #463b1f inset; }
-.ui-dot.danger  { background: var(--danger); box-shadow: 0 0 0 1px #5a2929 inset; }
+.ui-dot.success { background: var(--success); box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 50%, var(--bg-0)) inset; }
+.ui-dot.warning { background: var(--warning); box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 50%, var(--bg-0)) inset; }
+.ui-dot.danger  { background: var(--danger); box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 50%, var(--bg-0)) inset; }
 .ui-dot.mute    { background: var(--text-mute); box-shadow: 0 0 0 1px var(--border) inset; }
 
 /* --- Expand panel --- */
@@ -1105,13 +1118,13 @@ select:-webkit-autofill {
 }
 .ui-keys-form input {
   flex: 1; min-width: 12rem;
-  padding: 0.45rem 0.6rem; border-radius: 6px;
+  padding: 0.45rem 0.6rem; border-radius: var(--btn-radius);
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); font-size: 0.85rem;
 }
 .ui-keys-form input:focus { outline: none; border-color: var(--accent); }
 .ui-keys-revealed {
-  background: rgba(212, 166, 87, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: 1px solid var(--accent);
   border-radius: 8px; padding: 0.7rem 0.8rem;
   display: flex; flex-direction: column; gap: 0.4rem;
@@ -1167,7 +1180,7 @@ select:-webkit-autofill {
 .ui-mem-row input {
   padding: 0.35rem 0.5rem;
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   font-size: 0.82rem; min-width: 0;
 }
 .ui-mem-row input:focus { outline: none; border-color: var(--accent); }
@@ -1190,7 +1203,7 @@ select:-webkit-autofill {
 .ui-mem-aliasrow input {
   padding: 0.4rem 0.55rem;
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   font-size: 0.83rem; font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 .ui-mem-aliasrow input:focus { outline: none; border-color: var(--accent); }
@@ -1204,7 +1217,7 @@ select:-webkit-autofill {
   -webkit-tap-highlight-color: transparent; transition: transform 0.05s ease;
 }
 .ui-chip:active { transform: scale(0.94); }
-.ui-chip.on { background: var(--accent); color: #1a1a1a; border-color: var(--accent); }
+.ui-chip.on { background: var(--accent); color: var(--text-on-accent, #fff); border-color: var(--accent); }
 
 /* --- chip_picker attach mode: selected-as-pills + reveal-list --- */
 .ui-chip-picker { display: flex; flex-direction: column; }
@@ -1340,7 +1353,7 @@ select:-webkit-autofill {
 .ui-form-select {
   width: 100%; box-sizing: border-box;
   padding: 0.55rem 0.65rem;
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--btn-radius);
   color: var(--text); font-size: 0.95rem; font-family: inherit;
   outline: none; transition: border-color 0.1s ease;
   -webkit-appearance: none; appearance: none;
@@ -1651,7 +1664,7 @@ select:-webkit-autofill {
 .ui-apikey-input {
   flex: 1; min-width: 0;
   padding: 0.4rem 0.55rem;
-  border-radius: 6px;
+  border-radius: var(--btn-radius);
   background: var(--bg-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -1914,7 +1927,7 @@ select:-webkit-autofill {
 }
 .ui-rules-input {
   flex: 1; min-width: 0;
-  padding: 0.4rem 0.55rem; border-radius: 6px;
+  padding: 0.4rem 0.55rem; border-radius: var(--btn-radius);
   background: var(--bg-2); border: 1px solid var(--border);
   color: var(--text); font-size: 0.88rem; font-family: inherit;
   outline: none; transition: border-color 0.1s ease;
@@ -1950,7 +1963,7 @@ select:-webkit-autofill {
   border: 1px solid var(--border); background: var(--bg-2); color: var(--text);
   font-size: 0.85rem;
 }
-.ui-rules-edit-done { border-color: var(--accent); background: var(--accent); color: #fff; }
+.ui-rules-edit-done { border-color: var(--accent); background: var(--accent); color: var(--text-on-accent, #fff); }
 .ui-rules-edit-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; }
 /* Edit sits before the remove ×, so it reads left-to-right as the safer
  * action first. */
@@ -2014,7 +2027,7 @@ select:-webkit-autofill {
   font-size: 0.8rem; line-height: 1.5; padding: 0.45rem 0.6rem; border-radius: 8px;
   max-width: 92%; word-break: break-word; overflow-wrap: anywhere;
 }
-.ui-assist-msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+.ui-assist-msg.user { align-self: flex-end; background: var(--accent); color: var(--text-on-accent, #fff); }
 .ui-assist-msg.assistant { align-self: flex-start; background: var(--bg-2); color: var(--text); }
 .ui-assist-msg.assistant p:first-child { margin-top: 0; }
 .ui-assist-msg.assistant p:last-child { margin-bottom: 0; }
@@ -2024,13 +2037,13 @@ select:-webkit-autofill {
 .ui-assist-composer { display: flex; gap: 0.4rem; align-items: flex-end; }
 .ui-assist-input {
   flex: 1; min-width: 0; box-sizing: border-box; resize: none;
-  padding: 0.5rem 0.6rem; border-radius: 8px;
+  padding: 0.5rem 0.6rem; border-radius: var(--btn-radius);
   background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
   font-size: 0.82rem; font-family: inherit; line-height: 1.45; outline: none;
 }
 .ui-assist-input:focus { border-color: var(--accent); }
 .ui-assist-send {
-  flex: 0 0 auto; background: var(--accent); color: #fff; border: none;
+  flex: 0 0 auto; background: var(--accent); color: var(--text-on-accent, #fff); border: none;
   border-radius: 8px; padding: 0.55rem 0.9rem; font-size: 0.8rem; cursor: pointer;
 }
 .ui-assist-send:disabled { opacity: 0.5; cursor: default; }
@@ -2078,7 +2091,7 @@ select:-webkit-autofill {
 .ui-sec-title-fixed.intro { font-weight: 500; color: var(--text-mute); font-style: italic; }
 .ui-sec-title-input {
   flex: 1; min-width: 0;
-  padding: 0.3rem 0.45rem; border-radius: 6px;
+  padding: 0.3rem 0.45rem; border-radius: var(--btn-radius);
   background: var(--bg-2); border: 1px solid var(--border);
   color: var(--text); font-size: 0.85rem; font-weight: 600; font-family: inherit;
   outline: none; transition: border-color 0.1s ease;
@@ -2184,16 +2197,16 @@ select:-webkit-autofill {
 /* Form chip create modal — AI Assist + Save flow. */
 .ui-form-modal-overlay {
   position: fixed; inset: 0; z-index: 1100;
-  background: rgba(0,0,0,0.55);
+  background: var(--modal-scrim);
   display: flex; align-items: center; justify-content: center;
   padding: 1rem;
 }
 .ui-form-modal {
-  background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--modal-radius);
   width: 100%; max-width: 520px;
   display: flex; flex-direction: column; gap: 0.4rem;
-  padding: 1.2rem;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  padding: 1.1rem 1.2rem;
+  box-shadow: var(--modal-shadow);
 }
 .ui-form-modal-h { font-size: 1rem; font-weight: 600; color: var(--text); }
 .ui-form-modal-hint { font-size: 0.78rem; color: var(--text-mute); }
@@ -2511,7 +2524,7 @@ select:-webkit-autofill {
   margin: 0.4rem 0.5rem;
   padding: 0.35rem 0.6rem;
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   font-size: 0.78rem; font-family: inherit;
   -webkit-appearance: none;
 }
@@ -2575,7 +2588,7 @@ select:-webkit-autofill {
 }
 .ui-bulk-pill:hover { color: var(--text); border-color: var(--text-mute); }
 .ui-bulk-pill.active {
-  color: #1a1a1a; background: var(--accent); border-color: var(--accent);
+  color: var(--text-on-accent, #fff); background: var(--accent); border-color: var(--accent);
   font-weight: 600;
 }
 
@@ -2597,7 +2610,7 @@ select:-webkit-autofill {
   transition: all 0.1s ease;
 }
 .ui-chat-side-item.selected {
-  background: rgba(212, 166, 87, 0.12); /* amber-tinted on Blackboard */
+  background: color-mix(in srgb, var(--accent) 12%, transparent); /* amber-tinted on Blackboard */
   border-radius: 6px;
 }
 .ui-chat-side-item.selected::before {
@@ -2605,7 +2618,7 @@ select:-webkit-autofill {
   border-color: var(--accent);
   /* Tiny check mark via inline SVG-ish trick: use a unicode check. */
   content: '✓';
-  color: #1a1a1a; font-weight: 700; font-size: 11px;
+  color: var(--text-on-accent, #fff); font-weight: 700; font-size: 11px;
   display: flex; align-items: center; justify-content: center;
   line-height: 1;
 }
@@ -2683,19 +2696,19 @@ select:-webkit-autofill {
   height: 0.55rem;
   border-radius: 50%;
   background: var(--success);
-  box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.55);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 55%, transparent);
   vertical-align: middle;
   margin-right: 0.4rem;
   animation: ui-chat-side-running-pulse 1.6s ease-in-out infinite;
 }
 @keyframes ui-chat-side-running-pulse {
-  0%   { box-shadow: 0 0 0 0   rgba(63, 185, 80, 0.55); }
-  70%  { box-shadow: 0 0 0 6px rgba(63, 185, 80, 0); }
-  100% { box-shadow: 0 0 0 0   rgba(63, 185, 80, 0); }
+  0%   { box-shadow: 0 0 0 0   color-mix(in srgb, var(--success) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--success) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0   color-mix(in srgb, var(--success) 0%, transparent); }
 }
 /* The whole row reads as live, not only the dot: a faint tint of the same
  * green, and the title carries the weight of something happening. */
-.ui-chat-side-item.running { background: rgba(63, 185, 80, 0.08); }
+.ui-chat-side-item.running { background: color-mix(in srgb, var(--success) 8%, transparent); }
 .ui-chat-side-item.running .ui-chat-side-title { font-weight: 600; }
 .ui-chat-side-del {
   position: absolute; right: 0.4rem; top: 50%; transform: translateY(-50%);
@@ -2857,21 +2870,48 @@ select:-webkit-autofill {
   white-space: pre-wrap; word-break: break-word;
 }
 .ui-chat-status { align-self: center; font-size: 0.78rem; color: var(--text-mute); font-style: italic; padding: 0.2rem 0; }
+/* --- Modals: one look ---
+ * Every dialog the toolkit draws shares a scrim, a corner and a shadow:
+ * uiOpenModal's box, the confirm / alert / prompt dialog, the form-chip and
+ * code-editor dialogs, and (with its own darker reading scrim) the report
+ * reader. They had drifted to four corners from 6px to 12px, and the shared
+ * modal had no shadow at all, so a dialog looked different from app to app. */
+:root {
+  --modal-radius: 10px;
+  --modal-scrim: rgba(0, 0, 0, 0.55);
+  --modal-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+}
+.ui-modal-overlay {
+  position: fixed; inset: 0; box-sizing: border-box; padding: 1rem;
+  background: var(--modal-scrim);
+  display: flex; align-items: center; justify-content: center;
+}
+.ui-modal-box {
+  box-sizing: border-box; width: 100%; max-width: 640px;
+  max-height: 88vh; max-height: calc(var(--ui-vh, 100dvh) - 2rem);
+  display: flex; flex-direction: column;
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--modal-radius);
+  box-shadow: var(--modal-shadow);
+  padding: 1.1rem 1.2rem;
+}
+.ui-modal-title { margin: 0 0 0.5rem; color: var(--text-hi); }
+.ui-modal-sub { margin: 0 0 0.8rem; font-size: 0.82rem; color: var(--text-mute); line-height: 1.45; }
 /* Themed confirm / alert / prompt dialog (uiDefaultModal) — the in-page
  * replacement for native browser dialogs, so the chrome matches the app
  * and mirrors the gohort-desktop host modal. */
 .ui-modal-dialog {
   background: var(--bg-1); color: var(--text);
-  border: 1px solid var(--border); border-radius: 8px;
+  border: 1px solid var(--border); border-radius: var(--modal-radius);
   padding: 1.1rem 1.2rem; width: 92%; max-width: 440px;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  box-shadow: var(--modal-shadow);
   font: inherit;
 }
-.ui-modal-dialog::backdrop { background: rgba(0,0,0,0.5); }
+.ui-modal-dialog::backdrop { background: var(--modal-scrim); }
 .ui-modal-msg { margin-bottom: 1rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .ui-modal-input {
   width: 100%; box-sizing: border-box; margin-bottom: 0.9rem;
-  padding: 0.45rem 0.6rem; border-radius: 5px;
+  padding: 0.45rem 0.6rem; border-radius: var(--btn-radius);
   border: 1px solid var(--border); background: var(--bg-0); color: var(--text); font: inherit;
 }
 /* The multiline variant of the same box (uiPrompt opts.multiline). */
@@ -2948,9 +2988,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   -webkit-tap-highlight-color: transparent;
 }
 .ui-chat-tools-badge:hover { color: var(--text); border-color: var(--accent); }
+/* Placed by uiAnchorMenu (under the badge, kept on screen, height capped to
+ * the room it has), so nothing here positions it. */
 .ui-chat-tools-popover {
-  position: absolute; right: 0; top: calc(100% + 4px); z-index: 60;
-  min-width: 320px; max-width: 480px; max-height: 60vh; overflow-y: auto;
+  min-width: min(320px, calc(100vw - 8px)); max-width: min(480px, calc(100vw - 8px));
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 6px;
   box-shadow: 0 4px 14px rgba(0,0,0,0.35);
   padding: 0.4rem;
@@ -2969,12 +3010,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   line-height: 1.35; margin-top: 0.15rem;
 }
 .ui-chat-tools-loading { color: var(--text-mute); font-size: 0.78rem; padding: 0.5rem; }
-@media (max-width: 600px) {
-  .ui-chat-tools-popover {
-    position: fixed; left: 0.5rem; right: 0.5rem; top: auto; bottom: 4rem;
-    min-width: 0; max-width: none;
-  }
-}
 
 /* --- PipelinePanel --- */
 .ui-pl-form {
@@ -3020,7 +3055,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-input {
   font-family: inherit; font-size: 0.9rem;
   background: var(--bg-1); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   padding: 0.45rem 0.6rem;
 }
 .ui-pl-input:focus { outline: none; border-color: var(--accent); }
@@ -3052,12 +3087,12 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * action rather than a generic toolbar button. */
 .ui-pl-prefill-btn {
   display: inline-flex; align-items: center; gap: 0.4rem;
-  background: linear-gradient(135deg, rgba(212, 166, 87, 0.18), rgba(212, 166, 87, 0.06));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
   color: var(--accent); border: 1px solid var(--accent);
   font-weight: 600;
 }
 .ui-pl-prefill-btn:hover:not(:disabled):not(.is-disabled) {
-  background: linear-gradient(135deg, rgba(212, 166, 87, 0.28), rgba(212, 166, 87, 0.12));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
   filter: none;
 }
 .ui-pl-prefill-icon {
@@ -3126,7 +3161,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-modal {
   position: relative;
   background: var(--bg-0); border: 1px solid var(--border);
-  border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  border-radius: var(--modal-radius); box-shadow: var(--modal-shadow);
   width: 100%; max-width: 800px; height: fit-content;
   padding: 2rem;
   display: flex; flex-direction: column; gap: 0.4rem;
@@ -3203,7 +3238,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-related-hint {
   display: inline-block; margin-top: 0.3rem;
   font-size: 0.7rem; color: var(--accent);
-  background: rgba(212, 166, 87, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   padding: 0.1rem 0.45rem; border-radius: 999px;
 }
 /* Headline: Orbitron metallic gradient, matches legacy report h1. */
@@ -3211,7 +3246,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
   font-size: 1.5rem; line-height: 1.3; text-align: center;
   text-wrap: balance; margin: 0 0 0.5rem;
-  background: linear-gradient(180deg, #f0f6fc 0%, #30363d 100%);
+  background: linear-gradient(180deg, var(--text-hi) 15%, var(--text-mute) 115%);
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
   background-clip: text;
 }
@@ -3328,7 +3363,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.3rem 0.75rem; border-radius: 999px;
   background: var(--bg-2);
   border: 1px solid var(--accent);
-  box-shadow: 0 0 0 3px rgba(212, 166, 87, 0.08);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .ui-pl-status-done {
   color: var(--text-mute); font-weight: normal;
@@ -3349,7 +3384,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border-right-color: transparent;
   border-radius: 50%;
   animation: ui-pl-spin 0.9s linear infinite;
-  box-shadow: 0 0 0 1px rgba(212, 166, 87, 0.18);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 @keyframes ui-pl-spin { to { transform: rotate(360deg); } }
 
@@ -3450,7 +3485,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: var(--danger); color: #fff; border-color: var(--danger);
   animation: ui-mic-pulse 1s ease-in-out infinite;
 }
-@keyframes ui-mic-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(248,81,73,0.6); } 50% { box-shadow: 0 0 0 6px rgba(248,81,73,0); } }
+@keyframes ui-mic-pulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger) 60%, transparent); } 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--danger) 0%, transparent); } }
 
 /* Chat-bubble prose (headings / pre / code / lists / links) comes from
  * .ui-md — see the canonical block above. No surface-specific overrides
@@ -4114,7 +4149,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
    it apart from something the model said. */
 .ui-agent-msg-failed { align-self: flex-start; max-width: 100%; }
 .ui-agent-msg-failed .ui-agent-msg-body {
-  background: rgba(220, 38, 38, 0.10);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
   border-left: 3px solid var(--danger, #dc2626);
   color: var(--text);
   font-size: 0.86rem;
@@ -4128,9 +4163,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-notice {
   align-self: stretch;
   max-width: 100%;
-  border: 1px solid rgba(217, 119, 6, 0.35);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
   border-left: 3px solid var(--warning, #d97706);
-  background: rgba(217, 119, 6, 0.08);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
   border-radius: 8px;
   padding: 0.45rem 0.6rem;
   margin: 0.15rem 0;
@@ -4215,8 +4250,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border-right: 3px solid var(--accent);
   /* Brighter than --text-mute (too dim — own messages became hard
    * to scan), still clearly secondary to the assistant's pure
-   * white reply. Sits between mute and text in luminance. */
-  color: #b5bbc7;
+   * white reply. Sits between mute and text in luminance, drawn from the
+   * theme: a fixed light grey was near-invisible on the Light theme. */
+  color: color-mix(in srgb, var(--text) 62%, var(--text-mute));
 }
 /* Attachment-only user message: no text → empty body card, which
  * otherwise renders as a blank styled box above the attachment.
@@ -4662,7 +4698,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-ask-opt input { margin-top: 0.2rem; }
 .ui-ask-extra, .ui-ask-input {
   width: 100%; box-sizing: border-box; background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 5px; padding: 0.4rem 0.55rem; font: inherit;
+  border: 1px solid var(--border); border-radius: var(--btn-radius); padding: 0.4rem 0.55rem; font: inherit;
 }
 .ui-ask-extra { resize: vertical; }
 .ui-ask-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; margin-top: 0.6rem; }
@@ -4703,7 +4739,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   order: 99;
   /* Soft glow so the spinning state catches the eye without
    * shouting — matches the muted top-bar palette. */
-  box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.10) inset;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent) inset;
 }
 .ui-agent-status-pill .ui-spinner {
   width: 12px; height: 12px; border-width: 2px; margin-right: 0;
@@ -4910,7 +4946,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-name::placeholder { color: var(--text-mute); font-weight: normal; }
 .ui-cw-lang {
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   padding: 0.35rem 0.55rem; font-size: 0.82rem; font-family: inherit;
   outline: none;
 }
@@ -5023,7 +5059,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-prof-pill:hover { color: var(--text); border-color: var(--accent); }
 .ui-cw-prof-pill.active {
   background: var(--accent); border-color: var(--accent);
-  color: #fff; font-weight: 500;
+  color: var(--text-on-accent, #fff); font-weight: 500;
 }
 /* "Manage" / "+ New" sits at the end of the roster. Muted on purpose: it is
  * the way OUT of the writing surface, and a link competing with the pills
@@ -5117,7 +5153,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-chat-input {
   flex: 1 1 100%;
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   padding: 0.5rem 0.6rem;
   font-family: inherit; font-size: 0.85rem; line-height: 1.4;
   resize: vertical; outline: none;
@@ -5337,20 +5373,20 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-modal-overlay {
   display: none;
   position: fixed; inset: 0; z-index: 1000;
-  background: rgba(0,0,0,0.55); backdrop-filter: blur(4px);
+  background: var(--modal-scrim); backdrop-filter: blur(4px);
   align-items: center; justify-content: center;
   padding: 1rem;
 }
 .ui-cw-modal-overlay.open { display: flex; }
 .ui-cw-modal-box {
   background: var(--bg-1); border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--modal-radius);
   padding: 1.1rem 1.2rem;
   width: 100%; max-width: 540px; max-height: 85vh;
   max-height: calc(var(--ui-vh, 100dvh) - 2rem);
   overflow-y: auto;
   display: flex; flex-direction: column; gap: 0.5rem;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+  box-shadow: var(--modal-shadow);
 }
 .ui-cw-modal-box h3 {
   margin: 0 0 0.3rem 0; font-size: 1.05rem; color: var(--text);
@@ -5365,7 +5401,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   width: 100%; box-sizing: border-box;
   padding: 0.45rem 0.6rem;
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   font-family: inherit; font-size: 0.85rem;
   outline: none;
 }
@@ -5626,7 +5662,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   font-size: 0.8rem; padding: 0.2rem 0.65rem; border-radius: 999px; cursor: pointer;
   background: var(--bg-2); color: var(--text-mute); border: 1px solid var(--border);
 }
-.ui-tw-variant.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ui-tw-variant.active { background: var(--accent); color: var(--text-on-accent, #fff); border-color: var(--accent); }
 .ui-tw-variant-note { font-size: 0.78rem; color: var(--text-mute); margin-left: 0.35rem; }
 .ui-tw-image-row {
   display: flex; gap: 0.6rem; align-items: flex-start;
@@ -5788,7 +5824,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-upload-drop.over {
   border-color: var(--accent, #6366f1);
-  background: var(--accent-soft, rgba(99,102,241,0.12));
+  background: var(--accent-soft, color-mix(in srgb, var(--accent) 12%, transparent));
 }
 .ui-upload-list { display: flex; flex-direction: column; gap: 0.35rem; }
 .ui-upload-row {
@@ -5845,7 +5881,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border: 1px solid var(--border, rgba(127,127,127,0.3));
 }
 .ui-suggest-pick:hover { border-color: var(--accent, #6366f1); }
-.ui-suggest-pick.chosen { background: var(--accent, #6366f1); color: #fff; border-color: transparent; }
+.ui-suggest-pick.chosen { background: var(--accent, #6366f1); color: var(--text-on-accent, #fff); border-color: transparent; }
 
 /* Notifications bell — shares the header row with the live pill, and stays as
  * quiet as it does. Muted until there is something unread; the count appears
@@ -5870,7 +5906,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-bell.unread { opacity: 1; }
 .ui-bell-count {
   display: none; margin-left: 0.2rem; min-width: 1.05rem; padding: 0 0.28rem;
-  border-radius: 999px; background: var(--accent); color: #fff;
+  border-radius: 999px; background: var(--accent); color: var(--text-on-accent, #fff);
   font-size: 0.65rem; font-weight: 700; line-height: 1.05rem; text-align: center;
 }
 .ui-bell.unread .ui-bell-count { display: inline-block; }

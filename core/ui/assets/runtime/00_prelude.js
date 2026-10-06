@@ -818,10 +818,14 @@
 
   window.uiOpenModal = function(opts) {
     opts = opts || {};
+    // The look is the shared modal one (.ui-modal-overlay / .ui-modal-box in
+    // runtime.css); only what varies per call is set here.
     var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:' + window.uiNextModalZ() + ';padding:1rem;box-sizing:border-box';
+    overlay.className = 'ui-modal-overlay';
+    overlay.style.zIndex = String(window.uiNextModalZ());
     var dlg = document.createElement('div');
-    dlg.style.cssText = 'box-sizing:border-box;background:var(--bg-1);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1rem;width:100%;max-width:' + (opts.width || '640px') + ';max-height:88vh;max-height:calc(var(--ui-vh, 100dvh) - 2rem);display:flex;flex-direction:column';
+    dlg.className = 'ui-modal-box';
+    if (opts.width) dlg.style.maxWidth = opts.width;
     overlay.appendChild(dlg);
     var released = false;
     function close() {
@@ -860,13 +864,13 @@
     document.addEventListener('keydown', onKey);
     if (opts.title) {
       var h = document.createElement('h3');
-      h.style.cssText = 'margin:0 0 0.5rem';
+      h.className = 'ui-modal-title';
       h.textContent = opts.title;
       dlg.appendChild(h);
     }
     if (opts.subtitle) {
       var sub = document.createElement('p');
-      sub.style.cssText = 'margin:0 0 0.8rem;font-size:0.82rem;color:var(--text-mute);line-height:1.45';
+      sub.className = 'ui-modal-sub';
       sub.textContent = opts.subtitle;
       dlg.appendChild(sub);
     }

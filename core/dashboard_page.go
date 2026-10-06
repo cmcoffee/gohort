@@ -184,7 +184,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-    background: #0d1117; color: #c9d1d9; min-height: 100vh;
+    background: var(--bg-0, #0d1117); color: var(--text, #c9d1d9); min-height: 100vh;
     display: flex; flex-direction: column; align-items: center;
     padding: 80px 20px;
   }
@@ -229,7 +229,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     .ascii-logo .sq, .ascii-logo .lt { animation: none !important; }
   }
   @media (max-width: 640px) { .ascii-logo { font-size: 0.74rem; } }
-  .subtitle { color: #8b949e; margin-bottom: 3rem; font-size: 1rem; }
+  .subtitle { color: var(--text-mute, #8b949e); margin-bottom: 3rem; font-size: 1rem; }
   /* A notice is a thing to DO, so it reads as one: an accent edge, the
      sentence, and the button that resolves it. Sized to the grid so it sits
      with the cards rather than floating over them. */
@@ -238,15 +238,15 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
     padding: 0.85rem 1.1rem; border-radius: 8px;
     background: rgba(99,102,241,0.10); border: 1px solid rgba(99,102,241,0.35);
-    color: #c9d1d9; font-size: 0.95rem; line-height: 1.5;
+    color: var(--text, #c9d1d9); font-size: 0.95rem; line-height: 1.5;
   }
   .notice span { flex: 1; min-width: 14rem; }
   .notice-act {
     flex: 0 0 auto; text-decoration: none; font-weight: 600; font-size: 0.9rem;
     padding: 0.45rem 0.9rem; border-radius: 6px;
-    background: #6366f1; color: #fff;
+    background: var(--accent, #6366f1); color: var(--text-on-accent, #fff);
   }
-  .notice-act:hover { background: #4f46e5; }
+  .notice-act:hover { filter: brightness(1.1); }
   /* Column width for the PHONE layout, where one centred column is the right
      answer. Desktop stops being that shape entirely: see the wide layout
      below, so this is not a cap that grows, it is the narrow case's width. */
@@ -256,20 +256,20 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     gap: 1.5rem; width: 100%; max-width: var(--dash-w);
   }
   .card {
-    display: block; text-decoration: none; color: #c9d1d9;
-    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    display: block; text-decoration: none; color: var(--text, #c9d1d9);
+    background: var(--bg-1, #161b22); border: 1px solid var(--border, #30363d); border-radius: 8px;
     padding: 1.5rem; transition: border-color 0.2s, transform 0.2s;
   }
-  .card:hover { border-color: #58a6ff; transform: translateY(-2px); }
-  .card-name { font-size: 1.25rem; font-weight: 600; color: #f0f6fc; margin-bottom: 0.5rem; }
-  .card-desc { font-size: 0.9rem; color: #8b949e; line-height: 1.4; }
+  .card:hover { border-color: var(--accent, #58a6ff); transform: translateY(-2px); }
+  .card-name { font-size: 1.25rem; font-weight: 600; color: var(--text-hi, #f0f6fc); margin-bottom: 0.5rem; }
+  .card-desc { font-size: 0.9rem; color: var(--text-mute, #8b949e); line-height: 1.4; }
   /* Featured hero card: the primary entry point. Spans the full grid
      width and is larger so it stands apart by SIZE, not color (a blue
      border reads as a hover/selected state and is confusing here). */
   .card.featured {
     grid-column: 1 / -1;
     padding: 2.25rem 2rem;
-    background: linear-gradient(135deg, #161b22 0%, #1b2230 100%);
+    background: linear-gradient(135deg, var(--bg-1, #161b22) 0%, var(--bg-2, #1b2230) 100%);
     box-shadow: 0 8px 24px rgba(0,0,0,0.35);
   }
   .card.featured:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
@@ -289,12 +289,12 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
      inner card grid. */
   .cluster {
     grid-column: 1 / -1;
-    border: 1px solid #30363d; border-radius: 10px;
+    border: 1px solid var(--border, #30363d); border-radius: 10px;
     padding: 1rem 1rem 1.25rem;
   }
   .cluster-head {
     font-size: 0.78rem; font-weight: 600; letter-spacing: 0.08em;
-    text-transform: uppercase; color: #8b949e; margin-bottom: 0.9rem;
+    text-transform: uppercase; color: var(--text-mute, #8b949e); margin-bottom: 0.9rem;
   }
   .cluster-grid {
     /* auto-FIT, not auto-fill. The cluster holds a bounded set: the apps that
@@ -310,8 +310,8 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   #live-panel {
     width: 100%; max-width: var(--dash-w); margin-top: 2rem;
   }
-  #live-panel h3 { color: #8b949e; font-size: 0.9rem; margin-bottom: 0.75rem; cursor: pointer; }
-  #live-panel h3:hover { color: #c9d1d9; }
+  #live-panel h3 { color: var(--text-mute, #8b949e); font-size: 0.9rem; margin-bottom: 0.75rem; cursor: pointer; }
+  #live-panel h3:hover { color: var(--text, #c9d1d9); }
   /* A row is a flex LINE THAT MAY BECOME TWO, and every part of that is load
      bearing. In the 320px rail (and on a handset) an app badge, a state badge
      and a status string are all the width there is; the label was flex:1
@@ -326,11 +326,11 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   .live-item {
     display: flex; align-items: center; flex-wrap: wrap;
     gap: 0.35rem 0.75rem;
-    padding: 0.6rem 0.8rem; background: #161b22; border: 1px solid #21262d;
+    padding: 0.6rem 0.8rem; background: var(--bg-1, #161b22); border: 1px solid var(--border, #21262d);
     border-radius: 6px; margin-bottom: 0.4rem; cursor: pointer;
-    text-decoration: none; color: #c9d1d9; font-size: 0.85rem;
+    text-decoration: none; color: var(--text, #c9d1d9); font-size: 0.85rem;
   }
-  .live-item:hover { border-color: #30363d; }
+  .live-item:hover { border-color: var(--border, #30363d); }
   .live-badge {
     flex: 0 0 auto;
     font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 4px;
@@ -346,7 +346,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   }
   .live-status {
     flex: 0 1 auto; min-width: 0; margin-left: auto; text-align: right;
-    color: #8b949e; font-size: 0.8rem;
+    color: var(--text-mute, #8b949e); font-size: 0.8rem;
     overflow-wrap: anywhere; line-height: 1.35;
   }
   .auth-bar {
@@ -356,21 +356,21 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     max-width: calc(100vw - 64px); /* leave room for the dashboard-back icon at top-left */
   }
   .auth-user {
-    color: #8b949e;
+    color: var(--text-mute, #8b949e);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 40vw;
   }
   .auth-link {
-    color: #8b949e; text-decoration: none;
-    padding: 0.3rem 0.7rem; border: 1px solid #30363d; border-radius: 6px;
-    background: #161b22; transition: border-color 0.2s, color 0.2s;
+    color: var(--text-mute, #8b949e); text-decoration: none;
+    padding: 0.3rem 0.7rem; border: 1px solid var(--border, #30363d); border-radius: 6px;
+    background: var(--bg-1, #161b22); transition: border-color 0.2s, color 0.2s;
     white-space: nowrap;
     /* Match a <button class="auth-link"> (POST-logout) to the <a> siblings. */
     cursor: pointer; font: inherit; line-height: normal;
   }
-  .auth-link:hover { border-color: #58a6ff; color: #f0f6fc; }
+  .auth-link:hover { border-color: var(--accent, #58a6ff); color: var(--text-hi, #f0f6fc); }
   .auth-logout { display: inline; margin: 0; padding: 0; }
   /* DESKTOP: stop being a phone. Below this the page is one centred column,
      which is the right answer on a handset and the wrong one on a monitor
@@ -522,7 +522,7 @@ function refreshLive() {
     document.getElementById('logo').classList.toggle('running',
       items.some(function(it) { return !it.queued; }));
     if (items.length === 0) {
-      list.innerHTML = '<div style="color:#484f58;padding:0.5rem;font-size:0.85rem">No active sessions.</div>';
+      list.innerHTML = '<div style="color:var(--text-mute);padding:0.5rem;font-size:0.85rem">No active sessions.</div>';
       return;
     }
     items.sort(function(a, b) {
@@ -532,7 +532,7 @@ function refreshLive() {
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
       var badge = it.queued ? '<span class="live-badge queued">Queued</span>' : '<span class="live-badge running">Running</span>';
-      var app = it.app ? '<span class="live-badge" style="background:#30363d;color:#8b949e">' + esc(it.app) + '</span>' : '';
+      var app = it.app ? '<span class="live-badge" style="background:var(--bg-2);color:var(--text-mute)">' + esc(it.app) + '</span>' : '';
       var label = it.topic || it.label || 'Untitled';
       // Every live item opens the central Monitor page (the expanded view).
       html += '<a class="live-item" href="/monitor" title="' + esc(label) + '">';

@@ -162,11 +162,11 @@
         class: 'ui-chat-tools-badge',
         title: 'Tools the LLM can use',
         onclick: function() {
-          if (toolsPopover.style.display !== 'none') {
-            toolsPopover.style.display = 'none';
+          if (toolsAnchor.isOpen()) {
+            toolsAnchor.close();
             return;
           }
-          toolsPopover.style.display = '';
+          toolsAnchor.open();
           if (toolsLoaded) {
             renderToolsPopover();
             return;
@@ -176,15 +176,19 @@
         },
       }, ['🔧 Tools']);
       toolsPopover = el('div', {class: 'ui-chat-tools-popover', style: 'display:none'});
+      // Anchored on the body, under the badge and kept on screen, rather than
+      // hung from the badge's right edge (off a phone's left side) or switched
+      // to a bottom sheet below 600px.
+      var toolsAnchor = window.uiAnchorMenu(toolsBadge, toolsPopover, {align: 'right', display: 'flex'});
       // Prefetch so the badge shows the count immediately. fetchTools
       // is defined above this block at the chat-panel function scope.
       fetchTools();
-      var toolsWrap = el('div', {class: 'ui-chat-tools-wrap'}, [toolsBadge, toolsPopover]);
+      var toolsWrap = el('div', {class: 'ui-chat-tools-wrap'}, [toolsBadge]);
       modesBar.appendChild(toolsWrap);
       // Outside-click dismiss.
       document.addEventListener('click', function(ev) {
         if (toolsPopover.style.display === 'none') return;
-        if (!toolsWrap.contains(ev.target)) toolsPopover.style.display = 'none';
+        if (!toolsWrap.contains(ev.target) && !toolsPopover.contains(ev.target)) toolsAnchor.close();
       });
     }
 

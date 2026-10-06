@@ -914,7 +914,7 @@
           onclick: function() { selectOrchNav(idx); }}, ['Show all']);
         var bar = el('div', {style: 'display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;' +
           'margin:0 0 0.5rem;padding:0.35rem 0.6rem;border:1px solid var(--accent, #4a9eff);' +
-          'border-radius:6px;background:rgba(88,166,255,0.08)'}, [
+          'border-radius:6px;background:color-mix(in srgb, var(--accent) 8%, transparent)'}, [
             el('span', {style: 'flex:1 1 auto;min-width:0;font-size:0.78rem;color:var(--text, inherit)'}, [text]),
             back,
           ]);
@@ -1000,7 +1000,7 @@
           // De-accent the SELECTED state (border + strong bg) but keep the
           // Cortex's persistent faint gold tint — it's the standing-thread
           // marker, not a selection cue.
-          if (heroBtn) { heroBtn.style.border = '1px solid transparent'; heroBtn.style.background = 'rgba(217,184,108,0.07)'; }
+          if (heroBtn) { heroBtn.style.border = '1px solid transparent'; heroBtn.style.background = 'color-mix(in srgb, var(--warning) 7%, transparent)'; }
           // On mobile, start the overlay BELOW the header bar so the ☰ stays
           // uncovered and tappable (otherwise inset:0 paints over it and there's
           // no way back). Desktop has no mobile header — pin to the top.
@@ -1127,7 +1127,7 @@
               // A pinned action-queue row keeps a faint always-on tint (marks it
               // like the Cortex row) and STRENGTHENS it when items are pending.
               if (item.pinned && orchBtns[i]) {
-                orchBtns[i].style.background = n ? 'rgba(88,166,255,0.18)' : 'rgba(88,166,255,0.06)';
+                orchBtns[i].style.background = n ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'color-mix(in srgb, var(--accent) 6%, transparent)';
               }
               // No background tint for a topbar control: the count pill already
               // says the queue is non-empty, and a persistent fill is
@@ -1217,8 +1217,8 @@
         var badge = null;
         var b;
         if (item.topbar) {
-          var tAccent = '#58a6ff';
-          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.15rem;text-align:center;padding:0.02rem 0.4rem;border-radius:999px;font-size:0.68rem;font-weight:700;background:' + tAccent + ';color:#fff'}, ['']);
+          var tAccent = 'var(--accent)';
+          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.15rem;text-align:center;padding:0.02rem 0.4rem;border-radius:999px;font-size:0.68rem;font-weight:700;background:' + tAccent + ';color:var(--text-on-accent, #fff)'}, ['']);
           b = el('button', {type: 'button', class: 'ui-row-btn', title: item.subtitle || item.label,
             // Border stated inline rather than left to .ui-row-btn: this
             // control sits in its own table cell, outside .ui-agent-actions,
@@ -1242,7 +1242,7 @@
           // row: a colored glyph + bold title (+ optional subtitle) + count pill,
           // rounded with a faint always-on accent tint that strengthens when the
           // queue has pending items (set in refreshChannelBadges).
-          var pAccent = '#58a6ff';
+          var pAccent = 'var(--accent)';
           var plabel = el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:ellipsis;min-width:0'}, [item.label || ('View ' + (i + 1))]);
           // margin-left:auto parks the count on the RIGHT EDGE of the row
           // rather than letting it trail the label. Hugging the text means it
@@ -1251,7 +1251,7 @@
           // the edge it lines up with the other rows and can be scanned down
           // the column. The gap stays as a minimum for a label long enough to
           // reach it.
-          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.3rem;text-align:center;padding:0.05rem 0.45rem;border-radius:999px;font-size:0.7rem;font-weight:700;background:' + pAccent + ';color:#fff;flex:0 0 auto;margin-left:auto'}, ['']);
+          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.3rem;text-align:center;padding:0.05rem 0.45rem;border-radius:999px;font-size:0.7rem;font-weight:700;background:' + pAccent + ';color:var(--text-on-accent, #fff);flex:0 0 auto;margin-left:auto'}, ['']);
           var ptitle = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;white-space:nowrap;overflow:hidden;width:100%'}, [plabel, badge]);
           var pbody = [ptitle];
           if (item.subtitle) {
@@ -1265,7 +1265,7 @@
           // selectOrchNav swaps in the accent border when this view is selected,
           // matching the Cortex row's "selected" treatment.
           b = el('button', {type: 'button', class: 'ui-channel-row ui-channel-pinned-row',
-            style: 'display:flex;align-items:flex-start;gap:0.5rem;text-align:left;padding:0.5rem 0.6rem;border:1px solid transparent;border-radius:7px;cursor:pointer;font:inherit;color:var(--text, inherit);background:rgba(88,166,255,0.06);width:100%',
+            style: 'display:flex;align-items:flex-start;gap:0.5rem;text-align:left;padding:0.5rem 0.6rem;border:1px solid transparent;border-radius:7px;cursor:pointer;font:inherit;color:var(--text, inherit);background:color-mix(in srgb, var(--accent) 6%, transparent);width:100%',
             onclick: function() { selectOrchNav(i); }}, pkids);
           pinnedEl.appendChild(b);
         } else {
@@ -5787,7 +5787,7 @@
             // A RECORD thread (the agent does not take turns in it) wears a
             // neutral tint and says so, so it is never mistaken for the
             // standing thread an agent resumes.
-            var gold = isRecord ? '#8a93a6' : '#d9b86c';
+            var gold = isRecord ? 'var(--text-mute)' : 'var(--warning)';
             var heroLabel = isRecord ? (cfg.record_label || 'Activity') : (cfg.alt_primary_label || 'Cortex');
             var titleLine = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;white-space:nowrap;overflow:hidden'}, [
               el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:ellipsis'}, [heroLabel]),
@@ -5809,8 +5809,8 @@
             // border adds when it's the active thread.
             var heroBorder = chActive ? gold : 'transparent';
             var heroBg = isRecord
-              ? (chActive ? 'rgba(138,147,166,0.16)' : 'rgba(138,147,166,0.07)')
-              : (chActive ? 'rgba(217,184,108,0.16)' : 'rgba(217,184,108,0.07)');
+              ? (chActive ? 'color-mix(in srgb, var(--text-mute) 16%, transparent)' : 'color-mix(in srgb, var(--text-mute) 7%, transparent)')
+              : (chActive ? 'color-mix(in srgb, var(--warning) 16%, transparent)' : 'color-mix(in srgb, var(--warning) 7%, transparent)');
             var chRow = el('button', {type: 'button', class: 'ui-channel-hero' + (chActive ? ' active' : ''),
               style: 'display:flex;align-items:flex-start;gap:0.5rem;width:100%;text-align:left;padding:0.5rem 0.6rem;border:1px solid ' + heroBorder + ';border-radius:7px;cursor:pointer;font:inherit;color:var(--text, inherit);background:' + heroBg,
               onclick: function() { openSession(chId); closeDrawer(); }}, chKids);

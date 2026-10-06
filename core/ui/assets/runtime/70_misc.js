@@ -337,12 +337,14 @@
       var trigger = el('button', {class: 'ui-wb-action-btn', text: (a.label || 'More') + ' ▾'});
       trigger.disabled = true;
       var menu = el('div', {class: 'ui-wb-menu'});
-      menu.style.display = 'none';
+      // Anchored on the body: inside its column (overflow: hidden) the menu
+      // was clipped wherever it ran past the column's edge.
+      var anchor = window.uiAnchorMenu(trigger, menu, {display: 'flex'});
       function closeMenu() {
-        menu.style.display = 'none';
+        anchor.close();
         document.removeEventListener('click', onDocClick, true);
       }
-      function onDocClick(ev) { if (!wrap.contains(ev.target)) closeMenu(); }
+      function onDocClick(ev) { if (!wrap.contains(ev.target) && !menu.contains(ev.target)) closeMenu(); }
       (a.children || []).forEach(function(child) {
         var item = el('button', {class: 'ui-wb-menu-item', text: child.label});
         item.addEventListener('click', function() { closeMenu(); runViewerAction(child, trigger); });
@@ -350,15 +352,14 @@
       });
       trigger.addEventListener('click', function(ev) {
         ev.stopPropagation();
-        if (menu.style.display === 'none') {
-          menu.style.display = 'flex';
+        if (!anchor.isOpen()) {
+          anchor.open();
           document.addEventListener('click', onDocClick, true);
         } else {
           closeMenu();
         }
       });
       wrap.appendChild(trigger);
-      wrap.appendChild(menu);
       return wrap;
     }
 
