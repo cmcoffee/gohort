@@ -137,6 +137,11 @@ type ArticleEditor struct {
 	// remains for the framework-managed rules / merge slide-in panels
 	// only; app-specific flows should use "client".
 	Actions []ToolbarAction `json:"actions,omitempty"`
+	// ViewerLabel and ChatLabel name the article and its assistant on a
+	// phone, where the two are shown one at a time behind a switch (defaults
+	// "Article" and "Assistant").
+	ViewerLabel string `json:"viewer_label,omitempty"`
+	ChatLabel   string `json:"chat_label,omitempty"`
 }
 
 // MenuAction is one entry in an ExtraActions / popover-style

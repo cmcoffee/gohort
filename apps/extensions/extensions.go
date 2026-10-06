@@ -2139,14 +2139,14 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 						},
 						EmptyText: "No tools yet. Ask the assistant in chat to build one for you.",
 					},
-						// Sub-heading for the categories block. Card is the escape hatch for
-						// a heading the framework doesn't model; it borrows the two section
-						// classes so this reads as a section within the section rather than
-						// a stray second table.
-						ui.Card{HTML: `<div class="ui-section-h" style="margin-top:1.6rem">Categories</div>` +
-							`<div class="ui-section-sub">The headings used above, and the same ones the tool picker and each app's tool list use. ` +
-							`Open one to tick the tools that belong in it, or start a new one and fill it in the same step. ` +
-							`A tool holds one category, so filing it here moves it out of wherever it was.</div>`},
+					}},
+				},
+				ui.Subsection{
+					Title:    "Categories",
+					Subtitle: "The headings used above, and the same ones the tool picker and each app's tool list use.",
+					Detail: "Open one to tick the tools that belong in it, or start a new one and fill it in the same step. " +
+						"A tool holds one category, so filing it here moves it out of wherever it was.",
+					Body: ui.Stack{Children: []ui.Component{
 						ui.Table{
 							Source: "api/tool-categories",
 							RowKey: "name",

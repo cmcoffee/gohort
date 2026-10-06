@@ -61,7 +61,7 @@
       container.innerHTML = '';
       var loading = document.createElement('div');
       loading.style.cssText = 'color:var(--text-mute,#888);font-size:0.82rem;padding:0.4rem 0';
-      loading.textContent = 'Loading…';
+      loading.textContent = ''; loading.appendChild(uiLoading());
       container.appendChild(loading);
       Promise.resolve(opts.load()).then(function (state) {
         container.innerHTML = '';

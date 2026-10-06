@@ -730,7 +730,7 @@ func agentLockIconHTML(id string, locked bool) string {
     var next=!locked; b.disabled=true;
     fetch('../api/agents/'+id+'/lock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({locked:next})})
       .then(function(r){ if(!r.ok) throw new Error('request failed'); locked=next; draw(); applyLock(); })
-      .catch(function(e){ alert('Could not change lock: '+(e&&e.message||e)); })
+      .catch(function(e){ window.uiAlert('Could not change lock: '+(e&&e.message||e)); })
       .then(function(){ b.disabled=false; });
   };
   var tries=0;

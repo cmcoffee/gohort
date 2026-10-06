@@ -108,7 +108,7 @@
   };
 
   components.table = function(cfg) {
-    var listEl = el('div', {class: 'ui-table-list'}, ['Loading…']);
+    var listEl = el('div', {class: 'ui-table-list'}, [uiLoading()]);
     var refreshIndicator = null;
     var records = [];
     var searchText = '';
@@ -798,7 +798,7 @@
   };
 
   components.history_panel = function(cfg) {
-    var panel = el('div', {class: 'ui-history'}, ['Loading…']);
+    var panel = el('div', {class: 'ui-history'}, [uiLoading()]);
     var roleField = cfg.role_field || 'role';
     var textField = cfg.text_field || 'text';
     var whoField = cfg.who_field || 'display_name';
@@ -965,7 +965,7 @@
 
     var revealed = el('div', {class: 'ui-keys-revealed', style: 'display:none'});
 
-    var listEl = el('div', {class: 'ui-keys-list'}, ['Loading…']);
+    var listEl = el('div', {class: 'ui-keys-list'}, [uiLoading()]);
 
     wrap.appendChild(actions);
     wrap.appendChild(formWrap);
@@ -1011,7 +1011,7 @@
       revealed.style.display = '';
     }
     function loadList() {
-      listEl.innerHTML = 'Loading…';
+      listEl.innerHTML = ''; listEl.appendChild(uiLoading());
       fetchJSON(cfg.list_url).then(function(items) {
         listEl.innerHTML = '';
         items = items || [];
@@ -1104,7 +1104,7 @@
     var valueField = cfg.value_field || nameField; // key whose value is STORED
     var labelField = cfg.label_field || nameField; // display key
     var descField  = cfg.desc_field  || 'desc';
-    var wrap = el('div', {class: mode === 'attach' ? 'ui-chip-picker' : 'ui-chips'}, ['Loading…']);
+    var wrap = el('div', {class: mode === 'attach' ? 'ui-chip-picker' : 'ui-chips'}, [uiLoading()]);
 
     // extractOptions unwraps a shaped list response to its array. Endpoints
     // use a mix of top-level keys; a flat array passes straight through.
@@ -3196,7 +3196,7 @@
       }
       function refresh() {
         host.innerHTML = '';
-        host.appendChild(el('span', {class: 'ui-form-chips-loading'}, ['Loading…']));
+        host.appendChild(el('span', {class: 'ui-form-chips-loading'}, [uiLoading()]));
         fetchJSON(f.chips_source).then(function(items) {
           host.innerHTML = '';
           (items || []).forEach(function(p) {
@@ -3533,7 +3533,7 @@
         btn.addEventListener('click', function() {
           var orig = btn.textContent;
           btn.disabled = true;
-          btn.textContent = 'Loading…';
+          btn.textContent = ''; btn.appendChild(uiLoading('Loading', {immediate: true}));
           fetchJSON(cfg.history_url).then(function(d) {
             openHistoryModal(d || {});
           }).catch(function(err) {
@@ -3610,7 +3610,7 @@
               var orig = ab.textContent;
               if (a.kind === 'show') {
                 ab.disabled = true;
-                ab.textContent = 'Loading…';
+                ab.textContent = ''; ab.appendChild(uiLoading('Loading', {immediate: true}));
                 fetchJSON(url).then(function(view) {
                   showView(view || {}, back);
                 }).catch(function(err) {
@@ -3978,7 +3978,7 @@
   };
 
   components.display_panel = function(cfg) {
-    var wrap = el('div', {class: 'ui-display'}, ['Loading…']);
+    var wrap = el('div', {class: 'ui-display'}, [uiLoading()]);
     function reload() {
       fetchJSON(cfg.source).then(function(d) {
         var restoreScroll = uiKeepBlockScroll(wrap);
@@ -4532,7 +4532,7 @@
   };
 
   components.bar_chart = function(cfg) {
-    var wrap = el('div', {class: 'ui-chart'}, ['Loading…']);
+    var wrap = el('div', {class: 'ui-chart'}, [uiLoading()]);
     var height = cfg.height_px || 200;
     var decimals = cfg.y_decimals != null ? cfg.y_decimals : 2;
     var prefix = cfg.y_prefix || '';
@@ -4881,7 +4881,7 @@
       });
     }
     if (cfg.source) {
-      wrap.textContent = 'Loading…';
+      wrap.textContent = ''; wrap.appendChild(uiLoading());
       reload();
       // A chart of live data is the case auto-refresh exists for, and this was
       // the one source-backed component that could not do it.
@@ -4899,7 +4899,7 @@
   };
 
   components.action_list = function(cfg) {
-    var wrap = el('div', {class: 'ui-actionlist'}, ['Loading…']);
+    var wrap = el('div', {class: 'ui-actionlist'}, [uiLoading()]);
     var labelField = cfg.label_field || 'Label';
     var descField  = cfg.desc_field  || 'Desc';
     var histField  = cfg.history_field || '';

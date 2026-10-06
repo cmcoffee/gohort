@@ -35,7 +35,7 @@
       leftExtras: sideSelectBtn ? [sideSelectBtn] : [],
     });
     var sideHdr  = sideHdrBuilt.elt;
-    var sideList = el('div', {class: 'ui-chat-side-list'}, ['Loading…']);
+    var sideList = el('div', {class: 'ui-chat-side-list'}, [uiLoading()]);
     var sideSearch = makeSideSearch(sideList);
     side.appendChild(sideHdr);
     side.appendChild(sideSearch);
@@ -319,7 +319,7 @@
     // the legacy suggest panel.
     function openRelatedPopover(action, url, btn) {
       var origLabel = btn.textContent;
-      btn.textContent = 'Loading…';
+      btn.textContent = ''; btn.appendChild(uiLoading('Loading', {immediate: true}));
       btn.disabled = true;
       fetch(url, {
         method: 'POST',

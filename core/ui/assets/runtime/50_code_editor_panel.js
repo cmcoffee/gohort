@@ -36,7 +36,7 @@
       leftExtras: [collapseBtn],
     });
     var sideHdr  = sideHdrBuilt.elt;
-    var sideList = el('div', {class: 'ui-tw-side-list'}, ['Loading…']);
+    var sideList = el('div', {class: 'ui-tw-side-list'}, [uiLoading()]);
     var sideSearch = makeSideSearch(sideList);
     side.appendChild(sideHdr);
     side.appendChild(sideSearch);
@@ -936,6 +936,18 @@
     bodyRow.appendChild(chatPane);
     main.appendChild(bodyRow);
 
+    // Phone: the code and its assistant one at a time, behind a switch in the
+    // drawer header, rather than the chat stacked under the editor in a 45%
+    // slice. A reply landing while you edit lights a dot.
+    var panes = makePaneSwitch({
+      panes: [
+        {key: 'code', label: cfg.viewer_label || 'Code', els: [toolbar, profBar, editorWrap]},
+        {key: 'chat', label: cfg.chat_label || 'Assistant', els: [chatResizer, chatPane]},
+      ],
+      watch: {key: 'chat', el: chatMessages, selector: '.ui-cw-msg.assistant'},
+    });
+    drawer.mobileHdr.appendChild(panes.el);
+
     // Floating expand-tab shown when the sidebar is collapsed. Pinned
     // to the left edge of the main pane so the user can always pop
     // the snippets list back without hunting through menus.
@@ -1396,7 +1408,7 @@
       modalBox.innerHTML = '';
       var hdr = el('h3', {}, ['Values']);
       modalBox.appendChild(hdr);
-      var listEl = el('div', {class: 'ui-cw-list'}, ['Loading…']);
+      var listEl = el('div', {class: 'ui-cw-list'}, [uiLoading()]);
       modalBox.appendChild(listEl);
       var btns = el('div', {class: 'ui-cw-modal-btns'});
       var closeBtn = el('button', {class: 'ui-row-btn'}, ['Close']);
@@ -1511,7 +1523,7 @@
       if (!cfg.contexts_list_url) return;
       modalBox.innerHTML = '';
       modalBox.appendChild(el('h3', {}, ['Saved contexts']));
-      var listEl = el('div', {class: 'ui-cw-list'}, ['Loading…']);
+      var listEl = el('div', {class: 'ui-cw-list'}, [uiLoading()]);
       modalBox.appendChild(listEl);
       var btns = el('div', {class: 'ui-cw-modal-btns'});
       var closeBtn = el('button', {class: 'ui-row-btn'}, ['Close']);

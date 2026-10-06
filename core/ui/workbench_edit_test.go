@@ -93,6 +93,7 @@ function el(tag, attrs, kids) {
 }
 var components = {};
 function mountComponent() {}
+function makePaneSwitch() { return {el: node('div'), show: function() {}}; }
 function makeDrawer(col, o) {
   return {mobileHdr: node('div'), backdrop: node('div'), mobileTitle: node('div'), closeDrawer: function(){}};
 }

@@ -55,7 +55,7 @@
       leftExtras: leftExtras,
     });
     var sideHdr  = sideHdrBuilt.elt;
-    var sideList = el('div', {class: 'ui-chat-side-list'}, ['Loading…']);
+    var sideList = el('div', {class: 'ui-chat-side-list'}, [uiLoading()]);
     var sideSearch = makeSideSearch(sideList);
     side.appendChild(sideHdr);
     side.appendChild(sideSearch);
@@ -171,7 +171,8 @@
             renderToolsPopover();
             return;
           }
-          toolsPopover.innerHTML = '<div class="ui-chat-tools-loading">Loading…</div>';
+          toolsPopover.innerHTML = '';
+          toolsPopover.appendChild(el('div', {class: 'ui-chat-tools-loading'}, [uiLoading()]));
           fetchTools();
         },
       }, ['🔧 Tools']);

@@ -364,7 +364,7 @@
       mount: function(body, api) {
         if (canSave) {
           body.appendChild(el('div', {class: 'ui-doc-tpl-head'}, ['Your templates']));
-          var saved = el('div', {class: 'ui-doc-tpl-list'}, ['Loading…']);
+          var saved = el('div', {class: 'ui-doc-tpl-list'}, [uiLoading()]);
           body.appendChild(saved);
           fetchJSON(opts.listURL).then(function(items) {
             saved.innerHTML = '';

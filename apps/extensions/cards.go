@@ -30,6 +30,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
 (function(){
   var box = document.getElementById('acct-conns');
   if (!box) return;
+  if (window.uiLoading) { box.textContent = ''; box.appendChild(window.uiLoading()); }
   var API = '/account/api/connections';
   // A consent popup reports success via postMessage; refresh so the badge flips.
   window.addEventListener('message', function(e){ if (e && e.data === 'gohort-mcp-connected') load(); });
@@ -40,7 +41,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
       .then(function(r){ if(!r.ok && r.status!==204) return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); load();
         // An own credential's "Needs its key" badge sits in the API list above.
         if (window.uiInvalidate) window.uiInvalidate('api/credentials'); })
-      .catch(function(e){ btn.disabled=false; btn.textContent=orig; alert('Failed: '+(e&&e.message||e)); });
+      .catch(function(e){ btn.disabled=false; btn.textContent=orig; window.uiAlert('Failed: '+(e&&e.message||e)); });
   }
   // kind rides along: one of your own credentials can share a name with one
   // the deployment offers, and the server needs to know which key to touch.
@@ -72,7 +73,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
           }
           if (c.connected){
             var d2 = el('button', {class:'ui-row-btn', text:'Disconnect'});
-            d2.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your authorization is removed.')) return; disconnect(c, d2); });
+            d2.addEventListener('click', function(){ window.uiConfirm('Disconnect '+c.name+'? Your authorization is removed.').then(function(ok){ if (ok) disconnect(c, d2); }); });
             row.appendChild(d2);
           }
         } else {
@@ -82,7 +83,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
           row.appendChild(inp); row.appendChild(saveBtn);
           if (c.connected){
             var dis = el('button', {class:'ui-row-btn', text:'Disconnect'});
-            dis.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your stored key is removed.')) return; disconnect(c, dis); });
+            dis.addEventListener('click', function(){ window.uiConfirm('Disconnect '+c.name+'? Your stored key is removed.').then(function(ok){ if (ok) disconnect(c, dis); }); });
             row.appendChild(dis);
           }
         }
@@ -108,7 +109,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
             fetch(API, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
                         body: JSON.stringify({name:c.name, secured:want})})
               .then(function(r){ if(!r.ok && r.status!==204) return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); })
-              .catch(function(e){ lock.checked = !want; alert('Failed: '+(e&&e.message||e)); });
+              .catch(function(e){ lock.checked = !want; window.uiAlert('Failed: '+(e&&e.message||e)); });
           });
           card.appendChild(lockWrap);
         }

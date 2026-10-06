@@ -1631,6 +1631,98 @@
     };
   }
 
+  // uiLoading(label) — the toolkit's "working on it" mark, for anything that
+  // fetches before it can show. A bare "Loading…" cannot be told apart from a
+  // hung one, so this moves: the braille spinner, the label, and the seconds
+  // once past three. It fades in after 300ms, so a fast load never flashes it.
+  // One shared ticker drives every one on the page and stops itself when the
+  // last is gone (replaced by the content it was holding the place of).
+  var LOADING_FRAMES = '\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f';
+  var loadingTicker = null;
+  function tickLoading() {
+    var marks = document.querySelectorAll('.ui-loading');
+    if (!marks.length) { clearInterval(loadingTicker); loadingTicker = null; return; }
+    var now = Date.now();
+    var frame = LOADING_FRAMES.charAt(Math.floor(now / 100) % LOADING_FRAMES.length);
+    for (var i = 0; i < marks.length; i++) {
+      var m = marks[i];
+      m.firstChild.textContent = frame;
+      var secs = Math.floor((now - (m.__uiT0 || now)) / 1000);
+      m.lastChild.textContent = secs >= 3 ? secs + 's' : '';
+    }
+  }
+  // opts.immediate skips the fade, for a button whose label the mark replaces:
+  // a button gone blank for 300ms reads as broken, not as fast.
+  function uiLoading(label, opts) {
+    var mark = el('span', {class: 'ui-loading' + (opts && opts.immediate ? ' now' : ''), role: 'status'}, [
+      el('span', {class: 'ui-loading-spin', 'aria-hidden': 'true'}, [LOADING_FRAMES.charAt(0)]),
+      el('span', {class: 'ui-loading-label'}, [label || 'Loading']),
+      el('span', {class: 'ui-loading-secs'}),
+    ]);
+    mark.__uiT0 = Date.now();
+    if (!loadingTicker) loadingTicker = setInterval(tickLoading, 100);
+    return mark;
+  }
+  window.uiLoading = uiLoading;
+
+  // makePaneSwitch — on a phone, a panel's panes one at a time behind a switch
+  // in its mobile header, instead of stacked into slivers where neither is
+  // readable. opts.panes is [{key, label, els: [elements]}], the first shown by
+  // default; a pane's elements get .ui-pane-off while another is showing, and
+  // that class only hides anything below 700px, so a wider screen shows
+  // everything side by side as before.
+  //
+  // opts.watch {key, el, selector} lights a dot on that pane's tab when the
+  // count of selector under el grows while the pane is hidden: a reply landing
+  // while you read the other pane. Counted, so a ticking timer cannot light it,
+  // and armed only after a first visit, so history loading with the page does
+  // not either. Returns {el, show(key)}; mount el in the mobile header.
+  function makePaneSwitch(opts) {
+    var btns = {}, current = null;
+    var watch = opts.watch || null;
+    var seen = 0, armed = false;
+    var bar = el('div', {class: 'ui-pane-switch', role: 'tablist'});
+    function count() { return watch ? watch.el.querySelectorAll(watch.selector).length : 0; }
+    function apply(key) {
+      current = key;
+      opts.panes.forEach(function(p) {
+        var on = p.key === key;
+        btns[p.key].classList.toggle('active', on);
+        btns[p.key].setAttribute('aria-selected', on ? 'true' : 'false');
+        (p.els || []).forEach(function(e) { if (e) e.classList.toggle('ui-pane-off', !on); });
+      });
+      if (watch && key === watch.key) {
+        btns[key].classList.remove('unread');
+        seen = count();
+        armed = true;
+      }
+    }
+    function show(key) {
+      apply(key);
+      // The pane coming back was display:none and measured nothing; let the
+      // full-height sizing run again now that it has a box.
+      window.dispatchEvent(new Event('resize'));
+    }
+    opts.panes.forEach(function(p) {
+      var b = el('button', {type: 'button', class: 'ui-pane-switch-btn', role: 'tab'},
+        [p.label, el('span', {class: 'ui-pane-switch-dot', 'aria-hidden': 'true'})]);
+      b.addEventListener('click', function() { show(p.key); });
+      btns[p.key] = b;
+      bar.appendChild(b);
+    });
+    if (watch && window.MutationObserver) {
+      new window.MutationObserver(function() {
+        var n = count();
+        // offsetParent is null only while the watched pane is switched off.
+        var hidden = watch.el.offsetParent === null;
+        if (armed && hidden && n > seen && current !== watch.key) btns[watch.key].classList.add('unread');
+        if (!hidden) seen = n;
+      }).observe(watch.el, {childList: true, subtree: true});
+    }
+    apply(opts.panes[0].key);
+    return {el: bar, show: show};
+  }
+
   // makeSideSearch builds the small search input rendered below the
   // sidebar header. Returns the input element. Filters elements
   // matching itemSelector (default '.ui-chat-side-item') under the

@@ -32,7 +32,7 @@ func TestExtensionsRailHoldsFourPlaces(t *testing.T) {
 			t.Fatalf("rail sections = %q, want %q", got, want)
 		}
 	}
-	for _, part := range []string{"Your APIs", "Shared with you", "Your tools", "Global tools", "Your skills", "Published by your deployment"} {
+	for _, part := range []string{"Your APIs", "Shared with you", "Your tools", "Categories", "Global tools", "Your skills", "Published by your deployment"} {
 		if !regexp.MustCompile(`ui\.Subsection\{\s*Title:\s*"` + regexp.QuoteMeta(part) + `"`).MatchString(src) {
 			t.Errorf("%q should be a part of its section", part)
 		}

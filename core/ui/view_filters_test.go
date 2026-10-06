@@ -201,7 +201,7 @@ func TestAnAutoRefreshDoesNotUndoTheFilter(t *testing.T) {
 	}
 	// And the deliberate open must clear it, or a view comes back narrowed by a
 	// choice made minutes ago, with rows missing for a reason nobody remembers.
-	k := strings.Index(src, "orchView.textContent = 'Loading…';")
+	k := strings.Index(src, "orchView.textContent = ''; orchView.appendChild(uiLoading());")
 	if k < 0 {
 		t.Fatal("the deliberate-open path has moved")
 	}

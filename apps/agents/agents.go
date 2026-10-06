@@ -688,7 +688,7 @@ const intakeFormAssets = `<style>
         missing.push(f.label || f.name);
       }
     });
-    if (missing.length > 0) { alert('Please fill in: ' + missing.join(', ')); return null; }
+    if (missing.length > 0) { window.uiAlert('Please fill in: ' + missing.join(', ')); return null; }
     var entries = [];
     fields.forEach(function(f){
       var entry = inputs[f.name];
@@ -792,7 +792,7 @@ const intakeFormAssets = `<style>
     submitBtn.addEventListener('click', function(){
       var entries = collect(fields, built.inputs);
       if (!entries) return;
-      if (entries.length === 0) { alert('Fill in at least one field.'); return; }
+      if (entries.length === 0) { window.uiAlert('Fill in at least one field.'); return; }
       var values = valuesByNameFromEntries(entries);
       submitBtn.disabled = true;
       // Stage any file fields onto the framework's attachment queue
@@ -849,7 +849,7 @@ const intakeFormAssets = `<style>
         save.addEventListener('click', function(){
           var entries = collect(fields, built.inputs);
           if (!entries) return;
-          if (entries.length === 0) { alert('Fill in at least one field.'); return; }
+          if (entries.length === 0) { window.uiAlert('Fill in at least one field.'); return; }
           save.disabled = true; cancel.disabled = true;
           var newValues = valuesByNameFromEntries(entries);
           stageIntakeFiles(entries).then(function(){
@@ -864,7 +864,7 @@ const intakeFormAssets = `<style>
             }, 0);
           }).catch(function(err){
             save.disabled = false; cancel.disabled = false;
-            alert('Edit failed: ' + (err && err.message || err));
+            window.uiAlert('Edit failed: ' + (err && err.message || err));
           });
         });
         cancel.addEventListener('click', function(){
@@ -1125,11 +1125,13 @@ const docsModalScript = `<script>
               del.style.cssText = 'color:var(--danger,#ff7b72);font-size:0.74rem;padding:0.2rem 0.5rem';
               del.textContent = 'Remove';
               del.onclick = function() {
-                if (!confirm('Remove ' + nm.textContent + ' from your documents?')) return;
-                del.disabled = true;
-                fetch('api/knowledge/sources/' + encodeURIComponent(s.id), {method: 'DELETE'})
-                  .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); refreshOwn(); })
-                  .catch(function(err){ del.disabled = false; alert('Remove failed: ' + (err && err.message || err)); });
+                window.uiConfirm('Remove ' + nm.textContent + ' from your documents?').then(function(ok) {
+                  if (!ok) return;
+                  del.disabled = true;
+                  fetch('api/knowledge/sources/' + encodeURIComponent(s.id), {method: 'DELETE'})
+                    .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); refreshOwn(); })
+                    .catch(function(err){ del.disabled = false; window.uiAlert('Remove failed: ' + (err && err.message || err)); });
+                });
               };
               row.appendChild(nm); row.appendChild(meta); row.appendChild(del);
               ownList.appendChild(row);

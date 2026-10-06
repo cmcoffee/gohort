@@ -50,6 +50,18 @@ select:-webkit-autofill {
   transition: background-color 5000s ease-in-out 0s;
 }
 
+/* --- Type scale ---
+ * Six steps for text, and every font-size in this file takes one of them.
+ * The stylesheet had drifted to 48 sizes, among them 0.70, 0.72, 0.74, 0.75,
+ * 0.76 and 0.78rem side by side, so two labels meant to read alike came out a
+ * pixel apart from one panel to the next. Each step sits where the cluster it
+ * absorbed already was. Sizes off the scale (a 0.6rem badge glyph, a heading)
+ * are deliberate and stay literal. */
+:root {
+  --fs-2xs: 0.72rem; --fs-xs: 0.78rem; --fs-sm: 0.85rem;
+  --fs-md: 0.92rem;  --fs-lg: 1rem;    --fs-xl: 1.1rem;
+}
+
 /* --- Buttons: one shape, two sizes ---
  *
  * Every button the toolkit draws takes its size from these tokens, so a row
@@ -62,8 +74,8 @@ select:-webkit-autofill {
  *
  * On a touch screen both sizes grow to a thumb-sized target. */
 :root {
-  --btn-h: 2.125rem;    --btn-px: 0.8rem;     --btn-fs: 0.82rem;
-  --btn-h-sm: 1.625rem; --btn-px-sm: 0.55rem; --btn-fs-sm: 0.75rem;
+  --btn-h: 2.125rem;    --btn-px: 0.8rem;     --btn-fs: var(--fs-sm);
+  --btn-h-sm: 1.625rem; --btn-px-sm: 0.55rem; --btn-fs-sm: var(--fs-xs);
   --btn-radius: 6px;
 }
 @media (pointer: coarse) {
@@ -145,7 +157,7 @@ select:-webkit-autofill {
     .ui-chat-side-btn, .ui-chat-mode, .ui-chat-iconbtn, .ui-agent-mode,
     .ui-agent-msg-act, .ui-cw-ctx-btn, .ui-cw-list-btn, .ui-checklist-toolbtn,
     .ui-form-suggest-btn, .ui-rules-edit-btn, .ui-agent-earlier-btn,
-    .ui-back-link, .ui-page-tab, .ui-seg, .ui-wb-view):focus-visible {
+    .ui-back-link, .ui-page-tab, .ui-seg, .ui-pane-switch-btn):focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 /* Fields share the buttons' corner (set on each field's own rule), and a
@@ -260,7 +272,7 @@ select:-webkit-autofill {
   /* The chevrons carry the whole meaning now that the word "Back" is gone, and
    * a chevron draws lighter than an arrow did — so they get a size and a weight
    * that survive being one small glyph. */
-  font-size: 1.1rem; font-weight: 600; line-height: 1;
+  font-size: var(--fs-xl); font-weight: 600; line-height: 1;
   color: var(--text-mute); text-decoration: none;
   border: 1px solid var(--border); border-radius: 6px;
   background: var(--bg-1);
@@ -287,7 +299,7 @@ select:-webkit-autofill {
 .ui-page-tab {
   display: inline-flex; align-items: center;
   padding: 0.3rem 0.7rem;
-  font-size: 0.85rem; color: var(--text-mute); text-decoration: none;
+  font-size: var(--fs-sm); color: var(--text-mute); text-decoration: none;
   border-radius: 6px; white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
   transition: color 0.1s ease, background 0.1s ease;
@@ -311,7 +323,7 @@ select:-webkit-autofill {
    * State lives in the dot color, so the pill itself stays out of the way. */
   background: var(--bg-1); color: var(--text-mute);
   border: 1px solid var(--border);
-  font-size: 0.72rem; font-weight: 600;
+  font-size: var(--fs-2xs); font-weight: 600;
   letter-spacing: 0.04em;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
@@ -371,7 +383,7 @@ select:-webkit-autofill {
   padding: 0.3rem; max-height: 60vh; overflow-y: auto;
 }
 .ui-live-empty {
-  font-size: 0.82rem; color: var(--text-mute);
+  font-size: var(--fs-sm); color: var(--text-mute);
   padding: 0.5rem 0.6rem; text-align: center;
 }
 /* The row is one line where there is room for one and two where there is not.
@@ -386,11 +398,11 @@ select:-webkit-autofill {
   gap: 0.3rem 0.5rem;
   padding: 0.5rem 0.6rem; border-radius: 6px;
   text-decoration: none; color: var(--text);
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
 }
 .ui-live-item:hover { background: var(--bg-2); }
 .ui-live-app {
-  font-size: 0.7rem; font-weight: 600;
+  font-size: var(--fs-2xs); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-mute); flex-shrink: 0;
 }
@@ -420,7 +432,7 @@ select:-webkit-autofill {
    and muted: it is the detail you read after deciding the row is the one you
    care about, so it must not compete with the label for the first glance. */
 .ui-live-status {
-  font-size: 0.7rem; color: var(--text-mute);
+  font-size: var(--fs-2xs); color: var(--text-mute);
   /* Shrinkable, unlike the badges: it already ellipsizes, so giving up width
      costs it a few characters where refusing to costs the label all of them. */
   flex: 0 1 auto; min-width: 0; margin-left: auto; padding-left: 0.5rem;
@@ -452,7 +464,7 @@ select:-webkit-autofill {
      bar from the tabs. */
   margin: 0; flex: 0 1 auto; min-width: 0; max-width: 13.5rem;
   font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
-  font-weight: 700; font-size: 1.1rem; letter-spacing: 0.05em; line-height: 1;
+  font-weight: 700; font-size: var(--fs-xl); letter-spacing: 0.05em; line-height: 1;
   /* Metallic wordmark, drawn from the theme: brightest text at the top
      easing to muted text at the foot. A fixed light-to-charcoal ramp
      vanished on the Light theme, where the top of every letter was white
@@ -510,7 +522,7 @@ select:-webkit-autofill {
 }
 .ui-tab {
   padding: 0.4rem 0.9rem; border-radius: 8px; cursor: pointer;
-  font: inherit; font-size: 0.85rem;
+  font: inherit; font-size: var(--fs-sm);
   border: 1px solid var(--border); background: var(--bg-1); color: var(--text-mute);
   transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
@@ -529,7 +541,7 @@ select:-webkit-autofill {
 .ui-secnav-content { flex: 1 1 auto; min-width: 0; }
 .ui-secnav-item {
   text-align: left; padding: 0.45rem 0.7rem; border-radius: 8px; cursor: pointer;
-  font: inherit; font-size: 0.85rem;
+  font: inherit; font-size: var(--fs-sm);
   border: 1px solid transparent; background: transparent; color: var(--text-mute);
   transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
@@ -564,7 +576,7 @@ select:-webkit-autofill {
  * gap is 0 because the icon carries its own margin and a gap on top of it
  * loosens the one pair that must stay tight. */
 .ui-section-h {
-  font-size: 0.85rem; margin: 0 0 0.7rem 0;
+  font-size: var(--fs-sm); margin: 0 0 0.7rem 0;
   color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
   display: flex; align-items: center; justify-content: flex-start; gap: 0;
   flex-wrap: wrap;
@@ -572,10 +584,10 @@ select:-webkit-autofill {
 }
 .ui-section-h-r {
   margin-left: auto; padding-left: 0.5rem;
-  font-size: 0.7rem; text-transform: none; letter-spacing: 0; font-weight: normal;
+  font-size: var(--fs-2xs); text-transform: none; letter-spacing: 0; font-weight: normal;
 }
 .ui-section-sub {
-  font-size: 0.8rem; color: var(--text-mute);
+  font-size: var(--fs-sm); color: var(--text-mute);
   margin: -0.3rem 0 0.6rem 0;
   line-height: 1.45;
   /* Long subtitles wrap onto multiple lines; never truncate. */
@@ -587,7 +599,7 @@ select:-webkit-autofill {
 .ui-subsection + .ui-subsection { margin-top: 0.8rem; padding-top: 1.1rem; border-top: 1px solid var(--border); }
 .ui-subsection-h {
   display: flex; align-items: center; flex-wrap: wrap;
-  margin: 0 0 0.5rem; font-size: 0.95rem; font-weight: 600; color: var(--text-hi);
+  margin: 0 0 0.5rem; font-size: var(--fs-lg); font-weight: 600; color: var(--text-hi);
 }
 /* Heading for a NO-CHROME section (chat / pipeline / workbench panels). It sits
  * above the panel rather than inside a card, so it supplies the padding the
@@ -611,19 +623,60 @@ select:-webkit-autofill {
   display: block; width: 100%; min-height: var(--tap);
   background: linear-gradient(180deg, #8b2222, #6e1c1c); color: #fff;
   border: 1px solid var(--danger); border-radius: 10px;
-  padding: 0.85rem; font-size: 1rem; font-weight: 600; letter-spacing: 0.02em;
+  padding: 0.85rem; font-size: var(--fs-lg); font-weight: 600; letter-spacing: 0.02em;
   cursor: pointer; -webkit-tap-highlight-color: transparent;
   transition: transform 0.05s ease, background 0.1s ease;
 }
 .ui-panic-btn:active { background: var(--danger); transform: scale(0.98); }
-.ui-panic-status { font-size: 0.8rem; color: var(--text-mute); text-align: center; display: block; margin-top: 0.3rem; min-height: 1em; }
+.ui-panic-status { font-size: var(--fs-sm); color: var(--text-mute); text-align: center; display: block; margin-top: 0.3rem; min-height: 1em; }
 
 /* --- EmptyState (centered "nothing here yet" placeholder) --- */
 .ui-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 3rem 1rem; min-height: 200px; }
 .ui-empty-icon { font-size: 48px; line-height: 1; opacity: 0.3; margin-bottom: 1rem; }
-.ui-empty-title { font-size: 1.05rem; color: var(--text); margin-bottom: 0.35rem; }
-.ui-empty-hint { font-size: 0.85rem; color: var(--text-mute); opacity: 0.85; max-width: 360px; line-height: 1.5; }
+.ui-empty-title { font-size: var(--fs-lg); color: var(--text); margin-bottom: 0.35rem; }
+.ui-empty-hint { font-size: var(--fs-sm); color: var(--text-mute); opacity: 0.85; max-width: 360px; line-height: 1.5; }
 .ui-empty-action { margin-top: 1.25rem; }
+
+/* --- Loading mark (uiLoading) ---
+ * Spinner, label, and elapsed seconds once past three. Invisible for its first
+ * 300ms so a fast load does not flash it. */
+.ui-loading {
+  display: inline-flex; align-items: baseline; gap: 0.4rem;
+  color: var(--text-mute); font-size: var(--fs-sm);
+  opacity: 0; animation: ui-loading-in 0.2s ease 0.3s forwards;
+}
+.ui-loading-spin { color: var(--accent); font-family: ui-monospace, Menlo, Consolas, monospace; }
+.ui-loading-secs { font-variant-numeric: tabular-nums; opacity: 0.8; }
+.ui-loading-secs:empty { display: none; }
+@keyframes ui-loading-in { to { opacity: 1; } }
+.ui-loading.now { animation: none; opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .ui-loading { animation: none; opacity: 1; } }
+
+/* --- Pane switch (makePaneSwitch) ---
+ * A panel with two panes (a document and its assistant, say) shows one at a
+ * time on a phone, picked from a switch in its mobile header. Wider screens
+ * show both and never see the switch. */
+.ui-pane-switch { display: none; }
+@media (max-width: 700px) {
+  .ui-pane-switch {
+    display: inline-flex; flex: 0 0 auto;
+    border: 1px solid var(--border); border-radius: var(--btn-radius); overflow: hidden;
+  }
+  .ui-pane-switch-btn {
+    position: relative; min-height: 36px; padding: 0 0.7rem;
+    background: transparent; color: var(--text-mute); border: 0;
+    font-family: inherit; font-size: var(--btn-fs-sm); cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ui-pane-switch-btn + .ui-pane-switch-btn { border-left: 1px solid var(--border); }
+  .ui-pane-switch-btn.active { background: var(--accent); color: var(--text-on-accent, #fff); font-weight: 600; }
+  .ui-pane-switch-dot {
+    display: none; position: absolute; top: 5px; right: 5px;
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  }
+  .ui-pane-switch-btn.unread .ui-pane-switch-dot { display: block; }
+  .ui-pane-off { display: none !important; }
+}
 
 /* --- WorkbenchPanel: list | viewer | chat, full-height columns --- */
 .ui-wb {
@@ -685,9 +738,8 @@ select:-webkit-autofill {
  * whole workbench spreading (a max-width on .ui-wb), not to keep inflating one
  * column. */
 .ui-wb-chat   { flex: 0 0 clamp(380px, calc(54vw - 398px), 820px); }
-/* Mobile-only ✕ in the list header (closes the drawer), and the phone's
- * viewer/chat switch. */
-.ui-wb-close, .ui-wb-views { display: none; }
+/* Mobile-only ✕ in the list header (closes the drawer). */
+.ui-wb-close { display: none; }
 /* Tablet: soften the fixed side-column widths so the viewer keeps room.
  * Also neutralize the agent panel's standalone-page mobile rules here —
  * they pin its grid to a full viewport (100dvh) and unclamp its root,
@@ -720,26 +772,7 @@ select:-webkit-autofill {
   .ui-wb-list.open { transform: translateX(0); }
   .ui-wb-viewer { flex: 1 1 0; min-height: 0; }
   .ui-wb-chat   { flex: 1 1 0; min-height: 0; }
-  /* One pane at a time, picked by the switch in the drawer header. */
-  .ui-wb[data-view="viewer"] > .ui-wb-chat { display: none; }
-  .ui-wb[data-view="chat"] > .ui-wb-viewer { display: none; }
-  .ui-wb-views {
-    display: inline-flex; flex: 0 0 auto;
-    border: 1px solid var(--border); border-radius: var(--btn-radius); overflow: hidden;
-  }
-  .ui-wb-view {
-    position: relative; min-height: 36px; padding: 0 0.7rem;
-    background: transparent; color: var(--text-mute); border: 0;
-    font-family: inherit; font-size: var(--btn-fs-sm); cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .ui-wb-view + .ui-wb-view { border-left: 1px solid var(--border); }
-  .ui-wb-view.active { background: var(--accent); color: var(--text-on-accent, #fff); font-weight: 600; }
-  .ui-wb-view-dot {
-    display: none; position: absolute; top: 5px; right: 5px;
-    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
-  }
-  .ui-wb-view.unread .ui-wb-view-dot { display: block; }
+
   .ui-wb-viewer-body { padding: 0.9rem 1rem; }
   /* One row; what does not fit moves into the bar's More menu (the runtime
    * measures and moves it). */
@@ -749,7 +782,7 @@ select:-webkit-autofill {
     background: transparent; color: var(--text-mute);
     border: 1px solid var(--border); border-radius: 8px;
     min-width: 36px; min-height: 36px; padding: 0;
-    font-size: 0.95rem; cursor: pointer;
+    font-size: var(--fs-lg); cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
   /* Touch has no hover — keep per-item delete reachable. */
@@ -767,7 +800,7 @@ select:-webkit-autofill {
   padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); flex: 0 0 auto;
 }
 .ui-wb-head-t {
-  font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute);
+  font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute);
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ui-wb-head-actions { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
@@ -775,7 +808,7 @@ select:-webkit-autofill {
 .ui-wb-list-body { flex: 1 1 0; overflow-y: auto; padding: 0.4rem; display: flex; flex-direction: column; gap: 0.2rem; }
 .ui-wb-item {
   display: flex; align-items: center; gap: 0.4rem;
-  padding: 0.5rem 0.6rem; border-radius: 7px; cursor: pointer; font-size: 0.88rem;
+  padding: 0.5rem 0.6rem; border-radius: 7px; cursor: pointer; font-size: var(--fs-md);
   color: var(--text);
 }
 .ui-wb-item-label { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -783,14 +816,14 @@ select:-webkit-autofill {
 .ui-wb-item.active { background: var(--accent); color: var(--text-on-accent, #fff); }
 .ui-wb-item-del {
   flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
-  color: var(--text-mute); font-size: 1.1rem; line-height: 1; padding: 0 0.2rem;
+  color: var(--text-mute); font-size: var(--fs-xl); line-height: 1; padding: 0 0.2rem;
   opacity: 0; transition: opacity 0.12s;
 }
 .ui-wb-item:hover .ui-wb-item-del { opacity: 0.7; }
 .ui-wb-item-del:hover { opacity: 1; color: var(--danger); }
 .ui-wb-item.active .ui-wb-item-del { color: var(--text-on-accent, #fff); }
 .ui-wb-coauthor-btn { margin-top: 0.5rem; }
-.ui-wb-list-empty { padding: 0.8rem 0.6rem; color: var(--text-mute); font-size: 0.82rem; font-style: italic; }
+.ui-wb-list-empty { padding: 0.8rem 0.6rem; color: var(--text-mute); font-size: var(--fs-sm); font-style: italic; }
 .ui-wb-actions {
   display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 0 0 auto;
   padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);
@@ -817,13 +850,13 @@ select:-webkit-autofill {
 .ui-wb-menu-item {
   background: transparent; border: none; color: var(--text);
   text-align: left; padding: 0.45rem 0.7rem; border-radius: 6px;
-  font-family: inherit; font-size: 0.82rem; cursor: pointer; white-space: nowrap;
+  font-family: inherit; font-size: var(--fs-sm); cursor: pointer; white-space: nowrap;
 }
 .ui-wb-menu-item:hover { background: var(--bg-2); color: var(--text-hi); }
 .ui-wb-hist-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
 .ui-wb-hist-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
-.ui-wb-hist-note { font-size: 0.85rem; color: var(--text); }
-.ui-wb-hist-at { font-size: 0.72rem; color: var(--text-mute); }
+.ui-wb-hist-note { font-size: var(--fs-sm); color: var(--text); }
+.ui-wb-hist-at { font-size: var(--fs-2xs); color: var(--text-mute); }
 .ui-wb-hist-empty { color: var(--text-mute); font-style: italic; padding: 0.6rem 0; }
 .ui-wb-viewer-body {
   flex: 1 1 0; overflow-y: auto; padding: 1.4rem 1.6rem;
@@ -858,7 +891,7 @@ select:-webkit-autofill {
 /* Title and body share the measure so they sit on the same left edge — capping
  * only the prose would step the heading out past it. */
 .ui-wb-viewer-title, .ui-wb-md { max-width: var(--wb-measure); margin-inline: auto; }
-.ui-wb-md { font-size: 0.92rem; line-height: 1.6; color: var(--text); }
+.ui-wb-md { font-size: var(--fs-md); line-height: 1.6; color: var(--text); }
 /* A table or a code block inside the measure can still be wider than it — they
  * are read by scanning, not by line, so they are not what the cap is for. They
  * scroll within it rather than pushing the column wider, which is what an
@@ -870,7 +903,7 @@ select:-webkit-autofill {
 .ui-wb-md-empty {
   display: flex; flex-direction: column; gap: 0.5rem; align-items: center; justify-content: center;
   text-align: center; height: 100%; min-height: 200px; color: var(--text-mute);
-  font-size: 0.9rem; line-height: 1.5; max-width: 440px; margin: 0 auto;
+  font-size: var(--fs-md); line-height: 1.5; max-width: 440px; margin: 0 auto;
 }
 /* The embedded chat fills its column (its own internal layout takes over).
  * Single-mode ChatPanel roots at .ui-chat; agent_loop_panel at .ui-agent. */
@@ -914,8 +947,8 @@ select:-webkit-autofill {
 }
 .ui-toggle-row:last-child { border-bottom: none; }
 .ui-toggle-row:active { background: rgba(255,255,255,0.02); }
-.ui-toggle-row .ui-toggle-label { font-size: 0.95rem; color: var(--text); flex: 1; min-width: 0; padding-right: 0.5rem; }
-.ui-toggle-row .ui-toggle-help { display: block; font-size: 0.78rem; color: var(--text-mute); margin-top: 0.15rem; }
+.ui-toggle-row .ui-toggle-label { font-size: var(--fs-lg); color: var(--text); flex: 1; min-width: 0; padding-right: 0.5rem; }
+.ui-toggle-row .ui-toggle-help { display: block; font-size: var(--fs-xs); color: var(--text-mute); margin-top: 0.15rem; }
 
 /* --- Table --- */
 .ui-table-list { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -972,7 +1005,7 @@ select:-webkit-autofill {
   margin-bottom: 0.6rem;
   padding: 0.45rem 0.6rem;
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--btn-radius);
-  color: var(--text); font-size: 0.9rem; font-family: inherit;
+  color: var(--text); font-size: var(--fs-md); font-family: inherit;
   outline: none; transition: border-color 0.1s ease;
   -webkit-appearance: none; appearance: none;
 }
@@ -980,7 +1013,7 @@ select:-webkit-autofill {
 /* Group heading for a table declaring group_by — a quiet section rule, not a
  * row, so the eye reads it as structure rather than data. */
 .ui-table-group {
-  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em;
+  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--text-mute);
   padding: 0.9rem 0.2rem 0.3rem;
   border-bottom: 1px solid var(--border);
@@ -1006,11 +1039,11 @@ select:-webkit-autofill {
 .ui-table-band:first-child { margin-top: 0.2rem; }
 .ui-table-band .ui-table-group { padding-top: 0.6rem; }
 .ui-table-band-body > .ui-table-row:last-child { border-bottom: none; }
-.ui-table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
-.ui-table-cell.mute { color: var(--text-mute); font-size: 0.78rem; }
+.ui-table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-lg); }
+.ui-table-cell.mute { color: var(--text-mute); font-size: var(--fs-xs); }
 .ui-table-cell a.ui-table-link { color: var(--accent); text-decoration: none; }
 .ui-table-cell a.ui-table-link:hover { text-decoration: underline; }
-.ui-table-empty { color: var(--text-mute); font-size: 0.9rem; padding: 0.5rem 0; }
+.ui-table-empty { color: var(--text-mute); font-size: var(--fs-md); padding: 0.5rem 0; }
 
 /* Narrow viewport: row goes column, cells stack vertically (display:
  * block — more predictable than nested flex), actions stay a single
@@ -1035,7 +1068,7 @@ select:-webkit-autofill {
     text-overflow: clip;
   }
   .ui-row-cells > .ui-table-cell:last-child { margin-bottom: 0; }
-  .ui-table-cell.mute { font-size: 0.8rem; }
+  .ui-table-cell.mute { font-size: var(--fs-sm); }
   .ui-row-actions {
     display: flex; flex-wrap: wrap;
     flex-direction: row;
@@ -1045,12 +1078,12 @@ select:-webkit-autofill {
 }
 
 .ui-row-toggle-pair { display: inline-flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
-.ui-row-toggle-label { font-size: 0.78rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }
+.ui-row-toggle-label { font-size: var(--fs-xs); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }
 /* What an action did last time: quieter than its description, which is already
    quieter than its label. Three tiers, because the eye should reach the label
    first and this last. */
 .ui-actionlist-history {
-  font-size: 0.72rem; color: var(--text-mute); opacity: 0.85;
+  font-size: var(--fs-2xs); color: var(--text-mute); opacity: 0.85;
   margin-top: 0.15rem;
 }
 .ui-row-select, .ui-row-number, .ui-filter-search {
@@ -1058,7 +1091,7 @@ select:-webkit-autofill {
   padding: 0.35rem 0.45rem;
   background: var(--bg-1); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--btn-radius);
-  font-size: 0.85rem; font-family: inherit; outline: none;
+  font-size: var(--fs-sm); font-family: inherit; outline: none;
   -webkit-appearance: none; appearance: none;
 }
 .ui-row-select:focus, .ui-row-number:focus, .ui-filter-search:focus { border-color: var(--accent); }
@@ -1073,7 +1106,7 @@ select:-webkit-autofill {
 .ui-row-segmented .ui-seg {
   padding: 0.35rem 0.6rem; background: transparent; color: var(--text-mute);
   border: none; border-left: 1px solid var(--border);
-  font-size: 0.82rem; font-family: inherit; cursor: pointer; white-space: nowrap;
+  font-size: var(--fs-sm); font-family: inherit; cursor: pointer; white-space: nowrap;
   transition: background 0.12s, color 0.12s;
 }
 .ui-row-segmented .ui-seg:first-child { border-left: none; }
@@ -1084,14 +1117,14 @@ select:-webkit-autofill {
  * ~36x36 box. Used for secondary row buttons on narrow screens where
  * the standard 44px-min target would push the auto-reply switch and
  * row name off the visible width. */
-.ui-row-btn.compact { padding-left: 0.4rem; padding-right: 0.4rem; font-size: 0.95rem; }
+.ui-row-btn.compact { padding-left: 0.4rem; padding-right: 0.4rem; font-size: var(--fs-lg); }
 @media (pointer: coarse) { .ui-row-btn.compact { min-width: 36px; min-height: 36px; } }
 /* Stack composes multiple components in one expand panel. */
 .ui-stack { display: flex; flex-direction: column; gap: 0.6rem; }
 /* Badge — colored pill for boolean/state indicators in table rows. */
 .ui-badge {
   display: inline-block; padding: 0.1rem 0.55rem;
-  border-radius: 999px; font-size: 0.7rem; font-weight: 600;
+  border-radius: 999px; font-size: var(--fs-2xs); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em;
   border: 1px solid var(--border); background: var(--bg-0);
 }
@@ -1120,12 +1153,12 @@ select:-webkit-autofill {
 
 /* --- HistoryPanel --- */
 .ui-history { display: flex; flex-direction: column; gap: 0.4rem; max-height: 60vh; overflow-y: auto; }
-.ui-history-h { font-size: 0.7rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); }
-.ui-history-msg { padding: 0.4rem 0.5rem; border-radius: 8px; font-size: 0.88rem; line-height: 1.4; background: var(--bg-1); }
+.ui-history-h { font-size: var(--fs-2xs); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); }
+.ui-history-msg { padding: 0.4rem 0.5rem; border-radius: 8px; font-size: var(--fs-md); line-height: 1.4; background: var(--bg-1); }
 .ui-history-msg.ai { border-left: 3px solid var(--accent); }
-.ui-history-who { font-size: 0.7rem; color: var(--text-mute); margin-bottom: 0.15rem; }
+.ui-history-who { font-size: var(--fs-2xs); color: var(--text-mute); margin-bottom: 0.15rem; }
 .ui-history-body { color: var(--text); white-space: pre-wrap; word-break: break-word; }
-.ui-history-empty { color: var(--text-mute); font-size: 0.85rem; }
+.ui-history-empty { color: var(--text-mute); font-size: var(--fs-sm); }
 
 /* --- KeyManager (API keys list + create-once-show-secret + delete) --- */
 .ui-keys { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -1139,7 +1172,7 @@ select:-webkit-autofill {
   flex: 1; min-width: 12rem;
   padding: 0.45rem 0.6rem; border-radius: var(--btn-radius);
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); font-size: 0.85rem;
+  border: 1px solid var(--border); font-size: var(--fs-sm);
 }
 .ui-keys-form input:focus { outline: none; border-color: var(--accent); }
 .ui-keys-revealed {
@@ -1148,11 +1181,11 @@ select:-webkit-autofill {
   border-radius: 8px; padding: 0.7rem 0.8rem;
   display: flex; flex-direction: column; gap: 0.4rem;
 }
-.ui-keys-revealed-h { font-size: 0.78rem; color: var(--accent); font-weight: 600; }
-.ui-keys-revealed-hint { font-size: 0.78rem; color: var(--text-mute); }
+.ui-keys-revealed-h { font-size: var(--fs-xs); color: var(--accent); font-weight: 600; }
+.ui-keys-revealed-hint { font-size: var(--fs-xs); color: var(--text-mute); }
 .ui-keys-revealed-secret {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.85rem; word-break: break-all; user-select: all;
+  font-size: var(--fs-sm); word-break: break-all; user-select: all;
   background: var(--bg-0); border: 1px solid var(--border);
   border-radius: 6px; padding: 0.5rem 0.6rem;
 }
@@ -1167,16 +1200,16 @@ select:-webkit-autofill {
   border-bottom: 1px solid var(--border);
 }
 .ui-keys-row:last-child { border-bottom: none; }
-.ui-keys-row-name { flex: 1; min-width: 0; color: var(--text); font-size: 0.9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ui-keys-row-meta { font-size: 0.75rem; color: var(--text-mute); white-space: nowrap; }
+.ui-keys-row-name { flex: 1; min-width: 0; color: var(--text); font-size: var(--fs-md); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-keys-row-meta { font-size: var(--fs-xs); color: var(--text-mute); white-space: nowrap; }
 .ui-keys-row-del {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 6px;
   width: 1.8rem; height: 1.8rem; padding: 0; cursor: pointer;
-  font-size: 1rem; line-height: 1;
+  font-size: var(--fs-lg); line-height: 1;
 }
 .ui-keys-row-del:hover { color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
-.ui-keys-empty { color: var(--text-mute); font-size: 0.85rem; padding: 0.5rem 0.2rem; }
+.ui-keys-empty { color: var(--text-mute); font-size: var(--fs-sm); padding: 0.5rem 0.2rem; }
 
 /* --- MemberEditor (group-chat participants list) --- */
 .ui-mem { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -1200,7 +1233,7 @@ select:-webkit-autofill {
   padding: 0.35rem 0.5rem;
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--btn-radius);
-  font-size: 0.82rem; min-width: 0;
+  font-size: var(--fs-sm); min-width: 0;
 }
 .ui-mem-row input:focus { outline: none; border-color: var(--accent); }
 .ui-mem-row input::placeholder { color: var(--text-mute); }
@@ -1208,29 +1241,29 @@ select:-webkit-autofill {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 4px;
   width: 1.8rem; height: 1.8rem; padding: 0; cursor: pointer;
-  font-size: 0.95rem; line-height: 1;
+  font-size: var(--fs-lg); line-height: 1;
 }
 .ui-mem-del:hover { color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
 .ui-mem-add { align-self: flex-start; }
-.ui-mem-empty { color: var(--text-mute); font-size: 0.82rem; padding: 0.3rem 0.2rem; }
+.ui-mem-empty { color: var(--text-mute); font-size: var(--fs-sm); padding: 0.3rem 0.2rem; }
 .ui-mem-aliasrow {
   display: flex; flex-direction: column; gap: 0.3rem;
   margin-top: 0.4rem; padding: 0.5rem 0.6rem;
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 6px;
 }
-.ui-mem-aliasrow label { font-size: 0.78rem; color: var(--text-mute); }
+.ui-mem-aliasrow label { font-size: var(--fs-xs); color: var(--text-mute); }
 .ui-mem-aliasrow input {
   padding: 0.4rem 0.55rem;
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--btn-radius);
-  font-size: 0.83rem; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: var(--fs-sm); font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 .ui-mem-aliasrow input:focus { outline: none; border-color: var(--accent); }
 
 /* --- ChipPicker --- */
 .ui-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .ui-chip {
-  font-size: 0.8rem; padding: 0.45rem 0.7rem; border-radius: 18px;
+  font-size: var(--fs-sm); padding: 0.45rem 0.7rem; border-radius: 18px;
   background: var(--bg-1); color: var(--text-mute); border: 1px solid var(--border);
   cursor: pointer; user-select: none; min-height: 32px;
   -webkit-tap-highlight-color: transparent; transition: transform 0.05s ease;
@@ -1240,14 +1273,14 @@ select:-webkit-autofill {
 
 /* --- chip_picker attach mode: selected-as-pills + reveal-list --- */
 .ui-chip-picker { display: flex; flex-direction: column; }
-.ui-cp-intro { font-size: 0.82rem; color: var(--text-mute); line-height: 1.45; margin-bottom: 0.6rem; }
-.ui-cp-empty, .ui-cp-none { font-size: 0.76rem; color: var(--text-mute); font-style: italic; }
+.ui-cp-intro { font-size: var(--fs-sm); color: var(--text-mute); line-height: 1.45; margin-bottom: 0.6rem; }
+.ui-cp-empty, .ui-cp-none { font-size: var(--fs-xs); color: var(--text-mute); font-style: italic; }
 .ui-cp-pills { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.5rem; }
 .ui-cp-pill {
   display: inline-flex; align-items: center; gap: 0.3rem;
   padding: 0.1rem 0.35rem 0.1rem 0.55rem;
   border: 1px solid var(--border); border-radius: 999px;
-  font-size: 0.74rem; color: var(--text);
+  font-size: var(--fs-xs); color: var(--text);
 }
 /* The per-member permission, on the member's own chip. It states which state
  * it is IN, not which state it can be put into: a control reading "make
@@ -1271,10 +1304,10 @@ select:-webkit-autofill {
 .ui-cp-pill-note { font-size: 0.64rem; color: var(--warning, var(--text-mute)); font-style: italic; }
 .ui-cp-pill-x { cursor: pointer; color: var(--text-mute); font-weight: 700; }
 .ui-cp-pill-x:hover { color: var(--danger); }
-.ui-cp-add { align-self: flex-start; padding: 0.3rem 0.7rem; font-size: 0.8rem; margin-bottom: 0.5rem; }
+.ui-cp-add { align-self: flex-start; padding: 0.3rem 0.7rem; font-size: var(--fs-sm); margin-bottom: 0.5rem; }
 .ui-cp-list { display: flex; flex-direction: column; gap: 0.3rem; }
 .ui-cp-group {
-  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
+  font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--text-mute); font-weight: 700; margin: 0.4rem 0 0.1rem;
 }
 .ui-cp-group:first-child { margin-top: 0; }
@@ -1284,23 +1317,23 @@ select:-webkit-autofill {
   border: 1px solid var(--border); border-radius: 4px;
 }
 .ui-cp-row-meta { flex: 1; min-width: 0; }
-.ui-cp-name { font-size: 0.85rem; color: var(--text); font-weight: 500; }
-.ui-cp-desc { font-size: 0.74rem; color: var(--text-mute); line-height: 1.4; margin-top: 0.15rem; }
+.ui-cp-name { font-size: var(--fs-sm); color: var(--text); font-weight: 500; }
+.ui-cp-desc { font-size: var(--fs-xs); color: var(--text-mute); line-height: 1.4; margin-top: 0.15rem; }
 .ui-cp-metaline {
-  font-size: 0.72rem; color: var(--text-mute); margin-top: 0.12rem;
+  font-size: var(--fs-2xs); color: var(--text-mute); margin-top: 0.12rem;
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 .ui-cp-add-btn {
   flex-shrink: 0; align-self: center; background: transparent;
   color: var(--accent); border: 1px solid var(--accent); border-radius: 6px;
-  padding: 0.15rem 0.55rem; font-size: 1rem; font-weight: 700; cursor: pointer;
+  padding: 0.15rem 0.55rem; font-size: var(--fs-lg); font-weight: 700; cursor: pointer;
 }
 
 /* --- Pull-to-refresh --- */
 .ui-ptr {
   position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0;
   background: var(--bg-1); border-bottom: 1px solid var(--border);
-  text-align: center; padding: 0.5rem; font-size: 0.85rem; color: var(--text-mute);
+  text-align: center; padding: 0.5rem; font-size: var(--fs-sm); color: var(--text-mute);
   transform: translateY(-100%); transition: transform 0.2s ease;
   z-index: 20;
 }
@@ -1312,7 +1345,7 @@ select:-webkit-autofill {
   vertical-align: middle; margin-right: 0.4rem;
 }
 @keyframes ui-spin { to { transform: rotate(360deg); } }
-.ui-wb-working { display: flex; align-items: center; gap: 0.5rem; color: var(--text); font-size: 0.95rem; padding: 0.2rem 0 0.9rem; }
+.ui-wb-working { display: flex; align-items: center; gap: 0.5rem; color: var(--text); font-size: var(--fs-lg); padding: 0.2rem 0 0.9rem; }
 /* Direct editing (WorkbenchPanel.EditURL): the textarea takes the viewer's
  * full height; the action row sits beneath it. */
 .ui-wb-edit { display: flex; flex-direction: column; gap: 0.6rem; height: 100%; min-height: 0; }
@@ -1324,7 +1357,7 @@ select:-webkit-autofill {
 }
 .ui-wb-edit-ta:focus { outline: none; border-color: var(--accent); }
 .ui-wb-edit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; flex: 0 0 auto; }
-.ui-wb-edit-status { color: var(--text-mute); font-size: 0.85rem; }
+.ui-wb-edit-status { color: var(--text-mute); font-size: var(--fs-sm); }
 .ui-wb-edit-btn.active { background: var(--accent); color: var(--text-on-accent, #fff); border-color: var(--accent); }
 .ui-wb-working-actions { text-align: right; display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: flex-end; }
 
@@ -1340,7 +1373,7 @@ select:-webkit-autofill {
 .ui-wb-compose-opt:hover { background: var(--bg-2, rgba(127,127,127,0.12)); }
 .ui-wb-compose-opt input { margin-top: 0.15rem; flex: 0 0 auto; }
 .ui-wb-compose-opt-t { font-weight: 600; }
-.ui-wb-compose-opt-h { font-size: 0.8rem; color: var(--text-mute, #999); margin-top: 0.1rem; }
+.ui-wb-compose-opt-h { font-size: var(--fs-sm); color: var(--text-mute, #999); margin-top: 0.1rem; }
 .ui-wb-compose-box {
   width: 100%; margin-top: 0.5rem; padding: 0.5rem;
   font: inherit; color: var(--text, inherit);
@@ -1351,7 +1384,7 @@ select:-webkit-autofill {
 
 /* --- Footer --- */
 .ui-footer { margin-top: 1rem; text-align: center; }
-.ui-footer-link { display: inline-block; min-height: var(--tap); padding: 0.7rem 1rem; font-size: 0.9rem; color: var(--text-mute); text-decoration: none; }
+.ui-footer-link { display: inline-block; min-height: var(--tap); padding: 0.7rem 1rem; font-size: var(--fs-md); color: var(--text-mute); text-decoration: none; }
 .ui-footer-link:active { color: var(--text); }
 
 /* --- FormPanel --- */
@@ -1366,14 +1399,14 @@ select:-webkit-autofill {
 .ui-form-field.ui-form-toggle-field { padding-top: 1rem; }
 .ui-form-submit { margin-top: 1rem; }
 .ui-form-submit:disabled { cursor: wait; }
-.ui-form-label { display: block; font-size: 0.78rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.3rem; }
+.ui-form-label { display: block; font-size: var(--fs-xs); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.3rem; }
 .ui-form-input,
 .ui-form-textarea,
 .ui-form-select {
   width: 100%; box-sizing: border-box;
   padding: 0.55rem 0.65rem;
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--btn-radius);
-  color: var(--text); font-size: 0.95rem; font-family: inherit;
+  color: var(--text); font-size: var(--fs-lg); font-family: inherit;
   outline: none; transition: border-color 0.1s ease;
   -webkit-appearance: none; appearance: none;
 }
@@ -1393,7 +1426,7 @@ select:-webkit-autofill {
   overflow-y: auto;
   white-space: pre-wrap;
 }
-.ui-form-help { display: block; font-size: 0.75rem; color: var(--text-mute); margin-top: 0.3rem; }
+.ui-form-help { display: block; font-size: var(--fs-xs); color: var(--text-mute); margin-top: 0.3rem; }
 
 /* Info icon (uiInfoIcon) — the ⓘ that holds the detail the visible line
  * dropped. Sized to sit on a label's baseline without pushing the row
@@ -1420,7 +1453,7 @@ select:-webkit-autofill {
   background: var(--bg-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 0.45rem;
   padding: 0.55rem 0.7rem;
-  font-size: 0.78rem; line-height: 1.5; font-weight: 400;
+  font-size: var(--fs-xs); line-height: 1.5; font-weight: 400;
   text-transform: none; letter-spacing: normal;
   white-space: normal; text-align: left;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
@@ -1441,11 +1474,11 @@ select:-webkit-autofill {
   margin-top: 0;
 }
 .ui-form-section-title {
-  font-size: 0.85rem; font-weight: 700; color: var(--text-hi);
+  font-size: var(--fs-sm); font-weight: 700; color: var(--text-hi);
   text-transform: uppercase; letter-spacing: 0.05em;
 }
 .ui-form-section-help {
-  font-size: 0.78rem; color: var(--text-mute);
+  font-size: var(--fs-xs); color: var(--text-mute);
   margin-top: 0.25rem; line-height: 1.4;
 }
 /* Collapsible header (Collapsed:true) — click to fold/unfold the group below. */
@@ -1467,7 +1500,7 @@ select:-webkit-autofill {
 .ui-wizard-rail-item {
   display: flex; align-items: center; gap: 0.45rem;
   padding: 0.3rem 0.65rem; border-radius: 999px; border: 1px solid transparent;
-  color: var(--text-mute); font-size: 0.8rem; user-select: none;
+  color: var(--text-mute); font-size: var(--fs-sm); user-select: none;
 }
 .ui-wizard-rail-item.done { cursor: pointer; color: var(--text); }
 .ui-wizard-rail-item.done:hover { color: var(--accent, #58a6ff); }
@@ -1478,7 +1511,7 @@ select:-webkit-autofill {
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.35rem; height: 1.35rem; border-radius: 50%; flex: none;
   background: var(--bg-2); border: 1px solid var(--border);
-  font-size: 0.72rem; font-weight: 600;
+  font-size: var(--fs-2xs); font-weight: 600;
 }
 .ui-wizard-rail-item.active .ui-wizard-dot {
   background: var(--accent); border-color: var(--accent); color: var(--bg-0);
@@ -1487,7 +1520,7 @@ select:-webkit-autofill {
   border-color: var(--accent); color: var(--accent);
 }
 .ui-wizard-intro {
-  font-size: 0.85rem; color: var(--text-mute); line-height: 1.5;
+  font-size: var(--fs-sm); color: var(--text-mute); line-height: 1.5;
   margin: 0.2rem 0 0.9rem;
 }
 .ui-wizard-nav {
@@ -1495,7 +1528,7 @@ select:-webkit-autofill {
   gap: 0.6rem; margin-top: 1rem;
 }
 .ui-wizard-nav .ui-wizard-next { margin-top: 0; }
-.ui-wizard-note { margin-top: 0.6rem; font-size: 0.8rem; color: var(--danger, #ff7b72); }
+.ui-wizard-note { margin-top: 0.6rem; font-size: var(--fs-sm); color: var(--danger, #ff7b72); }
 .ui-form-field-invalid .ui-form-input,
 .ui-form-field-invalid .ui-form-textarea,
 .ui-form-field-invalid .ui-form-select { border-color: var(--danger, #ff7b72); }
@@ -1524,7 +1557,7 @@ select:-webkit-autofill {
   border-radius: 6px 6px 0 0;
 }
 .ui-watch-app {
-  font-size: 0.85rem; color: var(--text-mute);
+  font-size: var(--fs-sm); color: var(--text-mute);
   margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.05em;
 }
 .ui-watch-title-row {
@@ -1532,11 +1565,11 @@ select:-webkit-autofill {
   margin-bottom: 0.3rem;
 }
 .ui-watch-title {
-  font-size: 1.05rem; color: var(--text-hi); font-weight: 600;
+  font-size: var(--fs-lg); color: var(--text-hi); font-weight: 600;
 }
 .ui-watch-cancel { --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm); }
 .ui-watch-topic {
-  color: var(--text-mute); font-size: 0.9rem;
+  color: var(--text-mute); font-size: var(--fs-md);
   white-space: normal; word-break: break-word;
 }
 .ui-watch-spinner {
@@ -1559,7 +1592,7 @@ select:-webkit-autofill {
   background: var(--bg-1);
   border: 1px solid var(--border);
   color: var(--text-mute);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 .ui-watch-pill.active {
   border-color: var(--accent); color: var(--accent);
@@ -1579,7 +1612,7 @@ select:-webkit-autofill {
   max-height: 60vh;
 }
 .ui-watch-status-msg {
-  color: var(--text-mute); font-size: 0.88rem;
+  color: var(--text-mute); font-size: var(--fs-md);
   padding: 0.3rem 0;
 }
 .ui-watch-status-msg:last-child { color: var(--text); }
@@ -1590,7 +1623,7 @@ select:-webkit-autofill {
   background: var(--bg-1);
 }
 .ui-watch-draft summary {
-  cursor: pointer; color: var(--text-mute); font-size: 0.85rem;
+  cursor: pointer; color: var(--text-mute); font-size: var(--fs-sm);
   user-select: none;
 }
 /* ============================================================
@@ -1653,7 +1686,7 @@ select:-webkit-autofill {
 
 .ui-watch-draft-body {
   margin-top: 0.7rem; color: var(--text);
-  font-size: 0.9rem; line-height: 1.6;
+  font-size: var(--fs-md); line-height: 1.6;
 }
 .ui-watch-article {
   padding: 1.5rem 2rem;
@@ -1665,10 +1698,10 @@ select:-webkit-autofill {
   font-size: 1.4rem; color: var(--text-hi); margin: 0 0 1rem;
 }
 .ui-watch-article-body {
-  color: var(--text); line-height: 1.7; font-size: 0.95rem;
+  color: var(--text); line-height: 1.7; font-size: var(--fs-lg);
 }
-.ui-watch-article-body h2 { font-size: 1.15rem; margin: 1.5rem 0 0.4rem; color: var(--text-hi); }
-.ui-watch-article-body h3 { font-size: 1.02rem; margin: 1.2rem 0 0.35rem; color: var(--text-hi); }
+.ui-watch-article-body h2 { font-size: var(--fs-xl); margin: 1.5rem 0 0.4rem; color: var(--text-hi); }
+.ui-watch-article-body h3 { font-size: var(--fs-lg); margin: 1.2rem 0 0.35rem; color: var(--text-hi); }
 .ui-watch-article-body p  { margin: 0.6rem 0; }
 .ui-watch-done-actions {
   display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center;
@@ -1688,7 +1721,7 @@ select:-webkit-autofill {
   border: 1px solid var(--border);
   color: var(--text);
   font-family: monospace;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   outline: none;
 }
 
@@ -1699,7 +1732,7 @@ select:-webkit-autofill {
 .ui-suggest-btn { white-space: nowrap; }
 .ui-suggest-list { display: flex; flex-direction: column; gap: 0.4rem; }
 .ui-suggest-loading, .ui-suggest-empty {
-  font-size: 0.85rem; color: var(--text-mute); padding: 0.4rem 0.2rem;
+  font-size: var(--fs-sm); color: var(--text-mute); padding: 0.4rem 0.2rem;
 }
 .ui-suggest-item {
   display: flex; align-items: center; gap: 0.5rem;
@@ -1711,16 +1744,16 @@ select:-webkit-autofill {
 .ui-suggest-item:hover { border-color: var(--accent); background: var(--bg-2); }
 .ui-suggest-item-body { flex: 1; min-width: 0; }
 .ui-suggest-item-q {
-  color: var(--text); font-size: 0.9rem; font-weight: 500;
+  color: var(--text); font-size: var(--fs-md); font-weight: 500;
   white-space: normal; word-break: break-word;
 }
 .ui-suggest-item-hook {
-  color: var(--text-mute); font-size: 0.8rem; margin-top: 0.15rem;
+  color: var(--text-mute); font-size: var(--fs-sm); margin-top: 0.15rem;
   white-space: normal; word-break: break-word;
 }
 .ui-suggest-secondary {
   flex-shrink: 0;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   padding: 0.25rem 0.6rem;
 }
 
@@ -1738,23 +1771,23 @@ select:-webkit-autofill {
   padding: 0.15rem 0.5rem;
   border-radius: 999px;
   background: var(--bg-1); border: 1px solid var(--border);
-  color: var(--text); font-size: 0.82rem;
+  color: var(--text); font-size: var(--fs-sm);
   white-space: nowrap;
 }
 .ui-tag-del {
   background: transparent; border: none; color: var(--text-mute);
   padding: 0; margin: 0; cursor: pointer;
-  font-size: 1rem; line-height: 1;
+  font-size: var(--fs-lg); line-height: 1;
 }
 .ui-tag-del:hover { color: var(--danger, var(--danger)); }
 .ui-tag-input {
   flex: 1; min-width: 6rem;
   background: transparent; border: none;
-  color: var(--text); font-size: 0.85rem; font-family: inherit;
+  color: var(--text); font-size: var(--fs-sm); font-family: inherit;
   outline: none; padding: 0.1rem 0.2rem;
 }
 .ui-tags-empty {
-  font-size: 0.78rem; color: var(--text-mute);
+  font-size: var(--fs-xs); color: var(--text-mute);
   padding: 0.1rem 0.2rem;
 }
 
@@ -1805,7 +1838,7 @@ select:-webkit-autofill {
   gap: 0.35rem;
   align-items: center;
   margin-bottom: 0.3rem;
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-mute);
@@ -1835,7 +1868,7 @@ select:-webkit-autofill {
   box-sizing: border-box;
 }
 .ui-rows-wide-label {
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-mute);
@@ -1854,12 +1887,12 @@ select:-webkit-autofill {
 .ui-checklist-toolbtn:hover { color: var(--text-hi); }
 .ui-checklist-count {
   margin-left: auto;
-  font-size: 0.74rem;
+  font-size: var(--fs-xs);
   color: var(--text-mute);
   align-self: center;
 }
 .ui-checklist-group {
-  font-size: 0.7rem; font-weight: 600;
+  font-size: var(--fs-2xs); font-weight: 600;
   color: var(--text-mute);
   text-transform: uppercase; letter-spacing: 0.04em;
   margin-top: 0.55rem; margin-bottom: 0.2rem;
@@ -1882,28 +1915,28 @@ select:-webkit-autofill {
   padding: 0.35rem 0.3rem;
   border-radius: 3px;
   margin-top: 0; margin-bottom: 0;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   text-transform: none; letter-spacing: 0;
   color: var(--text);
 }
 .ui-checklist-group-collapsible:hover { background: var(--bg-1); }
 .ui-checklist-caret {
   width: 0.9rem; text-align: center;
-  color: var(--text-mute); font-size: 0.7rem;
+  color: var(--text-mute); font-size: var(--fs-2xs);
   flex-shrink: 0;
 }
 .ui-checklist-master { margin: 0; flex-shrink: 0; }
 .ui-checklist-group-name {
   color: var(--text-hi); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em;
-  font-size: 0.72rem;
+  font-size: var(--fs-2xs);
 }
 /* The count rides at the end of the header, so a collapsed group still
    says how much of it is on. A restriction you cannot see without
    opening something is the failure this whole control came out of. */
 .ui-checklist-group-count {
   margin-left: auto;
-  color: var(--text-mute); font-size: 0.7rem;
+  color: var(--text-mute); font-size: var(--fs-2xs);
   text-transform: none; letter-spacing: 0;
 }
 .ui-checklist-section-body {
@@ -1929,9 +1962,9 @@ select:-webkit-autofill {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
   margin-left: auto; flex-shrink: 0;
 }
-.ui-checklist-name { color: var(--text-hi); font-size: 0.85rem; }
+.ui-checklist-name { color: var(--text-hi); font-size: var(--fs-sm); }
 .ui-checklist-help {
-  color: var(--text-mute); font-size: 0.76rem;
+  color: var(--text-mute); font-size: var(--fs-xs);
   word-wrap: break-word;
 }
 
@@ -1942,13 +1975,13 @@ select:-webkit-autofill {
 }
 .ui-rules-num {
   flex: 0 0 auto; min-width: 1.4rem; text-align: right;
-  font-size: 0.78rem; color: var(--text-mute); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs); color: var(--text-mute); font-variant-numeric: tabular-nums;
 }
 .ui-rules-input {
   flex: 1; min-width: 0;
   padding: 0.4rem 0.55rem; border-radius: var(--btn-radius);
   background: var(--bg-2); border: 1px solid var(--border);
-  color: var(--text); font-size: 0.88rem; font-family: inherit;
+  color: var(--text); font-size: var(--fs-md); font-family: inherit;
   outline: none; transition: border-color 0.1s ease;
 }
 .ui-rules-input:focus { border-color: var(--accent); }
@@ -1958,7 +1991,7 @@ select:-webkit-autofill {
   flex: 0 0 auto; max-width: 11rem;
   padding: 0.35rem 0.4rem; border-radius: 6px;
   background: var(--bg-1); border: 1px solid var(--border);
-  color: var(--text); font-size: 0.78rem; font-family: inherit; outline: none;
+  color: var(--text); font-size: var(--fs-xs); font-family: inherit; outline: none;
 }
 .ui-rules-mode:focus { border-color: var(--accent); }
 /* Single-rule editor — swapped in place of the list by RowEditor. Sized so a
@@ -1975,12 +2008,12 @@ select:-webkit-autofill {
 .ui-rules-edit-askin {
   flex: 1; padding: 0.4rem 0.6rem; box-sizing: border-box;
   border: 1px solid var(--border); border-radius: 6px;
-  background: var(--bg-0); color: var(--text); font-size: 0.85rem;
+  background: var(--bg-0); color: var(--text); font-size: var(--fs-sm);
 }
 .ui-rules-edit-suggest, .ui-rules-edit-done, .ui-rules-edit-cancel {
   padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer;
   border: 1px solid var(--border); background: var(--bg-2); color: var(--text);
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
 }
 .ui-rules-edit-done { border-color: var(--accent); background: var(--accent); color: var(--text-on-accent, #fff); }
 .ui-rules-edit-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; }
@@ -1990,7 +2023,7 @@ select:-webkit-autofill {
   flex-shrink: 0; width: 26px; height: 26px; padding: 0; line-height: 1;
   border: 1px solid var(--border); border-radius: 5px;
   background: transparent; color: var(--text-mute);
-  cursor: pointer; font-size: 0.9rem;
+  cursor: pointer; font-size: var(--fs-md);
 }
 .ui-rules-edit-btn:hover { color: var(--text); background: var(--bg-2); }
 .ui-rules-del {
@@ -1998,17 +2031,17 @@ select:-webkit-autofill {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 6px;
   width: 1.7rem; height: 1.7rem; padding: 0; cursor: pointer;
-  font-size: 0.95rem; line-height: 1;
+  font-size: var(--fs-lg); line-height: 1;
 }
 .ui-rules-del:hover { color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
 .ui-rules-add {
   align-self: flex-start;
   background: transparent; color: var(--accent); border: 1px dashed var(--accent);
-  border-radius: 6px; padding: 0.35rem 0.7rem; font-size: 0.78rem; cursor: pointer;
+  border-radius: 6px; padding: 0.35rem 0.7rem; font-size: var(--fs-xs); cursor: pointer;
   margin-top: 0.2rem;
 }
 .ui-rules-add:hover { background: var(--bg-2); }
-.ui-rules-empty { font-size: 0.8rem; color: var(--text-mute); padding: 0.2rem 0; }
+.ui-rules-empty { font-size: var(--fs-sm); color: var(--text-mute); padding: 0.2rem 0; }
 /* Assist editor — modal workbench: draft on the left, conversation on
    the right, version walk above the draft. */
 .ui-assist {
@@ -2021,19 +2054,19 @@ select:-webkit-autofill {
 .ui-assist-nav {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 6px;
-  width: 1.8rem; height: 1.8rem; padding: 0; cursor: pointer; font-size: 0.7rem; line-height: 1;
+  width: 1.8rem; height: 1.8rem; padding: 0; cursor: pointer; font-size: var(--fs-2xs); line-height: 1;
 }
 .ui-assist-nav:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
 .ui-assist-nav:disabled { opacity: 0.3; cursor: default; }
 .ui-assist-ver {
-  font-size: 0.74rem; color: var(--text-mute); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs); color: var(--text-mute); font-variant-numeric: tabular-nums;
   min-width: 5rem;
 }
 .ui-assist-draft {
   flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; resize: none;
   padding: 0.7rem 0.8rem; border-radius: 8px;
   background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
-  font-size: 0.84rem; line-height: 1.6; font-family: inherit; outline: none;
+  font-size: var(--fs-sm); line-height: 1.6; font-family: inherit; outline: none;
 }
 .ui-assist-draft:focus { border-color: var(--accent); }
 .ui-assist-log {
@@ -2043,7 +2076,7 @@ select:-webkit-autofill {
   background: var(--bg-0); border: 1px solid var(--border);
 }
 .ui-assist-msg {
-  font-size: 0.8rem; line-height: 1.5; padding: 0.45rem 0.6rem; border-radius: 8px;
+  font-size: var(--fs-sm); line-height: 1.5; padding: 0.45rem 0.6rem; border-radius: 8px;
   max-width: 92%; word-break: break-word; overflow-wrap: anywhere;
 }
 .ui-assist-msg.user { align-self: flex-end; background: var(--accent); color: var(--text-on-accent, #fff); }
@@ -2051,19 +2084,19 @@ select:-webkit-autofill {
 .ui-assist-msg.assistant p:first-child { margin-top: 0; }
 .ui-assist-msg.assistant p:last-child { margin-bottom: 0; }
 .ui-assist-msg.pending { color: var(--text-mute); font-style: italic; }
-.ui-assist-msg.note { align-self: stretch; background: transparent; color: var(--text-mute); font-size: 0.76rem; padding: 0.2rem 0; }
+.ui-assist-msg.note { align-self: stretch; background: transparent; color: var(--text-mute); font-size: var(--fs-xs); padding: 0.2rem 0; }
 .ui-assist-msg.error { align-self: flex-start; background: var(--bg-2); color: var(--danger); }
 .ui-assist-composer { display: flex; gap: 0.4rem; align-items: flex-end; }
 .ui-assist-input {
   flex: 1; min-width: 0; box-sizing: border-box; resize: none;
   padding: 0.5rem 0.6rem; border-radius: var(--btn-radius);
   background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
-  font-size: 0.82rem; font-family: inherit; line-height: 1.45; outline: none;
+  font-size: var(--fs-sm); font-family: inherit; line-height: 1.45; outline: none;
 }
 .ui-assist-input:focus { border-color: var(--accent); }
 .ui-assist-send {
   flex: 0 0 auto; background: var(--accent); color: var(--text-on-accent, #fff); border: none;
-  border-radius: 8px; padding: 0.55rem 0.9rem; font-size: 0.8rem; cursor: pointer;
+  border-radius: 8px; padding: 0.55rem 0.9rem; font-size: var(--fs-sm); cursor: pointer;
 }
 .ui-assist-send:disabled { opacity: 0.5; cursor: default; }
 @media (max-width: 760px) {
@@ -2081,14 +2114,14 @@ select:-webkit-autofill {
 .ui-sections-preview {
   overflow-y: auto; -webkit-overflow-scrolling: touch;
   padding: 0.6rem 0.75rem; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--bg-1); color: var(--text); font-size: 0.84rem; line-height: 1.55;
+  background: var(--bg-1); color: var(--text); font-size: var(--fs-sm); line-height: 1.55;
 }
-.ui-sections-preview.empty { color: var(--text-mute); font-size: 0.8rem; }
+.ui-sections-preview.empty { color: var(--text-mute); font-size: var(--fs-sm); }
 .ui-sections-viewrow { display: flex; gap: 0.25rem; align-self: flex-end; }
 .ui-sections-view {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 6px;
-  padding: 0.2rem 0.6rem; font-size: 0.72rem; cursor: pointer;
+  padding: 0.2rem 0.6rem; font-size: var(--fs-2xs); cursor: pointer;
 }
 .ui-sections-view.on { color: var(--accent); border-color: var(--accent); background: var(--bg-2); }
 .ui-sections-list { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -2101,10 +2134,10 @@ select:-webkit-autofill {
 .ui-sec-head { display: flex; align-items: center; gap: 0.3rem; min-height: 1.9rem; }
 .ui-sec-caret {
   flex: 0 0 auto; background: transparent; border: none; cursor: pointer;
-  color: var(--text-mute); font-size: 0.75rem; padding: 0.2rem 0.15rem; line-height: 1;
+  color: var(--text-mute); font-size: var(--fs-xs); padding: 0.2rem 0.15rem; line-height: 1;
 }
 .ui-sec-title-fixed {
-  flex: 1; min-width: 0; font-size: 0.85rem; font-weight: 600; color: var(--text);
+  flex: 1; min-width: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ui-sec-title-fixed.intro { font-weight: 500; color: var(--text-mute); font-style: italic; }
@@ -2112,7 +2145,7 @@ select:-webkit-autofill {
   flex: 1; min-width: 0;
   padding: 0.3rem 0.45rem; border-radius: var(--btn-radius);
   background: var(--bg-2); border: 1px solid var(--border);
-  color: var(--text); font-size: 0.85rem; font-weight: 600; font-family: inherit;
+  color: var(--text); font-size: var(--fs-sm); font-weight: 600; font-family: inherit;
   outline: none; transition: border-color 0.1s ease;
 }
 .ui-sec-title-input:focus { border-color: var(--accent); }
@@ -2121,19 +2154,19 @@ select:-webkit-autofill {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 5px;
   min-width: 1.6rem; height: 1.6rem; padding: 0 0.25rem; cursor: pointer;
-  font-size: 0.72rem; line-height: 1;
+  font-size: var(--fs-2xs); line-height: 1;
 }
 .ui-sec-mode.on { color: var(--accent); border-color: var(--accent); background: var(--bg-2); }
 .ui-sec-suggest, .ui-sec-move, .ui-sec-del {
   flex: 0 0 auto; background: transparent; color: var(--text-mute);
   border: 1px solid transparent; border-radius: 5px;
   width: 1.6rem; height: 1.6rem; padding: 0; cursor: pointer;
-  font-size: 0.8rem; line-height: 1;
+  font-size: var(--fs-sm); line-height: 1;
 }
 /* Arrow glyphs sit small in most UI fonts — size them up so the pair
    reads at a glance, and force a font that has both at equal weight. */
 .ui-sec-move {
-  font-size: 0.95rem;
+  font-size: var(--fs-lg);
   font-family: ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace;
 }
 .ui-sec-suggest:hover, .ui-sec-move:hover, .ui-sec-del:hover { border-color: var(--border); color: var(--text); }
@@ -2157,7 +2190,7 @@ select:-webkit-autofill {
   flex: 1; min-width: 0; width: 100%; box-sizing: border-box;
   padding: 0.35rem 0.45rem; border-radius: 5px;
   background: var(--bg-2); border: 1px solid var(--border);
-  color: var(--text); font-size: 0.82rem; font-family: inherit;
+  color: var(--text); font-size: var(--fs-sm); font-family: inherit;
   outline: none; transition: border-color 0.1s ease;
 }
 .ui-sec-cell:focus { border-color: var(--accent); }
@@ -2166,23 +2199,23 @@ select:-webkit-autofill {
   flex: 0 0 auto; background: transparent; color: var(--text-mute);
   border: 1px solid transparent; border-radius: 5px;
   width: 1.5rem; height: 1.5rem; padding: 0; cursor: pointer;
-  font-size: 0.78rem; line-height: 1;
+  font-size: var(--fs-xs); line-height: 1;
 }
 .ui-sec-colx:hover, .ui-sec-rowx:hover { color: var(--danger); border-color: var(--danger); }
 .ui-sec-addcol { color: var(--accent); border: 1px dashed var(--accent); }
 .ui-sec-addcol:hover { background: var(--bg-2); }
-.ui-sec-align { border-color: var(--border); font-size: 0.7rem; }
+.ui-sec-align { border-color: var(--border); font-size: var(--fs-2xs); }
 .ui-sec-align:hover { color: var(--accent); border-color: var(--accent); }
 .ui-sec-text { width: 100%; box-sizing: border-box; resize: vertical; min-height: 3.5rem; }
 .ui-sec-preview {
-  font-size: 0.78rem; color: var(--text-mute); padding: 0.15rem 0.15rem 0 1.35rem;
+  font-size: var(--fs-xs); color: var(--text-mute); padding: 0.15rem 0.15rem 0 1.35rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ui-sec-help { font-size: 0.72rem; color: var(--text-mute); margin-top: 0.35rem; line-height: 1.4; }
+.ui-sec-help { font-size: var(--fs-2xs); color: var(--text-mute); margin-top: 0.35rem; line-height: 1.4; }
 .ui-sec-add {
   align-self: flex-start;
   background: transparent; color: var(--accent); border: 1px dashed var(--accent);
-  border-radius: 6px; padding: 0.35rem 0.7rem; font-size: 0.78rem; cursor: pointer;
+  border-radius: 6px; padding: 0.35rem 0.7rem; font-size: var(--fs-xs); cursor: pointer;
 }
 .ui-sec-add:hover { background: var(--bg-2); }
 /* Chips row above a form input — applied to FormField with
@@ -2191,7 +2224,7 @@ select:-webkit-autofill {
   display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.4rem;
 }
 .ui-form-chip {
-  font-size: 0.72rem; padding: 0.2rem 0.55rem; border-radius: 999px;
+  font-size: var(--fs-2xs); padding: 0.2rem 0.55rem; border-radius: 999px;
   border: 1px solid var(--border); background: var(--bg-0); color: var(--text-mute);
   cursor: pointer; white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
@@ -2199,7 +2232,7 @@ select:-webkit-autofill {
 }
 .ui-form-chip:hover { color: var(--text); border-color: var(--accent); }
 .ui-form-chip-add { color: var(--accent); border-color: var(--accent); }
-.ui-form-chips-loading { color: var(--text-mute); font-size: 0.72rem; padding: 0.2rem 0.55rem; }
+.ui-form-chips-loading { color: var(--text-mute); font-size: var(--fs-2xs); padding: 0.2rem 0.55rem; }
 /* Inline static presets — small click-to-fill chips. Slightly more
  * compact than ui-form-chip since presets are reference fills, not
  * the field's primary input affordance. */
@@ -2207,7 +2240,7 @@ select:-webkit-autofill {
   display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.35rem;
 }
 .ui-form-preset-chip {
-  font-size: 0.68rem; padding: 0.15rem 0.5rem; border-radius: 4px;
+  font-size: var(--fs-2xs); padding: 0.15rem 0.5rem; border-radius: 4px;
   border: 1px solid var(--border); background: var(--bg-0); color: var(--text-mute);
   cursor: pointer; white-space: nowrap; font-family: inherit;
   -webkit-tap-highlight-color: transparent;
@@ -2227,10 +2260,10 @@ select:-webkit-autofill {
   padding: 1.1rem 1.2rem;
   box-shadow: var(--modal-shadow);
 }
-.ui-form-modal-h { font-size: 1rem; font-weight: 600; color: var(--text); }
-.ui-form-modal-hint { font-size: 0.78rem; color: var(--text-mute); }
+.ui-form-modal-h { font-size: var(--fs-lg); font-weight: 600; color: var(--text); }
+.ui-form-modal-hint { font-size: var(--fs-xs); color: var(--text-mute); }
 .ui-form-modal-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.6rem; }
-.ui-form-saving { font-size: 0.7rem; color: var(--text-mute); margin-left: 0.4rem; opacity: 0; transition: opacity 0.15s ease; }
+.ui-form-saving { font-size: var(--fs-2xs); color: var(--text-mute); margin-left: 0.4rem; opacity: 0; transition: opacity 0.15s ease; }
 .ui-form-saving.show { opacity: 1; }
 
 /* --- DisplayPanel --- */
@@ -2240,14 +2273,14 @@ select:-webkit-autofill {
   gap: 0.7rem; padding: 0.45rem 0; border-bottom: 1px solid var(--border);
 }
 .ui-display-row:last-child { border-bottom: none; }
-.ui-display-label { font-size: 0.85rem; color: var(--text-mute); }
-.ui-display-value { font-size: 0.9rem; color: var(--text); text-align: right; word-break: break-all; }
+.ui-display-label { font-size: var(--fs-sm); color: var(--text-mute); }
+.ui-display-value { font-size: var(--fs-md); color: var(--text); text-align: right; word-break: break-all; }
 /* Server-assigned severity on a display pair. Weight as well as colour, so the
    row still reads as notable where colour is unavailable or unnoticed. */
 .ui-display-value.ok   { color: var(--success); font-weight: 600; }
 .ui-display-value.warn { color: var(--warning); font-weight: 600; }
 .ui-display-value.bad  { color: var(--danger, #dc2626); font-weight: 600; }
-.ui-display-value.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.82rem; }
+.ui-display-value.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: var(--fs-sm); }
 /* Block-style row: label on its own line, value as a <pre> block
    below — for multi-line content like script bodies. */
 .ui-display-row-block {
@@ -2256,7 +2289,7 @@ select:-webkit-autofill {
 .ui-display-value-block {
   margin: 0; padding: 0.5rem 0.65rem;
   background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: var(--fs-sm);
   color: var(--text); white-space: pre-wrap; word-break: break-word;
   max-height: 420px; overflow: auto;
 }
@@ -2268,9 +2301,9 @@ select:-webkit-autofill {
   background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px;
   display: flex; flex-direction: column; gap: 0.15rem;
 }
-.ui-display-list-field { font-size: 0.82rem; color: var(--text); word-break: break-word; }
+.ui-display-list-field { font-size: var(--fs-sm); color: var(--text); word-break: break-word; }
 .ui-display-list-key { color: var(--text-mute); }
-.ui-display-list-val.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8rem; }
+.ui-display-list-val.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: var(--fs-sm); }
 
 /* --- BarChart --- */
 .ui-chart { width: 100%; }
@@ -2282,23 +2315,23 @@ select:-webkit-autofill {
 .ui-chart-bar { fill: var(--accent); transition: fill 0.1s ease; }
 .ui-chart-bar:hover { fill: var(--accent-hi); }
 .ui-chart-empty { color: var(--text-mute); padding: 1rem 0; text-align: center; }
-.ui-chart-summary { font-size: 0.8rem; color: var(--text-mute); margin-top: 0.5rem; text-align: right; }
+.ui-chart-summary { font-size: var(--fs-sm); color: var(--text-mute); margin-top: 0.5rem; text-align: right; }
 .ui-chart-tip {
   position: absolute; z-index: 5;
   background: var(--bg-1); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px;
-  padding: 0.5rem 0.7rem; font-size: 0.82rem;
+  padding: 0.5rem 0.7rem; font-size: var(--fs-sm);
   white-space: nowrap; pointer-events: none;
   box-shadow: 0 4px 14px rgba(0,0,0,0.5);
   min-width: 12rem;
 }
 .ui-chart-tip-h { font-weight: 600; color: var(--text-hi); margin-bottom: 0.25rem; }
-.ui-chart-tip-y { font-size: 1.05rem; color: var(--accent-hi); margin-bottom: 0.4rem; }
+.ui-chart-tip-y { font-size: var(--fs-lg); color: var(--accent-hi); margin-bottom: 0.4rem; }
 .ui-chart-tip-rows {
   border-top: 1px solid var(--border);
   padding-top: 0.4rem;
   display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.7rem;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.75rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: var(--fs-xs);
 }
 .ui-chart-tip-row { display: contents; }
 .ui-chart-tip-label { color: var(--text-mute); }
@@ -2316,18 +2349,18 @@ select:-webkit-autofill {
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
 }
 .ui-actionlist-text { flex: 1 1 16rem; min-width: 0; }
-.ui-actionlist-label { font-size: 0.92rem; color: var(--text); }
-.ui-actionlist-desc  { font-size: 0.78rem; color: var(--text-mute); margin-top: 0.15rem; }
-.ui-actionlist-status { font-size: 0.78rem; color: var(--text-mute); min-width: 4rem; max-width: 100%; text-align: right; overflow-wrap: anywhere; }
-.ui-actionlist-empty { color: var(--text-mute); font-size: 0.9rem; padding: 0.5rem 0; }
+.ui-actionlist-label { font-size: var(--fs-md); color: var(--text); }
+.ui-actionlist-desc  { font-size: var(--fs-xs); color: var(--text-mute); margin-top: 0.15rem; }
+.ui-actionlist-status { font-size: var(--fs-xs); color: var(--text-mute); min-width: 4rem; max-width: 100%; text-align: right; overflow-wrap: anywhere; }
+.ui-actionlist-empty { color: var(--text-mute); font-size: var(--fs-md); padding: 0.5rem 0; }
 
 /* --- JSONView --- */
-.ui-jsonview-h { font-size: 0.7rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); margin-bottom: 0.4rem; }
+.ui-jsonview-h { font-size: var(--fs-2xs); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); margin-bottom: 0.4rem; }
 .ui-jsonview-body {
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
   padding: 0.55rem 0.7rem; margin: 0;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.78rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: var(--fs-xs);
   line-height: 1.4;
   max-height: 40vh; overflow: auto;
   white-space: pre; word-break: normal;
@@ -2439,13 +2472,13 @@ select:-webkit-autofill {
     background: transparent; color: var(--text);
     border: 1px solid var(--border); border-radius: 8px;
     min-width: 40px; min-height: 40px; padding: 0;
-    font-size: 1.05rem; cursor: pointer;
+    font-size: var(--fs-lg); cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
   .ui-chat-hamburger:active { background: var(--bg-1); }
   .ui-chat-mobile-title {
     flex: 1; min-width: 0;
-    font-size: 0.95rem; font-weight: 600; color: var(--text);
+    font-size: var(--fs-lg); font-weight: 600; color: var(--text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   /* Trim main-column chrome on mobile so the chat dominates the viewport. */
@@ -2461,13 +2494,13 @@ select:-webkit-autofill {
   padding: 1.1rem 0.7rem;
   text-align: center;
   color: var(--text-mute);
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
   font-style: italic;
 }
 .ui-chat-side-h {
   display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
   padding: 0.5rem 0.7rem;
-  font-size: 0.8rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: var(--fs-sm); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
   border-bottom: 1px solid var(--border);
 }
 /* Stretch the "Sessions" label so action buttons hug the right edge —
@@ -2495,7 +2528,7 @@ select:-webkit-autofill {
 }
 .ui-side-menu-item {
   display: block; width: 100%; text-align: left; background: transparent;
-  border: none; color: var(--text); font: inherit; font-size: 0.8rem;
+  border: none; color: var(--text); font: inherit; font-size: var(--fs-sm);
   text-transform: none; letter-spacing: normal;
   padding: 0.35rem 0.5rem; border-radius: 4px; cursor: pointer; white-space: nowrap;
 }
@@ -2544,7 +2577,7 @@ select:-webkit-autofill {
   padding: 0.35rem 0.6rem;
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--btn-radius);
-  font-size: 0.78rem; font-family: inherit;
+  font-size: var(--fs-xs); font-family: inherit;
   -webkit-appearance: none;
 }
 .ui-chat-side-search:focus { outline: none; border-color: var(--accent); }
@@ -2583,7 +2616,7 @@ select:-webkit-autofill {
   content: '\203A';
   position: absolute; right: 0.6rem; top: 50%;
   transform: translateY(-50%);
-  color: var(--text-mute); font-size: 0.95rem; line-height: 1;
+  color: var(--text-mute); font-size: var(--fs-lg); line-height: 1;
 }
 .ui-chat-side-item.is-action:hover { background: var(--bg-2); }
 
@@ -2601,7 +2634,7 @@ select:-webkit-autofill {
 .ui-bulk-pill {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 999px;
-  padding: 0.3rem 0.85rem; font-size: 0.78rem; cursor: pointer;
+  padding: 0.3rem 0.85rem; font-size: var(--fs-xs); cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transition: color 0.1s ease, border-color 0.1s ease, background 0.1s ease;
 }
@@ -2655,7 +2688,7 @@ select:-webkit-autofill {
 .ui-channels-h-title { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-mute); font-weight: 600; }
 .ui-channels-add {
   border: none; background: transparent; color: var(--text-mute); cursor: pointer;
-  font-size: 1rem; line-height: 1; padding: 0 0.25rem; border-radius: 4px;
+  font-size: var(--fs-lg); line-height: 1; padding: 0 0.25rem; border-radius: 4px;
 }
 .ui-channels-add:hover { background: var(--bg-2); color: var(--text); }
 .ui-channels-dir {
@@ -2669,7 +2702,7 @@ select:-webkit-autofill {
   padding: 0 0.25rem; margin-left: 0.3rem; align-self: center;
 }
 .ui-chat-side-title {
-  font-size: 0.85rem; color: var(--text); line-height: 1.3;
+  font-size: var(--fs-sm); color: var(--text); line-height: 1.3;
   /* Allow up to 3 lines before truncating — single-line ellipsis
    * truncated too much information from long session titles get
    * truncated. -webkit-line-clamp is widely supported and
@@ -2681,7 +2714,7 @@ select:-webkit-autofill {
   word-break: break-word;
 }
 .ui-chat-side-meta {
-  font-size: 0.7rem; color: var(--text-mute); margin-top: 0.05rem;
+  font-size: var(--fs-2xs); color: var(--text-mute); margin-top: 0.05rem;
   display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
 }
 /* Source badge on session rows — small inline pill tagging where a
@@ -2734,7 +2767,7 @@ select:-webkit-autofill {
   background: transparent; color: var(--text-mute);
   border: none; border-radius: 4px;
   width: 1.4rem; height: 1.4rem; cursor: pointer;
-  font-size: 1rem; line-height: 1;
+  font-size: var(--fs-lg); line-height: 1;
 }
 .ui-chat-side-del:hover { color: var(--danger); background: var(--bg-2); }
 .ui-chat-side-ren {
@@ -2742,7 +2775,7 @@ select:-webkit-autofill {
   background: transparent; color: var(--text-mute);
   border: none; border-radius: 4px;
   width: 1.4rem; height: 1.4rem; cursor: pointer;
-  font-size: 0.9rem; line-height: 1;
+  font-size: var(--fs-md); line-height: 1;
 }
 .ui-chat-side-ren:hover { color: var(--text-hi); background: var(--bg-2); }
 /* Rename (✎) stays hidden until the session row is hovered, to keep the
@@ -2764,7 +2797,7 @@ select:-webkit-autofill {
     background: transparent; color: var(--text-mute);
     border: 1px solid var(--border); border-radius: 6px;
     width: 1.7rem; height: 1.7rem; padding: 0;
-    font-size: 1rem; line-height: 1; cursor: pointer;
+    font-size: var(--fs-lg); line-height: 1; cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
   .ui-chat-side-close:active { background: var(--bg-2); }
@@ -2779,11 +2812,11 @@ select:-webkit-autofill {
   padding: 0.8rem 1rem;
   display: flex; flex-direction: column; gap: 0.7rem;
 }
-.ui-chat-empty { color: var(--text-mute); text-align: center; padding: 2rem 1rem; font-size: 0.9rem; }
+.ui-chat-empty { color: var(--text-mute); text-align: center; padding: 2rem 1rem; font-size: var(--fs-md); }
 .ui-chat-msg {
   max-width: 85%;
   padding: 0.6rem 0.85rem; border-radius: 10px;
-  font-size: 0.92rem; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word;
+  font-size: var(--fs-md); line-height: 1.5; white-space: pre-wrap; word-wrap: break-word;
 }
 .ui-chat-msg.user { background: var(--bg-2); align-self: flex-end; border: 1px solid var(--border); }
 .ui-chat-msg.assistant { background: var(--bg-0); align-self: flex-start; border: 1px solid var(--border); border-left: 3px solid var(--accent); }
@@ -2798,14 +2831,14 @@ select:-webkit-autofill {
   padding: 0.5rem 0.7rem; resize: vertical;
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
-  font-family: inherit; font-size: 0.92rem; line-height: 1.4; outline: none;
+  font-family: inherit; font-size: var(--fs-md); line-height: 1.4; outline: none;
 }
 .ui-chat-edit-ta:focus { border-color: var(--accent); }
 .ui-chat-edit-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .ui-chat-round-stats {
   margin-top: 0.4rem;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.7rem; color: var(--text-mute);
+  font-size: var(--fs-2xs); color: var(--text-mute);
   letter-spacing: 0.02em;
   opacity: 0.75;
 }
@@ -2813,13 +2846,13 @@ select:-webkit-autofill {
   padding: 0.35rem 0.9rem;
   border-top: 1px solid var(--border);
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.72rem; color: var(--text-mute);
+  font-size: var(--fs-2xs); color: var(--text-mute);
   background: var(--bg-2);
   letter-spacing: 0.02em;
 }
 .ui-chat-act {
   background: transparent; color: var(--text-mute); border: 1px solid var(--border);
-  border-radius: 5px; padding: 0.2rem 0.55rem; font-size: 0.72rem; cursor: pointer;
+  border-radius: 5px; padding: 0.2rem 0.55rem; font-size: var(--fs-2xs); cursor: pointer;
 }
 .ui-chat-act:hover { color: var(--text); border-color: var(--text-mute); }
 
@@ -2828,7 +2861,7 @@ select:-webkit-autofill {
   margin-top: 0.4rem; padding: 0.25rem 0.55rem;
   background: var(--bg-2); color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 999px;
-  font-size: 0.72rem; cursor: pointer;
+  font-size: var(--fs-2xs); cursor: pointer;
   font-family: inherit;
   -webkit-tap-highlight-color: transparent;
 }
@@ -2841,7 +2874,7 @@ select:-webkit-autofill {
 }
 .ui-chat-tool {
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
-  font-size: 0.78rem; color: var(--text-mute);
+  font-size: var(--fs-xs); color: var(--text-mute);
   font-family: ui-monospace, monospace;
 }
 .ui-chat-tool-summary {
@@ -2851,20 +2884,20 @@ select:-webkit-autofill {
 .ui-chat-tool-summary::-webkit-details-marker { display: none; }
 .ui-chat-tool-summary::before {
   content: '▸'; display: inline-block; margin-right: 0.35rem;
-  color: var(--text-mute); font-size: 0.7rem;
+  color: var(--text-mute); font-size: var(--fs-2xs);
   transition: transform 0.12s ease;
 }
 .ui-chat-tool[open] > .ui-chat-tool-summary::before { transform: rotate(90deg); }
 .ui-chat-tool-summary:hover { background: var(--bg-1); }
 .ui-chat-tool-name { color: var(--accent); font-weight: 600; margin-right: 0.5rem; }
-.ui-chat-tool-args { color: var(--text-mute); font-size: 0.72rem; }
+.ui-chat-tool-args { color: var(--text-mute); font-size: var(--fs-2xs); }
 .ui-chat-tool-body { padding: 0 0.5rem 0.5rem 0.5rem; }
 .ui-chat-tool-empty { color: var(--text-mute); font-style: italic; padding: 0.3rem 0; }
 .ui-chat-tool-result {
   align-self: flex-start; max-width: 100%;
   background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px;
   padding: 0.45rem 0.65rem; margin: 0;
-  font-family: ui-monospace, monospace; font-size: 0.75rem;
+  font-family: ui-monospace, monospace; font-size: var(--fs-xs);
   color: var(--text-mute); max-height: 320px; overflow: auto;
   white-space: pre-wrap; word-break: break-word;
 }
@@ -2878,17 +2911,17 @@ select:-webkit-autofill {
   display: flex; flex-direction: column; gap: 0.15rem;
 }
 .ui-chat-tool-argkey {
-  font-size: 0.7rem; font-weight: 600; color: var(--accent);
+  font-size: var(--fs-2xs); font-weight: 600; color: var(--accent);
   font-family: ui-monospace, monospace; opacity: 0.85;
 }
 .ui-chat-tool-argval {
   background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px;
   padding: 0.35rem 0.55rem; margin: 0;
-  font-family: ui-monospace, monospace; font-size: 0.75rem;
+  font-family: ui-monospace, monospace; font-size: var(--fs-xs);
   color: var(--text); max-height: 280px; overflow: auto;
   white-space: pre-wrap; word-break: break-word;
 }
-.ui-chat-status { align-self: center; font-size: 0.78rem; color: var(--text-mute); font-style: italic; padding: 0.2rem 0; }
+.ui-chat-status { align-self: center; font-size: var(--fs-xs); color: var(--text-mute); font-style: italic; padding: 0.2rem 0; }
 /* --- Modals: one look ---
  * Every dialog the toolkit draws shares a scrim, a corner and a shadow:
  * uiOpenModal's box, the confirm / alert / prompt dialog, the form-chip and
@@ -2915,7 +2948,7 @@ select:-webkit-autofill {
   padding: 1.1rem 1.2rem;
 }
 .ui-modal-title { margin: 0 0 0.5rem; color: var(--text-hi); }
-.ui-modal-sub { margin: 0 0 0.8rem; font-size: 0.82rem; color: var(--text-mute); line-height: 1.45; }
+.ui-modal-sub { margin: 0 0 0.8rem; font-size: var(--fs-sm); color: var(--text-mute); line-height: 1.45; }
 /* Themed confirm / alert / prompt dialog (uiDefaultModal) — the in-page
  * replacement for native browser dialogs, so the chrome matches the app
  * and mirrors the gohort-desktop host modal. */
@@ -2956,7 +2989,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-chat-attached-file {
   display: inline-block; padding: 0.4rem 0.7rem;
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
-  color: var(--text); text-decoration: none; font-size: 0.85rem;
+  color: var(--text); text-decoration: none; font-size: var(--fs-sm);
   max-width: 100%; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
@@ -2976,7 +3009,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   0%, 60%, 100% { transform: translateY(0);   opacity: 0.4; }
   30%           { transform: translateY(-3px); opacity: 1;   }
 }
-.ui-chat-error { align-self: center; color: var(--danger); font-size: 0.85rem; padding: 0.4rem 0.6rem; }
+.ui-chat-error { align-self: center; color: var(--danger); font-size: var(--fs-sm); padding: 0.4rem 0.6rem; }
 
 .ui-chat-modesbar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
@@ -2987,7 +3020,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-chat-modes { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .ui-chat-empty-hint {
   margin-left: auto; color: var(--text-mute);
-  font-size: 0.78rem; font-style: italic;
+  font-size: var(--fs-xs); font-style: italic;
 }
 /* Tools badge — expandable "🔧 N tools" pill on the right of the
    modes bar. Click expands a popover listing every tool the LLM
@@ -3002,7 +3035,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-chat-tools-badge {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 999px;
-  padding: 0.2rem 0.6rem; font-size: 0.72rem; cursor: pointer;
+  padding: 0.2rem 0.6rem; font-size: var(--fs-2xs); cursor: pointer;
   font-family: inherit;
   -webkit-tap-highlight-color: transparent;
 }
@@ -3021,14 +3054,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: var(--bg-2); border: 1px solid var(--border);
 }
 .ui-chat-tools-name {
-  font-family: ui-monospace, monospace; font-size: 0.78rem;
+  font-family: ui-monospace, monospace; font-size: var(--fs-xs);
   font-weight: 600; color: var(--accent);
 }
 .ui-chat-tools-desc {
-  font-size: 0.72rem; color: var(--text-mute);
+  font-size: var(--fs-2xs); color: var(--text-mute);
   line-height: 1.35; margin-top: 0.15rem;
 }
-.ui-chat-tools-loading { color: var(--text-mute); font-size: 0.78rem; padding: 0.5rem; }
+.ui-chat-tools-loading { color: var(--text-mute); font-size: var(--fs-xs); padding: 0.5rem; }
 
 /* --- PipelinePanel --- */
 .ui-pl-form {
@@ -3037,7 +3070,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: flex; flex-direction: column; gap: 0.5rem;
 }
 .ui-pl-formrow { display: flex; flex-direction: column; gap: 0.2rem; }
-.ui-pl-formlabel { font-size: 0.72rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }
+.ui-pl-formlabel { font-size: var(--fs-2xs); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }
 
 /* Toggle row — laid out horizontally as a compact pill instead of
  * the default full-width stacked input. Hugs its content so the
@@ -3054,7 +3087,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border-radius: 999px;
 }
 .ui-pl-formrow-toggle .ui-pl-formlabel {
-  font-size: 0.74rem;
+  font-size: var(--fs-xs);
   text-transform: none;
   letter-spacing: 0;
   color: var(--text);
@@ -3072,7 +3105,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   transform: translateX(14px);
 }
 .ui-pl-input {
-  font-family: inherit; font-size: 0.9rem;
+  font-family: inherit; font-size: var(--fs-md);
   background: var(--bg-1); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--btn-radius);
   padding: 0.45rem 0.6rem;
@@ -3081,12 +3114,12 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-textarea { resize: vertical; min-height: 3rem; }
 .ui-pl-file { padding: 0.35rem 0.5rem; cursor: pointer; }
 .ui-pl-file::file-selector-button {
-  font-family: inherit; font-size: 0.82rem; cursor: pointer;
+  font-family: inherit; font-size: var(--fs-sm); cursor: pointer;
   margin-right: 0.6rem; padding: 0.3rem 0.6rem;
   background: var(--bg-2, var(--bg-1)); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
 }
-.ui-pl-file-status { font-size: 0.8rem; color: var(--text-mute); min-height: 1rem; }
+.ui-pl-file-status { font-size: var(--fs-sm); color: var(--text-mute); min-height: 1rem; }
 .ui-pl-file-status.is-error { color: var(--danger, #e5534b); }
 .ui-pl-formactions {
   display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem;
@@ -3126,7 +3159,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 @media (min-width: 700px) {
   .ui-pl-prefill-btn {
     padding: 0.55rem 1.1rem;
-    font-size: 0.95rem;
+    font-size: var(--fs-lg);
     letter-spacing: 0.01em;
   }
   .ui-pl-prefill-icon { font-size: 1.05em; }
@@ -3139,10 +3172,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-prefill-item:hover { background: var(--bg-2); }
 .ui-pl-prefill-item:hover .ui-pl-prefill-item-q { color: var(--accent); }
 .ui-pl-prefill-item-q {
-  color: var(--text); font-size: 1rem; line-height: 1.4; font-weight: 500;
+  color: var(--text); font-size: var(--fs-lg); line-height: 1.4; font-weight: 500;
 }
 .ui-pl-prefill-item-hook {
-  color: var(--text-mute); font-size: 0.85rem; line-height: 1.5;
+  color: var(--text-mute); font-size: var(--fs-sm); line-height: 1.5;
   margin-top: 0.3rem;
 }
 /* On narrow viewports the popover would overflow off-screen
@@ -3158,8 +3191,8 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
     max-height: 50vh;
   }
   .ui-pl-prefill-item { padding: 0.75rem 0.8rem; }
-  .ui-pl-prefill-item-q { font-size: 1.02rem; }
-  .ui-pl-prefill-item-hook { font-size: 0.88rem; }
+  .ui-pl-prefill-item-q { font-size: var(--fs-lg); }
+  .ui-pl-prefill-item-hook { font-size: var(--fs-md); }
 }
 .ui-pl-btn.is-disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 
@@ -3191,7 +3224,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   margin-bottom: 0.5rem;
 }
 .ui-pl-modal-title {
-  font-size: 0.78rem; font-weight: 700; color: var(--text-mute);
+  font-size: var(--fs-xs); font-weight: 700; color: var(--text-mute);
   text-transform: uppercase; letter-spacing: 0.06em;
   flex-shrink: 0;
 }
@@ -3209,13 +3242,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-pl-modal-close:hover { background: var(--bg-2); color: var(--text); }
 .ui-pl-modal-body {
-  font-size: 0.92rem; line-height: 1.7; color: var(--text);
+  font-size: var(--fs-md); line-height: 1.7; color: var(--text);
 }
 /* Related-action popover items — the "click a topic to drill in"
  * style the legacy panels had inline. Each entry is a clickable card
  * with the question on top and an optional reason below. */
 .ui-pl-related-h {
-  font-size: 0.72rem; color: var(--text-mute);
+  font-size: var(--fs-2xs); color: var(--text-mute);
   text-transform: uppercase; letter-spacing: 0.05em;
   margin: 0.6rem 0 0.4rem;
 }
@@ -3249,14 +3282,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-related-h.success { color: var(--success); }
 .ui-pl-related-item.warning .ui-pl-related-reason { color: var(--warning); }
 .ui-pl-related-item.success .ui-pl-related-reason { color: var(--success); }
-.ui-pl-related-q { color: var(--text); font-size: 0.92rem; line-height: 1.4; }
+.ui-pl-related-q { color: var(--text); font-size: var(--fs-md); line-height: 1.4; }
 .ui-pl-related-reason {
-  color: var(--text-mute); font-size: 0.8rem;
+  color: var(--text-mute); font-size: var(--fs-sm);
   line-height: 1.45; margin-top: 0.2rem;
 }
 .ui-pl-related-hint {
   display: inline-block; margin-top: 0.3rem;
-  font-size: 0.7rem; color: var(--accent);
+  font-size: var(--fs-2xs); color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   padding: 0.1rem 0.45rem; border-radius: 999px;
 }
@@ -3270,7 +3303,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background-clip: text;
 }
 .ui-pl-modal-sub {
-  color: var(--text-mute); font-size: 0.85rem;
+  color: var(--text-mute); font-size: var(--fs-sm);
   margin-bottom: 0.2rem; text-align: center;
 }
 .ui-pl-modal-content { margin-top: 1rem; }
@@ -3280,13 +3313,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   color: var(--text); font-size: 1.25rem; margin: 1rem 0 0.4rem;
 }
 .ui-pl-modal-content h2 {
-  color: var(--accent); font-size: 1.1rem; margin: 1.5rem 0 0.5rem;
+  color: var(--accent); font-size: var(--fs-xl); margin: 1.5rem 0 0.5rem;
   border-bottom: 1px solid var(--border); padding-bottom: 0.3rem;
   text-transform: none; letter-spacing: normal; font-weight: 600;
 }
 .ui-pl-modal-content h2:first-child { margin-top: 0; }
 .ui-pl-modal-content h3 {
-  color: var(--text); font-size: 0.98rem; margin: 1rem 0 0.3rem;
+  color: var(--text); font-size: var(--fs-lg); margin: 1rem 0 0.3rem;
   font-weight: 600; text-transform: none; letter-spacing: normal;
 }
 .ui-pl-modal-content ol, .ui-pl-modal-content ul {
@@ -3308,7 +3341,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* Sidebar session-row meta fields: verdict snippet, confidence pill,
    winning-side pill. Compact, scannable. */
 .ui-pl-side-metaline {
-  font-size: 0.7rem; color: var(--text-mute); line-height: 1.3;
+  font-size: var(--fs-2xs); color: var(--text-mute); line-height: 1.3;
   margin-top: 0.08rem;
   /* Multi-line up to 3 lines so verdict snippets don't get
    * truncated to a useless half-sentence. line-clamp keeps the cap
@@ -3336,7 +3369,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-session-title {
   padding: 0.55rem 0.95rem 0.45rem;
   border-bottom: 1px solid var(--border); background: var(--bg-1);
-  font-size: 1rem; font-weight: 600; color: var(--text);
+  font-size: var(--fs-lg); font-weight: 600; color: var(--text);
   line-height: 1.35;
 }
 
@@ -3357,11 +3390,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-block-h {
   padding: 0.4rem 0.7rem;
   background: var(--bg-2); border-bottom: 1px solid var(--border);
-  font-weight: 600; font-size: 0.85rem; color: var(--text);
+  font-weight: 600; font-size: var(--fs-sm); color: var(--text);
 }
 .ui-pl-block-body {
   padding: 0.6rem 0.8rem;
-  font-size: 0.92rem; line-height: 1.55;
+  font-size: var(--fs-md); line-height: 1.55;
   color: var(--text);
   white-space: pre-wrap; word-break: break-word;
 }
@@ -3378,7 +3411,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-status {
   align-self: center;
   display: inline-flex; align-items: center; gap: 0.55rem;
-  font-size: 0.82rem; color: var(--text); font-weight: 500;
+  font-size: var(--fs-sm); color: var(--text); font-weight: 500;
   padding: 0.3rem 0.75rem; border-radius: 999px;
   background: var(--bg-2);
   border: 1px solid var(--accent);
@@ -3433,7 +3466,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-expandable-h {
   display: flex; justify-content: space-between; align-items: flex-start;
   gap: 0.6rem;
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
 }
 .ui-pl-expandable-title {
   flex: 1; min-width: 0;
@@ -3443,27 +3476,27 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-expandable-subtitle {
   margin-top: 0.2rem;
   font-weight: 500; color: var(--text-mute);
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 .ui-pl-expandable-toggle {
   flex-shrink: 0;
-  font-size: 0.7rem; color: var(--text-mute);
+  font-size: var(--fs-2xs); color: var(--text-mute);
 }
 .ui-pl-expandable.expanded .ui-pl-expandable-toggle::after { content: ' ▾'; }
-.ui-pl-expandable-body { display: none; margin-top: 0.5rem; font-size: 0.85rem; line-height: 1.5; color: var(--text); }
+.ui-pl-expandable-body { display: none; margin-top: 0.5rem; font-size: var(--fs-sm); line-height: 1.5; color: var(--text); }
 .ui-pl-expandable.expanded .ui-pl-expandable-body { display: block; }
 /* Expandable-card prose comes from .ui-md — the em-relative scale keeps
  * headings compact against this card's smaller base font-size. */
 
 .ui-chat-field {
   display: inline-flex; align-items: center; gap: 0.3rem;
-  font-size: 0.75rem; color: var(--text-mute);
+  font-size: var(--fs-xs); color: var(--text-mute);
 }
 .ui-chat-field-label { white-space: nowrap; }
 .ui-chat-field-input {
   background: var(--bg-1); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;
-  padding: 0.15rem 0.35rem; font-size: 0.75rem;
+  padding: 0.15rem 0.35rem; font-size: var(--fs-xs);
   font-family: inherit;
 }
 .ui-chat-field-input[type="number"] { width: 4rem; }
@@ -3495,7 +3528,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: var(--btn-radius);
   min-width: var(--btn-h); min-height: var(--btn-h); padding: 0 0.6rem;
-  font-size: 1.1rem; cursor: pointer;
+  font-size: var(--fs-xl); cursor: pointer;
   -webkit-tap-highlight-color: transparent; user-select: none;
 }
 .ui-chat-iconbtn:hover { color: var(--text); border-color: var(--text-mute); }
@@ -3514,7 +3547,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.5rem 0.7rem;
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--btn-radius);
-  font-family: inherit; font-size: 0.92rem; line-height: 1.4; outline: none;
+  font-family: inherit; font-size: var(--fs-md); line-height: 1.4; outline: none;
 }
 .ui-chat-input:focus { border-color: var(--accent); }
 /* The composer row: the field and its buttons stand at one height. */
@@ -3936,7 +3969,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-agent .ui-agent-extras.ui-agent-extras-in-side .ui-agent-extras-label {
   flex: 1 1 auto;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   color: var(--text-mute);
   display: flex;
   align-items: center;
@@ -3954,7 +3987,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   flex: 1 1 auto;
   min-width: 0;
   padding: 0.2rem 0.45rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   line-height: 1.2;
   height: auto;
   min-height: 0;
@@ -3982,13 +4015,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   gap: 0.4rem;
 }
 .ui-agent.ui-agent-list-top .ui-agent-extras-label {
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 .ui-agent.ui-agent-list-top .ui-agent-extras-label select,
 .ui-agent.ui-agent-list-top .ui-agent-extras-label input {
   min-width: 0;
   padding: 0.2rem 0.45rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
 }
 .ui-agent.ui-agent-list-top .ui-agent-modes {
   background: transparent;
@@ -4032,7 +4065,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-collapse, .ui-agent-expand {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 3px;
-  width: 26px; height: 24px; font-size: 0.95rem; line-height: 1;
+  width: 26px; height: 24px; font-size: var(--fs-lg); line-height: 1;
   cursor: pointer; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
 }
@@ -4058,7 +4091,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-activity-toggle {
   background: transparent; color: var(--text-mute);
   border: none; cursor: pointer;
-  width: 22px; height: 22px; font-size: 1rem; line-height: 1;
+  width: 22px; height: 22px; font-size: var(--fs-lg); line-height: 1;
   padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
 }
@@ -4066,7 +4099,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-activity-expand {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 3px;
-  width: 26px; height: 24px; font-size: 0.95rem; line-height: 1;
+  width: 26px; height: 24px; font-size: var(--fs-lg); line-height: 1;
   cursor: pointer; padding: 0;
   display: none; align-items: center; justify-content: center;
   position: absolute; right: 4px; top: 6px;
@@ -4089,7 +4122,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-status {
   padding: 0.4rem 0.7rem;
   background: var(--bg-2); color: var(--text-mute);
-  font-size: 0.78rem; border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs); border-bottom: 1px solid var(--border);
 }
 .ui-agent-actions {
   display: flex; gap: 0.4rem; padding: 0.5rem 0.7rem;
@@ -4114,7 +4147,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-toolbar-menu button {
   display: block; width: 100%; text-align: left; padding: 0.4rem 0.6rem;
   border: none; background: transparent; cursor: pointer; font: inherit;
-  font-size: 0.82rem; color: var(--text, inherit); border-radius: 4px;
+  font-size: var(--fs-sm); color: var(--text, inherit); border-radius: 4px;
 }
 .ui-toolbar-menu button:hover { background: var(--bg-2, rgba(127,127,127,0.15)); }
 .ui-toolbar-menu button.danger { color: var(--danger, #d9534f); }
@@ -4152,11 +4185,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-earlier-btn {
   background: var(--bg-1); color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 999px;
-  padding: 0.3rem 0.9rem; font-size: 0.85rem; cursor: pointer;
+  padding: 0.3rem 0.9rem; font-size: var(--fs-sm); cursor: pointer;
 }
 .ui-agent-earlier-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
 .ui-agent-earlier-btn:disabled { cursor: default; opacity: 0.6; }
-.ui-agent-earlier-note { color: var(--text-mute); font-size: 0.8rem; }
+.ui-agent-earlier-note { color: var(--text-mute); font-size: var(--fs-sm); }
 /* Mid-turn status from send_status, rendered as a real message bubble
  * (same .ui-agent-msg-body card chrome as a normal reply) so it reads
  * like the agent talking. Left-aligned like the assistant; tinted with
@@ -4171,7 +4204,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   border-left: 3px solid var(--danger, #dc2626);
   color: var(--text);
-  font-size: 0.86rem;
+  font-size: var(--fs-sm);
   white-space: pre-wrap;
 }
 /* Framework breadcrumb told in the conversation flow — a guard stopped
@@ -4193,7 +4226,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.72rem;
+  font-size: var(--fs-2xs);
   line-height: 1.2;
   margin-bottom: 0.2rem;
 }
@@ -4208,7 +4241,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-notice-when { color: var(--text-mute); }
 .ui-agent-notice-when { margin-left: auto; }
 .ui-agent-notice-body {
-  font-size: 0.84rem;
+  font-size: var(--fs-sm);
   line-height: 1.45;
   color: var(--text);
   white-space: pre-wrap;
@@ -4219,7 +4252,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: var(--bg-1);
   color: var(--text-mute);
   border-left: 3px solid var(--accent);
-  font-size: 0.92rem;
+  font-size: var(--fs-md);
 }
 /* Per-message container — transparent layout slot. The card chrome
  * (bg + border + padding) lives on .ui-agent-msg-body so the meta
@@ -4303,7 +4336,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-agent-interjection-note {
   margin-top: 0.35rem;
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   font-style: normal;
   line-height: 1.35;
   color: var(--warning, #d98c34);
@@ -4320,7 +4353,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-agent-msg-system {
   color: var(--text-mute); font-style: italic;
-  align-self: center; font-size: 0.85rem;
+  align-self: center; font-size: var(--fs-sm);
 }
 .ui-agent-msg-system .ui-agent-msg-body {
   background: transparent; border: 0; padding: 0;
@@ -4356,7 +4389,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-agent-msg-struck .ui-agent-msg-body * { text-decoration: inherit; color: inherit; }
 .ui-agent-msg-struck-reason {
-  font-size: 0.75rem;
+  font-size: var(--fs-xs);
   line-height: 1.35;
   color: var(--text-mute);
   margin-bottom: 0.25rem;
@@ -4401,14 +4434,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-agent-terminal-h {
   padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border);
-  font-size: 0.78rem; font-weight: 600; color: var(--text-hi);
+  font-size: var(--fs-xs); font-weight: 600; color: var(--text-hi);
   background: var(--bg-2);
 }
 .ui-agent-terminal-body {
   flex: 1 1 auto; overflow: hidden;
   background: #0d1117; color: #e6edf3;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   min-height: 0;
   position: relative;
 }
@@ -4429,14 +4462,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-activity.collapsed { flex: 0 0 0; min-width: 0; overflow: hidden; }
 .ui-agent-activity-h {
   padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border);
-  font-size: 0.78rem; font-weight: 600; color: var(--text-hi);
+  font-size: var(--fs-xs); font-weight: 600; color: var(--text-hi);
   background: var(--bg-2);
 }
 .ui-agent-activity-log {
   flex: 1 1 auto; overflow-y: auto; padding: 0.5rem 0.7rem;
   display: flex; flex-direction: column; gap: 0.35rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 .ui-agent-act {
   padding: 0.25rem 0.4rem; border-radius: 3px;
@@ -4466,7 +4499,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   position: absolute; left: 0; right: 0; bottom: 0;
   padding: 0.15rem 0.5rem;
   background: var(--bg-2); color: var(--accent);
-  font-size: 0.72rem; text-align: center;
+  font-size: var(--fs-2xs); text-align: center;
   border-top: 1px solid var(--border);
   font-family: system-ui, -apple-system, sans-serif;
   pointer-events: none;
@@ -4494,7 +4527,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   margin: 0.3rem 0;
 }
 .ui-agent-confirm-prompt { font-weight: 600; color: var(--text-hi); margin-bottom: 0.3rem; }
-.ui-agent-confirm-detail { color: var(--text-mute); font-size: 0.75rem; margin-bottom: 0.4rem; }
+.ui-agent-confirm-detail { color: var(--text-mute); font-size: var(--fs-xs); margin-bottom: 0.4rem; }
 .ui-agent-confirm-btns  { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 /* Resolved confirm card — the operator answered. Drop the warning
  * tint to a neutral/settled look and stamp the chosen disposition so
@@ -4502,7 +4535,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-confirm-resolved { background: var(--bg-2); border-color: var(--border); }
 .ui-agent-confirm-resolved.is-deny { border-color: var(--danger, #d44); }
 .ui-agent-confirm-status {
-  font-weight: 600; font-size: 0.82rem;
+  font-weight: 600; font-size: var(--fs-sm);
   color: var(--ok, #4caf50);
 }
 .ui-agent-confirm-resolved.is-deny .ui-agent-confirm-status { color: var(--danger, #d44); }
@@ -4514,7 +4547,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-agent-extras-label {
   display: flex; align-items: center; gap: 0.35rem;
-  font-size: 0.78rem; color: var(--text-mute);
+  font-size: var(--fs-xs); color: var(--text-mute);
 }
 .ui-agent-extras-label select, .ui-agent-extras-label input {
   min-width: 12rem;
@@ -4545,7 +4578,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-tool-summary {
   cursor: pointer;
   padding: 0.2rem 0;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
   list-style: none;
   user-select: none;
 }
@@ -4553,9 +4586,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-tool-summary::before { content: '▸ '; color: var(--text-mute); }
 .ui-agent-tool[open] > .ui-agent-tool-summary::before { content: '▾ '; }
 .ui-agent-tool-name { color: var(--accent); font-weight: 600; margin-right: 0.5rem; }
-.ui-agent-tool-args { color: var(--text-mute); font-size: 0.72rem; }
+.ui-agent-tool-args { color: var(--text-mute); font-size: var(--fs-2xs); }
 .ui-agent-tool-body { padding: 0.2rem 0 0.4rem 0.8rem; }
-.ui-agent-tool-empty { color: var(--text-mute); font-style: italic; font-size: 0.78rem; }
+.ui-agent-tool-empty { color: var(--text-mute); font-style: italic; font-size: var(--fs-xs); }
 /* The call's arguments in full, above its result: one labelled block per
    key, accent-tinted keys so inputs read apart from the output below. */
 .ui-agent-tool-argblock {
@@ -4563,7 +4596,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-agent-tool-argrow { display: flex; flex-direction: column; gap: 0.15rem; }
 .ui-agent-tool-argkey {
-  font-size: 0.7rem; font-weight: 600; color: var(--accent);
+  font-size: var(--fs-2xs); font-weight: 600; color: var(--accent);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; opacity: 0.85;
 }
 .ui-agent-tool-argval {
@@ -4573,7 +4606,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border-left: 2px solid var(--accent);
   border-radius: 3px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.76rem;
+  font-size: var(--fs-xs);
   line-height: 1.4;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -4586,7 +4619,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: var(--bg-1);
   border-radius: 3px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.76rem;
+  font-size: var(--fs-xs);
   line-height: 1.4;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -4598,7 +4631,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-stats {
   margin-top: 0.3rem;
   color: var(--text-mute);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-family: var(--font-mono, ui-monospace, monospace);
   letter-spacing: 0.02em;
   opacity: 0; transition: opacity 0.12s ease;
@@ -4713,7 +4746,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-ask-field { margin: 0 0 0.8rem; }
 .ui-ask-field .ui-ask-q { font-weight: 500; }
 .ui-ask-opts { display: flex; flex-direction: column; gap: 0.35rem; margin: 0 0 0.6rem; }
-.ui-ask-opt { display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer; color: var(--text); font-size: 0.92rem; }
+.ui-ask-opt { display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer; color: var(--text); font-size: var(--fs-md); }
 .ui-ask-opt input { margin-top: 0.2rem; }
 .ui-ask-extra, .ui-ask-input {
   width: 100%; box-sizing: border-box; background: var(--bg-0); color: var(--text);
@@ -4746,7 +4779,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.3rem 0.7rem;
   border: 1px solid var(--border); border-radius: 999px;
   background: var(--bg-1); color: var(--text-mute);
-  font-size: 0.75rem; line-height: 1;
+  font-size: var(--fs-xs); line-height: 1;
   flex-shrink: 0;
   /* Sits at the end of the flex row regardless of DOM order. The
    * topbar uses CSS order: 1 on .ui-agent-extras-slot and order: 2
@@ -4769,7 +4802,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-attach-strip {
   padding: 0.3rem 0.7rem; border-top: 1px solid var(--border);
   background: var(--bg-2); display: flex; gap: 0.4rem; flex-wrap: wrap;
-  font-size: 0.78rem;
+  font-size: var(--fs-xs);
 }
 .ui-agent-attach-chip {
   background: var(--bg-1); border: 1px solid var(--border);
@@ -4778,7 +4811,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-agent-attach-x {
   background: none; border: 0; color: var(--text-mute); cursor: pointer;
-  font-size: 1rem; line-height: 1; padding: 0;
+  font-size: var(--fs-lg); line-height: 1; padding: 0;
 }
 .ui-agent-attach-x:hover { color: var(--danger); }
 /* Per-bubble attachment box for inline images + files. Hangs off the
@@ -4808,7 +4841,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-msg-actions:focus-within { opacity: 1; }
 .ui-agent-msg-timestamp {
   color: var(--text-mute);
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-family: var(--font-mono, ui-monospace, monospace);
   letter-spacing: 0.02em;
   user-select: none;
@@ -4820,7 +4853,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-msg-act {
   background: transparent; border: 1px solid var(--border);
   color: var(--text-mute); padding: 0.18rem 0.55rem; border-radius: 4px;
-  cursor: pointer; font: inherit; font-size: 0.74rem;
+  cursor: pointer; font: inherit; font-size: var(--fs-xs);
 }
 .ui-agent-msg-act:hover { color: var(--text); border-color: var(--text-mute); }
 .ui-agent-msg-act.primary { color: var(--accent); border-color: var(--accent); }
@@ -4838,7 +4871,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   align-self: flex-start;
   display: inline-block;
   width: max-content;
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   color: var(--text-mute);
   border: 1px solid var(--border);
@@ -4886,7 +4919,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: inline-flex; align-items: center; gap: 0.4rem;
   padding: 0.35rem 0.6rem; border-radius: 6px;
   background: var(--bg-2); border: 1px solid var(--border);
-  color: var(--text); text-decoration: none; font-size: 0.88rem;
+  color: var(--text); text-decoration: none; font-size: var(--fs-md);
   max-width: 100%; align-self: flex-start;
 }
 .ui-agent-msg-file:hover { background: var(--bg-3, var(--bg-2)); border-color: var(--accent, #4f8cff); }
@@ -4901,12 +4934,12 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* In place of the composer on a read-only thread: where to talk instead. */
 .ui-agent-locked-note {
   padding: 0.6rem 0.8rem; margin: 0.4rem 0 0; border-top: 1px solid var(--border);
-  color: var(--text-mute); font-size: 0.85rem; line-height: 1.4;
+  color: var(--text-mute); font-size: var(--fs-sm); line-height: 1.4;
 }
 /* A delivered picture, sound or video with its Download link under it. */
 .ui-agent-msg-media { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; max-width: 100%; }
 .ui-agent-msg-dl {
-  font-size: 0.78rem; color: var(--text-mute); text-decoration: none;
+  font-size: var(--fs-xs); color: var(--text-mute); text-decoration: none;
   padding: 0.1rem 0.2rem; border-radius: 4px;
 }
 .ui-agent-msg-dl:hover { color: var(--accent, #4f8cff); text-decoration: underline; }
@@ -4941,10 +4974,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   align-items: center;
 }
 .ui-cw .ui-chat-side-title {
-  font-size: 0.85rem; line-height: 1.3;
+  font-size: var(--fs-sm); line-height: 1.3;
 }
 .ui-cw .ui-chat-side-del {
-  width: 1.2rem; height: 1.2rem; font-size: 0.85rem;
+  width: 1.2rem; height: 1.2rem; font-size: var(--fs-sm);
 }
 .ui-cw-main { background: var(--bg-1); }
 .ui-cw-toolbar {
@@ -4956,7 +4989,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   flex: 1; min-width: 12rem;
   background: transparent; color: var(--text);
   border: none; outline: none;
-  font-size: 1.0rem; font-weight: 600; font-family: inherit;
+  font-size: var(--fs-lg); font-weight: 600; font-family: inherit;
   padding: 0.3rem 0;
   border-bottom: 1px solid transparent;
   transition: border-color 0.15s ease;
@@ -4966,12 +4999,12 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-lang {
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--btn-radius);
-  padding: 0.35rem 0.55rem; font-size: 0.82rem; font-family: inherit;
+  padding: 0.35rem 0.55rem; font-size: var(--fs-sm); font-family: inherit;
   outline: none;
 }
 .ui-cw-lang:focus { border-color: var(--accent); }
 .ui-cw-saved {
-  font-size: 0.72rem; color: var(--text-mute); white-space: nowrap;
+  font-size: var(--fs-2xs); color: var(--text-mute); white-space: nowrap;
   align-self: center;
 }
 /* Revision navigation group — pinned next to the snippet name. The
@@ -4986,13 +5019,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border-right: 1px solid var(--border);
 }
 .ui-cw-rev-ind {
-  font-size: 0.72rem; color: var(--text-mute);
+  font-size: var(--fs-2xs); color: var(--text-mute);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   min-width: 4.5rem; text-align: center;
 }
 .ui-cw-rev-mark {
-  padding: 0.25rem 0.55rem !important; font-size: 0.72rem;
+  padding: 0.25rem 0.55rem !important; font-size: var(--fs-2xs);
   background: transparent; color: var(--accent); border-color: var(--accent);
 }
 .ui-cw-rev-mark:hover { background: var(--bg-2); }
@@ -5011,7 +5044,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border: none;
   padding: 0.85rem 1rem;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.88rem; line-height: 1.5; tab-size: 2;
+  font-size: var(--fs-md); line-height: 1.5; tab-size: 2;
 }
 
 /* Chat pane on the right side of the body row. Matches the tw-asst
@@ -5035,10 +5068,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
     max-height: 45%;
   }
 }
+/* Phone: the chat is a pane of its own (the pane switch), so it fills the
+ * body when shown. !important beats a width a desktop session dragged. */
+@media (max-width: 700px) {
+  .ui-cw-chat { flex: 1 1 0; min-height: 0; max-height: none; width: auto !important; border-top: none; }
+  .ui-cw-chat-resizer { display: none; }
+}
 .ui-cw-chat-h {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0.45rem 0.7rem;
-  font-size: 0.78rem; color: var(--text-mute);
+  font-size: var(--fs-xs); color: var(--text-mute);
   text-transform: uppercase; letter-spacing: 0.04em;
   border-bottom: 1px solid var(--border);
 }
@@ -5058,7 +5097,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.4rem 0.75rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-1);
-  font-size: 0.74rem;
+  font-size: var(--fs-xs);
 }
 .ui-cw-prof-lbl {
   color: var(--text-mute); text-transform: uppercase;
@@ -5072,7 +5111,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.12rem 0.6rem;
   border: 1px solid var(--border); border-radius: 999px;
   background: transparent; color: var(--text-mute);
-  font-size: 0.74rem; font-family: inherit; cursor: pointer;
+  font-size: var(--fs-xs); font-family: inherit; cursor: pointer;
   white-space: nowrap;
 }
 .ui-cw-prof-pill:hover { color: var(--text); border-color: var(--accent); }
@@ -5095,13 +5134,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-prof-save {
   background: var(--bg-2); color: var(--text-mute);
   border: 1px dashed var(--border); border-radius: 999px;
-  padding: 0.12rem 0.6rem; font-size: 0.72rem; cursor: pointer;
+  padding: 0.12rem 0.6rem; font-size: var(--fs-2xs); cursor: pointer;
   font-family: inherit; white-space: nowrap;
 }
 .ui-cw-prof-save:hover { color: var(--text); border-color: var(--accent); }
 .ui-cw-prof-del {
   background: none; border: none; cursor: pointer;
-  color: var(--text-mute); font-size: 0.95rem; line-height: 1;
+  color: var(--text-mute); font-size: var(--fs-lg); line-height: 1;
   padding: 0 0.15rem; font-family: inherit;
 }
 .ui-cw-prof-del:hover { color: var(--danger, #dc2626); }
@@ -5115,7 +5154,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   max-width: 95%;
   padding: 0.5rem 0.7rem;
   border-radius: 10px;
-  font-size: 0.86rem; line-height: 1.45;
+  font-size: var(--fs-sm); line-height: 1.45;
   background: var(--bg-2); color: var(--text);
 }
 .ui-cw-msg.user {
@@ -5135,7 +5174,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border-radius: 6px;
   padding: 0.5rem 0.65rem;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.8rem; line-height: 1.45;
+  font-size: var(--fs-sm); line-height: 1.45;
   overflow-x: auto;
   white-space: pre;
   margin: 0.2rem 0;
@@ -5162,7 +5201,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-err { color: var(--danger, var(--danger)); }
 .ui-cw-diff-summary {
   margin-top: 0.4rem;
-  font-size: 0.78rem; color: var(--text-mute);
+  font-size: var(--fs-xs); color: var(--text-mute);
   font-style: italic;
 }
 .ui-cw-chat-input-area {
@@ -5174,7 +5213,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--btn-radius);
   padding: 0.5rem 0.6rem;
-  font-family: inherit; font-size: 0.85rem; line-height: 1.4;
+  font-family: inherit; font-size: var(--fs-sm); line-height: 1.4;
   resize: vertical; outline: none;
 }
 .ui-cw-chat-input:focus { border-color: var(--accent); }
@@ -5224,14 +5263,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-ctx-toggle {
   display: flex; align-items: center; gap: 0.4rem;
   padding: 0.4rem 0.7rem;
-  font-size: 0.78rem; color: var(--text-mute);
+  font-size: var(--fs-xs); color: var(--text-mute);
   cursor: pointer; user-select: none;
   border-bottom: 1px solid transparent;
 }
 .ui-cw-ctx-toggle:hover { color: var(--text); }
 .ui-cw-ctx-arrow {
   display: inline-block; transition: transform 0.15s ease;
-  font-size: 0.7rem;
+  font-size: var(--fs-2xs);
 }
 .ui-cw-ctx-arrow.open { transform: rotate(90deg); }
 .ui-cw-ctx-actions { display: inline-flex; align-items: center; gap: 0.35rem; margin-left: auto; }
@@ -5240,7 +5279,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border: 1px solid var(--border); cursor: pointer;
 }
 .ui-cw-ctx-btn:hover { color: var(--text); border-color: var(--text-mute); }
-.ui-cw-ctx-current { font-size: 0.72rem; color: var(--accent); margin-left: 0.4rem; font-style: italic; }
+.ui-cw-ctx-current { font-size: var(--fs-2xs); color: var(--accent); margin-left: 0.4rem; font-style: italic; }
 .ui-cw-ctx-pane {
   display: none; flex: 1 1 auto; min-height: 0;
   border-top: 1px solid var(--border);
@@ -5251,7 +5290,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.4rem 0.75rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-1);
-  font-size: 0.74rem;
+  font-size: var(--fs-xs);
 }
 .ui-cw-coll-lbl {
   color: var(--text-mute); text-transform: uppercase;
@@ -5267,7 +5306,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-coll-add {
   background: var(--bg-2); color: var(--text-mute);
   border: 1px dashed var(--border); border-radius: 999px;
-  padding: 0.12rem 0.6rem; font-size: 0.74rem; cursor: pointer;
+  padding: 0.12rem 0.6rem; font-size: var(--fs-xs); cursor: pointer;
   font-family: inherit;
 }
 .ui-cw-coll-add:hover { color: var(--text); border-color: var(--accent); }
@@ -5278,7 +5317,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-coll-x:hover { color: var(--danger, var(--danger)); }
 .ui-cw-list-check { display: flex; align-items: center; margin: 0; padding: 0; }
 .ui-cw-modal-sub {
-  font-size: 0.72rem; color: var(--text-mute);
+  font-size: var(--fs-2xs); color: var(--text-mute);
   text-transform: uppercase; letter-spacing: 0.04em;
   margin: 0.55rem 0 0.3rem;
 }
@@ -5292,7 +5331,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border: none;
   padding: 0.55rem 0.75rem;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.82rem; line-height: 1.45;
+  font-size: var(--fs-sm); line-height: 1.45;
 }
 /* FormPanel side-nav mode — headers become a left rail instead of
    accordions, so every group is visible at once. */
@@ -5306,7 +5345,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-form-nav-item {
   text-align: left; background: transparent; color: var(--text-mute);
   border: 1px solid transparent; border-radius: 6px;
-  padding: 0.4rem 0.55rem; font-size: 0.84rem; cursor: pointer;
+  padding: 0.4rem 0.55rem; font-size: var(--fs-sm); cursor: pointer;
   font-family: inherit; line-height: 1.3;
 }
 .ui-form-nav-item:hover { color: var(--text); background: var(--bg-1); }
@@ -5330,14 +5369,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-doc-rules-ta {
   padding: 0.6rem 0.7rem; border-radius: 8px;
   background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
-  font-size: 0.84rem; line-height: 1.6; font-family: inherit; outline: none;
+  font-size: var(--fs-sm); line-height: 1.6; font-family: inherit; outline: none;
 }
 .ui-doc-rules-ta:focus { border-color: var(--accent); }
-.ui-doc-rules-status { font-size: 0.76rem; color: var(--text-mute); }
+.ui-doc-rules-status { font-size: var(--fs-xs); color: var(--text-mute); }
 /* Shared template picker (openTemplatePicker), rendered inside the
    standard uiOpenModal shell. */
 .ui-doc-tpl-head {
-  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-mute); margin-bottom: -0.5rem;
 }
 .ui-doc-tpl-list { display: flex; flex-direction: column; gap: 0.3rem; }
@@ -5348,9 +5387,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-doc-tpl-row:hover { border-color: var(--accent); }
 .ui-doc-tpl-info { flex: 1; min-width: 0; cursor: pointer; }
-.ui-doc-tpl-name { font-size: 0.85rem; font-weight: 600; color: var(--text); }
-.ui-doc-tpl-desc { font-size: 0.76rem; color: var(--text-mute); margin-top: 0.15rem; line-height: 1.4; }
-.ui-doc-tpl-empty { font-size: 0.8rem; color: var(--text-mute); padding: 0.3rem 0; }
+.ui-doc-tpl-name { font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
+.ui-doc-tpl-desc { font-size: var(--fs-xs); color: var(--text-mute); margin-top: 0.15rem; line-height: 1.4; }
+.ui-doc-tpl-empty { font-size: var(--fs-sm); color: var(--text-mute); padding: 0.3rem 0; }
 /* Outline view over the article body — same slot as the textarea, so
    toggling views doesn't reflow the editor pane. */
 .ui-tw-outline {
@@ -5366,7 +5405,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-doc-view {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 4px;
-  padding: 0.25rem 0.55rem; font-size: 0.74rem; cursor: pointer;
+  padding: 0.25rem 0.55rem; font-size: var(--fs-xs); cursor: pointer;
   font-family: inherit;
 }
 .ui-cw-doc-view:hover { color: var(--text); border-color: var(--text-mute); }
@@ -5384,7 +5423,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-ctx-outline .ui-sec-text,
 .ui-cw-ctx-outline .ui-rules-input {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 .ui-cw-ctx-btn.on { color: var(--accent); border-color: var(--accent); }
 
@@ -5408,11 +5447,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   box-shadow: var(--modal-shadow);
 }
 .ui-cw-modal-box h3 {
-  margin: 0 0 0.3rem 0; font-size: 1.05rem; color: var(--text);
+  margin: 0 0 0.3rem 0; font-size: var(--fs-lg); color: var(--text);
 }
-.ui-cw-modal-desc { font-size: 0.82rem; color: var(--text-mute); margin-bottom: 0.3rem; }
+.ui-cw-modal-desc { font-size: var(--fs-sm); color: var(--text-mute); margin-bottom: 0.3rem; }
 .ui-cw-modal-box label {
-  display: block; font-size: 0.72rem; color: var(--text-mute);
+  display: block; font-size: var(--fs-2xs); color: var(--text-mute);
   text-transform: uppercase; letter-spacing: 0.04em;
   margin: 0.4rem 0 0.2rem;
 }
@@ -5421,13 +5460,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.45rem 0.6rem;
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--btn-radius);
-  font-family: inherit; font-size: 0.85rem;
+  font-family: inherit; font-size: var(--fs-sm);
   outline: none;
 }
 .ui-cw-modal-box input[type="text"]:focus { border-color: var(--accent); }
 .ui-cw-modal-box input.mono {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.82rem;
+  font-size: var(--fs-sm);
 }
 .ui-cw-modal-btns {
   display: flex; flex-wrap: wrap; gap: 0.45rem; justify-content: flex-end;
@@ -5443,14 +5482,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-cw-var-row label {
   margin: 0; padding: 0; text-transform: none; letter-spacing: 0;
-  font-size: 0.85rem; color: var(--text);
+  font-size: var(--fs-sm); color: var(--text);
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 .ui-cw-var-picker {
   grid-column: 2;
   background: var(--bg-2); color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 6px;
-  padding: 0.3rem 0.45rem; font-size: 0.78rem; font-family: inherit;
+  padding: 0.3rem 0.45rem; font-size: var(--fs-xs); font-family: inherit;
   outline: none;
 }
 .ui-cw-var-picker:focus { border-color: var(--accent); }
@@ -5463,11 +5502,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-cw-list-info { flex: 1; min-width: 0; overflow: hidden; }
 .ui-cw-list-title {
-  font-size: 0.88rem; color: var(--text); font-weight: 600;
+  font-size: var(--fs-md); color: var(--text); font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ui-cw-list-meta {
-  font-size: 0.74rem; color: var(--text-mute);
+  font-size: var(--fs-xs); color: var(--text-mute);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ui-cw-list-meta.mono {
@@ -5481,7 +5520,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-list-btn.danger { width: var(--btn-h-sm); padding: 0; }
 .ui-cw-list-btn.danger:hover { color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
 .ui-cw-empty {
-  font-size: 0.85rem; color: var(--text-mute);
+  font-size: var(--fs-sm); color: var(--text-mute);
   padding: 0.4rem 0.2rem; text-align: center;
 }
 
@@ -5515,11 +5554,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   align-items: center;
 }
 .ui-tw .ui-chat-side-title {
-  font-size: 0.85rem; line-height: 1.3;
+  font-size: var(--fs-sm); line-height: 1.3;
 }
 .ui-tw .ui-chat-side-meta { display: none; }
 .ui-tw .ui-chat-side-del {
-  width: 1.2rem; height: 1.2rem; font-size: 0.85rem;
+  width: 1.2rem; height: 1.2rem; font-size: var(--fs-sm);
 }
 .ui-tw-side {
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
@@ -5540,7 +5579,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-tw-side-h {
   display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
   padding: 0.5rem 0.7rem;
-  font-size: 0.8rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: var(--fs-sm); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
   border-bottom: 1px solid var(--border);
 }
 .ui-tw-side-h > span:first-child {
@@ -5552,7 +5591,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 6px;
   width: 26px; height: 26px; padding: 0; cursor: pointer;
-  font-size: 0.95rem; line-height: 1;
+  font-size: var(--fs-lg); line-height: 1;
 }
 .ui-tw-collapse:hover { color: var(--text); border-color: var(--text-mute); }
 @media (max-width: 700px) { .ui-tw-collapse { display: none; } }
@@ -5568,7 +5607,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border: 1px solid var(--border); border-left: none;
   border-radius: 0 8px 8px 0;
   width: 26px; height: 36px; padding: 0; cursor: pointer;
-  font-size: 1rem; line-height: 1;
+  font-size: var(--fs-lg); line-height: 1;
 }
 .ui-tw-expand:hover { color: var(--text); }
 
@@ -5610,7 +5649,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: transparent; border: none;
   color: var(--text); text-align: left;
   padding: 0.45rem 0.7rem; border-radius: 6px;
-  font-family: inherit; font-size: 0.85rem; cursor: pointer;
+  font-family: inherit; font-size: var(--fs-sm); cursor: pointer;
   white-space: nowrap;
 }
 .ui-tw-extras-item:hover { background: var(--bg-2); color: var(--text-hi); }
@@ -5618,13 +5657,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   flex: 1; min-width: 0;
   background: transparent; color: var(--text-hi);
   border: none; outline: none;
-  font-size: 1.05rem; font-weight: 600; font-family: inherit;
+  font-size: var(--fs-lg); font-weight: 600; font-family: inherit;
   padding: 0.3rem 0;
   border-bottom: 1px solid transparent;
   transition: border-color 0.15s ease;
 }
 .ui-tw-title:focus { border-bottom-color: var(--accent); }
-.ui-tw-saved { font-size: 0.72rem; color: var(--text-mute); white-space: nowrap; flex-shrink: 0; }
+.ui-tw-saved { font-size: var(--fs-2xs); color: var(--text-mute); white-space: nowrap; flex-shrink: 0; }
 .ui-tw-body {
   width: 100%; min-height: 200px;
   flex: 1 1 auto; /* absorb remaining vertical space inside the flex-column main */
@@ -5632,7 +5671,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: var(--bg-0); color: var(--text);
   border: none; outline: none; resize: none;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.9rem; line-height: 1.55;
+  font-size: var(--fs-md); line-height: 1.55;
   box-sizing: border-box;
 }
 
@@ -5670,7 +5709,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: flex; flex-direction: column; gap: 0.45rem;
   min-height: 80px;
 }
-.ui-tw-asst-empty { color: var(--text-mute); font-size: 0.82rem; padding: 0.4rem 0.2rem; }
+.ui-tw-asst-empty { color: var(--text-mute); font-size: var(--fs-sm); padding: 0.4rem 0.2rem; }
 .ui-tw-asst-input-row {
   display: flex; gap: 0.5rem; padding: 0.5rem 0.7rem;
   border-top: 1px solid var(--border);
@@ -5678,11 +5717,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* ArticleEditor variants: a version switch above the body. */
 .ui-tw-variants { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin: 0.35rem 0 0.25rem; }
 .ui-tw-variant {
-  font-size: 0.8rem; padding: 0.2rem 0.65rem; border-radius: 999px; cursor: pointer;
+  font-size: var(--fs-sm); padding: 0.2rem 0.65rem; border-radius: 999px; cursor: pointer;
   background: var(--bg-2); color: var(--text-mute); border: 1px solid var(--border);
 }
 .ui-tw-variant.active { background: var(--accent); color: var(--text-on-accent, #fff); border-color: var(--accent); }
-.ui-tw-variant-note { font-size: 0.78rem; color: var(--text-mute); margin-left: 0.35rem; }
+.ui-tw-variant-note { font-size: var(--fs-xs); color: var(--text-mute); margin-left: 0.35rem; }
 .ui-tw-image-row {
   display: flex; gap: 0.6rem; align-items: flex-start;
   padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);
@@ -5699,16 +5738,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: flex; align-items: center; justify-content: space-between;
   padding: 0.3rem 0.4rem 0.5rem; border-bottom: 1px solid var(--border);
   margin-bottom: 0.4rem;
-  font-size: 0.78rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: var(--fs-xs); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
 }
 .ui-tw-rev-row {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0.4rem 0.5rem; border-radius: 6px;
 }
 .ui-tw-rev-row:hover { background: var(--bg-2); }
-.ui-tw-rev-date { font-size: 0.85rem; color: var(--text); }
+.ui-tw-rev-date { font-size: var(--fs-sm); color: var(--text); }
 .ui-tw-rev-indicator {
-  font-size: 0.75rem; color: var(--text-mute);
+  font-size: var(--fs-xs); color: var(--text-mute);
   font-family: ui-monospace, monospace;
   padding: 0 0.3rem;
   white-space: nowrap;
@@ -5721,15 +5760,15 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.85rem; line-height: 1.5; outline: none;
+  font-size: var(--fs-sm); line-height: 1.5; outline: none;
 }
 .ui-tw-rules-ta:focus { border-color: var(--accent); }
-.ui-tw-rules-hint { font-size: 0.78rem; color: var(--text-mute); margin-bottom: 0.4rem; }
+.ui-tw-rules-hint { font-size: var(--fs-xs); color: var(--text-mute); margin-bottom: 0.4rem; }
 .ui-tw-rules-actions {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
   margin-top: 0.5rem; gap: 0.5rem;
 }
-.ui-tw-rules-saved { font-size: 0.78rem; color: var(--text-mute); }
+.ui-tw-rules-saved { font-size: var(--fs-xs); color: var(--text-mute); }
 /* Merge panel gets a touch wider than the rules panel so the dropdown
  * + paste area + guidance fit without horizontal squeeze. */
 .ui-tw-merge-panel { width: 420px; }
@@ -5749,7 +5788,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
     box-shadow: none;
   }
   .ui-tw-side.open { transform: translateX(0); }
-  .ui-tw-asst { max-height: 45%; }
+  /* The assistant is a pane of its own here (the pane switch), so it takes
+   * the full height when shown. !important beats the drag-resized inline
+   * height a desktop session saved; there is no drag handle on a phone. */
+  .ui-tw-asst { flex: 1 1 0; min-height: 0; max-height: none !important; height: auto !important; }
+  .ui-tw-resizer { display: none; }
   /* Last row on screen once the root's bottom gutter is gone — clear the
    * home indicator here instead. */
   .ui-tw-asst-input-row {
@@ -5827,7 +5870,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-chat-msg-pending { opacity: 0.55; }
 .ui-chat-msg-pending .ui-chat-msg-body::after {
   content: " - queued for the running turn";
-  font-size: 0.75rem; color: var(--text-mute); font-style: italic;
+  font-size: var(--fs-xs); color: var(--text-mute); font-style: italic;
 }
 
 /* --- upload_panel ---------------------------------------------------------
@@ -5854,7 +5897,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-upload-row.failed { border-color: var(--danger, #d9534f); }
 .ui-upload-name {
-  font-size: 0.85rem; overflow: hidden;
+  font-size: var(--fs-sm); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
 .ui-upload-bar {
@@ -5865,8 +5908,8 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   height: 100%; width: 0%;
   background: var(--accent, #6366f1); transition: width 0.15s linear;
 }
-.ui-upload-state { font-size: 0.75rem; color: var(--text-mute); min-width: 3.5rem; }
-.ui-upload-status { font-size: 0.8rem; color: var(--text-mute); min-height: 1.1em; }
+.ui-upload-state { font-size: var(--fs-xs); color: var(--text-mute); min-width: 3.5rem; }
+.ui-upload-status { font-size: var(--fs-sm); color: var(--text-mute); min-height: 1.1em; }
 
 /* Narrow screens: the name gets its own line so the bar keeps a usable width
  * instead of collapsing to a sliver next to a truncated filename. */
@@ -5891,11 +5934,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
    A popup that arrives unasked (suggest_on_open) is the thing this must not
    be, so the picks sit quietly below the input until one is clicked. */
 .ui-suggest-host:empty { display: none; }
-.ui-suggest-pick-label { font-size: 0.8rem; opacity: 0.7; margin: 0.4rem 0 0.3rem; }
+.ui-suggest-pick-label { font-size: var(--fs-sm); opacity: 0.7; margin: 0.4rem 0 0.3rem; }
 .ui-suggest-picks { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .ui-suggest-pick {
   padding: 0.3rem 0.7rem; border-radius: 999px; cursor: pointer; font: inherit;
-  font-size: 0.85rem; color: var(--text, inherit);
+  font-size: var(--fs-sm); color: var(--text, inherit);
   background: var(--bg-2, rgba(127,127,127,0.12));
   border: 1px solid var(--border, rgba(127,127,127,0.3));
 }
@@ -5915,7 +5958,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   min-height: 1.75rem; box-sizing: border-box;
   background: none; border: 0; padding: 0.2rem 0.3rem;
   color: var(--text-mute); opacity: 0.55; cursor: pointer;
-  font-size: 0.95rem; font-family: inherit; line-height: 1;
+  font-size: var(--fs-lg); font-family: inherit; line-height: 1;
   -webkit-tap-highlight-color: transparent;
 }
 .ui-bell-glyph {
@@ -5939,22 +5982,22 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-bell-head {
   display: flex; justify-content: space-between; align-items: center; gap: 0.6rem;
   padding: 0.45rem 0.65rem; border-bottom: 1px solid var(--border);
-  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em;
+  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em;
   color: var(--text-mute); text-transform: uppercase;
 }
-.ui-bell-empty { padding: 0.9rem 0.65rem; color: var(--text-mute); font-size: 0.82rem; }
+.ui-bell-empty { padding: 0.9rem 0.65rem; color: var(--text-mute); font-size: var(--fs-sm); }
 .ui-bell-item { padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); }
 .ui-bell-item:last-child { border-bottom: 0; }
 .ui-bell-item.unread { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.ui-bell-title { font-size: 0.84rem; color: var(--text-hi); }
-.ui-bell-body { font-size: 0.78rem; color: var(--text-mute); margin-top: 0.2rem; }
+.ui-bell-title { font-size: var(--fs-sm); color: var(--text-hi); }
+.ui-bell-body { font-size: var(--fs-xs); color: var(--text-mute); margin-top: 0.2rem; }
 .ui-bell-meta {
   display: flex; gap: 0.6rem; align-items: center; margin-top: 0.3rem;
-  font-size: 0.7rem; color: var(--text-mute);
+  font-size: var(--fs-2xs); color: var(--text-mute);
 }
 .ui-bell-act {
   background: none; border: 0; padding: 0; cursor: pointer;
-  color: var(--accent); font-size: 0.7rem; font-family: inherit;
+  color: var(--accent); font-size: var(--fs-2xs); font-family: inherit;
 }
 
 /* ---- Touch screens ---------------------------------------------------
@@ -5971,7 +6014,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   /* Compact, as on desktop, with just enough height to land a thumb: a
    * message carries five or six of these, and at full tap size the row
    * outweighed the reply it sits under. */
-  .ui-agent-msg-act { min-height: 30px; padding: 0.15rem 0.5rem; font-size: 0.74rem; line-height: 1.2; }
+  .ui-agent-msg-act { min-height: 30px; padding: 0.15rem 0.5rem; font-size: var(--fs-xs); line-height: 1.2; }
   .ui-agent-msg-act.glyph { padding-left: 0.4rem; padding-right: 0.4rem; }
   .ui-chat-side-del, .ui-chat-side-ren { width: 2.25rem; height: 2.25rem; }
   .ui-chat-side-ren { right: 2.7rem; }
@@ -6023,4 +6066,4 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 
 /* document lists: a record's badges under its label */
 .ui-doc-badges { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.15rem; }
-.ui-doc-badge { font-size: 0.7rem; padding: 0 0.35rem; line-height: 1.4; }
+.ui-doc-badge { font-size: var(--fs-2xs); padding: 0 0.35rem; line-height: 1.4; }

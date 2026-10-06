@@ -553,7 +553,7 @@ const guideSectionCode = `(function(){
         onSave(tf.input.value, mf.input.value).then(function(){
           try { dlg.close(); dlg.remove(); } catch(e){}
           refresh();
-        }).catch(function(err){ save.disabled = false; save.textContent = 'Save'; alert('Save failed: ' + (err && err.message || err)); });
+        }).catch(function(err){ save.disabled = false; save.textContent = 'Save'; window.uiAlert('Save failed: ' + (err && err.message || err)); });
       });
     }});
   }
@@ -692,7 +692,7 @@ const guideSettingsAction = `function(ctx){
               body: JSON.stringify({title: tf.input.value, subtitle: sf.input.value, private: pcb.checked, shared: scb.checked, mode: (rEdit.checked ? 'edit' : 'view')})})
               .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
               .then(function(){ try { dlg.close(); dlg.remove(); } catch(e){} if (window.uiInvalidate) window.uiInvalidate('guides'); })
-              .catch(function(err){ save.disabled = false; save.textContent = 'Save'; alert('Save failed: ' + (err && err.message || err)); });
+              .catch(function(err){ save.disabled = false; save.textContent = 'Save'; window.uiAlert('Save failed: ' + (err && err.message || err)); });
           });
         }});
       });

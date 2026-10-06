@@ -37,7 +37,7 @@
       rightExtras: (cfg.list_actions || []).map(buildActionBtn),
     });
     var sideHdr  = sideHdrBuilt.elt;
-    var sideList = el('div', {class: 'ui-tw-side-list'}, ['Loading…']);
+    var sideList = el('div', {class: 'ui-tw-side-list'}, [uiLoading()]);
     var sideSearch = cfg.no_search ? null : makeSideSearch(sideList);
     side.appendChild(sideHdr);
     if (sideSearch) side.appendChild(sideSearch);
@@ -533,6 +533,19 @@
     asstWrap.appendChild(asstInputRow);
     main.appendChild(asstResizer);
     main.appendChild(asstWrap);
+
+    // Phone: the article and its assistant one at a time, behind a switch in
+    // the drawer header, rather than the assistant stacked under the editor
+    // in a 45% slice. A reply landing while you read lights a dot.
+    var panes = makePaneSwitch({
+      panes: [
+        {key: 'doc',  label: cfg.viewer_label || 'Article',
+         els: [titleBar, mergePanel, variantBar, imageRow, revsPanel, bodyArea, docOutlineHost]},
+        {key: 'chat', label: cfg.chat_label || 'Assistant', els: [asstResizer, asstWrap]},
+      ],
+      watch: {key: 'chat', el: asstThread, selector: '.ui-chat-msg.assistant'},
+    });
+    drawer.mobileHdr.appendChild(panes.el);
 
     // Restore saved height (if any). Override the default 35% cap so
     // the saved value sticks even when it's larger than 35%.

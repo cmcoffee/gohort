@@ -799,6 +799,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 <script>
 (function(){
   var root = document.getElementById('acct-tokens');
+  if (root && window.uiLoading) { root.textContent = ''; root.appendChild(window.uiLoading()); }
   if (!root) return;
   var CAT = null; // {features:[{key,label}], targets:[{value,label,group}]}, loaded once
   function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else n.setAttribute(k,attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }

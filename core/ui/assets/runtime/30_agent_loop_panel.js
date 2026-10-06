@@ -308,7 +308,7 @@
         // via leftExtras — matches the user's "next to new" ask.
         leftExtras: leftExtras,
       });
-      sideList = el('div', {class: 'ui-chat-side-list'}, ['Loading…']);
+      sideList = el('div', {class: 'ui-chat-side-list'}, [uiLoading()]);
       sideSearch = makeSideSearch(sideList);
       side.appendChild(sideHdrBuilt.elt);
       side.appendChild(sideSearch);
@@ -423,7 +423,7 @@
             // it is refused.
             if (row && row._id) src += '&row=' + encodeURIComponent(row._id);
             window.uiOpenSimpleModal({title: a.picker_title || a.label, width: '420px', mount: function(body, dlg) {
-              var status = el('div', {style: 'color:var(--text-mute,#999);font-size:0.85rem;padding:0.3rem 0'}, ['Loading…']);
+              var status = el('div', {style: 'color:var(--text-mute,#999);font-size:0.85rem;padding:0.3rem 0'}, [uiLoading()]);
               var list = el('div', {style: 'display:flex;flex-direction:column;gap:0.35rem;margin-top:0.4rem'});
               body.appendChild(status); body.appendChild(list);
               fetch(src, {credentials: 'same-origin'})
@@ -1008,7 +1008,7 @@
           // Reflect the loaded view in the mobile header (e.g. "Authorizations")
           // instead of leaving the stale session title.
           if (drawer && drawer.mobileTitle) drawer.mobileTitle.textContent = item.label || '';
-          orchView.textContent = 'Loading…';
+          orchView.textContent = ''; orchView.appendChild(uiLoading());
           // A nav item naming a PAGE renders that page here, with the same
           // renderer a document uses. The app declares the page once and
           // serves it both ways, so this panel and the standalone page cannot
@@ -6453,7 +6453,7 @@
               type: 'button', class: 'ui-agent-earlier-btn',
               onclick: function() {
                 this.disabled = true;
-                this.textContent = 'Loading…';
+                this.textContent = ''; this.appendChild(uiLoading('Loading', {immediate: true}));
                 captureEarlierAnchor();
                 loadEarlierMessages(loaded, msgOffset);
               },

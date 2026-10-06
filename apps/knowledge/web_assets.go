@@ -48,7 +48,10 @@ const documentsListAssets = `<style>
   var newBtn = $('#docs-new');
 
   function load() {
-    if (status) status.textContent = 'Loading...';
+    if (status) {
+      status.textContent = 'Loading...';
+      if (window.uiLoading) { status.textContent = ''; status.appendChild(window.uiLoading()); }
+    }
     fetch(api('/api/collections'), {credentials: 'same-origin'}).then(function(r) {
       if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
       return r.json();

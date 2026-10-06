@@ -156,6 +156,11 @@ type CodeEditorPanel struct {
 	PlaceholderCode string `json:"placeholder_code,omitempty"`
 	PlaceholderCtx  string `json:"placeholder_ctx,omitempty"`
 	PlaceholderChat string `json:"placeholder_chat,omitempty"`
+	// ViewerLabel and ChatLabel name the code and its assistant on a phone,
+	// where the two are shown one at a time behind a switch (defaults "Code"
+	// and "Assistant").
+	ViewerLabel string `json:"viewer_label,omitempty"`
+	ChatLabel   string `json:"chat_label,omitempty"`
 }
 
 // DocTemplate is one starting skeleton in CodeEditorPanel.Templates.

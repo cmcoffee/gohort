@@ -183,3 +183,21 @@ func TestModalButtonUsesTheFrameworksOneModal(t *testing.T) {
 		}
 	}
 }
+
+// No native dialogs in the runtime. In the desktop app's web view a native
+// confirm() returns false without asking and alert() shows nothing, so a
+// button behind one silently does nothing there; everywhere else it is the
+// browser's grey box in the middle of a themed page. uiConfirm / uiAlert /
+// uiPrompt are the toolkit's own.
+func TestRuntimeUsesNoNativeDialogs(t *testing.T) {
+	call := regexp.MustCompile(`(^|[^.\w])(confirm|alert|prompt)\(`)
+	for _, line := range strings.Split(runtimeJS, "\n") {
+		code := line
+		if i := strings.Index(code, "//"); i >= 0 {
+			code = code[:i]
+		}
+		if call.MatchString(code) {
+			t.Errorf("native dialog in the runtime (use window.uiConfirm / uiAlert / uiPrompt): %s", strings.TrimSpace(line))
+		}
+	}
+}

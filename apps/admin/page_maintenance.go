@@ -254,6 +254,7 @@ func databaseBrowserCard() ui.Card {
     document.getElementById('dbb-keys-label').textContent = table;
     var keyList = document.getElementById('dbb-keys');
     keyList.innerHTML = '<div class="dbb-empty">Loading...</div>';
+    if (window.uiLoading) { keyList.firstChild.textContent = ''; keyList.firstChild.appendChild(window.uiLoading()); }
     fetch('api/db/keys?table=' + encodeURIComponent(table)).then(function(r){ return r.json(); }).then(function(keys){
       keyList.innerHTML = '';
       if(!keys || !keys.length){ keyList.innerHTML = '<div class="dbb-empty">No keys.</div>'; return; }
@@ -267,6 +268,7 @@ func databaseBrowserCard() ui.Card {
     document.getElementById('dbb-rec-label').textContent = key;
     var view = document.getElementById('dbb-rec');
     view.textContent = 'Loading...';
+    if (window.uiLoading) { view.textContent = ''; view.appendChild(window.uiLoading()); }
     fetch('api/db/record?table=' + encodeURIComponent(activeTable) + '&key=' + encodeURIComponent(key)).then(function(r){
       if(!r.ok) return r.text().then(function(t){ throw new Error(t); });
       return r.json();

@@ -154,10 +154,12 @@ const agentMemoryModalTemplate = `<script>
             del.title = 'Delete this memory (' + item.id + ')';
             del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:1rem;padding:0 0.4rem;align-self:flex-start';
             del.onclick = function() {
-              if (!confirm('Delete this ' + item.layer + ' memory?\n\n' + (item.text || item.title || item.id).slice(0, 200))) return;
-              fetch(MEMBASE + 'memsearch?id=' + encodeURIComponent(item.id), {method: 'DELETE'})
-                .then(function(r) { if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); row.remove(); })
-                .catch(function(err) { alert('Delete failed: ' + (err && err.message || err)); });
+              window.uiConfirm('Delete this ' + item.layer + ' memory?\n\n' + (item.text || item.title || item.id).slice(0, 200)).then(function(ok) {
+                if (!ok) return;
+                fetch(MEMBASE + 'memsearch?id=' + encodeURIComponent(item.id), {method: 'DELETE'})
+                  .then(function(r) { if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); row.remove(); })
+                  .catch(function(err) { window.uiAlert('Delete failed: ' + (err && err.message || err)); });
+              });
             };
             row.appendChild(del);
           }
@@ -511,9 +513,11 @@ const agentMemoryModalTemplate = `<script>
       }
       notesSave.addEventListener('click', function() { notesPut(notesArea.value, 'Saved.'); });
       notesClear.addEventListener('click', function() {
-        if (!confirm('Clear this agent\'s working notes? It will start the next turn with none.')) return;
-        notesArea.value = '';
-        notesPut('', 'Cleared.');
+        window.uiConfirm('Clear this agent\'s working notes? It will start the next turn with none.').then(function(ok) {
+          if (!ok) return;
+          notesArea.value = '';
+          notesPut('', 'Cleared.');
+        });
       });
       fetch(MEMBASE + 'notes').then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
         if (!d) { notesWrap.style.display = 'none'; return; }
@@ -639,9 +643,11 @@ const agentMemoryModalTemplate = `<script>
             edel.textContent = String.fromCharCode(215);
             edel.title = 'Remove this relationship';
             edel.onclick = function() {
-              if (!confirm('Remove the relationship: ' + e.name + ' ' + ed.rel + ' ' + (ed.to_name || ed.to) + '?')) return;
-              var u = MEMBASE + 'graph/edge?from=' + encodeURIComponent(e.id) + '&rel=' + encodeURIComponent(ed.rel) + '&to=' + encodeURIComponent(ed.to);
-              fetch(u, {method: 'DELETE'}).then(function(r){ if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); er.remove(); }).catch(function(err){ alert('Delete failed: ' + (err && err.message || err)); });
+              window.uiConfirm('Remove the relationship: ' + e.name + ' ' + ed.rel + ' ' + (ed.to_name || ed.to) + '?').then(function(ok) {
+                if (!ok) return;
+                var u = MEMBASE + 'graph/edge?from=' + encodeURIComponent(e.id) + '&rel=' + encodeURIComponent(ed.rel) + '&to=' + encodeURIComponent(ed.to);
+                fetch(u, {method: 'DELETE'}).then(function(r){ if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); er.remove(); }).catch(function(err){ window.uiAlert('Delete failed: ' + (err && err.message || err)); });
+              });
             };
             er.appendChild(edel);
             col.appendChild(er);
@@ -652,8 +658,10 @@ const agentMemoryModalTemplate = `<script>
           del.textContent = String.fromCharCode(215);
           del.title = 'Delete this entity and all its relationships';
           del.onclick = function() {
-            if (!confirm('Delete ' + e.name + ' and all its relationships?')) return;
-            fetch(MEMBASE + 'graph/entity/' + encodeURIComponent(e.id), {method: 'DELETE'}).then(function(r){ if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); row.remove(); }).catch(function(err){ alert('Delete failed: ' + (err && err.message || err)); });
+            window.uiConfirm('Delete ' + e.name + ' and all its relationships?').then(function(ok) {
+              if (!ok) return;
+              fetch(MEMBASE + 'graph/entity/' + encodeURIComponent(e.id), {method: 'DELETE'}).then(function(r){ if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); row.remove(); }).catch(function(err){ window.uiAlert('Delete failed: ' + (err && err.message || err)); });
+            });
           };
           row.appendChild(col);
           row.appendChild(del);
@@ -704,10 +712,12 @@ const agentMemoryModalTemplate = `<script>
           del.title = 'Delete this entry';
           del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:1rem;padding:0 0.4rem;align-self:flex-start';
           del.addEventListener('click', function() {
-            if (!confirm('Delete this Reference Memory entry?')) return;
-            fetch(MEMBASE + 'inferred/' + encodeURIComponent(item.id), {method: 'DELETE'})
-              .then(function(r){ if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); row.remove(); })
-              .catch(function(err){ alert('Delete failed: ' + (err && err.message || err)); });
+            window.uiConfirm('Delete this Reference Memory entry?').then(function(ok) {
+              if (!ok) return;
+              fetch(MEMBASE + 'inferred/' + encodeURIComponent(item.id), {method: 'DELETE'})
+                .then(function(r){ if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); row.remove(); })
+                .catch(function(err){ window.uiAlert('Delete failed: ' + (err && err.message || err)); });
+            });
           });
           row.appendChild(col); row.appendChild(del);
           inferredList.appendChild(row);
@@ -715,15 +725,17 @@ const agentMemoryModalTemplate = `<script>
       }
 
       wipeBtn.addEventListener('click', function() {
-        if (!confirm('Wipe every Reference Memory entry for this agent. Uploaded files in Knowledge are NOT affected. Continue?')) return;
-        wipeBtn.disabled = true;
-        fetch(MEMBASE + 'knowledge/auto-inferred', {method: 'DELETE'})
-          .then(function(r){ return r.ok ? r.json() : null; })
-          .then(function(d){
-            renderInferred([]);
-            if (d) inferredIntro.textContent = 'Wiped ' + (d.removed || 0) + ' entr' + (d.removed === 1 ? 'y' : 'ies') + '. ' + inferredIntro.textContent;
-          })
-          .catch(function(err){ alert('Wipe failed: ' + (err && err.message || err)); wipeBtn.disabled = false; });
+        window.uiConfirm('Wipe every Reference Memory entry for this agent. Uploaded files in Knowledge are NOT affected. Continue?').then(function(ok) {
+          if (!ok) return;
+          wipeBtn.disabled = true;
+          fetch(MEMBASE + 'knowledge/auto-inferred', {method: 'DELETE'})
+            .then(function(r){ return r.ok ? r.json() : null; })
+            .then(function(d){
+              renderInferred([]);
+              if (d) inferredIntro.textContent = 'Wiped ' + (d.removed || 0) + ' entr' + (d.removed === 1 ? 'y' : 'ies') + '. ' + inferredIntro.textContent;
+            })
+            .catch(function(err){ window.uiAlert('Wipe failed: ' + (err && err.message || err)); wipeBtn.disabled = false; });
+        });
       });
 
       fetch(MEMBASE + 'inferred')
@@ -763,7 +775,7 @@ const agentMemoryModalTemplate = `<script>
         }).then(function(r){
           if (!r.ok && r.status !== 204) return r.text().then(function(t){ throw new Error(t); });
           dlg.close(); dlg.remove();
-        }).catch(function(err){ save.disabled = false; alert('Save failed: ' + (err && err.message || err)); });
+        }).catch(function(err){ save.disabled = false; window.uiAlert('Save failed: ' + (err && err.message || err)); });
       });
       actions.appendChild(cancel);
       actions.appendChild(save);
