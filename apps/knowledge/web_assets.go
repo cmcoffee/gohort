@@ -220,7 +220,7 @@ const documentsListAssets = `<style>
 const documentsDetailBody = `
 <div class="docs-detail">
   <div class="docs-detail-hdr">
-    <div class="docs-detail-name"><span id="docs-name">Loading...</span><button id="docs-rename" class="ui-row-btn">Rename</button><button id="docs-export" class="ui-row-btn" title="Download this collection as a portable bundle, document text travels, embeddings are rebuilt on import">Export</button><button id="docs-delete" class="ui-row-btn" style="color:var(--danger,#ff7b72)">Delete</button></div>
+    <div class="docs-detail-name"><span id="docs-name">Loading...</span><button id="docs-rename" class="ui-row-btn">Rename</button><button id="docs-export" class="ui-row-btn" title="Download this collection as a portable bundle, document text travels, embeddings are rebuilt on import">Export</button><button id="docs-delete" class="ui-row-btn danger">Delete</button></div>
     <div class="docs-desc-wrap">
       <textarea id="docs-desc" class="docs-detail-desc-edit" placeholder="Describe what this collection should contain. The description steers Auto-fill's search queries: be specific (e.g. &quot;Official Kubernetes API reference, operator best practices, and our cluster runbook&quot;)."></textarea>
       <div class="docs-desc-actions">
@@ -289,7 +289,7 @@ const documentsDetailBody = `
     </div>
     <div id="docs-bulk-bar" style="display:none;align-items:center;gap:0.6rem;padding:0.4rem 0.6rem;background:var(--bg-2);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
       <span id="docs-bulk-count" style="font-size:0.82rem;color:var(--text);font-weight:600"></span>
-      <button id="docs-bulk-delete" class="ui-row-btn" style="color:var(--danger,#ff7b72);font-size:0.8rem;padding:0.25rem 0.6rem">Remove selected</button>
+      <button id="docs-bulk-delete" class="ui-row-btn danger">Remove selected</button>
       <span id="docs-bulk-status" style="font-size:0.74rem;color:var(--text-mute);margin-left:auto"></span>
     </div>
     <div id="docs-sources"></div>

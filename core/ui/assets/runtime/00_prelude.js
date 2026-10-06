@@ -765,6 +765,10 @@
   // opts.align "right" hangs the menu off the toggle's right edge; anything
   // else hangs it off the left. Either way it is pulled back on screen rather
   // than allowed off the edge on a narrow one.
+  //
+  // It drops below the toggle and scrolls inside itself when it is taller than
+  // the room there. It opens upward only when it does not fit below and there
+  // is more room above, which on a phone is a toggle near the bottom.
   window.uiAnchorMenu = function(toggle, menu, opts) {
     opts = opts || {};
     var shown = opts.display || 'block';
@@ -774,8 +778,19 @@
     menu.style.display = 'none';
     function place() {
       var r = toggle.getBoundingClientRect();
-      menu.style.top = Math.round(r.bottom + 4) + 'px';
-      // Measured while displayed, so the width is the real one.
+      var vh = window.innerHeight || 0;
+      menu.style.maxHeight = '';
+      // Measured while displayed, so the height and width are the real ones.
+      var h = menu.offsetHeight || 0;
+      var below = vh - r.bottom - 8, above = r.top - 8;
+      if (vh && h > below && above > below) {
+        menu.style.maxHeight = Math.floor(above) + 'px';
+        menu.style.top = Math.round(r.top - 4 - Math.min(h, above)) + 'px';
+      } else {
+        menu.style.top = Math.round(r.bottom + 4) + 'px';
+        if (vh) menu.style.maxHeight = Math.floor(Math.max(120, below)) + 'px';
+      }
+      menu.style.overflowY = 'auto';
       var w = menu.offsetWidth;
       var left = (opts.align === 'right') ? (r.right - w) : r.left;
       var maxLeft = window.innerWidth - w - 4;
@@ -792,7 +807,12 @@
     // A fixed menu does not travel with what it is anchored to, so anything
     // that moves the toggle underneath it leaves it pointing at nothing.
     window.addEventListener('resize', function() { if (api.isOpen()) api.close(); });
-    window.addEventListener('scroll', function() { if (api.isOpen()) api.close(); }, true);
+    // Scrolling the menu's own list is not the toggle moving.
+    window.addEventListener('scroll', function(ev) {
+      if (!api.isOpen()) return;
+      if (ev && ev.target && menu.contains && menu.contains(ev.target)) return;
+      api.close();
+    }, true);
     return api;
   };
 

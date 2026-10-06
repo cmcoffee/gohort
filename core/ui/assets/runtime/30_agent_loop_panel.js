@@ -1140,7 +1140,10 @@
       }
       // Channel/fleet management lives in topbar dropdowns — NOT in a box in
       // the session rail (channel model: the rail is threads only). Each menu's
-      // panel is absolutely positioned under its own button; each item is a
+      // panel is anchored under its own button by uiAnchorMenu, which keeps it
+      // on screen: hung from the button's right edge inside the panel, it ran
+      // off a phone's left side whenever the button wrapped to the start of a
+      // row, cutting off the front of every item. Each item is a
       // management view (Enabled agents / Event monitors) with a live count
       // badge, or a channel-wide action (Compact / Clear).
       //
@@ -1152,7 +1155,7 @@
       function navMenuFor(item) {
         var name = (item && item.menu) || DEFAULT_NAV_MENU;
         if (navMenuByName[name]) return navMenuByName[name];
-        var panel = el('div', {class: 'ui-channel-menu', style: 'display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:40;min-width:210px;flex-direction:column;gap:0.1rem;padding:0.35rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;background:var(--bg-1, #1b1b2b);box-shadow:0 6px 24px rgba(0,0,0,0.35)'});
+        var panel = el('div', {class: 'ui-channel-menu', style: 'display:none;min-width:210px;max-width:calc(100vw - 8px);flex-direction:column;gap:0.1rem;padding:0.35rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;background:var(--bg-1, #1b1b2b);box-shadow:0 6px 24px rgba(0,0,0,0.35)'});
         var m = {name: name, panel: panel, items: [], hdrs: [], lastGroup: null, btn: null, dot: null, control: null};
         m.close = function() { panel.style.display = 'none'; clearOpenTopbarMenu(m.close); };
         var dot = el('span', {class: 'ui-unread-dot', title: 'Pending items',
@@ -1163,7 +1166,7 @@
             var open = panel.style.display === 'none' || !panel.style.display;
             if (open) {
               setOpenTopbarMenu(m.close); // close any open toolbar menu first
-              panel.style.display = 'flex';
+              m.anchor.open();
               refreshChannelBadges();
             } else {
               m.close();
@@ -1172,13 +1175,15 @@
         btn.appendChild(dot);
         m.btn = btn;
         m.dot = dot;
-        m.control = el('div', {style: 'position:relative;display:none'}, [btn, panel]);
+        m.control = el('div', {style: 'position:relative;display:none'}, [btn]);
+        m.anchor = window.uiAnchorMenu(btn, panel, {align: 'right', display: 'flex'});
         // Close on any outside click. One listener per menu, each testing only
-        // its own control, so a click inside one menu closes the others via
-        // their own listeners rather than through shared bookkeeping.
+        // its own control and panel (the panel lives on the body now), so a
+        // click inside one menu closes the others via their own listeners
+        // rather than through shared bookkeeping.
         document.addEventListener('click', function(ev) {
           if (panel.style.display && panel.style.display !== 'none' &&
-              !m.control.contains(ev.target)) m.close();
+              !m.control.contains(ev.target) && !panel.contains(ev.target)) m.close();
         });
         navMenus.push(m);
         navMenuByName[name] = m;

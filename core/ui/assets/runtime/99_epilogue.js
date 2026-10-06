@@ -688,6 +688,12 @@
       if (cfg.show_title && cfg.title) {
         // title attr = full name, so a name truncated by the ellipsis in a
         // narrow column is still readable on hover.
+        var mark = el('span', {class: 'ui-page-mark', 'aria-hidden': 'true'});
+        mark.innerHTML = '<svg viewBox="6 8 52 44" width="17" height="14">' +
+          '<rect x="23" y="8" width="18" height="18" rx="5"/>' +
+          '<rect x="6" y="34" width="18" height="18" rx="5"/>' +
+          '<rect x="40" y="34" width="18" height="18" rx="5"/></svg>';
+        headerLeft.appendChild(mark);
         headerLeft.appendChild(el('h1', {class: 'ui-page-title', title: cfg.title}, [cfg.title]));
       }
       header.appendChild(headerLeft);

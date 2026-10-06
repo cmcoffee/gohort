@@ -21,7 +21,7 @@ var buttonRowSelector = regexp.MustCompile(`(?i)(actions|footer|btns|buttons|btn
 // rowsAllowedNoWrap are button rows that keep to one line on purpose, each
 // for a reason wrapping would break.
 var rowsAllowedNoWrap = map[string]string{
-	".ui-page-tabs":         "scrolls sideways (overflow-x: auto) so the tabs sit at a fixed offset on every app",
+	".ui-page-tabs":         "scrolls sideways (overflow-x: auto) so the tabs stay on the header row",
 	".ui-toolbar-menu.open": "a dropdown menu; its buttons are block-level, one per line",
 	".ui-rows-actions":      "a fixed-width column in a table row, sized to its buttons",
 }

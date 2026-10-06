@@ -778,7 +778,7 @@ const guidePublishAction = `function(ctx){
                 if (!j.ok){
                   // A quick update that failed usually needs an answer: hand
                   // it to the Publisher with what went wrong.
-                  var talk = el('button', {class:'ui-row-btn ui-row-btn-primary', text:'Work it out with the Publisher'});
+                  var talk = el('button', {class:'ui-row-btn primary', text:'Work it out with the Publisher'});
                   talk.addEventListener('click', function(){
                     openChat('Update this guide in my publishing target "' + j.target + '". The last try failed: ' + (j.message || 'no reason given'));
                   });

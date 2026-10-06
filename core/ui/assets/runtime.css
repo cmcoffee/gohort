@@ -50,6 +50,122 @@ select:-webkit-autofill {
   transition: background-color 5000s ease-in-out 0s;
 }
 
+/* --- Buttons: one shape, two sizes ---
+ *
+ * Every button the toolkit draws takes its size from these tokens, so a row
+ * mixing a table action, a pipeline button and a form submit lines up instead
+ * of standing at three heights. A surface that wants the dense size (a panel
+ * header, a toolbar, a group foot) sets the tokens on its container, never
+ * padding on the button:
+ *
+ *   .my-toolbar { --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm); }
+ *
+ * On a touch screen both sizes grow to a thumb-sized target. */
+:root {
+  --btn-h: 2.125rem;    --btn-px: 0.8rem;     --btn-fs: 0.82rem;
+  --btn-h-sm: 1.625rem; --btn-px-sm: 0.55rem; --btn-fs-sm: 0.75rem;
+  --btn-radius: 6px;
+}
+@media (pointer: coarse) {
+  :root { --btn-h: var(--tap, 44px); --btn-h-sm: 2.25rem; }
+}
+:where(.ui-row-btn, .ui-pl-btn, .ui-btn-primary, .ui-watch-action, .ui-watch-cancel,
+    .ui-keys-new, .ui-keys-form button, .ui-keys-revealed-row button, .ui-mem-add,
+    .ui-apikey-btn, .ui-form-submit, .ui-empty-action, .ui-wb-action-btn,
+    .ui-wb-coauthor-btn, .ui-chat-send, .ui-chat-cancel) {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+  flex-shrink: 0; min-width: var(--btn-h); min-height: var(--btn-h);
+  padding: 0.25rem var(--btn-px);
+  font-family: inherit; font-size: var(--btn-fs); font-weight: 500; line-height: 1.2;
+  text-align: center; text-decoration: none;
+  color: var(--text); background: var(--bg-2);
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease,
+              filter 0.12s ease, transform 0.05s ease;
+}
+:where(.ui-row-btn, .ui-pl-btn, .ui-watch-action, .ui-keys-new, .ui-keys-form button,
+    .ui-keys-revealed-row button, .ui-mem-add, .ui-apikey-btn, .ui-wb-action-btn,
+    .ui-wb-coauthor-btn):hover:not(:disabled) {
+  color: var(--text-hi); border-color: var(--text-mute);
+}
+:where(.ui-row-btn, .ui-pl-btn, .ui-btn-primary, .ui-watch-action, .ui-watch-cancel,
+    .ui-keys-new, .ui-keys-form button, .ui-keys-revealed-row button, .ui-mem-add,
+    .ui-apikey-btn, .ui-form-submit, .ui-empty-action, .ui-wb-action-btn,
+    .ui-wb-coauthor-btn, .ui-chat-send, .ui-chat-cancel):active:not(:disabled) {
+  transform: scale(0.97);
+}
+:where(.ui-row-btn, .ui-pl-btn, .ui-btn-primary, .ui-watch-action, .ui-watch-cancel,
+    .ui-keys-new, .ui-keys-form button, .ui-keys-revealed-row button, .ui-mem-add,
+    .ui-apikey-btn, .ui-form-submit, .ui-empty-action, .ui-wb-action-btn,
+    .ui-wb-coauthor-btn, .ui-chat-send, .ui-chat-cancel):disabled {
+  opacity: 0.5; cursor: not-allowed;
+}
+/* Primary: the one thing this surface is for. Filled with the accent. */
+:is(.ui-row-btn, .ui-pl-btn, .ui-watch-action).primary,
+.ui-btn-primary, .ui-form-submit, .ui-empty-action, .ui-chat-send,
+.ui-keys-form button:not(.secondary) {
+  background: var(--accent); border-color: var(--accent);
+  color: var(--text-on-accent, #fff); font-weight: 600;
+}
+:is(:is(.ui-row-btn, .ui-pl-btn, .ui-watch-action).primary,
+    .ui-btn-primary, .ui-form-submit, .ui-empty-action, .ui-chat-send,
+    .ui-keys-form button:not(.secondary)):hover:not(:disabled) {
+  color: var(--text-on-accent, #fff); border-color: var(--accent); filter: brightness(1.1);
+}
+/* Danger / warning / success: outlined in their colour, tinted on hover, so a
+ * destructive action is unmistakable without shouting louder than the primary. */
+:is(.ui-row-btn, .ui-pl-btn, .ui-watch-action).danger, .ui-watch-cancel, .ui-chat-cancel {
+  color: var(--danger); border-color: var(--danger); background: transparent;
+}
+:is(.ui-row-btn, .ui-pl-btn, .ui-watch-action).warning { color: var(--warning); border-color: var(--warning); background: transparent; }
+:is(.ui-row-btn, .ui-pl-btn, .ui-watch-action).success { color: var(--success); border-color: var(--success); background: transparent; }
+:is(:is(.ui-row-btn, .ui-pl-btn, .ui-watch-action).danger, .ui-watch-cancel, .ui-chat-cancel):hover:not(:disabled) {
+  color: var(--danger); border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+:is(.ui-row-btn, .ui-pl-btn, .ui-watch-action).warning:hover:not(:disabled) {
+  color: var(--warning); border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+}
+:is(.ui-row-btn, .ui-pl-btn, .ui-watch-action).success:hover:not(:disabled) {
+  color: var(--success); border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+/* Brief confirmation after a Copy: the button itself turns green. */
+:is(.ui-row-btn, .ui-pl-btn, .ui-keys-revealed-row button).copied {
+  background: var(--success); color: #fff; border-color: var(--success);
+}
+/* Keyboard focus is visible on every button, including the small chrome ones
+ * below; a mouse click does not draw it. */
+:where(.ui-row-btn, .ui-pl-btn, .ui-btn-primary, .ui-watch-action, .ui-watch-cancel,
+    .ui-keys-new, .ui-keys-form button, .ui-keys-revealed-row button, .ui-mem-add,
+    .ui-apikey-btn, .ui-form-submit, .ui-empty-action, .ui-wb-action-btn,
+    .ui-wb-coauthor-btn, .ui-chat-send, .ui-chat-cancel, .ui-chat-new,
+    .ui-chat-side-btn, .ui-chat-mode, .ui-chat-iconbtn, .ui-agent-mode,
+    .ui-agent-msg-act, .ui-cw-ctx-btn, .ui-cw-list-btn, .ui-checklist-toolbtn,
+    .ui-form-suggest-btn, .ui-rules-edit-btn, .ui-agent-earlier-btn,
+    .ui-back-link, .ui-page-tab, .ui-seg):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+/* The dense size: chrome inside a panel header or a toolbar, and the quiet
+ * one-word controls that share a row with them. */
+.ui-table-group-foot, .ui-bulk-bar, .ui-pl-actions, .ui-pl-modal-h-actions,
+.ui-agent-actions, .ui-agent-top-bundle .ui-agent-modes-in-bundle,
+.ui-agent-msg-file-row, .ui-cw-chat-h, .ui-cw-rev-group {
+  --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm);
+}
+:is(.ui-chat-new, .ui-chat-side-btn, .ui-chat-mode, .ui-agent-mode, .ui-cw-ctx-btn,
+    .ui-cw-list-btn, .ui-checklist-toolbtn, .ui-form-suggest-btn) {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: var(--btn-h-sm); padding: 0 var(--btn-px-sm);
+  font-family: inherit; font-size: var(--btn-fs-sm); line-height: 1.2;
+}
+:is(.ui-chat-new, .ui-chat-side-btn, .ui-chat-mode, .ui-cw-ctx-btn,
+    .ui-cw-list-btn, .ui-checklist-toolbtn, .ui-form-suggest-btn) {
+  border-radius: var(--btn-radius);
+}
+
 #ui-root {
   margin: 0 auto;
   padding: 0.95rem;
@@ -96,12 +212,21 @@ select:-webkit-autofill {
   padding-left: calc(0.95rem + env(safe-area-inset-left, 0px));
   border-bottom: 1px solid var(--border);
   background: var(--bg-1);
-  position: relative; /* anchor for the fixed-offset tabs + live-pill popover */
+  position: relative; /* anchor for the live-pill popover */
 }
 .ui-page-header-left {
   /* back link + title grouped on the left; min-width:0 lets the title clamp. */
   display: flex; align-items: center; gap: 0.6rem;
   min-width: 0;
+}
+/* On a page with tabs, the left group takes a fixed width, so the tabs after
+ * it start at the same place on every app: 22rem from the bar's edge, less the
+ * bar's padding and the gap. It can shrink, and the title gives way with an
+ * ellipsis; the tabs never draw over it. They used to be positioned
+ * absolutely at that offset, which overlapped the title whenever the left group
+ * ran wider than the offset (a large phone held sideways, a long title). */
+@media (min-width: 701px) {
+  .ui-page-header:has(> .ui-page-tabs) > .ui-page-header-left { flex: 0 1 20.45rem; }
 }
 /* The two header chevrons: ‹ to the page you came from, « to the dashboard.
  * Grouped tight so they read as one control with two aims rather than as two
@@ -133,13 +258,10 @@ select:-webkit-autofill {
 .ui-page-tabs {
   display: flex; align-items: center; gap: 0.15rem;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
-  /* Fixed left offset so the tabs land in the SAME spot on every app (they never
-   * jump per title width). The title is CLAMPED (max-width below) so it always
-   * truncates with an ellipsis BEFORE reaching this offset — that's what kills
-   * the old tuck-under. Keep the two in sync: title max-width < (this offset −
-   * the back link). Scrolls horizontally if the tab row overflows. */
-  position: absolute; left: 22rem;
-  max-width: calc(100% - 24rem);
+  /* In the flow after the left group, which holds them at a fixed offset (see
+   * .ui-page-header-left). Shrinks before anything else on the bar, and scrolls
+   * sideways when the tabs do not fit. */
+  flex: 0 1 auto; min-width: 0;
 }
 .ui-page-tabs::-webkit-scrollbar { height: 0; }
 .ui-page-tab {
@@ -154,10 +276,6 @@ select:-webkit-autofill {
 .ui-page-tab.active { color: var(--text); background: var(--bg-2); font-weight: 600; }
 @media (max-width: 700px) {
   .ui-page-tab { min-height: var(--tap); padding: 0.5rem 0.7rem; }
-  /* Too narrow for a fixed offset — flow the tabs inline after the title, and
-     let the title use its full width. */
-  .ui-page-tabs { position: static; left: auto; max-width: none; margin-left: 0.4rem; }
-  .ui-page-title { max-width: none; }
 }
 /* Live-sessions pill — pinned to the right of the page header (margin-left:auto).
  * Hidden when no sessions are active so the header stays clean
@@ -308,16 +426,17 @@ select:-webkit-autofill {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ui-page-title {
-  /* Clamped so a wide name truncates with "…" (full name on the title tooltip)
-     BEFORE it can reach the fixed-offset tabs — the fix for the tuck-under.
-     Keep max-width below .ui-page-tabs' left offset minus the back link. */
-  margin: 0; flex: 0 1 auto; min-width: 0; max-width: 15rem;
+  /* Truncates with "…" (full name on the title tooltip) when the left group
+     runs out of room; the cap keeps a long name from taking a phone's whole
+     bar from the tabs. */
+  margin: 0; flex: 0 1 auto; min-width: 0; max-width: 13.5rem;
   font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
   font-weight: 700; font-size: 1.1rem; letter-spacing: 0.05em; line-height: 1;
-  /* Metallic gradient — chrome-on-charcoal wordmark matching the
-     legacy app-title look so framework pages don't appear downgraded
-     vs. apps still serving hand-rolled chrome. */
-  background: linear-gradient(180deg, #f0f6fc 0%, #30363d 100%);
+  /* Metallic wordmark, drawn from the theme: brightest text at the top
+     easing to muted text at the foot. A fixed light-to-charcoal ramp
+     vanished on the Light theme, where the top of every letter was white
+     on white. */
+  background: linear-gradient(180deg, var(--text-hi) 15%, var(--text-mute) 115%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -325,6 +444,13 @@ select:-webkit-autofill {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* The gohort mark before the page title: the favicon's three squares, the
+ * top one in the accent and the pair below it a step darker, as on the icon. */
+.ui-page-mark { display: inline-flex; flex: 0 0 auto; }
+.ui-page-mark svg { display: block; }
+.ui-page-mark rect { fill: color-mix(in srgb, var(--accent) 55%, var(--bg-1)); }
+.ui-page-mark rect:first-child { fill: var(--accent); }
 
 /* --- Section --- */
 .ui-section {
@@ -468,8 +594,7 @@ select:-webkit-autofill {
 .ui-empty-icon { font-size: 48px; line-height: 1; opacity: 0.3; margin-bottom: 1rem; }
 .ui-empty-title { font-size: 1.05rem; color: var(--text); margin-bottom: 0.35rem; }
 .ui-empty-hint { font-size: 0.85rem; color: var(--text-mute); opacity: 0.85; max-width: 360px; line-height: 1.5; }
-.ui-empty-action { margin-top: 1.25rem; min-height: var(--tap); background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 0.55rem 1.1rem; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
-.ui-empty-action:hover { filter: brightness(1.08); }
+.ui-empty-action { margin-top: 1.25rem; }
 
 /* --- WorkbenchPanel: list | viewer | chat, full-height columns --- */
 .ui-wb {
@@ -611,24 +736,12 @@ select:-webkit-autofill {
 .ui-wb-item:hover .ui-wb-item-del { opacity: 0.7; }
 .ui-wb-item-del:hover { opacity: 1; color: var(--danger); }
 .ui-wb-item.active .ui-wb-item-del { color: #fff; }
-.ui-wb-coauthor-btn {
-  margin-top: 0.5rem; min-height: var(--tap); cursor: pointer;
-  background: var(--bg-2); color: var(--text); border: 1px solid var(--border);
-  border-radius: 7px; padding: 0.3rem 0.7rem; font-size: 0.8rem; font-weight: 600;
-}
-.ui-wb-coauthor-btn:hover { border-color: var(--accent); color: var(--accent-hi, var(--accent)); }
-.ui-wb-coauthor-btn:disabled { opacity: 0.6; cursor: default; }
+.ui-wb-coauthor-btn { margin-top: 0.5rem; }
 .ui-wb-list-empty { padding: 0.8rem 0.6rem; color: var(--text-mute); font-size: 0.82rem; font-style: italic; }
 .ui-wb-actions {
   display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 0 0 auto;
   padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);
 }
-.ui-wb-action-btn {
-  cursor: pointer; background: var(--bg-2); color: var(--text); border: 1px solid var(--border);
-  border-radius: 7px; padding: 0.28rem 0.7rem; font-size: 0.8rem; font-weight: 600;
-}
-.ui-wb-action-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-hi, var(--accent)); }
-.ui-wb-action-btn:disabled { opacity: 0.45; cursor: default; }
 /* Grouped-action dropdown (Kind:"menu") — a button that opens a small popover
  * of sub-actions (e.g. Export → HTML / PDF / Markdown) so related toolbar
  * buttons collapse into one. Generic: any WorkbenchAction with children uses it. */
@@ -819,10 +932,9 @@ select:-webkit-autofill {
 .ui-table-group-foot .ui-row-btn,
 .ui-table-group-foot .ui-row-btn.warning,
 .ui-table-group-foot .ui-row-btn.danger {
-  min-height: 0; padding: 0.2rem 0.6rem; font-size: 0.76rem;
   color: var(--text-mute); border-color: var(--border); background: transparent;
 }
-.ui-table-group-foot .ui-row-btn:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-table-group-foot .ui-row-btn:hover:not(:disabled) { color: var(--text); border-color: var(--text-mute); background: transparent; }
 /* A grouped table draws each group as an enclosed band. The heading alone
  * says where a group starts and nothing says where it ends, which is fine for
  * two groups and useless for six. */
@@ -871,14 +983,6 @@ select:-webkit-autofill {
   }
 }
 
-.ui-row-btn {
-  flex-shrink: 0; min-width: var(--tap); min-height: var(--tap);
-  padding: 0.45rem 0.7rem; font-size: 0.8rem;
-  background: var(--bg-1); color: var(--text); border: 1px solid var(--border);
-  border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent;
-  transition: transform 0.05s ease, background 0.1s ease;
-}
-.ui-row-btn:active { background: var(--bg-0); transform: scale(0.96); }
 .ui-row-toggle-pair { display: inline-flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
 .ui-row-toggle-label { font-size: 0.78rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }
 /* What an action did last time: quieter than its description, which is already
@@ -913,16 +1017,14 @@ select:-webkit-autofill {
 }
 .ui-row-segmented .ui-seg:first-child { border-left: none; }
 .ui-row-segmented .ui-seg:hover:not(.active):not(:disabled) { color: var(--text); background: var(--bg-1); }
-.ui-row-segmented .ui-seg.active { background: var(--accent); color: #fff; cursor: default; }
+.ui-row-segmented .ui-seg.active { background: var(--accent); color: var(--text-on-accent, #fff); cursor: default; }
 .ui-row-segmented .ui-seg:disabled { opacity: 0.5; cursor: not-allowed; }
-.ui-row-btn.danger  { color: var(--danger); border-color: var(--danger); }
-.ui-row-btn.warning { color: var(--warning); border-color: var(--warning); }
-.ui-row-btn.success { color: var(--success); border-color: var(--success); }
 /* Compact: trim padding so an emoji or 1-3 letter label sits in a
  * ~36x36 box. Used for secondary row buttons on narrow screens where
  * the standard 44px-min target would push the auto-reply switch and
  * row name off the visible width. */
-.ui-row-btn.compact { min-width: 36px; min-height: 36px; padding: 0.3rem 0.4rem; font-size: 0.95rem; }
+.ui-row-btn.compact { padding-left: 0.4rem; padding-right: 0.4rem; font-size: 0.95rem; }
+@media (pointer: coarse) { .ui-row-btn.compact { min-width: 36px; min-height: 36px; } }
 /* Stack composes multiple components in one expand panel. */
 .ui-stack { display: flex; flex-direction: column; gap: 0.6rem; }
 /* Badge — colored pill for boolean/state indicators in table rows. */
@@ -967,12 +1069,6 @@ select:-webkit-autofill {
 /* --- KeyManager (API keys list + create-once-show-secret + delete) --- */
 .ui-keys { display: flex; flex-direction: column; gap: 0.5rem; }
 .ui-keys-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; }
-.ui-keys-new {
-  background: transparent; color: var(--accent); border: 1px solid var(--accent);
-  border-radius: 6px; padding: 0.4rem 0.85rem; font-size: 0.8rem; cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.ui-keys-new:hover { background: var(--bg-2); }
 .ui-keys-form {
   display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center;
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
@@ -985,12 +1081,6 @@ select:-webkit-autofill {
   border: 1px solid var(--border); font-size: 0.85rem;
 }
 .ui-keys-form input:focus { outline: none; border-color: var(--accent); }
-.ui-keys-form button {
-  padding: 0.45rem 0.85rem; border-radius: 6px; font-size: 0.8rem; cursor: pointer;
-  background: var(--accent); color: var(--text-on-accent, #1a1a1a);
-  border: 1px solid var(--accent); font-weight: 600;
-}
-.ui-keys-form button.secondary { background: transparent; color: var(--text-mute); border-color: var(--border); font-weight: normal; }
 .ui-keys-revealed {
   background: rgba(212, 166, 87, 0.12);
   border: 1px solid var(--accent);
@@ -1006,11 +1096,6 @@ select:-webkit-autofill {
   border-radius: 6px; padding: 0.5rem 0.6rem;
 }
 .ui-keys-revealed-row { display: flex; gap: 0.4rem; align-items: center; }
-.ui-keys-revealed-row button {
-  padding: 0.4rem 0.75rem; border-radius: 6px; font-size: 0.78rem; cursor: pointer;
-  background: var(--bg-1); color: var(--text); border: 1px solid var(--border);
-}
-.ui-keys-revealed-row button.copied { background: var(--success); color: #fff; border-color: var(--success); }
 .ui-keys-list {
   display: flex; flex-direction: column;
   border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
@@ -1065,12 +1150,7 @@ select:-webkit-autofill {
   font-size: 0.95rem; line-height: 1;
 }
 .ui-mem-del:hover { color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
-.ui-mem-add {
-  align-self: flex-start;
-  background: transparent; color: var(--accent); border: 1px solid var(--accent);
-  border-radius: 6px; padding: 0.35rem 0.7rem; font-size: 0.78rem; cursor: pointer;
-}
-.ui-mem-add:hover { background: var(--bg-2); }
+.ui-mem-add { align-self: flex-start; }
 .ui-mem-empty { color: var(--text-mute); font-size: 0.82rem; padding: 0.3rem 0.2rem; }
 .ui-mem-aliasrow {
   display: flex; flex-direction: column; gap: 0.3rem;
@@ -1184,7 +1264,7 @@ select:-webkit-autofill {
 .ui-wb-edit-ta:focus { outline: none; border-color: var(--accent); }
 .ui-wb-edit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; flex: 0 0 auto; }
 .ui-wb-edit-status { color: var(--text-mute); font-size: 0.85rem; }
-.ui-wb-edit-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ui-wb-edit-btn.active { background: var(--accent); color: var(--text-on-accent, #fff); border-color: var(--accent); }
 .ui-wb-working-actions { text-align: right; display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: flex-end; }
 
 /* Compose chooser — how a toolbar macro asks what the user wants before it
@@ -1223,15 +1303,8 @@ select:-webkit-autofill {
  * label+help text blend into the next row and you have to count
  * widgets to know which help belongs to which switch. */
 .ui-form-field.ui-form-toggle-field { padding-top: 1rem; }
-.ui-form-submit {
-  display: inline-block; margin-top: 1rem; padding: 0.6rem 1.2rem;
-  background: var(--accent); color: var(--bg-0);
-  border: 1px solid var(--accent); border-radius: 8px;
-  font-size: 0.95rem; font-weight: 600; cursor: pointer;
-  transition: opacity 0.1s ease;
-}
-.ui-form-submit:hover { opacity: 0.9; }
-.ui-form-submit:disabled { opacity: 0.5; cursor: wait; }
+.ui-form-submit { margin-top: 1rem; }
+.ui-form-submit:disabled { cursor: wait; }
 .ui-form-label { display: block; font-size: 0.78rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.3rem; }
 .ui-form-input,
 .ui-form-textarea,
@@ -1372,9 +1445,7 @@ select:-webkit-autofill {
 }
 .ui-form-suggest-btn {
   background: var(--bg-2); border: 1px solid var(--border);
-  color: var(--text-mute);
-  padding: 0.25rem 0.6rem; border-radius: 4px;
-  cursor: pointer; font-size: 0.74rem; font-family: inherit;
+  color: var(--text-mute); cursor: pointer;
   transition: color 0.1s ease, border-color 0.1s ease;
 }
 .ui-form-suggest-btn:hover { color: var(--accent); border-color: var(--accent); }
@@ -1402,12 +1473,7 @@ select:-webkit-autofill {
 .ui-watch-title {
   font-size: 1.05rem; color: var(--text-hi); font-weight: 600;
 }
-.ui-watch-cancel {
-  padding: 0.3rem 0.8rem; background: var(--danger);
-  color: #fff; border: none; border-radius: 6px;
-  font-size: 0.8rem; cursor: pointer;
-}
-.ui-watch-cancel:hover { filter: brightness(1.1); }
+.ui-watch-cancel { --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm); }
 .ui-watch-topic {
   color: var(--text-mute); font-size: 0.9rem;
   white-space: normal; word-break: break-word;
@@ -1550,23 +1616,6 @@ select:-webkit-autofill {
   background: var(--bg-1);
   border-radius: 0 0 6px 6px;
 }
-.ui-watch-action {
-  padding: 0.5rem 1rem;
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 0.88rem;
-  text-decoration: none;
-  cursor: pointer;
-}
-.ui-watch-action:hover { border-color: var(--accent); }
-.ui-watch-action.primary {
-  background: var(--accent); color: #fff; border-color: var(--accent);
-}
-.ui-watch-action.danger {
-  background: var(--danger, var(--danger)); color: #fff; border-color: var(--danger, var(--danger));
-}
 
 /* --- ApiKeyPanel — single rotating API key with Copy/Generate --- */
 .ui-apikey { display: flex; gap: 0.4rem; align-items: center; }
@@ -1581,18 +1630,6 @@ select:-webkit-autofill {
   font-size: 0.82rem;
   outline: none;
 }
-.ui-apikey-btn {
-  flex-shrink: 0;
-  padding: 0.4rem 0.7rem;
-  border-radius: 6px;
-  background: var(--bg-1);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-.ui-apikey-btn:hover:not(:disabled) { border-color: var(--accent); }
-.ui-apikey-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* --- SuggestPanel — LLM-backed topic suggestion list --- */
 .ui-suggest { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -1751,10 +1788,7 @@ select:-webkit-autofill {
 }
 .ui-checklist-toolbtn {
   background: var(--bg-1); border: 1px solid var(--border);
-  color: var(--text-mute); padding: 0.2rem 0.55rem;
-  border-radius: 4px; cursor: pointer;
-  font-size: 0.74rem;
-  font-family: inherit;
+  color: var(--text-mute); cursor: pointer;
 }
 .ui-checklist-toolbtn:hover { color: var(--text-hi); }
 .ui-checklist-count {
@@ -2407,7 +2441,7 @@ select:-webkit-autofill {
 .ui-side-menu-item:hover { background: var(--bg-2, rgba(127,127,127,0.18)); }
 .ui-chat-new {
   background: transparent; color: var(--accent); border: 1px solid var(--accent);
-  border-radius: 6px; padding: 0.2rem 0.55rem; font-size: 0.75rem; cursor: pointer;
+  cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   flex: 0 0 auto; white-space: nowrap;
 }
@@ -2432,8 +2466,7 @@ select:-webkit-autofill {
    when active so the click → mode-on transition is visible). */
 .ui-chat-side-btn {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 0.2rem 0.55rem; font-size: 0.75rem; cursor: pointer;
+  border: 1px solid var(--border); cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   flex: 0 0 auto; white-space: nowrap;
 }
@@ -2504,7 +2537,6 @@ select:-webkit-autofill {
   margin-bottom: 0.4rem;
 }
 .ui-bulk-bar.bottom { margin: 0.4rem 0 0; border-top: 1px solid var(--border); padding-top: 0.5rem; }
-.ui-bulk-bar .ui-row-btn { padding: 0.3rem 0.65rem; font-size: 0.78rem; min-height: 0; min-width: 0; }
 .ui-bulk-pill {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 999px;
@@ -3046,18 +3078,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-pl-prefill-item-q { font-size: 1.02rem; }
   .ui-pl-prefill-item-hook { font-size: 0.88rem; }
 }
-.ui-pl-btn {
-  font-family: inherit; font-size: 0.85rem;
-  padding: 0.4rem 0.85rem; border-radius: 6px; cursor: pointer;
-  border: 1px solid var(--border); background: var(--bg-1); color: var(--text);
-  -webkit-tap-highlight-color: transparent;
-}
-.ui-pl-btn:disabled,
-.ui-pl-btn.is-disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
-.ui-pl-btn.primary { background: var(--accent); color: var(--text-on-accent, #fff); border-color: var(--accent); }
-.ui-pl-btn.danger { background: transparent; color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
-.ui-pl-btn.secondary { background: var(--bg-2); }
-.ui-pl-btn:hover:not(:disabled):not(.is-disabled) { filter: brightness(1.1); }
+.ui-pl-btn.is-disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 
 .ui-pl-actions {
   padding: 0.5rem 0.9rem;
@@ -3095,7 +3116,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: flex; flex-wrap: wrap; gap: 0.35rem;
   margin-left: auto;
 }
-.ui-pl-modal-h-actions .ui-pl-btn { font-size: 0.75rem; padding: 0.3rem 0.7rem; }
 .ui-pl-modal-close {
   position: absolute; top: 1rem; right: 1rem;
   background: transparent; border: 1px solid var(--border);
@@ -3201,11 +3221,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: flex; gap: 0.4rem; align-items: center; justify-content: center;
   padding: 1rem; color: var(--text-mute); font-style: italic;
 }
-.ui-pl-actions .ui-pl-btn { font-size: 0.78rem; padding: 0.3rem 0.7rem; }
 .ui-pl-btn-cancel { margin-left: auto !important; }
-/* Inline feedback flash — the Copy Link button briefly turns green
-   on success so the user gets confirmation without a corner toast. */
-.ui-pl-btn.copied { background: var(--success) !important; color: #fff !important; border-color: var(--success) !important; }
 /* Sidebar session-row meta fields: verdict snippet, confidence pill,
    winning-side pill. Compact, scannable. */
 .ui-pl-side-metaline {
@@ -3370,8 +3386,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-chat-field-input[type="number"] { width: 4rem; }
 .ui-chat-mode {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 0.25rem 0.6rem; font-size: 0.75rem; cursor: pointer;
+  border: 1px solid var(--border); cursor: pointer;
   transition: color 0.1s ease, border-color 0.1s ease;
   -webkit-tap-highlight-color: transparent;
 }
@@ -3395,8 +3410,8 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-chat-iconbtn {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 8px;
-  min-width: 40px; min-height: 40px; padding: 0 0.6rem;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
+  min-width: var(--btn-h); min-height: var(--btn-h); padding: 0 0.6rem;
   font-size: 1.1rem; cursor: pointer;
   -webkit-tap-highlight-color: transparent; user-select: none;
 }
@@ -3412,21 +3427,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * .ui-md — see the canonical block above. No surface-specific overrides
  * needed here; don't re-add them. */
 .ui-chat-input {
-  flex: 1; min-height: 40px; max-height: 200px; resize: none;
+  flex: 1; min-height: var(--btn-h); max-height: 200px; resize: none;
   padding: 0.5rem 0.7rem;
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 8px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   font-family: inherit; font-size: 0.92rem; line-height: 1.4; outline: none;
 }
 .ui-chat-input:focus { border-color: var(--accent); }
-.ui-chat-send, .ui-chat-cancel {
-  padding: 0 1.1rem; min-height: 40px;
-  border: 1px solid var(--accent); border-radius: 8px;
-  background: var(--accent); color: #1a1a1a; font-weight: 600;
-  cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-.ui-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
-.ui-chat-cancel { background: transparent; color: var(--danger); border-color: var(--danger); }
+/* The composer row: the field and its buttons stand at one height. */
+.ui-chat-input-area { --btn-h: 2.5rem; --btn-px: 1.1rem; }
+@media (pointer: coarse) { .ui-chat-input-area { --btn-h: var(--tap, 44px); } }
 
 /* --- CodeEditorPanel ---
  * Reuses the .ui-tw two-pane grid (sidebar + main) and adds the
@@ -3709,13 +3719,8 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* Match the rail's "+ New" / Select buttons: transparent bg,
  * border, same padding/font/radius. Color is left unset so the
  * .danger variant (Delete/Revert) keeps its red. */
-.ui-agent.ui-agent-list-top .ui-agent-actions .ui-row-btn,
-.ui-agent.ui-agent-list-top .ui-agent-actions button {
-  min-width: 0 !important; min-height: 0 !important;
-  padding: 0.2rem 0.55rem !important;
-  font-size: 0.75rem !important;
-  border-radius: 6px !important;
-  background: transparent !important;
+.ui-agent.ui-agent-list-top .ui-agent-actions .ui-row-btn:not(.primary):not(.copied) {
+  background: transparent;
 }
 /* Extras strip (Agent picker, etc.) + Modes (Private, Explorer, …)
  * inline in the topbar — strip the default bg-2 / border / padding
@@ -3885,13 +3890,8 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   flex-wrap: wrap;
   justify-content: flex-start;
 }
-.ui-agent-top-bundle .ui-agent-actions .ui-row-btn,
-.ui-agent-top-bundle .ui-agent-actions button {
-  min-width: 0 !important; min-height: 0 !important;
-  padding: 0.2rem 0.55rem !important;
-  font-size: 0.75rem !important;
-  border-radius: 6px !important;
-  background: transparent !important;
+.ui-agent-top-bundle .ui-agent-actions .ui-row-btn:not(.primary):not(.copied) {
+  background: transparent;
 }
 .ui-agent.ui-agent-list-top .ui-agent-extras {
   background: transparent;
@@ -3923,9 +3923,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   /* Same shape as the rail's + New / Select and the action
    * buttons — slight-rounded rectangle (6px), same padding, same
    * font, transparent bg, muted text. */
-  padding: 0.2rem 0.55rem !important;
-  font-size: 0.75rem !important;
-  border-radius: 6px !important;
+  border-radius: var(--btn-radius) !important;
 }
 .ui-agent.ui-agent-list-top .ui-agent-expand { display: none; }
 
@@ -4039,18 +4037,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-toolbar-menu button.danger { color: var(--danger, #d9534f); }
 @media (max-width: 700px) {
   .ui-agent-actions { padding: 0.4rem 0.5rem; gap: 0.3rem; }
-  .ui-agent-actions .ui-row-btn { font-size: 0.78rem; padding: 0.3rem 0.55rem; }
-}
-/* Manage ▾ dropdown, mobile. The panel runtime anchors this menu inline with
- * right: 0 against its button. On desktop the button is the last thing in a
- * right-aligned action row, so flush-right reads correctly. On mobile the
- * bundle stacks and .ui-agent-actions switches to justify-content: flex-start
- * with wrapping, so the button sits mid-row and a flush-right menu hangs to
- * its left, tucked under the buttons before it. Nudge the panel right by a
- * button's worth of inset so it clears that shoulder. !important because the
- * anchor is an inline style (same trick .ui-agent-top-bundle uses for height). */
-@media (max-width: 900px) {
-  .ui-channel-menu { right: -0.5rem !important; }
 }
 .ui-agent-split {
   display: flex; flex: 1 1 auto; min-height: 0;
@@ -4559,10 +4545,8 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-mode {
   background: transparent; border: 1px solid var(--border);
   color: var(--text-mute);
-  padding: 0.25rem 0.65rem;
   border-radius: 999px;
   cursor: pointer;
-  font-size: 0.76rem; font-family: inherit;
   transition: color 0.1s ease, border-color 0.1s ease;
 }
 .ui-agent-mode:hover { color: var(--text); border-color: var(--text-mute); }
@@ -4586,11 +4570,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   align-items: center;
   flex: 0 1 auto;
 }
-.ui-agent-top-bundle .ui-agent-modes-in-bundle .ui-agent-mode {
-  font-size: 0.75rem;
-  padding: 0.2rem 0.55rem;
-  min-height: 0;
-}
 /* Two-row buttons table inside the top bundle's right column.
  * Using <table> sidesteps the bundle's CSS-grid layout — rows are
  * structural HTML rather than flex/grid items that fight the
@@ -4613,12 +4592,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * rectangular context buttons (.ui-row-btn), keep them on the same
  * baseline — the .ui-row-btn default styling carries its own padding
  * that would otherwise tower over the pills. */
-.ui-agent-top-bundle .ui-agent-modes-in-bundle .ui-row-btn {
-  font-size: 0.75rem;
-  padding: 0.2rem 0.55rem;
-  min-height: 0;
-  border-radius: 6px;
-}
 .ui-agent-input-row {
   display: flex; gap: 0.4rem; align-items: flex-end;
   /* flex-end (not stretch) so the textarea uses its own height
@@ -4633,14 +4606,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background: var(--bg-1);
 }
 .ui-agent-input {
-  flex: 1 1 auto; resize: vertical; min-height: 2.2rem;
+  flex: 1 1 auto; resize: vertical; min-height: var(--btn-h);
   /* Cap auto-grow at roughly 8 lines — enough for medium messages
    * but doesn't eat the chat pane. Content beyond scrolls inside the
    * box. Pastes longer than the snippet threshold get redirected to
    * an attachment chip instead, see the paste handler. */
   max-height: 12rem; overflow-y: auto;
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   padding: 0.4rem 0.55rem; font: inherit;
   white-space: pre-wrap; word-wrap: break-word;
 }
@@ -4836,7 +4809,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* HTML file delivery: download chip + View button side by side. The
  * button opens the shared artifact pane (sandboxed) on the decoded file. */
 .ui-agent-msg-file-row { display: inline-flex; align-items: center; gap: 0.4rem; align-self: flex-start; max-width: 100%; }
-.ui-agent-msg-file-row .ui-row-btn { padding: 0.3rem 0.6rem; font-size: 0.8rem; min-height: 0; min-width: 0; }
 .ui-agent-msg-video {
   max-width: 100%; max-height: 320px; border-radius: 6px;
   border: 1px solid var(--border); display: block;
@@ -4914,14 +4886,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   outline: none;
 }
 .ui-cw-lang:focus { border-color: var(--accent); }
-.ui-cw-toolbar .ui-row-btn { padding: 0.4rem 0.85rem; min-height: 0; min-width: 0; font-size: 0.82rem; }
-.ui-cw-toolbar .ui-row-btn.primary {
-  background: var(--accent); color: var(--text-on-accent, #1a1a1a);
-  border-color: var(--accent); font-weight: 600;
-}
-.ui-cw-toolbar .ui-row-btn.copied {
-  background: var(--success); color: #fff; border-color: var(--success);
-}
 .ui-cw-saved {
   font-size: 0.72rem; color: var(--text-mute); white-space: nowrap;
   align-self: center;
@@ -4937,11 +4901,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
 }
-.ui-cw-rev-btn {
-  padding: 0.25rem 0.5rem !important; min-height: 0; min-width: 0;
-  font-size: 0.78rem;
-}
-.ui-cw-rev-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .ui-cw-rev-ind {
   font-size: 0.72rem; color: var(--text-mute);
   font-variant-numeric: tabular-nums;
@@ -4999,7 +4958,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   text-transform: uppercase; letter-spacing: 0.04em;
   border-bottom: 1px solid var(--border);
 }
-.ui-cw-chat-h .ui-row-btn { padding: 0.25rem 0.55rem; font-size: 0.72rem; min-height: 0; min-width: 0; }
 /* Reference picker in the chat header — undo the header's uppercase styling
  * so source/system names render as-is, and keep long names from blowing out
  * the header row. */
@@ -5137,10 +5095,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-cw-chat-input:focus { border-color: var(--accent); }
 .ui-cw-chat-input-area .ui-row-btn { flex: 1 1 auto; }
-.ui-cw-chat-input-area .ui-row-btn.primary {
-  background: var(--accent); color: var(--text-on-accent, #1a1a1a);
-  border-color: var(--accent); font-weight: 600;
-}
 
 /* Editor wrap stacks: [code editor (flex)] over [context section]. */
 .ui-cw-editor-wrap { flex-direction: column; }
@@ -5199,9 +5153,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-cw-ctx-actions { display: inline-flex; align-items: center; gap: 0.35rem; margin-left: auto; }
 .ui-cw-ctx-btn {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 4px;
-  padding: 0.2rem 0.5rem; font-size: 0.72rem; cursor: pointer;
-  font-family: inherit;
+  border: 1px solid var(--border); cursor: pointer;
 }
 .ui-cw-ctx-btn:hover { color: var(--text); border-color: var(--text-mute); }
 .ui-cw-ctx-current { font-size: 0.72rem; color: var(--accent); margin-left: 0.4rem; font-style: italic; }
@@ -5397,10 +5349,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: flex; flex-wrap: wrap; gap: 0.45rem; justify-content: flex-end;
   margin-top: 0.6rem;
 }
-.ui-cw-modal-btns .ui-row-btn.primary {
-  background: var(--accent); color: var(--text-on-accent, #1a1a1a);
-  border-color: var(--accent); font-weight: 600;
-}
 
 .ui-cw-var-inputs { display: flex; flex-direction: column; gap: 0.5rem; }
 .ui-cw-var-row {
@@ -5443,12 +5391,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-cw-list-btn {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 0.3rem 0.55rem; font-size: 0.78rem; cursor: pointer;
-  font-family: inherit; flex-shrink: 0;
+  border: 1px solid var(--border); cursor: pointer; flex-shrink: 0;
 }
 .ui-cw-list-btn:hover { color: var(--text); border-color: var(--text-mute); }
-.ui-cw-list-btn.danger { width: 1.8rem; height: 1.8rem; padding: 0; }
+.ui-cw-list-btn.danger { width: var(--btn-h-sm); padding: 0; }
 .ui-cw-list-btn.danger:hover { color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
 .ui-cw-empty {
   font-size: 0.85rem; color: var(--text-mute);
@@ -5562,20 +5508,19 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
-.ui-tw-titlebar .ui-row-btn { padding: 0.4rem 0.85rem; min-height: 0; min-width: 0; font-size: 0.82rem; }
 
 /* "More" menu — anchored popover that holds less-frequent actions
  * (Suggest title, Generate image, etc) so the titlebar doesn't get
- * crowded. Shows below + right-aligned to the trigger button. */
-.ui-tw-extras-wrap { position: relative; display: inline-flex; }
+ * crowded. Placed by uiAnchorMenu (below, right-aligned to the trigger,
+ * kept on screen), so nothing here positions it. */
+.ui-tw-extras-wrap { display: inline-flex; }
 .ui-tw-extras-menu {
-  position: absolute; top: calc(100% + 4px); right: 0;
-  min-width: 180px;
+  min-width: 180px; max-width: calc(100vw - 8px);
   background: var(--bg-1); border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-  padding: 0.25rem; z-index: 50;
-  display: flex; flex-direction: column;
+  padding: 0.25rem;
+  flex-direction: column;
 }
 .ui-tw-extras-item {
   background: transparent; border: none;
@@ -5948,8 +5893,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-chat-side-ren { right: 2.7rem; }
   .ui-chat-side-item.ui-chat-side-item-renable { padding-right: 5.2rem; }
   .ui-chat-side-close { width: var(--tap, 44px); height: var(--tap, 44px); }
-  .ui-agent-mode, .ui-chat-mode { min-height: 36px; }
-  .ui-agent-top-bundle .ui-agent-modes-in-bundle .ui-row-btn { min-height: 36px; }
   .ui-toolbar-menu > button { min-height: 40px; }
   .ui-tab { min-height: 36px; }
   /* The info mark stays small to look at; its hit area grows invisibly. */

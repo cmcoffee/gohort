@@ -188,14 +188,21 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     display: flex; flex-direction: column; align-items: center;
     padding: 80px 20px;
   }
+  /* The masthead: the favicon's three squares in block characters beside the
+     name in box-drawing letters. Left-aligned inside a centred block, because
+     centring each line on its own slides rows of unequal length against each
+     other. Sized so its 33 columns fit a 360px phone at 1rem. */
   .ascii-logo {
-    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
-    font-size: 1rem; line-height: 1.15; white-space: pre; letter-spacing: 0.02em;
-    margin-bottom: 0.5rem; text-align: center;
-    background: linear-gradient(180deg, #f0f6fc 0%, #30363d 100%);
+    font-family: 'SF Mono', ui-monospace, Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 1.25rem; line-height: 1; white-space: pre; letter-spacing: 0;
+    margin-bottom: 0.75rem; text-align: left;
+    background: linear-gradient(180deg, #f0f6fc 10%, #8b949e 110%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     background-clip: text;
   }
+  .ascii-logo .m1 { -webkit-text-fill-color: var(--accent, #6366f1); }
+  .ascii-logo .m2 { -webkit-text-fill-color: color-mix(in srgb, var(--accent, #6366f1) 55%, var(--bg-0, #0d1117)); }
+  @media (max-width: 640px) { .ascii-logo { font-size: 1rem; } }
   .subtitle { color: #8b949e; margin-bottom: 3rem; font-size: 1rem; }
   /* A notice is a thing to DO, so it reads as one: an accent edge, the
      sentence, and the button that resolves it. Sized to the grid so it sits
@@ -410,7 +417,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   .card:hover, .auth-link:hover, .live-item:hover { border-color: var(--accent); }
   .auth-link:hover { color: var(--text-hi); }
   .live-badge.running { background: var(--success); }
-  .ascii-logo { background: linear-gradient(180deg, var(--text-hi) 0%, var(--border) 100%); -webkit-background-clip: text; background-clip: text; }
+  .ascii-logo { background: linear-gradient(180deg, var(--text-hi) 10%, var(--text-mute) 110%); -webkit-background-clip: text; background-clip: text; }
   /* A bell that is always lit is a bell nobody reads. Muted until there is
      something unread, and then it carries the number. */
   .bell {
@@ -453,12 +460,11 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 </head>
 <body>
   %AUTH%
-  <div class="ascii-logo">
-  ____       _                _
- / ___| ___ | |__   ___  _ __| |_
-| |  _ / _ \| '_ \ / _ \| '__| __|
-| |_| | (_) | | | | (_) | |  | |_
- \____|\___/|_| |_|\___/|_|   \__|</div>
+  <div class="ascii-logo"><span class="m1">    ████    </span>
+<span class="m1">    ████    </span>   ╔═╗╔═╗╦ ╦╔═╗╦═╗╔╦╗
+<span class="m2">▄▄▄▄    ▄▄▄▄</span>   ║ ╦║ ║╠═╣║ ║╠╦╝ ║ 
+<span class="m2">████    ████</span>   ╚═╝╚═╝╩ ╩╚═╝╩╚═ ╩ 
+<span class="m2">▀▀▀▀    ▀▀▀▀</span></div>
   <p class="subtitle">Agent Dashboard</p>
   %NOTICES%
   <div class="grid">%CARDS%</div>

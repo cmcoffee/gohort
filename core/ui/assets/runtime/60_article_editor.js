@@ -250,9 +250,13 @@
         });
         extrasMenu.appendChild(entry);
       });
+      // Anchored by uiAnchorMenu so it stays on screen: hung from the
+      // button's right edge, it ran off a phone's left side whenever the
+      // titlebar wrapped and put More at the start of a row.
+      var extrasAnchor = window.uiAnchorMenu(extrasBtn, extrasMenu, {align: 'right', display: 'flex'});
       extrasBtn.addEventListener('click', function(ev) {
         ev.stopPropagation();
-        extrasMenu.style.display = extrasMenu.style.display === 'none' ? 'block' : 'none';
+        extrasAnchor.toggle();
       });
       document.addEventListener('click', function(ev) {
         if (extrasMenu.style.display === 'none') return;
@@ -298,7 +302,7 @@
     if (assistBtn) titleBar.appendChild(assistBtn);
     actionButtons.forEach(function(btn){ titleBar.appendChild(btn); });
     if (extrasBtn) {
-      var extrasWrap = el('span', {class: 'ui-tw-extras-wrap'}, [extrasBtn, extrasMenu]);
+      var extrasWrap = el('span', {class: 'ui-tw-extras-wrap'}, [extrasBtn]);
       titleBar.appendChild(extrasWrap);
     }
     titleBar.appendChild(saveBtn);

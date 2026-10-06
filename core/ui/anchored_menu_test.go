@@ -240,3 +240,69 @@ func TestActionListRejoinsARunInProgress(t *testing.T) {
 		t.Error("the arrival probe must not fight a run this page already started")
 	}
 }
+
+// Vertically the menu fits the room it has: below the toggle, scrolling inside
+// itself when taller than that, and upward only when it does not fit below and
+// there is more room above. Scrolling its own list does not close it; only the
+// toggle moving does.
+func TestAnchoredMenuFitsTheScreenVertically(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not available")
+	}
+	src := readRuntimeFile(t, "00_prelude.js")
+	i := strings.Index(src, "window.uiAnchorMenu = function(")
+	if i < 0 {
+		t.Fatal("uiAnchorMenu is gone")
+	}
+	end := strings.Index(src[i:], "\n  };")
+	if end < 0 {
+		t.Fatal("could not bound uiAnchorMenu")
+	}
+	fn := src[i : i+end+len("\n  };")]
+
+	harness := `
+var onScroll = null;
+global.window = {innerWidth: 400, innerHeight: 600, addEventListener: function(ev, fn) {
+  if (ev === 'scroll') onScroll = fn;
+}};
+global.document = {body: {appendChild: function() {}}};
+var inside = {};
+function stubMenu(w, h) {
+  return {style: {}, offsetWidth: w, offsetHeight: h,
+          contains: function(n) { return n === inside; }};
+}
+function stubToggle(rect) { return {getBoundingClientRect: function() { return rect; }}; }
+` + fn + `
+
+// A toggle near the bottom of a phone screen opens the menu upward.
+var up = stubMenu(200, 300);
+var a = window.uiAnchorMenu(stubToggle({left: 20, right: 80, top: 530, bottom: 560}), up);
+a.open();
+if (up.style.top !== '226px') throw new Error('did not open upward: ' + up.style.top);
+if (up.style.maxHeight !== '522px') throw new Error('upward cap wrong: ' + up.style.maxHeight);
+
+// A tall menu under a toggle at the top stays below and scrolls inside itself.
+var tall = stubMenu(200, 900);
+var b = window.uiAnchorMenu(stubToggle({left: 20, right: 80, top: 20, bottom: 50}), tall);
+b.open();
+if (tall.style.top !== '54px') throw new Error('should open downward: ' + tall.style.top);
+if (tall.style.maxHeight !== '542px') throw new Error('not capped to the room below: ' + tall.style.maxHeight);
+if (tall.style.overflowY !== 'auto') throw new Error('a capped menu must scroll');
+
+// Scrolling inside the menu leaves it open; a page scroll closes it.
+onScroll({target: inside});
+if (!b.isOpen()) throw new Error('scrolling the menu list closed it');
+onScroll({target: {}});
+if (b.isOpen()) throw new Error('a page scroll should close it');
+
+console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "anchor_v.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("node", tmp).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("uiAnchorMenu does not fit vertically:\n%s", out)
+	}
+}

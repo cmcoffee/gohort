@@ -55,6 +55,9 @@ function el(tag, attrs, kids) {
           contains: function() { return false; }};
 }
 global.document = {addEventListener: function() {}};
+global.window = {uiAnchorMenu: function(toggle, menu) {
+  return {open: function() { menu.style.display = 'flex'; }};
+}};
 function clearOpenTopbarMenu() {}
 function setOpenTopbarMenu() {}
 function refreshChannelBadges() {}
