@@ -87,6 +87,12 @@ toolbox feeds, and any future tool that declares `CapNetwork`. Then:
 
 Default-on by capability, opt-out by name. Not the reverse.
 
+**App agents always scan** (v0.7.383, `scansToolResults`): an agent an app
+registers (Scribe's Guide Author, Servitor's investigator) scans whatever its
+stored switch says. The switch lived on orchestrate's Security page, which
+app agents are not set up on, so it was off for all of them, and they are the
+agents that read outside documents for a living. See `docs/app-agents.md`.
+
 ## Where it runs
 
 Same site as the fence, `wrapToolsForActivity` (`runner.go:3225-3245`), on the raw handler,
