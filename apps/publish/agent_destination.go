@@ -140,10 +140,12 @@ func (d *agentDest) Publish(ctx context.Context, user string, req docs.PublishRe
 	if !ok {
 		return docs.PublishResult{}, fmt.Errorf("this destination is no longer configured")
 	}
+	docs.PublishStep(ctx, "Handed to the agent %s", a.Agent)
 	said, err := docs.PublishViaAgent(ctx, user, a.Agent, agentInstruction(a, req))
 	if err != nil {
 		return docs.PublishResult{}, err
 	}
+	docs.PublishStep(ctx, "The agent said: %s", clipToLabel(said))
 	Log("[publish.agent] user=%q destination=%q agent=%q published %q",
 		user, d.slug, a.Agent, req.Title)
 	// The agent's own account of what it did becomes the "where it went" line,

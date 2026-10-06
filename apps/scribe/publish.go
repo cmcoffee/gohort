@@ -184,33 +184,21 @@ func (T *Scribe) handleRepublish(w http.ResponseWriter, r *http.Request, udb Dat
 		http.Error(w, "This guide has not been published there yet: use Publish to choose where it should go.", http.StatusBadRequest)
 		return
 	}
-	res, err := docs.PublishDocument(r.Context(), user, kind, docs.PublishRequest{
+	if j, running := currentPublishJob(g.ID); running && !j.Done {
+		http.Error(w, "This guide is already being published to "+j.Target+".", http.StatusConflict)
+		return
+	}
+	// A job like any publish: it outlives the request, the dialog follows its
+	// steps, and a dialog opened mid-run rejoins it. It used to run on the
+	// request, a dead button for as long as the publish took.
+	where := firstNonEmpty(prev.TargetTitle, prev.Kind)
+	runPublishJob(r, g, ownerUDB, user, kind, where, docs.PublishRequest{
 		Target:     prev.Target,
 		Title:      prev.Title,
 		Doc:        publishDoc(g),
 		ExternalID: prev.ExternalID,
 		Version:    prev.Version,
 		Answers:    prev.Answers,
-	})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	cur, ok := loadGuide(ownerUDB, g.ID)
-	if !ok {
-		http.Error(w, "the guide no longer exists", http.StatusNotFound)
-		return
-	}
-	prev.ExternalID, prev.URL, prev.Version = res.ExternalID, res.URL, res.Version
-	prev.At = now()
-	cur.Published = docs.UpsertPublishRecord(cur.Published, prev)
-	where := firstNonEmpty(prev.TargetTitle, prev.Kind)
-	saveGuideRev(ownerUDB, cur, "Published to "+where)
-
-	writeJSON(w, map[string]any{
-		"ok":      true,
-		"url":     res.URL,
-		"version": res.Version,
-		"message": fmt.Sprintf("Updated %q in %s.", prev.Title, where),
-	})
+	}, prev)
+	writeJSON(w, map[string]any{"started": true, "target": where})
 }

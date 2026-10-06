@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -77,7 +78,12 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 		sess := &ToolSession{Username: user}
 		tools, err := publishIntegrationTools(sess, credential)
 		if err != nil {
+			docs.PublishStep(ctx, "Could not start: %v", err)
 			return "", "", err
+		}
+		docs.PublishStep(ctx, "Publishing through %s, with %d of its tools", strings.TrimPrefix(credential, docs.MCPIntegrationPrefix), len(tools))
+		for i := range tools {
+			tools[i] = publishStepReported(ctx, tools[i])
 		}
 		var url, note string
 		reported, ok := false, false
@@ -97,6 +103,12 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 				note = strings.TrimSpace(stringArg(args, "note"))
 				ok, _ = args["ok"].(bool)
 				reported = true
+				docs.PublishStep(ctx, "Reported back: %s%s", chFirst(note, "no note"), func() string {
+					if url != "" {
+						return " (" + url + ")"
+					}
+					return ""
+				}())
 				return "Recorded. Reply with the same note and stop.", nil
 			},
 		}
@@ -109,6 +121,7 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 			return "", "", err
 		}
 		if !reported {
+			docs.PublishStep(ctx, "Ended without reporting where the document landed")
 			said := ""
 			if resp != nil {
 				said = strings.TrimSpace(resp.Content)
@@ -158,3 +171,60 @@ func publishIntegrationTools(sess *ToolSession, credential string) ([]AgentToolD
 }
 
 var publishWithheldRe = regexp.MustCompile(`(?i)(?:^|[_.\-])(?:delete|remove|archive|purge|trash|destroy)`)
+
+// publishStepReported wraps a publish run's tool so each call is a step the
+// person watching can read (docs.PublishStep): what was called with what, and
+// how it came back. The steps go to ctx, the publish's, which outlives the
+// loop's own per-call contexts.
+func publishStepReported(ctx context.Context, td AgentToolDef) AgentToolDef {
+	h := td.Handler
+	if h == nil {
+		return td
+	}
+	name := td.Tool.Name
+	td.Handler = func(c context.Context, args map[string]any) (string, error) {
+		docs.PublishStep(ctx, "%s %s", name, publishArgsBrief(args))
+		out, err := h(c, args)
+		if err != nil {
+			docs.PublishStep(ctx, "  failed: %s", clipStep(firstLineOf(err.Error()), 200))
+		} else {
+			docs.PublishStep(ctx, "  returned: %s", clipStep(firstLineOf(out), 200))
+		}
+		return out, err
+	}
+	return td
+}
+
+// publishArgsBrief is a tool call's arguments as one short line: each value
+// clipped, and a long one (the page body) said by its size.
+func publishArgsBrief(args map[string]any) string {
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var parts []string
+	for _, k := range keys {
+		v := strings.TrimSpace(fmt.Sprint(args[k]))
+		if len(v) > 80 {
+			v = fmt.Sprintf("(%d characters)", len(v))
+		}
+		parts = append(parts, k+"="+v)
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+func firstLineOf(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return s
+}
+
+func clipStep(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}

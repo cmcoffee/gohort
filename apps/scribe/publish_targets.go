@@ -33,6 +33,63 @@ type publishJob struct {
 	Message string    `json:"message,omitempty"`
 	URL     string    `json:"url,omitempty"`
 	Ended   time.Time `json:"ended,omitempty"`
+	// Steps are what the publish did, as it did them (docs.PublishStep):
+	// shown under the spinner while it runs and kept after, so a publish
+	// that ends "done" without doing what was meant leaves something to read.
+	Steps []publishJobStep `json:"steps,omitempty"`
+}
+
+// publishJobStep is one step and when it happened, in seconds from the start.
+type publishJobStep struct {
+	At   int    `json:"at"`
+	Text string `json:"text"`
+}
+
+// publishJobMaxSteps bounds a job's steps: a run that loops is still shown,
+// its start and its latest, without growing without end.
+const publishJobMaxSteps = 200
+
+// step records one step of j. Safe from the publish's goroutines.
+func (j *publishJob) step(text string) {
+	publishJobsMu.Lock()
+	defer publishJobsMu.Unlock()
+	if len(j.Steps) >= publishJobMaxSteps {
+		j.Steps = append(j.Steps[:publishJobMaxSteps/2], j.Steps[len(j.Steps)-publishJobMaxSteps/2+1:]...)
+	}
+	j.Steps = append(j.Steps, publishJobStep{At: int(time.Since(j.Started).Seconds()), Text: text})
+}
+
+// runPublishJob publishes req to kind in the background as g's publish job,
+// reporting its steps, and files rec (filled in with where it landed) on the
+// guide when it succeeds. It does not wait: the job is what the Publish
+// dialog follows, and rejoins when it opens mid-run.
+func runPublishJob(r *http.Request, g Guide, ownerUDB Database, user, kind, where string, req docs.PublishRequest, rec docs.PublishRecord) {
+	job := &publishJob{Target: where, Started: time.Now()}
+	publishJobsMu.Lock()
+	publishJobs[g.ID] = job
+	publishJobsMu.Unlock()
+	// Not on the request's context: the publish outlives the request, and a
+	// closed modal must not cancel a post halfway through.
+	ctx := docs.WithPublishSteps(context.WithoutCancel(r.Context()), job.step)
+	go func() {
+		res, err := docs.PublishDocument(ctx, user, kind, req)
+		publishJobsMu.Lock()
+		defer publishJobsMu.Unlock()
+		job.Done, job.Ended = true, time.Now()
+		if err != nil {
+			job.Message = err.Error()
+			return
+		}
+		job.OK, job.URL = true, res.URL
+		job.Message = chFirst(res.Label, "Published to "+where+".")
+		cur, ok := loadGuide(ownerUDB, g.ID)
+		if !ok {
+			return
+		}
+		rec.ExternalID, rec.URL, rec.Version, rec.At = res.ExternalID, res.URL, res.Version, now()
+		cur.Published = docs.UpsertPublishRecord(cur.Published, rec)
+		saveGuideRev(ownerUDB, cur, "Published to "+where)
+	}()
 }
 
 // publishJobKeep is how long an outcome stays for a modal that opens late.
@@ -54,7 +111,9 @@ func currentPublishJob(guideID string) (publishJob, bool) {
 		delete(publishJobs, guideID)
 		return publishJob{}, false
 	}
-	return *j, true
+	out := *j
+	out.Steps = append([]publishJobStep(nil), j.Steps...)
+	return out, true
 }
 
 // handlePublishTo starts a publish to one target: POST ?id=<guide> with
@@ -104,39 +163,12 @@ func (T *Scribe) handlePublishTo(w http.ResponseWriter, r *http.Request, udb Dat
 	}
 	title := chFirst(strings.TrimSpace(body.Title), g.Title)
 	prev, _ := docs.FindPublishRecord(g.Published, spec.Kind)
-	job := &publishJob{Target: spec.Target.Title, Started: time.Now()}
-	publishJobsMu.Lock()
-	publishJobs[g.ID] = job
-	publishJobsMu.Unlock()
-
-	// Not on the request's context: the publish outlives the request, and a
-	// closed modal must not cancel a post halfway through.
-	ctx := context.WithoutCancel(r.Context())
-	doc := publishDoc(g)
-	go func() {
-		res, err := docs.PublishDocument(ctx, user, spec.Kind, docs.PublishRequest{
-			Target: spec.Target.ID, Title: title, Doc: doc, Answers: body.Answers,
+	runPublishJob(r, g, ownerUDB, user, spec.Kind, spec.Target.Title,
+		docs.PublishRequest{
+			Target: spec.Target.ID, Title: title, Doc: publishDoc(g), Answers: body.Answers,
 			ExternalID: prev.ExternalID, Version: prev.Version,
-		})
-		publishJobsMu.Lock()
-		defer publishJobsMu.Unlock()
-		job.Done, job.Ended = true, time.Now()
-		if err != nil {
-			job.Message = err.Error()
-			return
-		}
-		job.OK, job.URL = true, res.URL
-		job.Message = chFirst(res.Label, "Published to "+spec.Target.Title+".")
-		cur, ok := loadGuide(ownerUDB, g.ID)
-		if !ok {
-			return
-		}
-		cur.Published = docs.UpsertPublishRecord(cur.Published, docs.PublishRecord{
-			Kind: spec.Kind, Target: spec.Target.ID, TargetTitle: spec.Target.Title, Title: title,
-			ExternalID: res.ExternalID, URL: res.URL, Version: res.Version, At: now(), Answers: body.Answers,
-		})
-		saveGuideRev(ownerUDB, cur, "Published to "+spec.Target.Title)
-	}()
+		},
+		docs.PublishRecord{Kind: spec.Kind, Target: spec.Target.ID, TargetTitle: spec.Target.Title, Title: title, Answers: body.Answers})
 	writeJSON(w, map[string]any{"started": true, "target": spec.Target.Title})
 }
 
@@ -157,6 +189,7 @@ func (T *Scribe) handlePublishJob(w http.ResponseWriter, r *http.Request, udb Da
 		"target": j.Target, "done": j.Done, "ok": j.OK, "message": j.Message, "url": j.URL,
 		"elapsed": int(time.Since(j.Started).Seconds()),
 		"took":    fmt.Sprintf("%ds", int(j.Ended.Sub(j.Started).Seconds())),
+		"steps":   j.Steps,
 	})
 }
 

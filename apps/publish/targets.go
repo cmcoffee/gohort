@@ -253,7 +253,11 @@ func (d *targetsDest) Publish(ctx context.Context, user string, req docs.Publish
 	var said, url string
 	var err error
 	if t.Uses == "agent" {
+		docs.PublishStep(ctx, "Handed to the agent %s", t.Agent)
 		said, err = docs.PublishViaAgent(ctx, user, t.Agent, instruction)
+		if err == nil {
+			docs.PublishStep(ctx, "The agent said: %s", clipToLabel(said))
+		}
 	} else {
 		said, url, err = docs.PublishViaCredential(ctx, user, t.Credential, instruction)
 	}

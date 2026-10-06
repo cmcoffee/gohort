@@ -744,6 +744,18 @@ const guidePublishAction = `function(ctx){
             view.innerHTML = '';
             var line = el('div', {class:'guide-pub-status'});
             view.appendChild(line);
+            // What the publish is doing, step by step, under the spinner;
+            // kept when it ends, so an outcome can be checked against what
+            // was actually done.
+            var steps = el('ol', {class:'guide-pub-steps'});
+            view.appendChild(steps);
+            function showSteps(list){
+              steps.innerHTML = '';
+              (list || []).forEach(function(st){
+                steps.appendChild(el('li', {}, [el('span', {class:'guide-pub-mute', text: st.at + 's '}), document.createTextNode(st.text)]));
+              });
+              steps.style.display = (list && list.length) ? '' : 'none';
+            }
             var frames = ['\u280b','\u2819','\u2839','\u2838','\u283c','\u2834','\u2826','\u2827','\u2807','\u280f'], fi = 0, last = null;
             var spin = setInterval(function(){
               fi = (fi + 1) % frames.length;
@@ -753,6 +765,7 @@ const guidePublishAction = `function(ctx){
               fetch('publish/job?' + qp, {credentials:'same-origin', cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
                 if (j.none){ clearInterval(spin); showList(); return; }
                 last = j;
+                showSteps(j.steps);
                 if (!j.done){ setTimeout(poll, 2000); return; }
                 clearInterval(spin);
                 line.textContent = (j.ok ? 'Published to ' : 'Could not publish to ') + j.target + ' (' + j.took + ').';
@@ -827,11 +840,11 @@ const guidePublishAction = `function(ctx){
                   startPublish({kind: p.kind, target: p.target, title: p.title, answers: p.answers || {}});
                   return;
                 }
-                again.disabled = true; again.textContent = 'Updating...';
+                again.disabled = true;
                 fetch('publish/again?' + qp + '&kind=' + encodeURIComponent(p.kind), {method:'POST', credentials:'same-origin'})
                   .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t; }); })
-                  .then(function(){ again.textContent = 'Updated'; if (window.uiInvalidate) window.uiInvalidate('guides'); })
-                  .catch(function(err){ again.disabled = false; again.textContent = 'Update';
+                  .then(function(){ followJob(); })
+                  .catch(function(err){ again.disabled = false;
                     window.uiAlert('Could not update it: ' + (err && err.message || err)); });
               });
               row.appendChild(again);
@@ -877,6 +890,8 @@ const guidePublishCSS = `.guide-pub-row { display: flex; align-items: center; ga
 .guide-pub-target:hover { border-color: var(--accent); }
 .guide-pub-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
 .guide-pub-status { font-size: 0.95rem; color: var(--text-hi); padding: 0.6rem 0; }
+.guide-pub-steps { margin: 0 0 0.6rem; padding-left: 1.4rem; max-height: 16rem; overflow-y: auto; font-size: 0.8rem; line-height: 1.45; color: var(--text); font-family: var(--mono, ui-monospace, monospace); word-break: break-word; }
+.guide-pub-steps li { margin: 0.1rem 0; }
 .guide-pub-ok { color: var(--ok, #3fb950); }
 .guide-pub-fail { color: var(--danger, #f85149); }
 .guide-pub-chat { height: 52vh; min-height: 20rem; display: flex; flex-direction: column; margin-top: 0.4rem; }

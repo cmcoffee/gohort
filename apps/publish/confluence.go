@@ -110,9 +110,14 @@ func (d *confluenceDest) Publish(ctx context.Context, user string, req docs.Publ
 		return docs.PublishResult{}, fmt.Errorf("the document is empty: there's nothing to publish")
 	}
 
+	if !req.Nav.Empty() {
+		docs.PublishStep(ctx, "Rebuilt its navigation for Confluence: %d link(s) to its own sections%s", len(req.Nav.Links), map[bool]string{true: ", table of contents as Confluence's", false: ""}[req.Nav.Contents != ""])
+	}
 	if strings.TrimSpace(req.ExternalID) != "" {
+		docs.PublishStep(ctx, "Updating Confluence page %s", req.ExternalID)
 		return d.update(user, cfg, req, storage)
 	}
+	docs.PublishStep(ctx, "Creating a page in space %s", req.Target)
 
 	payload, err := json.Marshal(map[string]any{
 		"spaceId": req.Target,
