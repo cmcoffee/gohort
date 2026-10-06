@@ -11,8 +11,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
-	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -173,45 +173,94 @@ func publishIntegrationTools(sess *ToolSession, credential string) ([]AgentToolD
 var publishWithheldRe = regexp.MustCompile(`(?i)(?:^|[_.\-])(?:delete|remove|archive|purge|trash|destroy)`)
 
 // publishStepReported wraps a publish run's tool so each call is a step the
-// person watching can read (docs.PublishStep): what was called with what, and
-// how it came back. The steps go to ctx, the publish's, which outlives the
-// loop's own per-call contexts.
+// person watching can read (docs.PublishStep): what it is doing, in words, and
+// what to, and why it failed if it did. The steps go to ctx, the publish's,
+// which outlives the loop's own per-call contexts.
+//
+// Worded for a person, not traced for a developer. The steps used to be the
+// raw tool name, every argument, and the first line of each response, which
+// read as noise: a cloud id, "returned: {", and short lines of the document
+// itself (a command from the guide passed through untouched).
 func publishStepReported(ctx context.Context, td AgentToolDef) AgentToolDef {
 	h := td.Handler
 	if h == nil {
 		return td
 	}
-	name := td.Tool.Name
+	label := publishStepLabel(td.Tool)
 	td.Handler = func(c context.Context, args map[string]any) (string, error) {
-		docs.PublishStep(ctx, "%s %s", name, publishArgsBrief(args))
+		line := label
+		if what := publishStepTarget(args); what != "" {
+			line += " \u00b7 " + what
+		}
+		docs.PublishStep(ctx, "%s", line)
 		out, err := h(c, args)
 		if err != nil {
 			docs.PublishStep(ctx, "  failed: %s", clipStep(firstLineOf(err.Error()), 200))
-		} else {
-			docs.PublishStep(ctx, "  returned: %s", clipStep(firstLineOf(out), 200))
 		}
 		return out, err
 	}
 	return td
 }
 
-// publishArgsBrief is a tool call's arguments as one short line: each value
-// clipped, and a long one (the page body) said by its size.
-func publishArgsBrief(args map[string]any) string {
-	keys := make([]string, 0, len(args))
-	for k := range args {
-		keys = append(keys, k)
+// publishStepLabel is what a tool does, for the step list: the first sentence
+// of its description, which its author wrote to say exactly that. Tool names
+// arrive lowercased and prefixed ("atlassian_getconfluencepage") with no word
+// boundaries left to split on, so the name is only the fallback.
+func publishStepLabel(t Tool) string {
+	d := strings.TrimSpace(firstLineOf(t.Description))
+	if i := strings.Index(d, ". "); i > 0 {
+		d = d[:i]
 	}
-	sort.Strings(keys)
+	d = strings.TrimSuffix(d, ".")
+	if d == "" {
+		return t.Name
+	}
+	return clipStep(d, 80)
+}
+
+// publishStepTargetKeys are the arguments that name what a call acts on, in
+// the order they are worth showing. Anything else (a cloud or site id, the
+// body, formatting options) is plumbing or the document itself.
+var publishStepTargetKeys = []struct{ key, word string }{
+	{"title", ""}, {"pagetitle", ""}, {"name", ""},
+	{"spacekey", "space"}, {"space", "space"},
+	{"pageid", "page"}, {"page_id", "page"}, {"parentid", "under page"},
+	{"method", ""}, {"path", ""}, {"url", ""},
+}
+
+// publishStepTarget is what a call acts on, from its identifying arguments: a
+// title quoted, a page or space by id, a method and path. Only a short single
+// line is ever shown, so the document's own text cannot leak into the list.
+func publishStepTarget(args map[string]any) string {
+	low := map[string]string{}
+	for k, v := range args {
+		low[strings.ToLower(k)] = strings.TrimSpace(fmt.Sprint(v))
+	}
 	var parts []string
-	for _, k := range keys {
-		v := strings.TrimSpace(fmt.Sprint(args[k]))
-		if len(v) > 80 {
-			v = fmt.Sprintf("(%d characters)", len(v))
+	for _, tk := range publishStepTargetKeys {
+		v, ok := low[tk.key]
+		if !ok || v == "" || len(v) > 80 || strings.ContainsAny(v, "\n\r") {
+			continue
 		}
-		parts = append(parts, k+"="+v)
+		switch {
+		case tk.key == "title" || tk.key == "pagetitle" || tk.key == "name":
+			parts = append(parts, "\u201c"+v+"\u201d")
+		case tk.key == "url":
+			// The path, not the host or query: what a person reads as "where".
+			if u, err := url.Parse(v); err == nil && u.Path != "" {
+				v = u.Path
+			}
+			parts = append(parts, v)
+		case tk.word != "":
+			parts = append(parts, tk.word+" "+v)
+		default:
+			parts = append(parts, v)
+		}
+		if len(parts) == 2 {
+			break
+		}
 	}
-	return "(" + strings.Join(parts, ", ") + ")"
+	return strings.Join(parts, " ")
 }
 
 func firstLineOf(s string) string {
