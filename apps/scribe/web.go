@@ -1,5 +1,5 @@
 // Scribe HTTP surface: the workbench page, the document/section data endpoints,
-// and the chat bridge (with the section / article co-author tools injected into
+// and the chat bridge (with the section co-author tools injected into
 // the bound Guide Author agent's run).
 package scribe
 
@@ -179,16 +179,16 @@ func (T *Scribe) handleGuide(w http.ResponseWriter, r *http.Request, udb Databas
 			"own": canManage, "can_edit": canEdit, "shared": g.Shared,
 			"image_url": g.ImageURL,
 		}
-		// The editable source rides only for an article the requester may
-		// edit: its presence is what enables the viewer's Edit toggle (see
-		// ui.WorkbenchPanel.EditURL). A guide is edited section by section.
-		if g.isArticle() && canEdit {
-			rec["markdown"] = g.body()
+		// The whole guide as one markdown page, for anyone who may edit it:
+		// its presence is what enables the viewer's Edit toggle (see
+		// ui.WorkbenchPanel.EditURL). Each ## heading is a section.
+		if canEdit {
+			rec["markdown"] = guideMarkdown(g)
 		}
 		writeJSON(w, rec)
 	case http.MethodDelete:
 		if !canManage {
-			http.Error(w, "only the owner can delete this "+g.kindNoun(), http.StatusForbidden)
+			http.Error(w, "only the owner can delete this guide", http.StatusForbidden)
 			return
 		}
 		// The guide's research collection is its OWNER's, so it is the owner's
@@ -215,23 +215,12 @@ func (T *Scribe) handleNew(w http.ResponseWriter, r *http.Request, udb Database,
 	var body struct {
 		Title    string `json:"title"`
 		Subtitle string `json:"subtitle"`
-		Kind     string `json:"kind"`     // "" | "guide" | "article"
-		Template string `json:"template"` // article only: a MarkdownDocTemplates name for the starting body
+		Template string `json:"template"` // a MarkdownDocTemplates name for the starting sections
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	if strings.TrimSpace(body.Kind) == KindArticle {
-		g := newArticle(user, body.Title, templateBody(body.Template))
-		g.Subtitle = strings.TrimSpace(body.Subtitle)
-		g = saveGuideRev(udb, g, "Created article")
-		writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
-		return
-	}
-	g := saveGuideRev(udb, Guide{
-		ID:       newID(),
-		Title:    firstNonEmpty(strings.TrimSpace(body.Title), "Untitled guide"),
-		Subtitle: strings.TrimSpace(body.Subtitle),
-		Owner:    user,
-	}, "Created guide")
+	g := newDocument(user, body.Title, templateBody(body.Template), false)
+	g.Subtitle = strings.TrimSpace(body.Subtitle)
+	g = saveGuideRev(udb, g, "Created guide")
 	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
 }
 
@@ -250,21 +239,15 @@ func templateBody(name string) string {
 	return ""
 }
 
-// listLabel is a document's row label in the workbench list: its title, an
-// article marker so the two kinds read apart at a glance, then any sharing
-// suffix.
+// listLabel is a document's row label in the workbench list: its title, then
+// any sharing suffix.
 func listLabel(g Guide, suffix string) string {
-	label := firstNonEmpty(g.Title, "Untitled "+g.kindNoun())
-	if g.isArticle() {
-		label += " - article"
-	}
-	return label + suffix
+	return firstNonEmpty(g.Title, "Untitled guide") + suffix
 }
 
-// handleBody is the viewer's direct-edit save for an article: POST ?id= with
-// {markdown} replaces the whole body as one revision. Guides are edited a
-// section at a time (handleSection); this refuses them so a stale client cannot
-// flatten one.
+// handleBody is the viewer's whole-guide save: POST ?id= with {markdown}, the
+// guide as one page, splits it back into sections at its ## headings and saves
+// that as one revision. A section whose title survives keeps its ID.
 func (T *Scribe) handleBody(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -277,11 +260,7 @@ func (T *Scribe) handleBody(w http.ResponseWriter, r *http.Request, udb Database
 		return
 	}
 	if !canEdit {
-		http.Error(w, "you don't have edit access to this article", http.StatusForbidden)
-		return
-	}
-	if !g.isArticle() {
-		http.Error(w, "a guide is edited section by section", http.StatusBadRequest)
+		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
 		return
 	}
 	var body struct {
@@ -291,12 +270,12 @@ func (T *Scribe) handleBody(w http.ResponseWriter, r *http.Request, udb Database
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	g.setBody(body.Markdown)
-	saveGuideRev(ownerUDB, g, "Edited article")
+	g.Sections = sectionsFromMarkdown(body.Markdown, g.Sections)
+	saveGuideRev(ownerUDB, g, "Edited as one page")
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// handleImage manages an article's header image. GET ?id= → {image_url,
+// handleImage manages a guide's header image. GET ?id= → {image_url,
 // can_generate}. POST ?id= with {url} sets one the user supplies; with
 // {generate: true} generates one from the title through the deployment's image
 // profile and stores it (a remote URL, or a data URL when the generator writes
@@ -312,7 +291,7 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 	case http.MethodGet:
 		writeJSON(w, map[string]any{
 			"image_url":    g.ImageURL,
-			"can_edit":     canEdit && g.isArticle(),
+			"can_edit":     canEdit,
 			"can_generate": ImageProfileAvailable("blog") || ImageGenerationAvailable(),
 		})
 		return
@@ -322,11 +301,7 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 		return
 	}
 	if !canEdit {
-		http.Error(w, "you don't have edit access to this article", http.StatusForbidden)
-		return
-	}
-	if !g.isArticle() {
-		http.Error(w, "only an article has a header image", http.StatusBadRequest)
+		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
 		return
 	}
 	if r.Method == http.MethodDelete {
@@ -362,9 +337,10 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 	writeJSON(w, map[string]string{"image_url": url})
 }
 
-// handleImport creates an article from an HTML page exported earlier (Scribe's
+// handleImport creates a guide from an HTML page exported earlier (Scribe's
 // own, or TechWriter's): the title comes from <title> / <h1>, the body is the
-// page body converted back to markdown. POST multipart with a "file" field →
+// page body converted back to markdown and split into sections at its ##
+// headings. It starts Private: an imported page is usually internal. POST multipart with a "file" field →
 // {id, title}.
 func (T *Scribe) handleImport(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
@@ -382,8 +358,8 @@ func (T *Scribe) handleImport(w http.ResponseWriter, r *http.Request, udb Databa
 		http.Error(w, "could not read the file", http.StatusBadRequest)
 		return
 	}
-	title, body := articleFromHTML(string(raw))
-	g := newArticle(user, title, body)
+	title, body := docFromHTML(string(raw))
+	g := newDocument(user, title, body, true)
 	g = saveGuideRev(udb, g, "Imported from HTML")
 	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
 }
@@ -427,7 +403,7 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 		})
 	case http.MethodPost:
 		if !canManage {
-			http.Error(w, "only the owner can change this "+g.kindNoun()+"'s settings", http.StatusForbidden)
+			http.Error(w, "only the owner can change this guide's settings", http.StatusForbidden)
 			return
 		}
 		var body struct {
@@ -441,7 +417,7 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		g.Title = firstNonEmpty(strings.TrimSpace(body.Title), "Untitled "+g.kindNoun())
+		g.Title = firstNonEmpty(strings.TrimSpace(body.Title), "Untitled guide")
 		g.Subtitle = strings.TrimSpace(body.Subtitle)
 		g.Private = body.Private
 		g.Shared = body.Shared
@@ -1054,13 +1030,6 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 		all := T.coauthorTools(coauthorScope{
 			Ctx: turnCtx, UDB: udb, Orch: orch, User: user, CanEdit: canEdit, Guide: guideID,
 		})
-		if g.isArticle() {
-			// An article is one body: the section kit makes no sense over it.
-			// Swap in the article kit and tell the agent how articles are
-			// written here (the house conventions TechWriter's users relied on).
-			all = T.articleTools(udb, user, guideID, all)
-			agent.OrchestratorPrompt += articleModePrompt
-		}
 		if canEdit {
 			tools = all
 		} else {
@@ -1221,7 +1190,6 @@ func guideDispatchPolicy(g Guide) (mode string, targets []string) {
 // the owner's corpus) is withheld.
 var readOnlyGuideToolNames = map[string]bool{
 	"list_sections":          true,
-	"read_article":           true,
 	"search_knowledge":       true,
 	"list_reference_sources": true,
 	"pull_reference":         true,

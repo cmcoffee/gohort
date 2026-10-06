@@ -1506,10 +1506,10 @@ func (pr *probeRun) reportTools() {
 	pr.save_to_scribe_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "save_to_scribe",
-			Description: "Save a report, runbook, findings summary, or any prose document as a new article in the user's Scribe library in gohort. This is a local save action: do NOT run anything on the appliance or search for Scribe on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
+			Description: "Save a report, runbook, findings summary, or any prose document as a new guide in the user's Scribe library in gohort. This is a local save action: do NOT run anything on the appliance or search for Scribe on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
 			Parameters: map[string]ToolParam{
 				"subject": {Type: "string", Description: "Title or subject of the document (e.g. 'Disk usage report – web01', 'MySQL slow query runbook')."},
-				"body":    {Type: "string", Description: "Full document body in markdown."},
+				"body":    {Type: "string", Description: "Full document body in markdown. Use ## headings for its main parts: each becomes a section of the guide."},
 			},
 			Required: []string{"subject", "body"},
 		},
@@ -1526,7 +1526,7 @@ func (pr *probeRun) reportTools() {
 			if err != nil {
 				return "", fmt.Errorf("save failed: %w", err)
 			}
-			return fmt.Sprintf("Saved to Scribe as the article %q (id: %s).", subject, id), nil
+			return fmt.Sprintf("Saved to Scribe as the guide %q (id: %s).", subject, id), nil
 		},
 		NeedsConfirm: false,
 	}

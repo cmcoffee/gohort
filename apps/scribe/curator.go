@@ -268,17 +268,12 @@ func (cs *curatorSession) listGuides() string {
 // editableGuides returns the user's own guides plus those shared WITH EDIT by
 // others. View-shared guides are excluded: the curator would be able to read
 // them and not write, which produces placements that fail after the decision has
-// already been made. Articles are excluded too — the curator files findings as
-// SECTIONS, and an article has one body, so a placement there would either fail
-// or quietly turn the article into something it is not.
+// already been made.
 func (cs *curatorSession) editableGuides() []Guide {
 	var out []Guide
 	seen := map[string]bool{}
 	for _, g := range listGuides(cs.udb) {
 		seen[g.ID] = true
-		if g.isArticle() {
-			continue
-		}
 		out = append(out, g)
 	}
 	for id, owner := range ListSharedOwners(cs.app.DB, sharedGuidesIndex) {
@@ -286,7 +281,7 @@ func (cs *curatorSession) editableGuides() []Guide {
 			continue
 		}
 		if oudb := UserDB(cs.app.DB, owner); oudb != nil {
-			if g, ok := loadGuide(oudb, id); ok && g.sharedForEdit() && !g.isArticle() {
+			if g, ok := loadGuide(oudb, id); ok && g.sharedForEdit() {
 				out = append(out, g)
 			}
 		}

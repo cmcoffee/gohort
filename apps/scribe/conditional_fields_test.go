@@ -6,16 +6,17 @@ import (
 	"testing"
 )
 
-// A template is a starting body for an article; a guide ignores it. The New
-// form opens on Guide, so the field starts hidden and appears for Article.
-func TestTheTemplatePickerIsForArticlesOnly(t *testing.T) {
+// A template is a starting skeleton for any new guide, so the New form offers
+// it unconditionally. It used to show only for the article kind, which no
+// longer exists; a leftover kind picker or condition would hide it again.
+func TestTheTemplatePickerIsForEveryGuide(t *testing.T) {
 	raw, err := os.ReadFile("page.go")
 	if err != nil {
 		t.Fatalf("reading the source: %v", err)
 	}
 	src := string(raw)
-	if !strings.Contains(src, `{Value: "`+KindArticle+`", Label: "Article"`) {
-		t.Fatal("the New form no longer offers the article kind under its stored value")
+	if strings.Contains(src, `{Field: "kind"`) {
+		t.Error("the New form still asks for a kind; Scribe has one kind of document")
 	}
 	idx := strings.Index(src, `{Field: "template"`)
 	if idx < 0 {
@@ -25,7 +26,7 @@ func TestTheTemplatePickerIsForArticlesOnly(t *testing.T) {
 	if end := strings.Index(line, "\n"); end >= 0 {
 		line = line[:end]
 	}
-	if !strings.Contains(line, `ShowWhen: "kind:`+KindArticle+`"`) {
-		t.Errorf("the template field must show only for articles:\n%s", line)
+	if strings.Contains(line, "ShowWhen") {
+		t.Errorf("the template field should show for every new guide:\n%s", line)
 	}
 }

@@ -1,6 +1,6 @@
 // The Scribe workbench page: document list (left) | rendered HTML document
-// (center: a guide with its table of contents, or an article with its header
-// image) | Guide Author chat (right). Built from the core/ui WorkbenchPanel
+// (center: the guide, with its header image and, once it is long enough, a
+// table of contents) | Guide Author chat (right). Built from the core/ui WorkbenchPanel
 // primitive; the document styling rides in via the page head so a document
 // reads like a formatted page.
 package scribe
@@ -19,7 +19,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 		ItemKey:   "id",
 		ItemLabel: "title",
 		ListTitle: "Documents",
-		ListEmpty: "Nothing yet: create a guide or an article.",
+		ListEmpty: "Nothing yet: create a guide.",
 		DeleteURL: "guide?id={id}",
 		NewButton: ui.ModalButton{
 			Label: "New",
@@ -28,15 +28,9 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 				PostURL:     "new",
 				SubmitLabel: "Create",
 				Fields: []ui.FormField{
-					{Field: "kind", Label: "Kind", Type: "select", Options: []ui.SelectOption{
-						{Value: "guide", Label: "Guide", Help: "Many sections with a table of contents.",
-							Detail: "The Guide Author adds and edits sections; you edit any section in place."},
-						{Value: "article", Label: "Article", Help: "One body under a title, with an optional header image. Starts private.",
-							Detail: "Type into it directly, or have the Guide Author write it."},
-					}},
 					{Field: "title", Label: "Title", Type: "text", Placeholder: "e.g. Getting Started with Kubernetes"},
 					{Field: "subtitle", Label: "Subtitle", Type: "text", Placeholder: "Optional one-line description"},
-					{Field: "template", Label: "Start from", Type: "select", Options: templateOptions(), ShowWhen: "kind:article",
+					{Field: "template", Label: "Start from", Type: "select", Options: templateOptions(),
 						Help: "A starting skeleton for a document people write repeatedly."},
 				},
 				Invalidate: []string{"guides"},
@@ -64,16 +58,18 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// them.
 			{Label: "Rules", Kind: "client", URL: "scribe_rules", Scope: "library"},
 		},
-		// Center — the rendered document (server HTML: title + ToC + sections,
-		// or title + image + body).
+		// Center — the rendered document (server HTML: title, header image,
+		// contents once there are three or more sections, sections).
 		RecordURL:  "guide?id={id}",
 		BodyField:  "html",
 		BodyIsHTML: true,
-		// Direct editing: an article's whole body in a textarea. The record
-		// carries "markdown" only for an article the user may edit, which is what
-		// enables the toggle; guides keep their per-section controls.
+		// The whole guide as one markdown page, each ## heading a section: the
+		// record carries "markdown" only for a guide the user may edit, which is
+		// what enables the toggle. "Edit all" because each section also has its
+		// own Edit.
 		EditURL:    "body?id={id}",
 		EditField:  "markdown",
+		EditLabel:  "Edit all",
 		EmptyIcon:  "📖",
 		EmptyTitle: "Nothing selected",
 		EmptyHint:  "Pick a document on the left, or create one. Then ask the assistant to draft it, or write it yourself.",
@@ -244,7 +240,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			CSS(guideSettingsCSS).
 			CSS(guideCuratorCSS).
 			CSS(guidePublishCSS).
-			CSS(scribeArticleCSS).
+			CSS(scribeImageCSS).
 			JS(guideModalElJS).
 			JS(guideSectionCode).
 			ClientAction("guides_knowledge", guideKnowledgeAction).
@@ -279,7 +275,7 @@ const scribeRulesAction = `function(ctx){
       window.uiOpenRulesPanel({url: 'rules', noun: 'document the Guide Author writes'});
 }`
 
-// scribeImportAction brings an exported HTML page back in as a new article:
+// scribeImportAction brings an exported HTML page back in as a new guide:
 // pick a file, POST it, refresh the list.
 const scribeImportAction = `function(ctx){
       var input = document.createElement('input');
@@ -294,7 +290,7 @@ const scribeImportAction = `function(ctx){
           .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); return r.json(); })
           .then(function(d){
             if (window.uiInvalidate) window.uiInvalidate('guides');
-            window.uiAlert('Imported "' + ((d && d.title) || 'article') + '". It is in the list on the left.');
+            window.uiAlert('Imported "' + ((d && d.title) || 'guide') + '". It is in the list on the left.');
           })
           .catch(function(err){ window.uiAlert('Import failed: ' + (err && err.message || err)); });
       });
@@ -330,7 +326,7 @@ const scribeImportBundleAction = `function(ctx){
       });
 }`
 
-// scribeImageAction manages an article's header image in a modal: show the
+// scribeImageAction manages a guide's header image in a modal: show the
 // current one, generate one from the title, paste a URL, or remove it.
 const scribeImageAction = `function(ctx){
       var gid = ctx.recordId;
@@ -339,7 +335,7 @@ const scribeImageAction = `function(ctx){
       fetch('image?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
         window.uiOpenSimpleModal({title:'Header image', width:'560px', mount: function(body, dlg){
           if (!d || !d.can_edit){
-            body.appendChild(el('p', {class:'guide-kn-intro', text:'Only an article you can edit has a header image.'}));
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'Only someone who can edit this guide can change its header image.'}));
             return;
           }
           var preview = el('div', {class:'scribe-img-preview'});
@@ -379,12 +375,9 @@ const scribeImageAction = `function(ctx){
       });
 }`
 
-// scribeArticleCSS styles the article view (header image, body measure) and the
-// image modal. Scoped under .guide-doc / .scribe-img-* so nothing leaks.
-const scribeArticleCSS = `.guide-doc-image { display: block; width: 100%; max-height: 320px; object-fit: cover; border-radius: 10px; margin: 0 0 1.4rem; }
-.guide-article-body > :first-child { margin-top: 0; }
-.guide-article-body h2 { font-size: 1.4rem; color: var(--text-hi); border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; margin: 1.6rem 0 0.8rem; }
-.guide-article-body h3 { font-size: 1.12rem; color: var(--text-hi); margin: 1.3rem 0 0.5rem; }
+// scribeImageCSS styles a guide's header image and the image modal. Scoped
+// under .guide-doc / .scribe-img-* so nothing leaks.
+const scribeImageCSS = `.guide-doc-image { display: block; width: 100%; max-height: 320px; object-fit: cover; border-radius: 10px; margin: 0 0 1.4rem; }
 .scribe-img-preview { min-height: 4rem; display: flex; align-items: center; justify-content: center; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.8rem; overflow: hidden; }
 .scribe-img-preview img { width: 100%; max-height: 220px; object-fit: cover; display: block; }
 .scribe-img-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
@@ -658,7 +651,7 @@ const guideSettingsAction = `function(ctx){
       var qp = 'id=' + encodeURIComponent(gid);
       fetch('settings?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
         var canManage = !!(d && d.can_manage);
-        window.uiOpenSimpleModal({title:'Edit ' + ((d && d.kind === 'article') ? 'article' : 'guide'), width:'520px', mount: function(body, dlg){
+        window.uiOpenSimpleModal({title:'Edit guide', width:'520px', mount: function(body, dlg){
           if (!canManage){
             body.appendChild(el('p', {class:'guide-kn-intro', text:'Only the owner can change these settings.'}));
             return;

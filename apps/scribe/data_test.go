@@ -11,6 +11,7 @@ func TestRenderGuideHTML(t *testing.T) {
 		Sections: []Section{
 			{ID: "b", Title: "Setup", Markdown: "Install with `kubectl`.", Order: 2},
 			{ID: "a", Title: "Intro", Markdown: "### Why\nIt orchestrates containers.", Order: 1},
+			{ID: "c", Title: "Next", Markdown: "Scale out.", Order: 3},
 		},
 	}
 	html := renderGuideHTML(g, true)
@@ -20,7 +21,7 @@ func TestRenderGuideHTML(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	// Table of contents present, with both sections.
+	// Table of contents present: three sections is where a guide gets one.
 	if !strings.Contains(html, "guide-toc") {
 		t.Error("no table of contents")
 	}

@@ -29,16 +29,7 @@ func (h *scribeUserData) Describe(uid string) UserDataSummary {
 	if udb == nil {
 		return sum
 	}
-	articles, guides := 0, 0
-	for _, g := range listGuides(udb) {
-		if g.isArticle() {
-			articles++
-		} else {
-			guides++
-		}
-	}
-	sum.Counts["guides"] = guides
-	sum.Counts["articles"] = articles
+	sum.Counts["guides"] = len(listGuides(udb))
 	return sum
 }
 

@@ -1,4 +1,4 @@
-// Document export + standalone preview. A guide or article exports to PDF (via
+// Document export + standalone preview. A guide exports to PDF (via
 // core's markdown PDF renderer), a self-contained HTML document (shareable /
 // printable, styled inline so it stands alone), or raw markdown.
 package scribe
@@ -173,7 +173,6 @@ body { margin: 0; background: #f6f7f9; color: #1f2328; font: 16px/1.65 -apple-sy
 .guide-doc-sub { font-size: 1.05rem; color: #59636e; margin: 0 0 1.6rem; }
 .guide-doc-empty { color: #59636e; font-style: italic; }
 .guide-doc-image { display: block; width: 100%; max-height: 320px; object-fit: cover; border-radius: 8px; margin: 0 0 1.5rem; }
-.guide-article-body h2 { font-size: 1.5rem; color: #0b1320; border-bottom: 1px solid #d6dae0; padding-bottom: 0.3rem; margin: 1.6rem 0 0.9rem; }
 .guide-toc { background: #f0f2f5; border: 1px solid #d6dae0; border-radius: 10px; padding: 1rem 1.2rem; margin: 0 0 2.4rem; }
 .guide-toc-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: #59636e; margin-bottom: 0.5rem; }
 .guide-toc ol { margin: 0; padding-left: 1.4rem; }

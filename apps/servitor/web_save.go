@@ -22,7 +22,7 @@ func (T *Servitor) handleSaveDestinations(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handleSaveArticle saves the given assistant response to Scribe as an article, as-is.
+// handleSaveArticle saves the given assistant response to Scribe as a guide, as-is.
 // Subject is derived from the first heading/line; body is the verbatim text.
 func (T *Servitor) handleSaveArticle(w http.ResponseWriter, r *http.Request) {
 	userID, _, ok := RequireUser(w, r, T.DB)

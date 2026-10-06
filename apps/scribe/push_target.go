@@ -25,11 +25,6 @@ func (g *guideTarget) List(user string) []DocItem {
 	}
 	out := []DocItem{}
 	for _, gd := range listGuides(udb) {
-		// Guides only: a push lands as a SECTION, which an article has no room
-		// for (see Append). Offering one would be offering a write that fails.
-		if gd.isArticle() {
-			continue
-		}
 		out = append(out, DocItem{ID: gd.ID, Title: firstNonEmpty(gd.Title, "Untitled guide")})
 	}
 	return out
@@ -46,9 +41,6 @@ func (g *guideTarget) ListReferencing(user, srcKind, srcItemID string) []DocItem
 	}
 	out := []DocItem{}
 	for _, gd := range listGuides(udb) {
-		if gd.isArticle() {
-			continue
-		}
 		for _, ref := range gd.References {
 			if ref.Kind == srcKind && ref.ItemID == srcItemID {
 				out = append(out, DocItem{ID: gd.ID, Title: firstNonEmpty(gd.Title, "Untitled guide")})
@@ -102,9 +94,6 @@ func (g *guideTarget) Append(ctx context.Context, user, docID, newDocTitle, sect
 	}
 	if !(CanManageShared(user, owner, false) || resolved.sharedForEdit()) {
 		return "", fmt.Errorf("you don't have edit access to that guide")
-	}
-	if resolved.isArticle() {
-		return "", fmt.Errorf("%q is an article, which has one body rather than sections: push into a guide, or create one", resolved.Title)
 	}
 	if orch := findOrchestrate(); orch != nil {
 		if _, err := g.app.runIncorporate(ctx, udb, orch, user, docID, sectionTitle, markdown, resolved.Private); err != nil {

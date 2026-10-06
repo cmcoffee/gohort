@@ -1,5 +1,6 @@
 // One-time carry-over of TechWriter's library into Scribe. Every article a
-// user had becomes an article-kind document in their Scribe store, with its
+// user had becomes a private guide in their Scribe store (split into sections
+// at its ## headings), with its
 // revision trail and their house-style rules. The source bucket is left as it
 // was (a copy, not a move), and each user is marked done so a restart never
 // imports twice.
@@ -105,7 +106,7 @@ func migrateTechWriterUser(src, dst Database, user string) int {
 		if _, exists := loadGuide(dst, rec.ID); exists {
 			continue
 		}
-		g := newArticle(user, rec.Subject, rec.Body)
+		g := newDocument(user, rec.Subject, rec.Body, true)
 		g.ID = rec.ID
 		g.ImageURL = rec.ImageURL
 		g.Created = firstNonEmpty(rec.Date, now())
@@ -118,8 +119,7 @@ func migrateTechWriterUser(src, dst Database, user string) int {
 		for _, rev := range revs {
 			snap := g
 			snap.Title = firstNonEmpty(strings.TrimSpace(rev.Subject), g.Title)
-			snap.Sections = nil
-			snap.setBody(rev.Body)
+			snap.Sections = sectionsFromMarkdown(rev.Body, g.Sections)
 			snap.Updated = firstNonEmpty(rev.Date, g.Updated)
 			rl.Revisions = append(rl.Revisions, GuideRevision{
 				ID:    firstNonEmpty(rev.ID, newID()),

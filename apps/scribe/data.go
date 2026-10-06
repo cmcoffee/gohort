@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -29,26 +30,28 @@ type Section struct {
 	Order    int    `json:"order"`
 }
 
-// Document kinds. A guide (the zero value, for every record written before
-// articles existed) is many sections with a table of contents. An article is
-// ONE body under a title, optionally with a header image: the shape TechWriter
-// kept, folded in here so both live in one library.
+// Scribe keeps one kind of document: a guide, which is sections under a title.
+// KindArticle is what a single-body article was stored under before that (the
+// shape TechWriter kept). Nothing writes it now: a stored article becomes a
+// guide as it is read (upgradeLegacyArticle), and the next save keeps it so.
+// Two kinds meant every feature written twice or refusing one of them, and a
+// guide-only action pressed on an article failed in front of the user.
 const (
 	KindGuide   = ""
 	KindArticle = "article"
 )
 
-// Guide is the living document — a guide or an article (see Kind). The type
-// keeps its name because every stored record and revision carries it.
+// Guide is the living document: sections under a title. The type keeps its
+// name because every stored record and revision carries it.
 type Guide struct {
 	ID       string    `json:"id"`
 	Kind     string    `json:"kind,omitempty"`
 	Title    string    `json:"title"`
 	Subtitle string    `json:"subtitle,omitempty"`
 	Sections []Section `json:"sections"`
-	// ImageURL is an article's optional header image: a remote URL or a data
-	// URL, either of which renders without further work. Shown above the body
-	// in the viewer and in exports. Guides do not use it.
+	// ImageURL is the document's optional header image: a remote URL or a
+	// data URL, either of which renders without further work. Shown under the
+	// title in the viewer and in exports.
 	ImageURL string `json:"image_url,omitempty"`
 	// Collections are knowledge-collection IDs attached to this guide. The Guide
 	// Author searches them (search_knowledge tool) to ground sections in the
@@ -85,58 +88,109 @@ type Guide struct {
 	Updated   string               `json:"updated"`
 }
 
-// isArticle reports whether this document is a single-body article.
-func (g Guide) isArticle() bool { return g.Kind == KindArticle }
-
-// kindNoun is the word for this document in copy: "guide" or "article".
-func (g Guide) kindNoun() string {
-	if g.isArticle() {
-		return "article"
-	}
-	return "guide"
-}
-
-// body returns an article's markdown: its one section's body. For a guide it
-// is the first section's body, which callers should not rely on.
-func (g Guide) body() string {
-	if len(g.Sections) == 0 {
-		return ""
-	}
-	return g.sorted()[0].Markdown
-}
-
-// setBody replaces an article's markdown, creating its one section when the
-// article is still empty. Extra sections (a guide restored as an article, say)
-// are folded away: the article keeps exactly one.
-func (g *Guide) setBody(md string) {
-	md = strings.TrimSpace(md)
-	if len(g.Sections) == 0 {
-		g.Sections = []Section{{ID: newID(), Markdown: md, Order: 1}}
+// upgradeLegacyArticle turns a stored article (one body under a title) into a
+// guide whose sections are its ## parts. Applied wherever a guide or a
+// revision is read, so no reader ever sees the old shape.
+func (g *Guide) upgradeLegacyArticle() {
+	if g.Kind != KindArticle {
 		return
 	}
-	secs := g.sorted()
-	secs[0].Markdown = md
-	secs[0].Order = 1
-	g.Sections = secs[:1]
+	g.Kind = KindGuide
+	md := ""
+	if secs := g.sorted(); len(secs) > 0 {
+		md = secs[0].Markdown
+	}
+	g.Sections = sectionsFromMarkdown(md, nil)
 }
 
-// newArticle builds an unsaved article for owner. Articles start Private:
-// what lands in one is typically internal — a runbook, a finding, a draft with
-// customer names in it — and TechWriter, whose library these replace, never
-// let a body leave the local worker at all. The owner can open it up in
-// Settings; nothing opens it by default.
-func newArticle(owner, title, body string) Guide {
-	g := Guide{
-		ID:      newID(),
-		Kind:    KindArticle,
-		Title:   firstNonEmpty(strings.TrimSpace(title), "Untitled article"),
-		Owner:   owner,
-		Private: true,
+// guideMarkdown is the guide's body as one markdown document, each section
+// under its own ## heading: what the viewer's Edit toggle opens. The inverse of
+// sectionsFromMarkdown, so a guide edited as one page saves back as sections.
+func guideMarkdown(g Guide) string {
+	var parts []string
+	for _, s := range g.sorted() {
+		parts = append(parts, "## "+strings.TrimSpace(s.Title)+"\n\n"+strings.TrimSpace(s.Markdown))
 	}
-	if strings.TrimSpace(body) != "" {
-		g.setBody(body)
+	return strings.Join(parts, "\n\n")
+}
+
+// h2Line matches a level-two markdown heading, the line that starts a section.
+var h2Line = regexp.MustCompile(`^##\s+(.+?)\s*#*\s*$`)
+
+// sectionsFromMarkdown splits markdown at its ## headings into sections. Text
+// before the first heading becomes a section called "Overview" ("Introduction"
+// when the document already has an Overview), so every section has a title the
+// tools can name. A ## inside a fenced code block is content, not a heading. A
+// section whose title matches one in prev keeps that section's ID, so a page
+// edited as a whole still reads to History as the same sections, changed.
+func sectionsFromMarkdown(md string, prev []Section) []Section {
+	type part struct {
+		title string
+		body  []string
 	}
-	return g
+	var parts []part
+	var lead []string
+	fence := ""
+	for _, line := range strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n") {
+		t := strings.TrimSpace(line)
+		if fence == "" && (strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")) {
+			fence = t[:3]
+		} else if fence != "" && strings.HasPrefix(t, fence) {
+			fence = ""
+		} else if fence == "" {
+			if m := h2Line.FindStringSubmatch(line); m != nil {
+				parts = append(parts, part{title: strings.TrimSpace(m[1])})
+				continue
+			}
+		}
+		if len(parts) == 0 {
+			lead = append(lead, line)
+		} else {
+			parts[len(parts)-1].body = append(parts[len(parts)-1].body, line)
+		}
+	}
+	if intro := strings.TrimSpace(strings.Join(lead, "\n")); intro != "" {
+		name := "Overview"
+		for _, p := range parts {
+			if strings.EqualFold(p.title, name) {
+				name = "Introduction"
+				break
+			}
+		}
+		parts = append([]part{{title: name, body: lead}}, parts...)
+	}
+	used := map[string]bool{}
+	out := make([]Section, 0, len(parts))
+	for i, p := range parts {
+		id := ""
+		for _, s := range prev {
+			if !used[s.ID] && strings.EqualFold(strings.TrimSpace(s.Title), p.title) {
+				id = s.ID
+				used[id] = true
+				break
+			}
+		}
+		if id == "" {
+			id = newID()
+		}
+		out = append(out, Section{ID: id, Title: p.title,
+			Markdown: strings.TrimSpace(strings.Join(p.body, "\n")), Order: i + 1})
+	}
+	return out
+}
+
+// newDocument builds an unsaved guide for owner from a title and a markdown
+// body, split into sections at its ## headings. private is for what arrives
+// from elsewhere (an imported page, a write-up another app saved): typically
+// internal, so it starts with no internet access until the owner opens it up.
+func newDocument(owner, title, md string, private bool) Guide {
+	return Guide{
+		ID:       newID(),
+		Title:    firstNonEmpty(strings.TrimSpace(title), "Untitled guide"),
+		Owner:    owner,
+		Private:  private,
+		Sections: sectionsFromMarkdown(md, nil),
+	}
 }
 
 // ShareModeEdit is the ShareMode value that lets any authenticated user edit a
@@ -207,6 +261,7 @@ func (g Guide) nextOrder() int {
 func loadGuide(udb Database, id string) (Guide, bool) {
 	var g Guide
 	ok := udb.Get(guidesTable, id, &g)
+	g.upgradeLegacyArticle()
 	return g, ok
 }
 
@@ -373,6 +428,9 @@ func saveGuideRev(udb Database, g Guide, note string) Guide {
 func listRevisions(udb Database, guideID string) []GuideRevision {
 	var rl guideRevisions
 	udb.Get(revisionsTable, guideID, &rl)
+	for i := range rl.Revisions {
+		rl.Revisions[i].Guide.upgradeLegacyArticle()
+	}
 	return rl.Revisions
 }
 
@@ -396,9 +454,6 @@ func loadRevision(udb Database, guideID, revID string) (GuideRevision, bool) {
 // (the live viewer), each section carries inline edit / move / delete buttons and
 // data-*-id attributes the guides JS wires up; exports pass false.
 func renderGuideHTML(g Guide, controls bool) string {
-	if g.isArticle() {
-		return renderArticleHTML(g, controls)
-	}
 	secs := g.sorted()
 	var b strings.Builder
 	b.WriteString(`<article class="guide-doc" data-guide-id="` + HTMLEscape(g.ID) + `">`)
@@ -407,6 +462,7 @@ func renderGuideHTML(g Guide, controls bool) string {
 		b.WriteString(`<p class="guide-doc-sub">` + HTMLEscape(g.Subtitle) + `</p>`)
 	}
 	b.WriteString(`</header>`)
+	b.WriteString(headerImageHTML(g.ImageURL))
 
 	if len(secs) == 0 {
 		b.WriteString(`<p class="guide-doc-empty">This guide has no sections yet. Ask the assistant on the right to draft one, for example, "Add an introduction section."`)
@@ -417,13 +473,17 @@ func renderGuideHTML(g Guide, controls bool) string {
 		return b.String()
 	}
 
-	// Table of contents.
-	b.WriteString(`<nav class="guide-toc"><div class="guide-toc-title">Contents</div><ol>`)
-	for i, s := range secs {
-		anchor := fmt.Sprintf("sec-%d", i+1)
-		b.WriteString(`<li><a href="#` + anchor + `">` + HTMLEscape(sectionHeading(s, i)) + `</a></li>`)
+	// Table of contents, once there is enough to navigate. A short guide reads
+	// as one flow: no contents block and no section numbers.
+	withTOC := hasContents(secs)
+	if withTOC {
+		b.WriteString(`<nav class="guide-toc"><div class="guide-toc-title">Contents</div><ol>`)
+		for i, s := range secs {
+			anchor := fmt.Sprintf("sec-%d", i+1)
+			b.WriteString(`<li><a href="#` + anchor + `">` + HTMLEscape(sectionHeading(s, i)) + `</a></li>`)
+		}
+		b.WriteString(`</ol></nav>`)
 	}
-	b.WriteString(`</ol></nav>`)
 
 	// Sections.
 	for i, s := range secs {
@@ -437,7 +497,11 @@ func renderGuideHTML(g Guide, controls bool) string {
 				`<button type="button" class="guide-sec-btn guide-sec-del" data-guide-act="delete" title="Delete">&times;</button>` +
 				`</div>`)
 		}
-		b.WriteString(`<h2><span class="guide-section-num">` + fmt.Sprint(i+1) + `.</span> ` + HTMLEscape(sectionHeading(s, i)) + `</h2>`)
+		num := ""
+		if withTOC {
+			num = `<span class="guide-section-num">` + fmt.Sprint(i+1) + `.</span> `
+		}
+		b.WriteString(`<h2>` + num + HTMLEscape(sectionHeading(s, i)) + `</h2>`)
 		b.WriteString(`<div class="guide-section-body">` + MarkdownToHTML(s.Markdown) + `</div>`)
 		b.WriteString(`</section>`)
 	}
@@ -448,35 +512,13 @@ func renderGuideHTML(g Guide, controls bool) string {
 	return b.String()
 }
 
-// renderArticleHTML renders an article: title, subtitle, header image, and the
-// body as one flow — no contents block, no numbered section heading, no
-// per-section controls (the whole body is edited at once, through the
-// viewer's Edit toggle or the co-author). Same outer wrapper as a guide so the
-// document styling and the exporters treat both alike.
-func renderArticleHTML(g Guide, controls bool) string {
-	var b strings.Builder
-	b.WriteString(`<article class="guide-doc guide-doc-article" data-guide-id="` + HTMLEscape(g.ID) + `">`)
-	b.WriteString(`<header class="guide-doc-head"><h1>` + HTMLEscape(g.Title) + `</h1>`)
-	if strings.TrimSpace(g.Subtitle) != "" {
-		b.WriteString(`<p class="guide-doc-sub">` + HTMLEscape(g.Subtitle) + `</p>`)
-	}
-	b.WriteString(`</header>`)
-	b.WriteString(headerImageHTML(g.ImageURL))
-	body := strings.TrimSpace(g.body())
-	if body == "" {
-		b.WriteString(`<p class="guide-doc-empty">This article is empty. Ask the assistant on the right to draft it`)
-		if controls {
-			b.WriteString(`, or click Edit above and write it yourself`)
-		}
-		b.WriteString(`.</p></article>`)
-		return b.String()
-	}
-	b.WriteString(`<div class="guide-section-body guide-article-body">` + MarkdownToHTML(body) + `</div>`)
-	b.WriteString(`</article>`)
-	return b.String()
-}
+// tocMinSections is where a guide starts to need a contents block and numbered
+// sections. Below it the document is short enough to read as one flow.
+const tocMinSections = 3
 
-// headerImageHTML returns the <img> for an article's header image, or "" when
+func hasContents(secs []Section) bool { return len(secs) >= tocMinSections }
+
+// headerImageHTML returns the <img> for a document's header image, or "" when
 // none is set. Shared by the viewer and the exporters so the published page and
 // the preview always agree.
 func headerImageHTML(url string) string {
@@ -498,16 +540,17 @@ func sectionHeading(s Section, i int) string {
 // export (PDF/markdown). Includes a numbered Table of Contents so the PDF and the
 // markdown carry the same structure the HTML viewer shows.
 func renderGuideMarkdown(g Guide) string {
-	if g.isArticle() {
-		return renderArticleMarkdown(g)
-	}
 	var b strings.Builder
 	b.WriteString("# " + g.Title + "\n\n")
 	if strings.TrimSpace(g.Subtitle) != "" {
 		b.WriteString("_" + g.Subtitle + "_\n\n")
 	}
+	if img := strings.TrimSpace(g.ImageURL); img != "" {
+		b.WriteString("![" + firstNonEmpty(g.Title, "header image") + "](" + img + ")\n\n")
+	}
 	secs := g.sorted()
-	if len(secs) > 0 {
+	withTOC := hasContents(secs)
+	if withTOC {
 		b.WriteString("## Contents\n\n")
 		for i, s := range secs {
 			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, sectionHeading(s, i)))
@@ -515,7 +558,11 @@ func renderGuideMarkdown(g Guide) string {
 		b.WriteString("\n")
 	}
 	for i, s := range secs {
-		b.WriteString(fmt.Sprintf("## %d. %s\n\n", i+1, sectionHeading(s, i)))
+		if withTOC {
+			b.WriteString(fmt.Sprintf("## %d. %s\n\n", i+1, sectionHeading(s, i)))
+		} else {
+			b.WriteString("## " + sectionHeading(s, i) + "\n\n")
+		}
 		b.WriteString(strings.TrimSpace(s.Markdown) + "\n\n")
 	}
 	return b.String()
@@ -525,9 +572,6 @@ func renderGuideMarkdown(g Guide) string {
 // for feeding the audit (the agent doesn't need a ToC, and numbered "## N." would
 // just be noise it might echo).
 func renderGuideMarkdownPlain(g Guide) string {
-	if g.isArticle() {
-		return renderArticleMarkdown(g)
-	}
 	var b strings.Builder
 	b.WriteString("# " + g.Title + "\n\n")
 	if strings.TrimSpace(g.Subtitle) != "" {
@@ -537,21 +581,6 @@ func renderGuideMarkdownPlain(g Guide) string {
 		b.WriteString("## " + sectionHeading(s, i) + "\n\n")
 		b.WriteString(strings.TrimSpace(s.Markdown) + "\n\n")
 	}
-	return b.String()
-}
-
-// renderArticleMarkdown assembles an article as one markdown document: title,
-// header image (as a markdown image so it survives a paste), body.
-func renderArticleMarkdown(g Guide) string {
-	var b strings.Builder
-	b.WriteString("# " + g.Title + "\n\n")
-	if strings.TrimSpace(g.Subtitle) != "" {
-		b.WriteString("_" + g.Subtitle + "_\n\n")
-	}
-	if img := strings.TrimSpace(g.ImageURL); img != "" {
-		b.WriteString("![" + firstNonEmpty(g.Title, "header image") + "](" + img + ")\n\n")
-	}
-	b.WriteString(strings.TrimSpace(g.body()) + "\n")
 	return b.String()
 }
 
@@ -623,13 +652,6 @@ func renderRevisionHTML(rev, cur Guide, at string) string {
 		return b.String()
 	}
 
-	if rev.isArticle() {
-		b.WriteString(`<article class="guide-doc guide-doc-article">`)
-		b.WriteString(headerImageHTML(rev.ImageURL))
-		b.WriteString(`<div class="guide-section-body guide-article-body">` + MarkdownToHTML(rev.body()) + `</div>`)
-		b.WriteString(`</article></div>`)
-		return b.String()
-	}
 	b.WriteString(`<article class="guide-doc">`)
 	goneSeen := 0
 	for i, s := range secs {

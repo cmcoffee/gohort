@@ -1,6 +1,6 @@
 package scribe
 
-// A guide (or article) as a portable artifact: the whole document, lossless,
+// A guide as a portable artifact: the whole document, lossless,
 // in the bundle format every Import button reads. The older doors stay (HTML,
 // Markdown and PDF export; HTML import), but they are renderings: HTML import
 // comes back as a single-body article, and sections, subtitle, attached
@@ -169,6 +169,8 @@ func (a *guideArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner
 		Owner:       owner,
 		Private:     true,
 	}
+	// A bundle exported while articles existed lands as a guide like any other.
+	g.upgradeLegacyArticle()
 	saveGuideRev(udb, g, "Imported")
 	return title, "", nil
 }

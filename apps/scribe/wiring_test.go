@@ -85,12 +85,17 @@ func TestRetiredPathsAreCarriedOver(t *testing.T) {
 	}
 }
 
-// An article is one body, so every section-shaped write path has to turn one
-// away rather than quietly appending a second section to it.
-func TestSectionWritesRefuseArticles(t *testing.T) {
-	for _, f := range []string{"push_target.go", "curator.go", "mcp.go"} {
-		if !strings.Contains(read(t, f), "isArticle()") {
-			t.Errorf("%s writes or offers sections without checking for an article", f)
+// Scribe keeps one kind of document. Every feature used to be written twice
+// or refuse one kind (push targets, the Curator, MCP, the macros), and a
+// guide-only action pressed on an article failed in front of the user. Only
+// the read-side upgrade may still name the old kind.
+func TestOneKindOfDocument(t *testing.T) {
+	for _, f := range []string{"push_target.go", "curator.go", "mcp.go", "web.go", "page.go", "scribe.go", "userdata.go"} {
+		src := read(t, f)
+		for _, gone := range []string{"isArticle()", "KindArticle", "articleTools", "read_article"} {
+			if strings.Contains(src, gone) {
+				t.Errorf("%s still names %s", f, gone)
+			}
 		}
 	}
 }

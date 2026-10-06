@@ -190,14 +190,8 @@ func TestReadOnlyNamesExistInTheCoauthorBuilder(t *testing.T) {
 	orch := &orchestrate.OrchestrateApp{AppCore: AppCore{DB: root}}
 	T := &Scribe{}
 	built := map[string]bool{}
-	// Both kits: a reader of a shared guide gets the guide subset, a reader of a
-	// shared article the article subset (read_article stands in for
-	// list_sections there).
 	guideKit := T.coauthorTools(coauthorScope{Ctx: context.Background(), UDB: udb, Orch: orch, User: "u", CanEdit: true})
 	for _, td := range guideKit {
-		built[td.Tool.Name] = true
-	}
-	for _, td := range T.articleTools(udb, "u", "", guideKit) {
 		built[td.Tool.Name] = true
 	}
 	if len(built) == 0 {

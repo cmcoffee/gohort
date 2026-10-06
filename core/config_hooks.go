@@ -133,7 +133,8 @@ func SaveGhostConfig(cfg GhostConfig) bool {
 var SaveSnippetFunc func(userID, name, lang, code string) (id string, err error)
 
 // SaveArticleFunc is set by the Scribe app so other apps can save documents
-// (as articles) to the user's Scribe library without importing that package.
+// (as guides, split at their ## headings) to the user's Scribe library without
+// importing that package. The name predates Scribe keeping one kind.
 var SaveArticleFunc func(userID, subject, body string) (id string, err error)
 
 // RunAgentFunc is set by the application to enable agent-to-agent delegation.
