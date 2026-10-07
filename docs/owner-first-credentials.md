@@ -1,6 +1,7 @@
 # Owner-first: tools, APIs and connected accounts
 
-**Status:** Proposed, 2026-10-07. Nothing here is built.
+**Status:** Proposed, 2026-10-07; every decision settled. Nothing here is
+built.
 Supersedes, once built: the credential half of the global plane in
 `tool-credential-namespacing.md`, and the binding model in
 `secured-credential-tool-binding.md`. Builds on the three sharing rungs in
@@ -144,8 +145,9 @@ things differ from a key, both made visible:
   API, rotates the client secret, or the provider revokes the app, every
   account connected through it stops. The adopter's API says whose
   registration it uses; the owner sees who depends on it before deleting.
-- **A registration is tied to this deployment's callback URL.** Sharing to
-  another gohort needs a registration there (Open decision 1).
+- **A registration is tied to this deployment's callback URL,** so an OAuth
+  API is not shareable to another gohort instance. The far side registers
+  its own app with the provider and makes its own API.
 
 ## Agents
 
@@ -352,11 +354,12 @@ Settled in discussion (2026-10-07):
   the same boundary as an agent share. It is reachable only through those
   tools, every call records who made it, and the secret stays on the server.
 
-Open:
+- **An OAuth API is not shareable across gohort instances.** Its app
+  registration is tied to this deployment's callback URL; another instance
+  registers its own.
 
-1. **OAuth across gohort instances:** does the API travel with an empty
-   registration for the far side to fill, or is an OAuth API not shareable
-   across machines?
+Open: none. Every decision this design raised is settled; what remains is
+building it, in the phases below.
 
 ## Phases
 
