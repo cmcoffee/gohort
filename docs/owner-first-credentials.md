@@ -83,7 +83,7 @@ reached.
 
 Nothing in an API is secret, so a deployment API holds no secret: every
 account on it is someone's own (or an administrator's shared account, Open
-decision 3).
+decision 2).
 
 ## Sharing and adopting
 
@@ -145,7 +145,7 @@ things differ from a key, both made visible:
   account connected through it stops. The adopter's API says whose
   registration it uses; the owner sees who depends on it before deleting.
 - **A registration is tied to this deployment's callback URL.** Sharing to
-  another gohort needs a registration there (Open decision 2).
+  another gohort needs a registration there (Open decision 1).
 
 ## Agents
 
@@ -202,6 +202,49 @@ has not connected, and is unavailable until every one is.
 Disallowed APIs are not on that list: they are withheld by the owner's choice.
 The relink picker primitive (`OrchestratorRowAction.PickerSource`, pick a
 target then act) covers "use an API you already have".
+
+## Repairs
+
+A repair is made in a **working copy** first, tested, then published. Who
+publishes depends on where the thing lives.
+
+**A tool**
+
+1. The owner, or Builder for them, edits their own working copy in place.
+   While it is being fixed, only the owner's own agents use it.
+2. They test it with their own account (`tool_def` test) until it passes.
+3. Then it reaches others by where it is shared:
+   - **Named people get the owner's fix live.** The owner chose to trust that
+     small group with their changes; the edit reaches them when it is saved.
+   - **The deployment rung gets an approved version.** The owner requests the
+     update, an administrator approves the diff, and everyone moves to the new
+     version at once (the snapshot versioning proposed 2026-09-24; edits to a
+     published tool already reach only the editor's agents until an update is
+     approved). Until then everyone keeps the last approved version: a fix
+     never lands half-tested on everyone.
+
+**A deployment API** (its base URL moved, its version changed, its auth
+header changed). Users cannot edit it, so the fix goes the same way, with a
+working copy of the API:
+
+1. **The drafter makes a working copy of the API,** tied to a change request.
+   Only the drafter's own tools and tests use it, with their own account. It
+   keeps the deployment API's denied endpoints, so testing cannot step
+   outside the administrator's limits.
+2. **The administrator sees the diff with the drafter's passing test
+   results,** and approves, or edits the deployment API directly (often the
+   fastest fix).
+3. **On approval everyone moves to the fixed API,** and the drafter's working
+   copy is retired: their tools point back at the deployment API.
+4. **While it is broken, failures say so.** Affected users see that the API
+   is failing and a fix is waiting for approval, not an opaque 404. The
+   administrator is told, with the failing calls attached.
+
+**Builder repairs the right layer.** When the same failure hits every tool on
+an API (the base URL answers 404, auth is refused everywhere), the API is
+broken, not the tools. Builder drafts an API change request instead of
+rewriting tools that were never broken. This is a structural check on the
+failures, not prompt copy.
 
 ## Enforcement
 
@@ -297,15 +340,19 @@ Settled in discussion (2026-10-07):
   than one that says it is not ready. Disallowed APIs do not count; they are
   withheld by the owner's choice.
 
+- **Repairs go through a working copy:** fix, test with your own account,
+  then publish. Named people get a tool owner's fix live; the deployment rung
+  gets an administrator-approved version. A broken deployment API is fixed
+  by a change request whose drafter tests it on a working copy, or by an
+  administrator directly. Builder repairs the API, not the tools, when every
+  tool on it fails the same way.
+
 Open (proposed answers in **bold**):
 
-1. **Repairs to a shared tool:** recipients run the owner's fix live, or an
-   approved version (the snapshot-versioning question from 2026-09-24)?
-   Accounts carry over either way.
-2. **OAuth across gohort instances:** does the API travel with an empty
+1. **OAuth across gohort instances:** does the API travel with an empty
    registration for the far side to fill, or is an OAuth API not shareable
    across machines?
-3. **A company key nobody personally holds** (a shared search or LLM key)
+2. **A company key nobody personally holds** (a shared search or LLM key)
    outside any agent share: **proposed: an administrator's account shared
    through named tools,** the same boundary as an agent share.
 
@@ -323,5 +370,8 @@ Open (proposed answers in **bold**):
    resolver for the list and the call-time check; needs setup.
 4. **Shared accounts** replace Secured and key lending; authoring stops
    auto-binding.
-5. **Ownerless credentials migrated,** then the name fallback and the old
+5. **Repairs and versions.** Working copies for tools and deployment APIs,
+   change requests with test results, approved versions on the deployment
+   rung, the "failing, fix waiting" notice, and Builder's API-layer check.
+6. **Ownerless credentials migrated,** then the name fallback and the old
    fields removed.
