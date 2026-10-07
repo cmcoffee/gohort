@@ -18,7 +18,7 @@ they fill in is their own key, password or OAuth connection.
 | Layer | Holds | Owned by | Shared |
 | --- | --- | --- | --- |
 | **Tool** | Actions, templates, params, scripts; which API it uses | Its author | Yes, on any rung. It carries its API with it |
-| **API** | The recipe to connect: base URL, auth type and header name, allowed and denied endpoints, allowed methods, confirm-before settings, the OAuth app registration | Its creator. An adopter owns their copy | Yes, as a template |
+| **API** | The recipe to connect: base URL, auth type and header name, allowed and denied endpoints, allowed methods, confirm-before settings, the OAuth app registration | A **deployment API**: the deployment, governed by an administrator. A **personal API**: its creator, and an adopter owns their copy | Deployment API: referenced by everyone on its allow list. Personal API: copied, as a template |
 | **Connected account** | The secret for one API: key, password, OAuth token | The person who connected it | Only through an agent share (see Agents) |
 
 At call time a tool resolves its API, then **the calling user's** connected
@@ -58,23 +58,60 @@ for an OAuth token (`SaveUserToken`), chosen by `resolveSecret`. Those
 per-user records are connected accounts in all but name. This design makes
 that split the only one: every API's secrets live in connected accounts.
 
+## Where an API lives
+
+An API lives in one of two places:
+
+- **Deployment APIs, the normal home for a shared service.** One definition
+  per service, in one catalog, with an **allow list** of who may use it.
+  Tools refer to it; nobody holds a copy. A fix (a new endpoint, a corrected
+  base URL) reaches everyone at once. The allow list and the endpoint lists
+  are the administrator's governance: who may use GitLab from gohort at all,
+  and what any tool on it may call, whosever account it is.
+- **Personal APIs, for what only their creator uses.** The creator owns it
+  and edits it freely.
+
+**Editing a deployment API:** anyone may request a change, and an
+administrator approves it before it takes effect, as with edits to a
+published tool today. An administrator may also edit it directly.
+
+**Promoting a personal API:** its creator requests promotion to the
+deployment catalog, through the same administrator-approval path tools use
+today. Promotion moves the API (it does not copy it), so tools already on it
+keep working; the allow list starts as the creator and whoever their shares
+reached.
+
+Nothing in an API is secret, so a deployment API holds no secret: every
+account on it is someone's own (or an administrator's shared account, Open
+decision 4).
+
 ## Sharing and adopting
 
 Sharing a tool shares the tool and its API, never an account.
 
-- **The adopter gets their own copy of the API** (Open decision 1), marked
+**A tool on a deployment API** carries a reference to it:
+
+- **On the allow list:** the API shows as "connect your account". They
+  connect, and the tool works.
+- **Not on the allow list:** the API shows as "request access", which asks an
+  administrator. Until then the tool does not run for them.
+
+**A tool on a personal API** carries a copy:
+
+- **The adopter gets their own copy of the API**, marked
   "connect your account". They paste a key, or click Connect for OAuth, and
   the tool works.
-- **If they already have an API for that host,** they are offered it instead,
-  so nobody ends up with two GitLab APIs. Choosing it is one click; it is
-  never chosen silently.
+- **If a deployment API or one of theirs already covers that host,** they
+  are offered it instead, so nobody ends up with two GitLab APIs. Choosing it
+  is one click; it is never chosen silently.
 - **The adopter can edit their copy,** widening its endpoints, say: it only
   ever spends their own account.
 - **A tool refers to its API by a stable id,** never by name. Two users'
   "gitlab" APIs are two APIs.
 
-Sharing an API on its own (without a tool) is the same: a template the
-adopter copies and connects.
+Sharing a personal API on its own (without a tool) is the same: a template
+the adopter copies and connects. A deployment API is not shared: its allow
+list says who may use it.
 
 **Building more on an adopted API.** The limit follows whose account pays and
 acts, not the API, which is only a recipe:
@@ -82,8 +119,9 @@ acts, not the API, which is only a recipe:
 - **With their own account,** the adopter may build any tools they like on
   the API. It is their copy and their key: they could have set it up from
   scratch and built the same things, so holding them to the shared tool would
-  only add friction. Every call acts as them and is recorded as theirs, and
-  their copy's endpoint and method lists still apply.
+  only add friction. Every call acts as them and is recorded as theirs. The
+  API's endpoint and method lists still apply: on a copy they are theirs to
+  change, on a deployment API they are the administrator's.
 - **With an account someone shared with them** (see Agents), they may
   use it only through the tools its owner named. The key is not theirs, so
   its owner decides what it is spent on.
@@ -107,7 +145,7 @@ things differ from a key, both made visible:
   account connected through it stops. The adopter's API says whose
   registration it uses; the owner sees who depends on it before deleting.
 - **A registration is tied to this deployment's callback URL.** Sharing to
-  another gohort needs a registration there (Open decision 4).
+  another gohort needs a registration there (Open decision 3).
 
 ## Agents
 
@@ -160,7 +198,7 @@ your own for existing recipients, and the owner is told, to choose. Nothing is
 shared automatically.
 
 **Needs setup:** a shared agent lists each bring-your-own API the recipient
-has not connected, and is unavailable until every one is (Open decision 2).
+has not connected, and is unavailable until every one is (Open decision 1).
 Disallowed APIs are not on that list: they are withheld by the owner's choice.
 The relink picker primitive (`OrchestratorRowAction.PickerSource`, pick a
 target then act) covers "use an API you already have".
@@ -171,6 +209,7 @@ One question at dispatch: **what is this tool's API, and does the calling
 user have a connected account for it they may use this way?**
 
 - The user's own account: send, within the API's endpoint and method lists.
+  On a deployment API the user must also be on its allow list.
 - No account: refuse before sending, naming the API and where to connect.
 - An owner's account shared through an agent: the share must still include
   the user, the call must come from one of that agent's own tools, and the
@@ -186,7 +225,9 @@ URL lists keep being judged as written and as the server reads them
 
 ## What this removes
 
-- `Owner == ""` credentials, migrated (below).
+- Ownerless secrets. `Owner == ""` credentials become deployment APIs, which
+  hold no secret; a global secret becomes an administrator's shared account
+  (below).
 - Name resolution of a tool's credential (`Resolve`'s same-name fallback).
 - `Secured` as a credential field, and `ApprovedToolBindings` filled at
   authoring: a tool uses its API, and an account's own share decides which
@@ -204,16 +245,18 @@ Nothing that works today should stop working on upgrade.
 1. **Each credential splits** into an API (its configuration) and connected
    accounts (its secrets): one for the owner's own secret, one per user for a
    `per_user` credential's stored keys and tokens.
-2. **Deployment credentials** (`Owner == ""`) get an owner, an administrator
-   chosen at upgrade. A credential with one global secret becomes that
-   administrator's API with a **shared account**, shared with today's Access
-   list and, if it was secured, only through today's `ApprovedToolBindings`.
-4. **Agents already shared** get their list made at upgrade with each API set
-   to what works today (share mine where the recipient reaches the owner's
-   credential now, bring your own otherwise), shown to the owner to review.
+2. **Deployment credentials** (`Owner == ""`) become deployment APIs, with
+   today's Access list (`AllowedUsers`) as the allow list. Their per-user keys
+   and tokens become those users' accounts. A credential with one global
+   secret also gets a **shared account** owned by an administrator chosen at
+   upgrade, usable by today's Access list and, if it was secured, only through
+   today's `ApprovedToolBindings`.
 3. **Tools** get their API's id from what `Resolve(name, owner)` gives today.
    Each user who runs a tool through name resolution gets that resolution
    recorded, and listed on their setup page so they can see and change it.
+4. **Agents already shared** get their list made at upgrade with each API set
+   to what works today (share mine where the recipient reaches the owner's
+   credential now, bring your own otherwise), shown to the owner to review.
 5. **A tool whose API has no account for its user** becomes "connect your
    account", rather than failing at call time.
 
@@ -221,7 +264,12 @@ Nothing that works today should stop working on upgrade.
 
 Settled in discussion (2026-10-07):
 
-- Owner-first: every tool, API and account has an owner.
+- Owner-first: every tool and account has an owner. An API is personal
+  (owned by its creator) or a deployment API (governed by an administrator).
+- **Deployment APIs are global, with an allow list,** and referenced, not
+  copied: one definition per service. Changes are requested by anyone and
+  approved by an administrator, who may also edit directly. A personal API
+  is promoted through the same approval path tools use.
 - Tool → API → connected account.
 - An API is a recipe, shared as a template; the adopter fills in their own
   key, password or OAuth.
@@ -231,27 +279,30 @@ Settled in discussion (2026-10-07):
   a shared account is limited to the tools its owner names.
 - **A connected account can be shared, only through an agent share,** per
   API: share mine, bring your own (the default), or disallow. What a shared
-  account may do is set at the provider. (Was open decision 1.)
+  account may do is set at the provider.
 - **Sub-agents are not part of an agent share:** a shared agent dispatches
   only the recipient's own agents.
 - The list of an agent's APIs fails closed, and comes from the same resolver
   as the call-time check.
 
+- **An adopted personal API is a copy** the adopter owns, not a reference to
+  the owner's. A reference would pass the owner's later changes to everyone, and
+  let the owner change what the adopter's own key may do. The owner's fixes
+  reach adopters later as an "update available" notice they choose to take.
+ 
+
 Open (proposed answers in **bold**):
 
-1. **Is an adopted API a copy or a reference?** A reference passes the
-   owner's fixes to everyone, and lets the owner change what the adopter's key
-   may do. **Proposed: a copy**, with an "update available" notice later.
-2. **Unconnected bring-your-own APIs in a shared agent:** **proposed: the
+1. **Unconnected bring-your-own APIs in a shared agent:** **proposed: the
    agent is unavailable until every one is connected,** rather than running
    with those tools withheld.
-3. **Repairs to a shared tool:** recipients run the owner's fix live, or an
+2. **Repairs to a shared tool:** recipients run the owner's fix live, or an
    approved version (the snapshot-versioning question from 2026-09-24)?
    Accounts carry over either way.
-4. **OAuth across gohort instances:** does the API travel with an empty
+3. **OAuth across gohort instances:** does the API travel with an empty
    registration for the far side to fill, or is an OAuth API not shareable
    across machines?
-5. **A company key nobody personally holds** (a shared search or LLM key)
+4. **A company key nobody personally holds** (a shared search or LLM key)
    outside any agent share: **proposed: an administrator's account shared
    through named tools,** the same boundary as an agent share.
 
@@ -260,9 +311,11 @@ Open (proposed answers in **bold**):
 1. **Split the record.** API and connected-account records, migrated from
    every `SecureCredential`; dispatch resolves tool → API → account, with
    name resolution as the fallback the migration fills. No behaviour change.
-2. **Tools carry their API.** Sharing a tool or an API copies the API to the
-   adopter, "connect your account", the offer of an existing API for that
-   host.
+2. **The two homes.** Deployment API catalog with allow lists, change
+   requests and administrator approval, promotion of personal APIs. Tools
+   carry their API: a reference to a deployment API, a copy of a personal one;
+   "connect your account" and "request access"; the offer of an existing API
+   for that host.
 3. **Agent shares: the API list.** Share mine, bring your own, disallow; one
    resolver for the list and the call-time check; needs setup.
 4. **Shared accounts** replace Secured and key lending; authoring stops
