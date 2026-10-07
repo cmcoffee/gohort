@@ -184,6 +184,13 @@ func formStepOptions(m map[string]any) []string {
 //
 // We reject when EVERY step matches at least one of these patterns —
 // a single ack step at the end of a real plan is fine.
+//
+// A step that names a tool other than respond_directly is work, whatever its
+// wording, and the phrases are matched against the title and intent only: the
+// worker brief is long free text that routinely ends "report it in your final
+// response". Observed: Builder's one-step plan to probe an endpoint, tools
+// ["workspace"], was refused as a no-op on a phrase in its brief. The brief
+// still counts when it names respond_directly, the trigger seen in traces.
 func looksLikeVacuousPlan(steps []PlanStep) string {
 	if len(steps) == 0 {
 		return ""
@@ -216,8 +223,12 @@ func looksLikeVacuousPlan(steps []PlanStep) string {
 		return false
 	}
 	for _, st := range steps {
-		blob := st.Title + " || " + st.Intent + " || " + st.WorkerBrief
-		if !matchesEmpty(blob) {
+		for _, tool := range st.Tools {
+			if name := strings.TrimSpace(tool); name != "" && name != "respond_directly" {
+				return ""
+			}
+		}
+		if !matchesEmpty(st.Title+" || "+st.Intent) && !strings.Contains(strings.ToLower(st.WorkerBrief), "respond_directly") {
 			return ""
 		}
 	}

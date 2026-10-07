@@ -27,6 +27,14 @@ func init() {
 // loop (a setInterval that throws every tick) can't balloon the report.
 const checkMaxEvents = 20
 
+// checkQuietWindow is how long the network must stay quiet (no request
+// started, none in flight) before a check takes its snapshot.
+const checkQuietWindow = time.Second
+
+// checkQuietMax bounds the wait for that quiet on a page that keeps starting
+// requests, so a poll cannot hold the check to its full deadline.
+const checkQuietMax = 5 * time.Second
+
 // checkMaxRequests caps the full request log — roomier than the error
 // lists because a normal page load makes many requests and callers scan
 // this list for specific endpoints.
@@ -112,6 +120,9 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 	// slow script can outlive the idle wait — without this the report
 	// claims the endpoint was "never fetched" when it was merely slow.
 	pending := map[proto.NetworkRequestID]string{}
+	// lastStart is when the page last began a request, for the quiet
+	// wait below.
+	var lastStart time.Time
 	appendCapped := func(list *[]string, s string) {
 		if s = strings.TrimSpace(s); s == "" || len(*list) >= checkMaxEvents {
 			return
@@ -152,6 +163,7 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 			}
 			mu.Lock()
 			pending[e.RequestID] = e.Request.URL
+			lastStart = time.Now()
 			mu.Unlock()
 		},
 		func(e *proto.NetworkLoadingFailed) {
@@ -206,14 +218,27 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 	// pending requests to land before snapshotting, so a slow-but-working
 	// source reports its real response instead of showing as unfetched.
 	// Bounded well under the outer budget (3×HTTPRequestTimeout).
-	for deadline := time.Now().Add(HTTPRequestTimeout()); ; {
+	//
+	// And for the network to go QUIET, not just empty: nothing in flight AND
+	// nothing new started for checkQuietWindow. WaitIdle only waits for the
+	// main thread to idle, which comes before a framed document has loaded,
+	// and that document's load-time fetch is bridged through this page by
+	// message, so it starts later still. Breaking the moment nothing was in
+	// flight snapshotted before it began, and a page that did fetch its data
+	// on load was reported as never having fetched it. The window counts from
+	// the idle wait too, so a page that is already quiet pays it once, and a
+	// page that never goes quiet (a fast poll) stops waiting for it after
+	// checkQuietMax, as soon as nothing is in flight.
+	settled := time.Now()
+	for deadline := settled.Add(HTTPRequestTimeout()); ; {
 		mu.Lock()
-		n := len(pending)
+		n, last := len(pending), lastStart
 		mu.Unlock()
-		if n == 0 || time.Now().After(deadline) {
+		now := time.Now()
+		if checkSettled(now, settled, last, n) || now.After(deadline) {
 			break
 		}
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	if probeJS != "" {
@@ -252,6 +277,20 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 	}
 	mu.Unlock()
 	return out, nil
+}
+
+// checkSettled reports whether a page check may take its snapshot: nothing
+// in flight, and no request started for checkQuietWindow, counted from
+// settled (the end of the idle wait) when the last one began before it.
+// Past checkQuietMax from settled, nothing in flight is enough.
+func checkSettled(now, settled, lastStart time.Time, inFlight int) bool {
+	if inFlight > 0 {
+		return false
+	}
+	if lastStart.Before(settled) {
+		lastStart = settled
+	}
+	return now.Sub(lastStart) >= checkQuietWindow || now.Sub(settled) >= checkQuietMax
 }
 
 // remoteObjText renders one console argument for the report: the

@@ -859,11 +859,8 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, u
 		return
 	}
 	var ds *AppDataSource
-	for i := range spec.DataSources {
-		if spec.DataSources[i].Name == name {
-			ds = &spec.DataSources[i]
-			break
-		}
+	if i := scriptIndex(len(spec.DataSources), func(i int) string { return spec.DataSources[i].Name }, name); i >= 0 {
+		ds = &spec.DataSources[i]
 	}
 	if ds == nil || strings.TrimSpace(ds.Script) == "" {
 		http.NotFound(w, r)
@@ -906,6 +903,49 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, u
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(trimmed))
+}
+
+// scriptIndex finds the data source or action a request names: the exact
+// name first, then the name as it would have been saved. Names are slugged on
+// save ("balance_step" is stored as "balance-step"), but a page's code keeps
+// whatever its author typed, so fetch('data/balance_step') was a 404 against
+// a source that existed, and the page read it as the script failing.
+func scriptIndex(n int, nameAt func(int) string, name string) int {
+	for i := 0; i < n; i++ {
+		if nameAt(i) == name {
+			return i
+		}
+	}
+	want := scriptSlug(name)
+	if want == "" || want == name {
+		return -1
+	}
+	for i := 0; i < n; i++ {
+		if nameAt(i) == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// scriptSlug is the saved form of a script name: lowercase, every run of
+// non-alphanumerics one hyphen, trimmed. It must agree with the slugging the
+// app_def tool applies when it saves the name.
+func scriptSlug(name string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			if dash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(r)
+			dash = false
+			continue
+		}
+		dash = true
+	}
+	return b.String()
 }
 
 // runDataSource executes one data-source script and returns its stdout.
@@ -1083,11 +1123,8 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 		return
 	}
 	var act *AppAction
-	for i := range spec.Actions {
-		if spec.Actions[i].Name == name {
-			act = &spec.Actions[i]
-			break
-		}
+	if i := scriptIndex(len(spec.Actions), func(i int) string { return spec.Actions[i].Name }, name); i >= 0 {
+		act = &spec.Actions[i]
 	}
 	if act == nil || strings.TrimSpace(act.Script) == "" {
 		http.NotFound(w, r)

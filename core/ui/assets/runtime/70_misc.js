@@ -1160,7 +1160,17 @@
       function reply(r) { r.__uiIsoReply = 1; r.id = d.id; f.contentWindow.postMessage(r, '*'); }
       // Say what IS allowed: a bare refusal of an absolute path read as a
       // permissions problem, not as "write it relative".
-      if (!permitted(String(d.url || ''))) { reply({error: 'not allowed: ' + d.url + ' (isolated content fetches only relative paths starting with: ' + (allowed.join(', ') || 'nothing') + ')'}); return; }
+      //
+      // And say it on this page's console too. The refusal never reaches the
+      // network, so a page check watching requests saw nothing at all and
+      // reported the endpoint as never fetched, sending the author to rewire
+      // a page whose only fault was how it wrote the path.
+      if (!permitted(String(d.url || ''))) {
+        var why = 'not allowed: ' + d.url + ' (isolated content fetches only relative paths starting with: ' + (allowed.join(', ') || 'nothing') + ')';
+        console.error('isolated content fetch refused, ' + why);
+        reply({error: why});
+        return;
+      }
       var opts = {method: d.method || 'GET', credentials: 'same-origin'};
       if (d.body != null && opts.method !== 'GET' && opts.method !== 'HEAD') {
         opts.body = d.body;

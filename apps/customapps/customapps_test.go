@@ -330,3 +330,69 @@ func TestShareIsAPublishRequestForNonAdmins(t *testing.T) {
 		t.Fatalf("an admin's share must not queue a request; pending = %d", n)
 	}
 }
+
+// Names are slugged on save, so a source the author called balance_step is
+// stored as balance-step, while the page's code still fetches
+// data/balance_step. That was a 404 against a source that existed, and the
+// page read it as the script failing. The exact name still wins, so two
+// names that slug alike never steal each other's requests.
+func TestScriptLookupFallsBackToTheSavedName(t *testing.T) {
+	names := []string{"balance-step", "a_b", "a-b"}
+	at := func(i int) string { return names[i] }
+	for req, want := range map[string]int{
+		"balance-step": 0,
+		"balance_step": 0,
+		"Balance Step": 0,
+		"a_b":          1, // exact beats the slugged form
+		"a-b":          2,
+		"missing":      -1,
+		"":             -1,
+	} {
+		if got := scriptIndex(len(names), at, req); got != want {
+			t.Errorf("scriptIndex(%q) = %d, want %d", req, got, want)
+		}
+	}
+	for in, want := range map[string]string{
+		"Reading List": "reading-list",
+		"  My App!! ":  "my-app",
+		"Tasks/2026":   "tasks-2026",
+		"balance_step": "balance-step",
+		"###":          "",
+	} {
+		if got := scriptSlug(in); got != want {
+			t.Errorf("scriptSlug(%q) = %q, want %q (must agree with app_def's slugify)", in, got, want)
+		}
+	}
+}
+
+// The same fallback through the served endpoints: data/balance_step and
+// action/balance_step reach the scripts saved as balance-step. Skips where
+// the sandbox cannot exec; a 404 is the failure this guards.
+func TestUnderscoreNamesReachTheSavedScripts(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "game", Name: "Game", Owner: "alice",
+		DataSources: []AppDataSource{{Name: "balance-step", Language: "bash", Script: `printf '{"scene":1}'`, Capabilities: []string{}}},
+		Actions:     []AppAction{{Name: "balance-step", Language: "bash", Script: `printf '{"message":"ok"}'`, Capabilities: []string{}}},
+	}
+
+	w := httptest.NewRecorder()
+	T.handleData(w, httptest.NewRequest(http.MethodGet, "/apps/game/data/balance_step", nil), "alice", "alice", T.recordBase(spec, "alice"), spec, "balance_step")
+	if w.Code == http.StatusNotFound {
+		t.Fatalf("data/balance_step was a 404 against a source saved as balance-step")
+	}
+	if w.Code != http.StatusOK {
+		t.Skipf("sandbox/bash unavailable in this environment: %d %s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	T.handleAction(w, httptest.NewRequest(http.MethodPost, "/apps/game/action/balance_step", nil), "alice", "alice", T.recordBase(spec, "alice"), spec, "balance_step")
+	if w.Code == http.StatusNotFound {
+		t.Fatalf("action/balance_step was a 404 against an action saved as balance-step")
+	}
+
+	w = httptest.NewRecorder()
+	T.handleData(w, httptest.NewRequest(http.MethodGet, "/apps/game/data/nothing_here", nil), "alice", "alice", T.recordBase(spec, "alice"), spec, "nothing_here")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("an unknown source must still 404, got %d", w.Code)
+	}
+}

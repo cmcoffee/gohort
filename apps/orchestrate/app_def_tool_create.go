@@ -117,12 +117,24 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// Script-backed data sources (the "logic" seam): a table/display section can
 	// be backed by a python script instead of the record store. Passed wholesale
 	// replaces the stored set on update (omit to keep existing).
+	//
+	// "Replaces" is also how scripts got lost: an update carrying actions:[one
+	// new action] deleted every other action the app had, and the save said
+	// success. So a list that leaves out a stored name is refused below, the
+	// same way a dropped functional section is.
 	var parseNotes []string
+	var droppedScripts []string
 	if raw, ok := args["data_sources"]; ok && raw != nil {
 		if arr, note, ok := appArrayArg(raw, "data_sources"); ok {
 			var notes []string
+			prior := appDataSourceNames(spec)
 			spec.DataSources, notes = appDataSources(arr)
 			parseNotes = append(parseNotes, notes...)
+			if isUpdate {
+				if risk := appDroppedScripts("data_sources", "data source", prior, appDataSourceNames(spec)); risk != "" {
+					droppedScripts = append(droppedScripts, risk)
+				}
+			}
 		} else {
 			parseNotes = append(parseNotes, note)
 		}
@@ -132,11 +144,20 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if raw, ok := args["actions"]; ok && raw != nil {
 		if arr, note, ok := appArrayArg(raw, "actions"); ok {
 			var notes []string
+			prior := appActionNames(spec)
 			spec.Actions, notes = appActionDefs(arr)
 			parseNotes = append(parseNotes, notes...)
+			if isUpdate {
+				if risk := appDroppedScripts("actions", "action", prior, appActionNames(spec)); risk != "" {
+					droppedScripts = append(droppedScripts, risk)
+				}
+			}
 		} else {
 			parseNotes = append(parseNotes, note)
 		}
+	}
+	if len(droppedScripts) > 0 && !boolArg(args, "confirm_rewrite") {
+		return "", errors.New(appWithParseNotes(strings.Join(droppedScripts, "\n\n"), parseNotes))
 	}
 	// Declared tunables: the framework renders their Settings page and hands
 	// them to every script as env vars. Passed wholesale replaces the list.
@@ -256,10 +277,12 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// Report any name-normalization or dropped entries up front — a
 	// slugified data-source name silently breaks a source_script/fetch
 	// reference the author spelled the original way, and a dropped entry
-	// reads as saved when it wasn't.
-	if len(parseNotes) > 0 {
-		msg += "\n\nHeads up, the framework adjusted your input:\n- " + strings.Join(parseNotes, "\n- ")
-	}
+	// reads as saved when it wasn't. Every early return below carries the
+	// same block, because a failed save is exactly when the author is reading
+	// closely: a page fetching data/balance_step from a source registered as
+	// balance-step was broken by the rename, and the note saying so used to
+	// appear only on the success path, which that page never reached.
+	msg = appWithParseNotes(msg, parseNotes)
 
 	// Parse the inline JavaScript an html section carries. A script that
 	// doesn't parse takes the WHOLE page down (a game is one section, so the
@@ -280,8 +303,8 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			}
 		}
 		if len(scriptProblems) > 0 {
-			return fmt.Sprintf("%s app %q, BUT its inline JavaScript DOES NOT PARSE, the page will be blank/dead until this is fixed:\n- %s\n\nFix the markup with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
-				verb, saved.Name, strings.Join(scriptProblems, "\n- "), saved.Slug), nil
+			return appWithParseNotes(fmt.Sprintf("%s app %q, BUT its inline JavaScript DOES NOT PARSE, the page will be blank/dead until this is fixed:\n- %s\n\nFix the markup with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
+				verb, saved.Name, strings.Join(scriptProblems, "\n- "), saved.Slug), parseNotes), nil
 		}
 		// Parsing says the document is well-formed, not that it is whole. A
 		// page that calls a function nothing defines parses, loads, and (for a
@@ -291,8 +314,8 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		// REFUSED this shape; reaching here means either a create, or a
 		// rewrite the author explicitly confirmed. Say it plainly either way.
 		if dangling := jsDanglingCalls(appProposedHTMLText(raw)); len(dangling) > 0 {
-			return fmt.Sprintf("%s app %q, BUT the page CALLS CODE IT NEVER DEFINES: it parses and loads, and then dies the moment anyone uses it. Nothing defines: %s\n\nEither add those functions or remove the calls to them. Fix it with app_def(action=\"replace_function\", …) if you are adding one back, or action=\"update\" for the whole document. Do NOT tell the user the app is ready.",
-				verb, saved.Name, appNameList(dangling, 12)), nil
+			return appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page CALLS CODE IT NEVER DEFINES: it parses and loads, and then dies the moment anyone uses it. Nothing defines: %s\n\nEither add those functions or remove the calls to them. Fix it with app_def(action=\"replace_function\", …) if you are adding one back, or action=\"update\" for the whole document. Do NOT tell the user the app is ready.",
+				verb, saved.Name, appNameList(dangling, 12)), parseNotes), nil
 		}
 
 		// Parsing is only the cheap half. An html section IS the page, so load
@@ -304,8 +327,8 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		// longer exists. Checking the write's own output cannot go stale.
 		if len(appHTMLSectionScripts(raw)) > 0 {
 			if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
-				return fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
-					verb, saved.Name, strings.Join(errs, "\n- "), saved.Slug), nil
+				return appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
+					verb, saved.Name, strings.Join(errs, "\n- "), saved.Slug), parseNotes), nil
 			}
 		}
 	}
@@ -320,8 +343,8 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if len(saved.DataSources) > 0 {
 		report, _, _, fail := t.checkScripts(saved, false, nil, nil)
 		if fail > 0 {
-			return fmt.Sprintf("%s app %q, BUT a data source FAILED to run, the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, …) (it re-checks on save). Do NOT tell the user the app is ready yet.",
-				verb, saved.Name, strings.TrimSpace(report), saved.Slug), nil
+			return appWithParseNotes(fmt.Sprintf("%s app %q, BUT a data source FAILED to run, the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, …) (it re-checks on save). Do NOT tell the user the app is ready yet.",
+				verb, saved.Name, strings.TrimSpace(report), saved.Slug), parseNotes), nil
 		}
 		msg += "\n\nData source check, all passed:\n" + strings.TrimSpace(report)
 		msg += "\nTip: run app_def(action=\"test\", id=\"" + saved.Slug + "\", sample=[{…example form entry…}]) to confirm the full form→data-source→output chain produces real output."

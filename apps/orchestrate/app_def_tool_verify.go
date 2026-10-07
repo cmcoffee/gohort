@@ -1,9 +1,12 @@
 package orchestrate
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -87,7 +90,7 @@ func (t *chatTurn) appDefTest(args map[string]any) (string, error) {
 	} else if len(spec.Sample) > 0 && len(appStoredRecords(t.user, spec)) == 0 {
 		src = "retained sample"
 	}
-	report, records, pass, fail := t.checkScripts(spec, true, sample, params)
+	report, records, pass, fail := t.runScriptChecks(spec, appScriptRun{includeActions: true, sample: sample, params: params, preview: testOutputPreview})
 	var b strings.Builder
 	fmt.Fprintf(&b, "Tested app %q with %d %s record(s).\n\n%s\n%d passed, %d failed.", spec.Name, records, src, report, pass, fail)
 	for _, w := range appSampleFieldWarnings(spec.RecordFields, sample) {
@@ -153,7 +156,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			spec.RecordSample(sample)
 			spec.Sample = sample
 		}
-		report, _, _, fail := t.checkScripts(spec, true, sample, mapArg(args["params"]))
+		report, _, _, fail := t.runScriptChecks(spec, appScriptRun{includeActions: true, sample: sample, params: mapArg(args["params"]), preview: verifyOutputPreview})
 		failures += fail
 		if fail > 0 {
 			classes = append(classes, "script-fail")
@@ -235,49 +238,9 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			classes = append(classes, "failed-request")
 			fmt.Fprintf(&b, "FAIL request: %s\n", e)
 		}
-		// Positive per-data-source confirmation: the page must have
-		// actually FETCHED each source's live endpoint and gotten a
-		// good status. A source that was never requested means no
-		// section references it (source_script) — the "script works
-		// but the page never calls it" disconnect the script checks
-		// can't see.
-		for _, ds := range spec.DataSources {
-			endpoint := "/apps/" + spec.Slug + "/data/" + ds.Name
-			status := 0
-			for _, req := range rep.Requests {
-				if pathOfURL(req.URL) == endpoint {
-					status = req.Status
-					break
-				}
-			}
-			requested := status != 0
-			if !requested {
-				for _, u := range rep.PendingRequests {
-					if pathOfURL(u) == endpoint {
-						requested = true
-						break
-					}
-				}
-			}
-			switch {
-			case status == 0 && requested:
-				// The wiring is proven (the page called the endpoint);
-				// the script just didn't answer inside the check window.
-				// A latency problem, not a structure problem — warn, but
-				// don't send the author chasing section config.
-				fmt.Fprintf(&b, "WARN data source %q: the page DID request %s but the response had not arrived when the check ended. The wiring is correct; the SCRIPT IS SLOW (a script that makes many sequential fetch_url calls takes that long on every page load). Reduce the calls or accept slow loads: do NOT change the section wiring.\n", ds.Name, endpoint)
-			case status == 0:
-				failures++
-				classes = append(classes, "source-unwired")
-				fmt.Fprintf(&b, "FAIL data source %q: the page NEVER fetched %s; no section is wired to it. Set source_script:%q on the table/display that should render it, or (from an html section's script), call fetch(%q) (plain relative fetch; there is no client-side gohort object in app pages).\n", ds.Name, endpoint, ds.Name, "data/"+ds.Name)
-			case status >= 400:
-				// Already counted via FailedRequests above; this line
-				// just names the source for the fix.
-				fmt.Fprintf(&b, "     ^ that failing request is data source %q.\n", ds.Name)
-			default:
-				fmt.Fprintf(&b, "OK   data source %q: page fetched %s live (HTTP %d).\n", ds.Name, endpoint, status)
-			}
-		}
+		n, cls := appVerifyDataSources(&b, spec, rep)
+		failures += n
+		classes = append(classes, cls...)
 		var pr struct {
 			Sections   int      `json:"sections"`
 			Panels     int      `json:"panels"`
@@ -365,6 +328,87 @@ func pathOfURL(raw string) string {
 	return u.Path
 }
 
+// appVerifyDataSources is the positive per-data-source confirmation: the page
+// must have actually FETCHED each source's live endpoint and gotten a good
+// status. A source that was never requested means no section references it
+// (source_script), the "script works but the page never calls it" disconnect
+// the script checks can't see. Returns the failures it found and their classes.
+func appVerifyDataSources(b *strings.Builder, spec AppSpec, rep *PageCheckReport) (failures int, classes []string) {
+	var html string
+	for _, ds := range spec.DataSources {
+		endpoint := "/apps/" + spec.Slug + "/data/" + ds.Name
+		status := 0
+		for _, req := range rep.Requests {
+			if pathOfURL(req.URL) == endpoint {
+				status = req.Status
+				break
+			}
+		}
+		requested := status != 0
+		if !requested {
+			for _, u := range rep.PendingRequests {
+				if pathOfURL(u) == endpoint {
+					requested = true
+					break
+				}
+			}
+		}
+		if status == 0 && !requested && html == "" {
+			html = appSpecHTMLText(spec)
+		}
+		switch {
+		case status == 0 && requested:
+			// The wiring is proven (the page called the endpoint);
+			// the script just didn't answer inside the check window.
+			// A latency problem, not a structure problem — warn, but
+			// don't send the author chasing section config.
+			fmt.Fprintf(b, "WARN data source %q: the page DID request %s but the response had not arrived when the check ended. The wiring is correct; the SCRIPT IS SLOW (a script that makes many sequential fetch_url calls takes that long on every page load). Reduce the calls or accept slow loads: do NOT change the section wiring.\n", ds.Name, endpoint)
+		case status == 0 && appHTMLReferencesData(html, ds.Name):
+			// A source the page's own code names but only calls when someone
+			// plays: a click-driven game fetches its next step on a click, and
+			// a page load never clicks. Failing it as unwired sent a build into
+			// adding a load-time warm-up fetch, then a probe branch in the
+			// script, then a whole extra section, all to satisfy this check,
+			// and the app came out worse for it. The reference is the wiring
+			// evidence a load cannot give; test is what runs the script.
+			fmt.Fprintf(b, "WARN data source %q: the page's code references %s but did not fetch it on load, presumably it does on interaction (a click, a move), which a page load cannot exercise. That is fine, do NOT add a load-time fetch to satisfy this check; action=test is what runs the script.\n", ds.Name, "data/"+ds.Name)
+		case status == 0:
+			failures++
+			classes = append(classes, "source-unwired")
+			fmt.Fprintf(b, "FAIL data source %q: the page NEVER fetched %s; no section is wired to it. Set source_script:%q on the table/display that should render it, or (from an html section's script), call fetch(%q) (plain relative fetch; there is no client-side gohort object in app pages).\n", ds.Name, endpoint, ds.Name, "data/"+ds.Name)
+		case status >= 400:
+			// Already counted via FailedRequests above; this line
+			// just names the source for the fix.
+			fmt.Fprintf(b, "     ^ that failing request is data source %q.\n", ds.Name)
+		default:
+			fmt.Fprintf(b, "OK   data source %q: page fetched %s live (HTTP %d).\n", ds.Name, endpoint, status)
+		}
+	}
+	return failures, classes
+}
+
+// appDataRefRE finds a data endpoint named in page code: "data/<name>" right
+// after a quote, a backtick or a slash, so 'data/x', "./data/x" and
+// "/apps/<slug>/data/x" all count and an identifier like metadata/x does not.
+var appDataRefRE = regexp.MustCompile("(?:^|['\"`/])data/([A-Za-z0-9_-]+)")
+
+// appHTMLReferencesData reports whether the page's html, framed documents
+// included, names the data source called name. A reference written with
+// underscores counts: the served app answers data/a_b for a source saved as
+// a-b, since names are slugged when they are saved.
+func appHTMLReferencesData(html, name string) bool {
+	if html == "" || name == "" {
+		return false
+	}
+	want := slugify(name)
+	for _, m := range appDataRefRE.FindAllStringSubmatch(html, -1) {
+		if slugify(m[1]) == want {
+			return true
+		}
+	}
+	return false
+}
+
 // countSpecSections reads the section count out of the stored pageConfig
 // JSON; -1 when the page bytes don't parse (never a verify failure by
 // itself — the browser probe judges the rendered result).
@@ -442,9 +486,35 @@ func appSampleRecords(raw any) ([]map[string]any, error) {
 // form submissions before any real data exists (a fresh app's store is empty, so
 // without this every data source just sees []). params are extra env vars handed
 // to each script, simulating query-param inputs for filter-style sources.
+//
+// The saves' automatic check reads this; test and verify go through
+// runScriptChecks to choose how much of each script's output to show.
 func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[string]any, params map[string]any) (report string, records, pass, fail int) {
+	return t.runScriptChecks(spec, appScriptRun{includeActions: includeActions, sample: sample, params: params})
+}
+
+// appScriptRun is how one script check runs: which components, against what
+// input, and how many characters of each passing script's output the report
+// shows (0 shows none, the save check's terse report).
+type appScriptRun struct {
+	includeActions bool
+	sample         []map[string]any
+	params         map[string]any
+	preview        int
+}
+
+// testOutputPreview is how much of each script's output action=test shows,
+// and verifyOutputPreview the same for verify, which is the final gate and
+// reads best short: enough to tell a real answer from a caught error.
+const (
+	testOutputPreview   = 600
+	verifyOutputPreview = 160
+)
+
+// runScriptChecks is checkScripts with the run's options spelled out.
+func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report string, records, pass, fail int) {
 	db := UserDB(RootDB, t.user)
-	recs := sample
+	recs := opt.sample
 	var b strings.Builder
 	if recs == nil {
 		recs = appStoredRecords(t.user, spec)
@@ -459,19 +529,18 @@ func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[
 		}
 	}
 	recJSON, _ := json.Marshal(recs)
+	baseArgs, applied, shadowed := appScriptArgs(spec, string(recJSON), opt.params)
+	if len(applied) > 0 {
+		fmt.Fprintf(&b, "Params applied as env vars: %s.\n", strings.Join(applied, ", "))
+	}
+	for _, name := range shadowed {
+		fmt.Fprintf(&b, "NOTE param %q was NOT applied: it names a declared setting, and live a setting always beats a param, so the scripts ran with the setting's value %q, as they will when served.\n", name, fmt.Sprint(baseArgs[name]))
+	}
 	run := func(kind, name, lang, script string, caps []string) {
 		label := fmt.Sprintf("%s %q", kind, name)
-		scriptArgs := map[string]any{"records": string(recJSON)}
-		for k, v := range params {
-			scriptArgs[k] = fmt.Sprint(v)
-		}
-		// Every declared setting is present at its default, the way it is
-		// live, so a script that reads one runs here the way it runs there.
-		// A test param of the same name stands in for a value someone set.
-		for _, st := range spec.Settings {
-			if _, given := scriptArgs[st.Name]; st.Name != "" && !given {
-				scriptArgs[st.Name] = st.Default
-			}
+		scriptArgs := make(map[string]any, len(baseArgs))
+		for k, v := range baseArgs {
+			scriptArgs[k] = v
 		}
 		out, err := appscript.Run(t.user, db, spec.Slug, kind, name, lang, script, caps, scriptArgs)
 		if err != nil {
@@ -505,6 +574,15 @@ func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[
 		}
 		var v any
 		_ = json.Unmarshal([]byte(trimmed), &v)
+		// What the script actually printed, on the OK lines too. A script that
+		// catches its own failure prints a perfectly valid object, and an OK
+		// that names only the shape cannot tell a scene from {"error": ...,
+		// "detail": ...}: a build ran test three times with different params
+		// and saw "printed a JSON object" every time, never the object.
+		shown := ""
+		if opt.preview > 0 {
+			shown = "\n     output: " + appOutputPreview(trimmed, opt.preview)
+		}
 		switch kind {
 		case "data":
 			if arr, isArr := v.([]any); isArr {
@@ -517,7 +595,7 @@ func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[
 					// disconnect. Pass (it's valid) but flag it loudly.
 					fmt.Fprintf(&b, "WARN %s: printed an EMPTY array though the app has %d saved record(s). The script is probably reading a query param (e.g. os.environ.get('city')) that is never set; read the saved entries from the `records` env var instead, e.g. recs = json.loads(os.environ.get('records','[]')).\n", label, len(recs))
 				} else {
-					fmt.Fprintf(&b, "OK   %s: printed a JSON array (%d item(s)); good for a table.%s\n", label, len(arr), emptyStoreNote(recs))
+					fmt.Fprintf(&b, "OK   %s: printed a JSON array (%d item(s)); good for a table.%s%s\n", label, len(arr), emptyStoreNote(recs), shown)
 				}
 			} else if obj, isObj := v.(map[string]any); isObj && len(obj) == 1 && obj["error"] != nil {
 				// The script caught its own failure and printed it: valid JSON,
@@ -527,12 +605,12 @@ func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[
 				fmt.Fprintf(&b, "FAIL %s: printed an error: %s\n", label, truncate(fmt.Sprint(obj["error"]), 400))
 			} else {
 				pass++
-				fmt.Fprintf(&b, "OK   %s: printed a JSON object; good for a display (a table section needs a JSON array).%s\n", label, emptyStoreNote(recs))
+				fmt.Fprintf(&b, "OK   %s: printed a JSON object; good for a display (a table section needs a JSON array).%s%s\n", label, emptyStoreNote(recs), shown)
 			}
 		case "action":
 			if _, isObj := v.(map[string]any); isObj {
 				pass++
-				fmt.Fprintf(&b, "OK   %s: printed a JSON object {message?, records?}.\n", label)
+				fmt.Fprintf(&b, "OK   %s: printed a JSON object {message?, records?}.%s\n", label, shown)
 			} else {
 				fail++
 				fmt.Fprintf(&b, "FAIL %s: an action must print a JSON OBJECT {message?, records?}, got %T.\n", label, v)
@@ -543,12 +621,65 @@ func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[
 	for _, ds := range spec.DataSources {
 		run("data", ds.Name, ds.Language, ds.Script, ds.Capabilities)
 	}
-	if includeActions {
+	if opt.includeActions {
 		for _, act := range spec.Actions {
 			run("action", act.Name, act.Language, act.Script, act.Capabilities)
 		}
 	}
 	return b.String(), len(recs), pass, fail
+}
+
+// appScriptArgs is the env a checked script runs with, built in the order the
+// served app builds it: the records, then each param, then every declared
+// setting LAST, so a param naming a setting loses to it here as it does live
+// (customapps applies settings after the query params, because anyone holding
+// a link can set a param). The test used to let the param win, which passed a
+// value through that the served app would have thrown away. Settings arrive
+// at their declared defaults: the values someone set live in the app's own
+// store, which a check does not read.
+//
+// applied lists the params that reached the scripts (name=value, sorted) and
+// shadowed the ones a setting overrode, so the report can say which is which.
+func appScriptArgs(spec AppSpec, records string, params map[string]any) (args map[string]any, applied, shadowed []string) {
+	args = map[string]any{"records": records}
+	for k, v := range params {
+		args[k] = fmt.Sprint(v)
+	}
+	isSetting := map[string]bool{}
+	for _, st := range spec.Settings {
+		if st.Name == "" {
+			continue
+		}
+		isSetting[st.Name] = true
+		args[st.Name] = st.Default
+	}
+	for k, v := range params {
+		if isSetting[k] {
+			shadowed = append(shadowed, k)
+			continue
+		}
+		applied = append(applied, k+"="+strconv.Quote(fmt.Sprint(v)))
+	}
+	sort.Strings(applied)
+	sort.Strings(shadowed)
+	return args, applied, shadowed
+}
+
+// appOutputPreview is one line of what a script printed, capped at max
+// characters: JSON compacted so a pretty-printed object does not spend the
+// budget on indentation, anything else with its whitespace folded.
+func appOutputPreview(out string, max int) string {
+	var buf bytes.Buffer
+	s := out
+	if json.Compact(&buf, []byte(out)) == nil {
+		s = buf.String()
+	} else {
+		s = strings.Join(strings.Fields(out), " ")
+	}
+	if len(s) <= max {
+		return s
+	}
+	return fmt.Sprintf("%s... (%d more chars)", s[:max], len(s)-max)
 }
 
 // boolArg coerces a section-map field to bool: native bool, or the strings
