@@ -358,6 +358,50 @@ func TestLlamacppEffortReachesTheChatTemplate(t *testing.T) {
 	}
 }
 
+// On vLLM a budget becomes the level it stands for. vLLM ignores
+// thinking_budget_tokens and a budget outranks effort, so a call that asked to
+// think briefly sent neither and the template reasoned at xhigh, its default.
+func TestVLLMBudgetBecomesTheEffortItStandsFor(t *testing.T) {
+	oc := &openAIClient{llamacpp: true, vllm: true, noThinkUseKwarg: true}
+	for budget, want := range map[int]string{256: "low", 1024: "low", 2048: "medium", 3072: "medium", 4096: "xhigh", 16000: "xhigh"} {
+		cfg := effortCfg(WithEffort("high"), WithThinkBudget(budget))
+		resolveEffort(&cfg, "", "")
+		if kw := oc.llamacppChatTemplateKwargs(cfg); kw["reasoning_effort"] != want {
+			t.Errorf("budget %d: kwargs %v, want reasoning_effort=%q", budget, kw, want)
+		}
+		if b := oc.llamacppThinkBudget(cfg); b != nil {
+			t.Errorf("budget %d: thinking_budget_tokens %d sent to vLLM, which ignores it", budget, *b)
+		}
+	}
+	// The deployment's global budget is the ceiling, and the tier's max effort
+	// caps the level, as for an effort chosen outright.
+	ceiled := &openAIClient{llamacpp: true, vllm: true, llamacppBudget: 512}
+	cfg := effortCfg(WithThinkBudget(8000))
+	resolveEffort(&cfg, "", "")
+	if kw := ceiled.llamacppChatTemplateKwargs(cfg); kw["reasoning_effort"] != "low" {
+		t.Errorf("under a 512 ceiling: kwargs %v, want low", kw)
+	}
+	capped := &openAIClient{llamacpp: true, vllm: true, effort: effortTier{max: "medium"}}
+	cfg = effortCfg(WithThinkBudget(8000))
+	resolveEffort(&cfg, "", "medium")
+	if kw := capped.llamacppChatTemplateKwargs(cfg); kw["reasoning_effort"] != "medium" {
+		t.Errorf("tier max medium: kwargs %v, want medium", kw)
+	}
+	// Thinking off stays off, with no level beside it.
+	cfg = effortCfg(WithThink(false), WithThinkBudget(300))
+	resolveEffort(&cfg, "", "")
+	if kw := oc.llamacppChatTemplateKwargs(cfg); kw["reasoning_effort"] != nil {
+		t.Errorf("thinking off: kwargs %v, want no level", kw)
+	}
+	// llama.cpp honours the budget itself, so it is left to do so.
+	lc := &openAIClient{llamacpp: true}
+	cfg = effortCfg(WithThinkBudget(300))
+	resolveEffort(&cfg, "", "")
+	if kw := lc.llamacppChatTemplateKwargs(cfg); kw["reasoning_effort"] != nil {
+		t.Errorf("llama.cpp with a budget: kwargs %v, want no level", kw)
+	}
+}
+
 func TestGeminiEffortTable(t *testing.T) {
 	c := &geminiClient{thinkingBudget: 2000}
 	for level, want := range map[string]int{"low": 1024, "medium": 8192, "high": 24576} {

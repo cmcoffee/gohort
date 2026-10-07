@@ -317,6 +317,38 @@ var templateEffortLevels = map[string]string{
 	effortHigh:   "xhigh",
 }
 
+// vllmBudgetEffort is the effort level a thinking budget stands for on vLLM,
+// or "" when there is none to read. A budget outranks effort (resolveEffort),
+// and vLLM ignores the budget, so a call that asked to think briefly (a
+// 256-token judge call) sent neither and got the template's default, its
+// costliest. The budget's intent carries across instead: the thresholds sit
+// between llamacppEffortBudgets' sizes, so the two tables round-trip. The
+// deployment's global budget is still the ceiling, and the tier's max effort
+// still caps the level.
+func (c *openAIClient) vllmBudgetEffort(cfg ChatConfig) string {
+	if !c.vllm || cfg.Effort != "" || cfg.ThinkBudget == nil || *cfg.ThinkBudget <= 0 || (cfg.Think != nil && !*cfg.Think) {
+		return ""
+	}
+	b := *cfg.ThinkBudget
+	if c.llamacppBudget > 0 && b > c.llamacppBudget {
+		b = c.llamacppBudget
+	}
+	level := effortHigh
+	switch {
+	case b <= 1024:
+		level = effortLow
+	case b <= 3072:
+		level = effortMedium
+	}
+	if m := normEffort(c.effort.max); m != "" && effortRank(level) > effortRank(m) {
+		level = m
+	}
+	if level == effortOff {
+		return ""
+	}
+	return level
+}
+
 // reasoning_effort is OpenAI's own dial, and only reasoning models take it:
 // the rest answer a 400 that names the parameter. Which models those are is not
 // derivable from the id in a way that keeps working, so the field is sent and
@@ -598,6 +630,8 @@ func (c *openAIClient) llamacppChatTemplateKwargs(cfg ChatConfig) map[string]any
 	// ignores the key, as with lazy_tool_names below.
 	if lvl, ok := templateEffortLevels[cfg.Effort]; ok && (cfg.Think == nil || *cfg.Think) {
 		kw["reasoning_effort"] = lvl
+	} else if lvl := c.vllmBudgetEffort(cfg); lvl != "" {
+		kw["reasoning_effort"] = templateEffortLevels[lvl]
 	}
 	// lazy_tool_names: tools flagged RenderLate are rendered at the BOTTOM of
 	// the prompt by the split chat template, so loading one mid-session doesn't
