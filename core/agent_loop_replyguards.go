@@ -467,71 +467,6 @@ func stripFakeToolCodeBlocks(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// containsActionPromise reports whether content includes an explicit
-// promise of action — phrases the LLM emits when it intends to call a
-// tool but doesn't actually emit the call. Detection is conservative:
-// only matches forms that almost always indicate "I'm about to do
-// something" and never natural conversational closes ("let me know if
-// you have other questions" wouldn't trigger because of the "know if").
-//
-// Scope: matches the trailing portion of content (last ~200 chars)
-// since the action-promise is usually the closing sentence, and a
-// promise-shaped phrase mid-text followed by a real conclusion is
-// usually fine. Case-insensitive.
-func containsActionPromise(content string) bool {
-	c := strings.ToLower(strings.TrimSpace(content))
-	if c == "" {
-		return false
-	}
-	// Look at trailing 200 chars; longer content with a closing
-	// promise is the typical failure shape.
-	if len(c) > 200 {
-		c = c[len(c)-200:]
-	}
-	// Phrase set chosen to match "stated intent to act" and avoid
-	// natural conversational closes. Each must be followed by some
-	// hint of an upcoming action ("try", "pull", "check", etc.) or
-	// a temporal hold ("moment", "second", "sec").
-	phrases := []string{
-		"let me try",
-		"let me figure",
-		"let me pull",
-		"let me look up",
-		"let me check",
-		"let me see if",
-		"let me get",
-		"let me find",
-		"let me grab",
-		"let me look",
-		"let me actually",
-		"let me first",
-		"i'll figure",
-		"i'll pull",
-		"i'll check",
-		"i'll look",
-		"i'll try",
-		"i'll grab",
-		"i'll fetch",
-		"one moment",
-		"one sec",
-		"give me a moment",
-		"give me a sec",
-		"hold on",
-		"stand by",
-		"hang on",
-		"hold tight",
-		"bear with me",
-		"working on it",
-		"on it",
-	}
-	for _, p := range phrases {
-		if strings.Contains(c, p) {
-			return true
-		}
-	}
-	return false
-}
-
 // frameworkNoticeTag prefixes every loop-injected corrective/pacing message.
 // These ride the user ROLE (the only reliable mid-conversation carrier), so
 // small models kept attributing them to the human and answering THEM
@@ -679,8 +614,60 @@ func replyStalledOnAPromise(content string) bool {
 	if conditionalOfferRe.MatchString(lower) {
 		return false
 	}
-	return futureCommitmentRe.MatchString(lower)
+	return promiseEndsTheReply(lower)
 }
+
+// promiseEndsTheReply reports whether the reply's LAST promise is how it ends:
+// nothing of substance follows the sentence that makes it.
+//
+// A stall ends on its promise ("Let me look up the current price." and
+// nothing more); that is what makes the turn a stall. A promise with an answer
+// after it is a figure of speech: "Let me explain." followed by the
+// explanation, "I'll be honest." followed by the opinion. Matching the phrase
+// anywhere re-prompted those finished answers, the retry wrote the answer a
+// second time, and the user saw both. A pleasantry after the promise ("I'll
+// look it up now. Anything else?") is not substance, so that stall is still
+// caught.
+func promiseEndsTheReply(lower string) bool {
+	var last []int
+	for _, m := range futureCommitmentRe.FindAllStringIndex(lower, -1) {
+		last = m
+	}
+	for _, m := range onItRe.FindAllStringIndex(lower, -1) {
+		if last == nil || m[1] > last[1] {
+			last = m
+		}
+	}
+	if last == nil {
+		return false
+	}
+	rest := lower[last[1]:]
+	if end := sentenceEndRe.FindStringIndex(rest); end != nil {
+		rest = rest[end[1]:]
+	} else {
+		rest = ""
+	}
+	substance := 0
+	for _, r := range rest {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			substance++
+		}
+	}
+	return substance < promiseTrailerMax
+}
+
+// promiseTrailerMax is how much text may follow a promise's sentence and still
+// leave the promise as the reply's ending: room for a pleasantry ("Anything
+// else?", "Sound good?"), not for an answer.
+const promiseTrailerMax = 40
+
+// sentenceEndRe finds where a sentence stops.
+var sentenceEndRe = regexp.MustCompile(`[.!?…](?:\s|$)|\n`)
+
+// onItRe is "on it" as an acknowledgement, opening the reply or a sentence.
+// Anywhere else it is ordinary English ("based on it", "depends on it",
+// "working on it" in a report of what someone else is doing).
+var onItRe = regexp.MustCompile(`(?:^|[.!?,;:—–-]\s*)on it\b`)
 
 // ReplyPromisesWork reports whether a reply commits the agent to work it has
 // not done — the exported form of the loop's own stall predicate, for a host
@@ -701,7 +688,13 @@ func ReplyPromisesWork(reply string) bool { return replyStalledOnAPromise(reply)
 // difference only stopped mattering while this was conjoined with pending tool
 // errors. Standing alone it decides whether an ordinary reply gets re-prompted,
 // and "Here's the answer: 42." is an answer.
-var futureCommitmentRe = regexp.MustCompile(`\b(?:let me|i'll|i will|i'm going to|i am going to|going to|now i|next i|on it)\b`)
+//
+// First person only. A bare "going to" matched "it's going to take a minute",
+// and "now i" matched "now I see the problem": a forecast and an insight, both
+// finished answers, both re-prompted to "do it now with a real tool call".
+// "Now I'm going to run it" and "Next I'll check" are still caught, by "i'm
+// going to" and "i'll". "On it" lives in onItRe, where it can be anchored.
+var futureCommitmentRe = regexp.MustCompile(`\b(?:let me|i'll|i will|i'm going to|i am going to)\b`)
 
 // behavioralCommitmentRe matches the agent promising to BEHAVE differently
 // rather than to do something.
@@ -1068,7 +1061,7 @@ const (
 	noteRoleBreak     = "Your last attempt at a reply was withdrawn: it began mid-sentence and carried on the user's message in their voice, as if you were them. Their message is complete as sent, and nothing in the withdrawn text was their request. Answer it now, as yourself: act on what they asked."
 	noteMalformedCall = "Your last tool call could not be read by the model provider (it was malformed) and was dropped, so it did not run and the user has seen only the text before it. Make the call again now, with arguments that match the tool's schema exactly: valid JSON, only the listed fields, the right types."
 	noteTruncated     = "Your previous reply was CUT OFF before you finished it: you did not choose to stop. Continue from where you left off without repeating what you already said. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits."
-	noteActionPromise = "You stated an intention to take an action (e.g. 'let me try', 'one moment') but called no tool. Either call the tool now to actually do what you said, or reply plainly that you can't proceed and explain what you tried. Do NOT promise further action without taking it."
+	noteActionPromise = "You ended your turn saying you were about to do something, and then called no tool at all, so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. Do it NOW with a real tool call, or say plainly what is stopping you. Do not repeat the promise, and do not apologize for it: do the work or explain why you can't."
 	noteAnnouncedCall = "Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW: never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead."
 	noteCollapse      = "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question."
 )
@@ -1085,7 +1078,7 @@ func init() {
 		{ID: correctionFakeToolCode, Name: "Tool call written as a text block", Desc: "The reply wrote a tool call as a <tool_code> block or ::name():: text, which runs nothing. The block is always removed; this asks for a real call."},
 		{ID: correctionPhantomDelivery, Name: "Delivers a file that does not exist", Desc: "The reply says it sent or attached a file that nothing produced. It is taken back and the model asked again."},
 		{ID: correctionRoleBreak, Name: "Carries on the user's message", Desc: "The reply continues the user's sentence in their voice instead of answering it. It is withdrawn and the model asked again.", Note: noteRoleBreak},
-		{ID: correctionActionPromise, Name: "Promises an action and stops", Desc: "The reply says it will do something and ends without a tool call.", Note: noteActionPromise},
+		{ID: correctionActionPromise, Name: "Promises an action and stops", Desc: "The reply ends on a promise to do something (\"let me check\", \"I'll look it up\") and the turn called no tool at all. The model is asked to do it or say what stops it.", Note: noteActionPromise},
 		{ID: correctionAnnouncedCall, Name: "Announces a call that never comes", Desc: "The reply's last line introduces a call or a list (ending in a colon) and the turn stops there.", Note: noteAnnouncedCall},
 		{ID: correctionUnfinished, Name: "Stops mid-sentence", Desc: "The reply's last line ends on a joining word or mark (\"and\", \"the\", a comma) or a colon that asks the user nothing. The model is asked to finish."},
 		{ID: correctionToolMention, Name: "Names a tool instead of calling it", Desc: "A short lead-in names a tool in its text and makes no call. The model is asked to run it or answer plainly."},

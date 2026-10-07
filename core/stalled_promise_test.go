@@ -10,8 +10,11 @@
 package core
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/replyguard"
 )
 
 func TestAPromiseToActIsNotAFinishedTurn(t *testing.T) {
@@ -175,5 +178,81 @@ func TestAnOfferThatWaitsOnTheUserIsNotAStall(t *testing.T) {
 		if !replyStalledOnAPromise(stall) {
 			t.Errorf("work the agent said it would do now is still a stall: %q", stall)
 		}
+	}
+}
+
+// Finished answers that only SOUND like promises. Each was re-prompted to "do
+// it NOW with a real tool call", the retry wrote the answer again, and the
+// user saw both. The detector matched the phrase anywhere; a stall is a reply
+// that ENDS on its promise.
+func TestAFigureOfSpeechIsNotAPromise(t *testing.T) {
+	for _, answer := range []string{
+		// A forecast and an insight: not first person, not commitments.
+		"It's going to take about ten minutes on that hardware, mostly prefill.",
+		"Now I see the problem: the config points at the wrong port, so requests never arrive.",
+		// "on it" as ordinary English, not an acknowledgement.
+		"That depends on it being cached. If it's cold, the first call takes longer.",
+		// A promise with the answer right behind it.
+		"Let me explain. The server batches requests, so two calls run together instead of waiting in line, which is why the second finishes almost as fast as the first.",
+		"I'll be honest with you. The second option is cheaper and does everything you listed, so I would go with that one.",
+	} {
+		if replyStalledOnAPromise(answer) {
+			t.Errorf("a finished answer was read as a stall:\n  %s", answer)
+		}
+	}
+	for _, stall := range []string{
+		"On it.",
+		"Got it, on it.",
+		"Good question. Let me check the logs for that.",
+		"I'll look into it. Thanks!",
+	} {
+		if !replyStalledOnAPromise(stall) {
+			t.Errorf("a reply ending on its promise is still a stall: %q", stall)
+		}
+	}
+}
+
+// A promise with nothing errored and nothing called is its own guard, not the
+// give-up guard: under one id the two could only be shadowed together, so
+// quieting the one that misfired took the other with it.
+func TestAnEmptyPromiseIsItsOwnGuard(t *testing.T) {
+	replyguard.SetStore(guardStore{})
+	defer replyguard.SetStore(nil)
+	run := func() int {
+		stub := &FakeLLM{Turns: []FakeTurn{
+			{Content: "Let me look up the current price."},
+			{Content: "It's $42 as of this morning.", Repeat: true},
+		}}
+		app := &AppCore{LLM: stub, LeadLLM: stub}
+		if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "price?"}}, AgentLoopConfig{MaxRounds: 8}); err != nil {
+			t.Fatal(err)
+		}
+		return stub.Calls()
+	}
+	acted := func(id string) (n int) {
+		for _, st := range replyguard.Stats() {
+			if st.ID == id {
+				n += st.Acted
+			}
+		}
+		return
+	}
+
+	if calls := run(); calls != 2 {
+		t.Fatalf("an empty promise is re-prompted once: calls=%d", calls)
+	}
+	if acted(correctionActionPromise) != 1 || acted(correctionGiveUp) != 0 {
+		t.Errorf("counted under the wrong guard: action-promise=%d give-up=%d",
+			acted(correctionActionPromise), acted(correctionGiveUp))
+	}
+	// Turning the give-up guard off leaves this one working...
+	replyguard.Put(replyguard.Setting{ID: correctionGiveUp, Scope: replyguard.AllTiers, Mode: replyguard.Off})
+	if calls := run(); calls != 2 {
+		t.Errorf("give-up off must not silence the promise guard: calls=%d", calls)
+	}
+	// ...and turning this one off is what silences it.
+	replyguard.Put(replyguard.Setting{ID: correctionActionPromise, Scope: replyguard.AllTiers, Mode: replyguard.Off})
+	if calls := run(); calls != 1 {
+		t.Errorf("promise guard off: calls=%d, want the reply left alone", calls)
 	}
 }

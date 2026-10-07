@@ -3,8 +3,8 @@
 // Four guards in this file decide whether a reply is honest about what the turn
 // did, and every one of them works by matching phrases: a cue list plus an
 // attachment noun (replyClaimsAttachment), a first-person commitment regex
-// (replyStalledOnAPromise), a trailing colon (endsWithCallAnnouncement), and one
-// disabled outright for noise (containsActionPromise). Each has a blind spot,
+// (replyStalledOnAPromise), a trailing colon (endsWithCallAnnouncement), and a
+// phrase list since removed for noise (containsActionPromise). Each has a blind spot,
 // and each blind spot was found the same way — in production, by a person.
 //
 //   - "Here's you, wasting away in the garage like Craig ordered." Slipped the

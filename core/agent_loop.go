@@ -2655,29 +2655,13 @@ func (lr *loopRun) finalRoundTruncation() loopAction {
 }
 
 func (lr *loopRun) finalRoundPromiseGuards() loopAction {
-	// Action-promise correction DISABLED for now — it false-positived
-	// on ordinary conversational replies ("I'll try to nail the house
-	// next time."), burning rounds re-prompting for an action the model
-	// never intended. Flip to true to re-enable; the reasoning-collapse
-	// correction below is unaffected either way.
-	const actionPromiseCorrection = false
-	if actionPromiseCorrection && lr.corrections.available(correctionActionPromise) && lr.round < lr.maxRounds && !lr.toolFiredThisTurn && containsActionPromise(lr.rs.resp.Content) && lr.guardActs(correctionActionPromise) {
-		Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", lr.corrections.spend(correctionActionPromise), maxCorrectionsPerKind, truncForLog(lr.rs.resp.Content, 80))
-		lr.history = append(lr.history, Message{
-			Role:    "user",
-			Content: frameworkNoticeTag + lr.guardNote(correctionActionPromise, noteActionPromise),
-		})
-		return actContinue
-	}
-
 	// Announced-call correction: the reply ENDS on a colon
 	// introducing a call that never came — "Here's the
 	// `update_agent` call to implement these changes:" and the turn
 	// stops (observed: Builder settled a turn exactly there and the
-	// user watched nothing happen). Unlike the disabled
-	// actionPromiseCorrection above, the trailing-colon +
-	// call-announcement shape doesn't occur in complete replies, so
-	// it's safe to re-prompt on. No !toolFiredThisTurn gate:
+	// user watched nothing happen). Unlike a bare promise phrase,
+	// the trailing-colon + call-announcement shape doesn't occur in
+	// complete replies, so it's safe to re-prompt on. No !toolFiredThisTurn gate:
 	// announcing a follow-up call and stopping is just as broken
 	// after earlier tools succeeded. Budget-shared with the other
 	// promise corrections so it can't loop.
@@ -2838,12 +2822,28 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 	stalledOnErrors := lr.cumulativeToolErrors > 0 && (len(trimmedContent) < 30 || promised)
 	stalledOnNothing := promised && !lr.toolFiredThisTurn
 	gaveUp := roundsLeft >= 5 && (stalledOnErrors || stalledOnNothing)
-	if gaveUp {
-		lr.noteUncorrected(correctionGiveUp, "The turn again stopped with tool errors unaddressed and rounds to spare; no further re-prompt was left to spend.")
+	// Two guards, not one. With errors pending it is the give-up guard; a
+	// promise with nothing errored and nothing called is "Promises an action
+	// and stops", which has its own row in the registry. Under one id they
+	// could only be shadowed together, so quieting the one that misfired on a
+	// tier took the other with it.
+	kind, uncorrected := correctionGiveUp, "The turn again stopped with tool errors unaddressed and rounds to spare; no further re-prompt was left to spend."
+	if !stalledOnErrors {
+		kind, uncorrected = correctionActionPromise, "The reply again ended on a promise to act with no tool called; no further re-prompt was left to spend, so it was delivered as written."
 	}
-	if gaveUp && lr.corrections.available(correctionGiveUp) && lr.guardActs(correctionGiveUp) {
-		Debug("[agent_loop] give-up-with-errors-pending detected (errors=%d, rounds_left=%d, content=%dch, promised=%v), re-prompting: correction %d/%d",
-			lr.cumulativeToolErrors, roundsLeft, len(trimmedContent), promised, lr.corrections.spend(correctionGiveUp), maxCorrectionsPerKind)
+	if gaveUp {
+		lr.noteUncorrected(kind, uncorrected)
+	}
+	if gaveUp && lr.corrections.available(kind) && lr.guardActs(kind) {
+		tail := trimmedContent
+		if r := []rune(tail); len(r) > 160 {
+			tail = "…" + string(r[len(r)-160:])
+		}
+		// The reply's tail is logged so a firing can be judged from the log
+		// alone: without it there was no telling a real stall from a finished
+		// answer that happened to say "let me".
+		Debug("[agent_loop] %s detected (errors=%d, rounds_left=%d, content=%dch, promised=%v), re-prompting: correction %d/%d: %q",
+			kind, lr.cumulativeToolErrors, roundsLeft, len(trimmedContent), promised, lr.corrections.spend(kind), maxCorrectionsPerKind, tail)
 		// Two failures, two messages. Telling a model to "re-read the
 		// error messages" when nothing errored sends it hunting for a
 		// problem that isn't there, and it will invent one.
@@ -2868,9 +2868,7 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 				stopped, lr.cumulativeToolErrors, errPlural, roundsLeft, roundPlural)
 		} else {
 			diag = "The reply said the work was about to happen and then ended the turn without calling a single tool. Re-prompted to do it now or say plainly what is stopping it."
-			nudge = fmt.Sprintf(
-				frameworkNoticeTag+"You ended your turn saying you were about to do something, and then called no tool at all, so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. You have %d round%s remaining. Do it NOW with a real tool call, or say plainly what is stopping you. Do not repeat the promise, and do not apologize for it: do the work or explain why you can't.",
-				roundsLeft, roundPlural)
+			nudge = frameworkNoticeTag + lr.guardNote(correctionActionPromise, noteActionPromise)
 		}
 		lr.emitDiag("giveup-retried", diag)
 		lr.settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
