@@ -644,8 +644,11 @@
             });
             break;
           case 'error':
-            body.innerHTML = '<div class="ui-pl-modal-status" style="color:var(--danger)">' +
-              (data.Body || data.message || 'Error') + '</div>';
+            // As text: the message can carry a provider's error, which can
+            // quote whatever it was sent. Built with innerHTML it was markup.
+            body.innerHTML = '';
+            body.appendChild(el('div', {class: 'ui-pl-modal-status', style: 'color:var(--danger)'},
+              [String(data.Body || data.message || 'Error')]));
             break;
         }
       }

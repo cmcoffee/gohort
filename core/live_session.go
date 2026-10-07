@@ -362,8 +362,7 @@ func (m *LiveSessionMap[T]) HandleReconnect() http.HandlerFunc {
 			http.Error(w, "session not found", http.StatusNotFound)
 			return
 		}
-		events, done := m.SnapshotEvents(id)
-		if events == nil {
+		if events, _ := m.SnapshotEvents(id); events == nil {
 			http.Error(w, "session not found", http.StatusNotFound)
 			return
 		}
@@ -373,46 +372,53 @@ func (m *LiveSessionMap[T]) HandleReconnect() http.HandlerFunc {
 			http.Error(w, "streaming not supported", http.StatusInternalServerError)
 			return
 		}
+		m.Tail(r.Context(), sse, id, func(ev T) error { return sse.Send(ev) })
+	}
+}
 
-		// Replay buffered events.
-		for _, ev := range events {
-			if err := sse.Send(ev); err != nil {
-				return
-			}
+// Tail streams a live session to one viewer: every buffered event, then each
+// new one as it arrives, through emit. It returns true when the run finished
+// and false when the viewer left first (ctx done, or a write failed), so the
+// caller knows whether to close the stream as complete.
+//
+// The run does not depend on the viewer. Leaving stops the tail and nothing
+// else; a page that comes back tails again from the start.
+//
+// emit is where an app turns its own event type into what its page draws, so
+// a send and a reconnect can share one tail instead of each keeping a copy.
+// Ownership is the caller's to check (MayView) before it starts streaming.
+func (m *LiveSessionMap[T]) Tail(ctx context.Context, sse *SSEWriter, id string, emit func(T) error) (done bool) {
+	// A keepalive comment after 15s of silence keeps proxies and browsers
+	// from dropping the stream through a long model pause.
+	const heartbeat = 15 * time.Second
+	sent := 0
+	lastActivity := time.Now()
+	for {
+		current, isDone := m.SnapshotEvents(id)
+		if current == nil {
+			return true // gone: cleaned up after it finished
 		}
-		if done {
-			return
+		if len(current) > sent {
+			for i := sent; i < len(current); i++ {
+				if emit(current[i]) != nil {
+					return false
+				}
+			}
+			sent = len(current)
+			lastActivity = time.Now()
+		} else if time.Since(lastActivity) >= heartbeat {
+			if sse.SendComment("heartbeat") != nil {
+				return false
+			}
+			lastActivity = time.Now()
 		}
-
-		// Stream new events as they arrive. Send a keepalive comment every
-		// 15 seconds of silence to prevent proxy and browser timeouts during
-		// long LLM pauses. Return immediately if the client disconnects.
-		const heartbeat = 15 * time.Second
-		sent := len(events)
-		lastActivity := time.Now()
-		for {
-			time.Sleep(500 * time.Millisecond)
-			current, isDone := m.SnapshotEvents(id)
-			if current == nil {
-				return
-			}
-			if len(current) > sent {
-				for i := sent; i < len(current); i++ {
-					if err := sse.Send(current[i]); err != nil {
-						return
-					}
-				}
-				sent = len(current)
-				lastActivity = time.Now()
-			} else if time.Since(lastActivity) >= heartbeat {
-				if err := sse.SendComment("heartbeat"); err != nil {
-					return
-				}
-				lastActivity = time.Now()
-			}
-			if isDone {
-				return
-			}
+		if isDone {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(500 * time.Millisecond):
 		}
 	}
 }

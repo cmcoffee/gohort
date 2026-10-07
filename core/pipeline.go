@@ -11,6 +11,11 @@ import (
 // it to AppCore.RunPipeline, which handles session registration,
 // persistent queuing, slot acquisition, notification, and cleanup.
 type PipelineConfig struct {
+	// ID runs the pipeline under this id instead of a fresh one. For work on
+	// a record that already exists (re-synthesize it, fold children into it):
+	// a page that opens the record by its id can then rejoin the run, which a
+	// generated id would never match. Empty = generate one, as before.
+	ID         string
 	App        string      // app identifier for queue/logging
 	Label      string      // human-readable label (topic, question)
 	Params     interface{} // app-specific queue params (JSON-marshalable)
@@ -35,6 +40,14 @@ type PipelineConfig struct {
 	// ctx derivation rather than requiring manual cancel-tree
 	// bookkeeping. Leave nil for top-level pipelines.
 	ParentCtx context.Context
+}
+
+// pipelineID is the id a run goes by: the caller's, else a fresh one.
+func pipelineID(cfg PipelineConfig) string {
+	if cfg.ID != "" {
+		return cfg.ID
+	}
+	return UUIDv4()
 }
 
 // pipelineRoot returns the parent context the pipeline should derive
@@ -85,7 +98,7 @@ type PipelineWork func(ctx context.Context, pc *PipelineCtx) error
 // session registration, persistent queue, slot acquisition, work
 // execution, notification, and cleanup. Returns the pipeline ID.
 func (T *AppCore) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
-	id := UUIDv4()
+	id := pipelineID(cfg)
 	ctx, cancel := context.WithCancel(pipelineRoot(cfg))
 
 	// 1. Register live session.
@@ -171,7 +184,7 @@ func (T *AppCore) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
 // RunPipelineAsync is like RunPipeline but runs in a goroutine and
 // returns the pipeline ID immediately.
 func (T *AppCore) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) string {
-	id := UUIDv4()
+	id := pipelineID(cfg)
 	ctx, cancel := context.WithCancel(pipelineRoot(cfg))
 
 	if cfg.OnRegister != nil {
