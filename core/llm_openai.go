@@ -297,6 +297,16 @@ var llamacppEffortBudgets = map[string]int{
 	effortHigh:   4096,
 }
 
+// templateEffortLevels names each effort level the way a llama.cpp chat
+// template that takes one spells it. Qwen 3.8's top level is xhigh and it has
+// no plain high, so High maps to it: the template's own highest, as High is
+// gohort's. Off is absent; enable_thinking=false already says it.
+var templateEffortLevels = map[string]string{
+	effortLow:    "low",
+	effortMedium: "medium",
+	effortHigh:   "xhigh",
+}
+
 // reasoning_effort is OpenAI's own dial, and only reasoning models take it:
 // the rest answer a 400 that names the parameter. Which models those are is not
 // derivable from the id in a way that keeps working, so the field is sent and
@@ -569,6 +579,15 @@ func (c *openAIClient) llamacppChatTemplateKwargs(cfg ChatConfig) map[string]any
 		} else if c.noThinkUseKwarg {
 			kw["enable_thinking"] = false
 		}
+	}
+	// reasoning_effort: a chat template that takes a reasoning level reads it
+	// here (Qwen 3.8: low | medium | xhigh). Without it the template's own
+	// default applies to every thinking call, and Qwen 3.8's default is its
+	// costliest, so Low and Medium only shrank the budget while the model was
+	// still told to reason as hard as it can. A template with no such variable
+	// ignores the key, as with lazy_tool_names below.
+	if lvl, ok := templateEffortLevels[cfg.Effort]; ok && (cfg.Think == nil || *cfg.Think) {
+		kw["reasoning_effort"] = lvl
 	}
 	// lazy_tool_names: tools flagged RenderLate are rendered at the BOTTOM of
 	// the prompt by the split chat template, so loading one mid-session doesn't

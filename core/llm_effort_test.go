@@ -321,6 +321,43 @@ func TestLlamacppEffortTableIsClampedByTheCeiling(t *testing.T) {
 	}
 }
 
+// The level also reaches the chat template, named the template's way. Qwen
+// 3.8 reads reasoning_effort (low | medium | xhigh) and defaults to xhigh, so
+// without it every thinking call reasoned at the maximum whatever the agent's
+// effort said, and only the budget moved.
+func TestLlamacppEffortReachesTheChatTemplate(t *testing.T) {
+	oc := &openAIClient{llamacpp: true, noThinkUseKwarg: true}
+	for level, want := range map[string]string{"low": "low", "medium": "medium", "high": "xhigh"} {
+		cfg := effortCfg(WithEffort(level))
+		resolveEffort(&cfg, "", "")
+		kw := oc.llamacppChatTemplateKwargs(cfg)
+		if kw["reasoning_effort"] != want || kw["enable_thinking"] != true {
+			t.Errorf("%s: kwargs %v, want reasoning_effort=%q with thinking on", level, kw, want)
+		}
+	}
+	// Off is said by enable_thinking=false; a level beside it would contradict it.
+	cfg := effortCfg(WithEffort("off"))
+	resolveEffort(&cfg, "", "")
+	if kw := oc.llamacppChatTemplateKwargs(cfg); kw["reasoning_effort"] != nil || kw["enable_thinking"] != false {
+		t.Errorf("effort off: kwargs %v, want thinking off and no level", kw)
+	}
+	// No effort in play, and an explicit budget (which outranks effort), both
+	// leave the template's own default alone, exactly as before.
+	for _, cfg := range []ChatConfig{effortCfg(), effortCfg(WithEffort("high"), WithThinkBudget(300))} {
+		resolveEffort(&cfg, "", "")
+		if kw := oc.llamacppChatTemplateKwargs(cfg); kw["reasoning_effort"] != nil {
+			t.Errorf("no effort chosen: kwargs %v, want no reasoning_effort", kw)
+		}
+	}
+	// And it is on the wire, inside chat_template_kwargs.
+	cfg = effortCfg(WithEffort("medium"))
+	resolveEffort(&cfg, "", "")
+	body, _ := json.Marshal(oaiRequest{ChatTemplateKwargs: oc.llamacppChatTemplateKwargs(cfg)})
+	if !strings.Contains(string(body), `"chat_template_kwargs":{"enable_thinking":true,"reasoning_effort":"medium"}`) {
+		t.Errorf("request body %s, want reasoning_effort inside chat_template_kwargs", body)
+	}
+}
+
 func TestGeminiEffortTable(t *testing.T) {
 	c := &geminiClient{thinkingBudget: 2000}
 	for level, want := range map[string]int{"low": 1024, "medium": 8192, "high": 24576} {
