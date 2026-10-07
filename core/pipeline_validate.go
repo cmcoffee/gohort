@@ -226,6 +226,31 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 			probs = append(probs, "stage "+s.Name+": count_from is only read by kind=panel (rounds) and kind=loop (passes): "+
 				"nothing else repeats, so there is no count for it to set")
 		}
+		// verify checks an EARLIER stage's writing, and returns a shape of its
+		// own (verifyFields), so it takes no prompt-made output.
+		if s.Kind == StageVerify {
+			switch {
+			case strings.TrimSpace(s.Check) == "":
+				probs = append(probs, "stage "+s.Name+": a verify stage needs \"check\", the earlier stage whose writing it checks")
+			case done[s.Check] == nil && !badOutput[s.Check]:
+				probs = append(probs, "stage "+s.Name+": check names "+strconv.Quote(s.Check)+", which is not an earlier stage")
+			}
+			if len(s.Output) > 0 {
+				probs = append(probs, "stage "+s.Name+": a verify stage returns its own fields (summary, checked, supported, unsupported, unchecked, unresolved_citations, unverified_figures, passed), so it declares no output")
+			}
+		} else if strings.TrimSpace(s.Check) != "" {
+			probs = append(probs, "stage "+s.Name+": check is only read by kind=verify")
+		}
+		// cite tidies prose citations; a stage that returns JSON, or writes
+		// nothing of its own, has none to tidy.
+		if s.Cite {
+			switch {
+			case len(s.Output) > 0:
+				probs = append(probs, "stage "+s.Name+": cite works on a stage that writes prose; this one declares output, so its result is JSON. Cite the stage that writes from it instead")
+			case s.Kind == StageVerify || s.Kind == StageBranch || s.Kind == StageLoop || s.Kind == StageTool:
+				probs = append(probs, "stage "+s.Name+": cite works on a stage that writes prose, not on a "+string(s.Kind)+" stage")
+			}
+		}
 		if s.Kind != StagePanel && len(s.Panel) > 0 {
 			probs = append(probs, "stage "+s.Name+": only a kind \"panel\" stage has voices")
 		}
@@ -311,6 +336,11 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 		// particular, fan over the survivors.
 		for k, v := range fanoutCollectedShape(s) {
 			own[k] = v
+		}
+		if s.Kind == StageVerify {
+			for _, f := range verifyFields {
+				own[f.Name] = f.Type
+			}
 		}
 		done[s.Name] = own
 	}
@@ -496,6 +526,11 @@ func cardProblems(s PipelineStage) []string {
 	}
 	if s.Kind == StagePanel {
 		have["voice"], have["round"], have["text"] = true, true, true
+	}
+	if s.Kind == StageVerify {
+		for _, f := range verifyFields {
+			have[f.Name] = true
+		}
 	}
 	hint := ""
 	if s.Kind == StagePanel {

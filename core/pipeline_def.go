@@ -106,6 +106,13 @@ const (
 	// this the fan is sequential.
 	StageMachine PipelineStageKind = "machine"
 
+	// StageVerify checks what an earlier stage (Check) wrote against the
+	// sources the run read: every citation names a source, every figure
+	// appears in the text that was read, and each cited claim is put to the
+	// model against its cited sources. No prompt of its own; its result is
+	// the fields verifyFields declares, so a card or a branch can use them.
+	StageVerify PipelineStageKind = "verify"
+
 	// StagePanel puts SEVERAL voices on the SAME question, in parallel,
 	// optionally over several rounds where each round reads what the last
 	// one said.
@@ -322,6 +329,13 @@ type PipelineStage struct {
 	// Output). The field form is what a stage with an Output contract
 	// needs, since its raw text is a JSON *object*, not a bare array.
 	FanOver string `json:"fan_over,omitempty"`
+	// Cite resolves this stage's [N] citations against what the run read:
+	// it appends a Sources section of exactly the sources cited, and a
+	// citation naming no source the run read is noted in the result rather
+	// than passing for real. For a stage that writes prose from {sources}.
+	Cite bool `json:"cite,omitempty"`
+	// Check names the earlier stage a kind=verify stage checks.
+	Check string `json:"check,omitempty"`
 	// Render names the card this stage's result is drawn as in a run's
 	// transcript. Empty = the plain text card, as before. "card" is core's
 	// own card, laid out by Card below from this stage's output fields with

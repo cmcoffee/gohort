@@ -71,6 +71,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			{Value: "branch", Label: "Branch: read a bool and skip or stop (no model call)"},
 			{Value: "tool", Label: "Tool: call a tool directly (no model, no tokens)"},
 			{Value: "machine", Label: "Machine: run a whole machine as this stage"},
+			{Value: "verify", Label: "Verify: check an earlier stage's writing against what the run read"},
 		}, Help: "Changing this changes which controls below apply.",
 			Detail: "Anything the new kind does not use stays visible while it still holds a value, so you can clear it."},
 	}
@@ -91,6 +92,14 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			Options:  append([]ui.SelectOption{{Value: "", Label: "(none)"}}, cat.agents...),
 			Help:     "It answers with its own persona, tools and memory.",
 			Detail:   "What comes back is shaped into this stage's declared fields."},
+		ui.FormField{Field: "check", Type: "select", Label: "Check which stage",
+			ShowWhen: keepWhileSet(s.Check, "kind:verify"),
+			Options:  append([]ui.SelectOption{{Value: "", Label: "(pick the writing to check)"}}, earlierStageOptions(def, s.Name)...),
+			Help:     "Its citations, figures and cited claims are checked against the pages the run read.",
+			Detail:   "Returns summary, checked, supported, unsupported, unchecked, unresolved_citations, unverified_figures and passed, for a card or a branch."},
+		ui.FormField{Field: "cite", Type: "toggle", Label: "Resolve its citations",
+			ShowWhen: keepWhileSet(chIf(s.Cite, "true", ""), "kind:worker|synthesize|agent|fanout|panel"),
+			Help:     "For prose written from {sources}: adds a Sources section of what it cited, and notes a citation naming nothing read."},
 		ui.FormField{Field: "fan_over", Type: "text", Label: "Fan over",
 			ShowWhen: keepWhileSet(s.FanOver, "kind:fanout"),
 			Help:     "An earlier stage whose prompt emits a JSON array, or one of its declared list fields.",
@@ -217,7 +226,7 @@ func stageNameNarrowingLabel(s PipelineStage) string {
 // branch and a tool stage never read one.
 func stageReadsPrompt(k PipelineStageKind) bool {
 	switch k {
-	case StageLoop, StageBranch, StageTool:
+	case StageLoop, StageBranch, StageTool, StageVerify:
 		return false
 	}
 	return true
@@ -255,6 +264,19 @@ func keepWhileList(stored []string, expr string) string {
 	return expr
 }
 
+// earlierStageOptions is the stages before this one: what a verify stage may
+// check, since it reads a result that already exists.
+func earlierStageOptions(def PipelineDef, upTo string) []ui.SelectOption {
+	var out []ui.SelectOption
+	for _, s := range def.Stages {
+		if strings.TrimSpace(s.Name) == strings.TrimSpace(upTo) {
+			break
+		}
+		out = append(out, ui.SelectOption{Value: s.Name, Label: s.Name})
+	}
+	return out
+}
+
 // laterStageOptions is the stages a branch may jump to: forward only,
 // which is what Validate enforces anyway.
 func laterStageOptions(def PipelineDef, from string) []ui.SelectOption {
@@ -285,6 +307,7 @@ func stageRecord(s PipelineStage) map[string]any {
 		"until": s.Until, "when": s.When, "skip_to": s.SkipTo,
 		"tool": s.Tool, "args": nameValueRowsOf(s.Args), "machine": s.Machine, "model": s.Model, "think": StageThinkMode(s),
 		"panel": s.Panel, "reach": StageReach(s), "tools": s.Tools, "output": stageOutputRecord(s),
+		"check": s.Check, "cite": s.Cite,
 	}
 }
 
@@ -318,6 +341,7 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 		{"tool", func(v string) { s.Tool = v }},
 		{"machine", func(v string) { s.Machine = v }},
 		{"model", func(v string) { s.Model = v }},
+		{"check", func(v string) { s.Check = v }},
 	} {
 		if v, ok := str(f.key); ok {
 			f.set(v)
@@ -334,6 +358,9 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 		// stage is a transform" read back as inherit.
 		s.ThinkMode = normalizePhaseThink(v)
 		s.Think = nil
+	}
+	if v, ok := str("cite"); ok {
+		s.Cite = v == "true" || v == "1" || v == "on"
 	}
 	if v, ok := body["reach"]; ok {
 		s.Reach = strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))

@@ -43,7 +43,7 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 				"input":       {Type: "string", Description: "(run) The input fed to the pipeline's first stage and available as {input} in every stage prompt."},
 				"stages": {
 					Type:        "array",
-					Description: "(create/update) Ordered stages, each an object. Common shape: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"panel\"|\"loop\"|\"branch\"|\"tool\", \"prompt\": instruction}. Kinds: worker = a plain LLM step (the default); agent = dispatch to one of your agents (set \"agent\"); fanout = run the prompt once per element of an earlier list, in parallel (set \"fan_over\", use {item}); panel = put SEVERAL voices on the SAME question, in parallel, over \"count\" rounds where each round reads the last (set \"panel\": [names], use {voice} and {panel}), that is what disagreement is for, and it is NOT a fanout: a fanout's branches never meet; loop = repeat a nested \"body\" of stages, each pass seeing the last (set \"count\" as the ceiling, \"until\" to stop early); a panel's rounds or a loop's passes may come from the RUN instead of the recipe with \"count_from\": \"{field}\" (a submit-form field) or \"{stage:NAME.field}\" (a number an earlier stage decided), with \"count\" as the fallback; a fanout may ALSO take a \"body\", run once per item, when each item needs several steps rather than one prompt. WHEN THE NUMBER OF REPETITIONS IS NOT KNOWN AS YOU WRITE THE PIPELINE (\"keep going until the critic is satisfied\", \"until they agree\", \"up to five rounds\") that is kind=loop, NOT five hand-written copies of the same two stages. The copies cannot stop early, cannot say which pass they are, and silently become a fixed-length pipeline the user was not promised; machine = run a stored machine as this stage (set \"machine\"), for work that carries state between its own steps; branch = no LLM call, read a bool and stop or skip (set \"when\"); tool = call one of your tools directly with \"args\" you write (no LLM, no tokens). Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration}, {voice}, {panel}, plus {field_name} for every field of the submit form when this pipeline backs an app (that is how a run takes parameters, not just a question). Any stage may declare \"output\": [{name,type,desc,required}] to return validated JSON whose fields later stages read as {stage:NAME.field}, that is what makes fan_over-a-field, loop \"until\", and branch \"when\" possible. Worker stages inherit the calling agent's tools; set \"reach\" (\"all\" or \"\" for the caller's whole catalog, \"read\", \"none\") to restrict (prefer it to naming tools, since it survives a different caller; name tools only when the person named them or agreed when asked), \"think\" for deliberation, \"model\":\"lead\" for the precision tier on the stages that earn it. Set \"render\":\"card\" with \"card\":{title,badges,body,accent} to draw a stage's output fields as a card (a verdict, a scored item; on a panel, one card per voice per round). **Call action=\"help\" for the full spec**: every field, the caps, and the canonical shapes.",
+					Description: "(create/update) Ordered stages, each an object. Common shape: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"panel\"|\"loop\"|\"branch\"|\"tool\"|\"verify\", \"prompt\": instruction}. Kinds: worker = a plain LLM step (the default); agent = dispatch to one of your agents (set \"agent\"); fanout = run the prompt once per element of an earlier list, in parallel (set \"fan_over\", use {item}); panel = put SEVERAL voices on the SAME question, in parallel, over \"count\" rounds where each round reads the last (set \"panel\": [names], use {voice} and {panel}), that is what disagreement is for, and it is NOT a fanout: a fanout's branches never meet; loop = repeat a nested \"body\" of stages, each pass seeing the last (set \"count\" as the ceiling, \"until\" to stop early); a panel's rounds or a loop's passes may come from the RUN instead of the recipe with \"count_from\": \"{field}\" (a submit-form field) or \"{stage:NAME.field}\" (a number an earlier stage decided), with \"count\" as the fallback; a fanout may ALSO take a \"body\", run once per item, when each item needs several steps rather than one prompt. WHEN THE NUMBER OF REPETITIONS IS NOT KNOWN AS YOU WRITE THE PIPELINE (\"keep going until the critic is satisfied\", \"until they agree\", \"up to five rounds\") that is kind=loop, NOT five hand-written copies of the same two stages. The copies cannot stop early, cannot say which pass they are, and silently become a fixed-length pipeline the user was not promised; machine = run a stored machine as this stage (set \"machine\"), for work that carries state between its own steps; branch = no LLM call, read a bool and stop or skip (set \"when\"); tool = call one of your tools directly with \"args\" you write (no LLM, no tokens); verify = check an earlier stage's writing against what the run read (set \"check\"). Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration}, {voice}, {panel}, {sources} (the pages the run has read, numbered to cite as [N]; set \"cite\":true on the stage that cites them), plus {field_name} for every field of the submit form when this pipeline backs an app (that is how a run takes parameters, not just a question). Any stage may declare \"output\": [{name,type,desc,required}] to return validated JSON whose fields later stages read as {stage:NAME.field}, that is what makes fan_over-a-field, loop \"until\", and branch \"when\" possible. Worker stages inherit the calling agent's tools; set \"reach\" (\"all\" or \"\" for the caller's whole catalog, \"read\", \"none\") to restrict (prefer it to naming tools, since it survives a different caller; name tools only when the person named them or agreed when asked), \"think\" for deliberation, \"model\":\"lead\" for the precision tier on the stages that earn it. Set \"render\":\"card\" with \"card\":{title,badges,body,accent} to draw a stage's output fields as a card (a verdict, a scored item; on a panel, one card per voice per round). **Call action=\"help\" for the full spec**: every field, the caps, and the canonical shapes.",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"session_meta": {
@@ -142,8 +142,27 @@ when       (branch) required bool field on an EARLIER stage
 skip_to    (branch) a LATER stage name; omit to end the pipeline
 tool       (tool) the tool to call
 args       (tool) {param: template}
+cite       true: resolve this prose stage's [N] citations against what the run read, add its Sources (see SOURCES)
+check      (verify) the earlier stage whose writing it checks
 render     how the stage's result is drawn in a run: "card" draws its output fields as values (see CARDS)
 card       (render="card") {"title": field, "badges": "field, field", "body": field, "accent": field}
+
+=== SOURCES ===
+A run numbers every page its stages read: each web_search result and each fetch_url page becomes source [N], in
+the order first read, kept with the text it was read as (fanout branches number into the same list). {sources} in
+a prompt is that list, "[N] Title - URL" per line, so a writing stage can cite by number: "Write the answer from
+what was found. Cite as [N] from: {sources}". Give that stage "cite": true and its citations are resolved: a
+Sources section listing exactly what it cited is appended, and a citation naming nothing the run read is noted in
+the result instead of passing for real. (Pages an AGENT stage reads stay inside that agent's turn; a worker stage
+with web tools, a fanout, or a tool stage is how a pipeline gathers sources it can cite.)
+
+To CHECK the writing, add a stage {"kind": "verify", "check": "<the writing stage>"}. It takes no prompt and no
+output: it finds citations naming nothing read, figures that appear in none of the text read, and puts each cited
+claim (up to 20) to the model against the sources it cites. Its fields are summary, checked, supported,
+unsupported (list, each with why), unchecked (claims whose sources were only seen as search snippets),
+unresolved_citations, unverified_figures, and passed (bool): branch on passed to send a draft back for a rewrite,
+or show it as a card: {"render": "card", "card": {"title": "summary", "badges": "supported, checked",
+"accent": "passed"}}.
 
 === FOLLOW-UPS ===
 A run that has finished can be put through more pipelines: write a report from it, re-synthesize it, fold what
@@ -779,6 +798,8 @@ func parsePipelineStages(raw any) ([]PipelineStage, error) {
 			Args:      mapStrMap(m, "args"),
 			Render:    strings.ToLower(strings.TrimSpace(mapStr(m, "render"))),
 			Card:      mapStrMap(m, "card"),
+			Cite:      mapBool(m, "cite"),
+			Check:     strings.TrimSpace(mapStr(m, "check")),
 		})
 	}
 	return out, nil

@@ -19,11 +19,17 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+
+	"github.com/cmcoffee/gohort/core/factcheck"
+	"github.com/cmcoffee/gohort/core/sources"
 )
 
 // PipelineDispatch runs a single agent stage: dispatch `input` to the
@@ -233,7 +239,12 @@ func (T *AppCore) executePipelineHooks(ctx context.Context, def PipelineDef, inp
 		blockSeq:    new(atomic.Int64),
 		defID:       def.ID,
 		sessionMeta: def.SessionMeta,
+		srcs:        sources.NewRunSources(),
 	}
+	// The stages' tool calls run several layers down (an agent loop inside a
+	// worker stage, inside a fanout branch); the source list rides the
+	// context to reach them.
+	ctx = context.WithValue(ctx, runSourcesKey{}, r.srcs)
 	out, _, err := r.runList(ctx, def.Stages, input, "Stage")
 	return out, r, err
 }
@@ -262,6 +273,10 @@ type pipelineRun struct {
 	// start its own numbering: two branches would both claim "stage-1" and
 	// the transcript would fold their blocks together.
 	blockSeq *atomic.Int64
+	// srcs is what the run has read, numbered: pages its stages' tools
+	// fetched, for {sources}, a stage's cite and a verify stage. Shared by
+	// every branch, so a fanout's branches number into one list.
+	srcs *sources.RunSources
 	// quiet suppresses this run's own transcript blocks. Set on a fanout
 	// branch: N branches x K body stages of individual blocks would bury a
 	// transcript that reads one entry per stage, and the fanout's joined
@@ -305,6 +320,7 @@ func (r *pipelineRun) forBranch() *pipelineRun {
 		vars:        r.vars,
 		outputs:     outs,
 		blockSeq:    r.blockSeq,
+		srcs:        r.srcs,
 		quiet:       true,
 		defID:       r.defID,
 		sessionMeta: r.sessionMeta,
@@ -574,7 +590,42 @@ func (r *pipelineRun) applyRunVars(s string) string {
 	for k, v := range r.vars {
 		s = strings.ReplaceAll(s, k, v)
 	}
+	// {sources}: what the run has read so far, numbered, to cite as [N].
+	// Resolved when the prompt is, so a stage sees everything its earlier
+	// stages read.
+	if strings.Contains(s, "{sources}") {
+		s = strings.ReplaceAll(s, "{sources}", r.srcs.List())
+	}
 	return s
+}
+
+// runSourcesKey carries a run's source list on the context, down to the agent
+// loop a tool-equipped stage runs.
+type runSourcesKey struct{}
+
+// collectSources adds the pages a stage's tool calls read to the run's source
+// list, from the stage loop's history: each call paired with its result, and
+// each result read by its tool's extractor (core/sources).
+func collectSources(ctx context.Context, history []Message) {
+	rs, _ := ctx.Value(runSourcesKey{}).(*sources.RunSources)
+	if rs == nil {
+		return
+	}
+	calls := map[string]ToolCall{}
+	for _, m := range history {
+		for _, tc := range m.ToolCalls {
+			calls[tc.ID] = tc
+		}
+		for _, res := range m.ToolResults {
+			tc, ok := calls[res.ID]
+			if !ok || res.IsError {
+				continue
+			}
+			for _, f := range sources.Extract(tc.Name, tc.Args, res.Content) {
+				rs.Add(f)
+			}
+		}
+	}
 }
 
 // runList executes a stage list in order and returns the last stage's
@@ -751,6 +802,9 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		case StageLoop:
 			// Repeat the body, threading each pass's result into the next.
 			out, err = r.runLoopStage(ctx, stage, prev)
+		case StageVerify:
+			// Check an earlier stage's writing against what the run read.
+			out, fields, err = r.runVerifyStage(ctx, stage, status)
 		case StageMachine:
 			// A whole run as a stage. Computed here rather than handed over
 			// as a `call` closure on purpose: runDeclaredStage repairs a
@@ -765,6 +819,11 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 				status(stageLabel + " [" + kindLabel + "] starting")
 			}
 			out, err = r.runToolStage(ctx, stage, prev, stageTools, vars)
+			if err == nil {
+				for _, f := range sources.Extract(stage.Tool, nil, out) {
+					r.srcs.Add(f)
+				}
+			}
 			if err == nil && len(stage.Output) > 0 {
 				// A tool that returns JSON can declare its shape like any
 				// other stage — decode it, but with no repair retry: there
@@ -799,6 +858,20 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			return "", fmt.Errorf("stage %q: %w", stage.Name, err)
 		}
 		out = strings.TrimSpace(out)
+		// cite: the stage's citations resolved against what the run read, a
+		// Sources section of exactly what it cited, and a citation naming
+		// nothing it read said out loud rather than left to pass for real.
+		if stage.Cite && out != "" {
+			var unknown []int
+			out, unknown = r.srcs.Cite(out)
+			if len(unknown) > 0 {
+				note := fmt.Sprintf("cites %s, which name no source this run read", citeList(unknown))
+				if status != nil {
+					status(stageLabel + " " + note)
+				}
+				out += "\n\n> Note: this " + note + "."
+			}
+		}
 		// Fields the stage takes from a variable rather than asking for.
 		// Filled AFTER the call and merged in, so they land in outputs
 		// exactly like answered ones and every {stage:NAME.field} reads
@@ -1282,7 +1355,7 @@ func (T *AppCore) runWorkerStageConfirm(ctx context.Context, prompt string, tool
 	// RoundAbortTools: a machine step that skips is done, so nothing else in
 	// that round runs and the loop ends. Harmless elsewhere, where no such
 	// tool exists.
-	resp, _, err := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: prompt}}, AgentLoopConfig{
+	resp, history, err := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: prompt}}, AgentLoopConfig{
 		Tools:             tools,
 		Tier:              tier,
 		MaxRounds:         pipelineStageMaxRounds,
@@ -1297,6 +1370,9 @@ func (T *AppCore) runWorkerStageConfirm(ctx context.Context, prompt string, tool
 			WithThink(think),
 		},
 	})
+	// What the stage's tools read becomes the run's sources, even when the
+	// stage itself then failed: the pages were read either way.
+	collectSources(ctx, history)
 	if err != nil {
 		return "", err
 	}
@@ -2074,4 +2150,218 @@ func fieldNameList(fields []PipelineField) string {
 		names = append(names, f.Name)
 	}
 	return strings.Join(names, ", ")
+}
+
+// citeList writes source numbers as a reader sees them: [3], [7].
+func citeList(ns []int) string {
+	parts := make([]string, len(ns))
+	for i, n := range ns {
+		parts[i] = "[" + strconv.Itoa(n) + "]"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// --- verify ---------------------------------------------------------------
+
+// verifyFields is what a kind=verify stage returns: the shape a later stage
+// reads as {stage:NAME.field}, a branch tests, and a card lays out.
+var verifyFields = []PipelineField{
+	{Name: "summary", Type: FieldString, Desc: "one line: what was checked and how it came out"},
+	{Name: "checked", Type: FieldNumber, Desc: "cited claims put to the model"},
+	{Name: "supported", Type: FieldNumber, Desc: "claims their cited sources carry"},
+	{Name: "unsupported", Type: FieldList, Desc: "claims their sources do not carry, each with why"},
+	{Name: "unchecked", Type: FieldNumber, Desc: "claims whose sources were never read in full"},
+	{Name: "unresolved_citations", Type: FieldList, Desc: "citations naming no source the run read"},
+	{Name: "unverified_figures", Type: FieldList, Desc: "figures that appear in none of the text read"},
+	{Name: "passed", Type: FieldBool, Desc: "nothing unsupported, unresolved or unverified"},
+}
+
+// verifyMaxClaims caps the claims a verify stage puts to the model: each is a
+// call, and a long report's first twenty cited claims are its load-bearing
+// ones far more often than not.
+const verifyMaxClaims = 20
+
+// verifyParallel is how many claim checks run at once.
+const verifyParallel = 4
+
+// citedClaimRE is one sentence carrying a citation.
+var citedClaimRE = regexp.MustCompile(`[^.!?\n]*\[\d+(?:\s*,\s*\d+)*\][^.!?\n]*[.!?]?`)
+
+// runVerifyStage checks what stage.Check wrote against the run's sources:
+// citations that name nothing, figures found in none of the text read, and
+// each cited claim put to the model against the sources it cites.
+func (r *pipelineRun) runVerifyStage(ctx context.Context, stage PipelineStage, status func(string)) (string, map[string]any, error) {
+	target, ok := r.outputs[stage.Check]
+	if !ok {
+		return "", nil, Error("verify stage " + stage.Name + ": nothing to check, " + strconv.Quote(stage.Check) + " has not run")
+	}
+	text := target.Text
+
+	var unresolved []any
+	for _, n := range sources.Citations(text) {
+		if n < 1 || n > r.srcs.Len() {
+			unresolved = append(unresolved, "["+strconv.Itoa(n)+"]")
+		}
+	}
+	var figures []any
+	for _, f := range factcheck.VerifyFacts(text, r.srcs.Texts()) {
+		figures = append(figures, f.Raw)
+	}
+
+	claims := citedClaimRE.FindAllString(text, -1)
+	if len(claims) > verifyMaxClaims {
+		if status != nil {
+			status(fmt.Sprintf("verify %s: %d cited claims, checking the first %d", stage.Name, len(claims), verifyMaxClaims))
+		}
+		claims = claims[:verifyMaxClaims]
+	}
+	type verdict struct{ kind, why string }
+	verdicts := make([]verdict, len(claims))
+	sem := make(chan struct{}, verifyParallel)
+	var wg sync.WaitGroup
+	for i, claim := range claims {
+		wg.Add(1)
+		go func(i int, claim string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			verdicts[i].kind, verdicts[i].why = r.checkClaim(ctx, strings.TrimSpace(claim))
+		}(i, claim)
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return "", nil, err
+	}
+
+	var unsupported []any
+	supported, unchecked := 0, 0
+	for i, v := range verdicts {
+		switch v.kind {
+		case "supported":
+			supported++
+		case "unchecked":
+			unchecked++
+		default:
+			unsupported = append(unsupported, strings.TrimSpace(claims[i])+" ("+v.why+")")
+		}
+	}
+	checked := len(claims) - unchecked
+	passed := len(unsupported) == 0 && len(unresolved) == 0 && len(figures) == 0
+	summary := fmt.Sprintf("%d of %d cited claims supported by their sources", supported, checked)
+	if len(unresolved) > 0 {
+		summary += fmt.Sprintf(", %d citation(s) naming nothing read", len(unresolved))
+	}
+	if len(figures) > 0 {
+		summary += fmt.Sprintf(", %d figure(s) found in none of the sources", len(figures))
+	}
+	if unchecked > 0 {
+		summary += fmt.Sprintf(", %d claim(s) unchecked (sources only seen as snippets)", unchecked)
+	}
+	fields := map[string]any{
+		"summary": summary, "checked": checked, "supported": supported, "unsupported": unsupported,
+		"unchecked": unchecked, "unresolved_citations": unresolved, "unverified_figures": figures, "passed": passed,
+	}
+	var b strings.Builder
+	b.WriteString(summary + ".")
+	for _, group := range []struct {
+		head  string
+		items []any
+	}{{"Not supported", unsupported}, {"Citations naming nothing read", unresolved}, {"Figures in none of the sources", figures}} {
+		if len(group.items) == 0 {
+			continue
+		}
+		b.WriteString("\n\n" + group.head + ":")
+		for _, it := range group.items {
+			b.WriteString("\n- " + fmt.Sprint(it))
+		}
+	}
+	return b.String(), fields, nil
+}
+
+// checkClaim puts one cited claim to the worker against the sources it cites:
+// "supported", "partly", "unsupported", or "unchecked" when none of its
+// sources was read in full (a search snippet is not enough to judge by).
+func (r *pipelineRun) checkClaim(ctx context.Context, claim string) (string, string) {
+	var ev strings.Builder
+	for _, n := range sources.Citations(claim) {
+		ref, text, ok := r.srcs.Source(n)
+		if !ok || len(text) < 400 {
+			continue
+		}
+		fmt.Fprintf(&ev, "[%d] %s (%s)\n%s\n\n", n, ref.Title, ref.URL, relevantExcerpt(text, claim, 4000))
+	}
+	if ev.Len() == 0 {
+		return "unchecked", "its sources were not read in full"
+	}
+	prompt := "Does the SOURCE TEXT below support the CLAIM? Judge only from the text given, not from what you know.\n\n" +
+		"CLAIM: " + claim + "\n\nSOURCE TEXT:\n" + ev.String() +
+		"Answer as JSON: {\"verdict\": \"supported\" | \"partly\" | \"unsupported\", \"why\": one short sentence}. " +
+		"\"partly\" is a claim the text carries only in a narrower or weaker form."
+	reply, err := r.app.runWorkerStage(ctx, prompt, nil, false, true, WORKER)
+	if err != nil {
+		return "unchecked", "the check could not run: " + err.Error()
+	}
+	var v struct {
+		Verdict string `json:"verdict"`
+		Why     string `json:"why"`
+	}
+	if DecodeJSON(reply, &v) != nil {
+		return "unchecked", "the check gave no verdict"
+	}
+	switch strings.ToLower(strings.TrimSpace(v.Verdict)) {
+	case "supported":
+		return "supported", v.Why
+	case "partly":
+		return "partly", "only partly: " + v.Why
+	}
+	return "unsupported", chooseStr(v.Why, "the sources do not say this")
+}
+
+// relevantExcerpt is up to max characters of text: the paragraphs sharing the
+// most words with claim, in their original order. A source is usually far
+// longer than the passage a claim rests on.
+func relevantExcerpt(text, claim string, max int) string {
+	if len(text) <= max {
+		return text
+	}
+	words := map[string]bool{}
+	for _, w := range strings.FieldsFunc(strings.ToLower(claim), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+		if len(w) > 3 {
+			words[w] = true
+		}
+	}
+	paras := strings.Split(text, "\n")
+	type scored struct{ i, score int }
+	var ranked []scored
+	for i, p := range paras {
+		score := 0
+		for _, w := range strings.FieldsFunc(strings.ToLower(p), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+			if words[w] {
+				score++
+			}
+		}
+		if score > 0 {
+			ranked = append(ranked, scored{i, score})
+		}
+	}
+	sort.Slice(ranked, func(a, b int) bool { return ranked[a].score > ranked[b].score })
+	keep := map[int]bool{}
+	size := 0
+	for _, s := range ranked {
+		if size+len(paras[s.i]) > max {
+			continue
+		}
+		keep[s.i] = true
+		size += len(paras[s.i]) + 1
+	}
+	if len(keep) == 0 {
+		return text[:max]
+	}
+	var b strings.Builder
+	for i, p := range paras {
+		if keep[i] {
+			b.WriteString(p + "\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
 }

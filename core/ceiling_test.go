@@ -322,7 +322,11 @@ const (
 	// the one place every call passes. Two exports, not four: the gate itself
 	// says which calls are the waiting work, so core carries no marker of its
 	// own for it.
-	coreExportCeiling = 2266
+	// 2267: StageVerify, the pipeline kind that checks a stage's writing
+	// against what the run read. A stage kind is an exported constant like
+	// every other one; the rest of sources and verification (the run's
+	// source list, the extractor registry) lives in core/sources instead.
+	coreExportCeiling = 2267
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a
