@@ -35,7 +35,7 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 			Name:        "pipeline",
 			Description: "Author and run multi-stage pipelines: reusable workflows that chain stages (decompose → investigate → synthesize, etc.), where each stage is a worker LLM step or a dispatch to one of your agents, and outputs thread forward. Actions: create (author a new pipeline), update (revise one), list (see yours), get (read one's stages), run (execute on an input and get the result), delete. Pick the action that matches the intent.\n\nUse a pipeline when the work is a repeatable multi-step shape worth saving: not for a one-off question (answer that directly) and not for a single specialist task (dispatch to an agent). A pipeline pays off when the same staged flow runs more than once.\n\n**When building a pipeline FOR a specific agent, pass `attach_to_agents` in the same call**: that's the one-shot wire-up. Forgetting to attach is the classic failure mode: the pipeline exists in storage but the agent can't see it in the next session.",
 			Parameters: map[string]ToolParam{
-				"action":      {Type: "string", Description: "One of: create | update | list | get | run | delete | help."},
+				"action":      {Type: "string", Description: "One of: create | update | list | get | run | delete | examples | example | help. examples lists the shipped pipelines (a debate, a deep research run) to start from; example {name} returns one, with the app that runs it."},
 				"name":        {Type: "string", Description: "Pipeline name. Required for create/update/get/run/delete (get/run/delete also accept the id)."},
 				"id":          {Type: "string", Description: "(update/get/run/delete) Pipeline id, if you have it instead of the name."},
 				"full":        {Type: "boolean", Description: "(get) When true, return the COMPLETE definition with every stage's full prompt. Default false returns a compact view (stage prompts previewed) to save context. Use full=true only to read stage prompts you didn't write this session (e.g. editing an existing pipeline)."},
@@ -88,10 +88,14 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 				return t.pipelineRun(args)
 			case "delete":
 				return t.pipelineDelete(args)
+			case "examples":
+				return pipelineExamples()
+			case "example":
+				return pipelineExample(args)
 			case "help", "":
 				return pipelineHelpText, nil
 			default:
-				return "", fmt.Errorf("unknown action %q: use create | update | list | get | run | delete | help", action)
+				return "", fmt.Errorf("unknown action %q: use create | update | list | get | run | delete | examples | example | help", action)
 			}
 		},
 	}
@@ -104,6 +108,9 @@ const pipelineHelpText = `pipeline actions:
 - get     {name|id, full?:true}, one pipeline's definition.
 - run     {name|id, input}: execute it, returns the final stage's output.
 - delete  {name|id}.
+- examples: the shipped pipelines to start from (a debate, a deep research run), each with its shape.
+- example {name}: one of them in full, with the app that runs it. START HERE for a debate, a research run, or
+  anything shaped like one: adapt a recipe that runs rather than assembling the shape from the fields below.
 
 When building a pipeline FOR an agent, pass attach_to_agents in the same call, that wires it so future sessions see it as run_<pipeline>.
 

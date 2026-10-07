@@ -1,0 +1,33 @@
+{
+  "_note": "Arguments for the app_def tool (action=create). Pair it with research.pipeline.json: author the pipeline first, then this app binds it. The check is drawn as a card the stage declares, and Briefing is the pipeline's own follow-up, offered on every finished run. No script, no html.",
+  "name": "Deep Research",
+  "slug": "research",
+  "description": "Research a question on the web and write a checked, cited report.",
+  "full_width": true,
+  "pipeline_id": "Deep Research",
+  "record_key": "id",
+  "sections": [
+    {
+      "kind": "pipeline",
+      "submit_label": "Research",
+      "empty_text": "Ask a question to research, or open a past report from the sidebar.",
+      "toolbar": [
+        {
+          "label": "Copy Link",
+          "method": "copy",
+          "title": "Copy a shareable link to this report"
+        }
+      ],
+      "fields": [
+        {
+          "name": "question",
+          "label": "Question",
+          "type": "textarea",
+          "rows": 3,
+          "required": true,
+          "placeholder": "A question that needs evidence from several places"
+        }
+      ]
+    }
+  ]
+}

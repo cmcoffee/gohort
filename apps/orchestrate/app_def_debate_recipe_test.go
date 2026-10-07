@@ -3,7 +3,6 @@ package orchestrate
 import (
 	"encoding/json"
 	"os"
-	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -81,44 +80,35 @@ func TestDebateRecipeBuildsTheApp(t *testing.T) {
 	}
 	readExtras(t, "debate.app.json", &app)
 
-	var raw any
-	if err := json.Unmarshal(app.DataSources, &raw); err != nil {
-		t.Fatalf("data_sources: %v", err)
-	}
-	sources, _ := appDataSources(raw)
 	spec := AppSpec{
 		Slug: app.Slug, Name: app.Name, RecordKey: app.RecordKey,
-		PipelineID: app.PipelineID, DataSources: sources,
+		PipelineID: app.PipelineID,
 	}
 
 	page, err := buildAppPage(spec, app.Sections)
 	if err != nil {
 		t.Fatalf("the shipped debate app does not build: %v", err)
 	}
-
-	// The html section registers a block renderer, and a pipeline panel COPIES
-	// the registry when it mounts. Ordering is the whole correctness of this
-	// file and it fails silently when it is wrong.
-	if len(page.Sections) < 2 {
-		t.Fatalf("expected an html section and a pipeline section, got %d", len(page.Sections))
+	if len(page.Sections) != 1 {
+		t.Fatalf("the debate app is one pipeline section and nothing else, got %d sections", len(page.Sections))
 	}
-	if _, ok := page.Sections[0].Body.(ui.Card); !ok {
-		t.Fatalf("section 1 must be the html FRAGMENT that registers the renderer (a ui.Card); got %T", page.Sections[0].Body)
-	}
-	panel, ok := page.Sections[1].Body.(ui.PipelinePanel)
+	panel, ok := page.Sections[0].Body.(ui.PipelinePanel)
 	if !ok {
-		t.Fatalf("section 2 must be the pipeline panel; got %T", page.Sections[1].Body)
+		t.Fatalf("the section must be the pipeline panel; got %T", page.Sections[0].Body)
 	}
-
-	// Everything the last four commits added, wired by one authored file.
-	if panel.CancelURL == "" || panel.ReconnectURL == "" {
-		t.Error("the panel should carry cancel + reconnect without the author asking")
+	if panel.CancelURL == "" || panel.ReconnectURL == "" || panel.FollowUpsURL == "" {
+		t.Error("the panel should carry cancel, reconnect and the follow-ups/suggest base without the author asking")
 	}
-	if panel.PrefillURL != "data/topic-ideas" {
-		t.Errorf("suggest is bound to %q, want the slugified data source", panel.PrefillURL)
+	// Suggest is the pipeline's own recipe, found through the surface, so the
+	// page names no script for it.
+	if panel.PrefillURL != "" {
+		t.Errorf("suggest should come from the pipeline, not %q", panel.PrefillURL)
 	}
-	if len(panel.Actions) != 2 || len(panel.SessionMetaFields) != 3 {
-		t.Errorf("got %d toolbar buttons and %d meta fields, want 2 and 3", len(panel.Actions), len(panel.SessionMetaFields))
+	if def.Suggest == nil {
+		t.Error("the pipeline should carry the suggest recipe the page relies on")
+	}
+	if len(panel.Actions) != 1 || len(panel.SessionMetaFields) != 3 {
+		t.Errorf("got %d toolbar buttons and %d meta fields, want 1 and 3", len(panel.Actions), len(panel.SessionMetaFields))
 	}
 
 	// The join between the two files: every pill the app draws has to be a
@@ -128,23 +118,47 @@ func TestDebateRecipeBuildsTheApp(t *testing.T) {
 	}
 }
 
-// A client-method button needs something to register its handler. The recipe
-// does it in the html section; this is the check that the two stay together.
-func TestDebateRecipeRegistersItsOwnClientAction(t *testing.T) {
+// The point of the recipe: a debate is DATA. No html section, no script, no
+// tool only debate has; everything it shows and checks is a primitive any
+// pipeline has.
+func TestDebateRecipeIsPureData(t *testing.T) {
 	raw, err := os.ReadFile("../../extras/debate.app.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var app struct {
-		Sections []any `json:"sections"`
+		Sections    []map[string]any `json:"sections"`
+		DataSources []any            `json:"data_sources"`
+		Actions     []any            `json:"actions"`
 	}
 	if err := json.Unmarshal(raw, &app); err != nil {
 		t.Fatal(err)
 	}
-	if notes := appShapeNotes(app.Sections, true); len(notes) != 0 {
+	if len(app.DataSources) > 0 || len(app.Actions) > 0 {
+		t.Error("the debate app should need no scripts")
+	}
+	var sections []any
+	for _, s := range app.Sections {
+		sections = append(sections, s)
+	}
+	if notes := appShapeNotes(sections, true); len(notes) != 0 {
 		t.Errorf("the shipped app trips its own authoring notes: %v", notes)
 	}
-	if !strings.Contains(string(raw), "uiRegisterClientAction") {
-		t.Error("the Export button dispatches to a handler nothing registers")
+	for _, s := range app.Sections {
+		if s["kind"] == "html" {
+			t.Error("the debate app should need no html: its cards are the stages' own")
+		}
+	}
+	var def PipelineDef
+	readExtras(t, "debate.pipeline.json", &def)
+	kinds := map[PipelineStageKind]int{}
+	for _, s := range def.Stages {
+		kinds[s.Kind]++
+		if s.Kind == StageTool {
+			t.Errorf("stage %s calls a tool: the recipe must not depend on a tool only debate has", s.Name)
+		}
+	}
+	if kinds[StageGather] == 0 || kinds[StageVerify] == 0 || kinds[StagePanel] == 0 {
+		t.Errorf("a debate on evidence gathers, argues and checks: got %v", kinds)
 	}
 }

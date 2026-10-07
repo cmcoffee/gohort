@@ -1,0 +1,82 @@
+{
+  "name": "Deep Research",
+  "description": "Research a question properly: split it into the sub-questions that decide it, search and read the web for each one, write a report that cites every claim to a page it read, check every citation against that page, and fix what the check found. Use it for a question that needs evidence from several places, not one with a lookup answer.",
+  "stages": [
+    {
+      "name": "plan",
+      "kind": "worker",
+      "model": "lead",
+      "think": "on",
+      "reach": "none",
+      "prompt": "Plan the research for the question below.\n\nBreak it into the three to five sub-questions that would actually decide it: the facts, numbers, precedents or mechanisms a careful answer depends on. Each one should be answerable by reading a few good pages, and together they should cover the question rather than circle it. Write each as a search a person would type, not as a heading.\n\nThe question:\n\n{input}",
+      "output": [
+        {
+          "name": "questions",
+          "type": "list",
+          "required": true,
+          "desc": "three to five sub-questions, each written as a web search"
+        }
+      ]
+    },
+    {
+      "name": "dig",
+      "kind": "fanout",
+      "fan_over": "plan.questions",
+      "body": [
+        {
+          "name": "look",
+          "kind": "gather",
+          "prompt": "{item}",
+          "count": 3
+        },
+        {
+          "name": "notes",
+          "kind": "worker",
+          "reach": "none",
+          "prompt": "Answer one sub-question from the pages below, and only from them.\n\nThe sub-question: {item}\n\nState what the pages establish, citing each fact as [N] with the page's number. Where they disagree, give both readings. Where they do not answer it, say so plainly: an empty finding stated is worth more than a plausible paragraph, because the report is written from these notes.\n\nThe pages:\n\n{stage:look}"
+        }
+      ]
+    },
+    {
+      "name": "write",
+      "kind": "worker",
+      "model": "lead",
+      "think": "on",
+      "reach": "none",
+      "cite": true,
+      "prompt": "Write the report that answers the question below, from the research notes and nothing else.\n\nLead with the answer, as directly as the evidence allows, then the findings that support it, then what is still uncertain and why. Cite every factual claim as [N], using the numbers in the notes; never cite a number that is not there. Where the notes disagree, say so rather than picking a side quietly.\n\nThe question: {input}\n\nThe research notes:\n\n{stage:dig}\n\nThe sources, numbered:\n\n{sources}"
+    },
+    {
+      "name": "check",
+      "kind": "verify",
+      "check": "write",
+      "render": "card",
+      "card": {
+        "title": "summary",
+        "badges": "supported, checked",
+        "accent": "passed"
+      }
+    },
+    {
+      "name": "final",
+      "kind": "worker",
+      "model": "lead",
+      "reach": "none",
+      "cite": true,
+      "prompt": "Below is a research report and a check of its citations against the pages they name. Produce the final report.\n\nWhere the check found a claim its source does not carry, correct the claim to what the source does say, or remove it. Where a citation names no source, remove the citation, and the claim too if nothing else supports it. Where a figure appears in none of the sources, remove it or mark it as unverified. Change nothing else: the check is the only reason to edit. If it found nothing, return the report as it is.\n\nReturn only the report, without the Sources list (it is rebuilt from your citations).\n\nThe report:\n\n{stage:write}\n\nThe check:\n\n{stage:check}"
+    }
+  ],
+  "followups": [
+    {
+      "name": "Briefing",
+      "description": "A one-page briefing from the finished report",
+      "stages": [
+        {
+          "name": "brief",
+          "reach": "none",
+          "prompt": "Turn the research report below into a one-page briefing for a reader with two minutes.\n\nThe answer first, in two sentences. Then the three findings that decide it, one short paragraph each, keeping their [N] citations. Then one line on what is still uncertain. Nothing the report does not say.\n\nThe question was: {parent_input}\n\nThe report:\n\n{input}"
+        }
+      ]
+    }
+  ]
+}

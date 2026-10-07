@@ -2250,6 +2250,13 @@ func (r *pipelineRun) runVerifyStage(ctx context.Context, stage PipelineStage, s
 		return "", nil, Error("verify stage " + stage.Name + ": nothing to check, " + strconv.Quote(stage.Check) + " has not run")
 	}
 	text := target.Text
+	// A Sources list (cite appends one, a writer may write its own) names the
+	// sources rather than claiming anything from them: each of its lines
+	// carries a [N], and checked as a claim it reads as the source "supporting"
+	// its own title.
+	if i := strings.LastIndex(text, "\n## Sources\n"); i >= 0 {
+		text = text[:i]
+	}
 
 	var unresolved []any
 	for _, n := range sources.Citations(text) {
