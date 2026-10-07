@@ -572,6 +572,9 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 		if credName, rerr := Secure().AutoRouteCredential(rawURL, sessUsername(h.Sess)); rerr != nil {
 			writeHookError(conn, rerr.Error())
 			return
+		} else if credName == "" && Secure().SecuredCoverRefusal(rawURL, sessUsername(h.Sess), h.ToolName != "") != nil {
+			writeHookError(conn, "fetch refused: "+Secure().SecuredCoverRefusal(rawURL, sessUsername(h.Sess), h.ToolName != "").Error())
+			return
 		} else if credName != "" && h.ToolName == "" && h.Sess.DirectCredentialRefusal != nil && h.Sess.DirectCredentialRefusal(credName) != "" {
 			// An agent's own workspace script, not an authored tool: the same
 			// rule as its fetch_url tool. An authored tool IS the bound path.

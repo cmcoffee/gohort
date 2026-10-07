@@ -38,6 +38,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -1419,7 +1420,7 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string, agent
 		return nil
 	}
 	if credSliceHas(c.RevokedToolBindings, toolName) {
-		return fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED: an admin re-approves it in Admin > APIs to restore access", credName, toolName)
+		return fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED: an admin re-approves it in Admin > APIs to restore access. Stop and ask the person; do not route around it with another tool, a fetch or a script", credName, toolName)
 	}
 	if !credSliceHas(c.ApprovedToolBindings, toolName) {
 		// A DEPLOYMENT key is bound to a new tool only by an administrator:
@@ -1428,7 +1429,7 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string, agent
 		// (and a revoked binding came back under a new tool name). An admin's
 		// own run still binds, so authoring for the deployment stays one step.
 		if c.Owner == "" && !UserIsAdmin(user) {
-			return fmt.Errorf("credential %q is SECURED and tool %q is not bound to it yet: an administrator approves the binding in Admin > APIs", credName, toolName)
+			return fmt.Errorf("credential %q is SECURED and tool %q is not bound to it yet: an administrator approves the binding in Admin > APIs. To repair a tool that is bound, change it in place (tool_def action=\"update\") rather than making a new one. Otherwise stop and ask the person; do not route around it with another tool, a fetch or a script", credName, toolName)
 		}
 		// Declaring-but-unrecorded (a tool authored before the binding record, or
 		// via a path that didn't record it): auto-bind it on first dispatch.
@@ -2419,14 +2420,8 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// URL deny patterns: applied after the allowlist for fine-grained
 	// carve-outs ("allow Vapi but never /billing/**"). Each pattern
 	// uses the same glob shape as AllowedURLPattern.
-	for _, deny := range c.DeniedURLPatterns {
-		deny = strings.TrimSpace(deny)
-		if deny == "" {
-			continue
-		}
-		if urlMatchesPattern(rawURL, deny) {
-			return "", fmt.Errorf("url %q matches deny pattern %q for credential %q", rawURL, deny, c.Name)
-		}
+	if deny := urlDeniedByCredential(c, rawURL); deny != "" {
+		return "", fmt.Errorf("url %q matches deny pattern %q for credential %q", rawURL, deny, c.Name)
 	}
 
 	// Daily call cap: count successful (non-error) audit entries in
@@ -3107,6 +3102,51 @@ func (s *SecureAPI) SameHostCredentials(rawURL, user string) []string {
 // autoRouteOwn is AutoRouteCredential over one user's own credentials: the
 // name of the one that covers rawURL, an error when that cannot be done
 // cleanly, or ("", nil) when none of theirs covers it.
+// SecuredCoverRefusal is the refusal for a plain fetch to a host a SECURED
+// credential covers, or nil when none does. The auto-route skips a secured
+// credential, so such a fetch used to go out without the key and come back
+// 401: the caller read that as a broken credential and went looking for
+// another way in. It is refused instead, as a disabled credential's host is,
+// with what to do: repair the bound tools in place, or stop and ask. inTool
+// is a script running inside an authored tool, which reaches the credential
+// by declaring fetch_via.
+func (s *SecureAPI) SecuredCoverRefusal(rawURL, user string, inTool bool) error {
+	if s == nil || !s.ready() {
+		return nil
+	}
+	var cover *SecureCredential
+	consider := func(list []SecureCredential, global bool) {
+		for i := range list {
+			c := list[i]
+			if cover != nil || !s.EffectiveSecured(c, user) || (global && !s.UserMayUse(c, user)) {
+				continue
+			}
+			if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" && urlUnderBase(rawURL, base) {
+				cover = &c
+			}
+		}
+	}
+	if strings.TrimSpace(user) != "" {
+		consider(s.ListUser(user), false)
+	}
+	consider(s.List(), true)
+	if cover == nil {
+		return nil
+	}
+	if inTool {
+		return fmt.Errorf("this host is covered by credential %q, which is SECURED: a plain fetch never carries its key. Declare fetch_via:%s in the tool's hook_capabilities and call fetch_via(%q, url, ...), which sends it server-side", cover.Name, cover.Name, cover.Name)
+	}
+	tools := "none bound yet"
+	if len(cover.ApprovedToolBindings) > 0 {
+		tools = strings.Join(cover.ApprovedToolBindings, ", ")
+	}
+	who := "an administrator can unsecure it in Admin > APIs"
+	if cover.Owner != "" {
+		who = "its owner can unsecure it in Extensions > APIs"
+	}
+	return fmt.Errorf("this host is covered by credential %q, which is SECURED: its key is used only by the tools bound to it (%s), never by fetch_url or a script. To check or repair one of those tools, change it in place with tool_def action=\"update\" and run it with tool_def action=\"test\": an edit keeps its binding. Do not route around this with another fetch, a script or a new credential. If the work needs this API outside those tools, stop and ask the person: %s", cover.Name, tools, who)
+}
+
 func (s *SecureAPI) autoRouteOwn(rawURL, user string) (string, error) {
 	var covering []string
 	for _, c := range s.ListUser(user) {
@@ -3335,10 +3375,8 @@ func credentialRedirectCheck(c SecureCredential) func(*http.Request, []*http.Req
 		if !urlAllowedByCredential(c, req.URL.String()) {
 			return fmt.Errorf("credential %q: refusing a redirect outside its allowed endpoints", c.Name)
 		}
-		for _, deny := range c.DeniedURLPatterns {
-			if deny = strings.TrimSpace(deny); deny != "" && urlMatchesPattern(req.URL.String(), deny) {
-				return fmt.Errorf("credential %q: refusing a redirect to a denied endpoint", c.Name)
-			}
+		if urlDeniedByCredential(c, req.URL.String()) != "" {
+			return fmt.Errorf("credential %q: refusing a redirect to a denied endpoint", c.Name)
 		}
 		return nil
 	}
@@ -3353,6 +3391,16 @@ func urlAllowedByCredential(c SecureCredential, rawURL string) bool {
 	if credentialURLTrick(rawURL) != "" {
 		return false
 	}
+	for _, read := range credentialURLReadings(rawURL) {
+		if !urlReadingAllowed(c, read) {
+			return false
+		}
+	}
+	return true
+}
+
+// urlReadingAllowed is the allow-list check on one reading of a URL.
+func urlReadingAllowed(c SecureCredential, rawURL string) bool {
 	if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
 		eps := c.AllowedEndpoints
 		if len(eps) == 0 {
@@ -3436,11 +3484,18 @@ func baseURLProblem(b string) string {
 }
 
 // credentialURLTrick names what makes a URL unsafe to match against a
-// credential's allow and deny lists, or "" when nothing does. The lists match
-// the URL as written; a server resolves "..", "%2F" and "%2e" in the path,
-// drops a "#fragment" and treats a backslash its own way, so each of those can
-// read as an allowed path here and reach a different one there. Credentials in
-// the URL ("user@host") are refused too: auth comes from the credential.
+// credential's allow and deny lists, or "" when nothing does. A server drops a
+// "#fragment", treats a backslash its own way and resolves a literal "." or
+// ".." segment, so each of those can read as an allowed path here and reach a
+// different one there. Credentials in the URL ("user@host") are refused too:
+// auth comes from the credential.
+//
+// An ENCODED separator (%2F, %5C, %2E) is not refused here: some APIs need
+// one (GitLab names a project "group%2Fproject" and a file "dir%2Ffile"), and
+// refusing it broke every such tool. It is judged instead by checking the
+// lists against the URL both as written and as a server that decodes it
+// reads it (credentialURLReadings): a URL is sent only when both readings
+// pass.
 func credentialURLTrick(rawURL string) string {
 	if strings.ContainsAny(rawURL, "\\#") {
 		return "a backslash or a #fragment"
@@ -3452,15 +3507,52 @@ func credentialURLTrick(rawURL string) string {
 	if u.User != nil {
 		return "a user name or password in it"
 	}
-	esc := strings.ToLower(u.EscapedPath())
-	for _, enc := range []string{"%2f", "%5c", "%2e"} {
-		if strings.Contains(esc, enc) {
-			return "an encoded / or ."
-		}
-	}
-	for _, seg := range strings.Split(u.Path, "/") {
+	for _, seg := range strings.Split(u.EscapedPath(), "/") {
 		if seg == "." || seg == ".." {
 			return "a . or .. path segment"
+		}
+	}
+	return ""
+}
+
+// credentialURLReadings is rawURL as the allow and deny lists must judge it:
+// as written, and, when its path carries an encoded separator, as a server
+// that decodes one reads it (%2F and %5C as "/", %2E as ".", then "." and
+// ".." resolved). Either reading is what the request may reach, so a URL is
+// allowed only when every reading is, and denied when any reading is.
+func credentialURLReadings(rawURL string) []string {
+	out := []string{rawURL}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return out
+	}
+	esc := u.EscapedPath()
+	dec := strings.NewReplacer("%2f", "/", "%2F", "/", "%5c", "/", "%5C", "/", "%2e", ".", "%2E", ".").Replace(esc)
+	if dec == esc {
+		return out
+	}
+	served := path.Clean("/" + dec)
+	if strings.HasSuffix(dec, "/") && served != "/" {
+		served += "/"
+	}
+	read := u.Scheme + "://" + u.Host + served
+	if u.RawQuery != "" {
+		read += "?" + u.RawQuery
+	}
+	return append(out, read)
+}
+
+// urlDeniedByCredential is the deny pattern rawURL matches in any of its
+// readings, or "".
+func urlDeniedByCredential(c SecureCredential, rawURL string) string {
+	for _, deny := range c.DeniedURLPatterns {
+		if deny = strings.TrimSpace(deny); deny == "" {
+			continue
+		}
+		for _, read := range credentialURLReadings(rawURL) {
+			if urlMatchesPattern(read, deny) {
+				return deny
+			}
 		}
 	}
 	return ""

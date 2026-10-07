@@ -1990,3 +1990,32 @@ func TestOwnCredentialKeyLivesUnderConnectedAccounts(t *testing.T) {
 		t.Error("bob must not reach alice's credential")
 	}
 }
+
+// A plain fetch to a SECURED credential's host is refused with what to do,
+// not sent without the key: that came back 401 and read as a broken
+// credential, and the caller went looking for another way in.
+func TestAFetchToASecuredHostSaysWhatToDo(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	url := "https://gitlab.example/api/v4/projects/1"
+	s.db.Set(secureAPITable, "gitlab", SecureCredential{Name: "gitlab", BaseURL: "https://gitlab.example/api/v4", Secured: true,
+		ApprovedToolBindings: []string{"gitlab_files"}})
+	err := s.SecuredCoverRefusal(url, "alice", false)
+	if err == nil {
+		t.Fatal("a fetch to a secured host was let through without its key")
+	}
+	for _, want := range []string{`"gitlab"`, "gitlab_files", `action="update"`, "stop and ask", "Admin > APIs"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal lacks %q: %v", want, err)
+		}
+	}
+	if err := s.SecuredCoverRefusal(url, "alice", true); err == nil || !strings.Contains(err.Error(), "fetch_via:gitlab") {
+		t.Errorf("inside a tool, the refusal names fetch_via: %v", err)
+	}
+	if err := s.SecuredCoverRefusal("https://elsewhere.example/x", "alice", false); err != nil {
+		t.Errorf("a host no credential covers was refused: %v", err)
+	}
+	s.db.Set(secureAPITable, "gitlab", SecureCredential{Name: "gitlab", BaseURL: "https://gitlab.example/api/v4"})
+	if err := s.SecuredCoverRefusal(url, "alice", false); err != nil {
+		t.Errorf("an open credential's host was refused as secured: %v", err)
+	}
+}

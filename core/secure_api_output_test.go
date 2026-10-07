@@ -20,7 +20,7 @@ import (
 // never a query or fragment that happens to end like one.
 func TestCredentialURLsAreMatchedAsTheServerReadsThem(t *testing.T) {
 	for _, u := range []string{
-		"https://api.example/v1/../admin", "https://api.example/v1/%2e%2e/admin", "https://api.example/v1%2Fadmin",
+		"https://api.example/v1/../admin",
 		"https://api.example/v1#/other", `https://api.example/v1\admin`, "https://user@api.example/v1",
 	} {
 		if why := credentialURLTrick(u); why == "" {
@@ -40,6 +40,21 @@ func TestCredentialURLsAreMatchedAsTheServerReadsThem(t *testing.T) {
 	c = SecureCredential{Name: "gh", BaseURL: "https://api.example", AllowedEndpoints: []string{"/v1/*"}, DeniedURLPatterns: []string{"https://api.example/v1/admin/**"}}
 	if urlAllowedByCredential(c, "https://api.example/v1/../admin/x") {
 		t.Error("traversal left the allowed endpoints")
+	}
+	// Encoded separators are judged as written AND as a server decodes them:
+	// either reading is what the request can reach.
+	for _, u := range []string{
+		"https://api.example/v1/%2e%2e/admin/x", // decodes out of /v1
+		"https://api.example/v1%2Fadmin",        // as written, not under /v1/
+		"https://api.example/v1/admin%2Fx",      // decodes into the denied /v1/admin/
+		"https://api.example/v1/x%5C..%5C..%5Cadmin",
+	} {
+		if urlAllowedByCredential(c, u) && urlDeniedByCredential(c, u) == "" {
+			t.Errorf("%s reached past the lists", u)
+		}
+	}
+	if !urlAllowedByCredential(c, "https://api.example/v1/items/a%2Fb") || urlDeniedByCredential(c, "https://api.example/v1/items/a%2Fb") != "" {
+		t.Error("an encoded / that stays inside the allowed endpoints is refused")
 	}
 
 	secureAPITestStore(t)
@@ -212,5 +227,30 @@ func TestSameHostCredentialsNamesTheBaseTheURLMissed(t *testing.T) {
 	}
 	if name, err := Secure().AutoRouteCredential("http://127.0.0.1:37185/fixture/todo?status=open"); err != nil && !strings.Contains(err.Error(), "todo") || err == nil && name != "todo" {
 		t.Errorf("the base with a query is not routed to its credential: %q %v", name, err)
+	}
+}
+
+// GitLab names a project "group%2Fproject" and a file "dir%2Ffile": the
+// encoded separator is the API's own syntax. Refusing every one broke every
+// GitLab tool; a path that stays under the credential's base in both readings
+// is sent, and one that decodes out of it is not.
+func TestAGitLabEncodedPathIsSentWithItsCredential(t *testing.T) {
+	c := SecureCredential{Name: "gitlab", BaseURL: "https://gitlab.example/api/v4"}
+	for _, u := range []string{
+		"https://gitlab.example/api/v4/projects/grp%2Fproj/repository/files/dir%2Ffile.txt/raw?ref=main",
+		"https://gitlab.example/api/v4/projects/grp%2Fsub%2Fproj/merge_requests",
+	} {
+		if why := credentialURLTrick(u); why != "" {
+			t.Errorf("%s refused: %s", u, why)
+		}
+		if !urlAllowedByCredential(c, u) {
+			t.Errorf("%s is not allowed under the credential's base", u)
+		}
+	}
+	if urlAllowedByCredential(c, "https://gitlab.example/api/v4/projects/a%2F..%2F..%2F..%2Fadmin") {
+		t.Error("an encoded climb out of the base was allowed")
+	}
+	if got := credentialURLReadings("https://gitlab.example/api/v4/projects/a%2Fb?x=1"); len(got) != 2 || got[1] != "https://gitlab.example/api/v4/projects/a/b?x=1" {
+		t.Errorf("readings = %v", got)
 	}
 }

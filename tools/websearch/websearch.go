@@ -313,7 +313,11 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 	if sess != nil {
 		if credName, rerr := Secure().AutoRouteCredential(target, sess.Username); rerr != nil {
 			return "", rerr
-		} else if credName != "" {
+		} else if credName == "" {
+			if err := Secure().SecuredCoverRefusal(target, sess.Username, false); err != nil {
+				return "", err
+			}
+		} else {
 			// Credential scope: this agent may be barred from the credential
 			// that covers the host. Block rather than route (or fall through
 			// anonymous, which would 401 and leak that the host is credentialed)
