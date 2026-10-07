@@ -83,7 +83,7 @@ reached.
 
 Nothing in an API is secret, so a deployment API holds no secret: every
 account on it is someone's own (or an administrator's shared account, Open
-decision 4).
+decision 3).
 
 ## Sharing and adopting
 
@@ -145,7 +145,7 @@ things differ from a key, both made visible:
   account connected through it stops. The adopter's API says whose
   registration it uses; the owner sees who depends on it before deleting.
 - **A registration is tied to this deployment's callback URL.** Sharing to
-  another gohort needs a registration there (Open decision 3).
+  another gohort needs a registration there (Open decision 2).
 
 ## Agents
 
@@ -198,7 +198,7 @@ your own for existing recipients, and the owner is told, to choose. Nothing is
 shared automatically.
 
 **Needs setup:** a shared agent lists each bring-your-own API the recipient
-has not connected, and is unavailable until every one is (Open decision 1).
+has not connected, and is unavailable until every one is.
 Disallowed APIs are not on that list: they are withheld by the owner's choice.
 The relink picker primitive (`OrchestratorRowAction.PickerSource`, pick a
 target then act) covers "use an API you already have".
@@ -291,18 +291,21 @@ Settled in discussion (2026-10-07):
   reach adopters later as an "update available" notice they choose to take.
  
 
+- **A shared agent is unavailable until every bring-your-own API is
+  connected,** rather than running with those tools withheld: an agent that
+  quietly behaves differently for its recipient than for its owner is worse
+  than one that says it is not ready. Disallowed APIs do not count; they are
+  withheld by the owner's choice.
+
 Open (proposed answers in **bold**):
 
-1. **Unconnected bring-your-own APIs in a shared agent:** **proposed: the
-   agent is unavailable until every one is connected,** rather than running
-   with those tools withheld.
-2. **Repairs to a shared tool:** recipients run the owner's fix live, or an
+1. **Repairs to a shared tool:** recipients run the owner's fix live, or an
    approved version (the snapshot-versioning question from 2026-09-24)?
    Accounts carry over either way.
-3. **OAuth across gohort instances:** does the API travel with an empty
+2. **OAuth across gohort instances:** does the API travel with an empty
    registration for the far side to fill, or is an OAuth API not shareable
    across machines?
-4. **A company key nobody personally holds** (a shared search or LLM key)
+3. **A company key nobody personally holds** (a shared search or LLM key)
    outside any agent share: **proposed: an administrator's account shared
    through named tools,** the same boundary as an agent share.
 
