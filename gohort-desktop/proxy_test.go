@@ -107,6 +107,12 @@ func TestRefreshButtonClearsTheHeaderNotOneControl(t *testing.T) {
 		t.Error("the Refresh button no longer reserves space on the header itself; " +
 			"whatever sits rightmost will end up under it")
 	}
+	// The dashboard has no .ui-page-header: its Account/Logout bar is pinned
+	// to the top right on its own and sat under the button. The bar moves, and
+	// the bell's panel with it, or the panel opens under the button too.
+	if !strings.Contains(popup_shim_js, ".auth-bar,.notify-panel,#webui-live-ribbon{right:") {
+		t.Error("the dashboard's fixed account bar is not moved out from under Refresh")
+	}
 	// Naming a single control again would reintroduce exactly the bug above.
 	for _, one := range []string{".ui-live-pill-wrap{margin-right", ".ui-bell-wrap{margin-right"} {
 		if strings.Contains(popup_shim_js, one) {

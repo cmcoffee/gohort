@@ -5,8 +5,12 @@
    rightmost thing; the notifications bell was later added to its right and
    ended up underneath the button, with the pill politely shifted out of the
    way of nothing. Padding the bar clears whatever is rightmost today and
-   whatever is added tomorrow. */
-psty.textContent='.ui-page-header{padding-right:2.9rem}';(document.head||document.documentElement).appendChild(psty);}}if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',add_refresh);}else{add_refresh();}})();(function(){var O='input,textarea,select,button,a[href],summary,[contenteditable=""],[contenteditable="true"],[tabindex],[role="button"],[role="checkbox"],[role="switch"],[role="tab"],[role="menuitem"],[role="option"],[role="radio"]';document.addEventListener('keydown',function(e){if(e.key!==' '&&e.code!=='Space')return;if(e.metaKey||e.ctrlKey||e.altKey)return;var t=e.target;if(t&&t.isContentEditable)return;if(t&&t.closest&&t.closest(O))return;var s=document.scrollingElement||document.documentElement;if(s&&s.scrollHeight>s.clientHeight+1)return;e.preventDefault();});})();
+   whatever is added tomorrow.
+   A page with no .ui-page-header pins its own bar to the corner instead: the
+   dashboard's Account/Logout bar (and the bell panel it opens) and the old
+   pages' live ribbon are position:fixed at the top right, which padding cannot
+   reach, so the whole bar moves left of the button (8px + 28px + a gap). */
+psty.textContent='.ui-page-header{padding-right:2.9rem}.auth-bar,.notify-panel,#webui-live-ribbon{right:44px}';(document.head||document.documentElement).appendChild(psty);}}if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',add_refresh);}else{add_refresh();}})();(function(){var O='input,textarea,select,button,a[href],summary,[contenteditable=""],[contenteditable="true"],[tabindex],[role="button"],[role="checkbox"],[role="switch"],[role="tab"],[role="menuitem"],[role="option"],[role="radio"]';document.addEventListener('keydown',function(e){if(e.key!==' '&&e.code!=='Space')return;if(e.metaKey||e.ctrlKey||e.altKey)return;var t=e.target;if(t&&t.isContentEditable)return;if(t&&t.closest&&t.closest(O))return;var s=document.scrollingElement||document.documentElement;if(s&&s.scrollHeight>s.clientHeight+1)return;e.preventDefault();});})();
 (function(){
 // --- desktop copy path ---
 // WKWebView's own pasteboard write has proven unreliable in this app
