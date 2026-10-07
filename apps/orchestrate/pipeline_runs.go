@@ -48,7 +48,44 @@ func (T *OrchestrateApp) pipelineRunSurface(ctx context.Context, user string, de
 // handlePipelineRuns serves the panel protocol for one of the caller's own
 // pipelines, under /api/pipelines/{id}/…
 func (T *OrchestrateApp) handlePipelineRuns(w http.ResponseWriter, r *http.Request, user string, def PipelineDef, sub string) {
-	T.ServePipelineRuns(w, r, T.pipelineRunSurface(r.Context(), user, def), sub)
+	T.ServePipelineRuns(w, r, T.ownPipelineSurface(r.Context(), user, def), sub)
+}
+
+// pipelineRunKind is the restore kind a pipeline page's runs resume under.
+const pipelineRunKind = "pipeline"
+
+// ownPipelineSurface is a pipeline run from its own page: resumed after a
+// restart, on the activity ribbon, and the completion notice links back to the
+// page opened on the run.
+func (T *OrchestrateApp) ownPipelineSurface(ctx context.Context, user string, def PipelineDef) PipelineRunSurface {
+	s := T.pipelineRunSurface(ctx, user, def)
+	s.Kind = pipelineRunKind
+	s.Live = RunLiveInfo{
+		App:       chFirst(strings.TrimSpace(def.Name), "Pipeline"),
+		URL:       T.WebPath() + "/pipeline?id=" + url_(def.ID) + "&session={id}",
+		CancelURL: T.WebPath() + "/api/pipelines/" + url_(def.ID) + "/cancel?id={id}",
+	}
+	return s
+}
+
+// registerRunRestores lets pipeline and machine runs interrupted by a restart
+// come back: each kind rebuilds its surface from the run's user and owner.
+func (T *OrchestrateApp) registerRunRestores() {
+	T.RegisterRunRestore(pipelineRunKind, func(user, ownerID, _ string) (RunSurface, bool) {
+		def, ok := LoadPipelineDef(UserDB(T.DB, user), user, ownerID)
+		if !ok {
+			return RunSurface{}, false
+		}
+		return T.RunsOf(T.ownPipelineSurface(context.Background(), user, def)), true
+	})
+	T.RegisterRunRestore(machineRunKind, func(user, ownerID, _ string) (RunSurface, bool) {
+		udb := UserDB(T.DB, user)
+		def, ok := LoadMachineDef(udb, user, ownerID)
+		if !ok {
+			return RunSurface{}, false
+		}
+		return T.machineRunSurface(udb, user, def), true
+	})
 }
 
 // pipelineStandaloneTools builds the tool catalog for a run with no calling

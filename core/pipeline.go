@@ -33,6 +33,15 @@ type PipelineConfig struct {
 	// pipeline before it gets a chance to run. Safe to leave nil for
 	// fresh RunPipeline / RunPipelineAsync paths.
 	OnStarted func(id string)
+	// Ephemeral runs without a persistent queue entry: it still waits for a
+	// slot and gets recovery and the notice, but a restart does not bring it
+	// back. For a run nothing could resume, which as a queue entry would sit
+	// there forever, skipped and warned about at every start.
+	Ephemeral bool
+	// Name is what the notice and the queue view call this kind of run. App is
+	// the queue's key and can be an internal one ("run:pipeline"). Empty =
+	// App.
+	Name string
 	// ParentCtx roots the pipeline's context at a parent pipeline's
 	// ctx instead of AppContext(). Set this when one pipeline spawns
 	// another (e.g. autoblog → debate/research) so cancelling the
@@ -40,6 +49,54 @@ type PipelineConfig struct {
 	// ctx derivation rather than requiring manual cancel-tree
 	// bookkeeping. Leave nil for top-level pipelines.
 	ParentCtx context.Context
+}
+
+// pipelineName is what people see this run called.
+func pipelineName(cfg PipelineConfig) string {
+	if cfg.Name != "" {
+		return cfg.Name
+	}
+	return cfg.App
+}
+
+// pipelineQueueAdd and pipelineQueueRemove keep a run's persistent queue
+// entry, unless it is ephemeral.
+func pipelineQueueAdd(id string, cfg PipelineConfig) {
+	if !cfg.Ephemeral {
+		QueueAdd(id, cfg.App, cfg.Label, cfg.Params, cfg.NotifyUser)
+	}
+}
+
+func pipelineQueueRemove(id string, cfg PipelineConfig) {
+	if !cfg.Ephemeral {
+		QueueRemove(id)
+	}
+}
+
+// pipelineNotify sends a finished run's notices: each user on its notify list
+// and the admin. Needs a record id and a link path; a run with neither has
+// nothing to point anyone at. An ephemeral run has no queue entry to hold the
+// list, so its one NotifyUser is the list.
+func pipelineNotify(cfg PipelineConfig, id, recordID string) {
+	if recordID == "" || cfg.LinkPath == "" {
+		return
+	}
+	link := DashboardURL() + cfg.LinkPath + recordID
+	var users []string
+	if cfg.Ephemeral {
+		if cfg.NotifyUser != "" {
+			users = []string{cfg.NotifyUser}
+		}
+	} else {
+		users = QueueGetNotifyUsers(id)
+	}
+	name := pipelineName(cfg)
+	subject := "[" + ServiceName() + "] " + name + " complete: " + cfg.Label
+	body := fmt.Sprintf("Your %s has completed on %s.\n\n%s\n\n%s\n", name, DashboardURL(), cfg.Label, link)
+	for _, nu := range users {
+		NotifyUser(nu, subject, body)
+	}
+	NotifyAdmin(subject, body, users...)
 }
 
 // pipelineID is the id a run goes by: the caller's, else a fresh one.
@@ -107,17 +164,17 @@ func (T *AppCore) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
 	}
 
 	// 2. Persist to queue.
-	QueueAdd(id, cfg.App, cfg.Label, cfg.Params, cfg.NotifyUser)
+	pipelineQueueAdd(id, cfg)
 
 	// 3. Acquire slot from global queue.
-	if !GlobalQueue().Acquire(ctx, id, cfg.Label, cfg.App, cfg.LinkPath, func(position int) {
+	if !GlobalQueue().Acquire(ctx, id, cfg.Label, pipelineName(cfg), cfg.LinkPath, func(position int) {
 		if cfg.OnEvent != nil {
 			cfg.OnEvent(id, fmt.Sprintf("Position in queue: %d", position), false)
 		}
 	}) {
 		// Cancelled while queued.
 		cancel()
-		QueueRemove(id)
+		pipelineQueueRemove(id, cfg)
 		if cfg.OnCleanup != nil {
 			cfg.OnCleanup(id)
 		}
@@ -145,19 +202,9 @@ func (T *AppCore) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
 			}
 			return
 		}
-		// 5. Notify on completion.
-		if pc.record_id != "" && cfg.LinkPath != "" {
-			link := DashboardURL() + cfg.LinkPath + pc.record_id
-			users := QueueGetNotifyUsers(id)
-			subject := "[" + ServiceName() + "] " + cfg.App + " complete: " + cfg.Label
-			body := fmt.Sprintf("Your %s has completed on %s.\n\n%s\n\n%s\n", cfg.App, DashboardURL(), cfg.Label, link)
-			for _, nu := range users {
-				NotifyUser(nu, subject, body)
-			}
-			NotifyAdmin(subject, body, users...)
-		}
+		pipelineNotify(cfg, id, pc.record_id)
 		// 6. Cleanup.
-		QueueRemove(id)
+		pipelineQueueRemove(id, cfg)
 		if cfg.OnCleanup != nil {
 			cfg.OnCleanup(id)
 		}
@@ -191,15 +238,15 @@ func (T *AppCore) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) string
 		cfg.OnRegister(id, cancel)
 	}
 
-	QueueAdd(id, cfg.App, cfg.Label, cfg.Params, cfg.NotifyUser)
+	pipelineQueueAdd(id, cfg)
 
 	go func() {
-		if !GlobalQueue().Acquire(ctx, id, cfg.Label, cfg.App, cfg.LinkPath, func(position int) {
+		if !GlobalQueue().Acquire(ctx, id, cfg.Label, pipelineName(cfg), cfg.LinkPath, func(position int) {
 			if cfg.OnEvent != nil {
 				cfg.OnEvent(id, fmt.Sprintf("Position in queue: %d", position), false)
 			}
 		}) {
-			QueueRemove(id)
+			pipelineQueueRemove(id, cfg)
 			if cfg.OnCleanup != nil {
 				cfg.OnCleanup(id)
 			}
@@ -222,17 +269,8 @@ func (T *AppCore) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) string
 				}
 				return
 			}
-			if pc.record_id != "" && cfg.LinkPath != "" {
-				link := DashboardURL() + cfg.LinkPath + pc.record_id
-				users := QueueGetNotifyUsers(id)
-				subject := "[" + ServiceName() + "] " + cfg.App + " complete: " + cfg.Label
-				body := fmt.Sprintf("Your %s has completed on %s.\n\n%s\n\n%s\n", cfg.App, DashboardURL(), cfg.Label, link)
-				for _, nu := range users {
-					NotifyUser(nu, subject, body)
-				}
-				NotifyAdmin(subject, body, users...)
-			}
-			QueueRemove(id)
+			pipelineNotify(cfg, id, pc.record_id)
+			pipelineQueueRemove(id, cfg)
 			if cfg.OnCleanup != nil {
 				cfg.OnCleanup(id)
 			}
@@ -273,13 +311,13 @@ func (T *AppCore) RestorePipeline(entry QueueEntry, cfg PipelineConfig, work Pip
 	// Brief delay to let the server finish starting.
 	time.Sleep(2 * time.Second)
 
-	if !GlobalQueue().Acquire(ctx, id, cfg.Label, cfg.App, cfg.LinkPath, func(position int) {
+	if !GlobalQueue().Acquire(ctx, id, cfg.Label, pipelineName(cfg), cfg.LinkPath, func(position int) {
 		if cfg.OnEvent != nil {
 			cfg.OnEvent(id, fmt.Sprintf("Position in queue: %d", position), false)
 		}
 	}) {
 		cancel()
-		QueueRemove(id)
+		pipelineQueueRemove(id, cfg)
 		if cfg.OnCleanup != nil {
 			cfg.OnCleanup(id)
 		}
@@ -302,17 +340,8 @@ func (T *AppCore) RestorePipeline(entry QueueEntry, cfg PipelineConfig, work Pip
 			}
 			return
 		}
-		if pc.record_id != "" && cfg.LinkPath != "" {
-			link := DashboardURL() + cfg.LinkPath + pc.record_id
-			users := QueueGetNotifyUsers(id)
-			subject := "[" + ServiceName() + "] " + cfg.App + " complete: " + cfg.Label
-			body := fmt.Sprintf("Your %s has completed on %s.\n\n%s\n\n%s\n", cfg.App, DashboardURL(), cfg.Label, link)
-			for _, nu := range users {
-				NotifyUser(nu, subject, body)
-			}
-			NotifyAdmin(subject, body, users...)
-		}
-		QueueRemove(id)
+		pipelineNotify(cfg, id, pc.record_id)
+		pipelineQueueRemove(id, cfg)
 		if cfg.OnCleanup != nil {
 			cfg.OnCleanup(id)
 		}

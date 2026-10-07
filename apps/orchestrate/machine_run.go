@@ -69,15 +69,33 @@ func (T *OrchestrateApp) handleMachineRuns(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
 		return
 	}
-	T.ServeRuns(w, r, RunSurface{
+	T.ServeRuns(w, r, T.machineRunSurface(udb, user, def), sub)
+}
+
+// machineRunKind is the restore kind a machine's runs resume under.
+const machineRunKind = "machine"
+
+// machineRunSurface is one machine's runs: where they are stored, how one
+// runs, and where it is watched from (the ribbon link and the completion
+// notice both point at the machine's page, opened on the run). Shared with the
+// restore after a restart, so a resumed run is the same run.
+func (T *OrchestrateApp) machineRunSurface(udb Database, user string, def MachineDef) RunSurface {
+	page := T.WebPath() + "/machine?id=" + url_(def.ID)
+	return RunSurface{
 		DB:      udb,
 		User:    user,
 		OwnerID: def.ID,
 		Timeout: runTimeout,
+		Kind:    machineRunKind,
+		Live: RunLiveInfo{
+			App:       chFirst(strings.TrimSpace(def.Name), "Machine"),
+			URL:       page + "&session={id}",
+			CancelURL: T.WebPath() + "/api/machines/" + url_(def.ID) + "/runs/cancel?id={id}",
+		},
 		Work: func(ctx context.Context, input string, _ map[string]string, sink PipelineSink) (string, error) {
 			return T.runMachineStreaming(ctx, def, user, input, sink)
 		},
-	}, sub)
+	}
 }
 
 // runMachineStreaming is one unattended run, narrating itself.
@@ -178,6 +196,8 @@ func machineRunPanel(def MachineDef) ui.Component {
 		SessionLoadURL:   base + "sessions/{id}",
 		SessionDeleteURL: base + "sessions/{id}",
 		SubmitURL:        base + "stream",
+		CancelURL:        base + "cancel",
+		ReconnectURL:     base + "reconnect/{id}",
 		SubmitLabel:      "Start the run",
 		// This page's ?id= is the MACHINE, so the panel is told which param
 		// carries a run or it would open a session that cannot exist.

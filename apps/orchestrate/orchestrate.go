@@ -608,6 +608,9 @@ func (T *OrchestrateApp) Routes() {
 	// colliding with handleCollectionOne's per-id paths.
 	T.HandleFunc("/api/collections/draft-description", T.handleCollectionDraftDescription)
 	T.HandleFunc("/api/collections/", T.handleCollectionOne)
+	// Runs interrupted by a restart resume (pipeline_runs.go); registered
+	// with the routes so they exist before the queue is restored.
+	T.registerRunRestores()
 	// The pipeline as a page (pipeline_page.go): what it is made of,
 	// read in the order it runs.
 	T.HandleFunc("/pipeline", T.handlePipelinePage)

@@ -255,7 +255,11 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 				SessionLoadURL:   "api/pipelines/" + url_(def.ID) + "/sessions/{id}",
 				SessionDeleteURL: "api/pipelines/" + url_(def.ID) + "/sessions/{id}",
 				SubmitURL:        "api/pipelines/" + url_(def.ID) + "/stream",
-				SubmitLabel:      "Run it",
+				// A run outlives the tab: Cancel stops one, and a page that
+				// comes back (or opens a run's link) rejoins it.
+				CancelURL:    "api/pipelines/" + url_(def.ID) + "/cancel",
+				ReconnectURL: "api/pipelines/" + url_(def.ID) + "/reconnect/{id}",
+				SubmitLabel:  "Run it",
 				// This page's ?id= is the PIPELINE. Without naming the param,
 				// the panel's deep-link fallback reads it as a session id and
 				// opens a run that cannot exist.

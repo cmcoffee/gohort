@@ -27,6 +27,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -518,6 +519,34 @@ func (T *OrchestrateApp) PublicHandlePipelineLive(w http.ResponseWriter, r *http
 	surface := T.pipelineRunSurface(r.Context(), user, def)
 	surface.Live = live
 	T.ServePipelineRuns(w, r, surface, sub)
+}
+
+// AppPipelineRunKind is the restore kind an app's pipeline section runs under:
+// its host (customapps) registers the restorer, because only it can find the
+// app again from a key.
+const AppPipelineRunKind = "app_pipeline"
+
+// PublicHandleAppPipeline is PublicHandlePipelineLive for an app's pipeline
+// section: its runs resume after a restart, found again through key (the
+// host's own handle on the app).
+func (T *OrchestrateApp) PublicHandleAppPipeline(w http.ResponseWriter, r *http.Request, def PipelineDef, sub string, live RunLiveInfo, key string) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.ServePipelineRuns(w, r, T.appPipelineSurface(r.Context(), user, def, live, key), sub)
+}
+
+// AppPipelineRunSurface is an app's pipeline runs for one user, ready for a
+// restore resolver to hand back.
+func (T *OrchestrateApp) AppPipelineRunSurface(user string, def PipelineDef, live RunLiveInfo, key string) RunSurface {
+	return T.RunsOf(T.appPipelineSurface(context.Background(), user, def, live, key))
+}
+
+func (T *OrchestrateApp) appPipelineSurface(ctx context.Context, user string, def PipelineDef, live RunLiveInfo, key string) PipelineRunSurface {
+	s := T.pipelineRunSurface(ctx, user, def)
+	s.Live, s.Kind, s.RestoreKey = live, AppPipelineRunKind, key
+	return s
 }
 
 // PublicLatestPipelineRun returns a user's most recent run of a pipeline —

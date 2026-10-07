@@ -95,6 +95,7 @@ func (T *CustomApps) WebDesc() string { return "Apps composed from primitives." 
 func (T *CustomApps) Routes() {
 	// An app's own rows travel with it on request (records_artifact.go).
 	T.registerRecordsArtifact()
+	T.registerPipelineRestore()
 	T.HandleFunc("/", T.route)
 	// Wire self-updating apps: register the scheduled-action trigger dispatcher and
 	// the spec-lifecycle hooks that keep each app's standing triggers in sync.
@@ -314,18 +315,48 @@ func (T *CustomApps) handlePipeline(w http.ResponseWriter, r *http.Request, spec
 		http.Error(w, "the app's pipeline could not be resolved", http.StatusNotFound)
 		return
 	}
-	// Where this app's runs can be watched and stopped from the global activity
-	// ribbon. Without it a run that outlives its tab is listed with nowhere to
-	// go — visible, which is the important half, but not reachable.
+	orch.PublicHandleAppPipeline(w, r, def, sub, T.appPipelineLive(spec), appRunKey(spec))
+}
+
+// appPipelineLive is where an app's runs can be watched and stopped from the
+// global activity ribbon, and what a completion notice links to. Without it a
+// run that outlives its tab is listed with nowhere to go.
+func (T *CustomApps) appPipelineLive(spec AppSpec) RunLiveInfo {
 	base := T.WebPath() + "/" + spec.Slug
 	appName := strings.TrimSpace(spec.Name)
 	if appName == "" {
 		appName = spec.Slug
 	}
-	orch.PublicHandlePipelineLive(w, r, def, sub, RunLiveInfo{
+	return RunLiveInfo{
 		App:       appName,
 		URL:       base + "/?session={id}",
 		CancelURL: base + "/pipeline/cancel?id={id}",
+	}
+}
+
+// appRunKey is how a run finds its app again after a restart: the app's owner
+// and slug, which is what loadSpec takes.
+func appRunKey(spec AppSpec) string { return spec.Owner + "/" + spec.Slug }
+
+// registerPipelineRestore lets an app's pipeline runs resume after a restart.
+// orchestrate is looked up when a run is restored, not now, so the order apps
+// start in does not matter.
+func (T *CustomApps) registerPipelineRestore() {
+	T.RegisterRunRestore(orchestrate.AppPipelineRunKind, func(user, _, key string) (RunSurface, bool) {
+		owner, slug, ok := strings.Cut(key, "/")
+		if !ok {
+			return RunSurface{}, false
+		}
+		spec, found := loadSpec(owner, slug)
+		orch := findOrchestrate()
+		if !found || orch == nil || strings.TrimSpace(spec.PipelineID) == "" {
+			return RunSurface{}, false
+		}
+		def, ok := orch.LookupAppPipeline(spec.Owner, spec.PipelineID)
+		if !ok {
+			return RunSurface{}, false
+		}
+		return orch.AppPipelineRunSurface(user, def, T.appPipelineLive(spec), key), true
 	})
 }
 

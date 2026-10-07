@@ -257,20 +257,29 @@ func PipelineRunSubmission(body []byte) (string, map[string]string) {
 // needs no agent runtime), and Tools is the catalog a stage's declared tool
 // names resolve against. Core decides neither; it just runs what it is handed.
 type PipelineRunSurface struct {
-	DB       Database              // the host's store — runs live where that host keeps them
-	User     string                // whose history this is
-	Def      PipelineDef           // what to run
-	Dispatch PipelineDispatch      // agent stages; nil = none available
-	Machine  PipelineMachineRunner // kind=machine stages; nil = none available
-	Tools    []AgentToolDef        // catalog a stage's declared tool names resolve against
-	Timeout  time.Duration         // 0 = defaultPipelineRunTimeout
-	Live     RunLiveInfo           // where these runs can be watched and stopped; see RunSurface.Live
+	DB         Database              // the host's store — runs live where that host keeps them
+	User       string                // whose history this is
+	Def        PipelineDef           // what to run
+	Dispatch   PipelineDispatch      // agent stages; nil = none available
+	Machine    PipelineMachineRunner // kind=machine stages; nil = none available
+	Tools      []AgentToolDef        // catalog a stage's declared tool names resolve against
+	Timeout    time.Duration         // 0 = defaultPipelineRunTimeout
+	Live       RunLiveInfo           // where these runs can be watched and stopped; see RunSurface.Live
+	Kind       string                // see RunSurface.Kind
+	RestoreKey string                // see RunSurface.RestoreKey
 }
 
 // ServePipelineRuns is ServeRuns with a pipeline as the thing that runs.
 func (T *AppCore) ServePipelineRuns(w http.ResponseWriter, r *http.Request, s PipelineRunSurface, sub string) {
-	T.ServeRuns(w, r, RunSurface{
+	T.ServeRuns(w, r, T.RunsOf(s), sub)
+}
+
+// RunsOf is the run surface that runs a pipeline: what ServePipelineRuns
+// serves, and what a RegisterRunRestore resolver returns to resume one.
+func (T *AppCore) RunsOf(s PipelineRunSurface) RunSurface {
+	return RunSurface{
 		DB: s.DB, User: s.User, OwnerID: s.Def.ID, Timeout: s.Timeout, Live: s.Live,
+		Kind: s.Kind, RestoreKey: s.RestoreKey,
 		Work: func(ctx context.Context, input string, vars map[string]string, sink PipelineSink) (string, error) {
 			// executePipelineHooks, not an exported Run*: the form's fields are
 			// run-scoped template values and this is the only entry point that
@@ -279,7 +288,7 @@ func (T *AppCore) ServePipelineRuns(w http.ResponseWriter, r *http.Request, s Pi
 				PipelineHooks{Dispatch: s.Dispatch, Machine: s.Machine, Tools: s.Tools})
 			return out, err
 		},
-	}, sub)
+	}
 }
 
 // RunWork is one execution of whatever the host is running. It reports its
@@ -301,6 +310,16 @@ type RunSurface struct {
 	OwnerID string        // what ran: the id its past runs are listed under
 	Work    RunWork       // the run itself
 	Timeout time.Duration // 0 = defaultPipelineRunTimeout
+	// Kind names this sort of run for a restart. Set, a run in progress is
+	// kept in the persistent queue and resumed (from the top) by whatever the
+	// host registered under the same kind with RegisterRunRestore. Empty, a
+	// run still waits for a queue slot but a restart ends it, and it shows as
+	// interrupted.
+	Kind string
+	// RestoreKey is the host's own handle for finding this surface again,
+	// handed back to its RegisterRunRestore resolver along with the user and
+	// owner. Optional: a host that can rebuild from those two leaves it empty.
+	RestoreKey string
 	// Live places this surface's runs on the global activity ribbon. Optional:
 	// a host that fills nothing still gets its runs LISTED, because a run that
 	// outlives its request and appears nowhere is the failure this exists to
@@ -351,6 +370,9 @@ func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface
 		// "it never saved my runs" when every run was stored correctly.
 		runs := ListPipelineRuns(s.DB, s.User, s.OwnerID)
 		out := make([]PipelineSessionRow, 0, len(runs))
+		for i := range runs {
+			repairInterrupted(s, &runs[i])
+		}
 		for _, run := range runs {
 			out = append(out, PipelineSessionRow{ID: run.ID, Title: run.Title, Date: run.Date, Meta: run.Meta})
 		}
@@ -371,6 +393,7 @@ func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface
 			http.NotFound(w, r)
 			return
 		}
+		repairInterrupted(s, &run)
 		// Same flat shape as a row: the panel reads a loaded run through the
 		// same field names it reads the sidebar with, so a promoted field that
 		// only appeared in the list would show on the row and vanish the
@@ -498,30 +521,100 @@ func (T *AppCore) streamRun(w http.ResponseWriter, r *http.Request, s RunSurface
 		Running:    true,
 	}
 	SavePipelineRun(s.DB, s.User, run)
+	T.startRun(s, run, input, vars, nil)
+	tailRun(w, r, run.ID)
+}
 
+// runQueueParams is what a run's queue entry carries, so a restart can find
+// its surface again and run it once more.
+type runQueueParams struct {
+	User    string            `json:"user"`
+	OwnerID string            `json:"owner_id"`
+	Input   string            `json:"input"`
+	Vars    map[string]string `json:"vars,omitempty"`
+	Key     string            `json:"key,omitempty"`
+}
+
+// runQueueApp is the queue key a kind of run restores under.
+func runQueueApp(kind string) string { return "run:" + kind }
+
+// startRun hands a run to the framework's pipeline runner and returns at once.
+// The runner is what the apps written in Go already had: a queue slot, so ten
+// runs do not all hit the model together; panic recovery; the completion
+// notice; and, for a surface with a Kind, a persistent queue entry a restart
+// resumes. A run used to start in a bare goroutine with none of those.
+//
+// entry is the queue entry being resumed, or nil for a fresh run.
+func (T *AppCore) startRun(s RunSurface, run PipelineRun, input string, vars map[string]string, entry *QueueEntry) {
 	timeout := s.Timeout
 	if timeout <= 0 {
 		timeout = defaultPipelineRunTimeout
 	}
-	// context.Background, deliberately: r.Context() dies with the response, and
-	// this run is meant to survive it. The timeout is what bounds it now, so it
-	// is the only thing standing between a stuck stage and a goroutine that
-	// runs until the process does.
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	liveRuns.Register(run.ID, run.Title, cancel).SetOwner(s.User)
-	setRunLink(run.ID, s.Live)
-
 	emit := func(name string, data map[string]any, done bool) {
 		liveRuns.AppendEvent(run.ID, runFrame{Name: name, Data: data}, done)
 	}
-	emit("session", map[string]any{"id": run.ID, "title": run.Title}, false)
+	name := s.Live.App
+	if name == "" {
+		name = "pipeline run"
+	}
+	cfg := PipelineConfig{
+		ID:        run.ID,
+		App:       runQueueApp(s.Kind),
+		Name:      name,
+		Label:     run.Title,
+		Params:    runQueueParams{User: s.User, OwnerID: s.OwnerID, Input: input, Vars: vars, Key: s.RestoreKey},
+		Ephemeral: s.Kind == "",
+		OnRegister: func(id string, cancel context.CancelFunc) {
+			liveRuns.Register(id, run.Title, cancel).SetOwner(s.User)
+			setRunLink(id, s.Live)
+			emit("session", map[string]any{"id": id, "title": run.Title}, false)
+		},
+		// Queue position while it waits. The run's own ending is the work's
+		// to say (done or error, below), so the runner's echo of it is
+		// dropped, except when the work never got to say it: a panic.
+		OnEvent: func(id, status string, done bool) {
+			if !done {
+				liveRuns.UpdateStatus(id, status)
+				emit("status", map[string]any{"text": status}, false)
+				return
+			}
+			if _, ended := liveRuns.SnapshotEvents(id); !ended {
+				if rec, ok := LoadPipelineRun(s.DB, s.User, s.OwnerID, id); ok {
+					rec.Running, rec.Err = false, status
+					SavePipelineRun(s.DB, s.User, rec)
+				}
+				emit("error", map[string]any{"message": status}, true)
+			}
+		},
+		// Cancelled while still queued, the work never ran, so nothing said
+		// it ended: say so here, on the record and to anyone watching.
+		OnCleanup: func(id string) {
+			if _, done := liveRuns.SnapshotEvents(id); !done {
+				if rec, ok := LoadPipelineRun(s.DB, s.User, s.OwnerID, id); ok && rec.Running {
+					rec.Running, rec.Err = false, "stopped"
+					SavePipelineRun(s.DB, s.User, rec)
+				}
+				emit("error", map[string]any{"message": "stopped"}, true)
+			}
+			clearRunLink(id)
+			// Kept around briefly so a viewer that reconnects just after the
+			// end still gets the transcript rather than a 404 and a blank panel.
+			liveRuns.ScheduleCleanup(id)
+		},
+	}
+	// The completion notice, for a starter who keeps notices on, linking to
+	// the page the run is watched from.
+	if prefix, ok := strings.CutSuffix(s.Live.URL, "{id}"); ok && s.User != "" && AuthDB != nil && AuthGetNotifyDefault(AuthDB(), s.User) {
+		cfg.NotifyUser, cfg.LinkPath = s.User, prefix
+	}
 
-	go func() {
+	work := func(rctx context.Context, pc *PipelineCtx) error {
+		// The timeout bounds a run now that nothing else does: a stuck stage
+		// would otherwise hold its slot until the process ends.
+		ctx, cancel := context.WithTimeout(rctx, timeout)
 		defer cancel()
 		// One mutex over the run record: fanout branches emit from parallel
-		// goroutines, so the stored transcript would otherwise race. The SSE
-		// ordering it used to also guard is no longer its problem — each
-		// viewer writes from its own goroutine, reading a snapshot.
+		// goroutines, so the stored transcript would otherwise race.
 		var mu sync.Mutex
 		blockIdx := map[string]int{}
 		sink := func(ev PipelineEvent) {
@@ -564,7 +657,7 @@ func (T *AppCore) streamRun(w http.ResponseWriter, r *http.Request, s RunSurface
 			run.Err = runErr.Error()
 			// A cancel arrives as a context error, which reads to a user as
 			// though something broke. It did not; they stopped it.
-			if ctx.Err() == context.Canceled {
+			if rctx.Err() == context.Canceled {
 				run.Err = "stopped"
 			}
 		}
@@ -573,16 +666,64 @@ func (T *AppCore) streamRun(w http.ResponseWriter, r *http.Request, s RunSurface
 
 		if runErr != nil {
 			emit("error", map[string]any{"message": run.Err}, true)
-		} else {
-			emit("done", map[string]any{"id": run.ID}, true)
+			return runErr
 		}
-		clearRunLink(run.ID)
-		// Kept around briefly so a viewer that reconnects just after the end
-		// still gets the transcript rather than a 404 and a blank panel.
-		liveRuns.ScheduleCleanup(run.ID)
-	}()
+		pc.SetRecordID(run.ID) // what the notice links to
+		emit("done", map[string]any{"id": run.ID}, true)
+		return nil
+	}
 
-	tailRun(w, r, run.ID)
+	if entry != nil {
+		go T.RestorePipeline(*entry, cfg, work)
+		return
+	}
+	T.RunPipelineAsync(cfg, work)
+}
+
+// RegisterRunRestore lets runs of one kind come back after a restart. surface
+// rebuilds the host's half for a run: from the user, the owner id and the
+// host's RestoreKey, the same RunSurface it served the run with (Kind set to
+// kind), or false when it no longer can (the pipeline was deleted). The run
+// starts again from the top: a pipeline keeps no checkpoint mid-stage.
+//
+// A method rather than a free function so core's namespace does not grow for
+// it, and because the restore runs on this AppCore's runner.
+func (T *AppCore) RegisterRunRestore(kind string, surface func(user, ownerID, key string) (RunSurface, bool)) {
+	RegisterQueueHandler(runQueueApp(kind), func(entry QueueEntry) {
+		var p runQueueParams
+		UnmarshalQueueParams(entry, &p)
+		s, ok := surface(p.User, p.OwnerID, p.Key)
+		if !ok {
+			Log("[runs] %s run %s cannot be resumed: its surface is gone", kind, entry.ID)
+			QueueRemove(entry.ID)
+			return
+		}
+		run, found := LoadPipelineRun(s.DB, s.User, s.OwnerID, entry.ID)
+		if !found {
+			QueueRemove(entry.ID)
+			return
+		}
+		run.Blocks, run.Output, run.Err, run.Running = nil, "", "", true
+		SavePipelineRun(s.DB, s.User, run)
+		T.startRun(s, run, p.Input, p.Vars, &entry)
+	})
+}
+
+// repairInterrupted settles a run left marked running by a restart that
+// nothing resumed: no live session holds it, so it is not going anywhere.
+// Without this the panel showed it as running forever.
+func repairInterrupted(s RunSurface, run *PipelineRun) {
+	if !run.Running {
+		return
+	}
+	if frames, _ := liveRuns.SnapshotEvents(run.ID); frames != nil {
+		return // live, or a restore has it
+	}
+	run.Running = false
+	if run.Err == "" {
+		run.Err = "interrupted: the server restarted during this run"
+	}
+	SavePipelineRun(s.DB, s.User, *run)
 }
 
 // reconnectRun attaches a viewer to a run that is still going.
