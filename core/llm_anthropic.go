@@ -815,6 +815,10 @@ type anthStreamState struct {
 	// blocks tracks in-flight content blocks by index, for tool_use assembly
 	// (a tool call's arguments arrive as partial JSON across many deltas).
 	blocks []anthBlockState
+
+	// clock times generation for the decode rate: every delta counts,
+	// thinking included, since thinking is billed as output too.
+	clock decodeClock
 }
 
 type anthBlockState struct {
@@ -862,6 +866,7 @@ func (a *anthStreamState) feed(data []byte) {
 		}
 	case "content_block_delta":
 		if event.Delta != nil {
+			a.clock.mark()
 			if event.Index < len(a.blocks) {
 				bs := &a.blocks[event.Index]
 				switch bs.blockType {
@@ -1004,6 +1009,8 @@ func (a *anthStreamState) response(tag string) *Response {
 		CacheWriteTokens: a.cacheWrite,
 		OutputTokens:     a.outputTokens,
 		StopReason:       a.stopReason,
+
+		PredictedPerSecond: a.clock.rate(a.outputTokens),
 	}
 }
 

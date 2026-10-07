@@ -166,21 +166,18 @@ func (t *chatTurn) emitStats(msgID string, resp *Response, start time.Time) {
 		usage.CacheWriteTokens = resp.CacheWriteTokens
 		usage.OutputTokens = resp.OutputTokens
 		usage.ReasoningTokens = resp.ReasoningTokens
-		// Prefer the backend's per-phase throughput (llama.cpp) when
-		// available — matches what the user sees in llama.cpp's own
-		// UI. Fall back to a coarse output_tokens / elapsed otherwise.
+		// Decode speed of the final call: llama.cpp's own figure, or
+		// the stream timed from its first token to its last. Never
+		// output over the turn's elapsed time, which counts prefill,
+		// every earlier round and the tools' run time, and read as a
+		// fraction of the real speed. No figure beats that one.
 		if resp.PredictedPerSecond > 0 {
 			payload["tokens_per_sec"] = resp.PredictedPerSecond
-			payload["prompt_per_sec"] = resp.PromptPerSecond
 			usage.TokensPerSec = resp.PredictedPerSecond
+		}
+		if resp.PromptPerSecond > 0 {
+			payload["prompt_per_sec"] = resp.PromptPerSecond
 			usage.PromptPerSec = resp.PromptPerSecond
-		} else if resp.OutputTokens > 0 {
-			elapsed := time.Since(start)
-			if elapsed > 0 {
-				rate := float64(resp.OutputTokens) / elapsed.Seconds()
-				payload["tokens_per_sec"] = rate
-				usage.TokensPerSec = rate
-			}
 		}
 	}
 	t.sse.Send(payload)

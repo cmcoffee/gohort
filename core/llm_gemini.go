@@ -641,7 +641,8 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 	// it, and it must reach Response.StopReason or the agent loop's
 	// clean-finish gate stays permanently closed for Gemini.
 	var streamFinishReason string
-	var inputTokens, outputTokens, cachedTokens int
+	var inputTokens, outputTokens, cachedTokens, thoughtTokens int
+	var clock decodeClock
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -671,9 +672,15 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 		if chunk.UsageMetadata.CandidatesTokenCount > 0 {
 			outputTokens = chunk.UsageMetadata.CandidatesTokenCount
 		}
+		if chunk.UsageMetadata.ThoughtsTokenCount > 0 {
+			thoughtTokens = chunk.UsageMetadata.ThoughtsTokenCount
+		}
 
 		if len(chunk.Candidates) > 0 {
 			for _, part := range chunk.Candidates[0].Content.Parts {
+				if part.Text != "" || part.FunctionCall != nil {
+					clock.mark()
+				}
 				if part.Text != "" {
 					if part.Thought {
 						thinking.WriteString(part.Text)
@@ -714,6 +721,13 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 		Trace("<-- GEMINI TOOL CALL: id=%s name=%s args=%s", tc.ID, tc.Name, string(argsJSON))
 	}
 
+	// Thinking is counted apart from the output. It falls inside the timed
+	// span only when its text was streamed; otherwise it ran before the first
+	// part, and counting it would credit the span with work done outside it.
+	decodedTokens := outputTokens
+	if thinking.Len() > 0 {
+		decodedTokens += thoughtTokens
+	}
 	return &Response{
 		Content:         full.String(),
 		Reasoning:       thinking.String(),
@@ -723,6 +737,8 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 		InputTokens:     inputTokens - cachedTokens,
 		CacheReadTokens: cachedTokens,
 		OutputTokens:    outputTokens,
+
+		PredictedPerSecond: clock.rate(decodedTokens),
 	}, nil
 }
 

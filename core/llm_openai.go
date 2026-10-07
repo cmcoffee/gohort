@@ -2204,6 +2204,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	contentCount := 0
 	finishReason := ""
 	sawDone := false
+	var clock decodeClock
 	for scanner.Scan() {
 		totalLines++
 		line := scanner.Text()
@@ -2245,6 +2246,9 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 			delta := chunk.Choices[0].Delta
 			if chunk.Choices[0].FinishReason != "" {
 				finishReason = chunk.Choices[0].FinishReason
+			}
+			if delta.Content != "" || delta.ReasoningContent != "" || delta.Reasoning != "" || len(delta.ToolCalls) > 0 {
+				clock.mark()
 			}
 
 			// Thinking models (qwen3, deepseek-r1, etc.) emit reasoning in
@@ -2394,6 +2398,10 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		finishReason = stopInterrupted
 	}
 
+	// llama.cpp reports its own decode rate; anything else is timed here.
+	if predictedPerSecond == 0 {
+		predictedPerSecond = clock.rate(outputTokens)
+	}
 	streamed := &Response{
 		Content:            full.String(),
 		Reasoning:          reasoning.String(),

@@ -108,10 +108,12 @@ type Response struct {
 	// the backend doesn't report it; callers can fall back to a
 	// char-ratio estimate from len(Reasoning) / len(Reasoning+Content).
 	ReasoningTokens int
-	// Server-reported pure-throughput numbers. Populated by llama.cpp;
-	// other backends leave these zero. PredictedPerSecond is decode-
-	// only tokens/sec (excludes prefill), matching what llama.cpp's
-	// own web UI displays. PromptPerSecond is prefill throughput.
+	// Pure-throughput numbers. PredictedPerSecond is decode-only
+	// tokens/sec (excludes prefill), matching what llama.cpp's own web
+	// UI displays: llama.cpp's figure when it reports one, otherwise
+	// measured off the stream by decodeClock. PromptPerSecond is prefill
+	// throughput, llama.cpp only. Zero when neither is known (a call
+	// that was not streamed), never a guess.
 	PredictedPerSecond float64
 	PromptPerSecond    float64
 	// PromptTokensPrefilled is how many of the prompt's tokens the server
@@ -1603,6 +1605,38 @@ func (r *retryLLM) ContextSize() int {
 		return cs.ContextSize()
 	}
 	return 0
+}
+
+// decodeClock times a stream's generation, from the first output it carries
+// (thinking, text or tool-call arguments) to the last, for backends that do
+// not report their own decode rate. The span starts at the first token rather
+// than at the request, so prefill and queueing stay out of it; timed from the
+// request, a long prompt reads as a slow model.
+type decodeClock struct{ first, last time.Time }
+
+// mark records that output arrived now.
+func (d *decodeClock) mark() {
+	now := time.Now()
+	if d.first.IsZero() {
+		d.first = now
+	}
+	d.last = now
+}
+
+// minDecodeSpan is the shortest span a rate is read from. A provider that
+// delivers a short reply in one or two network bursts would otherwise report
+// thousands of tokens a second.
+const minDecodeSpan = 250 * time.Millisecond
+
+// rate is tokens per second over the span. The first token arrives at the
+// span's start, so tokens-1 were generated across it. Zero when the span is
+// too short to mean anything.
+func (d *decodeClock) rate(tokens int) float64 {
+	span := d.last.Sub(d.first)
+	if tokens < 2 || span < minDecodeSpan {
+		return 0
+	}
+	return float64(tokens-1) / span.Seconds()
 }
 
 // respShape summarizes a response's actionable output for diagnostics. It
