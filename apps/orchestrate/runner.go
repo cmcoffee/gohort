@@ -2007,9 +2007,9 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 		pr.streamMsgID = ""
 		t.setCurrentMsgID("")
 	}
-	// Stats land on the last bubble we finalized; RunAgentLoop only
-	// returns the last round's resp, so per-round stats aren't
-	// available without backend changes.
+	// Stats land on the last bubble we finalized. RunAgentLoop returns
+	// only the last round's resp; the turn's output and thinking totals
+	// come from OnResponse (thinkResponse).
 	if pr.lastFinalizedID != "" {
 		t.emitStats(pr.lastFinalizedID, pr.resp, pr.orchStart)
 	}
@@ -2193,6 +2193,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		ToolFallbackResolver: t.lazyToolFallback,
 		Stream:               pr.streamHandler,
 		ReasoningStream:      t.thinkChunk,
+		OnResponse:           t.thinkResponse,
 		OnStep:               pr.onStepHandler,
 		OnPromptDigest:       pr.stamp.digest,
 		OnRoundStart:         pr.onRoundStartHandler,

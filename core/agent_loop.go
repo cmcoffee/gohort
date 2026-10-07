@@ -642,6 +642,13 @@ func (lr *loopRun) exit(resp *Response, history []Message, err error) loopAction
 	return actReturn
 }
 
+// noteResponse hands one call's response to the caller's OnResponse hook.
+func (lr *loopRun) noteResponse(resp *Response) {
+	if lr.cfg.OnResponse != nil && resp != nil {
+		lr.cfg.OnResponse(resp)
+	}
+}
+
 // guardOutgoing runs the output guardrail on a reply about to be returned,
 // unless this round already ran it.
 //
@@ -1496,6 +1503,7 @@ func (lr *loopRun) finish() (*Response, []Message, error) {
 			wrapOpts = append(wrapOpts, WithRouteKey(lr.cfg.RouteKey))
 		}
 		if forced, err := lr.T.LLM.Chat(lr.ctx, wrapHistory, wrapOpts...); err == nil && forced != nil {
+			lr.noteResponse(forced)
 			// Thinking workers often answer entirely in the reasoning
 			// channel with empty content — promote it rather than discard
 			// it, same as the in-loop reasoning→content promotion. Without
@@ -2124,6 +2132,7 @@ func (lr *loopRun) callModel() loopAction {
 		return lr.exit(lr.rs.resp, lr.history, lr.rs.err)
 	}
 	lr.lastResp = lr.rs.resp
+	lr.noteResponse(lr.rs.resp)
 
 	// Lead-spend accounting. resp.Tier reflects the tier that actually
 	// SERVED the round — a lead call that fell back to the worker is

@@ -556,7 +556,10 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		StopReason:      geminiStopReason(finishReason),
 		InputTokens:     result.UsageMetadata.PromptTokenCount - cached,
 		CacheReadTokens: cached,
-		OutputTokens:    result.UsageMetadata.CandidatesTokenCount,
+		// Gemini counts thinking apart from the candidates and bills it as
+		// output, so the output is both, and the thinking is its own figure.
+		OutputTokens:    result.UsageMetadata.CandidatesTokenCount + result.UsageMetadata.ThoughtsTokenCount,
+		ReasoningTokens: result.UsageMetadata.ThoughtsTokenCount,
 	}, nil
 }
 
@@ -736,7 +739,9 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 		StopReason:      geminiStopReason(streamFinishReason),
 		InputTokens:     inputTokens - cachedTokens,
 		CacheReadTokens: cachedTokens,
-		OutputTokens:    outputTokens,
+		// Thinking is billed as output; see Chat.
+		OutputTokens:    outputTokens + thoughtTokens,
+		ReasoningTokens: thoughtTokens,
 
 		PredictedPerSecond: clock.rate(decodedTokens),
 	}, nil

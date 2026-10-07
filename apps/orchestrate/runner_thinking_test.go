@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // The model's reasoning becomes progress a person can watch: one event the
@@ -61,5 +63,40 @@ func TestThinkingTimeSumsEachCall(t *testing.T) {
 	turn.thinkNewCall()
 	if got := turn.thinkTotalMS(); got != 5000 {
 		t.Errorf("after idle round starts: %dms, want 5000", got)
+	}
+}
+
+// The footer's thinking and output tokens are the whole turn's. A turn that
+// thinks, calls a tool and thinks again used to show only its last call's.
+func TestStatsFooterTotalsEveryCall(t *testing.T) {
+	buf := &bytes.Buffer{}
+	turn := &chatTurn{sse: &sseWriter{live: buf}}
+	turn.thinkResponse(&Response{OutputTokens: 900, ReasoningTokens: 800}) // thinks, calls a tool
+	turn.thinkResponse(&Response{OutputTokens: 300, ReasoningTokens: 250}) // thinks again, calls another
+	final := &Response{OutputTokens: 120, ReasoningTokens: 40, InputTokens: 5000}
+	turn.thinkResponse(final)
+	turn.emitStats("m1", final, time.Now())
+
+	u := turn.drainLastUsage()
+	if u == nil {
+		t.Fatal("no usage recorded")
+	}
+	if u.ReasoningTokens != 1090 || u.OutputTokens != 1320 {
+		t.Errorf("recorded think=%d out=%d, want 1090 and 1320 (every call, not the last)", u.ReasoningTokens, u.OutputTokens)
+	}
+	if u.InputTokens != 5000 {
+		t.Errorf("prompt %d, want the last call's 5000", u.InputTokens)
+	}
+	if !strings.Contains(buf.String(), `"reasoning_tokens":1090`) {
+		t.Errorf("live footer %q, want the turn's 1090 thinking tokens", buf.String())
+	}
+}
+
+// With no call counted, the footer falls back to the response it was handed.
+func TestStatsFooterFallsBackToResponse(t *testing.T) {
+	turn := &chatTurn{sse: &sseWriter{live: &bytes.Buffer{}}}
+	turn.emitStats("m1", &Response{OutputTokens: 70, ReasoningTokens: 30}, time.Now())
+	if u := turn.drainLastUsage(); u == nil || u.ReasoningTokens != 30 || u.OutputTokens != 70 {
+		t.Errorf("usage %+v, want the response's own 70 out / 30 think", u)
 	}
 }

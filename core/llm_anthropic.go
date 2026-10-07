@@ -391,6 +391,7 @@ type anthMessage struct {
 type anthContentBlock struct {
 	Type         string          `json:"type"`
 	Text         string          `json:"text,omitempty"`
+	Thinking     string          `json:"thinking,omitempty"`     // a thinking block's text, and a thinking_delta's
 	PartialJSON  string          `json:"partial_json,omitempty"` // streamed tool args; NOT Text — see anthStreamState.feed
 	ID           string          `json:"id,omitempty"`
 	Name         string          `json:"name,omitempty"`
@@ -624,13 +625,26 @@ func addCacheBreakpoint(msgs []anthMessage) {
 }
 
 // parseAnthResponse extracts text content and tool calls from an Anthropic response.
+//
+// Claude bills thinking as output and reports no breakdown, so its thinking
+// tokens are estimated from the thinking text by the same char ratio the
+// OpenAI path falls back on. Counted only where the text arrives: it runs low
+// on models that return a summary of their thinking, and is zero where the
+// thinking is omitted. The stream path (anthStreamState.response) does the same.
+//
+// The text itself stays OFF Response.Reasoning. The agent loop acts on that
+// field (an empty reply promotes it to the answer, tool markup in it runs), and
+// a Claude call truncated mid-thinking would hand back its raw thinking as the
+// reply. It is counted here and streamed live through ReasoningHandler, no more.
 func parseAnthResponse(result anthResponse) *Response {
-	var text strings.Builder
+	var text, thinking strings.Builder
 	var toolCalls []ToolCall
 	for _, block := range result.Content {
 		switch block.Type {
 		case "text":
 			text.WriteString(block.Text)
+		case "thinking":
+			thinking.WriteString(block.Thinking)
 		case "tool_use":
 			args, err := decodeToolInput(block.Input)
 			if err != nil {
@@ -661,6 +675,7 @@ func parseAnthResponse(result anthResponse) *Response {
 		CacheReadTokens:  result.Usage.CacheReadInputTokens,
 		CacheWriteTokens: result.Usage.CacheCreationInputTokens,
 		OutputTokens:     result.Usage.OutputTokens,
+		ReasoningTokens:  estimateReasoningTokens(result.Usage.OutputTokens, thinking.String(), text.String(), toolCalls),
 		StopReason:       result.StopReason,
 	}
 }
@@ -800,8 +815,12 @@ func decodeToolInput(raw json.RawMessage) (map[string]any, error) {
 // and the two copies would have drifted the first time a block type changed.
 type anthStreamState struct {
 	handler StreamHandler
+	// reasoning receives thinking_delta text as it arrives (ChatConfig's
+	// ReasoningHandler), so a caller can show that the model is thinking.
+	reasoning StreamHandler
 
 	textContent  strings.Builder
+	thinking     strings.Builder
 	model        string
 	inputTokens  int
 	outputTokens int
@@ -850,8 +869,8 @@ func (a *anthStreamState) feed(data []byte) {
 			Debug("[anthropic]: content_block_start at index %d carried no content_block, any tool input for this block will be dropped", event.Index)
 		}
 		if event.ContentBlock != nil {
-			if event.ContentBlock.Type != "text" && event.ContentBlock.Type != "tool_use" {
-				Debug("[anthropic]: content_block_start index=%d type=%q (not text/tool_use), deltas for it are ignored",
+			if event.ContentBlock.Type != "text" && event.ContentBlock.Type != "tool_use" && event.ContentBlock.Type != "thinking" {
+				Debug("[anthropic]: content_block_start index=%d type=%q (not text/tool_use/thinking), deltas for it are ignored",
 					event.Index, event.ContentBlock.Type)
 			}
 			bs := anthBlockState{blockType: event.ContentBlock.Type}
@@ -875,6 +894,15 @@ func (a *anthStreamState) feed(data []byte) {
 						a.textContent.WriteString(event.Delta.Text)
 						if a.handler != nil {
 							a.handler(event.Delta.Text)
+						}
+					}
+				case "thinking":
+					// The signature_delta that closes the block carries no
+					// text; only thinking_delta does.
+					if event.Delta.Thinking != "" {
+						a.thinking.WriteString(event.Delta.Thinking)
+						if a.reasoning != nil {
+							a.reasoning(event.Delta.Thinking)
 						}
 					}
 				case "tool_use":
@@ -987,9 +1015,9 @@ func (a *anthStreamState) finish(tag string, cause error) (*Response, error) {
 func (a *anthStreamState) response(tag string) *Response {
 	// Prompt size is the SUM. Logging input_tokens alone is what made a
 	// cache-hit turn read as a two-token prompt.
-	Debug("[%s]: Stream complete: model=%s prompt=%d (uncached=%d cache_read=%d cache_write=%d) output_tokens=%d tool_calls=%d",
+	Debug("[%s]: Stream complete: model=%s prompt=%d (uncached=%d cache_read=%d cache_write=%d) output_tokens=%d tool_calls=%d thinking=%d chars",
 		tag, a.model, a.inputTokens+a.cacheRead+a.cacheWrite, a.inputTokens, a.cacheRead, a.cacheWrite,
-		a.outputTokens, len(a.toolCalls))
+		a.outputTokens, len(a.toolCalls), a.thinking.Len())
 	Trace("<-- STREAM COMPLETE: model=%s prompt=%d (uncached=%d cache_read=%d cache_write=%d) output_tokens=%d",
 		a.model, a.inputTokens+a.cacheRead+a.cacheWrite, a.inputTokens, a.cacheRead, a.cacheWrite, a.outputTokens)
 	if a.textContent.Len() > 0 {
@@ -1002,6 +1030,7 @@ func (a *anthStreamState) response(tag string) *Response {
 	warnStopReason(a.stopReason)
 	return &Response{
 		Content:          a.textContent.String(),
+		ReasoningTokens:  estimateReasoningTokens(a.outputTokens, a.thinking.String(), a.textContent.String(), a.toolCalls),
 		ToolCalls:        a.toolCalls,
 		Model:            a.model,
 		InputTokens:      a.inputTokens,
@@ -1074,7 +1103,7 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		return nil, noteIfAdaptiveThinking(c.model, c.apiError(resp.StatusCode, msg))
 	}
 
-	st := &anthStreamState{handler: handler}
+	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler}
 
 	scanner := bufio.NewScanner(resp.Body)
 	// Default Scanner caps a line at 64KB; a single large SSE `data:` line

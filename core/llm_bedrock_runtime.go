@@ -401,7 +401,7 @@ func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Messag
 			StatusCode: resp.StatusCode, Message: withBedrockHint(c.model, msg), Provider: "bedrock-runtime"})
 	}
 
-	st := &anthStreamState{handler: handler}
+	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler}
 	reader := newEventStreamReader(resp.Body)
 	// Every way out goes through finish: it is the one place that knows a
 	// stream without its terminal stop_reason is a fragment. Partial output

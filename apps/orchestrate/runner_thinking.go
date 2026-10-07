@@ -3,6 +3,8 @@ package orchestrate
 import (
 	"sync"
 	"time"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // thinkProgress turns the model's reasoning stream into something a person
@@ -14,7 +16,8 @@ import (
 // long and roughly how much: a "thinking" event on a ~2s tick (the run buffer
 // replays events to a page that rejoins, so a tick per chunk would crowd out
 // the conversation). It also totals the time spent thinking across the turn,
-// for the stats footer.
+// for the stats footer, and the tokens every call of the turn reported: a turn
+// that thinks, calls a tool and thinks again is more than its last call.
 //
 // Usable at its zero value, so every way a chatTurn is built gets it.
 type thinkProgress struct {
@@ -24,6 +27,10 @@ type thinkProgress struct {
 	chars     int       // reasoning received in the current span
 	doneMS    int64     // thinking time of spans already closed
 	lastSent  time.Time
+
+	calls           int // LLM calls that reported back this turn
+	outputTokens    int // their output, thinking included
+	reasoningTokens int // the thinking part of it
 }
 
 // thinkTick is how often progress is reported while the model thinks.
@@ -90,4 +97,28 @@ func (t *chatTurn) thinkTotalMS() int64 {
 		total += p.last.Sub(p.spanStart).Milliseconds()
 	}
 	return total
+}
+
+// thinkResponse counts one call's tokens into the turn's totals. Wired to the
+// agent loop's OnResponse and to every call the turn makes outside it, since
+// the loop hands back only its last response.
+func (t *chatTurn) thinkResponse(resp *Response) {
+	if resp == nil {
+		return
+	}
+	p := &t.think
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	p.outputTokens += resp.OutputTokens
+	p.reasoningTokens += resp.ReasoningTokens
+}
+
+// thinkTokens is the turn's output and thinking tokens across every call, and
+// false when no call has been counted.
+func (t *chatTurn) thinkTokens() (output, reasoning int, ok bool) {
+	p := &t.think
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.outputTokens, p.reasoningTokens, p.calls > 0
 }

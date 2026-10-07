@@ -364,6 +364,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		BudgetKey:            t.agent.ID,
 		DailySpendUSD:        t.agent.DailySpendUSD,
 		Stream:               stream,
+		OnResponse:           t.thinkResponse, // the footer totals every call of the turn
 		// Same turn-scoped notes the orchestrator round gets. A worker step is
 		// where the work usually actually runs, so leaving them out would hand the
 		// context to the layer that plans and withhold it from the one that acts.
@@ -604,6 +605,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 		})
 	}
 	t.sse.Send(map[string]any{"kind": "message_done", "id": msgID})
+	t.thinkResponse(resp)
 	t.emitStats(msgID, resp, synthStart)
 	// Scrub framework-internal markers AND enforce the house style on the
 	// saved/exported copy (the client also strips em-dashes on render — see

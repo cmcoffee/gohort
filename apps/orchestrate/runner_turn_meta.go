@@ -162,14 +162,23 @@ func (t *chatTurn) emitStats(msgID string, resp *Response, start time.Time) {
 		payload["input_tokens"] = promptTokens
 		payload["cache_read_tokens"] = resp.CacheReadTokens
 		payload["cache_write_tokens"] = resp.CacheWriteTokens
-		payload["output_tokens"] = resp.OutputTokens
-		payload["reasoning_tokens"] = resp.ReasoningTokens
+		// Output and thinking are the WHOLE turn's. A turn that thinks, calls
+		// a tool and thinks again made several calls, and the footer used to
+		// show only the last one's, so a turn that reasoned for minutes before
+		// its tools read as a few hundred tokens of thought. The prompt stays
+		// the last call's: it is the context the reply was written from.
+		output, reasoning := resp.OutputTokens, resp.ReasoningTokens
+		if o, r, ok := t.thinkTokens(); ok {
+			output, reasoning = o, r
+		}
+		payload["output_tokens"] = output
+		payload["reasoning_tokens"] = reasoning
 		usage.InputTokens = promptTokens
 		usage.Model = resp.Model
 		usage.CacheReadTokens = resp.CacheReadTokens
 		usage.CacheWriteTokens = resp.CacheWriteTokens
-		usage.OutputTokens = resp.OutputTokens
-		usage.ReasoningTokens = resp.ReasoningTokens
+		usage.OutputTokens = output
+		usage.ReasoningTokens = reasoning
 		// Decode speed of the final call: llama.cpp's own figure, or
 		// the stream timed from its first token to its last. Never
 		// output over the turn's elapsed time, which counts prefill,

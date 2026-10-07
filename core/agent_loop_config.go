@@ -152,6 +152,13 @@ type AgentLoopConfig struct {
 	// OnStep is called after each LLM round for logging/observability. Optional.
 	OnStep StepCallback
 
+	// OnResponse is called with every LLM response the loop receives, one per
+	// call, including the rescue call that ends a turn at the round cap. The
+	// loop RETURNS only the last one, so a caller that totals the turn (the
+	// thinking and output tokens of a turn that called tools between rounds)
+	// has to count them here. Optional.
+	OnResponse func(*Response)
+
 	// OnPromptDigest is called ONCE per turn with what the prompt was made of,
 	// as soon as the first response makes the provider's own token count
 	// available. Wire it to whatever outlives the turn — orchestrate puts it on

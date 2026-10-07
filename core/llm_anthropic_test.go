@@ -297,6 +297,60 @@ func TestStreamedToolArgumentsConcatenateAcrossManyFragments(t *testing.T) {
 	}
 }
 
+// Claude bills thinking as output and reports no breakdown, so the thinking
+// share is estimated from the thinking text. Before this every Claude call read
+// as zero thinking. The text is counted and streamed live, but kept off
+// Response.Reasoning, which the agent loop would act on.
+func TestStreamedThinkingIsCountedNotReturned(t *testing.T) {
+	var live strings.Builder
+	st := &anthStreamState{reasoning: func(s string) { live.WriteString(s) }}
+	for _, e := range []string{
+		`{"type":"message_start","message":{"model":"claude-opus-5","usage":{"input_tokens":10}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"` + strings.Repeat("t", 300) + `"}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"` + strings.Repeat("a", 100) + `"}}`,
+		`{"type":"content_block_stop","index":1}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":400}}`,
+	} {
+		st.feed([]byte(e))
+	}
+	resp := st.response("test")
+	if resp.ReasoningTokens != 300 {
+		t.Errorf("thinking tokens = %d, want 300 (3/4 of 400 by text share)", resp.ReasoningTokens)
+	}
+	if resp.Reasoning != "" {
+		t.Error("thinking text reached Response.Reasoning, where the loop would act on it")
+	}
+	if strings.Contains(resp.Content, "ttt") {
+		t.Error("thinking text leaked into the reply")
+	}
+	if live.Len() != 300 {
+		t.Errorf("live reasoning stream got %d chars, want 300", live.Len())
+	}
+}
+
+// The same estimate on a non-streamed reply, and zero where no thinking text
+// came back: counted only where it is known.
+func TestThinkingEstimateOnAWholeReply(t *testing.T) {
+	var result anthResponse
+	if err := json.Unmarshal([]byte(`{"model":"claude-opus-5","content":[`+
+		`{"type":"thinking","thinking":"`+strings.Repeat("t", 100)+`","signature":"sig"},`+
+		`{"type":"text","text":"`+strings.Repeat("a", 100)+`"}],`+
+		`"usage":{"output_tokens":200},"stop_reason":"end_turn"}`), &result); err != nil {
+		t.Fatal(err)
+	}
+	if got := parseAnthResponse(result).ReasoningTokens; got != 100 {
+		t.Errorf("thinking tokens = %d, want 100", got)
+	}
+	result.Content = result.Content[1:]
+	if got := parseAnthResponse(result).ReasoningTokens; got != 0 {
+		t.Errorf("no thinking text, but thinking tokens = %d", got)
+	}
+}
+
 func mustJSONString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
