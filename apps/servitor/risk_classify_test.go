@@ -196,3 +196,45 @@ func TestLexerEdgesFailClosed(t *testing.T) {
 		}()
 	}
 }
+
+// A program named by its full path is judged by its name, as a bare name is
+// whatever the PATH finds: /opt/bin/mysql is mysql. A path is refused only
+// where the run, or anyone, could have put the program: the scratch directory,
+// a shared temp directory, a relative path, or one that climbs with "..".
+func TestAProgramByPathIsJudgedByItsName(t *testing.T) {
+	const scratch = "/tmp/servitor-abc123"
+	for cmd, want := range map[string]RiskCategory{
+		`/opt/bin/mysql -e "SELECT 1"`:          RiskNone,
+		`/opt/vendor/bin/ls -la /var/log`:       RiskNone,
+		`/snap/bin/cat /etc/hostname`:           RiskNone,
+		`/usr/bin/ls`:                           RiskNone,
+		`/opt/bin/mysql -e "DELETE FROM users"`: RiskDataMutate,
+		`/opt/bin/frobnicate`:                   RiskUnverified,
+	} {
+		if cat, reason := classify_command_scoped(cmd, scratch); cat != want {
+			t.Errorf("%q: got %q (%s), want %q", cmd, cat, reason, want)
+		}
+	}
+	for cmd, why := range map[string]string{
+		scratch + "/ls":         "scratch directory",
+		"/var/tmp/ls":           "anyone on the host",
+		"/dev/shm/ls":           "anyone on the host",
+		"/tmp/ls":               "anyone on the host",
+		"./ls":                  "relative path",
+		"bin/ls":                "relative path",
+		"/usr/../tmp/x/ls":      "climbs",
+		"/opt/bin/../../tmp/ls": "climbs",
+	} {
+		cat, reason := classify_command_scoped(cmd, scratch)
+		if cat != RiskUnverified || !strings.Contains(reason, why) {
+			t.Errorf("%q: got %q (%s), want unverified saying %q", cmd, cat, reason, why)
+		}
+	}
+	// The same in an interactive session: typed SQL is read as SQL.
+	if risks := pty_input_risks("/opt/bin/mysql -u root", "SELECT 1;", scratch); len(risks) != 0 {
+		t.Errorf("SELECT typed into /opt/bin/mysql asked: %+v", risks)
+	}
+	if risks := pty_input_risks(scratch+"/mysql -u root", "SELECT 1;", scratch); len(risks) == 0 {
+		t.Error("input typed into a program from the scratch directory was read as SQL")
+	}
+}

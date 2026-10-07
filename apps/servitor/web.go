@@ -66,7 +66,15 @@ func toInt(v any) (int, bool) {
 	return 0, false
 }
 
+// alwaysAllowTable holds the commands an operator answered Always for, in
+// their own store: that exact command, on that appliance (alwaysAllowKey).
 const alwaysAllowTable = "ssh_always_allow"
+
+// alwaysAllowKey is an Always answer's key: the appliance and the exact
+// command. Not the command alone: trusting a command on one box says nothing
+// about what it does on another.
+func alwaysAllowKey(applianceID, cmd string) string { return applianceID + "\x00" + cmd }
+
 const notesTable = "ssh_notes"
 
 // pendingConfirm is one session's operator-approval channel plus the two facts
@@ -203,6 +211,7 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/rules", T.handleRules)
 	sub.HandleFunc("/api/rules/", T.handleRuleDelete)
 	sub.HandleFunc("/api/permissions", T.handlePermissions)
+	sub.HandleFunc("/api/permissions/always", T.handleAlwaysAllowed)
 	MountSubMux(mux, prefix, sub)
 	go T.runWatchLoop(AppContext())
 	RegisterLiveProvider(func() []LiveEntry {

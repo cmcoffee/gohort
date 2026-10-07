@@ -274,28 +274,53 @@ func under_scratch(p, scratch string) bool {
 	return c == s || strings.HasPrefix(c, s+"/")
 }
 
-// system_bin_dirs are the directories a program may be named from by path and
-// still be judged by its name. "/tmp/x/ls" is not ls: it is whatever somebody
-// put there, and the gate cannot vouch for it.
-var system_bin_dirs = map[string]bool{
-	"/bin": true, "/sbin": true, "/usr/bin": true, "/usr/sbin": true,
-	"/usr/local/bin": true, "/usr/local/sbin": true,
+// program_path_refusal says why a program named by path cannot be judged by
+// its name, or "" when it can.
+//
+// A bare name is judged by its name, whatever the PATH finds for it, so a full
+// path is too: /opt/bin/mysql is no more a risk than mysql. What a path can add
+// is a program the run put there itself under a harmless name ("/x/ls" that
+// deletes), and the only place a run writes without asking is its scratch
+// directory: a write anywhere else is gated. So a path is refused when it lands
+// there or in a temp directory anyone can write to, when it is relative (it resolves against wherever the run stands) and
+// when it climbs with "..", which the gate will not follow.
+func program_path_refusal(word, scratch string) string {
+	if !strings.Contains(word, "/") {
+		return ""
+	}
+	if !strings.HasPrefix(word, "/") {
+		return "runs a program by a relative path, which depends on where the run stands: " + word
+	}
+	for _, seg := range strings.Split(word, "/") {
+		if seg == ".." {
+			return "runs a program by a path that climbs with \"..\": " + word
+		}
+	}
+	if under_scratch(word, scratch) {
+		return "runs a program from the scratch directory, which this run can write to: " + word
+	}
+	for _, dir := range shared_temp_dirs {
+		if under_scratch(word, dir) {
+			return "runs a program from " + dir + ", which anyone on the host can write to: " + word
+		}
+	}
+	return ""
 }
+
+// shared_temp_dirs are writable by every user and process on a host, and the
+// scratch directory lives under the first: a program there is whatever
+// somebody put there.
+var shared_temp_dirs = []string{"/tmp", "/var/tmp", "/dev/shm"}
 
 var versioned_name = regexp.MustCompile(`^(python|pip|perl|ruby|php|node|lua)[0-9][0-9.]*$`)
 
-// program_name resolves the command word to the name the rules know it by.
-func program_name(word string) (string, bool) {
-	if word == "" {
+// program_name resolves the command word to the name the rules know it by;
+// false when it is named by a path program_path_refusal refuses.
+func program_name(word, scratch string) (string, bool) {
+	if word == "" || program_path_refusal(word, scratch) != "" {
 		return "", false
 	}
-	name := word
-	if strings.Contains(word, "/") {
-		if !system_bin_dirs[path.Dir(word)] {
-			return "", false
-		}
-		name = path.Base(word)
-	}
+	name := path.Base(word)
 	// python3.11 -> python, pip3 -> pip, nodejs -> node: same rules.
 	if m := versioned_name.FindStringSubmatch(name); m != nil {
 		name = m[1]
@@ -328,9 +353,13 @@ func (rc *risk_ctx) invoke(words []sh_word, c *sh_command, more bool) {
 		rc.unverified("the program name is only decided at run time: " + w.raw)
 		return
 	}
-	name, ok := program_name(w.text)
+	name, ok := program_name(w.text, rc.scratch)
 	if !ok {
-		rc.unverified("runs a program by a path the gate cannot vouch for: " + w.text)
+		why := program_path_refusal(w.text, rc.scratch)
+		if why == "" {
+			why = "runs a program with no name"
+		}
+		rc.unverified(why)
 		return
 	}
 	inv := &invocation{name: name, args: words[1:], cmd: c, more: more}

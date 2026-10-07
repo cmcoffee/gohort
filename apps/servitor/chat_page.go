@@ -204,7 +204,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 						// overflow menu so the toolbar stays lean.
 						{Label: "Map App", Title: "Enumerate a specific command's subcommands and flags",
 							Method: "client", URL: "servitor_run_mapapp", Group: "More"},
-						{Label: "Permissions", Title: "Choose which categories of risky command run without asking: database writes, file changes, outbound calls, system control, software installs, unrecognized commands. Unchecked categories still prompt before each command.",
+						{Label: "Permissions", Title: "Choose which categories of risky command run without asking: database writes, file changes, outbound calls, system control, software installs, unrecognized commands. Unchecked categories still prompt before each command. Also lists the commands you answered Always for, to remove.",
 							Method: "client", URL: "servitor_permissions", Group: "More"},
 						{Label: "Copy session", Title: "Copy the full session as markdown (every user message, every assistant round, every tool call/result) for pasting into a prompt-tuning chat.",
 							Method: "client", URL: "copy_session", Group: "More"},
@@ -235,7 +235,7 @@ func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Identity first: it is half of the access decision.
-	user, _, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -248,8 +248,15 @@ func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	allow := body.Value == "allow" || body.Value == "always"
+	// Always is Allow that is remembered: this exact command, on this
+	// appliance, runs without asking again. Written before the run is let go,
+	// so the run's next identical command already finds it.
+	var remember func(sid, cmd string)
+	if body.Value == "always" {
+		remember = func(sid, cmd string) { rememberAlwaysAllow(udb, user, sid, cmd) }
+	}
 
-	delivered := deliverConfirm(user, body.ID, allow)
+	delivered := deliverConfirmWith(user, body.ID, allow, remember)
 	if delivered == "" {
 		// Say so rather than answering 204. A silent success settles the card
 		// as answered while the run stays blocked, which reads as servitor
@@ -313,6 +320,27 @@ func parseConfirmCardID(id string) (sessionID, tag string, ok bool) {
 // Split out of the handler because this is the whole of the access decision,
 // and a plain function of its inputs can be tested without a session cookie.
 func deliverConfirm(user, cardID string, allow bool) string {
+	return deliverConfirmWith(user, cardID, allow, nil)
+}
+
+// rememberAlwaysAllow records an Always answer for sid's appliance. A session
+// whose appliance is not known is not remembered: the answer still allows the
+// command once, and the next one asks again rather than being trusted
+// everywhere.
+func rememberAlwaysAllow(udb Database, user, sid, cmd string) {
+	v, ok := sessionAppliances.Load(sid)
+	appliance, _ := v.(string)
+	if udb == nil || !ok || appliance == "" {
+		Log("[servitor] %s answered Always on session %s, but its appliance is not known: allowed once, not remembered", user, sid)
+		return
+	}
+	udb.Set(alwaysAllowTable, alwaysAllowKey(appliance, cmd), true)
+	Log("[servitor] %s set always-allow on %s for: %s", user, appliance, cmd)
+}
+
+// deliverConfirmWith is deliverConfirm that, for an answer it delivers, first
+// tells remember (when set) which session and command were answered.
+func deliverConfirmWith(user, cardID string, allow bool, remember func(sid, cmd string)) string {
 	if strings.TrimSpace(user) == "" {
 		return ""
 	}
@@ -332,6 +360,9 @@ func deliverConfirm(user, cardID string, allow bool) string {
 	cmd, ok := pending.(string)
 	if !ok || confirmCmdTag(cmd) != tag {
 		return ""
+	}
+	if allow && remember != nil && len(p.ch) < cap(p.ch) {
+		remember(sid, cmd)
 	}
 	select {
 	case p.ch <- allow:

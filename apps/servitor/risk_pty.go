@@ -39,7 +39,7 @@ type pty_session struct {
 // pty_input_risks classifies each non-empty input line of a run_pty call and
 // returns the ones that are not read-only. Password answers are skipped.
 func pty_input_risks(cmd, input, scratch string) []pty_line_risk {
-	sess := pty_session_of(cmd)
+	sess := pty_session_of(cmd, scratch)
 	var out []pty_line_risk
 	passwords := sess.passwords
 	for _, raw := range strings.Split(input, "\n") {
@@ -89,7 +89,7 @@ func looks_like_password(line string) bool {
 
 // pty_session_of finds the program whose terminal the input reaches: the last
 // simple command on the line, looked through the usual wrappers.
-func pty_session_of(cmd string) pty_session {
+func pty_session_of(cmd, scratch string) pty_session {
 	p := sh_lex(cmd)
 	if p.opaque != "" || len(p.cmds) == 0 {
 		return pty_session{kind: "opaque", program: "unknown"}
@@ -100,7 +100,7 @@ func pty_session_of(cmd string) pty_session {
 	}
 	sess := pty_session{}
 	for len(words) > 0 {
-		name, ok := program_name(words[0].text)
+		name, ok := program_name(words[0].text, scratch)
 		if !ok || words[0].expanded {
 			return pty_session{kind: "opaque", program: words[0].text}
 		}
@@ -185,9 +185,10 @@ func skip_wrapper(words []sh_word) []sh_word {
 }
 
 // looks_like_program: a word the gate has rules for, so it is the program and
-// not an option's value.
+// not an option's value. Where it lives does not matter here: it only finds
+// the program word, which pty_session_of then names with the scratch rule.
 func looks_like_program(w string) bool {
-	name, ok := program_name(w)
+	name, ok := program_name(w, "")
 	if !ok {
 		return false
 	}

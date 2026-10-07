@@ -143,7 +143,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 		cat, reason := hits[0].cat, hits[0].reason
 		if udb != nil {
 			var alwaysOK bool
-			if udb.Get(alwaysAllowTable, cmd, &alwaysOK) && alwaysOK {
+			if udb.Get(alwaysAllowTable, alwaysAllowKey(appliance.ID, cmd), &alwaysOK) && alwaysOK {
 				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
 				return nil
 			}

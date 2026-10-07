@@ -608,7 +608,8 @@
     // Command permissions — the operator's "levels of allowance": which
     // categories of risky command run WITHOUT a confirmation prompt. Per-user
     // (not per-appliance), mirrors the CLI --allow flag. Checked = auto-run;
-    // unchecked = still prompt each time. Autosaves on toggle.
+    // unchecked = still prompt each time. Autosaves on toggle. Below them, the
+    // commands answered Always, per appliance, each with Remove.
     window.uiRegisterClientAction('servitor_permissions', function() {
       var cats = [
         {key: 'data_mutate', label: 'Database writes',
@@ -654,7 +655,58 @@
         .then(function(r) { return r.json(); })
         .then(function(d) { state = d || {}; render(); })
         .catch(function() { state = {}; render(); });
-      var body = el('div', {class: 'ui-pl-modal-body'}, [listBox]);
+
+      // Always allowed: each command answered Always on an approval card. It
+      // runs without asking on that appliance only; Remove makes it ask again.
+      var alwaysBox = el('div', {}, [el('div', {class: 'ui-pl-empty'}, ['Loading…'])]);
+      function renderAlways(list) {
+        alwaysBox.innerHTML = '';
+        alwaysBox.appendChild(el('div', {style: 'font-weight:600;margin:18px 0 4px'}, ['Always allowed']));
+        alwaysBox.appendChild(el('div', {class: 'ui-pl-empty', style: 'text-align:left;margin-bottom:6px'},
+          ['Commands you answered Always for. Each runs without asking, as written, on that appliance only. Remove one and it asks again.']));
+        if (!list.length) {
+          alwaysBox.appendChild(el('div', {class: 'ui-pl-empty', style: 'text-align:left'},
+            ['None yet. Answer Always on an approval card to add one.']));
+          return;
+        }
+        list.forEach(function(it) {
+          var btn = el('button', {class: 'ui-row-btn danger', style: 'margin-left:auto;flex:none'}, ['Remove']);
+          btn.onclick = function() {
+            btn.disabled = true;
+            btn.textContent = 'Removing…';
+            fetch('api/permissions/always', {
+              method: 'POST', headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({appliance_id: it.appliance_id, command: it.command}),
+            }).then(function(r) {
+              if (!r.ok) throw new Error('HTTP ' + r.status);
+              loadAlways();
+            }).catch(function(err) {
+              btn.disabled = false;
+              btn.textContent = 'Remove';
+              window.uiAlert('Could not remove it: ' + (err && err.message || err));
+            });
+          };
+          alwaysBox.appendChild(el('div', {
+            style: 'display:flex;gap:10px;align-items:flex-start;padding:8px 4px;border-bottom:1px solid var(--border)'},
+            [el('div', {style: 'min-width:0'}, [
+              el('div', {style: 'font-weight:600'}, [it.appliance]),
+              el('code', {style: 'display:block;white-space:pre-wrap;word-break:break-all;margin-top:2px'}, [it.command]),
+            ]), btn]));
+        });
+      }
+      function loadAlways() {
+        fetch('api/permissions/always')
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function(d) { renderAlways((d && d.commands) || []); })
+          .catch(function(err) {
+            alwaysBox.innerHTML = '';
+            alwaysBox.appendChild(el('div', {class: 'ui-pl-empty'},
+              ['Could not load the always-allowed commands: ' + (err && err.message || err)]));
+          });
+      }
+      loadAlways();
+
+      var body = el('div', {class: 'ui-pl-modal-body'}, [listBox, alwaysBox]);
       var m = openModal('Command permissions', body);
       var doneBtn = el('button', {class: 'ui-row-btn primary',
         onclick: function(){ m.close(); }}, ['Done']);
