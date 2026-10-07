@@ -1696,6 +1696,7 @@ func (pr *planRun) initRoundCaps() {
 
 func (pr *planRun) onRoundStartHandler() []Message {
 	t := pr.t
+	t.thinkNewCall()
 	pr.roundCounter++
 	t.currentRound = pr.roundCounter
 	// Pace against the SOFT cap normally; once the LLM has flipped
@@ -2186,6 +2187,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		DynamicTools:         t.dynamicNewTempTools(pr.sess),
 		ToolFallbackResolver: t.lazyToolFallback,
 		Stream:               pr.streamHandler,
+		ReasoningStream:      t.thinkChunk,
 		OnStep:               pr.onStepHandler,
 		OnPromptDigest:       pr.stamp.digest,
 		OnRoundStart:         pr.onRoundStartHandler,

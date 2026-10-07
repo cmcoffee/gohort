@@ -3183,6 +3183,7 @@
           output_tokens:    meta.usage.output_tokens || meta.usage.completion_tokens,
           reasoning_tokens: meta.usage.reasoning_tokens,
           tokens_per_sec:   meta.usage.tokens_per_sec,
+          think_ms:         meta.usage.think_ms,
           prompt_per_sec:   meta.usage.prompt_per_sec,
           elapsed_ms:       meta.usage.elapsed_ms,
         });
@@ -3823,13 +3824,52 @@
         .replace(/\s+$/, '');
     }
 
+    // streamingMarkdown is in-progress text as the markdown pass should see
+    // it: a code fence still open gets a closing one, so the code inside
+    // renders as code now instead of as markdown (a # comment as a heading, a
+    // - line as a list) until its real closing fence arrives.
+    function streamingMarkdown(text) {
+      var fences = (text.match(/```/g) || []).length;
+      return fences % 2 ? text + '\n```' : text;
+    }
+
+    // STREAM_PAINT_MS spaces markdown repaints of a reply still arriving. A
+    // repaint per chunk would re-render the whole reply dozens of times a
+    // second; this keeps it smooth without visibly lagging the stream.
+    var STREAM_PAINT_MS = 120;
+
     // showStreaming puts a bubble's in-progress text on screen, keeping the
-    // bubble hidden while there is nothing visible to show.
+    // bubble hidden while there is nothing visible to show. With markdown on,
+    // the reply is rendered as markdown while it streams, so it looks the
+    // same mid-stream as finished: plain text that only became markdown at
+    // the end made headings, lists and code blocks snap into place, and a
+    // long reply jumped when the turn settled.
     function showStreaming(m) {
       var shown = streamingText(m.rawText);
-      m.body.textContent = shown;
+      m.shownText = shown;
+      if (cfg.markdown && m.role === 'assistant') {
+        if (!m.paintTimer) paintStreaming(m);
+      } else {
+        m.body.textContent = shown;
+      }
       if (shown.length > 0) unmarkEmptyBubble(m);
       else markEmptyBubble(m);
+      scrollConvo(false);
+    }
+
+    // paintStreaming renders now and checks back after STREAM_PAINT_MS for
+    // text that arrived in between, so the first words show at once and the
+    // last chunk is never left unpainted.
+    function paintStreaming(m) {
+      m.paintTimer = setTimeout(function() {
+        m.paintTimer = null;
+        if (m.paintedText !== m.shownText) paintStreaming(m);
+      }, STREAM_PAINT_MS);
+      m.paintedText = m.shownText;
+      uiRenderMarkdown(m.body, streamingMarkdown(m.shownText || ''));
+      // Markdown emits block elements that handle their own spacing; the
+      // raw-text pre-wrap would add gaps between them.
+      if (m.bubble) m.bubble.classList.remove('ui-agent-msg-streaming');
       scrollConvo(false);
     }
 
@@ -3855,6 +3895,9 @@
     function finalizeMessage(id) {
       var m = msgEls[id];
       if (!m) return;
+      // A repaint still pending would draw the in-progress text back over
+      // the finished render.
+      if (m.paintTimer) { clearTimeout(m.paintTimer); m.paintTimer = null; }
       if (cfg.markdown && m.role === 'assistant') {
         uiRenderMarkdown(m.body, m.rawText || '');
       }
@@ -4190,17 +4233,11 @@
       // tool-only rounds without LLM output get a sparse payload
       // that doesn't deserve a footer.
       if (!ev.output_tokens && !ev.input_tokens && !ev.elapsed_ms) return;
-      var parts = [];
-      if (ev.tokens_per_sec)   parts.push(ev.tokens_per_sec.toFixed(1) + ' tk/s');
-      if (ev.prompt_per_sec)   parts.push(ev.prompt_per_sec.toFixed(0) + ' prefill');
-      if (ev.elapsed_ms)       parts.push((ev.elapsed_ms / 1000).toFixed(1) + 's');
-      if (ev.input_tokens)     parts.push(ev.input_tokens + ' in');
-      if (ev.output_tokens)    parts.push(ev.output_tokens + ' out');
-      if (ev.reasoning_tokens) parts.push(ev.reasoning_tokens + ' think');
+      var parts = statsFooterNodes(ev);
       if (!parts.length) return;
       var existing = m.bubble.querySelector(':scope > .ui-agent-stats');
       if (existing) existing.remove();
-      var footer = el('div', {class: 'ui-agent-stats'}, [parts.join(' - ')]);
+      var footer = el('div', {class: 'ui-agent-stats'}, parts);
       // Place stats ABOVE the action bar (Retry/Copy/timestamp).
       // The bar lives at the bottom of the bubble container, so we
       // insert stats before it when present.
@@ -4611,9 +4648,14 @@
           addMessage(ev.role || 'assistant', ev.id || ('m-' + Date.now()), ev.text || '');
           break;
         case 'chunk':
+          if (thinkLive && (ev.text || '').trim()) endThinkLive();
           appendChunk(ev.id, ev.text || '');
           break;
+        case 'thinking':
+          noteThinking(ev);
+          break;
         case 'chunk_replace':
+          endThinkLive();
           replaceChunk(ev.id, ev.text || '');
           break;
         case 'message_done':
@@ -4632,6 +4674,7 @@
           renderMessageStats(ev);
           break;
         case 'tool_call': {
+          endThinkLive();
           // Inline tool-call card on the targeted bubble — OR on the
           // previous visible block when the bubble's still empty (so
           // tool activity surfaces on a plan/intent card the user is
@@ -4875,8 +4918,10 @@
       thinkingEl = el('div', {class: 'ui-agent-msg ui-agent-msg-assistant ui-agent-thinking'});
       var body = el('div', {class: 'ui-agent-msg-body'});
       body.innerHTML = '<span class="ui-chat-typing" aria-label="Thinking">' +
-        '<span></span><span></span><span></span></span>';
+        '<span></span><span></span><span></span></span>' +
+        '<span class="ui-agent-thinking-label" aria-live="polite"></span>';
       thinkingEl.appendChild(body);
+      renderThinkLive();
       convoLog.appendChild(thinkingEl);
       // Force-scroll: the user just sent, they expect to see
       // activity at the bottom of the thread.
@@ -4884,8 +4929,38 @@
       scrollConvo(true);
     }
     function clearThinking() {
+      endThinkLive();
       if (thinkingEl && thinkingEl.parentNode) thinkingEl.remove();
       thinkingEl = null;
+    }
+
+    // The live "Thinking · 34s · ~1,200 tokens" line beside the dots. A
+    // thinking model can reason for most of a minute before it writes a word,
+    // and dots alone cannot tell a long think from a hung one. The server
+    // reports progress on a slow tick ({kind:"thinking", elapsed_ms, tokens});
+    // the seconds advance here between ticks so the line never sits still.
+    // Anything the model produces (text, a tool call) ends it: from there the
+    // reply itself is the progress.
+    var thinkLive = null;   // {since: ms timestamp the span began, tokens}
+    var thinkLiveTimer = null;
+    function noteThinking(ev) {
+      thinkLive = {
+        since: Date.now() - (Number(ev.elapsed_ms) || 0),
+        tokens: Number(ev.tokens) || 0,
+      };
+      if (!thinkingEl) showThinking();
+      renderThinkLive();
+      if (!thinkLiveTimer) thinkLiveTimer = setInterval(renderThinkLive, 1000);
+    }
+    function endThinkLive() {
+      thinkLive = null;
+      if (thinkLiveTimer) { clearInterval(thinkLiveTimer); thinkLiveTimer = null; }
+      renderThinkLive();
+    }
+    function renderThinkLive() {
+      var label = thinkingEl && thinkingEl.querySelector('.ui-agent-thinking-label');
+      if (!label) return;
+      label.textContent = thinkLive ? thinkingLabel(Date.now() - thinkLive.since, thinkLive.tokens) : '';
     }
 
     function disableInput() {

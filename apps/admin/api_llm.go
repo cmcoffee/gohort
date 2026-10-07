@@ -10,9 +10,11 @@ import (
 
 // registerLLMRoutes wires the llm API under the admin sub-mux.
 func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
-	// Live connectivity check for the Worker LLM form — POSTs the form's
-	// current, possibly-unsaved values and actually talks to the provider.
-	sub.HandleFunc("/api/worker-llm/test", a.handleWorkerLLMTest)
+	// Live connectivity check for the Worker and Lead LLM forms — POSTs the
+	// form's current, possibly-unsaved values and actually talks to the
+	// provider. Each tier falls back to its OWN stored key.
+	sub.HandleFunc("/api/worker-llm/test", a.handleLLMTest(LLMTable))
+	sub.HandleFunc("/api/lead-llm/test", a.handleLLMTest(LeadLLMTable))
 
 	// LLM routing: GET returns all stages + current values, POST updates one.
 	sub.HandleFunc("/api/routing", func(w http.ResponseWriter, r *http.Request) {

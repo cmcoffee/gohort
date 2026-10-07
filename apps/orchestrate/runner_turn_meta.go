@@ -149,6 +149,10 @@ func (t *chatTurn) emitStats(msgID string, resp *Response, start time.Time) {
 		"elapsed_ms": elapsedMs,
 	}
 	usage := &ChatMessageUsage{ElapsedMs: elapsedMs}
+	if ms := t.thinkTotalMS(); ms > 0 {
+		payload["think_ms"] = ms
+		usage.ThinkMs = ms
+	}
 	if resp != nil {
 		// The prompt is the SUM. A provider reports input_tokens as the
 		// uncached remainder only, so on a conversation whose system prompt and

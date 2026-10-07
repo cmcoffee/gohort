@@ -576,6 +576,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	// turn so its lens governs the synthesis reply. No trigger hints here —
 	// synthesis has no tools, so a "go consult it" nudge would be useless.
 	synthSys += t.renderTriggeredSkills()
+	t.thinkNewCall()
 	resp, err := t.app.ChatStreamWithReport(t.ctx,
 		msgs,
 		handler,
@@ -583,6 +584,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 		WithRouteKey(routeKey),
 		WithTierOverride(tierPin), // the phase's pin, which the route key alone cannot carry
 		WithThink(think),
+		WithReasoningStream(t.thinkChunk), // the live "Thinking" line, as the orchestrator round has
 	)
 	stopKeepalive()
 	if err != nil {

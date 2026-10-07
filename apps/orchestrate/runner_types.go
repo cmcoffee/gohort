@@ -435,6 +435,10 @@ type chatTurn struct {
 	lastUsageMu sync.Mutex
 	lastUsage   *ChatMessageUsage
 
+	// think tracks the model's reasoning for the live "Thinking" line and
+	// the footer's thinking time. See runner_thinking.go.
+	think thinkProgress
+
 	// midTurnBubbles collects every finalized assistant bubble the
 	// turn streams BEFORE the final synthesis/respond_directly/question.
 	// runPlan's onStepHandler and runWorkerStep's onStep append to it

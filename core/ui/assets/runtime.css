@@ -4655,6 +4655,18 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   opacity: 0; transition: opacity 0.12s ease;
 }
 .ui-agent-msg:hover .ui-agent-stats { opacity: 0.85; }
+/* Each figure carries a hover title saying what it measures. */
+.ui-agent-stats span[title], .ui-chat-round-stats span[title] { cursor: help; }
+
+/* The live line beside the thinking dots ("Thinking · 34s · ~1,200 tokens").
+ * Empty, it takes no room: the dots alone, as before thinking starts. */
+.ui-agent-thinking-label {
+  margin-left: 0.6rem;
+  color: var(--text-mute);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.ui-agent-thinking-label:empty { display: none; }
 
 /* The extras slot stacks vertically by default (one row per child).
  * When both extras and modes are present we want them on ONE line so

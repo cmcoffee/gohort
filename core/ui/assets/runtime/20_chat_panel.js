@@ -821,16 +821,9 @@
     function renderRoundStats(msgEl, stats) {
       if (!msgEl || !stats) return;
       if (!stats.output_tokens && !stats.input_tokens && !stats.elapsed_ms) return;
-      var parts = [];
-      if (stats.tokens_per_sec) parts.push(stats.tokens_per_sec.toFixed(1) + ' tk/s');
-      if (stats.prompt_per_sec) parts.push(Math.round(stats.prompt_per_sec) + ' prefill');
-      if (stats.elapsed_ms)     parts.push((stats.elapsed_ms / 1000).toFixed(1) + 's');
-      if (stats.input_tokens)   parts.push(stats.input_tokens.toLocaleString() + ' in');
-      if (stats.output_tokens)  parts.push(stats.output_tokens.toLocaleString() + ' out');
-      if (stats.reasoning_tokens) parts.push(stats.reasoning_tokens.toLocaleString() + ' think');
-      if (stats.est_cost && stats.est_cost > 0) parts.push('$' + Number(stats.est_cost).toFixed(4));
+      var parts = statsFooterNodes(stats);
       if (!parts.length) return;
-      var bar = el('div', {class: 'ui-chat-round-stats'}, [parts.join(' - ')]);
+      var bar = el('div', {class: 'ui-chat-round-stats'}, parts);
       msgEl.appendChild(bar);
     }
 

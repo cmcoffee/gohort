@@ -200,15 +200,23 @@ func setupSkipLinkHTML() string {
 </script>`
 }
 
-// handleWorkerLLMTest runs a live one-shot chat against the posted (unsaved)
-// settings and reports whether the provider answered.
+// handleLLMTest runs a live one-shot chat against the posted (unsaved)
+// settings for the tier stored in table, and reports whether the provider
+// answered.
 //
 // It builds the LLM from the request body rather than from stored config on
 // purpose: the whole point is to validate credentials BEFORE writing them, so
 // an operator never saves a key that was going to fail. A blank api_key falls
 // back to the stored one, matching the form's "blank means keep the existing
 // key" convention.
-func (a *AdminApp) handleWorkerLLMTest(w http.ResponseWriter, r *http.Request) {
+func (a *AdminApp) handleLLMTest(table string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) { a.testLLM(w, r, table) }
+}
+
+// testLLM checks one tier's form values: for a local server, what is actually
+// at the endpoint (see probeModelServer), then whether it answers a chat. The
+// key falls back to the tier's own stored one, never the other tier's.
+func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string) {
 	if !a.requireAdmin(w, r) {
 		return
 	}
@@ -217,13 +225,14 @@ func (a *AdminApp) handleWorkerLLMTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Provider   string `json:"provider"`
-		Model      string `json:"model"`
-		APIKey     string `json:"api_key"`
-		Endpoint   string `json:"endpoint"`
-		AWSRegion  string `json:"aws_region"`
-		AWSProfile string `json:"aws_profile"`
-		BedrockAPI string `json:"bedrock_api"`
+		Provider    string `json:"provider"`
+		Model       string `json:"model"`
+		APIKey      string `json:"api_key"`
+		Endpoint    string `json:"endpoint"`
+		AWSRegion   string `json:"aws_region"`
+		AWSProfile  string `json:"aws_profile"`
+		BedrockAPI  string `json:"bedrock_api"`
+		ContextSize int    `json:"context_size"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeTestResult(w, false, "", "invalid request body")
@@ -234,7 +243,7 @@ func (a *AdminApp) handleWorkerLLMTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.APIKey == "" && a.db != nil {
-		a.db.Get(LLMTable, "api_key", &req.APIKey)
+		a.db.Get(table, "api_key", &req.APIKey)
 	}
 	// The model id, before anything tries to use it. A value carrying
 	// invisible rubbish comes back from AWS as "the provided model identifier
@@ -292,12 +301,20 @@ func (a *AdminApp) handleWorkerLLMTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 
+	// What is at the endpoint, said on success AND failure: a refused chat
+	// from a server that turns out to be a different kind is half-diagnosed.
+	serverNote := ""
+	switch req.Provider {
+	case "llama.cpp", "vllm", "ollama":
+		serverNote = probeModelServer(ctx, req.Provider, req.Endpoint, req.APIKey).describe(req.Provider, req.ContextSize)
+	}
+
 	started := time.Now()
 	resp, err := llm.Chat(ctx,
 		[]Message{{Role: "user", Content: "Reply with the single word: ok"}},
 		WithMaxTokens(16), WithThink(false))
 	if err != nil {
-		writeTestResult(w, false, "", err.Error()+credNote)
+		writeTestResult(w, false, "", err.Error()+credNote+serverNote)
 		return
 	}
 	took := time.Since(started).Round(time.Millisecond)
@@ -309,7 +326,7 @@ func (a *AdminApp) handleWorkerLLMTest(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = "the provider default"
 	}
-	writeTestResult(w, true, "Connected: "+model+" answered in "+took.String()+"."+credNote, "")
+	writeTestResult(w, true, "Connected: "+model+" answered in "+took.String()+"."+credNote+serverNote, "")
 }
 
 // bedrockRegionPresets lists regions that actually have a Messages-API

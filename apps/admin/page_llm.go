@@ -14,6 +14,11 @@ func (a *AdminApp) llmSections() []ui.Section {
 			Detail:   "Applies immediately on save, because the live LLM is rebuilt and nothing restarts. The API key is stored encrypted; leave it blank to keep the current one.",
 			Body: ui.FormPanel{
 				Source: "api/worker-llm",
+				// Says what is actually at a local endpoint as well as whether
+				// it answers: the kind of server, the model and its context,
+				// and what in this form does not match it.
+				TestURL:   "api/worker-llm/test",
+				TestLabel: "Test connection",
 				Fields: []ui.FormField{
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(false),
 						Help:   "Local providers, ollama, llama.cpp or vLLM, are the usual worker.",
@@ -88,7 +93,10 @@ func (a *AdminApp) llmSections() []ui.Section {
 			Subtitle: "The precision, remote model for high-stakes stages.",
 			Detail:   "Routing sends \"lead\" stages here. Provider \"(use primary)\" reuses the worker. Applies immediately on save with no restart; the key is stored encrypted, and blank keeps the current one.",
 			Body: ui.FormPanel{
-				Source: "api/lead-llm",
+				Source:       "api/lead-llm",
+				TestURL:      "api/lead-llm/test",
+				TestLabel:    "Test connection",
+				TestShowWhen: "provider", // "(use primary)" has nothing of its own to test
 				Fields: []ui.FormField{
 					// What is RUNNING, above what is stored. A save writes the
 					// config and then rebuilds, and a rebuild that fails leaves

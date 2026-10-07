@@ -58,6 +58,64 @@
     return box;
   }
 
+  // statsSeconds formats a duration in ms for a stats line: "18.7s" under a
+  // minute, "2m 05s" past it.
+  function statsSeconds(ms) {
+    var s = (Number(ms) || 0) / 1000;
+    if (s < 60) return s.toFixed(1) + 's';
+    var whole = Math.round(s);
+    var rem = whole % 60;
+    return Math.floor(whole / 60) + 'm ' + (rem < 10 ? '0' : '') + rem + 's';
+  }
+
+  // thinkingLabel is the live line beside a reply's thinking dots:
+  // "Thinking · 34s · ~1,200 tokens". Whole seconds, since it ticks; the
+  // token count is approximate (counted off the streamed reasoning) and says
+  // so with the "~".
+  function thinkingLabel(ms, tokens) {
+    var secs = Math.floor((Number(ms) || 0) / 1000);
+    var out = 'Thinking';
+    if (secs >= 60) out += ' · ' + Math.floor(secs / 60) + 'm ' + (secs % 60 < 10 ? '0' : '') + (secs % 60) + 's';
+    else if (secs >= 1) out += ' · ' + secs + 's';
+    if (tokens > 0) out += ' · ~' + Number(tokens).toLocaleString() + ' tokens';
+    return out;
+  }
+
+  // statsFooterNodes builds a reply's stats line ("41.2 tk/s - 18.7s - …") as
+  // nodes, each figure in a span whose hover title says what it measures. The
+  // bare line was terse enough that tk/s was read as covering the whole turn.
+  // One builder for every panel that shows these, so they cannot drift.
+  // Fields absent from stats are left out; an empty array means no line.
+  var STATS_FIELDS = [
+    {key: 'tokens_per_sec', fmt: function(v) { return v.toFixed(1) + ' tk/s'; },
+     title: 'Writing speed: tokens per second while the model was generating, from its first token to its last. Prompt processing is not included.'},
+    {key: 'prompt_per_sec', fmt: function(v) { return Math.round(v).toLocaleString() + ' prefill'; },
+     title: 'Prompt-processing speed in tokens per second, as the model server reported it.'},
+    {key: 'elapsed_ms', fmt: statsSeconds,
+     title: 'Time from sending to the end of the reply, tool calls and every round included.'},
+    {key: 'think_ms', fmt: function(v) { return 'thought ' + statsSeconds(v); },
+     title: 'Time the model spent thinking before and between its answers.'},
+    {key: 'input_tokens', fmt: function(v) { return v.toLocaleString() + ' in'; },
+     title: 'Prompt size: everything the model was sent for this reply, cached or not.'},
+    {key: 'output_tokens', fmt: function(v) { return v.toLocaleString() + ' out'; },
+     title: 'Tokens the model wrote for this reply, thinking included.'},
+    {key: 'reasoning_tokens', fmt: function(v) { return v.toLocaleString() + ' think'; },
+     title: 'The share of those output tokens spent thinking.'},
+    {key: 'est_cost', fmt: function(v) { return '$' + v.toFixed(4); },
+     title: 'Estimated cost of this reply at the configured rates.'},
+  ];
+  function statsFooterNodes(stats) {
+    var out = [];
+    if (!stats) return out;
+    STATS_FIELDS.forEach(function(f) {
+      var v = Number(stats[f.key]);
+      if (!(v > 0)) return;
+      if (out.length) out.push(' - ');
+      out.push(el('span', {title: f.title}, [f.fmt(v)]));
+    });
+    return out;
+  }
+
   // comboSeq gives each combo cell's <datalist> a unique id. Ids are
   // document-global, so two rows sharing one would put the first row's
   // suggestions on every later cell.
