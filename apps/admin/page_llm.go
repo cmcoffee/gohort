@@ -16,7 +16,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 				Source: "api/worker-llm",
 				Fields: []ui.FormField{
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(false),
-						Help:   "Local providers, ollama or llama.cpp, are the usual worker.",
+						Help:   "Local providers, ollama, llama.cpp or vLLM, are the usual worker.",
 						Detail: "A peer offering inference appears here too, and its GPU runs the turns."},
 					// Shown only when there is something to say: a peer's model is
 					// tuned on that peer, and its wording governs here.
@@ -26,14 +26,15 @@ func (a *AdminApp) llmSections() []ui.Section {
 						Help:   "Blank uses the provider default.",
 						Detail: "On AWS Bedrock, many accounts require a region-prefixed inference profile (us.anthropic.claude-opus-4-8) and deny the bare id."},
 					{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
-						ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp",
-						Help:     "Stored encrypted. Ollama ignores it; llama.cpp sends it only when the server requires one (started with --api-key)."},
+						ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm",
+						Help:     "Stored encrypted. Ollama ignores it; llama.cpp and vLLM send it only when the server requires one (started with --api-key)."},
 					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "http://localhost:8080/v1",
-						ShowWhen: "provider:ollama|llama.cpp|bedrock",
+						ShowWhen: "provider:ollama|llama.cpp|vllm|bedrock",
 						Help:     "For local / self-hosted providers; blank = provider default.",
 						Presets: []ui.FieldPreset{
 							{Label: "Ollama", Value: "http://localhost:11434"},
-							{Label: "llama.cpp", Value: "http://localhost:8080/v1"}}},
+							{Label: "llama.cpp", Value: "http://localhost:8080/v1"},
+							{Label: "vLLM", Value: "http://localhost:8000/v1"}}},
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
 						ShowWhen: "provider:bedrock",
 						Help:     "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
@@ -52,7 +53,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 						Detail:   "Credentials are never stored here. For SSO, run `aws sso login` on the gohort host. The API key field above is optional, and means a Bedrock bearer token instead."},
 					{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 1000000,
 						ShowWhen: "provider:!openai|gemini",
-						Help:     "0 uses the default: 65K for ollama and llama.cpp, 200K for Anthropic and Bedrock.",
+						Help:     "0 uses the default: 65K for ollama, llama.cpp and vLLM, 200K for Anthropic and Bedrock.",
 						Detail:   "Local providers send this as num_ctx. For Anthropic and Bedrock it is the working cap history compaction keys on. The API accepts up to 1M, but every input token bills per turn, so keep it modest."},
 					{Field: "request_timeout_seconds", Label: "Request timeout (sec)", Type: "number", Min: 0, Max: 3600,
 						Help: "0 = default 300s."},
@@ -65,15 +66,15 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle",
 						ShowWhen: "provider:!anthropic|openai|bedrock"},
 					{Field: "thinking_budget", Label: "Thinking budget (tokens)", Type: "number", Min: 0, Max: 131072,
-						ShowWhen: "provider:!anthropic|openai|bedrock|ollama",
+						ShowWhen: "provider:!anthropic|openai|bedrock|ollama|vllm",
 						Help:     thinkingBudgetHelp},
 					effortDefaultField(), effortMaxField(),
 					{Field: "no_think_use_kwarg", Label: "No-think: send enable_thinking=false", Type: "toggle",
 						ShowWhen: workerNoThink},
 					{Field: "no_think_send_budget", Label: "No-think: send thinking_budget cap", Type: "toggle",
-						ShowWhen: workerNoThink},
+						ShowWhen: workerNoThinkBudget},
 					{Field: "no_think_budget", Label: "No-think: budget value (tokens)", Type: "number", Min: 0, Max: 8192,
-						ShowWhen: workerNoThink + ";no_think_send_budget",
+						ShowWhen: workerNoThinkBudget + ";no_think_send_budget",
 						Help:     "0 = built-in default (512)."},
 					{Field: "no_think_prepend_system", Label: "No-think: prepend /no_think to system prompt", Type: "toggle",
 						ShowWhen: workerNoThink},
@@ -99,11 +100,11 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. claude-sonnet-5",
 						ShowWhen: "provider"},
 					{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
-						ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp",
+						ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm",
 						Help:     "Stored encrypted. The lead has its own key and never falls back to the worker's.",
-						Detail:   "Ollama ignores it, and llama.cpp sends it only when the server requires one (started with --api-key). Leaving it blank on save keeps the current key."},
+						Detail:   "Ollama ignores it, and llama.cpp and vLLM send it only when the server requires one (started with --api-key). Leaving it blank on save keeps the current key."},
 					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "(provider default)",
-						ShowWhen: "provider:ollama|llama.cpp|bedrock",
+						ShowWhen: "provider:ollama|llama.cpp|vllm|bedrock",
 						Help:     "For local / self-hosted lead providers. On Bedrock this OVERRIDES the AWS region below.",
 						Detail:   "Anything here is used as the host verbatim, so on Bedrock the region box stops deciding where calls go while going on displaying whatever it was set to. Leave it blank unless you are pointing at a private link or a VPC endpoint."},
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
@@ -133,15 +134,15 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle",
 						ShowWhen: "provider;provider:!anthropic|openai|bedrock"},
 					{Field: "thinking_budget", Label: "Thinking budget (tokens)", Type: "number", Min: 0, Max: 131072,
-						ShowWhen: "provider;provider:!anthropic|openai|bedrock|ollama",
+						ShowWhen: "provider;provider:!anthropic|openai|bedrock|ollama|vllm",
 						Help:     thinkingBudgetHelp},
 					leadOnly(effortDefaultField()), leadOnly(effortMaxField()),
 					{Field: "no_think_use_kwarg", Label: "No-think: send enable_thinking=false", Type: "toggle",
 						ShowWhen: leadNoThink},
 					{Field: "no_think_send_budget", Label: "No-think: send thinking_budget cap", Type: "toggle",
-						ShowWhen: leadNoThink},
+						ShowWhen: leadNoThinkBudget},
 					{Field: "no_think_budget", Label: "No-think: budget value (tokens)", Type: "number", Min: 0, Max: 8192,
-						ShowWhen: leadNoThink + ";no_think_send_budget"},
+						ShowWhen: leadNoThinkBudget + ";no_think_send_budget"},
 					{Field: "no_think_prepend_system", Label: "No-think: prepend /no_think to system prompt", Type: "toggle",
 						ShowWhen: leadNoThink},
 					{Field: "no_think_prepend_user", Label: "No-think: prepend /no_think to last user message", Type: "toggle",
@@ -218,16 +219,17 @@ func (a *AdminApp) llmSections() []ui.Section {
 		},
 		{
 			Title:    "Local Model Scheduler",
-			Subtitle: "Concurrent-request caps for local LLM backends. Default 1, strictly serial.",
+			Subtitle: "Concurrent-request caps for local LLM backends. Default 1, strictly serial; 8 for vLLM, which batches.",
 			Detail:   "Raise it only when the backend supports parallel requests. Applies immediately on save, because the live LLM is rebuilt.",
 			Body: ui.FormPanel{
 				Source: "api/local-scheduler",
 				Fields: []ui.FormField{
 					{Field: "ollama_max_parallel", Label: "Ollama max parallel", Type: "number",
 						Min: 1, Max: 16},
-					{Field: "llamacpp_max_parallel", Label: "llama.cpp max parallel (also caps peer-backed tiers)", Type: "number",
-						Min: 1, Max: 16,
-						Help: "A tier running on a peer goes through the llama.cpp client, so this limit applies to it too."},
+					{Field: "llamacpp_max_parallel", Label: "llama.cpp / vLLM max parallel (also caps peer-backed tiers)", Type: "number",
+						Min: 1, Max: 64,
+						Help:   "One queue for the local model server, whichever it is.",
+						Detail: "vLLM batches concurrent requests, so it can take many more than llama.cpp; size it to the server's --max-num-seqs. A tier running on a peer goes through the same client, so this limit applies to it too."},
 				},
 			},
 		},
@@ -239,12 +241,15 @@ func (a *AdminApp) llmSections() []ui.Section {
 const thinkingBudgetHelp = "Default 4096. On llama.cpp and peers, 0 = unlimited and this is the ceiling for per-agent and per-route budgets. On Gemini, 0 = 16384 and per-call budgets are not capped."
 
 // workerNoThink and leadNoThink show the no-think signal settings only for
-// providers that send them (llama.cpp and peers). A "!" list also matches an
-// empty provider, so the Lead form first requires one to be picked, which
-// excludes "(use primary)".
+// providers that send them (llama.cpp, vLLM and peers). A "!" list also
+// matches an empty provider, so the Lead form first requires one to be picked,
+// which excludes "(use primary)". The budget pair also leaves out vLLM, which
+// ignores thinking_budget_tokens: a control there would do nothing.
 const (
-	workerNoThink = "provider:!ollama|anthropic|openai|gemini|bedrock"
-	leadNoThink   = "provider;" + workerNoThink
+	workerNoThink       = "provider:!ollama|anthropic|openai|gemini|bedrock"
+	leadNoThink         = "provider;" + workerNoThink
+	workerNoThinkBudget = "provider:!ollama|anthropic|openai|gemini|bedrock|vllm"
+	leadNoThinkBudget   = "provider;" + workerNoThinkBudget
 )
 
 // leadOnly gates a shared tier field on the Lead form, where a blank provider

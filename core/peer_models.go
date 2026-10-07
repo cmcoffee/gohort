@@ -51,6 +51,7 @@ import (
 // getting this wrong is lending out a metered API key.
 var peerLendableProviders = map[string]bool{
 	"llama.cpp": true,
+	"vllm":      true,
 	"ollama":    true,
 }
 
@@ -436,7 +437,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 // no configured cap has always done.
 func acquirePeerModelSlot(ctx context.Context, provider, caller string) (func(), error) {
 	switch provider {
-	case "llama.cpp":
+	case "llama.cpp", "vllm":
 		if err := AcquireLlamacppSlot(ctx, caller); err != nil {
 			return nil, err
 		}

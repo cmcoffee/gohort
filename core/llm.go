@@ -1250,7 +1250,7 @@ type LLMProviderConfig struct {
 	ThinkingBudget      int           // Max thinking tokens per call, read by Gemini and llama.cpp (and peers); Ollama ignores it. 0 = model default. Ignored when DisableThinking is set.
 	NativeTools         bool          // When true, use native function calling. When false, tools are described in the system prompt and parsed from <tool_call> tags. Default false for ollama models without tool support.
 	OllamaMaxParallel   int           // Ollama only: global concurrency cap. 0 or negative = scheduler disabled; 1 = strict serial (default). Requests are fair-queued across sessions.
-	LlamacppMaxParallel int           // llama.cpp only: global concurrency cap. Default 1 (llama.cpp is single-threaded). Raise only when the server supports concurrent requests.
+	LlamacppMaxParallel int           // llama.cpp and vLLM: global concurrency cap. Default 1 for llama.cpp (single-threaded), vllmDefaultMaxParallel for vLLM (it batches). Raise only when the server supports concurrent requests.
 	// NoThink* fields control individual signals sent to llama.cpp on
 	// WithThink(false) calls. Defaults are what's empirically proven
 	// to work on Qwen 3 unified — kwarg + budget alone is sufficient,
@@ -1792,13 +1792,18 @@ func ProviderHasNativeTools(provider string) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "anthropic", "bedrock", "openai", "gemini", "llama.cpp":
+	case "anthropic", "bedrock", "openai", "gemini", "llama.cpp", "vllm":
 		return true
 	}
 	// ollama (and anything unrecognized): depends on the model, so honor the
 	// operator's toggle.
 	return false
 }
+
+// vllmDefaultMaxParallel is the local scheduler's cap for a vLLM backend when
+// the operator has not set one. vLLM batches concurrent requests, so the
+// llama.cpp default of 1 would queue work the server could run together.
+const vllmDefaultMaxParallel = 8
 
 // NewLLMFromConfig creates an LLM client from a stored configuration.
 func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
@@ -1907,8 +1912,15 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 			maxParallel = 1
 		}
 		StartOllamaScheduler(maxParallel)
-	case "llama.cpp":
+	case "llama.cpp", "vllm":
+		// vLLM speaks the same OpenAI-compatible dialect and reads
+		// chat_template_kwargs the same way, so it is this client with the
+		// one llama.cpp-only field left off (see openAIClient.vllm).
+		vllm := cfg.Provider == "vllm"
 		ep := "http://localhost:8080/v1"
+		if vllm {
+			ep = "http://localhost:8000/v1"
+		}
 		if cfg.Endpoint != "" {
 			ep = cfg.Endpoint
 		}
@@ -1919,6 +1931,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		client := newOpenAILLM(cfg.APIKey, model, ep, api)
 		oc := client.(*openAIClient)
 		oc.llamacpp = true
+		oc.vllm = vllm
 		oc.llamacppBudget = cfg.ThinkingBudget
 		oc.disableThinking = cfg.DisableThinking
 		oc.noThinkUseKwarg = cfg.NoThinkUseKwarg
@@ -1932,9 +1945,16 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		// Start the serializer so concurrent callers queue here instead
 		// of racing to llama.cpp and getting 503s. Default 1 matches
 		// llama.cpp's single-threaded design; configurable via admin UI.
+		// One local server, one queue: vLLM shares the scheduler, which keeps
+		// its calls on the Monitor page and caps a lent-out model. Unset, it
+		// starts wider, because vLLM batches concurrent requests where stock
+		// llama.cpp runs one at a time.
 		mp := cfg.LlamacppMaxParallel
 		if mp < 1 {
 			mp = 1
+			if vllm {
+				mp = vllmDefaultMaxParallel
+			}
 		}
 		StartLlamacppScheduler(mp)
 	default:

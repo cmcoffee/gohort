@@ -968,6 +968,7 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 	for _, o := range []ui.SelectOption{
 		{Value: "ollama", Label: "Ollama"},
 		{Value: "llama.cpp", Label: "llama.cpp"},
+		{Value: "vllm", Label: "vLLM"},
 		{Value: "anthropic", Label: "Anthropic"},
 		{Value: "openai", Label: "OpenAI"},
 		{Value: "gemini", Label: "Gemini"},

@@ -13,7 +13,7 @@ import (
 
 // NewAgent builds a minimal agent from an LLM provider config. It wires the LLM
 // into an AppCore and nothing else: no database, no route stages, no server, no
-// boot. For a local model set Provider "llama.cpp" or "ollama" with an Endpoint;
+// boot. For a local model set Provider "llama.cpp", "vllm" or "ollama" with an Endpoint;
 // for a hosted one set "anthropic" / "openai" / "gemini" with an APIKey.
 //
 //	agent, err := core.NewAgent(core.LLMProviderConfig{

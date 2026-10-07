@@ -153,12 +153,17 @@ func main() {
 	}
 	LlamaCppBackendFunc = func() (string, string) {
 		cfg := dbcfg.llm()
-		if cfg.Provider != "llama.cpp" {
+		// vLLM serves the same OpenAI-compatible API, so the proxy fronts it
+		// the same way.
+		if cfg.Provider != "llama.cpp" && cfg.Provider != "vllm" {
 			return "", ""
 		}
 		ep := cfg.Endpoint
 		if ep == "" {
 			ep = "http://localhost:8080/v1"
+			if cfg.Provider == "vllm" {
+				ep = "http://localhost:8000/v1"
+			}
 		}
 		return ep, cfg.Model
 	}

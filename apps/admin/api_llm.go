@@ -244,8 +244,9 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 		a.handleLLMConfig(w, r, LeadLLMTable, false)
 	})
 
-	// Local model scheduler: GET returns max parallel for Ollama and llama.cpp,
-	// POST updates both values. Requires restart to apply.
+	// Local model scheduler: GET returns max parallel for Ollama and for
+	// llama.cpp / vLLM (one shared queue), POST updates both values. Applied
+	// live by the LLM reload.
 	sub.HandleFunc("/api/local-scheduler", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
 			return
@@ -286,7 +287,13 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 			ollamaMP = 1
 		}
 		if llamacppMP < 1 {
-			llamacppMP = 1
+			// Unset: show the cap actually running, which for a vLLM tier is
+			// a wider default than 1. Showing 1 would let an unrelated save
+			// on this form store 1 and quietly serialize a batching server.
+			llamacppMP = LlamacppSchedulerStats().MaxParallel
+			if llamacppMP < 1 {
+				llamacppMP = 1
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{

@@ -168,7 +168,8 @@ type openAIClient struct {
 	api                  *apiclient.APIClient
 	streamIdleTimeout    time.Duration // Idle-read deadline for streaming chat calls; zero falls back to DefaultStreamIdleTimeout.
 	ollama               bool          // true when created via NewOllamaLLM
-	llamacpp             bool          // true when provider is llama.cpp server
+	llamacpp             bool          // true when provider is llama.cpp server, or vLLM (see vllm)
+	vllm                 bool          // vLLM: the llama.cpp path (chat_template_kwargs, the local scheduler) without thinking_budget_tokens, which vLLM ignores.
 	llamacppBudget       int           // llama.cpp: default thinking_budget_tokens (0 = server default, >0 = limit)
 	contextSize          int           // Ollama num_ctx; 0 uses ollamaDefaultCtx
 	disableThinking      bool          // master override forcing think=false / thinking_budget_tokens=0 on every call.
@@ -207,6 +208,9 @@ func (c *openAIClient) isLocal() bool {
 
 // provider returns the log tag for this client.
 func (c *openAIClient) provider() string {
+	if c.vllm {
+		return "vllm"
+	}
 	if c.llamacpp {
 		return "llama.cpp"
 	}
@@ -246,6 +250,12 @@ func isQwen3Unified(model string) bool {
 // hard cap (resolveNoThinkBudget); when false, omits and the model is
 // expected to honor the soft signals (kwarg / directive) instead.
 func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
+	// vLLM ignores thinking_budget_tokens (measured: a 128-token budget still
+	// thought for thousands), so sending one would only pad max_tokens for a
+	// cap nothing enforces. Thinking depth there is reasoning_effort's job.
+	if c.vllm {
+		return nil
+	}
 	if cfg.Think != nil && !*cfg.Think {
 		if c.noThinkSendBudget {
 			b := c.resolveNoThinkBudget()
@@ -1954,11 +1964,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			msg = apiErr.Error.Message
 		}
-		ep := "openai"
-		if c.llamacpp {
-			ep = "llama.cpp"
-		}
-		return nil, noteIfReasoningEffortRefused(payload, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: ep})
+		return nil, noteIfReasoningEffortRefused(payload, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: c.provider()})
 	}
 
 	var result oaiResponse
@@ -2186,11 +2192,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			msg = apiErr.Error.Message
 		}
-		ep := "openai"
-		if c.llamacpp {
-			ep = "llama.cpp"
-		}
-		return nil, noteIfReasoningEffortRefused(payload, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: ep})
+		return nil, noteIfReasoningEffortRefused(payload, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: c.provider()})
 	}
 
 	var full strings.Builder
