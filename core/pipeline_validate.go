@@ -29,7 +29,38 @@ func (d PipelineDef) Validate() error {
 	if err := validateStageList(d.Stages, done, false); err != nil {
 		return err
 	}
-	return d.validateSessionMeta()
+	if err := d.validateSessionMeta(); err != nil {
+		return err
+	}
+	return d.validateFollowUps()
+}
+
+// validateFollowUps checks the pipelines a finished run can be put through.
+// Each is a pipeline in its own right, checked as one; its name is its
+// button and its address, so it must be there and must not collide.
+func (d PipelineDef) validateFollowUps() error {
+	seen := map[string]bool{}
+	for i, f := range d.FollowUps {
+		label := strings.TrimSpace(f.Name)
+		if label == "" {
+			return Error("follow-up " + strconv.Itoa(i+1) + " has no name, and its name is the button a finished run offers")
+		}
+		key := SnakeFromDisplay(label)
+		if key == "" {
+			return Error("follow-up " + strconv.Quote(label) + " needs a name with letters or digits in it")
+		}
+		if seen[key] {
+			return Error("two follow-ups are both called " + strconv.Quote(label))
+		}
+		seen[key] = true
+		if len(f.FollowUps) > 0 {
+			return Error("follow-up " + strconv.Quote(label) + " has follow-ups of its own: a follow-up's run is a run of the pipeline it belongs to, so put them on the pipeline")
+		}
+		if err := f.Validate(); err != nil {
+			return Error("follow-up " + strconv.Quote(label) + ": " + err.Error())
+		}
+	}
+	return nil
 }
 
 // reservedSessionMetaKeys are the summary's own columns. A promoted field

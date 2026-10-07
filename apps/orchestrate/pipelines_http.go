@@ -480,7 +480,7 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		T.runPipelineHTTP(w, r, user, def)
-	case "stream", "sessions", "cancel":
+	case "stream", "sessions", "cancel", "followups":
 		// The streaming twin of "run": same execution, transcript instead of a
 		// lump. This is what lets a PipelineDef be an APP — core serves the
 		// protocol (core/pipeline_runs.go); orchestrate supplies the store and
@@ -492,6 +492,11 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if rid, ok := strings.CutPrefix(action, "reconnect/"); ok && rid != "" && !strings.Contains(rid, "/") {
+			T.handlePipelineRuns(w, r, user, def, action)
+			return
+		}
+		// followup/<name>/<run>: put a finished run through a follow-up.
+		if rest, ok := strings.CutPrefix(action, "followup/"); ok && strings.Count(rest, "/") == 1 {
 			T.handlePipelineRuns(w, r, user, def, action)
 			return
 		}

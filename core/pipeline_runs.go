@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -75,6 +76,13 @@ type PipelineRun struct {
 	// finished-with-no-output, which would look like the pipeline produced
 	// nothing rather than that it was interrupted.
 	Running bool `json:"running,omitempty"`
+	// Input is what the run was asked, whole (Title is it trimmed), so a
+	// follow-up can read it as {parent_input} and a restart can ask it again.
+	Input string `json:"input,omitempty"`
+	// ParentID is the run this one was made from by a follow-up, and FollowUp
+	// that follow-up's name. Both empty on a run started from the form.
+	ParentID string `json:"parent_id,omitempty"`
+	FollowUp string `json:"followup,omitempty"`
 }
 
 // PipelineSessionRow is one row of the panel's sidebar list — part of the wire
@@ -84,6 +92,9 @@ type PipelineSessionRow struct {
 	ID    string    `json:"ID"`
 	Title string    `json:"Title"`
 	Date  time.Time `json:"Date"`
+	// ParentID names the run this one followed up, so the panel can offer a
+	// way back to it. Omitted on a run started from the form.
+	ParentID string `json:"ParentID,omitempty"`
 	// Meta is the run's promoted summary fields. Marshalled FLAT onto the row
 	// (see MarshalJSON), never as a nested object.
 	Meta map[string]string `json:"-"`
@@ -109,6 +120,9 @@ func (row PipelineSessionRow) MarshalJSON() ([]byte, error) {
 	out["ID"] = row.ID
 	out["Title"] = row.Title
 	out["Date"] = row.Date
+	if row.ParentID != "" {
+		out["ParentID"] = row.ParentID
+	}
 	return json.Marshal(out)
 }
 
@@ -282,17 +296,24 @@ func (T *AppCore) ServePipelineRuns(w http.ResponseWriter, r *http.Request, s Pi
 // RunsOf is the run surface that runs a pipeline: what ServePipelineRuns
 // serves, and what a RegisterRunRestore resolver returns to resume one.
 func (T *AppCore) RunsOf(s PipelineRunSurface) RunSurface {
+	// One way to run a definition with this surface's hooks: the pipeline
+	// itself, and each of its follow-ups.
+	work := func(def PipelineDef) RunWork {
+		return func(ctx context.Context, input string, vars map[string]string, sink PipelineSink) (string, error) {
+			// executePipelineHooks, not an exported Run*: the form's fields
+			// are run-scoped template values and this is the only entry point
+			// that carries them. Same package, so no public surface grows.
+			out, _, err := T.executePipelineHooks(ctx, def, input, vars, sink,
+				PipelineHooks{Dispatch: s.Dispatch, Machine: s.Machine, Tools: s.Tools})
+			return out, err
+		}
+	}
 	return RunSurface{
 		DB: s.DB, User: s.User, OwnerID: s.Def.ID, Timeout: s.Timeout, Live: s.Live,
 		Kind: s.Kind, RestoreKey: s.RestoreKey,
-		Work: func(ctx context.Context, input string, vars map[string]string, sink PipelineSink) (string, error) {
-			// executePipelineHooks, not an exported Run*: the form's fields are
-			// run-scoped template values and this is the only entry point that
-			// carries them. Same package, so no public surface grows for it.
-			out, _, err := T.executePipelineHooks(ctx, s.Def, input, vars, sink,
-				PipelineHooks{Dispatch: s.Dispatch, Machine: s.Machine, Tools: s.Tools})
-			return out, err
-		},
+		Work:         work(s.Def),
+		FollowUps:    s.Def.FollowUps,
+		FollowUpWork: work,
 	}
 }
 
@@ -325,6 +346,12 @@ type RunSurface struct {
 	// handed back to its RegisterRunRestore resolver along with the user and
 	// owner. Optional: a host that can rebuild from those two leaves it empty.
 	RestoreKey string
+	// FollowUps are the pipelines a finished run can be put through, offered
+	// as buttons on it (GET followups lists them), and FollowUpWork is how
+	// this surface runs one. Both empty on a surface with nothing to follow up
+	// with, a machine's for one.
+	FollowUps    []PipelineDef
+	FollowUpWork func(def PipelineDef) RunWork
 	// Live places this surface's runs on the global activity ribbon. Optional:
 	// a host that fills nothing still gets its runs LISTED, because a run that
 	// outlives its request and appears nowhere is the failure this exists to
@@ -361,6 +388,10 @@ func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface
 		T.cancelRun(w, r, s)
 	case strings.HasPrefix(sub, "reconnect/"):
 		T.reconnectRun(w, r, s, strings.TrimPrefix(sub, "reconnect/"))
+	case sub == "followups":
+		listFollowUps(w, r, s)
+	case strings.HasPrefix(sub, "followup/"):
+		T.startFollowUp(w, r, s, strings.TrimPrefix(sub, "followup/"))
 	case sub == "sessions":
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -379,7 +410,7 @@ func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface
 			repairInterrupted(s, &runs[i])
 		}
 		for _, run := range runs {
-			out = append(out, PipelineSessionRow{ID: run.ID, Title: run.Title, Date: run.Date, Meta: run.Meta})
+			out = append(out, PipelineSessionRow{ID: run.ID, Title: run.Title, Date: run.Date, Meta: run.Meta, ParentID: run.ParentID})
 		}
 		writePipelineJSON(w, out)
 	case strings.HasPrefix(sub, "sessions/"):
@@ -410,6 +441,9 @@ func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface
 		one["ID"] = run.ID
 		one["Title"] = run.Title
 		one["Date"] = run.Date
+		if run.ParentID != "" {
+			one["ParentID"] = run.ParentID
+		}
 		one["Blocks"] = run.Blocks
 		one["Output"] = run.Output
 		one["Error"] = run.Err
@@ -524,9 +558,102 @@ func (T *AppCore) streamRun(w http.ResponseWriter, r *http.Request, s RunSurface
 		Title:      PipelineRunTitle(input),
 		Date:       time.Now(),
 		Running:    true,
+		Input:      input,
 	}
 	SavePipelineRun(s.DB, s.User, run)
-	T.startRun(s, run, input, vars, nil)
+	T.startRun(s, run, input, vars, s.Work, nil)
+	tailRun(w, r, run.ID)
+}
+
+// followUpName is how a follow-up is addressed in a URL and a queue entry.
+func followUpName(def PipelineDef) string { return SnakeFromDisplay(def.Name) }
+
+// followUp finds one of a surface's follow-ups by its URL name.
+func (s RunSurface) followUp(name string) (PipelineDef, bool) {
+	for _, def := range s.FollowUps {
+		if followUpName(def) == name {
+			return def, true
+		}
+	}
+	return PipelineDef{}, false
+}
+
+// listFollowUps answers GET followups: what a finished run can be put
+// through, for the panel to offer as buttons.
+func listFollowUps(w http.ResponseWriter, r *http.Request, s RunSurface) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	out := []map[string]string{}
+	if s.FollowUpWork != nil {
+		for _, def := range s.FollowUps {
+			out = append(out, map[string]string{"name": followUpName(def), "label": def.Name, "title": def.Description})
+		}
+	}
+	writePipelineJSON(w, out)
+}
+
+// followUpVars are the template values a follow-up reads its run through:
+// {parent_input}, what it was asked, and {children}, what the runs already
+// made from it produced, each under its title. {input} is its output, passed
+// as the follow-up's input.
+func followUpVars(s RunSurface, parent PipelineRun) map[string]string {
+	var kids strings.Builder
+	for _, run := range ListPipelineRuns(s.DB, s.User, s.OwnerID) {
+		if run.ParentID != parent.ID || run.Running || strings.TrimSpace(run.Output) == "" {
+			continue
+		}
+		fmt.Fprintf(&kids, "## %s\n%s\n\n", run.Title, strings.TrimSpace(run.Output))
+	}
+	return map[string]string{
+		"{parent_input}": chooseStr(parent.Input, parent.Title),
+		"{children}":     strings.TrimSpace(kids.String()),
+	}
+}
+
+// startFollowUp answers POST followup/<name>/<run>: put a finished run through
+// one of the surface's follow-ups, as a new run linked to it, and stream it.
+// It runs the way any run does: queue slot, progress, cancel, rejoin, and
+// resumed after a restart.
+func (T *AppCore) startFollowUp(w http.ResponseWriter, r *http.Request, s RunSurface, rest string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	name, runID, ok := strings.Cut(rest, "/")
+	def, found := s.followUp(name)
+	if !ok || !found || s.FollowUpWork == nil {
+		http.NotFound(w, r)
+		return
+	}
+	// The store is the caller's own, so finding the run is the ownership
+	// check.
+	parent, ok := LoadPipelineRun(s.DB, s.User, s.OwnerID, runID)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if parent.Running {
+		http.Error(w, "this run has not finished yet", http.StatusConflict)
+		return
+	}
+	if strings.TrimSpace(parent.Output) == "" {
+		http.Error(w, "this run produced nothing to follow up on", http.StatusBadRequest)
+		return
+	}
+	run := PipelineRun{
+		ID:         UUIDv4()[:12],
+		PipelineID: s.OwnerID,
+		Title:      def.Name + ": " + parent.Title,
+		Date:       time.Now(),
+		Running:    true,
+		Input:      parent.Output,
+		ParentID:   parent.ID,
+		FollowUp:   name,
+	}
+	SavePipelineRun(s.DB, s.User, run)
+	T.startRun(s, run, run.Input, followUpVars(s, parent), s.FollowUpWork(def), nil)
 	tailRun(w, r, run.ID)
 }
 
@@ -538,6 +665,9 @@ type runQueueParams struct {
 	Input   string            `json:"input"`
 	Vars    map[string]string `json:"vars,omitempty"`
 	Key     string            `json:"key,omitempty"`
+	// FollowUp names the follow-up a run was made by, so a restart runs that
+	// rather than the pipeline itself.
+	FollowUp string `json:"followup,omitempty"`
 }
 
 // runQueueApp is the queue key a kind of run restores under.
@@ -550,7 +680,7 @@ func runQueueApp(kind string) string { return "run:" + kind }
 // resumes. A run used to start in a bare goroutine with none of those.
 //
 // entry is the queue entry being resumed, or nil for a fresh run.
-func (T *AppCore) startRun(s RunSurface, run PipelineRun, input string, vars map[string]string, entry *QueueEntry) {
+func (T *AppCore) startRun(s RunSurface, run PipelineRun, input string, vars map[string]string, runWork RunWork, entry *QueueEntry) {
 	timeout := s.Timeout
 	if timeout <= 0 {
 		timeout = defaultPipelineRunTimeout
@@ -567,7 +697,7 @@ func (T *AppCore) startRun(s RunSurface, run PipelineRun, input string, vars map
 		App:       runQueueApp(s.Kind),
 		Name:      name,
 		Label:     run.Title,
-		Params:    runQueueParams{User: s.User, OwnerID: s.OwnerID, Input: input, Vars: vars, Key: s.RestoreKey},
+		Params:    runQueueParams{User: s.User, OwnerID: s.OwnerID, Input: input, Vars: vars, Key: s.RestoreKey, FollowUp: run.FollowUp},
 		Ephemeral: s.Kind == "",
 		OnRegister: func(id string, cancel context.CancelFunc) {
 			liveRuns.Register(id, run.Title, cancel).SetOwner(s.User)
@@ -664,7 +794,7 @@ func (T *AppCore) startRun(s RunSurface, run PipelineRun, input string, vars map
 			}
 		}
 
-		out, runErr := s.Work(ctx, input, vars, sink)
+		out, runErr := runWork(ctx, input, vars, sink)
 
 		mu.Lock()
 		run.Running = false
@@ -719,9 +849,19 @@ func (T *AppCore) RegisterRunRestore(kind string, surface func(user, ownerID, ke
 			QueueRemove(entry.ID)
 			return
 		}
+		work := s.Work
+		if p.FollowUp != "" {
+			def, ok := s.followUp(p.FollowUp)
+			if !ok || s.FollowUpWork == nil {
+				Log("[runs] %s run %s cannot be resumed: its follow-up %q is gone", kind, entry.ID, p.FollowUp)
+				QueueRemove(entry.ID)
+				return
+			}
+			work = s.FollowUpWork(def)
+		}
 		run.Blocks, run.Output, run.Err, run.Running = nil, "", "", true
 		SavePipelineRun(s.DB, s.User, run)
-		T.startRun(s, run, p.Input, p.Vars, &entry)
+		T.startRun(s, run, p.Input, p.Vars, work, &entry)
 	})
 }
 

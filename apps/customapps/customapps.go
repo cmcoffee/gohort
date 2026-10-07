@@ -1573,6 +1573,16 @@ func isolateAppHTML(page json.RawMessage, base ...string) json.RawMessage {
 			// naming another gohort endpoint (an approval, a credential)
 			// acted there with the viewer's session on one click; an app
 			// reaches gohort through its own data sources and actions.
+			// An app's run panel offers its pipeline's follow-ups. Added
+			// here, at serve time, so an app built before follow-ups existed
+			// offers them too, without being rebuilt.
+			if typ, _ := t["type"].(string); typ == "pipeline_panel" {
+				if sub, _ := t["submit_url"].(string); sub == "pipeline/stream" {
+					if _, has := t["followups_url"]; !has {
+						t["followups_url"] = "pipeline/followups"
+					}
+				}
+			}
 			holdEndpointsInApp(t, appBase)
 			for _, e := range t {
 				walk(e)

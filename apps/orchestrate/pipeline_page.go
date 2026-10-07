@@ -259,6 +259,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 				// comes back (or opens a run's link) rejoins it.
 				CancelURL:    "api/pipelines/" + url_(def.ID) + "/cancel",
 				ReconnectURL: "api/pipelines/" + url_(def.ID) + "/reconnect/{id}",
+				FollowUpsURL: "api/pipelines/" + url_(def.ID) + "/followups",
 				SubmitLabel:  "Run it",
 				// This page's ?id= is the PIPELINE. Without naming the param,
 				// the panel's deep-link fallback reads it as a session id and

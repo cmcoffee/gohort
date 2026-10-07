@@ -40,6 +40,14 @@ type PipelinePanel struct {
 	// on initial load. Streams the same SSE event shape as SubmitURL.
 	// {id} is a placeholder substituted at navigation time.
 	ReconnectURL string `json:"reconnect_url,omitempty"`
+	// FollowUpsURL — when set, the panel asks it (GET) what a finished run
+	// can be put through and offers each as a button on an open run, which
+	// streams a new run made from it: the reply is [{name, label, title}],
+	// and a button POSTs to the same base + "followup/<name>/<run id>". The
+	// same base serves both, so "pipeline/followups" pairs with
+	// "pipeline/followup/...". A run made that way carries ParentID, and the
+	// panel offers the way back to it.
+	FollowUpsURL string `json:"followups_url,omitempty"`
 
 	// Fields rendered in the submit form. Field name "topic" / "subject" /
 	// the first textarea acts as the "title" for new sessions if the

@@ -51,6 +51,11 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 					Description: "(create/update) Declared output fields to promote onto each RUN's sidebar row, as \"<stage>.<field>\" references: e.g. [\"judge.winner\", \"judge.confidence\"]. A run history is browsed rather than read: titles and timestamps answer \"when did I run this\", while what a reader scans for is the ANSWER, and without this the only route to it is opening runs one at a time. The field must be one that stage declares in its \"output\" contract, and it must be a TOP-LEVEL stage (a loop body holds a different value every pass). An app built on this pipeline then draws them with the pipeline section's `meta` key. Names must be unique and may not be ID, Title or Date.",
 					Items:       &ToolParam{Type: "string"},
 				},
+				"followups": {
+					Type:        "array",
+					Description: "(create/update) Further pipelines a FINISHED run can be put through, each offered as a button on the run and producing a new run linked to it: [{\"name\": button text, \"description\": tooltip, \"stages\": [...]}]. Their stages read the finished run as {input} (its output), {parent_input} (what it was asked) and {children} (what earlier follow-up runs of it produced). A report written from a result, a re-synthesis, folding follow-ups back in. Present replaces the list; omit to keep it. See action=\"help\", FOLLOW-UPS.",
+					Items:       &ToolParam{Type: "object"},
+				},
 				"attach_to_agents": {
 					Type:        "array",
 					Description: "(create/update) Optional list of agent names or IDs. After the pipeline saves, it's added to each named agent's attached_pipelines so the agent can call it as `run_<pipeline>` from its next session onward. Idempotent: already-attached pipelines aren't double-added. Unknown agent names get reported back in the result; the pipeline still saves. Use this whenever the pipeline is being built as part of an agent's surface so you don't have to remember a separate update_agent call.",
@@ -139,6 +144,16 @@ tool       (tool) the tool to call
 args       (tool) {param: template}
 render     how the stage's result is drawn in a run: "card" draws its output fields as values (see CARDS)
 card       (render="card") {"title": field, "badges": "field, field", "body": field, "accent": field}
+
+=== FOLLOW-UPS ===
+A run that has finished can be put through more pipelines: write a report from it, re-synthesize it, fold what
+later runs found back into it. Declare them as "followups": [{"name": "Write report", "description": "...",
+"stages": [...]}]. Each appears as a button on a finished run, by its name, and running it makes a NEW run linked
+to the one it came from (the run page offers the way back to the parent). A follow-up's stages read the finished
+run through {input} (its output), {parent_input} (what it was asked) and {children} (what the follow-up runs
+already made from it produced, each under its title: a "Consolidate" follow-up is a synthesis over {input} and
+{children}). A follow-up is a pipeline in its own right (any stage kinds, output, cards) but has no follow-ups of
+its own. It runs like any run: queued, watched, stoppable, resumed after a restart.
 
 === CARDS ===
 A run shows each stage as a block of text. Set "render": "card" and a stage that declares output is drawn as a card
@@ -249,6 +264,15 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 	// nothing about it keeps what is stored; an explicit empty list clears it.
 	if raw, ok := args["session_meta"]; ok && raw != nil {
 		def.SessionMeta = appStringList(raw)
+	}
+	// followups: the same rule, present-means-replace, so an update that does
+	// not mention them keeps the stored ones.
+	if raw, ok := args["followups"]; ok && raw != nil {
+		fus, err := parsePipelineFollowUps(raw)
+		if err != nil {
+			return "", err
+		}
+		def.FollowUps = fus
 	}
 	if err := def.Validate(); err != nil {
 		return "", fmt.Errorf("pipeline is not runnable: %w", err)
@@ -532,19 +556,31 @@ func slimPipelineJSON(def PipelineDef) []byte {
 		Prompt  string            `json:"prompt"`
 		Agent   string            `json:"agent,omitempty"`
 		FanOver string            `json:"fan_over,omitempty"`
+		Render  string            `json:"render,omitempty"`
 	}
 	stages := make([]stageSummary, 0, len(def.Stages))
 	for _, s := range def.Stages {
 		stages = append(stages, stageSummary{
 			Name: s.Name, Kind: s.Kind, Prompt: preview(s.Prompt, 300),
-			Agent: s.Agent, FanOver: s.FanOver,
+			Agent: s.Agent, FanOver: s.FanOver, Render: s.Render,
 		})
+	}
+	// Follow-ups by name and size only: get full=true reads their stages.
+	type followUpSummary struct {
+		Name        string `json:"name"`
+		Description string `json:"description,omitempty"`
+		Stages      int    `json:"stages"`
+	}
+	var followups []followUpSummary
+	for _, f := range def.FollowUps {
+		followups = append(followups, followUpSummary{Name: f.Name, Description: f.Description, Stages: len(f.Stages)})
 	}
 	slim := map[string]any{
 		"id":          def.ID,
 		"name":        def.Name,
 		"description": def.Description,
 		"stages":      stages,
+		"followups":   followups,
 		"_note":       "Compact view: stage prompts are previewed to save context. To change a stage, re-send its full prompt via pipeline(action=\"update\"). To read a full stage prompt you didn't write this session, call pipeline(action=\"get\", full=true).",
 	}
 	b, _ := json.Marshal(slim)
@@ -963,4 +999,30 @@ func mapStrMap(m map[string]any, key string) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// parsePipelineFollowUps decodes a pipeline's "followups": each a small
+// pipeline of its own, {name, description, stages}.
+func parsePipelineFollowUps(raw any) ([]PipelineDef, error) {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("followups must be an ARRAY of {name, description, stages}, got %T", raw)
+	}
+	out := make([]PipelineDef, 0, len(arr))
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("follow-up %d is not an object: each is {name, description, stages}", i+1)
+		}
+		stages, err := parsePipelineStages(m["stages"])
+		if err != nil {
+			return nil, fmt.Errorf("follow-up %d (%s): %w", i+1, chFirst(strings.TrimSpace(mapStr(m, "name")), "unnamed"), err)
+		}
+		out = append(out, PipelineDef{
+			Name:        strings.TrimSpace(mapStr(m, "name")),
+			Description: strings.TrimSpace(mapStr(m, "description")),
+			Stages:      stages,
+		})
+	}
+	return out, nil
 }

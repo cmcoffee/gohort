@@ -601,6 +601,15 @@ type PipelineDef struct {
 	// pass, so promoting one would summarize a run by whatever the last
 	// iteration happened to leave behind.
 	SessionMeta []string `json:"session_meta,omitempty"`
+	// FollowUps are further pipelines a FINISHED run can be put through: a
+	// report written from it, a re-synthesis, a fold of its own follow-ups
+	// back into it. Each is offered as a button on a finished run, by its
+	// Name, and runs as a new run linked to the one it came from (its
+	// parent). Their stages read the finished run through {input} (its
+	// output), {parent_input} (what it was asked) and {children} (what the
+	// runs already made from it produced, each labelled). A follow-up has no
+	// follow-ups of its own.
+	FollowUps []PipelineDef `json:"followups,omitempty"`
 	// Global scopes the pipeline to ALL of the owner's agents (minus any that
 	// deny it via AgentRecord.DisabledPipelines), the way a global tool lives
 	// in the user-wide pool. Off = available only to the agents that list its

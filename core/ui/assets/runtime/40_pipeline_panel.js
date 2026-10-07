@@ -654,9 +654,41 @@
       }
     }
 
+    // Follow-ups: what a finished run can be put through, asked of the
+    // surface once (cfg.followups_url) and offered beside the configured
+    // actions. Asked rather than configured because the pipeline is edited
+    // separately from the page that shows it; a page built before a
+    // follow-up was added still offers it.
+    var followUpActions = [];
+    if (cfg.followups_url) {
+      var followBase = cfg.followups_url.replace(/followups\/?$/, '');
+      fetchJSON(cfg.followups_url).then(function(list) {
+        followUpActions = (Array.isArray(list) ? list : []).filter(function(f) { return f && f.name; }).map(function(f) {
+          return {
+            label: f.label || f.name, title: f.title || '', method: 'stream',
+            url: followBase + 'followup/' + encodeURIComponent(f.name) + '/{id}',
+          };
+        });
+        if (currentSessionId) renderActions(currentSessionId);
+      }).catch(function() {});
+    }
+    // panelActions is everything the toolbar offers for an open run: the
+    // configured actions, the follow-ups, and the way back to the run this
+    // one was made from.
+    function panelActions() {
+      var out = (cfg.actions || []).slice();
+      if (cfg.followups_url) {
+        out.push({label: 'Parent run', method: 'load', url: '{ParentID}', show_if_field: 'ParentID',
+          title: 'Open the run this one was made from'});
+        out = out.concat(followUpActions);
+      }
+      return out;
+    }
+
     function renderActions(sessionId) {
       actionsBar.innerHTML = '';
-      if (!sessionId || !cfg.actions || !cfg.actions.length) {
+      var actions = panelActions();
+      if (!sessionId || !actions.length) {
         // Cancel button still belongs in the bar (when running) — re-
         // append it so a session-less reconnect or running-but-no-
         // actions config still has a Cancel.
@@ -668,7 +700,7 @@
       }
       actionsBar.style.display = '';
       var sessionRec = sessionsByID[sessionId] || {};
-      cfg.actions.forEach(function(a) {
+      actions.forEach(function(a) {
         // ShowIfField — skip the action when the named summary field
         // on this session record is falsy. Lets apps hide buttons
         // that don't apply to every session (e.g. "Descendants"

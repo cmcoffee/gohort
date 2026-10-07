@@ -26,3 +26,13 @@ func TestAppPipelineRunsAreRestorable(t *testing.T) {
 		t.Error("an app's pipeline must be served as a restorable app pipeline")
 	}
 }
+
+// An app built before follow-ups existed offers them anyway: the run panel is
+// given the follow-ups url when the page is served.
+func TestAnOlderAppsRunPanelOffersFollowUps(t *testing.T) {
+	page := []byte(`{"sections":[{"body":{"type":"pipeline_panel","submit_url":"pipeline/stream"}}]}`)
+	out := string(isolateAppHTML(page, "/apps/x/"))
+	if !strings.Contains(out, `"followups_url":"pipeline/followups"`) {
+		t.Errorf("the served page must carry the follow-ups url: %s", out)
+	}
+}

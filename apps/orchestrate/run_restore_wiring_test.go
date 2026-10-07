@@ -46,7 +46,7 @@ func TestRunSurfacesAreRestorableAndReachable(t *testing.T) {
 		!strings.Contains(page, `ReconnectURL: "api/pipelines/" + url_(def.ID) + "/reconnect/{id}"`) {
 		t.Error("the pipeline page must declare cancel and reconnect")
 	}
-	if !strings.Contains(routes, `case "stream", "sessions", "cancel":`) || !strings.Contains(routes, `strings.CutPrefix(action, "reconnect/")`) {
+	if !regexp.MustCompile(`case "stream", "sessions", "cancel"[^:]*:`).MatchString(routes) || !strings.Contains(routes, `strings.CutPrefix(action, "reconnect/")`) {
 		t.Error("the pipeline routes must reach cancel and reconnect")
 	}
 	if !strings.Contains(machine, `CancelURL:        base + "cancel"`) || !strings.Contains(machine, `ReconnectURL:     base + "reconnect/{id}"`) {

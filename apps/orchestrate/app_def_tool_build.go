@@ -518,6 +518,9 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 			// way back into one still running when the page is reopened.
 			CancelURL:    "pipeline/cancel",
 			ReconnectURL: "pipeline/reconnect/{id}",
+			// What a finished run can be put through: the pipeline's
+			// follow-ups, offered as buttons on an open run.
+			FollowUpsURL: "pipeline/followups",
 			SubmitLabel:  firstNonEmptyStr(mapStr(m, "submit_label"), "Start"),
 			Fields:       fields,
 			// Name the deep-link param, because an app page's own ?id= is
