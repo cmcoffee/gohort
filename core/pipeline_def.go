@@ -322,6 +322,26 @@ type PipelineStage struct {
 	// Output). The field form is what a stage with an Output contract
 	// needs, since its raw text is a JSON *object*, not a bare array.
 	FanOver string `json:"fan_over,omitempty"`
+	// Render names the card this stage's result is drawn as in a run's
+	// transcript. Empty = the plain text card, as before. "card" is core's
+	// own card, laid out by Card below from this stage's output fields with
+	// no code needed; any other name is a renderer a host registered (a Go
+	// app's block types, through uiRegisterBlockRenderer).
+	//
+	// On a panel stage it draws one card per voice per round, each with the
+	// fields voice, round and text, and the stage's own block becomes the
+	// heading above them.
+	Render string `json:"render,omitempty"`
+	// Card lays out a render="card" result from the stage's output fields.
+	// Each value names fields:
+	//   title  - the headline (one field)
+	//   badges - short values shown as labelled pills (comma-separated)
+	//   body   - the main text, as markdown (one field)
+	//   accent - the field whose value colours the card's edge, the same
+	//            value always the same colour (a side, a verdict, a status)
+	// Every field not placed is listed below the body, labelled. Empty =
+	// all fields listed.
+	Card map[string]string `json:"card,omitempty"`
 	// Output declares the shape of this stage's result. Empty (the
 	// default) = the stage returns free text and behaves exactly as it
 	// always has. Non-empty = the interpreter appends a field contract

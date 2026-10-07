@@ -6100,3 +6100,27 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* The dialog box takes focus itself on a touch screen (uiOpenModal); it is
  * not a control, so no focus ring. */
 .ui-modal-box:focus { outline: none; }
+
+/* --- card blocks: a pipeline stage's fields drawn as values --- */
+.ui-pl-card { border-left: 3px solid var(--border); }
+/* Six edge colours chosen by value, none of them pure red or green: the colour
+ * tells two values apart, it does not say which one is good. */
+.ui-pl-card[data-accent="0"] { border-left-color: var(--accent); }
+.ui-pl-card[data-accent="1"] { border-left-color: var(--accent-2); }
+.ui-pl-card[data-accent="2"] { border-left-color: var(--warn); }
+.ui-pl-card[data-accent="3"] { border-left-color: color-mix(in srgb, var(--accent) 55%, var(--good)); }
+.ui-pl-card[data-accent="4"] { border-left-color: color-mix(in srgb, var(--accent-2) 55%, var(--danger)); }
+.ui-pl-card[data-accent="5"] { border-left-color: color-mix(in srgb, var(--warn) 50%, var(--accent)); }
+.ui-pl-card-box { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-pl-card-title { font-size: var(--fs-lg); font-weight: 600; color: var(--text-hi); }
+.ui-pl-card-badges { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.ui-pl-card-badge {
+  display: inline-flex; gap: 0.35rem; align-items: baseline;
+  padding: 0.1rem 0.5rem; border: 1px solid var(--border); border-radius: 999px;
+  font-size: var(--fs-xs); color: var(--text);
+}
+.ui-pl-card-badge-k { color: var(--text-mute); }
+.ui-pl-card-fields { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 0.75rem; margin: 0; font-size: var(--fs-sm); }
+.ui-pl-card-fields dt { color: var(--text-mute); }
+.ui-pl-card-fields dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.ui-pl-card-fields ul { margin: 0; padding-left: 1.1rem; }

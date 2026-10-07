@@ -913,6 +913,39 @@
       };
     };
 
+    // card — a stage's typed output drawn as values (fillCard in
+    // 10_basics.js), laid out by the stage's card map. The text rendering
+    // streams into body until the fields arrive, then gives way to them; a
+    // stored run carries its fields, so it draws the card straight away.
+    blockRenderers.card = function(d) {
+      var wrap = el('div', {class: 'ui-pl-block ui-pl-card'});
+      var hdr = el('div', {class: 'ui-pl-block-h'}, [d.title || '']);
+      if (!d.title) hdr.style.display = 'none';
+      wrap.appendChild(hdr);
+      var box = el('div', {class: 'ui-pl-card-box'});
+      var body = el('div', {class: 'ui-pl-block-body'});
+      wrap.appendChild(box);
+      wrap.appendChild(body);
+      var draw = function(fields) {
+        if (!fields || typeof fields !== 'object' || !Object.keys(fields).length) return;
+        box.innerHTML = '';
+        var accent = fillCard(box, d.card || {}, fields, cfg.markdown);
+        if (accent >= 0) wrap.setAttribute('data-accent', String(accent));
+        body.style.display = 'none';
+      };
+      draw(d.fields);
+      return {
+        wrap: wrap, body: body,
+        onMeta: function(rec, meta) {
+          if (meta.fields) draw(meta.fields);
+          if (typeof meta.title === 'string') {
+            hdr.textContent = meta.title;
+            hdr.style.display = meta.title ? '' : 'none';
+          }
+        },
+      };
+    };
+
     // App-specific renderers (round_header, section_header,
     // argument, verdict) live in each app's web_assets.go.
     // Loaded into window.UIBlockRenderers before pipeline_panel

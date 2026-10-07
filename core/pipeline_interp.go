@@ -78,11 +78,17 @@ type PipelineHooks struct {
 // stage is working and what it produced". A pipeline that can only report
 // "stage 3 starting" cannot replace them however expressive its stages are.
 type PipelineEvent struct {
-	Kind  string // "block" | "chunk" | "block_done" | "status" | "meta"
+	Kind  string // "block" | "chunk" | "fields" | "block_done" | "status" | "meta"
 	ID    string // stable block id within one run; empty for status
-	Type  string // block type — the stage kind, so a surface can style per kind
+	Type  string // block type: the stage's Render, else its kind, so a surface can draw per type
 	Title string // human label for the block
 	Text  string // chunk body, or the status line
+	// Card is the layout a "card" block is drawn with (PipelineStage.Card),
+	// sent with the block so the surface knows it before the fields arrive.
+	Card map[string]string
+	// Fields is a "fields" event's payload: the stage's typed output, sent as
+	// the block closes so a card can draw values rather than text.
+	Fields map[string]any
 	// Meta carries the promoted summary fields of a Kind=="meta" event: the
 	// stage output values a def named in SessionMeta, keyed by field name.
 	//
@@ -323,18 +329,56 @@ func (r *pipelineRun) emit(ev PipelineEvent) {
 // per stage execution — a loop body stage opens a fresh block per pass, which
 // is what makes a loop legible in the transcript rather than one card that
 // silently rewrites itself.
-func (r *pipelineRun) openBlock(stage PipelineStage, title string) (string, func(body string)) {
+func (r *pipelineRun) openBlock(stage PipelineStage, title string) (string, func(body string, fields map[string]any)) {
 	if r == nil || r.sink == nil || r.quiet {
-		return "", func(string) {}
+		return "", func(string, map[string]any) {}
 	}
 	id := fmt.Sprintf("stage-%d", r.blockSeq.Add(1))
-	r.emit(PipelineEvent{Kind: "block", ID: id, Type: string(stage.Kind), Title: title})
-	return id, func(body string) {
+	// A panel drawn as cards puts its content in one card per voice; its
+	// own block is the heading above them.
+	blockType, card := blockLook(stage)
+	if stage.Kind == StagePanel && stage.Render != "" {
+		blockType, card = "text", nil
+	}
+	r.emit(PipelineEvent{Kind: "block", ID: id, Type: blockType, Title: title, Card: card})
+	return id, func(body string, fields map[string]any) {
 		if body != "" {
 			r.emit(PipelineEvent{Kind: "chunk", ID: id, Text: body})
 		}
+		if len(fields) > 0 {
+			r.emit(PipelineEvent{Kind: "fields", ID: id, Fields: fields})
+		}
 		r.emit(PipelineEvent{Kind: "block_done", ID: id})
 	}
+}
+
+// blockLook is the block type and card layout a stage's result is drawn
+// with: its Render if it names one, else its kind.
+func blockLook(stage PipelineStage) (string, map[string]string) {
+	if r := strings.TrimSpace(stage.Render); r != "" {
+		return r, stage.Card
+	}
+	return string(stage.Kind), nil
+}
+
+// voiceCard draws one panel contribution as its own card: what a debate shows
+// as an argument from a side in a round. Fields are voice, round and text, so
+// a card can be accented by voice and headed by round.
+func (r *pipelineRun) voiceCard(stage PipelineStage, voice string, round, rounds int, text string) {
+	if r == nil || r.sink == nil || r.quiet || stage.Render == "" {
+		return
+	}
+	id := fmt.Sprintf("stage-%d", r.blockSeq.Add(1))
+	title := voice
+	if rounds > 1 {
+		title = fmt.Sprintf("%s, round %d", voice, round)
+	}
+	r.emit(PipelineEvent{Kind: "block", ID: id, Type: stage.Render, Title: title, Card: stage.Card})
+	if text != "" {
+		r.emit(PipelineEvent{Kind: "chunk", ID: id, Text: text})
+	}
+	r.emit(PipelineEvent{Kind: "fields", ID: id, Fields: map[string]any{"voice": voice, "round": round, "text": text}})
+	r.emit(PipelineEvent{Kind: "block_done", ID: id})
 }
 
 // promoteSessionMeta files the finished stage's declared fields that the def
@@ -751,7 +795,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			}
 			// Close the block on the way out: a surface that leaves a card
 			// spinning forever after a failed stage reads as a hung run.
-			closeBlock("failed after " + elapsed.String() + ": " + err.Error())
+			closeBlock("failed after "+elapsed.String()+": "+err.Error(), nil)
 			return "", fmt.Errorf("stage %q: %w", stage.Name, err)
 		}
 		out = strings.TrimSpace(out)
@@ -783,7 +827,13 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		r.lastStage = stage.Name
 		// The transcript gets a READABLE rendering; `out` — the JSON a declared
 		// stage produces — stays exactly as it is for everything downstream.
-		closeBlock(transcriptBody(stage, out, fields))
+		// The fields go with it, so a card draws the values themselves. A
+		// panel drawn as cards has already shown each voice in its own.
+		body := transcriptBody(stage, out, fields)
+		if stage.Kind == StagePanel && stage.Render != "" {
+			body = ""
+		}
+		closeBlock(body, fields)
 		if status != nil {
 			// Tail preview lets the user see WHAT the stage produced
 			// without having to wait for the whole pipeline to finish.
@@ -1629,6 +1679,7 @@ func (r *pipelineRun) runPanelStage(ctx context.Context, stage PipelineStage, pr
 		}
 		for i, v := range voices {
 			transcript = append(transcript, panelSaid{Voice: v, Text: results[i]})
+			r.voiceCard(stage, v, round, rounds, results[i])
 			if rounds > 1 {
 				fmt.Fprintf(&b, "## Round %d: %s\n%s\n\n", round, v, results[i])
 				continue

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -155,6 +156,7 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 				probs = append(probs, err.Error())
 			}
 		}
+		probs = append(probs, cardProblems(s)...)
 		if s.Kind == StageAgent && s.Agent == "" {
 			probs = append(probs, "stage "+s.Name+" is kind=agent but names no agent")
 		}
@@ -433,4 +435,59 @@ func checkLoopUntil(s PipelineStage, ref string, done, inner map[string]map[stri
 		return Error("stage " + s.Name + ": until references " + ref + ", which is OUTSIDE the loop: its value never changes between passes, so the loop would either run once or all " + strconv.Itoa(s.Count) + " times. Point it at a body stage.")
 	}
 	return nil
+}
+
+// renderNameRE is what a block type may be called: it reaches the browser as
+// a renderer name, so keep it to the plain shape every registered one has.
+var renderNameRE = regexp.MustCompile(`^[a-z0-9_]+$`)
+
+// cardLayoutKeys are the parts of a card a field can be placed in.
+var cardLayoutKeys = map[string]bool{"title": true, "badges": true, "body": true, "accent": true}
+
+// cardProblems checks a stage's Render and Card. A card that names a field the
+// stage never produces would draw an empty space where the author expects a
+// value, which reads as the model leaving it blank.
+func cardProblems(s PipelineStage) []string {
+	var probs []string
+	render := strings.TrimSpace(s.Render)
+	if render != "" && !renderNameRE.MatchString(render) {
+		probs = append(probs, "stage "+s.Name+": render must be a lowercase block type such as \"card\", got "+strconv.Quote(s.Render))
+	}
+	if len(s.Card) == 0 {
+		return probs
+	}
+	if render != "card" {
+		return append(probs, "stage "+s.Name+": card lays out a render=\"card\" block, so set render to \"card\" or drop card")
+	}
+	have := map[string]bool{}
+	for _, f := range s.Output {
+		have[f.Name] = true
+	}
+	if s.Kind == StagePanel {
+		have["voice"], have["round"], have["text"] = true, true, true
+	}
+	hint := ""
+	if s.Kind == StagePanel {
+		hint = " (a panel's cards have voice, round and text)"
+	}
+	for key, val := range s.Card {
+		if !cardLayoutKeys[key] {
+			probs = append(probs, "stage "+s.Name+": card has no "+strconv.Quote(key)+", the parts are title, badges, body and accent")
+			continue
+		}
+		names := []string{val}
+		if key == "badges" {
+			names = strings.Split(val, ",")
+		} else if strings.Contains(val, ",") {
+			probs = append(probs, "stage "+s.Name+": card "+key+" takes one field, got "+strconv.Quote(val))
+			continue
+		}
+		for _, n := range names {
+			n = strings.TrimSpace(n)
+			if n != "" && !have[n] {
+				probs = append(probs, "stage "+s.Name+": card "+key+" names "+strconv.Quote(n)+", which this stage does not produce: declare it in output"+hint)
+			}
+		}
+	}
+	return probs
 }

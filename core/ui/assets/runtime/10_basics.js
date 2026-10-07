@@ -104,6 +104,99 @@
     {key: 'est_cost', fmt: function(v) { return '$' + v.toFixed(4); },
      title: 'Estimated cost of this reply at the configured rates.'},
   ];
+  // --- "card" blocks --------------------------------------------------------
+  //
+  // A card draws a pipeline stage's typed output as values rather than as the
+  // text rendering of them, laid out by the stage's card map (PipelineStage.
+  // Card): title, badges, body and accent each name fields; anything not
+  // placed is listed below, labelled. It is data only, which is the point: an
+  // app built by Builder can have a verdict card or an argument card without
+  // shipping any script.
+
+  // cardFieldText is a field value as one line of text.
+  function cardFieldText(v) {
+    if (v == null) return '';
+    if (Array.isArray(v)) return v.map(cardFieldText).filter(Boolean).join(', ');
+    if (typeof v === 'object') {
+      return Object.keys(v).map(function(k) { return cardLabel(k) + ': ' + cardFieldText(v[k]); }).join('; ');
+    }
+    return String(v);
+  }
+
+  // cardLabel turns a field name into a label: snake_case to "Snake case".
+  function cardLabel(name) {
+    var s = String(name || '').replace(/_/g, ' ').trim();
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+  }
+
+  // cardAccent maps a value to one of six edge colours, the same value always
+  // the same colour, so two sides of an argument are told apart at a glance.
+  // -1 for no value.
+  function cardAccent(value) {
+    var s = String(value == null ? '' : value).toLowerCase().trim();
+    if (!s) return -1;
+    var h = 0;
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h % 6;
+  }
+
+  // cardMarkdown is a field value as markdown for the card's body: text as
+  // is, a list as bullets.
+  function cardMarkdown(v) {
+    if (Array.isArray(v)) return v.map(function(x) { return '- ' + cardFieldText(x); }).join('\n');
+    return cardFieldText(v);
+  }
+
+  // fillCard draws fields into box by layout and returns the accent index.
+  function fillCard(box, layout, fields, markdown) {
+    layout = layout || {};
+    var placed = {};
+    var one = function(key) {
+      var n = String(layout[key] || '').trim();
+      if (n) placed[n] = true;
+      return n;
+    };
+    var titleF = one('title'), bodyF = one('body'), accentF = one('accent');
+    var badgeFs = String(layout.badges || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    badgeFs.forEach(function(n) { placed[n] = true; });
+
+    if (titleF && cardFieldText(fields[titleF])) {
+      box.appendChild(el('div', {class: 'ui-pl-card-title'}, [cardFieldText(fields[titleF])]));
+    }
+    var badges = badgeFs.filter(function(n) { return cardFieldText(fields[n]); });
+    if (badges.length) {
+      var row = el('div', {class: 'ui-pl-card-badges'});
+      badges.forEach(function(n) {
+        row.appendChild(el('span', {class: 'ui-pl-card-badge'},
+          [el('span', {class: 'ui-pl-card-badge-k'}, [cardLabel(n)]), cardFieldText(fields[n])]));
+      });
+      box.appendChild(row);
+    }
+    if (bodyF && cardFieldText(fields[bodyF])) {
+      var body = el('div', {class: 'ui-pl-card-body'});
+      if (markdown && typeof window.uiRenderMarkdown === 'function') window.uiRenderMarkdown(body, cardMarkdown(fields[bodyF]));
+      else body.textContent = cardMarkdown(fields[bodyF]);
+      box.appendChild(body);
+    }
+    var rest = Object.keys(fields).filter(function(n) { return !placed[n] && cardFieldText(fields[n]); });
+    if (rest.length) {
+      var dl = el('dl', {class: 'ui-pl-card-fields'});
+      rest.forEach(function(n) {
+        dl.appendChild(el('dt', {}, [cardLabel(n)]));
+        var v = fields[n];
+        if (Array.isArray(v) && v.length > 1) {
+          var ul = el('ul', {});
+          v.forEach(function(x) { ul.appendChild(el('li', {}, [cardFieldText(x)])); });
+          dl.appendChild(el('dd', {}, [ul]));
+        } else {
+          dl.appendChild(el('dd', {}, [cardFieldText(v)]));
+        }
+      });
+      box.appendChild(dl);
+    }
+    return accentF ? cardAccent(cardFieldText(fields[accentF])) : -1;
+  }
+
   function statsFooterNodes(stats) {
     var out = [];
     if (!stats) return out;

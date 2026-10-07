@@ -48,6 +48,11 @@ type PipelineRunBlock struct {
 	Type  string `json:"type"`
 	Title string `json:"title"`
 	Body  string `json:"body"`
+	// Card and Fields are what a "card" block is drawn from (see
+	// PipelineStage.Render): kept so a stored run draws the same card it
+	// streamed, not its text fallback.
+	Card   map[string]string `json:"card,omitempty"`
+	Fields map[string]any    `json:"fields,omitempty"`
 }
 
 // PipelineRun is one execution: what was asked, what each stage produced, and
@@ -625,9 +630,20 @@ func (T *AppCore) startRun(s RunSurface, run PipelineRun, input string, vars map
 				liveRuns.UpdateStatus(run.ID, ev.Text)
 				emit("status", map[string]any{"text": ev.Text}, false)
 			case "block":
-				run.Blocks = append(run.Blocks, PipelineRunBlock{ID: ev.ID, Type: ev.Type, Title: ev.Title})
+				run.Blocks = append(run.Blocks, PipelineRunBlock{ID: ev.ID, Type: ev.Type, Title: ev.Title, Card: ev.Card})
 				blockIdx[ev.ID] = len(run.Blocks) - 1
-				emit("block", map[string]any{"id": ev.ID, "type": ev.Type, "title": ev.Title}, false)
+				data := map[string]any{"id": ev.ID, "type": ev.Type, "title": ev.Title}
+				if len(ev.Card) > 0 {
+					data["card"] = ev.Card
+				}
+				emit("block", data, false)
+			case "fields":
+				if i, ok := blockIdx[ev.ID]; ok {
+					run.Blocks[i].Fields = ev.Fields
+				}
+				// Through block_meta, which every renderer already takes:
+				// a card draws the values, any other block ignores them.
+				emit("block_meta", map[string]any{"id": ev.ID, "fields": ev.Fields}, false)
 			case "chunk":
 				if i, ok := blockIdx[ev.ID]; ok {
 					run.Blocks[i].Body += ev.Text
