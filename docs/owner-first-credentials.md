@@ -19,7 +19,7 @@ they fill in is their own key, password or OAuth connection.
 | --- | --- | --- | --- |
 | **Tool** | Actions, templates, params, scripts; which API it uses | Its author | Yes, on any rung. It carries its API with it |
 | **API** | The recipe to connect: base URL, auth type and header name, allowed and denied endpoints, allowed methods, confirm-before settings, the OAuth app registration | Its creator. An adopter owns their copy | Yes, as a template |
-| **Connected account** | The secret for one API: key, password, OAuth token | The person who connected it | No (see Open decision 1) |
+| **Connected account** | The secret for one API: key, password, OAuth token | The person who connected it | Only through an agent share (see Agents) |
 
 At call time a tool resolves its API, then **the calling user's** connected
 account for that API, then sends. With no account connected, the call stops
@@ -62,7 +62,7 @@ that split the only one: every API's secrets live in connected accounts.
 
 Sharing a tool shares the tool and its API, never an account.
 
-- **The adopter gets their own copy of the API** (Open decision 2), marked
+- **The adopter gets their own copy of the API** (Open decision 1), marked
   "connect your account". They paste a key, or click Connect for OAuth, and
   the tool works.
 - **If they already have an API for that host,** they are offered it instead,
@@ -84,7 +84,7 @@ acts, not the API, which is only a recipe:
   scratch and built the same things, so holding them to the shared tool would
   only add friction. Every call acts as them and is recorded as theirs, and
   their copy's endpoint and method lists still apply.
-- **With an account someone shared with them** (Open decision 1), they may
+- **With an account someone shared with them** (see Agents), they may
   use it only through the tools its owner named. The key is not theirs, so
   its owner decides what it is spent on.
 
@@ -107,15 +107,63 @@ things differ from a key, both made visible:
   account connected through it stops. The adopter's API says whose
   registration it uses; the owner sees who depends on it before deleting.
 - **A registration is tied to this deployment's callback URL.** Sharing to
-  another gohort needs a registration there (Open decision 5).
+  another gohort needs a registration there (Open decision 4).
 
 ## Agents
 
-A shared agent arrives with its tools and their APIs. It shows as **needs
-setup**, listing each API without a connected account, until every one is
-connected (Open decision 3). The relink picker primitive
-(`OrchestratorRowAction.PickerSource`, pick a target then act) covers the
-"use an API you already have" choice.
+Sharing an agent lists **every API it can reach**, and the owner chooses for
+each one:
+
+| Choice | Meaning |
+| --- | --- |
+| **Share mine** | The agent's tools keep using the owner's linked account. Reachable only through this agent's tools; every call records which recipient made it; the secret stays on the server |
+| **Bring your own** (default) | The recipient connects their own account; the API shows as "connect your account" |
+| **Disallow** | The tools that use this API are withheld for the recipient. The agent runs without them, and its setup says what was left out and why |
+
+Example: GitLab as **share mine**, Confluence as **bring your own**. The
+agent reads GitLab with the owner's account and writes Confluence as the
+recipient.
+
+**What an account may do is set at the provider.** An owner who shares their
+GitLab account sets that account up read-only at GitLab (a token scoped to
+read). Gohort does not guess "read" from HTTP methods. Its own reads-only
+setting (GET and HEAD) stays as an option for providers whose tokens cannot
+be scoped.
+
+**Gohort keeps the boundaries around a shared account:**
+
+- Reachable only through the tools on that shared agent: not from tools the
+  recipient builds, not from a copy of the agent.
+- Ends immediately when the owner revokes the share or switches the API to
+  bring your own; the API then shows as "connect your account".
+- Every call through it records which recipient made it. At the provider it
+  arrives as the owner, so gohort's audit is the only place that says who.
+
+**The list covers every route an agent reaches an API by:** its own tools
+(api and toolbox tools, scripts that declare `fetch_via`), deployment tools it
+has adopted, tools its skills bring, tool steps in its attached pipelines, MCP
+connectors with credentials, and servitor appliances (their SSH credentials
+are accounts too).
+
+**Sub-agents are not shared.** A shared agent can dispatch only the
+recipient's own agents, never the owner's. Sharing a chain would hand the
+recipient agents, and accounts, they never saw.
+
+**A gap in the list fails closed.** A shared agent may reach only the APIs on
+its list marked share mine or bring your own; anything else is refused at
+call time. A missed route then means a tool that does not work for the
+recipient, never the owner's account leaking. The list and that check come
+from the same resolver, so they cannot drift apart.
+
+**Changes after sharing:** a tool added later with a new API starts as bring
+your own for existing recipients, and the owner is told, to choose. Nothing is
+shared automatically.
+
+**Needs setup:** a shared agent lists each bring-your-own API the recipient
+has not connected, and is unavailable until every one is (Open decision 2).
+Disallowed APIs are not on that list: they are withheld by the owner's choice.
+The relink picker primitive (`OrchestratorRowAction.PickerSource`, pick a
+target then act) covers "use an API you already have".
 
 ## Enforcement
 
@@ -124,8 +172,11 @@ user have a connected account for it they may use this way?**
 
 - The user's own account: send, within the API's endpoint and method lists.
 - No account: refuse before sending, naming the API and where to connect.
-- A shared account (if Open decision 1 allows them): the share must still
-  include the user, and allow this tool.
+- An owner's account shared through an agent: the share must still include
+  the user, the call must come from one of that agent's own tools, and the
+  API must be marked share mine.
+- An API the shared agent's list does not mark share mine or bring your own:
+  refuse.
 - A plain fetch to a host covered by an account the user may reach only
   through named tools: refuse with the guidance shipped in v0.7.429
   (`SecuredCoverRefusal`): repair the bound tool in place, or stop and ask.
@@ -155,13 +206,15 @@ Nothing that works today should stop working on upgrade.
    `per_user` credential's stored keys and tokens.
 2. **Deployment credentials** (`Owner == ""`) get an owner, an administrator
    chosen at upgrade. A credential with one global secret becomes that
-   administrator's API with a **shared account** (Open decision 1), shared
-   with today's Access list and, if it was secured, only through today's
-   `ApprovedToolBindings`.
+   administrator's API with a **shared account**, shared with today's Access
+   list and, if it was secured, only through today's `ApprovedToolBindings`.
+4. **Agents already shared** get their list made at upgrade with each API set
+   to what works today (share mine where the recipient reaches the owner's
+   credential now, bring your own otherwise), shown to the owner to review.
 3. **Tools** get their API's id from what `Resolve(name, owner)` gives today.
    Each user who runs a tool through name resolution gets that resolution
    recorded, and listed on their setup page so they can see and change it.
-4. **A tool whose API has no account for its user** becomes "connect your
+5. **A tool whose API has no account for its user** becomes "connect your
    account", rather than failing at call time.
 
 ## Decisions
@@ -176,26 +229,31 @@ Settled in discussion (2026-10-07):
   referenced by adopters, and the dependency is visible.
 - An adopter with their own account may build more tools on an adopted API;
   a shared account is limited to the tools its owner names.
+- **A connected account can be shared, only through an agent share,** per
+  API: share mine, bring your own (the default), or disallow. What a shared
+  account may do is set at the provider. (Was open decision 1.)
+- **Sub-agents are not part of an agent share:** a shared agent dispatches
+  only the recipient's own agents.
+- The list of an agent's APIs fails closed, and comes from the same resolver
+  as the call-time check.
 
 Open (proposed answers in **bold**):
 
-1. **Can a connected account be shared?** Some services have one company key
-   nobody personally holds (a shared search or LLM key). **Proposed: only as
-   an explicit share by its owner, usable only through tools the owner names.**
-   That is where Secured ends up, and today's lending of a key to named people
-   (reads only, or reads and writes) becomes the same kind of share.
-2. **Is an adopted API a copy or a reference?** A reference passes the
+1. **Is an adopted API a copy or a reference?** A reference passes the
    owner's fixes to everyone, and lets the owner change what the adopter's key
    may do. **Proposed: a copy**, with an "update available" notice later.
-3. **Unconnected APIs in a shared agent:** **proposed: the agent is
-   unavailable until every API is connected,** rather than running with those
-   tools withheld.
-4. **Repairs to a shared tool:** recipients run the owner's fix live, or an
+2. **Unconnected bring-your-own APIs in a shared agent:** **proposed: the
+   agent is unavailable until every one is connected,** rather than running
+   with those tools withheld.
+3. **Repairs to a shared tool:** recipients run the owner's fix live, or an
    approved version (the snapshot-versioning question from 2026-09-24)?
    Accounts carry over either way.
-5. **OAuth across gohort instances:** does the API travel with an empty
+4. **OAuth across gohort instances:** does the API travel with an empty
    registration for the far side to fill, or is an OAuth API not shareable
    across machines?
+5. **A company key nobody personally holds** (a shared search or LLM key)
+   outside any agent share: **proposed: an administrator's account shared
+   through named tools,** the same boundary as an agent share.
 
 ## Phases
 
@@ -205,8 +263,9 @@ Open (proposed answers in **bold**):
 2. **Tools carry their API.** Sharing a tool or an API copies the API to the
    adopter, "connect your account", the offer of an existing API for that
    host.
-3. **Agents: needs setup.**
-4. **Account shares** (Open decision 1) replace Secured and key lending;
-   authoring stops auto-binding.
+3. **Agent shares: the API list.** Share mine, bring your own, disallow; one
+   resolver for the list and the call-time check; needs setup.
+4. **Shared accounts** replace Secured and key lending; authoring stops
+   auto-binding.
 5. **Ownerless credentials migrated,** then the name fallback and the old
    fields removed.
