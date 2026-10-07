@@ -82,8 +82,8 @@ keep working; the allow list starts as the creator and whoever their shares
 reached.
 
 Nothing in an API is secret, so a deployment API holds no secret: every
-account on it is someone's own (or an administrator's shared account, Open
-decision 2).
+account on it is someone's own, or an administrator's account shared through
+named tools (see Decisions).
 
 ## Sharing and adopting
 
@@ -347,14 +347,16 @@ Settled in discussion (2026-10-07):
   administrator directly. Builder repairs the API, not the tools, when every
   tool on it fails the same way.
 
-Open (proposed answers in **bold**):
+- **A company key nobody personally holds** (a shared search or LLM key) is
+  an administrator's account, shared through tools the administrator names:
+  the same boundary as an agent share. It is reachable only through those
+  tools, every call records who made it, and the secret stays on the server.
+
+Open:
 
 1. **OAuth across gohort instances:** does the API travel with an empty
    registration for the far side to fill, or is an OAuth API not shareable
    across machines?
-2. **A company key nobody personally holds** (a shared search or LLM key)
-   outside any agent share: **proposed: an administrator's account shared
-   through named tools,** the same boundary as an agent share.
 
 ## Phases
 
