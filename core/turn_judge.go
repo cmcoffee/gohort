@@ -107,6 +107,14 @@ type TurnClaimEvidence struct {
 	// tool ran. Convicting it retracts a true reply and re-prompts the agent to
 	// go and do work it already did.
 	PriorReports []string
+	// Given is what the assistant was handed WITH the request that is not the
+	// user's words: the bulletin posts its turn carried. Written by others, so
+	// it is neither work this agent did nor a report it filed.
+	//
+	// Without it a reply relaying the morning's posted headlines arrived at a
+	// judge shown only "give me the latest" and an empty action list, and was
+	// retracted as news presented with no retrieval behind it.
+	Given []string
 	// PriorTurnWork names the tool actions this conversation ran in EARLIER
 	// turns: what the assistant and the user already did together, before the
 	// turn now being judged. Deduplicated labels, most recent turns only.

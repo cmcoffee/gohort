@@ -638,3 +638,28 @@ func TestStandingActivityTheAgentWasShownReachesTheJudge(t *testing.T) {
 		t.Errorf("the standing activity never reaches the judge: %q", got)
 	}
 }
+
+// A reply relaying the bulletin posts its turn carried is relaying what it was
+// handed. Observed: "give me the latest" answered from the 6 AM headlines post
+// was retracted as news with no retrieval behind it, because the judge was
+// shown the user's words and not the posts riding on them.
+func TestJudgeIsShownTheBulletinsTheTurnCarried(t *testing.T) {
+	ev := TurnClaimEvidence{Request: "Give me the latest", Reply: "Top stories as of 6 AM: Porsche cuts 25% of jobs."}
+	if msg := turnJudgeEvidenceMessage(ev); strings.Contains(msg, "BULLETIN POSTS") {
+		t.Error("no posts, but the evidence names some")
+	}
+
+	turn := &chatTurn{app: &OrchestrateApp{}}
+	turn.givenBulletins = []string{"[headlines, posted today 6:00 AM] Porsche cutting 25% of jobs on tariff hit."}
+	var seen TurnClaimEvidence
+	inner := func(e TurnClaimEvidence) (TurnClaimVerdict, bool) { seen = e; return TurnClaimVerdict{}, true }
+	judge := turn.givenJudge(inner)
+	judge(ev)
+	if len(seen.Given) != 1 {
+		t.Fatalf("judge got %d given posts, want the turn's 1", len(seen.Given))
+	}
+	msg := turnJudgeEvidenceMessage(seen)
+	if !strings.Contains(msg, "BULLETIN POSTS") || !strings.Contains(msg, "Porsche cutting 25%") {
+		t.Errorf("evidence does not show the post:\n%s", msg)
+	}
+}

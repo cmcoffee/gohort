@@ -461,10 +461,11 @@ func (t *chatTurn) claimJudge(ctx context.Context) TurnClaimJudge {
 	if t == nil || t.app == nil {
 		return nil
 	}
-	judge := t.app.turnClaimJudge(ctx)
-	if judge == nil {
+	inner := t.app.turnClaimJudge(ctx)
+	if inner == nil {
 		return nil
 	}
+	judge := t.givenJudge(inner)
 	db := t.firingDB()
 	if db == nil {
 		return judge
@@ -473,6 +474,18 @@ func (t *chatTurn) claimJudge(ctx context.Context) TurnClaimJudge {
 	return func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
 		v, ok := judge(ev)
 		return rec.observe(ev, v, ok), ok
+	}
+}
+
+// givenJudge hands the judge what the turn was given besides the user's
+// words (the bulletin posts withBulletins put on the request), read when the
+// judge runs: the request's notes are built after this hook is.
+func (t *chatTurn) givenJudge(inner TurnClaimJudge) TurnClaimJudge {
+	return func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
+		t.givenMu.Lock()
+		ev.Given = append([]string(nil), t.givenBulletins...)
+		t.givenMu.Unlock()
+		return inner(ev)
 	}
 }
 
@@ -932,7 +945,7 @@ func testCaseOf(rec firingRecord) firingTestCase {
 			GivenEstimate: rec.GivenEstimate,
 			Unattended:    rec.Unattended,
 		},
-		NotKept: []string{"Request", "ToolOutputs", "PriorWork", "PriorReports", "CatalogTools", "LastToolError", "Now"},
+		NotKept: []string{"Request", "ToolOutputs", "PriorWork", "PriorReports", "Given", "CatalogTools", "LastToolError", "Now"},
 		ID:      rec.ID, Kind: rec.Kind, Finding: rec.Finding, Arm: rec.Arm, Claim: rec.Claim,
 		First: rec.First, Confirm: rec.Confirm, Overturned: rec.Overturned, Retry: rec.Retry,
 	}

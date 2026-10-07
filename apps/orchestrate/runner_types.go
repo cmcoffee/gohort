@@ -161,6 +161,12 @@ type chatTurn struct {
 	// reports: a forked session carries none of those, and its agent recapping
 	// what the prompt told it was otherwise convicted as invention.
 	cortexReports []string
+	// givenBulletins is the bulletin posts withBulletins put on this turn's
+	// request, for the claim judge (TurnClaimEvidence.Given): what the
+	// assistant was handed, so relaying it is not convicted as invention.
+	// Its own mutex: toolMu is held across parts of the tool-call path.
+	givenMu        sync.Mutex
+	givenBulletins []string
 	// detach is this TURN's background-job ledger, shared by every session the
 	// turn mints. It has to live here rather than on a session because a plan
 	// runs each step on its OWN session (runWorkerStep), so a per-session cap
