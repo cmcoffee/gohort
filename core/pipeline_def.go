@@ -640,6 +640,13 @@ type PipelineDef struct {
 	// runs already made from it produced, each labelled). A follow-up has no
 	// follow-ups of its own.
 	FollowUps []PipelineDef `json:"followups,omitempty"`
+	// Suggest is a small pipeline behind the run form's Suggest button: it
+	// proposes what to ask (topics from today's news, questions worth
+	// answering) and its output fills the form, a JSON list of choices or a
+	// single text. Its Name is the button's label ("Suggest" when empty). It
+	// runs inside the click, with {input} what is already in the field, so a
+	// typed hint steers it; it keeps no run and has no follow-ups.
+	Suggest *PipelineDef `json:"suggest,omitempty"`
 	// Global scopes the pipeline to ALL of the owner's agents (minus any that
 	// deny it via AgentRecord.DisabledPipelines), the way a global tool lives
 	// in the user-wide pool. Off = available only to the agents that list its

@@ -215,3 +215,65 @@ func TestFollowUpsAreCheckedOnSave(t *testing.T) {
 		}
 	}
 }
+
+// A pipeline's suggest recipe backs its form's Suggest button: run inside the
+// click with what is already typed as its input, its output handed back for the
+// form (a JSON list as choices, text as text), and a probe that says whether
+// there is a button to draw.
+func TestSuggestRunsInsideTheClickAndFillsTheForm(t *testing.T) {
+	s := runSurface(t, func(context.Context, string, map[string]string, PipelineSink) (string, error) { return "", nil })
+	var gotInput string
+	reply := "```json\n[\"Should cities ban cars?\", \"Is remote work here to stay?\"]\n```"
+	s.Suggest = &PipelineDef{Name: "Find a topic", Stages: []PipelineStage{{Name: "pick", Prompt: "{input}"}}}
+	s.FollowUpWork = func(def PipelineDef) RunWork {
+		return func(_ context.Context, input string, _ map[string]string, _ PipelineSink) (string, error) {
+			gotInput = input
+			return reply, nil
+		}
+	}
+	get := func(url string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		(&AppCore{}).ServeRuns(w, httptest.NewRequest(http.MethodGet, url, nil), s, "suggest")
+		return w
+	}
+	if w := get("/suggest?probe=1"); !strings.Contains(w.Body.String(), `"label":"Find a topic"`) {
+		t.Errorf("the probe names the button: %d %s", w.Code, w.Body.String())
+	}
+	w := get("/suggest?input=transport")
+	if gotInput != "transport" {
+		t.Errorf("what is typed is the suggest pipeline's input, got %q", gotInput)
+	}
+	var list []string
+	if !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") || json.Unmarshal(w.Body.Bytes(), &list) != nil || len(list) != 2 {
+		t.Errorf("a fenced JSON list comes back as JSON choices: %q %s", w.Header().Get("Content-Type"), w.Body.String())
+	}
+	reply = "Should cities ban cars?"
+	if w := get("/suggest"); !strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") || w.Body.String() != reply {
+		t.Errorf("plain text comes back as text: %q %q", w.Header().Get("Content-Type"), w.Body.String())
+	}
+	s.Suggest = nil
+	if w := get("/suggest?probe=1"); w.Code != http.StatusNoContent {
+		t.Errorf("no suggest recipe, no button: probe gave %d", w.Code)
+	}
+	if w := get("/suggest"); w.Code != http.StatusNotFound {
+		t.Errorf("no suggest recipe to run: %d", w.Code)
+	}
+}
+
+// The pipeline's suggest reaches its run surface, and is checked on save.
+func TestSuggestIsCarriedAndChecked(t *testing.T) {
+	stages := []PipelineStage{{Name: "a", Prompt: "x"}}
+	def := PipelineDef{Name: "d", Stages: stages, Suggest: &PipelineDef{Stages: stages}}
+	if (&AppCore{}).RunsOf(PipelineRunSurface{Def: def}).Suggest == nil {
+		t.Error("the run surface must carry the pipeline's suggest")
+	}
+	for name, bad := range map[string]*PipelineDef{
+		"empty":           {},
+		"with follow-ups": {Stages: stages, FollowUps: []PipelineDef{{Name: "f", Stages: stages}}},
+		"a broken stage":  {Stages: []PipelineStage{{Name: "a", Prompt: "{stage:nope}"}}},
+	} {
+		if err := (PipelineDef{Name: "d", Stages: stages, Suggest: bad}).Validate(); err == nil {
+			t.Errorf("a suggest that is %s should be refused", name)
+		}
+	}
+}

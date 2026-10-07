@@ -158,7 +158,10 @@
     });
     var formActions = el('div', {class: 'ui-pl-formactions'});
     var prefillBtn = null;
-    if (cfg.prefill_url) {
+    // addPrefill draws the Suggest button: from the page's own prefill_url,
+    // or, when the page names none, from the surface's suggest pipeline once
+    // asking it (below) says there is one.
+    function addPrefill(prefillURL, label, first) {
       var target = cfg.prefill_target || (function() {
         for (var i = 0; i < (cfg.fields || []).length; i++) {
           if (cfg.fields[i].type === 'textarea') return cfg.fields[i].name;
@@ -170,23 +173,31 @@
       // the target input. Click outside to dismiss.
       var prefillMenu = el('div', {class: 'ui-pl-prefill-menu', style: 'display:none'});
       var prefillWrap = el('div', {class: 'ui-pl-prefill-wrap'});
+      var prefillRun = null; // {busy, ctl} while a suggestion is being fetched
       prefillBtn = el('button', {
         class: 'ui-pl-btn ui-pl-prefill-btn',
         onclick: function() {
-          var orig = prefillBtn.textContent;
-          prefillBtn.textContent = '…';
-          prefillBtn.disabled = true;
-          // Default GET; apps that need a POST body declare
-          // prefill_method + prefill_body so the runtime doesn't
-          // need an app-specific wrapper endpoint.
-          var fetchOpts = {};
+          // A second click while it works stops it: a suggestion backed by
+          // a model and a search can take a while.
+          if (prefillRun) { prefillRun.ctl.abort(); return; }
+          var ctl = new AbortController();
+          prefillRun = {busy: busyButton(prefillBtn, true), ctl: ctl};
+          // Default GET, with what is already in the field as ?input= so a
+          // typed hint steers it; apps that need a POST body declare
+          // prefill_method + prefill_body so the runtime doesn't need an
+          // app-specific wrapper endpoint.
+          var url = prefillURL;
+          var fetchOpts = {signal: ctl.signal};
+          var typed = target && formInputs[target] ? String(formInputs[target].value || '').trim() : '';
           if ((cfg.prefill_method || 'GET').toUpperCase() === 'POST') {
             fetchOpts.method = 'POST';
             fetchOpts.headers = {'Content-Type': 'application/json'};
             fetchOpts.body = cfg.prefill_body || '{}';
+          } else if (typed) {
+            url += (url.indexOf('?') < 0 ? '?' : '&') + 'input=' + encodeURIComponent(typed);
           }
-          fetch(cfg.prefill_url, fetchOpts).then(function(r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
+          fetch(url, fetchOpts).then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
             return r.text();
           }).then(function(text) {
             var t = String(text || '').trim();
@@ -196,6 +207,7 @@
             try {
               var j = JSON.parse(t);
               if (Array.isArray(j)) arr = j;
+              else if (typeof j === 'string') t = j;
               else if (j && typeof j === 'object') {
                 t = String(j.topic || j.text || j.suggestion || '').trim();
               }
@@ -231,9 +243,11 @@
               return;
             }
             if (t && target && formInputs[target]) formInputs[target].value = t;
-          }).catch(function(err) { showToast('Suggest failed: ' + err.message); }).then(function() {
-            prefillBtn.textContent = orig;
-            prefillBtn.disabled = false;
+          }).catch(function(err) {
+            showToast(err.name === 'AbortError' ? 'Suggest stopped' : 'Suggest failed: ' + err.message);
+          }).then(function() {
+            prefillRun.busy.stop();
+            prefillRun = null;
           });
         },
       }, [
@@ -242,16 +256,27 @@
         // the label text the app provides.
         el('span', {class: 'ui-pl-prefill-icon'}, ['✨']),
         ' ',
-        cfg.prefill_label || 'Suggest',
+        label || 'Suggest',
       ]);
       prefillWrap.appendChild(prefillBtn);
       prefillWrap.appendChild(prefillMenu);
-      formActions.appendChild(prefillWrap);
+      if (first && formActions.firstChild) formActions.insertBefore(prefillWrap, formActions.firstChild);
+      else formActions.appendChild(prefillWrap);
       // Dismiss on outside click.
       document.addEventListener('click', function(ev) {
         if (prefillMenu.style.display === 'none') return;
         if (!prefillWrap.contains(ev.target)) prefillMenu.style.display = 'none';
       });
+    }
+    if (cfg.prefill_url) {
+      addPrefill(cfg.prefill_url, cfg.prefill_label, false);
+    } else if (cfg.followups_url) {
+      // The pipeline may carry a suggest recipe of its own, served beside its
+      // follow-ups: ask once, and draw the button when it answers with a label.
+      var suggestURL = cfg.followups_url.replace(/followups\/?$/, '') + 'suggest';
+      fetchJSON(suggestURL + '?probe=1').then(function(p) {
+        if (p && p.label && !prefillBtn) addPrefill(suggestURL, p.label, true);
+      }).catch(function() {});
     }
     var submitBtn = el('button', {class: 'ui-pl-btn primary', onclick: function(){ doSubmit(); }}, [cfg.submit_label || 'Start']);
     // Cancel button stays in the top action bar (defined below) so
@@ -508,12 +533,11 @@
               return;
             }
             if (maMethod === 'post') {
-              maBtn.disabled = true;
-              fetch(maURL, {method: 'POST'}).then(function(r) {
-                if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
-                showToast(ma.label + ' done');
+              var maBusy = busyButton(maBtn, false);
+              fetchJSON(maURL, {method: 'POST'}).then(function(r) {
+                showToast(r && typeof r === 'object' && r.message ? r.message : ma.label + ' done');
               }).catch(function(err) { showToast(ma.label + ' failed: ' + err.message); })
-                .then(function(){ maBtn.disabled = false; });
+                .then(function(){ maBusy.stop(); });
               return;
             }
           }}, [ma.label]);
@@ -751,13 +775,14 @@
               return;
             }
             if (method === 'post') {
-              btn.disabled = true;
-              fetch(url, {method: 'POST'}).then(function(r) {
-                if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
-                showToast(a.label + ' done');
+              // A script behind a button can take a while: show it working,
+              // then say what it said ({message}), not just that it ended.
+              var busy = busyButton(btn, false);
+              fetchJSON(url, {method: 'POST'}).then(function(r) {
+                showToast(r && typeof r === 'object' && r.message ? r.message : a.label + ' done');
                 loadSessions();
               }).catch(function(err){ showToast(a.label + ' failed: ' + err.message); })
-                .then(function(){ btn.disabled = false; });
+                .then(function(){ busy.stop(); });
               return;
             }
             if (method === 'stream') {

@@ -314,6 +314,7 @@ func (T *AppCore) RunsOf(s PipelineRunSurface) RunSurface {
 		Work:         work(s.Def),
 		FollowUps:    s.Def.FollowUps,
 		FollowUpWork: work,
+		Suggest:      s.Def.Suggest,
 	}
 }
 
@@ -352,6 +353,9 @@ type RunSurface struct {
 	// with, a machine's for one.
 	FollowUps    []PipelineDef
 	FollowUpWork func(def PipelineDef) RunWork
+	// Suggest is the pipeline behind the run form's Suggest button (GET
+	// suggest), run through FollowUpWork. Nil = no button.
+	Suggest *PipelineDef
 	// Live places this surface's runs on the global activity ribbon. Optional:
 	// a host that fills nothing still gets its runs LISTED, because a run that
 	// outlives its request and appears nowhere is the failure this exists to
@@ -374,6 +378,7 @@ type RunLiveInfo struct {
 //	POST   stream          → run it, streaming the transcript
 //	GET    reconnect/<id>  → attach to a run still going, from the top
 //	POST   cancel?id=<id>  → stop one
+//	GET    suggest         → what to ask, for the form (?probe=1: its label)
 //	GET    sessions        → past runs, newest first
 //	GET    sessions/<id>   → one run's stored blocks
 //	DELETE sessions/<id>   → drop a run
@@ -390,6 +395,8 @@ func (T *AppCore) ServeRuns(w http.ResponseWriter, r *http.Request, s RunSurface
 		T.reconnectRun(w, r, s, strings.TrimPrefix(sub, "reconnect/"))
 	case sub == "followups":
 		listFollowUps(w, r, s)
+	case sub == "suggest":
+		serveSuggest(w, r, s)
 	case strings.HasPrefix(sub, "followup/"):
 		T.startFollowUp(w, r, s, strings.TrimPrefix(sub, "followup/"))
 	case sub == "sessions":
@@ -971,4 +978,47 @@ const runTailInterval = 250 * time.Millisecond
 func writePipelineJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// suggestTimeout bounds a Suggest click: somebody is waiting on the button.
+const suggestTimeout = 3 * time.Minute
+
+// serveSuggest answers GET suggest: run the surface's Suggest pipeline inside
+// the request, with ?input= (what is already in the field) as its input, and
+// return what it produced for the form: a JSON value when it wrote one (a list
+// becomes choices to pick from), else its text. Cancelled with the request,
+// which is how the button stops it. ?probe=1 only says whether there is one,
+// and its label, so a panel knows to draw the button.
+func serveSuggest(w http.ResponseWriter, r *http.Request, s RunSurface) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.Suggest == nil || s.FollowUpWork == nil {
+		if r.URL.Query().Get("probe") != "" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+	if r.URL.Query().Get("probe") != "" {
+		writePipelineJSON(w, map[string]string{"label": chooseStr(strings.TrimSpace(s.Suggest.Name), "Suggest")})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), suggestTimeout)
+	defer cancel()
+	out, err := s.FollowUpWork(*s.Suggest)(ctx, strings.TrimSpace(r.URL.Query().Get("input")), nil, func(PipelineEvent) {})
+	if err != nil {
+		http.Error(w, "suggest failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out = strings.TrimSpace(StripCodeFence(strings.TrimSpace(out)))
+	if json.Valid([]byte(out)) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(out))
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(out))
 }

@@ -51,6 +51,10 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 					Description: "(create/update) Declared output fields to promote onto each RUN's sidebar row, as \"<stage>.<field>\" references: e.g. [\"judge.winner\", \"judge.confidence\"]. A run history is browsed rather than read: titles and timestamps answer \"when did I run this\", while what a reader scans for is the ANSWER, and without this the only route to it is opening runs one at a time. The field must be one that stage declares in its \"output\" contract, and it must be a TOP-LEVEL stage (a loop body holds a different value every pass). An app built on this pipeline then draws them with the pipeline section's `meta` key. Names must be unique and may not be ID, Title or Date.",
 					Items:       &ToolParam{Type: "string"},
 				},
+				"suggest": {
+					Type:        "object",
+					Description: "(create/update) A small pipeline behind the run form's Suggest button: {\"name\": button text (default Suggest), \"stages\": [...]}. It proposes what to ask and its output fills the form: a JSON list of strings (or {topic, hook} objects) offers choices, plain text fills the field. {input} is what the user already typed, as a hint. Runs inside the click, keeps no run. Present replaces it; {} removes it. See action=\"help\", SUGGEST.",
+				},
 				"followups": {
 					Type:        "array",
 					Description: "(create/update) Further pipelines a FINISHED run can be put through, each offered as a button on the run and producing a new run linked to it: [{\"name\": button text, \"description\": tooltip, \"stages\": [...]}]. Their stages read the finished run as {input} (its output), {parent_input} (what it was asked) and {children} (what earlier follow-up runs of it produced). A report written from a result, a re-synthesis, folding follow-ups back in. Present replaces the list; omit to keep it. See action=\"help\", FOLLOW-UPS.",
@@ -191,6 +195,17 @@ already made from it produced, each under its title: a "Consolidate" follow-up i
 {children}). A follow-up is a pipeline in its own right (any stage kinds, output, cards) but has no follow-ups of
 its own. It runs like any run: queued, watched, stoppable, resumed after a restart.
 
+=== SUGGEST ===
+A run form can carry a Suggest button that proposes what to ask, backed by a small pipeline of its own:
+"suggest": {"name": "Suggest a topic", "stages": [...]}. Its output fills the form: a JSON list of strings, or of
+{"topic", "hook"} objects (the hook is the muted line under each choice), is offered as choices to pick from; plain
+text goes straight into the field. {input} is whatever is already in the field, so a typed hint steers it. It runs
+inside the click (the button shows it working and a second click stops it) and keeps no run. A debate's topic
+finder: {"stages": [{"name": "news", "kind": "gather", "prompt": "top news stories today", "count": 4},
+{"name": "pick", "prompt": "From these stories, propose five debatable questions (about
+this, if it is not blank: {input}). Reply with a JSON list of {\"topic\", \"hook\"} objects only.\n\n{stage:news}", "reach": "none"}]}. An app built on the pipeline gets the
+button too, unless its section names a suggest_script of its own.
+
 === CARDS ===
 A run shows each stage as a block of text. Set "render": "card" and a stage that declares output is drawn as a card
 of its values instead: "card" places fields: title (the headline), badges (short values as labelled pills,
@@ -309,6 +324,14 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 			return "", err
 		}
 		def.FollowUps = fus
+	}
+	// suggest: present replaces, an empty object or null-stages clears it.
+	if raw, ok := args["suggest"]; ok && raw != nil {
+		sg, err := parsePipelineSuggest(raw)
+		if err != nil {
+			return "", err
+		}
+		def.Suggest = sg
 	}
 	if err := def.Validate(); err != nil {
 		return "", fmt.Errorf("pipeline is not runnable: %w", err)
@@ -1043,6 +1066,23 @@ func mapStrMap(m map[string]any, key string) map[string]string {
 
 // parsePipelineFollowUps decodes a pipeline's "followups": each a small
 // pipeline of its own, {name, description, stages}.
+// parsePipelineSuggest decodes the suggest pipeline: {name?, stages}. An
+// object with no stages removes it.
+func parsePipelineSuggest(raw any) (*PipelineDef, error) {
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("suggest must be an OBJECT {name, stages}, got %T", raw)
+	}
+	if m["stages"] == nil {
+		return nil, nil
+	}
+	stages, err := parsePipelineStages(m["stages"])
+	if err != nil {
+		return nil, fmt.Errorf("suggest: %w", err)
+	}
+	return &PipelineDef{Name: strings.TrimSpace(mapStr(m, "name")), Stages: stages}, nil
+}
+
 func parsePipelineFollowUps(raw any) ([]PipelineDef, error) {
 	arr, ok := raw.([]any)
 	if !ok {

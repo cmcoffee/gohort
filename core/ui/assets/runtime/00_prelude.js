@@ -1521,6 +1521,35 @@
     setTimeout(function(){ t.remove(); }, 2500);
   }
 
+  // busyButton shows a button working until stop(): a spinner frame and,
+  // past three seconds, the seconds elapsed, in place of its label. The rule
+  // for anything a click waits on, because a static "…" reads the same as a
+  // request that hung. stoppable keeps the button live, for a caller whose
+  // next click stops the work (and says so on hover); otherwise it is
+  // disabled while it works.
+  function busyButton(btn, stoppable) {
+    var saved = Array.prototype.slice.call(btn.childNodes);
+    var title = btn.title;
+    var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏', fi = 0, started = Date.now();
+    btn.classList.add('ui-busy');
+    if (stoppable) btn.title = 'Working - click to stop';
+    else btn.disabled = true;
+    function paint() {
+      var secs = Math.round((Date.now() - started) / 1000);
+      btn.textContent = frames.charAt(fi++ % frames.length) + (secs >= 3 ? ' ' + secs + 's' : '');
+    }
+    paint();
+    var timer = setInterval(paint, 120);
+    return {stop: function() {
+      clearInterval(timer);
+      btn.textContent = '';
+      saved.forEach(function(n) { btn.appendChild(n); });
+      btn.title = title;
+      btn.classList.remove('ui-busy');
+      btn.disabled = false;
+    }};
+  }
+
   // parseRules splits a free-form rules string into an array of
   // individual rule strings. Splits on newlines, strips common bullet
   // and number prefixes ("1. ", "2)", "- ", "* ") so existing rules

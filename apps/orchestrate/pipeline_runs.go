@@ -136,8 +136,9 @@ func (T *OrchestrateApp) pipelineStandaloneTools(ctx context.Context, user strin
 }
 
 // pipelineDeclaredToolNames is every tool name a definition asks for, sorted:
-// each stage's Tools, a tool stage's own Tool, and the same for the stages
-// nested in a loop Body — a loop is where the tool-calling stages of a
+// each stage's Tools, a tool stage's own Tool, the web tools a gather or a
+// researching panel reads with, across its follow-ups and its suggest
+// pipeline, and the same for the stages nested in a loop Body — a loop is where the tool-calling stages of a
 // refinement pass usually live, so missing them would leave exactly the
 // iterative pipelines tool-less.
 //
@@ -157,10 +158,22 @@ func pipelineDeclaredToolNames(def PipelineDef) []string {
 			if n := strings.TrimSpace(s.Tool); n != "" {
 				names[n] = true
 			}
+			// A gather, and a panel whose voices research, search and read
+			// pages without naming the tools that do it.
+			if s.Kind == StageGather || (s.Kind == StagePanel && s.Research > 0) {
+				names["web_search"], names["fetch_url"] = true, true
+			}
 			walk(s.Body)
 		}
 	}
 	walk(def.Stages)
+	// Follow-ups and the suggest pipeline run with this same catalog.
+	for _, f := range def.FollowUps {
+		walk(f.Stages)
+	}
+	if def.Suggest != nil {
+		walk(def.Suggest.Stages)
+	}
 	if len(names) == 0 {
 		return nil
 	}

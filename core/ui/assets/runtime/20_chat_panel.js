@@ -213,38 +213,46 @@
     var input  = el('textarea', {class: 'ui-chat-input', rows: '1', placeholder: 'Message…'});
     var prefillBtn = null;
     if (cfg.prefill_url) {
+      var prefillRun = null; // {busy, ctl} while a suggestion is being fetched
       prefillBtn = el('button', {
         class: 'ui-chat-iconbtn',
         title: cfg.prefill_label || 'Suggest',
         onclick: function() {
-          var orig = prefillBtn.textContent;
-          prefillBtn.textContent = '…';
-          prefillBtn.disabled = true;
-          // Default GET; apps that need a POST body declare
-          // prefill_method + prefill_body so the runtime doesn't
-          // need an app-specific wrapper endpoint.
-          var fetchOpts = {};
+          // A second click while it works stops it.
+          if (prefillRun) { prefillRun.ctl.abort(); return; }
+          var ctl = new AbortController();
+          prefillRun = {busy: busyButton(prefillBtn, true), ctl: ctl};
+          // Default GET, with what is already typed as ?input= so a hint can
+          // steer it; apps that need a POST body declare prefill_method +
+          // prefill_body so the runtime doesn't need an app-specific wrapper
+          // endpoint.
+          var url = cfg.prefill_url;
+          var fetchOpts = {signal: ctl.signal};
           if ((cfg.prefill_method || 'GET').toUpperCase() === 'POST') {
             fetchOpts.method = 'POST';
             fetchOpts.headers = {'Content-Type': 'application/json'};
             fetchOpts.body = cfg.prefill_body || '{}';
+          } else if (input.value.trim()) {
+            url += (url.indexOf('?') < 0 ? '?' : '&') + 'input=' + encodeURIComponent(input.value.trim());
           }
-          fetch(cfg.prefill_url, fetchOpts).then(function(r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
+          fetch(url, fetchOpts).then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
             return r.text();
           }).then(function(text) {
             // Endpoint may return JSON {topic|text|suggestion} or plain text.
             var t = String(text || '').trim();
             try {
               var j = JSON.parse(t);
-              if (j && typeof j === 'object') t = String(j.topic || j.text || j.suggestion || j.message || '').trim();
+              if (Array.isArray(j)) j = j[0];
+              if (typeof j === 'string') t = j;
+              else if (j && typeof j === 'object') t = String(j.topic || j.text || j.suggestion || j.message || '').trim();
             } catch (_) {}
             if (t) input.value = t;
           }).catch(function(err) {
-            showToast('Suggest failed: ' + err.message);
+            showToast(err.name === 'AbortError' ? 'Suggest stopped' : 'Suggest failed: ' + err.message);
           }).then(function() {
-            prefillBtn.textContent = orig;
-            prefillBtn.disabled = false;
+            prefillRun.busy.stop();
+            prefillRun = null;
           });
         },
       }, [cfg.prefill_label || '✨']);

@@ -32,7 +32,26 @@ func (d PipelineDef) Validate() error {
 	if err := d.validateSessionMeta(); err != nil {
 		return err
 	}
-	return d.validateFollowUps()
+	if err := d.validateFollowUps(); err != nil {
+		return err
+	}
+	return d.validateSuggest()
+}
+
+// validateSuggest checks the pipeline behind the Suggest button: a pipeline in
+// its own right, with nothing of its own to follow up or suggest.
+func (d PipelineDef) validateSuggest() error {
+	s := d.Suggest
+	if s == nil {
+		return nil
+	}
+	if len(s.FollowUps) > 0 || s.Suggest != nil {
+		return Error("suggest: it fills the form and keeps no run, so it has no follow-ups or suggest of its own")
+	}
+	if err := s.Validate(); err != nil {
+		return Error("suggest: " + err.Error())
+	}
+	return nil
 }
 
 // validateFollowUps checks the pipelines a finished run can be put through.
