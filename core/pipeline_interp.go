@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -727,7 +728,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		// so a stage can be permissive (no Tools = inherit everything)
 		// OR restrictive (specific names from the inherited pool).
 		var stageTools []AgentToolDef
-		if stage.Kind == StageWorker || stage.Kind == StageSynthesize || stage.Kind == StageTool ||
+		if stage.Kind == StageWorker || stage.Kind == StageSynthesize || stage.Kind == StageTool || stage.Kind == StageGather ||
 			(stage.Kind == StageFanout && strings.TrimSpace(stage.Agent) == "") {
 			stageTools = StageTools(stage, inheritedTools)
 			if len(stageTools) > 0 {
@@ -805,6 +806,9 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		case StageVerify:
 			// Check an earlier stage's writing against what the run read.
 			out, fields, err = r.runVerifyStage(ctx, stage, status)
+		case StageGather:
+			// Search, read the best pages, and number them into the sources.
+			out, fields, err = r.runGatherStage(ctx, stage, prompt, stageTools, status)
 		case StageMachine:
 			// A whole run as a stage. Computed here rather than handed over
 			// as a `call` closure on purpose: runDeclaredStage repairs a
@@ -1700,6 +1704,17 @@ func (r *pipelineRun) runPanelStage(ctx context.Context, stage PipelineStage, pr
 
 	think := StageThinks(stage)
 	tier := r.stageTierFor(stage)
+	// A researching panel reads with the stage's own catalog, resolved here
+	// rather than handed in: a role voice answers without tools, and giving
+	// it the catalog for research must not also put a tool loop in its turn.
+	research := min(stage.Research, panelMaxResearch)
+	var catalog []AgentToolDef
+	if research > 0 {
+		catalog = StageTools(stage, r.inherited)
+		if status != nil {
+			status(fmt.Sprintf("panel %s: each voice reads up to %d page(s) a round before it speaks", stage.Name, research))
+		}
+	}
 
 	var transcript []panelSaid
 	var b strings.Builder
@@ -1721,6 +1736,9 @@ func (r *pipelineRun) runPanelStage(ctx context.Context, stage PipelineStage, pr
 			go func(idx int, voice string) {
 				defer lg.Done()
 				p := r.applyRunVars(resolveStageTemplate(panelPrompt(stage.Prompt, voice, round, rounds, sofar), input, prev, outputs))
+				if research > 0 {
+					p = r.voiceResearch(ctx, stage, voice, round, p, research, catalog, tier, status)
+				}
 				var out string
 				var err error
 				// A voice that names one of your agents IS that agent: its
@@ -1771,6 +1789,42 @@ func (r *pipelineRun) runPanelStage(ctx context.Context, stage PipelineStage, pr
 		names = append(names, v)
 	}
 	return strings.TrimSpace(b.String()), map[string]any{"voices": names, "rounds": rounds}, nil
+}
+
+// voiceResearch has one voice look things up before it speaks: it says what
+// it would search for given where the panel stands, reads up to pages pages,
+// and gets them back as {research} in its prompt (appended when the prompt
+// does not place it), numbered into the run's sources so it can cite them.
+// A failed lookup leaves the voice to answer from what it knows, and says so:
+// one voice without research is a weaker turn, not a broken panel.
+func (r *pipelineRun) voiceResearch(ctx context.Context, stage PipelineStage, voice string, round int, prompt string, pages int, catalog []AgentToolDef, tier LLMTier, status func(string)) string {
+	label := fmt.Sprintf("panel %s: %s, round %d", stage.Name, voice, round)
+	ask := "You are " + voice + ", about to speak on a panel. This is what you have been asked:\n\n" + prompt +
+		"\n\nBefore you answer, you may look things up. What would you search the web for, to make your case " +
+		"with evidence rather than from memory? Reply with a JSON list of one or two search queries, nothing else."
+	var queries []string
+	if reply, err := r.app.runWorkerStage(ctx, ask, nil, false, true, tier); err == nil {
+		var list []string
+		if DecodeJSON(reply, &list) == nil {
+			queries = gatherQueries(strings.Join(list, "\n"))
+		}
+	}
+	if len(queries) > 2 {
+		queries = queries[:2]
+	}
+	if len(queries) == 0 {
+		queries = gatherQueries(r.input)
+	}
+	read, err := r.gatherPages(ctx, label, queries, pages, catalog, status)
+	found := renderGathered(read)
+	if err != nil {
+		found = "(nothing could be looked up this round: " + err.Error() + ")"
+	}
+	block := found + "\n\nCite what you use from these as [N]."
+	if strings.Contains(prompt, "{research}") {
+		return strings.ReplaceAll(prompt, "{research}", block)
+	}
+	return prompt + "\n\n## What you looked up\n" + block
 }
 
 // panelPrompt layers the panel's own vocabulary over the stage prompt:
@@ -2364,4 +2418,256 @@ func relevantExcerpt(text, claim string, max int) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// --- gather ---------------------------------------------------------------
+
+// gatherFields is what a kind=gather stage returns.
+var gatherFields = []PipelineField{
+	{Name: "found", Type: FieldNumber, Desc: "pages read by this stage"},
+	{Name: "sources", Type: FieldList, Desc: "the pages read, each as [N] Title - URL"},
+}
+
+const (
+	gatherDefaultPages = 6  // pages a gather reads when Count is unset
+	gatherMaxPages     = 12 // the most one gather reads
+	gatherMaxQueries   = 4  // searches one gather runs
+	gatherPerDomain    = 2  // pages from one site, so one site cannot be the whole read
+	gatherParallel     = 4  // searches or fetches at once
+	gatherExcerpt      = 1200
+	panelMaxResearch   = 4 // pages a panel voice reads per round
+)
+
+// gatheredPage is one page a gather read, numbered in the run's sources.
+type gatheredPage struct {
+	N              int
+	Title, URL     string
+	Excerpt, Query string
+}
+
+// runGatherStage searches for each query the stage's prompt names and reads
+// the best pages, numbering them into the run's sources. Its text is each
+// page's number, title and the passage most about the queries, for a writer
+// to read; its fields are the count and the list.
+func (r *pipelineRun) runGatherStage(ctx context.Context, stage PipelineStage, prompt string, tools []AgentToolDef, status func(string)) (string, map[string]any, error) {
+	queries := gatherQueries(prompt)
+	if len(queries) == 0 {
+		queries = gatherQueries(r.input)
+	}
+	if len(queries) == 0 {
+		return "", nil, Error("gather stage " + stage.Name + ": nothing to look up, the prompt and the input are both empty")
+	}
+	if stage.Count < 1 && strings.TrimSpace(stage.CountFrom) == "" {
+		stage.Count = gatherDefaultPages
+	}
+	pages := r.resolveCount(stage, gatherMaxPages, status)
+	read, err := r.gatherPages(ctx, "gather "+stage.Name, queries, pages, tools, status)
+	if err != nil {
+		return "", nil, err
+	}
+	list := make([]any, 0, len(read))
+	for _, p := range read {
+		list = append(list, fmt.Sprintf("[%d] %s - %s", p.N, p.Title, p.URL))
+	}
+	return renderGathered(read), map[string]any{"found": len(read), "sources": list}, nil
+}
+
+// renderGathered is what a gather read, as a writer reads it: each page's
+// number, title and address, then the passage that bears on the search.
+func renderGathered(read []gatheredPage) string {
+	if len(read) == 0 {
+		return "(nothing new was found to read)"
+	}
+	var b strings.Builder
+	for _, p := range read {
+		fmt.Fprintf(&b, "[%d] %s - %s\n", p.N, p.Title, p.URL)
+		for _, line := range strings.Split(p.Excerpt, "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				b.WriteString("> " + line + "\n")
+			}
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// listMarkerRE is a line's list marker: "- ", "* ", "1. ", "2) ".
+var listMarkerRE = regexp.MustCompile(`^\s*(?:[-*•]|\d+[.)])\s+`)
+
+// gatherQueries is the searches a prompt names: a JSON list of strings, or
+// one per non-empty line (list markers dropped), at most gatherMaxQueries.
+func gatherQueries(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	var list []string
+	if strings.HasPrefix(text, "[") && json.Unmarshal([]byte(text), &list) == nil {
+		text = strings.Join(list, "\n")
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(listMarkerRE.ReplaceAllString(line, ""))
+		if line == "" || seen[strings.ToLower(line)] {
+			continue
+		}
+		seen[strings.ToLower(line)] = true
+		out = append(out, line)
+		if len(out) == gatherMaxQueries {
+			break
+		}
+	}
+	return out
+}
+
+// gatherPages runs each query through web_search, picks up to pages results
+// worth reading (not a weak source, not a page this run read or is reading, at most
+// gatherPerDomain from one site, taken in turn from each query so no one query
+// crowds out the rest), reads them with fetch_url, and adds each page read to
+// the run's sources. A page that fails to read is replaced by the next pick.
+//
+// The two tools come from the stage's resolved catalog, so a stage whose reach
+// or tool list leaves them out cannot gather: the same rule a worker stage's
+// own tool calls follow.
+func (r *pipelineRun) gatherPages(ctx context.Context, label string, queries []string, pages int, tools []AgentToolDef, status func(string)) ([]gatheredPage, error) {
+	var search, fetch ToolHandlerFunc
+	for _, td := range tools {
+		switch td.Tool.Name {
+		case "web_search":
+			search = td.Handler
+		case "fetch_url":
+			fetch = td.Handler
+		}
+	}
+	if search == nil || fetch == nil {
+		return nil, Error(label + ": needs web_search and fetch_url, and this stage's tools do not include both")
+	}
+	say := func(format string, a ...any) {
+		if status != nil {
+			status(label + ": " + fmt.Sprintf(format, a...))
+		}
+	}
+
+	say("searching %d quer%s", len(queries), map[bool]string{true: "y", false: "ies"}[len(queries) == 1])
+	found := make([][]sources.Fetched, len(queries))
+	lg := NewLimitGroup(gatherParallel)
+	for i, q := range queries {
+		lg.Add(1)
+		go func(i int, q string) {
+			defer lg.Done()
+			args := map[string]any{"query": q}
+			out, err := search(ctx, args)
+			if err != nil {
+				say("search %q failed: %v", q, err)
+				return
+			}
+			found[i] = sources.Extract("web_search", args, out)
+		}(i, q)
+	}
+	lg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// Candidates, in turn from each query's results.
+	type candidate struct {
+		sources.Fetched
+		query string
+	}
+	var picks []candidate
+	seen := map[string]bool{}
+	perDomain := map[string]int{}
+	for depth := 0; ; depth++ {
+		more := false
+		for qi, res := range found {
+			if depth >= len(res) {
+				continue
+			}
+			more = true
+			f := res[depth]
+			key := sources.NormalizeURL(f.URL)
+			host := gatherHost(f.URL)
+			if key == "" || seen[key] || sources.IsWeakSource(f.URL) || r.srcs.Claimed(f.URL) || perDomain[host] >= gatherPerDomain {
+				continue
+			}
+			seen[key] = true
+			perDomain[host]++
+			picks = append(picks, candidate{f, queries[qi]})
+		}
+		if !more {
+			break
+		}
+	}
+	if len(picks) == 0 {
+		say("the searches turned up nothing new to read")
+		return nil, nil
+	}
+
+	// Read in waves: as many as are still wanted, until enough read or
+	// nothing is left to try.
+	var read []gatheredPage
+	var mu sync.Mutex
+	next, tried := 0, 0
+	for len(read) < pages && next < len(picks) {
+		want := pages - len(read)
+		wave := picks[next:min(next+want, len(picks))]
+		next += len(wave)
+		lg := NewLimitGroup(gatherParallel)
+		for _, c := range wave {
+			lg.Add(1)
+			go func(c candidate) {
+				defer lg.Done()
+				if !r.srcs.Claim(c.URL) {
+					// Another reader got to it first; the next wave
+					// replaces it.
+					mu.Lock()
+					tried++
+					mu.Unlock()
+					return
+				}
+				args := map[string]any{"url": c.URL}
+				out, err := fetch(ctx, args)
+				mu.Lock()
+				defer mu.Unlock()
+				tried++
+				if err != nil {
+					return
+				}
+				for _, f := range sources.Extract("fetch_url", args, out) {
+					if len(f.Text) < minPageText {
+						continue // a block page or a stub, not a read
+					}
+					if strings.TrimSpace(c.Title) != "" {
+						f.Title = c.Title // the search's title beats a page's first line
+					}
+					n := r.srcs.Add(f)
+					read = append(read, gatheredPage{N: n, Title: f.Title, URL: f.URL, Query: c.query,
+						Excerpt: relevantExcerpt(f.Text, strings.Join(queries, " "), gatherExcerpt)})
+				}
+			}(c)
+		}
+		lg.Wait()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		say("read %d of %d pages (%d tried)", min(len(read), pages), pages, tried)
+	}
+	if len(read) > pages {
+		read = read[:pages]
+	}
+	sort.Slice(read, func(a, b int) bool { return read[a].N < read[b].N })
+	return read, nil
+}
+
+// minPageText is the least text that counts as having read a page.
+const minPageText = 400
+
+// gatherHost is a URL's site, without a leading www.
+func gatherHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
 }

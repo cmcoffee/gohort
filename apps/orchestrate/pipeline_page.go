@@ -652,6 +652,7 @@ func pipelineStageSections(def PipelineDef, cat editorCatalog) []ui.Section {
 					{Value: "loop", Label: "Loop: repeat a body of stages"},
 					{Value: "branch", Label: "Branch: read a bool and skip or stop"},
 					{Value: "tool", Label: "Tool: call a tool directly"},
+					{Value: "gather", Label: "Gather: search the web and read the best pages"},
 					{Value: "verify", Label: "Verify: check an earlier stage's writing"},
 				}},
 				{Field: "prompt", Type: "textarea", Rows: 4, Label: "Instructions", ShowWhen: "kind:!loop|branch|tool|verify",

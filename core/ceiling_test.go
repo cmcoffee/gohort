@@ -326,7 +326,10 @@ const (
 	// against what the run read. A stage kind is an exported constant like
 	// every other one; the rest of sources and verification (the run's
 	// source list, the extractor registry) lives in core/sources instead.
-	coreExportCeiling = 2267
+	// 2268: StageGather, the kind that searches and reads pages into the
+	// run's sources, so gathering is a step a pipeline names rather than a
+	// tool loop it hopes a worker runs.
+	coreExportCeiling = 2268
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

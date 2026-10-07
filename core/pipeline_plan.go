@@ -72,6 +72,16 @@ func (p *PipelinePlan) walk(stages []PipelineStage, depth int) {
 			step.RunBy = "agent " + orPlaceholder(s.Agent, "(unnamed)")
 			step.Min, step.Max = 1, 1
 			step.Note = "an agent turn is at least one call, and its own tools may add more"
+		case StageGather:
+			pages := s.Count
+			if pages < 1 {
+				pages = gatherDefaultPages
+			}
+			step.RunBy = "no model: searches the web and reads up to " + strconv.Itoa(pages) + " page" + plural(pages)
+		case StageVerify:
+			step.RunBy = "checks " + orPlaceholder(s.Check, "an earlier stage") + " against what the run read"
+			step.Max = verifyMaxClaims
+			step.Note = "one model call per cited claim, up to " + strconv.Itoa(verifyMaxClaims)
 		case StageMachine:
 			step.RunBy = "machine " + orPlaceholder(s.Machine, "(unnamed)")
 			step.Min, step.Max = 1, 1
@@ -81,6 +91,11 @@ func (p *PipelinePlan) walk(stages []PipelineStage, depth int) {
 			voices := len(s.Panel)
 			step.RunBy = strconv.Itoa(voices) + " voices × " + strconv.Itoa(rounds) + " round" + plural(rounds)
 			step.Min, step.Max = voices*rounds, voices*rounds
+			if s.Research > 0 {
+				// Each voice first picks what to look up: one more call each.
+				step.Min, step.Max = 2*voices*rounds, 2*voices*rounds
+				step.Note = "each voice looks things up first, reading up to " + strconv.Itoa(s.Research) + " page" + plural(s.Research) + " a round"
+			}
 		case StageFanout:
 			// The item count comes from an earlier stage's output, so it is
 			// unknowable here. The CAP is knowable, and it is the number

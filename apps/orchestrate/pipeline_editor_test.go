@@ -204,7 +204,7 @@ func TestStageControlsShowForTheKindsThatReadThem(t *testing.T) {
 		return out
 	}
 	for field, want := range map[string][]string{
-		"prompt": {"worker", "synthesize", "agent", "fanout", "panel", "machine"},
+		"prompt": {"worker", "synthesize", "agent", "fanout", "panel", "machine", "gather"},
 		"model":  {"worker", "synthesize", "fanout", "panel"},
 		"think":  {"worker", "synthesize", "fanout", "panel"},
 		"reach":  {"worker", "synthesize", "fanout"},

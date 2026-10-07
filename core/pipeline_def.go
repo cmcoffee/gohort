@@ -113,6 +113,14 @@ const (
 	// the fields verifyFields declares, so a card or a branch can use them.
 	StageVerify PipelineStageKind = "verify"
 
+	// StageGather looks things up and reads them: it searches the web for
+	// each query its prompt names (one per line, or the run's input when it
+	// names none), reads the best Count pages, and numbers them into the
+	// run's sources for a later stage to cite. No model call: the search
+	// and the reading are the whole job. Needs web_search and fetch_url in
+	// the stage's tools.
+	StageGather PipelineStageKind = "gather"
+
 	// StagePanel puts SEVERAL voices on the SAME question, in parallel,
 	// optionally over several rounds where each round reads what the last
 	// one said.
@@ -322,6 +330,12 @@ type PipelineStage struct {
 	// authoring three agents first; a panel of real agents is what you reach
 	// for when the perspectives need their own tools and memory.
 	Panel []string `json:"panel,omitempty"`
+	// Research has each panel voice look things up before it speaks: every
+	// round, each voice picks what it would search for and reads this many
+	// pages (1-4), handed to it as {research} and numbered into the run's
+	// sources so it can cite them. 0 (the default) = voices argue from what
+	// they already know. Panel only.
+	Research int `json:"research,omitempty"`
 	// FanOver names a prior stage whose output is a JSON array; the
 	// fanout stage runs once per element, in parallel. Phase 2.
 	// Accepts "NAME" (the whole stage output, parsed as a list) or
@@ -381,6 +395,8 @@ type PipelineStage struct {
 	// stages read.
 	Body []PipelineStage `json:"body,omitempty"`
 
+	// On a kind="gather" stage it is how many pages to read (default 6).
+	//
 	// Count is how many times a loop runs: required for kind="loop",
 	// 1..loopMaxIterations. With Until set this is the CEILING rather
 	// than the exact count, which is what guarantees termination.

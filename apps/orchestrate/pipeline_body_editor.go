@@ -130,6 +130,7 @@ func bodyKindOptions() []ui.SelectOption {
 		{Value: "machine", Label: "Machine: run a whole machine for this item"},
 		{Value: "branch", Label: "Branch: read a bool and skip ahead (no model call)"},
 		{Value: "tool", Label: "Tool: call a tool directly (no model, no tokens)"},
+		{Value: "gather", Label: "Gather: search the web and read the best pages for this item"},
 		{Value: "synthesize", Label: "Synthesize: combine what earlier stages produced"},
 	}
 }

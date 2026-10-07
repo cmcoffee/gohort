@@ -219,12 +219,30 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 					strconv.Itoa(panelMaxRounds))
 			}
 		}
-		// count_from is honored by the two kinds that repeat. On anything else
-		// it is a control that does nothing, and an author who set it believes
-		// their stage takes its count from the form.
-		if strings.TrimSpace(s.CountFrom) != "" && s.Kind != StagePanel && s.Kind != StageLoop {
-			probs = append(probs, "stage "+s.Name+": count_from is only read by kind=panel (rounds) and kind=loop (passes): "+
-				"nothing else repeats, so there is no count for it to set")
+		// count_from is honored by the kinds that read a count. On anything
+		// else it is a control that does nothing, and an author who set it
+		// believes their stage takes its count from the form.
+		if strings.TrimSpace(s.CountFrom) != "" && s.Kind != StagePanel && s.Kind != StageLoop && s.Kind != StageGather {
+			probs = append(probs, "stage "+s.Name+": count_from is only read by kind=panel (rounds), kind=loop (passes) and kind=gather (pages): "+
+				"nothing else has a count for it to set")
+		}
+		// gather returns its own fields, and reads at most gatherMaxPages.
+		if s.Kind == StageGather {
+			if len(s.Output) > 0 {
+				probs = append(probs, "stage "+s.Name+": a gather stage returns its own fields (found, sources), so it declares no output")
+			}
+			if s.Count > gatherMaxPages {
+				probs = append(probs, "stage "+s.Name+": "+strconv.Itoa(s.Count)+" pages is past the cap of "+strconv.Itoa(gatherMaxPages)+" for one gather, split the queries over two stages")
+			}
+		}
+		// research is a panel voice's own lookup; {research} is where it lands.
+		switch {
+		case s.Research != 0 && s.Kind != StagePanel:
+			probs = append(probs, "stage "+s.Name+": research is only read by kind=panel (pages each voice reads a round), for one lookup use a kind=gather stage")
+		case s.Research < 0 || s.Research > panelMaxResearch:
+			probs = append(probs, "stage "+s.Name+": research is pages each voice reads a round, 1-"+strconv.Itoa(panelMaxResearch)+", got "+strconv.Itoa(s.Research))
+		case s.Research == 0 && strings.Contains(s.Prompt, "{research}"):
+			probs = append(probs, "stage "+s.Name+": the prompt places {research}, which only a panel with research set fills")
 		}
 		// verify checks an EARLIER stage's writing, and returns a shape of its
 		// own (verifyFields), so it takes no prompt-made output.
@@ -247,7 +265,7 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 			switch {
 			case len(s.Output) > 0:
 				probs = append(probs, "stage "+s.Name+": cite works on a stage that writes prose; this one declares output, so its result is JSON. Cite the stage that writes from it instead")
-			case s.Kind == StageVerify || s.Kind == StageBranch || s.Kind == StageLoop || s.Kind == StageTool:
+			case s.Kind == StageVerify || s.Kind == StageGather || s.Kind == StageBranch || s.Kind == StageLoop || s.Kind == StageTool:
 				probs = append(probs, "stage "+s.Name+": cite works on a stage that writes prose, not on a "+string(s.Kind)+" stage")
 			}
 		}
@@ -337,10 +355,8 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 		for k, v := range fanoutCollectedShape(s) {
 			own[k] = v
 		}
-		if s.Kind == StageVerify {
-			for _, f := range verifyFields {
-				own[f.Name] = f.Type
-			}
+		for _, f := range kindFields(s.Kind) {
+			own[f.Name] = f.Type
 		}
 		done[s.Name] = own
 	}
@@ -527,10 +543,8 @@ func cardProblems(s PipelineStage) []string {
 	if s.Kind == StagePanel {
 		have["voice"], have["round"], have["text"] = true, true, true
 	}
-	if s.Kind == StageVerify {
-		for _, f := range verifyFields {
-			have[f.Name] = true
-		}
+	for _, f := range kindFields(s.Kind) {
+		have[f.Name] = true
 	}
 	hint := ""
 	if s.Kind == StagePanel {
@@ -556,4 +570,16 @@ func cardProblems(s PipelineStage) []string {
 		}
 	}
 	return probs
+}
+
+// kindFields is the shape a kind returns on its own, with no output declared:
+// what a verify found, what a gather read.
+func kindFields(k PipelineStageKind) []PipelineField {
+	switch k {
+	case StageVerify:
+		return verifyFields
+	case StageGather:
+		return gatherFields
+	}
+	return nil
 }

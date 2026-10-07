@@ -67,6 +67,9 @@ type RunSources struct {
 	reg  SourceRegistry
 	mu   sync.Mutex
 	text map[string]string // normalized URL -> the text it was read as
+	// claimed is every page a reader has started on, so a parallel reader
+	// picks another (see Claim).
+	claimed map[string]bool
 }
 
 // NewRunSources is an empty source list.
@@ -131,6 +134,42 @@ func (rs *RunSources) Source(n int) (SourceRef, string, bool) {
 	rs.mu.Unlock()
 	return r, t, true
 }
+
+// Claim marks a page as being read, and reports false when the run already
+// holds its full text or another stage is reading it now: parallel readers (a
+// panel's voices, a fanout's branches) each read a different page rather than
+// all reading the first result. A search snippet alone does not count as read.
+func (rs *RunSources) Claim(rawURL string) bool {
+	if rs == nil {
+		return true
+	}
+	key := NormalizeURL(rawURL)
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.claimed[key] || len(rs.text[key]) >= minReadText {
+		return false
+	}
+	if rs.claimed == nil {
+		rs.claimed = map[string]bool{}
+	}
+	rs.claimed[key] = true
+	return true
+}
+
+// Claimed reports whether a page has been read or is being read.
+func (rs *RunSources) Claimed(rawURL string) bool {
+	if rs == nil {
+		return false
+	}
+	key := NormalizeURL(rawURL)
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.claimed[key] || len(rs.text[key]) >= minReadText
+}
+
+// minReadText is how much text makes a page read rather than glimpsed: more
+// than any search snippet.
+const minReadText = 400
 
 // Texts is every source's text, for a check that looks across all of them.
 func (rs *RunSources) Texts() []string {

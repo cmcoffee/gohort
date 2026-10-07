@@ -71,6 +71,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			{Value: "branch", Label: "Branch: read a bool and skip or stop (no model call)"},
 			{Value: "tool", Label: "Tool: call a tool directly (no model, no tokens)"},
 			{Value: "machine", Label: "Machine: run a whole machine as this stage"},
+			{Value: "gather", Label: "Gather: search the web and read the best pages (no model call)"},
 			{Value: "verify", Label: "Verify: check an earlier stage's writing against what the run read"},
 		}, Help: "Changing this changes which controls below apply.",
 			Detail: "Anything the new kind does not use stays visible while it still holds a value, so you can clear it."},
@@ -80,10 +81,12 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 	// to its voices, and the input a machine stage starts its run with.
 	fields = append(fields, ui.FormField{
 		Field: "prompt", Type: "textarea", Rows: 6, Label: "Instructions",
-		ShowWhen: keepWhileSet(s.Prompt, "kind:worker|synthesize|agent|fanout|panel|machine"),
-		Help: "The METHOD, not the shape of the answer. Declared fields below already say what to produce. " +
-			"Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}" +
-			chIf(kind == string(StageFanout), ", and {item} for the element this branch got", "") + ".",
+		ShowWhen: keepWhileSet(s.Prompt, "kind:worker|synthesize|agent|fanout|panel|machine|gather"),
+		Help: chIf(kind == string(StageGather),
+			"What to search for, one search per line (up to 4), or a list from an earlier stage: {stage:plan.queries}. Empty searches the run's input.",
+			"The METHOD, not the shape of the answer. Declared fields below already say what to produce. "+
+				"Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}"+
+				chIf(kind == string(StageFanout), ", and {item} for the element this branch got", "")+"."),
 	})
 
 	fields = append(fields,
@@ -181,6 +184,14 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			Help: "Two to " + strconv.Itoa(PanelMaxVoices) + ". A name that matches one of your agents IS that agent: its persona, its memory, its tools. " +
 				"One that does not is a role the worker answers as, which is how a panel of perspectives runs without authoring three agents first. " +
 				"Write the prompt to whoever is answering and place {voice}; {panel} is everything said so far, and goes at the end on its own if you leave it out."},
+		ui.FormField{Field: "research", Type: "number", Label: "Each voice reads, per round", Min: 0, Max: 4,
+			ShowWhen: keepWhileSet(chIf(s.Research > 0, strconv.Itoa(s.Research), ""), "kind:panel"),
+			Help:     "Pages, 0-4. Above 0, every round each voice picks what to search for and reads that many pages before it speaks, so it argues from evidence it can cite as [N].",
+			Detail:   "Lands in the prompt as {research}, or at the end if you leave it out. One more model call per voice per round, plus the pages; a page one voice read is not read again by another."},
+		ui.FormField{Field: "count", Type: "number", Label: "Pages to read", Min: 1, Max: 12,
+			ShowWhen: keepWhileSet(chIf(s.Kind == StageGather && s.Count > 0, strconv.Itoa(s.Count), ""), "kind:gather"),
+			Help:     "1-12, default 6. The best results across the searches, at most two from one site, none this run already read.",
+			Detail:   "Needs web_search and fetch_url. Returns each page's [N], title and the passage most about the searches, with found and sources as fields."},
 		ui.FormField{Field: "count", Type: "number", Label: "Rounds", Min: 1, Max: PanelMaxRounds,
 			ShowWhen: keepWhileSet(chIf(s.Kind == StagePanel && s.Count > 0, strconv.Itoa(s.Count), ""), "kind:panel"),
 			Help: "One round is a poll: nobody has replied to anybody. Two is the smallest thing worth calling a debate. " +
@@ -307,7 +318,7 @@ func stageRecord(s PipelineStage) map[string]any {
 		"until": s.Until, "when": s.When, "skip_to": s.SkipTo,
 		"tool": s.Tool, "args": nameValueRowsOf(s.Args), "machine": s.Machine, "model": s.Model, "think": StageThinkMode(s),
 		"panel": s.Panel, "reach": StageReach(s), "tools": s.Tools, "output": stageOutputRecord(s),
-		"check": s.Check, "cite": s.Cite,
+		"check": s.Check, "cite": s.Cite, "research": s.Research,
 	}
 }
 
@@ -350,6 +361,11 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 	if v, ok := str("count"); ok {
 		if n, err := strconv.Atoi(v); err == nil {
 			s.Count = n
+		}
+	}
+	if v, ok := str("research"); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			s.Research = n
 		}
 	}
 	if v, ok := str("think"); ok {

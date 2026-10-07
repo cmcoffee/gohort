@@ -43,7 +43,7 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 				"input":       {Type: "string", Description: "(run) The input fed to the pipeline's first stage and available as {input} in every stage prompt."},
 				"stages": {
 					Type:        "array",
-					Description: "(create/update) Ordered stages, each an object. Common shape: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"panel\"|\"loop\"|\"branch\"|\"tool\"|\"verify\", \"prompt\": instruction}. Kinds: worker = a plain LLM step (the default); agent = dispatch to one of your agents (set \"agent\"); fanout = run the prompt once per element of an earlier list, in parallel (set \"fan_over\", use {item}); panel = put SEVERAL voices on the SAME question, in parallel, over \"count\" rounds where each round reads the last (set \"panel\": [names], use {voice} and {panel}), that is what disagreement is for, and it is NOT a fanout: a fanout's branches never meet; loop = repeat a nested \"body\" of stages, each pass seeing the last (set \"count\" as the ceiling, \"until\" to stop early); a panel's rounds or a loop's passes may come from the RUN instead of the recipe with \"count_from\": \"{field}\" (a submit-form field) or \"{stage:NAME.field}\" (a number an earlier stage decided), with \"count\" as the fallback; a fanout may ALSO take a \"body\", run once per item, when each item needs several steps rather than one prompt. WHEN THE NUMBER OF REPETITIONS IS NOT KNOWN AS YOU WRITE THE PIPELINE (\"keep going until the critic is satisfied\", \"until they agree\", \"up to five rounds\") that is kind=loop, NOT five hand-written copies of the same two stages. The copies cannot stop early, cannot say which pass they are, and silently become a fixed-length pipeline the user was not promised; machine = run a stored machine as this stage (set \"machine\"), for work that carries state between its own steps; branch = no LLM call, read a bool and stop or skip (set \"when\"); tool = call one of your tools directly with \"args\" you write (no LLM, no tokens); verify = check an earlier stage's writing against what the run read (set \"check\"). Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration}, {voice}, {panel}, {sources} (the pages the run has read, numbered to cite as [N]; set \"cite\":true on the stage that cites them), plus {field_name} for every field of the submit form when this pipeline backs an app (that is how a run takes parameters, not just a question). Any stage may declare \"output\": [{name,type,desc,required}] to return validated JSON whose fields later stages read as {stage:NAME.field}, that is what makes fan_over-a-field, loop \"until\", and branch \"when\" possible. Worker stages inherit the calling agent's tools; set \"reach\" (\"all\" or \"\" for the caller's whole catalog, \"read\", \"none\") to restrict (prefer it to naming tools, since it survives a different caller; name tools only when the person named them or agreed when asked), \"think\" for deliberation, \"model\":\"lead\" for the precision tier on the stages that earn it. Set \"render\":\"card\" with \"card\":{title,badges,body,accent} to draw a stage's output fields as a card (a verdict, a scored item; on a panel, one card per voice per round). **Call action=\"help\" for the full spec**: every field, the caps, and the canonical shapes.",
+					Description: "(create/update) Ordered stages, each an object. Common shape: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"panel\"|\"loop\"|\"branch\"|\"tool\"|\"gather\"|\"verify\", \"prompt\": instruction}. Kinds: worker = a plain LLM step (the default); agent = dispatch to one of your agents (set \"agent\"); fanout = run the prompt once per element of an earlier list, in parallel (set \"fan_over\", use {item}); panel = put SEVERAL voices on the SAME question, in parallel, over \"count\" rounds where each round reads the last (set \"panel\": [names], use {voice} and {panel}), that is what disagreement is for, and it is NOT a fanout: a fanout's branches never meet; loop = repeat a nested \"body\" of stages, each pass seeing the last (set \"count\" as the ceiling, \"until\" to stop early); a panel's rounds or a loop's passes may come from the RUN instead of the recipe with \"count_from\": \"{field}\" (a submit-form field) or \"{stage:NAME.field}\" (a number an earlier stage decided), with \"count\" as the fallback; a fanout may ALSO take a \"body\", run once per item, when each item needs several steps rather than one prompt. WHEN THE NUMBER OF REPETITIONS IS NOT KNOWN AS YOU WRITE THE PIPELINE (\"keep going until the critic is satisfied\", \"until they agree\", \"up to five rounds\") that is kind=loop, NOT five hand-written copies of the same two stages. The copies cannot stop early, cannot say which pass they are, and silently become a fixed-length pipeline the user was not promised; machine = run a stored machine as this stage (set \"machine\"), for work that carries state between its own steps; branch = no LLM call, read a bool and stop or skip (set \"when\"); tool = call one of your tools directly with \"args\" you write (no LLM, no tokens); gather = no LLM call, search the web for each query its prompt names (one per line; the input when it names none) and read the best \"count\" pages (default 6) into the run's sources; verify = check an earlier stage's writing against what the run read (set \"check\"). A panel with \"research\": N has each voice look things up and read N pages every round before it speaks. Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration}, {voice}, {panel}, {sources} (the pages the run has read, numbered to cite as [N]; set \"cite\":true on the stage that cites them), plus {field_name} for every field of the submit form when this pipeline backs an app (that is how a run takes parameters, not just a question). Any stage may declare \"output\": [{name,type,desc,required}] to return validated JSON whose fields later stages read as {stage:NAME.field}, that is what makes fan_over-a-field, loop \"until\", and branch \"when\" possible. Worker stages inherit the calling agent's tools; set \"reach\" (\"all\" or \"\" for the caller's whole catalog, \"read\", \"none\") to restrict (prefer it to naming tools, since it survives a different caller; name tools only when the person named them or agreed when asked), \"think\" for deliberation, \"model\":\"lead\" for the precision tier on the stages that earn it. Set \"render\":\"card\" with \"card\":{title,badges,body,accent} to draw a stage's output fields as a card (a verdict, a scored item; on a panel, one card per voice per round). **Call action=\"help\" for the full spec**: every field, the caps, and the canonical shapes.",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"session_meta": {
@@ -107,13 +107,16 @@ In-place edit vs retire-and-replace: use action=update when iterating on the SAM
 
 === STAGE FIELDS ===
 name       unique label; also the key later stages read as {stage:NAME}. No dots.
-kind       worker (default) | agent | fanout | loop | branch | tool
+kind       worker (default) | agent | fanout | panel | loop | branch | tool | machine | gather | verify
 prompt     the instruction (not used by branch or tool)
 agent      agent name/id, for kind=agent, optionally for kind=fanout
 panel      [voices] for kind="panel": who answers. A name that matches one of your agents IS that
            agent (its persona, memory and tools); one that does not is a ROLE the worker answers
            as, which is what lets "the pessimist" / "the customer" work without authoring agents
            first. Two to 8 voices. "count" is the number of ROUNDS.
+research   (panel) 1-4: every round, each voice picks what it would search for and reads this many
+           pages before it speaks, given to it as {research} (appended if the prompt does not place
+           it) and numbered into the run's sources so it can cite them (see SOURCES)
 reach      how much of the caller's catalog a worker stage may touch: "all" or "" = all of it,
            the two being one value, "read" =
            only tools that read (nothing that writes, runs a command, or reaches the network),
@@ -135,7 +138,8 @@ output     [{name, type, desc, required, enum?, from?}]: declare a validated JSO
            A value you already have is not worth a model's attention, and asking invites a paraphrase
 fan_over   (fanout) an earlier stage, or one of its list fields: "plan.queries"
 body       (loop) nested stage list, repeated
-count      (loop) required, 1-25: the hard ceiling
+count      (loop) required, 1-25: the hard ceiling. (panel) rounds. (gather) pages to read, 1-12, default 6
+count_from (panel, loop, gather) the count from the run instead: "{field}" or "{stage:NAME.field}"
 until      (loop) a body stage's bool field; stops early when true
 collect    (loop) "last" (default) | "all" (passes joined as ## Pass N)
 when       (branch) required bool field on an EARLIER stage
@@ -155,6 +159,19 @@ what was found. Cite as [N] from: {sources}". Give that stage "cite": true and i
 Sources section listing exactly what it cited is appended, and a citation naming nothing the run read is noted in
 the result instead of passing for real. (Pages an AGENT stage reads stay inside that agent's turn; a worker stage
 with web tools, a fanout, or a tool stage is how a pipeline gathers sources it can cite.)
+
+To GATHER as a step of its own, add {"kind": "gather", "prompt": "<one search per line>", "count": 6}. No model
+call: it runs each search (up to 4; with no prompt it searches the run's input), picks the best results (skipping
+pages this run already read, weak sources, and more than 2 from one site), reads them, and numbers them into the
+sources. Its output is each page's [N], title and the passage most about the searches, for the stage that writes
+from it; its fields are found (pages read) and sources (the list). Queries can come from an earlier stage:
+"prompt": "{stage:plan.queries}" (a list field, one search per item). Needs web_search and fetch_url in the
+stage's reach. Canonical: plan (declares queries) -> gather -> write (cite, from {stage:gather}) -> verify.
+
+On a PANEL, "research": 2 has every voice look things up before each turn: it says what it would search for given
+where the panel stands, reads that many pages, and gets them as {research}. Each side argues from its own
+evidence, cites it as [N], and a page one voice read is not read again by another. Mind the cost: one more model
+call per voice per round, plus the pages.
 
 To CHECK the writing, add a stage {"kind": "verify", "check": "<the writing stage>"}. It takes no prompt and no
 output: it finds citations naming nothing read, figures that appear in none of the text read, and puts each cited
@@ -193,7 +210,7 @@ Every reference is checked when the pipeline is SAVED, so a typo is an authoring
 Give a stage "output": [{"name": lowercase_key, "type": "string"|"number"|"bool"|"list"|"object", "desc": what goes in it, "required": bool}] and it is asked for JSON with those keys, validated, and each field becomes {stage:NAME.field} downstream. Use it when a later stage needs ONE PIECE of an earlier result: a list to fan over, a count, a verdict, a title. This is what makes fan_over-a-field, loop until, and branch when possible. A stage that declares output renders its own {stage:NAME} as JSON, so point fan_over at the field ("plan.queries"). Nested fields go one level deep. Not valid on fanout, loop, or branch. Skip it for prose stages (a draft, a summary): wrapping prose in a JSON envelope buys nothing. NEVER ask for JSON in the prompt as well: declaring the fields IS the mechanism, so a prompt that also specifies a format is two sets of formatting rules, and the usual result is a JSON string nested inside a JSON field. Say what to FIND; the framework handles the shape.
 
 HOW MANY TIMES (count, count_from)
-A panel's "count" is its rounds and a loop's is its passes, and both are fixed when you write the pipeline. Set "count_from" when the number belongs to the QUESTION rather than to the recipe: "{rounds}" reads a submit-form field, "{stage:plan.rounds}" reads a number an earlier stage decided (that is how "as many rounds as this deserves" works). "count" stays the fallback and the guarantee: a reference nobody filled falls back to it quietly, one that resolves to something that is not a number falls back and says so, and anything over the ceiling is clamped and says so. Only panel and loop repeat; count_from is refused anywhere else rather than ignored.
+A panel's "count" is its rounds and a loop's is its passes, and both are fixed when you write the pipeline. Set "count_from" when the number belongs to the QUESTION rather than to the recipe: "{rounds}" reads a submit-form field, "{stage:plan.rounds}" reads a number an earlier stage decided (that is how "as many rounds as this deserves" works). "count" stays the fallback and the guarantee: a reference nobody filled falls back to it quietly, one that resolves to something that is not a number falls back and says so, and anything over the ceiling is clamped and says so. Only panel, loop and gather (pages to read) take a count; count_from is refused anywhere else rather than ignored.
 
 SUMMARIZING A RUN (session_meta)
 Pass session_meta:["<stage>.<field>"...] to promote declared output fields onto every RUN's row in the sidebar, the verdict, the winning side, a confidence level. A run history is BROWSED, not read: the title and the date answer "when did I run this", and the thing a reader is actually scanning for is the answer, which otherwise means opening runs one at a time until the right one appears. The field must be declared in that stage's "output", the stage must be top-level (a loop body holds a different value every pass), names must be unique, and ID/Title/Date are taken. The values are filled as each stage finishes, so a run that fails halfway still carries what it had established. An app built on the pipeline renders them with the pipeline section's "meta" key, which is where the label, the style (text/badge/pill) and the per-value colors are chosen.
@@ -788,6 +805,8 @@ func parsePipelineStages(raw any) ([]PipelineStage, error) {
 			Output:    fields,
 			Body:      body,
 			Count:     mapInt(m, "count"),
+			CountFrom: strings.TrimSpace(mapStr(m, "count_from")),
+			Research:  mapInt(m, "research"),
 			Until:     strings.TrimSpace(mapStr(m, "until")),
 			Collect:   strings.ToLower(strings.TrimSpace(mapStr(m, "collect"))),
 			When:      strings.TrimSpace(mapStr(m, "when")),
