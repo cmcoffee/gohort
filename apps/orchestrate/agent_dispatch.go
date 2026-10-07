@@ -1916,6 +1916,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// the model itself never saw them.
 	llmMessages = append(llmMessages, Message{Role: "user", Content: attributeSender("user", run.MessageSender, llmMessage), Images: run.Images})
 
+	// Background results delivered on this session from here on, so the turn
+	// knows about files another turn sent while it was running.
+	// Keyed as a task keys its result (ToolSession.DeliverySession), so the
+	// two cannot disagree about which conversation this is.
+	bgSent := watchBackgroundDeliveries(chFirst(subSess.DeliverySession(), subSessionID))
 	// Optional injection-queue drain hook for mid-flight user notes.
 	// Cheap no-op when the queue isn't registered.
 	var onRoundStart func() []Message
@@ -1980,7 +1985,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// returns nil when empty, so the loop's pre-finalize re-call
 		// terminates. A mid-flight note pushed while this dispatch runs
 		// gets picked up at the next round AND right before finalizing.
-		InjectionDrain: onRoundStart,
+		// Background work this turn started that another turn delivered
+		// meanwhile is reported the same way (background_deliveries.go).
+		InjectionDrain: drainWithDeliveries(onRoundStart, bgSent),
 		ChatOptions: []ChatOption{
 			WithRouteKey(dispatchRoute),
 			WithThink(think),
@@ -2062,13 +2069,21 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			loopCfg.LiveClaimTrusted = true
 		}
 	}
-	loopCfg.DeliveredCount = func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) }
+	// What reaches the conversation with this reply, plus what a background
+	// result this turn started delivered while it ran: a file the chat already
+	// has is not a phantom because a different turn sent it.
+	loopCfg.DeliveredCount = func() int {
+		return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) + bgSent.files()
+	}
 	loopCfg.Backgrounded = func() bool { return subSess.Detach.Any() }
 	loopCfg.BackgroundEstimate = func() string { return subSess.Detach.EstimateText() }
 	// Catch a reply that promises a file it never made, while the loop can still
 	// do something about it. Without this the claim reaches the channel, strips
 	// to an empty reply, and the contact is asked to rephrase.
 	loopCfg.PhantomDeliveryRefs = func(reply string) []string {
+		if bgSent.files() > 0 {
+			return nil
+		}
 		return phantomDeliveryRefs(subSess, reply, produced.producedKind())
 	}
 	buildCheck := newDispatchBuildCheck(target, subSess)
@@ -2324,6 +2339,89 @@ func attributeSender(role, sender, content string) string {
 // past words. Same thread, two builders, two different ways to lose the speaker.
 // Both call this now; neither renders history on its own.
 func llmHistoryContent(m ChatMessage) string {
+	if note := deliveredNote(m); note != "" {
+		return llmHistoryText(m) + "\n" + note
+	}
+	return llmHistoryText(m)
+}
+
+// deliveredNote says what files a stored assistant message actually sent,
+// for the model's copy of the history only.
+//
+// The thread keeps them (Attachments, Files) so a reload can show them, and
+// they never reached the model: a later turn read back only the words. When
+// the words were "it'll land on its own and I'll attach it then" about a
+// picture that had in fact gone out, every later turn believed the picture
+// was still owed, and kept going back to the error from its first attempt.
+// Files sent mid-turn by send_message count too: they ride a tool call, not
+// the reply, so the message's own fields never list them.
+//
+// Fenced like the other history markers, so a reply that echoes it is
+// scrubbed on the way out.
+func deliveredNote(m ChatMessage) string {
+	if m.Role != "assistant" {
+		return ""
+	}
+	var parts []string
+	switch n := len(m.Attachments); {
+	case n == 1:
+		parts = append(parts, "1 image")
+	case n > 1:
+		parts = append(parts, fmt.Sprintf("%d images", n))
+	}
+	for _, f := range m.Files {
+		parts = append(parts, chFirst(strings.TrimSpace(f.Name), f.Kind, "a file"))
+	}
+	for _, tc := range m.ToolCalls {
+		if tc.Name != "send_message" || tc.Framework || tc.Err != "" || !strings.HasPrefix(strings.TrimSpace(tc.Result), "Sent to") {
+			continue // not sent: errored, queued for approval, or not ours
+		}
+		for _, ref := range sentAttachmentRefs(tc.Args) {
+			parts = append(parts, ref+" (via send_message)")
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return textutil.FenceMeta("delivered with this message: " + strings.Join(parts, ", ") + ". Already sent; do not send it again unless asked.")
+}
+
+// sentAttachmentRefs reads the attachments a send_message call named, by
+// their last path element: what a person would call the file.
+func sentAttachmentRefs(args map[string]any) []string {
+	var raw []string
+	switch v := args["attachments"].(type) {
+	case []any:
+		for _, x := range v {
+			if s, ok := x.(string); ok {
+				raw = append(raw, s)
+			}
+		}
+	case []string:
+		raw = append(raw, v...)
+	case string:
+		raw = append(raw, v)
+	}
+	if s, ok := args["attachment"].(string); ok {
+		raw = append(raw, s)
+	}
+	var out []string
+	for _, r := range raw {
+		r = strings.TrimSpace(r)
+		if r == "" {
+			continue
+		}
+		if i := strings.LastIndexAny(r, "/\\"); i >= 0 && i < len(r)-1 {
+			r = r[i+1:]
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// llmHistoryText is a stored message's own words, attributed: llmHistoryContent
+// without the delivery note.
+func llmHistoryText(m ChatMessage) string {
 	// Automated reports store a clean body (the UI shows the producer in a card
 	// header); re-attach an origin marker for the LLM so it reads as an
 	// automated report, not something it said itself. Wrapped in <gohort-meta>

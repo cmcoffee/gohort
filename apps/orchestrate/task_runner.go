@@ -532,9 +532,13 @@ func wakeChannelTarget(p orchUpdatePayload) (chatID, handle string, ok bool) {
 // that asked for it. No-op for a web session, and no-op when the turn already
 // sent something itself — a model that called send_message has delivered, and a
 // second copy is worse than none.
-func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply string, toolTrace []PersistedToolCall) {
+//
+// Reports whether the conversation is a channel at all, and whether this sent
+// the result: the caller's "carried files but delivered nothing" warning has to
+// be judged after the send, not before it.
+func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply string, toolTrace []PersistedToolCall) (isChannel, sent bool) {
 	if !isTaskWake(p.Prompt) || toolCallsInclude(toolTrace, "send_message") {
-		return
+		return false, false
 	}
 	chatID, handle, ok := wakeChannelTarget(p)
 	if !ok {
@@ -545,8 +549,9 @@ func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply strin
 		// LOOKS like a channel and resolved nobody is the one worth a line.
 		if strings.HasPrefix(p.SessionID, "chan:") || p.SessionID == cortexSessionID(p.AgentID) {
 			Log("[task] finished work for session %s has no deliverable recipient: it is in the thread but was NOT sent to the conversation", p.SessionID)
+			return true, false
 		}
-		return
+		return false, false
 	}
 	// House style holds here too. It used to run only on the interactive chat
 	// path, so a scheduled report was the one reply nobody had read yet and the
@@ -554,12 +559,13 @@ func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply strin
 	text := strings.TrimSpace(prompts.ApplyRuleEnforcers(StripMetaTags(reply)))
 	imgs, vids := collectMessageMedia(subSess, reply)
 	if text == "" && len(imgs) == 0 {
-		return
+		return true, false
 	}
 	if _, err := operatorDeliverMedia(p.Username, p.AgentID, chatID, handle, text, imgs, vids); err != nil {
 		Warn("[task] could not deliver the finished result to the conversation (%s): %v", chFirst(chatID, handle), err)
-		return
+		return true, false
 	}
 	Log("[task] delivered a finished background result to %s (%d char(s), %d image(s), %d video(s))",
 		chFirst(chatID, handle), len(text), len(imgs), len(vids))
+	return true, true
 }

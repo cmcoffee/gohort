@@ -146,6 +146,10 @@ type planRun struct {
 	// has to answer "was this turn making a picture?" while the loop is still
 	// running — long before the transcript the after-the-fact backstop reads.
 	produced *deliveryWatch
+	// bgSent: background results delivered on this session while the turn
+	// runs, by a wake turn of their own (background_deliveries.go). They count
+	// as delivered for this turn's checks, and the model is told once.
+	bgSent *backgroundDeliveryWatch
 
 	// Round budget: soft cap, explorer hard cap, and the loop's absolute
 	// ceiling (initRoundCaps); roundCounter paces the nudges, orchRoundsUsed
@@ -179,6 +183,7 @@ func (t *chatTurn) newPlanRun(msgs []ChatMessage) *planRun {
 		maxSteps:   resolveMaxPlanSteps(t.agent),
 		holdStream: agentHasOutputGuardrail(t.agent),
 		produced:   new(deliveryWatch),
+		bgSent:     watchBackgroundDeliveries(t.chatSessionID()),
 	}
 	pr.orchCtx, pr.cancelOrch = context.WithCancel(t.ctx)
 	return pr
@@ -2266,7 +2271,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// forget. (facts() now enforces incognito itself, so a second read would
 		// agree today — the point stands for whatever the next condition is.)
 		UncheckedClaims:    UncheckedFactNotes(pr.facts),
-		DeliveredCount:     func() int { return len(pr.sess.Images) + len(pr.sess.Videos) + len(pr.sess.Files) },
+		DeliveredCount:     func() int { return len(pr.sess.Images) + len(pr.sess.Videos) + len(pr.sess.Files) + pr.bgSent.files() },
 		Backgrounded:       func() bool { return pr.sess.Detach.Any() },
 		BackgroundEstimate: func() string { return pr.sess.Detach.EstimateText() },
 		// Catch a reply that presents a picture the turn never produced, while
@@ -2276,6 +2281,9 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// ships a staged file and has nothing to say when there is no file. A
 		// generation that failed left the caption standing on its own.
 		PhantomDeliveryRefs: func(reply string) []string {
+			if pr.bgSent.files() > 0 {
+				return nil // another turn sent what this one started
+			}
 			return phantomDeliveryRefs(pr.sess, reply, pr.produced.producedKind())
 		},
 		// An authoring turn may not finish on a reply over tools it never
@@ -2292,7 +2300,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// return empty when nothing's queued or the pre-finalize re-drain
 		// would loop. drainNotes() empties the shared queue, so the
 		// plan-step/synthesis drains coexist (first drain wins).
-		InjectionDrain: func() []Message {
+		InjectionDrain: drainWithDeliveries(func() []Message {
 			notes := t.drainNotes()
 			if len(notes) == 0 {
 				return nil
@@ -2302,7 +2310,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 				return nil
 			}
 			return []Message{{Role: "user", Content: block}}
-		},
+		}, pr.bgSent),
 		// plan_set fixation guard. Once the model has had plan_set
 		// rejected planSetDropThreshold times this turn, drop it from the
 		// catalog so it physically can't keep re-submitting the same

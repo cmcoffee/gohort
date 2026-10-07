@@ -926,16 +926,6 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		toolTrace = persistedToolCallsFromTranscript(transcript)
 	}
 	steps := runStepsFromToolCalls(toolTrace)
-	// A wake that carried files but ended without sending anything means the
-	// picture went nowhere — the exact silent failure this staging exists to
-	// end, so say so where someone reading the log will see it rather than
-	// letting a "done!" with no attachment look like a success. A messaging
-	// surface collects them through the send; a plain web thread has no stored
-	// attachment channel, so this is expected there and still worth recording.
-	if carriedAttachments > 0 && !toolCallsInclude(toolTrace, "send_message") {
-		Log("[orchestrate/scheduled] WARN session=%s wake carried %d attachment(s) but the turn sent no message: they were not delivered",
-			p.SessionID, carriedAttachments)
-	}
 	record := func(status RunStatus, summary, raw, errStr string) {
 		RecordRun(RootDB, RunRecord{
 			Owner:  p.Username,
@@ -1224,7 +1214,23 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// A background result whose conversation lives on a messaging channel has to
 	// be SENT there — appending it to the stored session is what the recurring
 	// path wants and leaves the person who asked with nothing.
-	deliverWakeToChannel(p, subSess, reply, toolTrace)
+	isChannel, sent := deliverWakeToChannel(p, subSess, reply, toolTrace)
+	// Where a wake's files went, judged after every route had its turn. A
+	// channel result goes out by the send above or by the turn's own
+	// send_message; a web thread's goes out as the card appended above, which
+	// keeps them. This used to be checked before the send, so it reported a
+	// picture as undelivered one line before the log said it was delivered.
+	if carriedAttachments > 0 {
+		delivered := sent || toolCallsInclude(toolTrace, "send_message") || !isChannel
+		if delivered {
+			// A turn that started this work may still be running on the
+			// same session: tell it (see background_deliveries.go).
+			recordBackgroundDelivery(p.SessionID, carriedAttachments, StripMetaTags(reply))
+		} else {
+			Log("[orchestrate/scheduled] WARN session=%s wake carried %d attachment(s) but nothing sent them: they were not delivered",
+				p.SessionID, carriedAttachments)
+		}
+	}
 	outcome := scheduledOutcome{
 		reply:       reply,
 		objLine:     objLine,
