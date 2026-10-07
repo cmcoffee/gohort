@@ -3809,6 +3809,30 @@
                                  ':scope > .ui-agent-msg-attachments')) return;
       m.bubble.classList.add('ui-agent-msg-empty');
     }
+    // streamingText is what a bubble shows while its reply is still arriving.
+    // The body is pre-wrap then, so whitespace the markdown pass would drop is
+    // drawn: a reply opening with blank lines (common after a thinking block,
+    // or once an internal note is stripped from the front) sat below a gap,
+    // and a paragraph break arrives before the paragraph it opens, so a gap
+    // trailed the text until the next words landed. Both vanished when the
+    // turn settled, which made the reply jump. Only the display is trimmed;
+    // rawText keeps every character for the markdown pass.
+    function streamingText(raw) {
+      return String(window.uiStripMetaTags(raw || '') || '')
+        .replace(/^(?:[ \t]*\n)+/, '')
+        .replace(/\s+$/, '');
+    }
+
+    // showStreaming puts a bubble's in-progress text on screen, keeping the
+    // bubble hidden while there is nothing visible to show.
+    function showStreaming(m) {
+      var shown = streamingText(m.rawText);
+      m.body.textContent = shown;
+      if (shown.length > 0) unmarkEmptyBubble(m);
+      else markEmptyBubble(m);
+      scrollConvo(false);
+    }
+
     function appendChunk(id, text) {
       var m = msgEls[id];
       if (!m) { m = addMessage('assistant', id, ''); }
@@ -3818,19 +3842,14 @@
       // used to happen, so an internal note was on screen in plain text for
       // the whole stream and only vanished when the turn settled. rawText
       // keeps the original for that later pass.
-      m.body.textContent = window.uiStripMetaTags(m.rawText);
-      if (m.rawText.length > 0) unmarkEmptyBubble(m);
-      scrollConvo(false);
+      showStreaming(m);
     }
 
     function replaceChunk(id, text) {
       var m = msgEls[id];
       if (!m) { m = addMessage('assistant', id, ''); }
       m.rawText = text || '';
-      m.body.textContent = window.uiStripMetaTags(m.rawText);
-      if (m.rawText.length > 0) unmarkEmptyBubble(m);
-      else markEmptyBubble(m);
-      scrollConvo(false);
+      showStreaming(m);
     }
 
     function finalizeMessage(id) {
@@ -3846,7 +3865,9 @@
       // Marking, not just skipping the unmark: a round that streamed
       // text and had it cleared before settling has already lost the
       // class, and "keep hidden" has to be able to re-hide it.
-      if ((m.rawText || '').length > 0) unmarkEmptyBubble(m);
+      // Judged on what is visible: a reply of only blank lines renders to
+      // nothing, and showing it would leave an empty card.
+      if (streamingText(m.rawText).length > 0) unmarkEmptyBubble(m);
       else markEmptyBubble(m);
       // Streaming-mode pre-wrap is no longer needed once mdToHTML
       // emits structured block elements (p / pre / lists handle
