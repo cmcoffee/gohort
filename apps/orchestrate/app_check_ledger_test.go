@@ -105,3 +105,14 @@ func TestAnAskWithoutGrantOrAgentIsNoted(t *testing.T) {
 		t.Fatal("task( read as ask(")
 	}
 }
+
+// An app whose sources work from saved entries cannot pass verify on an
+// empty store with no sample: its main path never ran.
+func TestAppReadsRecords(t *testing.T) {
+	if !appReadsRecords(AppSpec{DataSources: []AppDataSource{{Script: "recs = json.loads(os.environ.get('records','[]'))"}}}) {
+		t.Fatal("a records-reading source not seen")
+	}
+	if appReadsRecords(AppSpec{DataSources: []AppDataSource{{Script: "print(json.dumps(fetch_url('https://x')))"}}}) {
+		t.Fatal("a source that reads no records counted")
+	}
+}

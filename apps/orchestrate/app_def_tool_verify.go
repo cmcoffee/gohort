@@ -212,12 +212,22 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			spec.RecordSample(sample)
 			spec.Sample = sample
 		}
-		report, _, _, fail := t.runScriptChecks(spec, appScriptRun{includeActions: true, sample: sample, params: mapArg(args["params"]), preview: verifyOutputPreview})
+		report, recCount, _, fail := t.runScriptChecks(spec, appScriptRun{includeActions: true, sample: sample, params: mapArg(args["params"]), preview: verifyOutputPreview})
 		failures += fail
 		if fail > 0 {
 			classes = append(classes, "script-fail")
 		}
 		fmt.Fprintf(&b, "Script checks:\n%s\n", strings.TrimSpace(report))
+		// Nothing saved and no sample: every source that works from the
+		// person's entries ran as a first visit, so the app's main path (the
+		// forecast for a city, the summary of a transcript) never ran at all.
+		// A verify that passed on that told the user an app worked whose
+		// work nobody had seen.
+		if recCount == 0 && appReadsRecords(spec) {
+			failures++
+			classes = append(classes, "main-path-unrun")
+			b.WriteString("FAIL the app's main path never ran: nothing is saved and no sample was given, so every data source that works from the person's entries ran as a first visit. Verify again with sample=[{...one entry shaped like the form's...}], and look at what each source prints.\n")
+		}
 		for _, w := range appSampleFieldWarnings(spec.RecordFields, sample) {
 			b.WriteString(w + "\n")
 		}
@@ -898,4 +908,15 @@ func emptyStoreNote(recs []map[string]any) string {
 		return ""
 	}
 	return " That was against an EMPTY store, so it only shows the script runs: pass sample=[{...}] with a few records shaped like the form's to check its logic."
+}
+
+// appReadsRecords reports an app with a data source that works from the
+// person's saved entries.
+func appReadsRecords(spec AppSpec) bool {
+	for _, ds := range spec.DataSources {
+		if strings.Contains(ds.Script, "records") {
+			return true
+		}
+	}
+	return false
 }
