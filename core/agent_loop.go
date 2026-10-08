@@ -4182,7 +4182,41 @@ func (lr *loopRun) settleToolRound() loopAction {
 	// Evidence for the turn judge: what ran, and what the last failure said.
 	// Duplicates are kept on purpose — three image calls are three attempts,
 	// and a judge that sees one of them is reading a different turn.
+	//
+	// In the order the model made them, the calls a guard REFUSED before they
+	// ran included. Those never reach the work list, so the judge saw only the
+	// failure count rise: an agent whose two delete calls the id gate refused
+	// said "I tried twice and it was refused", and was retracted for claiming
+	// an attempt that "never happened". A refused call is an attempt; it
+	// carries " [REFUSED before it ran: <why>]" in place of a result. A batch
+	// duplicate is not: it ran once, as its twin.
+	ranAt := make(map[int]toolWork, len(lr.rs.work))
 	for _, w := range lr.rs.work {
+		ranAt[w.index] = w
+	}
+	twin := map[int]bool{}
+	for _, d := range lr.rs.batchDup {
+		twin[d[0]] = true
+	}
+	var inOrder []toolWork
+	refusedAt := map[int]bool{}
+	for i, tc := range lr.rs.resp.ToolCalls {
+		if w, ok := ranAt[i]; ok {
+			inOrder = append(inOrder, w)
+		} else if !twin[i] && i < len(lr.rs.results) && lr.rs.results[i].IsError {
+			inOrder = append(inOrder, toolWork{index: i, tc: tc})
+			refusedAt[i] = true
+		}
+	}
+	for _, w := range inOrder {
+		if refusedAt[w.index] {
+			refused := lr.rs.results[w.index].Content
+			lr.lastToolError = refused
+			label := toolCallLabel(w.tc) + " [REFUSED before it ran: " + toolFailureNote(refused) + "]"
+			lr.turnToolCalls = append(lr.turnToolCalls, label)
+			lr.turnToolOutputs = append(lr.turnToolOutputs, label+": "+toolResultExcerpt(refused, toolOutputExcerptMax))
+			continue
+		}
 		// The LABEL, not the bare name: a grouped tool's read and its write
 		// share a name, and "moltbook ran nine times" is consistent with a
 		// reply claiming three posts. "moltbook/get_feed" is not.

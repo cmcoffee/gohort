@@ -94,8 +94,19 @@ func idProvenanceRefusal(tool string, args map[string]any, known map[string]bool
 			continue
 		}
 		v, _ := args[name].(string)
-		id := strings.ToLower(strings.TrimSpace(v))
-		if !uuidPattern.MatchString(id) || known[id] {
+		// The UUIDs IN the value, not the value: an id is often printed with
+		// a prefix ("fact:58df4d7c-…"), and the model copying it exactly as
+		// printed was refused as having invented it, because only the bare
+		// UUID was ever collected. Each UUID in the argument must be one the
+		// conversation was given; nothing else about the value is judged.
+		id := ""
+		for _, u := range uuidPattern.FindAllString(v, -1) {
+			if !known[strings.ToLower(u)] {
+				id = strings.ToLower(u)
+				break
+			}
+		}
+		if id == "" {
 			continue
 		}
 		return fmt.Sprintf(

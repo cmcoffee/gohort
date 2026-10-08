@@ -551,3 +551,71 @@ func TestARefusalSaysTheToolItselfStillWorks(t *testing.T) {
 		}
 	}
 }
+
+// An id printed with a prefix ("fact:<uuid>", as recall prints a pinned note)
+// is the id the conversation was given: an agent copying it exactly as
+// printed was refused as having invented it, because only the bare UUID was
+// collected and the whole argument was compared. The UUIDs in the argument are
+// judged, each one; a prefix around a real one passes, around an invented one
+// does not.
+func TestAnIDCopiedWithItsPrefixIsNotInvented(t *testing.T) {
+	real := "58df4d7c-ede9-437d-9ea5-1a2acf6c98f1"
+	known := collectKnownIDs("", []Message{
+		{Role: "user", Content: "clear the stale notes"},
+		{Role: "assistant", ToolResults: []ToolResult{{Content: "- [pinned] Qwen 3.6 released April 2026\n  id: fact:" + real}}},
+	})
+	for _, v := range []string{"fact:" + real, real, "FACT:" + strings.ToUpper(real)} {
+		if r := idProvenanceRefusal("forget", map[string]any{"id": v}, known); r != "" {
+			t.Errorf("%q was copied from a tool result and must pass:\n%s", v, r)
+		}
+	}
+	invented := "fact:58df4d7c-0000-437d-9ea5-1a2acf6c98f1"
+	if r := idProvenanceRefusal("forget", map[string]any{"id": invented}, known); r == "" {
+		t.Error("a prefix around an invented UUID must still be refused")
+	}
+	both := "fact:" + real + ",fact:99999999-8888-7777-6666-555555555555"
+	if r := idProvenanceRefusal("forget", map[string]any{"id": both}, known); r == "" {
+		t.Error("one invented UUID beside a real one must be refused")
+	}
+}
+
+// A call the gate refuses is an attempt, and the turn judge is shown it as
+// one, in order among the calls that ran: an agent that said "I tried to
+// delete it and was refused" was retracted because the refused call was
+// missing from the evidence and only the failure count rose.
+func TestARefusedCallReachesTheJudgeAsAnAttempt(t *testing.T) {
+	invented := "99999999-8888-7777-6666-555555555555"
+	var calls, outputs []string
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{
+			{ID: "1", Name: "recall", Args: map[string]any{"query": "stale"}},
+			{ID: "2", Name: "forget", Args: map[string]any{"id": "fact:" + invented}},
+		}},
+		{Content: "I tried to delete it, but the delete was refused.", Repeat: true},
+	}}}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "clear the stale note"}}, AgentLoopConfig{
+		MaxRounds: 3, RouteKey: "test.refusedevidence", Unattended: true,
+		Tools: []AgentToolDef{
+			{Tool: Tool{Name: "recall", Description: "recall notes", Parameters: map[string]ToolParam{"query": {Type: "string"}}},
+				Handler: func(context.Context, map[string]any) (string, error) { return "nothing stale", nil }},
+			{Tool: Tool{Name: "forget", Description: "delete a note", Parameters: map[string]ToolParam{"id": {Type: "string"}}},
+				Handler: func(context.Context, map[string]any) (string, error) { t.Error("the refused call ran"); return "", nil }},
+		},
+		TurnClaimJudge: func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
+			calls, outputs = ev.ToolCalls, ev.ToolOutputs
+			return TurnClaimVerdict{}, true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls[0] != "recall" || !strings.HasPrefix(calls[1], "forget [REFUSED before it ran: ") {
+		t.Fatalf("judge saw calls %q, want recall then the refused forget, in order", calls)
+	}
+	if len(outputs) != 2 || !strings.Contains(outputs[1], "was NOT called") {
+		t.Errorf("the refusal's own words must be in the evidence: %q", outputs)
+	}
+	if turnRanProducer([]string{"image [REFUSED before it ran: x]"}) {
+		t.Error("a refused call made nothing")
+	}
+}

@@ -356,6 +356,10 @@ func (ev TurnClaimEvidence) JudgeArm() string {
 // producers get them covered by the no-tools and tool-error arms above.
 func turnRanProducer(calls []string) bool {
 	for _, c := range calls {
+		// A call refused before it ran made nothing.
+		if strings.Contains(c, " [REFUSED before it ran:") {
+			continue
+		}
 		// A failed call carries " [FAILED: …]" after its label. Cut there
 		// first: tool labels never contain a space, so the first one ends the
 		// label whatever follows it.
