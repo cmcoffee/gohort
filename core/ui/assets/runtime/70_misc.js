@@ -1237,7 +1237,10 @@
     // The storage polyfill first: localStorage throws in an opaque origin,
     // and an app that saves a setting or a high score there died on its
     // first line.
-    f.__uiSet = function(html) { f.setAttribute('srcdoc', STORAGE_SHIM + ISOLATE_SHIM + (html || '')); };
+    // isolate_prelude is the host's own markup for the top of every frame it
+    // isolates: a page's helpers, written once by the host rather than by
+    // each page.
+    f.__uiSet = function(html) { f.setAttribute('srcdoc', STORAGE_SHIM + ISOLATE_SHIM + (cfg.isolate_prelude || '') + (html || '')); };
     return f;
   }
 

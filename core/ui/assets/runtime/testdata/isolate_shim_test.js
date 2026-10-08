@@ -80,6 +80,8 @@ w.fetch('https://example.com/x').catch(function() { refused = true; }).then(func
     /if \(d\.body\.__uiForm\) \{[\s\S]*?new FormData\(\)[\s\S]*?opts\.body = fd;\s*\}/.test(misc));
   check('the frame gets the storage polyfill ahead of the relay',
     /f\.setAttribute\('srcdoc', STORAGE_SHIM \+ ISOLATE_SHIM \+/.test(misc));
+  check('the host prelude goes in after the relay and before the page',
+    /ISOLATE_SHIM \+ \(cfg\.isolate_prelude \|\| ''\) \+ \(html/.test(misc));
   check('audio and video sources are relayed like images',
     /audio\[src\],video\[src\],source\[src\]/.test(misc) && /parentNode\.load\(\)/.test(misc));
   return codePaths();

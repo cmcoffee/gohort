@@ -1268,14 +1268,9 @@ func (T *CustomApps) handleRecords(w http.ResponseWriter, r *http.Request, udb D
 	tbl := recTable(spec.Slug)
 	switch r.Method {
 	case http.MethodGet:
-		out := []map[string]any{}
-		for _, k := range udb.Keys(tbl) {
-			var rec map[string]any
-			if udb.Get(tbl, k, &rec) {
-				out = append(out, rec)
-			}
-		}
-		writeJSON(w, out)
+		// Oldest first, as scripts get them: in key order (random hex) a page
+		// listing "my entries" showed them shuffled.
+		writeJSON(w, appscript.ReadRecords(udb, spec.Slug))
 	case http.MethodPost:
 		var rec map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
@@ -1682,6 +1677,7 @@ func isolateAppHTML(page json.RawMessage, base ...string) json.RawMessage {
 			if typ, _ := t["type"].(string); typ == "card" || typ == "frame" {
 				t["isolate"] = true
 				t["isolate_fetch"] = appOwnPaths
+				t["isolate_prelude"] = appPageHelper
 			}
 			// The two other ways a page writes HTML on this origin, both on
 			// the document workbench: a record body taken as HTML, and a
