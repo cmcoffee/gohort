@@ -4650,13 +4650,16 @@
         case 'chunk':
           if (thinkLive && (ev.text || '').trim()) endThinkLive();
           appendChunk(ev.id, ev.text || '');
+          if ((ev.text || '').trim()) writingNow();
           break;
         case 'thinking':
           noteThinking(ev);
+          waitingNow();
           break;
         case 'chunk_replace':
           endThinkLive();
           replaceChunk(ev.id, ev.text || '');
+          writingNow();
           break;
         case 'message_done':
           finalizeMessage(ev.id);
@@ -4930,8 +4933,29 @@
     }
     function clearThinking() {
       endThinkLive();
+      if (thinkingQuietTimer) { clearTimeout(thinkingQuietTimer); thinkingQuietTimer = null; }
       if (thinkingEl && thinkingEl.parentNode) thinkingEl.remove();
       thinkingEl = null;
+    }
+
+    // The dots say "waiting". While the reply is being written the words are
+    // the progress, so the dots step aside, and they come back once the
+    // writing has gone quiet for a moment (a tool round, the next model call)
+    // or at once when the model is thinking again. The element stays where it
+    // is, still moved below each new bubble, only hidden.
+    var thinkingQuietTimer = null;
+    var thinkingQuietMs = 1500;
+    function writingNow() {
+      if (!thinkingEl) return;
+      thinkingEl.style.display = 'none';
+      if (thinkingQuietTimer) clearTimeout(thinkingQuietTimer);
+      thinkingQuietTimer = setTimeout(waitingNow, thinkingQuietMs);
+    }
+    function waitingNow() {
+      if (thinkingQuietTimer) { clearTimeout(thinkingQuietTimer); thinkingQuietTimer = null; }
+      if (!thinkingEl || thinkingEl.style.display !== 'none') return;
+      thinkingEl.style.display = '';
+      if (convoStickToBottom) scrollConvo();
     }
 
     // The live "Thinking · 34s · ~1,200 tokens" line beside the dots. A

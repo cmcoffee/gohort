@@ -56,6 +56,45 @@ check('the turn ending ends it, timer included',
 check('the seconds advance between server ticks',
   /setInterval\(renderThinkLive, 1000\)/.test(lift(panel, 'function noteThinking(', 'noteThinking')));
 
+// ---- the dots step aside while the reply is written --------------------------
+
+// The dots say "waiting": hidden while words arrive, back once the writing has
+// been quiet for a moment, or at once when the model thinks again. Driven with
+// a stand-in element and clock.
+(function() {
+  var timers = [], now = 0;
+  var setTimeout = function(fn, ms) { timers.push({fn: fn, at: now + ms}); return timers.length; };
+  var clearTimeout = function(id) { if (id && timers[id - 1]) timers[id - 1].fn = null; };
+  function advance(ms) {
+    now += ms;
+    timers.forEach(function(t) { if (t.fn && t.at <= now) { var f = t.fn; t.fn = null; f(); } });
+  }
+  var thinkingEl = {style: {display: ''}};
+  var thinkingQuietTimer = null, thinkingQuietMs = 1500;
+  var convoStickToBottom = true, scrolled = 0;
+  function scrollConvo() { scrolled++; }
+  eval(lift(panel, 'function writingNow(', 'writingNow'));
+  eval(lift(panel, 'function waitingNow(', 'waitingNow'));
+
+  writingNow();
+  check('the dots hide while words arrive', thinkingEl.style.display === 'none');
+  advance(800); writingNow(); advance(1000);
+  check('a steady stream keeps them hidden', thinkingEl.style.display === 'none');
+  advance(600);
+  check('they come back once the writing has gone quiet', thinkingEl.style.display === '' && scrolled === 1);
+  writingNow(); waitingNow();
+  check('thinking again brings them back at once', thinkingEl.style.display === '');
+  thinkingEl = null;
+  writingNow(); waitingNow();
+  check('with no dots on screen there is nothing to hide or show', thinkingEl === null);
+})();
+check('visible text and a replaced chunk hide them; a thinking event shows them',
+  /appendChunk\(ev\.id, ev\.text \|\| ''\);\s*if \(\(ev\.text \|\| ''\)\.trim\(\)\) writingNow\(\);/.test(panel) &&
+  /replaceChunk\(ev\.id, ev\.text \|\| ''\);\s*writingNow\(\);/.test(panel) &&
+  /noteThinking\(ev\);\s*waitingNow\(\);/.test(panel));
+check('the turn ending clears the quiet timer',
+  /clearTimeout\(thinkingQuietTimer\)/.test(lift(panel, 'function clearThinking(', 'clearThinking')));
+
 // ---- markdown while streaming ----------------------------------------------
 
 eval(lift(panel, 'function streamingText(', 'streamingText'));
