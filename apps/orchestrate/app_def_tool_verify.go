@@ -724,6 +724,11 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 					// as the warning below does, sent a leaderboard reading the
 					// shared board to read the player's own store.
 					fmt.Fprintf(&b, "OK   %s: printed an empty array; it reads the shared collections, which hold no records yet, so that is expected. A check does not save a shared write, so its logic shows once an action has written one live.\n", label)
+				} else if len(arr) == 0 && len(recs) > 0 && (strings.Contains(script, "call_tool") || strings.Contains(script, "fetch")) {
+					// It reads a tool or an API: the empty list is far more often
+					// a key the response does not have than a query param, and
+					// the query-param hint sent a build looking in the wrong place.
+					fmt.Fprintf(&b, "WARN %s: printed an EMPTY array though the app has %d saved record(s). It reads a tool or an API, so the likely cause is a key the response does not have: log what it returns (from gohort import log; log(raw)) and read the keys it actually has.\n", label, len(recs))
 				} else if len(arr) == 0 && len(recs) > 0 {
 					// Valid JSON, but empty output while the app HAS records is the
 					// signature of a script that reads a query param nothing supplies

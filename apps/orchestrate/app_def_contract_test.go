@@ -56,3 +56,21 @@ func TestRawDataOnThePage(t *testing.T) {
 		t.Error("a JSON tool is exempt, a weather app is not")
 	}
 }
+
+// A page that loads Chart.js from a CDN and calls new Chart(...) is not
+// calling something it never defines; a page with no external script that
+// calls an undefined function still is.
+func TestLibraryConstructorsAreNotDangling(t *testing.T) {
+	withCDN := `<!DOCTYPE html><html><head><script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script></head><body><canvas id=c></canvas><script>
+function draw(){ chart = new Chart(document.getElementById('c'), {}); Plotly.newPlot('x', []); }
+draw(); missingHelper();
+</script></body></html>`
+	got := jsDanglingCalls(withCDN)
+	if len(got) != 1 || got[0] != "missingHelper" {
+		t.Fatalf("dangling with a CDN script = %v, want only missingHelper", got)
+	}
+	noCDN := `<html><body><script>function draw(){ c = new Chart(x, {}); } draw();</script></body></html>`
+	if got := jsDanglingCalls(noCDN); len(got) != 1 || got[0] != "Chart" {
+		t.Fatalf("without any library loaded, Chart is still undefined: %v", got)
+	}
+}

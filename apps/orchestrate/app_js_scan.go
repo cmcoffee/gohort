@@ -284,15 +284,54 @@ func jsDanglingCalls(html string) []string {
 		}
 	}
 
+	// A page that loads a library from a CDN calls names the library
+	// defines: new Chart(...) after a Chart.js <script src>, new THREE.Scene()
+	// after three. The scan sees only the page's own code, so it read those as
+	// calls to nothing and a build added guard code for a working chart.
+	external := jsLoadsExternalScript(html)
 	var out []string
 	for name := range called {
 		if defined[name] || bareRef[name] || jsGlobals[name] || jsKeywords[name] {
+			continue
+		}
+		if external && (jsLibraryGlobals[name] || jsNewRE(name).MatchString(jsMaskAll(html))) {
 			continue
 		}
 		out = append(out, name)
 	}
 	sort.Strings(out)
 	return out
+}
+
+var jsExternalScriptRE = regexp.MustCompile(`(?i)<script[^>]+src\s*=\s*["']?(https?:)?//|(?m)^\s*import\b[^;\n]*from\s*["']https?://|import\(\s*["']https?://`)
+
+// jsLoadsExternalScript reports a page that loads code from another site.
+func jsLoadsExternalScript(html string) bool { return jsExternalScriptRE.MatchString(html) }
+
+// jsLibraryGlobals are names the common browser libraries put on window.
+var jsLibraryGlobals = map[string]bool{
+	"Chart": true, "THREE": true, "L": true, "d3": true, "Plotly": true, "echarts": true, "ApexCharts": true,
+	"Highcharts": true, "mapboxgl": true, "maplibregl": true, "gsap": true, "anime": true, "dayjs": true,
+	"moment": true, "marked": true, "DOMPurify": true, "Papa": true, "Tone": true, "Howl": true, "Howler": true,
+	"Phaser": true, "PIXI": true, "Konva": true, "fabric": true, "p5": true, "confetti": true, "Sortable": true,
+	"Swiper": true, "lottie": true, "Vue": true, "React": true, "ReactDOM": true, "Alpine": true, "htmx": true,
+	"hljs": true, "katex": true, "mermaid": true, "QRCode": true, "JsBarcode": true, "Fuse": true, "lunr": true,
+}
+
+// jsNewRE matches "new <name>(" for one name.
+func jsNewRE(name string) *regexp.Regexp {
+	return regexp.MustCompile(`\bnew\s+` + regexp.QuoteMeta(name) + `\s*\(`)
+}
+
+// jsMaskAll is every script body with its literals masked, joined, so a
+// "new X(" inside a string does not count.
+func jsMaskAll(html string) string {
+	var b strings.Builder
+	for _, block := range jsScriptBodies(html) {
+		b.WriteString(jsMaskLiterals(block))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // jsNewDanglingCalls reports the names an edit BROKE: dangling after, not
