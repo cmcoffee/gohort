@@ -76,3 +76,27 @@ func TestTheKindOfOutputIsNamed(t *testing.T) {
 		t.Fatalf("display message: %q", probs)
 	}
 }
+
+// Sections written without a kind are read with the kind the builder infers,
+// so a form-and-table app is still seen as one.
+func TestTypedOnlyReadsInferredKinds(t *testing.T) {
+	spec := AppSpec{Sections: []byte(`[{"fields":[{"name":"city"}]},{"columns":[{"field":"city"}]},{"pairs":[{"field":"temp"}]}]`)}
+	if !appTypedOnly(spec) {
+		t.Fatal("kind-less form/table/display not seen as typed-only")
+	}
+}
+
+// The verify that passed {"temperature": "None°F", "conditions": null, ...}:
+// most of the values are empty, which is a script reading keys its input
+// does not have.
+func TestEmptyValuesAreCounted(t *testing.T) {
+	out := map[string]any{"city": "San Francisco", "state": "CA", "temperature": "None°F", "conditions": nil, "humidity": "None%", "wind_speed": "None mph", "forecast": ""}
+	empty, total := appEmptyValues(out)
+	if total != 7 || empty != 5 {
+		t.Fatalf("empty %d of %d", empty, total)
+	}
+	good := map[string]any{"city": "Reno", "temperature": "71°F", "conditions": "Clear", "note": "Nonetheless sunny"}
+	if empty, _ := appEmptyValues(good); empty != 0 {
+		t.Fatalf("a real forecast counted %d empty", empty)
+	}
+}

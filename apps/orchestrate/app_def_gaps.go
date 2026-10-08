@@ -42,9 +42,15 @@ func appBuildGaps(user string, spec AppSpec, in appGapInput) string {
 	return "\n\nWORTH ADDING (found in the app, not failures; leave one out only if the owner asked for it that way):\n- " + strings.Join(gaps, "\n- ") + "\n"
 }
 
+// appSectionList is the app's sections, each with its kind made explicit the
+// way the builder infers it (fields means a form, columns a table), so a check
+// reading kinds sees the kind the page was built with.
 func appSectionList(spec AppSpec) []map[string]any {
 	var secs []map[string]any
 	_ = json.Unmarshal(spec.Sections, &secs)
+	for i, s := range secs {
+		secs[i] = normalizeSection(s)
+	}
 	return secs
 }
 

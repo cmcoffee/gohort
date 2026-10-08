@@ -756,6 +756,12 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				fail++
 				fmt.Fprintf(&b, "FAIL %s: printed a bare JSON value (%s); a page reads an object or an array.%s\n", label, appOutputPreview(trimmed, 80), shown)
 				return
+			} else if empty, total := appEmptyValues(v); len(recs) > 0 && total >= 3 && empty*2 >= total {
+				// The real path ran and the values came back empty: None°F,
+				// null, "". A build read keys a tool's output does not have
+				// and passed verify on {"temperature": "None°F", ...}.
+				fail++
+				fmt.Fprintf(&b, "FAIL %s: %d of its %d values are empty (null, None, \"\") on the real path: the script reads fields its input does not have. Log what the tool or API actually returns (from gohort import log; log(raw)) and read the keys it has.%s\n", label, empty, total, shown)
 			} else {
 				pass++
 				fmt.Fprintf(&b, "OK   %s: printed a JSON object; good for a display (a table section needs a JSON array).%s%s\n", label, emptyStoreNote(recs), shown)

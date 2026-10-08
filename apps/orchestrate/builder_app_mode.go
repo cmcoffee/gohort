@@ -61,6 +61,7 @@ func (t *chatTurn) renderBuilderAppModeBlock() string {
 	if !t.builderAppMode() {
 		return ""
 	}
+	Log("[builder] app mode on for session %s", t.chatSessionID())
 	return "\n\n" + EffectivePromptText(BuilderAppModeKey, builderAppModeShipped)
 }
 

@@ -304,3 +304,40 @@ func appToolCapNotes(user string, spec AppSpec) []string {
 	}
 	return notes
 }
+
+var pyNoneRE = regexp.MustCompile(`(^|[^A-Za-z])None([^A-Za-z]|$)`)
+
+// appEmptyValues counts an object's empty leaf values (null, "", or a string
+// a Python None was formatted into, "None°F") against all of them, one level
+// into nested objects.
+func appEmptyValues(v any) (empty, total int) {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return 0, 0
+	}
+	var visit func(any, int)
+	visit = func(x any, depth int) {
+		switch t := x.(type) {
+		case nil:
+			empty++
+			total++
+		case string:
+			total++
+			if strings.TrimSpace(t) == "" || pyNoneRE.MatchString(t) || t == "null" {
+				empty++
+			}
+		case map[string]any:
+			if depth < 1 {
+				for _, e := range t {
+					visit(e, depth+1)
+				}
+			}
+		case float64, bool:
+			total++
+		}
+	}
+	for _, e := range obj {
+		visit(e, 0)
+	}
+	return empty, total
+}
