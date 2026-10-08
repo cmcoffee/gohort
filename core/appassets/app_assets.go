@@ -61,6 +61,12 @@ var appAssetExts = map[string]string{
 	".ico":   "image/x-icon",
 	".woff":  "font/woff",
 	".woff2": "font/woff2",
+	// Sound, for an app that plays it (a game's effects and music, an alert
+	// tone). Inert data like the images: nothing here executes.
+	".mp3": "audio/mpeg",
+	".ogg": "audio/ogg",
+	".wav": "audio/wav",
+	".m4a": "audio/mp4",
 }
 
 // MaxAppAssetBytes caps one asset. Generated art lands well under this; the

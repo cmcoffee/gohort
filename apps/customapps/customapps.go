@@ -208,7 +208,16 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	// before anything else so an app can reference its own artwork without the
 	// asset name having to dodge every other route below.
 	case rest == "assets" || strings.HasPrefix(rest, "assets/"):
-		T.handleAsset(w, r, ownerUser, slug, strings.TrimPrefix(strings.TrimPrefix(rest, "assets"), "/"))
+		name := strings.TrimPrefix(strings.TrimPrefix(rest, "assets"), "/")
+		if r.Method == http.MethodPut || r.Method == http.MethodPost || r.Method == http.MethodDelete {
+			T.handleAssetWrite(w, r, user, ownerUser, slug, name)
+			return
+		}
+		if name == "" {
+			T.handleAssetList(w, ownerUser, slug)
+			return
+		}
+		T.handleAsset(w, r, ownerUser, slug, name)
 		return
 	case rest == "":
 		// Component Source/PostURL are relative ("records"), so the page must
@@ -1470,11 +1479,10 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // handleAsset serves one of an app's static assets.
 //
-// Read-only by design: assets are written through the authoring tool, never
-// over HTTP, so there is no upload endpoint to abuse. Resolution is scoped to
-// the app's OWNER, not the requester, so a shared app serves the owner's
-// artwork to everyone who can already see the app — the same trust boundary
-// the page itself sits behind.
+// Resolution is scoped to the app's OWNER, not the requester, so a shared app
+// serves the owner's artwork to everyone who can already see the app — the
+// same trust boundary the page itself sits behind. Written by the owner only:
+// app_def's add_asset, or the owner's own page (handleAssetWrite).
 func (T *CustomApps) handleAsset(w http.ResponseWriter, r *http.Request, owner, slug, name string) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1498,16 +1506,66 @@ func (T *CustomApps) handleAsset(w http.ResponseWriter, r *http.Request, owner, 
 	// browser sniffing its way to something else is exactly the hole the
 	// allowlist exists to close.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Served from this origin, so an asset opened directly is a page of its
+	// own: an SVG can carry script, and run as whoever opens it. The sandbox
+	// directive gives it an origin of its own and no script at all; the rest
+	// lets an image, a font or a sound be nothing but that.
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; media-src 'self'")
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(data)
 	}
 }
 
+// handleAssetList is GET assets: the app's asset names, for a page that lists
+// its own artwork or sounds.
+func (T *CustomApps) handleAssetList(w http.ResponseWriter, owner, slug string) {
+	names, err := ListAppAssets(owner, slug)
+	if err != nil || names == nil {
+		names = []string{}
+	}
+	writeJSON(w, map[string]any{"assets": names})
+}
+
+// handleAssetWrite is PUT/POST (the raw bytes, the name in the path) or
+// DELETE assets/<name>, from the app's OWNER only: an asset is shown to
+// everyone the app is shared with, so one viewer must not replace what all of
+// them see. A viewer's own files are their records' business, not the app's.
+func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, user, owner, slug, name string) {
+	if user != owner {
+		http.Error(w, "only the app's owner can change its assets", http.StatusForbidden)
+		return
+	}
+	name = strings.TrimSpace(name)
+	if !ValidAppAssetName(name) {
+		http.Error(w, "invalid asset name: a flat filename ending in an image, font or sound extension (.png .jpg .gif .webp .svg .ico .woff .woff2 .mp3 .ogg .wav .m4a)", http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		if err := DeleteAppAsset(owner, slug, name); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, map[string]any{"deleted": name})
+		return
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxAppAssetBytes+1))
+	if err != nil || len(data) > MaxAppAssetBytes {
+		http.Error(w, fmt.Sprintf("asset too large: at most %d MiB", MaxAppAssetBytes>>20), http.StatusRequestEntityTooLarge)
+		return
+	}
+	path, err := SaveAppAsset(owner, slug, name, data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"saved": name, "url": path})
+}
+
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets/"}
+var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}

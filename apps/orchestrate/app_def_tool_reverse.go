@@ -69,6 +69,8 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		"records":                     len(records),
 		"stored_fields_not_in_schema": appStoredFieldsOutsideSchema(recordFieldsOf(spec), records),
 		"sample":                      spec.Sample,
+		// Its images, fonts and sounds, served to the page at assets/<name>.
+		"assets": appAssetNames(t.user, spec.Slug),
 		// What a later author most needs and could not know: whether the
 		// revision serving now has ever passed verify.
 		"status": spec.VerifyStatus(),
