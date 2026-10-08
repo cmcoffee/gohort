@@ -107,6 +107,9 @@ var workerAbortTools = func() []string {
 type chatTurn struct {
 	app *OrchestrateApp
 	ctx context.Context
+	// assetRenders counts the pictures app_def has had the image generator
+	// draw this turn, against ImageGenHardCap.
+	assetRenders int
 	// prep measures how long the person waited before their message reached a
 	// model. nil on every turn that is not a live send — a fire, a dispatch, a
 	// test — and every method on it tolerates that.
