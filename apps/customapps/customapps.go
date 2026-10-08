@@ -219,6 +219,9 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		}
 		T.handleAsset(w, r, ownerUser, slug, name)
 		return
+	case strings.HasPrefix(rest, "shared/"):
+		T.handleShared(w, r, T.recordBase(spec, ownerUser), spec, strings.TrimPrefix(rest, "shared/"))
+		return
 	case rest == "":
 		// Component Source/PostURL are relative ("records"), so the page must
 		// live at a trailing-slash URL or they resolve one level too high.
@@ -889,6 +892,9 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, u
 
 	// Args become env vars in the script: the records JSON, plus each query param.
 	args := map[string]any{"records": string(recJSON)}
+	if len(spec.SharedCollections) > 0 {
+		args["shared"] = sharedInput(T.recordBase(spec, owner), spec)
+	}
 	for k, vs := range r.URL.Query() {
 		if len(vs) > 0 {
 			args[k] = vs[0]
@@ -1092,8 +1098,11 @@ func cachedRunDataSource(user string, db Database, slug string, ds AppDataSource
 
 // runAppScript executes one custom-app script (a data source or an action) and
 // returns its stdout. Delegates to the shared appscript.Run seam so the host and
-// the app_def test action run scripts through byte-identical machinery.
-func runAppScript(user string, db Database, slug, kind, name, language, script string, caps []string, args map[string]any) (string, error) {
+// the app_def test action run scripts through byte-identical machinery. A
+// variable so a test can stand in for the sandbox.
+var runAppScript = runAppScriptSandboxed
+
+func runAppScriptSandboxed(user string, db Database, slug, kind, name, language, script string, caps []string, args map[string]any) (string, error) {
 	return appscript.Run(user, db, slug, kind, name, language, script, caps, args)
 }
 
@@ -1177,7 +1186,7 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	}
 
 	T.applySettings(args, spec, uid) // last: neither a param nor the body overrides a setting
-	msg, saved, err := runActionAndPersist(owner, T.recordBase(spec, owner), udb, spec, *act, args)
+	msg, saved, err := runActionAndPersist(owner, T.recordBase(spec, owner), udb, spec, *act, args, uid)
 	if err != nil {
 		Log("[customapps] action %q/%q failed: %v", spec.Slug, name, err)
 		http.Error(w, "action failed: "+err.Error(), http.StatusInternalServerError)
@@ -1193,19 +1202,33 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 // (dispatchScheduledAction): the ONLY difference between the two is who builds
 // args and who reads the result. The framework owns persistence — the script
 // never writes the store itself.
-func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act AppAction, args map[string]any) (msg string, saved int, err error) {
+//
+// by is who triggered the run, stamped on any shared record it writes.
+func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act AppAction, args map[string]any, by string) (msg string, saved int, err error) {
+	if len(spec.SharedCollections) > 0 {
+		args["shared"] = sharedInput(ownerDB, spec)
+	}
 	out, err := runAppScript(owner, ownerDB, spec.Slug, "action", act.Name, act.Language, act.Script, act.Capabilities, args)
 	if err != nil {
 		return "", 0, err
 	}
 	var result struct {
-		Message string           `json:"message"`
-		Records []map[string]any `json:"records"`
+		Message      string                      `json:"message"`
+		Records      []map[string]any            `json:"records"`
+		Shared       map[string][]map[string]any `json:"shared"`
+		SharedDelete map[string][]string         `json:"shared_delete"`
 	}
 	trimmed := strings.TrimSpace(out)
 	if trimmed != "" && json.Unmarshal([]byte(trimmed), &result) != nil {
-		return "", 0, fmt.Errorf("the action script must print a JSON object {message?, records?} to stdout (got %.200s)", trimmed)
+		return "", 0, fmt.Errorf("the action script must print a JSON object {message?, records?, shared?, shared_delete?} to stdout (got %.200s)", trimmed)
 	}
+	// Shared writes first, and all or nothing: a refused one (an undeclared
+	// collection, an oversized record) leaves the user's records untouched too.
+	sharedN, err := applySharedWrites(owner, ownerDB, spec, by, result.Shared, result.SharedDelete)
+	if err != nil {
+		return "", 0, err
+	}
+	saved += sharedN
 	tbl := recTable(spec.Slug)
 	for _, rec := range result.Records {
 		if rec == nil {
@@ -1565,7 +1588,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets"}
+var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets", "shared/"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}

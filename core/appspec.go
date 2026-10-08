@@ -85,6 +85,14 @@ type AppSpec struct {
 	// choice for a data-heavy app. Opt-in per app, no migration: existing apps
 	// (PrivateDB=false) keep using the shared store untouched.
 	PrivateDB bool `json:"private_db,omitempty"`
+	// SharedCollections are record collections every user of the app reads in
+	// common: a leaderboard, a lobby, a shared list. The app's ordinary
+	// records are each user's own; these live once, in the owner's store. A
+	// page reads one at shared/<name>; only the app's ACTION scripts write
+	// them (they run as the owner and can validate what a player sends), by
+	// returning {"shared": {"<name>": [records]}}. Undeclared names are
+	// refused, so a script cannot create a collection the review never saw.
+	SharedCollections []string `json:"shared_collections,omitempty"`
 	// DataSources are script-backed data endpoints (see AppDataSource), referenced
 	// by a table/display section's source_script. Served at /apps/<slug>/data/<name>.
 	// This is the "logic" seam: structure stays declarative, computation/integration
@@ -438,9 +446,14 @@ func SaveAppSpecAs(s AppSpec, reason string) AppSpec {
 }
 
 // appServesDifferently reports whether what an app shows or runs changed: its
-// page, sections, data-source and action scripts, bound agent or pipeline.
+// page, sections, data-source and action scripts, bound agent or pipeline,
+// and the collections its users share.
 func appServesDifferently(prior, next AppSpec) bool {
 	if specPageChanged(prior, next) || prior.AgentID != next.AgentID || prior.PipelineID != next.PipelineID {
+		return true
+	}
+	// A new shared collection puts data in front of every user of the app.
+	if strings.Join(prior.SharedCollections, "\x00") != strings.Join(next.SharedCollections, "\x00") {
 		return true
 	}
 	a, _ := json.Marshal([]any{prior.DataSources, prior.Actions})

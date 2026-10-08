@@ -114,6 +114,20 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if _, ok := args["private_db"]; ok {
 		spec.PrivateDB = boolArg(args, "private_db")
 	}
+	// shared_collections: names of the collections every user of the app reads
+	// in common. Slugged like script names, de-duplicated, order kept. Passed
+	// wholesale on update (omit to keep; [] to clear).
+	if _, ok := args["shared_collections"]; ok {
+		var names []string
+		seen := map[string]bool{}
+		for _, n := range stringSliceFromArgs(args, "shared_collections") {
+			if n = slugify(n); n != "" && !seen[n] {
+				seen[n] = true
+				names = append(names, n)
+			}
+		}
+		spec.SharedCollections = names
+	}
 	// Script-backed data sources (the "logic" seam): a table/display section can
 	// be backed by a python script instead of the record store. Passed wholesale
 	// replaces the stored set on update (omit to keep existing).

@@ -71,6 +71,8 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		"sample":                      spec.Sample,
 		// Its images, fonts and sounds, served to the page at assets/<name>.
 		"assets": appAssetNames(t.user, spec.Slug),
+		// The collections every user of the app reads in common.
+		"shared_collections": spec.SharedCollections,
 		// What a later author most needs and could not know: whether the
 		// revision serving now has ever passed verify.
 		"status": spec.VerifyStatus(),
