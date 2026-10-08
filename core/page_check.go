@@ -62,6 +62,9 @@ type PageCheckReport struct {
 	// FrameTexts is each iframe's body text, trimmed, in document order:
 	// what a sandboxed page actually shows, which BodyText cannot see.
 	FrameTexts []string
+	// Screenshot is the whole page as rendered, a JPEG: what a person sees,
+	// for an author who otherwise never looks at what it built.
+	Screenshot []byte
 }
 
 // BrowserCheckPage is wired by tools/browser at init. Loads target in

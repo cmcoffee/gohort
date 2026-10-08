@@ -228,6 +228,20 @@ func init() {
 		},
 	})
 
+	gt.AddAction("edit", &GroupedToolAction{
+		Description: "Change part of a file in the active workspace in place: find is the EXACT text to replace (copied from the file, whitespace included) and must appear exactly once; replace is what goes there. Use it instead of rewriting a whole file to change a few lines: re-typing a long file is how working code gets silently changed around the fix. all=true replaces every occurrence instead.",
+		Params: map[string]ToolParam{
+			"path":    {Type: "string", Description: "Workspace-relative path of the file."},
+			"find":    {Type: "string", Description: "The exact text to replace."},
+			"replace": {Type: "string", Description: "The text to put in its place (empty deletes it)."},
+			"all":     {Type: "boolean", Description: "Replace every occurrence rather than requiring exactly one."},
+		},
+		Required:     []string{"path", "find"},
+		Caps:         []Capability{CapWrite},
+		NeedsConfirm: true,
+		Handler:      handleEdit,
+	})
+
 	gt.AddAction("rm", &GroupedToolAction{
 		Description: "Delete a single file inside the active workspace. Rejects paths outside the workspace. For removing a whole workspace use delete instead.",
 		Params: map[string]ToolParam{
@@ -1080,4 +1094,48 @@ func humanSize(n int64) string {
 	default:
 		return fmt.Sprintf("%d B", n)
 	}
+}
+
+// handleEdit replaces text inside one workspace file. Exactly one match
+// unless all is set: a find that matches nothing is aimed at a version the
+// file no longer has, and one that matches several places cannot say which.
+func handleEdit(args map[string]any, sess *ToolSession) (string, error) {
+	if _, err := EnsureSessionWorkspace(sess); err != nil {
+		return "", fmt.Errorf("edit: %w", err)
+	}
+	rel, _ := args["path"].(string)
+	find, _ := args["find"].(string)
+	replace, _ := args["replace"].(string)
+	all, _ := args["all"].(bool)
+	if strings.TrimSpace(rel) == "" || find == "" {
+		return "", fmt.Errorf("edit needs path and find")
+	}
+	abs, err := ResolveWorkspacePath(sess.WorkspaceDir, rel)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return "", fmt.Errorf("no file %q in the workspace", rel)
+	}
+	text := string(data)
+	n := strings.Count(text, find)
+	switch {
+	case n == 0:
+		return "", fmt.Errorf("that text does not appear in %s: read the file (workspace cat) and copy the exact text, whitespace included", rel)
+	case n > 1 && !all:
+		return "", fmt.Errorf("that text appears %d times in %s: extend find with the surrounding lines until it is unique, or pass all=true to replace every one", n, rel)
+	}
+	if all {
+		text = strings.ReplaceAll(text, find, replace)
+	} else {
+		text = strings.Replace(text, find, replace, 1)
+	}
+	if err := os.WriteFile(abs, []byte(text), 0600); err != nil {
+		return "", fmt.Errorf("write %s: %w", rel, err)
+	}
+	if all {
+		return fmt.Sprintf("Replaced %d occurrence(s) in %s.", n, rel), nil
+	}
+	return fmt.Sprintf("Replaced 1 occurrence in %s (%d bytes now).", rel, len(text)), nil
 }

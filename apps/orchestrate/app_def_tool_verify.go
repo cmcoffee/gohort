@@ -283,6 +283,10 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		});
 	}`
 	rep, err := CheckPageAsUser(RootDB, t.user, "/apps/"+spec.Slug+"/", probe)
+	shotPath := ""
+	if err == nil && rep != nil {
+		shotPath = t.saveAppScreenshot(spec.Slug, rep.Screenshot)
+	}
 	pageCheckBroke := false
 	if err != nil {
 		failures++
@@ -388,6 +392,9 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		t.noteAppStanding(spec.Slug, false, "its last verify failed ("+summary+")")
 	} else {
 		t.noteAppStanding(spec.Slug, true, "")
+	}
+	if shotPath != "" {
+		fmt.Fprintf(&b, "\nScreenshot of the page as served: %s. LOOK at it before calling the page done: workspace(action=\"view_image\", path=%q). A page can pass every check and still read badly.\n", shotPath, shotPath)
 	}
 	if failures > 0 {
 		fmt.Fprintf(&b, "\nVERDICT: FAIL, %d problem(s) above. Fix with app_def action=update and run verify again. Do NOT tell the user the app is ready.", failures)
@@ -582,6 +589,10 @@ type appScriptRun struct {
 	sample         []map[string]any
 	params         map[string]any
 	preview        int
+	// scriptsOnly runs the scripts and their own checks and skips the
+	// whole-app ones (the page's calls, WORTH ADDING): a run of one file
+	// from a project folder is not the app.
+	scriptsOnly bool
 }
 
 // testOutputPreview is how much of each script's output action=test shows,
@@ -816,6 +827,9 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		if out, err := appscript.Run(t.user, db, spec.Slug, "data", ds.Name, ds.Language, ds.Script, ds.Capabilities, emptyArgs); err == nil {
 			gapIn.empty[ds.Name] = strings.TrimSpace(out)
 		}
+	}
+	if opt.scriptsOnly {
+		return b.String(), len(recs), pass, fail
 	}
 	if lines, n := appContractReport(spec); n > 0 {
 		b.WriteString(lines)

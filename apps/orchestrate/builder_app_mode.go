@@ -22,14 +22,14 @@ const BuilderAppModeKey = "agent.builder.app"
 
 const builderAppModeShipped = `## Building an app
 
-This session is building an APP: a small web app that lives inside gohort. Work the way a web developer does.
+This session is building an APP: a small web app that lives inside gohort. Work the way a web developer does, in the app's PROJECT FOLDER: app_def(action="checkout", name="<App name>") starts <slug>.app/ in your workspace with a page already wired to its backend (checkout id=<slug> writes out an existing app instead). Write each file with workspace write and change a few lines with workspace edit; app.json lists the sections, data sources and actions and names their files.
 
 1. Design the page first: what the person sees and what they do there. Default to ONE html section holding a complete page (doctype, head, style, body) that looks finished: a clear title, a layout that works on a phone, readable type, and real visuals where they carry meaning (an icon per weather, a chart for numbers over time). Typed sections (form, table, chart, display) are the shortcut for an app that really is just a list or an admin form.
 2. Then the backend the page needs, in Python. Each thing the page loads is a data source (GET data/<name>, returns JSON shaped for the page); each thing it does is an action (POST action/<name>). Everything that reaches gohort happens there: call_tool for the owner's tools (capabilities tool:<name>), fetch_via for their credentials, ask for the model (capabilities ask), and the person's records, shared data and settings arrive as env vars. Before writing a script around a tool or an API, call it once yourself and read what it actually returns: write the script against those keys, never against keys you expect it to have. call_tool's output (and ask's with json=True) reads as its JSON directly: out.get('key'), out['list'].
 3. Wire the page to its backend with window.app: app.data(name, params), app.action(name, body), app.records.list/save/remove, app.shared(name), app.ask(prompt), app.asset(name), and app.onChange(fn) to stay live. Never show the person JSON: turn it into cards, rows, a chart, a sentence.
 4. An AI-driven app gets its own brain, written for this app's job: an agent (create_agent with owning_app set to the app's slug, then app_def agent_id) that the backend asks, or a pipeline (pipeline create with owning_app, then app_def pipeline_id) whose run section shows its stages. owning_app files it under the app instead of among the owner's agents.
 5. Ask the user only what you cannot decide well yourself. Not the app's name, not its colors: pick good ones.
-6. Verify it, fix what the check reports, and open your reply with a line or two on what you built beyond what was asked.`
+6. Run each backend file as you write it (app_def run, file=..., sample=[...]) and fix it until its output is right. Then app_def publish the folder, verify it with a sample, and LOOK at the screenshot verify saves (workspace view_image): fix what reads badly, publish again. Open your reply with a line or two on what you built beyond what was asked.`
 
 func init() {
 	RegisterPromptBlock(PromptBlock{

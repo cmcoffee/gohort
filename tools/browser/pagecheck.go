@@ -257,6 +257,14 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 		rep.BodyText = strings.TrimSpace(obj.Value.Str())
 		mu.Unlock()
 	}
+	// The page as a person sees it. JPEG, so a long page stays small enough to
+	// hand a model to look at.
+	quality := 70
+	if shot, err := page.Screenshot(true, &proto.PageCaptureScreenshot{Format: proto.PageCaptureScreenshotFormatJpeg, Quality: &quality}); err == nil {
+		mu.Lock()
+		rep.Screenshot = shot
+		mu.Unlock()
+	}
 	// A sandboxed frame has no origin, so the page's own script cannot read
 	// it; the browser's protocol can. An app's page lives in one.
 	if frames, err := page.Elements("iframe"); err == nil {
@@ -287,6 +295,7 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 		ProbeJSON:      rep.ProbeJSON,
 		BodyText:       rep.BodyText,
 		FrameTexts:     append([]string(nil), rep.FrameTexts...),
+		Screenshot:     rep.Screenshot,
 	}
 	for _, u := range pending {
 		if len(out.PendingRequests) >= checkMaxEvents {
