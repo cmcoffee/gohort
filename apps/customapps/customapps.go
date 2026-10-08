@@ -249,8 +249,16 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		T.handleAction(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "action/"))
 	case rest == "records":
 		T.handleRecords(w, r, appdb, spec)
+		if r.Method == http.MethodPost {
+			noteChange(recordsChangeKey(ownerUser, slug, user))
+		}
 	case rest == "record":
 		T.handleRecord(w, r, appdb, spec)
+		if r.Method == http.MethodDelete {
+			noteChange(recordsChangeKey(ownerUser, slug, user))
+		}
+	case rest == "changes":
+		T.handleChanges(w, r, ownerUser, user, slug)
 	case rest == "chat" || strings.HasPrefix(rest, "chat/"):
 		// The app's chat surface: a chat section's AgentLoopPanel points at
 		// chat/* and these dispatch into orchestrate's PublicHandle* methods,
@@ -1229,6 +1237,9 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 		return "", 0, err
 	}
 	saved += sharedN
+	if sharedN > 0 {
+		noteChange(sharedChangeKey(owner, spec.Slug))
+	}
 	tbl := recTable(spec.Slug)
 	for _, rec := range result.Records {
 		if rec == nil {
@@ -1244,6 +1255,9 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 		}
 		udb.Set(tbl, id, rec)
 		saved++
+	}
+	if saved > sharedN {
+		noteChange(recordsChangeKey(owner, spec.Slug, by))
 	}
 	msg = strings.TrimSpace(result.Message)
 	if msg == "" {
@@ -1588,7 +1602,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets", "shared/"}
+var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets", "shared/", "changes"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}
