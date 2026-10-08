@@ -103,7 +103,7 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 		if label == "" {
 			label = a.ID
 		}
-		opts = append(opts, opt{Value: a.ID, Label: label, Group: agentGroup(a.ID, "Your agents")})
+		opts = append(opts, opt{Value: a.ID, Label: label, Group: agentGroupFor(a, "Your agents")})
 	}
 	// Your own agents first, then each app's: the picker draws a heading
 	// where the group changes.

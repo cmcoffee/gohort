@@ -92,7 +92,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			// App agents last, under their app.
 			var apps []map[string]any
 			for _, a := range agents {
-				if g, ok := appAgentGroup(a.ID); ok {
+				if g, ok := agentAppGroup(a); ok {
 					apps = append(apps, map[string]any{"id": a.ID, "name": a.Name, "description": a.Description, "group": g})
 				}
 			}
@@ -110,7 +110,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 		}
 		rows := make([]listed, 0, len(agents))
 		for _, a := range agents {
-			rows = append(rows, listed{AgentRecord: a, Group: agentGroup(a.ID, "Your agents")})
+			rows = append(rows, listed{AgentRecord: a, Group: agentGroupFor(a, "Your agents")})
 		}
 		sort.SliceStable(rows, func(i, j int) bool { return appGroupsLast(rows[i].Group, rows[j].Group) })
 		_ = json.NewEncoder(w).Encode(rows)

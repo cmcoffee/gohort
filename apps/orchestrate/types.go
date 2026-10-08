@@ -802,6 +802,14 @@ type AgentRecord struct {
 	// Empty (default) = no parent, standard top-level agent.
 	OwnedBy string `json:"owned_by,omitempty"`
 
+	// OwningApp is the slug of the owner's custom app this agent was written
+	// for: its brain, built with the app. A label, not a boundary: the agent
+	// is an ordinary agent of the owner's, with ordinary tools, shown in
+	// every picker under "App agents: <app>" instead of among the owner's
+	// own, and offered for deletion with the app. (The framework's own app
+	// agents, which ARE a boundary, are the appagents registry.)
+	OwningApp string `json:"owning_app,omitempty"`
+
 	// Locked protects this agent from being edited or deleted BY ANOTHER AGENT
 	// (the agent-CRUD tools). Only the human — via the dashboard/editor — can
 	// change a locked agent. Off by default; the user opts in to protect agents

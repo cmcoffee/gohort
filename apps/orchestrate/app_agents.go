@@ -45,6 +45,34 @@ func appAgentGroup(id string) (group string, ok bool) {
 	return "App agents: " + chFirst(s.OwningApp, "other apps"), true
 }
 
+// agentAppGroup is appAgentGroup for a record: a framework app agent's group,
+// else the group of a custom app the owner wrote it for (OwningApp). Display
+// only: an OwningApp agent is an ordinary agent, so nothing that guards the
+// app-agent boundary (isAppAgent) may read this.
+func agentAppGroup(a AgentRecord) (string, bool) {
+	if g, ok := appAgentGroup(a.ID); ok {
+		return g, true
+	}
+	slug := strings.TrimSpace(a.OwningApp)
+	if slug == "" {
+		return "", false
+	}
+	name := slug
+	if spec, ok := LoadAppSpec(a.Owner, slug); ok && strings.TrimSpace(spec.Name) != "" {
+		name = spec.Name
+	}
+	return "App agents: " + name, true
+}
+
+// agentGroupFor is agentAppGroup with the group a picker gives everything
+// else.
+func agentGroupFor(a AgentRecord, others string) string {
+	if g, ok := agentAppGroup(a); ok {
+		return g
+	}
+	return others
+}
+
 // agentGroup is appAgentGroup with the group a picker gives everything else.
 func agentGroup(id, others string) string {
 	if g, ok := appAgentGroup(id); ok {

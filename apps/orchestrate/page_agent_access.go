@@ -136,7 +136,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	callable := []ui.SelectOption{}
 	for _, a := range listAgents(udb, user) {
 		if a.ID != agent.ID && !fleetHidden(a.ID) {
-			callable = append(callable, ui.SelectOption{Value: a.ID, Label: a.Name, Group: agentGroup(a.ID, "Your agents")})
+			callable = append(callable, ui.SelectOption{Value: a.ID, Label: a.Name, Group: agentGroupFor(a, "Your agents")})
 		}
 	}
 	sort.SliceStable(callable, func(i, j int) bool { return appGroupsLast(callable[i].Group, callable[j].Group) })

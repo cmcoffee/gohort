@@ -60,6 +60,7 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 					Description: "(create/update) Further pipelines a FINISHED run can be put through, each offered as a button on the run and producing a new run linked to it: [{\"name\": button text, \"description\": tooltip, \"stages\": [...]}]. Their stages read the finished run as {input} (its output), {parent_input} (what it was asked) and {children} (what earlier follow-up runs of it produced). A report written from a result, a re-synthesis, folding follow-ups back in. Present replaces the list; omit to keep it. See action=\"help\", FOLLOW-UPS.",
 					Items:       &ToolParam{Type: "object"},
 				},
+				"owning_app": {Type: "string", Description: "(create/update) The slug of the custom app this pipeline is written for: grouped under the app and offered for deletion with it. Leave empty for a pipeline meant for general use."},
 				"attach_to_agents": {
 					Type:        "array",
 					Description: "(create/update) Optional list of agent names or IDs. After the pipeline saves, it's added to each named agent's attached_pipelines so the agent can call it as `run_<pipeline>` from its next session onward. Idempotent: already-attached pipelines aren't double-added. Unknown agent names get reported back in the result; the pipeline still saves. Use this whenever the pipeline is being built as part of an agent's surface so you don't have to remember a separate update_agent call.",
@@ -313,6 +314,9 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 	}
 	if d := strings.TrimSpace(stringArg(args, "description")); d != "" {
 		def.Description = d
+	}
+	if v, ok := args["owning_app"]; ok && v != nil {
+		def.OwningApp = slugify(fmt.Sprint(v))
 	}
 	if len(stages) > 0 {
 		def.Stages = stages

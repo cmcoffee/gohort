@@ -697,4 +697,8 @@ type PipelineDef struct {
 	// actually wrote. Stripped on export. Same field, same reasoning, as
 	// MachineDef.Previous.
 	Previous *PipelineDef `json:"previous,omitempty"`
+	// OwningApp is the slug of the owner's custom app this pipeline was
+	// written for, as for an agent (AgentRecord.OwningApp): a label that
+	// groups it under the app and offers it for deletion with the app.
+	OwningApp string `json:"owning_app,omitempty"`
 }

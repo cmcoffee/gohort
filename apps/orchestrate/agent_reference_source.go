@@ -50,7 +50,7 @@ func (s agentReferenceSource) List(user string) []ReferenceItem {
 		}
 		desc := a.Description
 		// The list has no groups, so an app's agent says whose it is.
-		if g, ok := appAgentGroup(a.ID); ok {
+		if g, ok := agentAppGroup(a); ok {
 			desc = strings.TrimSpace(strings.TrimPrefix(g, "App agents: ") + " app agent. " + desc)
 		}
 		out = append(out, ReferenceItem{ID: a.ID, Name: a.Name, Desc: desc})

@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"net/http"
 	"sort"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
@@ -90,6 +91,9 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 				continue
 			}
 			appAgents = append(appAgents, agentPickerRow{ID: a.ID, Name: a.Name, App: spec.OwningApp})
+		} else if g, ok := agentAppGroup(a); ok {
+			// An agent written for one of the owner's apps sits with that app.
+			appAgents = append(appAgents, agentPickerRow{ID: a.ID, Name: a.Name, App: strings.TrimPrefix(g, "App agents: ")})
 		} else if ord, ok := agentPickerBuiltInOrder[a.ID]; ok {
 			builtIns = append(builtIns, agentPickerRow{ID: a.ID, Name: a.Name, Order: ord})
 		} else if a.Cortex {
@@ -117,7 +121,7 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 		opts = append(opts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Specialized Agents"})
 	}
 	for _, a := range appAgents {
-		opts = append(opts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: agentGroup(a.ID, "App agents")})
+		opts = append(opts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "App agents: " + chFirst(a.App, "other apps")})
 	}
 	return opts, cortex, subs
 }

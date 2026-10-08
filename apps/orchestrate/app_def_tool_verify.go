@@ -82,7 +82,33 @@ func (t *chatTurn) appDefDelete(args map[string]any) (string, error) {
 	}
 	DeleteAppSpec(t.user, spec.Slug)
 	t.forgetAppStanding(spec.Slug)
-	return fmt.Sprintf("Deleted app %q (/apps/%s/).", spec.Name, spec.Slug), nil
+	msg := fmt.Sprintf("Deleted app %q (/apps/%s/).", spec.Name, spec.Slug)
+	if left := t.appOwnedLeftovers(spec.Slug); left != "" {
+		msg += " " + left
+	}
+	return msg, nil
+}
+
+// appOwnedLeftovers names the agents and pipelines written for app slug
+// (OwningApp), which deleting the app leaves in place. They are offered, not
+// removed: one may have come to be used outside the app, and a delete is the
+// owner's to approve.
+func (t *chatTurn) appOwnedLeftovers(slug string) string {
+	var names []string
+	for _, a := range listAgents(t.udb, t.user) {
+		if a.OwningApp == slug {
+			names = append(names, fmt.Sprintf("agent %q (id %s)", a.Name, a.ID))
+		}
+	}
+	for _, p := range ListPipelineDefs(t.udb, t.user) {
+		if p.OwningApp == slug {
+			names = append(names, fmt.Sprintf("pipeline %q", p.Name))
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return "These were written for it and still exist: " + strings.Join(names, ", ") + ". Ask the user whether to delete them too (delete_agent, pipeline action=delete) or keep them; do not delete them unasked."
 }
 
 // appDefTest executes every script-backed component of an app — each data source

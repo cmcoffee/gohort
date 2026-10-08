@@ -934,6 +934,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"attached_pipelines":       {Type: "array", Description: "Pipeline IDs (pipeline action=list). Each becomes its own callable tool here (run_<pipeline>), so a saved multi-stage workflow is on hand without the generic pipeline tool. Author the pipeline first. Default empty.", Items: &ToolParam{Type: "string"}},
 		"recall_hints":             {Type: "boolean", Description: "Each turn surfaces a short scored list of the agent's OWN knowledge relevant to the message: pointers (title + doc_id for fetch_knowledge_doc), not content. Needs a real corpus. Default false."},
 		"triggers":                 {Type: "array", Description: "Substring/glob patterns matched against each user message. On a match the host agent gets a per-turn nudge to dispatch HERE first. Author SPECIFIC patterns the domain's questions actually contain (criminal law: \"penal code\", \"felony\", \"sentencing\"), loose ones over-fire and train the host to ignore the hint. Empty = in the catalog, no nudge.", Items: &ToolParam{Type: "string"}},
+		"owning_app":               {Type: "string", Description: "The slug of the custom app this agent is written for (its brain): it is listed under \"App agents: <app>\" instead of among the owner's agents, and offered for deletion with the app. Set it for an agent created for an app; leave it empty for one meant for general use."},
 		"owned_by":                 {Type: "string", Description: "Parent agent ID, making this a sub-agent: deleting the parent cascade-deletes this agent (sessions/memory/knowledge included), and the parent may dispatch to it without an allowed_dispatch_targets entry, ownership IS the dispatch link. Pair with hidden=true to keep it out of the global fleet menu."},
 		"ingest_attachments":       {Type: "boolean", Description: "Extracted text from uploaded documents (PDF/DOCX/text) is ALSO ingested into the agent's knowledge store under topic=\"attachments\", searchable in later sessions. For document-Q&A agents whose uploads are referenced repeatedly. Default false."},
 		"think":                    {Type: "string", Description: "Reasoning override: \"on\", \"off\", or \"auto\" (the route decides). Create defaults: top-level \"on\", sub-agents (owned_by set) \"off\"; update keeps the stored value when omitted. \"on\" for planners/synthesizers, \"off\" for lookups, transformers, routers. When effort is set, effort takes precedence and this is ignored."},
@@ -1081,6 +1082,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v, ok := args["owned_by"]; ok && v != nil {
 		rec.OwnedBy = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := args["owning_app"]; ok && v != nil {
+		rec.OwningApp = slugify(fmt.Sprint(v))
 	}
 	if v, ok := args["ingest_attachments"].(bool); ok {
 		rec.IngestAttachments = v
@@ -1265,6 +1269,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["owned_by"]; ok && v != nil {
 		rec.OwnedBy = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := args["owning_app"]; ok && v != nil {
+		rec.OwningApp = slugify(fmt.Sprint(v))
 	}
 	if v, ok := args["ingest_attachments"].(bool); ok {
 		rec.IngestAttachments = v
