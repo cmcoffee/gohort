@@ -400,6 +400,7 @@ func (pr *planRun) assemblePrompt() {
 	// is how Builder still knows what exists. No-op for every other
 	// agent.
 	pr.sys += t.renderBuilderExistingToolsBlock()
+	pr.sys += t.renderBuilderAppModeBlock()
 	// "Known topics" block — lists the snake_case slugs this
 	// (user, agent) has already used so the LLM reuses them when
 	// calling memory_save / memory_search instead of minting near-
