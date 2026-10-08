@@ -23,7 +23,7 @@ func TestGapsTheWeatherBuildLeftOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := AppSpec{Owner: "owner", Slug: "wx",
-		Sections: json.RawMessage(`[{"kind":"form","fields":[{"name":"city"}]},{"kind":"html","source_script":"weather"}]`),
+		Sections: json.RawMessage(`[{"kind":"form","fields":[{"name":"city"}]},{"kind":"display","source_script":"weather","pairs":[{"field":"html"}]}]`),
 		DataSources: []AppDataSource{{Name: "weather", Script: `records = os.environ.get("records")
 fetch_url("https://api.open-meteo.com/v1/forecast?lat=1")
 html += '<img src="/assets/weather-icons/sun.png">'`}}}
@@ -47,7 +47,7 @@ html += '<img src="/assets/weather-icons/sun.png">'`}}}
 
 	// The complete version lists nothing.
 	SaveAppAsset("owner", "wx", "cloud.png", []byte("\x89PNG\r\n\x1a\n...."))
-	spec.Sections = json.RawMessage(`[{"kind":"form"},{"kind":"table"},{"kind":"html","source_script":"weather"}]`)
+	spec.Sections = json.RawMessage(`[{"kind":"form"},{"kind":"table"},{"kind":"display","source_script":"weather"}]`)
 	spec.DataSources[0].Script = `records = os.environ.get("records"); out = call_tool("get_weather", city="Reno")`
 	in.empty["weather"] = `{"html":"Add a city to see its forecast"}`
 	if got := appBuildGaps("owner", spec, in); got != "" {
@@ -118,5 +118,21 @@ func TestTheCreateResultCarriesThePlan(t *testing.T) {
 	}
 	if strings.Contains(out, "COMPLETE IT BEFORE YOU REPLY") {
 		t.Errorf("an update repeats the plan:\n%s", out)
+	}
+}
+
+// A page draws its own empty state, and a table over a source shows rows: the
+// run-tracker build was told its first visit was blank and its entries never
+// shown, though its page said "No runs yet" and its table listed them.
+func TestGapsTrustAPageAndASourcedTable(t *testing.T) {
+	pinRootDB(t)
+	page := AppSpec{Owner: "u", Slug: "runs", Sections: json.RawMessage(`[{"kind":"html","html":"<!DOCTYPE html><p>No runs yet</p>"}]`),
+		DataSources: []AppDataSource{{Name: "runs", Script: "records"}}}
+	if got := appBuildGaps("u", page, appGapInput{empty: map[string]string{"runs": "[]"}}); strings.Contains(got, "first visit") {
+		t.Fatalf("a page's own empty state flagged:\n%s", got)
+	}
+	typed := AppSpec{Owner: "u", Slug: "runs", Sections: json.RawMessage(`[{"kind":"form"},{"kind":"table","source_script":"runs"},{"kind":"chart","source_script":"runs"}]`)}
+	if got := appGapSavedNotShown(typed); len(got) != 0 {
+		t.Fatalf("a table over a source counted as not showing entries: %v", got)
 	}
 }

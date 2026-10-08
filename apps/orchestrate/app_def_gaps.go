@@ -32,7 +32,7 @@ type appGapInput struct {
 func appBuildGaps(user string, spec AppSpec, in appGapInput) string {
 	var gaps []string
 	gaps = append(gaps, appGapSavedNotShown(spec)...)
-	gaps = append(gaps, appGapFirstVisit(in)...)
+	gaps = append(gaps, appGapFirstVisit(spec, in)...)
 	gaps = append(gaps, appGapAssets(user, spec, in)...)
 	gaps = append(gaps, appGapCopiedTool(user, spec)...)
 	gaps = append(gaps, appUnusedEndpoints(spec)...)
@@ -63,9 +63,11 @@ func appGapSavedNotShown(spec AppSpec) []string {
 		switch {
 		case kind == "form":
 			hasForm = true
-		case (kind == "table" || kind == "display") && strings.TrimSpace(mapStr(sec, "source_script")) == "":
+		case kind == "table" || kind == "workbench" || kind == "html" || kind == "card":
+			// A table lists rows whether it reads the records or a source over
+			// them; a page draws its own list.
 			shown = true
-		case kind == "workbench":
+		case kind == "display" && strings.TrimSpace(mapStr(sec, "source_script")) == "":
 			shown = true
 		}
 	}
@@ -76,18 +78,31 @@ func appGapSavedNotShown(spec AppSpec) []string {
 }
 
 // With nothing saved yet, a source that prints nothing leaves a new user a
-// blank page and no idea what to do.
-func appGapFirstVisit(in appGapInput) []string {
+// blank page and no idea what to do. Only where a typed section draws that
+// output as it is (a display, a chart): a page draws its own empty state
+// from an empty list, and a table shows its empty_text.
+func appGapFirstVisit(spec AppSpec, in appGapInput) []string {
+	drawnRaw := map[string]bool{}
+	for _, sec := range appSectionList(spec) {
+		switch strings.ToLower(mapStr(sec, "kind")) {
+		case "display", "chart":
+			if src := slugify(mapStr(sec, "source_script")); src != "" {
+				drawnRaw[src] = true
+			}
+		}
+	}
 	var out []string
 	names := make([]string, 0, len(in.empty))
 	for n := range in.empty {
-		names = append(names, n)
+		if drawnRaw[slugify(n)] {
+			names = append(names, n)
+		}
 	}
 	sort.Strings(names)
 	for _, n := range names {
 		var v any
 		if json.Unmarshal([]byte(strings.TrimSpace(in.empty[n])), &v) == nil && appOutputEmpty(v) {
-			out = append(out, fmt.Sprintf("with nothing saved yet, data/%s prints an empty result, so a first visit shows a blank page: print something that says what to do (\"Add a city to see its forecast\"), in the shape its section reads", n))
+			out = append(out, fmt.Sprintf("with nothing saved yet, data/%s prints an empty result, so a first visit shows a blank page: print something that says what to do (\"Add your first entry to see it here\"), in the shape its section reads", n))
 		}
 	}
 	return out
