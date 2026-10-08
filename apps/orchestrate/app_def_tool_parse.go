@@ -169,6 +169,10 @@ func appDataSources(raw any) (out []AppDataSource, notes []string) {
 		given := strings.TrimSpace(mapStr(m, "name"))
 		name := slugify(given)
 		script := mapStr(m, "script")
+		if fixed, ok := appUnescapeScript(script); ok {
+			script = fixed
+			notes = append(notes, fmt.Sprintf("data source %q arrived as ONE line with its newlines written as \\n; it was decoded into real lines. Send a script's newlines as newlines", given))
+		}
 		if name == "" || strings.TrimSpace(script) == "" {
 			notes = append(notes, fmt.Sprintf("data_sources entry %d IGNORED: needs both a name and a script", i+1))
 			continue
@@ -186,6 +190,19 @@ func appDataSources(raw any) (out []AppDataSource, notes []string) {
 		})
 	}
 	return out, notes
+}
+
+// appUnescapeScript decodes a script that arrived escaped a second time: one
+// line, its newlines written as the two characters \n. A build sent its data
+// source that way and python stopped at line 1, a SyntaxError that read as
+// the script's fault rather than the encoding's. A script with real newlines,
+// or a one-liner whose only \n is inside a string, is left alone.
+func appUnescapeScript(script string) (string, bool) {
+	if strings.Contains(script, "\n") || strings.Count(script, `\n`) < 3 {
+		return script, false
+	}
+	r := strings.NewReplacer(`\\`, `\`, `\n`, "\n", `\t`, "\t", `\"`, `"`, `\'`, `'`)
+	return r.Replace(script), true
 }
 
 // appConfirm is an action's confirm prompt. It is text, but an author reads
@@ -262,6 +279,10 @@ func appActionDefs(raw any) (out []AppAction, notes []string) {
 		given := strings.TrimSpace(mapStr(m, "name"))
 		name := slugify(given)
 		script := mapStr(m, "script")
+		if fixed, ok := appUnescapeScript(script); ok {
+			script = fixed
+			notes = append(notes, fmt.Sprintf("action %q arrived as ONE line with its newlines written as \\n; it was decoded into real lines. Send a script's newlines as newlines", given))
+		}
 		if name == "" || strings.TrimSpace(script) == "" {
 			notes = append(notes, fmt.Sprintf("actions entry %d IGNORED: needs both a name and a script", i+1))
 			continue

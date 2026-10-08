@@ -19,6 +19,33 @@ import (
 // exports. Kept beside the hint because the point of the hint is this list.
 var gohortScriptHelpers = []string{"fetch_url", "fetch", "fetch_via", "browse_page", "log", "secret", "call_tool", "HookError"}
 
+// uncalledPythonFunctions lists the functions a python script defines at its
+// top level and never calls. A build wrapped its whole data source in
+// def current_weather_source_script(): and never called it, so the script
+// ran in 80ms and printed nothing; five rounds blamed escaping, flushing and
+// finally the platform, and gave up. Python runs only a file's top level.
+func uncalledPythonFunctions(script string) []string {
+	var defs []string
+	for _, line := range strings.Split(script, "\n") {
+		if rest, ok := strings.CutPrefix(line, "def "); ok {
+			if i := strings.Index(rest, "("); i > 0 {
+				defs = append(defs, strings.TrimSpace(rest[:i]))
+			}
+		}
+	}
+	var out []string
+	for _, name := range defs {
+		if strings.Count(script, name+"(") <= 1 {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func uncalledHint(names []string) string {
+	return fmt.Sprintf("Hint: the script defines %s() but never calls it, and python runs only a file's top level, so nothing in it ran. Call it at the bottom of the script: %s()", strings.Join(names, "(), "), names[0])
+}
+
 // scriptFailureHint turns a raw Python traceback into the one sentence that
 // resolves it, when the traceback is one we recognize.
 //
@@ -573,13 +600,20 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		}
 		trimmed := strings.TrimSpace(out)
 		if trimmed == "" {
+			uncalled := uncalledPythonFunctions(script)
 			if kind == "action" { // an action may legitimately print nothing
 				pass++
 				fmt.Fprintf(&b, "OK   %s: ran, printed nothing (no message/records).\n", label)
+				if len(uncalled) > 0 {
+					fmt.Fprintf(&b, "     %s\n", uncalledHint(uncalled))
+				}
 				return
 			}
 			fail++
 			fmt.Fprintf(&b, "FAIL %s: printed nothing; a data source must print JSON to stdout.\n", label)
+			if len(uncalled) > 0 {
+				fmt.Fprintf(&b, "     %s\n", uncalledHint(uncalled))
+			}
 			return
 		}
 		if !json.Valid([]byte(trimmed)) {
