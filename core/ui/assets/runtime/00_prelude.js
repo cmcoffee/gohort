@@ -1,6 +1,29 @@
 (function() {
   'use strict';
 
+  // Storage polyfill, injected into EVERY authored document. The sandbox is
+  // allow-scripts WITHOUT allow-same-origin, so the document has an opaque
+  // origin and merely TOUCHING window.localStorage throws SecurityError —
+  // which kills the whole script on line one. Authored pages reach for it
+  // constantly (a high score, a saved draft, a theme), so without this a
+  // large share of artifacts render blank or freeze on load with no visible
+  // cause. Swap in an in-memory Storage: the API works, nothing persists
+  // past the pane (which is the sandbox's point, and true of an artifact
+  // either way). App pages' isolated frames (70_misc.js ISOLATE_SHIM) take
+  // the same one: they are the same sandbox and the same opaque origin.
+  var STORAGE_SHIM = '<script>(function(){' +
+    'function mem(){var d={};return{getItem:function(k){k=String(k);' +
+    'return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null;},' +
+    'setItem:function(k,v){d[String(k)]=String(v);},' +
+    'removeItem:function(k){delete d[String(k)];},clear:function(){d={};},' +
+    'key:function(i){var ks=Object.keys(d);return i<ks.length?ks[i]:null;},' +
+    'get length(){return Object.keys(d).length;}};}' +
+    '["localStorage","sessionStorage"].forEach(function(n){try{' +
+    'var s=window[n];s.setItem("__probe","1");s.removeItem("__probe");}catch(e){' +
+    'try{Object.defineProperty(window,n,{value:mem(),configurable:true});}catch(_){}}});' +
+    '})();<' + '/script>';
+
+
   // --- helpers ----------------------------------------------------------
   // renderBulkBar adds a select-mode toggle pill above a side list.
   // When the pill is active:
@@ -1079,26 +1102,8 @@
     // the privileged half that enforces the allowlist and does the real
     // same-origin GET. The closing script tag is split so this string can
     // never terminate an enclosing <script> block.
-    // Storage polyfill, injected into EVERY authored document. The sandbox is
-    // allow-scripts WITHOUT allow-same-origin, so the document has an opaque
-    // origin and merely TOUCHING window.localStorage throws SecurityError —
-    // which kills the whole script on line one. Authored pages reach for it
-    // constantly (a high score, a saved draft, a theme), so without this a
-    // large share of artifacts render blank or freeze on load with no visible
-    // cause. Swap in an in-memory Storage: the API works, nothing persists
-    // past the pane (which is the sandbox's point, and true of an artifact
-    // either way).
-    var STORAGE_SHIM = '<script>(function(){' +
-      'function mem(){var d={};return{getItem:function(k){k=String(k);' +
-      'return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null;},' +
-      'setItem:function(k,v){d[String(k)]=String(v);},' +
-      'removeItem:function(k){delete d[String(k)];},clear:function(){d={};},' +
-      'key:function(i){var ks=Object.keys(d);return i<ks.length?ks[i]:null;},' +
-      'get length(){return Object.keys(d).length;}};}' +
-      '["localStorage","sessionStorage"].forEach(function(n){try{' +
-      'var s=window[n];s.setItem("__probe","1");s.removeItem("__probe");}catch(e){' +
-      'try{Object.defineProperty(window,n,{value:mem(),configurable:true});}catch(_){}}});' +
-      '})();<' + '/script>';
+    // STORAGE_SHIM is defined at the top of the runtime: an app page's
+    // isolated frame (ISOLATE_SHIM, 70_misc.js) takes the same polyfill.
     var BRIDGE_SHIM = '<script>(function(){var seq=0,pend={};' +
       'window.addEventListener("message",function(ev){if(ev.source!==window.parent)return;' +
       'var d=ev.data;if(!d||d.gohort_fetch_id==null||!pend[d.gohort_fetch_id])return;' +

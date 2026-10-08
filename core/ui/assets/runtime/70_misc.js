@@ -1116,16 +1116,25 @@
     'addEventListener("message",function(e){var d=e.data;if(!d||!d.__uiIsoReply)return;var c=p[d.id];if(!c)return;delete p[d.id];' +
       'if(d.error){c.rej(new Error(d.error));return;}' +
       'c.res(new Response(d.body,{status:d.status,headers:{"Content-Type":d.type||"application/octet-stream"}}));});' +
+    // A body crosses as itself where the browser can clone it (a Blob, a
+    // File, an ArrayBuffer, a typed array), so an upload arrives as bytes;
+    // FormData cannot be cloned and crosses as its entries. String(body)
+    // turned every one of them into "[object Blob]".
+    'function bod(b){if(b==null)return null;if(typeof b==="string")return b;' +
+      'if((typeof Blob!=="undefined"&&b instanceof Blob)||b instanceof ArrayBuffer||ArrayBuffer.isView(b))return b;' +
+      'if(typeof FormData!=="undefined"&&b instanceof FormData){var a=[];b.forEach(function(v,k){a.push([k,v]);});return{__uiForm:a};}' +
+      'return String(b);}' +
     'function ask(u,o){o=o||{};return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};' +
       'var h=o.headers||{},ct=h["Content-Type"]||h["content-type"]||"";' +
-      'parent.postMessage({__uiIso:1,id:id,url:String(u),method:o.method||"GET",body:(o.body==null?null:String(o.body)),ctype:ct},"*");});}' +
+      'parent.postMessage({__uiIso:1,id:id,url:String(u),method:o.method||"GET",body:bod(o.body),ctype:ct},"*");});}' +
     'window.fetch=function(u,o){u=String(u&&u.url||u);if(/^[a-z][a-z0-9+.-]*:/i.test(u)||u.indexOf("//")===0)' +
       'return Promise.reject(new Error("isolated content can only fetch its own data"));return ask(u,o);};' +
     'function img(x){var s=x.getAttribute&&x.getAttribute("src");if(!s||/^(data|blob):|^[a-z][a-z0-9+.-]*:|^\\/\\//i.test(s)||x.__uiIso)return;' +
-      'x.__uiIso=1;ask(s).then(function(r){return r.blob();}).then(function(b){x.src=URL.createObjectURL(b);}).catch(function(){});}' +
-    'function scan(r){(r.querySelectorAll?r.querySelectorAll("img[src]"):[]).forEach(img);}' +
+      'x.__uiIso=1;ask(s).then(function(r){return r.blob();}).then(function(b){x.src=URL.createObjectURL(b);' +
+        'if(x.tagName==="SOURCE"&&x.parentNode&&x.parentNode.load)x.parentNode.load();}).catch(function(){});}' +
+    'function scan(r){(r.querySelectorAll?r.querySelectorAll("img[src],audio[src],video[src],source[src]"):[]).forEach(img);}' +
     'function height(){parent.postMessage({__uiIsoHeight:Math.ceil(document.documentElement.scrollHeight)},"*");}' +
-    'addEventListener("DOMContentLoaded",function(){scan(document);new MutationObserver(function(m){m.forEach(function(x){x.addedNodes.forEach(function(nd){if(nd.tagName==="IMG")img(nd);else scan(nd);});});height();})' +
+    'addEventListener("DOMContentLoaded",function(){scan(document);new MutationObserver(function(m){m.forEach(function(x){x.addedNodes.forEach(function(nd){if(/^(IMG|AUDIO|VIDEO|SOURCE)$/.test(nd.tagName||""))img(nd);else scan(nd);});});height();})' +
       '.observe(document.documentElement,{childList:true,subtree:true});' +
       'if(window.ResizeObserver)new ResizeObserver(height).observe(document.documentElement);height();});' +
     '})();<\/script>';
@@ -1173,15 +1182,29 @@
       }
       var opts = {method: d.method || 'GET', credentials: 'same-origin'};
       if (d.body != null && opts.method !== 'GET' && opts.method !== 'HEAD') {
-        opts.body = d.body;
-        opts.headers = {'Content-Type': d.ctype || 'application/json'};
+        if (d.body.__uiForm) {
+          // The browser writes the multipart boundary; a Content-Type set
+          // here would leave the server without it.
+          var fd = new FormData();
+          d.body.__uiForm.forEach(function(kv) { fd.append(kv[0], kv[1]); });
+          opts.body = fd;
+        } else if (typeof d.body === 'string') {
+          opts.body = d.body;
+          opts.headers = {'Content-Type': d.ctype || 'application/json'};
+        } else {
+          opts.body = d.body;
+          opts.headers = {'Content-Type': d.ctype || d.body.type || 'application/octet-stream'};
+        }
       }
       fetch(d.url, opts).then(function(r) {
         var type = r.headers.get('Content-Type') || '';
         return r.arrayBuffer().then(function(buf) { reply({status: r.status, type: type, body: buf}); });
       }).catch(function(err) { reply({error: String(err && err.message || err)}); });
     });
-    f.__uiSet = function(html) { f.setAttribute('srcdoc', ISOLATE_SHIM + (html || '')); };
+    // The storage polyfill first: localStorage throws in an opaque origin,
+    // and an app that saves a setting or a high score there died on its
+    // first line.
+    f.__uiSet = function(html) { f.setAttribute('srcdoc', STORAGE_SHIM + ISOLATE_SHIM + (html || '')); };
     return f;
   }
 
