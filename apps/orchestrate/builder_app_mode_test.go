@@ -100,3 +100,22 @@ func TestEmptyValuesAreCounted(t *testing.T) {
 		t.Fatalf("a real forecast counted %d empty", empty)
 	}
 }
+
+// The kind is read from the intake's packed text when no intake values were
+// stored, by the label Builder's own form gives the field.
+func TestAppModeReadsTheIntakeText(t *testing.T) {
+	builder := AgentRecord{ID: "seed-builder", IntakeForm: IntakeFormSpec{{Name: "kind", Label: "What kind of thing?"}}}
+	turn := &chatTurn{agent: builder, session: &ChatSession{Messages: []ChatMessage{
+		{Role: "user", Content: "**What do you want to do?:** Create\n\n**What kind of thing?:** App\n\n**What should it do?:** weather"},
+	}}}
+	if kind, from := turn.intakeKind(); kind != "App" || from != "text" {
+		t.Fatalf("kind %q from %q", kind, from)
+	}
+	if !turn.builderAppMode() {
+		t.Fatal("the packed text did not turn on app mode")
+	}
+	turn.session.Messages = append(turn.session.Messages, ChatMessage{Role: "user", Content: "**What kind of thing?:** Tool"})
+	if turn.builderAppMode() {
+		t.Fatal("the latest intake (Tool) should decide")
+	}
+}

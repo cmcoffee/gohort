@@ -48,12 +48,46 @@ func (t *chatTurn) builderAppMode() bool {
 	if t == nil || t.session == nil || !isBuilderAgent(t.agent.ID) {
 		return false
 	}
-	for i := len(t.session.Messages) - 1; i >= 0; i-- {
-		if v := t.session.Messages[i].IntakeValues; len(v) > 0 {
-			return strings.EqualFold(strings.TrimSpace(v["kind"]), "app")
+	kind, from := t.intakeKind()
+	if from == "" {
+		Debug("[builder] no intake on session %s (%d messages): not app mode", t.chatSessionID(), len(t.session.Messages))
+	}
+	return strings.EqualFold(kind, "app")
+}
+
+// intakeKind is the latest intake's answer to "What kind of thing?", and
+// where it was read: the stored intake values, or else the intake's packed
+// text ("**<label>:** App"), which every intake send carries. Three app-mode
+// runs in a row never turned it on, and the values are the one piece of that
+// path no check could see, so the text is read too.
+func (t *chatTurn) intakeKind() (kind, from string) {
+	label := ""
+	for _, f := range t.agent.IntakeForm {
+		if f.Name == "kind" {
+			label = strings.TrimSpace(f.Label)
 		}
 	}
-	return false
+	for i := len(t.session.Messages) - 1; i >= 0; i-- {
+		m := t.session.Messages[i]
+		if m.Role != "user" {
+			continue
+		}
+		if v := m.IntakeValues; len(v) > 0 {
+			return strings.TrimSpace(v["kind"]), "values"
+		}
+		if label == "" {
+			continue
+		}
+		marker := "**" + label + ":**"
+		if j := strings.Index(m.Content, marker); j >= 0 {
+			rest := strings.TrimSpace(m.Content[j+len(marker):])
+			if k := strings.IndexAny(rest, "\n\r"); k >= 0 {
+				rest = rest[:k]
+			}
+			return strings.TrimSpace(rest), "text"
+		}
+	}
+	return "", ""
 }
 
 // renderBuilderAppModeBlock is app mode's instructions for this turn, or "".

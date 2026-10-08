@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -399,6 +400,13 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	userMsg := ChatMessage{Role: "user", Content: req.Message, Created: time.Now(), Hidden: req.Hidden}
 	if len(req.IntakeValues) > 0 {
 		userMsg.IntakeValues = req.IntakeValues
+		// Which fields arrived, and the kind: never the person's answers.
+		keys := make([]string, 0, len(req.IntakeValues))
+		for k := range req.IntakeValues {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		Log("[orchestrate] intake on session %s: fields %v, kind %q", sess.ID, keys, req.IntakeValues["kind"])
 	}
 	sess.Messages = append(sess.Messages, userMsg)
 	if saved, err := saveChatSession(udb, sess); err == nil {
