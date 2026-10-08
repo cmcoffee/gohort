@@ -338,6 +338,7 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 	} else {
 		msg += " Actions are not run on save (one may reach an external API): run app_def(action=\"test\", id=" + quoteName(saved.Slug) + ") to execute it."
 	}
+	t.noteAppStanding(saved.Slug, false, "a script was edited after its last check: run app_def(action=\"verify\")")
 	return msg + " " + saved.VerifyStatus() + ".", nil
 }
 

@@ -631,13 +631,22 @@ func buildGapsFinishCheck(plan func() *BuildPlanState, udb Database, sessionID s
 func (g buildGaps) finishNotice() string {
 	var b strings.Builder
 	b.WriteString("Your reply was held back: before a reply that finishes the work, the build check (report_build_gaps) runs, and you had not run it. It found:")
+	apps := false
 	for _, u := range g.Unverified {
+		if slug, isApp := ledgerApp(u.Tool); isApp {
+			apps = true
+			fmt.Fprintf(&b, "\n  - app %s is NOT ready: %s", slug, u.Reason)
+			continue
+		}
 		fmt.Fprintf(&b, "\n  - tool %s is NOT verified: %s", u.Tool, u.Reason)
 	}
 	for _, st := range g.Blocked {
 		fmt.Fprintf(&b, "\n  - step %d (%s) is blocked: %s", st.Step, st.Title, st.Reason)
 	}
 	b.WriteString("\n\nAn edit is not a fix and a save is not a test: until a tool has run and worked, you do not know that it works. Verify each tool now (tool_def(action=\"test\") with cases, or add_tool with test_args) and fix what fails. If you cannot verify one, say plainly in your reply which one and why. Do NOT tell the user an unverified tool works or has been fixed.")
+	if apps {
+		b.WriteString(" For an app: fix what its last check reported and run app_def(action=\"verify\") until it passes. If you cannot get it to pass, say plainly in your reply that the app does not work yet, what fails, and what you tried; do NOT tell the user where to open it as if it works.")
+	}
 	return b.String()
 }
 
@@ -661,6 +670,10 @@ func buildGapsNote(plan *BuildPlanState, udb Database, sessionID string) string 
 	}
 	var parts []string
 	for _, u := range rep.Unverified {
+		if slug, isApp := ledgerApp(u.Tool); isApp {
+			parts = append(parts, fmt.Sprintf("app %s (%s)", slug, u.Reason))
+			continue
+		}
 		parts = append(parts, fmt.Sprintf("%s (%s)", u.Tool, u.Reason))
 	}
 	for _, st := range rep.Blocked {
@@ -727,6 +740,9 @@ func (d *dispatchBuildCheck) annotate(resp *Response) {
 func (g buildGaps) strikeReason() string {
 	switch n := len(g.Unverified); {
 	case n == 1:
+		if slug, isApp := ledgerApp(g.Unverified[0].Tool); isApp {
+			return fmt.Sprintf("Held back: sent while app %s's last check had not passed.", slug)
+		}
 		return fmt.Sprintf("Held back: sent before the build check, which found %s not verified.", g.Unverified[0].Tool)
 	case n > 1:
 		return fmt.Sprintf("Held back: sent before the build check, which found %d tools not verified.", n)

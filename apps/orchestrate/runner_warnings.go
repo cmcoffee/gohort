@@ -205,8 +205,12 @@ func injectSkippedGapReportWarning(sess *ChatSession, udb Database, reply string
 	}
 	note := "FRAMEWORK NOTICE: your previous reply closed out the build plan without calling report_build_gaps. That call is required before any reply that presents the build as finished: it is what surfaces blocked steps and tools that are not verified. Marking a step done is your OWN claim and is not evidence the tool works."
 	if un := unverifiedTools(udb, sess.ID); len(un) > 0 {
-		note += "\n\nTools you authored that do NOT currently stand verified:"
+		note += "\n\nWhat you authored that does NOT currently stand verified:"
 		for _, u := range un {
+			if slug, isApp := ledgerApp(u.Tool); isApp {
+				note += fmt.Sprintf("\n  - app %s: %s", slug, u.Reason)
+				continue
+			}
 			note += fmt.Sprintf("\n  - %s: %s", u.Tool, u.Reason)
 		}
 		note += "\n\nYou may have told the user these are working. Verify each one now (add_tool with test_args, or tool_def(action=\"test\")), then say plainly what was actually confirmed and what was not."

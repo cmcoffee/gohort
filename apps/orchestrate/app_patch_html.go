@@ -135,6 +135,7 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 		return "", fmt.Errorf("that %s broke the page in a real browser, so it was ROLLED BACK, the app is serving the previous revision again:\n- %s\n\nFix the replacement text and try again",
 			verb, strings.Join(errs, "\n- "))
 	}
+	t.noteAppStanding(saved.Slug, true, "")
 	return fmt.Sprintf(summary, htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated) +
 		" The page was parsed and loaded in a real browser after the change and came up clean, so there is nothing further to verify. Tell the user what changed.", nil
 }

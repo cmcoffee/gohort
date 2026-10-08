@@ -81,6 +81,7 @@ func (t *chatTurn) appDefDelete(args map[string]any) (string, error) {
 		return "", appNotFound(args, "to delete")
 	}
 	DeleteAppSpec(t.user, spec.Slug)
+	t.forgetAppStanding(spec.Slug)
 	return fmt.Sprintf("Deleted app %q (/apps/%s/).", spec.Name, spec.Slug), nil
 }
 
@@ -337,6 +338,11 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	}
 	spec.RecordVerify(failures == 0, summary)
 	t.recordAppVerify(spec.Slug, failures, classes, pageCheckBroke)
+	if failures > 0 {
+		t.noteAppStanding(spec.Slug, false, "its last verify failed ("+summary+")")
+	} else {
+		t.noteAppStanding(spec.Slug, true, "")
+	}
 	if failures > 0 {
 		fmt.Fprintf(&b, "\nVERDICT: FAIL, %d problem(s) above. Fix with app_def action=update and run verify again. Do NOT tell the user the app is ready.", failures)
 	} else {

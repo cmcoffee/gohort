@@ -356,6 +356,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		// longer exists. Checking the write's own output cannot go stale.
 		if len(appHTMLSectionScripts(raw)) > 0 {
 			if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
+				t.noteAppStanding(saved.Slug, false, "its page fails in a real browser: "+errs[0])
 				return appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.%s",
 					verb, saved.Name, strings.Join(errs, "\n- "), saved.Slug, plan), parseNotes), nil
 			}
@@ -372,6 +373,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if len(saved.DataSources) > 0 {
 		report, _, _, fail := t.checkScripts(saved, false, nil, nil)
 		if fail > 0 {
+			t.noteAppStanding(saved.Slug, false, "a data source fails its check (see the last app_def result)")
 			return appWithParseNotes(fmt.Sprintf("%s app %q, BUT a data source FAILED to run, the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, …) (it re-checks on save). Do NOT tell the user the app is ready yet.%s",
 				verb, saved.Name, strings.TrimSpace(report), saved.Slug, plan), parseNotes), nil
 		}
@@ -388,7 +390,11 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// a verify batched alongside the NEXT update reports on the revision being
 	// replaced, and its findings read as fresh.
 	if _, ok := args["sections"]; ok && len(appHTMLSectionScripts(args["sections"])) > 0 {
+		t.noteAppStanding(saved.Slug, true, "")
 		msg += "\nThis save already parsed the inline JavaScript AND loaded /apps/" + saved.Slug + "/ in a real browser: it rendered with no JS errors. That check covered THIS revision, so you don't need a separate verify unless you change the app again."
+	} else if !isUpdate || appUpdateChangesBehavior(args) {
+		t.noteAppStanding(saved.Slug, false, "saved, and not yet verified in a browser: run app_def(action=\"verify\")")
+		msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\"): it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
 	} else {
 		msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\"): it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
 	}
@@ -425,4 +431,16 @@ func floatArg(args map[string]any, key string) float64 {
 		}
 	}
 	return 0
+}
+
+// appUpdateChangesBehavior reports an update that touches what the app does,
+// which a check has to see again. A notes or name edit leaves a verified app
+// verified.
+func appUpdateChangesBehavior(args map[string]any) bool {
+	for _, k := range []string{"sections", "data_sources", "actions", "settings", "shared_collections", "record_key", "agent_id", "pipeline_id"} {
+		if _, ok := args[k]; ok {
+			return true
+		}
+	}
+	return false
 }
