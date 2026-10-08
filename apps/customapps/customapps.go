@@ -59,7 +59,7 @@ type CustomApps struct {
 
 // --- core.Agent interface (dashboard-only) -----------------------------------
 
-func (T CustomApps) Name() string         { return "customapps" }
+func (T CustomApps) Name() string         { return appscript.StoreName }
 func (T CustomApps) SystemPrompt() string { return "" }
 func (T CustomApps) Desc() string {
 	return "Apps: host for data-driven apps composed from ui primitives."
@@ -902,13 +902,15 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, u
 
 	// Args become env vars in the script: the records JSON, plus each query param.
 	args := map[string]any{"records": string(recJSON)}
-	if len(spec.SharedCollections) > 0 {
-		args["shared"] = sharedInput(T.recordBase(spec, owner), spec)
-	}
 	for k, vs := range r.URL.Query() {
 		if len(vs) > 0 {
 			args[k] = vs[0]
 		}
+	}
+	// After the params, as an action does: a page must not hand its own view
+	// a shared collection of its choosing.
+	if len(spec.SharedCollections) > 0 {
+		args["shared"] = sharedInput(T.recordBase(spec, owner), spec)
 	}
 	T.applySettings(args, spec, uid) // last: a param never overrides a setting
 

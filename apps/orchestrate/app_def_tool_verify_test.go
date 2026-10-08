@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/appscript"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A test param naming a setting used to win, so test ran a value the served
@@ -14,7 +16,7 @@ import (
 // params reached the scripts, since the author cannot see the env otherwise.
 func TestScriptArgsLetASettingBeatAParam(t *testing.T) {
 	spec := AppSpec{Settings: []AppSetting{{Name: "difficulty", Default: "normal"}, {Name: "", Default: "x"}}}
-	args, applied, shadowed := appScriptArgs(spec, "[]", map[string]any{"mode": "scene", "probe": 1, "difficulty": "hard"}, "alice")
+	args, applied, shadowed := appScriptArgs(spec, "[]", map[string]any{"mode": "scene", "probe": 1, "difficulty": "hard"}, nil)
 	if args["records"] != "[]" || args["mode"] != "scene" || args["probe"] != "1" {
 		t.Fatalf("records and params must reach the scripts: %v", args)
 	}
@@ -29,7 +31,7 @@ func TestScriptArgsLetASettingBeatAParam(t *testing.T) {
 	}
 
 	// A declared setting with no param is still present at its default.
-	args, applied, shadowed = appScriptArgs(spec, "[]", nil, "alice")
+	args, applied, shadowed = appScriptArgs(spec, "[]", nil, nil)
 	if args["difficulty"] != "normal" || len(applied) != 0 || len(shadowed) != 0 {
 		t.Errorf("no params: settings at their defaults and nothing to report; got %v %v %v", args, applied, shadowed)
 	}
@@ -127,7 +129,7 @@ func TestHTMLReferencesData(t *testing.T) {
 // live no page can set caller, so a test that let it would pass a vote check
 // the served app never sees.
 func TestScriptArgsCallerIsTheAuthor(t *testing.T) {
-	args, applied, shadowed := appScriptArgs(AppSpec{}, "[]", map[string]any{"caller": "mallory"}, "alice")
+	args, applied, shadowed := appScriptArgs(AppSpec{}, "[]", map[string]any{"caller": "mallory"}, map[string]string{"caller": "alice"})
 	if args["caller"] != "alice" || len(applied) != 0 || len(shadowed) != 1 || shadowed[0] != "caller" {
 		t.Fatalf("args %v applied %v shadowed %v", args, applied, shadowed)
 	}
@@ -138,5 +140,36 @@ func TestSettingCannotTakeAScriptInputName(t *testing.T) {
 	got, notes := appSettings([]any{map[string]any{"name": "caller"}, map[string]any{"name": "records"}, map[string]any{"name": "goal"}})
 	if len(got) != 1 || got[0].Name != "goal" || len(notes) != 2 || !strings.Contains(notes[0], "IGNORED") {
 		t.Fatalf("got %+v notes %v", got, notes)
+	}
+}
+
+// The check reads the records where the host keeps them. It read RootDB
+// once, which is not the host's bucket, so every check ran on an empty store.
+func TestCheckReadsTheHostsRecordStore(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	spec := AppSpec{Slug: "club", Owner: "alice", SharedCollections: []string{"votes"}}
+	UserDB(RootDB, "alice").Set("custom_records:club", "stray", map[string]any{"id": "stray"})
+	host := appscript.RecordBase(spec, "alice")
+	host.Set("custom_records:club", "b1", map[string]any{"id": "b1", "title": "Dune"})
+	host.Set(appscript.SharedTable("club", "votes"), "v1", map[string]any{"id": "v1", "by": "bob"})
+
+	recs := appStoredRecords("alice", spec)
+	if len(recs) != 1 || recs[0]["id"] != "b1" {
+		t.Fatalf("records = %v, want the host's one", recs)
+	}
+	if got := appscript.SharedInput(host, spec); got != `{"votes":[{"by":"bob","id":"v1"}]}` {
+		t.Fatalf("shared = %s", got)
+	}
+}
+
+// shared is set by the framework, so a check, like the live app, does not
+// let a param replace it.
+func TestScriptArgsSharedCannotBeSent(t *testing.T) {
+	fixed := map[string]string{"caller": "alice", "shared": `{"votes":[]}`}
+	args, _, shadowed := appScriptArgs(AppSpec{}, "[]", map[string]any{"shared": `{"votes":[{"by":"x"}]}`}, fixed)
+	if args["shared"] != `{"votes":[]}` || len(shadowed) != 1 || shadowed[0] != "shared" {
+		t.Fatalf("args %v shadowed %v", args, shadowed)
 	}
 }

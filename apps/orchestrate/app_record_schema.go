@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
 // appRecordFields derives the record schema from a sections array: form fields
@@ -107,17 +108,11 @@ func appFieldList(fields map[string]string) []string {
 	return out
 }
 
-// appStoredRecords reads an app's live records from wherever they live — the
-// shared per-user store, or the app's own file when PrivateDB is set. The
-// script check used to read the shared store unconditionally, so a private-db
-// app tested against an empty set even when it had rows.
+// appStoredRecords reads an app's live records from where the host keeps
+// them (appscript.RecordBase). This read RootDB once, which is not the host's
+// bucket, so every check saw an empty store and ran against the sample.
 func appStoredRecords(user string, spec AppSpec) []map[string]any {
-	var db Database
-	if spec.PrivateDB {
-		db = OpenCustomAppDB(user, spec.Slug)
-	} else {
-		db = UserDB(RootDB, user)
-	}
+	db := appscript.RecordBase(spec, user)
 	if db == nil {
 		return nil
 	}

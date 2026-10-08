@@ -122,3 +122,24 @@ func TestThePageReadsButCannotWriteShared(t *testing.T) {
 		t.Fatalf("an undeclared collection answered %d", w.Code)
 	}
 }
+
+// A data source gets shared after the page's params, as an action does, so a
+// page cannot hand its own view a collection of its choosing.
+func TestDataSourceSharedCannotBeSent(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "club", Owner: "alice", SharedCollections: []string{"votes"},
+		DataSources: []AppDataSource{{Name: "mine", Script: "x"}}}
+	var got map[string]any
+	saved := runAppScript
+	runAppScript = func(user string, db Database, slug, kind, name, language, script string, caps []string, a map[string]any) (string, error) {
+		got = a
+		return `[]`, nil
+	}
+	t.Cleanup(func() { runAppScript = saved })
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, `/apps/club/data/mine?shared={"votes":[{"by":"x"}]}&caller=x`, nil)
+	T.handleData(w, r, "alice", "bob", T.recordBase(spec, "bob"), spec, "mine")
+	if w.Code != http.StatusOK || got["shared"] != `{"votes":[]}` || got["caller"] != "bob" {
+		t.Fatalf("%d %s: shared %v caller %v", w.Code, w.Body.String(), got["shared"], got["caller"])
+	}
+}

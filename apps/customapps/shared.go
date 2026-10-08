@@ -16,12 +16,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
 // maxSharedRecords bounds one collection, and maxSharedRecordBytes one record:
@@ -31,7 +31,7 @@ const (
 	maxSharedRecordBytes = 32 << 10
 )
 
-func sharedTable(slug, name string) string { return "custom_shared:" + slug + ":" + name }
+func sharedTable(slug, name string) string { return appscript.SharedTable(slug, name) }
 
 // sharedDeclared reports whether spec declares the collection name.
 func sharedDeclared(spec AppSpec, name string) bool {
@@ -45,40 +45,12 @@ func sharedDeclared(spec AppSpec, name string) bool {
 
 // readShared is one collection's records, oldest first by created, then id.
 func readShared(ownerDB Database, spec AppSpec, name string) []map[string]any {
-	out := []map[string]any{}
-	if ownerDB == nil {
-		return out
-	}
-	tbl := sharedTable(spec.Slug, name)
-	for _, k := range ownerDB.Keys(tbl) {
-		var rec map[string]any
-		if ownerDB.Get(tbl, k, &rec) {
-			out = append(out, rec)
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		ci, _ := out[i]["created"].(string)
-		cj, _ := out[j]["created"].(string)
-		if ci != cj {
-			return ci < cj
-		}
-		ii, _ := out[i]["id"].(string)
-		ij, _ := out[j]["id"].(string)
-		return ii < ij
-	})
-	return out
+	return appscript.ReadShared(ownerDB, spec.Slug, name)
 }
 
 // sharedInput is every declared collection as one JSON object, the `shared`
 // input scripts read: {"<name>": [records]}.
-func sharedInput(ownerDB Database, spec AppSpec) string {
-	all := map[string]any{}
-	for _, name := range spec.SharedCollections {
-		all[name] = readShared(ownerDB, spec, name)
-	}
-	b, _ := json.Marshal(all)
-	return string(b)
-}
+func sharedInput(ownerDB Database, spec AppSpec) string { return appscript.SharedInput(ownerDB, spec) }
 
 // sharedWriteMu serializes writes to one app's shared collections, so two
 // players' actions landing together each see a whole collection.
