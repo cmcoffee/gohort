@@ -603,6 +603,15 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		if opt.preview > 0 {
 			shown = "\n     output: " + appOutputPreview(trimmed, opt.preview)
 		}
+		if kind == "data" {
+			// The section is what the user sees: a source that prints valid
+			// JSON its sections cannot read renders an empty page that every
+			// shape-only check called OK.
+			for _, p := range appSectionShapeProblems(spec, name, v) {
+				fail++
+				fmt.Fprintf(&b, "FAIL %s: %s\n", label, p)
+			}
+		}
 		switch kind {
 		case "data":
 			if arr, isArr := v.([]any); isArr {

@@ -889,16 +889,9 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, u
 		return
 	}
 
-	// Gather the REQUESTER's stored records (udb) to hand the script as input.
-	tbl := recTable(spec.Slug)
-	records := []map[string]any{}
-	for _, k := range udb.Keys(tbl) {
-		var rec map[string]any
-		if udb.Get(tbl, k, &rec) {
-			records = append(records, rec)
-		}
-	}
-	recJSON, _ := json.Marshal(records)
+	// Gather the REQUESTER's stored records (udb) to hand the script as input,
+	// oldest first, so records[-1] is the newest.
+	recJSON, _ := json.Marshal(appscript.ReadRecords(udb, spec.Slug))
 
 	// Args become env vars in the script: the records JSON, plus each query param.
 	args := map[string]any{"records": string(recJSON)}
@@ -1161,16 +1154,9 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 		return
 	}
 
-	// Hand the script the app's records + request params (query + JSON body).
-	tbl := recTable(spec.Slug)
-	records := []map[string]any{}
-	for _, k := range udb.Keys(tbl) {
-		var rec map[string]any
-		if udb.Get(tbl, k, &rec) {
-			records = append(records, rec)
-		}
-	}
-	recJSON, _ := json.Marshal(records)
+	// Hand the script the app's records (oldest first) + request params
+	// (query + JSON body).
+	recJSON, _ := json.Marshal(appscript.ReadRecords(udb, spec.Slug))
 	args := map[string]any{"records": string(recJSON)}
 	// An app bound to a pipeline also hands its actions the LAST FINISHED RUN.
 	// The transcript lives in the pipeline's run store, not the app's records,
@@ -1276,7 +1262,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 
 // --- generic record store ----------------------------------------------------
 
-func recTable(slug string) string { return "custom_records:" + slug }
+func recTable(slug string) string { return appscript.RecordsTable(slug) }
 
 func (T *CustomApps) handleRecords(w http.ResponseWriter, r *http.Request, udb Database, spec AppSpec) {
 	tbl := recTable(spec.Slug)

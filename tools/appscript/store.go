@@ -34,6 +34,45 @@ func RecordBase(spec AppSpec, uid string) Database {
 	return UserDB(RootDB.Bucket(StoreName), uid)
 }
 
+// RecordsTable is the table an app's own records live in.
+func RecordsTable(slug string) string { return "custom_records:" + slug }
+
+// ReadRecords is one person's records for an app, as every script gets them:
+// oldest first by created, then by key. They came in key order, and a key is
+// random hex, so records[-1], which every "the location I entered" script
+// reads as the newest, was an arbitrary one: a weather app kept forecasting
+// whichever saved city happened to sort last, and read as not saving the
+// city just entered. A record with no created sorts first.
+func ReadRecords(db Database, slug string) []map[string]any {
+	type row struct {
+		key string
+		rec map[string]any
+	}
+	var rows []row
+	if db != nil {
+		tbl := RecordsTable(slug)
+		for _, k := range db.Keys(tbl) {
+			var rec map[string]any
+			if db.Get(tbl, k, &rec) {
+				rows = append(rows, row{k, rec})
+			}
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		ci, _ := rows[i].rec["created"].(string)
+		cj, _ := rows[j].rec["created"].(string)
+		if ci != cj {
+			return ci < cj
+		}
+		return rows[i].key < rows[j].key
+	})
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.rec)
+	}
+	return out
+}
+
 // SharedTable is the table one shared collection lives in.
 func SharedTable(slug, name string) string { return "custom_shared:" + slug + ":" + name }
 

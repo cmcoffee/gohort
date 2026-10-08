@@ -25,6 +25,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
 const (
@@ -160,7 +161,8 @@ func (T *CustomApps) dispatchScheduledAction(_ context.Context, t ScheduledTrigg
 	}
 
 	db := T.recordBase(spec, owner)
-	records := gatherRecords(db, recTable(slug))
+	recJSON, _ := json.Marshal(appscript.ReadRecords(db, slug))
+	records := string(recJSON)
 	args := map[string]any{"records": records}
 	T.applySettings(args, spec, owner) // a scheduled fire is the owner's own run
 	msg, saved, err := runActionAndPersist(owner, db, db, spec, *act, args, owner)
@@ -272,18 +274,4 @@ func appLastViewed(owner, slug string) time.Time {
 		return time.Time{}
 	}
 	return t
-}
-
-// gatherRecords reads a record table into the JSON string the action script
-// expects as its `records` arg (mirrors handleAction's own gathering).
-func gatherRecords(db Database, tbl string) string {
-	out := []map[string]any{}
-	for _, k := range db.Keys(tbl) {
-		var rec map[string]any
-		if db.Get(tbl, k, &rec) {
-			out = append(out, rec)
-		}
-	}
-	b, _ := json.Marshal(out)
-	return string(b)
 }

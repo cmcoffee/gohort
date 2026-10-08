@@ -116,13 +116,9 @@ func appStoredRecords(user string, spec AppSpec) []map[string]any {
 	if db == nil {
 		return nil
 	}
-	tbl := "custom_records:" + spec.Slug
-	var recs []map[string]any
-	for _, k := range db.Keys(tbl) {
-		var rec map[string]any
-		if db.Get(tbl, k, &rec) {
-			recs = append(recs, rec)
-		}
+	recs := appscript.ReadRecords(db, spec.Slug)
+	if len(recs) == 0 {
+		return nil
 	}
 	return recs
 }

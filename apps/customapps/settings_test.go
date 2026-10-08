@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/gohort/core/appadmin"
+	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
