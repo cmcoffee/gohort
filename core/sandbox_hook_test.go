@@ -3,8 +3,10 @@ package core
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -222,5 +224,79 @@ func TestTheHookCountsTheScriptsCalls(t *testing.T) {
 	}
 	if n := h.Calls.Load(); n != 1 {
 		t.Errorf("one request made, counted %d", n)
+	}
+}
+
+// call_tool runs only a tool the script names in an exact tool:<name>
+// capability, and hands back the tool's output.
+func TestHookCallsOnlyDeclaredTools(t *testing.T) {
+	var ran []string
+	sess := &ToolSession{Username: "owner", CallTool: func(name string, args map[string]any) (string, error) {
+		ran = append(ran, name+":"+fmt.Sprint(args["city"]))
+		return "sunny", nil
+	}}
+	call := func(caps []string, name string) string {
+		h := &SandboxHook{Capabilities: caps, Sess: sess}
+		a, b := net.Pipe()
+		go func() { h.handleTool(a, map[string]interface{}{"name": name, "args": map[string]interface{}{"city": "Reno"}}); a.Close() }()
+		out, _ := io.ReadAll(b)
+		return string(out)
+	}
+	if out := call([]string{"tool:get_weather"}, "get_weather"); !strings.Contains(out, `"output":"sunny"`) {
+		t.Fatalf("declared tool: %s", out)
+	}
+	if out := call([]string{"tool:get_weather"}, "send_email"); !strings.Contains(out, "does not declare") {
+		t.Fatalf("undeclared tool: %s", out)
+	}
+	if out := call([]string{"tool"}, "get_weather"); !strings.Contains(out, "does not declare") {
+		t.Fatalf("a bare tool capability granted a call: %s", out)
+	}
+	if len(ran) != 1 || ran[0] != "get_weather:Reno" {
+		t.Fatalf("ran %v", ran)
+	}
+	// Outside an app script (a chat tool) there is no caller to reach.
+	h := &SandboxHook{Capabilities: []string{"tool:get_weather"}, Sess: &ToolSession{Username: "owner"}}
+	a, b := net.Pipe()
+	go func() { h.handleTool(a, map[string]interface{}{"name": "get_weather"}); a.Close() }()
+	if out, _ := io.ReadAll(b); !strings.Contains(string(out), "only for a custom app") {
+		t.Fatalf("a session without CallTool: %s", out)
+	}
+}
+
+// The whole path a script takes: python's gohort.call_tool over the real
+// hook socket, back with the tool's output. Skips without python3.
+func TestPythonCallToolReachesTheHook(t *testing.T) {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not installed")
+	}
+	dir := t.TempDir()
+	h, err := NewSandboxHook(dir, []string{"tool:get_weather"}, &ToolSession{Username: "owner", CallTool: func(name string, args map[string]any) (string, error) {
+		return fmt.Sprintf("%s for %v, forecast=%v", name, args["city"], args["forecast"]), nil
+	}})
+	if err != nil || h == nil {
+		t.Fatalf("hook: %v", err)
+	}
+	defer h.Close()
+	lib := t.TempDir()
+	if err := os.WriteFile(filepath.Join(lib, "gohort.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := `from gohort import call_tool, HookError
+print(call_tool("get_weather", city="Reno", forecast=True))
+try:
+    call_tool("send_email", to="x")
+except HookError as e:
+    print("refused:", e)
+`
+	cmd := exec.Command(py, "-c", script)
+	cmd.Env = append(os.Environ(), "GOHORT_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python: %v\n%s", err, out)
+	}
+	got := string(out)
+	if !strings.Contains(got, "get_weather for Reno, forecast=true") || !strings.Contains(got, "refused:") || !strings.Contains(got, "does not declare") {
+		t.Fatalf("output:\n%s", got)
 	}
 }

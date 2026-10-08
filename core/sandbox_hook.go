@@ -376,6 +376,8 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		h.handleFetchVia(conn, req.Params)
 	case "browse_page":
 		h.handleBrowsePage(conn, req.Params)
+	case "tool":
+		h.handleTool(conn, req.Params)
 	default:
 		Log("[hook] unknown method: %s", req.Method)
 		writeHookError(conn, "unknown method: "+req.Method)
@@ -421,6 +423,10 @@ func hookMethodDeadline(method string, params map[string]interface{}) time.Durat
 		return 90 * time.Second
 	case "secret", "log":
 		return 10 * time.Second
+	case "tool":
+		// A tool can fetch, browse or run its own sandbox; a script's whole
+		// run is capped well under this, which is the real bound.
+		return 120 * time.Second
 	}
 	return 10 * time.Second
 }
@@ -507,6 +513,45 @@ func (h *SandboxHook) grantedFetchVia(credName string) bool {
 		}
 	}
 	return false
+}
+
+// handleTool serves gohort.call_tool: the way an app's script reuses a tool
+// the owner already has (a forecast, a lookup) instead of re-implementing it
+// and letting the two drift. The session's CallTool does the running. Only a tool named by an exact
+// "tool:<name>" capability runs; a bare "tool" grants nothing, the same way
+// bare "secret" does not.
+func (h *SandboxHook) handleTool(conn net.Conn, params map[string]interface{}) {
+	name := strings.TrimSpace(stringFromParams(params, "name"))
+	if name == "" {
+		writeHookError(conn, "call_tool requires the tool's name")
+		return
+	}
+	granted := false
+	for _, c := range h.Capabilities {
+		if c == "tool:"+name {
+			granted = true
+			break
+		}
+	}
+	if !granted {
+		writeHookError(conn, fmt.Sprintf("call_tool %q refused: this script may only call the tools it declares, and it does not declare \"tool:%s\" in its capabilities", name, name))
+		return
+	}
+	if h.Sess == nil || h.Sess.CallTool == nil {
+		writeHookError(conn, "call_tool is only for a custom app's data sources and actions")
+		return
+	}
+	args, _ := params["args"].(map[string]interface{})
+	if args == nil {
+		args = map[string]interface{}{}
+	}
+	out, err := h.Sess.CallTool(name, args)
+	if err != nil {
+		Log("[hook/tool] %s failed: %v", name, err)
+		writeHookError(conn, fmt.Sprintf("call_tool %q: %v", name, err))
+		return
+	}
+	writeHookResult(conn, map[string]any{"output": out})
 }
 
 // --- method handlers ---
@@ -1708,6 +1753,14 @@ class _Gohort:
         return self.fetch_url(url, method=method, headers=headers,
                               body=body, timeout=timeout)
 
+    def call_tool(self, name, **args):
+        """Run one of the owner's tools and return its output as text
+        (json.loads it if the tool prints JSON). The script must declare
+        "tool:<name>" in its capabilities, and only a tool that never
+        stops to ask before running can be called."""
+        result = self._call("tool", {"name": name, "args": args})
+        return result.get("output", "") if isinstance(result, dict) else result
+
     def log(self, msg, level="info"):
         """Route a message into gohort's log stream.
         level: debug, info, warn, error."""
@@ -1806,6 +1859,10 @@ def browse_page(url):
 
 def log(msg, level="info"):
     return gohort.log(msg, level=level)
+
+
+def call_tool(name, **args):
+    return gohort.call_tool(name, **args)
 
 
 def secret(name):

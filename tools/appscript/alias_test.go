@@ -31,3 +31,11 @@ func TestCallerAliasSurvivesARestart(t *testing.T) {
 		t.Error("nobody has no alias")
 	}
 }
+
+// Naming a tool to call adds to the default grant; it must not take fetch
+// away from the rest of the script.
+func TestToolCapsAddToTheDefaults(t *testing.T) {
+	if !onlyToolCaps([]string{"tool:get_weather"}) || onlyToolCaps([]string{"tool:x", "fetch"}) || onlyToolCaps(nil) {
+		t.Fatal("onlyToolCaps")
+	}
+}

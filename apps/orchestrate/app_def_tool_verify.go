@@ -17,7 +17,7 @@ import (
 
 // gohortScriptHelpers is everything the sandbox's gohort module actually
 // exports. Kept beside the hint because the point of the hint is this list.
-var gohortScriptHelpers = []string{"fetch_url", "fetch", "fetch_via", "browse_page", "log", "secret", "HookError"}
+var gohortScriptHelpers = []string{"fetch_url", "fetch", "fetch_via", "browse_page", "log", "secret", "call_tool", "HookError"}
 
 // scriptFailureHint turns a raw Python traceback into the one sentence that
 // resolves it, when the traceback is one we recognize.
@@ -39,10 +39,12 @@ func scriptFailureHint(output string) string {
 		}
 	}
 	msg := "HINT: the gohort module exports only " + strings.Join(gohortScriptHelpers, ", ") + ", that is the network/secret channel, NOT the tool catalog."
+	call := "the tool"
 	if name != "" {
 		msg += " " + strconv.Quote(name) + " is a gohort TOOL, and a tool cannot be imported or subprocessed from a script."
+		call = strconv.Quote(name)
 	}
-	return msg + " A script does its own work in plain Python (with fetch_url for anything off-box); if the job genuinely needs a tool, it belongs in a pipeline tool stage, not in here."
+	return msg + " To reuse one of the owner's tools, CALL it: add \"tool:<name>\" to the script's capabilities and run out = call_tool(" + call + ", param=value) (from gohort import call_tool), which returns the tool's output as text; only the owner's own tools or ones added from the catalog, and only ones that never ask before running. Otherwise a script does its own work in plain Python (with fetch_url for anything off-box), and a job for a tool that asks first belongs in a pipeline tool stage."
 }
 
 func (t *chatTurn) appDefDelete(args map[string]any) (string, error) {

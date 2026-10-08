@@ -181,6 +181,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if len(droppedScripts) > 0 && !boolArg(args, "confirm_rewrite") {
 		return "", errors.New(appWithParseNotes(strings.Join(droppedScripts, "\n\n"), parseNotes))
 	}
+	parseNotes = append(parseNotes, appToolCapNotes(t.user, spec)...)
 	// Declared tunables: the framework renders their Settings page and hands
 	// them to every script as env vars. Passed wholesale replaces the list.
 	if raw, ok := args["settings"]; ok && raw != nil {

@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 // appSectionShapeProblems lists, for every section that reads data source
@@ -214,4 +215,29 @@ func appKeys(m map[string]any) string {
 		keys = append(keys[:12], "…")
 	}
 	return strings.Join(keys, ", ")
+}
+
+// appToolCapNotes checks each "tool:<name>" a script declares against the rule
+// the call itself meets, at save time: a tool the owner does not have, or one
+// that would stop to ask, fails on every page load otherwise, far from here.
+func appToolCapNotes(user string, spec AppSpec) []string {
+	var notes []string
+	check := func(kind, script string, caps []string) {
+		for _, c := range caps {
+			name, ok := strings.CutPrefix(c, "tool:")
+			if !ok {
+				continue
+			}
+			if _, err := temptool.ScriptCallableTool(RootDB, user, name); err != nil {
+				notes = append(notes, fmt.Sprintf("%s %q declares tool:%s, but the call will be refused: %v", kind, script, name, err))
+			}
+		}
+	}
+	for _, ds := range spec.DataSources {
+		check("data source", ds.Name, ds.Capabilities)
+	}
+	for _, act := range spec.Actions {
+		check("action", act.Name, act.Capabilities)
+	}
+	return notes
 }

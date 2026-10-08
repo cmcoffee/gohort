@@ -36,6 +36,11 @@ func Run(user string, db Database, slug, kind, name, language, script string, ca
 	scriptName := fmt.Sprintf("%s_%s_%s.%s", kind, SanitizeName(slug), SanitizeName(name), ext)
 	if caps == nil {
 		caps = []string{"fetch", "log"} // sensible default: read external data + log
+	} else if onlyToolCaps(caps) {
+		// Naming a tool to call is a grant on top of the defaults, not instead
+		// of them: a script that declared tool:get_weather to reuse the
+		// owner's forecast must not lose fetch for everything else it reads.
+		caps = append([]string{"fetch", "log"}, caps...)
 	}
 	// Auto-grant fetch_via for every credential the app OWNER may use. A custom-
 	// app script always runs in the owner's context (handleData/handleAction pass
@@ -69,6 +74,9 @@ func Run(user string, db Database, slug, kind, name, language, script string, ca
 		// The owner is acting in their own app — allow the hook's fetch/browse to
 		// reach the network (the sandbox itself stays network-isolated).
 		Network: NewNetworkConnector(false),
+	}
+	sess.CallTool = func(name string, args map[string]any) (string, error) {
+		return temptool.CallToolForScript(sess, name, args)
 	}
 	return temptool.DispatchTempToolDirect(sess, tt, args)
 }
@@ -136,4 +144,17 @@ func SanitizeName(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// onlyToolCaps reports a capability list made only of "tool:<name>" grants.
+func onlyToolCaps(caps []string) bool {
+	if len(caps) == 0 {
+		return false
+	}
+	for _, c := range caps {
+		if !strings.HasPrefix(c, "tool:") {
+			return false
+		}
+	}
+	return true
 }

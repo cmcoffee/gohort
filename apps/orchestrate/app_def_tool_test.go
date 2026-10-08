@@ -320,6 +320,9 @@ ImportError: cannot import name 'create_docx' [exit: exit status 1]`
 	if !strings.Contains(hint, "pipeline tool stage") {
 		t.Errorf("say where the work belongs if it really does need a tool, got:\n%s", hint)
 	}
+	if !strings.Contains(hint, `call_tool("create_docx"`) || !strings.Contains(hint, "tool:<name>") {
+		t.Errorf("say how to call the tool instead, got:\n%s", hint)
+	}
 
 	// Unrelated failures get no invented advice.
 	if h := scriptFailureHint("NameError: name 'records' is not defined"); h != "" {

@@ -34,6 +34,13 @@ type ToolSession struct {
 	// workspace or the separation means nothing. Empty = no fallback.
 	WorkspaceFallback string
 
+	// CallTool, when set, is what gohort.call_tool reaches: one of the
+	// session user's tools, run for a script that declared "tool:<name>".
+	// Only an app's own script runs set it (appscript.Run), so a tool in a
+	// chat cannot use the hook to call further tools behind its own
+	// confirmation. Nil: call_tool is refused.
+	CallTool func(name string, args map[string]any) (string, error)
+
 	// imageBackends memoizes ReachableImageBackends for this turn. Resolving it
 	// reads the connector table, and the grouped `image` tool's schema is
 	// rebuilt on every catalog assembly — the DynamicChatTool cheapness contract

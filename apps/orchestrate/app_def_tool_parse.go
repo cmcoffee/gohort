@@ -228,7 +228,8 @@ func appScriptCaps(raw any, label string) ([]string, []string) {
 		switch {
 		case c == "fetch", c == "log", c == "browse_page",
 			strings.HasPrefix(c, "secret:") && len(c) > len("secret:"),
-			strings.HasPrefix(c, "fetch_via:") && len(c) > len("fetch_via:"):
+			strings.HasPrefix(c, "fetch_via:") && len(c) > len("fetch_via:"),
+			strings.HasPrefix(c, "tool:") && len(c) > len("tool:"):
 			keep = append(keep, c)
 		default:
 			dropped = append(dropped, c)
@@ -236,7 +237,7 @@ func appScriptCaps(raw any, label string) ([]string, []string) {
 	}
 	var notes []string
 	if len(dropped) > 0 {
-		notes = append(notes, fmt.Sprintf("%s: capabilities %s IGNORED (known: fetch, log, browse_page, secret:<credential>, fetch_via:<credential>; reading env vars and printing JSON need none)", label, strings.Join(dropped, ", ")))
+		notes = append(notes, fmt.Sprintf("%s: capabilities %s IGNORED (known: fetch, log, browse_page, secret:<credential>, fetch_via:<credential>, tool:<tool name>; reading env vars and printing JSON need none)", label, strings.Join(dropped, ", ")))
 	}
 	if len(keep) == 0 {
 		return nil, notes
