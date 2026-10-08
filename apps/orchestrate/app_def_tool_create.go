@@ -372,6 +372,10 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		msg += "\n\nData source check, all passed:\n" + strings.TrimSpace(report)
 		msg += "\nTip: run app_def(action=\"test\", id=\"" + saved.Slug + "\", sample=[{…example form entry…}]) to confirm the full form→data-source→output chain produces real output."
 	}
+	if len(saved.DataSources) == 0 {
+		// No scripts to run, so the check above did not list these.
+		msg += appBuildGaps(t.user, saved, appGapInput{})
+	}
 	// What to say about verification depends on what this save already did. An
 	// html-section app was just loaded in a real browser above, so telling the
 	// author to go verify it invites the exact loop this check exists to end:

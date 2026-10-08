@@ -535,6 +535,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		}
 	}
 	recJSON, _ := json.Marshal(recs)
+	gapIn := appGapInput{outputs: map[string]string{}, empty: map[string]string{}}
 	fixed := map[string]string{"caller": appscript.CallerAlias(spec, t.user)}
 	sharedRecs := 0
 	if len(spec.SharedCollections) > 0 {
@@ -596,6 +597,9 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		}
 		var v any
 		_ = json.Unmarshal([]byte(trimmed), &v)
+		if kind == "data" {
+			gapIn.outputs[name] = trimmed
+		}
 		// What the script actually printed, on the OK lines too. A script that
 		// catches its own failure prints a perfectly valid object, and an OK
 		// that names only the shape cannot tell a scene from {"error": ...,
@@ -664,6 +668,28 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 			run("action", act.Name, act.Language, act.Script, act.Capabilities)
 		}
 	}
+	// The first visit: what each source that reads the records prints with
+	// none saved. When the run above already had none, that run is the answer.
+	for _, ds := range spec.DataSources {
+		if !strings.Contains(ds.Script, "records") {
+			continue
+		}
+		if len(recs) == 0 {
+			if o, ok := gapIn.outputs[ds.Name]; ok {
+				gapIn.empty[ds.Name] = o
+			}
+			continue
+		}
+		emptyArgs := make(map[string]any, len(baseArgs))
+		for k, v := range baseArgs {
+			emptyArgs[k] = v
+		}
+		emptyArgs["records"] = "[]"
+		if out, err := appscript.Run(t.user, db, spec.Slug, "data", ds.Name, ds.Language, ds.Script, ds.Capabilities, emptyArgs); err == nil {
+			gapIn.empty[ds.Name] = strings.TrimSpace(out)
+		}
+	}
+	b.WriteString(appBuildGaps(t.user, spec, gapIn))
 	return b.String(), len(recs), pass, fail
 }
 
