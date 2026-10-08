@@ -58,9 +58,25 @@ func TestChartAndTableShapes(t *testing.T) {
 	if len(probs) != 2 || !strings.Contains(probs[0], "printed an array") || !strings.Contains(probs[1], "temp") {
 		t.Fatalf("%q", probs)
 	}
-	chart := map[string]any{"labels": []any{"a", "b"}, "series": []any{map[string]any{"data": []any{1.0, 2.0}}}}
-	if probs := appChartShape("chart", "s", chart); len(probs) != 1 || !strings.Contains(probs[0], `"data"`) {
+	// The rounds the weather build lost: "data" for "points" in the OUTPUT,
+	// fixed by editing the section's own series as if it were a template.
+	sec := map[string]any{"series": []any{map[string]any{"data": "{series[0].data}"}}, "labels": "{labels}"}
+	chart := map[string]any{"labels": []any{"a", "b"}, "series": []any{map[string]any{"name": "Low", "data": []any{1.0, 2.0}}}}
+	probs = appChartShape("chart", "s", sec, chart)
+	if len(probs) != 1 || !strings.Contains(probs[0], "rename the key in the script's output") || !strings.Contains(probs[0], "labels and series is the literal text") {
 		t.Fatalf("data instead of points: %q", probs)
+	}
+	nested := map[string]any{"Humidity": "58%", "chart_data": map[string]any{"labels": []any{"a"}, "series": []any{}}}
+	if probs := appChartShape("chart", "s", map[string]any{}, nested); len(probs) != 1 || !strings.Contains(probs[0], `inside "chart_data"`) || !strings.Contains(probs[0], "TOP level") {
+		t.Fatalf("nested: %q", probs)
+	}
+	unnamed := map[string]any{"labels": []any{"a"}, "series": []any{map[string]any{"label": "Low", "points": []any{1.0}}}}
+	if probs := appChartShape("chart", "s", map[string]any{}, unnamed); len(probs) != 1 || !strings.Contains(probs[0], `"Series 1"`) {
+		t.Fatalf("label for name: %q", probs)
+	}
+	named := map[string]any{"labels": []any{"a"}, "series": []any{map[string]any{"name": "Low", "points": []any{1.0}}}}
+	if probs := appChartShape("chart", "s", map[string]any{"series": []any{map[string]any{"name": "Low"}}}, named); len(probs) != 0 {
+		t.Fatalf("a good chart flagged: %q", probs)
 	}
 }
 

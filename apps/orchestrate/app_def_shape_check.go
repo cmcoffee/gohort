@@ -40,7 +40,7 @@ func appSectionShapeProblems(spec AppSpec, source string, v any) []string {
 		where := fmt.Sprintf("%s section %q", kind, name)
 		switch kind {
 		case "chart":
-			out = append(out, appChartShape(where, source, v)...)
+			out = append(out, appChartShape(where, source, sec, v)...)
 		case "display":
 			out = append(out, appDisplayShape(where, source, sec, v)...)
 		case "table":
@@ -62,34 +62,66 @@ func appOutputEmpty(v any) bool {
 	return false
 }
 
-func appChartShape(where, source string, v any) []string {
+func appChartShape(where, source string, sec map[string]any, v any) []string {
 	want := `print {"labels": ["Mon", "Tue"], "series": [{"name": "High", "points": [21, 19]}]} (a pie: one series whose points are the slices). If another section needs a different shape, give the chart its own data source.`
+	fix := fmt.Sprintf("Change what the data/%s script prints; the section's own labels and series are fixed values for a chart with no script, not templates", source)
+	if appChartHasTemplates(sec) {
+		fix += fmt.Sprintf(" (this section's %s is the literal text, not a reference into the output: remove it)", appChartTemplateFields(sec))
+	}
 	obj, ok := v.(map[string]any)
 	if !ok {
-		return []string{fmt.Sprintf("%s reads data/%s, which printed an array; a chart renders nothing from that: %s", where, source, want)}
+		return []string{fmt.Sprintf("%s reads data/%s, which printed an array; a chart renders nothing from that: %s %s.", where, source, want, fix)}
 	}
-	labels, _ := obj["labels"].([]any)
 	series, _ := obj["series"].([]any)
 	if len(series) == 0 {
-		return []string{fmt.Sprintf("%s reads data/%s, which printed no series (its keys: %s), so the chart is empty: %s", where, source, appKeys(obj), want)}
+		// The likeliest near miss: the right object, one level down.
+		for k, inner := range obj {
+			if m, isMap := inner.(map[string]any); isMap && m["series"] != nil {
+				return []string{fmt.Sprintf("%s: data/%s prints its labels and series inside %q, and the chart reads them at the TOP level of the output: print \"labels\" and \"series\" as keys of the object itself. %s.", where, source, k, fix)}
+			}
+		}
+		return []string{fmt.Sprintf("%s reads data/%s, which printed no series (its keys: %s), so the chart is empty: %s %s.", where, source, appKeys(obj), want, fix)}
 	}
+	labels, _ := obj["labels"].([]any)
 	var out []string
 	for i, s := range series {
 		m, _ := s.(map[string]any)
 		pts, _ := m["points"].([]any)
-		if len(pts) == 0 {
-			if _, alt := m["data"]; alt {
-				out = append(out, fmt.Sprintf("%s: series %d carries its numbers in \"data\"; the chart reads \"points\"", where, i+1))
-			} else {
-				out = append(out, fmt.Sprintf("%s: series %d has no points: %s", where, i+1, want))
-			}
-			continue
-		}
-		if len(labels) > 0 && len(pts) != len(labels) {
+		switch {
+		case len(pts) == 0 && m["data"] != nil:
+			out = append(out, fmt.Sprintf("%s: series %d in what data/%s prints carries its numbers in \"data\", and the chart reads \"points\": rename the key in the script's output. %s.", where, i+1, source, fix))
+		case len(pts) == 0:
+			out = append(out, fmt.Sprintf("%s: series %d in what data/%s prints has no points: %s", where, i+1, source, want))
+		case len(labels) > 0 && len(pts) != len(labels):
 			out = append(out, fmt.Sprintf("%s: series %d has %d points for %d labels; one point per label", where, i+1, len(pts), len(labels)))
+		}
+		if _, named := m["name"]; !named && m["label"] != nil {
+			out = append(out, fmt.Sprintf("%s: series %d in what data/%s prints is titled with \"label\"; the legend reads \"name\", so it shows \"Series %d\". Rename the key in the script's output.", where, i+1, source, i+1))
 		}
 	}
 	return out
+}
+
+// appChartHasTemplates reports a chart section whose own labels or series
+// hold "{...}" strings: an author reaching into the source's output from the
+// section, which the chart reads as literal text.
+func appChartHasTemplates(sec map[string]any) bool { return appChartTemplateFields(sec) != "" }
+
+func appChartTemplateFields(sec map[string]any) string {
+	var hit []string
+	for _, k := range []string{"labels", "series"} {
+		b, _ := json.Marshal(sec[k])
+		if strings.Contains(string(b), "{") && strings.Contains(string(b), "}") && sec[k] != nil {
+			if k == "series" {
+				// A series object is braces by nature; only a "{...}" STRING counts.
+				if !strings.Contains(string(b), `"{`) {
+					continue
+				}
+			}
+			hit = append(hit, k)
+		}
+	}
+	return strings.Join(hit, " and ")
 }
 
 func appDisplayShape(where, source string, sec map[string]any, v any) []string {
