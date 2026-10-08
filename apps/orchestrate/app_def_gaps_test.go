@@ -95,3 +95,28 @@ func TestADoublyEscapedScriptIsDecoded(t *testing.T) {
 		t.Fatalf("parse: %+v %v", ds, notes)
 	}
 }
+
+// The checklist for a complete app rides on the create result, where the next
+// step is decided, and not on every update after it.
+func TestTheCreateResultCarriesThePlan(t *testing.T) {
+	pinRootDB(t)
+	turn := &chatTurn{user: "u"}
+	sections := []any{map[string]any{"kind": "form", "fields": []any{map[string]any{"name": "city"}}},
+		map[string]any{"kind": "table", "empty_text": "Nothing yet.", "columns": []any{map[string]any{"field": "city"}}}}
+	out, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Weather", "sections": sections}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"COMPLETE IT BEFORE YOU REPLY", "call_tool", "first visit", "open your reply with one or two lines"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("create result lacks %q:\n%s", want, out)
+		}
+	}
+	out, err = turn.appDefCreateOrUpdate(map[string]any{"id": "weather", "name": "Weather", "sections": sections}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "COMPLETE IT BEFORE YOU REPLY") {
+		t.Errorf("an update repeats the plan:\n%s", out)
+	}
+}

@@ -288,6 +288,12 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	msg := fmt.Sprintf("%s app %q at /apps/%s/ (revision %s): open it in the dashboard under My Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …). Status: %s.",
 		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug, saved.VerifyStatus())
 
+	// On create, the checklist for a complete app: shown once, in the result
+	// of the call that made it, where the next step is decided.
+	plan := ""
+	if !isUpdate {
+		plan = appCompletePlan()
+	}
 	msg += "\n\n" + t.appInventoryLine(saved)
 	if n := len(saved.Settings); n > 0 {
 		names := make([]string, 0, n)
@@ -350,8 +356,8 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		// longer exists. Checking the write's own output cannot go stale.
 		if len(appHTMLSectionScripts(raw)) > 0 {
 			if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
-				return appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
-					verb, saved.Name, strings.Join(errs, "\n- "), saved.Slug), parseNotes), nil
+				return appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.%s",
+					verb, saved.Name, strings.Join(errs, "\n- "), saved.Slug, plan), parseNotes), nil
 			}
 		}
 	}
@@ -366,8 +372,8 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if len(saved.DataSources) > 0 {
 		report, _, _, fail := t.checkScripts(saved, false, nil, nil)
 		if fail > 0 {
-			return appWithParseNotes(fmt.Sprintf("%s app %q, BUT a data source FAILED to run, the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, …) (it re-checks on save). Do NOT tell the user the app is ready yet.",
-				verb, saved.Name, strings.TrimSpace(report), saved.Slug), parseNotes), nil
+			return appWithParseNotes(fmt.Sprintf("%s app %q, BUT a data source FAILED to run, the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, …) (it re-checks on save). Do NOT tell the user the app is ready yet.%s",
+				verb, saved.Name, strings.TrimSpace(report), saved.Slug, plan), parseNotes), nil
 		}
 		msg += "\n\nData source check, all passed:\n" + strings.TrimSpace(report)
 		msg += "\nTip: run app_def(action=\"test\", id=\"" + saved.Slug + "\", sample=[{…example form entry…}]) to confirm the full form→data-source→output chain produces real output."
@@ -386,7 +392,22 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	} else {
 		msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\"): it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
 	}
-	return msg, nil
+	return msg + plan, nil
+}
+
+// appCompletePlan is what a complete first build includes, in the create
+// result. It lived in the notes param's description, read once at most, and
+// a build with that text in its catalog still stated no plan and shipped the
+// literal request; the call that just made the app is where the next step is
+// actually decided.
+func appCompletePlan() string {
+	return "\n\nCOMPLETE IT BEFORE YOU REPLY. A request names what an app is for, not every part of it, and the user should not have to come back for the obvious. Check THIS app against each and add what is missing now:\n" +
+		"1. Real data from where it lives, one of the owner's tools first (capabilities tool:<name>, call_tool), never invented values standing in for it.\n" +
+		"2. What a person enters is saved AND shown back, so they can see, correct and remove it.\n" +
+		"3. Pictures where they carry meaning (an icon per weather, a chart for numbers over time): made, found or generated, never left for the user to supply.\n" +
+		"4. A setting for any value a person would want to change (units, a default, a count).\n" +
+		"5. A first visit that says what to do, not a blank page.\n" +
+		"Stay inside the app's purpose: this is what a complete version of THAT includes, not extra features. Then write the plan into notes (update notes=), and open your reply with one or two lines naming what you added beyond the request and anything you left out and why."
 }
 
 // floatArg reads a number argument, as JSON sends it or as text; 0 when it is
