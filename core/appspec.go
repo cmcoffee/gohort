@@ -93,6 +93,11 @@ type AppSpec struct {
 	// returning {"shared": {"<name>": [records]}}. Undeclared names are
 	// refused, so a script cannot create a collection the review never saw.
 	SharedCollections []string `json:"shared_collections,omitempty"`
+	// AskDailyUSD and AskUserDailyUSD cap what the app's page may spend asking
+	// its agent (POST ask), per day, in the whole app and per user. The owner
+	// pays, so a shared app cannot burn their budget; 0 means the default.
+	AskDailyUSD     float64 `json:"ask_daily_usd,omitempty"`
+	AskUserDailyUSD float64 `json:"ask_user_daily_usd,omitempty"`
 	// DataSources are script-backed data endpoints (see AppDataSource), referenced
 	// by a table/display section's source_script. Served at /apps/<slug>/data/<name>.
 	// This is the "logic" seam: structure stays declarative, computation/integration

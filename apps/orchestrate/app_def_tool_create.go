@@ -117,6 +117,14 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// shared_collections: names of the collections every user of the app reads
 	// in common. Slugged like script names, de-duplicated, order kept. Passed
 	// wholesale on update (omit to keep; [] to clear).
+	// ask_daily_usd / ask_user_daily_usd: the page's daily budget for asking
+	// the app's agent, whole app and per user. Kept when absent.
+	if _, ok := args["ask_daily_usd"]; ok {
+		spec.AskDailyUSD = floatArg(args, "ask_daily_usd")
+	}
+	if _, ok := args["ask_user_daily_usd"]; ok {
+		spec.AskUserDailyUSD = floatArg(args, "ask_user_daily_usd")
+	}
 	if _, ok := args["shared_collections"]; ok {
 		var names []string
 		seen := map[string]bool{}
@@ -374,4 +382,21 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\"): it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
 	}
 	return msg, nil
+}
+
+// floatArg reads a number argument, as JSON sends it or as text; 0 when it is
+// neither.
+func floatArg(args map[string]any, key string) float64 {
+	switch v := args[key].(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case string:
+		var f float64
+		if _, err := fmt.Sscanf(strings.TrimSpace(v), "%g", &f); err == nil {
+			return f
+		}
+	}
+	return 0
 }

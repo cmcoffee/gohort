@@ -259,6 +259,8 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		}
 	case rest == "changes":
 		T.handleChanges(w, r, ownerUser, user, slug)
+	case rest == "ask":
+		T.handleAsk(w, r, T.recordBase(spec, ownerUser), ownerUser, user, spec)
 	case rest == "chat" || strings.HasPrefix(rest, "chat/"):
 		// The app's chat surface: a chat section's AgentLoopPanel points at
 		// chat/* and these dispatch into orchestrate's PublicHandle* methods,
@@ -1602,7 +1604,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets", "shared/", "changes"}
+var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets", "shared/", "changes", "ask"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}
