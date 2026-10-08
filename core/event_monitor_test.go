@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1080,4 +1081,87 @@ func allowLoopbackPolls(t *testing.T) {
 	prev := monitorMayReachInternal
 	monitorMayReachInternal = func(string) bool { return true }
 	t.Cleanup(func() { monitorMayReachInternal = prev })
+}
+
+// Every check leaves its outcome on the monitor, newest last, so a monitor
+// that never fires can be told from a broken one: the checks that did not
+// match say what they saw, the ones that WOULD have fired say why they were
+// held, and the answer seen is the latest one, not whatever an older check
+// returned. The history is bounded.
+func TestAMonitorRecordsWhatEachCheckFound(t *testing.T) {
+	db := memDB(t)
+	m := EventMonitor{Name: "cve-watch", Owner: "craig", Kind: EventKindPoll, CheckAgent: "Security", Check: "any new CVEs?", IntervalSeconds: 60}
+	SaveEventMonitor(db, m)
+	answer := "NONE today"
+	fail := false
+	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) {
+		if fail {
+			return "", fmt.Errorf("checker timed out")
+		}
+		return answer, nil
+	})
+	defer RegisterEventPoller(nil)
+	delivered := true
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		if !delivered {
+			return false, "nobody is listening"
+		}
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+	check := func() EventMonitor {
+		cur, _ := GetEventMonitor(db, "craig", "cve-watch")
+		executeEventPoll(context.Background(), db, cur)
+		cur, _ = GetEventMonitor(db, "craig", "cve-watch")
+		return cur
+	}
+	last := func(cur EventMonitor) monitorCheck { return cur.RecentChecks[len(cur.RecentChecks)-1] }
+
+	cur := check()
+	if c := last(cur); c.Outcome != "no match" || !strings.Contains(c.Detail, `"YES"`) || !strings.Contains(c.Detail, "NONE today") || cur.LastResult != "NONE today" {
+		t.Fatalf("a non-match check: %+v, last result %q", c, cur.LastResult)
+	}
+	answer = "YES: CVE-2026-1"
+	if c := last(check()); c.Outcome != "fired" {
+		t.Fatalf("a fire: %+v", c)
+	}
+	answer = "YES: CVE-2026-1, CVE-2026-2"
+	if c := last(check()); c.Outcome != "held" || !strings.Contains(c.Detail, "still matches") {
+		t.Fatalf("a check that would have fired: %+v", c)
+	}
+	answer = "NONE"
+	if c := last(check()); c.Outcome != "re-armed" {
+		t.Fatalf("a re-arm: %+v", c)
+	}
+	answer, delivered = "YES: CVE-2026-3", false
+	if c := last(check()); c.Outcome != "fired, not delivered" || c.Detail != "nobody is listening" {
+		t.Fatalf("an undelivered fire: %+v", c)
+	}
+	fail = true
+	if c := last(check()); c.Outcome != "failed" || !strings.Contains(c.Detail, "timed out") {
+		t.Fatalf("a failed check: %+v", c)
+	}
+	fail = false
+	for i := 0; i < 20; i++ {
+		answer = fmt.Sprintf("NONE %d", i)
+		check()
+	}
+	if cur := check(); len(cur.RecentChecks) != recentChecksKept {
+		t.Fatalf("%d checks kept, want %d", len(cur.RecentChecks), recentChecksKept)
+	}
+}
+
+// An HTTP monitor says what value it saw against the threshold, and a watch
+// says when nothing changed or a change was skipped.
+func TestHTTPAndWatchChecksSayWhyTheyDidNotFire(t *testing.T) {
+	cur := EventMonitor{}
+	noteCheck(&cur, "no match", "149.5 is not < 150")
+	if cur.RecentChecks[0].Outcome != "no match" || cur.RecentChecks[0].At.IsZero() {
+		t.Fatalf("recorded %+v", cur.RecentChecks)
+	}
+	long := strings.Repeat("x", 500) + "\nsecond line"
+	noteCheck(&cur, "no match", long)
+	if d := cur.RecentChecks[1].Detail; len([]rune(d)) > 170 || strings.Contains(d, "\n") {
+		t.Fatalf("detail not kept to one short line: %q", d)
+	}
 }

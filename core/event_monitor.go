@@ -290,6 +290,13 @@ type EventMonitor struct {
 	LastFired           time.Time `json:"last_fired,omitempty"`
 	LastChecked         time.Time `json:"last_checked,omitempty"` // last time the poll ran (every interval) — proves liveness even with no change
 	LastResult          string    `json:"last_result,omitempty"`  // last answer/value seen (poll debounce / http display)
+	// RecentChecks is what the last few checks found and did, newest last:
+	// fired, no match (with the value seen), held because the condition is
+	// still true from a fire, re-armed, unchanged, a change a filter or the
+	// format script skipped, a failure. A monitor that never fires otherwise
+	// looks exactly like one that is broken; this says which, and shows the
+	// checks that WOULD have fired and why they did not.
+	RecentChecks []monitorCheck `json:"recent_checks,omitempty"`
 	// StuckMatches counts checks that found the condition STILL true while the
 	// monitor was already tripped. Both polled kinds are edge-triggered: they
 	// fire on the crossing and re-arm only when a check finds the condition
@@ -1183,6 +1190,13 @@ func executeEventPoll(ctx context.Context, db Database, m EventMonitor) {
 		cur.LastMatched = false
 		cur.LastResult = answer
 		cur.StuckMatches = 0
+		noteCheck(&cur, "re-armed", "no longer matches "+quoteMatch(m.MatchContains)+": "+answer)
+		SaveEventMonitor(db, cur)
+	case !matched:
+		// The common case, which used to save nothing: the last answer seen
+		// stayed whatever an older check returned.
+		cur.LastResult = answer
+		noteCheck(&cur, "no match", "answer lacks "+quoteMatch(m.MatchContains)+": "+answer)
 		SaveEventMonitor(db, cur)
 	case matched && cur.LastMatched:
 		// Still true, so nothing fires. Counted, because a condition that never
@@ -1190,11 +1204,20 @@ func executeEventPoll(ctx context.Context, db Database, m EventMonitor) {
 		// ever do — while still running a checker agent every interval.
 		cur.StuckMatches++
 		cur.LastResult = answer
+		noteCheck(&cur, "held", "still matches since it fired; fires again once an answer stops matching: "+answer)
 		SaveEventMonitor(db, cur)
 		if cur.StuckMatches == monitorStuckMatchNotice {
 			noteStuckMonitor(db, cur)
 		}
 	}
+}
+
+// quoteMatch is a poll's match word as a check outcome names it.
+func quoteMatch(match string) string {
+	if strings.TrimSpace(match) == "" {
+		match = "YES"
+	}
+	return strconv.Quote(match)
 }
 
 // executeHTTPPoll fetches the monitor's URL, extracts a value, compares it to
@@ -1236,6 +1259,11 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 		cur.LastBreached = false
 		cur.LastResult = val
 		cur.StuckMatches = 0
+		noteCheck(&cur, "re-armed", fmt.Sprintf("%s is no longer %s %s", val, m.CompareOp, m.Threshold))
+		SaveEventMonitor(db, cur)
+	case !breached:
+		cur.LastResult = val
+		noteCheck(&cur, "no match", fmt.Sprintf("%s is not %s %s", val, m.CompareOp, m.Threshold))
 		SaveEventMonitor(db, cur)
 	case breached && cur.LastBreached:
 		// Still over the line. The same silence as the poll kind, cheaper: no
@@ -1243,6 +1271,7 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 		// has nothing left to tell them.
 		cur.StuckMatches++
 		cur.LastResult = val
+		noteCheck(&cur, "held", fmt.Sprintf("%s is still %s %s since it fired; fires again once it recovers and crosses again", val, m.CompareOp, m.Threshold))
 		SaveEventMonitor(db, cur)
 		if cur.StuckMatches == monitorStuckMatchNotice {
 			noteStuckMonitor(db, cur)
@@ -1283,8 +1312,9 @@ func notePollFailure(db Database, m EventMonitor, reason string) bool {
 	cur.ConsecutiveFailures++
 	Log("[event] %s %s/%s failed check %d/%d: %s",
 		cur.Kind, m.Owner, m.Name, cur.ConsecutiveFailures, monitorFailureThreshold, reason)
+	noteCheck(&cur, "failed", reason)
+	SaveEventMonitor(db, cur)
 	if cur.ConsecutiveFailures < monitorFailureThreshold {
-		SaveEventMonitor(db, cur)
 		return false
 	}
 	MarkEventMonitorFailing(db, m.Owner, m.Name, cur.Kind+" checks are failing: "+reason)
@@ -1369,6 +1399,8 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 		// usually watching something that has stopped happening — a thread
 		// nobody posts to any more — and it will poll forever without the
 		// owner ever having a reason to look at it. Stop, visibly.
+		noteCheck(&cur, "unchanged", "")
+		SaveEventMonitor(db, cur)
 		if days := watchIdleDays(); idleWatchDue(cur, time.Now(), days) {
 			pauseIdleWatch(db, cur, days)
 		}
@@ -1382,6 +1414,7 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	if firstObservation {
 		// Baseline only — don't wake on the very first poll.
 		Debug("[event] watch %s/%s: first observation, baseline recorded (no wake)", m.Owner, m.Name)
+		noteCheck(&cur, "baseline", "first look recorded; the next change fires")
 		SaveEventMonitor(db, cur)
 		return
 	}
@@ -1392,6 +1425,7 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	// exactly the "wake only on Alex's reply, not on every group message" case.
 	if strings.TrimSpace(cur.MatchNew) != "" && !addedLinesContain(prior, body, cur.MatchNew) {
 		Debug("[event] watch %s/%s: change detected but no new line matched %q, baseline advanced, no wake", m.Owner, m.Name, cur.MatchNew)
+		noteCheck(&cur, "skipped", "changed, but no new line contains "+strconv.Quote(cur.MatchNew))
 		SaveEventMonitor(db, cur)
 		return
 	}
@@ -1409,6 +1443,7 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 		// it and stay quiet. The next poll diffs against THIS body, not the
 		// pre-change one, so the same change won't re-trip.
 		Debug("[event] watch %s/%s: change detected but format_script suppressed the alert", m.Owner, m.Name)
+		noteCheck(&cur, "skipped", "changed, but the format script skipped it")
 		SaveEventMonitor(db, cur)
 		return
 	}
@@ -2188,6 +2223,11 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 		Debug("[event] one-shot await %s/%s fired once: removed", owner, name)
 		return
 	}
+	if delivered {
+		noteCheck(&cur, "fired", summary)
+	} else {
+		noteCheck(&cur, "fired, not delivered", detail)
+	}
 	// The fire is spent whether or not it reached anybody. Counting only
 	// DELIVERED fires would leave a monitor whose delivery is broken running
 	// without a bound, which is the shape this exists to end — and the ledger
@@ -2198,6 +2238,24 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 	SaveEventMonitor(db, cur)
 	if cur.firedOut() {
 		stopFiredOutMonitor(db, cur)
+	}
+}
+
+// monitorCheck is one check's outcome, for EventMonitor.RecentChecks.
+type monitorCheck struct {
+	At      time.Time `json:"at"`
+	Outcome string    `json:"outcome"`
+	Detail  string    `json:"detail,omitempty"`
+}
+
+// recentChecksKept is how many outcomes a monitor keeps.
+const recentChecksKept = 8
+
+// noteCheck records one outcome on m, keeping the last recentChecksKept.
+func noteCheck(m *EventMonitor, outcome, detail string) {
+	m.RecentChecks = append(m.RecentChecks, monitorCheck{At: time.Now(), Outcome: outcome, Detail: truncateEvent(oneLine(detail), 160)})
+	if n := len(m.RecentChecks); n > recentChecksKept {
+		m.RecentChecks = append([]monitorCheck(nil), m.RecentChecks[n-recentChecksKept:]...)
 	}
 }
 

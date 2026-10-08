@@ -1974,6 +1974,7 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 					if !m.LastFired.IsZero() {
 						fmt.Fprintf(&b, "; last fired %s", m.LastFired.Local().Format("Jan 2 3:04 PM"))
 					}
+					b.WriteString(lastCheckNote(m))
 					if lbl := m.FireLabel(); lbl != "" {
 						fmt.Fprintf(&b, "; %s", lbl)
 					}

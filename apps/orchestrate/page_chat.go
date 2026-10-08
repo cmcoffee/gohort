@@ -424,6 +424,10 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
 								// Event monitors.
 								{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_monitor", OnlyIf: "_edit_monitor"},
+								// What its recent checks found, the ones that would
+								// have fired included: a monitor that never fires
+								// otherwise looks just like a broken one.
+								{Label: "Recent checks", Method: "GET", URL: "api/console/monitors/checks", ShowResult: true, OnlyIf: "_del_monitor"},
 								{Label: "Test", Method: "POST", URL: "api/console/monitors/run", OnlyIf: "_test_monitor", Confirm: "Run this monitor's check once right now? If its condition matches, it will fire (wake/notify) as it would on a normal poll."},
 								{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
 								{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},

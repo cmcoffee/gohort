@@ -191,6 +191,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/agents/move", w(T.handleConsoleStandingMove))
 	T.HandleFunc("/api/console/recurring/move", w(T.handleConsoleRecurringMove))
 	T.HandleFunc("/api/console/monitors/run", w(T.handleConsoleMonitorRun))
+	T.HandleFunc("/api/console/monitors/checks", w(T.handleConsoleMonitorChecks))
 	T.HandleFunc("/api/console/monitors/get", T.handleConsoleMonitorGet)
 	T.HandleFunc("/api/console/monitors/update", w(T.handleConsoleMonitorUpdate))
 	T.HandleFunc("/api/console/agents/get", T.handleConsoleAgentGet)

@@ -457,6 +457,7 @@ func bridgeList(args map[string]any, sess *ToolSession) (string, error) {
 		if !m.LastFired.IsZero() {
 			fmt.Fprintf(&b, "; last fired %s", m.LastFired.Local().Format("Jan 2 3:04 PM"))
 		}
+		b.WriteString(lastCheckNote(m))
 		b.WriteString("\n")
 	}
 	return strings.TrimSpace(b.String()) + bridgeWhereToManage, nil
@@ -508,6 +509,12 @@ func bridgeGet(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	if !m.LastFired.IsZero() {
 		fmt.Fprintf(&b, "  last fired:  %s\n", m.LastFired.Local().Format("Mon Jan 2 3:04 PM"))
+	}
+	if lines := monitorCheckLines(m, 5); len(lines) > 0 {
+		b.WriteString("  recent checks (newest first):\n")
+		for _, l := range lines {
+			b.WriteString("    " + l + "\n")
+		}
 	}
 	return strings.TrimSpace(b.String()), nil
 }
