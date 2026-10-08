@@ -173,3 +173,33 @@ func TestScriptArgsSharedCannotBeSent(t *testing.T) {
 		t.Fatalf("args %v shadowed %v", args, shadowed)
 	}
 }
+
+// confirm reads as a switch to an author: false was stored as the prompt
+// "false" and asked it before every click.
+func TestActionConfirmIsASwitchOrAPrompt(t *testing.T) {
+	for in, want := range map[any]string{false: "", "false": "", true: "Are you sure?", "Clear every score?": "Clear every score?", nil: ""} {
+		if got := appConfirm(in); got != want {
+			t.Errorf("appConfirm(%v) = %q, want %q", in, got, want)
+		}
+	}
+	acts, _ := appActionDefs([]any{map[string]any{"name": "go", "script": "x", "description": "Runs it", "confirm": false}})
+	if len(acts) != 1 || acts[0].Desc != "Runs it" || acts[0].Confirm != "" {
+		t.Fatalf("%+v", acts)
+	}
+}
+
+// Any capability list replaces the default fetch+log grant, so an unknown
+// name must not silently strip fetch from a script.
+func TestUnknownCapabilitiesAreDroppedAndKeepTheDefaults(t *testing.T) {
+	caps, notes := appScriptCaps([]any{"json"}, "action \"go\"")
+	if caps != nil || len(notes) != 1 || !strings.Contains(notes[0], "json") {
+		t.Fatalf("only-unknown: caps %v notes %v", caps, notes)
+	}
+	caps, notes = appScriptCaps([]any{"fetch", "json", "fetch_via:github", "secret:"}, "action \"go\"")
+	if len(caps) != 2 || caps[0] != "fetch" || caps[1] != "fetch_via:github" || len(notes) != 1 {
+		t.Fatalf("mixed: caps %v notes %v", caps, notes)
+	}
+	if caps, notes = appScriptCaps(nil, "x"); caps != nil || notes != nil {
+		t.Fatalf("absent: %v %v", caps, notes)
+	}
+}

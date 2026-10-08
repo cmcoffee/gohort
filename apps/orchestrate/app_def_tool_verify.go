@@ -534,11 +534,14 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 	}
 	recJSON, _ := json.Marshal(recs)
 	fixed := map[string]string{"caller": t.user}
+	sharedRecs := 0
 	if len(spec.SharedCollections) > 0 {
 		fixed["shared"] = appscript.SharedInput(db, spec)
 		var counts []string
 		for _, name := range spec.SharedCollections {
-			counts = append(counts, fmt.Sprintf("%s (%d)", name, len(appscript.ReadShared(db, spec.Slug, name))))
+			n := len(appscript.ReadShared(db, spec.Slug, name))
+			sharedRecs += n
+			counts = append(counts, fmt.Sprintf("%s (%d)", name, n))
 		}
 		fmt.Fprintf(&b, "Shared collections given as shared, as stored now: %s. A shared write an action prints is NOT saved by a check.\n", strings.Join(counts, ", "))
 	}
@@ -604,7 +607,14 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		case "data":
 			if arr, isArr := v.([]any); isArr {
 				pass++
-				if len(arr) == 0 && len(recs) > 0 {
+				readsShared := len(spec.SharedCollections) > 0 && strings.Contains(script, "shared")
+				if len(arr) == 0 && readsShared && sharedRecs == 0 {
+					// A source over a shared collection with nothing in it yet is
+					// empty for the right reason. Pointing it at records instead,
+					// as the warning below does, sent a leaderboard reading the
+					// shared board to read the player's own store.
+					fmt.Fprintf(&b, "OK   %s: printed an empty array; it reads the shared collections, which hold no records yet, so that is expected. A check does not save a shared write, so its logic shows once an action has written one live.\n", label)
+				} else if len(arr) == 0 && len(recs) > 0 {
 					// Valid JSON, but empty output while the app HAS records is the
 					// signature of a script that reads a query param nothing supplies
 					// (os.environ.get('city')) instead of pulling the saved entries

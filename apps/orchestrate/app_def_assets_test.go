@@ -26,14 +26,14 @@ func TestAWorkspaceFileBecomesAnAppAsset(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "art"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(dir, "art", "hero.png"), []byte("PNG"), 0o644)
+	os.WriteFile(filepath.Join(dir, "art", "hero.png"), []byte("\x89PNG\r\n\x1a\nIHDR"), 0o644)
 	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hi"), 0o644)
 
 	out, err := turn.appDefAddAsset(map[string]any{"id": "game", "path": "art/hero.png"})
 	if err != nil || !strings.Contains(out, "assets/hero.png") {
 		t.Fatalf("add: %q %v", out, err)
 	}
-	if data, _, err := ReadAppAsset("u", "game", "hero.png"); err != nil || string(data) != "PNG" {
+	if data, _, err := ReadAppAsset("u", "game", "hero.png"); err != nil || string(data) != "\x89PNG\r\n\x1a\nIHDR" {
 		t.Fatalf("the asset reads %q %v", data, err)
 	}
 	if _, err := turn.appDefAddAsset(map[string]any{"id": "game", "path": "art/hero.png", "asset": "boss.png"}); err != nil {

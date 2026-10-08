@@ -52,9 +52,15 @@ func TestAssetsAreWrittenByTheOwnerAndServedSandboxed(t *testing.T) {
 		t.Fatalf("the sound: %d %q", w.Code, w.Header().Get("Content-Type"))
 	}
 	w = httptest.NewRecorder()
-	T.handleAssetList(w, "alice", "game")
-	if !strings.Contains(w.Body.String(), "jump.ogg") || !strings.Contains(w.Body.String(), "logo.svg") {
+	T.handleAssetList(w, "alice", "alice", "game")
+	if !strings.Contains(w.Body.String(), "jump.ogg") || !strings.Contains(w.Body.String(), "logo.svg") || !strings.Contains(w.Body.String(), `"can_write":true`) {
 		t.Fatalf("list = %s", w.Body.String())
+	}
+	// The page shows an upload control only where the write would succeed.
+	w = httptest.NewRecorder()
+	T.handleAssetList(w, "bob", "alice", "game")
+	if !strings.Contains(w.Body.String(), `"can_write":false`) {
+		t.Fatalf("a viewer's list = %s", w.Body.String())
 	}
 	w = httptest.NewRecorder()
 	T.handleAssetWrite(w, httptest.NewRequest(http.MethodDelete, "/apps/game/assets/jump.ogg", nil), "alice", "alice", "game", "jump.ogg")

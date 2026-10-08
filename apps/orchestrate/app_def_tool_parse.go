@@ -176,14 +176,72 @@ func appDataSources(raw any) (out []AppDataSource, notes []string) {
 		if name != given {
 			notes = append(notes, fmt.Sprintf("data source %q is registered as %q (names are slugified: lowercase, non-alphanumerics → \"-\"), reference it by the slugified name in source_script and in any fetch of data/%s", given, name, name))
 		}
+		caps, cnotes := appScriptCaps(m["capabilities"], "data source "+strconv.Quote(name))
+		notes = append(notes, cnotes...)
 		out = append(out, AppDataSource{
 			Name:         name,
 			Language:     strings.ToLower(strings.TrimSpace(mapStr(m, "language"))),
 			Script:       script,
-			Capabilities: appStringList(m["capabilities"]),
+			Capabilities: caps,
 		})
 	}
 	return out, notes
+}
+
+// appConfirm is an action's confirm prompt. It is text, but an author reads
+// it as a switch: confirm:false was stored as the prompt "false", so the
+// button asked "false" before every click. false (or "false") is no prompt,
+// true asks a plain question, and anything else is the prompt itself.
+func appConfirm(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case bool:
+		if t {
+			return "Are you sure?"
+		}
+		return ""
+	}
+	s := strings.TrimSpace(fmt.Sprint(v))
+	switch strings.ToLower(s) {
+	case "false", "no", "0", "none":
+		return ""
+	case "true", "yes":
+		return "Are you sure?"
+	}
+	return s
+}
+
+// appScriptCaps keeps the capabilities the sandbox hook knows: fetch, log,
+// browse_page, and the per-credential secret:<name> / fetch_via:<name>. An
+// unknown one is dropped with a note. Dropping matters more than it looks: ANY
+// list replaces the default grant (fetch, log), so capabilities:["json"]
+// silently took fetch away from a script that needed it. A list of nothing
+// but unknown names therefore becomes no list, which keeps the defaults.
+func appScriptCaps(raw any, label string) ([]string, []string) {
+	given := appStringList(raw)
+	if len(given) == 0 {
+		return given, nil
+	}
+	var keep, dropped []string
+	for _, c := range given {
+		switch {
+		case c == "fetch", c == "log", c == "browse_page",
+			strings.HasPrefix(c, "secret:") && len(c) > len("secret:"),
+			strings.HasPrefix(c, "fetch_via:") && len(c) > len("fetch_via:"):
+			keep = append(keep, c)
+		default:
+			dropped = append(dropped, c)
+		}
+	}
+	var notes []string
+	if len(dropped) > 0 {
+		notes = append(notes, fmt.Sprintf("%s: capabilities %s IGNORED (known: fetch, log, browse_page, secret:<credential>, fetch_via:<credential>; reading env vars and printing JSON need none)", label, strings.Join(dropped, ", ")))
+	}
+	if len(keep) == 0 {
+		return nil, notes
+	}
+	return keep, notes
 }
 
 // appActionDefs parses the declarative actions array into AppAction records.
@@ -210,14 +268,16 @@ func appActionDefs(raw any) (out []AppAction, notes []string) {
 		if name != given {
 			notes = append(notes, fmt.Sprintf("action %q is registered as %q (names are slugified: lowercase, non-alphanumerics → \"-\"), its endpoint is action/%s", given, name, name))
 		}
+		caps, cnotes := appScriptCaps(m["capabilities"], "action "+strconv.Quote(name))
+		notes = append(notes, cnotes...)
 		act := AppAction{
 			Name:         name,
 			Label:        strings.TrimSpace(mapStr(m, "label")),
-			Desc:         strings.TrimSpace(mapStr(m, "desc")),
+			Desc:         strings.TrimSpace(firstNonEmptyStr(mapStr(m, "desc"), mapStr(m, "description"))),
 			Language:     strings.ToLower(strings.TrimSpace(mapStr(m, "language"))),
 			Script:       script,
-			Capabilities: appStringList(m["capabilities"]),
-			Confirm:      strings.TrimSpace(mapStr(m, "confirm")),
+			Capabilities: caps,
+			Confirm:      appConfirm(m["confirm"]),
 		}
 		sch, snotes := appSchedule(m["schedule"], name)
 		act.Schedule = sch

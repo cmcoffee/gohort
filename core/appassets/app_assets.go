@@ -90,6 +90,61 @@ func AppAssetContentType(name string) (string, bool) {
 	return ct, ok
 }
 
+// assetMagic is how each binary type's file begins. An author with no image
+// library wrote a one-pixel GIF as base64 TEXT into "wood-grain.png" and it
+// was saved: every load of it then failed in the browser, a long way from the
+// write that caused it. A file that does not start the way its extension
+// says is refused here, where the message can say what it is instead.
+var assetMagic = map[string][]string{
+	".png":   {"\x89PNG\r\n\x1a\n"},
+	".jpg":   {"\xff\xd8\xff"},
+	".jpeg":  {"\xff\xd8\xff"},
+	".gif":   {"GIF87a", "GIF89a"},
+	".ico":   {"\x00\x00\x01\x00"},
+	".woff":  {"wOFF"},
+	".woff2": {"wOF2"},
+	".ogg":   {"OggS"},
+	".glb":   {"glTF"},
+}
+
+// assetMatchesType reports why data is not the type name's extension says,
+// or nil. The text types are checked for being text of the right kind; .bin
+// is any bytes by definition.
+func assetMatchesType(name string, data []byte) error {
+	ext := strings.ToLower(filepath.Ext(name))
+	s := string(data)
+	ok := true
+	switch ext {
+	case ".webp":
+		ok = len(s) >= 12 && s[:4] == "RIFF" && s[8:12] == "WEBP"
+	case ".wav":
+		ok = len(s) >= 12 && s[:4] == "RIFF" && s[8:12] == "WAVE"
+	case ".mp3":
+		ok = strings.HasPrefix(s, "ID3") || (len(data) >= 2 && data[0] == 0xff && data[1]&0xe0 == 0xe0)
+	case ".m4a":
+		ok = len(s) >= 8 && s[4:8] == "ftyp"
+	case ".svg":
+		ok = strings.Contains(strings.ToLower(s[:min(len(s), 4096)]), "<svg")
+	case ".gltf":
+		ok = strings.HasPrefix(strings.TrimSpace(s), "{")
+	default:
+		if prefixes, has := assetMagic[ext]; has {
+			ok = false
+			for _, p := range prefixes {
+				if strings.HasPrefix(s, p) {
+					ok = true
+					break
+				}
+			}
+		}
+	}
+	if ok {
+		return nil
+	}
+	start := s[:min(len(s), 12)]
+	return fmt.Errorf("asset %q is not a %s file: its bytes start %q. Write the file's real bytes (a script that encodes the format, e.g. zlib+struct for a PNG, the wave module for a WAV), not text or base64 of it", name, strings.TrimPrefix(ext, "."), start)
+}
+
 // ValidAppAssetName reports whether name is a safe flat asset filename.
 //
 // Flat names only. A path separator here would let a write escape the app's
@@ -152,6 +207,9 @@ func SaveAppAsset(owner, slug, name string, data []byte) (string, error) {
 	}
 	if len(data) > MaxAppAssetBytes {
 		return "", fmt.Errorf("asset %q is %d bytes, over the %d-byte limit", name, len(data), MaxAppAssetBytes)
+	}
+	if err := assetMatchesType(name, data); err != nil {
+		return "", err
 	}
 	dir, err := appAssetDir(owner, slug, true)
 	if err != nil {

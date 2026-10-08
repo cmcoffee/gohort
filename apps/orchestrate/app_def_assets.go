@@ -50,7 +50,7 @@ func (t *chatTurn) appDefAddAsset(args map[string]any) (string, error) {
 	if _, err := SaveAppAsset(t.user, spec.Slug, name, data); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Saved %q as an asset of %q. Reference it from the page by the RELATIVE path assets/%s: <img src=\"assets/%s\">, <audio src=\"assets/%s\">, or fetch(\"assets/%s\") then URL.createObjectURL on the blob for an image or sound made in JS (new Image() and new Audio() with a path are not relayed). Replacing it later is the same call with the same asset name.", path, spec.Slug, name, name, name, name), nil
+	return fmt.Sprintf("Saved %q as an asset of %q. Reference it from the page by the RELATIVE path assets/%s, the way you would any file: <img src=\"assets/%s\">, new Audio(\"assets/%s\"), fetch(\"assets/%s\"), or a library loader such as three's TextureLoader. Replacing it later is the same call with the same asset name.", path, spec.Slug, name, name, name, name), nil
 }
 
 // appDefRemoveAsset deletes the app's asset `asset`.

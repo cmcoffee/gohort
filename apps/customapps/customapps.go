@@ -214,7 +214,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if name == "" {
-			T.handleAssetList(w, ownerUser, slug)
+			T.handleAssetList(w, user, ownerUser, slug)
 			return
 		}
 		T.handleAsset(w, r, ownerUser, slug, name)
@@ -1560,12 +1560,14 @@ func (T *CustomApps) handleAsset(w http.ResponseWriter, r *http.Request, owner, 
 
 // handleAssetList is GET assets: the app's asset names, for a page that lists
 // its own artwork or sounds.
-func (T *CustomApps) handleAssetList(w http.ResponseWriter, owner, slug string) {
+// handleAssetList lists the app's assets, and whether this viewer may write
+// them, so a page can show its owner an upload control and nobody else.
+func (T *CustomApps) handleAssetList(w http.ResponseWriter, user, owner, slug string) {
 	names, err := ListAppAssets(owner, slug)
 	if err != nil || names == nil {
 		names = []string{}
 	}
-	writeJSON(w, map[string]any{"assets": names})
+	writeJSON(w, map[string]any{"assets": names, "can_write": user != "" && user == owner})
 }
 
 // handleAssetWrite is PUT/POST (the raw bytes, the name in the path) or
