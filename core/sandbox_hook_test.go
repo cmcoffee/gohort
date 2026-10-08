@@ -300,3 +300,16 @@ except HookError as e:
 		t.Fatalf("output:\n%s", got)
 	}
 }
+
+// A script that calls a tool it did not declare is told which entry to add,
+// not handed the list of everything it does have.
+func TestAnUndeclaredToolCallNamesTheGrant(t *testing.T) {
+	h := &SandboxHook{Capabilities: []string{"fetch", "log"}, Sess: &ToolSession{Username: "owner"}}
+	a, b := net.Pipe()
+	go h.handleConn(a)
+	fmt.Fprintln(b, `{"method":"tool","params":{"name":"get_weather","args":{}}}`)
+	out, _ := io.ReadAll(b)
+	if !strings.Contains(string(out), `tool:get_weather`) || !strings.Contains(string(out), "does not declare") {
+		t.Fatalf("refusal: %s", out)
+	}
+}

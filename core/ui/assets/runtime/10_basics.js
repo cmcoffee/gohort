@@ -5038,8 +5038,11 @@
       // the one source-backed component that could not do it.
       uiAutoRefresh(cfg.auto_refresh_ms, reload);
       // Same event-driven refresh the table and display panels honor, so a
-      // record write updates a chart computed FROM those records.
-      document.addEventListener('ui-data-changed', function(ev) {
+      // record write updates a chart computed FROM those records. On WINDOW,
+      // where uiInvalidate dispatches: an event sent to window never reaches
+      // document, so a chart listening there kept its old drawing after every
+      // form save until the page was reloaded.
+      window.addEventListener('ui-data-changed', function(ev) {
         var sources = ev.detail && ev.detail.sources;
         if (sources && cfg.source && sources.indexOf(cfg.source) >= 0) reload();
       });

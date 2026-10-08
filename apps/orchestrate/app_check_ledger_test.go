@@ -71,3 +71,15 @@ func TestAppStandingFollowsTheAppsChanges(t *testing.T) {
 		t.Fatal("a deleted app is still held to a check")
 	}
 }
+
+// A script that calls a tool without declaring it is told at save, not on the
+// first page load.
+func TestAnUndeclaredCallToolIsNotedOnSave(t *testing.T) {
+	pinRootDB(t)
+	spec := AppSpec{Owner: "u", Slug: "wx", DataSources: []AppDataSource{{Name: "now",
+		Script: "from gohort import call_tool\nprint(call_tool(\"get_weather\", city=\"Reno\"))\n"}}}
+	notes := appToolCapNotes("u", spec)
+	if len(notes) != 1 || !strings.Contains(notes[0], `call_tool("get_weather")`) || !strings.Contains(notes[0], "tool:get_weather") {
+		t.Fatalf("notes = %q", notes)
+	}
+}

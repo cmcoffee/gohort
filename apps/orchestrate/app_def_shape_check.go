@@ -13,6 +13,7 @@ package orchestrate
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -220,12 +221,43 @@ func appKeys(m map[string]any) string {
 	return strings.Join(keys, ", ")
 }
 
+var callToolRE = regexp.MustCompile(`call_tool\(\s*["']([A-Za-z0-9_.-]+)["']`)
+
+// appScriptBody is the source of the data source or action named name.
+func appScriptBody(spec AppSpec, kind, name string) string {
+	if kind == "action" {
+		for _, a := range spec.Actions {
+			if a.Name == name {
+				return a.Script
+			}
+		}
+		return ""
+	}
+	for _, ds := range spec.DataSources {
+		if ds.Name == name {
+			return ds.Script
+		}
+	}
+	return ""
+}
+
 // appToolCapNotes checks each "tool:<name>" a script declares against the rule
 // the call itself meets, at save time: a tool the owner does not have, or one
 // that would stop to ask, fails on every page load otherwise, far from here.
 func appToolCapNotes(user string, spec AppSpec) []string {
 	var notes []string
 	check := func(kind, script string, caps []string) {
+		declared := map[string]bool{}
+		for _, c := range caps {
+			declared[c] = true
+		}
+		body := appScriptBody(spec, kind, script)
+		for _, m := range callToolRE.FindAllStringSubmatch(body, -1) {
+			if !declared["tool:"+m[1]] {
+				notes = append(notes, fmt.Sprintf("%s %q calls call_tool(%q) but does not declare tool:%s in its capabilities, so the call will be refused: add it", kind, script, m[1], m[1]))
+				declared["tool:"+m[1]] = true
+			}
+		}
 		for _, c := range caps {
 			name, ok := strings.CutPrefix(c, "tool:")
 			if !ok {

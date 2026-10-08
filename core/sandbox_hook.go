@@ -325,6 +325,14 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 	h.Calls.Add(1)
 	if !h.granted(req.Method) {
 		Log("[hook] method %q not granted; capabilities=%v", req.Method, h.Capabilities)
+		if req.Method == "tool" {
+			// The generic refusal listed every capability the script HAS and
+			// none it lacks; a build read it and still had to work out that
+			// the fix was one entry naming the tool.
+			name := strings.TrimSpace(stringFromParams(req.Params, "name"))
+			writeHookError(conn, fmt.Sprintf("call_tool(%q) refused: the script does not declare \"tool:%s\" in its capabilities. Add that entry (it adds to the defaults, it does not replace them)", name, name))
+			return
+		}
 		writeHookError(conn, fmt.Sprintf("method %q not granted; capabilities=%v", req.Method, h.Capabilities))
 		return
 	}
