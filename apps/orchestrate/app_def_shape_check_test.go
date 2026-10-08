@@ -128,3 +128,13 @@ func TestAnHTMLSectionRendersItsSourcesHTML(t *testing.T) {
 		t.Fatalf("good html flagged: %q", probs)
 	}
 }
+
+// A source that printed "series" with nothing in it is told so, not that it
+// printed no series while its keys list one.
+func TestAnEmptySeriesIsNamedAsEmpty(t *testing.T) {
+	out := map[string]any{"location": "N/A", "labels": []any{}, "series": []any{}}
+	probs := appChartShape("chart", "s", map[string]any{}, out)
+	if len(probs) != 1 || !strings.Contains(probs[0], "with nothing in it") || strings.Contains(probs[0], "printed no series") {
+		t.Fatalf("%q", probs)
+	}
+}

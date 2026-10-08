@@ -105,6 +105,9 @@ func appChartShape(where, source string, sec map[string]any, v any) []string {
 		return []string{fmt.Sprintf("%s reads data/%s, which printed an array; a chart renders nothing from that: %s %s.", where, source, want, fix)}
 	}
 	series, _ := obj["series"].([]any)
+	if _, has := obj["series"]; has && len(series) == 0 {
+		return []string{fmt.Sprintf("%s reads data/%s, which printed \"series\" with nothing in it, so the chart is blank: fill it, %s", where, source, want)}
+	}
 	if len(series) == 0 {
 		// The likeliest near miss: the right object, one level down.
 		for k, inner := range obj {

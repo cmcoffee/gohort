@@ -647,7 +647,16 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 			// The section is what the user sees: a source that prints valid
 			// JSON its sections cannot read renders an empty page that every
 			// shape-only check called OK.
-			for _, p := range appSectionShapeProblems(spec, name, v) {
+			probs := appSectionShapeProblems(spec, name, v)
+			// Nothing saved and no sample: a source that reads the records
+			// just printed its first-visit output, placeholders and an empty
+			// series. Judging that as the forecast failed a correct script,
+			// and a build rewrote it six times against the same report.
+			if len(probs) > 0 && len(recs) == 0 && strings.Contains(script, "records") {
+				fmt.Fprintf(&b, "NOTE %s: nothing is saved and no sample was given, so this ran as a FIRST VISIT and how its sections read it was not judged. Check the real path with app_def(action=\"test\", sample=[{...one entry shaped like the form's...}]).\n", label)
+				probs = nil
+			}
+			for _, p := range probs {
 				fail++
 				fmt.Fprintf(&b, "FAIL %s: %s\n", label, p)
 			}
