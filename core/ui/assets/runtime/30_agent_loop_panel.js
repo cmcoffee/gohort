@@ -2997,17 +2997,15 @@
         }
       }
       bubble.appendChild(body);
-      // Spinner-above-streaming pattern: if a thinking indicator
-      // exists, move it to the end of convoLog FIRST (so it sits
-      // after any existing content), THEN append the new bubble —
-      // the bubble lands just below the spinner, visually
-      // indicating "this bubble is being worked on." On the next
-      // round's new bubble, the same sequence relocates the
-      // spinner above THAT one.
+      convoLog.appendChild(bubble);
+      // The waiting dots stay LAST: they say "waiting on what comes next",
+      // and next is below the newest bubble. They sat above a streaming
+      // bubble once ("this one is being worked on"), which stopped meaning
+      // anything when the dots began hiding while text streams: they came
+      // back above the last reply instead of where the next thing appears.
       if (thinkingEl && thinkingEl.parentNode === convoLog && role === 'assistant') {
         convoLog.appendChild(thinkingEl); // move-to-end (no clone, same node)
       }
-      convoLog.appendChild(bubble);
       keepPendingInterjectionsLast();
       // A new user message means the user just sent — force-scroll
       // so their own message lands in view + reset the stick-to-
@@ -4941,8 +4939,8 @@
     // The dots say "waiting". While the reply is being written the words are
     // the progress, so the dots step aside, and they come back once the
     // writing has gone quiet for a moment (a tool round, the next model call)
-    // or at once when the model is thinking again. The element stays where it
-    // is, still moved below each new bubble, only hidden.
+    // or at once when the model is thinking again. Hidden, not moved: it goes
+    // back to the end of the log as it reappears.
     var thinkingQuietTimer = null;
     var thinkingQuietMs = 1500;
     function writingNow() {
@@ -4954,6 +4952,12 @@
     function waitingNow() {
       if (thinkingQuietTimer) { clearTimeout(thinkingQuietTimer); thinkingQuietTimer = null; }
       if (!thinkingEl || thinkingEl.style.display !== 'none') return;
+      // Back at the end: tool cards and results may have landed below it
+      // while it was hidden. A queued message of the person's stays last.
+      if (thinkingEl.parentNode === convoLog) {
+        convoLog.appendChild(thinkingEl);
+        keepPendingInterjectionsLast();
+      }
       thinkingEl.style.display = '';
       if (convoStickToBottom) scrollConvo();
     }

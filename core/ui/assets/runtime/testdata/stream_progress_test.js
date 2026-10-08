@@ -71,7 +71,8 @@ check('the seconds advance between server ticks',
   }
   var thinkingEl = {style: {display: ''}};
   var thinkingQuietTimer = null, thinkingQuietMs = 1500;
-  var convoStickToBottom = true, scrolled = 0;
+  var convoStickToBottom = true, scrolled = 0, convoLog = null;
+  function keepPendingInterjectionsLast() {}
   function scrollConvo() { scrolled++; }
   eval(lift(panel, 'function writingNow(', 'writingNow'));
   eval(lift(panel, 'function waitingNow(', 'waitingNow'));
