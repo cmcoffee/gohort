@@ -43,6 +43,9 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 	case "send_message":
 		who = operatorApprovalRecipient(user, a)
 		detail = "text: " + a.Text
+		if a.BindReply {
+			detail += " - and read their reply (binds their 1:1 thread to the agent)"
+		}
 	case "converse_contact":
 		who = operatorApprovalRecipient(user, a)
 		detail = "converse toward: " + a.Brief

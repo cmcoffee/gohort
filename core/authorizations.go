@@ -78,6 +78,11 @@ type Authorization struct {
 	// delegation inherits it from the live turn; a queued one has no live turn
 	// left to inherit from, so it is carried here.
 	FromPrivate bool `json:"from_private,omitempty"`
+	// BindReply makes a send_message approval also bind the recipient's 1:1
+	// thread to the agent that asked (FromAgent), so it can read the reply:
+	// one approval for "send this and read the answer", where it used to take
+	// a send and a separate bind_thread request.
+	BindReply bool `json:"bind_reply,omitempty"`
 }
 
 func authKey(owner, id string) string { return owner + ":" + id }

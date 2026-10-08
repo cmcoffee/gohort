@@ -167,6 +167,13 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		// Approved post: if the target is a bound channel, make its agent see it
 		// (channel session + cortex) so it can field follow-ups.
 		recordChannelPost(UserDB(T.DB, a.Owner), a.Owner, a.ChatID, a.Handle, a.Text)
+		// Asked as "send this and read the reply": the same approval binds
+		// their 1:1 thread to the agent that asked.
+		if a.BindReply {
+			if agent := approvalRequester(a); agent != "" {
+				bindReplyThread(a.Owner, agent, a.ChatID, a.Handle, a.Brief, true)
+			}
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -175,41 +182,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	// that handle, with a gatekeeper rule that keeps it to replies-to-its-own
 	// messages. Idempotent; "Always allow" has no separate meaning here.
 	if a.Action == "bind_thread" {
-		addr := a.ChatID
-		if addr == "" {
-			addr = a.Handle
-		}
-		if addr != "" {
-			exists := false
-			for _, ch := range ListChannelsForAgent(RootDB, a.Owner, a.Agent) {
-				if ch.Service == "imessage" && (ch.Address == addr || ch.Address == a.Handle || ch.Address == a.ChatID) {
-					exists = true
-					break
-				}
-			}
-			if !exists {
-				name := a.Brief
-				if name == "" {
-					name = addr
-				}
-				wake := a.Text != "nowake"
-				gk := threadBindingGatekeeperRule
-				if !wake {
-					gk = "" // no-wake = record-only; the gatekeeper is skipped anyway
-				}
-				SaveChannel(RootDB, Channel{
-					ID:         UUIDv4(),
-					Owner:      a.Owner,
-					AgentID:    a.Agent,
-					Name:       "DM: " + name,
-					Service:    "imessage",
-					Address:    addr,
-					AutoReply:  wake,
-					Gatekeeper: gk,
-					AgentBound: true,
-				})
-			}
-		}
+		bindReplyThread(a.Owner, a.Agent, a.ChatID, a.Handle, a.Brief, a.Text != "nowake")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -239,6 +212,43 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	// conversation's privacy is re-applied, and its result goes back there.
 	go T.runApprovedDelegation(a, a.Agent)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// bindReplyThread binds a person's 1:1 thread to agent so it can read their
+// replies: a persistent, agent-bound channel scoped to that address, with a
+// gatekeeper keeping it to replies to the agent's own messages (wake), or
+// record-only (no wake). Idempotent: an existing binding is left as it is.
+func bindReplyThread(owner, agent, chatID, handle, name string, wake bool) {
+	addr := chatID
+	if addr == "" {
+		addr = handle
+	}
+	if addr == "" || agent == "" {
+		return
+	}
+	for _, ch := range ListChannelsForAgent(RootDB, owner, agent) {
+		if ch.Service == "imessage" && (ch.Address == addr || ch.Address == handle || ch.Address == chatID) {
+			return
+		}
+	}
+	if name == "" {
+		name = addr
+	}
+	gk := threadBindingGatekeeperRule
+	if !wake {
+		gk = "" // no-wake = record-only; the gatekeeper is skipped anyway
+	}
+	SaveChannel(RootDB, Channel{
+		ID:         UUIDv4(),
+		Owner:      owner,
+		AgentID:    agent,
+		Name:       "DM: " + name,
+		Service:    "imessage",
+		Address:    addr,
+		AutoReply:  wake,
+		Gatekeeper: gk,
+		AgentBound: true,
+	})
 }
 
 func (T *OrchestrateApp) handleApprovalApprove(w http.ResponseWriter, r *http.Request) {
