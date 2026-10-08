@@ -66,7 +66,7 @@ func appHTMLShape(where, source string, v any) []string {
 		}
 		return []string{fmt.Sprintf("%s renders the \"html\" key of what data/%s prints, and it has none (its keys: %s): print the markup as \"html\"", where, source, appKeys(t))}
 	}
-	return []string{fmt.Sprintf("%s reads data/%s, which printed an array; it renders {\"html\": \"<markup>\"}", where, source)}
+	return []string{fmt.Sprintf("%s reads data/%s, which printed %s; it renders {\"html\": \"<markup>\"}", where, source, appJSONKind(v))}
 }
 
 // appHTMLPlaceholder is the name inside markup that is nothing but a
@@ -81,6 +81,23 @@ func appHTMLPlaceholder(html string) string {
 		return ""
 	}
 	return t
+}
+
+// appJSONKind names what a script printed, for a message: the shape checks
+// said "an array" of anything that was not an object, a string included.
+func appJSONKind(v any) string {
+	switch x := v.(type) {
+	case []any:
+		return "an array"
+	case map[string]any:
+		return "an object"
+	case string:
+		if json.Valid([]byte(strings.TrimSpace(x))) {
+			return "a JSON string holding JSON (encoded twice: json.loads the tool's output before printing)"
+		}
+		return "a bare string"
+	}
+	return "a bare value"
 }
 
 func appOutputEmpty(v any) bool {
@@ -103,7 +120,7 @@ func appChartShape(where, source string, sec map[string]any, v any) []string {
 	}
 	obj, ok := v.(map[string]any)
 	if !ok {
-		return []string{fmt.Sprintf("%s reads data/%s, which printed an array; a chart renders nothing from that: %s %s.", where, source, want, fix)}
+		return []string{fmt.Sprintf("%s reads data/%s, which printed %s; a chart renders nothing from that: %s %s.", where, source, appJSONKind(v), want, fix)}
 	}
 	series, _ := obj["series"].([]any)
 	if _, has := obj["series"]; has && len(series) == 0 {
@@ -163,7 +180,7 @@ func appChartTemplateFields(sec map[string]any) string {
 func appDisplayShape(where, source string, sec map[string]any, v any) []string {
 	obj, ok := v.(map[string]any)
 	if !ok {
-		return []string{fmt.Sprintf("%s reads data/%s, which printed an array; a display shows one object's fields", where, source)}
+		return []string{fmt.Sprintf("%s reads data/%s, which printed %s; a display shows one object's fields", where, source, appJSONKind(v))}
 	}
 	pairs := appDisplayPairs(sec["pairs"])
 	if len(pairs) == 0 {
@@ -184,7 +201,7 @@ func appDisplayShape(where, source string, sec map[string]any, v any) []string {
 func appTableShape(where, source string, sec map[string]any, v any) []string {
 	rows, ok := v.([]any)
 	if !ok {
-		return []string{fmt.Sprintf("%s reads data/%s, which printed an object; a table needs an array of rows", where, source)}
+		return []string{fmt.Sprintf("%s reads data/%s, which printed %s; a table needs an array of rows", where, source, appJSONKind(v))}
 	}
 	first, _ := rows[0].(map[string]any)
 	cols, _ := sec["columns"].([]any)

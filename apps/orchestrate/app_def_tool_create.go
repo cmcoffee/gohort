@@ -394,7 +394,10 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// author to go verify it invites the exact loop this check exists to end:
 	// a verify batched alongside the NEXT update reports on the revision being
 	// replaced, and its findings read as fresh.
-	if contractBroken {
+	if p := t.appModeTypedOnlyProblem(saved); p != "" {
+		msg += "\n\nNOT DONE: " + p
+		t.noteAppStanding(saved.Slug, false, "built only from typed sections in an app session")
+	} else if contractBroken {
 		t.noteAppStanding(saved.Slug, false, "the page calls an endpoint the app does not have (see the last app_def result)")
 	} else if _, ok := args["sections"]; ok && len(appHTMLSectionScripts(args["sections"])) > 0 {
 		t.noteAppStanding(saved.Slug, true, "")

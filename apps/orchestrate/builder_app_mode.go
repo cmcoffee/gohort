@@ -63,3 +63,39 @@ func (t *chatTurn) renderBuilderAppModeBlock() string {
 	}
 	return "\n\n" + EffectivePromptText(BuilderAppModeKey, builderAppModeShipped)
 }
+
+// appTypedOnly reports an app built only from the typed data sections (form,
+// table, display, chart, actions, empty): the shortcut for a plain list or
+// an admin form. An app built around a chat, a pipeline run or a workbench
+// is a different shape and is not this.
+func appTypedOnly(spec AppSpec) bool {
+	secs := appSectionList(spec)
+	if len(secs) == 0 {
+		return false
+	}
+	for _, sec := range secs {
+		switch strings.ToLower(strings.TrimSpace(mapStr(sec, "kind"))) {
+		case "form", "table", "display", "chart", "actions", "empty":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// appPlainListOnPurpose is a typed-only app whose notes record that the
+// person asked for exactly that ("plain list: <why>").
+func appPlainListOnPurpose(spec AppSpec) bool {
+	return strings.Contains(strings.ToLower(spec.Notes), "plain list:")
+}
+
+// appModeTypedOnlyProblem is the app-mode objection to a typed-only app, or
+// "". Prompt text alone did not move it: with the app-mode block and the
+// help both saying design the page, a build still shipped form + table +
+// display and said icons "would need a heavier custom page".
+func (t *chatTurn) appModeTypedOnlyProblem(spec AppSpec) string {
+	if !t.builderAppMode() || !appTypedOnly(spec) || appPlainListOnPurpose(spec) {
+		return ""
+	}
+	return "this session builds a web app, and this one is only typed sections (form, table, display, chart), the shortcut for a plain list or an admin form. Build the page: ONE html section holding a complete, designed page that loads with app.data(...), saves with app.records.save(...) and stays live with app.onChange(...), with its pictures (icons drawn as inline SVG) and its chart (a CDN chart library). Keep the typed sections only if the person asked for a plain list: then write \"plain list: <why>\" into the app's notes."
+}

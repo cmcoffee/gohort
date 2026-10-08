@@ -223,6 +223,11 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		// forecast for a city, the summary of a transcript) never ran at all.
 		// A verify that passed on that told the user an app worked whose
 		// work nobody had seen.
+		if p := t.appModeTypedOnlyProblem(spec); p != "" {
+			failures++
+			classes = append(classes, "typed-only-app")
+			b.WriteString("FAIL " + p + "\n")
+		}
 		if recCount == 0 && appReadsRecords(spec) {
 			failures++
 			classes = append(classes, "main-path-unrun")
@@ -735,6 +740,22 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				// to tell the user the app worked.
 				fail++
 				fmt.Fprintf(&b, "FAIL %s: printed an error: %s\n", label, truncate(fmt.Sprint(obj["error"]), 400))
+			} else if str, isStr := v.(string); isStr {
+				// A JSON string that is itself JSON: encoded twice. call_tool
+				// returns the tool's output as text, and json.dumps of that
+				// text quotes it again. This was reported as an object on one
+				// line and an array on the next, and a build chased both.
+				fail++
+				if json.Valid([]byte(strings.TrimSpace(str))) {
+					fmt.Fprintf(&b, "FAIL %s: printed a JSON STRING that holds JSON: it was encoded twice. call_tool (and ask with json=True) return text, so json.loads it first, then print the object with json.dumps.%s\n", label, shown)
+				} else {
+					fmt.Fprintf(&b, "FAIL %s: printed a bare JSON string; a page reads an object or an array.%s\n", label, shown)
+				}
+				return
+			} else if _, isObj := v.(map[string]any); !isObj {
+				fail++
+				fmt.Fprintf(&b, "FAIL %s: printed a bare JSON value (%s); a page reads an object or an array.%s\n", label, appOutputPreview(trimmed, 80), shown)
+				return
 			} else {
 				pass++
 				fmt.Fprintf(&b, "OK   %s: printed a JSON object; good for a display (a table section needs a JSON array).%s%s\n", label, emptyStoreNote(recs), shown)
