@@ -620,8 +620,12 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		// including that one. It runs after the agent has already answered, so
 		// the reply about to be sent is the last one; the cut applies to the
 		// inbound that would follow.
-		if noteReply(chatID, handle, T.isSelfThread(chatID, handle)) {
-			logLoopCut(chatID)
+		// The strict count is for replies that could be answering our own
+		// reply come back: the owner's handle, or no handle at all (a
+		// transport that could not name the sender could be naming us).
+		mayBeEcho := T.isOwnerHandleFor(svc, handle) || strings.TrimSpace(handle) == ""
+		if cut := noteReply(chatID, handle, T.isSelfThread(chatID, handle), mayBeEcho); cut != "" {
+			logLoopCut(chatID, cut)
 		}
 		if hasOutput {
 			T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"})

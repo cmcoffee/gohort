@@ -3,6 +3,7 @@ package bridges
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -36,8 +37,10 @@ import (
 //     id-keyed dedupe treats as new every time. This is the duplicate delivery
 //     that starts a loop.
 //  4. noteReply — a cap on replies per conversation. Catches any shape the
-//     others miss. Strict in a self thread (the only place this can happen) and
-//     generous elsewhere, so it never becomes the bug it prevents.
+//     others miss. Strict in a self thread (the only place this can happen),
+//     strict for replies to the OWNER's messages anywhere (the only inbound an
+//     echo can arrive as), and loose for replies to anyone else, who has to
+//     type, so it never becomes the bug it prevents.
 //
 // Everything is keyed on the PERSON, not the chat id: iMessage falls back to
 // SMS/MMS, and those are separate ids for one thread — a reply sent one way and
@@ -66,6 +69,16 @@ const (
 	// exchange — ten minutes and twelve replies clears both.
 	replyWindowDefault = 10 * time.Minute
 	replyBudgetDefault = 12
+	// personReplyBudgetDefault is the budget for replies to someone OTHER than
+	// the owner. Our own reply can only come back looking like the owner's
+	// message, so a reply to another person answers words a person typed and
+	// cannot be the loop above. Counting those against twelve cut a real
+	// conversation: someone messaging an agent about once a minute reached it
+	// in seven minutes, and routing went dead for ten. What it still has to
+	// catch is the agent stuck answering another bot, which runs at the
+	// agents' speed (~13s a round) and fills forty inside ten minutes, where a
+	// person chatting briskly sends ten to fifteen.
+	personReplyBudgetDefault = 40
 	// A loop of this shape is only possible in a thread addressed to YOURSELF:
 	// anywhere else the other end is a person who has to actually type, so the
 	// agent can never be answering its own words. That means the self thread can
@@ -90,11 +103,20 @@ func init() {
 	RegisterTunable(TunableSpec{
 		App: "/bridges",
 		Key: "tune_bridge_reply_budget", Category: "Limits",
-		Label:   "Loop guard: agent replies per conversation",
-		Help:    "How many replies the agent may send into ONE conversation before routing is cut.",
-		Detail:  "The window is set below, and the cut treats it as a suspected loop. Every reply counts, including a guardrail decline, so testing an agent from your phone spends this budget. Raise it if ordinary use trips the cut; lower it to catch runaways sooner.",
+		Label:   "Loop guard: replies to your messages per conversation",
+		Help:    "How many replies to YOUR messages the agent may send into one conversation before routing is cut.",
+		Detail:  "An agent's own reply can only come back looking like your message, so these are the replies a loop is made of. The window is set below. Every reply counts, including a guardrail decline, so testing an agent from your phone spends this budget. Raise it if ordinary use trips the cut; lower it to catch runaways sooner.",
 		Kind:    KindInt,
 		Default: replyBudgetDefault, Min: 2, Max: 200,
+	})
+	RegisterTunable(TunableSpec{
+		App: "/bridges",
+		Key: "tune_bridge_person_reply_budget", Category: "Limits",
+		Label:   "Loop guard: replies per conversation, all senders",
+		Help:    "How many replies in all the agent may send into one conversation before routing is cut, whoever it is answering.",
+		Detail:  "Someone else has to type each message, so a conversation with a person cannot loop the way your own thread can. This catches the agent stuck answering another bot instead, which runs far faster than anyone types. Same window as above.",
+		Kind:    KindInt,
+		Default: personReplyBudgetDefault, Min: 2, Max: 400,
 	})
 	RegisterTunable(TunableSpec{
 		App: "/bridges",
@@ -132,6 +154,13 @@ func replyBudgetFor() int {
 	return replyBudgetDefault
 }
 
+func personReplyBudgetFor() int {
+	if n := TuneInt("tune_bridge_person_reply_budget"); n > 0 {
+		return n
+	}
+	return personReplyBudgetDefault
+}
+
 func selfThreadBudgetFor() int {
 	if n := TuneInt("tune_bridge_self_thread_budget"); n > 0 {
 		return n
@@ -159,7 +188,8 @@ var loopGuard struct {
 	echo map[string]time.Time
 	// content: identity+text hash → when we last saw it inbound.
 	content map[string]time.Time
-	// replies: identity → recent agent-reply timestamps.
+	// replies: identity → recent agent-reply timestamps, and
+	// ownerReplyKey(identity) → those that may have answered an echo.
 	replies map[string][]time.Time
 	// tripped: identity → when the budget blew, for the cooldown.
 	tripped map[string]time.Time
@@ -377,36 +407,64 @@ func seenContent(chatID, handle, text string) bool {
 	return false
 }
 
-// noteReply records that the agent answered into this conversation and reports
-// whether that has now blown the budget. The caller stops routing on true.
-// selfThread selects the strict limit — see selfThreadBudget.
-func noteReply(chatID, handle string, selfThread bool) (tripped bool) {
+// noteReply records that the agent answered into this conversation and
+// reports why that has blown the budget, or "" when it has not. The caller
+// stops routing on a reason. In a self thread every reply counts against the
+// strict limit; elsewhere replies to anything that could be our own reply
+// returning (mayBeEcho: the owner's handle, or none) have their own limit, and
+// all replies together the looser one.
+func noteReply(chatID, handle string, selfThread, mayBeEcho bool) (cut string) {
 	id := loopIdentity(chatID, handle)
 	if id == "" {
-		return false
-	}
-	budget := replyBudgetFor()
-	if selfThread {
-		budget = selfThreadBudgetFor()
+		return ""
 	}
 	loopGuard.mu.Lock()
 	defer loopGuard.mu.Unlock()
 	loopGuardInit()
 	sweepLocked()
 	now := time.Now()
-	kept := loopGuard.replies[id][:0]
-	for _, at := range loopGuard.replies[id] {
+	all := recordReplyLocked(id, now)
+	owner := 0
+	if mayBeEcho || selfThread {
+		owner = recordReplyLocked(ownerReplyKey(id), now)
+	}
+	switch {
+	case selfThread:
+		if all >= selfThreadBudgetFor() {
+			cut = fmt.Sprintf("%d agent replies into your own thread", all)
+		}
+	case owner >= replyBudgetFor():
+		cut = fmt.Sprintf("%d agent replies to your messages", owner)
+	case all >= personReplyBudgetFor():
+		cut = fmt.Sprintf("%d agent replies", all)
+	}
+	if cut != "" {
+		loopGuard.tripped[id] = now
+	}
+	return cut
+}
+
+// recordReplyLocked adds a reply at now to key's window and returns how many
+// the window holds. Caller holds the lock.
+func recordReplyLocked(key string, now time.Time) int {
+	kept := loopGuard.replies[key][:0]
+	for _, at := range loopGuard.replies[key] {
 		if now.Sub(at) < replyWindowFor() {
 			kept = append(kept, at)
 		}
 	}
 	kept = append(kept, now)
-	loopGuard.replies[id] = kept
-	if len(kept) >= budget {
-		loopGuard.tripped[id] = now
-		return true
-	}
-	return false
+	loopGuard.replies[key] = kept
+	return len(kept)
+}
+
+func ownerReplyKey(id string) string { return id + "\x00owner" }
+
+// clearRepliesLocked forgets a conversation's reply counts once its cooldown
+// is over. Caller holds the lock.
+func clearRepliesLocked(id string) {
+	delete(loopGuard.replies, id)
+	delete(loopGuard.replies, ownerReplyKey(id))
 }
 
 // loopTripped reports whether a conversation is in its post-loop cooldown.
@@ -421,7 +479,7 @@ func loopTripped(chatID, handle string) bool {
 	}
 	if time.Since(at) > loopCooldownFor() {
 		delete(loopGuard.tripped, id)
-		delete(loopGuard.replies, id)
+		clearRepliesLocked(id)
 		return false
 	}
 	return true
@@ -444,7 +502,7 @@ func sweepLocked() {
 	for k, at := range loopGuard.tripped {
 		if now.Sub(at) > loopCooldownFor() {
 			delete(loopGuard.tripped, k)
-			delete(loopGuard.replies, k)
+			clearRepliesLocked(k)
 		}
 	}
 }
@@ -460,8 +518,9 @@ func LoopGuardReset() {
 // logLoopCut reports a tripped conversation once, loudly. A loop that is
 // silently contained still means the agent burned a run per round and the owner
 // saw a burst of texts — they need to know which thread did it.
-func logLoopCut(chatID string) {
-	Log("[bridges] LOOP GUARD: conversation %s produced %d agent replies in %s, routing CUT for %s. "+
+func logLoopCut(chatID, cut string) {
+	Log("[bridges] LOOP GUARD: conversation %s: %s in %s, routing CUT for %s. "+
 		"Inbound is still recorded; nothing wakes the agent. Common cause: a self-thread where the agent's own "+
-		"replies arrive back as owner messages.", chatID, replyBudgetFor(), replyWindowFor(), loopCooldownFor())
+		"replies arrive back as owner messages; with other people, another bot answering the agent. "+
+		"Budgets: Bridges > Limits.", chatID, cut, replyWindowFor(), loopCooldownFor())
 }
