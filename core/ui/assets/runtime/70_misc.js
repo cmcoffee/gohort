@@ -1127,12 +1127,45 @@
     'function ask(u,o){o=o||{};return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};' +
       'var h=o.headers||{},ct=h["Content-Type"]||h["content-type"]||"";' +
       'parent.postMessage({__uiIso:1,id:id,url:String(u),method:o.method||"GET",body:bod(o.body),ctype:ct},"*");});}' +
-    'window.fetch=function(u,o){u=String(u&&u.url||u);if(/^[a-z][a-z0-9+.-]*:/i.test(u)||u.indexOf("//")===0)' +
-      'return Promise.reject(new Error("isolated content can only fetch its own data"));return ask(u,o);};' +
+    // mine is a URL as the relay takes it: relative, or null when it is not
+    // the app's own. A library hands fetch a Request, whose url the browser
+    // has already resolved to an absolute one against the page's base, so an
+    // absolute URL under that base is turned back into the relative path.
+    'function rel(s){return !!s&&!/^(data|blob):|^[a-z][a-z0-9+.-]*:|^\\/\\//i.test(s);}' +
+    'function mine(s){s=String(s);if(rel(s))return s;try{var b=new URL(".",document.baseURI).href;if(b.indexOf("http")===0&&s.indexOf(b)===0)return s.slice(b.length);}catch(e){}return null;}' +
+    'window.fetch=function(u,o){var q=u&&u.url?u:null,m=mine(q?q.url:u);if(m===null)' +
+      'return Promise.reject(new Error("isolated content can only fetch its own data"));return ask(m,o||(q?{method:q.method}:o));};' +
     'function img(x){var s=x.getAttribute&&x.getAttribute("src");if(!s||/^(data|blob):|^[a-z][a-z0-9+.-]*:|^\\/\\//i.test(s)||x.__uiIso)return;' +
       'x.__uiIso=1;ask(s).then(function(r){return r.blob();}).then(function(b){x.src=URL.createObjectURL(b);' +
         'if(x.tagName==="SOURCE"&&x.parentNode&&x.parentNode.load)x.parentNode.load();}).catch(function(){});}' +
     'function scan(r){(r.querySelectorAll?r.querySelectorAll("img[src],audio[src],video[src],source[src]"):[]).forEach(img);}' +
+    // Images, sounds and requests a script makes in code never reach the
+    // page, so the scan above never sees them: three.js loads a texture with
+    // an Image it never attaches, a game plays new Audio('assets/hit.wav'),
+    // and older loaders (a model, a level file) use XMLHttpRequest. Each one
+    // resolved a relative path against a document with no origin and failed.
+    // A relative src set in code and a relative XHR now go through the relay
+    // like a fetch; an absolute one is left to the browser, as before.
+    'function srcHook(P){var d=P&&Object.getOwnPropertyDescriptor(P,"src");if(!d||!d.set)return;Object.defineProperty(P,"src",{configurable:true,enumerable:d.enumerable,get:function(){return d.get.call(this);},set:function(v){var s=mine(v),x=this;if(s===null){d.set.call(x,v);return;}x.__uiIso=1;ask(s).then(function(r){if(r.status<200||r.status>299)throw new Error("status "+r.status);return r.blob();}).then(function(b){d.set.call(x,URL.createObjectURL(b));}).catch(function(){x.dispatchEvent(new Event("error"));});}});}' +
+    'if(window.HTMLImageElement)srcHook(window.HTMLImageElement.prototype);' +
+    'if(window.HTMLMediaElement)srcHook(window.HTMLMediaElement.prototype);' +
+    'if(window.Audio){var OA=window.Audio,A=function(u){var a=new OA();if(u!==undefined)a.src=u;return a;};A.prototype=OA.prototype;window.Audio=A;}' +
+    'if(window.XMLHttpRequest){var OX=window.XMLHttpRequest;window.XMLHttpRequest=class extends OX{' +
+    'open(m,u){var s=mine(u);if(s!==null){this.__r={m:m||"GET",u:s,h:{}};return;}this.__r=null;return super.open.apply(this,arguments);}' +
+    'setRequestHeader(k,v){if(this.__r){this.__r.h[k]=v;return;}return super.setRequestHeader(k,v);}' +
+    'overrideMimeType(t){if(this.__r)return;return super.overrideMimeType(t);}' +
+    'getResponseHeader(k){if(this.__r)return /^content-type$/i.test(k)?(this.__t||null):null;return super.getResponseHeader(k);}' +
+    'getAllResponseHeaders(){if(this.__r)return this.__t?"content-type: "+this.__t+"\\r\\n":"";return super.getAllResponseHeaders();}' +
+    'abort(){if(this.__r){this.__a=1;return;}return super.abort();}' +
+    'send(b){var r=this.__r,x=this;if(!r)return super.send(b);' +
+    'function set(k,v){Object.defineProperty(x,k,{configurable:true,value:v});}' +
+    'function fin(st,buf){if(x.__a)return;var rt=x.responseType||"",txt="",out=null;' +
+    'if(buf&&(rt===""||rt==="text"||rt==="json"))txt=new TextDecoder().decode(buf);' +
+    'if(buf)out=rt==="arraybuffer"?buf:rt==="blob"?new Blob([buf],{type:x.__t||""}):rt==="json"?(function(){try{return JSON.parse(txt);}catch(e){return null;}})():txt;' +
+    'set("status",st);set("statusText",st?String(st):"");set("readyState",4);set("response",out);set("responseURL",r.u);if(rt===""||rt==="text")set("responseText",txt);' +
+    'var n=buf?buf.byteLength:0;x.dispatchEvent(new Event("readystatechange"));' +
+    'x.dispatchEvent(new ProgressEvent(st?"load":"error",{lengthComputable:!!buf,loaded:n,total:n}));x.dispatchEvent(new ProgressEvent("loadend",{loaded:n,total:n}));}' +
+    'ask(r.u,{method:r.m,body:b,headers:r.h}).then(function(res){x.__t=res.headers.get("Content-Type")||"";return res.arrayBuffer().then(function(buf){fin(res.status,buf);});},function(){fin(0,null);});}};}' +
     'function height(){parent.postMessage({__uiIsoHeight:Math.ceil(document.documentElement.scrollHeight)},"*");}' +
     'addEventListener("DOMContentLoaded",function(){scan(document);new MutationObserver(function(m){m.forEach(function(x){x.addedNodes.forEach(function(nd){if(/^(IMG|AUDIO|VIDEO|SOURCE)$/.test(nd.tagName||""))img(nd);else scan(nd);});});height();})' +
       '.observe(document.documentElement,{childList:true,subtree:true});' +

@@ -67,6 +67,13 @@ var appAssetExts = map[string]string{
 	".ogg": "audio/ogg",
 	".wav": "audio/wav",
 	".m4a": "audio/mp4",
+	// 3D models, for a WebGL game or viewer: a .glb is one self-contained
+	// file; a .gltf is JSON that names a .bin of buffers (and textures)
+	// beside it by relative path. Inert data a loader parses, nothing that
+	// runs, and served sandboxed like the rest.
+	".glb":  "model/gltf-binary",
+	".gltf": "model/gltf+json",
+	".bin":  "application/octet-stream",
 }
 
 // MaxAppAssetBytes caps one asset. Generated art lands well under this; the

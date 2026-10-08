@@ -1579,7 +1579,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 	}
 	name = strings.TrimSpace(name)
 	if !ValidAppAssetName(name) {
-		http.Error(w, "invalid asset name: a flat filename ending in an image, font or sound extension (.png .jpg .gif .webp .svg .ico .woff .woff2 .mp3 .ogg .wav .m4a)", http.StatusBadRequest)
+		http.Error(w, "invalid asset name: a flat filename ending in an image, font, sound or 3D model extension (.png .jpg .gif .webp .svg .ico .woff .woff2 .mp3 .ogg .wav .m4a .glb .gltf .bin)", http.StatusBadRequest)
 		return
 	}
 	if r.Method == http.MethodDelete {
