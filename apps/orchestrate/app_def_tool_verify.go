@@ -513,7 +513,11 @@ const (
 
 // runScriptChecks is checkScripts with the run's options spelled out.
 func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report string, records, pass, fail int) {
-	db := UserDB(RootDB, t.user)
+	// The store the host hands a live script: the owner's part of the app's
+	// data. It used to be UserDB(RootDB, ...), which nothing on the script's
+	// path reads today (tool lookups resolve RootDB themselves), but a check
+	// should not depend on that staying true.
+	db := appscript.RecordBase(spec, t.user)
 	recs := opt.sample
 	var b strings.Builder
 	if recs == nil {
@@ -531,11 +535,10 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 	recJSON, _ := json.Marshal(recs)
 	fixed := map[string]string{"caller": t.user}
 	if len(spec.SharedCollections) > 0 {
-		owner := appscript.RecordBase(spec, t.user)
-		fixed["shared"] = appscript.SharedInput(owner, spec)
+		fixed["shared"] = appscript.SharedInput(db, spec)
 		var counts []string
 		for _, name := range spec.SharedCollections {
-			counts = append(counts, fmt.Sprintf("%s (%d)", name, len(appscript.ReadShared(owner, spec.Slug, name))))
+			counts = append(counts, fmt.Sprintf("%s (%d)", name, len(appscript.ReadShared(db, spec.Slug, name))))
 		}
 		fmt.Fprintf(&b, "Shared collections given as shared, as stored now: %s. A shared write an action prints is NOT saved by a check.\n", strings.Join(counts, ", "))
 	}
