@@ -45,9 +45,40 @@ func appSectionShapeProblems(spec AppSpec, source string, v any) []string {
 			out = append(out, appDisplayShape(where, source, sec, v)...)
 		case "table":
 			out = append(out, appTableShape(where, source, sec, v)...)
+		case "html", "card":
+			out = append(out, appHTMLShape(where, source, v)...)
 		}
 	}
 	return out
+}
+
+// appHTMLShape: a sourced html section renders the "html" string of what the
+// script prints (or the output itself, when that is a string).
+func appHTMLShape(where, source string, v any) []string {
+	switch t := v.(type) {
+	case string:
+		return nil
+	case map[string]any:
+		if _, ok := t["html"].(string); ok {
+			return nil
+		}
+		return []string{fmt.Sprintf("%s renders the \"html\" key of what data/%s prints, and it has none (its keys: %s): print the markup as \"html\"", where, source, appKeys(t))}
+	}
+	return []string{fmt.Sprintf("%s reads data/%s, which printed an array; it renders {\"html\": \"<markup>\"}", where, source)}
+}
+
+// appHTMLPlaceholder is the name inside markup that is nothing but a
+// "{name}" (or "{{name}}") placeholder, or "". An html section renders its
+// markup verbatim, so such a section shows the braces.
+func appHTMLPlaceholder(html string) string {
+	t := strings.TrimSpace(html)
+	for strings.HasPrefix(t, "{") && strings.HasSuffix(t, "}") {
+		t = strings.TrimSpace(t[1 : len(t)-1])
+	}
+	if t == "" || t == strings.TrimSpace(html) || strings.ContainsAny(t, "<>{} \n\t\"'") {
+		return ""
+	}
+	return t
 }
 
 func appOutputEmpty(v any) bool {

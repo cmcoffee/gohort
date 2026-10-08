@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -91,5 +92,39 @@ func TestRecordsReachScriptsOldestFirst(t *testing.T) {
 	recs := appscript.ReadRecords(db, "wx")
 	if len(recs) != 3 || recs[0]["city"] != "Old" || recs[1]["city"] != "Reno" || recs[2]["city"] != "Boise" {
 		t.Fatalf("order = %v", recs)
+	}
+}
+
+// A weather build put "{html_forecast}" in an html section with a
+// source_script the section ignored, and the page showed the braces while
+// the check passed. An html section can now render a data source's HTML;
+// a bare placeholder without one is refused, saying how.
+func TestAnHTMLSectionRendersItsSourcesHTML(t *testing.T) {
+	spec := AppSpec{Slug: "wx", RecordKey: "id"}
+	sec, err := buildAppSection(spec, map[string]any{"kind": "html", "html": "{html_forecast}", "source_script": "weather_data_source"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, ok := sec.Body.(ui.Card)
+	if !ok || card.Source != "data/weather-data-source" || card.HTML != "" {
+		t.Fatalf("sourced html section = %#v", sec.Body)
+	}
+	if _, err := buildAppSection(spec, map[string]any{"kind": "html", "html": "{html_forecast}"}, nil); err == nil || !strings.Contains(err.Error(), "source_script") {
+		t.Fatalf("a bare placeholder was saved: %v", err)
+	}
+	if _, err := buildAppSection(spec, map[string]any{"kind": "html", "html": "<p>{not a placeholder}</p>"}, nil); err != nil {
+		t.Fatalf("markup with braces in it refused: %v", err)
+	}
+	if _, err := buildAppSection(spec, map[string]any{"kind": "html", "html": "<!DOCTYPE html><html><body></body></html>", "source_script": "s"}, nil); err == nil {
+		t.Fatal("a whole document cannot be refilled from a source")
+	}
+
+	shape := shapeSpec(t, `[{"kind":"html","title":"Forecast","source_script":"weather_data_source"}]`)
+	probs := appSectionShapeProblems(shape, "weather-data-source", map[string]any{"html_forecast": "<p>x</p>", "labels": []any{}})
+	if len(probs) != 1 || !strings.Contains(probs[0], "html_forecast") {
+		t.Fatalf("missing html key: %q", probs)
+	}
+	if probs := appSectionShapeProblems(shape, "weather-data-source", map[string]any{"html": "<p>x</p>"}); len(probs) != 0 {
+		t.Fatalf("good html flagged: %q", probs)
 	}
 }

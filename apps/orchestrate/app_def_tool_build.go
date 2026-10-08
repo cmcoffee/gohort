@@ -117,8 +117,8 @@ var sectionKeys = map[string][]string{
 	"pipeline":  {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target", "meta"},
 	"run":       {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target", "meta"},
 	"workbench": {"item_label", "body_field", "item_noun", "new_fields", "new_label", "new_title", "list_title", "list_empty", "empty_title", "empty_hint", "empty_icon", "chat_empty", "placeholder"},
-	"html":      {"html", "height"},
-	"card":      {"html", "height"},
+	"html":      {"html", "height", "source_script"},
+	"card":      {"html", "height", "source_script"},
 }
 
 // topLevelAppKeys are app_def parameters that sit BESIDE sections, not inside
@@ -580,8 +580,26 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 		// trust level as the python data_sources (which run arbitrary code
 		// server-side). Reach for a typed section first; this is a last resort.
 		html := mapStr(m, "html")
+		// HTML a data source makes: the section renders what the script
+		// prints as {"html": "..."}, and fetches it again after a form save
+		// or an action, like a table over the same source. A placeholder
+		// like "{html_forecast}" in html is what an author writes reaching
+		// for this; it is no first paint, so it is dropped rather than shown.
+		if src := slugify(mapStr(m, "source_script")); src != "" {
+			if isFullHTMLDocument(html) {
+				return ui.Section{}, errors.New("an html section with a source_script renders a FRAGMENT the script prints; a whole document (doctype, <html>, <body>) cannot be refilled from one. Print the fragment from the script, or keep the document and fetch('data/" + src + "') in its own script")
+			}
+			if appHTMLPlaceholder(html) != "" {
+				html = ""
+			}
+			sec.Body = ui.Card{HTML: html, Source: "data/" + src}
+			break
+		}
 		if strings.TrimSpace(html) == "" {
-			return ui.Section{}, errors.New("an html section needs an `html` field (the raw HTML to render): pass the markup itself, not a nested object")
+			return ui.Section{}, errors.New("an html section needs an `html` field (the raw HTML to render): pass the markup itself, not a nested object. For HTML a data source makes, set source_script instead and have the script print {\"html\": \"...\"}")
+		}
+		if name := appHTMLPlaceholder(html); name != "" {
+			return ui.Section{}, fmt.Errorf("this html section's markup is the placeholder %q, and an html section renders its markup verbatim: the page would show the text %q. To show HTML a data source makes, set source_script to that data source and have its script print {\"html\": \"<the markup>\"}", html, html)
 		}
 		// A COMPLETE document gets its own frame; a fragment is inlined. An
 		// author writing a game or an animation writes a whole document
