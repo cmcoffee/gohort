@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -323,9 +324,11 @@ func (T *CustomApps) settingsFor(spec AppSpec, uid string) map[string]string {
 // Without it a shared app's script could not tell who clicked: "one vote per
 // person" had nothing to check against but whatever the page chose to send.
 // A scheduled fire passes the owner, which is who the shared write stamps.
+// The id is the person's alias in this app (appscript.CallerAlias), never
+// their username, which on most deployments is their email.
 func (T *CustomApps) applySettings(args map[string]any, spec AppSpec, uid string) {
 	for k, v := range T.settingsFor(spec, uid) {
 		args[k] = v
 	}
-	args["caller"] = uid
+	args["caller"] = appscript.CallerAlias(spec, uid)
 }

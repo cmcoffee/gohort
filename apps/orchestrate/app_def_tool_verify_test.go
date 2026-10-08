@@ -159,7 +159,7 @@ func TestCheckReadsTheHostsRecordStore(t *testing.T) {
 	if len(recs) != 1 || recs[0]["id"] != "b1" {
 		t.Fatalf("records = %v, want the host's one", recs)
 	}
-	if got := appscript.SharedInput(host, spec); got != `{"votes":[{"by":"bob","id":"v1"}]}` {
+	if got := appscript.SharedInput(host, spec); got != `{"votes":[{"by":"`+appscript.CallerAlias(spec, "bob")+`","id":"v1"}]}` {
 		t.Fatalf("shared = %s", got)
 	}
 }

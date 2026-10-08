@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -296,8 +297,8 @@ func TestCallerIsTheRequesterAndCannotBeSent(t *testing.T) {
 	spec.Settings = append(spec.Settings, AppSetting{Name: "caller", Default: "owner-picked"})
 	args := map[string]any{"records": "[]", "caller": "alice"}
 	T.applySettings(args, spec, "bob")
-	if args["caller"] != "bob" {
-		t.Fatalf("caller = %v, want the requester", args["caller"])
+	if args["caller"] != appscript.CallerAlias(spec, "bob") {
+		t.Fatalf("caller = %v, want the requester's alias", args["caller"])
 	}
 
 	var got map[string]any
@@ -311,7 +312,7 @@ func TestCallerIsTheRequesterAndCannotBeSent(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/apps/wx/action/vote?caller=alice", strings.NewReader(`{"caller":"alice"}`))
 	T.handleAction(w, r, "alice", "bob", T.recordBase(spec, "bob"), spec, "vote")
-	if w.Code != http.StatusOK || got["caller"] != "bob" {
+	if w.Code != http.StatusOK || got["caller"] != appscript.CallerAlias(spec, "bob") {
 		t.Fatalf("action: %d %s, caller = %v", w.Code, w.Body.String(), got["caller"])
 	}
 }

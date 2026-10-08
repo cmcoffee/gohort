@@ -533,13 +533,13 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		}
 	}
 	recJSON, _ := json.Marshal(recs)
-	fixed := map[string]string{"caller": t.user}
+	fixed := map[string]string{"caller": appscript.CallerAlias(spec, t.user)}
 	sharedRecs := 0
 	if len(spec.SharedCollections) > 0 {
 		fixed["shared"] = appscript.SharedInput(db, spec)
 		var counts []string
 		for _, name := range spec.SharedCollections {
-			n := len(appscript.ReadShared(db, spec.Slug, name))
+			n := len(appscript.ReadShared(db, spec, name))
 			sharedRecs += n
 			counts = append(counts, fmt.Sprintf("%s (%d)", name, n))
 		}

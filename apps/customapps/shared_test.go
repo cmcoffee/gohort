@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -38,7 +39,7 @@ func TestAnActionWritesASharedCollectionEveryoneReads(t *testing.T) {
 		t.Fatalf("action: %q %d %v", msg, saved, err)
 	}
 	board := readShared(ownerDB, spec, "leaderboard")
-	if len(board) != 1 || board[0]["by"] != "bob" || board[0]["score"] != float64(120) || board[0]["created"] == nil {
+	if len(board) != 1 || board[0]["by"] != appscript.CallerAlias(spec, "bob") || board[0]["score"] != float64(120) || board[0]["created"] == nil {
 		t.Fatalf("leaderboard = %+v (by must be the triggering user, not what the script said)", board)
 	}
 	if len(readShared(bobDB, spec, "leaderboard")) != 0 {
@@ -139,7 +140,39 @@ func TestDataSourceSharedCannotBeSent(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, `/apps/club/data/mine?shared={"votes":[{"by":"x"}]}&caller=x`, nil)
 	T.handleData(w, r, "alice", "bob", T.recordBase(spec, "bob"), spec, "mine")
-	if w.Code != http.StatusOK || got["shared"] != `{"votes":[]}` || got["caller"] != "bob" {
+	if w.Code != http.StatusOK || got["shared"] != `{"votes":[]}` || got["caller"] != appscript.CallerAlias(spec, "bob") {
 		t.Fatalf("%d %s: shared %v caller %v", w.Code, w.Body.String(), got["shared"], got["caller"])
+	}
+}
+
+// A shared collection is read by every user of the app, so who wrote a record
+// must not be their username (an email on most deployments). Writers are an
+// alias per app: the same person matches themselves, nobody can read who it
+// is, and the same person is someone else in another app. A record stamped
+// before aliasing reads as the alias too.
+func TestSharedWritersAreAliasedPerApp(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	game := AppSpec{Slug: "game", Owner: "alice", SharedCollections: []string{"board"}}
+	other := AppSpec{Slug: "quiz", Owner: "alice"}
+	a := appscript.CallerAlias(game, "bob@example.com")
+	if !appscript.IsCallerAlias(a) || strings.Contains(a, "bob") {
+		t.Fatalf("alias %q", a)
+	}
+	if appscript.CallerAlias(game, "bob@example.com") != a || appscript.CallerAlias(game, "carol@example.com") == a {
+		t.Fatal("an alias must be stable for one person and differ between people")
+	}
+	if appscript.CallerAlias(other, "bob@example.com") == a {
+		t.Fatal("the same person must be someone else in another app")
+	}
+	ownerDB := &DBase{Store: kvlite.MemStore()}
+	ownerDB.Set(appscript.SharedTable("game", "board"), "old", map[string]any{"id": "old", "by": "bob@example.com"})
+	board := readShared(ownerDB, game, "board")
+	if len(board) != 1 || board[0]["by"] != a {
+		t.Fatalf("an old record's writer reads as %v, want %s", board[0]["by"], a)
+	}
+	if strings.Contains(sharedInput(ownerDB, game), "example.com") {
+		t.Fatal("a script's shared input still carries a username")
 	}
 }

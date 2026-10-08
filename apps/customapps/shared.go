@@ -45,7 +45,7 @@ func sharedDeclared(spec AppSpec, name string) bool {
 
 // readShared is one collection's records, oldest first by created, then id.
 func readShared(ownerDB Database, spec AppSpec, name string) []map[string]any {
-	return appscript.ReadShared(ownerDB, spec.Slug, name)
+	return appscript.ReadShared(ownerDB, spec, name)
 }
 
 // sharedInput is every declared collection as one JSON object, the `shared`
@@ -138,7 +138,7 @@ func applySharedWrites(owner string, ownerDB Database, spec AppSpec, by string, 
 			} else {
 				rec["created"] = now
 			}
-			rec["by"], rec["updated"] = by, now
+			rec["by"], rec["updated"] = appscript.CallerAlias(spec, by), now
 			ownerDB.Set(tbl, id, rec)
 			n++
 		}

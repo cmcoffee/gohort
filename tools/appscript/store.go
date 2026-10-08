@@ -38,15 +38,21 @@ func RecordBase(spec AppSpec, uid string) Database {
 func SharedTable(slug, name string) string { return "custom_shared:" + slug + ":" + name }
 
 // ReadShared is one collection's records, oldest first by created, then id.
-func ReadShared(ownerDB Database, slug, name string) []map[string]any {
+// A by stamped before writers were aliased (a username) is read as the alias,
+// so an old record neither shows an email nor stops matching its writer's
+// caller.
+func ReadShared(ownerDB Database, spec AppSpec, name string) []map[string]any {
 	out := []map[string]any{}
 	if ownerDB == nil {
 		return out
 	}
-	tbl := SharedTable(slug, name)
+	tbl := SharedTable(spec.Slug, name)
 	for _, k := range ownerDB.Keys(tbl) {
 		var rec map[string]any
 		if ownerDB.Get(tbl, k, &rec) {
+			if by, ok := rec["by"].(string); ok && by != "" && !IsCallerAlias(by) {
+				rec["by"] = CallerAlias(spec, by)
+			}
 			out = append(out, rec)
 		}
 	}
@@ -68,7 +74,7 @@ func ReadShared(ownerDB Database, slug, name string) []map[string]any {
 func SharedInput(ownerDB Database, spec AppSpec) string {
 	all := map[string]any{}
 	for _, name := range spec.SharedCollections {
-		all[name] = ReadShared(ownerDB, spec.Slug, name)
+		all[name] = ReadShared(ownerDB, spec, name)
 	}
 	b, _ := json.Marshal(all)
 	return string(b)
