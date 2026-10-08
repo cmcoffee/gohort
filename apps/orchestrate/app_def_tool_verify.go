@@ -317,6 +317,11 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			if pr.Frames > 0 {
 				fmt.Fprintf(&b, "OK   %d framed document(s) rendered (an html section holding a complete page gets its own frame).\n", pr.Frames)
 			}
+			if what, snip := pageShowsRawData(append([]string{rep.BodyText}, rep.FrameTexts...)); what != "" && !appShowsJSONOnPurpose(spec) {
+				failures++
+				classes = append(classes, "raw-data-shown")
+				fmt.Fprintf(&b, "FAIL the page shows %s to the person: %q. A page shows data the way a person reads it (cards, rows, a chart, a sentence); JSON belongs between the page and its endpoints.\n", what, snip)
+			}
 			for _, txt := range pr.EmptyTexts {
 				fmt.Fprintf(&b, "NOTE a table is showing its empty state: %q, fine for a fresh store; a problem if records/data should exist.\n", txt)
 			}
@@ -737,6 +742,10 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		if out, err := appscript.Run(t.user, db, spec.Slug, "data", ds.Name, ds.Language, ds.Script, ds.Capabilities, emptyArgs); err == nil {
 			gapIn.empty[ds.Name] = strings.TrimSpace(out)
 		}
+	}
+	if lines, n := appContractReport(spec); n > 0 {
+		b.WriteString(lines)
+		fail += n
 	}
 	b.WriteString(appBuildGaps(t.user, spec, gapIn))
 	return b.String(), len(recs), pass, fail

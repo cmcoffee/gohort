@@ -380,8 +380,13 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		msg += "\n\nData source check, all passed:\n" + strings.TrimSpace(report)
 		msg += "\nTip: run app_def(action=\"test\", id=\"" + saved.Slug + "\", sample=[{…example form entry…}]) to confirm the full form→data-source→output chain produces real output."
 	}
+	contractBroken := false
 	if len(saved.DataSources) == 0 {
 		// No scripts to run, so the check above did not list these.
+		if lines, n := appContractReport(saved); n > 0 {
+			contractBroken = true
+			msg += "\n\n" + strings.TrimSpace(lines)
+		}
 		msg += appBuildGaps(t.user, saved, appGapInput{})
 	}
 	// What to say about verification depends on what this save already did. An
@@ -389,7 +394,9 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// author to go verify it invites the exact loop this check exists to end:
 	// a verify batched alongside the NEXT update reports on the revision being
 	// replaced, and its findings read as fresh.
-	if _, ok := args["sections"]; ok && len(appHTMLSectionScripts(args["sections"])) > 0 {
+	if contractBroken {
+		t.noteAppStanding(saved.Slug, false, "the page calls an endpoint the app does not have (see the last app_def result)")
+	} else if _, ok := args["sections"]; ok && len(appHTMLSectionScripts(args["sections"])) > 0 {
 		t.noteAppStanding(saved.Slug, true, "")
 		msg += "\nThis save already parsed the inline JavaScript AND loaded /apps/" + saved.Slug + "/ in a real browser: it rendered with no JS errors. That check covered THIS revision, so you don't need a separate verify unless you change the app again."
 	} else if !isUpdate || appUpdateChangesBehavior(args) {

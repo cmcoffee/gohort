@@ -257,6 +257,24 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 		rep.BodyText = strings.TrimSpace(obj.Value.Str())
 		mu.Unlock()
 	}
+	// A sandboxed frame has no origin, so the page's own script cannot read
+	// it; the browser's protocol can. An app's page lives in one.
+	if frames, err := page.Elements("iframe"); err == nil {
+		for _, el := range frames {
+			if len(rep.FrameTexts) >= checkMaxEvents {
+				break
+			}
+			fr, err := el.Frame()
+			if err != nil || fr == nil {
+				continue
+			}
+			if obj, err := fr.Eval(`() => document.body ? document.body.innerText : ''`); err == nil && obj != nil {
+				mu.Lock()
+				rep.FrameTexts = append(rep.FrameTexts, strings.TrimSpace(obj.Value.Str()))
+				mu.Unlock()
+			}
+		}
+	}
 
 	// Snapshot under the lock: the event goroutine stays live until the
 	// deferred close, so hand back a copy it can't keep appending to.
@@ -268,6 +286,7 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 		Requests:       append([]PageRequest(nil), rep.Requests...),
 		ProbeJSON:      rep.ProbeJSON,
 		BodyText:       rep.BodyText,
+		FrameTexts:     append([]string(nil), rep.FrameTexts...),
 	}
 	for _, u := range pending {
 		if len(out.PendingRequests) >= checkMaxEvents {

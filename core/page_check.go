@@ -59,6 +59,9 @@ type PageCheckReport struct {
 	ProbeJSON string
 	// BodyText is the rendered document.body.innerText, trimmed.
 	BodyText string
+	// FrameTexts is each iframe's body text, trimmed, in document order:
+	// what a sandboxed page actually shows, which BodyText cannot see.
+	FrameTexts []string
 }
 
 // BrowserCheckPage is wired by tools/browser at init. Loads target in

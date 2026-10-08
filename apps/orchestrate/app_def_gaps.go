@@ -35,6 +35,7 @@ func appBuildGaps(user string, spec AppSpec, in appGapInput) string {
 	gaps = append(gaps, appGapFirstVisit(in)...)
 	gaps = append(gaps, appGapAssets(user, spec, in)...)
 	gaps = append(gaps, appGapCopiedTool(user, spec)...)
+	gaps = append(gaps, appUnusedEndpoints(spec)...)
 	if len(gaps) == 0 {
 		return ""
 	}

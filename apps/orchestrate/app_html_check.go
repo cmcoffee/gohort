@@ -268,6 +268,10 @@ func appPageRuntimeErrors(user, slug string) []string {
 	for _, e := range rep.ConsoleErrors {
 		out = append(out, "console error: "+appOneLine(e, 300))
 	}
+	spec, _ := LoadAppSpec(user, slug)
+	if what, snip := pageShowsRawData(append([]string{rep.BodyText}, rep.FrameTexts...)); what != "" && !appShowsJSONOnPurpose(spec) {
+		out = append(out, fmt.Sprintf("the page shows %s to the person (%q): render the data as a person reads it (cards, rows, a chart, a sentence); JSON belongs between the page and its endpoints", what, snip))
+	}
 	if len(out) > 6 {
 		out = append(out[:6], fmt.Sprintf("…and %d more", len(out)-6))
 	}
