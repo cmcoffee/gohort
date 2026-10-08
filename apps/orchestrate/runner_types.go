@@ -349,6 +349,9 @@ type chatTurn struct {
 	// schemas out of the per-turn catalog. Zero-arg custom tools skip
 	// this (name+desc IS their schema, so they stay directly callable).
 	lazyCustomToolNames map[string]bool
+	// lazyToolGroups is the turn's collapsed groups of lazy tools, by the
+	// "group:" name load_tool takes (tool_groups.go).
+	lazyToolGroups map[string]toolGroup
 
 	// toolSuccessNoted dedupes Tier-3 elevation recording within a turn:
 	// recordToolSuccess is already idempotent per (tool, session), but it

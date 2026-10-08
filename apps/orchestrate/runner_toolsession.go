@@ -719,9 +719,9 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "load_tool",
-			Description: "Load one or more of your custom tools so you can call them. Custom tools are listed by name + description under \"Your custom tools\" but their parameters aren't loaded until you call this. Pass ALL the tools you expect to need for the task in ONE call (names[]): batching loads them in a single round instead of one round per tool. Returns their parameters and makes them callable on your next step. Only needed for custom tools shown as needing a load: built-in tools are always ready.",
+			Description: "Load one or more of your custom tools so you can call them. Custom tools are listed by name + description under \"Your custom tools\" but their parameters aren't loaded until you call this. Pass ALL the tools you expect to need for the task in ONE call (names[]): batching loads them in a single round instead of one round per tool. A \"group:\" name from that list loads every tool in the group. Returns their parameters and makes them callable on your next step. Only needed for custom tools shown as needing a load: built-in tools are always ready.",
 			Parameters: map[string]ToolParam{
-				"names": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Exact names of the custom tools to load (from the \"Your custom tools\" list). Pass every tool you anticipate needing: one or many."},
+				"names": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Exact names of the custom tools to load (from the \"Your custom tools\" list), or a \"group:\" name to load all of a group's tools. Pass every tool you anticipate needing: one or many."},
 			},
 			Required: nil, // validated in the handler (also tolerates a singular `name`)
 			Caps:     nil, // control/meta — no side effects of its own
@@ -735,11 +735,31 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 			}
 			seen := make(map[string]bool, len(raw))
 			var want []string
+			var unknownGroups []string
 			for _, n := range raw {
-				if n = strings.TrimSpace(n); n != "" && !seen[n] {
+				n = strings.TrimSpace(n)
+				// A group name loads each of its tools, by their own names.
+				if strings.HasPrefix(n, toolGroupPrefix) {
+					g, ok := t.lazyToolGroups[n]
+					if !ok {
+						unknownGroups = append(unknownGroups, n)
+						continue
+					}
+					for _, m := range g.Members {
+						if !seen[m] {
+							seen[m] = true
+							want = append(want, m)
+						}
+					}
+					continue
+				}
+				if n != "" && !seen[n] {
 					seen[n] = true
 					want = append(want, n)
 				}
+			}
+			if len(want) == 0 && len(unknownGroups) > 0 {
+				return "", fmt.Errorf("no group named %s in your custom tools list", strings.Join(unknownGroups, ", "))
 			}
 			if len(want) == 0 {
 				return "", errors.New("pass at least one tool name in names[]")
@@ -747,6 +767,7 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 			// Partial success: load every valid name, bucket the rest, so
 			// one bad name doesn't sink the batch or make the LLM loop.
 			var loaded, already, unknown []string
+			unknown = append(unknown, unknownGroups...)
 			schemas := make([]map[string]any, 0, len(want))
 			for _, n := range want {
 				// Deferred authoring tool (see registerLazyAuthoringTools).
