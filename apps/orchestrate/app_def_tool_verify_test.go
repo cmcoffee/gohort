@@ -14,7 +14,7 @@ import (
 // params reached the scripts, since the author cannot see the env otherwise.
 func TestScriptArgsLetASettingBeatAParam(t *testing.T) {
 	spec := AppSpec{Settings: []AppSetting{{Name: "difficulty", Default: "normal"}, {Name: "", Default: "x"}}}
-	args, applied, shadowed := appScriptArgs(spec, "[]", map[string]any{"mode": "scene", "probe": 1, "difficulty": "hard"})
+	args, applied, shadowed := appScriptArgs(spec, "[]", map[string]any{"mode": "scene", "probe": 1, "difficulty": "hard"}, "alice")
 	if args["records"] != "[]" || args["mode"] != "scene" || args["probe"] != "1" {
 		t.Fatalf("records and params must reach the scripts: %v", args)
 	}
@@ -29,7 +29,7 @@ func TestScriptArgsLetASettingBeatAParam(t *testing.T) {
 	}
 
 	// A declared setting with no param is still present at its default.
-	args, applied, shadowed = appScriptArgs(spec, "[]", nil)
+	args, applied, shadowed = appScriptArgs(spec, "[]", nil, "alice")
 	if args["difficulty"] != "normal" || len(applied) != 0 || len(shadowed) != 0 {
 		t.Errorf("no params: settings at their defaults and nothing to report; got %v %v %v", args, applied, shadowed)
 	}
@@ -120,5 +120,23 @@ func TestHTMLReferencesData(t *testing.T) {
 		if got := appHTMLReferencesData(tc.html, "balance-step"); got != tc.want {
 			t.Errorf("appHTMLReferencesData(%q) = %v, want %v", tc.html, got, tc.want)
 		}
+	}
+}
+
+// A check runs as its author, and a param cannot stand in for someone else:
+// live no page can set caller, so a test that let it would pass a vote check
+// the served app never sees.
+func TestScriptArgsCallerIsTheAuthor(t *testing.T) {
+	args, applied, shadowed := appScriptArgs(AppSpec{}, "[]", map[string]any{"caller": "mallory"}, "alice")
+	if args["caller"] != "alice" || len(applied) != 0 || len(shadowed) != 1 || shadowed[0] != "caller" {
+		t.Fatalf("args %v applied %v shadowed %v", args, applied, shadowed)
+	}
+}
+
+// A setting named after a script input would replace it.
+func TestSettingCannotTakeAScriptInputName(t *testing.T) {
+	got, notes := appSettings([]any{map[string]any{"name": "caller"}, map[string]any{"name": "records"}, map[string]any{"name": "goal"}})
+	if len(got) != 1 || got[0].Name != "goal" || len(notes) != 2 || !strings.Contains(notes[0], "IGNORED") {
+		t.Fatalf("got %+v notes %v", got, notes)
 	}
 }

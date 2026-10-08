@@ -286,3 +286,32 @@ func TestShareStatusLines(t *testing.T) {
 		t.Fatalf("disabled = %v", l)
 	}
 }
+
+// TestCallerIsTheRequesterAndCannotBeSent: caller is who the script runs for.
+// A page that sends caller, as a param or in the body, and an owner who
+// declared a setting of that name, both lose to it.
+func TestCallerIsTheRequesterAndCannotBeSent(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := settingsSpec()
+	spec.Settings = append(spec.Settings, AppSetting{Name: "caller", Default: "owner-picked"})
+	args := map[string]any{"records": "[]", "caller": "alice"}
+	T.applySettings(args, spec, "bob")
+	if args["caller"] != "bob" {
+		t.Fatalf("caller = %v, want the requester", args["caller"])
+	}
+
+	var got map[string]any
+	saved := runAppScript
+	runAppScript = func(user string, db Database, slug, kind, name, language, script string, caps []string, a map[string]any) (string, error) {
+		got = a
+		return `{}`, nil
+	}
+	t.Cleanup(func() { runAppScript = saved })
+	spec.Actions = []AppAction{{Name: "vote", Script: "x"}}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/apps/wx/action/vote?caller=alice", strings.NewReader(`{"caller":"alice"}`))
+	T.handleAction(w, r, "alice", "bob", T.recordBase(spec, "bob"), spec, "vote")
+	if w.Code != http.StatusOK || got["caller"] != "bob" {
+		t.Fatalf("action: %d %s, caller = %v", w.Code, w.Body.String(), got["caller"])
+	}
+}

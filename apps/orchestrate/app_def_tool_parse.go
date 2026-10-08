@@ -424,6 +424,12 @@ func floatVal(v any) (float64, bool) {
 // appSettingTypes are the control kinds a declared setting may take.
 var appSettingTypes = map[string]bool{"string": true, "number": true, "toggle": true, "choice": true}
 
+// appScriptInputs are the env vars the framework hands every script. A
+// setting is applied over the params, so one named records would hand the
+// scripts its value instead of the records, and one named caller would let
+// the owner's Settings page decide who clicked.
+var appScriptInputs = map[string]bool{"records": true, "shared": true, "caller": true, "pipeline_output": true, "pipeline_run": true}
+
 // appSettings coerces the LLM-supplied `settings` array into AppSettings.
 // A setting needs a name; the rest has defaults. Names are slugified with
 // underscores, not hyphens, because a setting becomes an environment
@@ -451,6 +457,10 @@ func appSettings(raw any) (out []AppSetting, notes []string) {
 		}
 		if name != given {
 			notes = append(notes, fmt.Sprintf("setting %q is registered as %q (a setting is an env var: lowercase, non-alphanumerics → \"_\"), read os.environ.get(%q) in scripts", given, name, name))
+		}
+		if appScriptInputs[name] {
+			notes = append(notes, fmt.Sprintf("setting %q IGNORED: %s is an input every script already gets, and a setting of that name would replace it; choose another name", name, name))
+			continue
 		}
 		if seen[name] {
 			notes = append(notes, fmt.Sprintf("setting %q declared twice: the later one IGNORED", name))

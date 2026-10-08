@@ -317,8 +317,15 @@ func (T *CustomApps) settingsFor(spec AppSpec, uid string) map[string]string {
 // each setting like every other input. It runs LAST, after the query params
 // and the body, so a param — which anyone holding a public link can set —
 // never overrides a value someone chose on the Settings page.
+//
+// It also sets caller, the id of the person the script runs for, after
+// everything else so neither a param nor a setting can name someone else.
+// Without it a shared app's script could not tell who clicked: "one vote per
+// person" had nothing to check against but whatever the page chose to send.
+// A scheduled fire passes the owner, which is who the shared write stamps.
 func (T *CustomApps) applySettings(args map[string]any, spec AppSpec, uid string) {
 	for k, v := range T.settingsFor(spec, uid) {
 		args[k] = v
 	}
+	args["caller"] = uid
 }

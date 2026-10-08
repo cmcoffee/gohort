@@ -529,11 +529,15 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		}
 	}
 	recJSON, _ := json.Marshal(recs)
-	baseArgs, applied, shadowed := appScriptArgs(spec, string(recJSON), opt.params)
+	baseArgs, applied, shadowed := appScriptArgs(spec, string(recJSON), opt.params, t.user)
 	if len(applied) > 0 {
 		fmt.Fprintf(&b, "Params applied as env vars: %s.\n", strings.Join(applied, ", "))
 	}
 	for _, name := range shadowed {
+		if name == "caller" {
+			fmt.Fprintf(&b, "NOTE param \"caller\" was NOT applied: caller is always the person the script runs for (here %q), and live no page can set it.\n", t.user)
+			continue
+		}
 		fmt.Fprintf(&b, "NOTE param %q was NOT applied: it names a declared setting, and live a setting always beats a param, so the scripts ran with the setting's value %q, as they will when served.\n", name, fmt.Sprint(baseArgs[name]))
 	}
 	run := func(kind, name, lang, script string, caps []string) {
@@ -638,9 +642,12 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 // at their declared defaults: the values someone set live in the app's own
 // store, which a check does not read.
 //
+// caller is set last, as live: it is whoever the script runs for, and a
+// param naming it is shadowed like one naming a setting.
+//
 // applied lists the params that reached the scripts (name=value, sorted) and
 // shadowed the ones a setting overrode, so the report can say which is which.
-func appScriptArgs(spec AppSpec, records string, params map[string]any) (args map[string]any, applied, shadowed []string) {
+func appScriptArgs(spec AppSpec, records string, params map[string]any, caller string) (args map[string]any, applied, shadowed []string) {
 	args = map[string]any{"records": records}
 	for k, v := range params {
 		args[k] = fmt.Sprint(v)
@@ -653,6 +660,8 @@ func appScriptArgs(spec AppSpec, records string, params map[string]any) (args ma
 		isSetting[st.Name] = true
 		args[st.Name] = st.Default
 	}
+	args["caller"] = caller
+	isSetting["caller"] = true
 	for k, v := range params {
 		if isSetting[k] {
 			shadowed = append(shadowed, k)
