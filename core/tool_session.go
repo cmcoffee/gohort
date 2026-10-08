@@ -40,6 +40,10 @@ type ToolSession struct {
 	// chat cannot use the hook to call further tools behind its own
 	// confirmation. Nil: call_tool is refused.
 	CallTool func(name string, args map[string]any) (string, error)
+	// Ask, when set, is what gohort.ask reaches: the app's agent with no
+	// tools, for an app script that declared "ask". Set only by an app
+	// script's run, like CallTool. Nil: ask is refused.
+	Ask func(prompt string, jsonMode bool) (string, error)
 
 	// imageBackends memoizes ReachableImageBackends for this turn. Resolving it
 	// reads the connector table, and the grouped `image` tool's schema is

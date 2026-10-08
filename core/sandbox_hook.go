@@ -386,6 +386,8 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		h.handleBrowsePage(conn, req.Params)
 	case "tool":
 		h.handleTool(conn, req.Params)
+	case "ask":
+		h.handleAsk(conn, req.Params)
 	default:
 		Log("[hook] unknown method: %s", req.Method)
 		writeHookError(conn, "unknown method: "+req.Method)
@@ -431,9 +433,10 @@ func hookMethodDeadline(method string, params map[string]interface{}) time.Durat
 		return 90 * time.Second
 	case "secret", "log":
 		return 10 * time.Second
-	case "tool":
-		// A tool can fetch, browse or run its own sandbox; a script's whole
-		// run is capped well under this, which is the real bound.
+	case "tool", "ask":
+		// A tool can fetch, browse or run its own sandbox, and a model call
+		// can be slow; a script's whole run is capped well under this, which
+		// is the real bound.
 		return 120 * time.Second
 	}
 	return 10 * time.Second
@@ -560,6 +563,28 @@ func (h *SandboxHook) handleTool(conn net.Conn, params map[string]interface{}) {
 		return
 	}
 	writeHookResult(conn, map[string]any{"output": out})
+}
+
+// handleAsk serves gohort.ask: one question to the app's agent, its text.
+// The grant is the "ask" capability (checked before dispatch); the caps on
+// spending are the host's, inside the session's Ask.
+func (h *SandboxHook) handleAsk(conn net.Conn, params map[string]interface{}) {
+	if h.Sess == nil || h.Sess.Ask == nil {
+		writeHookError(conn, "ask is only for a custom app's data sources and actions")
+		return
+	}
+	prompt := strings.TrimSpace(stringFromParams(params, "prompt"))
+	if prompt == "" {
+		writeHookError(conn, "ask needs a prompt")
+		return
+	}
+	jsonMode, _ := params["json"].(bool)
+	text, err := h.Sess.Ask(prompt, jsonMode)
+	if err != nil {
+		writeHookError(conn, "ask: "+err.Error())
+		return
+	}
+	writeHookResult(conn, map[string]any{"text": text})
 }
 
 // --- method handlers ---
@@ -1769,6 +1794,14 @@ class _Gohort:
         result = self._call("tool", {"name": name, "args": args})
         return result.get("output", "") if isinstance(result, dict) else result
 
+    def ask(self, prompt, json=False):
+        """Ask the app's agent one question and return its answer as text
+        (a JSON string when json=True: json.loads it). No tools; the owner
+        pays, under the app's daily caps. The script must declare "ask"
+        in its capabilities, and the app must have an agent."""
+        result = self._call("ask", {"prompt": str(prompt), "json": bool(json)})
+        return result.get("text", "") if isinstance(result, dict) else result
+
     def log(self, msg, level="info"):
         """Route a message into gohort's log stream.
         level: debug, info, warn, error."""
@@ -1871,6 +1904,10 @@ def log(msg, level="info"):
 
 def call_tool(name, **args):
     return gohort.call_tool(name, **args)
+
+
+def ask(prompt, json=False):
+    return gohort.ask(prompt, json=json)
 
 
 def secret(name):

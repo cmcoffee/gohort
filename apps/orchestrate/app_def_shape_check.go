@@ -221,7 +221,10 @@ func appKeys(m map[string]any) string {
 	return strings.Join(keys, ", ")
 }
 
-var callToolRE = regexp.MustCompile(`call_tool\(\s*["']([A-Za-z0-9_.-]+)["']`)
+var (
+	callToolRE = regexp.MustCompile(`call_tool\(\s*["']([A-Za-z0-9_.-]+)["']`)
+	askCallRE  = regexp.MustCompile(`(^|[^A-Za-z0-9_])ask\(`)
+)
 
 // appScriptBody is the source of the data source or action named name.
 func appScriptBody(spec AppSpec, kind, name string) string {
@@ -252,6 +255,14 @@ func appToolCapNotes(user string, spec AppSpec) []string {
 			declared[c] = true
 		}
 		body := appScriptBody(spec, kind, script)
+		if askCallRE.MatchString(body) {
+			switch {
+			case !declared["ask"]:
+				notes = append(notes, fmt.Sprintf("%s %q calls ask(...) but does not declare \"ask\" in its capabilities, so the call will be refused: add it", kind, script))
+			case strings.TrimSpace(spec.AgentID) == "":
+				notes = append(notes, fmt.Sprintf("%s %q calls ask(...), and the app has no agent to ask: set agent_id (an agent written for this app, or one of the owner's)", kind, script))
+			}
+		}
 		for _, m := range callToolRE.FindAllStringSubmatch(body, -1) {
 			if !declared["tool:"+m[1]] {
 				notes = append(notes, fmt.Sprintf("%s %q calls call_tool(%q) but does not declare tool:%s in its capabilities, so the call will be refused: add it", kind, script, m[1], m[1]))

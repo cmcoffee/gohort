@@ -35,7 +35,7 @@ func TestCallerAliasSurvivesARestart(t *testing.T) {
 // Naming a tool to call adds to the default grant; it must not take fetch
 // away from the rest of the script.
 func TestToolCapsAddToTheDefaults(t *testing.T) {
-	if !onlyToolCaps([]string{"tool:get_weather"}) || onlyToolCaps([]string{"tool:x", "fetch"}) || onlyToolCaps(nil) {
-		t.Fatal("onlyToolCaps")
+	if !onlyAddedCaps([]string{"tool:get_weather"}) || !onlyAddedCaps([]string{"ask", "tool:x"}) || onlyAddedCaps([]string{"tool:x", "fetch"}) || onlyAddedCaps(nil) {
+		t.Fatal("onlyAddedCaps")
 	}
 }

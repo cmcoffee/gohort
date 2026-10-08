@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -76,5 +77,34 @@ func TestAppAsksAreCappedPerAppAndPerUser(t *testing.T) {
 		if w.Code == http.StatusOK {
 			t.Errorf("%s %q on %+v was answered", c.method, c.body, c.spec)
 		}
+	}
+}
+
+// A script's gohort.ask is held to the same caps as the page's, charged to
+// the person the run is for.
+func TestAScriptsAskSharesThePagesCaps(t *testing.T) {
+	saved, savedAsk := RootDB, appAgentAsk
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved; appAgentAsk = savedAsk })
+	calls := 0
+	appAgentAsk = func(ctx context.Context, owner, agentID, prompt string, jsonMode bool) (string, float64, error) {
+		calls++
+		return "fine", 0.30, nil
+	}
+	spec := AppSpec{Owner: "alice", Slug: "wx", AgentID: "a1", AskUserDailyUSD: 0.50}
+	if text, err := appscript.AppAsk(context.Background(), spec, "bob", "hi", false); err != nil || text != "fine" {
+		t.Fatalf("first ask: %q %v", text, err)
+	}
+	if _, err := appscript.AppAsk(context.Background(), spec, "bob", "hi", false); err != nil {
+		t.Fatalf("second ask (0.30 spent of 0.50): %v", err)
+	}
+	if _, err := appscript.AppAsk(context.Background(), spec, "bob", "hi", false); err == nil || !strings.Contains(err.Error(), "you have spent") {
+		t.Fatalf("over bob's cap: %v", err)
+	}
+	if _, err := appscript.AppAsk(context.Background(), spec, "carol", "hi", false); err != nil {
+		t.Fatalf("carol has her own allowance: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("model calls = %d, want 3", calls)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -62,7 +63,7 @@ func TestAnActionSignalsWhatItChanged(t *testing.T) {
 	t.Cleanup(func() { runAppScript = prev })
 	sv0, _ := changeVersion(sharedChangeKey("alice", "game"))
 	rv0, _ := changeVersion(recordsChangeKey("alice", "game", "bob"))
-	runAppScript = func(string, Database, string, string, string, string, string, []string, map[string]any) (string, error) {
+	runAppScript = func(appscript.Job) (string, error) {
 		return `{"shared":{"leaderboard":[{"id":"bob","score":1}]}}`, nil
 	}
 	runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob")
@@ -71,7 +72,7 @@ func TestAnActionSignalsWhatItChanged(t *testing.T) {
 	if sv1 == sv0 || rv1 != rv0 {
 		t.Fatalf("a shared-only write: shared %s->%s, records %s->%s", sv0, sv1, rv0, rv1)
 	}
-	runAppScript = func(string, Database, string, string, string, string, string, []string, map[string]any) (string, error) {
+	runAppScript = func(appscript.Job) (string, error) {
 		return `{"records":[{"note":"x"}]}`, nil
 	}
 	runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob")

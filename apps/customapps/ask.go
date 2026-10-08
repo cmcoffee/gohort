@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
 const (
@@ -83,9 +84,30 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 		http.Error(w, fmt.Sprintf("the prompt is over %d characters", askMaxPrompt), http.StatusRequestEntityTooLarge)
 		return
 	}
-	if ownerDB == nil {
-		http.Error(w, "the app's store is not available", http.StatusInternalServerError)
+	text, status, err := askAppAgent(r.Context(), ownerDB, owner, user, spec, body.Prompt, body.JSON)
+	if err != nil {
+		http.Error(w, err.Error(), status)
 		return
+	}
+	writeJSON(w, map[string]any{"text": text})
+}
+
+// askAppAgent asks spec's agent prompt on user's behalf, under the app's and
+// user's daily caps, and returns the text, or why not with the HTTP status
+// that says so. The page's ask and a script's gohort.ask both come here, so
+// a backend call is held to exactly the caps a page call is.
+func askAppAgent(ctx context.Context, ownerDB Database, owner, user string, spec AppSpec, prompt string, jsonMode bool) (string, int, error) {
+	if strings.TrimSpace(spec.AgentID) == "" {
+		return "", http.StatusBadRequest, fmt.Errorf("this app has no agent to ask: its owner sets agent_id")
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return "", http.StatusBadRequest, fmt.Errorf("ask needs a prompt")
+	}
+	if len([]rune(prompt)) > askMaxPrompt {
+		return "", http.StatusRequestEntityTooLarge, fmt.Errorf("the prompt is over %d characters", askMaxPrompt)
+	}
+	if ownerDB == nil {
+		return "", http.StatusInternalServerError, fmt.Errorf("the app's store is not available")
 	}
 	appCap, userCap := askCaps(spec)
 	ak, uk := askKeys(spec.Slug, user, time.Now())
@@ -112,10 +134,9 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 	}
 	askMu.Unlock()
 	if why != "" {
-		http.Error(w, why+": it resets at midnight UTC", http.StatusTooManyRequests)
-		return
+		return "", http.StatusTooManyRequests, fmt.Errorf("%s: it resets at midnight UTC", why)
 	}
-	text, cost, err := appAgentAsk(r.Context(), owner, spec.AgentID, body.Prompt, body.JSON)
+	text, cost, err := appAgentAsk(ctx, owner, spec.AgentID, prompt, jsonMode)
 	if cost > 0 {
 		askMu.Lock()
 		ownerDB.Get(askSpendTable, ak, &appSpent)
@@ -128,8 +149,15 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 	}
 	if err != nil {
 		Log("[customapps] ask %q for %s failed: %v", spec.Slug, user, err)
-		http.Error(w, "the app's agent could not answer: "+err.Error(), http.StatusBadGateway)
-		return
+		return "", http.StatusBadGateway, fmt.Errorf("the app's agent could not answer: %w", err)
 	}
-	writeJSON(w, map[string]any{"text": text})
+	return text, http.StatusOK, nil
+}
+
+// A script's gohort.ask reaches the same caps, against the owner's store.
+func init() {
+	appscript.AppAsk = func(ctx context.Context, spec AppSpec, caller, prompt string, jsonMode bool) (string, error) {
+		text, _, err := askAppAgent(ctx, appscript.RecordBase(spec, spec.Owner), spec.Owner, caller, spec, prompt, jsonMode)
+		return text, err
+	}
 }

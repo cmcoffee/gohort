@@ -313,3 +313,38 @@ func TestAnUndeclaredToolCallNamesTheGrant(t *testing.T) {
 		t.Fatalf("refusal: %s", out)
 	}
 }
+
+// gohort.ask in a script, over the real hook: granted by the "ask"
+// capability, answered by the session's Ask, refused without the grant.
+func TestPythonAskReachesTheHook(t *testing.T) {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not installed")
+	}
+	lib := t.TempDir()
+	if err := os.WriteFile(filepath.Join(lib, "gohort.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(caps []string) string {
+		h, err := NewSandboxHook(t.TempDir(), caps, &ToolSession{Username: "owner", Ask: func(p string, j bool) (string, error) {
+			return fmt.Sprintf("answer to %q json=%v", p, j), nil
+		}})
+		if err != nil || h == nil {
+			t.Fatalf("hook: %v", err)
+		}
+		defer h.Close()
+		cmd := exec.Command(py, "-c", "from gohort import ask, HookError\ntry:\n    print(ask('hello', json=True))\nexcept HookError as e:\n    print('refused:', e)\n")
+		cmd.Env = append(os.Environ(), "GOHORT_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("python: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+	if got := run([]string{"fetch", "ask"}); !strings.Contains(got, `answer to "hello" json=true`) {
+		t.Fatalf("granted: %s", got)
+	}
+	if got := run([]string{"fetch"}); !strings.Contains(got, "refused:") {
+		t.Fatalf("not granted: %s", got)
+	}
+}

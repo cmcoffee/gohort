@@ -83,3 +83,25 @@ func TestAnUndeclaredCallToolIsNotedOnSave(t *testing.T) {
 		t.Fatalf("notes = %q", notes)
 	}
 }
+
+// A script that calls ask without the grant, or in an app with no agent, is
+// told at save.
+func TestAnAskWithoutGrantOrAgentIsNoted(t *testing.T) {
+	pinRootDB(t)
+	ds := []AppDataSource{{Name: "sum", Script: "from gohort import ask\nprint(ask('hi'))\n"}}
+	notes := appToolCapNotes("u", AppSpec{Owner: "u", Slug: "x", DataSources: ds})
+	if len(notes) != 1 || !strings.Contains(notes[0], `declare "ask"`) {
+		t.Fatalf("no grant: %q", notes)
+	}
+	ds[0].Capabilities = []string{"ask"}
+	notes = appToolCapNotes("u", AppSpec{Owner: "u", Slug: "x", DataSources: ds})
+	if len(notes) != 1 || !strings.Contains(notes[0], "set agent_id") {
+		t.Fatalf("no agent: %q", notes)
+	}
+	if notes := appToolCapNotes("u", AppSpec{Owner: "u", Slug: "x", AgentID: "a1", DataSources: ds}); len(notes) != 0 {
+		t.Fatalf("a granted ask with an agent: %q", notes)
+	}
+	if got := askCallRE.MatchString("task(1); flask(x)"); got {
+		t.Fatal("task( read as ask(")
+	}
+}

@@ -303,8 +303,8 @@ func TestCallerIsTheRequesterAndCannotBeSent(t *testing.T) {
 
 	var got map[string]any
 	saved := runAppScript
-	runAppScript = func(user string, db Database, slug, kind, name, language, script string, caps []string, a map[string]any) (string, error) {
-		got = a
+	runAppScript = func(j appscript.Job) (string, error) {
+		got = j.Args
 		return `{}`, nil
 	}
 	t.Cleanup(func() { runAppScript = saved })

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"net/http"
 	"net/http/httptest"
@@ -53,7 +54,7 @@ func TestRunDataSourcePython(t *testing.T) {
 		"q":       "hello",
 	}
 
-	out, err := runDataSource("tester", nil, "demo-app", ds, args)
+	out, err := runDataSource("tester", nil, "demo-app", ds, args, "")
 	if err != nil {
 		t.Skipf("sandbox/python unavailable in this environment: %v", err)
 	}
@@ -87,7 +88,7 @@ func TestRunAppScriptAction(t *testing.T) {
 		"print(json.dumps({'message': 'synced ' + os.environ.get('note',''), 'records': recs + [{'id':'new'}]}))\n"
 	args := map[string]any{"records": `[{"id":"a"}]`, "note": "ok"}
 
-	out, err := runAppScript("tester", nil, "demo-app", "action", "sync", "python", script, []string{}, args)
+	out, err := runAppScript(appscript.Job{Owner: "tester", Slug: "demo-app", Kind: "action", Name: "sync", Language: "python", Script: script, Caps: []string{}, Args: args})
 	if err != nil {
 		t.Skipf("sandbox/python unavailable: %v", err)
 	}

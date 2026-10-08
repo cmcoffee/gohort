@@ -29,8 +29,8 @@ func TestAnActionWritesASharedCollectionEveryoneReads(t *testing.T) {
 	prev := runAppScript
 	t.Cleanup(func() { runAppScript = prev })
 	out := `{"message":"saved","shared":{"leaderboard":[{"id":"bob","score":120,"by":"mallory"}]},"records":[{"note":"mine"}]}`
-	runAppScript = func(user string, db Database, slug, kind, name, language, script string, caps []string, args map[string]any) (string, error) {
-		s, _ := args["shared"].(string)
+	runAppScript = func(j appscript.Job) (string, error) {
+		s, _ := j.Args["shared"].(string)
 		gotShared = append(gotShared, s)
 		return out, nil
 	}
@@ -132,8 +132,8 @@ func TestDataSourceSharedCannotBeSent(t *testing.T) {
 		DataSources: []AppDataSource{{Name: "mine", Script: "x"}}}
 	var got map[string]any
 	saved := runAppScript
-	runAppScript = func(user string, db Database, slug, kind, name, language, script string, caps []string, a map[string]any) (string, error) {
-		got = a
+	runAppScript = func(j appscript.Job) (string, error) {
+		got = j.Args
 		return `[]`, nil
 	}
 	t.Cleanup(func() { runAppScript = saved })

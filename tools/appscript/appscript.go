@@ -11,6 +11,7 @@
 package appscript
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -25,6 +26,33 @@ import (
 // The script file is named per (kind, slug, name) so concurrent apps/scripts
 // don't collide in the owner's workspace.
 func Run(user string, db Database, slug, kind, name, language, script string, caps []string, args map[string]any) (string, error) {
+	return Job{Owner: user, DB: db, Slug: slug, Kind: kind, Name: name, Language: language, Script: script, Caps: caps, Args: args}.Run()
+}
+
+// Job is one script run. Caller is who the run is for (the person who
+// clicked or is viewing; the owner when empty), which is whose daily
+// allowance a model call from the script is charged to.
+type Job struct {
+	Owner    string
+	DB       Database
+	Slug     string
+	Kind     string
+	Name     string
+	Language string
+	Script   string
+	Caps     []string
+	Args     map[string]any
+	Caller   string
+}
+
+// AppAsk answers a script's gohort.ask: the app's agent, no tools, the owner
+// paying under the app's daily caps. Set by the custom-apps host, which owns
+// the caps; nil, and ask is refused.
+var AppAsk func(ctx context.Context, spec AppSpec, caller, prompt string, jsonMode bool) (string, error)
+
+// Run executes the job.
+func (j Job) Run() (string, error) {
+	user, db, slug, kind, name, language, script, caps, args := j.Owner, j.DB, j.Slug, j.Kind, j.Name, j.Language, j.Script, j.Caps, j.Args
 	ws, err := EnsureWorkspaceDir(user)
 	if err != nil {
 		return "", fmt.Errorf("workspace: %w", err)
@@ -36,7 +64,7 @@ func Run(user string, db Database, slug, kind, name, language, script string, ca
 	scriptName := fmt.Sprintf("%s_%s_%s.%s", kind, SanitizeName(slug), SanitizeName(name), ext)
 	if caps == nil {
 		caps = []string{"fetch", "log"} // sensible default: read external data + log
-	} else if onlyToolCaps(caps) {
+	} else if onlyAddedCaps(caps) {
 		// Naming a tool to call is a grant on top of the defaults, not instead
 		// of them: a script that declared tool:get_weather to reuse the
 		// owner's forecast must not lose fetch for everything else it reads.
@@ -77,6 +105,20 @@ func Run(user string, db Database, slug, kind, name, language, script string, ca
 	}
 	sess.CallTool = func(name string, args map[string]any) (string, error) {
 		return temptool.CallToolForScript(sess, name, args)
+	}
+	caller := strings.TrimSpace(j.Caller)
+	if caller == "" {
+		caller = user
+	}
+	sess.Ask = func(prompt string, jsonMode bool) (string, error) {
+		if AppAsk == nil {
+			return "", fmt.Errorf("ask is not available here")
+		}
+		spec, ok := LoadAppSpec(user, slug)
+		if !ok {
+			return "", fmt.Errorf("no app %q to ask for", slug)
+		}
+		return AppAsk(sess.Context(), spec, caller, prompt, jsonMode)
 	}
 	return temptool.DispatchTempToolDirect(sess, tt, args)
 }
@@ -146,13 +188,14 @@ func SanitizeName(s string) string {
 	return b.String()
 }
 
-// onlyToolCaps reports a capability list made only of "tool:<name>" grants.
-func onlyToolCaps(caps []string) bool {
+// onlyAddedCaps reports a capability list made only of grants that add to the
+// defaults rather than replace them: "tool:<name>" and "ask".
+func onlyAddedCaps(caps []string) bool {
 	if len(caps) == 0 {
 		return false
 	}
 	for _, c := range caps {
-		if !strings.HasPrefix(c, "tool:") {
+		if !strings.HasPrefix(c, "tool:") && c != "ask" {
 			return false
 		}
 	}

@@ -909,7 +909,7 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, u
 
 	// The script executes in the OWNER's context (sandbox identity + hook DB), so
 	// a shared app's data source reaches the owner's credentials/integrations.
-	out, err := cachedRunDataSource(owner, T.recordBase(spec, owner), spec.Slug, *ds, args)
+	out, err := cachedRunDataSource(owner, T.recordBase(spec, owner), spec.Slug, *ds, args, uid)
 	if err != nil {
 		Log("[customapps] data source %q/%q failed: %v", spec.Slug, name, err)
 		http.Error(w, "data source failed: "+err.Error(), http.StatusInternalServerError)
@@ -969,8 +969,8 @@ func scriptSlug(name string) string {
 }
 
 // runDataSource executes one data-source script and returns its stdout.
-func runDataSource(user string, db Database, slug string, ds AppDataSource, args map[string]any) (string, error) {
-	return runAppScript(user, db, slug, "data", ds.Name, ds.Language, ds.Script, ds.Capabilities, args)
+func runDataSource(user string, db Database, slug string, ds AppDataSource, args map[string]any, caller string) (string, error) {
+	return runAppScript(appscript.Job{Owner: user, DB: db, Slug: slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller})
 }
 
 // dataSourceCacheTTL is how long a data source's output is reused before it is
@@ -1068,7 +1068,7 @@ func dsCacheKey(user, slug string, ds AppDataSource, args map[string]any) string
 // — the authoring test/verify path always runs scripts fresh. Errors are never
 // cached (so a transient failure retries immediately), though a burst of
 // concurrent identical failing calls still shares one execution.
-func cachedRunDataSource(user string, db Database, slug string, ds AppDataSource, args map[string]any) (string, error) {
+func cachedRunDataSource(user string, db Database, slug string, ds AppDataSource, args map[string]any, caller string) (string, error) {
 	key := dsCacheKey(user, slug, ds, args)
 	now := time.Now()
 
@@ -1087,7 +1087,7 @@ func cachedRunDataSource(user string, db Database, slug string, ds AppDataSource
 	dsInFlightCalls[key] = call
 	dsCacheMu.Unlock()
 
-	out, err := runDataSource(user, db, slug, ds, args)
+	out, err := runDataSource(user, db, slug, ds, args, caller)
 
 	dsCacheMu.Lock()
 	call.out, call.err = out, err
@@ -1105,11 +1105,7 @@ func cachedRunDataSource(user string, db Database, slug string, ds AppDataSource
 // returns its stdout. Delegates to the shared appscript.Run seam so the host and
 // the app_def test action run scripts through byte-identical machinery. A
 // variable so a test can stand in for the sandbox.
-var runAppScript = runAppScriptSandboxed
-
-func runAppScriptSandboxed(user string, db Database, slug, kind, name, language, script string, caps []string, args map[string]any) (string, error) {
-	return appscript.Run(user, db, slug, kind, name, language, script, caps, args)
-}
+var runAppScript = func(j appscript.Job) (string, error) { return j.Run() }
 
 // handleActionsList feeds the actions section's button list: one {name, button,
 // desc, confirm} per declared action. GET only.
@@ -1206,7 +1202,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 	if len(spec.SharedCollections) > 0 {
 		args["shared"] = sharedInput(ownerDB, spec)
 	}
-	out, err := runAppScript(owner, ownerDB, spec.Slug, "action", act.Name, act.Language, act.Script, act.Capabilities, args)
+	out, err := runAppScript(appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by})
 	if err != nil {
 		return "", 0, err
 	}
