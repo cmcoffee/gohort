@@ -458,7 +458,11 @@ func TestFactProvenanceMarker(t *testing.T) {
 	if m := factProvenanceMarker(legacy); m != "" {
 		t.Errorf("legacy fact without AsOf should render clean, got %q", m)
 	}
-	// End-to-end through the render block.
+	// End-to-end through the render block, read the day after: a fresh note
+	// (an older one ages and is held back, TestVolatileNotesAgeInThePromptBlock).
+	prevNow := memoryBlockNow
+	memoryBlockNow = func() time.Time { return asof.Add(24 * time.Hour) }
+	defer func() { memoryBlockNow = prevNow }()
 	block := RenderMemoryFactsBlockWith([]MemoryFact{vol}, "", "")
 	if !strings.Contains(block, "volatile, as of 2026-07-07") {
 		t.Errorf("render block missing volatile marker:\n%s", block)
@@ -734,5 +738,56 @@ func TestSavedNotesKnowWhatTheyAreAboutInTime(t *testing.T) {
 			Chat: fakeChat(`{"relevant": true, "supersedes": [], "kind": "fact"}`, nil)})
 	if plain.Fact.MemKind != provenance.MemKindFact {
 		t.Errorf("the judge said fact, the keywords said open item; the judge wins: %+v", plain.Fact.MemoryProvenance)
+	}
+}
+
+// A volatile note ages in the always-in-prompt block too, not only on recall:
+// past its half-life it is marked to re-verify, and past twice that its text
+// is held back, keeping its number (forget-by-index counts every stored note)
+// and a short quote to recall or forget it by. Stable and slow notes, and the
+// numbering, are untouched.
+func TestVolatileNotesAgeInThePromptBlock(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	prev := memoryBlockNow
+	memoryBlockNow = func() time.Time { return now }
+	t.Cleanup(func() { memoryBlockNow = prev })
+	day := 24 * time.Hour
+	facts := []MemoryFact{
+		{ID: "a", Note: "Craig prefers texts before 8pm", MemoryProvenance: MemoryProvenance{AsOf: now.Add(-60 * day), Volatility: VolStable}},
+		{ID: "b", Note: "The deployment runs Qwen 3.8 27B", MemoryProvenance: MemoryProvenance{AsOf: now.Add(-1 * day), Volatility: VolVolatile}},
+		{ID: "c", Note: "Bitcoin is at 61,000 dollars", MemoryProvenance: MemoryProvenance{AsOf: now.Add(-4 * day), Volatility: VolVolatile}},
+		{ID: "d", Note: "Qwen 3.6 released April 2026 beats 3.5 on all benchmarks with the same VRAM", MemoryProvenance: MemoryProvenance{AsOf: now.Add(-68 * day), Volatility: VolVolatile}},
+		{ID: "e", Note: "Works at the same company", MemoryProvenance: MemoryProvenance{AsOf: now.Add(-68 * day), Volatility: VolSlow}},
+	}
+	out := RenderMemoryFactsBlock(facts)
+	lines := map[string]string{}
+	for _, l := range strings.Split(out, "\n") {
+		if len(l) > 2 && l[1] == '.' {
+			lines[l[:1]] = l
+		}
+	}
+	if !strings.Contains(lines["1"], "prefers texts before 8pm") || strings.Contains(lines["1"], "re-verify") {
+		t.Errorf("a stable note changed: %q", lines["1"])
+	}
+	if strings.Contains(lines["2"], "getting old") || strings.Contains(lines["2"], "held back") {
+		t.Errorf("a fresh volatile note was aged: %q", lines["2"])
+	}
+	if !strings.Contains(lines["3"], "61,000") || !strings.Contains(lines["3"], "getting old: re-verify") {
+		t.Errorf("an aging volatile note is not marked: %q", lines["3"])
+	}
+	l4 := lines["4"]
+	if !strings.HasPrefix(l4, "4. [held back: a volatile note from 2026-07-31, now stale]") || strings.Contains(l4, "same VRAM") {
+		t.Errorf("a stale volatile note was not held back: %q", l4)
+	}
+	if !strings.Contains(l4, `"Qwen 3.6 released April 2026 beats 3.5 on..."`) {
+		t.Errorf("the held-back line lacks the quote to recall or forget it by: %q", l4)
+	}
+	if !strings.Contains(lines["5"], "Works at the same company") {
+		t.Errorf("a slow note was held back: %q", lines["5"])
+	}
+	// The quote is what forget-by-index verifies against: it must be in the note.
+	quote := "Qwen 3.6 released April 2026 beats 3.5 on"
+	if !strings.Contains(facts[3].Note, quote) {
+		t.Fatal("the held-back quote is not a verbatim part of the note")
 	}
 }

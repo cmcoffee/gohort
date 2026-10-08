@@ -127,7 +127,7 @@ func init() {
 	RegisterTunable(TunableSpec{Key: TunableStaleVolatileDays, Category: "Memory",
 		Label:  "Volatile fact half-life (days)",
 		Help:   "A fact classified volatile is flagged aging on pull once older than this, stale past 2x.",
-		Detail: "Volatile means prices, live status, versions. 0 never flags volatile facts. It does not affect the always-in-prompt block, which shows the fixed as-of date.",
+		Detail: "Volatile means prices, live status, versions. 0 never flags volatile facts. In the always-in-prompt block an aging volatile note is marked to re-verify, and a stale one keeps its number but its text is held back (a short quote shows, to recall or forget it by).",
 		Kind:   KindInt, Default: 3, Min: 0, Max: 365})
 	RegisterTunable(TunableSpec{Key: TunableStaleSlowDays, Category: "Memory",
 		Label:  "Slow-changing fact half-life (days)",
@@ -1459,11 +1459,24 @@ func RenderMemoryFactsBlockWith(facts []MemoryFact, header, intro string) string
 		pos[f.ID] = i + 1
 	}
 	marked := false
+	now := memoryBlockNow()
 	for i, f := range facts {
 		b.WriteString(intToString(i + 1))
 		b.WriteString(". ")
+		// A volatile note past twice its half-life is held back: its number
+		// stays (forget-by-index counts every stored note), its text does not,
+		// because a stale price or version read as current is worse than none.
+		// The quote is enough to recall it or to forget it by.
+		if heldBack := staleVolatileLine(f, now); heldBack != "" {
+			b.WriteString(heldBack)
+			b.WriteString("\n")
+			continue
+		}
 		b.WriteString(f.Note)
 		b.WriteString(factProvenanceMarker(f))
+		if f.Volatility == VolVolatile && f.Staleness(now) == Aging {
+			b.WriteString(" (getting old: re-verify before relying on it)")
+		}
 		// Two notes that contradict each other, with nothing saying so, is worse
 		// than either alone: the model picks whichever it reads first and has no
 		// idea it chose.
@@ -1570,6 +1583,26 @@ func factAttributionMarker(f MemoryFact) string {
 		return " (" + how + ", not independently checked)"
 	}
 	return " (" + how + " on " + f.AsOf.Format("2006-01-02") + ", not independently checked)"
+}
+
+// memoryBlockNow is the clock the always-in-prompt block ages volatile notes
+// by; a test sets it. The block changes only when a note crosses its half-life
+// or twice it, so the prompt cache sees a change at those two points, not
+// daily.
+var memoryBlockNow = time.Now
+
+// staleVolatileLine is a stale volatile note's line in the always-in-prompt
+// block, its text held back, or "" for any other note.
+func staleVolatileLine(f MemoryFact, now time.Time) string {
+	if f.Volatility != VolVolatile || f.Staleness(now) != Stale {
+		return ""
+	}
+	words := strings.Fields(f.Note)
+	quote := strings.Join(words[:min(len(words), 8)], " ")
+	if len(words) > 8 {
+		quote += "..."
+	}
+	return fmt.Sprintf("[held back: a volatile note from %s, now stale] %q: recall it before using it, or forget it if it no longer holds.", f.AsOf.Format("2006-01-02"), quote)
 }
 
 // factVolatilityMarker is the staleness half of the marker: how fast the claim's
