@@ -323,7 +323,7 @@ func appEmptyValues(v any) (empty, total int) {
 			total++
 		case string:
 			total++
-			if strings.TrimSpace(t) == "" || pyNoneRE.MatchString(t) || t == "null" {
+			if strings.TrimSpace(t) == "" || pyNoneRE.MatchString(t) || t == "null" || strings.Contains(t, "N/A") {
 				empty++
 			}
 		case map[string]any:
@@ -340,4 +340,29 @@ func appEmptyValues(v any) (empty, total int) {
 		visit(e, 0)
 	}
 	return empty, total
+}
+
+var placeholderRE = regexp.MustCompile(`N/A|(^|[^A-Za-z])(None|null|undefined)([^A-Za-z]|$)`)
+
+// appPlaceholderHits counts placeholders printed where values belong (N/A, a
+// formatted Python None, null, undefined) across every string in v.
+func appPlaceholderHits(v any) int {
+	n := 0
+	var visit func(any)
+	visit = func(x any) {
+		switch t := x.(type) {
+		case string:
+			n += len(placeholderRE.FindAllStringIndex(t, -1))
+		case map[string]any:
+			for _, e := range t {
+				visit(e)
+			}
+		case []any:
+			for _, e := range t {
+				visit(e)
+			}
+		}
+	}
+	visit(v)
+	return n
 }

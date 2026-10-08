@@ -119,3 +119,34 @@ func TestAppModeReadsTheIntakeText(t *testing.T) {
 		t.Fatal("the latest intake (Tool) should decide")
 	}
 }
+
+// In an app session a create of only typed sections is refused, with what to
+// build instead; with the plain-list note it goes through.
+func TestAppModeRefusesATypedOnlyCreate(t *testing.T) {
+	pinRootDB(t)
+	turn := &chatTurn{user: "u", agent: AgentRecord{ID: "seed-builder"}, session: &ChatSession{ID: "s1", Messages: []ChatMessage{
+		{Role: "user", IntakeValues: map[string]string{"kind": "App"}}}}}
+	sections := []any{map[string]any{"kind": "form", "fields": []any{map[string]any{"name": "city"}}},
+		map[string]any{"kind": "table", "empty_text": "None.", "columns": []any{map[string]any{"field": "city"}}}}
+	_, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Outfit", "sections": sections}, false)
+	if err == nil || !strings.Contains(err.Error(), "NOT CREATED") || !strings.Contains(err.Error(), "ONE html section") {
+		t.Fatalf("typed-only create: %v", err)
+	}
+	if _, ok := LoadAppSpec("u", "outfit"); ok {
+		t.Fatal("a refused create was saved")
+	}
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Outfit", "sections": sections, "notes": "plain list: the user asked for a bare log."}, false); err != nil {
+		t.Fatalf("a plain list on purpose: %v", err)
+	}
+}
+
+// "Temperature: N/A°F" inside one markdown block is two placeholders.
+func TestPlaceholdersInsideTextAreCounted(t *testing.T) {
+	out := map[string]any{"content": "**Current Weather:**\nTemperature: N/A°F\nConditions: N/A\n**Outfit:** a light jacket"}
+	if n := appPlaceholderHits(out); n != 2 {
+		t.Fatalf("hits = %d", n)
+	}
+	if n := appPlaceholderHits(map[string]any{"content": "Nonetheless, wear layers. Annotated notes."}); n != 0 {
+		t.Fatalf("ordinary words counted: %d", n)
+	}
+}

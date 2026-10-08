@@ -284,6 +284,15 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// The note describes THIS revision; one given with an earlier edit must
 	// not be carried onto a revision it says nothing about.
 	spec.ChangeNote = strings.TrimSpace(stringArg(args, "note"))
+	// An app session's first build is the page. Flagging a typed-only app
+	// on save and failing its verify did not move it: a build accepted the
+	// failed verify, told the user so, and kept form + table + display.
+	// Refused at create, the shortcut costs a deliberate "plain list: <why>".
+	if !isUpdate {
+		if p := t.appModeTypedOnlyProblem(spec); p != "" {
+			return "", errors.New("NOT CREATED: " + p)
+		}
+	}
 	saved := SaveAppSpecAs(spec, reason)
 	msg := fmt.Sprintf("%s app %q at /apps/%s/ (revision %s): open it in the dashboard under My Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …). Status: %s.",
 		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug, saved.VerifyStatus())

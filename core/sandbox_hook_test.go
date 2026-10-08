@@ -348,3 +348,43 @@ func TestPythonAskReachesTheHook(t *testing.T) {
 		t.Fatalf("not granted: %s", got)
 	}
 }
+
+// call_tool's output is text that is also its JSON: .get, [] and iteration
+// read the parsed value, and json.loads still takes it. Every build reached
+// for out.get("current") and got "'str' object has no attribute 'get'".
+func TestPythonToolOutputIsTextAndJSON(t *testing.T) {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not installed")
+	}
+	lib := t.TempDir()
+	if err := os.WriteFile(filepath.Join(lib, "gohort.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewSandboxHook(t.TempDir(), []string{"tool:get_weather"}, &ToolSession{Username: "owner", CallTool: func(name string, args map[string]any) (string, error) {
+		return `{"current": {"temperature_f": 71.8}, "forecast": [{"date": "2026-10-08"}]}`, nil
+	}})
+	if err != nil || h == nil {
+		t.Fatalf("hook: %v", err)
+	}
+	defer h.Close()
+	script := `import json
+from gohort import call_tool
+out = call_tool("get_weather", city="Reno")
+print(out.get("current")["temperature_f"])
+print(out["forecast"][0]["date"])
+print("current" in out, sorted(out)[0])
+print(json.loads(out)["current"]["temperature_f"])
+print(isinstance(out, str), out.startswith("{"))
+`
+	cmd := exec.Command(py, "-c", script)
+	cmd.Env = append(os.Environ(), "GOHORT_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python: %v\n%s", err, b)
+	}
+	want := "71.8\n2026-10-08\nTrue current\n71.8\nTrue True\n"
+	if string(b) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", b, want)
+	}
+}

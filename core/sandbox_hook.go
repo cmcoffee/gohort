@@ -1684,6 +1684,59 @@ class HookError(RuntimeError):
     pass
 
 
+class Output(str):
+    """Text that is also the JSON it holds. call_tool and ask(json=True)
+    return one: json.loads(out) still works (it is a str), and so do
+    out.get("key"), out["key"], out[0], "key" in out and iterating, against
+    the parsed value, which is what every script reached for and got
+    "'str' object has no attribute 'get'"."""
+
+    def _data(self):
+        if not hasattr(self, "_parsed"):
+            try:
+                self._parsed = json.loads(str(self))
+            except ValueError:
+                self._parsed = None
+        return self._parsed
+
+    def _need(self):
+        d = self._data()
+        if d is None:
+            raise HookError("this output is not JSON: read it as text")
+        return d
+
+    def get(self, key, default=None):
+        d = self._need()
+        return d.get(key, default) if isinstance(d, dict) else default
+
+    def keys(self):
+        return self._need().keys()
+
+    def items(self):
+        return self._need().items()
+
+    def values(self):
+        return self._need().values()
+
+    def __getitem__(self, key):
+        d = self._data()
+        if d is None or (isinstance(key, slice) and not isinstance(d, list)):
+            return str.__getitem__(self, key)
+        return d[key]
+
+    def __contains__(self, key):
+        d = self._data()
+        if isinstance(d, (dict, list)):
+            return key in d
+        return str.__contains__(self, key)
+
+    def __iter__(self):
+        d = self._data()
+        if isinstance(d, (dict, list)):
+            return iter(d)
+        return str.__iter__(self)
+
+
 class _Gohort:
     def __init__(self):
         self._path = os.environ.get("GOHORT_HOOK_PATH")
@@ -1792,7 +1845,7 @@ class _Gohort:
         "tool:<name>" in its capabilities, and only a tool that never
         stops to ask before running can be called."""
         result = self._call("tool", {"name": name, "args": args})
-        return result.get("output", "") if isinstance(result, dict) else result
+        return Output(result.get("output", "") if isinstance(result, dict) else result)
 
     def ask(self, prompt, json=False):
         """Ask the app's agent one question and return its answer as text
@@ -1800,7 +1853,7 @@ class _Gohort:
         pays, under the app's daily caps. The script must declare "ask"
         in its capabilities, and the app must have an agent."""
         result = self._call("ask", {"prompt": str(prompt), "json": bool(json)})
-        return result.get("text", "") if isinstance(result, dict) else result
+        return Output(result.get("text", "") if isinstance(result, dict) else result)
 
     def log(self, msg, level="info"):
         """Route a message into gohort's log stream.

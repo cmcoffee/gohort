@@ -71,7 +71,7 @@ func scriptFailureHint(output string) string {
 		msg += " " + strconv.Quote(name) + " is a gohort TOOL, and a tool cannot be imported or subprocessed from a script."
 		call = strconv.Quote(name)
 	}
-	return msg + " To reuse one of the owner's tools, CALL it: add \"tool:<name>\" to the script's capabilities and run out = call_tool(" + call + ", param=value) (from gohort import call_tool), which returns the tool's output as text; only the owner's own tools or ones added from the catalog, and only ones that never ask before running. Otherwise a script does its own work in plain Python (with fetch_url for anything off-box), and a job for a tool that asks first belongs in a pipeline tool stage."
+	return msg + " To reuse one of the owner's tools, CALL it: add \"tool:<name>\" to the script's capabilities and run out = call_tool(" + call + ", param=value) (from gohort import call_tool), whose output reads as its JSON directly (out.get('key')) or as text; only the owner's own tools or ones added from the catalog, and only ones that never ask before running. Otherwise a script does its own work in plain Python (with fetch_url for anything off-box), and a job for a tool that asks first belongs in a pipeline tool stage."
 }
 
 func (t *chatTurn) appDefDelete(args map[string]any) (string, error) {
@@ -761,6 +761,12 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				fail++
 				fmt.Fprintf(&b, "FAIL %s: printed a bare JSON value (%s); a page reads an object or an array.%s\n", label, appOutputPreview(trimmed, 80), shown)
 				return
+			} else if hits := appPlaceholderHits(v); len(recs) > 0 && hits >= 2 {
+				// Placeholders where the values belong, inside text: "Temperature:
+				// N/A°F" in a markdown block a display shows, which the per-value
+				// count above cannot see.
+				fail++
+				fmt.Fprintf(&b, "FAIL %s: shows %d placeholder(s) (N/A, None, null) where values belong, on the real path: the script reads fields its input does not have. Log what the tool or API returns (from gohort import log; log(raw)) and read the keys it has.%s\n", label, hits, shown)
 			} else if empty, total := appEmptyValues(v); len(recs) > 0 && total >= 3 && empty*2 >= total {
 				// The real path ran and the values came back empty: None°F,
 				// null, "". A build read keys a tool's output does not have
