@@ -71,7 +71,13 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 	rec := agentRecordFromArgs(args)
 	if strings.TrimSpace(rec.Name) == "" {
-		return "", errors.New("name is required")
+		// A build called create_agent(action="list") and then action="help",
+		// as other authoring tools take, and was told twice only that a name
+		// was missing.
+		if a := strings.TrimSpace(stringArg(args, "action")); a != "" && !strings.EqualFold(a, "create") {
+			return "", fmt.Errorf("create_agent takes no action (got %q): it only creates. To see the agents: agents(action=\"list\"); to change one: update_agent. To create one, pass name, description, orchestrator_prompt and allowed_tools", a)
+		}
+		return "", errors.New("name is required: create_agent takes name, description, orchestrator_prompt and allowed_tools")
 	}
 	if strings.TrimSpace(rec.OrchestratorPrompt) == "" {
 		return "", errors.New("orchestrator_prompt is required")
