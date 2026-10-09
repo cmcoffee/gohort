@@ -4170,16 +4170,34 @@
       }
     }
 
+    // A field with options_source fetches its choices as the form renders,
+    // so a long list (every artifact in the store, say) is read when
+    // somebody opens the form and not when the page holding it is built.
+    // The answer is a flat array of {value, label, group?, help?} or a
+    // shaped object with one under records, items or options. A fetch
+    // that fails leaves the field with the options it declared, if any.
+    function loadOptionSources() {
+      var pending = (cfg.fields || []).filter(function(f){ return f.options_source; });
+      if (!pending.length) return Promise.resolve();
+      return Promise.all(pending.map(function(f) {
+        return fetchJSON(f.options_source).then(function(raw) {
+          var list = Array.isArray(raw) ? raw : ((raw && (raw.records || raw.items || raw.options)) || []);
+          f.options = list;
+        }).catch(function() { f.options = f.options || []; });
+      }));
+    }
     // Source empty / unset → render with an empty record. Lets a
     // FormPanel act as a create-form when there's nothing to load,
     // posting the typed fields to PostURL on save.
     function load() {
-      if (cfg.source) {
-        fetchJSON(cfg.source).then(function(d){ current = d || {}; render(); })
-          .catch(function(err){ wrap.textContent = 'Failed to load: ' + err.message; });
-      } else {
-        render();
-      }
+      loadOptionSources().then(function() {
+        if (cfg.source) {
+          fetchJSON(cfg.source).then(function(d){ current = d || {}; render(); })
+            .catch(function(err){ wrap.textContent = 'Failed to load: ' + err.message; });
+        } else {
+          render();
+        }
+      });
     }
     // RefreshOn — reload when ANOTHER view of these values saves. Exact
     // match, so this form's own saves never reload it. Deferred while focus

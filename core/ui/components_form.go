@@ -467,6 +467,14 @@ type FormField struct {
 	// in the saved value (use 4 for per-1K-token rates like 0.0003).
 	Decimals int            `json:"decimals,omitempty"`
 	Options  []SelectOption `json:"options,omitempty"`
+	// OptionsSource is where a select or checklist gets its Options as the
+	// form renders, for a list that is long or costly to build: a GET
+	// answering [{value, label, group?, help?}], or {records: [...]}. The
+	// list is read when somebody opens the form, not when the page holding
+	// it is built, which is the whole difference for a dialog on a page of
+	// many: a page carried every artifact in the store in one dialog's
+	// checklist, and took a second to build for everyone who never opened it.
+	OptionsSource string `json:"options_source,omitempty"`
 	// Multiple turns a "select" field into a multi-select that saves an ARRAY.
 	// For a field that legitimately takes several values — the sources a mode
 	// consults, the collections it searches — where the alternative was a

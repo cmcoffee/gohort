@@ -1380,41 +1380,6 @@ func (T *CustomApps) handleRecord(w http.ResponseWriter, r *http.Request, udb Da
 func loadSpec(owner, slug string) (AppSpec, bool) { return LoadAppSpec(owner, slug) }
 func listSpecs(owner string) []AppSpec            { return ListAppSpecs(owner) }
 
-// appSummary is what a list of apps needs to know about each one: what it
-// is called and where it stands, without its page, scripts, samples or
-// notes. Decoded from the same stored record by field name, so nothing is
-// written twice and nothing can disagree.
-type appSummary struct {
-	Slug        string
-	Name        string
-	Desc        string
-	PipelineID  string
-	PublicToken string
-	Disabled    bool
-	Shared      bool
-}
-
-// listSummaries is listSpecs without the weight. The dashboard's pins and
-// the administrator's rows for every user's apps read every app's whole
-// page and scripts to show a name and a state, on every request.
-func listSummaries(owner string) []appSummary {
-	if RootDB == nil || owner == "" {
-		return nil
-	}
-	db := UserDB(RootDB, owner)
-	if db == nil {
-		return nil
-	}
-	var out []appSummary
-	for _, k := range db.Keys(AppSpecTable) {
-		var s appSummary
-		if db.Get(AppSpecTable, k, &s) {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 // --- sharing (authenticated per-user copy + public capability URL) ------------
 //
 // Two independent, owner-controlled modes over the per-owner spec store:

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -322,21 +323,35 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 	}
 	// The page body, one builder per tab area (page_<area>.go). Appended in
 	// this order; within a tab, sections keep the order their builder lists.
-	for _, build := range []func() []ui.Section{
-		a.systemSections,
-		a.llmSections,
-		a.costSections,
-		a.capabilitiesSections,
-		a.maintenanceSections,
-		a.importExportSections,
-		a.credentialsSections,
-		a.governanceSections,
-		a.extensionsSections,
-		a.sourceHooksSections,
-		a.toolsSections,
-		a.skillsSections,
+	// Each builder is timed, so a slow page can name the one that was slow
+	// (see the log line at the end) rather than only how long they all took.
+	var slowest []string
+	timed := func(name string, build func() []ui.Section) []ui.Section {
+		t0 := time.Now()
+		secs := build()
+		if d := time.Since(t0); d > 50*time.Millisecond {
+			slowest = append(slowest, name+" "+d.Round(time.Millisecond).String())
+		}
+		return secs
+	}
+	for _, b := range []struct {
+		name  string
+		build func() []ui.Section
+	}{
+		{"system", a.systemSections},
+		{"llm", a.llmSections},
+		{"cost", a.costSections},
+		{"capabilities", a.capabilitiesSections},
+		{"maintenance", a.maintenanceSections},
+		{"import-export", a.importExportSections},
+		{"credentials", a.credentialsSections},
+		{"governance", a.governanceSections},
+		{"extensions", a.extensionsSections},
+		{"source-hooks", a.sourceHooksSections},
+		{"tools", a.toolsSections},
+		{"skills", a.skillsSections},
 	} {
-		page.Sections = append(page.Sections, build()...)
+		page.Sections = append(page.Sections, timed(b.name, b.build)...)
 	}
 	// Which sections span the full grid width (tables, the cost chart,
 	// multi-pane Stacks, the DB browser) vs the narrow config forms that pack
@@ -363,17 +378,17 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 	// from core's tunable registry so a newly-registered knob appears here with
 	// no admin edit. Pre-grouped under the "Tuning" tab; the loop below skips
 	// them (their titles aren't in sectionGroup, so their Group is preserved).
-	page.Sections = append(page.Sections, buildTunableSections()...)
+	page.Sections = append(page.Sections, timed("tunables", buildTunableSections)...)
 	// Resource sharing — lending this instance's capabilities to a peer
 	// instance. Lands under Capabilities via sectionGroup, next to the
 	// Embeddings and Image Generation settings it shares.
-	page.Sections = append(page.Sections, peerSharingSections()...)
+	page.Sections = append(page.Sections, timed("peer-sharing", peerSharingSections)...)
 	// The Apps tab: one row per compiled app. Custom apps land on the SAME tab
 	// through the runtime section source below, which is why this is appended
 	// first — compiled apps, then whatever people have authored.
 	builtOwn := time.Since(started)
 	panes := newPanes(r)
-	page.Sections = append(page.Sections, panes.sections()...)
+	page.Sections = append(page.Sections, timed("apps", panes.sections)...)
 	builtSources := time.Since(started) - builtOwn
 	// App-contributed admin sections — framework tuning that belongs in admin
 	// (e.g. the prompt-block editor), self-registered via core so admin doesn't
@@ -459,9 +474,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 	// reads: the admin's own sections, the sections other apps contribute
 	// (every source runs for each page), or the page itself.
 	if total := time.Since(started); total > 300*time.Millisecond {
-		Log("[admin] the %s page took %s to build: own sections %s, contributed sections %s, render %s",
+		Log("[admin] the %s page took %s to build: own sections %s, contributed sections %s, render %s; slow builders: %s",
 			tabs[cur].name, total.Round(time.Millisecond), builtOwn.Round(time.Millisecond),
-			builtSources.Round(time.Millisecond), (total - builtOwn - builtSources).Round(time.Millisecond))
+			builtSources.Round(time.Millisecond), (total - builtOwn - builtSources).Round(time.Millisecond),
+			strings.Join(slowest, ", "))
 	}
 }
 

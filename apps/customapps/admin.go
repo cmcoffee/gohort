@@ -50,14 +50,12 @@ func (T *CustomApps) adminSections(r *http.Request) []AdminSectionEntry {
 		return nil
 	}
 	type row struct {
-		spec  appSummary
+		spec  AppSpec
 		owner string
 	}
 	var rows []row
-	// Summaries, not specs: this runs for every user on every administrator
-	// page, and a row needs a name and a state, not the app's page.
 	for _, u := range AuthListUsers(AuthDB()) {
-		for _, s := range listSummaries(u.Username) {
+		for _, s := range ListAppSpecs(u.Username) {
 			rows = append(rows, row{spec: s, owner: u.Username})
 		}
 	}
@@ -103,7 +101,7 @@ func (T *CustomApps) adminSections(r *http.Request) []AdminSectionEntry {
 
 // adminRowSubtitle answers, in the rail, the question an operator is scanning
 // for: whose app is this and what state is it in.
-func adminRowSubtitle(spec appSummary, owner string) string {
+func adminRowSubtitle(spec AppSpec, owner string) string {
 	var state []string
 	if spec.Disabled {
 		if st := appadmin.Load(RootDB, owner, spec.Slug); st.DisabledBy != "" {
@@ -124,9 +122,9 @@ func adminRowSubtitle(spec appSummary, owner string) string {
 	return owner + " - " + strings.Join(state, " - ")
 }
 
-// adminAppView narrows a stored spec to what a control needs. The summary
+// adminAppView narrows a stored spec to what a control needs. ListAppSpecs
 // keys by owner rather than carrying it, so the owner is supplied here.
-func adminAppView(spec appSummary, owner string) appadmin.App {
+func adminAppView(spec AppSpec, owner string) appadmin.App {
 	return appadmin.App{
 		Owner:       owner,
 		Slug:        spec.Slug,

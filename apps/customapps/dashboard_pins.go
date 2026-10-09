@@ -28,9 +28,7 @@ func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 	}
 	var out []DashboardCard
 	seen := map[string]bool{}
-	// A card needs a name and a line, not the app's page: this runs on every
-	// dashboard, and the Customize page, for every app the viewer has.
-	add := func(s appSummary) {
+	add := func(s AppSpec, group string) {
 		seen[s.Slug] = true
 		if s.Disabled {
 			return
@@ -39,19 +37,17 @@ func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 		if r := []rune(desc); len(r) > 140 {
 			desc = string(r[:140]) + "..."
 		}
-		out = append(out, DashboardCard{Name: s.Name, Desc: desc, Path: "/apps/" + s.Slug, Group: "My apps", GroupOrder: dashboardGroupMyApps})
+		out = append(out, DashboardCard{Name: s.Name, Desc: desc, Path: "/apps/" + s.Slug, Group: group, GroupOrder: dashboardGroupMyApps})
 	}
-	for _, s := range listSummaries(user) {
-		add(s)
+	for _, s := range listSpecs(user) {
+		add(s, "My apps")
 	}
 	for slug, owner := range ListSharedOwners(T.DB, sharedAppsIndex) {
 		if owner == user || seen[slug] {
 			continue
 		}
-		for _, s := range listSummaries(owner) {
-			if s.Slug == slug && s.Shared {
-				add(s)
-			}
+		if s, ok := loadSpec(owner, slug); ok && s.Shared {
+			add(s, "My apps")
 		}
 	}
 	return out

@@ -1,7 +1,6 @@
 package admin
 
 import (
-	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -296,19 +295,12 @@ func mcpServerFormFields() []ui.FormField {
 // templatesSection is one list of every template: recipes that integrate a
 // service without Go (core/recipes: built-in, imported or saved here), and
 // the built-in forms that author one connector or tool.
+//
+// The "What goes in" checklist lists every artifact in the store. It is read
+// when the dialog opens (api/templates/pieces), not here: building it here
+// read every artifact of every kind for every user on every administrator
+// page, which was most of the second each page took.
 func (a *AdminApp) templatesSection() ui.Section {
-	var pieces []ui.SelectOption
-	var sels []ArtifactSel
-	if RootDB != nil {
-		sels = ArtifactSelectionForTypes(RootDB)
-	}
-	for _, sel := range sels {
-		label := sel.Type + ": " + sel.Name
-		if sel.Owner != "" {
-			label += " (" + sel.Owner + ")"
-		}
-		pieces = append(pieces, ui.SelectOption{Value: sel.Type + "|" + sel.Name + "|" + sel.Owner, Label: label})
-	}
 	yesNo := []ui.SelectOption{{Value: "", Label: "No"}, {Value: "yes", Label: "Yes"}}
 	return ui.Section{
 		Title:    "Templates",
@@ -336,7 +328,7 @@ func (a *AdminApp) templatesSection() ui.Section {
 						{Field: "category", Label: "Category", Type: "text", Placeholder: "Project tracking"},
 						{Field: "setup_notes", Label: "Setup notes", Type: "textarea", Rows: 3,
 							Help: "Shown when someone adds it: where to get a token, what to enable afterwards."},
-						{Field: "pieces", Label: "What goes in", Type: "checklist", Options: pieces, Required: true,
+						{Field: "pieces", Label: "What goes in", Type: "checklist", OptionsSource: "api/templates/pieces", Required: true,
 							Help: "What each needs (the credential a tool uses, say) comes along."},
 						{Field: "questions", Label: "Questions", Type: "rows", AddLabel: "Add a question",
 							Help: "Each value is replaced by the answer wherever it appears. A secret question asks for a credential's secret instead, which never travels.",
