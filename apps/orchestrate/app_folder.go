@@ -20,10 +20,13 @@ package orchestrate
 //	  page.html         the page
 //	  data/<name>.py    each data source
 //	  actions/<name>.py each action
+//	  lib/<name>.py     code the scripts share: `from engine import price`
 //	  assets/           images, sounds, models
 //	  NOTES.md          the app's notes: the plan, decisions, what was left out
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,11 +154,19 @@ func (t *chatTurn) appDefCheckout(args map[string]any) (string, error) {
 		m.Actions = append(m.Actions, appFolderScript{Name: a.Name, File: f, Language: a.Language, Capabilities: a.Capabilities,
 			Label: a.Label, Desc: a.Desc, Confirm: a.Confirm, Schedule: a.Schedule})
 	}
+	for name, src := range spec.Libraries {
+		if err := write("lib/"+name+".py", []byte(src)); err != nil {
+			return "", err
+		}
+	}
 	manifest, _ := json.MarshalIndent(m, "", "  ")
 	if err := write("app.json", manifest); err != nil {
 		return "", err
 	}
 	if err := write("NOTES.md", []byte(spec.Notes)); err != nil {
+		return "", err
+	}
+	if err := write(appFolderBaseFile, []byte(appLiveFingerprint(spec))); err != nil {
 		return "", err
 	}
 	assets := 0
@@ -166,8 +177,8 @@ func (t *chatTurn) appDefCheckout(args map[string]any) (string, error) {
 			}
 		}
 	}
-	return fmt.Sprintf("Checked out app %q into %s/: app.json, %d page file(s), %d data source(s) in data/, %d action(s) in actions/, %d asset(s) in assets/, NOTES.md. Edit the files (workspace write, or workspace edit for a few lines), run one backend file with app_def(action=\"run\", dir=%q, file=\"data/<name>.py\", sample=[...]), and publish with app_def(action=\"publish\", dir=%q).",
-		spec.Name, rel, pages, len(m.DataSources), len(m.Actions), assets, rel, rel), nil
+	return fmt.Sprintf("Checked out app %q into %s/: app.json, %d page file(s), %d data source(s) in data/, %d action(s) in actions/, %d shared module(s) in lib/, %d asset(s) in assets/, NOTES.md. Edit the files (workspace write, or workspace edit for a few lines), run one backend file with app_def(action=\"run\", dir=%q, file=\"data/<name>.py\", sample=[...]), and publish with app_def(action=\"publish\", dir=%q).",
+		spec.Name, rel, pages, len(m.DataSources), len(m.Actions), len(spec.Libraries), assets, rel, rel), nil
 }
 
 // appFolderStarterPage is a new app's page: a complete document already wired
@@ -237,7 +248,7 @@ func (t *chatTurn) appFolderScaffold(abs, rel string, args map[string]any) (stri
 			return "", err
 		}
 	}
-	return fmt.Sprintf("Started a new app folder %s/ for %q: app.json (one html section, page.html), a starter page.html already wired to window.app, and NOTES.md. Add a data source by writing data/<name>.py and listing it in app.json's data_sources ({\"name\", \"file\", \"capabilities\"}); an action likewise under actions/. Run a backend file with app_def(action=\"run\", dir=%q, file=...), then app_def(action=\"publish\", dir=%q) creates the app.", rel, name, rel, rel), nil
+	return fmt.Sprintf("Started a new app folder %s/ for %q: app.json (one html section, page.html), a starter page.html already wired to window.app, and NOTES.md. Add a data source by writing data/<name>.py and listing it in app.json's data_sources ({\"name\", \"file\", \"capabilities\"}); an action likewise under actions/. Code more than one script needs goes in lib/<name>.py once (no listing needed), imported as `from <name> import ...`. Run a backend file with app_def(action=\"run\", dir=%q, file=...), then app_def(action=\"publish\", dir=%q) creates the app.", rel, name, rel, rel), nil
 }
 
 // appFolderRead loads a folder into app_def's create/update arguments.
@@ -326,9 +337,20 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 	if err != nil {
 		return nil, m, err
 	}
+	// Every lib/*.py is a library: the folder is the whole app, so one
+	// deleted here is gone from the app too.
+	libs := map[string]any{}
+	files, _ := filepath.Glob(filepath.Join(abs, "lib", "*.py"))
+	for _, p := range files {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, m, err
+		}
+		libs[strings.TrimSuffix(filepath.Base(p), ".py")] = string(b)
+	}
 	args := map[string]any{
 		"name": m.Name, "slug": m.Slug, "sections": sections,
-		"data_sources": ds, "actions": acts, "confirm_rewrite": true,
+		"data_sources": ds, "actions": acts, "libraries": libs, "confirm_rewrite": true,
 	}
 	for k, v := range map[string]string{"description": m.Description, "record_key": m.RecordKey, "agent_id": m.AgentID, "pipeline_id": m.PipelineID} {
 		if v != "" {
@@ -374,9 +396,12 @@ func (t *chatTurn) appDefPublish(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, exists := LoadAppSpec(t.user, m.Slug)
+	live, exists := LoadAppSpec(t.user, m.Slug)
 	if exists {
 		in["id"] = m.Slug
+		if err := appFolderStale(abs, rel, live); err != nil && !boolArg(args, "overwrite_live") {
+			return "", err
+		}
 	}
 	if n := strings.TrimSpace(stringArg(args, "note")); n != "" {
 		in["note"] = n
@@ -384,6 +409,9 @@ func (t *chatTurn) appDefPublish(args map[string]any) (string, error) {
 	out, err := t.appDefCreateOrUpdate(in, exists)
 	if err != nil {
 		return "", fmt.Errorf("%s not published: %w", rel, err)
+	}
+	if saved, ok := LoadAppSpec(t.user, m.Slug); ok {
+		os.WriteFile(filepath.Join(abs, appFolderBaseFile), []byte(appLiveFingerprint(saved)), 0o644)
 	}
 	assets, _ := filepath.Glob(filepath.Join(abs, "assets", "*"))
 	sort.Strings(assets)
@@ -432,6 +460,11 @@ func (t *chatTurn) appDefRun(args map[string]any) (string, error) {
 	ds, _ := appDataSources(in["data_sources"])
 	acts, _ := appActionDefs(in["actions"])
 	spec := AppSpec{Owner: t.user, Slug: m.Slug, Name: m.Name, SharedCollections: m.SharedCollections, Settings: m.Settings, AgentID: m.AgentID}
+	if libs, err := appLibraries(in["libraries"]); err != nil {
+		return "", fmt.Errorf("%s/lib: %w", rel, err)
+	} else if len(libs) > 0 {
+		spec.Libraries = libs
+	}
 	if b, err := json.Marshal(in["sections"]); err == nil {
 		spec.Sections = b
 	}
@@ -485,4 +518,66 @@ func (t *chatTurn) saveAppScreenshot(slug string, shot []byte) string {
 		return ""
 	}
 	return rel
+}
+
+// appFolderBaseFile records, in a folder, which state of the live app the
+// folder holds: written on checkout and on each publish.
+//
+// A folder and the live app are two copies of one app. A build published
+// its folder, then made four fixes to the live page with patch_html; the
+// folder never had them, and its next publish would have undone all four
+// without a word. With this, a publish over live changes is refused, and a
+// live edit of an app whose folder is current is sent to the folder.
+const appFolderBaseFile = ".live"
+
+// appLiveFingerprint is a digest of what an app is, as stored: what a folder
+// holds and a publish writes. What changes on its own (verify state, samples)
+// is left out, so a verify does not read as an edit.
+func appLiveFingerprint(spec AppSpec) string {
+	b, _ := json.Marshal([]any{spec.Name, spec.Desc, spec.Notes, spec.RecordKey, spec.AgentID, spec.PipelineID,
+		spec.FullWidth, spec.AskDailyUSD, spec.AskUserDailyUSD, spec.SharedCollections, spec.Settings,
+		spec.Sections, spec.DataSources, spec.Actions, spec.Libraries})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// appFolderStale says why publishing this folder would undo changes made to
+// the live app outside it, or nil when the folder holds the live app as it
+// is (it was checked out from it, or last published to it).
+func appFolderStale(abs, rel string, live AppSpec) error {
+	base, err := os.ReadFile(filepath.Join(abs, appFolderBaseFile))
+	if err == nil && strings.TrimSpace(string(base)) == appLiveFingerprint(live) {
+		return nil
+	}
+	what := "the live app was changed since this folder was checked out or last published"
+	if err != nil {
+		what = "this folder has no record of being checked out from the live app (it predates that record, or it was started new while an app of this name exists)"
+	}
+	if note := strings.TrimSpace(live.ChangeNote); note != "" {
+		what += fmt.Sprintf("; the latest live change: %q", note)
+	}
+	return fmt.Errorf("NOT PUBLISHED: %s, and publishing %s/ would undo what is live and not in the folder. Either make those changes in the folder's files too and publish with overwrite_live=true, or take the live app back into the folder with app_def(action=\"checkout\", id=%q, overwrite=true) (that replaces the folder's files, so redo any change in them that is not live) and publish from there", what, rel, live.Slug)
+}
+
+// appFolderOwnsEdit refuses a live edit of an app whose folder holds it as it
+// is: the change belongs in the folder, or the next publish undoes it.
+func (t *chatTurn) appFolderOwnsEdit(args map[string]any) error {
+	slug := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug")))
+	if slug == "" {
+		return nil
+	}
+	live, ok := LoadAppSpec(t.user, slug)
+	if !ok {
+		return nil
+	}
+	ws, _, _ := t.turnWorkspace()
+	if ws == "" {
+		return nil
+	}
+	rel := slug + ".app"
+	abs, err := ResolveWorkspacePath(ws, rel)
+	if err != nil || appFolderStale(abs, rel, live) != nil {
+		return nil
+	}
+	return fmt.Errorf("NOT CHANGED: app %q is built in %s/, which holds it as it is live: make this change in the folder's files (workspace edit on %s/page.html, data/, actions/, lib/, app.json) and app_def(action=\"publish\", dir=%q). An edit made here would be undone by the next publish of the folder", slug, rel, rel, rel)
 }

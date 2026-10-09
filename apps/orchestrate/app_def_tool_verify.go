@@ -658,7 +658,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		for k, v := range baseArgs {
 			scriptArgs[k] = v
 		}
-		out, err := appscript.Run(t.user, db, spec.Slug, kind, name, lang, script, caps, scriptArgs)
+		out, err := appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: kind, Name: name, Language: lang, Script: script, Caps: caps, Args: scriptArgs, Libs: spec.Libraries}.Run()
 		if err != nil {
 			fail++
 			fmt.Fprintf(&b, "FAIL %s, could not run: %v\n", label, err)
@@ -800,10 +800,10 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				fmt.Fprintf(&b, "FAIL %s: printed an error: %s. A caught exception is still a failure: fix what raised it.\n", label, truncate(e, 400))
 			} else if _, isObj := v.(map[string]any); isObj {
 				pass++
-				fmt.Fprintf(&b, "OK   %s: printed a JSON object {message?, records?}.%s\n", label, shown)
+				fmt.Fprintf(&b, "OK   %s: printed a JSON object {message?, records?, result?}.%s\n", label, shown)
 			} else {
 				fail++
-				fmt.Fprintf(&b, "FAIL %s: an action must print a JSON OBJECT {message?, records?}, got %T.\n", label, v)
+				fmt.Fprintf(&b, "FAIL %s: an action must print a JSON OBJECT {message?, records?, result?}, got %T.\n", label, v)
 			}
 		}
 	}
@@ -833,7 +833,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 			emptyArgs[k] = v
 		}
 		emptyArgs["records"] = "[]"
-		if out, err := appscript.Run(t.user, db, spec.Slug, "data", ds.Name, ds.Language, ds.Script, ds.Capabilities, emptyArgs); err == nil {
+		if out, err := (appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: emptyArgs, Libs: spec.Libraries}).Run(); err == nil {
 			gapIn.empty[ds.Name] = strings.TrimSpace(out)
 		}
 	}

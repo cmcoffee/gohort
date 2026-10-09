@@ -178,6 +178,17 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			parseNotes = append(parseNotes, note)
 		}
 	}
+	// Shared Python modules: passed wholesale replaces the set (omit to keep).
+	if raw, ok := args["libraries"]; ok && raw != nil {
+		libs, err := appLibraries(raw)
+		if err != nil {
+			return "", err
+		}
+		spec.Libraries = libs
+		if len(libs) == 0 {
+			spec.Libraries = nil
+		}
+	}
 	if len(droppedScripts) > 0 && !boolArg(args, "confirm_rewrite") {
 		return "", errors.New(appWithParseNotes(strings.Join(droppedScripts, "\n\n"), parseNotes))
 	}
@@ -456,7 +467,7 @@ func floatArg(args map[string]any, key string) float64 {
 // which a check has to see again. A notes or name edit leaves a verified app
 // verified.
 func appUpdateChangesBehavior(args map[string]any) bool {
-	for _, k := range []string{"sections", "data_sources", "actions", "settings", "shared_collections", "record_key", "agent_id", "pipeline_id"} {
+	for _, k := range []string{"sections", "data_sources", "actions", "libraries", "settings", "shared_collections", "record_key", "agent_id", "pipeline_id"} {
 		if _, ok := args[k]; ok {
 			return true
 		}

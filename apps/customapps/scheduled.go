@@ -165,12 +165,12 @@ func (T *CustomApps) dispatchScheduledAction(_ context.Context, t ScheduledTrigg
 	records := string(recJSON)
 	args := map[string]any{"records": records}
 	T.applySettings(args, spec, owner) // a scheduled fire is the owner's own run
-	msg, saved, err := runActionAndPersist(owner, db, db, spec, *act, args, owner)
+	res, err := runActionAndPersist(owner, db, db, spec, *act, args, owner)
 	if err != nil {
 		Log("[customapps] scheduled action %q/%q failed: %v", slug, actName, err)
 		return
 	}
-	Log("[customapps] self-update %s/%s: %s (%d saved)", slug, actName, msg, saved)
+	Log("[customapps] self-update %s/%s: %s (%d saved)", slug, actName, res.Message, res.Saved)
 }
 
 // appScheduleStatus summarizes an app's self-update state for the index badge:

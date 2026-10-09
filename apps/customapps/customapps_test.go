@@ -54,7 +54,7 @@ func TestRunDataSourcePython(t *testing.T) {
 		"q":       "hello",
 	}
 
-	out, err := runDataSource("tester", nil, "demo-app", ds, args, "")
+	out, err := runDataSource("tester", nil, AppSpec{Slug: "demo-app"}, ds, args, "")
 	if err != nil {
 		t.Skipf("sandbox/python unavailable in this environment: %v", err)
 	}
@@ -120,10 +120,10 @@ func TestRunAppScriptAction(t *testing.T) {
 func TestDSCacheKey(t *testing.T) {
 	base := AppDataSource{Name: "src", Language: "python", Script: "print(1)"}
 	args := map[string]any{"records": `[{"a":1}]`, "q": "x"}
-	key := dsCacheKey("owner", "app", base, args)
+	key := dsCacheKey("owner", AppSpec{Slug: "app"}, base, args)
 
 	// Identical inputs must reuse the key.
-	if got := dsCacheKey("owner", "app", base, args); got != key {
+	if got := dsCacheKey("owner", AppSpec{Slug: "app"}, base, args); got != key {
 		t.Fatalf("identical inputs changed the key:\n %s\n %s", key, got)
 	}
 
@@ -132,23 +132,24 @@ func TestDSCacheKey(t *testing.T) {
 		"script": func() string {
 			d := base
 			d.Script = "print(2)"
-			return dsCacheKey("owner", "app", d, args)
+			return dsCacheKey("owner", AppSpec{Slug: "app"}, d, args)
 		}(),
 		"language": func() string {
 			d := base
 			d.Language = "bash"
-			return dsCacheKey("owner", "app", d, args)
+			return dsCacheKey("owner", AppSpec{Slug: "app"}, d, args)
 		}(),
 		"capabilities": func() string {
 			d := base
 			d.Capabilities = []string{"fetch"}
-			return dsCacheKey("owner", "app", d, args)
+			return dsCacheKey("owner", AppSpec{Slug: "app"}, d, args)
 		}(),
-		"name":   dsCacheKey("owner", "app", AppDataSource{Name: "other", Language: "python", Script: "print(1)"}, args),
-		"owner":  dsCacheKey("other", "app", base, args),
-		"slug":   dsCacheKey("owner", "other", base, args),
-		"record": dsCacheKey("owner", "app", base, map[string]any{"records": `[{"a":2}]`, "q": "x"}),
-		"param":  dsCacheKey("owner", "app", base, map[string]any{"records": `[{"a":1}]`, "q": "y"}),
+		"name":   dsCacheKey("owner", AppSpec{Slug: "app"}, AppDataSource{Name: "other", Language: "python", Script: "print(1)"}, args),
+		"owner":  dsCacheKey("other", AppSpec{Slug: "app"}, base, args),
+		"slug":   dsCacheKey("owner", AppSpec{Slug: "other"}, base, args),
+		"record": dsCacheKey("owner", AppSpec{Slug: "app"}, base, map[string]any{"records": `[{"a":2}]`, "q": "x"}),
+		"param":  dsCacheKey("owner", AppSpec{Slug: "app"}, base, map[string]any{"records": `[{"a":1}]`, "q": "y"}),
+		"lib":    dsCacheKey("owner", AppSpec{Slug: "app", Libraries: map[string]string{"engine": "X = 2"}}, base, args),
 	}
 	for what, got := range changed {
 		if got == key {

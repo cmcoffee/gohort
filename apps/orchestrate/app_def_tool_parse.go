@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -638,4 +639,69 @@ func appArgShape(raw any) string {
 		return "a number"
 	}
 	return fmt.Sprintf("%T", raw)
+}
+
+// appLibraryNameRE is a module name a script can import.
+var appLibraryNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// appLibraryShadowed are module names a library may not take: the helper
+// every script imports, and the standard modules app scripts use, which a
+// library of the same name would replace for every script of the app.
+var appLibraryShadowed = map[string]bool{"gohort": true, "json": true, "os": true, "sys": true, "re": true,
+	"math": true, "random": true, "time": true, "datetime": true, "hashlib": true, "secrets": true,
+	"string": true, "collections": true, "itertools": true, "functools": true, "urllib": true,
+	"base64": true, "struct": true, "zlib": true, "statistics": true, "typing": true, "types": true}
+
+const (
+	appMaxLibraries    = 20
+	appMaxLibraryBytes = 256 << 10
+)
+
+// appLibraries reads the libraries argument, {module name: source}, or a
+// list of {name, script}. A ".py" on a name is dropped.
+func appLibraries(raw any) (map[string]string, error) {
+	out := map[string]string{}
+	add := func(name string, src any) error {
+		name = strings.TrimSuffix(strings.TrimSpace(name), ".py")
+		body, ok := src.(string)
+		if !ok {
+			return fmt.Errorf("library %q: its source must be a string of Python", name)
+		}
+		if !appLibraryNameRE.MatchString(name) {
+			return fmt.Errorf("library %q: a library is named as a script imports it, letters, digits and _ (engine, game_rules)", name)
+		}
+		if appLibraryShadowed[name] {
+			return fmt.Errorf("library %q would replace the module of that name for every script: name it after what it holds (engine, rules)", name)
+		}
+		out[name] = body
+		return nil
+	}
+	switch v := raw.(type) {
+	case map[string]any:
+		for k, src := range v {
+			if err := add(k, src); err != nil {
+				return nil, err
+			}
+		}
+	case []any:
+		for _, e := range v {
+			m, _ := e.(map[string]any)
+			if err := add(mapStr(m, "name"), m["script"]); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		return nil, fmt.Errorf("libraries is {module name: Python source}")
+	}
+	total := 0
+	for _, src := range out {
+		total += len(src)
+	}
+	if len(out) > appMaxLibraries {
+		return nil, fmt.Errorf("%d libraries, over the %d an app may have", len(out), appMaxLibraries)
+	}
+	if total > appMaxLibraryBytes {
+		return nil, fmt.Errorf("the libraries come to %d bytes, over the %d an app may have", total, appMaxLibraryBytes)
+	}
+	return out, nil
 }

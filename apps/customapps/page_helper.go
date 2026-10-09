@@ -11,7 +11,7 @@ package customapps
 // never fired. window.app is that plumbing written once:
 //
 //	app.data(name, params)        GET a data source, its JSON
-//	app.action(name, body)        POST an action, {message, saved}
+//	app.action(name, body)        POST an action, {message, saved, records, result}
 //	app.records.list()            this person's records, oldest first
 //	app.records.save(record)      create, or update by the record key
 //	app.records.remove(id)        delete one

@@ -34,9 +34,9 @@ func TestAnActionWritesASharedCollectionEveryoneReads(t *testing.T) {
 		gotShared = append(gotShared, s)
 		return out, nil
 	}
-	msg, saved, err := runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob")
-	if err != nil || msg != "saved" || saved != 2 {
-		t.Fatalf("action: %q %d %v", msg, saved, err)
+	res, err := runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob")
+	if err != nil || res.Message != "saved" || res.Saved != 2 || len(res.Records) != 1 {
+		t.Fatalf("action: %+v %v", res, err)
 	}
 	board := readShared(ownerDB, spec, "leaderboard")
 	if len(board) != 1 || board[0]["by"] != appscript.CallerAlias(spec, "bob") || board[0]["score"] != float64(120) || board[0]["created"] == nil {
@@ -63,7 +63,7 @@ func TestAnActionWritesASharedCollectionEveryoneReads(t *testing.T) {
 	// Undeclared: refused, and the user's own records are not written either.
 	out = `{"shared":{"secrets":[{"id":"x"}]},"records":[{"note":"should not land"}]}`
 	before := len(bobDB.Keys(recTable("game")))
-	if _, _, err := runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob"); err == nil || !strings.Contains(err.Error(), "does not declare") {
+	if _, err := runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob"); err == nil || !strings.Contains(err.Error(), "does not declare") {
 		t.Fatalf("an undeclared collection was written: %v", err)
 	}
 	if len(bobDB.Keys(recTable("game"))) != before {

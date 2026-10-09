@@ -107,6 +107,10 @@ type AppSpec struct {
 	// logic seam. Served at /apps/<slug>/action/<name>; surfaced by an "actions"
 	// section.
 	Actions []AppAction `json:"actions,omitempty"`
+	// Libraries are Python modules the app's scripts share, by module name
+	// (engine -> `from engine import price`). Each script ran standalone, so a
+	// game's price table and helpers were copied into three files and drifted.
+	Libraries map[string]string `json:"libraries,omitempty"`
 	// Settings are the app's declared tunables — the knobs a person would
 	// plausibly change without re-authoring the app (an interval, a threshold,
 	// a unit, which source). Declared by the author, stored per app (and per

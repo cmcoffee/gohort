@@ -13,6 +13,8 @@ package appscript
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -43,6 +45,9 @@ type Job struct {
 	Caps     []string
 	Args     map[string]any
 	Caller   string
+	// Libs are the app's shared Python modules (AppSpec.Libraries), which a
+	// Python script imports by name.
+	Libs map[string]string
 }
 
 // AppAsk answers a script's gohort.ask: the app's agent, no tools, the owner
@@ -85,13 +90,22 @@ func (j Job) Run() (string, error) {
 	for k := range args {
 		params[k] = ToolParam{Type: "string"}
 	}
+	command := interp + " {workspace_dir}/" + scriptName
+	if interp == "python3" && len(j.Libs) > 0 {
+		dir, err := deployLibs(ws, slug, j.Libs)
+		if err != nil {
+			return "", err
+		}
+		// Ahead of what the sandbox already puts there (the gohort helper).
+		command = "PYTHONPATH={workspace_dir}/" + dir + `:"$PYTHONPATH" ` + command
+	}
 	tt := &TempTool{
 		Name:             "app_" + kind + ":" + slug + ":" + name,
 		Description:      "custom app " + kind,
 		Mode:             "shell",
 		ScriptBody:       script,
 		ScriptName:       scriptName,
-		CommandTemplate:  interp + " {workspace_dir}/" + scriptName,
+		CommandTemplate:  command,
 		HookCapabilities: caps,
 		Params:           params,
 	}
@@ -200,4 +214,53 @@ func onlyAddedCaps(caps []string) bool {
 		}
 	}
 	return true
+}
+
+// deployLibs writes an app's library modules into their own directory in the
+// workspace, <ws>/.applib/<slug>/, and removes any the app no longer has.
+// Their own directory, not the workspace root where the scripts land: a
+// module there would overwrite a file of the owner's by that name, and two
+// apps' engine.py would overwrite each other. Returns the directory relative
+// to the workspace.
+func deployLibs(ws, slug string, libs map[string]string) (string, error) {
+	rel := filepath.Join(".applib", SanitizeName(slug))
+	dir := filepath.Join(ws, rel)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("app libraries: %w", err)
+	}
+	for name, src := range libs {
+		if name == "" || strings.ContainsAny(name, `/\.`) {
+			return "", fmt.Errorf("app library %q: not a module name", name)
+		}
+		p := filepath.Join(dir, name+".py")
+		if have, err := os.ReadFile(p); err == nil && string(have) == src {
+			continue
+		}
+		// Written aside and renamed in, so a script of the app running at the
+		// same moment imports the old module or the new one, never half.
+		tmp, err := os.CreateTemp(dir, name+".*.tmp")
+		if err != nil {
+			return "", fmt.Errorf("app library %q: %w", name, err)
+		}
+		_, werr := tmp.WriteString(src)
+		cerr := tmp.Close()
+		if werr != nil || cerr != nil {
+			os.Remove(tmp.Name())
+			return "", fmt.Errorf("app library %q: could not write it", name)
+		}
+		if err := os.Rename(tmp.Name(), p); err != nil {
+			os.Remove(tmp.Name())
+			return "", fmt.Errorf("app library %q: %w", name, err)
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		n := e.Name()
+		if strings.HasSuffix(n, ".py") {
+			if _, keep := libs[strings.TrimSuffix(n, ".py")]; !keep {
+				os.Remove(filepath.Join(dir, n))
+			}
+		}
+	}
+	return rel, nil
 }

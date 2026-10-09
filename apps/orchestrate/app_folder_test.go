@@ -133,3 +133,105 @@ func TestRunExecutesOneFolderFile(t *testing.T) {
 		t.Fatal("run published the app")
 	}
 }
+
+// Code the scripts share travels as lib/: out on checkout, back on publish,
+// and a module deleted from the folder is gone from the app.
+func TestLibrariesTravelWithTheFolder(t *testing.T) {
+	turn, ws := folderTestTurn(t)
+	page := "<!DOCTYPE html><html><body><script>app.data('now').then(function(d){});</script></body></html>"
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Wx", "libraries": map[string]any{"json": "x"},
+		"sections": []any{map[string]any{"id": "page", "kind": "html", "html": page}}}, false); err == nil || !strings.Contains(err.Error(), "replace the module") {
+		t.Fatalf("a library named json was taken: %v", err)
+	}
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Wx", "libraries": map[string]any{"engine.py": "def price(n):\n    return n\n"},
+		"sections":     []any{map[string]any{"id": "page", "kind": "html", "html": page}},
+		"data_sources": []any{map[string]any{"name": "now", "script": "from engine import price\nprint('{}')"}}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if spec, _ := LoadAppSpec("u", "wx"); spec.Libraries["engine"] == "" {
+		t.Fatalf("libraries = %+v", spec.Libraries)
+	}
+	if out, _ := turn.appDefGet(map[string]any{"id": "wx"}); !strings.Contains(out, `"libraries":{"engine":{`) || !strings.Contains(out, `"price"`) {
+		t.Errorf("get does not show the library: %s", out)
+	}
+	if _, err := turn.appDefCheckout(map[string]any{"id": "wx"}); err != nil {
+		t.Fatal(err)
+	}
+	lib := filepath.Join(ws, "wx.app", "lib")
+	if b, _ := os.ReadFile(filepath.Join(lib, "engine.py")); string(b) != "def price(n):\n    return n\n" {
+		t.Fatalf("lib/engine.py = %q", b)
+	}
+	os.WriteFile(filepath.Join(lib, "rules.py"), []byte("MAX = 3\n"), 0o644)
+	if _, err := turn.appDefPublish(map[string]any{"dir": "wx.app"}); err != nil {
+		t.Fatal(err)
+	}
+	if spec, _ := LoadAppSpec("u", "wx"); spec.Libraries["rules"] != "MAX = 3\n" || spec.Libraries["engine"] == "" {
+		t.Fatalf("after adding lib/rules.py: %+v", spec.Libraries)
+	}
+	os.Remove(filepath.Join(lib, "rules.py"))
+	if _, err := turn.appDefPublish(map[string]any{"dir": "wx.app"}); err != nil {
+		t.Fatal(err)
+	}
+	if spec, _ := LoadAppSpec("u", "wx"); len(spec.Libraries) != 1 {
+		t.Fatalf("after deleting lib/rules.py: %+v", spec.Libraries)
+	}
+}
+
+// A folder and its live app stay one: a live edit of an app the folder holds
+// as it is goes to the folder, and a publish over a live change it does not
+// have is refused until it says it has it.
+func TestTheFolderAndTheLiveAppStayOne(t *testing.T) {
+	turn, ws := folderTestTurn(t)
+	page := "<!DOCTYPE html><html><body><h1>Wx</h1><script>app.data('now').then(function(d){});</script></body></html>"
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Wx",
+		"sections":     []any{map[string]any{"id": "page", "kind": "html", "html": page}},
+		"data_sources": []any{map[string]any{"name": "now", "script": "print('{}')"}}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := turn.appFolderOwnsEdit(map[string]any{"id": "wx"}); err != nil {
+		t.Fatalf("a live edit with no folder was refused: %v", err)
+	}
+	if _, err := turn.appDefCheckout(map[string]any{"id": "wx"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := turn.appFolderOwnsEdit(map[string]any{"id": "wx"}); err == nil || !strings.Contains(err.Error(), "wx.app/") {
+		t.Fatalf("a live edit of an app its folder holds went through: %v", err)
+	}
+	// A verify leaves the folder current.
+	spec, _ := LoadAppSpec("u", "wx")
+	before := appLiveFingerprint(spec)
+	spec.Verify = &AppVerifyState{At: "now", Pass: true}
+	spec.Sample = []map[string]any{{"x": 1}}
+	if appLiveFingerprint(spec) != before {
+		t.Error("a verify reads as an edit")
+	}
+	// A change made live anyway (another session, the app's own self-update).
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"id": "wx", "notes": "live notes", "note": "fixed the title live"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := turn.appFolderOwnsEdit(map[string]any{"id": "wx"}); err != nil {
+		t.Fatalf("a folder behind the live app still claims its edits: %v", err)
+	}
+	os.WriteFile(filepath.Join(ws, "wx.app", "NOTES.md"), []byte("folder notes"), 0o644)
+	_, err := turn.appDefPublish(map[string]any{"dir": "wx.app"})
+	if err == nil || !strings.Contains(err.Error(), "NOT PUBLISHED") || !strings.Contains(err.Error(), "fixed the title live") {
+		t.Fatalf("a publish over a live change went through: %v", err)
+	}
+	if spec, _ := LoadAppSpec("u", "wx"); spec.Notes != "live notes" {
+		t.Fatalf("the refused publish changed the app: %q", spec.Notes)
+	}
+	if _, err := turn.appDefPublish(map[string]any{"dir": "wx.app", "overwrite_live": true}); err != nil {
+		t.Fatal(err)
+	}
+	if spec, _ := LoadAppSpec("u", "wx"); spec.Notes != "folder notes" {
+		t.Fatalf("notes = %q", spec.Notes)
+	}
+	if err := turn.appFolderOwnsEdit(map[string]any{"id": "wx"}); err == nil {
+		t.Fatal("after a publish the folder holds the app again, and a live edit went through")
+	}
+	// A folder with no record of the live app, over an app of its name.
+	os.Remove(filepath.Join(ws, "wx.app", appFolderBaseFile))
+	if _, err := turn.appDefPublish(map[string]any{"dir": "wx.app"}); err == nil || !strings.Contains(err.Error(), "no record") {
+		t.Fatalf("a folder with no record published over the live app: %v", err)
+	}
+}

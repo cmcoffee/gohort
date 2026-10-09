@@ -909,7 +909,7 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, u
 
 	// The script executes in the OWNER's context (sandbox identity + hook DB), so
 	// a shared app's data source reaches the owner's credentials/integrations.
-	out, err := cachedRunDataSource(owner, T.recordBase(spec, owner), spec.Slug, *ds, args, uid)
+	out, err := cachedRunDataSource(owner, T.recordBase(spec, owner), spec, *ds, args, uid)
 	if err != nil {
 		Log("[customapps] data source %q/%q failed: %v", spec.Slug, name, err)
 		http.Error(w, "data source failed: "+err.Error(), http.StatusInternalServerError)
@@ -969,8 +969,8 @@ func scriptSlug(name string) string {
 }
 
 // runDataSource executes one data-source script and returns its stdout.
-func runDataSource(user string, db Database, slug string, ds AppDataSource, args map[string]any, caller string) (string, error) {
-	return runAppScript(appscript.Job{Owner: user, DB: db, Slug: slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller})
+func runDataSource(user string, db Database, spec AppSpec, ds AppDataSource, args map[string]any, caller string) (string, error) {
+	return runAppScript(appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries})
 }
 
 // dataSourceCacheTTL is how long a data source's output is reused before it is
@@ -1042,10 +1042,20 @@ func trimDSCache(now time.Time) {
 // iterate→verify loop, which reuses the same records + params), plus the input
 // records and query params. Any change to any of these misses the cache and
 // recomputes; identical repeats within the TTL reuse the result.
-func dsCacheKey(user, slug string, ds AppDataSource, args map[string]any) string {
+func dsCacheKey(user string, spec AppSpec, ds AppDataSource, args map[string]any) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00", user, slug, ds.Name, ds.Language)
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00", user, spec.Slug, ds.Name, ds.Language)
 	io.WriteString(h, ds.Script)
+	h.Write([]byte{0})
+	// The libraries it imports are part of the script.
+	libs := make([]string, 0, len(spec.Libraries))
+	for n := range spec.Libraries {
+		libs = append(libs, n)
+	}
+	sort.Strings(libs)
+	for _, n := range libs {
+		fmt.Fprintf(h, "%s\x00%s\x00", n, spec.Libraries[n])
+	}
 	h.Write([]byte{0})
 	for _, c := range ds.Capabilities {
 		io.WriteString(h, c)
@@ -1068,8 +1078,8 @@ func dsCacheKey(user, slug string, ds AppDataSource, args map[string]any) string
 // — the authoring test/verify path always runs scripts fresh. Errors are never
 // cached (so a transient failure retries immediately), though a burst of
 // concurrent identical failing calls still shares one execution.
-func cachedRunDataSource(user string, db Database, slug string, ds AppDataSource, args map[string]any, caller string) (string, error) {
-	key := dsCacheKey(user, slug, ds, args)
+func cachedRunDataSource(user string, db Database, spec AppSpec, ds AppDataSource, args map[string]any, caller string) (string, error) {
+	key := dsCacheKey(user, spec, ds, args)
 	now := time.Now()
 
 	dsCacheMu.Lock()
@@ -1087,7 +1097,7 @@ func cachedRunDataSource(user string, db Database, slug string, ds AppDataSource
 	dsInFlightCalls[key] = call
 	dsCacheMu.Unlock()
 
-	out, err := runDataSource(user, db, slug, ds, args, caller)
+	out, err := runDataSource(user, db, spec, ds, args, caller)
 
 	dsCacheMu.Lock()
 	call.out, call.err = out, err
@@ -1129,9 +1139,11 @@ func (T *CustomApps) handleActionsList(w http.ResponseWriter, r *http.Request, s
 
 // handleAction runs a named action script: POST /apps/<slug>/action/<name>.
 // The app's stored records + the request's params go in; the script prints a
-// JSON object {message?, records?}. The FRAMEWORK upserts any returned records
-// into the store (so they reach the viewer — the script never writes the store),
-// and returns {message} for the button. The script runs in the OWNER's sandbox
+// JSON object {message?, records?, result?}. The FRAMEWORK upserts any returned
+// records into the store (so they reach the viewer — the script never writes the
+// store), and answers {message, saved, records, result?}: the records as saved
+// (keys and created stamps filled in) and the script's result, for a page that
+// shows what the action did (a game's turn, a generated answer). The script runs in the OWNER's sandbox
 // (owner param), but any records it returns are upserted into the REQUESTER's
 // store (udb) — so on a shared app a user's action runs the owner's trusted
 // logic against, and saves into, that user's own copy. owner == requester for
@@ -1180,49 +1192,70 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	}
 
 	T.applySettings(args, spec, uid) // last: neither a param nor the body overrides a setting
-	msg, saved, err := runActionAndPersist(owner, T.recordBase(spec, owner), udb, spec, *act, args, uid)
+	res, err := runActionAndPersist(owner, T.recordBase(spec, owner), udb, spec, *act, args, uid)
 	if err != nil {
 		Log("[customapps] action %q/%q failed: %v", spec.Slug, name, err)
 		http.Error(w, "action failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"message": msg, "saved": saved})
+	reply := map[string]any{"message": res.Message, "saved": res.Saved, "records": res.Records}
+	if res.Result != nil {
+		reply["result"] = res.Result
+	}
+	writeJSON(w, reply)
+}
+
+// actionOutcome is what one action run did: the message for the button, how
+// many records it wrote, the person's records as saved, and the script's own
+// result for the page.
+//
+// The result is why there is more than a count. An action answered only
+// {message, saved}, so a game's turn (change the state, say what happened)
+// was built as a data source that changed nothing on the server, with the
+// page saving the whole state afterwards, and the turn's narrative was lost on
+// reload until the page was patched to copy it into the record first.
+type actionOutcome struct {
+	Message string
+	Saved   int
+	Records []map[string]any
+	Result  any
 }
 
 // runActionAndPersist executes one action script in the owner's sandbox (ownerDB
-// is the owner's record store the script reads), parses its {message?, records?}
-// object, and upserts the returned records into udb keyed by RecordKey. It is the
+// is the owner's record store the script reads), parses its {message?, records?,
+// result?} object, and upserts the returned records into udb keyed by RecordKey. It is the
 // shared core of both a button click (handleAction) and an unattended timer fire
 // (dispatchScheduledAction): the ONLY difference between the two is who builds
 // args and who reads the result. The framework owns persistence — the script
 // never writes the store itself.
 //
 // by is who triggered the run, stamped on any shared record it writes.
-func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act AppAction, args map[string]any, by string) (msg string, saved int, err error) {
+func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act AppAction, args map[string]any, by string) (res actionOutcome, err error) {
 	if len(spec.SharedCollections) > 0 {
 		args["shared"] = sharedInput(ownerDB, spec)
 	}
-	out, err := runAppScript(appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by})
+	out, err := runAppScript(appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries})
 	if err != nil {
-		return "", 0, err
+		return res, err
 	}
 	var result struct {
 		Message      string                      `json:"message"`
 		Records      []map[string]any            `json:"records"`
 		Shared       map[string][]map[string]any `json:"shared"`
 		SharedDelete map[string][]string         `json:"shared_delete"`
+		Result       any                         `json:"result"`
 	}
 	trimmed := strings.TrimSpace(out)
 	if trimmed != "" && json.Unmarshal([]byte(trimmed), &result) != nil {
-		return "", 0, fmt.Errorf("the action script must print a JSON object {message?, records?, shared?, shared_delete?} to stdout (got %.200s)", trimmed)
+		return res, fmt.Errorf("the action script must print a JSON object {message?, records?, result?, shared?, shared_delete?} to stdout (got %.200s)", trimmed)
 	}
 	// Shared writes first, and all or nothing: a refused one (an undeclared
 	// collection, an oversized record) leaves the user's records untouched too.
 	sharedN, err := applySharedWrites(owner, ownerDB, spec, by, result.Shared, result.SharedDelete)
 	if err != nil {
-		return "", 0, err
+		return res, err
 	}
-	saved += sharedN
+	saved := sharedN
 	if sharedN > 0 {
 		noteChange(sharedChangeKey(owner, spec.Slug))
 	}
@@ -1241,11 +1274,12 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 		}
 		udb.Set(tbl, id, rec)
 		saved++
+		res.Records = append(res.Records, rec)
 	}
 	if saved > sharedN {
 		noteChange(recordsChangeKey(owner, spec.Slug, by))
 	}
-	msg = strings.TrimSpace(result.Message)
+	msg := strings.TrimSpace(result.Message)
 	if msg == "" {
 		if saved > 0 {
 			msg = fmt.Sprintf("Done, %d record(s) updated.", saved)
@@ -1253,7 +1287,11 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 			msg = "Done."
 		}
 	}
-	return msg, saved, nil
+	if res.Records == nil {
+		res.Records = []map[string]any{}
+	}
+	res.Message, res.Saved, res.Result = msg, saved, result.Result
+	return res, nil
 }
 
 // --- generic record store ----------------------------------------------------

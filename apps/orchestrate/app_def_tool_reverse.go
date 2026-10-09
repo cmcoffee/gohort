@@ -135,6 +135,13 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		}
 		out["actions"] = acts
 	}
+	if len(spec.Libraries) > 0 {
+		libs := map[string]any{}
+		for n, src := range spec.Libraries {
+			libs[n] = appScriptSummary("python", src)
+		}
+		out["libraries"] = libs
+	}
 	b, _ := json.Marshal(out)
 	return string(b), nil
 }
