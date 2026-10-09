@@ -60,6 +60,7 @@ func (t *chatTurn) thinkChunk(s string) {
 		payload = map[string]any{
 			"kind":       "thinking",
 			"elapsed_ms": now.Sub(p.spanStart).Milliseconds(),
+			"started_ms": p.spanStart.UnixMilli(),
 			"tokens":     p.chars / thinkCharsPerToken,
 		}
 	}

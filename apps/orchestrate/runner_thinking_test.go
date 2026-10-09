@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -98,5 +99,26 @@ func TestStatsFooterFallsBackToResponse(t *testing.T) {
 	turn.emitStats("m1", &Response{OutputTokens: 70, ReasoningTokens: 30}, time.Now())
 	if u := turn.drainLastUsage(); u == nil || u.ReasoningTokens != 30 || u.OutputTokens != 70 {
 		t.Errorf("usage %+v, want the response's own 70 out / 30 think", u)
+	}
+}
+
+// A tick carries when its span began, so a page that rejoins mid-thought,
+// and gets the tick replayed seconds after it was sent, times the thought
+// from its real start.
+func TestThinkingTickSaysWhenTheSpanBegan(t *testing.T) {
+	buf := &bytes.Buffer{}
+	turn := &chatTurn{sse: &sseWriter{live: buf}}
+	before := time.Now().UnixMilli()
+	turn.thinkChunk("reasoning")
+	var ev struct {
+		StartedMS int64 `json:"started_ms"`
+	}
+	line := buf.String()
+	i := strings.Index(line, "{")
+	if i < 0 || json.Unmarshal([]byte(strings.TrimSpace(line[i:])), &ev) != nil {
+		t.Fatalf("no tick: %q", line)
+	}
+	if ev.StartedMS < before || ev.StartedMS > time.Now().UnixMilli() {
+		t.Errorf("started_ms = %d, want the span's start", ev.StartedMS)
 	}
 }

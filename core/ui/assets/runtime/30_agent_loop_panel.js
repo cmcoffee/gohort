@@ -134,6 +134,7 @@
     // cfg.runs_url_base is set, and (b) subscribe to the run's
     // stream after a reconnect.
     var activeRunId = '';
+    var sawTurnEnd = false;   // the current stream delivered its turn's done or error
     // runSeqReceived — counter of real SSE events delivered to
     // handleEvent for the current run. Sent as ?since=<n> on
     // /api/runs/<id>/stream reconnect so the server replays only
@@ -4695,6 +4696,12 @@
           // top-of-handleEvent counter already ticked, so just
           // capture the id and let the count keep accumulating.
           activeRunId = ev.id || '';
+          // The run's own count, from here: its buffer numbers from 1 (the
+          // session event) and this is 2. A second turn in the same view
+          // kept counting from the first, so a rejoin after a dropped stream
+          // asked for events past ones the new run never had, and missed all
+          // it had sent so far.
+          runSeqReceived = 2;
           break;
         case 'message':
           addMessage(ev.role || 'assistant', ev.id || ('m-' + Date.now()), ev.text || '');
@@ -4913,6 +4920,7 @@
           // fires on session OPEN — marking there would condemn a note belonging
           // to a run that is still going.
           markUndeliveredInterjections('The agent finished before reading this. It stays in the conversation and goes with your next message.');
+          sawTurnEnd = true;
           enableInput();
           setStatus('');
           // A turn can move whatever the app's status pill reports.
@@ -4947,6 +4955,7 @@
           keepPendingInterjectionsLast();
           scrollConvo(true);
           setStatus('');
+          sawTurnEnd = true;
           enableInput();
           break;
       }
@@ -5026,8 +5035,16 @@
     var thinkLive = null;   // {since: ms timestamp the span began, tokens}
     var thinkLiveTimer = null;
     function noteThinking(ev) {
+      // Timed from when the span began on the server when that is known: a
+      // tick replayed to a page that rejoins is as old as the replay, and
+      // timing from its elapsed_ms started the count over from a few seconds,
+      // a thought of a minute reading as one just begun.
+      var since = Date.now() - (Number(ev.elapsed_ms) || 0);
+      if (ev.started_ms && serverClockOffset !== null) {
+        since = Math.min(since, Number(ev.started_ms) + serverClockOffset);
+      }
       thinkLive = {
-        since: Date.now() - (Number(ev.elapsed_ms) || 0),
+        since: since,
         tokens: Number(ev.tokens) || 0,
       };
       if (!thinkingEl) showThinking();
@@ -5309,6 +5326,8 @@
       });
       pendingMessageExtras = {};
 
+      sawTurnEnd = false;
+      activeRunId = '';
       activeStream = new AbortController();
       // Through substituteExtras like every other URL, so a send can name the
       // host's open record ({scope}). The server would otherwise have to
@@ -5351,6 +5370,9 @@
         return streamSSE(resp);
       }).catch(function(err) {
         if (err.name === 'AbortError') return;
+        // Dropped mid-turn (the run had started): rejoin it rather than
+        // going idle over a turn that is still running.
+        if (activeRunId && !sawTurnEnd && cfg.runs_url_base) { streamLost(); return; }
         addActivity('error', '', err.message || String(err));
         enableInput();
       });
@@ -5362,7 +5384,11 @@
       var buffer = '';
       function pump() {
         return reader.read().then(function(r) {
-          if (r.done) { enableInput(); return; }
+          if (r.done) {
+            if (activeRunId && !sawTurnEnd && cfg.runs_url_base) streamLost();
+            else enableInput();
+            return;
+          }
           buffer += decoder.decode(r.value, {stream: true});
           var lines = buffer.split('\n');
           buffer = lines.pop();
@@ -6843,7 +6869,9 @@
       if (!cfg.runs_url_base || !sid) return;
       var activeUrl = cfg.runs_url_base + 'active?session_id=' + encodeURIComponent(sid);
       fetchJSON(activeUrl).then(function(d) {
+        noteServerClock(d);
         if (!d || !d.run_id) return;
+        if (sid !== activeSessionId) return; // switched away while asking
         activeRunId = d.run_id;
         // disableInput shows the in-flight UI affordances
         // (cancel button, spinner) so the user knows a turn is
@@ -6862,20 +6890,85 @@
       // (e.g. fast session-switch could trigger double-subscribe).
       if (activeEventSource) { activeEventSource.close(); activeEventSource = null; }
       var url = cfg.runs_url_base + encodeURIComponent(runId) + '/stream?since=' + (since || 0);
-      activeEventSource = new EventSource(url);
-      activeEventSource.onmessage = function(ev) {
+      sawTurnEnd = false;
+      var es = new EventSource(url);
+      activeEventSource = es;
+      es.onmessage = function(ev) {
         try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
       };
-      activeEventSource.onerror = function() {
-        // EventSource auto-reconnects on transient errors. When
-        // the server closes the stream (run completed), we get a
-        // final onerror; tear down and re-enable input.
-        if (activeEventSource && activeEventSource.readyState === EventSource.CLOSED) {
-          activeEventSource = null;
-          enableInput();
-        }
+      es.onerror = function() {
+        if (activeEventSource !== es) return;
+        // Never the browser's own reconnect: it asks again with the since
+        // this stream opened with and replays everything after it a second
+        // time. Close, and rejoin from what this view has.
+        es.close();
+        activeEventSource = null;
+        if (sawTurnEnd) enableInput();
+        else streamLost();
       };
     }
+
+    // A stream that ends before its turn did: a network blip, a phone that
+    // slept, a page put away and brought back. The run goes on server-side,
+    // and going idle here left the thread with no thinking line and no Cancel
+    // until a refresh. So ask whether it is still running and rejoin it from
+    // where this view left off, or, if it finished meanwhile, reload the
+    // thread for its ending.
+    function streamLost() {
+      detachActiveStream();
+      if (!cfg.runs_url_base || !activeSessionId) { enableInput(); return; }
+      recheckRun(activeSessionId, 0);
+    }
+    var recheckInFlight = false;
+    function recheckRun(sid, attempt) {
+      if (recheckInFlight) return;
+      recheckInFlight = true;
+      fetchJSON(cfg.runs_url_base + 'active?session_id=' + encodeURIComponent(sid)).then(function(d) {
+        recheckInFlight = false;
+        if (sid !== activeSessionId) return;
+        noteServerClock(d);
+        if (d && d.run_id) {
+          if (activeEventSource || activeStream) return; // rejoined already
+          activeRunId = d.run_id;
+          disableInput();
+          subscribeRunStream(d.run_id, runSeqReceived);
+          return;
+        }
+        if (turnLive) openSession(sid, true); // finished while away
+      }).catch(function() {
+        recheckInFlight = false;
+        if (sid !== activeSessionId) return;
+        if (attempt < 10) {
+          setTimeout(function() { recheckRun(sid, attempt + 1); }, 3000);
+        } else if (turnLive) {
+          addActivity('error', '', 'Lost the connection to this turn. Refresh to see where it got to.');
+          enableInput();
+        }
+      });
+    }
+    // The server's clock against this one, from a probe's now_ms, so a
+    // replayed thinking tick is timed from when its span really began.
+    var serverClockOffset = null;
+    function noteServerClock(d) {
+      if (d && d.now_ms) serverClockOffset = Date.now() - Number(d.now_ms);
+    }
+    // Back on the page: brought back from the browser's page cache, the tab
+    // shown again after a while, the network back. A stream that was there may
+    // have died without a word, so a running turn is rejoined from where this
+    // view left off (cheap and safe when it was alive: the old one is dropped
+    // first), and an idle view checks whether a turn started meanwhile.
+    var hiddenAt = 0;
+    function backOnPage(long) {
+      if (!cfg.runs_url_base || !activeSessionId || !convoLog || !convoLog.isConnected) return;
+      if (turnLive && (long || !(activeStream || activeEventSource))) { streamLost(); return; }
+      if (!turnLive && !(activeStream || activeEventSource)) recheckRun(activeSessionId, 0);
+    }
+    window.addEventListener('pageshow', function(e) { if (e.persisted) backOnPage(true); });
+    window.addEventListener('online', function() { backOnPage(true); });
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+      backOnPage(hiddenAt > 0 && Date.now() - hiddenAt > 5000);
+    });
 
     // Deep-link bootstrapping: if the URL carries the configured
     // session param, open it on mount. In CONTEXT mode this

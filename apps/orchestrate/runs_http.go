@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -35,14 +36,19 @@ func (T *OrchestrateApp) handleRunsActive(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	// now_ms is the server's clock, so a page rejoining a run can time a
+	// replayed thinking tick from when its span began (started_ms) rather
+	// than from when the replay reached it.
+	now := time.Now().UnixMilli()
 	run := T.runsRegistry().BySession(user, sessionID)
 	if run == nil {
-		w.Write([]byte("{}"))
+		json.NewEncoder(w).Encode(map[string]any{"now_ms": now})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{
+	json.NewEncoder(w).Encode(map[string]any{
 		"run_id":     run.ID,
 		"session_id": sessionID,
+		"now_ms":     now,
 	})
 }
 
