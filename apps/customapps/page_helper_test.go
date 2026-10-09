@@ -81,3 +81,17 @@ func TestEveryAppFrameCarriesTheHelper(t *testing.T) {
 		t.Fatalf("served page:\n%s", out)
 	}
 }
+
+// The helper's dialogs are the page's: a question an app asks is shown by
+// the page the app sits in, as gohort's own modal, not by the browser.
+func TestThePageHelpersDialogsAreThePages(t *testing.T) {
+	for _, want := range []string{
+		`confirm:function(m){return window.uiConfirm(m);}`,
+		`alert:function(m){return window.uiAlert(m);}`,
+		`prompt:function(m,d){return window.uiPrompt(m,d);}`,
+	} {
+		if !strings.Contains(appPageHelper, want) {
+			t.Errorf("window.app lacks %s", want)
+		}
+	}
+}

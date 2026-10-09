@@ -20,6 +20,14 @@ package customapps
 //	app.asset(name)               the URL of one of the app's assets
 //	app.onChange(fn)              fn() whenever records or shared data change
 //	                              (anyone's), until the returned stop() is called
+//	app.confirm(msg)              a question, true or false
+//	app.alert(msg)                a notice, resolved when read
+//	app.prompt(msg, default)      a line of text, or null
+//
+// The three dialogs are gohort's own, shown by the page the app sits in, so
+// a question an app asks looks like every other question gohort asks. The
+// browser's confirm() and prompt() are not these: they block the page, look
+// foreign, and a frame's are shown by the browser alone.
 //
 // Every call is relative, so it reaches only this app, and a failed one
 // rejects with the server's own message.
@@ -34,6 +42,7 @@ records:{list:function(){return fetch("records").then(json);},save:function(r){r
 shared:function(n){return fetch("shared/"+encodeURIComponent(n)).then(json);},
 ask:function(p,o){return post("ask",{prompt:String(p),json:!!(o&&o.json)}).then(function(d){return d&&d.text;});},
 asset:function(n){return "assets/"+n;},
+confirm:function(m){return window.uiConfirm(m);},alert:function(m){return window.uiAlert(m);},prompt:function(m,d){return window.uiPrompt(m,d);},
 onChange:function(fn){var v=null,stop=false;
 (function loop(){if(stop)return;var s=v||{shared:"",records:""};
 fetch("changes"+q({shared:s.shared,records:s.records})).then(json).then(function(d){if(stop||!d)return;var moved=v&&(d.shared!==v.shared||d.records!==v.records);v={shared:d.shared||"",records:d.records||""};if(moved){try{fn(d);}catch(e){console.error(e);}}loop();}).catch(function(){if(!stop)setTimeout(loop,3000);});})();

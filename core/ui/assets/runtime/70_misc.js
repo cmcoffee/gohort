@@ -1114,6 +1114,7 @@
   var ISOLATE_SHIM = '<script>(function(){' +
     'var n=0,p={};' +
     'addEventListener("message",function(e){var d=e.data;if(!d||!d.__uiIsoReply)return;var c=p[d.id];if(!c)return;delete p[d.id];' +
+      'if(d.dialog){c.res(d.value);return;}' +
       'if(d.error){c.rej(new Error(d.error));return;}' +
       'c.res(new Response(d.body,{status:d.status,headers:{"Content-Type":d.type||"application/octet-stream"}}));});' +
     // A body crosses as itself where the browser can clone it (a Blob, a
@@ -1127,6 +1128,17 @@
     'function ask(u,o){o=o||{};return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};' +
       'var h=o.headers||{},ct=h["Content-Type"]||h["content-type"]||"";' +
       'parent.postMessage({__uiIso:1,id:id,url:String(u),method:o.method||"GET",body:bod(o.body),ctype:ct},"*");});}' +
+    // The page's own dialogs, from inside the frame: uiConfirm, uiAlert and
+    // uiPrompt here ask the page to show its modal and answer with what was
+    // chosen, so a question an app asks looks like every other question
+    // gohort asks, and is answered where the browser's own would show
+    // nothing. alert() is rebound to it too, since nothing waits on an
+    // alert; confirm() and prompt() must return at once and stay the
+    // browser's, so a document uses the promise forms instead.
+    'function dlg(k,m,d){return new Promise(function(res){var id=++n;p[id]={res:res,rej:res};' +
+      'parent.postMessage({__uiIsoDialog:1,id:id,kind:k,msg:String(m==null?"":m),def:d==null?"":String(d)},"*");});}' +
+    'window.uiConfirm=function(m){return dlg("confirm",m);};window.uiAlert=function(m){return dlg("alert",m);};' +
+    'window.uiPrompt=function(m,d){return dlg("prompt",m,d);};window.alert=function(m){dlg("alert",m);};' +
     // mine is a URL as the relay takes it: relative, or null when it is not
     // the app's own. A library hands fetch a Request, whose url the browser
     // has already resolved to an absolute one against the page's base, so an
@@ -1196,6 +1208,17 @@
       var d = e.data;
       if (d.__uiIsoHeight && autoHeight) {
         f.style.height = Math.min(Math.max(d.__uiIsoHeight, 40), 20000) + 'px';
+        return;
+      }
+      // A dialog the document asks this page to show: the page's own modal,
+      // answered back with what was chosen (see the frame's dlg).
+      if (d.__uiIsoDialog) {
+        var show = d.kind === 'confirm' ? window.uiConfirm : d.kind === 'prompt' ? window.uiPrompt : window.uiAlert;
+        Promise.resolve(show(d.msg, d.def)).then(function(v) {
+          f.contentWindow.postMessage({__uiIsoReply: 1, id: d.id, dialog: 1, value: v === undefined ? null : v}, '*');
+        }, function() {
+          f.contentWindow.postMessage({__uiIsoReply: 1, id: d.id, dialog: 1, value: null}, '*');
+        });
         return;
       }
       if (!d.__uiIso) return;
