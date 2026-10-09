@@ -502,6 +502,37 @@ func (a *App) openURL(rawURL string) error {
 	return nil
 }
 
+// nativeDialog shows a page's alert or confirm as a native dialog and
+// reports whether it was accepted: OK pressed, which an alert always is.
+//
+// The webview does not draw a page's own dialogs: an alert() went nowhere
+// and a confirm() answered false without asking, so an app built in gohort
+// that asked "delete this?" cancelled itself. The proxy's DIALOG_PATH calls
+// this while the page waits for the answer.
+func (a *App) nativeDialog(kind, message string) (bool, error) {
+	if a.ctx == nil {
+		return false, fmt.Errorf("desktop not ready")
+	}
+	switch kind {
+	case "alert":
+		_, err := wails_runtime.MessageDialog(a.ctx, wails_runtime.MessageDialogOptions{
+			Type: wails_runtime.InfoDialog, Title: "Gohort", Message: message,
+			Buttons: []string{"OK"}, DefaultButton: "OK",
+		})
+		return true, err
+	case "confirm":
+		sel, err := wails_runtime.MessageDialog(a.ctx, wails_runtime.MessageDialogOptions{
+			Type: wails_runtime.QuestionDialog, Title: "Gohort", Message: message,
+			Buttons: []string{"OK", "Cancel"}, DefaultButton: "OK", CancelButton: "Cancel",
+		})
+		if err != nil {
+			return false, err
+		}
+		return sel == "OK", nil
+	}
+	return false, fmt.Errorf("unknown dialog kind %q", kind)
+}
+
 func (a *App) SaveAttachment(name, mimeType, b64 string) pick_result {
 	name = nameWithExt(name, mimeType)
 	if a.ctx == nil {

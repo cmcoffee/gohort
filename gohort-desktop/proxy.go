@@ -113,6 +113,13 @@ const COPY_PATH = "/__desktop/copy"
 // flavor is different: text vs «class PNGf».
 const COPYIMG_PATH = "/__desktop/copyimg"
 
+// DIALOG_PATH answers a page's window.alert / window.confirm with a native
+// dialog. The shim sends it as a SYNCHRONOUS request: confirm() has to hand
+// its answer back to the line that called it, so the page's script thread
+// waits on the request exactly as it would wait on the dialog, while the Go
+// side shows the sheet and returns the button pressed.
+const DIALOG_PATH = "/__desktop/dialog"
+
 // SAVE_SETTINGS_PATH / GET_SETTINGS_PATH back the configure form. The
 // form is served from the loopback origin (see main.go), where Wails
 // does NOT inject window.go — so the page can't call
@@ -219,6 +226,11 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// elements POSTs the image bytes here.
 	if r.URL.Path == COPYIMG_PATH {
 		gp.handle_copyimg_post(w, r)
+		return
+	}
+	// A page's alert() or confirm(), shown natively (see DIALOG_PATH).
+	if r.URL.Path == DIALOG_PATH {
+		gp.handle_dialog_post(w, r)
 		return
 	}
 	// Configure-form backends. The form lives on the loopback origin
@@ -499,6 +511,35 @@ func (gp *gohort_proxy) handle_open_post(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// handle_dialog_post shows a page's alert or confirm as a native dialog and
+// answers {ok, result}: result is whether OK was pressed. ok false means no
+// dialog could be shown, and the shim falls back to what it did before.
+func (gp *gohort_proxy) handle_dialog_post(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "method not allowed"})
+		return
+	}
+	if gp.app == nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "desktop not ready"})
+		return
+	}
+	var req struct {
+		Kind    string `json:"kind"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "bad request: " + err.Error()})
+		return
+	}
+	result, err := gp.app.nativeDialog(req.Kind, req.Message)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": result})
 }
 
 // handle_copy_post writes text to the system pasteboard from the Go side.

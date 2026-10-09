@@ -5,6 +5,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -95,8 +96,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Admin page — framework-rendered (core/ui). Lives at /admin/ (root).
 	// Every section is declarative now; the old hand-rolled /admin/legacy
 	// surface has been retired.
+	// One page per tab: /admin/ is the first tab, /admin/<tab> the others.
+	// Every route below is registered on its own path, so this is the only
+	// handler a tab's address reaches.
 	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
+		tab := strings.Trim(r.URL.Path, "/")
+		if strings.Contains(tab, "/") {
 			http.NotFound(w, r)
 			return
 		}
@@ -108,7 +113,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			http.Redirect(w, r, a.setupWizardPath(), http.StatusFound)
 			return
 		}
-		a.serveNewAdminPage(w, r)
+		a.serveNewAdminPage(w, r, tab)
 	})
 
 	// First-run wizard (and its skip affordance).

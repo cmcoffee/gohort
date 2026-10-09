@@ -32,7 +32,26 @@ const AppsTabGroup = "Apps"
 // appsTabSections builds the availability switchboard plus one section per
 // COMPILED app that has a pane (see paneApps).
 func (a *AdminApp) appsTabSections(r *http.Request) []ui.Section {
-	rows := paneApps(r)
+	return newPanes(r).sections()
+}
+
+// panes is one request's view of the Apps tab. It reads the contributed
+// admin sections ONCE: every source runs on each read (the custom-app source
+// loads every user's app specs), and the tab asked the question once per
+// app per check, some fifty reads for a page that needed one. That was most
+// of the time the admin page took to build.
+type panes struct {
+	r       *http.Request
+	entries []AdminSectionEntry
+}
+
+func newPanes(r *http.Request) *panes {
+	return &panes{r: r, entries: AdminSectionEntriesFor(r)}
+}
+
+// sections is the Apps tab: the switchboard, then one pane per app.
+func (p *panes) sections() []ui.Section {
+	rows := p.apps()
 	out := make([]ui.Section, 0, len(rows)+1)
 	out = append(out, appsAvailabilitySection())
 	for _, rw := range rows {
@@ -41,7 +60,7 @@ func (a *AdminApp) appsTabSections(r *http.Request) []ui.Section {
 			Subtitle: rw.path,
 			Group:    AppsTabGroup,
 			Wide:     true,
-			Body:     appPaneBody(r, rw.path),
+			Body:     p.body(rw.path),
 		})
 	}
 	return out
@@ -57,10 +76,12 @@ func (a *AdminApp) appsTabSections(r *http.Request) []ui.Section {
 // is exactly the question their pane answers. A pane is not a switch, so
 // listing them here costs nothing the switchboard was protecting. A hidden app
 // that claims nothing stays out: it has nothing an operator could look for.
-func paneApps(r *http.Request) []appRow {
+func paneApps(r *http.Request) []appRow { return newPanes(r).apps() }
+
+func (p *panes) apps() []appRow {
 	rows := listableApps()
 	for _, wa := range AllWebApps() {
-		if wa.WebPath() == "/admin" || !appIsHidden(wa) || !claimsAnything(r, wa.WebPath()) {
+		if wa.WebPath() == "/admin" || !appIsHidden(wa) || !p.claims(wa.WebPath()) {
 			continue
 		}
 		rows = append(rows, appRow{path: wa.WebPath(), name: wa.WebName(), desc: wa.WebDesc(), hidden: true})
@@ -73,9 +94,11 @@ func paneApps(r *http.Request) []appRow {
 // an admin section on another tab. A section already on the Apps tab does not
 // count: it is the app's settings in this rail already, and a pane beside it
 // with the same name would be a second entry for one thing.
-func claimsAnything(r *http.Request, path string) bool {
+func claimsAnything(r *http.Request, path string) bool { return newPanes(r).claims(path) }
+
+func (p *panes) claims(path string) bool {
 	return len(RouteStagesForApp(path)) > 0 || len(TunablesForApp(path)) > 0 ||
-		len(panelsElsewhere(r, path)) > 0
+		len(p.elsewhere(path)) > 0
 }
 
 // appPaneBody is one app's pane: what it is, then the controls it has claimed.
@@ -85,7 +108,9 @@ func claimsAnything(r *http.Request, path string) bool {
 // table the LLMs tab shows, then claimed knobs as the same fields the Tuning
 // tab shows, each filtered to this app and writing the same keys; a change in
 // either place reaches the other, so neither view contradicts the other.
-func appPaneBody(r *http.Request, path string) ui.Component {
+func appPaneBody(r *http.Request, path string) ui.Component { return newPanes(r).body(path) }
+
+func (p *panes) body(path string) ui.Component {
 	summary := ui.DisplayPanel{
 		Source: "api/app-summary?path=" + path,
 		Pairs: []ui.DisplayPair{
@@ -107,7 +132,7 @@ func appPaneBody(r *http.Request, path string) ui.Component {
 	// surface, often with state and client actions of its own, and two live
 	// copies of one on a page is two editors over one record. The link opens
 	// it on the tab it already lives on.
-	if len(panelsElsewhere(r, path)) > 0 {
+	if len(p.elsewhere(path)) > 0 {
 		children = append(children, ui.Table{
 			Source: appPanelsSource(path),
 			RowKey: "href",
@@ -272,7 +297,8 @@ func (a *AdminApp) handleAppSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
-	app := findPaneApp(r, path)
+	p := newPanes(r)
+	app := p.find(path)
 	if app == nil {
 		http.NotFound(w, r)
 		return
@@ -294,7 +320,7 @@ func (a *AdminApp) handleAppSummary(w http.ResponseWriter, r *http.Request) {
 		"state":          state,
 		"state_severity": severity,
 		"access":         describeAppAccess(a.db, path),
-		"controls":       describeAppControls(r, path),
+		"controls":       p.controls(path),
 	})
 }
 
@@ -333,7 +359,9 @@ func describeAppAccess(db Database, path string) string {
 // describeAppControls says what this app has CLAIMED. Until an app declares
 // its controls it claims nothing, which is the honest answer and not an error:
 // the controls still work, on their own tabs, exactly as before.
-func describeAppControls(r *http.Request, path string) string {
+func describeAppControls(r *http.Request, path string) string { return newPanes(r).controls(path) }
+
+func (p *panes) controls(path string) string {
 	var parts []string
 	if n := len(RouteStagesForApp(path)); n > 0 {
 		// Set from the table below, and the same dials as LLMs > LLM Routing:
@@ -344,7 +372,7 @@ func describeAppControls(r *http.Request, path string) string {
 	if n := len(TunablesForApp(path)); n > 0 {
 		parts = append(parts, plural(n, "tunable")+" (below; also on Tuning)")
 	}
-	if n := len(panelsElsewhere(r, path)); n > 0 {
+	if n := len(p.elsewhere(path)); n > 0 {
 		parts = append(parts, plural(n, "settings panel")+" (linked below)")
 	}
 	if len(parts) == 0 {
@@ -372,8 +400,10 @@ func plural(n int, noun string) string {
 // same reason: the list the sections are built from is the list it answers.
 //
 // Nil when no pane is for that path, which is the caller's 404.
-func findPaneApp(r *http.Request, path string) WebApp {
-	for _, rw := range paneApps(r) {
+func findPaneApp(r *http.Request, path string) WebApp { return newPanes(r).find(path) }
+
+func (p *panes) find(path string) WebApp {
+	for _, rw := range p.apps() {
 		if rw.path != path {
 			continue
 		}
@@ -411,7 +441,7 @@ func (a *AdminApp) handleAppPanels(w http.ResponseWriter, r *http.Request) {
 		Href  string `json:"href"`
 	}
 	out := []panel{}
-	for _, e := range panelsElsewhere(r, path) {
+	for _, e := range newPanes(r).elsewhere(path) {
 		tab := sectionTab(e.Section.Title, e.Section.Group)
 		if tab == "" {
 			tab = "General"
@@ -433,9 +463,16 @@ func (a *AdminApp) handleAppPanels(w http.ResponseWriter, r *http.Request) {
 // OTHER tab. One already on the Apps tab is in this tab's own rail beside the
 // pane, so there is nothing to link to and nothing to reach.
 func panelsElsewhere(r *http.Request, path string) []AdminSectionEntry {
+	return newPanes(r).elsewhere(path)
+}
+
+func (p *panes) elsewhere(path string) []AdminSectionEntry {
+	if path == "" {
+		return nil
+	}
 	var out []AdminSectionEntry
-	for _, e := range AdminSectionEntriesForApp(r, path) {
-		if sectionTab(e.Section.Title, e.Section.Group) != AppsTabGroup {
+	for _, e := range p.entries {
+		if e.App == path && sectionTab(e.Section.Title, e.Section.Group) != AppsTabGroup {
 			out = append(out, e)
 		}
 	}

@@ -7,6 +7,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -255,7 +256,18 @@ const (
 // one changes both the chart total and the per-source breakdown.
 var costSources = []string{costHistorySource, costBySourceSource}
 
-func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
+// serveNewAdminPage serves one tab of the administrator pages: tab is its
+// slug ("costs"), or empty for the first.
+//
+// The administrator UI was one page with every tab on it, and it took a few
+// seconds to arrive: the server built every section, then the browser
+// mounted all of them and fetched every table behind every tab at once,
+// seventy requests through the six connections it has, with the slow ones
+// (a version probe of each external binary, a summary per app) holding up
+// the ones the open tab needed. One page per tab builds and fetches only
+// what is on screen, and a change made on one tab is on the next because
+// the next is rendered fresh when it is opened.
+func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab string) {
 	if !a.requireAdmin(w, r) {
 		return
 	}
@@ -304,8 +316,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("artifacts_export_all", artifactsExportAllAction),
 		MaxWidth:   "1200px", // desktop admin: wide enough for full-width tables in a single column
 		Grid:       false,    // single column: sections stack vertically within each tab (Wide flags become no-ops)
-		Tabbed:     true,     // category tab bar across the top (the multiple menus); sections grouped below
-		SectionNav: true,     // within each tab, a left-rail sub-nav of its sections (one at a time)
+		SectionNav: true,     // a left-rail sub-nav of the tab's sections (one at a time); the tabs are Nav links, one page each
 	}
 	// The page body, one builder per tab area (page_<area>.go). Appended in
 	// this order; within a tab, sections keep the order their builder lists.
@@ -358,13 +369,15 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// The Apps tab: one row per compiled app. Custom apps land on the SAME tab
 	// through the runtime section source below, which is why this is appended
 	// first — compiled apps, then whatever people have authored.
-	page.Sections = append(page.Sections, a.appsTabSections(r)...)
+	panes := newPanes(r)
+	page.Sections = append(page.Sections, panes.sections()...)
 	// App-contributed admin sections — framework tuning that belongs in admin
 	// (e.g. the prompt-block editor), self-registered via core so admin doesn't
 	// import the app. Each carries its own Group/Wide; its Head brings any
-	// client actions the section's controls need.
+	// client actions the section's controls need. Read once, with the Apps
+	// tab, which asks the same sources about every app.
 	order := map[string]int{} // section title -> its Order within its tab
-	for _, e := range AdminSectionEntriesFor(r) {
+	for _, e := range panes.entries {
 		page.Sections = append(page.Sections, e.Section)
 		page.ExtraHeadHTML += e.Head
 		if e.Order != 0 {
@@ -379,6 +392,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		// where it would read as the app having vanished. Sections that have
 		// already declared this group keep it.
 		page.Sections[i].Group = sectionTab(t, page.Sections[i].Group)
+		if page.Sections[i].Group == "" {
+			page.Sections[i].Group = "General"
+		}
 		if wideSections[t] {
 			page.Sections[i].Wide = true
 		}
@@ -402,7 +418,74 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		}
 		return order[page.Sections[i].Title] < order[page.Sections[j].Title]
 	})
+	tabs := adminTabs(a.WebPath(), page.Sections)
+	cur := -1
+	for i, t := range tabs {
+		if t.slug == tab || (tab == "" && i == 0) {
+			cur = i
+		}
+	}
+	if cur < 0 {
+		http.NotFound(w, r)
+		return
+	}
+	keep := page.Sections[:0:0]
+	for _, s := range page.Sections {
+		if ui.SectionSlug(s.Group) == tabs[cur].slug {
+			keep = append(keep, s)
+		}
+	}
+	page.Sections = keep
+	for i, t := range tabs {
+		page.Nav = append(page.Nav, ui.NavLink{Label: t.name, URL: t.url, Active: i == cur})
+	}
+	page.ExtraHeadHTML += adminTabRedirectScript(tabs, tabs[cur].slug)
 	page.ServeHTTP(w, r)
+}
+
+// adminTab is one of the administrator pages: a tab's name, its slug and
+// the address it is served at.
+type adminTab struct {
+	name, slug, url string
+}
+
+// adminTabs is every tab the sections fill, in the sections' order: the
+// first at the app's root, the rest at their slug.
+func adminTabs(base string, sections []ui.Section) []adminTab {
+	var tabs []adminTab
+	seen := map[string]bool{}
+	for _, s := range sections {
+		if seen[s.Group] {
+			continue
+		}
+		seen[s.Group] = true
+		url := base + "/" + ui.SectionSlug(s.Group)
+		if len(tabs) == 0 {
+			url = base + "/"
+		}
+		tabs = append(tabs, adminTab{name: s.Group, slug: ui.SectionSlug(s.Group), url: url})
+	}
+	return tabs
+}
+
+// adminTabRedirectScript sends a "#<tab>/<section>" address to the page that
+// tab is on. Links into the administrator pages name a tab and a section
+// in the hash (ui.SectionOnTab), as they did when every tab was one page,
+// and a hash is not sent to the server: so the page the link lands on
+// reads it, and if it names another tab, goes there with the hash kept,
+// where the rail opens the section. Also on a hash change, for a link
+// clicked on the page itself (an app's "On tab" links).
+func adminTabRedirectScript(tabs []adminTab, cur string) string {
+	urls := map[string]string{}
+	for _, t := range tabs {
+		urls[t.slug] = t.url
+	}
+	b, _ := json.Marshal(urls)
+	c, _ := json.Marshal(cur)
+	return "<script>(function(){var tabs=" + string(b) + ",cur=" + string(c) + ";" +
+		"function go(){var h=location.hash.replace(/^#/,'');var i=h.indexOf('/');if(i<0)return;" +
+		"var t=h.slice(0,i);if(t===cur||!tabs[t])return;location.replace(tabs[t]+location.hash);}" +
+		"window.addEventListener('hashchange',go);go();})();</script>"
 }
 
 // addImageBackendAction (Image Generation toolbar) → Add flow for image templates.
