@@ -47,7 +47,7 @@ check('a thinking event updates the line',
 check('the line sits beside the dots',
   /ui-agent-thinking-label/.test(lift(panel, 'function showThinking(', 'showThinking')));
 check('visible text ends it',
-  /uiChunkPacer\(function\(id, text\) \{\s*if \(thinkLive && text\.trim\(\)\) endThinkLive\(\);/.test(panel));
+  /case 'chunk':\s*if \(thinkLive && \(ev\.text \|\| ''\)\.trim\(\)\) endThinkLive\(\);/.test(panel));
 check('a tool call ends it',
   /case 'tool_call': \{\s*endThinkLive\(\);/.test(panel));
 check('the turn ending ends it, timer included',
@@ -90,7 +90,7 @@ check('the seconds advance between server ticks',
   check('with no dots on screen there is nothing to hide or show', thinkingEl === null);
 })();
 check('visible text and a replaced chunk hide them; a thinking event shows them',
-  /appendChunk\(id, text\);\s*if \(text\.trim\(\)\) writingNow\(\);/.test(panel) &&
+  /appendChunk\(ev\.id, ev\.text \|\| ''\);\s*if \(\(ev\.text \|\| ''\)\.trim\(\)\) writingNow\(\);/.test(panel) &&
   /replaceChunk\(ev\.id, ev\.text \|\| ''\);\s*writingNow\(\);/.test(panel) &&
   /noteThinking\(ev\);\s*waitingNow\(\);/.test(panel));
 check('the turn ending clears the quiet timer',
@@ -99,16 +99,18 @@ check('the turn ending clears the quiet timer',
 // ---- markdown while streaming ----------------------------------------------
 
 var prelude = fs.readFileSync(dir + '/00_prelude.js', 'utf8');
-var frames = [];
+var frames = [], timers = [];
 function requestAnimationFrame(fn) { frames.push(fn); return frames.length; }
 function cancelAnimationFrame(id) { frames[id - 1] = null; }
 function frame() { var fns = frames; frames = []; fns.forEach(function(f) { if (f) f(); }); }
+function setTimeout(fn) { timers.push(fn); return timers.length; }
+function clearTimeout(id) { timers[id - 1] = null; }
 var clock = 0;
 var window = {uiStripMetaTags: function(s) { return s; }, performance: {now: function() { return clock; }}};
 var performance = window.performance;
 var renders = [];
 // A node per rendered piece, holding the markdown it came from.
-var document = {createElement: function() {
+var document = {hidden: false, createElement: function() {
   return {childNodes: [], set innerHTML(v) { this.childNodes = [{src: v, parentNode: null}]; }, classList: {add: function() {}}};
 }};
 window.uiRenderMarkdown = function(body, text) { renders.push(text); body.innerHTML = text; };
@@ -116,13 +118,15 @@ function fakeBody() {
   var b = {kids: [], classList: {add: function() {}},
     appendChild: function(n) { n.parentNode = b; b.kids.push(n); },
     removeChild: function(n) { b.kids.splice(b.kids.indexOf(n), 1); n.parentNode = null; }};
-  Object.defineProperty(b, 'innerHTML', {set: function() { b.kids.forEach(function(n) { n.parentNode = null; }); b.kids = []; }});
+  Object.defineProperty(b, 'innerHTML', {set: function(v) {
+    b.kids.forEach(function(n) { n.parentNode = null; }); b.kids = v ? [{src: v, parentNode: b}] : []; }});
   return b;
 }
 function shown(b) { return b.kids.map(function(n) { return n.src; }).join(''); }
 eval(lift(prelude, 'function uiStreamSettledCut(', 'uiStreamSettledCut'));
 eval('var PACER_LAG = 0.3;');
-eval(lift(prelude, 'window.uiChunkPacer = function(', 'uiChunkPacer'));
+eval(lift(prelude, 'window.uiStreamReveal = function(', 'uiStreamReveal'));
+eval(lift(prelude, 'window.uiReplayWindow = function(', 'uiReplayWindow'));
 eval(lift(prelude, 'window.uiStreamMarkdown = function(', 'uiStreamMarkdown'));
 
 // The painter: only the block still being written renders again.
@@ -143,101 +147,91 @@ check('a cut never lands inside a code fence', uiStreamSettledCut('a\n\n```\nx\n
 check('nor before a list item that may belong above', uiStreamSettledCut('- a\n\n- b') === 0);
 check('it lands after a blank line before a paragraph', uiStreamSettledCut('p1\n\np2') === 4);
 
-// The pacer: text comes out a few characters a frame, at the arrival rate.
-var got = [];
-var pacer = window.uiChunkPacer(function(id, text) { got.push(id + ':' + text); });
-pacer.chunk('a', 'Good morning, this is a reply.');
-check('nothing is delivered before a frame', got.length === 0);
+// The revealer: display only. It paints a growing prefix of text the caller
+// keeps whole; it holds no events and loses nothing.
+var painted = '';
+var rv = window.uiStreamReveal(function(p) { painted = p; });
+var full = '';
+for (var i = 0; i < 30; i++) { clock += 10; full += 'abcd'; rv.update(full); }
+check('nothing is painted before a frame', painted === '');
 clock += 16; frame();
-check('the first text eases in, not all at once', got.length === 1 && got[0].length < 'a:Good morning, this is a reply.'.length);
-pacer.flush();
-check('flush delivers everything held', got.join('').replace(/a:/g, '') === 'Good morning, this is a reply.');
-check('and asks for no more frames', frames.every(function(f) { return !f; }));
+check('a frame paints part of it, not all', painted.length > 0 && painted.length < full.length);
+check('what is painted is the start of the text', full.indexOf(painted) === 0);
+for (var f = 0; f < 200 && painted.length < full.length; f++) { clock += 16; frame(); }
+check('left alone it reaches all of the text', painted === full);
+check('and then asks for no more frames', frames.every(function(x) { return !x; }));
 
-// A steady stream: about the arrival rate comes out per frame.
-got = [];
-var steady = window.uiChunkPacer(function(id, text) { got.push(text); });
-for (var i = 0; i < 30; i++) { clock += 10; steady.chunk('s', 'abcd'); }
-clock += 16; frame();
-var step = got[got.length - 1].length;
-check('a frame reveals about what arrives in one (400 chars/s, 16ms: ~6)', step >= 4 && step <= 30);
-steady.flush();
-check('nothing is lost or reordered', got.join('') === new Array(31).join('abcd'));
+rv.update(full + ' more');
+rv.finish();
+check('finish paints all of it at once', painted === full + ' more');
 
-// An emoji is never split across two deliveries.
-got = [];
-var emo = window.uiChunkPacer(function(id, text) { got.push(text); });
-emo.chunk('e', 'ab\uD83D\uDE00cd');
-clock += 16; frame(); frame(); frame(); frame(); frame();
-emo.flush();
-check('no delivery ends between the halves of a surrogate pair',
-  got.every(function(t) { var c = t.charCodeAt(t.length - 1); return !(c >= 0xD800 && c <= 0xDBFF); }));
+rv.update('A correction.');
+check('text that changed rather than grew shows as it now is, at once', painted === 'A correction.');
 
-// Other events wait behind the text before them, in order, and a status
-// line mid-reply no longer forces the held text out in one burst.
-var log = [];
-var q = window.uiChunkPacer(function(id, text) { log.push('t:' + text); });
-q.after(function() { log.push('e:first'); });
-check('with nothing held an event runs at once', log.join() === 'e:first');
-log = [];
-for (var k = 0; k < 10; k++) { clock += 10; q.chunk('r', 'word '); }
-q.after(function() { log.push('e:status'); });
-q.chunk('r', 'more ');
-clock += 16; frame();
-check('a status line waits behind the text before it', log.indexOf('e:status') === -1);
-check('and does not push that text out at once', log.join('').length < 'word word word word word word word word word word more '.length + 20);
-for (var f = 0; f < 60; f++) { clock += 16; frame(); }
-var at = log.indexOf('e:status');
-var before = log.slice(0, at).join('').replace(/t:/g, ''), afterIt = log.slice(at + 1).join('').replace(/t:/g, '');
-check('it runs once the earlier text is out, before the later text', at > 0 && before === new Array(11).join('word ') && afterIt === 'more ');
-log = [];
-q.chunk('r', 'tail text');
-q.after(function() { log.push('e:done'); });
-q.flush();
-check('flush delivers the text, then runs what waited, in order', log[log.length - 1] === 'e:done' && log.slice(0, -1).join('').replace(/t:/g, '') === 'tail text');
+var cuts = [];
+var emo = window.uiStreamReveal(function(p) { cuts.push(p); });
+emo.update('ab\uD83D\uDE00cdefghijklmnop');
+for (var e = 0; e < 20; e++) { clock += 16; frame(); }
+check('no paint ends between the halves of a surrogate pair',
+  cuts.every(function(t) { var c = t.charCodeAt(t.length - 1); return !(c >= 0xD800 && c <= 0xDBFF); }));
 
-// drop forgets what is held: a view switched to another thread.
-got = [];
-var dropped = window.uiChunkPacer(function(id, text) { got.push(text); });
-dropped.chunk('d', 'stale text for a thread no longer on screen');
-dropped.after(function() { got.push('stale event'); });
-dropped.drop();
-clock += 16; frame();
-check('dropped text and the events behind it never land', got.length === 0);
+// A hidden tab gets no display frames; the reveal keeps up on a timer.
+document.hidden = true;
+painted = '';
+var hid = window.uiStreamReveal(function(p) { painted = p; });
+hid.update('written while the tab was hidden');
+check('a hidden tab reveals on a timer, not a frame', timers.length > 0 && frames.length === 0);
+document.hidden = false;
 
-// The panel's own repaint is once per frame through the shared painter.
+// A rejoin replays what already streamed: shown whole, not typed out again.
+var rw = window.uiReplayWindow(400);
+rw.arm();
+clock += 2000; // connecting took a while: the window opens at the first arrival
+rw.seen();
+painted = '';
+var rj = window.uiStreamReveal(function(p) { painted = p; }, {instant: rw.active});
+rj.update('everything that streamed before the refresh.');
+check('a replay shows whole at once', painted === 'everything that streamed before the refresh.');
+clock += 500;
+rj.update('everything that streamed before the refresh. Then live text.');
+check('live text after the window reveals evenly again', painted === 'everything that streamed before the refresh.');
+rj.finish();
+
+// The panel: the text and every event stay current; only the paint lags.
 renders = [];
+frames = [];
 function unmarkEmptyBubble() {} function markEmptyBubble() {} function scrollConvo() {}
 var cfg = {markdown: true};
+var replayWindow = window.uiReplayWindow(400);
+var msgEls = {};
 eval(lift(panel, 'function streamingText(', 'streamingText'));
-eval(lift(panel, 'function streamFrame(', 'streamFrame'));
+eval(lift(panel, 'function revealFor(', 'revealFor'));
 eval(lift(panel, 'function showStreaming(', 'showStreaming'));
-eval(lift(panel, 'function paintStreaming(', 'paintStreaming'));
-eval(lift(panel, 'function paintStreamingNow(', 'paintStreamingNow'));
+eval(lift(panel, 'function showVisible(', 'showVisible'));
+eval(lift(panel, 'function appendChunk(', 'appendChunk'));
+eval(lift(panel, 'function replaceChunk(', 'replaceChunk'));
 var removed = [];
-var m = {role: 'assistant', rawText: '', body: fakeBody(),
-  bubble: {classList: {remove: function(c) { removed.push(c); }}}};
-function chunk(t) { m.rawText += t; showStreaming(m); }
-frames = [];
-chunk('# Title'); chunk('\n\nFirst');
-check('chunks between frames wait for one frame', renders.length === 0 && frames.length === 1);
-frame();
-check('a frame paints what arrived meanwhile', shown(m.body) === '# Title\n\nFirst');
+function addMessage(role, id) {
+  return (msgEls[id] = {role: role, rawText: '', body: fakeBody(),
+    bubble: {classList: {remove: function(c) { removed.push(c); }}}});
+}
+appendChunk('m1', '# Title'); appendChunk('m1', '\n\nFirst');
+check('the text is current the moment a chunk arrives', msgEls.m1.rawText === '# Title\n\nFirst');
+for (var g = 0; g < 50; g++) { clock += 16; frame(); }
+check('the frames paint it, as markdown', shown(msgEls.m1.body) === '# Title\n\nFirst');
 check('the raw-text pre-wrap comes off once markdown draws', removed.indexOf('ui-agent-msg-streaming') >= 0);
-frame();
-check('with nothing new no frame is asked for', frames.length === 0);
+replaceChunk('m1', 'Cleaned.');
+check('a replace shows at once', shown(msgEls.m1.body) === 'Cleaned.');
 
 cfg.markdown = false;
-var plain = {role: 'assistant', rawText: 'a\n\nb', body: {}, bubble: {classList: {remove: function() {}}}};
-var rendered = renders.length;
-showStreaming(plain);
-frame();
-check('an app with markdown off keeps plain text', plain.body.textContent === 'a\n\nb' && renders.length === rendered);
+appendChunk('m2', 'a\n\nb');
+for (var h = 0; h < 50; h++) { clock += 16; frame(); }
+check('an app with markdown off keeps plain text', msgEls.m2.body.textContent === 'a\n\nb');
 
 var finalize = lift(panel, 'function finalizeMessage(', 'finalizeMessage');
-check('finishing cancels a pending repaint before the final render',
-  finalize.indexOf('m.paintCancel()') >= 0 &&
-  finalize.indexOf('m.paintCancel()') < finalize.indexOf('uiRenderMarkdown('));
+check('finishing paints all of the text before the final render',
+  finalize.indexOf('m.reveal.finish()') >= 0 &&
+  finalize.indexOf('m.reveal.finish()') < finalize.indexOf('uiRenderMarkdown('));
 
 // ---- the stats footer ------------------------------------------------------
 

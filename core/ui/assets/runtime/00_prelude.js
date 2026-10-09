@@ -506,39 +506,43 @@
     target.classList.add('ui-md');
     target.innerHTML = mdToHTML(window.uiStripEmDashes(window.uiStripMetaTags(String(raw == null ? '' : raw))));
   };
-  // uiChunkPacer evens out a stream of text chunks. A panel hands it each
-  // chunk event instead of rendering it, and it hands the text on to
-  // deliver(id, text) a few characters per display frame, at the rate text
-  // has been arriving for that id. So a reply types out evenly however its
-  // chunks land: a token at a time from a local server, a sentence at a
-  // time from a hosted API, or a burst after a network stall. The renderer
-  // behind deliver is the panel's own and does not change.
+  // uiStreamReveal paints streamed text evenly. The caller keeps the text
+  // itself, complete and current, exactly as before; the revealer decides
+  // only how much of it is on screen, growing that a few characters per
+  // display frame at the rate the text has been arriving. So a reply types
+  // out evenly however its chunks land: a token at a time from a local
+  // server, a sentence at a time from a hosted API, or a burst after a
+  // network stall.
   //
-  // Every other event goes through after(fn), which runs fn once the text
-  // that arrived before it is on screen: at once when none is held. So a
-  // tool card or the end of a block lands after the words before it, as
-  // sent, and a status line arriving mid-reply waits a moment instead of
-  // forcing the held text out in one burst (what flushing on every event
-  // did to a pipeline whose status lines arrive while a stage streams).
+  // Display only, on purpose. An earlier version held the EVENTS back
+  // behind the text, and text went missing: a view reset threw away what
+  // was held while the rejoin count already included it, and a hidden tab
+  // (no display frames) held everything until the tab came back. Here
+  // nothing waits and nothing can be dropped: whatever finishes, resets or
+  // reloads a bubble shows its true text, and the most the reveal can be
+  // behind is PACER_LAG.
   //
-  // The reveal runs about PACER_LAG behind the stream. A backlog past that
-  // (a reconnect replaying a reply, a tab coming back from the background)
-  // is caught up within a few frames rather than typed out at speed.
+  //   update(text) the text is now this (grown by a chunk)
+  //   jump(text)   the text is now this, all of it on screen (the caller
+  //                has painted it, or it replaced the old text outright)
+  //   finish()     paint all of it now and stop
+  //   stop()       stop, for a caller about to draw the finished text
   //
-  //   chunk(id, text) a chunk arrived
-  //   after(fn)       run fn once the text before it is delivered
-  //   flush()         deliver everything held and run what waits, now
-  //   drop()          forget what is held and what waits (a view reset)
+  // opts.instant(), when it returns true, shows each update whole: a
+  // rejoin replaying what already streamed should not type it out again.
   var PACER_LAG = 0.3; // seconds of text that may wait to be revealed
-  window.uiChunkPacer = function(deliver) {
-    // queue holds, in arrival order, {id, text} pieces and {fn} events.
-    var queue = [], rates = {}, cancel = null, lastTick = 0;
+  window.uiStreamReveal = function(paint, opts) {
+    opts = opts || {};
+    var text = '', shown = 0, rate = 0, carry = 0;
+    var lastUpdate = 0, lastTick = 0, cancel = null;
     function now() {
       return (window.performance && performance.now) ? performance.now() : Date.now();
     }
     function schedule() {
-      if (cancel || !queue.length) return;
-      if (typeof requestAnimationFrame === 'function') {
+      if (cancel || shown >= text.length) return;
+      // A hidden tab gets no display frames; a timer still runs there, so
+      // the text keeps up (and is current when the tab comes back).
+      if (typeof requestAnimationFrame === 'function' && !(typeof document !== 'undefined' && document.hidden)) {
         var id = requestAnimationFrame(tick);
         cancel = function() { cancelAnimationFrame(id); };
       } else {
@@ -550,101 +554,87 @@
       if (cancel) { cancel(); cancel = null; }
       lastTick = 0;
     }
-    // heldFor is how much text waits for one id.
-    function heldFor(id) {
-      var n = 0;
-      for (var i = 0; i < queue.length; i++) if (queue[i].fn == null && queue[i].id === id) n += queue[i].text.length;
-      return n;
-    }
-    // cutAt is where to end a piece taken from text, never between the two
-    // halves of a surrogate pair (an emoji).
-    function cutAt(text, n) {
-      n = Math.min(text.length, n);
-      var c = text.charCodeAt(n - 1);
-      if (n < text.length && c >= 0xD800 && c <= 0xDBFF) n++;
-      return n;
-    }
-    // drain runs queued events at the head and delivers up to budget[id]
-    // characters of each piece, stopping at the first piece it cannot finish
-    // so nothing after it runs early. A budget of Infinity empties the queue.
-    function drain(budget) {
-      while (queue.length) {
-        var head = queue[0];
-        if (head.fn) {
-          queue.shift();
-          head.fn();
-          continue;
-        }
-        var allow = budget(head.id);
-        if (allow <= 0) return;
-        var n = cutAt(head.text, allow);
-        var piece = head.text.slice(0, n);
-        head.text = head.text.slice(n);
-        head.spent = (head.spent || 0) + n;
-        if (!head.text) queue.shift();
-        deliver(head.id, piece);
-        if (head.text) return;
-      }
-    }
     function tick() {
       cancel = null;
       var t = now(), dt = lastTick ? t - lastTick : 16;
       lastTick = t;
-      var left = {};
-      drain(function(id) {
-        if (!(id in left)) {
-          var st = rates[id] || {rate: 0, carry: 0};
-          var backlog = heldFor(id), n;
-          if (dt > 250) {
-            n = backlog; // no frames for a while: the tab was hidden
-          } else if (!st.rate) {
-            n = backlog / 8; // no rate yet: ease the first text in
-          } else {
-            n = st.rate * dt / 1000 + st.carry;
-            var room = st.rate * PACER_LAG;
-            if (backlog > room) n += (backlog - room) / 8;
-          }
-          var step = Math.max(1, Math.floor(n));
-          st.carry = n - Math.floor(n);
-          left[id] = step;
-        }
-        var give = left[id];
-        left[id] = 0; // one piece per id per frame, the rest next frame
-        return give;
-      });
-      if (queue.length) schedule();
+      var backlog = text.length - shown;
+      if (backlog <= 0) { lastTick = 0; return; }
+      var n;
+      if (dt > 250) {
+        n = backlog; // frames stopped for a while: catch up at once
+      } else if (!rate) {
+        n = backlog / 8; // no rate yet: ease the first text in
+      } else {
+        n = rate * dt / 1000 + carry;
+        var room = rate * PACER_LAG;
+        if (backlog > room) n += (backlog - room) / 8;
+      }
+      var step = Math.max(1, Math.floor(n));
+      carry = n - Math.floor(n);
+      shown = Math.min(text.length, shown + step);
+      // Never between the two halves of a surrogate pair (an emoji).
+      var c = text.charCodeAt(shown - 1);
+      if (shown < text.length && c >= 0xD800 && c <= 0xDBFF) shown++;
+      paint(text.slice(0, shown));
+      if (shown < text.length) schedule();
       else lastTick = 0;
     }
     return {
-      chunk: function(id, text) {
-        if (!text) return;
-        var st = rates[id] || (rates[id] = {rate: 0, carry: 0, lastPush: 0});
-        var t = now();
-        // The arrival rate, from the gap since this stream's last chunk. A
-        // long gap is the model thinking or calling a tool, not its speed.
-        if (st.lastPush && t - st.lastPush < 1000) {
-          var inst = text.length * 1000 / Math.max(t - st.lastPush, 8);
-          st.rate = st.rate ? st.rate * 0.8 + inst * 0.2 : inst;
+      update: function(next) {
+        next = String(next || '');
+        // Text that changed rather than grew is shown as it now is.
+        if (next.lastIndexOf(text.slice(0, shown), 0) !== 0) {
+          halt();
+          text = next;
+          shown = next.length;
+          paint(text);
+          return;
         }
-        st.lastPush = t;
-        var tail = queue[queue.length - 1];
-        if (tail && tail.fn == null && tail.id === id) tail.text += text;
-        else queue.push({id: id, text: text});
+        var t = now(), grew = next.length - text.length;
+        // The arrival rate, from the gap since the last update. A long gap
+        // is the model thinking or calling a tool, not its writing speed.
+        if (grew > 0 && lastUpdate && t - lastUpdate < 1000) {
+          var inst = grew * 1000 / Math.max(t - lastUpdate, 8);
+          rate = rate ? rate * 0.8 + inst * 0.2 : inst;
+        }
+        if (grew > 0) lastUpdate = t;
+        text = next;
+        if (opts.instant && opts.instant()) {
+          halt();
+          shown = text.length;
+          paint(text);
+          return;
+        }
         schedule();
       },
-      after: function(fn) {
-        if (!queue.length) { fn(); return; }
-        queue.push({fn: fn});
-        schedule();
-      },
-      flush: function() {
+      jump: function(next) {
         halt();
-        drain(function() { return Infinity; });
+        text = String(next || '');
+        shown = text.length;
       },
-      drop: function() {
+      finish: function() {
         halt();
-        queue = [];
+        if (shown < text.length) { shown = text.length; paint(text); }
       },
+      stop: halt,
+    };
+  };
+
+  // uiReplayWindow tells a revealer when a stream is replaying. arm() at a
+  // (re)join; the window opens at the first thing that arrives after it,
+  // because a replay comes in one rush the moment the stream starts, however
+  // long connecting took. active() is the revealer's opts.instant. Nothing
+  // depends on it being exact: too short, a replay's tail types out quickly;
+  // too long, a moment of live text shows unsmoothed.
+  window.uiReplayWindow = function(ms) {
+    var armed = false, until = 0;
+    function t() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+    return {
+      arm: function() { armed = true; until = 0; },
+      // seen marks an arrival; call it for each event the stream delivers.
+      seen: function() { if (armed) { armed = false; until = t() + ms; } },
+      active: function() { return t() < until; },
     };
   };
 

@@ -968,7 +968,7 @@
         var buffer = '';
         function pump() {
           return reader.read().then(function(out) {
-            if (out.done) { chatPacer.flush(); finish(); return; }
+            if (out.done) { finish(); return; }
             buffer += decoder.decode(out.value, {stream: true});
             // Parse SSE: each event terminated by a blank line.
             var i;
@@ -982,7 +982,7 @@
         }
         return pump();
       }).catch(function(err) {
-        chatPacer.flush();
+        endReveal();
         if (err.name === 'AbortError') {
           appendError('Cancelled.');
         } else {
@@ -991,29 +991,26 @@
         finish();
       });
 
-      // Reply text reaches the bubble through the pacer, a few characters a
-      // frame, so it types out evenly however its chunks arrive.
-      var chatPacer = window.uiChunkPacer(function(_, text) {
-        // If the previous round was tool-only, its placeholder
-        // got dropped on the prior done event. Recreate one at
-        // the bottom of the thread so this round's text lands
-        // BELOW any tool pills/results — not above them where
-        // the original placeholder used to sit.
-        if (!assistantMsg || !assistantMsg.parentNode) {
-          assistantMsg = appendMessage('assistant', '');
-          assistantBody = assistantMsg.querySelector('.ui-chat-msg-body');
-          showTyping(assistantBody);
+      // revealReply is the current reply bubble's revealer (uiStreamReveal),
+      // made with the bubble. Display only: fullReply and every event are
+      // current the moment they arrive.
+      function revealReply() {
+        if (!assistantMsg._reveal) {
+          var body = assistantBody;
+          assistantMsg._reveal = window.uiStreamReveal(function(prefix) {
+            // Stripped on the way to the screen, not just at the markdown
+            // pass: an internal note must not be readable mid-stream.
+            body.textContent = window.uiStripMetaTags(prefix);
+            scrollToBottom();
+          });
         }
-        // First chunk replaces the typing indicator. Subsequent
-        // chunks just append to the running reply text.
-        if (fullReply === '') clearTyping(assistantBody);
-        fullReply += text;
-        // Stripped on the way to the screen, not just at the markdown
-        // pass below: streaming sets textContent directly, so an internal
-        // note used to be readable for the length of the stream.
-        assistantBody.textContent = window.uiStripMetaTags(fullReply);
-        scrollToBottom();
-      });
+        return assistantMsg._reveal;
+      }
+      // endReveal shows the whole reply so far and stops, for a bubble about
+      // to be finished, left behind, or drawn whole.
+      function endReveal() {
+        if (assistantMsg && assistantMsg._reveal) assistantMsg._reveal.finish();
+      }
 
       function processEvent(raw) {
         var lines = raw.split('\n');
@@ -1026,16 +1023,30 @@
         if (!ev) return;
         var data = {};
         if (dataStr) { try { data = JSON.parse(dataStr); } catch(e) {} }
-        // Text goes to the pacer; any other event waits behind the text that
-        // arrived before it, so it lands after those words, as sent.
-        if (ev === 'chunk') { chatPacer.chunk('reply', data.text || ''); return; }
-        chatPacer.after(function() { applyEvent(ev, data); });
-      }
-
-      // applyEvent is one event other than text, applied in order behind
-      // the text that arrived before it.
-      function applyEvent(ev, data) {
         switch (ev) {
+          case 'chunk':
+            // If the previous round was tool-only, its placeholder
+            // got dropped on the prior done event. Recreate one at
+            // the bottom of the thread so this round's text lands
+            // BELOW any tool pills/results — not above them where
+            // the original placeholder used to sit.
+            if (!assistantMsg || !assistantMsg.parentNode) {
+              assistantMsg = appendMessage('assistant', '');
+              assistantBody = assistantMsg.querySelector('.ui-chat-msg-body');
+              showTyping(assistantBody);
+            }
+            // First chunk replaces the typing indicator. Subsequent
+            // chunks just append to the running reply text.
+            if (fullReply === '') clearTyping(assistantBody);
+            fullReply += data.text || '';
+            // Stripped on the way to the screen, not just at the markdown
+            // pass below: streaming sets textContent directly, so an internal
+            // note used to be readable for the length of the stream.
+            // The whole reply is kept in fullReply as it arrives; the
+            // revealer paints it evenly, a few characters a frame.
+            revealReply().update(fullReply);
+            scrollToBottom();
+            break;
           case 'thinking_chunk':
             // Stage 1: ignore. Stage 2 will surface in a collapsible block.
             break;
@@ -1050,6 +1061,7 @@
             // because the chips visually attach to text they have
             // nothing to do with.
             if (assistantMsg && assistantMsg.parentNode && fullReply !== '') {
+              endReveal();
               assistantMsg = null;
               fullReply = '';
             }
@@ -1176,7 +1188,7 @@
             if (fullReply.trim()) {
               history.push({role: 'assistant', content: fullReply});
               assistantMsg.dataset.raw = fullReply;
-              renderMessageBody(assistantBody, fullReply);
+              endReveal(); renderMessageBody(assistantBody, fullReply);
               renderRoundStats(assistantMsg, data);
               addAssistantActions(assistantMsg);
               // Jump to the TOP of the just-finalized assistant
@@ -1195,6 +1207,7 @@
               setTimeout(jumpToTop, 50);
               setTimeout(jumpToTop, 200);
               fullReply = '';
+              endReveal();
               assistantMsg = null;
               assistantBody = null;
             } else if (assistantMsg && assistantBody && assistantBody.textContent === '' && (!assistantMsg.tools || !assistantMsg.tools.length)) {
@@ -1204,6 +1217,7 @@
               // (rare: tool_call without a paired result yet) so the
               // toggle stays attached to its bubble.
               assistantMsg.remove();
+              endReveal();
               assistantMsg = null;
               assistantBody = null;
             } else if (assistantMsg && assistantBody) {
@@ -1212,6 +1226,7 @@
               // the toggle and any later text from the next round
               // continues into a fresh placeholder.
               clearTyping(assistantBody);
+              endReveal();
               assistantMsg = null;
               assistantBody = null;
             }
@@ -1230,7 +1245,7 @@
           } else if (fullReply.trim() && !assistantMsg.dataset.raw) {
             history.push({role: 'assistant', content: fullReply});
             assistantMsg.dataset.raw = fullReply;
-            renderMessageBody(assistantBody, fullReply);
+            endReveal(); renderMessageBody(assistantBody, fullReply);
             addAssistantActions(assistantMsg);
           }
         }

@@ -106,9 +106,8 @@ var convoLog = {isConnected: true};
   check('the run event starts the count at the run\'s own 2', /activeRunId = ev\.id \|\| '';[\s\S]{0,400}runSeqReceived = 2;/.test(panel));
   check('the run stream never leaves reconnecting to the browser',
     /es\.onerror = function\(\) \{[\s\S]*?es\.close\(\);[\s\S]*?streamLost\(\);/.test(panel));
-  // The pacer's queue is applied first: the turn's end may be waiting in it.
   check('a send stream that ends before its turn rejoins',
-    /if \(r\.done\) \{[\s\S]{0,300}?chunkPacer\.flush\(\);\s*if \(activeRunId && !sawTurnEnd && cfg\.runs_url_base\) streamLost\(\);/.test(panel));
+    /if \(r\.done\) \{\s*if \(activeRunId && !sawTurnEnd && cfg\.runs_url_base\) streamLost\(\);/.test(panel));
   check('a resume answer for another session is dropped',
     /if \(sid !== activeSessionId\) return; \/\/ switched away while asking/.test(panel));
   if (fail) process.exit(1);

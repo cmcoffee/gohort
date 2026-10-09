@@ -50,11 +50,12 @@ check('nothing visible reads as empty',
 // turn judges emptiness the same way, so blank lines alone never leave a card.
 var append = lift(panel, 'function appendChunk(', 'appendChunk');
 var replace = lift(panel, 'function replaceChunk(', 'replaceChunk');
-var show = lift(panel, 'function showStreaming(', 'showStreaming');
+// The revealer paints through showVisible, which trims and judges emptiness.
+var show = lift(panel, 'function showVisible(', 'showVisible');
 check('appending a chunk draws through showStreaming', /showStreaming\(m\)/.test(append));
-check('replacing the text draws through showStreaming', /showStreaming\(m\)/.test(replace));
-check('showStreaming draws the trimmed text and hides an empty bubble',
-  /streamingText\(m\.rawText\)/.test(show) && /markEmptyBubble\(m\)/.test(show));
+check('replacing the text draws through showVisible', /showVisible\(m, m\.rawText\)/.test(replace));
+check('showVisible draws the trimmed text and hides an empty bubble',
+  /streamingText\(prefix\)/.test(show) && /markEmptyBubble\(m\)/.test(show));
 var finalize = lift(panel, 'function finalizeMessage(', 'finalizeMessage');
 check('a settled reply of blank lines stays hidden',
   /streamingText\(m\.rawText\)\.length > 0\) unmarkEmptyBubble/.test(finalize));

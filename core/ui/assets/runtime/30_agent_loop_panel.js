@@ -153,13 +153,9 @@
     // session for cancel/confirm routing.
     var activeContextId = '';
     var msgEls = {};      // message id -> {bubble, body, role, rawText}
-    // Reply text reaches the bubble through the pacer, a few characters a
-    // frame, so it types out evenly however its chunks arrive.
-    var chunkPacer = window.uiChunkPacer(function(id, text) {
-      if (thinkLive && text.trim()) endThinkLive();
-      appendChunk(id, text);
-      if (text.trim()) writingNow();
-    });
+    // A rejoin replays what already streamed; for a moment after it starts,
+    // text shows whole rather than typing out a second time.
+    var replayWindow = window.uiReplayWindow(400);
     var activityEls = {}; // activity id -> element
     var blockEls = {};    // app-block id -> {wrap, body}
     var noticeIds = {};   // framework-breadcrumb id -> true (see addNotice)
@@ -1806,7 +1802,7 @@
             // clearConvo() / clearActivity() — wipe a pane. Used by app-defined
             // Clear actions that mirror the legacy chat-header Clear button.
             clearConvo: function() {
-              msgEls = {}; blockEls = {}; noticeIds = {}; chunkPacer.drop();
+              msgEls = {}; blockEls = {}; noticeIds = {};
               convoLog.innerHTML = '';
               emptyMsg = el('div', {class: 'ui-agent-empty'},
                 [cfg.empty_text || 'Start typing below.']);
@@ -1828,12 +1824,12 @@
                 activeEventSource = null;
               }
               var es = new EventSource(url);
+              replayWindow.arm(); // what it replays shows at once
               activeEventSource = es;
               es.onmessage = function(ev) {
                 try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
               };
               es.onerror = function() {
-                chunkPacer.flush(); // apply what waits behind held text, a turn end included
                 if (es.readyState === EventSource.CLOSED) {
                   if (activeEventSource === es) activeEventSource = null;
                   enableInput();
@@ -3831,29 +3827,40 @@
         .replace(/\s+$/, '');
     }
 
-    // streamFrame runs fn at the next display frame and returns what cancels
-    // it. A hidden tab gets no frames, and nothing is lost: the finished
-    // reply renders in full when it settles.
-    function streamFrame(fn) {
-      if (typeof requestAnimationFrame === 'function') {
-        var id = requestAnimationFrame(fn);
-        return function() { cancelAnimationFrame(id); };
+    // A reply's text is kept whole and current in m.rawText as chunks
+    // arrive; how much of it is on screen is the revealer's (uiStreamReveal),
+    // which paints it evenly a few characters a frame. Display only: every
+    // event still applies the moment it arrives, and finishing a message
+    // draws its true text.
+    function revealFor(m) {
+      if (!m.reveal) {
+        m.reveal = window.uiStreamReveal(function(prefix) { showVisible(m, prefix); },
+          {instant: replayWindow.active});
       }
-      var t = setTimeout(fn, 16);
-      return function() { clearTimeout(t); };
+      return m.reveal;
     }
 
-    // showStreaming puts a bubble's in-progress text on screen, keeping the
-    // bubble hidden while there is nothing visible to show. With markdown on,
-    // the reply is rendered as markdown while it streams, so it looks the
+    // showStreaming puts a bubble's in-progress text on its way to the screen.
+    function showStreaming(m) {
+      revealFor(m).update(m.rawText || '');
+    }
+
+    // showVisible draws the part of the text the revealer has let out, keeping
+    // the bubble hidden while there is nothing visible to show. With markdown
+    // on, the reply is rendered as markdown while it streams, so it looks the
     // same mid-stream as finished: plain text that only became markdown at
     // the end made headings, lists and code blocks snap into place, and a
-    // long reply jumped when the turn settled.
-    function showStreaming(m) {
-      var shown = streamingText(m.rawText);
+    // long reply jumped when the turn settled. Only the block still being
+    // written renders again (uiStreamMarkdown), so a frame stays cheap.
+    function showVisible(m, prefix) {
+      var shown = streamingText(prefix);
       m.shownText = shown;
       if (cfg.markdown && m.role === 'assistant') {
-        paintStreaming(m);
+        if (!m.mdPaint) m.mdPaint = window.uiStreamMarkdown(m.body);
+        m.mdPaint(shown);
+        // Markdown emits block elements that handle their own spacing; the
+        // raw-text pre-wrap would add gaps between them.
+        if (m.bubble) m.bubble.classList.remove('ui-agent-msg-streaming');
       } else {
         m.body.textContent = shown;
       }
@@ -3862,59 +3869,33 @@
       scrollConvo(false);
     }
 
-    // paintStreaming draws the reply at the next display frame, once however
-    // many chunks arrive before it. It used to repaint at most every 120ms,
-    // and at a hundred tokens a second each repaint added a dozen at once, so
-    // the reply came in half-line jolts. A frame can afford to repaint
-    // because only the block still being written renders again: the finished
-    // blocks before it render once, as they finish, and stay.
-    function paintStreaming(m) {
-      if (m.paintCancel) return;
-      m.paintCancel = streamFrame(function() {
-        m.paintCancel = null;
-        paintStreamingNow(m);
-      });
-    }
-
-    function paintStreamingNow(m) {
-      var src = m.shownText || '';
-      if (m.paintedText === src) return;
-      if (!m.mdPaint) m.mdPaint = window.uiStreamMarkdown(m.body);
-      m.mdPaint(src);
-      m.paintedText = src;
-      // Markdown emits block elements that handle their own spacing; the
-      // raw-text pre-wrap would add gaps between them.
-      if (m.bubble) m.bubble.classList.remove('ui-agent-msg-streaming');
-      scrollConvo(false);
-    }
-
     function appendChunk(id, text) {
       var m = msgEls[id];
       if (!m) { m = addMessage('assistant', id, ''); }
       m.rawText = (m.rawText || '') + text;
-      // Streaming text stays plain — markdown pass on message_done. It still
-      // goes through uiStripMetaTags: the markdown pass is where the strip
-      // used to happen, so an internal note was on screen in plain text for
-      // the whole stream and only vanished when the turn settled. rawText
-      // keeps the original for that later pass.
+      // Shown through uiStripMetaTags (streamingText): an internal note must
+      // not be on screen for the length of the stream. rawText keeps the
+      // original for the final markdown pass.
       showStreaming(m);
     }
 
+    // A replace is shown as it is, at once: it is a correction, not more of
+    // the reply.
     function replaceChunk(id, text) {
       var m = msgEls[id];
       if (!m) { m = addMessage('assistant', id, ''); }
       m.rawText = text || '';
-      showStreaming(m);
+      revealFor(m).jump(m.rawText);
+      showVisible(m, m.rawText);
     }
 
     function finalizeMessage(id) {
       var m = msgEls[id];
       if (!m) return;
-      // A repaint still pending would draw the in-progress text back over
-      // the finished render.
-      if (m.paintCancel) { m.paintCancel(); m.paintCancel = null; }
+      // All of the text on screen now, and no reveal left running to draw a
+      // part of it back over the finished render.
+      if (m.reveal) m.reveal.finish();
       m.mdPaint = null;
-      m.paintedText = null;
       if (cfg.markdown && m.role === 'assistant') {
         uiRenderMarkdown(m.body, m.rawText || '');
       }
@@ -4657,25 +4638,13 @@
       lastEventTime = Date.now();
       if (heartbeatEl) { heartbeatEl.remove(); heartbeatEl = null; }
       if (!ev || !ev.kind) return;
+      replayWindow.seen();
       // Track received-event count so a /api/runs/<id>/stream
       // reconnect can resume from the gap with ?since=<count>.
       // Every event passing handleEvent — regardless of kind — is
       // one server-Seq tick on the run buffer (Ping/keepalives stay
       // out of the buffer; see sseWriter.emit in runner.go).
       runSeqReceived++;
-      // Text goes to the pacer; any other event waits behind the text that
-      // arrived before it, so a tool card or the end of a message lands
-      // after the words that preceded it, as sent.
-      if (ev.kind === 'chunk') {
-        chunkPacer.chunk(ev.id, ev.text || '');
-        return;
-      }
-      chunkPacer.after(function() { applyEvent(ev); });
-    }
-
-    // applyEvent is one event other than text, applied in order behind the
-    // text that arrived before it.
-    function applyEvent(ev) {
       // Drop the thinking indicator only on events that PRODUCE
       // CONVERSATION-PANE content. activity rows go to the activity
       // pane (which some apps lock off entirely), so they
@@ -4685,6 +4654,7 @@
       // session/status events also don't clear; they fire before
       // content arrives and the spinner bridges that gap.
       switch (ev.kind) {
+        case 'chunk':
         case 'chunk_replace':
           // Spinner used to clear here (on first response text), but
           // the new behavior keeps it visible across the whole turn —
@@ -4735,6 +4705,11 @@
           break;
         case 'message':
           addMessage(ev.role || 'assistant', ev.id || ('m-' + Date.now()), ev.text || '');
+          break;
+        case 'chunk':
+          if (thinkLive && (ev.text || '').trim()) endThinkLive();
+          appendChunk(ev.id, ev.text || '');
+          if ((ev.text || '').trim()) writingNow();
           break;
         case 'thinking':
           noteThinking(ev);
@@ -5410,9 +5385,6 @@
       function pump() {
         return reader.read().then(function(r) {
           if (r.done) {
-            // What waits behind held text is applied first: the turn's end
-            // may be among it, and without it this would read as a drop.
-            chunkPacer.flush();
             if (activeRunId && !sawTurnEnd && cfg.runs_url_base) streamLost();
             else enableInput();
             return;
@@ -5453,6 +5425,7 @@
       sawTurnEnd = false;
       eventsSeen = skip;
       var es = new EventSource(url), n = 0;
+      replayWindow.arm(); // what it replays shows at once
       activeEventSource = es;
       es.onmessage = function(ev) {
         n++;
@@ -5462,7 +5435,6 @@
         try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
       };
       es.onerror = function() {
-        chunkPacer.flush(); // apply what waits behind held text, a turn end included
         if (activeEventSource !== es) return;
         var refused = es.readyState === EventSource.CLOSED && n === 0;
         es.close();
@@ -6408,7 +6380,7 @@
     // the rebuild (re-rendering the same thread for "Show earlier"), so that a
     // press does not blank what the reader is looking at while it fetches.
     function clearConvoPanes() {
-      msgEls = {}; activityEls = {}; blockEls = {}; noticeIds = {}; chunkPacer.drop();
+      msgEls = {}; activityEls = {}; blockEls = {}; noticeIds = {};
       // Cleared with the rest of the per-thread state. A stale offset carried
       // into the next thread would misplace its truncate point.
       loadedMsgOffset = 0;
@@ -6606,7 +6578,7 @@
       if (cfg.list_is_context) {
         activeContextId = sid || '';
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid || '');
-        msgEls = {}; noticeIds = {}; chunkPacer.drop();
+        msgEls = {}; noticeIds = {};
         convoLog.innerHTML = '';
         if (!sid) {
           emptyMsg = el('div', {class: 'ui-agent-empty'},
@@ -7012,12 +6984,12 @@
       var url = cfg.runs_url_base + encodeURIComponent(runId) + '/stream?since=' + (since || 0);
       sawTurnEnd = false;
       var es = new EventSource(url);
+      replayWindow.arm(); // what it replays shows at once
       activeEventSource = es;
       es.onmessage = function(ev) {
         try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
       };
       es.onerror = function() {
-        chunkPacer.flush(); // apply what waits behind held text, a turn end included
         if (activeEventSource !== es) return;
         // Never the browser's own reconnect: it asks again with the since
         // this stream opened with and replays everything after it a second

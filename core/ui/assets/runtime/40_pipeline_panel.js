@@ -6,9 +6,9 @@
 
     var currentSessionId = '';
     var blockEls = {};       // block id -> DOM element { wrap, body, raw }
-    // Block text reaches its block through the pacer, a few characters a
-    // frame, so it types out evenly however its chunks arrive.
-    var blockPacer = window.uiChunkPacer(function(id, text) { appendChunk(id, text); });
+    // A rejoin replays what already streamed; for a moment after it starts,
+    // text shows whole rather than typing out a second time.
+    var replayWindow = window.uiReplayWindow(400);
     var liveVerdictBid = null; // most-recent verdict id (for auto-scroll on done)
     var activeStream = null; // AbortController for in-flight submit
 
@@ -563,30 +563,24 @@
 
       var ctrl = new AbortController();
       var streamRaw = '';
-      var streamPaint = null; // the in-progress markdown painter for the content
-      // Report text reaches the content through the pacer, a few characters
-      // a frame, so it types out evenly however its chunks arrive.
-      var modalPacer = window.uiChunkPacer(function(_, text) {
-        var statusEl = body.querySelector('.ui-pl-modal-status');
-        if (statusEl) statusEl.remove();
-        streamRaw += text;
-        body.dataset.raw = streamRaw;
+      // The report is kept whole in streamRaw; the revealer paints it evenly,
+      // and only the block still being written renders again
+      // (uiStreamMarkdown). A finished report arrives whole and a running one
+      // replays what it has: both show at once (the replay window).
+      var streamPaint = null, reportReplay = window.uiReplayWindow(400);
+      reportReplay.arm();
+      var reportReveal = window.uiStreamReveal(function(prefix) {
         var content = body.querySelector('.ui-pl-modal-content');
         if (!content) {
           content = el('div', {class: 'ui-pl-modal-content'});
           body.appendChild(content);
           streamPaint = null;
         }
-        // Only the block still being written renders again, so a long report
-        // does not re-render whole on every frame.
         if (!streamPaint) streamPaint = window.uiStreamMarkdown(content);
-        streamPaint(streamRaw);
-        // Don't auto-scroll-to-bottom on each chunk — that
-        // pushes the overlay past the headline and forces the
-        // user to scroll back up. Scroll to top on done instead.
-      });
+        streamPaint(prefix);
+      }, {instant: reportReplay.active});
       function close() {
-        modalPacer.drop();
+        reportReveal.stop();
         ctrl.abort();
         overlay.remove();
       }
@@ -598,7 +592,7 @@
         var buf = '';
         function pump() {
           return reader.read().then(function(res) {
-            if (res.done) { modalPacer.flush(); return; }
+            if (res.done) { reportReveal.finish(); return; }
             buf += dec.decode(res.value, {stream: true});
             var idx;
             while ((idx = buf.indexOf('\n\n')) >= 0) {
@@ -629,18 +623,7 @@
         try { data = JSON.parse(dataStr); } catch (_) {}
         // Legacy report stream uses Type field on anonymous events.
         var type = ev !== 'message' ? ev : (data.Type || data.type || '');
-        // Text goes to the pacer; any other event waits behind the text that
-        // arrived before it, so the report's end lands after its words.
-        if (type === 'report_stream' || type === 'chunk') {
-          modalPacer.chunk('report', data.Body || data.text || '');
-          return;
-        }
-        modalPacer.after(function() { applyModalEvent(type, data); });
-      }
-
-      // applyModalEvent is one report event other than text, in order
-      // behind the text that arrived before it.
-      function applyModalEvent(type, data) {
+        reportReplay.seen();
         switch (type) {
           case 'report_header':
           case 'header':
@@ -670,15 +653,28 @@
             body.appendChild(el('div', {class: 'ui-pl-modal-status'},
               [(data.Summary || data.text || ''), el('span', {class: 'ui-pl-spinner'})]));
             break;
+          case 'report_stream':
+          case 'chunk':
+            var statusEl = body.querySelector('.ui-pl-modal-status');
+            if (statusEl) statusEl.remove();
+            streamRaw += (data.Body || data.text || '');
+            body.dataset.raw = streamRaw;
+            reportReveal.update(streamRaw);
+            // Don't auto-scroll-to-bottom on each chunk — that
+            // pushes the overlay past the headline and forces the
+            // user to scroll back up. Scroll to top on done instead.
+            break;
           case 'report_replace':
             streamRaw = data.Body || '';
             body.dataset.raw = streamRaw;
+            reportReveal.jump(streamRaw);
             var c2 = body.querySelector('.ui-pl-modal-content');
             if (c2) uiRenderMarkdown(c2, streamRaw);
             streamPaint = null; // drawn whole; the next chunk starts a painter over it
             break;
           case 'report_done':
           case 'done':
+            reportReveal.finish(); // the whole report on screen
             headerActions.style.display = '';
             var s = body.querySelector('.ui-pl-modal-status');
             if (s) s.remove();
@@ -691,6 +687,7 @@
             });
             break;
           case 'error':
+            reportReveal.stop();
             // As text: the message can carry a provider's error, which can
             // quote whatever it was sent. Built with innerHTML it was markup.
             body.innerHTML = '';
@@ -872,7 +869,6 @@
     }
 
     function clearTranscript() {
-      blockPacer.drop();
       blockEls = {};
       transcript.innerHTML = '';
     }
@@ -915,14 +911,23 @@
       var rec = blockEls[id] || ensureBlock(id, 'text', {});
       rec.raw += text;
       // Live render as plain text so partial markdown doesn't break
-      // intermediate paint. finalizeBlock runs mdToHTML on done.
-      if (rec.body) rec.body.textContent = rec.raw;
-      scrollTranscript();
+      // intermediate paint. finalizeBlock runs mdToHTML on done. rec.raw is
+      // whole and current; the revealer paints it evenly, a few characters a
+      // frame (display only: every event still applies on arrival).
+      if (!rec.reveal) {
+        rec.reveal = window.uiStreamReveal(function(prefix) {
+          if (rec.body && !rec.done) rec.body.textContent = prefix;
+          scrollTranscript();
+        }, {instant: replayWindow.active});
+      }
+      rec.reveal.update(rec.raw);
     }
 
     function finalizeBlock(id) {
       var rec = blockEls[id];
       if (!rec || rec.done) return;
+      // All of the text on screen before the block settles.
+      if (rec.reveal) rec.reveal.finish();
       rec.done = true;
       if (rec.body && cfg.markdown && rec.raw.trim()) {
         uiRenderMarkdown(rec.body, rec.raw);
@@ -1136,7 +1141,7 @@
         var buf = '';
         function pump() {
           return reader.read().then(function(res) {
-            if (res.done) { blockPacer.flush(); finish(); return; }
+            if (res.done) { finish(); return; }
             buf += decoder.decode(res.value, {stream: true});
             var idx;
             while ((idx = buf.indexOf('\n\n')) >= 0) {
@@ -1229,6 +1234,7 @@
         }).catch(function(){});
       }
       activeStream = new AbortController();
+      replayWindow.arm(); // what it replays shows at once
       fetch(url, {signal: activeStream.signal}).then(function(r) {
         if (r.status === 404) {
           // Not live anymore — load the saved record instead.
@@ -1242,7 +1248,7 @@
         var buf = '';
         function pump() {
           return reader.read().then(function(res) {
-            if (res.done) { blockPacer.flush(); finish(); return; }
+            if (res.done) { finish(); return; }
             buf += decoder.decode(res.value, {stream: true});
             var idx;
             while ((idx = buf.indexOf('\n\n')) >= 0) {
@@ -1272,15 +1278,7 @@
       }
       var data = {};
       if (dataStr) { try { data = JSON.parse(dataStr); } catch(e) {} }
-      // Text goes to the pacer; any other event waits behind the text that
-      // arrived before it, so a block's end lands after its words, as sent.
-      if (ev === 'chunk') { blockPacer.chunk(data.id || 'main', data.text || ''); return; }
-      blockPacer.after(function() { applyEvent(ev, data); });
-    }
-
-    // applyEvent is one event other than text, applied in order behind the
-    // text that arrived before it.
-    function applyEvent(ev, data) {
+      replayWindow.seen();
       switch (ev) {
         case 'session':
           if (data.id) {
@@ -1311,6 +1309,9 @@
         case 'block_meta':
           applyBlockMeta(data.id, data);
           break;
+        case 'chunk':
+          appendChunk(data.id || 'main', data.text || '');
+          break;
         case 'chunk_replace':
           // Replace the entire body of a block with new content.
           // Accepts either "text" (legacy streaming chunks)
@@ -1324,6 +1325,7 @@
           if (rec) {
             var raw = String((data.body != null ? data.body : data.text) || '');
             rec.raw = raw;
+            if (rec.reveal) rec.reveal.jump(raw); // drawn whole just below
             // The "body" field signals the caller is sending a
             // complete current snapshot (as opposed to streamed
             // chunks). Render it as markdown so contained-window
