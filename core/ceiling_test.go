@@ -329,7 +329,10 @@ const (
 	// 2268: StageGather, the kind that searches and reads pages into the
 	// run's sources, so gathering is a step a pipeline names rather than a
 	// tool loop it hopes a worker runs.
-	coreExportCeiling = 2268
+	// 2269: ToolSessionFromContext, so a tool an app hands the loop can reach
+	// the turn's session: the pictures the user attached to the message, which
+	// only built-in tools could see before.
+	coreExportCeiling = 2269
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

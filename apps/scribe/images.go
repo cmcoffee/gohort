@@ -100,7 +100,51 @@ func (T *Scribe) handleImageUpload(w http.ResponseWriter, r *http.Request, udb D
 	imgID := newID()
 	ownerUDB.Set(guideImagesTable, guideImageKey(g.ID, imgID), guideImage{Mime: mime, Data: data, Name: name, Created: now()})
 	path := T.guideImagePath(g.ID, imgID)
-	writeJSON(w, map[string]string{"url": path, "markdown": "![" + imageAltFrom(name) + "](" + path + ")"})
+	md := "![" + imageAltFrom(name) + "](" + path + ")"
+	// place=1: a picture dropped on the rendered guide, not into an editor.
+	// It goes into the section it was dropped on (section=<id>), or the last
+	// one, and the guide is saved: the editor's cursor is the other way in.
+	if r.URL.Query().Get("place") != "" {
+		title := placeImageInSection(&g, strings.TrimSpace(r.URL.Query().Get("section")), md)
+		if title == "" {
+			http.Error(w, "the guide has no section to put a picture in yet: add one first", http.StatusBadRequest)
+			return
+		}
+		saveGuideRev(ownerUDB, g, "Added a picture to "+title)
+		writeJSON(w, map[string]any{"url": path, "markdown": md, "placed": true, "section": title})
+		return
+	}
+	writeJSON(w, map[string]string{"url": path, "markdown": md})
+}
+
+// placeImageInSection appends an image's markdown to the section with that
+// id, or to the last section when the id names none, as its own paragraph.
+// Returns the section's title, or "" when the guide has no sections.
+func placeImageInSection(g *Guide, sectionID, md string) string {
+	if len(g.Sections) == 0 {
+		return ""
+	}
+	idx := -1
+	for i, s := range g.Sections {
+		if sectionID != "" && s.ID == sectionID {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		sorted := g.sorted()
+		last := sorted[len(sorted)-1].ID
+		for i, s := range g.Sections {
+			if s.ID == last {
+				idx = i
+			}
+		}
+	}
+	body := strings.TrimRight(g.Sections[idx].Markdown, "\n ")
+	if body != "" {
+		body += "\n\n"
+	}
+	g.Sections[idx].Markdown = body + md + "\n"
+	return g.Sections[idx].Title
 }
 
 // imageAltFrom turns an uploaded file name into alt text: a pasted screenshot
