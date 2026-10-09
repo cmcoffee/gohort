@@ -456,6 +456,16 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 			out["script_name"] = tt.ScriptName
 		}
 	}
+	// Notes and helper files ride through an update's re-run of create, or an
+	// edit would drop them. Helpers are CARRIED, not forced: create gathers a
+	// fresh copy from the workspace when one is there, and only falls back to
+	// these when it finds none (see applyToolExtras).
+	if strings.TrimSpace(tt.Notes) != "" {
+		out["notes"] = tt.Notes
+	}
+	if len(tt.WorkspaceFiles) > 0 {
+		out[carriedWorkspaceFiles] = recipeFilesToArgs(tt.WorkspaceFiles)
+	}
 	// Sandbox capability + state fields the create path consumes from args.
 	// The update schema has NO parameter for any of these (there's no
 	// hook_capabilities / raw_network / state_path / cache update field), so

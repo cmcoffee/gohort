@@ -343,6 +343,13 @@ type TempTool struct {
 	// sharing the session workspace.
 	WorkspaceFiles []RecipeFile `json:"workspace_files,omitempty"`
 
+	// Notes are for whoever edits the tool next, not for the model choosing
+	// it: what it works around, why a param is optional, what was tried and
+	// failed, what its output looks like. Description is the one-line catalog
+	// pitch re-sent every turn; this is the tool's memory, kept with it so it
+	// exports with it and a fix months later starts from what was known.
+	Notes string `json:"notes,omitempty"`
+
 	// StatePath, when set, names a relative subdirectory inside the
 	// deployed sandbox whose contents are preserved across dispatches.
 	// Use for tools that legitimately need runtime state (counters,

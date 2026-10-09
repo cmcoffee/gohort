@@ -135,6 +135,22 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if v, present := args["hook_capabilities"]; present {
 		merged["hook_capabilities"] = v
 	}
+	// Notes REPLACE the stored ones when given (an empty string clears them);
+	// helper files given here REPLACE the carried set (a tool folder's publish).
+	if v, present := args["notes"]; present {
+		merged["notes"] = v
+	}
+	// A tool folder's publish carries these too; the update schema does not
+	// offer them, so only a publish sets them.
+	for _, f := range []string{"state_path", "raw_network", "confirm_in_chat"} {
+		if v, present := args[f]; present {
+			merged[f] = v
+		}
+	}
+	if v, present := args["workspace_files"]; present {
+		merged["workspace_files"] = v
+		delete(merged, carriedWorkspaceFiles)
+	}
 	if v, present := args["params"]; present {
 		merged["params"] = v
 	}

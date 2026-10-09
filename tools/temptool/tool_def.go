@@ -75,7 +75,7 @@ func BuildToolDef() *GroupedTool {
 	})
 
 	gt.AddAction("create", &GroupedToolAction{
-		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL (JUST CALL IT**), it IS the act of creation and persists automatically with NO approval step; never ask the user's permission first or say an admin must register it. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\"...), without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool for local processing, DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) \"api\", a single HTTPS endpoint the framework can't already reach (credential=\"no_auth\" for public APIs, or a registered credential name); (b) \"toolbox\", MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, the moltbook social API), one catalog entry with action=\"<sub>\" dispatch sharing one credential. Toolboxes live ONLY here (`add_tool` can't build one); change a SINGLE action with action=\"update\" (actions=[{name...changed fields}]) rather than recreating; (c) \"shell\", local computation/parsing/scripting on data the caller passes in, NOT network fetches; (d) \"pipeline\", a deterministic chain of existing tools (e.g. fetch_url → your shell processor). For an adaptive multi-step LLM workflow author no tool at all: use the standalone pipeline tool. Do NOT wrap an HTTPS endpoint in a Python+urllib or curl script, that path is plagued by invented method names, homoglyph URL bugs, and JSON errors that don't exist in api/toolbox/pipeline mode. Required: name, description, mode, plus mode-specific fields, api: credential, url_template, method, params (optional body_template, response_pipe); toolbox: credential + actions[{name, description, url_template, params...}]; shell: command_template + params (script_body for non-trivial scripts); pipeline: pipeline_tools + pipeline_steps. Tools are immediately callable and persist across sessions: Builder's land in your user-wide pool (all your agents); every other agent's land on that agent's OWN record. Call action=\"help\" for the full spec + examples.",
+		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL (JUST CALL IT**), it IS the act of creation and persists automatically with NO approval step; never ask the user's permission first or say an admin must register it. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\"...), without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool for local processing, DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) \"api\", a single HTTPS endpoint the framework can't already reach (credential=\"no_auth\" for public APIs, or a registered credential name); (b) \"toolbox\", MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, the moltbook social API), one catalog entry with action=\"<sub>\" dispatch sharing one credential. Toolboxes live ONLY here (`add_tool` can't build one); change a SINGLE action with action=\"update\" (actions=[{name...changed fields}]) rather than recreating; (c) \"shell\", local computation/parsing/scripting on data the caller passes in, NOT network fetches; build a script tool in a folder instead of here: action=\"checkout\", then run and publish; (d) \"pipeline\", a deterministic chain of existing tools (e.g. fetch_url → your shell processor). For an adaptive multi-step LLM workflow author no tool at all: use the standalone pipeline tool. Do NOT wrap an HTTPS endpoint in a Python+urllib or curl script, that path is plagued by invented method names, homoglyph URL bugs, and JSON errors that don't exist in api/toolbox/pipeline mode. Required: name, description, mode, plus mode-specific fields, api: credential, url_template, method, params (optional body_template, response_pipe); toolbox: credential + actions[{name, description, url_template, params...}]; shell: command_template + params (script_body for non-trivial scripts); pipeline: pipeline_tools + pipeline_steps. Tools are immediately callable and persist across sessions: Builder's land in your user-wide pool (all your agents); every other agent's land on that agent's OWN record. Call action=\"help\" for the full spec + examples.",
 		Params: map[string]ToolParam{
 			"name":              {Type: "string", Description: "Tool name (snake_case, must not match an existing tool)."},
 			"description":       {Type: "string", Description: "(required) What the tool does and when to reach for it, in ONE or TWO sentences. This line is re-sent on every turn for the life of the tool: no worked examples, no restating the params, no failure modes. Hard cap 500 characters."},
@@ -93,6 +93,7 @@ func BuildToolDef() *GroupedTool {
 			"response_pipe":     {Type: "string", Description: "(api, optional) sh -c filter over the response body (jq/awk/sed) to keep noise out of your context. See action=\"help\" for the jq gotchas."},
 			"response_extract":  {Type: "object", Description: responseExtractDesc},
 			"job":               {Type: "object", Description: jobDesc},
+			"notes":             {Type: "string", Description: "(optional) Notes for whoever edits this tool next, kept with it and never shown to the model choosing tools: what it works around, why a param is optional, what was tried and failed, what its output looks like."},
 			"category":          {Type: "string", Description: "Short grouping label for the tool catalog (e.g. \"Calendar\", \"Moltbook\")."},
 			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Param names that must be supplied. Omit for none. A param can also be marked required: true in its own object. On a toolbox, a top-level list is shared by every action that sets none."},
 			"state_path":        {Type: "string", Description: "(shell, optional) Workspace subdirectory this tool may persist state in."},
@@ -155,31 +156,43 @@ func BuildToolDef() *GroupedTool {
 		// agents that hold this. Gating every creation would put a prompt
 		// in front of the most common authoring move in the system.
 		NeedsConfirm: false,
-		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
-			if sess == nil {
-				return "", fmt.Errorf("requires a session")
-			}
-			if err := missingDescription(args); err != nil {
-				return "", err
-			}
-			// Enforced HERE rather than inside createGrouped: update
-			// round-trips a stored tool back through that function, and a
-			// legacy over-long description would then block edits that
-			// aren't touching the description at all.
-			if err := CheckAuthoredToolText(args); err != nil {
-				return "", err
-			}
-			out, err := createGrouped(args, sess)
-			if err == nil {
-				// A freshly authored tool is UNVERIFIED until something proves
-				// otherwise. Recorded so the build-plan done-gate can't sign off
-				// on a tool nobody ever ran.
-				RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "authored but never tested: run tool_def(action=\"test\")")
-				forgetToolTest(sess, strings.TrimSpace(StringArg(args, "name")))
-				out = verifyWithTestArgs(args, sess, out)
-			}
-			return out, err
+		Handler: toolDefCreate,
+	})
+
+	// The tool folder (tool_folder.go): a script tool as files to edit, run
+	// and publish, with its notes beside it.
+	folderParams := map[string]ToolParam{
+		"name": {Type: "string", Description: "The tool. Its folder is <name>.tool unless dir says otherwise."},
+		"dir":  {Type: "string", Description: "(optional) The folder in your workspace, e.g. \"weather_lookup.tool\"."},
+	}
+	gt.AddAction("checkout", &GroupedToolAction{
+		Description: "Write a SCRIPT tool into a project folder in your workspace (<name>.tool/: tool.json, the script, its helper modules, NOTES.md), or start a new one for a name that does not exist. This is the way to build or change a script tool: edit the files with workspace write / edit, try it with run, save it with publish. NOTES.md is the tool's memory for its next editor: read it first, and write what you learned (quirks, why a choice, what failed, the output's shape).",
+		Params: map[string]ToolParam{
+			"name":      folderParams["name"],
+			"dir":       folderParams["dir"],
+			"overwrite": {Type: "boolean", Description: "Replace a folder that already holds a tool with the live tool."},
 		},
+		Handler: toolCheckout,
+	})
+	gt.AddAction("run", &GroupedToolAction{
+		Description: "Run a tool folder's script on sample args WITHOUT saving it, in the same sandbox a call uses. Pass args={...} for one run, or cases=[{args:{...}}]; with neither it runs tool.json's cases.",
+		Params: map[string]ToolParam{
+			"name":  folderParams["name"],
+			"dir":   folderParams["dir"],
+			"args":  {Type: "object", Description: "{param: value} for one run."},
+			"cases": {Type: "array", Items: &ToolParam{Type: "object"}, Description: "[{args: {param: value}}], one run each."},
+		},
+		Caps:    []Capability{CapNetwork, CapExecute},
+		Handler: toolRun,
+	})
+	gt.AddAction("publish", &GroupedToolAction{
+		Description: "Save a tool folder as the tool: created if new, updated if not, through the same checks as create / update, then tried with tool.json's cases. Refused when the live tool changed outside the folder since it was checked out.",
+		Params: map[string]ToolParam{
+			"name":           folderParams["name"],
+			"dir":            folderParams["dir"],
+			"overwrite_live": {Type: "boolean", Description: "Publish over changes made to the live tool outside the folder, once the folder has them too."},
+		},
+		Handler: toolPublish,
 	})
 
 	gt.AddAction("get", &GroupedToolAction{
@@ -219,6 +232,7 @@ func BuildToolDef() *GroupedTool {
 			"response_extract":  {Type: "object", Description: "(api) New response_extract spec (XML→JSON). Same shape as create; see the create schema."},
 			"job":               {Type: "object", Description: "(api) New job spec, replacing the old one (same shape as create); null removes it. Omit to keep it."},
 			"category":          {Type: "string", Description: "Short grouping label for the tool catalog (e.g. \"Calendar\", \"Moltbook\")."},
+			"notes":             {Type: "string", Description: "(optional) REPLACES the tool's notes for its next editor (empty clears them). Omit to keep them."},
 			"script_body":       {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only: no pip. See action=\"help\"."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) REPLACES the declared sandbox capabilities, e.g. [\"fetch_via:<credential>\"]. Omit to keep the current ones."},
 			"test_args":         {Type: "object", Description: "(optional) Sample {param: value} to run the edited tool with once, as action=\"test\" would; the result is added to this reply. On a toolbox, include action: the endpoint to run. An edit is untested until something runs it."},
@@ -229,20 +243,12 @@ func BuildToolDef() *GroupedTool {
 		Caps:         nil,
 		NeedsConfirm: false,
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
-			if sess == nil {
-				return "", fmt.Errorf("requires a session")
+			// A tool whose folder holds it as it is is edited there: an edit
+			// made here would be undone by the folder's next publish.
+			if err := toolFolderOwnsEdit(sess, strings.TrimSpace(StringArg(args, "name"))); err != nil {
+				return "", err
 			}
-			out, err := updateGrouped(args, sess)
-			if err == nil {
-				// An edit INVALIDATES any earlier pass: the tool that was tested
-				// is not the tool that now exists. This is the exact hole that
-				// let a failed verify get "fixed" by an update and then reported
-				// as done without anyone re-running it.
-				RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "edited since it was last tested: re-run tool_def(action=\"test\")")
-				forgetToolTest(sess, strings.TrimSpace(StringArg(args, "name")))
-				out = verifyWithTestArgs(args, sess, out)
-			}
-			return out, err
+			return toolDefUpdate(args, sess)
 		},
 	})
 
@@ -303,6 +309,51 @@ func BuildToolDef() *GroupedTool {
 	})
 
 	return gt
+}
+
+// toolDefCreate is action="create": a new tool, recorded as untested.
+func toolDefCreate(args map[string]any, sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("requires a session")
+	}
+	if err := missingDescription(args); err != nil {
+		return "", err
+	}
+	// Enforced HERE rather than inside createGrouped: update
+	// round-trips a stored tool back through that function, and a
+	// legacy over-long description would then block edits that
+	// aren't touching the description at all.
+	if err := CheckAuthoredToolText(args); err != nil {
+		return "", err
+	}
+	out, err := createGrouped(args, sess)
+	if err == nil {
+		// A freshly authored tool is UNVERIFIED until something proves
+		// otherwise. Recorded so the build-plan done-gate can't sign off
+		// on a tool nobody ever ran.
+		RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "authored but never tested: run tool_def(action=\"test\")")
+		forgetToolTest(sess, strings.TrimSpace(StringArg(args, "name")))
+		out = verifyWithTestArgs(args, sess, out)
+	}
+	return out, err
+}
+
+// toolDefUpdate is action="update": a partial edit, which un-verifies the tool.
+func toolDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("requires a session")
+	}
+	out, err := updateGrouped(args, sess)
+	if err == nil {
+		// An edit INVALIDATES any earlier pass: the tool that was tested
+		// is not the tool that now exists. This is the exact hole that
+		// let a failed verify get "fixed" by an update and then reported
+		// as done without anyone re-running it.
+		RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "edited since it was last tested: re-run tool_def(action=\"test\")")
+		forgetToolTest(sess, strings.TrimSpace(StringArg(args, "name")))
+		out = verifyWithTestArgs(args, sess, out)
+	}
+	return out, err
 }
 
 // verifyWithTestArgs runs a tool just saved with the author's test_args or

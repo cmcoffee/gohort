@@ -111,6 +111,21 @@ func persistentToolLocked(sess *ToolSession, name string) bool {
 const lockedToolMsg = "Tool %q is LOCKED: it can't be modified or deleted. If it genuinely must change, the user unlocks it first in Extensions › Tools, then it's editable. Do NOT recreate it under a different name."
 
 func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
+	files, err := workspaceFilesArg(args["workspace_files"])
+	if err != nil {
+		return "", err
+	}
+	res, err := createGroupedMode(args, sess)
+	if err != nil {
+		return res, err
+	}
+	carried, _ := workspaceFilesArg(args[carriedWorkspaceFiles])
+	applyToolExtras(sess, strings.TrimSpace(StringArg(args, "name")), args, files, carried)
+	return res, nil
+}
+
+// createGroupedMode is the create itself, mode by mode.
+func createGroupedMode(args map[string]any, sess *ToolSession) (string, error) {
 	if name := strings.TrimSpace(StringArg(args, "name")); persistentToolLocked(sess, name) {
 		return fmt.Sprintf(lockedToolMsg, name), nil
 	}

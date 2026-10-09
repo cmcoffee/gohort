@@ -28,6 +28,20 @@ WHERE TO READ (find the heading below):
     SHELL-MODE TOOL"
   - Before calling any tool done: "verify"
 
+A SCRIPT TOOL IS BUILT IN A FOLDER: tool_def(action="checkout",
+name="<tool>") writes <tool>.tool/ into your workspace (a new name
+gets a starter): tool.json (description, params, required,
+hook_capabilities, timeout_sec, the script's filename, cases),
+the script, the helper modules it imports, and NOTES.md. Edit
+them with workspace write / edit; try the script with
+action="run" (args={...}, saves nothing); save with
+action="publish", which creates or updates the tool through the
+same checks and runs tool.json's cases. NOTES.md is the tool's
+memory for whoever edits it next: read it first, and leave what
+you learned (an API quirk it works around, why a param is
+optional, what you tried that failed, the output's shape). Any
+tool takes notes="..." on create and update too.
+
 A WRITE endpoint in a toolbox, the shape that goes wrong most:
     actions=[{name: "create_task", method: "POST",
               url_template: "/v1/tasks",
