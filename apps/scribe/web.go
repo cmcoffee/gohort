@@ -1043,6 +1043,14 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 		} else {
 			tools = readOnlyGuideTools(all)
 		}
+		// A picture for a section: when the deployment has an image generator,
+		// the author may draw one this turn and place it with add_image. Only
+		// onto a list; a blank allowlist already means every tool. A Private
+		// guide keeps it only if the generator is local: ForcePrivate below
+		// strips what reaches the network.
+		if canEdit && len(agent.AllowedTools) > 0 && ImageGenerationAvailable() {
+			agent.AllowedTools = append(append([]string(nil), agent.AllowedTools...), "generate_image")
+		}
 		// A Private guide gets NO internet access this turn: run the agent
 		// ForcePrivate (framework strips network tools + locks worker-tier
 		// routing), strip its web tools from the per-turn copy defensively, and
