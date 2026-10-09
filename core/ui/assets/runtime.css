@@ -4774,15 +4774,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * baseline — the .ui-row-btn default styling carries its own padding
  * that would otherwise tower over the pills. */
 .ui-agent-input-row {
-  display: flex; gap: 0.4rem; align-items: flex-end;
-  /* flex-end (not stretch) so the textarea uses its own height
+  display: flex; gap: 0.4rem; align-items: center;
+  /* center (not stretch) so the textarea uses its own height
    * — governed by min-height + autosizeInput's inline style.height
    * — rather than stretching to match the row's intrinsic height.
    * Without this, the spinner + cancel button showing during a run
    * make the row slightly taller than the resting send-button row,
-   * and the textarea stretches vertically with it. Aligning buttons
-   * to the bottom keeps things visually consistent at rest AND while
-   * a run is in flight. */
+   * and the textarea stretches vertically with it. Centred rather
+   * than bottom-aligned: once the textarea has grown to several
+   * lines, Attach and Send sitting at its foot read as having slid
+   * off the row, and the middle is where the eye expects them. */
   padding: 0.5rem 0.7rem; border-top: 1px solid var(--border);
   background: var(--bg-1);
 }
