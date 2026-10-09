@@ -5409,21 +5409,47 @@
     // expected to replay buffered events on connect (so reconnects
     // are safe) and emit new events as the in-flight session
     // produces them.
+    //
+    // Such a stream replays from the start on EVERY connect, so the
+    // browser's own reconnect after a dropped connection drew the whole
+    // session a second time into the same view. The panel reconnects
+    // itself instead, skipping the events this view already has (skip):
+    // the same session replays the same events in the same order.
     var activeEventSource = null;
-    function subscribeEvents(sid) {
+    var eventsSeen = 0, eventsRetry = 0;
+    function subscribeEvents(sid, skip) {
       if (activeEventSource) { activeEventSource.close(); activeEventSource = null; }
+      skip = skip || 0;
       var url = cfg.events_url + (cfg.events_url.indexOf('?') >= 0 ? '&' : '?') +
         'id=' + encodeURIComponent(sid);
-      activeEventSource = new EventSource(url);
-      activeEventSource.onmessage = function(ev) {
+      sawTurnEnd = false;
+      eventsSeen = skip;
+      var es = new EventSource(url), n = 0;
+      activeEventSource = es;
+      es.onmessage = function(ev) {
+        n++;
+        if (n <= skip) return; // replayed again: this view has it
+        eventsSeen = n;
+        eventsRetry = 0;
         try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
       };
-      activeEventSource.onerror = function() {
-        // EventSource auto-reconnects on transient errors. The server
-        // closes the stream once the session ends; we get a final
-        // onerror in that case and tear down here.
-        if (activeEventSource && activeEventSource.readyState === EventSource.CLOSED) {
-          activeEventSource = null;
+      es.onerror = function() {
+        if (activeEventSource !== es) return;
+        var refused = es.readyState === EventSource.CLOSED && n === 0;
+        es.close();
+        activeEventSource = null;
+        // Finished, or the server would not stream this session at all
+        // (gone, not theirs): the view is as complete as it will get. Gone
+        // on a reconnect means it ended while this view was away, and the
+        // saved thread has its ending.
+        if (refused && skip > 0) { openSession(sid, true); return; }
+        if (sawTurnEnd || refused) { enableInput(); return; }
+        if (eventsRetry++ < 10) {
+          setTimeout(function() {
+            if (activeSessionId === sid && !activeEventSource) subscribeEvents(sid, eventsSeen);
+          }, eventsRetry === 1 ? 500 : 3000);
+        } else {
+          addActivity('error', '', 'Lost the connection to this session. Refresh to see where it got to.');
           enableInput();
         }
       };
@@ -6959,7 +6985,12 @@
     // first), and an idle view checks whether a turn started meanwhile.
     var hiddenAt = 0;
     function backOnPage(long) {
-      if (!cfg.runs_url_base || !activeSessionId || !convoLog || !convoLog.isConnected) return;
+      if (!activeSessionId || !convoLog || !convoLog.isConnected) return;
+      if (!cfg.runs_url_base) {
+        // A replay-from-start stream: reconnect it past what this view has.
+        if (cfg.events_url && turnLive && (long || !activeEventSource)) subscribeEvents(activeSessionId, eventsSeen);
+        return;
+      }
       if (turnLive && (long || !(activeStream || activeEventSource))) { streamLost(); return; }
       if (!turnLive && !(activeStream || activeEventSource)) recheckRun(activeSessionId, 0);
     }
