@@ -117,10 +117,15 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 	msg := fmt.Sprintf("Reverted %q to revision #%d (saved %s; now serving as revision %s). The document is %s; it was %s.",
 		saved.Name, target.Seq, target.Stamp, saved.Updated, appRevisionShape(saved), appRevisionShape(current))
 	if len(appSpecHTMLText(saved)) > 0 {
-		if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
+		errs, checked := appPageRuntimeErrors(t.user, saved.Slug)
+		if len(errs) > 0 {
 			return msg + fmt.Sprintf("\n\nHEADS UP, the restored revision has problems of its own in a real browser:\n- %s\n\nIt is serving; revert again to a different revision (app_def action=\"revisions\") if this one isn't the good copy.", strings.Join(errs, "\n- ")) + undo, nil
 		}
-		msg += " It was loaded in a real browser after restoring and came up clean."
+		if checked {
+			msg += " It was loaded in a real browser after restoring and came up clean."
+		} else {
+			msg += " No browser check could run on it: run app_def(action=\"verify\") before telling the user it works."
+		}
 	}
 	return msg + undo, nil
 }

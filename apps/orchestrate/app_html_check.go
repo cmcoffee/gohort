@@ -250,16 +250,18 @@ func nodeCheckDetail(out string) string {
 // and console errors — because this runs on every save of an html-section app
 // and a noisy gate teaches an author to ignore it.
 //
-// Returns nothing when no browser is available in the build: an unavailable
-// checker must never read as a clean bill of health, and the caller only ever
-// uses a non-empty result to REFUSE, never an empty one to bless.
-func appPageRuntimeErrors(user, slug string) []string {
+// checked is false when no browser is available in the build or the check
+// itself failed: an unavailable checker must never read as a clean bill of
+// health, so a caller says "came up clean" only on checked with no errors.
+// Every caller used to bless an empty result, and a save with no browser
+// behind it told the author its page "rendered with no JS errors".
+func appPageRuntimeErrors(user, slug string) (errs []string, checked bool) {
 	if BrowserCheckPage == nil {
-		return nil
+		return nil, false
 	}
 	rep, err := CheckPageAsUser(RootDB, user, "/apps/"+slug+"/", "")
 	if err != nil || rep == nil {
-		return nil
+		return nil, false
 	}
 	var out []string
 	for _, e := range rep.PageErrors {
@@ -275,7 +277,7 @@ func appPageRuntimeErrors(user, slug string) []string {
 	if len(out) > 6 {
 		out = append(out[:6], fmt.Sprintf("…and %d more", len(out)-6))
 	}
-	return out
+	return out, true
 }
 
 // appHTMLSectionScripts collects the html blobs an authored section array

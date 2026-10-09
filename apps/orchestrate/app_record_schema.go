@@ -195,6 +195,18 @@ func appSampleFieldWarnings(fields map[string]string, sample []map[string]any) [
 	if len(fields) == 0 || len(sample) == 0 {
 		return nil
 	}
+	// A schema that knows only the record key knows nothing: an html page
+	// saves whatever fields it likes through app.records.save, and warning on
+	// every key of a coin-flip game's sample was noise about a working app.
+	named := false
+	for _, typ := range fields {
+		if typ != "key" {
+			named = true
+		}
+	}
+	if !named {
+		return nil
+	}
 	stray := map[string]bool{}
 	for _, rec := range sample {
 		for k := range rec {

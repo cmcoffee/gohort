@@ -235,3 +235,94 @@ func TestTheFolderAndTheLiveAppStayOne(t *testing.T) {
 		t.Fatalf("a folder with no record published over the live app: %v", err)
 	}
 }
+
+// A data source listed without its file read as "app.json names , which is
+// not in the folder", which named nothing, and a build guessed at the key
+// three times. A file at the conventional path is the one meant; with none
+// there, the error names the entry and the shape to write.
+func TestAScriptEntryWithoutAFile(t *testing.T) {
+	turn, ws := folderTestTurn(t)
+	if _, err := turn.appDefCheckout(map[string]any{"name": "Wx"}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(ws, "wx.app")
+	manifest := `{"name":"Wx","slug":"wx","sections":[{"id":"page","kind":"html","html_file":"page.html"}],"data_sources":[{"name":"now"}]}`
+	os.WriteFile(filepath.Join(dir, "app.json"), []byte(manifest), 0o644)
+	_, _, err := turn.appFolderRead(dir, "wx.app")
+	if err == nil || !strings.Contains(err.Error(), `"now"`) || !strings.Contains(err.Error(), `data/now.py`) {
+		t.Fatalf("the error should name the entry and its file: %v", err)
+	}
+	os.MkdirAll(filepath.Join(dir, "data"), 0o755)
+	os.WriteFile(filepath.Join(dir, "data", "now.py"), []byte("print('{}')\n"), 0o644)
+	args, _, err := turn.appFolderRead(dir, "wx.app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(args["data_sources"])
+	if !strings.Contains(string(raw), `print('{}')`) {
+		t.Errorf("data/now.py was not read for the entry: %s", raw)
+	}
+}
+
+// Checking out an app that was never published, when its folder is already
+// here, hands the folder back rather than refusing: there is no live app for
+// it to conflict with.
+func TestCheckoutReusesAnUnpublishedFolder(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	if _, err := turn.appDefCheckout(map[string]any{"name": "Wx"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := turn.appDefCheckout(map[string]any{"name": "Wx"})
+	if err != nil || !strings.Contains(out, "never published") {
+		t.Fatalf("a second checkout of an unpublished app should hand the folder back: %q %v", out, err)
+	}
+}
+
+// With no browser behind the save, the page check returns nothing, and every
+// caller used to read that as "came up clean": a publish told the author its
+// page "rendered with no JS errors" when no browser had loaded it. Only a
+// check that ran can say so.
+func TestASaveWithNoBrowserDoesNotClaimACleanLoad(t *testing.T) {
+	prev := BrowserCheckPage
+	BrowserCheckPage = nil
+	t.Cleanup(func() { BrowserCheckPage = prev })
+	if _, checked := appPageRuntimeErrors("u", "wx"); checked {
+		t.Fatal("no browser, yet the check says it ran")
+	}
+	turn, _ := folderTestTurn(t)
+	if _, err := turn.appDefCheckout(map[string]any{"name": "Wx"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := turn.appDefPublish(map[string]any{"dir": "wx.app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "no JS errors") || strings.Contains(out, "came up clean") {
+		t.Errorf("a save no browser loaded claimed a clean load:\n%s", out)
+	}
+	if !strings.Contains(out, `action=\"verify\"`) && !strings.Contains(out, `action="verify"`) {
+		t.Errorf("the result should send the author to verify:\n%s", out)
+	}
+}
+
+// Notes passed to publish while NOTES.md is still the starter are the ones
+// meant: they reach the app and the folder, not the starter line.
+func TestPublishNotesOverAStarterFile(t *testing.T) {
+	turn, ws := folderTestTurn(t)
+	if _, err := turn.appDefCheckout(map[string]any{"name": "Wx"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := turn.appDefPublish(map[string]any{"dir": "wx.app", "notes": "Shows the weather for one city."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "still the starter") {
+		t.Errorf("the passed notes were dropped:\n%s", out)
+	}
+	if spec, _ := LoadAppSpec("u", "wx"); spec.Notes != "Shows the weather for one city." {
+		t.Errorf("app notes = %q", spec.Notes)
+	}
+	if b, _ := os.ReadFile(filepath.Join(ws, "wx.app", "NOTES.md")); !strings.Contains(string(b), "one city") {
+		t.Errorf("NOTES.md = %q", b)
+	}
+}

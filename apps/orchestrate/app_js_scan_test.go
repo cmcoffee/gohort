@@ -555,3 +555,19 @@ func TestScopeGuardIgnoresPropertiesAndKeys(t *testing.T) {
 		t.Errorf("the real free identifier was missed: %v", free)
 	}
 }
+
+// "async () => {" put "async(" in front of the call scan, so a working reset
+// handler was reported as calling a function nothing defines, and the build
+// rewrote correct code to get past it. async and a dynamic import( are
+// language, not calls.
+func TestJSDanglingCallsIgnoresAsyncArrows(t *testing.T) {
+	page := `<script>
+btn.addEventListener("click", async () => { await go(); });
+const load = async (x) => x;
+import("./mod.js");
+function go() {}
+</script>`
+	if got := jsDanglingCalls(page); len(got) != 0 {
+		t.Errorf("language keywords read as calls: %v", got)
+	}
+}

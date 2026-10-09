@@ -130,10 +130,16 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	// failure put the previous revision back rather than leaving a dead app.
 	// The restore files no history of its own — the broken revision existed for
 	// milliseconds and is not a version anyone would want back.
-	if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
+	errs, checked := appPageRuntimeErrors(t.user, saved.Slug)
+	if len(errs) > 0 {
 		SaveAppSpecAs(before, AppSaveNoHistory)
 		return "", fmt.Errorf("that %s broke the page in a real browser, so it was ROLLED BACK, the app is serving the previous revision again:\n- %s\n\nFix the replacement text and try again",
 			verb, strings.Join(errs, "\n- "))
+	}
+	if !checked {
+		t.noteAppStanding(saved.Slug, false, "saved, and no browser check could run: run app_def(action=\"verify\")")
+		return fmt.Sprintf(summary, htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated) +
+			" The page parsed, but no browser check could run on this save: run app_def(action=\"verify\") before telling the user it works.", nil
 	}
 	t.noteAppStanding(saved.Slug, true, "")
 	return fmt.Sprintf(summary, htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated) +

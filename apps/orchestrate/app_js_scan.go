@@ -207,6 +207,7 @@ var jsKeywords = map[string]bool{
 	"of": true, "do": true, "else": true, "case": true, "throw": true, "with": true,
 	"await": true, "yield": true, "instanceof": true, "class": true, "super": true, "this": true,
 	"var": true, "let": true, "const": true, "try": true, "finally": true, "break": true, "continue": true,
+	"async": true, "import": true,
 }
 
 // jsGlobals are the host and language names an app can call without defining.

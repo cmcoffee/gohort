@@ -340,6 +340,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// usually against the previous revision, which is how a single stray
 	// token turns into six updates that never converge. Answer here, attached
 	// to the write that caused it, naming the block and line.
+	pageChecked := false // a browser loaded THIS revision, below
 	if raw, ok := args["sections"]; ok && raw != nil {
 		var scriptProblems []string
 		for i, html := range appHTMLSectionScripts(raw) {
@@ -375,7 +376,9 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		// report about code it already rewrote, and "fixes" a line that no
 		// longer exists. Checking the write's own output cannot go stale.
 		if len(appHTMLSectionScripts(raw)) > 0 {
-			if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
+			errs, checked := appPageRuntimeErrors(t.user, saved.Slug)
+			pageChecked = checked
+			if len(errs) > 0 {
 				t.noteAppStanding(saved.Slug, false, "its page fails in a real browser: "+errs[0])
 				return appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.%s",
 					verb, saved.Name, strings.Join(errs, "\n- "), saved.Slug, plan), parseNotes), nil
@@ -419,8 +422,13 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		t.noteAppStanding(saved.Slug, false, "built only from typed sections in an app session")
 	} else if contractBroken {
 		t.noteAppStanding(saved.Slug, false, "the page calls an endpoint the app does not have (see the last app_def result)")
-	} else if _, ok := args["sections"]; ok && len(appHTMLSectionScripts(args["sections"])) > 0 {
+	} else if pageChecked {
 		t.noteAppStanding(saved.Slug, true, "")
+		// The Status clause up top was written before this save loaded the
+		// page, and it still said "never verified: run verify", so one result
+		// told the author both that the page had passed and that it had not
+		// been checked.
+		msg = strings.Replace(msg, "Status: "+saved.VerifyStatus()+".", "Status: loaded in a real browser by this save, no JS errors.", 1)
 		msg += "\nThis save already parsed the inline JavaScript AND loaded /apps/" + saved.Slug + "/ in a real browser: it rendered with no JS errors. That check covered THIS revision, so you don't need a separate verify unless you change the app again."
 	} else if !isUpdate || appUpdateChangesBehavior(args) {
 		t.noteAppStanding(saved.Slug, false, "saved, and not yet verified in a browser: run app_def(action=\"verify\")")

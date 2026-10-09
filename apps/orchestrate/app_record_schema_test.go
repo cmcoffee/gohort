@@ -94,3 +94,11 @@ func TestAppSampleFieldWarnings(t *testing.T) {
 		t.Fatal("no schema, no basis to warn")
 	}
 }
+
+// A schema with only the record key in it (an html page that saves its own
+// fields) has nothing to compare a sample with, so it warns about nothing.
+func TestSampleWarningsNeedANamedField(t *testing.T) {
+	if w := appSampleFieldWarnings(map[string]string{"id": "key"}, []map[string]any{{"guess": "heads"}}); w != nil {
+		t.Errorf("a key-only schema warned: %v", w)
+	}
+}

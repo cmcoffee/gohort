@@ -99,11 +99,17 @@ func (t *chatTurn) appDefCheckout(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(filepath.Join(abs, "app.json")); err == nil && !boolArg(args, "overwrite") {
-		return "", fmt.Errorf("%s already holds an app folder: edit it, publish it, or pass overwrite=true to replace it with the live app", rel)
-	}
 	id := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, exists := LoadAppSpec(t.user, id)
+	if _, err := os.Stat(filepath.Join(abs, "app.json")); err == nil && !boolArg(args, "overwrite") {
+		// A folder for an app that was never published is work in progress,
+		// not a conflict: refusing it sent a build to inspect and second-guess
+		// its own leftovers. Hand it back to build on.
+		if !exists {
+			return fmt.Sprintf("%s/ is already here and was never published (no live app %q): build on it. List its files with workspace(action=\"ls\", path=%q); pass overwrite=true for a fresh starter instead.", rel, id, rel), nil
+		}
+		return "", fmt.Errorf("%s already holds an app folder: edit it, publish it, or pass overwrite=true to replace it with the live app", rel)
+	}
 	if !exists {
 		return t.appFolderScaffold(abs, rel, args)
 	}
@@ -286,6 +292,26 @@ func (t *chatTurn) appFolderScaffold(abs, rel string, args map[string]any) (stri
 	return fmt.Sprintf("Started a new app folder %s/ for %q: app.json (one html section, page.html), a starter page.html already wired to window.app, and NOTES.md. Add a data source by writing data/<name>.py and listing it in app.json's data_sources ({\"name\", \"file\", \"capabilities\"}); an action likewise under actions/. Code more than one script needs goes in lib/<name>.py once (no listing needed), imported as `from <name> import ...`. Run a backend file with app_def(action=\"run\", dir=%q, file=...), then app_def(action=\"publish\", dir=%q) creates the app.", rel, name, rel, rel), nil
 }
 
+// appFolderScriptFile is the file a script entry that names none stands for:
+// the one at the conventional path, when it exists. An author who listed
+// {"name": "stats"} next to data/stats.py meant that file.
+func appFolderScriptFile(abs, name string, isAction bool) string {
+	if name == "" {
+		return ""
+	}
+	dirs := []string{"data"}
+	if isAction {
+		dirs = []string{"actions", "action"}
+	}
+	for _, d := range dirs {
+		f := d + "/" + name + ".py"
+		if _, err := os.Stat(filepath.Join(abs, f)); err == nil {
+			return f
+		}
+	}
+	return ""
+}
+
 // appFolderRead loads a folder into app_def's create/update arguments.
 func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderManifest, error) {
 	var m appFolderManifest
@@ -332,6 +358,16 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 	scripts := func(list []appFolderScript, isAction bool) ([]any, error) {
 		out := []any{}
 		for _, s := range list {
+			if s.File == "" {
+				s.File = appFolderScriptFile(abs, s.Name, isAction)
+			}
+			if s.File == "" {
+				kind, dir := "data source", "data"
+				if isAction {
+					kind, dir = "action", "actions"
+				}
+				return nil, fmt.Errorf("%s/app.json lists the %s %q with no file: write it as {\"name\": %q, \"file\": \"%s/%s.py\"}", rel, kind, s.Name, s.Name, dir, s.Name)
+			}
 			body, err := readFile(s.File)
 			if err != nil {
 				return nil, err
@@ -440,6 +476,14 @@ func (t *chatTurn) appDefPublish(args map[string]any) (string, error) {
 	}
 	if n := strings.TrimSpace(stringArg(args, "note")); n != "" {
 		in["note"] = n
+	}
+	// Notes passed to publish over a starter NOTES.md are the notes meant:
+	// the folder copy won, and a build that wrote good notes in the call was
+	// told its notes were still the starter. They go into NOTES.md too, so
+	// the folder and the live app keep one copy.
+	if n := strings.TrimSpace(stringArg(args, "notes")); n != "" && appNotesIsStarter(stringArg(in, "notes"), m.Name) {
+		in["notes"] = n
+		os.WriteFile(filepath.Join(abs, "NOTES.md"), []byte(n+"\n"), 0o644)
 	}
 	out, err := t.appDefCreateOrUpdate(in, exists)
 	if err != nil {
@@ -637,13 +681,20 @@ const appNotesStarter = "Plan: what a complete version of this app includes beyo
 // not a refusal: what the notes say is the author's call.
 func appNotesNote(prev *AppSpec, saved AppSpec, rel string) string {
 	notes := strings.TrimSpace(saved.Notes)
-	if notes == "" || strings.Contains(notes, appNotesStarter) && len(notes) < len(appNotesStarter)+len(saved.Name)+16 {
+	if appNotesIsStarter(notes, saved.Name) {
 		return fmt.Sprintf("NOTES: %s/NOTES.md is still the starter. Write what this app is, the choices you made and why, and what you left out, then publish again: it is what the next person to change it (or anyone the app is packed for) starts from.", rel)
 	}
 	if prev != nil && strings.TrimSpace(prev.Notes) == notes && appCodeFingerprint(*prev) != appCodeFingerprint(saved) {
 		return fmt.Sprintf("NOTES: the app changed and %s/NOTES.md did not. Add what you changed and why (for a fix, what was wrong), then publish again.", rel)
 	}
 	return ""
+}
+
+// appNotesIsStarter reports notes that say nothing yet: none, or the starter
+// line under the app's name.
+func appNotesIsStarter(notes, name string) bool {
+	notes = strings.TrimSpace(notes)
+	return notes == "" || strings.Contains(notes, appNotesStarter) && len(notes) < len(appNotesStarter)+len(name)+16
 }
 
 // appCodeFingerprint is a digest of what an app does, notes left out.
