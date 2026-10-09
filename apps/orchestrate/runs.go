@@ -376,9 +376,9 @@ func (r *Run) Complete(status string) {
 // OrchestrateApp instance. A background sweeper drops completed
 // runs older than runCleanupAge so the map doesn't grow unbounded.
 type RunRegistry struct {
-	mu      sync.Mutex
-	runs    map[string]*Run // by run ID
-	bySess  map[string]*Run // by runSessKey(user, session) — at most one active run per session
+	mu     sync.Mutex
+	runs   map[string]*Run // by run ID
+	bySess map[string]*Run // by runSessKey(user, session) — at most one active run per session
 	// background is the run working FOR a session without being its turn: a
 	// background task's wake, a scheduled fire posting into it. Apart from
 	// bySess on purpose: claiming bySess cancels the session's running turn,
