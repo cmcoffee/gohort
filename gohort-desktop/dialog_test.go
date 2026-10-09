@@ -20,6 +20,14 @@ func TestAPagesConfirmIsAskedNatively(t *testing.T) {
 			t.Errorf("window.%s does not go through the native dialog", strings.Trim(kind, "'"))
 		}
 	}
+	// An app's page is an inline frame the browser builds from the page's
+	// own HTML, which the proxy never serves, so the parent hands its
+	// dialogs into every frame it can reach, present or added later.
+	for _, want := range []string{"__desktop_dialog_install(f.contentWindow)", "querySelectorAll('iframe')", "new MutationObserver("} {
+		if !strings.Contains(js, want) {
+			t.Errorf("the shim does not reach a page's frames: missing %s", want)
+		}
+	}
 	gp := &gohort_proxy{}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, DIALOG_PATH, strings.NewReader(`{"kind":"confirm","message":"Delete?"}`))
