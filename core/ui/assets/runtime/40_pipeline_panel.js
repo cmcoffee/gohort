@@ -6,6 +6,9 @@
 
     var currentSessionId = '';
     var blockEls = {};       // block id -> DOM element { wrap, body, raw }
+    // Block text reaches its block through the pacer, a few characters a
+    // frame, so it types out evenly however its chunks arrive.
+    var blockPacer = window.uiChunkPacer(function(id, text) { appendChunk(id, text); });
     var liveVerdictBid = null; // most-recent verdict id (for auto-scroll on done)
     var activeStream = null; // AbortController for in-flight submit
 
@@ -560,7 +563,30 @@
 
       var ctrl = new AbortController();
       var streamRaw = '';
+      var streamPaint = null; // the in-progress markdown painter for the content
+      // Report text reaches the content through the pacer, a few characters
+      // a frame, so it types out evenly however its chunks arrive.
+      var modalPacer = window.uiChunkPacer(function(_, text) {
+        var statusEl = body.querySelector('.ui-pl-modal-status');
+        if (statusEl) statusEl.remove();
+        streamRaw += text;
+        body.dataset.raw = streamRaw;
+        var content = body.querySelector('.ui-pl-modal-content');
+        if (!content) {
+          content = el('div', {class: 'ui-pl-modal-content'});
+          body.appendChild(content);
+          streamPaint = null;
+        }
+        // Only the block still being written renders again, so a long report
+        // does not re-render whole on every frame.
+        if (!streamPaint) streamPaint = window.uiStreamMarkdown(content);
+        streamPaint(streamRaw);
+        // Don't auto-scroll-to-bottom on each chunk — that
+        // pushes the overlay past the headline and forces the
+        // user to scroll back up. Scroll to top on done instead.
+      });
       function close() {
+        modalPacer.drop();
         ctrl.abort();
         overlay.remove();
       }
@@ -572,7 +598,7 @@
         var buf = '';
         function pump() {
           return reader.read().then(function(res) {
-            if (res.done) { return; }
+            if (res.done) { modalPacer.flush(); return; }
             buf += dec.decode(res.value, {stream: true});
             var idx;
             while ((idx = buf.indexOf('\n\n')) >= 0) {
@@ -603,6 +629,13 @@
         try { data = JSON.parse(dataStr); } catch (_) {}
         // Legacy report stream uses Type field on anonymous events.
         var type = ev !== 'message' ? ev : (data.Type || data.type || '');
+        // Text goes to the pacer; any other event first lets out the text
+        // held before it, so the report's end lands after its words.
+        if (type === 'report_stream' || type === 'chunk') {
+          modalPacer.chunk('report', data.Body || data.text || '');
+          return;
+        }
+        modalPacer.flush();
         switch (type) {
           case 'report_header':
           case 'header':
@@ -632,27 +665,12 @@
             body.appendChild(el('div', {class: 'ui-pl-modal-status'},
               [(data.Summary || data.text || ''), el('span', {class: 'ui-pl-spinner'})]));
             break;
-          case 'report_stream':
-          case 'chunk':
-            var statusEl = body.querySelector('.ui-pl-modal-status');
-            if (statusEl) statusEl.remove();
-            streamRaw += (data.Body || data.text || '');
-            body.dataset.raw = streamRaw;
-            var content = body.querySelector('.ui-pl-modal-content');
-            if (!content) {
-              content = el('div', {class: 'ui-pl-modal-content'});
-              body.appendChild(content);
-            }
-            uiRenderMarkdown(content, streamRaw);
-            // Don't auto-scroll-to-bottom on each chunk — that
-            // pushes the overlay past the headline and forces the
-            // user to scroll back up. Scroll to top on done instead.
-            break;
           case 'report_replace':
             streamRaw = data.Body || '';
             body.dataset.raw = streamRaw;
             var c2 = body.querySelector('.ui-pl-modal-content');
             if (c2) uiRenderMarkdown(c2, streamRaw);
+            streamPaint = null; // drawn whole; the next chunk starts a painter over it
             break;
           case 'report_done':
           case 'done':
@@ -849,6 +867,7 @@
     }
 
     function clearTranscript() {
+      blockPacer.drop();
       blockEls = {};
       transcript.innerHTML = '';
     }
@@ -1112,7 +1131,7 @@
         var buf = '';
         function pump() {
           return reader.read().then(function(res) {
-            if (res.done) { finish(); return; }
+            if (res.done) { blockPacer.flush(); finish(); return; }
             buf += decoder.decode(res.value, {stream: true});
             var idx;
             while ((idx = buf.indexOf('\n\n')) >= 0) {
@@ -1218,7 +1237,7 @@
         var buf = '';
         function pump() {
           return reader.read().then(function(res) {
-            if (res.done) { finish(); return; }
+            if (res.done) { blockPacer.flush(); finish(); return; }
             buf += decoder.decode(res.value, {stream: true});
             var idx;
             while ((idx = buf.indexOf('\n\n')) >= 0) {
@@ -1248,6 +1267,10 @@
       }
       var data = {};
       if (dataStr) { try { data = JSON.parse(dataStr); } catch(e) {} }
+      // Text goes to the pacer; any other event first lets out the text
+      // held before it, so a block's end lands after its words, as sent.
+      if (ev === 'chunk') { blockPacer.chunk(data.id || 'main', data.text || ''); return; }
+      blockPacer.flush();
       switch (ev) {
         case 'session':
           if (data.id) {
@@ -1277,9 +1300,6 @@
           break;
         case 'block_meta':
           applyBlockMeta(data.id, data);
-          break;
-        case 'chunk':
-          appendChunk(data.id || 'main', data.text || '');
           break;
         case 'chunk_replace':
           // Replace the entire body of a block with new content.

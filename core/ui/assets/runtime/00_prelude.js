@@ -506,6 +506,172 @@
     target.classList.add('ui-md');
     target.innerHTML = mdToHTML(window.uiStripEmDashes(window.uiStripMetaTags(String(raw == null ? '' : raw))));
   };
+  // uiChunkPacer evens out a stream of text chunks. A panel hands it each
+  // chunk event instead of rendering it, and it hands the text on to
+  // deliver(id, text) a few characters per display frame, at the rate text
+  // has been arriving for that id. So a reply types out evenly however its
+  // chunks land: a token at a time from a local server, a sentence at a
+  // time from a hosted API, or a burst after a network stall. The renderer
+  // behind deliver is the panel's own and does not change.
+  //
+  // Order is the caller's to keep, with one call: flush() before handling
+  // any other event. A tool call, a replace or the end of a message then
+  // lands after all the text that came before it, exactly as it was sent.
+  //
+  // The reveal runs about PACER_LAG behind the stream. A backlog past that
+  // (a reconnect replaying a reply, a tab coming back from the background)
+  // is caught up within a few frames rather than typed out at speed.
+  //
+  //   chunk(id, text) a chunk arrived
+  //   flush([id])     deliver everything held now, for one id or all
+  //   drop([id])      forget what is held, for a stream being thrown away
+  var PACER_LAG = 0.3; // seconds of text that may wait to be revealed
+  window.uiChunkPacer = function(deliver) {
+    var streams = {}, order = [], cancel = null, lastTick = 0;
+    function now() {
+      return (window.performance && performance.now) ? performance.now() : Date.now();
+    }
+    function pending() {
+      for (var i = 0; i < order.length; i++) if (streams[order[i]].held) return true;
+      return false;
+    }
+    function schedule() {
+      if (cancel || !pending()) return;
+      if (typeof requestAnimationFrame === 'function') {
+        var id = requestAnimationFrame(tick);
+        cancel = function() { cancelAnimationFrame(id); };
+      } else {
+        var t = setTimeout(tick, 16);
+        cancel = function() { clearTimeout(t); };
+      }
+    }
+    // take is the next n characters of a stream's held text, never ending
+    // between the two halves of a surrogate pair (an emoji).
+    function take(st, n) {
+      n = Math.min(st.held.length, n);
+      var c = st.held.charCodeAt(n - 1);
+      if (n < st.held.length && c >= 0xD800 && c <= 0xDBFF) n++;
+      var out = st.held.slice(0, n);
+      st.held = st.held.slice(n);
+      return out;
+    }
+    function tick() {
+      cancel = null;
+      var t = now(), dt = lastTick ? t - lastTick : 16;
+      lastTick = t;
+      order.slice().forEach(function(id) {
+        var st = streams[id];
+        var backlog = st.held.length;
+        if (!backlog) return;
+        var n;
+        if (dt > 250) {
+          n = backlog; // no frames for a while: the tab was hidden
+        } else if (!st.rate) {
+          n = backlog / 8; // no rate yet: ease the first text in
+        } else {
+          n = st.rate * dt / 1000 + st.carry;
+          var room = st.rate * PACER_LAG;
+          if (backlog > room) n += (backlog - room) / 8;
+        }
+        var step = Math.max(1, Math.floor(n));
+        st.carry = n - Math.floor(n);
+        deliver(id, take(st, step));
+      });
+      if (pending()) schedule();
+      else lastTick = 0;
+    }
+    function ids(id) { return id == null ? order.slice() : (streams[id] ? [id] : []); }
+    return {
+      chunk: function(id, text) {
+        if (!text) return;
+        var st = streams[id];
+        if (!st) {
+          st = streams[id] = {held: '', rate: 0, carry: 0, lastPush: 0};
+          order.push(id);
+        }
+        var t = now();
+        // The arrival rate, from the gap since this stream's last chunk. A
+        // long gap is the model thinking or calling a tool, not its speed.
+        if (st.lastPush && t - st.lastPush < 1000) {
+          var inst = text.length * 1000 / Math.max(t - st.lastPush, 8);
+          st.rate = st.rate ? st.rate * 0.8 + inst * 0.2 : inst;
+        }
+        st.lastPush = t;
+        st.held += text;
+        schedule();
+      },
+      flush: function(id) {
+        ids(id).forEach(function(k) {
+          var st = streams[k];
+          if (st.held) deliver(k, take(st, st.held.length));
+        });
+        if (!pending() && cancel) { cancel(); cancel = null; lastTick = 0; }
+      },
+      drop: function(id) {
+        ids(id).forEach(function(k) { streams[k].held = ''; });
+        if (!pending() && cancel) { cancel(); cancel = null; lastTick = 0; }
+      },
+    };
+  };
+
+  // uiStreamMarkdown returns a painter for markdown still arriving in
+  // target. Only the block still being written renders again on each paint:
+  // the finished blocks before it (up to the last blank line outside a code
+  // fence) render once, as they finish, and stay. Re-rendering a whole long
+  // reply every frame is what used to force a slow repaint interval. An open
+  // code fence is closed for the render, so its code shows as code rather
+  // than as markdown until its real closing fence arrives.
+  window.uiStreamMarkdown = function(target) {
+    var settledSrc = null, tail = [];
+    function nodes(text) {
+      if (!text) return [];
+      var tmp = document.createElement('div');
+      window.uiRenderMarkdown(tmp, text);
+      return Array.prototype.slice.call(tmp.childNodes);
+    }
+    return function(src) {
+      src = String(src || '');
+      var cut = uiStreamSettledCut(src);
+      var settled = src.slice(0, cut);
+      // Text that changed rather than grew starts over.
+      if (settledSrc == null || settled.lastIndexOf(settledSrc, 0) !== 0) {
+        target.innerHTML = '';
+        target.classList.add('ui-md');
+        settledSrc = '';
+        tail = [];
+      }
+      tail.forEach(function(n) { if (n.parentNode) n.parentNode.removeChild(n); });
+      if (settled.length > settledSrc.length) {
+        nodes(settled.slice(settledSrc.length)).forEach(function(n) { target.appendChild(n); });
+        settledSrc = settled;
+      }
+      var rest = src.slice(cut);
+      if ((rest.match(/```/g) || []).length % 2) rest += '\n```';
+      tail = nodes(rest);
+      tail.forEach(function(n) { target.appendChild(n); });
+    };
+  };
+
+  // uiStreamSettledCut is where the finished blocks of in-progress markdown
+  // end: just past the last blank line outside a code fence, unless what
+  // follows it is a list item or an indented line, which may still belong
+  // to the block above (a loose list, an item's second paragraph). Text
+  // before the cut renders the same alone as in the whole document.
+  function uiStreamSettledCut(src) {
+    var cut = 0, inFence = false, at = 0;
+    var lines = src.split('\n');
+    for (var i = 0; i < lines.length - 1; i++) {
+      var line = lines[i];
+      at += line.length + 1;
+      if (/^\s*```/.test(line)) { inFence = !inFence; continue; }
+      if (inFence || line.trim() !== '') continue;
+      var next = lines[i + 1];
+      if (next.trim() === '' || /^(\s|[-*+]\s|\d+[.)]\s)/.test(next)) continue;
+      cut = at;
+    }
+    return cut;
+  }
+
   // Markdown extension registry — apps add post-processors that
   // run after base mdToHTML passes complete.
   if (!window.UIMarkdownExtensions) window.UIMarkdownExtensions = [];

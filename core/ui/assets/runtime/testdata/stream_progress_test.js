@@ -47,7 +47,7 @@ check('a thinking event updates the line',
 check('the line sits beside the dots',
   /ui-agent-thinking-label/.test(lift(panel, 'function showThinking(', 'showThinking')));
 check('visible text ends it',
-  /case 'chunk':\s*if \(thinkLive && \(ev\.text \|\| ''\)\.trim\(\)\) endThinkLive\(\);/.test(panel));
+  /uiChunkPacer\(function\(id, text\) \{\s*if \(thinkLive && text\.trim\(\)\) endThinkLive\(\);/.test(panel));
 check('a tool call ends it',
   /case 'tool_call': \{\s*endThinkLive\(\);/.test(panel));
 check('the turn ending ends it, timer included',
@@ -90,7 +90,7 @@ check('the seconds advance between server ticks',
   check('with no dots on screen there is nothing to hide or show', thinkingEl === null);
 })();
 check('visible text and a replaced chunk hide them; a thinking event shows them',
-  /appendChunk\(ev\.id, ev\.text \|\| ''\);\s*if \(\(ev\.text \|\| ''\)\.trim\(\)\) writingNow\(\);/.test(panel) &&
+  /appendChunk\(id, text\);\s*if \(text\.trim\(\)\) writingNow\(\);/.test(panel) &&
   /replaceChunk\(ev\.id, ev\.text \|\| ''\);\s*writingNow\(\);/.test(panel) &&
   /noteThinking\(ev\);\s*waitingNow\(\);/.test(panel));
 check('the turn ending clears the quiet timer',
@@ -98,53 +98,122 @@ check('the turn ending clears the quiet timer',
 
 // ---- markdown while streaming ----------------------------------------------
 
-eval(lift(panel, 'function streamingText(', 'streamingText'));
-eval(lift(panel, 'function streamingMarkdown(', 'streamingMarkdown'));
-
-var fence = '```';
-check('an open code fence is closed for the render',
-  streamingMarkdown('Run this:\n' + fence + '\n# a comment') === 'Run this:\n' + fence + '\n# a comment\n' + fence);
-check('a closed one is left alone',
-  streamingMarkdown(fence + '\nx\n' + fence + '\nafter') === fence + '\nx\n' + fence + '\nafter');
-
-// The real showStreaming / paintStreaming, against a fake clock.
-var timers = [];
-function setTimeout(fn) { timers.push(fn); return timers.length; }
-function clearTimeout() {}
-function fire() { var fns = timers; timers = []; fns.forEach(function(f) { f(); }); }
+var prelude = fs.readFileSync(dir + '/00_prelude.js', 'utf8');
+var frames = [];
+function requestAnimationFrame(fn) { frames.push(fn); return frames.length; }
+function cancelAnimationFrame(id) { frames[id - 1] = null; }
+function frame() { var fns = frames; frames = []; fns.forEach(function(f) { if (f) f(); }); }
+var clock = 0;
+var window = {uiStripMetaTags: function(s) { return s; }, performance: {now: function() { return clock; }}};
+var performance = window.performance;
 var renders = [];
-var window = {uiStripMetaTags: function(s) { return s; }};
-function uiRenderMarkdown(body, text) { renders.push(text); body.html = text; }
+// A node per rendered piece, holding the markdown it came from.
+var document = {createElement: function() {
+  return {childNodes: [], set innerHTML(v) { this.childNodes = [{src: v, parentNode: null}]; }, classList: {add: function() {}}};
+}};
+window.uiRenderMarkdown = function(body, text) { renders.push(text); body.innerHTML = text; };
+function fakeBody() {
+  var b = {kids: [], classList: {add: function() {}},
+    appendChild: function(n) { n.parentNode = b; b.kids.push(n); },
+    removeChild: function(n) { b.kids.splice(b.kids.indexOf(n), 1); n.parentNode = null; }};
+  Object.defineProperty(b, 'innerHTML', {set: function() { b.kids.forEach(function(n) { n.parentNode = null; }); b.kids = []; }});
+  return b;
+}
+function shown(b) { return b.kids.map(function(n) { return n.src; }).join(''); }
+eval(lift(prelude, 'function uiStreamSettledCut(', 'uiStreamSettledCut'));
+eval('var PACER_LAG = 0.3;');
+eval(lift(prelude, 'window.uiChunkPacer = function(', 'uiChunkPacer'));
+eval(lift(prelude, 'window.uiStreamMarkdown = function(', 'uiStreamMarkdown'));
+
+// The painter: only the block still being written renders again.
+var pb = fakeBody(), paint = window.uiStreamMarkdown(pb);
+paint('# Title');
+check('the first words render as markdown', shown(pb) === '# Title');
+paint('# Title\n\nFirst paragraph.');
+var before = renders.length;
+paint('# Title\n\nFirst paragraph. More.');
+check('a finished block is not rendered again', renders.length === before + 1 && renders[renders.length - 1] === 'First paragraph. More.');
+check('the whole reply is on screen in order', shown(pb) === '# Title\n\nFirst paragraph. More.');
+var fence = '```';
+paint('# Title\n\nRun:\n' + fence + '\n# a comment');
+check('an open code fence is closed for the render', renders[renders.length - 1] === 'Run:\n' + fence + '\n# a comment\n' + fence);
+paint('Replaced.');
+check('text that changed rather than grew starts over', shown(pb) === 'Replaced.');
+check('a cut never lands inside a code fence', uiStreamSettledCut('a\n\n```\nx\n\ny\n') === 3);
+check('nor before a list item that may belong above', uiStreamSettledCut('- a\n\n- b') === 0);
+check('it lands after a blank line before a paragraph', uiStreamSettledCut('p1\n\np2') === 4);
+
+// The pacer: text comes out a few characters a frame, at the arrival rate.
+var got = [];
+var pacer = window.uiChunkPacer(function(id, text) { got.push(id + ':' + text); });
+pacer.chunk('a', 'Good morning, this is a reply.');
+check('nothing is delivered before a frame', got.length === 0);
+clock += 16; frame();
+check('the first text eases in, not all at once', got.length === 1 && got[0].length < 'a:Good morning, this is a reply.'.length);
+pacer.flush();
+check('flush delivers everything held', got.join('').replace(/a:/g, '') === 'Good morning, this is a reply.');
+check('and asks for no more frames', frames.every(function(f) { return !f; }));
+
+// A steady stream: about the arrival rate comes out per frame.
+got = [];
+var steady = window.uiChunkPacer(function(id, text) { got.push(text); });
+for (var i = 0; i < 30; i++) { clock += 10; steady.chunk('s', 'abcd'); }
+clock += 16; frame();
+var step = got[got.length - 1].length;
+check('a frame reveals about what arrives in one (400 chars/s, 16ms: ~6)', step >= 4 && step <= 30);
+steady.flush();
+check('nothing is lost or reordered', got.join('') === new Array(31).join('abcd'));
+
+// An emoji is never split across two deliveries.
+got = [];
+var emo = window.uiChunkPacer(function(id, text) { got.push(text); });
+emo.chunk('e', 'ab\uD83D\uDE00cd');
+clock += 16; frame(); frame(); frame(); frame(); frame();
+emo.flush();
+check('no delivery ends between the halves of a surrogate pair',
+  got.every(function(t) { var c = t.charCodeAt(t.length - 1); return !(c >= 0xD800 && c <= 0xDBFF); }));
+
+// drop forgets what is held: a view switched to another thread.
+got = [];
+var dropped = window.uiChunkPacer(function(id, text) { got.push(text); });
+dropped.chunk('d', 'stale text for a thread no longer on screen');
+dropped.drop();
+clock += 16; frame();
+check('dropped text is never delivered', got.length === 0);
+
+// The panel's own repaint is once per frame through the shared painter.
+renders = [];
 function unmarkEmptyBubble() {} function markEmptyBubble() {} function scrollConvo() {}
 var cfg = {markdown: true};
-var STREAM_PAINT_MS = 120;
+eval(lift(panel, 'function streamingText(', 'streamingText'));
+eval(lift(panel, 'function streamFrame(', 'streamFrame'));
 eval(lift(panel, 'function showStreaming(', 'showStreaming'));
 eval(lift(panel, 'function paintStreaming(', 'paintStreaming'));
-
+eval(lift(panel, 'function paintStreamingNow(', 'paintStreamingNow'));
 var removed = [];
-var m = {role: 'assistant', rawText: '', body: {},
+var m = {role: 'assistant', rawText: '', body: fakeBody(),
   bubble: {classList: {remove: function(c) { removed.push(c); }}}};
 function chunk(t) { m.rawText += t; showStreaming(m); }
-
-chunk('# Title');
-check('the first words render at once, as markdown', renders.length === 1 && renders[0] === '# Title');
+frames = [];
+chunk('# Title'); chunk('\n\nFirst');
+check('chunks between frames wait for one frame', renders.length === 0 && frames.length === 1);
+frame();
+check('a frame paints what arrived meanwhile', shown(m.body) === '# Title\n\nFirst');
 check('the raw-text pre-wrap comes off once markdown draws', removed.indexOf('ui-agent-msg-streaming') >= 0);
-chunk('\n\nFirst'); chunk(' paragraph.');
-check('chunks inside the interval wait for it', renders.length === 1);
-fire();
-check('the interval paints what arrived meanwhile', renders.length === 2 && renders[1] === '# Title\n\nFirst paragraph.');
-fire();
-check('with nothing new it stops, no idle repaints', renders.length === 2 && timers.length === 0);
+frame();
+check('with nothing new no frame is asked for', frames.length === 0);
 
 cfg.markdown = false;
 var plain = {role: 'assistant', rawText: 'a\n\nb', body: {}, bubble: {classList: {remove: function() {}}}};
+var rendered = renders.length;
 showStreaming(plain);
-check('an app with markdown off keeps plain text', plain.body.textContent === 'a\n\nb' && renders.length === 2);
+frame();
+check('an app with markdown off keeps plain text', plain.body.textContent === 'a\n\nb' && renders.length === rendered);
 
 var finalize = lift(panel, 'function finalizeMessage(', 'finalizeMessage');
 check('finishing cancels a pending repaint before the final render',
-  finalize.indexOf('clearTimeout(m.paintTimer)') >= 0 &&
-  finalize.indexOf('clearTimeout(m.paintTimer)') < finalize.indexOf('uiRenderMarkdown('));
+  finalize.indexOf('m.paintCancel()') >= 0 &&
+  finalize.indexOf('m.paintCancel()') < finalize.indexOf('uiRenderMarkdown('));
 
 // ---- the stats footer ------------------------------------------------------
 

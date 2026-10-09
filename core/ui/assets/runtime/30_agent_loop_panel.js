@@ -153,6 +153,13 @@
     // session for cancel/confirm routing.
     var activeContextId = '';
     var msgEls = {};      // message id -> {bubble, body, role, rawText}
+    // Reply text reaches the bubble through the pacer, a few characters a
+    // frame, so it types out evenly however its chunks arrive.
+    var chunkPacer = window.uiChunkPacer(function(id, text) {
+      if (thinkLive && text.trim()) endThinkLive();
+      appendChunk(id, text);
+      if (text.trim()) writingNow();
+    });
     var activityEls = {}; // activity id -> element
     var blockEls = {};    // app-block id -> {wrap, body}
     var noticeIds = {};   // framework-breadcrumb id -> true (see addNotice)
@@ -1799,7 +1806,7 @@
             // clearConvo() / clearActivity() — wipe a pane. Used by app-defined
             // Clear actions that mirror the legacy chat-header Clear button.
             clearConvo: function() {
-              msgEls = {}; blockEls = {}; noticeIds = {};
+              msgEls = {}; blockEls = {}; noticeIds = {}; chunkPacer.drop();
               convoLog.innerHTML = '';
               emptyMsg = el('div', {class: 'ui-agent-empty'},
                 [cfg.empty_text || 'Start typing below.']);
@@ -3823,19 +3830,17 @@
         .replace(/\s+$/, '');
     }
 
-    // streamingMarkdown is in-progress text as the markdown pass should see
-    // it: a code fence still open gets a closing one, so the code inside
-    // renders as code now instead of as markdown (a # comment as a heading, a
-    // - line as a list) until its real closing fence arrives.
-    function streamingMarkdown(text) {
-      var fences = (text.match(/```/g) || []).length;
-      return fences % 2 ? text + '\n```' : text;
+    // streamFrame runs fn at the next display frame and returns what cancels
+    // it. A hidden tab gets no frames, and nothing is lost: the finished
+    // reply renders in full when it settles.
+    function streamFrame(fn) {
+      if (typeof requestAnimationFrame === 'function') {
+        var id = requestAnimationFrame(fn);
+        return function() { cancelAnimationFrame(id); };
+      }
+      var t = setTimeout(fn, 16);
+      return function() { clearTimeout(t); };
     }
-
-    // STREAM_PAINT_MS spaces markdown repaints of a reply still arriving. A
-    // repaint per chunk would re-render the whole reply dozens of times a
-    // second; this keeps it smooth without visibly lagging the stream.
-    var STREAM_PAINT_MS = 120;
 
     // showStreaming puts a bubble's in-progress text on screen, keeping the
     // bubble hidden while there is nothing visible to show. With markdown on,
@@ -3847,7 +3852,7 @@
       var shown = streamingText(m.rawText);
       m.shownText = shown;
       if (cfg.markdown && m.role === 'assistant') {
-        if (!m.paintTimer) paintStreaming(m);
+        paintStreaming(m);
       } else {
         m.body.textContent = shown;
       }
@@ -3856,16 +3861,26 @@
       scrollConvo(false);
     }
 
-    // paintStreaming renders now and checks back after STREAM_PAINT_MS for
-    // text that arrived in between, so the first words show at once and the
-    // last chunk is never left unpainted.
+    // paintStreaming draws the reply at the next display frame, once however
+    // many chunks arrive before it. It used to repaint at most every 120ms,
+    // and at a hundred tokens a second each repaint added a dozen at once, so
+    // the reply came in half-line jolts. A frame can afford to repaint
+    // because only the block still being written renders again: the finished
+    // blocks before it render once, as they finish, and stay.
     function paintStreaming(m) {
-      m.paintTimer = setTimeout(function() {
-        m.paintTimer = null;
-        if (m.paintedText !== m.shownText) paintStreaming(m);
-      }, STREAM_PAINT_MS);
-      m.paintedText = m.shownText;
-      uiRenderMarkdown(m.body, streamingMarkdown(m.shownText || ''));
+      if (m.paintCancel) return;
+      m.paintCancel = streamFrame(function() {
+        m.paintCancel = null;
+        paintStreamingNow(m);
+      });
+    }
+
+    function paintStreamingNow(m) {
+      var src = m.shownText || '';
+      if (m.paintedText === src) return;
+      if (!m.mdPaint) m.mdPaint = window.uiStreamMarkdown(m.body);
+      m.mdPaint(src);
+      m.paintedText = src;
       // Markdown emits block elements that handle their own spacing; the
       // raw-text pre-wrap would add gaps between them.
       if (m.bubble) m.bubble.classList.remove('ui-agent-msg-streaming');
@@ -3896,7 +3911,9 @@
       if (!m) return;
       // A repaint still pending would draw the in-progress text back over
       // the finished render.
-      if (m.paintTimer) { clearTimeout(m.paintTimer); m.paintTimer = null; }
+      if (m.paintCancel) { m.paintCancel(); m.paintCancel = null; }
+      m.mdPaint = null;
+      m.paintedText = null;
       if (cfg.markdown && m.role === 'assistant') {
         uiRenderMarkdown(m.body, m.rawText || '');
       }
@@ -4645,6 +4662,14 @@
       // one server-Seq tick on the run buffer (Ping/keepalives stay
       // out of the buffer; see sseWriter.emit in runner.go).
       runSeqReceived++;
+      // Text goes to the pacer; any other event first lets out the text
+      // held before it, so a tool card or the end of a message lands after
+      // the words that preceded it, as sent.
+      if (ev.kind === 'chunk') {
+        chunkPacer.chunk(ev.id, ev.text || '');
+        return;
+      }
+      chunkPacer.flush();
       // Drop the thinking indicator only on events that PRODUCE
       // CONVERSATION-PANE content. activity rows go to the activity
       // pane (which some apps lock off entirely), so they
@@ -4654,7 +4679,6 @@
       // session/status events also don't clear; they fire before
       // content arrives and the spinner bridges that gap.
       switch (ev.kind) {
-        case 'chunk':
         case 'chunk_replace':
           // Spinner used to clear here (on first response text), but
           // the new behavior keeps it visible across the whole turn —
@@ -4705,11 +4729,6 @@
           break;
         case 'message':
           addMessage(ev.role || 'assistant', ev.id || ('m-' + Date.now()), ev.text || '');
-          break;
-        case 'chunk':
-          if (thinkLive && (ev.text || '').trim()) endThinkLive();
-          appendChunk(ev.id, ev.text || '');
-          if ((ev.text || '').trim()) writingNow();
           break;
         case 'thinking':
           noteThinking(ev);
@@ -6379,7 +6398,7 @@
     // the rebuild (re-rendering the same thread for "Show earlier"), so that a
     // press does not blank what the reader is looking at while it fetches.
     function clearConvoPanes() {
-      msgEls = {}; activityEls = {}; blockEls = {}; noticeIds = {};
+      msgEls = {}; activityEls = {}; blockEls = {}; noticeIds = {}; chunkPacer.drop();
       // Cleared with the rest of the per-thread state. A stale offset carried
       // into the next thread would misplace its truncate point.
       loadedMsgOffset = 0;
@@ -6577,7 +6596,7 @@
       if (cfg.list_is_context) {
         activeContextId = sid || '';
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid || '');
-        msgEls = {}; noticeIds = {};
+        msgEls = {}; noticeIds = {}; chunkPacer.drop();
         convoLog.innerHTML = '';
         if (!sid) {
           emptyMsg = el('div', {class: 'ui-agent-empty'},

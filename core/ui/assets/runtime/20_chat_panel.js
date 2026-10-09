@@ -968,7 +968,7 @@
         var buffer = '';
         function pump() {
           return reader.read().then(function(out) {
-            if (out.done) { finish(); return; }
+            if (out.done) { chatPacer.flush(); finish(); return; }
             buffer += decoder.decode(out.value, {stream: true});
             // Parse SSE: each event terminated by a blank line.
             var i;
@@ -982,12 +982,37 @@
         }
         return pump();
       }).catch(function(err) {
+        chatPacer.flush();
         if (err.name === 'AbortError') {
           appendError('Cancelled.');
         } else {
           appendError('Error: ' + err.message);
         }
         finish();
+      });
+
+      // Reply text reaches the bubble through the pacer, a few characters a
+      // frame, so it types out evenly however its chunks arrive.
+      var chatPacer = window.uiChunkPacer(function(_, text) {
+        // If the previous round was tool-only, its placeholder
+        // got dropped on the prior done event. Recreate one at
+        // the bottom of the thread so this round's text lands
+        // BELOW any tool pills/results — not above them where
+        // the original placeholder used to sit.
+        if (!assistantMsg || !assistantMsg.parentNode) {
+          assistantMsg = appendMessage('assistant', '');
+          assistantBody = assistantMsg.querySelector('.ui-chat-msg-body');
+          showTyping(assistantBody);
+        }
+        // First chunk replaces the typing indicator. Subsequent
+        // chunks just append to the running reply text.
+        if (fullReply === '') clearTyping(assistantBody);
+        fullReply += text;
+        // Stripped on the way to the screen, not just at the markdown
+        // pass below: streaming sets textContent directly, so an internal
+        // note used to be readable for the length of the stream.
+        assistantBody.textContent = window.uiStripMetaTags(fullReply);
+        scrollToBottom();
       });
 
       function processEvent(raw) {
@@ -1001,28 +1026,11 @@
         if (!ev) return;
         var data = {};
         if (dataStr) { try { data = JSON.parse(dataStr); } catch(e) {} }
+        // Text goes to the pacer; any other event first lets out the text
+        // held before it, so it lands after those words, as sent.
+        if (ev === 'chunk') { chatPacer.chunk('reply', data.text || ''); return; }
+        chatPacer.flush();
         switch (ev) {
-          case 'chunk':
-            // If the previous round was tool-only, its placeholder
-            // got dropped on the prior done event. Recreate one at
-            // the bottom of the thread so this round's text lands
-            // BELOW any tool pills/results — not above them where
-            // the original placeholder used to sit.
-            if (!assistantMsg || !assistantMsg.parentNode) {
-              assistantMsg = appendMessage('assistant', '');
-              assistantBody = assistantMsg.querySelector('.ui-chat-msg-body');
-              showTyping(assistantBody);
-            }
-            // First chunk replaces the typing indicator. Subsequent
-            // chunks just append to the running reply text.
-            if (fullReply === '') clearTyping(assistantBody);
-            fullReply += data.text || '';
-            // Stripped on the way to the screen, not just at the markdown
-            // pass below: streaming sets textContent directly, so an internal
-            // note used to be readable for the length of the stream.
-            assistantBody.textContent = window.uiStripMetaTags(fullReply);
-            scrollToBottom();
-            break;
           case 'thinking_chunk':
             // Stage 1: ignore. Stage 2 will surface in a collapsible block.
             break;
