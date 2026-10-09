@@ -32,6 +32,9 @@ func TestEveryEditorFieldIsSaveable(t *testing.T) {
 		"guardrails": true, "guardrails_disabled": true, "locked": true,
 		"id": true, "owner": true, "created": true,
 		"machine": true,
+		// One choice over lead_model + consult_lead: PATCH translates it into
+		// those two (applyLeadUse) before the allowlist is consulted.
+		"lead_use": true,
 	}
 	var missing []string
 	for _, m := range editorFieldRE.FindAllStringSubmatch(string(src), -1) {

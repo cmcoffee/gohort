@@ -1057,40 +1057,40 @@ func splitAgentFormSections(id, source string, fields []ui.FormField, identitySu
 	return out
 }
 
-// leadModelField is the "Use Lead model" toggle, or a hidden no-op field when
-// the deployment has no distinct lead wired (or the agent is ForcePrivate).
+// leadUseField is the one choice of how the agent uses the lead model:
+// every turn on it, ask it when stuck, or never. It replaces a "Use Lead
+// model" toggle and a "Consult the Lead" select, which were one decision told
+// as two (see applyLeadUse). Strongest first. The option the agent gets when
+// it decides nothing says "(default)".
 //
-// Returns a field either way so it can sit INLINE in the Reasoning group where
-// it belongs, rather than being appended to the end of the form — which is how
-// it ended up filed under "Autonomous runs".
-func leadModelField(show bool) ui.FormField {
+// Hidden, with no value, where the deployment has no distinct lead wired or
+// the agent's conversation must not leave for it: there is nothing to choose.
+func leadUseField(show bool, rec AgentRecord) ui.FormField {
 	if !show {
-		// Type "hidden" with no Default renders nothing and contributes
-		// nothing to the save payload.
-		return ui.FormField{Field: "lead_model", Type: "hidden"}
+		return ui.FormField{Field: "lead_use", Type: "hidden"}
 	}
+	def := leadUseDefault(RootDB, rec)
+	label := func(v, text string) ui.SelectOption {
+		if v == def {
+			text += " (default)"
+		}
+		return ui.SelectOption{Value: v, Label: text}
+	}
+	opts := []ui.SelectOption{label(leadUseLead, "Lead for every turn")}
+	// Consult is offered only where the deployment allows it.
+	for _, c := range deploymentDefaultChoices(RootDB, defaultConsultLead) {
+		if c == settingOn {
+			opts = append(opts, label(leadUseConsult, "Ask the lead when stuck"))
+		}
+	}
+	opts = append(opts, label(leadUseOff, "Never use the lead"))
 	return ui.FormField{
-		Field: "lead_model", Type: "toggle", Label: "Use Lead model for reasoning",
-		Help:   "Run this agent's orchestrator and synthesis turns on the lead model, not the local worker.",
-		Detail: "The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default.\n\nAutomatically ignored on a Private turn, where the conversation stays local. The exception is Admin, LLMs, Model Privacy saying every model is private, in which case escalating keeps it local too.\n\nUsually you do not need this. Consult the Lead, below, lets the agent ask the lead ONE self-contained question when it hits a wall, at a fraction of the cost of sending every round there. Reach for this toggle when the agent's own reasoning, rather than one hard question, is what needs the stronger model.",
-	}
-}
-
-// consultLeadField is "Consult the Lead": whether the agent may ask the lead
-// model one self-contained question when stuck. Shown where the lead toggle
-// is, and for the same reason hidden where that is: with no distinct lead, or
-// for an agent whose conversation must not leave for it.
-func consultLeadField(show bool, rec AgentRecord) ui.FormField {
-	if !show {
-		return ui.FormField{Field: "consult_lead", Type: "hidden"}
-	}
-	return ui.FormField{
-		Field: "consult_lead", Type: "select", Label: "Consult the Lead",
-		Options: settingOptions(RootDB, defaultConsultLead),
-		Help:    settingSource(RootDB, rec, defaultConsultLead),
-		Detail: "On, the agent may ask the lead model ONE self-contained question when it hits a wall: an unfamiliar API's request shape, an error it cannot read. The question and its evidence go to the lead and nothing else does: no tool catalog, no history. The answer comes back as advice to verify, and the agent keeps working. At most three a turn.\n\n" +
-			"This is the cheap way to use the stronger model. Use Lead model for reasoning, above, hands it every turn instead.\n\n" +
-			"The default is set for the whole deployment by an administrator. Agents that can author tools and agents consult by default, as they always have. A Private conversation never consults.",
+		Field: "lead_use", Type: "select", Label: "Lead model", Options: opts,
+		Help: "Which model this agent thinks with: the lead (remote, stronger, costs per turn) or the local worker.",
+		Detail: "Lead for every turn runs the agent's whole turn on the lead model; the dispatched per-step worker phases still run on the worker.\n\n" +
+			"Ask the lead when stuck keeps the turn on the local worker and lets it ask the lead ONE self-contained question when it hits a wall (an unfamiliar API's request shape, an error it cannot read): the question and its evidence go and nothing else does, no history, no tool catalog. At most three a turn. The cheap way to use the stronger model, and the default for agents that build things.\n\n" +
+			"Never use the lead keeps everything on the worker.\n\n" +
+			"A Private conversation never reaches the lead, whatever is chosen here.",
 	}
 }
 
@@ -1235,8 +1235,7 @@ func (T *OrchestrateApp) budgetReasoningFields(editRec AgentRecord, leadModelLoc
 		// otherwise it degrades straight back to the worker and the control
 		// would be a no-op. Hidden for ForcePrivate agents — their
 		// conversation must never leave for the remote lead model (gate 2).
-		leadModelField(T.HasDistinctLead() && !leadModelLocked),
-		consultLeadField(T.HasDistinctLead() && !leadModelLocked, editRec),
+		leadUseField(T.HasDistinctLead() && !leadModelLocked, editRec),
 	}
 }
 

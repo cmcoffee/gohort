@@ -110,7 +110,7 @@ func TestLeadModelFieldSitsInReasoning(t *testing.T) {
 	fields := []ui.FormField{
 		{Type: "header", Label: "Reasoning"},
 		{Field: "think", Type: "select"},
-		leadModelField(true),
+		leadUseField(true, AgentRecord{}),
 		{Type: "header", Label: "Autonomous runs"},
 		{Field: "auto_approve_tools", Type: "tags"},
 	}
@@ -121,17 +121,17 @@ func TestLeadModelFieldSitsInReasoning(t *testing.T) {
 	reasoning := got[0].Body.(ui.FormPanel)
 	found := false
 	for _, f := range reasoning.Fields {
-		if f.Field == "lead_model" {
+		if f.Field == "lead_use" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("lead_model is not in the Reasoning group")
+		t.Error("lead_use is not in the Reasoning group")
 	}
 	autonomous := got[1].Body.(ui.FormPanel)
 	for _, f := range autonomous.Fields {
-		if f.Field == "lead_model" {
-			t.Error("lead_model leaked into Autonomous runs")
+		if f.Field == "lead_use" {
+			t.Error("lead_use leaked into Autonomous runs")
 		}
 	}
 }
@@ -141,7 +141,7 @@ func TestLeadModelFieldSitsInReasoning(t *testing.T) {
 // Reasoning rather than being appended to the end of the form (which is how it
 // got mis-filed in the first place).
 func TestLeadModelFieldHiddenWithoutDistinctLead(t *testing.T) {
-	f := leadModelField(false)
+	f := leadUseField(false, AgentRecord{})
 	if f.Type != "hidden" {
 		t.Errorf("without a distinct lead the toggle should render nothing, got type %q", f.Type)
 	}

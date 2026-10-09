@@ -20,6 +20,7 @@
 package orchestrate
 
 import (
+	"encoding/json"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -331,4 +332,75 @@ func settingSource(db Database, rec AgentRecord, key string) string {
 	// owner does not care which store answered, they care that this agent has
 	// not decided and will move if the default does.
 	return "Default: " + word(effectiveDeploymentDefault(db, key)) + ". This agent has not decided, so it follows." + limit
+}
+
+// How an agent uses the lead model, as one choice. Two fields store it,
+// LeadModel (every turn on the lead) and ConsultLead (the worker may ask the
+// lead when stuck), and they made two controls whose fourth combination did
+// nothing: a turn already on the lead gains nothing by consulting it. The
+// editor shows one choice, lead_use, and these translate both ways.
+const (
+	leadUseLead    = "lead"
+	leadUseConsult = "consult"
+	leadUseOff     = "off"
+)
+
+// leadUseOf is the agent's choice as it stands, its consult setting resolved
+// through the deployment default it may be following.
+func leadUseOf(db Database, a AgentRecord) string {
+	switch {
+	case a.LeadModel:
+		return leadUseLead
+	case settingIsOn(db, a, defaultConsultLead):
+		return leadUseConsult
+	}
+	return leadUseOff
+}
+
+// leadUseDefault is what an agent that has decided nothing gets.
+func leadUseDefault(db Database, a AgentRecord) string {
+	a.LeadModel, a.ConsultLead = false, ""
+	return leadUseOf(db, a)
+}
+
+// applyLeadUse sets the stored fields for choice v. Choosing what the agent
+// already has changes nothing, so a form that sends back every field it
+// loaded never pins an agent that is following the default. A consult choice
+// that matches the default is stored as following it, for the same reason.
+func applyLeadUse(db Database, a *AgentRecord, v string) {
+	v = strings.TrimSpace(v)
+	if v == "" || v == leadUseOf(db, *a) {
+		return
+	}
+	switch v {
+	case leadUseLead:
+		a.LeadModel = true
+	case leadUseConsult, leadUseOff:
+		a.LeadModel = false
+		want := settingOn
+		if v == leadUseOff {
+			want = settingOff
+		}
+		probe := *a
+		probe.ConsultLead = ""
+		if resolveSetting(db, probe, defaultConsultLead) == want {
+			a.ConsultLead = ""
+		} else {
+			a.ConsultLead = want
+		}
+	}
+}
+
+// withLeadUse is the agent's JSON with lead_use beside its fields, for a form
+// that shows the one choice.
+func withLeadUse(db Database, a AgentRecord) map[string]json.RawMessage {
+	raw, _ := json.Marshal(a)
+	var m map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &m)
+	if m == nil {
+		m = map[string]json.RawMessage{}
+	}
+	v, _ := json.Marshal(leadUseOf(db, a))
+	m["lead_use"] = v
+	return m
 }
