@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-// The subtitle has to name the CURRENT policy and say where to change
-// it — it used to say "the Dispatch policy above", pointing at a select
-// inside a collapsed accordion in a different widget.
+// The subtitle has to name the CURRENT policy and say where to change it. It
+// pointed at a "Cortex & delegation" accordion in the agent editor long after
+// the policy had moved to the Security page, right above this list.
 func TestDispatchTargetSubtitle(t *testing.T) {
 	for _, mode := range []string{dispatchAll, dispatchOnly, dispatchExcept, dispatchNone} {
 		got := dispatchTargetSubtitle(mode)
-		if !strings.Contains(got, "Cortex & delegation") {
+		if !strings.Contains(got, "Which agents it can call at all") || strings.Contains(got, "Cortex & delegation") {
 			t.Errorf("%s: subtitle must say where the policy lives: %s", mode, got)
 		}
 		if !strings.Contains(got, "Currently") {

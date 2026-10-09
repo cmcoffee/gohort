@@ -325,7 +325,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 
 			ui.FormField{Type: "header", Label: "Cortex & capability", Collapsed: true,
 				Help:   "Standing behaviors and capability grants.",
-				Detail: "Whether the agent reads its Cortex, plus the conductor toolset (scheduling, monitors, delegate). Building is not a toolset any more: an agent hands it to Builder.\n\nThese add TOOLS; they do not govern who the agent may call. That is the Delegation section further down, which is open by default because its target list sits directly beneath it." + appGrantHelp(user, id)},
+				Detail: "Whether the agent reads its Cortex, plus the conductor toolset (scheduling, monitors, delegate). Building is not a toolset any more: an agent hands it to Builder.\n\nThese add TOOLS; they do not govern who the agent may call. That is Delegation, on the agent's Security page." + appGrantHelp(user, id)},
 			ui.FormField{Field: "channel", Type: "toggle", Label: "Reads its Cortex",
 				Help:   "Every agent keeps a Cortex, the record of what reached it. On, the agent also reads it: its recent lines ride into every session, and the thread becomes its own standing home.",
 				Detail: "Off, the Cortex is a record for you: the 📋 row pinned at the top of the rail, read-only, listing messages, requests from other agents, scheduled runs, monitor fires and new conversations. The agent never sees it and it costs nothing per turn.\n\nOn, it becomes the agent's mind: the 🧠 row, which the agent resumes and where event-monitor wakes and standing-agent reports land by default, kept bounded by a rolling summary. Its recent lines go into every other session's prompt, so the agent arrives aware of what has been happening. It also surfaces the Permissions queue and the Manage menu in the topbar, and is reached only from Agents.\n\nWhen the agent is published to the dashboard, granted users do not see the Cortex thread. They get ordinary chat sessions, each seeded read-only from the agent's standing awareness, so it shows up already aware; publishing and granting access is the consent to share that. Publishable as long as the delegation and management tools below are off."},
@@ -363,35 +363,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// places for a while, which is worse than being in the wrong one,
 			// because two controls over one fact drift and the one you did not
 			// use is the one you go on believing.
-			// (Dispatch policy lives in the "Cortex & delegation" section above,
-			// next to the conductor-tools toggle — the two delegation controls
-			// were split across sections and read as one switch when they are
-			// two: conductor toolset vs the agents(run) governor.)
 			// (Lock moved to the 🔒/🔓 icon in the top-right of the editor —
 			// toggled live via handleAgentLock, preserved across form saves.)
 
-			// Delegation sits LAST and uncollapsed on purpose: the fields
-			// render directly above the "Dispatch target list" card, which is
-			// the list this policy governs. They used to live inside the
-			// collapsed "Cortex & delegation" accordion, so that card pointed
-			// at a control the reader could not see.
-			//
-			// ONE section, both directions. There were two headers here, both
-			// called Delegation and adjacent — an uncollapsed one holding the
-			// fleet toggle and a collapsed one holding the policy — which is
-			// what two separate moves toward the target list leave behind when
-			// neither removes the other. The split also put the wrong half
-			// away: the target-list card is governed by Dispatch policy, and
-			// that was the field inside the accordion, so the card still
-			// pointed at a control the reader could not see.
-			//
-			// Ordered inbound then outbound, and within outbound the governor
-			// before its exception: Allow none overrides the Builder grant, so
-			// reading the grant first states a permission the next field can
-			// take away.
-			ui.FormField{Type: "header", Label: "Delegation",
-				Help:   "Both directions of agent-to-agent calling.",
-				Detail: "Who may call THIS agent (fleet visibility), and who this agent may call (dispatch policy plus the target list below, which is only consulted in the two \"selected\" modes)."},
 			// Delegation is NOT here. Who may call this agent and who it may
 			// call are the blast radius, which is a security question asked
 			// when you are not editing, and they live on the agent's Security
@@ -903,7 +877,7 @@ func agentAssistHTML(id string) string {
 // current value the reader can't tell whether the list they're editing
 // does anything at all — the two most common modes ignore it entirely.
 func dispatchTargetSubtitle(mode string) string {
-	const where = " The policy itself is the **Dispatch policy** select under **Cortex & delegation** above (collapsed by default)."
+	const where = " The policy itself is the **Dispatch policy** select just above, under **Which agents it can call at all**."
 	// Pipelines are listed here beside agents because they are dispatch targets
 	// too: an agent restricted to a few targets used to reach every pipeline
 	// its owner had, which made "only these" mean something other than what it
@@ -1160,45 +1134,6 @@ func machineSelectField(udb Database, user string) ui.FormField {
 			"\n\nThis is also how you make an agent that INVESTIGATES before it answers: a first phase that goes and looks (set its reach to read-only, so it can inspect and never act), then a phase that answers only from what it found. Its probes never enter the conversation, so the thread stays small. " +
 			"\n\nAuthor machines from chat with the `machine` tool, or describe one in plain words at Extensions, Machines, Describe one.",
 	}
-}
-
-// foldIntoDelegation appends the dispatch-target picker into the section that
-// holds the dispatch policy, so the select and the list it draws from live in
-// one place.
-//
-// Split apart they were one rail entry away from each other: you would set
-// "Only allow" and then have to find a different section to say WHICH agents.
-// Returns false when no section holds the policy (create mode, which does not
-// split), leaving the caller to add a standalone one.
-//
-// Found by the FIELD it serves, not by the section's title. It matched the
-// title "Delegation" exactly, and the moment those headers were merged under a
-// fuller name the match stopped hitting — silently, because the caller's
-// fallback is a standalone card, which is precisely the split this closes. A
-// renamed heading is a normal thing to do to a form; quietly undoing a layout
-// decision is not what it should cost.
-func foldIntoDelegation(sections []ui.Section, picker ui.ChipPicker) bool {
-	for i := range sections {
-		panel, ok := sections[i].Body.(ui.FormPanel)
-		if !ok {
-			continue
-		}
-		if !panelHasField(panel, "dispatch_mode") {
-			continue
-		}
-		sections[i].Body = ui.Stack{Children: []ui.Component{panel, picker}}
-		return true
-	}
-	return false
-}
-
-func panelHasField(panel ui.FormPanel, field string) bool {
-	for _, f := range panel.Fields {
-		if f.Field == field {
-			return true
-		}
-	}
-	return false
 }
 
 // "Auto" told the reader nothing. It means "this agent declines to override, so
