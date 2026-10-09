@@ -579,6 +579,34 @@
 
         host.appendChild(row);
       });
+      alignRowActions(listEl);
+    }
+
+    // alignRowActions gives every row of a table the same room for its
+    // buttons: the widest row's. Each row's cells used to get whatever its
+    // OWN buttons left, so a row with one button laid its columns out wider
+    // than a row with five, and no column lined up with the one above it
+    // (My Apps: your own apps carry five buttons, a shared one carries Open).
+    // Measured after layout, and again when the window is resized; a narrow
+    // screen stacks rows anyway and is left alone.
+    function alignRowActions(list) {
+      var run = function() {
+        var acts = list.querySelectorAll('.ui-table-row > .ui-row-actions');
+        var max = 0;
+        acts.forEach(function(a) { a.style.minWidth = ''; });
+        if (!window.matchMedia || !window.matchMedia('(min-width: 801px)').matches) return;
+        acts.forEach(function(a) { max = Math.max(max, a.getBoundingClientRect().width); });
+        if (max > 0) acts.forEach(function(a) { a.style.minWidth = Math.ceil(max) + 'px'; });
+      };
+      if (window.requestAnimationFrame) window.requestAnimationFrame(run); else run();
+      if (!list._uiAlignWatch) {
+        list._uiAlignWatch = true;
+        var t = null;
+        window.addEventListener('resize', function() {
+          clearTimeout(t);
+          t = setTimeout(run, 150);
+        });
+      }
     }
 
     // invalidateElsewhere tells the OTHER views of a row that an in-place

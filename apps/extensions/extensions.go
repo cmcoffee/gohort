@@ -1937,10 +1937,11 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 						GroupBy: "group",
 						Columns: []ui.Col{
 							// Tool names run long (create_apple_calendar_event) and this row
-							// carries several status badges, so give the name the largest
-							// share and keep the mute description narrow — otherwise the name
-							// ellipsizes.
-							{Field: "name", Flex: 3},
+							// carries several status badges. The name keeps a readable width
+							// on its own now (the table protects a row's first column), so
+							// the description gets the larger share: three shares on a short
+							// name left a wide gap after it while the description was cut.
+							{Field: "name", Flex: 2},
 							{Field: "category", Label: "Category", Mute: true},
 							{Field: "mode", Mute: true},
 							{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
@@ -1995,7 +1996,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							// Which agents a scoped tool is on. Blank for pool tools (every
 							// agent) and orphans (none) — the group heading already says so.
 							{Field: "agent_list", Label: "Agents", Mute: true, Flex: 1},
-							{Field: "description", Mute: true, Flex: 1},
+							{Field: "description", Mute: true, Flex: 3},
 						},
 						RowActions: []ui.RowAction{
 							{Type: "button", Label: "Export", Method: "client",
