@@ -24,7 +24,7 @@ func TestADashboardShowsWhatItsViewerPicked(t *testing.T) {
 	withUsers(t)
 	host := dashboardHost{apps: []dashApp{
 		{name: "Notes", desc: "notes", path: "/notes", app: pinApp{}},
-		{name: "My Apps", desc: "apps", path: "/apps", app: pinApp{pins: []DashboardCard{{Name: "Voidrunner", Desc: "a space RPG", Path: "/apps/voidrunner", Group: "Your apps"}}}},
+		{name: "My Apps", desc: "apps", path: "/apps", app: pinApp{pins: []DashboardCard{{Name: "Voidrunner", Desc: "a space RPG", Path: "/apps/voidrunner", Group: "My apps"}}}},
 	}}
 	items := func(user string) map[string]bool {
 		w := httptest.NewRecorder()
@@ -127,6 +127,47 @@ func sortByIndex(paths []string, page string) {
 	for i := 1; i < len(paths); i++ {
 		for j := i; j > 0 && idx(paths[j]) < idx(paths[j-1]); j-- {
 			paths[j], paths[j-1] = paths[j-1], paths[j]
+		}
+	}
+}
+
+type cardApp struct{ cards []DashboardCard }
+
+func (cardApp) WebPath() string                                { return "/orchestrate" }
+func (cardApp) WebName() string                                { return "Agents" }
+func (cardApp) WebDesc() string                                { return "agents" }
+func (cardApp) RegisterRoutes(*http.ServeMux, string)          {}
+func (c cardApp) DashboardCards(*http.Request) []DashboardCard { return c.cards }
+
+// The Customize page lists cards by kind: the dashboard's own apps first,
+// then each source's group in the order the source declares, so a person
+// finds an app under Apps, their own under My apps and an agent under
+// Agents, whichever source made the card.
+func TestTheCustomizePageGroupsCardsByKind(t *testing.T) {
+	withUsers(t)
+	host := dashboardHost{apps: []dashApp{
+		{name: "Agents", desc: "agents", path: "/orchestrate", app: cardApp{cards: []DashboardCard{{Name: "Helper", Desc: "a published agent", Path: "/agents/helper", Group: "Agents", GroupOrder: 20}}}},
+		{name: "My Apps", desc: "apps", path: "/apps", app: pinApp{pins: []DashboardCard{{Name: "Voidrunner", Desc: "a space RPG", Path: "/apps/voidrunner", Group: "My apps", GroupOrder: 10}}}},
+		{name: "Notes", desc: "notes", path: "/notes", app: pinApp{}},
+	}}
+	w := httptest.NewRecorder()
+	host.handleDashboardItems(w, asUser(t, "/api/dashboard/items", "craig"))
+	var got struct{ Records []dashItem }
+	json.Unmarshal(w.Body.Bytes(), &got)
+	var groups []string
+	for _, it := range got.Records {
+		groups = append(groups, it.Group+":"+it.Name)
+	}
+	want := "Apps:Agents Apps:My Apps Apps:Notes My apps:Voidrunner Agents:Helper"
+	if s := strings.Join(groups, " "); s != want {
+		t.Errorf("groups: %s", s)
+	}
+	for _, it := range got.Records {
+		if it.Path == "/apps/voidrunner" && it.Note != "only on your dashboard" {
+			t.Errorf("a card of the viewer's own does not say so: %q", it.Note)
+		}
+		if it.Path == "/agents/helper" && it.Note != "" {
+			t.Errorf("a published card carries a note: %q", it.Note)
 		}
 	}
 }

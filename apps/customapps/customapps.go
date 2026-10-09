@@ -501,20 +501,31 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
   });
 }`).Render(),
 		Sections: []ui.Section{{
-			Title:    "My apps",
-			Subtitle: "Data-driven apps composed from ui primitives.",
+			Title:    "Your apps",
+			Subtitle: "Apps Builder made for you, and apps colleagues shared with you. Open one here; Customize on the dashboard puts it on your front page. Import brings in an app somebody exported.",
+			// The row reads in two lines: what the app is called and where it
+			// stands, then what it does. One line held a name, a description
+			// and a state in front of six buttons, and the description was the
+			// part that got cut.
 			Body: ui.Stack{Children: []ui.Component{ui.Toolbar{Actions: []ui.ToolbarAction{{
 				Label: "Import…", Title: "Preview an app somebody exported, then bring it in",
 				Method: "client", URL: "customapps_import",
 			}}}, ui.Table{
-				Source: "_apps",
-				RowKey: "slug",
+				Source:  "_apps",
+				RowKey:  "slug",
+				GroupBy: "group",
 				Columns: []ui.Col{
-					{Field: "name", Flex: 1},
-					{Field: "desc", Flex: 2, Mute: true},
-					{Field: "status", Flex: 1, Mute: true},
+					{Field: "name", Flex: 2},
+					{Field: "state", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: "private", Label: "Private", Color: "mute"},
+						{Value: "shared", Label: "Shared", Color: "success"},
+						{Value: "requested", Label: "Publish requested", Color: "warning"},
+						{Value: "disabled", Label: "Disabled", Color: "danger"},
+					}},
+					{Field: "note", Flex: 3, Mute: true},
+					{Field: "desc", Flex: 1, Mute: true, Line: 2},
 				},
-				EmptyText: "No apps yet.",
+				EmptyText: "No apps yet. Ask Builder for one, or Import an app somebody exported.",
 				RowActions: []ui.RowAction{
 					{Type: "button", Label: "Open", Method: "GET", PostTo: "{slug}/", HideIf: "disabled"},
 					// Only an app that declares tunables gets the button; for a
@@ -524,11 +535,11 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 						Confirm: "Enable this imported app? Review its data-source and action scripts first: they run in your sandbox once the app is live."},
 					// One Share button opens the sharing modal (customapps_share).
 					{Type: "button", Label: "Share", Method: "client", PostTo: "customapps_share", OnlyIf: "mine"},
-					{Type: "button", Label: "Export", Method: "client", PostTo: "export_custom_app", OnlyIf: "mine"},
 					// Pause / Resume a self-updating app. Only one shows at a time,
 					// gated on the auto_running / auto_paused fields the list sets.
 					{Type: "button", Label: "Pause", Method: "POST", PostTo: "_app/schedule?slug={slug}&on=false", OnlyIf: "auto_running"},
 					{Type: "button", Label: "Resume", Method: "POST", PostTo: "_app/schedule?slug={slug}&on=true", OnlyIf: "auto_paused"},
+					{Type: "button", Label: "Export", Method: "client", PostTo: "export_custom_app", OnlyIf: "mine"},
 					{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "_app?slug={slug}", OnlyIf: "mine", Variant: "danger",
 						Confirm: "Delete this app and all its data? This can't be undone."},
 				},
@@ -737,7 +748,10 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		// "mine" gates the owner-only Share/Delete actions, and "shared" carries
 		// the current state into the Share modal (a client action) so it opens
 		// pre-filled.
-		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc, "mine": "1"}
+		// group bands the list; state is the badge; note is what the badge
+		// cannot say (when it next updates, what a disabled app is waiting
+		// on); status is the same in one string, for the API's readers.
+		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc, "mine": "1", "group": "Your apps", "state": "private"}
 		if len(visibleSettings(s, true)) > 0 {
 			row["has_settings"] = "1"
 		}
@@ -747,10 +761,10 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		}
 		var parts []string
 		if s.Shared {
-			row["shared"] = "1"
+			row["shared"], row["state"] = "1", "shared"
 			parts = append(parts, "shared to users")
 		} else if publishRequested(owner, "app", s.Slug) {
-			row["requested"] = "1"
+			row["requested"], row["state"] = "1", "requested"
 			parts = append(parts, "publish requested")
 		}
 		status := "private"
@@ -763,10 +777,11 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 			row["status_lines"] = strings.Join(lines, "\n")
 		}
 		if s.Disabled {
-			row["disabled"] = "1"
+			row["disabled"], row["state"] = "1", "disabled"
+			row["note"] = "review its scripts, then Enable"
 			status = "disabled: review, then Enable"
 		} else if has, allPaused, next := appScheduleStatus(owner, s.Slug); has {
-			// Self-updating app: badge its state and expose auto_running/auto_paused
+			// Self-updating app: say its state and expose auto_running/auto_paused
 			// so the Pause/Resume row actions show the right one.
 			row["auto"] = "1"
 			seg := "auto-updating"
@@ -779,6 +794,7 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 					seg = "auto-updating - next " + humanizeNext(next)
 				}
 			}
+			row["note"] = seg
 			if status == "private" {
 				status = seg
 			} else {
@@ -806,6 +822,7 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		row := map[string]string{
 			"slug": s.Slug, "name": s.Name, "desc": s.Desc,
 			"status": "shared by " + ownerName,
+			"group":  "Shared with you", "note": "shared by " + ownerName,
 		}
 		if len(visibleSettings(s, false)) > 0 {
 			row["has_settings"] = "1"

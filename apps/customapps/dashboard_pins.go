@@ -13,9 +13,14 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// dashboardGroupMyApps puts "My apps" right after the dashboard's own apps on
+// the Customize page, ahead of agents.
+const dashboardGroupMyApps = 10
+
 // DashboardPinnable offers the viewer's own apps and the apps shared with
-// them, each as a card to their app. A disabled app is left out: its card
-// would open onto "review, then Enable".
+// them, each as a card to their app, under one "My apps" heading: the same
+// list the My Apps page shows, so the two agree on what an app of theirs is.
+// A disabled app is left out: its card would open onto "review, then Enable".
 func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 	user := AuthCurrentUser(r)
 	if T == nil || user == "" {
@@ -32,17 +37,17 @@ func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 		if r := []rune(desc); len(r) > 140 {
 			desc = string(r[:140]) + "..."
 		}
-		out = append(out, DashboardCard{Name: s.Name, Desc: desc, Path: "/apps/" + s.Slug, Group: group})
+		out = append(out, DashboardCard{Name: s.Name, Desc: desc, Path: "/apps/" + s.Slug, Group: group, GroupOrder: dashboardGroupMyApps})
 	}
 	for _, s := range listSpecs(user) {
-		add(s, "Your apps")
+		add(s, "My apps")
 	}
 	for slug, owner := range ListSharedOwners(T.DB, sharedAppsIndex) {
 		if owner == user || seen[slug] {
 			continue
 		}
 		if s, ok := loadSpec(owner, slug); ok && s.Shared {
-			add(s, "Apps shared with you")
+			add(s, "My apps")
 		}
 	}
 	return out

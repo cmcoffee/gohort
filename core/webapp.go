@@ -98,8 +98,12 @@ type DashboardCard struct {
 	Path  string // href; rendered as "<Path>/" (leading slash, no trailing)
 	Order int    // sort key — lower first; defaults to 50 when zero
 	// Group is the heading the card is listed under on the Customize page
-	// ("Agents", "Your apps"); empty reads as "More".
+	// ("Agents", "My apps"); empty reads as "More". The dashboard's own app
+	// cards are always the first group, "Apps".
 	Group string
+	// GroupOrder places the Group among the others on that page: lower
+	// first, after "Apps"; zero reads as 50, and ties go by name.
+	GroupOrder int
 }
 
 // DashboardCardSource is implemented by WebApps that contribute

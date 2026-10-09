@@ -25,6 +25,7 @@ type dashApp struct {
 	order    int    // explicit sort key for dynamic cards; 0 means "ask app for WebOrder"
 	app      WebApp // nil for cards from DashboardCardSource
 	group    string // the Customize page's heading for it
+	groupAt  int    // where that heading comes among the others; 0 reads as 50
 	pinnable bool   // shown only when the viewer asks for it
 }
 
@@ -337,12 +338,13 @@ func (d dashboardHost) cards(r *http.Request) (defaults, pinnable []dashApp) {
 		}
 		for _, c := range src.DashboardCards(r) {
 			visible = append(visible, dashApp{
-				name:  c.Name,
-				desc:  c.Desc,
-				path:  c.Path,
-				order: c.Order,
-				app:   nil, // no underlying WebApp; live-view lookups skip it
-				group: chooseStr(c.Group, "More"),
+				name:    c.Name,
+				desc:    c.Desc,
+				path:    c.Path,
+				order:   c.Order,
+				app:     nil, // no underlying WebApp; live-view lookups skip it
+				group:   chooseStr(c.Group, "More"),
+				groupAt: c.GroupOrder,
 			})
 		}
 	}
@@ -357,7 +359,7 @@ func (d dashboardHost) cards(r *http.Request) (defaults, pinnable []dashApp) {
 			continue
 		}
 		for _, c := range src.DashboardPinnable(r) {
-			pinnable = append(pinnable, dashApp{name: c.Name, desc: c.Desc, path: c.Path, order: c.Order, group: chooseStr(c.Group, "More")})
+			pinnable = append(pinnable, dashApp{name: c.Name, desc: c.Desc, path: c.Path, order: c.Order, group: chooseStr(c.Group, "More"), groupAt: c.GroupOrder})
 		}
 	}
 	return visible, pinnable
@@ -375,6 +377,7 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 	visible := applyDashPrefs(defaults, pinnable, prefs)
 	sortDashDefault(visible)
 	orderDash(visible, prefs.Order)
+	sortDashGroups(visible)
 	// Notices from any app with something the viewer must act on. Walked over
 	// the ORIGINAL list, like card sources, so a hidden app can still speak —
 	// but never a switched-off one, whose links would land on the 503 the
@@ -762,7 +765,9 @@ func applyDashPrefs(defaults, pinnable []dashApp, p dashPrefs) []dashApp {
 	return out
 }
 
-// dashItem is one row of the Customize page.
+// dashItem is one row of the Customize page: a card, under the heading of
+// its kind (Apps, My apps, Agents), with a note on where it goes or who sees
+// it where the row alone would not say.
 type dashItem struct {
 	Path    string `json:"path"`
 	Name    string `json:"name"`
@@ -774,8 +779,8 @@ type dashItem struct {
 }
 
 // handleDashboardItems lists every card this viewer may put on their
-// dashboard, in their dashboard's order within each of its sections, and
-// whether it is there now. GET.
+// dashboard, grouped by kind and in their dashboard's order within each
+// group, and whether it is there now. GET.
 func (d dashboardHost) handleDashboardItems(w http.ResponseWriter, r *http.Request) {
 	user := AuthCurrentUser(r)
 	if user == "" {
@@ -785,7 +790,7 @@ func (d dashboardHost) handleDashboardItems(w http.ResponseWriter, r *http.Reque
 	p := loadDashPrefs(user)
 	var items []dashItem
 	for _, a := range d.orderedCards(r, p) {
-		it := dashItem{Path: a.path, Name: a.name, Desc: a.desc, Group: a.group, Section: dashSection(a), Shown: !hasPath(p.Hidden, a.path)}
+		it := dashItem{Path: a.path, Name: a.name, Desc: a.desc, Group: a.group, Section: dashSection(a), Shown: !hasPath(p.Hidden, a.path), Note: dashPlace(a)}
 		if a.pinnable {
 			it.Shown, it.Note = hasPath(p.Shown, a.path), "only on your dashboard"
 		}
@@ -795,9 +800,24 @@ func (d dashboardHost) handleDashboardItems(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]any{"records": items})
 }
 
+// dashPlace says where on the dashboard a card is drawn when that is not
+// the plain grid: the featured spot, or the Orchestrator group. The
+// arrows only move a card within its place, so the row has to say what
+// that place is.
+func dashPlace(a dashApp) string {
+	switch dashSection(a) {
+	case "Featured":
+		return "featured, at the top"
+	case "Orchestrator":
+		return "in the Orchestrator group"
+	}
+	return ""
+}
+
 // orderedCards is every card the viewer may place, shown or not, in the
-// order their dashboard puts them: by section, then their own order, then
-// the default one.
+// order the Customize page lists them: by group (Apps first, then each
+// source's group in its declared order), by place within the group, then
+// the viewer's own order, then the default one.
 func (d dashboardHost) orderedCards(r *http.Request, p dashPrefs) []dashApp {
 	defaults, pinnable := d.cards(r)
 	var all []dashApp
@@ -817,8 +837,36 @@ func (d dashboardHost) orderedCards(r *http.Request, p dashPrefs) []dashApp {
 	}
 	sortDashDefault(all)
 	orderDash(all, p.Order)
-	sort.SliceStable(all, func(i, j int) bool { return dashSectionRank(all[i]) < dashSectionRank(all[j]) })
+	sortDashGroups(all)
 	return all
+}
+
+// sortDashGroups puts cards of a kind together, keeping their order within
+// it: the dashboard's own apps, then each source's group in its declared
+// order, each group by place. The dashboard and the Customize page both
+// sort by this, so the grid reads the way the page that arranges it does.
+func sortDashGroups(list []dashApp) {
+	sort.SliceStable(list, func(i, j int) bool {
+		if gi, gj := dashGroupRank(list[i]), dashGroupRank(list[j]); gi != gj {
+			return gi < gj
+		}
+		if list[i].group != list[j].group {
+			return list[i].group < list[j].group
+		}
+		return dashSectionRank(list[i]) < dashSectionRank(list[j])
+	})
+}
+
+// dashGroupRank orders the Customize page's groups: the dashboard's own apps
+// first, then the card sources' groups by their declared order.
+func dashGroupRank(a dashApp) int {
+	if a.app != nil {
+		return -1
+	}
+	if a.groupAt != 0 {
+		return a.groupAt
+	}
+	return 50
 }
 
 // handleDashboardMove moves a card one place up or down within its section
@@ -850,9 +898,10 @@ func (d dashboardHost) handleDashboardMove(w http.ResponseWriter, r *http.Reques
 	if dir == "up" {
 		step = -1
 	}
-	// The next card in the same section; a section's cards cannot leave it.
+	// The next card in the same group and place; a card cannot leave either,
+	// since the dashboard draws each place on its own.
 	j := i + step
-	for j >= 0 && j < len(all) && dashSection(all[j]) != dashSection(all[i]) {
+	for j >= 0 && j < len(all) && (all[j].group != all[i].group || dashSection(all[j]) != dashSection(all[i])) {
 		j += step
 	}
 	if j >= 0 && j < len(all) {
@@ -991,16 +1040,15 @@ func (d dashboardHost) handleCustomize(w http.ResponseWriter, r *http.Request) {
 		MaxWidth:  "820px",
 		Sections: []ui.Section{{
 			Title:    "What your dashboard shows",
-			Subtitle: "Switch a card off to hide it, or on to add it, and move it with the arrows. Only your dashboard changes, and a hidden app is still there at its address.",
+			Subtitle: "Switch a card off to hide it, or on to add it, and move it with the arrows. Only your dashboard changes: a hidden app is still there at its address, and an agent switched on here opens for you alone.",
 			Body: ui.Table{
 				Source:  "/api/dashboard/items",
 				RowKey:  "path",
-				GroupBy: "section",
+				GroupBy: "group",
 				Columns: []ui.Col{
 					{Field: "name", Flex: 2},
-					{Field: "group", Flex: 1, Mute: true},
-					{Field: "desc", Flex: 3, Mute: true},
-					{Field: "note", Flex: 1, Mute: true},
+					{Field: "note", Flex: 2, Mute: true},
+					{Field: "desc", Flex: 5, Mute: true, Line: 2},
 				},
 				RowActions: []ui.RowAction{
 					{Type: "button", Label: "▲", Compact: true, PostTo: "/api/dashboard/move?path={path}&dir=up"},

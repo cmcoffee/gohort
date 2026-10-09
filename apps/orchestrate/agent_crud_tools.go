@@ -106,6 +106,9 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		rec.InheritParentTools = true
 		rec.PendingApproval = true
 	}
+	if _, explicit := args["cortex"].(bool); !explicit {
+		rec.Cortex = newAgentReadsCortex(rec)
+	}
 	saved, err := saveAgent(sess.DB, rec)
 	if err != nil {
 		return "", err
@@ -934,6 +937,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"disable_skills":           {Type: "boolean", Description: "Fully suppresses skills: no activation, no prompt addendum, no skill_knowledge chunks, no skill-attached tools. For agents that must faithfully report one source. The per-turn Clean toggle also suppresses skills. Default false."},
 		"allowed_skills":           {Type: "array", Description: "Strict allowlist of skill IDs the classifier may consider. Skills are opt-in per agent; empty (default) = none active. IDs from skill_def(action=list).", Items: &ToolParam{Type: "string"}},
 		"hidden":                   {Type: "boolean", Description: "When true, hidden from other agents' \"Available agents\" block and refused by agents(run), unless a caller lists it in allowed_dispatch_targets. Default false."},
+		"cortex":                   {Type: "boolean", Description: "Reads its Cortex: the agent keeps a standing home thread it resumes across sessions, where monitor wakes and reports from other agents land, and reads it on every turn. Default ON for a chat assistant (a top-level conversational agent with no intake form and memory_mode other than \"agent\"), OFF for a specialist, a sub-agent (owned_by) or an agent with an intake form. Pass false for a conversational agent that should start every session clean."},
 		"allowed_dispatch_targets": {Type: "array", Description: "Dispatch allowlist of TARGETS: agent IDs, and pipeline IDs or names. Empty (default) = may call any non-hidden agent and any of the owner's pipelines. Non-empty = ONLY these, hidden or not (the explicit pick wins, so it reaches hidden specialists), and a pipeline not listed is not reachable either.", Items: &ToolParam{Type: "string"}},
 		"attached_collections":     {Type: "array", Description: "Document Collection IDs merged into this agent's RAG recall: a curated reference corpus without authoring a skill. Bound at the agent layer, no activation needed. IDs from the Collections surface. Default empty.", Items: &ToolParam{Type: "string"}},
 		"attached_sources":         {Type: "array", Description: "Cross-app REFERENCE SOURCES this agent may draw on, each as \"<kind>:<item_id>\". Each attachment mints its own NAMED tools on the agent, shaped by what the source is. \"system:<appliance-id>\", a servitor system, evidence bundle, tool-backed service, or a whole WORKSPACE spanning several: gives search_<name>_knowledge (instant, already-gathered), get_<name>_facts, investigate_<name> (live read-only investigation, slow). \"files:<store-slug>\", a registered FOLDER on this host (log bundles, captures, exports): gives list_<slug> (subfolders/files, newest first), search_<slug> (regex over raw lines, reads .gz, takes an optional subfolder), read_<slug> (a bounded line window around a hit); read-only, so a Private agent keeps them. Any other source gets a named search over its content. Use list_reference_sources for the valid kinds and ids and the tools each item actually mints. Attach a workspace when the agent needs answers that span code, live state, evidence and services at once; attach a file store when it must ground answers in files somebody else drops there. Default empty.", Items: &ToolParam{Type: "string"}},
@@ -1003,6 +1007,21 @@ func agentEchoJSON(rec AgentRecord) string {
 // agentRecordFromArgs builds an AgentRecord from tool args. Used by
 // create_agent (fresh record). update_agent uses mergeAgentArgs
 // instead so omitted fields stay as-is.
+// newAgentReadsCortex is whether an agent created without saying decides to
+// read its Cortex: on for a chat assistant, off for a specialist. The agent
+// wizard draws the same line (wizard_kinds): a conversational agent resumes
+// a standing thread, so what reached it between sessions is in front of it;
+// a focused agent for one job starts each run clean. A sub-agent, an agent
+// with an intake form, and one whose memory is framed for lessons rather
+// than people are the focused kind; everything else Builder makes is a
+// chat assistant.
+func newAgentReadsCortex(rec AgentRecord) bool {
+	if strings.TrimSpace(rec.OwnedBy) != "" || len(rec.IntakeForm) > 0 {
+		return false
+	}
+	return !strings.EqualFold(strings.TrimSpace(rec.MemoryMode), "agent")
+}
+
 func agentRecordFromArgs(args map[string]any) AgentRecord {
 	rec := AgentRecord{
 		Name:               strings.TrimSpace(stringArg(args, "name")),
@@ -1067,6 +1086,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v, ok := args["hidden"].(bool); ok {
 		rec.Hidden = v
+	}
+	if v, ok := args["cortex"].(bool); ok {
+		rec.Cortex = v
 	}
 	if v, ok := args["recall_hints"].(bool); ok {
 		rec.RecallHints = v
@@ -1254,6 +1276,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["hidden"].(bool); ok {
 		rec.Hidden = v
+	}
+	if v, ok := args["cortex"].(bool); ok {
+		rec.Cortex = v
 	}
 	if v, ok := args["recall_hints"].(bool); ok {
 		rec.RecallHints = v

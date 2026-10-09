@@ -81,6 +81,12 @@ func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
 	var shown []ExposedAgentEntry
 	sameName := map[string]int{}
 	for _, e := range entries {
+		// An app's agent has its place inside the app (its chat, its
+		// settings); a second card for it on the dashboard would be the same
+		// agent twice, once without the app around it.
+		if e.AppOwned {
+			continue
+		}
 		// Per-agent access gate — a published agent is a normal app (app-access /
 		// admin), and a peer-shared agent is reachable by its AllowedUsers recipients
 		// (or its owner). AgentReachableBy composes both, so a published agent nobody
@@ -105,14 +111,20 @@ func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
 			desc = "Chat with " + e.Name + "."
 		}
 		out = append(out, DashboardCard{
-			Name:  name,
-			Desc:  desc,
-			Path:  "/agents/" + e.Slug,
-			Group: "Agents",
+			Name:       name,
+			Desc:       desc,
+			Path:       "/agents/" + e.Slug,
+			Group:      "Agents",
+			GroupOrder: dashboardGroupAgents,
 		})
 	}
 	return out
 }
+
+// dashboardGroupAgents puts "Agents" after the apps on the Customize page.
+// The published agents and the viewer's own share the heading: both are
+// agents to talk to, and the row says which opens for the viewer alone.
+const dashboardGroupAgents = 20
 
 // DashboardPinnable offers the viewer's own agents that have no dashboard card
 // of their own, for them to put on their own dashboard (the Customize page).
@@ -143,7 +155,7 @@ func (T *OrchestrateApp) DashboardPinnable(r *http.Request) []DashboardCard {
 		if r := []rune(desc); len(r) > 140 {
 			desc = string(r[:140]) + "..."
 		}
-		out = append(out, DashboardCard{Name: a.Name, Desc: desc, Path: "/orchestrate/?agent=" + a.ID, Group: "Your agents"})
+		out = append(out, DashboardCard{Name: a.Name, Desc: desc, Path: "/orchestrate/?agent=" + a.ID, Group: "Agents", GroupOrder: dashboardGroupAgents})
 	}
 	return out
 }
@@ -189,6 +201,10 @@ type ExposedAgentEntry struct {
 	Everyone        bool     // the REACH: every signed-in user may use it
 	ShowOnDashboard bool     // PRESENTATION: a card, for whoever can already use it
 	AllowedUsers    []string // peer-share recipients (empty when published-only)
+	// AppOwned marks an app's agent: one an app registered, or one Builder
+	// made for a custom app (OwningApp). It is reached inside its app, so
+	// the dashboard draws no card for it and Customize does not list it.
+	AppOwned bool
 }
 
 // ListExposedAgents walks every authenticated user's orchestrate
@@ -367,6 +383,7 @@ func (T *OrchestrateApp) exposedPool() []exposedPoolEntry {
 					Everyone:        a.Everyone,
 					ShowOnDashboard: a.ShowOnDashboard,
 					AllowedUsers:    a.AllowedUsers,
+					AppOwned:        strings.TrimSpace(a.OwningApp) != "" || isAppAgent(a.ID),
 				},
 				rec: a,
 			}
