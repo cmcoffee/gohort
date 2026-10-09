@@ -165,7 +165,8 @@
   function importFlow(opts) {
     var input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json,application/json';
+    // A packed app or tool is the same bundle under its own extension.
+    input.accept = '.json,.gohortapp,.gohorttool,application/json';
     input.style.display = 'none';
     document.body.appendChild(input);
     input.addEventListener('change', function () {

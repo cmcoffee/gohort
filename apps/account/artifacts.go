@@ -31,12 +31,27 @@ const maxAccountImportBytes = 64 << 20
 // Content-Disposition header.
 var unsafeFilenameRE = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
-func downloadName(base string) string {
+func downloadName(base, typ string) string {
 	base = strings.Trim(unsafeFilenameRE.ReplaceAllString(base, "-"), "-.")
 	if base == "" {
 		base = "gohort"
 	}
-	return base + ".gohort.json"
+	return base + bundleExt(typ)
+}
+
+// bundleExt names what a download holds: an app is a .gohortapp and a tool a
+// .gohorttool, the same files Builder packs (the content is the one bundle
+// format either way); anything else, or several kinds, a .gohort.json. Named
+// .gohort.json, an app's export read as "just a JSON file" rather than the
+// app.
+func bundleExt(typ string) string {
+	switch strings.TrimSpace(typ) {
+	case "custom_app":
+		return ".gohortapp"
+	case "tool":
+		return ".gohorttool"
+	}
+	return ".gohort.json"
 }
 
 // handleArtifactExport downloads the requester's own artifacts as a bundle:
@@ -79,7 +94,7 @@ func (T *Account) handleArtifactExport(w http.ResponseWriter, r *http.Request) {
 		if label == "" {
 			label = name
 		}
-		filename = downloadName(label)
+		filename = downloadName(label, typ)
 	case q.Get("all") != "":
 		sels = ArtifactSelectionForOwner(RootDB, user)
 		if len(sels) == 0 {
@@ -87,7 +102,7 @@ func (T *Account) handleArtifactExport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// The whole set is already its own closure; the walk only confirms it.
-		filename = downloadName("gohort-" + user + "-" + time.Now().Format("2006-01-02"))
+		filename = downloadName("gohort-"+user+"-"+time.Now().Format("2006-01-02"), "")
 	default:
 		http.Error(w, "name what to export (type and name), or all=1 for everything you own", http.StatusBadRequest)
 		return
