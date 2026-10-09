@@ -313,6 +313,19 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		serverNote = probeModelServer(ctx, req.Provider, req.Endpoint, req.APIKey).describe(req.Provider, req.ContextSize)
 	}
 
+	// From here the test takes several calls, so it says which one it is on:
+	// a line per step, then the result line the form reads either way.
+	partner, partnerName, partnerTools := handoffPartner(table)
+	h := &handoffCheck{llm: llm, tools: ProviderHasNativeTools(req.Provider) || req.NativeTools,
+		partner: partner, partnerName: partnerName, partnerTools: partnerTools}
+	total, step := 1+h.stepCount(), 0
+	progress := testProgress(w)
+	h.onStep = func(name string) {
+		step++
+		progress(fmt.Sprintf("step %d of %d: %s", step, total, name))
+	}
+	h.begin("Connecting")
+
 	started := time.Now()
 	resp, err := llm.Chat(ctx,
 		[]Message{{Role: "user", Content: "Reply with the single word: ok"}},
@@ -334,9 +347,6 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 
 	// Then the handoff check: the hello cannot see a model that refuses its
 	// own tool call sent back, or one the other tier made.
-	partner, partnerName, partnerTools := handoffPartner(table)
-	h := &handoffCheck{llm: llm, tools: ProviderHasNativeTools(req.Provider) || req.NativeTools,
-		partner: partner, partnerName: partnerName, partnerTools: partnerTools}
 	h.run(ctx)
 	if r.Context().Err() != nil {
 		return // cancelled from the page: nobody is reading

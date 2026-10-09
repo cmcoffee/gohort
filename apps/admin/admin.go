@@ -21,6 +21,23 @@ func writeTestResult(w http.ResponseWriter, ok bool, message, errMsg string) {
 	json.NewEncoder(w).Encode(body)
 }
 
+// testProgress switches a test response to a stream of lines and returns
+// what writes one progress line. The result still goes out through
+// writeTestResult, as the stream's last line. For a test that runs several
+// checks in turn: the form shows each step as it starts, beside the elapsed
+// seconds, rather than a bare "Testing…" for the whole minute.
+func testProgress(w http.ResponseWriter) func(text string) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	fl, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+	return func(text string) {
+		enc.Encode(map[string]string{"progress": text})
+		if fl != nil {
+			fl.Flush()
+		}
+	}
+}
+
 func init() {
 	RegisterWebApp(&AdminApp{})
 	// Tool-group editor's ✨ Suggest button dispatches here. Worker

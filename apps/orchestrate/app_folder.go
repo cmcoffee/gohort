@@ -74,14 +74,19 @@ type appFolderManifest struct {
 func (t *chatTurn) appFolderDir(args map[string]any) (abs, rel string, err error) {
 	rel = strings.TrimSpace(stringArg(args, "dir"))
 	if rel == "" {
-		id := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-		if id == "" {
+		if id := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name"))); id != "" {
+			rel = id + ".app"
+		} else if t.session != nil && t.session.AppFolder != "" {
+			rel = t.session.AppFolder
+		} else {
 			return "", "", errors.New("name the folder (dir, e.g. \"weather.app\") or the app (id)")
 		}
-		rel = id + ".app"
 	}
 	ws, _, _ := t.turnWorkspace()
 	abs, err = ResolveWorkspacePath(ws, rel)
+	if err == nil && t.session != nil {
+		t.session.AppFolder = rel
+	}
 	return abs, rel, err
 }
 

@@ -3683,15 +3683,56 @@
           testBtn.classList.add('danger');
           showResult('var(--text-mute)', 'Testing…');
           var startedAt = Date.now();
-          ticker = setInterval(function() {
+          var step = '';   // the step a streaming test last said it started
+          function tick() {
             var secs = Math.round((Date.now() - startedAt) / 1000);
-            if (secs >= 2) testResult.textContent = 'Testing… ' + secs + 's';
-          }, 1000);
-          fetchJSON(cfg.test_url, {
+            var text = 'Testing…' + (secs >= 2 ? ' ' + secs + 's' : '');
+            testResult.textContent = step ? text + ' - ' + step : text;
+          }
+          ticker = setInterval(tick, 1000);
+          fetch(cfg.test_url, {
             method: 'POST',
+            cache: 'no-store',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(current),
             signal: ctl ? ctl.signal : undefined,
+          }).then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+            var ct = r.headers.get('Content-Type') || '';
+            if (ct.indexOf('application/x-ndjson') < 0 || !r.body || !r.body.getReader) {
+              return ct.indexOf('application/json') >= 0 ? r.json() : r.text();
+            }
+            // A test that runs several checks in turn streams a line as each
+            // starts ({"progress": "..."}), then its result as the last line.
+            var reader = r.body.getReader();
+            var dec = new TextDecoder();
+            var buf = '';
+            var result = null;
+            function line(text) {
+              text = text.trim();
+              if (!text) return;
+              var m;
+              try { m = JSON.parse(text); } catch (e) { return; }
+              if (m && m.progress != null && m.ok === undefined) {
+                step = String(m.progress);
+                tick();
+              } else {
+                result = m;
+              }
+            }
+            function pump() {
+              return reader.read().then(function(chunk) {
+                if (chunk.done) { line(buf); return result; }
+                buf += dec.decode(chunk.value, {stream: true});
+                var i;
+                while ((i = buf.indexOf('\n')) >= 0) {
+                  line(buf.slice(0, i));
+                  buf = buf.slice(i + 1);
+                }
+                return pump();
+              });
+            }
+            return pump();
           }).then(function(resp) {
             if (resp && resp.ok) {
               showResult('var(--accent)', '✓ ' + (resp.message || 'OK'));

@@ -1371,6 +1371,12 @@ type ChatSession struct {
 	// updating as each step's tool fires.
 	BuildPlan *BuildPlanState `json:"BuildPlan,omitempty"`
 
+	// AppFolder is the app folder this session last named to app_def
+	// ("weather.app"), so run and publish without a dir mean that folder. A
+	// build checked out its folder, then called run with no dir and was told
+	// to name one.
+	AppFolder string `json:"AppFolder,omitempty"`
+
 	// ActiveSkillIDs is VESTIGIAL — skills are per-turn now (the LLM
 	// re-activates each turn it stays in-domain; nothing carries across
 	// turns), so this is no longer read or written. Kept only so older

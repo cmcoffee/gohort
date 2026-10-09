@@ -46,6 +46,26 @@ type handoffCheck struct {
 	partnerName  string // "the worker", "the lead"
 	partnerTools bool
 	steps        []handoffStep
+	// onStep, when set, hears each step as it starts, for a page watching
+	// the check run.
+	onStep func(name string)
+}
+
+// stepCount is how many steps run will start.
+func (h *handoffCheck) stepCount() int {
+	if !h.tools {
+		return 0
+	}
+	if h.partner != nil {
+		return 4
+	}
+	return 3
+}
+
+func (h *handoffCheck) begin(name string) {
+	if h.onStep != nil {
+		h.onStep(name)
+	}
 }
 
 // handoffWords are what lookup_word answers.
@@ -137,6 +157,7 @@ func (h *handoffCheck) continueFrom(ctx context.Context, llm LLM, hist []Message
 // returns the history ending in this model's call, for partnerContinues.
 func (h *handoffCheck) roundTrip(ctx context.Context) []Message {
 	const name = "Tool call, then its result"
+	h.begin(name)
 	ask := handoffAsk(`Use the lookup_word tool to look up "kestrel", then tell me in one sentence what it said.`)
 	resp, err := h.llm.Chat(ctx, ask, h.opts()...)
 	if err != nil {
@@ -159,6 +180,7 @@ func (h *handoffCheck) roundTrip(ctx context.Context) []Message {
 // twoCalls is two calls in one turn, both results sent back together.
 func (h *handoffCheck) twoCalls(ctx context.Context) {
 	const name = "Two calls in one turn"
+	h.begin(name)
 	ask := handoffAsk(`In this one turn, call lookup_word twice, once for "heron" and once for "wren". Then say what both are.`)
 	resp, err := h.llm.Chat(ctx, ask, h.opts()...)
 	if err != nil {
@@ -183,6 +205,7 @@ func (h *handoffCheck) twoCalls(ctx context.Context) {
 func (h *handoffCheck) continuesForeign(ctx context.Context) {
 	ask := handoffAsk(`Use the lookup_word tool to look up "kestrel", then tell me in one sentence what it said.`)
 	name := "Continues another model's tool call"
+	h.begin(name)
 	var hist []Message
 	if h.partner != nil && h.partnerTools {
 		if resp, err := h.partner.Chat(ctx, ask, h.opts()...); err == nil && len(resp.ToolCalls) > 0 {
@@ -207,6 +230,7 @@ func (h *handoffCheck) partnerContinues(ctx context.Context, own []Message) {
 		return
 	}
 	name := handoffTitle(h.partnerName) + " continues this model's tool call"
+	h.begin(name)
 	if own == nil {
 		h.add(name, handoffSkip, "this model made no call to continue")
 		return

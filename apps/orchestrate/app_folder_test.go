@@ -326,3 +326,25 @@ func TestPublishNotesOverAStarterFile(t *testing.T) {
 		t.Errorf("NOTES.md = %q", b)
 	}
 }
+
+// A folder named once in a session is the one a later run or publish with
+// no dir means: a build checked out its folder, called run without one, and
+// was told to name it.
+func TestRunWithoutADirUsesTheSessionsFolder(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	turn.session = &ChatSession{ID: "s1"}
+	if _, err := turn.appDefCheckout(map[string]any{"name": "Wx"}); err != nil {
+		t.Fatal(err)
+	}
+	_, rel, err := turn.appFolderDir(map[string]any{})
+	if err != nil || rel != "wx.app" {
+		t.Fatalf("no dir should mean the session's folder: %q %v", rel, err)
+	}
+	if _, rel, _ := turn.appFolderDir(map[string]any{"dir": "other.app"}); rel != "other.app" || turn.session.AppFolder != "other.app" {
+		t.Errorf("a named folder becomes the session's: %q %q", rel, turn.session.AppFolder)
+	}
+	turn.session = &ChatSession{ID: "s2"}
+	if _, _, err := turn.appFolderDir(map[string]any{}); err == nil {
+		t.Error("a session that named no folder should still be asked for one")
+	}
+}
