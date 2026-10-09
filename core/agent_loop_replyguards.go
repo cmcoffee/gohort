@@ -1039,6 +1039,13 @@ func replyEndsMidSentence(reply string) bool {
 	if strings.HasSuffix(last, ":") {
 		return !userDirectiveRe.MatchString(lower) && !asksTheUser(lower)
 	}
+	// A line that ends on a link or a path is done: "You can access your app
+	// at: /apps/weather-outfit-advisor/" ended two finished Builder turns in
+	// one day, its trailing slash read as dangling punctuation, and both were
+	// re-prompted to "finish what you were saying".
+	if f := strings.Fields(last); len(f) > 0 && trailingLinkRe.MatchString(f[len(f)-1]) {
+		return false
+	}
 	switch last[len(last)-1] {
 	case ',', ';', '(', '[', '{', '-', '/', '&', '+', '=':
 		return true
@@ -1053,6 +1060,10 @@ func replyEndsMidSentence(reply string) bool {
 // structuralLineRe matches a last line that legitimately ends without
 // punctuation: a list item, heading, table row, quote, or bare link.
 var structuralLineRe = regexp.MustCompile(`^(?:[-*+] |\d+[.)] |#|\||>|https?://\S+$)`)
+
+// trailingLinkRe is a last word that is a link or a path: a URL, a site, or
+// an absolute, home or relative path, in backticks or not.
+var trailingLinkRe = regexp.MustCompile("(?i)^[`(<]?(?:[a-z][a-z0-9+.-]*://\\S+|www\\.\\S+|~?/\\S+|\\.\\.?/\\S*)$")
 
 // danglingWords are words no sentence ends on.
 var danglingWords = map[string]bool{

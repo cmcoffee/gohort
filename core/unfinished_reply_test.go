@@ -21,6 +21,8 @@ func TestAReplyThatStopsMidSentenceIsCaught(t *testing.T) {
 		"Posting it to your",
 		"Here are the options (",
 		"It runs every morning,",
+		"Pick either this or /",
+		"Saved it under reports and/",
 	}
 	complete := []string{
 		"lol that's great",
@@ -33,6 +35,12 @@ func TestAReplyThatStopsMidSentenceIsCaught(t *testing.T) {
 		"```go\nfunc main() {}\n```",
 		"## Summary",
 		"https://example.com/post/1",
+		// A sentence that ends on a link or a path is finished, trailing slash and all.
+		"Your app is now ready and can be accessed at: /apps/weather-outfit-advisor/",
+		"You can check out the updated app here: /apps/local-weather-forecast/",
+		"The full write-up is at https://example.com/notes/",
+		"I saved the export to `~/exports/run-12/`",
+		"It's in ./out/",
 		"| name | value |",
 		"I'll post it every morning at 8",
 		"",

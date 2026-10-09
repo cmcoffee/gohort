@@ -1078,7 +1078,13 @@ func (lr *loopRun) finishCheck() loopAction {
 	if strings.TrimSpace(notice) == "" {
 		return actNone
 	}
-	Debug("[agent_loop] finish check held the reply back, re-prompting: correction %d/%d", lr.corrections.spend(correctionFinishCheck), maxCorrectionsPerKind)
+	// With what it found: without it, seven holds in a day could not be told
+	// apart from a misfire in the log, which is where a misfire gets noticed.
+	why := strings.Join(strings.Fields(notice), " ")
+	if r := []rune(why); len(r) > 200 {
+		why = string(r[:200]) + "..."
+	}
+	Debug("[agent_loop] finish check held the reply back, re-prompting: correction %d/%d: %q", lr.corrections.spend(correctionFinishCheck), maxCorrectionsPerKind, why)
 	lr.emitDiag("finish-check-corrected", "The reply was held back by a check that must pass before the turn ends, and the model was re-prompted with what it found.")
 	if strike != "" {
 		lr.strikeRound(strike)
