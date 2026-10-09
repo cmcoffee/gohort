@@ -1912,7 +1912,9 @@ func (pr *planRun) runLoop() {
 	// turn, against a request that is about to process every one of these
 	// tokens anyway.
 	logPromptComposition("plan", pr.sessID, pr.sys, pr.allTools, pr.llmMsgs)
-	pr.resp, _, pr.loopErr = t.app.RunAgentLoop(pr.orchCtx, pr.llmMsgs, pr.loopConfig())
+	// The session rides the loop's context, so a tool an app handed the loop
+	// (ToolSessionFromContext) can reach what the user attached to the message.
+	pr.resp, _, pr.loopErr = t.app.RunAgentLoop(pr.sess.ContextWithSession(pr.orchCtx), pr.llmMsgs, pr.loopConfig())
 	pr.stopKeepalive()
 	// Consume the silence flag. stay_silent writes ToolSession.Silenced and,
 	// until now, nothing read it: the only thing that worked was agent_loop's

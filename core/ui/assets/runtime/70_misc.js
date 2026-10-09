@@ -324,6 +324,75 @@
       if (editBtn) { editBtn.textContent = cfg.edit_label || 'Edit'; editBtn.classList.remove('active'); }
     }
 
+    // A picture dropped or pasted on the rendered document, with no editor
+    // open, goes into the document where it landed: the section under the
+    // drop (an ancestor carrying data-section-id), or the end for a paste,
+    // which has no place. Uploaded with place=1 and the server puts it in,
+    // then the record reloads. Only for a record this reader may edit, which
+    // is the same test the Edit button makes.
+    function canPlacePictures() {
+      return !!cfg.image_upload_url && !editing && !!selectedId && !!lastRec && typeof lastRec[editField] === 'string';
+    }
+    function placePicture(file, sectionId) {
+      if (!file || !/^image\//.test(file.type || '')) return;
+      var url = cfg.image_upload_url.replace('{id}', encodeURIComponent(selectedId)) +
+        (cfg.image_upload_url.indexOf('?') >= 0 ? '&' : '?') + 'place=1' +
+        (sectionId ? '&section=' + encodeURIComponent(sectionId) : '');
+      var fd = new FormData();
+      fd.append('file', file, file.name || 'image.png');
+      showToast('Adding picture…');
+      fetch(url, {method: 'POST', credentials: 'same-origin', body: fd})
+        .then(function(r) {
+          if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+          return r.json();
+        })
+        .then(function(d) {
+          showToast(d && d.section ? ('Picture added to ' + d.section) : 'Picture added');
+          if (cfg.refresh_on && cfg.refresh_on.length && window.uiInvalidate) window.uiInvalidate(cfg.refresh_on);
+          loadViewer(selectedId);
+        })
+        .catch(function(err) { showToast('Could not add the picture: ' + ((err && err.message) || err)); });
+    }
+    function pictureFiles(list) {
+      return Array.prototype.filter.call(list || [], function(f) { return f && /^image\//.test(f.type || ''); });
+    }
+    viewerBody.addEventListener('dragover', function(ev) {
+      if (!canPlacePictures()) return;
+      var types = (ev.dataTransfer && ev.dataTransfer.types) || [];
+      if (Array.prototype.indexOf.call(types, 'Files') < 0) return;
+      ev.preventDefault();
+      viewerBody.classList.add('ui-drop-target');
+    });
+    viewerBody.addEventListener('dragleave', function() { viewerBody.classList.remove('ui-drop-target'); });
+    viewerBody.addEventListener('drop', function(ev) {
+      viewerBody.classList.remove('ui-drop-target');
+      if (!canPlacePictures()) return;
+      var files = pictureFiles(ev.dataTransfer && ev.dataTransfer.files);
+      if (!files.length) return;
+      ev.preventDefault();
+      var part = ev.target && ev.target.closest ? ev.target.closest('[data-section-id]') : null;
+      var sectionId = part ? part.getAttribute('data-section-id') : '';
+      files.forEach(function(f) { placePicture(f, sectionId); });
+    });
+    // A paste lands at the end: it has no place on the page. Only when
+    // nothing that takes text has focus, so a field keeps its own paste.
+    document.addEventListener('paste', function(ev) {
+      if (!canPlacePictures() || !root.isConnected) return;
+      var a = document.activeElement;
+      if (a && (a.isContentEditable || /^(input|textarea|select)$/i.test(a.tagName || ''))) return;
+      var items = (ev.clipboardData && ev.clipboardData.items) || [];
+      var files = [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file' && /^image\//.test(items[i].type || '')) {
+          var f = items[i].getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (!files.length) return;
+      ev.preventDefault();
+      files.forEach(function(f) { placePicture(f, ''); });
+    });
+
     // renderRecord paints a fetched record into the viewer: title, then the
     // body as trusted server HTML or as markdown, or the empty-document hint.
     function renderRecord(rec) {

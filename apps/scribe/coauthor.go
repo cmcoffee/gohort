@@ -7,7 +7,9 @@ package scribe
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -540,7 +542,87 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 		},
 	}
 
-	base := []AgentToolDef{addSection, editSection, draftSection, listSections, renameSection, deleteSection, moveSection, research, searchKnowledge, listReferences, pullReference}
+	// add_image puts a picture into a section: one the user attached to this
+	// message (media#N, which the runner names for the model), or one at a
+	// web address. The attached kind is why the tool exists: a screenshot
+	// pasted into the chat with "put this under Setup" had no way into the
+	// guide, and the model could only describe it.
+	addImage := AgentToolDef{
+		Tool: Tool{
+			Name:        "add_image",
+			Caps:        []Capability{CapWrite},
+			Description: "Put a picture into a section of the open guide, as its own paragraph at the end of that section. image is media#1, media#2 … for a picture the user attached to THIS message (the message says which ids exist), or an http(s) URL of a picture. Use it when the user sends a screenshot and says where it goes; never describe a picture in words instead of placing it.",
+			Parameters: map[string]ToolParam{
+				"section_title": {Type: "string", Description: "Title of the section the picture goes in (must match an existing section)."},
+				"image":         {Type: "string", Description: "media#N for a picture attached to this message, or an http(s) URL."},
+				"caption":       {Type: "string", Description: "What the picture shows, in a few words: the alt text. Optional."},
+			},
+			Required: []string{"section_title", "image"},
+		},
+		SingleFirePerBatch: true,
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
+			ref := strings.TrimSpace(fmt.Sprint(args["image"]))
+			caption := strings.TrimSpace(fmt.Sprint(args["caption"]))
+			if caption == "" || caption == "<nil>" {
+				caption = "Screenshot"
+			}
+			if ref == "" || ref == "<nil>" {
+				return "", fmt.Errorf("image is required: media#N for a picture attached to this message, or an http(s) URL")
+			}
+			g, ownerUDB, _, ok := openGuide()
+			if !ok {
+				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
+			}
+			idx := findIdx(g, title)
+			if idx < 0 {
+				return "", fmt.Errorf("no section titled %q, existing sections: %s", title, sectionTitles(g))
+			}
+			var src string
+			switch {
+			case strings.HasPrefix(ref, "media#"):
+				sess := ToolSessionFromContext(ctx)
+				var item *InboundMediaItem
+				if sess != nil {
+					for i := range sess.InboundMedia {
+						if sess.InboundMedia[i].ID == ref {
+							item = &sess.InboundMedia[i]
+						}
+					}
+				}
+				if item == nil || item.Kind != "image" {
+					n := 0
+					if sess != nil {
+						n = len(sess.InboundMedia)
+					}
+					return "", fmt.Errorf("%s is not a picture attached to this message (%d attached): ask the user to attach it, or pass an http(s) URL", ref, n)
+				}
+				data, err := base64.StdEncoding.DecodeString(item.B64)
+				if err != nil || len(data) == 0 {
+					return "", fmt.Errorf("%s could not be read", ref)
+				}
+				if len(data) > maxGuideImageBytes {
+					return "", fmt.Errorf("%s is larger than 5 MB: ask for a smaller picture", ref)
+				}
+				mime := http.DetectContentType(data)
+				if !guideImageTypes[mime] {
+					return "", fmt.Errorf("%s is %s, not a PNG, JPEG, GIF or WebP picture", ref, mime)
+				}
+				imgID := newID()
+				ownerUDB.Set(guideImagesTable, guideImageKey(g.ID, imgID), guideImage{Mime: mime, Data: data, Name: caption, Created: now()})
+				src = T.guideImagePath(g.ID, imgID)
+			case strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://"):
+				src = ref
+			default:
+				return "", fmt.Errorf("image must be media#N (a picture attached to this message) or an http(s) URL, not %q", ref)
+			}
+			title = placeImageInSection(&g, g.Sections[idx].ID, "!["+strings.NewReplacer("[", "", "]", "").Replace(caption)+"]("+src+")")
+			saveGuideRev(ownerUDB, g, "Added a picture to "+title)
+			return fmt.Sprintf("Placed the picture at the end of the %q section in %q.", title, g.Title), nil
+		},
+	}
+
+	base := []AgentToolDef{addSection, editSection, draftSection, addImage, listSections, renameSection, deleteSection, moveSection, research, searchKnowledge, listReferences, pullReference}
 
 	// Attached-source tools: every source the user linked via the Sources button
 	// contributes its OWN named tools (e.g. search_<system>_knowledge,

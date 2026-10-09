@@ -593,6 +593,37 @@ func (s *ToolSession) FirstAvailableTool(names ...string) string {
 	return ""
 }
 
+// The session on a handler's context.
+//
+// A tool an app hands the loop (an AgentToolDef) gets a context and its
+// arguments, and no session: it cannot see what the user attached to the
+// message (InboundMedia), only built-in tools can. The runner puts the
+// session on the loop's context, and ToolSessionFromContext reads it back.
+type toolSessionCtxKey struct{}
+
+// ContextWithSession returns ctx carrying this session, for the context a
+// run hands its tool handlers.
+func (s *ToolSession) ContextWithSession(ctx context.Context) context.Context {
+	if s == nil {
+		return ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, toolSessionCtxKey{}, s)
+}
+
+// ToolSessionFromContext is the turn's session, for a tool an app hands the
+// loop: what the user attached to the message (InboundMedia), the workspace,
+// the tier. Nil when the context is not a run's.
+func ToolSessionFromContext(ctx context.Context) *ToolSession {
+	if ctx == nil {
+		return nil
+	}
+	s, _ := ctx.Value(toolSessionCtxKey{}).(*ToolSession)
+	return s
+}
+
 // Context returns the session's turn context (s.Ctx), or
 // context.Background() when unset or the session is nil. Tools that
 // spawn a synchronous sub-run should root it here so a parent-turn

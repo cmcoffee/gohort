@@ -56,6 +56,13 @@ type WorkbenchPanel struct {
 	// ImageUploadURL, with {id} for the open record, takes pictures pasted or
 	// dropped into the edit textarea (and an Add image button for a file):
 	// POST multipart "file", answering {markdown} to insert at the cursor.
+	//
+	// A picture dropped or pasted on the RENDERED document, with no editor
+	// open, is sent to the same URL with place=1 and, when the drop landed on
+	// an element inside one carrying data-section-id, section=<that id>: the
+	// server puts it in the document itself and answers {placed: true,
+	// section: <name>}, and the viewer reloads. The document's parts carry
+	// the attribute; a server that cannot place answers an error.
 	ImageUploadURL string `json:"image_upload_url,omitempty"`
 	// ViewerActions render as a button row above the document — actions on the
 	// SELECTED record (export, history, audit, …). Generic: any workbench can add
