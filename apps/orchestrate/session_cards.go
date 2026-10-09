@@ -25,10 +25,14 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // cardsPayload is what the poll gets back.
@@ -78,4 +82,69 @@ func observationCardsSince(msgs []ChatMessage, since string) []ChatMessage {
 func serveObservationCards(w http.ResponseWriter, msgs []ChatMessage, since string) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(cardsPayload{Messages: observationCardsSince(msgs, since)})
+}
+
+// Waiting for a card instead of asking every six seconds.
+//
+// A background task's result reached the thread as a card about two seconds
+// after it finished, and the page found it on its next poll: up to six more
+// seconds of a finished job looking unfinished. With wait=1 the poll is held
+// open until the thread is saved again (any save, which is cheap to re-check)
+// or cardsWait passes, so a card shows the moment it is written. A server
+// that ignores wait answers at once, and the client falls back to its timer.
+
+// cardsWait is how long a waiting poll is held before it answers empty.
+var cardsWait = 25 * time.Second
+
+var sessionChanges = struct {
+	sync.Mutex
+	m map[string]chan struct{}
+}{m: map[string]chan struct{}{}}
+
+// sessionChangeCh is the channel the session's next save closes.
+func sessionChangeCh(agentID, sessionID string) chan struct{} {
+	key := agentID + "\x00" + sessionID
+	sessionChanges.Lock()
+	defer sessionChanges.Unlock()
+	ch := sessionChanges.m[key]
+	if ch == nil {
+		ch = make(chan struct{})
+		sessionChanges.m[key] = ch
+	}
+	return ch
+}
+
+// noteSessionChange wakes every poll waiting on the session. Keyed by agent
+// and session id only: a seed agent's id is the same for every user, and a
+// wake meant for someone else's thread just re-checks this one and waits on.
+func noteSessionChange(agentID, sessionID string) {
+	key := agentID + "\x00" + sessionID
+	sessionChanges.Lock()
+	if ch := sessionChanges.m[key]; ch != nil {
+		close(ch)
+		delete(sessionChanges.m, key)
+	}
+	sessionChanges.Unlock()
+}
+
+// waitForCards returns the session once it holds a card after since, or as it
+// stands when cardsWait passes or the request ends.
+func waitForCards(ctx context.Context, udb Database, agentID, sessionID string, s ChatSession, since string) ChatSession {
+	ctx, cancel := context.WithTimeout(ctx, cardsWait)
+	defer cancel()
+	for {
+		// Taken before the re-read, so a save between the two still wakes us.
+		ch := sessionChangeCh(agentID, sessionID)
+		if latest, ok := loadChatSession(udb, agentID, sessionID); ok {
+			s = latest
+		}
+		if len(observationCardsSince(s.Messages, since)) > 0 {
+			return s
+		}
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return s
+		}
+	}
 }

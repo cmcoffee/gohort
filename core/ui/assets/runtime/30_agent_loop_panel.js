@@ -5802,7 +5802,10 @@
 
     function stopChannelPolling() {
       if (channelPollTimer) { clearInterval(channelPollTimer); channelPollTimer = null; }
+      reportPollGen++; // ends a waiting report poll's loop too
+      if (reportPollAbort) { try { reportPollAbort.abort(); } catch (_) {} reportPollAbort = null; }
     }
+    var reportPollGen = 0, reportPollAbort = null;
 
     // startChannelPolling — while a channel thread is open, re-fetch its session
     // every few seconds and append any messages beyond what's on screen, so new
@@ -5932,7 +5935,13 @@
     function startReportPolling(sid) {
       stopChannelPolling();
       if (!cfg.load_url || !sid) return;
-      channelPollTimer = setInterval(function() {
+      var gen = reportPollGen;
+      // wait=1 holds the request open until the thread is saved again, so a
+      // card (a background task's result, a scheduled report) shows the moment
+      // it is written instead of on the next six-second tick. A server that
+      // does not wait answers at once, and the loop falls back to the tick.
+      function poll() {
+        if (gen !== reportPollGen) return;
         if (activeSessionId !== sid) { stopChannelPolling(); return; }
         // cards=1 asks for observation cards ONLY, and `since` narrows that to
         // what landed after the newest one on screen. Without it this refetched
@@ -5940,10 +5949,12 @@
         // and output — every six seconds, to render the nothing that usually
         // arrived. See session_cards.go.
         var url = substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)));
-        url += (url.indexOf('?') >= 0 ? '&' : '?') + 'cards=1';
+        url += (url.indexOf('?') >= 0 ? '&' : '?') + 'cards=1&wait=1';
         if (cortexObsSince) url += '&since=' + encodeURIComponent(cortexObsSince);
-        fetchJSON(url).then(function(rec) {
-          if (activeSessionId !== sid) return;
+        var asked = Date.now(), drew = 0;
+        reportPollAbort = window.AbortController ? new AbortController() : null;
+        fetchJSON(url, reportPollAbort ? {signal: reportPollAbort.signal} : undefined).then(function(rec) {
+          if (gen !== reportPollGen || activeSessionId !== sid) return;
           var msgs = rec && rec[msgsF];
           if (!Array.isArray(msgs)) return;
           msgs.forEach(function(m) {
@@ -5953,12 +5964,17 @@
             if (cortexObsSeen[k]) return;
             cortexObsSeen[k] = true;
             renderObservation(m);
+            drew++;
           });
-        }).catch(function() {});
-        // Slower than the channel poll: this now runs for EVERY open thread,
-        // not just the cortex home, and a report card arriving six seconds
-        // later still arrives while the user is looking at it.
-      }, 6000);
+        }).catch(function() {}).then(function() {
+          if (gen !== reportPollGen) return;
+          // Answered quickly with nothing: a server that does not wait, or an
+          // error. Back to the tick, so this never spins.
+          var quick = Date.now() - asked < 2000 && drew === 0;
+          setTimeout(poll, quick ? 6000 : 0);
+        });
+      }
+      poll();
     }
 
     // scheduleRunningRefresh re-reads the rail a few seconds from now while

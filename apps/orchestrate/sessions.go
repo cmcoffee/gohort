@@ -87,6 +87,7 @@ func saveChatSession(db Database, s ChatSession) (ChatSession, error) {
 		s.Created = now
 	}
 	s.LastAt = now
+	defer noteSessionChange(s.AgentID, s.ID)
 	// Channel-model groundwork: every thread records its membership. Stage 1
 	// has exactly one agent per thread (the lead); the human owner is implicit
 	// in the user-scoped db. Additive — nothing reads it yet (see

@@ -423,7 +423,11 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		// not a person reading), computes no blocks, and serializes no chat
 		// turns. See session_cards.go for why that matters on a long thread.
 		if r.URL.Query().Get("cards") == "1" {
-			serveObservationCards(w, s.Messages, r.URL.Query().Get("since"))
+			since := r.URL.Query().Get("since")
+			if r.URL.Query().Get("wait") == "1" {
+				s = waitForCards(r.Context(), udb, agent.ID, sid, s, since)
+			}
+			serveObservationCards(w, s.Messages, since)
 			return
 		}
 		// Opening a session clears its unread state (a background wake that
