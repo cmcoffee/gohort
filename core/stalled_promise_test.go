@@ -169,6 +169,9 @@ func TestAnOfferThatWaitsOnTheUserIsNotAStall(t *testing.T) {
 		// The condition sits words away from "you", and the handover is its own phrase.
 		"Here's the shot with the tag in the corner. If a face came out wrong or you want a different setup (someone else in frame), say the word and I'll reroll it.",
 		"Unless you'd rather keep this one, I'll make another.",
+		// A handover with no "you" in it: both slipped through at 19:19.
+		"Here it is, sunset out and the city way down below. If the tag didn't make it into the corner, say the word and I'll fix that part.",
+		"There's no job left in flight. If the tag isn't in the corner, say so and I'll reroll it.",
 	} {
 		if replyStalledOnAPromise(offer) {
 			t.Errorf("an offer waiting on the user is not a stall: %q", offer)
@@ -259,5 +262,36 @@ func TestAnEmptyPromiseIsItsOwnGuard(t *testing.T) {
 	replyguard.Put(replyguard.Setting{ID: correctionActionPromise, Scope: replyguard.AllTiers, Mode: replyguard.Off})
 	if calls := run(); calls != 1 {
 		t.Errorf("promise guard off: calls=%d, want the reply left alone", calls)
+	}
+}
+
+// Asked to do the work or send the reply again unchanged, a model that sends
+// it again has said it was an offer: it is delivered, not corrected a second
+// time, and what reaches the person is the reply itself rather than a reply
+// to a note they never saw.
+func TestAReplySentBackUnchangedIsDelivered(t *testing.T) {
+	replyguard.SetStore(guardStore{})
+	defer replyguard.SetStore(nil)
+	stall := "The picture is ready and on its way to you. I'll keep the high-res copy handy."
+	stub := &FakeLLM{Turns: []FakeTurn{
+		{Content: "I'll pull the logs now."},
+		{Content: "I'll  pull the logs now.", Repeat: true},
+	}}
+	app := &AppCore{LLM: stub, LeadLLM: stub}
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "logs?"}}, AgentLoopConfig{MaxRounds: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stub.Calls() != 2 {
+		t.Errorf("the unchanged reply was corrected again: calls=%d, want 2", stub.Calls())
+	}
+	if !strings.Contains(resp.Content, "pull the logs") {
+		t.Errorf("delivered %q", resp.Content)
+	}
+	if !strings.Contains(noteActionPromise, "send your previous reply again exactly as it was") {
+		t.Error("the correction no longer offers resending the reply")
+	}
+	if sameReply(stall, "I'll pull the logs now.") || !sameReply("I'll pull the logs now.", "i'll pull the logs now") {
+		t.Error("sameReply tells the wrong replies apart")
 	}
 }

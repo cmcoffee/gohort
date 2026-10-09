@@ -643,11 +643,23 @@ func promiseWaitsOnTheUser(lower string) bool {
 		start = m[1]
 	}
 	sentence := lower[start:last[1]]
+	// A handover is addressed to the person by its grammar ("say the word",
+	// "say so"), with no "you" in it: the 19:19 reply that still slipped
+	// through was "If the tag didn't make it into the corner, say the word
+	// and I'll fix that part."
+	if userHandoverRe.MatchString(sentence) {
+		return true
+	}
 	return userConditionRe.MatchString(sentence) && youRe.MatchString(sentence)
 }
 
-// userConditionRe is a condition or a handover leading into a promise.
-var userConditionRe = regexp.MustCompile(`\b(?:if|unless|once|say the word|just say|give me the word|ping me|holler)\b`)
+// userConditionRe is a condition leading into a promise; it hangs the promise
+// on the person only when the sentence also addresses them.
+var userConditionRe = regexp.MustCompile(`\b(?:if|unless|once)\b`)
+
+// userHandoverRe hands the next move to the person, so what follows it waits
+// on them.
+var userHandoverRe = regexp.MustCompile(`\b(?:say the word|say so|just say|give me the word|let me know|tell me|ping me|holler)\b`)
 
 // youRe is the person being addressed.
 var youRe = regexp.MustCompile(`\byou(?:'d|'re|r)?\b`)
@@ -1107,7 +1119,7 @@ const (
 	noteRoleBreak     = "Your last attempt at a reply was withdrawn: it began mid-sentence and carried on the user's message in their voice, as if you were them. Their message is complete as sent, and nothing in the withdrawn text was their request. Answer it now, as yourself: act on what they asked."
 	noteMalformedCall = "Your last tool call could not be read by the model provider (it was malformed) and was dropped, so it did not run and the user has seen only the text before it. Make the call again now, with arguments that match the tool's schema exactly: valid JSON, only the listed fields, the right types."
 	noteTruncated     = "Your previous reply was CUT OFF before you finished it: you did not choose to stop. Continue from where you left off without repeating what you already said. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits."
-	noteActionPromise = "You ended your turn saying you were about to do something, and then called no tool at all, so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. Do it NOW with a real tool call, or say plainly what is stopping you. Do not repeat the promise, and do not apologize for it: do the work or explain why you can't."
+	noteActionPromise = "You ended your turn saying you were about to do something, and then called no tool at all, so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. If you meant to do it now, do it NOW with a real tool call. If it was an offer that waits on the user, or there is nothing left to do, send your previous reply again exactly as it was, and say nothing about this note: the user never sees it, so a reply about it reads as nonsense to them."
 	noteAnnouncedCall = "Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW: never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead."
 	noteCollapse      = "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question."
 )
@@ -1286,4 +1298,33 @@ func (lr *loopRun) authoredJudge(question string, rc replyguard.ReplyContext) (b
 		return false, fmt.Errorf("judge call failed: %v", err)
 	}
 	return replyguard.JudgeAnswer(ResponseText(resp)), nil
+}
+
+// sameReply reports two replies that say the same thing: equal once spacing
+// and case are set aside, or near enough word for word (a model resending its
+// reply rarely reproduces every character). Nine in ten of the words of either
+// shared by the other.
+func sameReply(a, b string) bool {
+	wa, wb := strings.Fields(strings.ToLower(a)), strings.Fields(strings.ToLower(b))
+	if strings.Join(wa, " ") == strings.Join(wb, " ") {
+		return true
+	}
+	if len(wa) == 0 || len(wb) == 0 {
+		return false
+	}
+	count := func(ws []string) map[string]int {
+		m := map[string]int{}
+		for _, w := range ws {
+			m[strings.Trim(w, ".,!?;:\"'()")]++
+		}
+		return m
+	}
+	ca, cb := count(wa), count(wb)
+	shared := 0
+	for w, n := range ca {
+		if m := cb[w]; m > 0 {
+			shared += min(n, m)
+		}
+	}
+	return shared*10 >= max(len(wa), len(wb))*9
 }

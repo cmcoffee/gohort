@@ -501,6 +501,10 @@ type loopRun struct {
 	judgedNarration            map[string]bool
 	skippedInterimGuard        bool
 	toolFiredThisTurn          bool
+	// promiseCorrected is the reply the action-promise correction last fired
+	// on. The same reply sent back after it is the model saying it was an
+	// offer, and is delivered rather than corrected again.
+	promiseCorrected string
 	wrapUpWarningFired         bool
 	midpointNudgeFired         bool
 	baseRound                  int
@@ -2846,10 +2850,21 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 	if !stalledOnErrors {
 		kind, uncorrected = correctionActionPromise, "The reply again ended on a promise to act with no tool called; no further re-prompt was left to spend, so it was delivered as written."
 	}
+	if gaveUp && kind == correctionActionPromise && lr.promiseCorrected != "" && sameReply(trimmedContent, lr.promiseCorrected) {
+		// Asked to do it or send the reply again unchanged, it sent the reply
+		// again: an offer, or nothing left to do. Correcting it once more would
+		// spend a round to arrive at the same text, or worse, at a reply to the
+		// correction itself ("Nothing is stopping me...") in its place.
+		Debug("[agent_loop] the reply came back unchanged after an action-promise correction: delivered as an offer")
+		return actNone
+	}
 	if gaveUp {
 		lr.noteUncorrected(kind, uncorrected)
 	}
 	if gaveUp && lr.corrections.available(kind) && lr.guardActs(kind) {
+		if kind == correctionActionPromise {
+			lr.promiseCorrected = trimmedContent
+		}
 		tail := trimmedContent
 		if r := []rune(tail); len(r) > 160 {
 			tail = "…" + string(r[len(r)-160:])
