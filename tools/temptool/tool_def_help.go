@@ -40,7 +40,10 @@ same checks and runs tool.json's cases. NOTES.md is the tool's
 memory for whoever edits it next: read it first, and leave what
 you learned (an API quirk it works around, why a param is
 optional, what you tried that failed, the output's shape). Any
-tool takes notes="..." on create and update too.
+tool takes notes="..." on create and update too. action="pack"
+writes a saved tool as one file (<name>.gohorttool) to hand
+over; action="unpack" turns a bundle somebody sent into a
+folder to read and change, installing nothing.
 
 A WRITE endpoint in a toolbox, the shape that goes wrong most:
     actions=[{name: "create_task", method: "POST",

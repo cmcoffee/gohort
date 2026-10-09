@@ -135,6 +135,26 @@ func toolCheckout(args map[string]any, sess *ToolSession) (string, error) {
 	if effectiveTempToolMode(existing) != TempToolModeShell || strings.TrimSpace(existing.ScriptBody) == "" {
 		return "", fmt.Errorf("%q is a %s tool, not a script tool: a folder holds a script tool. Edit this one with tool_def(action=\"update\")", name, effectiveTempToolMode(existing))
 	}
+	m, err := writeToolFolder(abs, existing, toolFingerprint(existing))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Checked out tool %q into %s/: tool.json, %s, %d helper file(s), NOTES.md. Read NOTES.md first. Edit the files (workspace write, or workspace edit for a few lines), try it with tool_def(action=\"run\", dir=%q, args={...}), and save it with tool_def(action=\"publish\", dir=%q).",
+		existing.Name, rel, m.Script, len(existing.WorkspaceFiles), rel, rel), nil
+}
+
+// writeToolFolder writes a script tool into a folder: tool.json, the script,
+// its helpers and NOTES.md. base is the live state the folder holds
+// (toolFingerprint), or "" when it holds none (an unpacked bundle). Shared by
+// checkout and unpack.
+func writeToolFolder(abs string, existing TempTool, base string) (toolFolderManifest, error) {
+	write := func(file string, data []byte) error {
+		p := filepath.Join(abs, file)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(p, data, 0o644)
+	}
 	m := toolFolderManifest{Name: existing.Name, Description: existing.Description, Category: existing.Category,
 		Script: chFirstStr(existing.ScriptName, "script.py"), HookCapabilities: existing.HookCapabilities,
 		TimeoutSec: existing.TimeoutSec, StatePath: existing.StatePath, RawNetwork: existing.RawNetwork, ConfirmInChat: existing.ConfirmInChat}
@@ -153,14 +173,17 @@ func toolCheckout(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	for f, data := range files {
 		if err := write(f, data); err != nil {
-			return "", err
+			return m, err
 		}
 	}
-	if err := write(toolFolderBaseFile, []byte(toolFingerprint(existing))); err != nil {
-		return "", err
+	if base != "" {
+		if err := write(toolFolderBaseFile, []byte(base)); err != nil {
+			return m, err
+		}
+	} else {
+		os.Remove(filepath.Join(abs, toolFolderBaseFile))
 	}
-	return fmt.Sprintf("Checked out tool %q into %s/: tool.json, %s, %d helper file(s), NOTES.md. Read NOTES.md first. Edit the files (workspace write, or workspace edit for a few lines), try it with tool_def(action=\"run\", dir=%q, args={...}), and save it with tool_def(action=\"publish\", dir=%q).",
-		existing.Name, rel, m.Script, len(existing.WorkspaceFiles), rel, rel), nil
+	return m, nil
 }
 
 // toolFolderRead loads a folder into create/update arguments.

@@ -107,9 +107,38 @@ func (t *chatTurn) appDefCheckout(args map[string]any) (string, error) {
 	if !exists {
 		return t.appFolderScaffold(abs, rel, args)
 	}
+	assets := map[string][]byte{}
+	if names, err := ListAppAssets(spec.Owner, spec.Slug); err == nil {
+		for _, n := range names {
+			if data, _, err := ReadAppAsset(spec.Owner, spec.Slug, n); err == nil {
+				assets[n] = data
+			}
+		}
+	}
+	w, err := writeAppFolder(abs, spec, assets, appLiveFingerprint(spec))
+	if err != nil {
+		return "", err
+	}
+	pages, m, nAssets := w.pages, w.manifest, w.assets
+	return fmt.Sprintf("Checked out app %q into %s/: app.json, %d page file(s), %d data source(s) in data/, %d action(s) in actions/, %d shared module(s) in lib/, %d asset(s) in assets/, NOTES.md. Edit the files (workspace write, or workspace edit for a few lines), run one backend file with app_def(action=\"run\", dir=%q, file=\"data/<name>.py\", sample=[...]), and publish with app_def(action=\"publish\", dir=%q).",
+		spec.Name, rel, pages, len(m.DataSources), len(m.Actions), len(spec.Libraries), nAssets, rel, rel), nil
+}
+
+// appFolderWrite is what writeAppFolder wrote.
+type appFolderWrite struct {
+	pages, assets int
+	manifest      appFolderManifest
+}
+
+// writeAppFolder writes spec into a folder as its files: the pages, each
+// script, the shared modules, the assets given, app.json and NOTES.md. base is
+// the live state the folder holds (appLiveFingerprint), or "" when it holds
+// none. Shared by checkout (the live app) and unpack (a bundle).
+func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base string) (appFolderWrite, error) {
+	var out appFolderWrite
 	var sections []map[string]any
 	if len(spec.Sections) == 0 || json.Unmarshal(spec.Sections, &sections) != nil {
-		return "", fmt.Errorf("app %q has no editable sections stored (it predates them): use app_def get / update for it", spec.Slug)
+		return out, fmt.Errorf("app %q has no editable sections stored (it predates them): use app_def get / update for it", spec.Slug)
 	}
 	write := func(name string, data []byte) error {
 		p := filepath.Join(abs, name)
@@ -130,7 +159,7 @@ func (t *chatTurn) appDefCheckout(args map[string]any) (string, error) {
 		}
 		pages++
 		if err := write(name, []byte(html)); err != nil {
-			return "", err
+			return out, err
 		}
 		delete(sec, "html")
 		sec["html_file"] = name
@@ -142,43 +171,49 @@ func (t *chatTurn) appDefCheckout(args map[string]any) (string, error) {
 	for _, ds := range spec.DataSources {
 		f := "data/" + ds.Name + scriptExt(ds.Language)
 		if err := write(f, []byte(ds.Script)); err != nil {
-			return "", err
+			return out, err
 		}
 		m.DataSources = append(m.DataSources, appFolderScript{Name: ds.Name, File: f, Language: ds.Language, Capabilities: ds.Capabilities})
 	}
 	for _, a := range spec.Actions {
 		f := "actions/" + a.Name + scriptExt(a.Language)
 		if err := write(f, []byte(a.Script)); err != nil {
-			return "", err
+			return out, err
 		}
 		m.Actions = append(m.Actions, appFolderScript{Name: a.Name, File: f, Language: a.Language, Capabilities: a.Capabilities,
 			Label: a.Label, Desc: a.Desc, Confirm: a.Confirm, Schedule: a.Schedule})
 	}
 	for name, src := range spec.Libraries {
 		if err := write("lib/"+name+".py", []byte(src)); err != nil {
-			return "", err
+			return out, err
 		}
 	}
 	manifest, _ := json.MarshalIndent(m, "", "  ")
 	if err := write("app.json", manifest); err != nil {
-		return "", err
+		return out, err
 	}
 	if err := write("NOTES.md", []byte(spec.Notes)); err != nil {
-		return "", err
+		return out, err
 	}
-	if err := write(appFolderBaseFile, []byte(appLiveFingerprint(spec))); err != nil {
-		return "", err
+	// The live state the folder holds; none for a folder that holds no live
+	// app (an unpacked bundle), which a publish over a same-named app sees.
+	if base != "" {
+		if err := write(appFolderBaseFile, []byte(base)); err != nil {
+			return out, err
+		}
+	} else {
+		os.Remove(filepath.Join(abs, appFolderBaseFile))
 	}
-	assets := 0
-	if names, err := ListAppAssets(spec.Owner, spec.Slug); err == nil {
-		for _, n := range names {
-			if data, _, err := ReadAppAsset(spec.Owner, spec.Slug, n); err == nil && write("assets/"+n, data) == nil {
-				assets++
-			}
+	for n, data := range assets {
+		if !ValidAppAssetName(n) {
+			continue
+		}
+		if write("assets/"+n, data) == nil {
+			out.assets++
 		}
 	}
-	return fmt.Sprintf("Checked out app %q into %s/: app.json, %d page file(s), %d data source(s) in data/, %d action(s) in actions/, %d shared module(s) in lib/, %d asset(s) in assets/, NOTES.md. Edit the files (workspace write, or workspace edit for a few lines), run one backend file with app_def(action=\"run\", dir=%q, file=\"data/<name>.py\", sample=[...]), and publish with app_def(action=\"publish\", dir=%q).",
-		spec.Name, rel, pages, len(m.DataSources), len(m.Actions), len(spec.Libraries), assets, rel, rel), nil
+	out.pages, out.manifest = pages, m
+	return out, nil
 }
 
 // appFolderStarterPage is a new app's page: a complete document already wired

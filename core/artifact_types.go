@@ -9,6 +9,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -1228,7 +1229,65 @@ func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.Ra
 	// bundle: the importer re-shares on their own terms.
 	spec.Shared = false
 	spec.PublicToken = ""
-	return json.Marshal(spec)
+	return marshalAppWithAssets(spec, owner)
+}
+
+// appBundleAssetsMax bounds the assets one app's recipe carries, encoded.
+const appBundleAssetsMax = 32 << 20
+
+// marshalAppWithAssets is the recipe: the spec, plus the app's assets
+// (images, sounds, models) as {"assets": {name: base64}}. They used to stay
+// behind, so an exported game arrived without its sprites and every <img>
+// broke on the other side. The spec's own fields are untouched; a reader of
+// an older recipe simply finds no assets.
+func marshalAppWithAssets(spec AppSpec, owner string) (json.RawMessage, error) {
+	base, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+	names, _ := ListAppAssets(owner, spec.Slug)
+	if len(names) == 0 {
+		return base, nil
+	}
+	assets := map[string]string{}
+	total := 0
+	for _, n := range names {
+		data, _, err := ReadAppAsset(owner, spec.Slug, n)
+		if err != nil {
+			continue
+		}
+		enc := base64.StdEncoding.EncodeToString(data)
+		total += len(enc)
+		if total > appBundleAssetsMax {
+			return nil, fmt.Errorf("app %q's assets come to more than %d MB encoded, over what a bundle carries: remove the large ones, or share them some other way", spec.Slug, appBundleAssetsMax>>20)
+		}
+		assets[n] = enc
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(base, &m); err != nil {
+		return nil, err
+	}
+	enc, _ := json.Marshal(assets)
+	m["assets"] = enc
+	return json.Marshal(m)
+}
+
+// appRecipeAssets reads the assets a custom-app recipe carries, by name.
+// Undecodable entries are dropped.
+func appRecipeAssets(recipe json.RawMessage) map[string][]byte {
+	var r struct {
+		Assets map[string]string `json:"assets"`
+	}
+	if json.Unmarshal(recipe, &r) != nil || len(r.Assets) == 0 {
+		return nil
+	}
+	out := map[string][]byte{}
+	for n, enc := range r.Assets {
+		if data, err := base64.StdEncoding.DecodeString(enc); err == nil {
+			out[n] = data
+		}
+	}
+	return out
 }
 
 // Dependencies folds in what the app references: the chat agent it binds
@@ -1346,6 +1405,13 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	spec.Shared = false
 	spec.PublicToken = ""
 	SaveAppSpec(spec)
+	// Its assets with it; each is checked as any asset save is (name, type,
+	// size), and one refused does not stop the app landing.
+	for n, data := range appRecipeAssets(recipe) {
+		if _, err := SaveAppAsset(owner, slug, n, data); err != nil {
+			Log("[artifacts] app %q: asset %q not imported: %v", slug, n, err)
+		}
+	}
 	return slug, "", nil
 }
 

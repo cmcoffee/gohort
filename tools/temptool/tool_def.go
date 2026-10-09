@@ -195,6 +195,25 @@ func BuildToolDef() *GroupedTool {
 		Handler: toolPublish,
 	})
 
+	gt.AddAction("pack", &GroupedToolAction{
+		Description: "Write a saved tool as one file in your workspace (<name>.gohorttool: the whole tool, script, helpers and notes) to hand over. Anyone imports it at Extensions, Tools, Import.",
+		Params: map[string]ToolParam{
+			"name": folderParams["name"],
+			"file": {Type: "string", Description: "(optional) Where to write it; defaults to <name>.gohorttool."},
+		},
+		Handler: toolPack,
+	})
+	gt.AddAction("unpack", &GroupedToolAction{
+		Description: "Write the script tool in a bundle file somebody sent into a project folder, to read and change before anything is installed; then run and publish it like any tool folder.",
+		Params: map[string]ToolParam{
+			"file":      {Type: "string", Description: "The bundle in your workspace."},
+			"name":      {Type: "string", Description: "(optional) Which tool, when the bundle holds several."},
+			"dir":       folderParams["dir"],
+			"overwrite": {Type: "boolean", Description: "Replace a folder that already holds a tool."},
+		},
+		Handler: toolUnpack,
+	})
+
 	gt.AddAction("get", &GroupedToolAction{
 		Description: "Return the FULL definition of a tool by name: script_body, command_template, url_template, params, mode-specific fields, hook_capabilities. Read-only inspection: use this to COPY content from an existing tool (e.g. lift a known-good script_body, adapt a params shape) when authoring a new one, OR to inspect what's there before re-authoring with the same name (which overwrites the active entry). Returns a JSON-shaped block with every field set on the record. Pulls from the active pool first, then pending, then session drafts.",
 		Params: map[string]ToolParam{
