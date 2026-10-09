@@ -96,6 +96,14 @@
 .ui-servitor-plan-step.done .ui-servitor-plan-title {
   color: var(--text-mute); text-decoration: line-through;
 }
+/* Pinned at the top of the thread while the turn runs (core/ui's
+ * data-ui-pin): the heading with its count stays put as the steps
+ * scroll under it. */
+.ui-servitor-plan.ui-agent-pinned { padding-top: 0; }
+.ui-servitor-plan.ui-agent-pinned .ui-servitor-plan-h {
+  position: sticky; top: 0; z-index: 1;
+  background: inherit; padding-top: 0.65rem; padding-bottom: 0.35rem; margin-bottom: 0.15rem;
+}
 
 .ui-servitor-facts-list { margin-bottom: 0.6rem; }
 .ui-servitor-fact {
@@ -265,9 +273,30 @@
       wrap.appendChild(hdr);
       var stepsBox = el('ul', {class: 'ui-servitor-plan-steps'});
       wrap.appendChild(stepsBox);
+      // While steps remain it asks core/ui to keep it pinned at the top of
+      // the thread (data-ui-pin), the step under way kept in view.
       function render(plan) {
         stepsBox.innerHTML = '';
-        (plan || []).forEach(function(step) {
+        var steps = plan || [];
+        var done = 0, blocked = 0, focus = null, firstPending = null;
+        steps.forEach(function(step) {
+          var s = (step.status || 'pending').toLowerCase();
+          if (s === 'done') done++;
+          if (s === 'blocked') blocked++;
+        });
+        var open = steps.length - done - blocked;
+        if (!steps.length) {
+          hdr.textContent = '▸ Investigation Plan';
+        } else if (open > 0) {
+          hdr.textContent = '▸ Investigation Plan - ' + done + ' of ' + steps.length + ' done';
+        } else if (blocked) {
+          hdr.textContent = '▸ Investigation Plan ended - ' + done + ' of ' + steps.length + ' done, ' + blocked + ' blocked';
+        } else {
+          hdr.textContent = '✓ Investigation Plan done - ' + done + ' of ' + steps.length;
+        }
+        if (steps.length) wrap.setAttribute('data-ui-pin', open > 0 ? 'live' : 'done');
+        else wrap.removeAttribute('data-ui-pin');
+        steps.forEach(function(step) {
           var status = (step.status || 'pending').toLowerCase();
           var mark = '-';
           if (status === 'pending')     mark = '○';
@@ -290,8 +319,12 @@
             row.appendChild(el('span', {class: 'ui-servitor-plan-blocked-reason'},
               ['blocked: ' + step.blocked_reason]));
           }
+          if (status === 'in_progress' && !focus) focus = row;
+          if (status === 'pending' && !firstPending) firstPending = row;
           stepsBox.appendChild(row);
         });
+        focus = focus || firstPending;
+        if (focus) focus.setAttribute('data-ui-pin-focus', '');
       }
       render(d.plan);
       return {

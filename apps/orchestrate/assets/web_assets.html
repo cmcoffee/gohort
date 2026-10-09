@@ -79,6 +79,14 @@
 .ui-orch-plan-step.done .ui-orch-plan-title {
   color: var(--text-mute); text-decoration: line-through;
 }
+/* Pinned at the top of the thread while the turn runs (core/ui's
+ * data-ui-pin): the heading with its count stays put as the steps
+ * scroll under it. */
+.ui-orch-plan.ui-agent-pinned { padding-top: 0; }
+.ui-orch-plan.ui-agent-pinned .ui-orch-plan-h {
+  position: sticky; top: 0; z-index: 1;
+  background: inherit; padding-top: 0.65rem; padding-bottom: 0.35rem; margin-bottom: 0.15rem;
+}
 
 /* --- Interactive ask card (ask_user with options) --- */
 .ui-orch-ask {
@@ -823,14 +831,38 @@ select.ui-orch-intake-input {
     // every subsequent emit so the checklist refreshes in place.
     // Status values come straight from the server-side PlanStep:
     // pending / in_progress / done / blocked.
+    //
+    // While steps remain it asks core/ui to keep it pinned at the top of the
+    // thread (data-ui-pin="live"), marking the step under way as the one to
+    // keep in view; once none remain it says how it ended ("done").
     window.uiRegisterBlockRenderer('orchestrate_plan', function(d) {
       var wrap = el('div', {class: 'ui-orch-plan'});
-      wrap.appendChild(el('div', {class: 'ui-orch-plan-h'}, ['▸ Plan']));
+      var head = el('div', {class: 'ui-orch-plan-h'}, ['▸ Plan']);
+      wrap.appendChild(head);
       var stepsBox = el('ul', {class: 'ui-orch-plan-steps'});
       wrap.appendChild(stepsBox);
       function render(plan) {
         stepsBox.innerHTML = '';
-        (plan || []).forEach(function(step) {
+        var steps = plan || [];
+        var done = 0, blocked = 0, focus = null, firstPending = null;
+        steps.forEach(function(step) {
+          var s = (step.status || 'pending').toLowerCase();
+          if (s === 'done') done++;
+          if (s === 'blocked') blocked++;
+        });
+        var open = steps.length - done - blocked;
+        if (!steps.length) {
+          head.textContent = '▸ Plan';
+        } else if (open > 0) {
+          head.textContent = '▸ Plan - ' + done + ' of ' + steps.length + ' done';
+        } else if (blocked) {
+          head.textContent = '▸ Plan ended - ' + done + ' of ' + steps.length + ' done, ' + blocked + ' blocked';
+        } else {
+          head.textContent = '✓ Plan done - ' + done + ' of ' + steps.length;
+        }
+        if (steps.length) wrap.setAttribute('data-ui-pin', open > 0 ? 'live' : 'done');
+        else wrap.removeAttribute('data-ui-pin');
+        steps.forEach(function(step) {
           var status = (step.status || 'pending').toLowerCase();
           var mark = '-';
           if (status === 'pending')     mark = '○';
@@ -853,8 +885,12 @@ select.ui-orch-intake-input {
             row.appendChild(el('span', {class: 'ui-orch-plan-blocked-reason'},
               ['blocked: ' + step.blocked_reason]));
           }
+          if (status === 'in_progress' && !focus) focus = row;
+          if (status === 'pending' && !firstPending) firstPending = row;
           stepsBox.appendChild(row);
         });
+        focus = focus || firstPending;
+        if (focus) focus.setAttribute('data-ui-pin-focus', '');
       }
       render(d.plan);
       return {

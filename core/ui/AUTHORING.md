@@ -443,6 +443,8 @@ For a new block type emitted on the SSE stream. Register a renderer that takes t
 </script>
 ```
 
+A block that follows the running turn (a checklist, a progress card) can ask to stay in sight: set `data-ui-pin="live"` on its wrap while the work is under way, and `"done"` once it has finished. While a turn runs, the newest live block sticks to the top of the conversation, at most a third of the pane, and scrolls itself to keep the element you mark `data-ui-pin-focus` (the current step) in view. A block set to `"done"` stays up a few seconds so its ending is read, then returns to its place in the thread. Update the attributes in `onUpdate` as the state changes; the panel re-reads them after every update.
+
 ### Markdown extension
 A post-processor that runs after `mdToHTML`'s base passes. Use it to add app-specific syntax (e.g., colorize a heading pattern unique to your domain).
 

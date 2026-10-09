@@ -4512,6 +4512,7 @@
       var existing = blockEls[id];
       if (existing && typeof existing.onUpdate === 'function') {
         try { existing.onUpdate(d); } catch (_) {}
+        refreshPins();
         return;
       }
       var built = fn(d, {sessionId: activeSessionId});
@@ -4527,6 +4528,59 @@
         scrollConvo(false);
       } else {
         target.scrollTop = target.scrollHeight;
+      }
+      refreshPins();
+    }
+
+    // Pinned blocks. A block that follows the run it belongs to (a plan's
+    // checklist) sets data-ui-pin="live" on its wrap, and "done" once it is.
+    // While a turn runs, the newest live one sticks to the top of the
+    // conversation instead of scrolling away with everything after it,
+    // capped to a third of the pane, and keeps its data-ui-pin-focus element
+    // (the step being worked on) in view inside itself. A block that turns
+    // done stays up a moment so its ending is read, then goes back to its
+    // place in the log, where it always was: sticky, not moved.
+    //
+    // Only while a turn runs: a plan left unfinished by a turn that ended
+    // would otherwise sit over the thread for good, reload after reload.
+    var turnLive = false;
+    var pinnedWrap = null, pinDoneTimer = null, pinDoneMs = 4000;
+    function unpin() {
+      if (pinDoneTimer) { clearTimeout(pinDoneTimer); pinDoneTimer = null; }
+      if (pinnedWrap) pinnedWrap.classList.remove('ui-agent-pinned');
+      pinnedWrap = null;
+    }
+    function refreshPins() {
+      if (!convoLog) return;
+      var want = null;
+      if (turnLive) {
+        var live = convoLog.querySelectorAll('[data-ui-pin="live"]');
+        for (var i = live.length - 1; i >= 0 && !want; i--) {
+          if (live[i].parentNode === convoLog) want = live[i];
+        }
+      }
+      if (!want && pinnedWrap && pinnedWrap.parentNode === convoLog &&
+          pinnedWrap.getAttribute('data-ui-pin') === 'done') {
+        followPinFocus(pinnedWrap);
+        if (!pinDoneTimer) {
+          pinDoneTimer = setTimeout(function() { pinDoneTimer = null; unpin(); refreshPins(); }, pinDoneMs);
+        }
+        return;
+      }
+      if (pinnedWrap !== want) unpin();
+      if (!want) return;
+      pinnedWrap = want;
+      want.classList.add('ui-agent-pinned');
+      followPinFocus(want);
+    }
+    // followPinFocus scrolls a pinned block's own list, never the thread, so
+    // the step it marks stays in sight a third of the way down.
+    function followPinFocus(w) {
+      var f = w.querySelector('[data-ui-pin-focus]');
+      if (!f) return;
+      var top = f.offsetTop, bottom = top + f.offsetHeight;
+      if (top < w.scrollTop || bottom > w.scrollTop + w.clientHeight) {
+        w.scrollTop = Math.max(0, top - w.clientHeight / 3);
       }
     }
 
@@ -5006,6 +5060,8 @@
       clearEmpty();
       showThinking();
       startHeartbeat();
+      turnLive = true;
+      refreshPins();
     }
     // markUndeliveredInterjections says so when a queued note was never read.
     //
@@ -5044,6 +5100,8 @@
       if (activeStream) { try { activeStream.abort(); } catch(_) {} activeStream = null; }
       if (activeEventSource) { activeEventSource.close(); activeEventSource = null; }
       stopHeartbeat();
+      turnLive = false;
+      refreshPins();
     }
 
     // applyRecordLock opens or closes the composer for the thread on screen: a
