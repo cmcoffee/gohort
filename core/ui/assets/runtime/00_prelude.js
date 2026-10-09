@@ -519,8 +519,8 @@
   // was held while the rejoin count already included it, and a hidden tab
   // (no display frames) held everything until the tab came back. Here
   // nothing waits and nothing can be dropped: whatever finishes, resets or
-  // reloads a bubble shows its true text, and the most the reveal can be
-  // behind is PACER_LAG.
+  // reloads a bubble shows its true text. The reveal runs about PACER_LAG
+  // behind the stream, the reserve that rides out a pause upstream.
   //
   //   update(text) the text is now this (grown by a chunk)
   //   jump(text)   the text is now this, all of it on screen (the caller
@@ -530,7 +530,7 @@
   //
   // opts.instant(), when it returns true, shows each update whole: a
   // rejoin replaying what already streamed should not type it out again.
-  var PACER_LAG = 0.3; // seconds of text that may wait to be revealed
+  var PACER_LAG = 0.35; // seconds of text kept in reserve; covers a model server's usual pauses
   window.uiStreamReveal = function(paint, opts) {
     opts = opts || {};
     var text = '', shown = 0, rate = 0, carry = 0;
@@ -566,9 +566,17 @@
       } else if (!rate) {
         n = backlog / 8; // no rate yet: ease the first text in
       } else {
-        n = rate * dt / 1000 + carry;
-        var room = rate * PACER_LAG;
-        if (backlog > room) n += (backlog - room) / 8;
+        // A jitter buffer: keep about PACER_LAG of text in reserve, revealing
+        // faster when more than that waits and slower when less does. A model
+        // server pauses now and then (vLLM stalls ~200ms while it reads in
+        // another request's prompt), and revealing right at the stream's edge
+        // ran dry and stopped with it; with a reserve the typing slows for a
+        // moment instead. A burst speeds it up the same way.
+        var reserve = rate * PACER_LAG;
+        var pace = Math.max(0.2, Math.min(backlog / reserve, 4));
+        n = rate * dt / 1000 * pace + carry;
+        // Far behind (a replay outside its window): catch up in a few frames.
+        if (backlog > reserve * 4) n += (backlog - reserve * 4) / 8;
       }
       var step = Math.max(1, Math.floor(n));
       carry = n - Math.floor(n);
