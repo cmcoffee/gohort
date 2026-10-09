@@ -31,6 +31,18 @@ function noteObsSince() {}
 function obsKey(m) { return m.id; }
 function renderObservation(m) { drawn.push(m.id); }
 function fetchJSON(url) { urls.push(url); return answer(); }
+var bgRunEl = null, bgRunId = '', bgRunTimer = null, serverClockOffset = null, convoStickToBottom = false;
+var convoLog = {kids: [], appendChild: function(n) { this.kids.push(n); n.parentNode = this; },
+  removeChild: function(n) { this.kids.splice(this.kids.indexOf(n), 1); n.parentNode = null; }};
+function el(tag, attrs, kids) {
+  return {tag: tag, attrs: attrs || {}, kids: [], textContent: (kids || []).join(''), parentNode: null,
+    appendChild: function(c) { this.kids.push(c); c.parentNode = this; }, addEventListener: function(t, f) { this['on' + t] = f; }};
+}
+function keepPendingInterjectionsLast() {}
+function scrollConvo() {}
+function setInterval() { return 1; }
+function clearInterval() {}
+eval(lift(panel, 'function showBackgroundRun(bg)', 'showBackgroundRun'));
 eval(lift(panel, 'function stopChannelPolling()', 'stopChannelPolling'));
 eval(lift(panel, 'function startReportPolling(sid)', 'startReportPolling'));
 function settle() { return new Promise(function(r) { global.setTimeout(r, 0); }); }
@@ -53,5 +65,23 @@ function settle() { return new Promise(function(r) { global.setTimeout(r, 0); })
   startReportPolling('s1');
   await settle();
   check('an immediate answer with a card asks again at once', drawn[0] === 'c1' && timers[0] === 0);
+  // A run working for the thread in the background: shown with its label
+  // and Stop, the poll tells the server which one it shows, and it goes
+  // when the server stops reporting it.
+  cfg.runs_url_base = 'api/runs/';
+  timers = []; urls = [];
+  answer = function() { now += 5; return Promise.resolve({Messages: [], background: {id: 'r7', label: 'Picking up a finished background task', started_ms: Date.now()}}); };
+  startReportPolling('s1');
+  await settle();
+  var line = convoLog.kids[0];
+  check('a background run is shown at the foot of the thread', line && /background task/.test(line.kids[1].textContent));
+  check('with Stop', line && line.kids[2] && line.kids[2].textContent === 'Stop');
+  check('a changed background run asks again at once', timers[0] === 0);
+  urls = [];
+  answer = function() { now += 25000; return Promise.resolve({Messages: []}); };
+  startReportPolling('s1');
+  await settle();
+  check('the poll carries which run it shows', /&bg=/.test(urls[0]));
+  check('a run no longer reported is taken away', convoLog.kids.length === 0);
   if (fail) process.exit(1);
 })();

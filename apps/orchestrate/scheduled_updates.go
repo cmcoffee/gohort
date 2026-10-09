@@ -797,6 +797,25 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// status. This catches a panic/early-return path so the run can't be
 	// stuck "running" until the sweeper's retention window.
 	defer liveRun.Complete(RunStatusFailed)
+	// Working FOR its session, where a page may be open on it: register it as
+	// that session's background run (never its turn: claiming the turn would
+	// cancel one the person started there), and wake the session's card poll
+	// now and when this ends, so an open page shows it working, with Stop,
+	// for as long as it runs. Completed before the poll is woken, so the page
+	// reads it as ended. (Complete is first-call-wins; the explicit one below
+	// still sets the real outcome.)
+	if p.SessionID != "" {
+		label := "Running " + recurringName(p)
+		if isTaskWake(p.Prompt) {
+			label = "Picking up a finished background task"
+		}
+		app.runsRegistry().WorkFor(liveRun, p.SessionID, label)
+		noteSessionChange(p.AgentID, p.SessionID)
+		defer func() {
+			liveRun.Complete(RunStatusFailed)
+			noteSessionChange(p.AgentID, p.SessionID)
+		}()
+	}
 	msgs, gDecline := subTurn.applyInputGuardrail(msgs)
 	// A scheduled fire reasons on the model the agent chose, as its direct
 	// chats and every dispatched run do (dispatchRouting).

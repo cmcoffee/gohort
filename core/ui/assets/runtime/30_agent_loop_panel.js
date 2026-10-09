@@ -5804,8 +5804,56 @@
       if (channelPollTimer) { clearInterval(channelPollTimer); channelPollTimer = null; }
       reportPollGen++; // ends a waiting report poll's loop too
       if (reportPollAbort) { try { reportPollAbort.abort(); } catch (_) {} reportPollAbort = null; }
+      showBackgroundRun(null);
     }
     var reportPollGen = 0, reportPollAbort = null;
+
+    // A run working for this thread in the background (a task's wake, a
+    // scheduled fire posting here), reported by the card poll as
+    // {id, label, started_ms}. Its result arrives as a card when it ends;
+    // until then the thread said nothing, and a finished task looked forgotten.
+    // Shown as the house spinner, its label, the seconds, and Stop where the
+    // panel has a run endpoint to cancel it at. Returns whether what is shown
+    // changed.
+    var bgRunEl = null, bgRunId = '', bgRunTimer = null;
+    function showBackgroundRun(bg) {
+      var id = (bg && bg.id) || '';
+      if (id === bgRunId) return false;
+      if (bgRunTimer) { clearInterval(bgRunTimer); bgRunTimer = null; }
+      if (bgRunEl && bgRunEl.parentNode) bgRunEl.parentNode.removeChild(bgRunEl);
+      bgRunEl = null;
+      bgRunId = id;
+      if (!id || !convoLog) return true;
+      bgRunEl = el('div', {class: 'ui-agent-bg-run'});
+      var spin = el('span', {class: 'ui-agent-bg-spin'});
+      var text = el('span', {class: 'ui-agent-bg-label'});
+      bgRunEl.appendChild(spin);
+      bgRunEl.appendChild(text);
+      if (cfg.runs_url_base) {
+        var stop = el('button', {type: 'button', class: 'ui-row-btn ui-agent-bg-stop'}, ['Stop']);
+        stop.addEventListener('click', function() {
+          stop.disabled = true;
+          stop.textContent = 'Stopping…';
+          fetchJSON(cfg.runs_url_base + encodeURIComponent(id) + '/cancel', {method: 'POST'})
+            .catch(function() { stop.disabled = false; stop.textContent = 'Stop'; });
+        });
+        bgRunEl.appendChild(stop);
+      }
+      var started = Number(bg.started_ms) || Date.now();
+      if (serverClockOffset !== null) started += serverClockOffset;
+      var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏', i = 0;
+      var tick = function() {
+        spin.textContent = frames.charAt(i++ % frames.length);
+        var secs = Math.max(0, Math.round((Date.now() - started) / 1000));
+        text.textContent = (bg.label || 'Working in the background') + (secs >= 3 ? ' · ' + secs + 's' : '');
+      };
+      tick();
+      bgRunTimer = setInterval(tick, 120);
+      convoLog.appendChild(bgRunEl);
+      keepPendingInterjectionsLast();
+      if (convoStickToBottom) scrollConvo();
+      return true;
+    }
 
     // startChannelPolling — while a channel thread is open, re-fetch its session
     // every few seconds and append any messages beyond what's on screen, so new
@@ -5949,12 +5997,13 @@
         // and output — every six seconds, to render the nothing that usually
         // arrived. See session_cards.go.
         var url = substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)));
-        url += (url.indexOf('?') >= 0 ? '&' : '?') + 'cards=1&wait=1';
+        url += (url.indexOf('?') >= 0 ? '&' : '?') + 'cards=1&wait=1&bg=' + encodeURIComponent(bgRunId);
         if (cortexObsSince) url += '&since=' + encodeURIComponent(cortexObsSince);
         var asked = Date.now(), drew = 0;
         reportPollAbort = window.AbortController ? new AbortController() : null;
         fetchJSON(url, reportPollAbort ? {signal: reportPollAbort.signal} : undefined).then(function(rec) {
           if (gen !== reportPollGen || activeSessionId !== sid) return;
+          if (rec && showBackgroundRun(rec.background)) drew++;
           var msgs = rec && rec[msgsF];
           if (!Array.isArray(msgs)) return;
           msgs.forEach(function(m) {

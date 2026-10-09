@@ -28,3 +28,23 @@ func TestAWakeTurnCountsWhatItDelivers(t *testing.T) {
 		t.Error("the wake turn's loop config does not count what it delivers")
 	}
 }
+
+// A wake turn registers as its thread's background run and wakes the
+// thread's card poll as it starts and ends, so an open page shows it working.
+func TestAWakeTurnShowsOnItsThread(t *testing.T) {
+	src, err := os.ReadFile("scheduled_updates.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	i := strings.Index(s, "func fireOrchestrateUpdate(")
+	body := s[i:]
+	if j := strings.Index(body, "\n}\n"); j > 0 {
+		body = body[:j]
+	}
+	for _, want := range []string{"app.runsRegistry().WorkFor(liveRun, p.SessionID, label)", "noteSessionChange(p.AgentID, p.SessionID)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the wake turn does not %s", want)
+		}
+	}
+}

@@ -45,6 +45,16 @@ import (
 // missing field rather than an empty one.
 type cardsPayload struct {
 	Messages []ChatMessage `json:"Messages"`
+	// Background is the run working for this thread in the background right
+	// now, absent when there is none.
+	Background *backgroundRun `json:"background,omitempty"`
+}
+
+// backgroundRun is what a page shows of a run working for its thread.
+type backgroundRun struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	StartedMS int64  `json:"started_ms"`
 }
 
 // observationCardsSince returns the report cards created strictly after `since`,
@@ -79,9 +89,13 @@ func observationCardsSince(msgs []ChatMessage, since string) []ChatMessage {
 }
 
 // serveObservationCards writes the poll's response.
-func serveObservationCards(w http.ResponseWriter, msgs []ChatMessage, since string) {
+func serveObservationCards(w http.ResponseWriter, msgs []ChatMessage, since string, bg *Run) {
+	out := cardsPayload{Messages: observationCardsSince(msgs, since)}
+	if bg != nil {
+		out.Background = &backgroundRun{ID: bg.ID, Label: bg.BackgroundLabel(), StartedMS: bg.StartedAt().UnixMilli()}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(cardsPayload{Messages: observationCardsSince(msgs, since)})
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 // Waiting for a card instead of asking every six seconds.
@@ -127,9 +141,10 @@ func noteSessionChange(agentID, sessionID string) {
 	sessionChanges.Unlock()
 }
 
-// waitForCards returns the session once it holds a card after since, or as it
-// stands when cardsWait passes or the request ends.
-func waitForCards(ctx context.Context, udb Database, agentID, sessionID string, s ChatSession, since string) ChatSession {
+// waitForCards returns the session once it holds a card after since, or once
+// the background run differs from the one the page shows (shown: its id, ""
+// for none), or as it stands when cardsWait passes or the request ends.
+func waitForCards(ctx context.Context, udb Database, agentID, sessionID string, s ChatSession, since, shown string, bg func() *Run) ChatSession {
 	ctx, cancel := context.WithTimeout(ctx, cardsWait)
 	defer cancel()
 	for {
@@ -140,6 +155,15 @@ func waitForCards(ctx context.Context, udb Database, agentID, sessionID string, 
 		}
 		if len(observationCardsSince(s.Messages, since)) > 0 {
 			return s
+		}
+		if bg != nil {
+			now := ""
+			if r := bg(); r != nil {
+				now = r.ID
+			}
+			if now != shown {
+				return s
+			}
 		}
 		select {
 		case <-ch:

@@ -424,10 +424,13 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		// turns. See session_cards.go for why that matters on a long thread.
 		if r.URL.Query().Get("cards") == "1" {
 			since := r.URL.Query().Get("since")
+			// The run working for this thread in the background (a task's
+			// wake), so an open page shows it working, with Stop.
+			bg := func() *Run { return T.runsRegistry().BackgroundFor(user, sid) }
 			if r.URL.Query().Get("wait") == "1" {
-				s = waitForCards(r.Context(), udb, agent.ID, sid, s, since)
+				s = waitForCards(r.Context(), udb, agent.ID, sid, s, since, r.URL.Query().Get("bg"), bg)
 			}
-			serveObservationCards(w, s.Messages, since)
+			serveObservationCards(w, s.Messages, since, bg())
 			return
 		}
 		// Opening a session clears its unread state (a background wake that

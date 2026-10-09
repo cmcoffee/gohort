@@ -131,6 +131,7 @@ type Run struct {
 	round     int
 	lastTool  string
 	parentID  string // the run that spawned this one (a delegating turn); "" for a top-level turn
+	bgLabel   string // what an open page says this run is doing for its session (WorkFor)
 }
 
 // runCtxKey carries the enclosing run's ID down the context so a nested
@@ -378,7 +379,12 @@ type RunRegistry struct {
 	mu      sync.Mutex
 	runs    map[string]*Run // by run ID
 	bySess  map[string]*Run // by runSessKey(user, session) — at most one active run per session
-	sweeper sync.Once
+	// background is the run working FOR a session without being its turn: a
+	// background task's wake, a scheduled fire posting into it. Apart from
+	// bySess on purpose: claiming bySess cancels the session's running turn,
+	// and a wake must never stop the person's own turn there.
+	background map[string]*Run
+	sweeper    sync.Once
 }
 
 // runSessKey is the bySess key. A session id alone is not an identity: ids
@@ -391,8 +397,9 @@ func runSessKey(userID, sessionID string) string { return userID + "\x1f" + sess
 // call starts the cleanup sweeper goroutine.
 func NewRunRegistry() *RunRegistry {
 	return &RunRegistry{
-		runs:   make(map[string]*Run),
-		bySess: make(map[string]*Run),
+		runs:       make(map[string]*Run),
+		bySess:     make(map[string]*Run),
+		background: make(map[string]*Run),
 	}
 }
 
@@ -606,6 +613,11 @@ func (rr *RunRegistry) sweep() {
 			if hasSess && rr.bySess[sess] == r {
 				delete(rr.bySess, sess)
 			}
+			for k, b := range rr.background {
+				if b == r {
+					delete(rr.background, k)
+				}
+			}
 		}
 	}
 }
@@ -635,4 +647,44 @@ func generateRunID() string {
 		}
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// WorkFor marks r as working for sessionID in the background, with label as
+// what an open page says it is doing. Replaces any earlier one: the newest
+// background run for a session is the one worth showing.
+func (rr *RunRegistry) WorkFor(r *Run, sessionID, label string) {
+	if rr == nil || r == nil || sessionID == "" {
+		return
+	}
+	r.mu.Lock()
+	r.bgLabel = label
+	r.mu.Unlock()
+	rr.mu.Lock()
+	if rr.background == nil {
+		rr.background = make(map[string]*Run)
+	}
+	rr.background[runSessKey(r.UserID, sessionID)] = r
+	rr.mu.Unlock()
+}
+
+// BackgroundFor is the run working for a session in the background right
+// now, or nil.
+func (rr *RunRegistry) BackgroundFor(userID, sessionID string) *Run {
+	if rr == nil {
+		return nil
+	}
+	rr.mu.Lock()
+	r := rr.background[runSessKey(userID, sessionID)]
+	rr.mu.Unlock()
+	if r == nil || r.Status() != RunStatusRunning {
+		return nil
+	}
+	return r
+}
+
+// BackgroundLabel is what a page says a background run is doing.
+func (r *Run) BackgroundLabel() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.bgLabel
 }

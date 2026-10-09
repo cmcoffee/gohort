@@ -4213,6 +4213,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   background-color: var(--bg-2, var(--bg-1));
   box-shadow: 0 6px 14px -8px rgba(0, 0, 0, 0.6);
 }
+/* A run working for the thread in the background (showBackgroundRun): the
+ * spinner, what it is doing, the seconds, and Stop. Quiet, at the foot of
+ * the thread where its result will land. */
+.ui-agent-bg-run {
+  display: flex; align-items: center; gap: 0.55rem;
+  color: var(--text-mute); font-size: var(--fs-sm);
+  padding: 0.35rem 0.2rem;
+}
+.ui-agent-bg-spin { color: var(--accent); font-family: var(--mono, monospace); width: 1em; text-align: center; }
+.ui-agent-bg-label { flex: 1 1 auto; min-width: 0; }
 .ui-agent-empty {
   color: var(--text-mute); font-style: italic; text-align: center;
   padding: 1.5rem 0;
