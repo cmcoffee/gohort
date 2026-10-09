@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1170,6 +1172,18 @@ type oaiError struct {
 	} `json:"error"`
 }
 
+// oaiToolID is a call's ID within OpenAI's 40-character limit. A call another
+// model made keeps that model's ID, and Gemini's ("gem:<name>:<uuid>") runs
+// past it. A long one is replaced by a digest of itself, so the call and its
+// result, mapped the same way, still match.
+func oaiToolID(id string) string {
+	if len(id) <= 40 {
+		return id
+	}
+	sum := sha256.Sum256([]byte(id))
+	return "call_" + hex.EncodeToString(sum[:16])
+}
+
 func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMessage {
 	var msgs []oaiMessage
 	if cfg.SystemPrompt != "" {
@@ -1198,7 +1212,7 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 			for _, tc := range m.ToolCalls {
 				argsJSON, _ := json.Marshal(tc.Args)
 				calls = append(calls, oaiToolCallMsg{
-					ID:   tc.ID,
+					ID:   oaiToolID(tc.ID),
 					Type: "function",
 					Function: struct {
 						Name      string `json:"name"`
@@ -1209,7 +1223,7 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 			msgs = append(msgs, oaiMessage{Role: "assistant", Content: oaiTextContent(m.Content), ToolCalls: calls})
 		case len(m.ToolResults) > 0:
 			for _, tr := range m.ToolResults {
-				msgs = append(msgs, oaiMessage{Role: "tool", Content: oaiTextContent(tr.Content), ToolCallID: tr.ID})
+				msgs = append(msgs, oaiMessage{Role: "tool", Content: oaiTextContent(tr.Content), ToolCallID: oaiToolID(tr.ID)})
 			}
 		default:
 			// Only include images/videos from the last message — older

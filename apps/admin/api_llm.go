@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -402,6 +403,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 			return
 		}
 		Log("[admin] user %q updated %s (provider=%q model=%q)", AuthCurrentUser(r), table, req.Provider, req.Model)
+		go checkAfterSave(table)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -438,6 +440,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		"endpoint":                endpoint,
 		"aws_region":              awsRegion,
 		"_live":                   liveTierDescription(table),
+		"_handoff":                handoffDescription(table),
 		"aws_profile":             awsProfile,
 		"bedrock_api":             bedrockAPI,
 		"native_tools":            nativeTools,
@@ -490,8 +493,28 @@ func liveTierDescription(table string) string {
 		if e := LeadInitError(); e != "" {
 			out += ". " + e
 		}
+		if c := leadCallsLine(LeadCalls()); c != "" {
+			out += ".\n" + c
+		}
 	}
 	return out
+}
+
+// leadCallsLine is how the lead's calls went over the last day, or "" before
+// any. A failure that hits some calls and not others reads as the lead
+// working from every other surface, so this says how many.
+func leadCallsLine(st LeadCallStats) string {
+	if st.Calls == 0 {
+		return ""
+	}
+	if st.Failed == 0 {
+		return fmt.Sprintf("Last 24 hours: %d lead calls, none failed.", st.Calls)
+	}
+	line := fmt.Sprintf("Last 24 hours: %d lead calls, %d failed (%d%%), and a failed lead call runs on the worker.", st.Calls, st.Failed, st.Failed*100/st.Calls)
+	if st.TopError != "" {
+		line += fmt.Sprintf(" Most often: %s (%d times, last at %s).", st.TopError, st.TopErrorCount, st.LastFailure.Format("Jan 2 15:04"))
+	}
+	return line
 }
 
 // effortLevel keeps only a real effort level, so a hand-edited or stale form

@@ -3650,7 +3650,14 @@
         var testBtn = el('button', {class: 'ui-row-btn', type: 'button'},
           [cfg.test_label || 'Test connectivity']);
         var testResult = el('span', {class: 'ui-form-test-result',
-          style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute)'});
+          style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);white-space:pre-line'});
+        // A test that checks several things answers with a line each. One
+        // line sits beside the button; more take the row below it.
+        function showResult(color, text) {
+          testResult.style.color = color;
+          testResult.textContent = text;
+          testResult.style.flexBasis = text.indexOf('\n') >= 0 ? '100%' : '';
+        }
         // While a test is in flight the button IS the cancel: a wrong host or
         // a dead port used to mean staring at "Testing…" until the server's
         // timeout gave up, with nothing to click. Aborting the request also
@@ -3674,8 +3681,7 @@
           inflight = ctl || {abort: function() {}};
           testBtn.textContent = 'Cancel';
           testBtn.classList.add('danger');
-          testResult.style.color = 'var(--text-mute)';
-          testResult.textContent = 'Testing…';
+          showResult('var(--text-mute)', 'Testing…');
           var startedAt = Date.now();
           ticker = setInterval(function() {
             var secs = Math.round((Date.now() - startedAt) / 1000);
@@ -3688,11 +3694,9 @@
             signal: ctl ? ctl.signal : undefined,
           }).then(function(resp) {
             if (resp && resp.ok) {
-              testResult.style.color = 'var(--accent)';
-              testResult.textContent = '✓ ' + (resp.message || 'OK');
+              showResult('var(--accent)', '✓ ' + (resp.message || 'OK'));
             } else {
-              testResult.style.color = 'var(--danger,#ff7b72)';
-              testResult.textContent = '✗ ' + ((resp && resp.error) || 'Failed');
+              showResult('var(--danger,#ff7b72)', '✗ ' + ((resp && resp.error) || 'Failed'));
             }
           }).catch(function(err) {
             if (err && err.name === 'AbortError') {

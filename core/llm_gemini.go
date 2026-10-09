@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
 	"github.com/cmcoffee/snugforge/iotimeout"
@@ -18,52 +17,6 @@ import (
 const (
 	geminiEndpoint = "https://generativelanguage.googleapis.com/v1beta"
 )
-
-// GeminiModels queries the Gemini API and returns available model names.
-// Only returns models that support generateContent (chat-capable).
-func GeminiModels(apiKey string) ([]string, error) {
-	client := &apiclient.APIClient{
-		Server:         "generativelanguage.googleapis.com",
-		VerifySSL:      true,
-		ConnectTimeout: llmConnectTimeout(),
-		RequestTimeout: 15 * time.Second,
-		AuthFunc: func(req *http.Request) {
-			q := req.URL.Query()
-			q.Set("key", apiKey)
-			req.URL.RawQuery = q.Encode()
-		},
-	}
-	req, err := client.NewRequest("GET", "/v1beta/models")
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.SendRawRequest("", req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	resp.Body = iotimeout.NewReadCloser(resp.Body, client.RequestTimeout)
-	var result struct {
-		Models []struct {
-			Name                       string   `json:"name"`
-			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
-		} `json:"models"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, m := range result.Models {
-		for _, method := range m.SupportedGenerationMethods {
-			if method == "generateContent" {
-				name := strings.TrimPrefix(m.Name, "models/")
-				names = append(names, name)
-				break
-			}
-		}
-	}
-	return names, nil
-}
 
 // geminiClient implements the LLM interface for Google's Gemini API.
 type geminiClient struct {
@@ -98,11 +51,6 @@ func (c *geminiClient) thinkBudgetFor(cfg ChatConfig) int {
 		return c.thinkingBudget
 	}
 	return 16384
-}
-
-// NewGeminiLLM creates an LLM client for Google Gemini using the default HTTP client.
-func NewGeminiLLM(apiKey string, model string) LLM {
-	return newGeminiLLM(apiKey, model, false, 0, nil)
 }
 
 // newGeminiLLM creates a Gemini LLM client with optional APIClient.
@@ -212,6 +160,17 @@ type gemResponse struct {
 // buildMessages converts generic Messages to Gemini contents.
 func (c *geminiClient) buildMessages(messages []Message) []gemContent {
 	var contents []gemContent
+	// A result names its call by ID, and Gemini wants the function's NAME on
+	// it. Our own IDs carry the name ("gem:<name>:<uuid>"); a call another
+	// model made (a worker round between two lead rounds) has that model's ID,
+	// which went out as the function name. The calls earlier in the history
+	// say which name each ID belongs to.
+	callNames := map[string]string{}
+	for _, m := range messages {
+		for _, tc := range m.ToolCalls {
+			callNames[tc.ID] = tc.Name
+		}
+	}
 	for _, m := range messages {
 		switch {
 		case m.Role == "assistant" && len(m.ToolCalls) > 0:
@@ -243,7 +202,9 @@ func (c *geminiClient) buildMessages(messages []Message) []gemContent {
 				}
 				// Extract tool name from ID format "gem:<name>:<uuid>".
 				name := tr.ID
-				if parts := strings.SplitN(name, ":", 3); len(parts) == 3 && parts[0] == "gem" {
+				if n := callNames[tr.ID]; n != "" {
+					name = n
+				} else if parts := strings.SplitN(name, ":", 3); len(parts) == 3 && parts[0] == "gem" {
 					name = parts[1]
 				}
 				parts = append(parts, gemPart{

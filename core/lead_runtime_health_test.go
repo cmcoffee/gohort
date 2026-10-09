@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // healthStub answers with whatever it is told to answer with.
@@ -196,5 +197,50 @@ func TestAnInitFailureOutranksARuntimeOne(t *testing.T) {
 	got := leadUnavailableReason(&AppCore{LeadLLM: handle})
 	if !strings.Contains(got, "could not be initialized") {
 		t.Errorf("the init failure is not what gets reported: %q", got)
+	}
+}
+
+// The lead failing on SOME calls: the health line flips with every call that
+// works, so only a count shows that most of the lead's work went to the
+// worker. Counts roll over by the hour and drop off after 24.
+func TestLeadCallsCountsAPartialFailure(t *testing.T) {
+	prevNow := leadStatsNow
+	leadStatsMu.Lock()
+	prevHours := leadHours
+	leadHours = [24]leadHour{}
+	leadStatsMu.Unlock()
+	t.Cleanup(func() {
+		leadStatsNow = prevNow
+		leadStatsMu.Lock()
+		leadHours = prevHours
+		leadStatsMu.Unlock()
+	})
+	at := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	leadStatsNow = func() time.Time { return at }
+
+	sig := errors.New("gemini api error (400): Function call is missing a thought_signature")
+	for i := 0; i < 10; i++ {
+		noteLeadCall(nil)
+		noteLeadCall(sig)
+		noteLeadCall(sig)
+	}
+	noteLeadCall(errors.New("timeout"))
+	got := LeadCalls()
+	if got.Calls != 31 || got.Failed != 21 || got.RecentFailed != 21 {
+		t.Fatalf("counts = %+v", got)
+	}
+	if got.TopErrorCount != 20 || !strings.Contains(got.TopError, "thought_signature") {
+		t.Errorf("top error = %q x%d", got.TopError, got.TopErrorCount)
+	}
+
+	// Three hours on, the calls are still in the day but no longer recent.
+	at = at.Add(3 * time.Hour)
+	if got := LeadCalls(); got.Calls != 31 || got.RecentCalls != 0 {
+		t.Errorf("after 3h = %+v", got)
+	}
+	// A day on, they are gone.
+	at = at.Add(24 * time.Hour)
+	if got := LeadCalls(); got.Calls != 0 || got.TopError != "" {
+		t.Errorf("after a day = %+v", got)
 	}
 }

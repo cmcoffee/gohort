@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -253,7 +254,7 @@ func (r reloadableLLM) Chat(ctx context.Context, messages []Message, opts ...Cha
 	defer done()
 	resp, err := llm.Chat(ctx, messages, r.withTierText(opts)...)
 	r.record(ctx, resp)
-	r.noteLeadHealth(ctx, err)
+	r.noteLeadHealth(ctx, resp, err)
 	return resp, err
 }
 
@@ -269,7 +270,7 @@ func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handl
 	defer done()
 	resp, err := llm.ChatStream(ctx, messages, handler, r.withTierText(opts)...)
 	r.record(ctx, resp)
-	r.noteLeadHealth(ctx, err)
+	r.noteLeadHealth(ctx, resp, err)
 	return resp, err
 }
 
@@ -447,18 +448,126 @@ func tunedToolDescriptions(tier string, tools []Tool) []Tool {
 // never reaches here as an error: it comes back as a successful response the
 // agent loop inspects separately. That is the right split. A refusal is the
 // lead working.
-func (r reloadableLLM) noteLeadHealth(ctx context.Context, err error) {
+//
+// The count (noteLeadCall) does take an empty answer as a failure: the
+// callers fall back to the worker on one, so it is a lead call that did not
+// do the work, whatever the health line says.
+func (r reloadableLLM) noteLeadHealth(ctx context.Context, resp *Response, err error) {
 	if !r.lead || SharedLeadLLM() == nil {
 		return
 	}
 	if err == nil {
+		if resp != nil && resp.Content == "" && resp.OutputTokens == 0 && len(resp.ToolCalls) == 0 {
+			noteLeadCall(errors.New("returned an empty answer"))
+		} else {
+			noteLeadCall(nil)
+		}
 		noteLeadCallSucceeded()
 		return
 	}
 	if ctx.Err() != nil || IsContextExceededError(err) {
 		return
 	}
+	noteLeadCall(err)
 	noteLeadCallFailed(err)
+}
+
+// LeadCallStats is how the lead's calls have gone lately: how many, how many
+// failed (each of those ran on the worker, or failed outright when pinned),
+// and the failure seen most.
+//
+// The health line above is one error, cleared by any call that works, and a
+// failure that hits only SOME calls defeats it. Gemini 3 answered the first
+// round of every turn and refused every follow-up, so the line flipped
+// between "stopped answering" and "answering again" all day while nearly all
+// the lead's work ran on the worker. A count shows that shape.
+type LeadCallStats struct {
+	Calls, Failed             int // the last 24 hours
+	RecentCalls, RecentFailed int // this clock hour and the one before it
+	TopError                  string
+	TopErrorCount             int
+	LastFailure               time.Time
+}
+
+// leadHour is one clock hour of lead calls, in a ring of 24.
+type leadHour struct {
+	hour          int64
+	calls, failed int
+	errs          map[string]int
+}
+
+var (
+	leadStatsMu     sync.Mutex
+	leadHours       [24]leadHour
+	leadLastFailure time.Time
+	leadStatsNow    = time.Now
+)
+
+// noteLeadCall counts one lead call, a failure when err is set.
+func noteLeadCall(err error) {
+	now := leadStatsNow()
+	h := now.Unix() / 3600
+	leadStatsMu.Lock()
+	defer leadStatsMu.Unlock()
+	b := &leadHours[h%24]
+	if b.hour != h {
+		*b = leadHour{hour: h}
+	}
+	b.calls++
+	if err == nil {
+		return
+	}
+	b.failed++
+	if b.errs == nil {
+		b.errs = map[string]int{}
+	}
+	b.errs[leadErrorKey(err)]++
+	leadLastFailure = now
+}
+
+// leadErrorKey is a failure as one short line, so the same refusal counts as
+// one error however many calls it hit.
+func leadErrorKey(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if i := strings.IndexByte(msg, '\n'); i >= 0 {
+		msg = msg[:i]
+	}
+	if r := []rune(msg); len(r) > 200 {
+		msg = string(r[:200]) + "…"
+	}
+	return msg
+}
+
+// LeadCalls reports the lead's calls over the last 24 hours.
+func LeadCalls() LeadCallStats {
+	h := leadStatsNow().Unix() / 3600
+	leadStatsMu.Lock()
+	defer leadStatsMu.Unlock()
+	var out LeadCallStats
+	errs := map[string]int{}
+	for _, b := range leadHours {
+		if b.calls == 0 || b.hour <= h-24 || b.hour > h {
+			continue
+		}
+		out.Calls += b.calls
+		out.Failed += b.failed
+		if b.hour >= h-1 {
+			out.RecentCalls += b.calls
+			out.RecentFailed += b.failed
+		}
+		for k, n := range b.errs {
+			errs[k] += n
+		}
+	}
+	for k, n := range errs {
+		if n > out.TopErrorCount || n == out.TopErrorCount && k < out.TopError {
+			out.TopError, out.TopErrorCount = k, n
+		}
+	}
+	if out.Failed > 0 {
+		out.LastFailure = leadLastFailure
+	}
+	return out
 }
 
 // ContextSize forwards the underlying LLM's ContextSizer, mirroring retryLLM.

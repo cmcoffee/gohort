@@ -19,6 +19,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -233,6 +234,7 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		AWSProfile  string `json:"aws_profile"`
 		BedrockAPI  string `json:"bedrock_api"`
 		ContextSize int    `json:"context_size"`
+		NativeTools bool   `json:"native_tools"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeTestResult(w, false, "", "invalid request body")
@@ -298,7 +300,9 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	// Room for the handoff check after the hello: a handful of calls, each
+	// under the 30s request timeout above.
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 	defer cancel()
 
 	// What is at the endpoint, said on success AND failure: a refused chat
@@ -326,7 +330,26 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 	if model == "" {
 		model = "the provider default"
 	}
-	writeTestResult(w, true, "Connected: "+model+" answered in "+took.String()+"."+credNote+serverNote, "")
+	connected := "Connected: " + model + " answered in " + took.String() + "." + credNote + serverNote
+
+	// Then the handoff check: the hello cannot see a model that refuses its
+	// own tool call sent back, or one the other tier made.
+	partner, partnerName, partnerTools := handoffPartner(table)
+	h := &handoffCheck{llm: llm, tools: ProviderHasNativeTools(req.Provider) || req.NativeTools,
+		partner: partner, partnerName: partnerName, partnerTools: partnerTools}
+	h.run(ctx)
+	if r.Context().Err() != nil {
+		return // cancelled from the page: nobody is reading
+	}
+	if ctx.Err() != nil {
+		writeTestResult(w, false, "", connected+" The handoff check ran out of time:"+h.lines())
+		return
+	}
+	if h.failed() {
+		writeTestResult(w, false, "", connected+" The handoff check FAILED:"+h.lines())
+		return
+	}
+	writeTestResult(w, true, connected+" Handoff check:"+h.lines(), "")
 }
 
 // bedrockRegionPresets lists regions that actually have a Messages-API
@@ -364,7 +387,35 @@ func (a *AdminApp) DashboardNotices(r *http.Request) []DashboardNotice {
 	if a.db == nil || !AuthIsAdmin(AuthDB(), r) {
 		return nil
 	}
-	return a.firstRunNotices(AuthGetFirstRunDismissed(AuthDB(), AuthCurrentUser(r)))
+	return append(a.firstRunNotices(AuthGetFirstRunDismissed(AuthDB(), AuthCurrentUser(r))), a.llmNotices()...)
+}
+
+// llmNotices says, on the dashboard, when the lead is quietly not doing its
+// work: most of its recent calls failing over to the worker, or a model that
+// failed its handoff check after a save. Both are invisible from a chat, where
+// the only sign is answers getting worse.
+func (a *AdminApp) llmNotices() []DashboardNotice {
+	url := a.WebPath() + "/" + ui.SectionOnTab("LLMs", "Lead LLM")
+	var out []DashboardNotice
+	if st := LeadCalls(); st.RecentCalls >= 5 && st.RecentFailed*4 >= st.RecentCalls {
+		text := fmt.Sprintf("The lead model failed %d of its last %d calls, so that work ran on the worker.", st.RecentFailed, st.RecentCalls)
+		if st.TopError != "" {
+			text += " Most often: " + st.TopError
+		}
+		out = append(out, DashboardNotice{Text: text, Action: "Open LLM settings", URL: url})
+	}
+	for _, table := range []string{LeadLLMTable, LLMTable} {
+		if model, first := handoffFailure(table); first != "" {
+			tier, sec := "lead", "Lead LLM"
+			if table == LLMTable {
+				tier, sec = "worker", "Worker LLM"
+			}
+			out = append(out, DashboardNotice{
+				Text:   fmt.Sprintf("The %s model (%s) failed its handoff check after the last save. %s", tier, model, first),
+				Action: "Open LLM settings", URL: a.WebPath() + "/" + ui.SectionOnTab("LLMs", sec)})
+		}
+	}
+	return out
 }
 
 // firstRunNotices is the decision itself, separated from the request so it can

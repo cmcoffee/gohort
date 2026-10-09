@@ -506,6 +506,34 @@ func (c *anthropicClient) doRequest(ctx context.Context, body []byte, stream boo
 	return resp, err
 }
 
+// anthToolID is a call's ID as Anthropic accepts it: letters, digits, "_" and
+// "-" only. A call another model made keeps that model's ID, and Gemini's
+// ("gem:<name>:<uuid>") was refused outright, so a lead round after a Gemini
+// round failed. The same mapping runs on the call and on its result, so the
+// two still match.
+func anthToolID(id string) string {
+	ok := true
+	for _, r := range id {
+		if !(r == '_' || r == '-' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			ok = false
+			break
+		}
+	}
+	if ok && id != "" {
+		return id
+	}
+	b := []byte(id)
+	for i, c := range b {
+		if !(c == '_' || c == '-' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			b[i] = '_'
+		}
+	}
+	if len(b) == 0 {
+		return "call"
+	}
+	return string(b)
+}
+
 // buildAnthMessages converts generic Messages into Anthropic-formatted messages.
 func buildAnthMessages(messages []Message) ([]anthMessage, error) {
 	var msgs []anthMessage
@@ -524,7 +552,7 @@ func buildAnthMessages(messages []Message) ([]anthMessage, error) {
 				}
 				blocks = append(blocks, anthContentBlock{
 					Type:  "tool_use",
-					ID:    tc.ID,
+					ID:    anthToolID(tc.ID),
 					Name:  tc.Name,
 					Input: json.RawMessage(inputJSON),
 				})
@@ -541,7 +569,7 @@ func buildAnthMessages(messages []Message) ([]anthMessage, error) {
 			for _, tr := range m.ToolResults {
 				blocks = append(blocks, anthContentBlock{
 					Type:      "tool_result",
-					ToolUseID: tr.ID,
+					ToolUseID: anthToolID(tr.ID),
 					Content:   tr.Content,
 					IsError:   tr.IsError,
 				})

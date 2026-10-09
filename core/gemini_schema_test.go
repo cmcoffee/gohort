@@ -162,3 +162,48 @@ func TestGeminiEchoesThoughtSignature(t *testing.T) {
 		t.Errorf("gemini-2.5 got a signature it never sent: %q", s)
 	}
 }
+
+// A result for a call another model made carried that model's ID as the
+// function name ("chatcmpl-tool-1" for a worker's call). The name comes from
+// the call it answers.
+func TestGeminiNamesAForeignCallsResult(t *testing.T) {
+	got := (&geminiClient{model: "gemini-3.5-flash"}).buildMessages([]Message{
+		{Role: "user", Content: "look it up"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "chatcmpl-tool-1", Name: "web_search"}}},
+		{Role: "user", ToolResults: []ToolResult{{ID: "chatcmpl-tool-1", Content: "found"}}},
+	})
+	if n := got[2].Parts[0].FunctionResponse.Name; n != "web_search" {
+		t.Errorf("result named %q, want the call's function name", n)
+	}
+}
+
+// A Gemini call's ID ("gem:<name>:<uuid>") replayed to another provider:
+// Anthropic refuses the colons and OpenAI the length. Each maps it to one it
+// accepts, the same way on the call and its result.
+func TestForeignToolIDsFitEachProvider(t *testing.T) {
+	id := "gem:web_search:" + UUIDv4()
+	if a := anthToolID(id); strings.ContainsAny(a, ":") || a != anthToolID(id) {
+		t.Errorf("anthropic id %q", a)
+	}
+	if anthToolID("toolu_01AbC-x") != "toolu_01AbC-x" {
+		t.Error("a valid Anthropic id was changed")
+	}
+	if o := oaiToolID(id); len(o) > 40 || o != oaiToolID(id) {
+		t.Errorf("openai id %q", o)
+	}
+	if oaiToolID("call_abc") != "call_abc" {
+		t.Error("a short id was changed")
+	}
+	msgs, err := buildAnthMessages([]Message{
+		{Role: "user", Content: "go"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: id, Name: "web_search"}}},
+		{Role: "user", ToolResults: []ToolResult{{ID: id, Content: "x"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(msgs)
+	if strings.Contains(string(raw), "gem:") {
+		t.Errorf("the raw Gemini id reached Anthropic: %s", raw)
+	}
+}
