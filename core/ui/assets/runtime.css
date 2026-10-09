@@ -1005,6 +1005,21 @@ select:-webkit-autofill {
   display: flex; align-items: center; gap: 0.7rem;
   flex: 1 1 auto; min-width: 0;
 }
+/* The cells claim room before the buttons do. With five or six buttons
+ * pinned right and never shrinking, the cells got what was left and the
+ * row's name ellipsized to a few letters (My Apps, Tools). Now a row whose
+ * cells cannot have ~26rem beside its buttons wraps the buttons beneath
+ * them instead. Decided by the row's width and its buttons, never by how
+ * long a value is, so rows with the same buttons lay out alike. */
+@media (min-width: 801px) {
+  .ui-table-row { flex-wrap: wrap; }
+  .ui-table-row > .ui-row-cells,
+  .ui-table-row > .ui-row-lines { flex: 1 1 26rem; }
+}
+/* The row's name (the first plain column) keeps a readable width however
+ * crowded the other columns are; past it, it still ellipsizes, and its
+ * title carries the whole value. */
+.ui-row-cells > .ui-table-cell-key { min-width: min(15rem, 45%); flex-shrink: 0; }
 .ui-row-actions {
   display: flex; align-items: center; gap: 0.5rem;
   flex-wrap: wrap; /* buttons wrap as a group, never one-per-line */

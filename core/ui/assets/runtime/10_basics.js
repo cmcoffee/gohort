@@ -421,6 +421,10 @@
           }
           return secondLine;
         }
+        // The first plain column on the first line is the row's name: what it
+        // IS. Marked so the layout keeps it readable when the row is crowded
+        // (see .ui-table-cell-key), rather than ellipsizing it first.
+        var keyed = false;
         cfg.columns.forEach(function(col) {
           var v = lookup(rec, col.field);
           if (col.type === 'badge') {
@@ -467,6 +471,10 @@
           }
           var cell = el('div', {class: 'ui-table-cell' + (col.mute ? ' mute' : '')});
           if (col.flex) cell.style.flex = col.flex;
+          if (!keyed && !col.mute && Number(col.line) !== 2) {
+            cell.classList.add('ui-table-cell-key');
+            keyed = true;
+          }
           // Full value on hover — cells ellipsize when crowded, so a long name
           // (create_apple_calendar_event) stays readable via the native tooltip.
           var cellText = fmt(v, col.format);
