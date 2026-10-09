@@ -82,7 +82,7 @@ document.getElementById('go').onclick = function() {
 	if n != 0 || len(classes) != 0 {
 		t.Fatalf("a source the page references must not fail: %d %v\n%s", n, classes, b.String())
 	}
-	if !strings.HasPrefix(b.String(), `WARN data source "balance-step"`) || !strings.Contains(b.String(), "on interaction") {
+	if !strings.HasPrefix(b.String(), `OK   data source "balance-step"`) || !strings.Contains(b.String(), "on interaction") {
 		t.Errorf("say it is referenced but only fetched on interaction:\n%s", b.String())
 	}
 

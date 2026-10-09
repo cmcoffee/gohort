@@ -138,3 +138,22 @@ func TestAnEmptySeriesIsNamedAsEmpty(t *testing.T) {
 		t.Fatalf("%q", probs)
 	}
 }
+
+// A turn that printed the whole game plus the error it caught passed verify,
+// and the game's LLM was never called once: an error beside other fields is
+// still the script failing.
+func TestPrintedErrorBesideOtherFields(t *testing.T) {
+	var turn any
+	json.Unmarshal([]byte(`{"game":{"id":"g1","hull":80},"narrative":"","ok":false,"error":"The DM went dark: 'str' object has no attribute 'get'"}`), &turn)
+	if e := appPrintedError(turn); !strings.Contains(e, "went dark") {
+		t.Errorf("an error beside the state is an error, got %q", e)
+	}
+	var fine any
+	json.Unmarshal([]byte(`{"game":{"id":"g1"},"narrative":"A barge drifts close.","ok":true,"error":""}`), &fine)
+	if e := appPrintedError(fine); e != "" {
+		t.Errorf("an empty error key is a result shape, not an error, got %q", e)
+	}
+	if e := appPrintedError([]any{map[string]any{"error": "x"}}); e != "" {
+		t.Errorf("only the top level reports the script's own failure, got %q", e)
+	}
+}

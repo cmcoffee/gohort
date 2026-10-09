@@ -459,11 +459,14 @@ func appVerifyDataSources(b *strings.Builder, spec AppSpec, rep *PageCheckReport
 			// script, then a whole extra section, all to satisfy this check,
 			// and the app came out worse for it. The reference is the wiring
 			// evidence a load cannot give; test is what runs the script.
-			fmt.Fprintf(b, "WARN data source %q: the page's code references %s but did not fetch it on load, presumably it does on interaction (a click, a move), which a page load cannot exercise. That is fine, do NOT add a load-time fetch to satisfy this check; action=test is what runs the script.\n", ds.Name, "data/"+ds.Name)
+			// An OK, not a WARN: a WARN that said "do NOT add a load-time
+			// fetch" still got one added "so verify confirms they are wired",
+			// on a source that calls the LLM. Nothing here is to be fixed.
+			fmt.Fprintf(b, "OK   data source %q: the page's code calls it on interaction (a click, a move), the normal place for it; the script checks above ran it.\n", ds.Name)
 		case status == 0:
 			failures++
 			classes = append(classes, "source-unwired")
-			fmt.Fprintf(b, "FAIL data source %q: the page NEVER fetched %s; no section is wired to it. Set source_script:%q on the table/display that should render it, or (from an html section's script), call fetch(%q) (plain relative fetch; there is no client-side gohort object in app pages).\n", ds.Name, endpoint, ds.Name, "data/"+ds.Name)
+			fmt.Fprintf(b, "FAIL data source %q: the page NEVER fetched %s; no section is wired to it. Set source_script:%q on the table/display that should render it, or (from an html section's script), call app.data(%q).\n", ds.Name, endpoint, ds.Name, ds.Name)
 		case status >= 400:
 			// Already counted via FailedRequests above; this line
 			// just names the source for the fix.
@@ -750,12 +753,15 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				} else {
 					fmt.Fprintf(&b, "OK   %s: printed a JSON array (%d item(s)); good for a table.%s%s\n", label, len(arr), emptyStoreNote(recs), shown)
 				}
-			} else if obj, isObj := v.(map[string]any); isObj && len(obj) == 1 && obj["error"] != nil {
+			} else if e := appPrintedError(v); e != "" {
 				// The script caught its own failure and printed it: valid JSON,
 				// and still a script that failed. OK here was the builder's cue
-				// to tell the user the app worked.
+				// to tell the user the app worked. Beside other fields too: a
+				// game's turn printed the whole state plus "error": "The DM went
+				// dark: 'str' object has no attribute 'get'", passed as OK, and
+				// its LLM was never once called.
 				fail++
-				fmt.Fprintf(&b, "FAIL %s: printed an error: %s\n", label, truncate(fmt.Sprint(obj["error"]), 400))
+				fmt.Fprintf(&b, "FAIL %s: printed an error: %s. A caught exception is still a failure: fix what raised it. If it is the right answer for these params, run it with params that reach the real path.\n", label, truncate(e, 400))
 			} else if str, isStr := v.(string); isStr {
 				// A JSON string that is itself JSON: encoded twice. call_tool
 				// returns the tool's output as text, and json.dumps of that
@@ -789,7 +795,10 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				fmt.Fprintf(&b, "OK   %s: printed a JSON object; good for a display (a table section needs a JSON array).%s%s\n", label, emptyStoreNote(recs), shown)
 			}
 		case "action":
-			if _, isObj := v.(map[string]any); isObj {
+			if e := appPrintedError(v); e != "" {
+				fail++
+				fmt.Fprintf(&b, "FAIL %s: printed an error: %s. A caught exception is still a failure: fix what raised it.\n", label, truncate(e, 400))
+			} else if _, isObj := v.(map[string]any); isObj {
 				pass++
 				fmt.Fprintf(&b, "OK   %s: printed a JSON object {message?, records?}.%s\n", label, shown)
 			} else {

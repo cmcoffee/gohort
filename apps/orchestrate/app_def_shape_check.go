@@ -307,6 +307,30 @@ func appToolCapNotes(user string, spec AppSpec) []string {
 
 var pyNoneRE = regexp.MustCompile(`(^|[^A-Za-z])None([^A-Za-z]|$)`)
 
+// appPrintedError is the error a script's output reports at its top level
+// ("error" or "err", a non-empty string or object), or "". An empty one, as a
+// result shape that always carries the key, is no error.
+func appPrintedError(v any) string {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, k := range []string{"error", "err"} {
+		switch e := obj[k].(type) {
+		case string:
+			if strings.TrimSpace(e) != "" {
+				return e
+			}
+		case map[string]any:
+			if len(e) > 0 {
+				data, _ := json.Marshal(e)
+				return string(data)
+			}
+		}
+	}
+	return ""
+}
+
 // appEmptyValues counts an object's empty leaf values (null, "", or a string
 // a Python None was formatted into, "None°F") against all of them, one level
 // into nested objects.

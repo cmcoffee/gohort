@@ -504,7 +504,7 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 			}
 			if rep.empty() {
 				if plan == nil {
-					return "No build plan is active (a repair, not a build) and every tool you touched this session stands verified: no gaps to report. You may write the final reply.", nil
+					return "No build plan is active, and every tool you touched this session stands verified: no gaps to report. You may write the final reply.", nil
 				}
 				return "All steps completed and every authored tool verified: no gaps to report. You may write the final reply.", nil
 			}
