@@ -14,6 +14,7 @@
 package servitor
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -227,7 +228,7 @@ func (T *Servitor) handleChatEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
-	events, done := probeSessions.SnapshotEvents(id)
+	events, _ := probeSessions.SnapshotEvents(id)
 	if events == nil {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
@@ -288,45 +289,17 @@ func (T *Servitor) handleChatEvents(w http.ResponseWriter, r *http.Request) {
 		return sse.Send(out) == nil
 	}
 
-	// Replay buffered events.
-	for _, ev := range events {
+	// Every buffered event, then each new one the moment it is appended
+	// (LiveSessionMap.Tail, which also keeps the heartbeat). This kept its own
+	// copy of a 500ms poll, which sent the chat's streamed text in half-second
+	// clumps.
+	probeSessions.Tail(r.Context(), sse, id, func(ev probeEvent) error {
 		if !sendEvent(ev) {
-			return
+			return errViewerLeft
 		}
-	}
-	if done {
-		return
-	}
-
-	// Stream new events as they arrive. Same poll cadence as
-	// LiveSessionMap.HandleReconnect — keep the cost cheap and
-	// fire a comment heartbeat when there's been no activity to
-	// keep proxies + browsers from timing the stream out.
-	const heartbeat = 15 * time.Second
-	sent := len(events)
-	lastActivity := time.Now()
-	for {
-		time.Sleep(500 * time.Millisecond)
-		current, isDone := probeSessions.SnapshotEvents(id)
-		if current == nil {
-			return
-		}
-		if len(current) > sent {
-			for i := sent; i < len(current); i++ {
-				if !sendEvent(current[i]) {
-					return
-				}
-			}
-			sent = len(current)
-			lastActivity = time.Now()
-		} else if time.Since(lastActivity) >= heartbeat {
-			if err := sse.SendComment("heartbeat"); err != nil {
-				return
-			}
-			lastActivity = time.Now()
-		}
-		if isDone {
-			return
-		}
-	}
+		return nil
+	})
 }
+
+// errViewerLeft ends a tail whose viewer's stream can no longer be written.
+var errViewerLeft = errors.New("viewer left")

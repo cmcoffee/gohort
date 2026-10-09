@@ -30,6 +30,17 @@ type LiveSession[T any] struct {
 	// in this window with 409 Conflict; set the flag in OnRegister on
 	// the restore path and clear it from PipelineConfig.OnStarted.
 	Restoring bool
+	// wake is closed, and replaced, whenever the session changes, so a Tail
+	// streaming it sends the moment there is something to send.
+	wake chan struct{}
+}
+
+// changed wakes every Tail on s. Called with m.mu held.
+func (s *LiveSession[T]) changed() {
+	if s.wake != nil {
+		close(s.wake)
+	}
+	s.wake = make(chan struct{})
 }
 
 // LiveSessionMap manages concurrent live sessions with mutex protection,
@@ -172,6 +183,7 @@ func (m *LiveSessionMap[T]) AppendEvent(id string, event T, isDone bool) {
 		if isDone {
 			s.Done = true
 		}
+		s.changed()
 	}
 }
 
@@ -219,6 +231,9 @@ func (m *LiveSessionMap[T]) ScheduleCleanupAfter(id string, d time.Duration) {
 		time.Sleep(d)
 		m.mu.Lock()
 		if m.sessions[id] == current {
+			if current != nil {
+				current.changed() // a Tail still on it sees it gone
+			}
 			delete(m.sessions, id)
 		}
 		m.mu.Unlock()
@@ -255,6 +270,7 @@ func (m *LiveSessionMap[T]) HandleCancel(logPrefix string) http.HandlerFunc {
 			}
 			s.Cancel()
 			s.Done = true // Mark done so it disappears from Live immediately.
+			s.changed()
 			Log("[web] %s %s cancelled by user", logPrefix, id)
 		}
 		m.mu.Unlock()
@@ -289,6 +305,7 @@ func (m *LiveSessionMap[T]) CancelSession(id string) bool {
 	// being listed as live immediately; the goroutine unwinding on a cancelled
 	// context can take as long as the call it is waiting on.
 	s.Done = true
+	s.changed()
 	return true
 }
 
@@ -387,24 +404,33 @@ func (m *LiveSessionMap[T]) HandleReconnect() http.HandlerFunc {
 // emit is where an app turns its own event type into what its page draws, so
 // a send and a reconnect can share one tail instead of each keeping a copy.
 // Ownership is the caller's to check (MayView) before it starts streaming.
+//
+// Each event goes out the moment it is appended: the session wakes its tails.
+// This used to check every 500ms and send what had piled up, so every viewer
+// of a pipeline (the first one as much as a reconnect) got its text in
+// half-second clumps that no amount of smoothing on the page could hide.
 func (m *LiveSessionMap[T]) Tail(ctx context.Context, sse *SSEWriter, id string, emit func(T) error) (done bool) {
 	// A keepalive comment after 15s of silence keeps proxies and browsers
 	// from dropping the stream through a long model pause.
 	const heartbeat = 15 * time.Second
+	// The fallback check: the heartbeat's clock, and a backstop for any
+	// change that does not wake the tail.
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
 	sent := 0
 	lastActivity := time.Now()
 	for {
-		current, isDone := m.SnapshotEvents(id)
-		if current == nil {
+		fresh, isDone, wake, ok := m.eventsSince(id, sent)
+		if !ok {
 			return true // gone: cleaned up after it finished
 		}
-		if len(current) > sent {
-			for i := sent; i < len(current); i++ {
-				if emit(current[i]) != nil {
+		if len(fresh) > 0 {
+			for _, ev := range fresh {
+				if emit(ev) != nil {
 					return false
 				}
 			}
-			sent = len(current)
+			sent += len(fresh)
 			lastActivity = time.Now()
 		} else if time.Since(lastActivity) >= heartbeat {
 			if sse.SendComment("heartbeat") != nil {
@@ -418,7 +444,28 @@ func (m *LiveSessionMap[T]) Tail(ctx context.Context, sse *SSEWriter, id string,
 		select {
 		case <-ctx.Done():
 			return false
-		case <-time.After(500 * time.Millisecond):
+		case <-wake:
+		case <-tick.C:
 		}
 	}
+}
+
+// eventsSince is the session's events past the first sent, whether it is
+// done, and the channel that closes when it next changes. ok is false when
+// the session is gone. One lock, so no change can land between reading the
+// events and taking the channel that would have announced it.
+func (m *LiveSessionMap[T]) eventsSince(id string, sent int) (fresh []T, done bool, wake <-chan struct{}, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, found := m.sessions[id]
+	if !found {
+		return nil, true, nil, false
+	}
+	if s.wake == nil {
+		s.wake = make(chan struct{})
+	}
+	if len(s.Events) > sent {
+		fresh = append([]T(nil), s.Events[sent:]...)
+	}
+	return fresh, s.Done, s.wake, true
 }
