@@ -24,6 +24,7 @@ type dashApp struct {
 	path  string
 	order int    // explicit sort key for dynamic cards; 0 means "ask app for WebOrder"
 	app   WebApp // nil for cards from DashboardCardSource
+	group string // the Customize page's heading for it
 }
 
 func ServeDashboard(addr string) error {
@@ -120,6 +121,9 @@ func ServeDashboard(addr string) error {
 	// defined, below ServeDashboard.
 	host := dashboardHost{apps: apps}
 	mux.HandleFunc("/", host.handleRoot)
+	mux.HandleFunc("/dashboard/customize", host.handleCustomize)
+	mux.HandleFunc("/api/dashboard/items", host.handleDashboardItems)
+	mux.HandleFunc("/api/dashboard/show", host.handleDashboardShow)
 	mux.HandleFunc("/api/live", host.handleLive)
 	mux.HandleFunc("/debug/pprof/", handlePprof)
 	mux.HandleFunc("/api/notify-preference", handleNotifyPreference)
@@ -291,13 +295,11 @@ type dashboardHost struct {
 	apps []dashApp
 }
 
-// handleRoot is the dashboard page: the app cards this viewer may see plus
-// the dynamic cards any DashboardCardSource contributes, in declared order.
-func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
+// cards is every card this viewer may see: the ones the dashboard shows by
+// default (apps they can reach, and what card sources contribute), and the
+// ones it shows only when they ask for it (dashboardPinSource: their own
+// custom apps, their unpublished agents).
+func (d dashboardHost) cards(r *http.Request) (defaults, pinnable []dashApp) {
 	visible := make([]dashApp, 0, len(d.apps))
 	for _, a := range d.apps {
 		if ra, ok := a.app.(WebAppRestricted); ok && ra.WebRestricted(r) {
@@ -338,9 +340,36 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 				path:  c.Path,
 				order: c.Order,
 				app:   nil, // no underlying WebApp; live-view lookups skip it
+				group: chooseStr(c.Group, "More"),
 			})
 		}
 	}
+	for i := range visible {
+		if visible[i].app != nil {
+			visible[i].group = "Apps"
+		}
+	}
+	for _, a := range d.apps {
+		src, ok := a.app.(dashboardPinSource)
+		if !ok || !AppEnabledHere(a.path) {
+			continue
+		}
+		for _, c := range src.DashboardPinnable(r) {
+			pinnable = append(pinnable, dashApp{name: c.Name, desc: c.Desc, path: c.Path, order: c.Order, group: chooseStr(c.Group, "More")})
+		}
+	}
+	return visible, pinnable
+}
+
+// handleRoot is the dashboard page: the app cards this viewer may see plus
+// the dynamic cards any DashboardCardSource contributes, in declared order.
+func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	defaults, pinnable := d.cards(r)
+	visible := applyDashPrefs(defaults, pinnable, loadDashPrefs(AuthCurrentUser(r)))
 	// Stable re-sort so dynamic cards land in their declared order.
 	sort.Slice(visible, func(i, j int) bool {
 		oi, oj := visible[i].order, visible[j].order
@@ -661,4 +690,210 @@ func HistoryHandlers[R Dated, S any](db func() Database, table string, summarize
 	}
 
 	return
+}
+
+// --- Choosing what the dashboard shows -------------------------------------
+//
+// Each person picks for themselves: hide a card they never use, or put one of
+// their own custom apps or unpublished agents on their dashboard. Nobody
+// else's dashboard changes. An app hidden here is still reachable at its
+// address and from its app's own pages; this is only what the front page
+// offers.
+
+// dashboardPinSource is a WebApp with cards the dashboard shows only when a
+// person asks for them, unlike DashboardCardSource's, which it shows by
+// default.
+type dashboardPinSource interface {
+	DashboardPinnable(r *http.Request) []DashboardCard
+}
+
+// dashPrefs is one person's choice: cards hidden that would show, and cards
+// shown that would not, by path.
+type dashPrefs struct {
+	Hidden []string `json:"hidden,omitempty"`
+	Shown  []string `json:"shown,omitempty"`
+}
+
+const dashPrefsTable = "dashboard_prefs"
+
+func loadDashPrefs(user string) dashPrefs {
+	var p dashPrefs
+	if user == "" || AuthDB == nil {
+		return p
+	}
+	if db := AuthDB(); db != nil {
+		db.Get(dashPrefsTable, user, &p)
+	}
+	return p
+}
+
+func saveDashPrefs(user string, p dashPrefs) {
+	if user == "" || AuthDB == nil {
+		return
+	}
+	if db := AuthDB(); db != nil {
+		db.Set(dashPrefsTable, user, p)
+	}
+}
+
+func hasPath(list []string, path string) bool {
+	for _, p := range list {
+		if p == path {
+			return true
+		}
+	}
+	return false
+}
+
+func withoutPath(list []string, path string) []string {
+	out := list[:0:0]
+	for _, p := range list {
+		if p != path {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// applyDashPrefs is what one person's dashboard shows: the defaults they did
+// not hide, then the pinnable cards they asked for.
+func applyDashPrefs(defaults, pinnable []dashApp, p dashPrefs) []dashApp {
+	out := make([]dashApp, 0, len(defaults))
+	seen := map[string]bool{}
+	for _, a := range defaults {
+		if hasPath(p.Hidden, a.path) {
+			continue
+		}
+		seen[a.path] = true
+		out = append(out, a)
+	}
+	for _, a := range pinnable {
+		if hasPath(p.Shown, a.path) && !seen[a.path] {
+			seen[a.path] = true
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// dashItem is one row of the Customize page.
+type dashItem struct {
+	Path  string `json:"path"`
+	Name  string `json:"name"`
+	Desc  string `json:"desc,omitempty"`
+	Group string `json:"group"`
+	Shown bool   `json:"shown"`
+	Note  string `json:"note,omitempty"`
+}
+
+// handleDashboardItems lists every card this viewer may put on their
+// dashboard, and whether it is there now. GET.
+func (d dashboardHost) handleDashboardItems(w http.ResponseWriter, r *http.Request) {
+	user := AuthCurrentUser(r)
+	if user == "" {
+		http.Error(w, "sign in first", http.StatusUnauthorized)
+		return
+	}
+	defaults, pinnable := d.cards(r)
+	p := loadDashPrefs(user)
+	var items []dashItem
+	seen := map[string]bool{}
+	for _, a := range defaults {
+		if seen[a.path] {
+			continue
+		}
+		seen[a.path] = true
+		items = append(items, dashItem{Path: a.path, Name: a.name, Desc: a.desc, Group: a.group, Shown: !hasPath(p.Hidden, a.path)})
+	}
+	for _, a := range pinnable {
+		if seen[a.path] {
+			continue
+		}
+		seen[a.path] = true
+		items = append(items, dashItem{Path: a.path, Name: a.name, Desc: a.desc, Group: a.group, Shown: hasPath(p.Shown, a.path),
+			Note: "only on your dashboard"})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"records": items})
+}
+
+// handleDashboardShow puts a card on this viewer's dashboard or takes it off.
+// POST ?path=<card path> with {"shown": bool}. Only a card they may see.
+func (d dashboardHost) handleDashboardShow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := AuthCurrentUser(r)
+	if user == "" {
+		http.Error(w, "sign in first", http.StatusUnauthorized)
+		return
+	}
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	var body struct {
+		Shown bool `json:"shown"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		http.Error(w, "send {\"shown\": true|false}", http.StatusBadRequest)
+		return
+	}
+	defaults, pinnable := d.cards(r)
+	isDefault, isPinnable := false, false
+	for _, a := range defaults {
+		isDefault = isDefault || a.path == path
+	}
+	for _, a := range pinnable {
+		isPinnable = isPinnable || a.path == path
+	}
+	if !isDefault && !isPinnable {
+		http.Error(w, "no such card for you", http.StatusNotFound)
+		return
+	}
+	p := loadDashPrefs(user)
+	if isDefault {
+		p.Hidden = withoutPath(p.Hidden, path)
+		if !body.Shown {
+			p.Hidden = append(p.Hidden, path)
+		}
+	} else {
+		p.Shown = withoutPath(p.Shown, path)
+		if body.Shown {
+			p.Shown = append(p.Shown, path)
+		}
+	}
+	saveDashPrefs(user, p)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"shown": body.Shown})
+}
+
+// handleCustomize is the page where a person picks what their dashboard shows.
+func (d dashboardHost) handleCustomize(w http.ResponseWriter, r *http.Request) {
+	if AuthCurrentUser(r) == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	ui.Page{
+		Title:     "Customize dashboard",
+		ShowTitle: true,
+		BackURL:   "/",
+		MaxWidth:  "820px",
+		Sections: []ui.Section{{
+			Title:    "What your dashboard shows",
+			Subtitle: "Switch a card off to hide it, or on to add it. Only your dashboard changes, and a hidden app is still there at its address.",
+			Body: ui.Table{
+				Source:  "/api/dashboard/items",
+				RowKey:  "path",
+				GroupBy: "group",
+				Columns: []ui.Col{
+					{Field: "name", Flex: 2},
+					{Field: "desc", Flex: 3, Mute: true},
+					{Field: "note", Flex: 1, Mute: true},
+				},
+				RowActions: []ui.RowAction{
+					{Type: "toggle", Field: "shown", PostTo: "/api/dashboard/show?path={path}"},
+				},
+				EmptyText: "Nothing to show yet.",
+			},
+		}},
+	}.ServeHTTP(w, r)
 }

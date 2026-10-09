@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"html"
 	"html/template"
 	"net/http"
 	"sort"
@@ -96,10 +97,17 @@ const notifyPanelHTML = `<div class="notify-panel" id="notify-panel">
 
 func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, notices []DashboardNotice) {
 	renderCard := func(b *strings.Builder, a dashApp, extraCls string) {
-		fmt.Fprintf(b, `<a class="card%s" href="%s/">
+		// Escaped: a published agent's name and description are typed by its
+		// owner and shown on other people's dashboards, and a custom app's by
+		// whoever wrote it. A link carrying a query opens as written.
+		href := a.path
+		if !strings.Contains(href, "?") {
+			href += "/"
+		}
+		fmt.Fprintf(b, `<a class="card%s" href="%s">
 			<div class="card-name">%s</div>
 			<div class="card-desc">%s</div>
-		</a>`, extraCls, a.path, a.name, a.desc)
+		</a>`, extraCls, html.EscapeString(href), html.EscapeString(a.name), html.EscapeString(a.desc))
 	}
 
 	// Partition: the orchestrator family, standalone featured heroes, and the rest.
@@ -166,6 +174,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 		auth_html = fmt.Sprintf(
 			`<div class="auth-bar"><span class="auth-user">%s</span>`+
 				`<button type="button" class="auth-link bell" id="bell" title="Notifications" aria-label="Notifications">`+bellGlyphSVG+`<span class="bell-count" id="bell-count"></span></button>`+
+				`<a class="auth-link" href="/dashboard/customize" title="Pick which apps and agents this page shows">Customize</a>`+
 				`<a class="auth-link" href="/account">Account</a><form class="auth-logout" method="POST" action="/logout"><button type="submit" class="auth-link">Logout</button></form></div>`+
 				notifyPanelHTML,
 			username)

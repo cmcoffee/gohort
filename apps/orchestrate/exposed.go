@@ -105,10 +105,45 @@ func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
 			desc = "Chat with " + e.Name + "."
 		}
 		out = append(out, DashboardCard{
-			Name: name,
-			Desc: desc,
-			Path: "/agents/" + e.Slug,
+			Name:  name,
+			Desc:  desc,
+			Path:  "/agents/" + e.Slug,
+			Group: "Agents",
 		})
+	}
+	return out
+}
+
+// DashboardPinnable offers the viewer's own agents that have no dashboard card
+// of their own, for them to put on their own dashboard (the Customize page).
+// Nobody else sees the card, and it publishes nothing: it opens the agent's
+// chat here, as the owner already could. Sub-agents and an app's agents are
+// left out, since they are reached through their parent and their app.
+func (T *OrchestrateApp) DashboardPinnable(r *http.Request) []DashboardCard {
+	user := AuthCurrentUser(r)
+	if T == nil || T.DB == nil || user == "" {
+		return nil
+	}
+	udb := UserDB(T.DB, user)
+	if udb == nil {
+		return nil
+	}
+	published := map[string]bool{}
+	for _, e := range T.ListExposedAgents() {
+		if e.Owner == user && e.ShowOnDashboard {
+			published[e.AgentID] = true
+		}
+	}
+	var out []DashboardCard
+	for _, a := range listAgents(udb, user) {
+		if published[a.ID] || strings.TrimSpace(a.OwnedBy) != "" || strings.TrimSpace(a.OwningApp) != "" || isAppAgent(a.ID) {
+			continue
+		}
+		desc := strings.TrimSpace(a.Description)
+		if r := []rune(desc); len(r) > 140 {
+			desc = string(r[:140]) + "..."
+		}
+		out = append(out, DashboardCard{Name: a.Name, Desc: desc, Path: "/orchestrate/?agent=" + a.ID, Group: "Your agents"})
 	}
 	return out
 }

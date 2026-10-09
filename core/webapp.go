@@ -97,6 +97,9 @@ type DashboardCard struct {
 	Desc  string // one-line description
 	Path  string // href; rendered as "<Path>/" (leading slash, no trailing)
 	Order int    // sort key — lower first; defaults to 50 when zero
+	// Group is the heading the card is listed under on the Customize page
+	// ("Agents", "Your apps"); empty reads as "More".
+	Group string
 }
 
 // DashboardCardSource is implemented by WebApps that contribute
