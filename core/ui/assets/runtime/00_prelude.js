@@ -531,6 +531,7 @@
   // opts.instant(), when it returns true, shows each update whole: a
   // rejoin replaying what already streamed should not type it out again.
   var PACER_LAG = 0.35; // seconds of text kept in reserve; covers a model server's usual pauses
+  var PACER_FLOOR = 0.7; // the slowest the reveal goes while the reserve drains, as a share of the arrival rate
   window.uiStreamReveal = function(paint, opts) {
     opts = opts || {};
     var text = '', shown = 0, rate = 0, carry = 0;
@@ -572,8 +573,16 @@
         // another request's prompt), and revealing right at the stream's edge
         // ran dry and stopped with it; with a reserve the typing slows for a
         // moment instead. A burst speeds it up the same way.
+        //
+        // The slowest it goes is PACER_FLOOR of the arrival rate. The end of a
+        // reply looks exactly like a pause (the text stops arriving, and the
+        // closing event comes only after the reply's checks run), so the
+        // reserve drains the same way there: at 0.2 the last line visibly
+        // crawled. 0.7 still stretches the reserve over a stall of about half
+        // a second, the vLLM pause it is for, and the end eases off by a
+        // third instead of slowing to a fifth.
         var reserve = rate * PACER_LAG;
-        var pace = Math.max(0.2, Math.min(backlog / reserve, 4));
+        var pace = Math.max(PACER_FLOOR, Math.min(backlog / reserve, 4));
         n = rate * dt / 1000 * pace + carry;
         // Far behind (a replay outside its window): catch up in a few frames.
         if (backlog > reserve * 4) n += (backlog - reserve * 4) / 8;

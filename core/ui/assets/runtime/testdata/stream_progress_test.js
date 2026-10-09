@@ -124,7 +124,7 @@ function fakeBody() {
 }
 function shown(b) { return b.kids.map(function(n) { return n.src; }).join(''); }
 eval(lift(prelude, 'function uiStreamSettledCut(', 'uiStreamSettledCut'));
-eval('var PACER_LAG = 0.3;');
+eval('var PACER_LAG = 0.3, PACER_FLOOR = 0.7;');
 eval(lift(prelude, 'window.uiStreamReveal = function(', 'uiStreamReveal'));
 eval(lift(prelude, 'window.uiReplayWindow = function(', 'uiReplayWindow'));
 eval(lift(prelude, 'window.uiStreamMarkdown = function(', 'uiStreamMarkdown'));
@@ -167,6 +167,21 @@ check('finish paints all of it at once', painted === full + ' more');
 
 rv.update('A correction.');
 check('text that changed rather than grew shows as it now is, at once', painted === 'A correction.');
+
+// The end of a reply drains the reserve like a pause does. It eases off, but
+// it must not crawl: at a 0.2 floor the last line typed at a fifth the speed.
+var lens = [];
+var tail = window.uiStreamReveal(function(p) { lens.push(p.length); });
+var steady = '';
+for (var s2 = 0; s2 < 80; s2++) { clock += 16; steady += 'abcdefg'; tail.update(steady); frame(); }
+var streamed = lens.length;
+for (var d2 = 0; d2 < 200 && lens[lens.length - 1] < steady.length; d2++) { clock += 16; frame(); }
+var steps = [];
+for (var k = streamed; k < lens.length - 1; k++) steps.push(lens[k] - lens[k - 1]);
+var steadyStep = (lens[streamed - 1] - lens[streamed - 21]) / 20;
+check('the reserve drains to the end once the text stops', lens[lens.length - 1] === steady.length);
+check('the end slows by at most a third, never to a crawl',
+  steps.length > 0 && steps.every(function(x) { return x >= steadyStep * 0.6; }));
 
 var cuts = [];
 var emo = window.uiStreamReveal(function(p) { cuts.push(p); });
