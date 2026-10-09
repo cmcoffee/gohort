@@ -261,7 +261,7 @@ func ServeDashboard(addr string) error {
 	if TLSEnabled() {
 		scheme = "https"
 	}
-	Log("Gohort Dashboard: %s://%s\n", scheme, addr)
+	Log("Oddjob Dashboard: %s://%s\n", scheme, addr)
 
 	return ListenAndServeTLS(addr, dashboardChain(mux))
 }

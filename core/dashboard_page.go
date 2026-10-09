@@ -191,7 +191,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 %FAVICON%
 %APPHEAD%
-<title>Gohort Dashboard</title>
+<title>Oddjob Dashboard</title>
 <style>
 %THEMECSS%
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -201,7 +201,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     display: flex; flex-direction: column; align-items: center;
     padding: 80px 20px;
   }
-  /* The masthead: the mark (the favicon's three squares) in front of GOHORT,
+  /* The masthead: the mark (the favicon's three squares) in front of ODDJOB,
      both in block letters five rows tall. Left-aligned inside a centred block,
      because centring each line on its own slides rows of unequal length
      against each other. Each row steps from bright to muted, like a lit sign.
@@ -498,11 +498,11 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 </head>
 <body>
   %AUTH%
-  <div class="ascii-logo play" id="logo" role="img" aria-label="gohort"><span class="r0"><span class="mk">  <span class="sq s1">███</span>  </span>   <span class="lt" style="--i:0"> ████</span> <span class="lt" style="--i:1"> ███ </span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3"> ███ </span> <span class="lt" style="--i:4">████ </span> <span class="lt" style="--i:5">█████</span></span>
-<span class="r1"><span class="mk">  <span class="sq s1">███</span>  </span>   <span class="lt" style="--i:0">█    </span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">  █  </span></span>
-<span class="r2"><span class="mk">       </span>   <span class="lt" style="--i:0">█  ██</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█████</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">████ </span> <span class="lt" style="--i:5">  █  </span></span>
-<span class="r3"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0">█   █</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">█  █ </span> <span class="lt" style="--i:5">  █  </span></span>
-<span class="r4"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0"> ███ </span> <span class="lt" style="--i:1"> ███ </span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3"> ███ </span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">  █  </span></span></div>
+  <div class="ascii-logo play" id="logo" role="img" aria-label="oddjob"><span class="r0"><span class="mk">  <span class="sq s1">███</span>  </span>   <span class="lt" style="--i:0"> ███ </span> <span class="lt" style="--i:1">████ </span> <span class="lt" style="--i:2">████ </span> <span class="lt" style="--i:3">█████</span> <span class="lt" style="--i:4"> ███ </span> <span class="lt" style="--i:5">████ </span></span>
+<span class="r1"><span class="mk">  <span class="sq s1">███</span>  </span>   <span class="lt" style="--i:0">█   █</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">    █</span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">█   █</span></span>
+<span class="r2"><span class="mk">       </span>   <span class="lt" style="--i:0">█   █</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">    █</span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">████ </span></span>
+<span class="r3"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0">█   █</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">█   █</span></span>
+<span class="r4"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0"> ███ </span> <span class="lt" style="--i:1">████ </span> <span class="lt" style="--i:2">████ </span> <span class="lt" style="--i:3"> ███ </span> <span class="lt" style="--i:4"> ███ </span> <span class="lt" style="--i:5">████ </span></span></div>
   <p class="subtitle">Agent Dashboard</p>
   %NOTICES%
   <div class="grid">%CARDS%</div>

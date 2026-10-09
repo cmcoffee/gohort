@@ -2086,7 +2086,7 @@ func serveSignupPage(w http.ResponseWriter, errMsg string) {
       <button type="submit">Create Account</button>
     </form>
     <a class="alt-link" href="/login">Already have an account? Sign in</a>`
-	page := authPageHTML("Gohort - Sign Up", body)
+	page := authPageHTML("Oddjob - Sign Up", body)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, page)
@@ -2289,7 +2289,7 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
       <button type="submit">Sign In</button>
     </form>
     ` + links
-	page := authPageHTML("Gohort - Login", body)
+	page := authPageHTML("Oddjob - Login", body)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, page)
 }
