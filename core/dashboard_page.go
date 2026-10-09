@@ -143,9 +143,13 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 	}
 	// Order the family by HubTab order so the cluster and the tab row stay in
 	// lockstep from one source (the featured lead sorts first via its low order).
-	sort.SliceStable(family, func(i, j int) bool {
-		return hubTabOrder(family[i].app) < hubTabOrder(family[j].app)
-	})
+	// Unless the viewer put them in an order of their own (Customize): then
+	// it is theirs, already applied to apps.
+	if len(loadDashPrefs(AuthCurrentUser(r)).Order) == 0 {
+		sort.SliceStable(family, func(i, j int) bool {
+			return hubTabOrder(family[i].app) < hubTabOrder(family[j].app)
+		})
+	}
 
 	var cards strings.Builder
 	cards.WriteString(heroB.String())

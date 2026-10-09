@@ -77,3 +77,56 @@ func TestADashboardShowsWhatItsViewerPicked(t *testing.T) {
 		t.Errorf("a hidden card could not be brought back")
 	}
 }
+
+// A card moves within its section of the dashboard, the dashboard draws it
+// there, and a move past the end of its section stays put.
+func TestADashboardCardMovesWithinItsSection(t *testing.T) {
+	withUsers(t)
+	host := dashboardHost{apps: []dashApp{
+		{name: "Alpha", desc: "a", path: "/alpha", app: pinApp{}},
+		{name: "Beta", desc: "b", path: "/beta", app: pinApp{}},
+		{name: "Gamma", desc: "c", path: "/gamma", app: pinApp{}},
+	}}
+	move := func(path, dir string) {
+		w := httptest.NewRecorder()
+		r := asUser(t, "/api/dashboard/move?path="+path+"&dir="+dir, "craig")
+		r.Method = http.MethodPost
+		host.handleDashboardMove(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("move %s %s: %d %s", path, dir, w.Code, w.Body.String())
+		}
+	}
+	order := func() string {
+		w := httptest.NewRecorder()
+		host.handleRoot(w, asUser(t, "/", "craig"))
+		page := w.Body.String()
+		var seen []string
+		for _, p := range []string{"/alpha/", "/beta/", "/gamma/"} {
+			seen = append(seen, p)
+		}
+		sortByIndex(seen, page)
+		return strings.Join(seen, " ")
+	}
+	if got := order(); got != "/alpha/ /beta/ /gamma/" {
+		t.Fatalf("default: %s", got)
+	}
+	move("/gamma", "up")
+	if got := order(); got != "/alpha/ /gamma/ /beta/" {
+		t.Errorf("after gamma up: %s", got)
+	}
+	move("/alpha", "up")  // already first: stays
+	move("/beta", "down") // already last: stays
+	if got := order(); got != "/alpha/ /gamma/ /beta/" {
+		t.Errorf("a move past the end changed the order: %s", got)
+	}
+}
+
+// sortByIndex orders paths by where their card's link appears in page.
+func sortByIndex(paths []string, page string) {
+	idx := func(p string) int { return strings.Index(page, `href="`+p+`"`) }
+	for i := 1; i < len(paths); i++ {
+		for j := i; j > 0 && idx(paths[j]) < idx(paths[j-1]); j-- {
+			paths[j], paths[j-1] = paths[j-1], paths[j]
+		}
+	}
+}
