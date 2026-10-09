@@ -291,6 +291,19 @@ func CheckImageInputs(sess *ToolSession, backend string, refs []string, mask str
 	return nil
 }
 
+// ResolveImageRef is resolveInputImage for a tool an app hands the loop: the
+// bytes and type behind any handle the model holds (media#N for a picture the
+// user attached, image#N or a workspace filename for one a tool made or found,
+// an http(s) URL fetched through the session's gate). A method, so an app can
+// place a picture however it came to exist without re-learning the handles.
+func (s *ToolSession) ResolveImageRef(ref string) (data []byte, mime string, err error) {
+	img, err := resolveInputImage(s, ref)
+	if err != nil {
+		return nil, "", err
+	}
+	return img.data, img.mime, nil
+}
+
 func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 	var out inputImage
 	ref = strings.TrimSpace(ref)

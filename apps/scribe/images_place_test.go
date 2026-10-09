@@ -6,7 +6,8 @@ package scribe
 
 import (
 	"context"
-	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -69,11 +70,25 @@ func TestTheCoAuthorPlacesAnAttachedPicture(t *testing.T) {
 		t.Error("the attached picture was not stored with the guide")
 	}
 
-	if _, err := addImage.Handler(ctx, map[string]any{"section_title": "Setup", "image": "media#2"}); err == nil || !strings.Contains(err.Error(), "1 attached") {
-		t.Errorf("a media id past the end should say how many came: %v", err)
+	if _, err := addImage.Handler(ctx, map[string]any{"section_title": "Setup", "image": "media#2"}); err == nil || !strings.Contains(err.Error(), "past the end") {
+		t.Errorf("a media id past the end should say so: %v", err)
 	}
-	if _, err := addImage.Handler(context.Background(), map[string]any{"section_title": "Setup", "image": "media#1"}); err == nil || !strings.Contains(err.Error(), "0 attached") {
+	if _, err := addImage.Handler(context.Background(), map[string]any{"section_title": "Setup", "image": "media#1"}); err == nil || !strings.Contains(err.Error(), "outside a turn") {
 		t.Errorf("outside a turn there is nothing attached: %v", err)
+	}
+	// A picture a tool made or found: the file the tool handed back, in the
+	// turn's workspace.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "diagram.png"), tinyPNG, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	made := &ToolSession{WorkspaceDir: dir}
+	if _, err := addImage.Handler(made.ContextWithSession(context.Background()), map[string]any{"section_title": "Setup", "image": "diagram.png", "caption": "Flow"}); err != nil {
+		t.Errorf("a generated picture by its filename: %v", err)
+	}
+	g, _ = loadGuide(udb, "g1")
+	if !strings.Contains(g.Sections[0].Markdown, "![Flow](/scribe/img?g=g1&i=") {
+		t.Errorf("the generated picture was not stored and placed:\n%s", g.Sections[0].Markdown)
 	}
 	if _, err := addImage.Handler(ctx, map[string]any{"section_title": "Setup", "image": "https://example.com/a.png", "caption": "Remote"}); err != nil {
 		t.Errorf("a URL is placed as it is: %v", err)
@@ -85,5 +100,4 @@ func TestTheCoAuthorPlacesAnAttachedPicture(t *testing.T) {
 	if _, err := addImage.Handler(ctx, map[string]any{"section_title": "Nope", "image": "media#1"}); err == nil || !strings.Contains(err.Error(), "Setup") {
 		t.Errorf("a missing section should list the ones there are: %v", err)
 	}
-	_ = base64.StdEncoding
 }

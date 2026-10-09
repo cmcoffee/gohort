@@ -7,9 +7,7 @@ package scribe
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -551,10 +549,10 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 		Tool: Tool{
 			Name:        "add_image",
 			Caps:        []Capability{CapWrite},
-			Description: "Put a picture into a section of the open guide, as its own paragraph at the end of that section. image is media#1, media#2 … for a picture the user attached to THIS message (the message says which ids exist), or an http(s) URL of a picture. Use it when the user sends a screenshot and says where it goes; never describe a picture in words instead of placing it.",
+			Description: "Put a picture into a section of the open guide, as its own paragraph at the end of that section. image is media#1, media#2 … for a picture the user attached to THIS message (the message says which ids exist), the handle or filename a generate_image call handed back, or an http(s) URL of a picture. Use it when the user sends a screenshot and says where it goes, and after generating a picture for a section: make it first, then place it with this. Never describe a picture in words where the picture should be.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Title of the section the picture goes in (must match an existing section)."},
-				"image":         {Type: "string", Description: "media#N for a picture attached to this message, or an http(s) URL."},
+				"image":         {Type: "string", Description: "media#N for a picture attached to this message, image#N or the filename a generate tool returned, or an http(s) URL."},
 				"caption":       {Type: "string", Description: "What the picture shows, in a few words: the alt text. Optional."},
 			},
 			Required: []string{"section_title", "image"},
@@ -578,43 +576,30 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			if idx < 0 {
 				return "", fmt.Errorf("no section titled %q, existing sections: %s", title, sectionTitles(g))
 			}
+			// The session resolves every kind of handle; a web address the turn
+			// cannot fetch (a Private guide) is linked as it is instead.
 			var src string
+			isURL := strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://")
+			sess := ToolSessionFromContext(ctx)
+			data, mime, err := []byte(nil), "", fmt.Errorf("nothing is attached to this message: outside a turn there are no handles")
+			if sess != nil {
+				data, mime, err = sess.ResolveImageRef(ref)
+			}
 			switch {
-			case strings.HasPrefix(ref, "media#"):
-				sess := ToolSessionFromContext(ctx)
-				var item *InboundMediaItem
-				if sess != nil {
-					for i := range sess.InboundMedia {
-						if sess.InboundMedia[i].ID == ref {
-							item = &sess.InboundMedia[i]
-						}
-					}
-				}
-				if item == nil || item.Kind != "image" {
-					n := 0
-					if sess != nil {
-						n = len(sess.InboundMedia)
-					}
-					return "", fmt.Errorf("%s is not a picture attached to this message (%d attached): ask the user to attach it, or pass an http(s) URL", ref, n)
-				}
-				data, err := base64.StdEncoding.DecodeString(item.B64)
-				if err != nil || len(data) == 0 {
-					return "", fmt.Errorf("%s could not be read", ref)
-				}
+			case err == nil:
 				if len(data) > maxGuideImageBytes {
 					return "", fmt.Errorf("%s is larger than 5 MB: ask for a smaller picture", ref)
 				}
-				mime := http.DetectContentType(data)
 				if !guideImageTypes[mime] {
 					return "", fmt.Errorf("%s is %s, not a PNG, JPEG, GIF or WebP picture", ref, mime)
 				}
 				imgID := newID()
 				ownerUDB.Set(guideImagesTable, guideImageKey(g.ID, imgID), guideImage{Mime: mime, Data: data, Name: caption, Created: now()})
 				src = T.guideImagePath(g.ID, imgID)
-			case strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://"):
+			case isURL:
 				src = ref
 			default:
-				return "", fmt.Errorf("image must be media#N (a picture attached to this message) or an http(s) URL, not %q", ref)
+				return "", fmt.Errorf("%s could not be placed: %v. Pass media#N for a picture attached to this message, the handle a generate tool returned, or an http(s) URL", ref, err)
 			}
 			title = placeImageInSection(&g, g.Sections[idx].ID, "!["+strings.NewReplacer("[", "", "]", "").Replace(caption)+"]("+src+")")
 			saveGuideRev(ownerUDB, g, "Added a picture to "+title)
