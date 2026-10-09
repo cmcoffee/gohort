@@ -124,7 +124,7 @@ func toolCheckout(args map[string]any, sess *ToolSession) (string, error) {
 		for f, data := range map[string][]byte{
 			toolManifestFile: manifest,
 			"script.py":      []byte(strings.ReplaceAll(toolStarterScript, "TOOL_NAME", name)),
-			toolNotesFile:    []byte("# " + name + "\n\nFor whoever edits this tool next: what it works around, why each choice was made, what was tried and failed, and what its output looks like.\n"),
+			toolNotesFile:    []byte("# " + name + "\n\n" + toolNotesStarter + "\n"),
 		} {
 			if err := write(f, data); err != nil {
 				return "", err
@@ -417,10 +417,18 @@ func toolPublish(args map[string]any, sess *ToolSession) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s not published: %w", rel, err)
 	}
+	head := fmt.Sprintf("Published %s/ to tool %q.", rel, m.Name)
 	if saved, ok := loadExistingToolRecord(sess, m.Name); ok {
 		os.WriteFile(filepath.Join(abs, toolFolderBaseFile), []byte(toolFingerprint(saved)), 0o644)
+		var prev *TempTool
+		if exists {
+			prev = &live
+		}
+		if n := toolNotesNote(prev, saved, rel); n != "" {
+			head += "\n\n" + n
+		}
 	}
-	return fmt.Sprintf("Published %s/ to tool %q.\n\n%s", rel, m.Name, out), nil
+	return head + "\n\n" + out, nil
 }
 
 // toolFingerprint is a digest of what a tool is, as stored: what its folder
@@ -479,4 +487,28 @@ func containsStr(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// toolNotesStarter is the line a new tool folder's NOTES.md starts with.
+const toolNotesStarter = "For whoever edits this tool next: what it works around, why each choice was made, what was tried and failed, and what its output looks like."
+
+// toolNotesNote asks for the notes a publish should have left, or "", as
+// appNotesNote does for an app: a placeholder, or code that changed while the
+// notes did not. A prompt, not a refusal.
+func toolNotesNote(prev *TempTool, saved TempTool, rel string) string {
+	notes := strings.TrimSpace(saved.Notes)
+	if notes == "" || strings.Contains(notes, toolNotesStarter) && len(notes) < len(toolNotesStarter)+len(saved.Name)+16 {
+		return fmt.Sprintf("NOTES: %s/%s is still the starter. Write what the tool works around, why its choices, what you tried that failed, and the shape of its output, then publish again: it is what the next person to fix it starts from.", rel, toolNotesFile)
+	}
+	if prev != nil && strings.TrimSpace(prev.Notes) == notes && toolCodeFingerprint(*prev) != toolCodeFingerprint(saved) {
+		return fmt.Sprintf("NOTES: the tool changed and %s/%s did not. Add what you changed and why (for a fix, what was wrong), then publish again.", rel, toolNotesFile)
+	}
+	return ""
+}
+
+// toolCodeFingerprint is a digest of what a tool does, notes left out.
+func toolCodeFingerprint(tt TempTool) string {
+	b, _ := json.Marshal([]any{tt.ScriptBody, tt.WorkspaceFiles, tt.Params, tt.Required, tt.CommandTemplate, tt.HookCapabilities})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }

@@ -41,3 +41,26 @@ func TestAToolPacksToAFileAndUnpacksToAFolder(t *testing.T) {
 		t.Error("an unpacked folder claims to hold the live tool")
 	}
 }
+
+// A tool's publish asks for notes the same way: a starter, or a script that
+// changed while the notes did not.
+func TestAToolPublishAsksForItsNotes(t *testing.T) {
+	sess := folderSession(t)
+	if _, err := toolCheckout(map[string]any{"name": "count"}, sess); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(sess.WorkspaceDir, "count.tool")
+	os.WriteFile(filepath.Join(dir, "tool.json"), []byte(`{"name":"count","description":"count words","script":"script.py","params":{}}`), 0o644)
+	out, err := toolPublish(map[string]any{"name": "count"}, sess)
+	if err != nil || !strings.Contains(out, "NOTES.md is still the starter") {
+		t.Fatalf("a starter's publish did not ask for notes: %v\n%s", err, out)
+	}
+	os.WriteFile(filepath.Join(dir, "NOTES.md"), []byte("Counts words split on whitespace."), 0o644)
+	if out, _ := toolPublish(map[string]any{"name": "count"}, sess); strings.Contains(out, "NOTES:") {
+		t.Errorf("written notes still asked for: %s", out)
+	}
+	os.WriteFile(filepath.Join(dir, "script.py"), []byte("print(2)\n"), 0o644)
+	if out, _ := toolPublish(map[string]any{"name": "count"}, sess); !strings.Contains(out, "changed and count.tool/NOTES.md did not") {
+		t.Errorf("a changed script with unchanged notes was not flagged: %s", out)
+	}
+}

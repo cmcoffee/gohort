@@ -272,7 +272,7 @@ func (t *chatTurn) appFolderScaffold(abs, rel string, args map[string]any) (stri
 	files := map[string][]byte{
 		"app.json":  manifest,
 		"page.html": []byte(strings.ReplaceAll(appFolderStarterPage, "APP_NAME", name)),
-		"NOTES.md":  []byte("# " + name + "\n\nPlan: what a complete version of this app includes beyond the request, and anything left out and why.\n"),
+		"NOTES.md":  []byte("# " + name + "\n\n" + appNotesStarter + "\n"),
 	}
 	for f, data := range files {
 		p := filepath.Join(abs, f)
@@ -445,8 +445,14 @@ func (t *chatTurn) appDefPublish(args map[string]any) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s not published: %w", rel, err)
 	}
+	notesNote := ""
 	if saved, ok := LoadAppSpec(t.user, m.Slug); ok {
 		os.WriteFile(filepath.Join(abs, appFolderBaseFile), []byte(appLiveFingerprint(saved)), 0o644)
+		var prev *AppSpec
+		if exists {
+			prev = &live
+		}
+		notesNote = appNotesNote(prev, saved, rel)
 	}
 	assets, _ := filepath.Glob(filepath.Join(abs, "assets", "*"))
 	sort.Strings(assets)
@@ -467,6 +473,9 @@ func (t *chatTurn) appDefPublish(args map[string]any) (string, error) {
 		saved = append(saved, name)
 	}
 	head := fmt.Sprintf("Published %s/ to app %q.", rel, m.Name)
+	if notesNote != "" {
+		head += "\n\n" + notesNote
+	}
 	if len(saved) > 0 {
 		head += " Assets saved: " + strings.Join(saved, ", ") + "."
 	}
@@ -616,4 +625,30 @@ func (t *chatTurn) appFolderOwnsEdit(args map[string]any) error {
 		return nil
 	}
 	return fmt.Errorf("NOT CHANGED: app %q is built in %s/, which holds it as it is live: make this change in the folder's files (workspace edit on %s/page.html, data/, actions/, lib/, app.json) and app_def(action=\"publish\", dir=%q). An edit made here would be undone by the next publish of the folder", slug, rel, rel, rel)
+}
+
+// appNotesStarter is the line a new folder's NOTES.md starts with.
+const appNotesStarter = "Plan: what a complete version of this app includes beyond the request, and anything left out and why."
+
+// appNotesNote asks for the notes a publish should have left, or "". The
+// notes are the app's memory, for whoever changes it next (and, packed into a
+// bundle, for whoever it is handed to): a placeholder tells them nothing, and
+// a fix that changed the code and not the notes loses its cause. A prompt,
+// not a refusal: what the notes say is the author's call.
+func appNotesNote(prev *AppSpec, saved AppSpec, rel string) string {
+	notes := strings.TrimSpace(saved.Notes)
+	if notes == "" || strings.Contains(notes, appNotesStarter) && len(notes) < len(appNotesStarter)+len(saved.Name)+16 {
+		return fmt.Sprintf("NOTES: %s/NOTES.md is still the starter. Write what this app is, the choices you made and why, and what you left out, then publish again: it is what the next person to change it (or anyone the app is packed for) starts from.", rel)
+	}
+	if prev != nil && strings.TrimSpace(prev.Notes) == notes && appCodeFingerprint(*prev) != appCodeFingerprint(saved) {
+		return fmt.Sprintf("NOTES: the app changed and %s/NOTES.md did not. Add what you changed and why (for a fix, what was wrong), then publish again.", rel)
+	}
+	return ""
+}
+
+// appCodeFingerprint is a digest of what an app does, notes left out.
+func appCodeFingerprint(spec AppSpec) string {
+	b, _ := json.Marshal([]any{spec.Sections, spec.DataSources, spec.Actions, spec.Libraries, spec.Settings, spec.SharedCollections})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }

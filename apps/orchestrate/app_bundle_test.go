@@ -60,3 +60,25 @@ func TestAnAppPacksToAFileAndUnpacksToAFolder(t *testing.T) {
 		t.Errorf("a bundle with no app: %v", err)
 	}
 }
+
+// A publish asks for the notes it should have left: a starter NOTES.md, or an
+// app whose code changed while its notes did not. It never refuses over them.
+func TestAPublishAsksForItsNotes(t *testing.T) {
+	turn, ws := folderTestTurn(t)
+	if _, err := turn.appDefCheckout(map[string]any{"name": "Dice"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := turn.appDefPublish(map[string]any{"dir": "dice.app"})
+	if err != nil || !strings.Contains(out, "NOTES.md is still the starter") {
+		t.Fatalf("a starter's publish did not ask for notes: %v\n%s", err, out)
+	}
+	os.WriteFile(filepath.Join(ws, "dice.app", "NOTES.md"), []byte("Rolls dice; history kept as records."), 0o644)
+	if out, _ := turn.appDefPublish(map[string]any{"dir": "dice.app"}); strings.Contains(out, "NOTES:") {
+		t.Errorf("written notes still asked for: %s", out)
+	}
+	page, _ := os.ReadFile(filepath.Join(ws, "dice.app", "page.html"))
+	os.WriteFile(filepath.Join(ws, "dice.app", "page.html"), []byte(strings.Replace(string(page), "</h1>", " (d20)</h1>", 1)), 0o644)
+	if out, _ := turn.appDefPublish(map[string]any{"dir": "dice.app"}); !strings.Contains(out, "changed and dice.app/NOTES.md did not") {
+		t.Errorf("a change with unchanged notes was not flagged: %s", out)
+	}
+}
