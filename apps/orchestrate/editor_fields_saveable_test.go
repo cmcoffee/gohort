@@ -61,27 +61,3 @@ func TestWorkingNotesIsSettableFromTheEditor(t *testing.T) {
 		t.Error("the editor must offer the toggle the Memory pane points at")
 	}
 }
-
-var editorFormFieldRE = regexp.MustCompile(`ui\.FormField\{(Type: "header", Label: "([^"]*)")?`)
-
-// No section of the agent editor is a heading with nothing under it. The
-// Delegation controls moved to the Security page and left their header
-// behind, so the editor's menu offered a Delegation section that opened onto
-// nothing.
-func TestNoEditorSectionIsEmpty(t *testing.T) {
-	src, err := os.ReadFile("page_agent.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	prevHeader := ""
-	for _, m := range editorFormFieldRE.FindAllStringSubmatch(string(src), -1) {
-		isHeader := m[1] != ""
-		if isHeader && prevHeader != "" {
-			t.Errorf("the %q section has no fields before the %q heading", prevHeader, m[2])
-		}
-		prevHeader = ""
-		if isHeader {
-			prevHeader = m[2]
-		}
-	}
-}

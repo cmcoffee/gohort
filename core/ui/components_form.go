@@ -226,10 +226,55 @@ func (FormPanel) componentType() string { return "form_panel" }
 
 func (f FormPanel) MarshalJSON() ([]byte, error) {
 	type alias FormPanel
+	f.Fields = dropEmptyHeadings(f.Fields)
+	if len(f.Steps) > 0 {
+		steps := make([]FormStep, len(f.Steps))
+		for i, st := range f.Steps {
+			st.Fields = dropEmptyHeadings(st.Fields)
+			steps[i] = st
+		}
+		f.Steps = steps
+	}
 	return json.Marshal(struct {
 		Type string `json:"type"`
 		alias
 	}{"form_panel", alias(f)})
+}
+
+// EmptyHeadings lists the labels of the headings in fields that have no field
+// under them: followed by another heading, or by nothing.
+//
+// A heading is a section, and in a side-nav form a menu entry. One left
+// behind when its fields moved elsewhere (the agent editor's Delegation, once
+// its controls went to the Security page) is a menu entry that opens onto
+// nothing, which reads as broken. The form drops them as it is served, and a
+// repo-wide test names any so the leftover is removed where it was written.
+func EmptyHeadings(fields []FormField) []string {
+	var out []string
+	for i, f := range fields {
+		if f.Type != "header" {
+			continue
+		}
+		if i+1 == len(fields) || fields[i+1].Type == "header" {
+			out = append(out, f.Label)
+		}
+	}
+	return out
+}
+
+// dropEmptyHeadings is fields without the headings EmptyHeadings names.
+func dropEmptyHeadings(fields []FormField) []FormField {
+	if len(EmptyHeadings(fields)) == 0 {
+		return fields
+	}
+	out := make([]FormField, 0, len(fields))
+	for i, f := range fields {
+		if f.Type == "header" && (i+1 == len(fields) || fields[i+1].Type == "header") {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // FormField describes one input in a FormPanel.
