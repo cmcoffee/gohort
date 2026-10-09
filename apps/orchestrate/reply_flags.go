@@ -414,8 +414,37 @@ type replyGuardRow struct {
 	Warning    string `json:"warning,omitempty"`
 	Acted      int    `json:"acted"`
 	Shadowed   int    `json:"shadowed"`
-	Last       string `json:"last,omitempty"`
-	Samples    string `json:"samples,omitempty"`
+	// Of the recent corrections whose turn has ended: how many got the work
+	// done (a tool ran after), and how many look like misfires (the same
+	// reply came back, or one answering the correction).
+	Fixed    int    `json:"fixed"`
+	Misfired int    `json:"misfired"`
+	Last     string `json:"last,omitempty"`
+	Samples  string `json:"samples,omitempty"`
+}
+
+// guardMisfireWarning is the row's warning when most of a guard's recent
+// corrections whose turn has ended look like misfires, at least two of them.
+func guardMisfireWarning(misfired, judged int) string {
+	if misfired < 2 || misfired*2 < judged {
+		return ""
+	}
+	return fmt.Sprintf("%d of its last %d corrections came back as the same reply, or as a reply to the correction itself: it may be firing on good replies. Read the recent replies in Detail, and consider Shadow.", misfired, judged)
+}
+
+// guardOutcomeLabel is how the page reads an outcome.
+func guardOutcomeLabel(out string) string {
+	switch out {
+	case replyguard.OutcomeFixed:
+		return "a tool ran after it"
+	case replyguard.OutcomeUnchanged:
+		return "the same reply came back (likely a misfire)"
+	case replyguard.OutcomeAnswered:
+		return "the reply answered the correction (likely a misfire)"
+	case replyguard.OutcomeRewritten:
+		return "rewritten, no tool"
+	}
+	return ""
 }
 
 // handleReplyGuards lists every guard on three rows: all tiers, the lead and
@@ -481,6 +510,7 @@ func (T *OrchestrateApp) handleReplyGuards(w http.ResponseWriter, r *http.Reques
 			}
 			var b strings.Builder
 			var last time.Time
+			judged := 0
 			for _, st := range stats {
 				if st.ID != g.ID || (scope != replyguard.AllTiers && st.Tier != scope) {
 					continue
@@ -495,11 +525,31 @@ func (T *OrchestrateApp) handleReplyGuards(w http.ResponseWriter, r *http.Reques
 					if smp.Shadow {
 						tag = "shadow: left as it was"
 					}
-					fmt.Fprintf(&b, "[%s, %s, %s]\n%s\n\n", smp.At.Local().Format("Jan 2 15:04"), st.Model, tag, smp.Text)
+					if l := guardOutcomeLabel(smp.Outcome); l != "" {
+						tag += ": " + l
+						judged++
+						switch {
+						case smp.Outcome == replyguard.OutcomeFixed:
+							row.Fixed++
+						case replyguard.Misfire(smp.Outcome):
+							row.Misfired++
+						}
+					}
+					fmt.Fprintf(&b, "[%s, %s, %s]\n%s\n", smp.At.Local().Format("Jan 2 15:04"), st.Model, tag, smp.Text)
+					if smp.After != "" && smp.Outcome != replyguard.OutcomeUnchanged {
+						fmt.Fprintf(&b, "  then sent: %s\n", smp.After)
+					}
+					b.WriteString("\n")
 				}
 			}
 			if !last.IsZero() {
 				row.Last = last.Format(time.RFC3339)
+			}
+			// Most of its recent corrections ended where a misfire ends: say so
+			// on the row, where it is seen, rather than leave it to someone
+			// reading the conversations the guard rewrote.
+			if w := guardMisfireWarning(row.Misfired, judged); w != "" {
+				row.Warning = strings.TrimSpace(row.Warning + " " + w)
 			}
 			row.Samples = strings.TrimSpace(b.String())
 			rows = append(rows, row)
@@ -658,6 +708,8 @@ func replyGuardControls() []ui.Component {
 			Columns: []ui.Col{
 				{Field: "scope_label", Label: "Tier", Flex: 2},
 				{Field: "acted", Label: "Corrected", Format: "thousands"},
+				{Field: "fixed", Label: "Done (recent)", Format: "thousands"},
+				{Field: "misfired", Label: "Misfired (recent)", Format: "thousands"},
 				{Field: "shadowed", Label: "Shadow", Format: "thousands"},
 				{Field: "retries", Label: "Retries"},
 				{Field: "last", Label: "Last", Format: "reltime", Mute: true},
@@ -673,7 +725,7 @@ func replyGuardControls() []ui.Component {
 				ui.Expand("Detail", ui.RecordView{Pairs: []ui.DisplayPair{
 					{Label: "What the model is told", Field: "note_value", Block: true},
 					{Label: "When it fires", Field: "fires", Block: true},
-					{Label: "Recent replies it caught", Field: "samples", Block: true},
+					{Label: "Recent replies it caught, and what each came to", Field: "samples", Block: true},
 				}}),
 			},
 			// Under the guard's three rows, in its card, since it acts on the

@@ -26,6 +26,7 @@ package replyguard
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -125,10 +126,30 @@ type Effective struct {
 
 // Sample is one reply a guard caught.
 type Sample struct {
+	ID     string    `json:"id,omitempty"`
 	At     time.Time `json:"at"`
 	Text   string    `json:"text"`
 	Shadow bool      `json:"shadow,omitempty"` // recorded in shadow mode: nothing was changed
+	// After is the reply the turn delivered once the correction had run, and
+	// Outcome what the correction came to (see Outcome*). A guard is judged
+	// by this half: a correction that ends in a tool call did its job; one
+	// that ends in the same reply, or in a reply to the correction itself,
+	// fired on a reply that was fine.
+	After   string `json:"after,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
 }
+
+// What a correction came to.
+const (
+	OutcomeFixed     = "fixed"     // a tool ran after it: it got the work done
+	OutcomeUnchanged = "unchanged" // the same reply came back: nothing was wrong with it
+	OutcomeAnswered  = "answered"  // the reply answered the correction, which the person never saw
+	OutcomeRewritten = "rewritten" // a different reply, no tool: maybe better, maybe not
+)
+
+// Misfire reports an outcome that says the guard fired on a reply that was
+// fine.
+func Misfire(outcome string) bool { return outcome == OutcomeUnchanged || outcome == OutcomeAnswered }
 
 // Stat is one guard's firings on one model, and the tier that model served.
 type Stat struct {
@@ -511,12 +532,16 @@ func CurrentModel(tier string) string {
 // Record tallies one firing: acted when the guard corrected the reply, not
 // when it only recorded it in shadow mode. The reply's tail is kept as a
 // sample, and the tier the model was serving is noted with it.
-func Record(id, tier, model, reply string, acted bool) {
+func Record(id, tier, model, reply string, acted bool) { RecordSample(id, tier, model, reply, acted) }
+
+// RecordSample is Record, returning the kept sample's id so the caller can
+// say what the correction came to with Outcome. "" when nothing is kept.
+func RecordSample(id, tier, model, reply string, acted bool) string {
 	model = NormalizeModel(model)
 	mu.Lock()
 	defer mu.Unlock()
 	if store == nil {
-		return
+		return ""
 	}
 	k := key(id, model)
 	var st Stat
@@ -531,11 +556,97 @@ func Record(id, tier, model, reply string, acted bool) {
 		st.Shadowed++
 	}
 	st.Last = time.Now()
-	st.Samples = append([]Sample{{At: st.Last, Text: tail(reply, maxSampleChars), Shadow: !acted}}, st.Samples...)
+	sid := fmt.Sprintf("%x", st.Last.UnixNano())
+	st.Samples = append([]Sample{{ID: sid, At: st.Last, Text: tail(reply, maxSampleChars), Shadow: !acted}}, st.Samples...)
 	if len(st.Samples) > maxSamples {
 		st.Samples = st.Samples[:maxSamples]
 	}
 	store.Set(statsTable, k, st)
+	return sid
+}
+
+// Outcome records what a correction came to: the reply the turn delivered in
+// the end (after), and whether a tool ran once it had fired. sampleID is
+// RecordSample's; a sample already pushed out of the kept few is let go.
+func Outcome(id, model, sampleID, after string, toolRan bool) string {
+	if sampleID == "" {
+		return ""
+	}
+	model = NormalizeModel(model)
+	mu.Lock()
+	defer mu.Unlock()
+	if store == nil {
+		return ""
+	}
+	k := key(id, model)
+	var st Stat
+	if !store.Get(statsTable, k, &st) {
+		return ""
+	}
+	for i := range st.Samples {
+		if st.Samples[i].ID != sampleID {
+			continue
+		}
+		out := ClassifyOutcome(st.Samples[i].Text, after, toolRan)
+		st.Samples[i].After, st.Samples[i].Outcome = tail(after, maxSampleChars), out
+		store.Set(statsTable, k, st)
+		return out
+	}
+	return ""
+}
+
+// ClassifyOutcome says what a correction of caught came to, given the reply
+// delivered after it and whether a tool ran in between.
+func ClassifyOutcome(caught, after string, toolRan bool) string {
+	switch {
+	case toolRan:
+		return OutcomeFixed
+	case SameReply(caught, after):
+		return OutcomeUnchanged
+	case answersTheNote(after):
+		return OutcomeAnswered
+	}
+	return OutcomeRewritten
+}
+
+// answeredNoteRE is how a reply to a correction reads, in the words these
+// replies used: "Nothing is stopping me, there's simply nothing left to run",
+// "Nothing's pending", "the line was conditional", "no tool call to make".
+// The person never saw the correction, so to them it answers nothing.
+var answeredNoteRE = regexp.MustCompile(`\b(?:nothing(?: is|'s) (?:stopping|pending|blocking|left)|nothing (?:left )?to (?:run|do|execute|call)|no (?:background )?(?:job|task|work) (?:is |left )?(?:in flight|pending|running)|no tool call to make|(?:was|were) (?:only )?conditional|no action (?:is )?(?:needed|required|pending)|not (?:a |an )?(?:task|promise) i was (?:about|going) to)\b`)
+
+func answersTheNote(reply string) bool {
+	return answeredNoteRE.MatchString(strings.ToLower(strings.ReplaceAll(reply, "\u2019", "'")))
+}
+
+// SameReply reports two replies that say the same thing: equal once spacing
+// and case are set aside, or near enough word for word (a model resending its
+// reply rarely reproduces every character). Nine in ten of the words of either
+// shared by the other. "…" from a kept tail is ignored.
+func SameReply(a, b string) bool {
+	norm := func(s string) []string { return strings.Fields(strings.ToLower(strings.TrimPrefix(strings.TrimSpace(s), "…"))) }
+	wa, wb := norm(a), norm(b)
+	if strings.Join(wa, " ") == strings.Join(wb, " ") {
+		return len(wa) > 0
+	}
+	if len(wa) == 0 || len(wb) == 0 {
+		return false
+	}
+	count := func(ws []string) map[string]int {
+		m := map[string]int{}
+		for _, w := range ws {
+			m[strings.Trim(w, ".,!?;:\"'()")]++
+		}
+		return m
+	}
+	ca, cb := count(wa), count(wb)
+	shared := 0
+	for w, n := range ca {
+		if m := cb[w]; m > 0 {
+			shared += min(n, m)
+		}
+	}
+	return shared*10 >= max(len(wa), len(wb))*9
 }
 
 // Stats lists every guard's firings per model, most recent first.

@@ -295,3 +295,45 @@ func TestAReplySentBackUnchangedIsDelivered(t *testing.T) {
 		t.Error("sameReply tells the wrong replies apart")
 	}
 }
+
+// Each correction is told at the end of its turn what it came to, and the
+// guard's sample keeps both: the reply it caught and what went out after. A
+// promise correction answered with a reply to the correction is a misfire; one
+// followed by a tool call did its job.
+func TestACorrectionLearnsWhatItCameTo(t *testing.T) {
+	replyguard.SetStore(guardStore{})
+	defer replyguard.SetStore(nil)
+	outcomes := func() []replyguard.Sample {
+		for _, st := range replyguard.Stats() {
+			if st.ID == correctionActionPromise {
+				return st.Samples
+			}
+		}
+		return nil
+	}
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{Content: "I'll pull the logs now."},
+		{Content: "Nothing is stopping me, there's simply nothing left to run.", Repeat: true},
+	}}}
+	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "logs?"}}, AgentLoopConfig{MaxRounds: 8}); err != nil {
+		t.Fatal(err)
+	}
+	s := outcomes()
+	if len(s) != 1 || s[0].Outcome != replyguard.OutcomeAnswered || !strings.Contains(s[0].After, "Nothing is stopping me") {
+		t.Fatalf("answered the correction: %+v", s)
+	}
+
+	ran := 0
+	tool := AgentToolDef{Tool: Tool{Name: "probe"}, Handler: func(ctx context.Context, args map[string]any) (string, error) { ran++; return "log lines", nil }}
+	app = &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{Content: "I'll pull the logs now."},
+		{ToolCalls: []ToolCall{{ID: "1", Name: "probe", Args: map[string]any{}}}},
+		{Content: "The logs show two restarts at 3am.", Repeat: true},
+	}}}
+	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "logs?"}}, AgentLoopConfig{MaxRounds: 8, Tools: []AgentToolDef{tool}}); err != nil {
+		t.Fatal(err)
+	}
+	if s := outcomes(); ran != 1 || len(s) != 2 || s[0].Outcome != replyguard.OutcomeFixed {
+		t.Fatalf("a tool ran after the correction (ran=%d): %+v", ran, s)
+	}
+}

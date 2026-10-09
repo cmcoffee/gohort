@@ -505,6 +505,12 @@ type loopRun struct {
 	// on. The same reply sent back after it is the model saying it was an
 	// offer, and is delivered rather than corrected again.
 	promiseCorrected string
+	// toolsRun counts the rounds that ran a tool, and guardPending the
+	// corrections this turn made, so each can be told at the end what it
+	// came to (replyguard.Outcome): a tool run after it, the same reply, or
+	// a reply to the correction itself.
+	toolsRun     int
+	guardPending []guardPending
 	wrapUpWarningFired         bool
 	midpointNudgeFired         bool
 	baseRound                  int
@@ -641,6 +647,7 @@ type loopResult struct {
 func (lr *loopRun) exit(resp *Response, history []Message, err error) loopAction {
 	if err == nil {
 		lr.guardOutgoing(resp)
+		lr.settleGuardOutcomes(resp)
 	}
 	lr.ret = loopResult{resp, history, err}
 	return actReturn
@@ -2292,6 +2299,7 @@ func (lr *loopRun) recordResponse() loopAction {
 		// Execute the tool.
 		output, toolErr := safeInvoke(lr.ctx, tc.Name, lr.handlers[tc.Name], tc.Args)
 		lr.toolFiredThisTurn = true
+		lr.toolsRun++
 		toolErrors := 0
 		var resultText string
 		if toolErr != nil {
@@ -3776,6 +3784,7 @@ func (lr *loopRun) debugToolErr(name string, err error) {
 func (lr *loopRun) dispatchTools() loopAction {
 	if len(lr.rs.work) > 0 {
 		lr.toolFiredThisTurn = true
+		lr.toolsRun++
 	}
 	if len(lr.rs.work) == 1 {
 		// Single call — no goroutine overhead.

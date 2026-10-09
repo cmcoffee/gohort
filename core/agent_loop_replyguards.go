@@ -1209,7 +1209,8 @@ func (lr *loopRun) guardActs(kind string) bool {
 		Debug("[agent_loop] %s would have fired (shadow on the %s tier): reply left as it is", kind, chooseStr(tier, "unknown"))
 		return false
 	}
-	replyguard.Record(kind, tier, model, lr.rs.resp.Content, true)
+	sid := replyguard.RecordSample(kind, tier, model, lr.rs.resp.Content, true)
+	lr.guardPending = append(lr.guardPending, guardPending{kind: kind, model: model, sample: sid, toolsAt: lr.toolsRun})
 	return true
 }
 
@@ -1300,31 +1301,31 @@ func (lr *loopRun) authoredJudge(question string, rc replyguard.ReplyContext) (b
 	return replyguard.JudgeAnswer(ResponseText(resp)), nil
 }
 
-// sameReply reports two replies that say the same thing: equal once spacing
-// and case are set aside, or near enough word for word (a model resending its
-// reply rarely reproduces every character). Nine in ten of the words of either
-// shared by the other.
-func sameReply(a, b string) bool {
-	wa, wb := strings.Fields(strings.ToLower(a)), strings.Fields(strings.ToLower(b))
-	if strings.Join(wa, " ") == strings.Join(wb, " ") {
-		return true
+// sameReply reports two replies that say the same thing; see
+// replyguard.SameReply, which the guard outcomes use too.
+func sameReply(a, b string) bool { return replyguard.SameReply(a, b) }
+
+// guardPending is one correction this turn made, waiting to hear what it came
+// to.
+type guardPending struct {
+	kind, model, sample string
+	toolsAt             int
+}
+
+// settleGuardOutcomes tells each correction this turn made what it came to,
+// and says so in the log when the answer is that the guard fired on a reply
+// that was fine: the same reply came back, or one answering the correction.
+// That is how tonight's misfires read, and until now only a person reading
+// the conversation could see it.
+func (lr *loopRun) settleGuardOutcomes(resp *Response) {
+	if resp == nil {
+		return
 	}
-	if len(wa) == 0 || len(wb) == 0 {
-		return false
-	}
-	count := func(ws []string) map[string]int {
-		m := map[string]int{}
-		for _, w := range ws {
-			m[strings.Trim(w, ".,!?;:\"'()")]++
+	for _, p := range lr.guardPending {
+		out := replyguard.Outcome(p.kind, p.model, p.sample, resp.Content, lr.toolsRun > p.toolsAt)
+		if replyguard.Misfire(out) {
+			Log("[agent_loop] %s correction came to %q: the guard likely fired on a reply that was fine (see the guard's recent replies)", p.kind, out)
 		}
-		return m
 	}
-	ca, cb := count(wa), count(wb)
-	shared := 0
-	for w, n := range ca {
-		if m := cb[w]; m > 0 {
-			shared += min(n, m)
-		}
-	}
-	return shared*10 >= max(len(wa), len(wb))*9
+	lr.guardPending = nil
 }

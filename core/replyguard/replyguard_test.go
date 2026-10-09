@@ -242,3 +242,28 @@ func TestAnAuthoredGuardJoinsTheListWhileActive(t *testing.T) {
 		t.Error("deleted, it is gone")
 	}
 }
+
+// A correction is judged by what it came to. The replies people got on
+// 2026-10-08 after the promise guard misfired read as answers to it.
+func TestACorrectionIsJudgedByWhatItCameTo(t *testing.T) {
+	caught := "If the tag didn't make it into the corner, say the word and I'll fix that part."
+	for _, c := range []struct {
+		after   string
+		toolRan bool
+		want    string
+	}{
+		{"Here's the fixed version.", true, OutcomeFixed},
+		{"If the tag didn't make it into the corner, say the word and I'll fix that part.", false, OutcomeUnchanged},
+		{"Nothing is stopping me, there's simply nothing left to run. The dragon picture is done and already delivered.", false, OutcomeAnswered},
+		{"Nothing's pending. The picture went out with my last message and there's no job left in flight.", false, OutcomeAnswered},
+		{"The \"I'll reroll it\" line was conditional on you asking.", false, OutcomeAnswered},
+		{"The tag is in the corner now; it rendered small.", false, OutcomeRewritten},
+	} {
+		if got := ClassifyOutcome(caught, c.after, c.toolRan); got != c.want {
+			t.Errorf("%q: %s, want %s", c.after, got, c.want)
+		}
+	}
+	if !Misfire(OutcomeAnswered) || !Misfire(OutcomeUnchanged) || Misfire(OutcomeFixed) || Misfire(OutcomeRewritten) {
+		t.Error("Misfire reads the outcomes wrong")
+	}
+}
