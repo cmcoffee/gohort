@@ -611,11 +611,46 @@ func replyStalledOnAPromise(content string) bool {
 	}
 	// Nor is an offer that waits on the user: nothing is owed until they take
 	// it up.
-	if conditionalOfferRe.MatchString(lower) {
+	if conditionalOfferRe.MatchString(lower) || promiseWaitsOnTheUser(lower) {
 		return false
 	}
 	return promiseEndsTheReply(lower)
 }
+
+// promiseWaitsOnTheUser reports a final promise whose own sentence hangs it
+// on the person: a condition about them ("if ... you want", "unless you") or
+// a handover ("say the word and I'll reroll it"). conditionalOfferRe catches
+// the fixed phrases; this catches the condition with words between, which is
+// how an offer is usually made.
+//
+// Observed 2026-10-08: a finished picture went out with "If a face came out
+// wrong or you want a different setup, say the word and I'll reroll it." The
+// guard demanded the reroll, and the user then read the agent's answer to an
+// instruction they never saw: "Nothing's pending... the line was conditional."
+//
+// The sentence must address the person: "If the API is down, I'll try the
+// backup" hangs on a fact, not on them, and is work it said it would do.
+func promiseWaitsOnTheUser(lower string) bool {
+	var last []int
+	for _, m := range futureCommitmentRe.FindAllStringIndex(lower, -1) {
+		last = m
+	}
+	if last == nil {
+		return false
+	}
+	start := 0
+	for _, m := range sentenceEndRe.FindAllStringIndex(lower[:last[0]], -1) {
+		start = m[1]
+	}
+	sentence := lower[start:last[1]]
+	return userConditionRe.MatchString(sentence) && youRe.MatchString(sentence)
+}
+
+// userConditionRe is a condition or a handover leading into a promise.
+var userConditionRe = regexp.MustCompile(`\b(?:if|unless|once|say the word|just say|give me the word|ping me|holler)\b`)
+
+// youRe is the person being addressed.
+var youRe = regexp.MustCompile(`\byou(?:'d|'re|r)?\b`)
 
 // promiseEndsTheReply reports whether the reply's LAST promise is how it ends:
 // nothing of substance follows the sentence that makes it.

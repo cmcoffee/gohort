@@ -166,6 +166,9 @@ func TestAnOfferThatWaitsOnTheUserIsNotAStall(t *testing.T) {
 		"I'll have the next draft ready whenever you want it.",
 		"I'll run it when you're ready.",
 		"I'll keep a few more on hand.",
+		// The condition sits words away from "you", and the handover is its own phrase.
+		"Here's the shot with the tag in the corner. If a face came out wrong or you want a different setup (someone else in frame), say the word and I'll reroll it.",
+		"Unless you'd rather keep this one, I'll make another.",
 	} {
 		if replyStalledOnAPromise(offer) {
 			t.Errorf("an offer waiting on the user is not a stall: %q", offer)
@@ -174,6 +177,8 @@ func TestAnOfferThatWaitsOnTheUserIsNotAStall(t *testing.T) {
 	for _, stall := range []string{
 		"Let me pull the logs just in case.",
 		"I'll grab a fresh copy and try that again.",
+		// A condition about a fact, not the person: still work it said it would do.
+		"If the API is down, I'll try the backup endpoint.",
 	} {
 		if !replyStalledOnAPromise(stall) {
 			t.Errorf("work the agent said it would do now is still a stall: %q", stall)

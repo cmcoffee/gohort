@@ -865,6 +865,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// and reports three posts is caught exactly as before.
 		CapturePrompt:  agent.CapturePrompt,
 		TurnClaimJudge: subTurn.claimJudge(ctx),
+		// What goes out with the reply, the finished picture a task wake
+		// carries included. Unset, the judge read every wake as delivering
+		// nothing: "There it is: the tagged version" went out WITH the picture
+		// and was convicted of presenting an image the turn did not deliver,
+		// and the rewrite replaced the caption.
+		DeliveredCount: func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) },
 		PriorTurnWork:  func() []string { return priorTurnWorkFrom(sess.Messages) },
 		// And the reports this thread already holds, which on a recurring
 		// schedule are this fire's own earlier cycles: their replies are stored
