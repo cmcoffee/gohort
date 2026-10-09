@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -246,5 +247,43 @@ func TestUpdateCardOnlyForWidening(t *testing.T) {
 	emitPrivilegeCard(sess, rec, tool, nil)
 	if shown != 3 {
 		t.Fatalf("a created agent with powers must raise the card, shown=%d", shown)
+	}
+}
+
+// The card says what the save granted: the new tool and the newly-on flag
+// are marked, and what the agent already held is not, so a card listing the
+// whole kit no longer reads as a request for all of it.
+func TestUpdateCardMarksWhatIsNew(t *testing.T) {
+	var got map[string]string
+	sess := &ToolSession{Username: "u"}
+	sess.PrivilegePrompt = func(_, _ string, data map[string]string) { got = data }
+	tool := []TempTool{{Name: "post_update", CommandTemplate: "curl x", Credential: "loud_api"}}
+	rec := AgentRecord{ID: "a8", Name: "Poster", AllowedTools: []string{"post_update"}}
+	prev := &privilegeSnapshot{tools: privilegeToolRows(sess, rec, tool), flags: privilegeFlagRows(rec)}
+
+	more := rec
+	more.AllowedTools = []string{"post_update", "wipe_disk"}
+	more.Fleet = true
+	tools := append(tool, TempTool{Name: "wipe_disk", CommandTemplate: "rm -rf /", Credential: "loud_api"})
+	emitPrivilegeCard(sess, more, tools, prev)
+	if got == nil {
+		t.Fatal("no card")
+	}
+	var rows []privilegeGrant
+	var flags []privilegeFlag
+	json.Unmarshal([]byte(got["tools"]), &rows)
+	json.Unmarshal([]byte(got["flags"]), &flags)
+	for _, r := range rows {
+		if r.New != (r.Name == "wipe_disk") {
+			t.Errorf("tool %q marked new=%v", r.Name, r.New)
+		}
+	}
+	for _, f := range flags {
+		if f.New != (f.Field == "fleet") {
+			t.Errorf("flag %q marked new=%v", f.Field, f.New)
+		}
+	}
+	if s := privilegeNewSummary(rows, flags); !strings.Contains(s, "wipe_disk") || !strings.Contains(s, "flag fleet") || strings.Contains(s, "post_update") {
+		t.Errorf("summary = %q", s)
 	}
 }

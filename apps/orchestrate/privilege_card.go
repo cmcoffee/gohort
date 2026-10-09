@@ -35,6 +35,10 @@ type privilegeGrant struct {
 	//   ask   — consequential and NOT pre-authorized: refused and queued
 	// Only allow/ask are editable; auto has nothing to decide.
 	Policy string `json:"policy"`
+	// New marks a row the save that raised the card granted or changed,
+	// so the card says what is new instead of only listing everything the
+	// agent holds, which read as a request nobody had made.
+	New bool `json:"new,omitempty"`
 }
 
 // privilegeFlag is one capability toggle (conductor tools, authoring, publish).
@@ -46,6 +50,8 @@ type privilegeFlag struct {
 	// posture is pinned by the framework, and showing a toggle that silently
 	// won't take is worse than showing none.
 	Locked bool `json:"locked,omitempty"`
+	// New marks a flag the save turned on.
+	New bool `json:"new,omitempty"`
 }
 
 // privilegeToolRows classifies every tool the agent can reach into card rows.
@@ -214,13 +220,24 @@ func snapshotPrivileges(sess *ToolSession, rec AgentRecord) *privilegeSnapshot {
 // whose policy or reach changed, or a capability flag newly on. Narrowing —
 // a tool dropped, a flag turned off — never prompts; there is nothing to grant.
 func (p *privilegeSnapshot) widenedBy(tools []privilegeGrant, flags []privilegeFlag) bool {
+	return p.markNew(tools, flags) > 0
+}
+
+// markNew sets New on each row the snapshot did not hold (the rows widenedBy
+// counts), and says how many.
+func (p *privilegeSnapshot) markNew(tools []privilegeGrant, flags []privilegeFlag) int {
 	had := map[privilegeGrant]bool{}
 	for _, t := range p.tools {
+		t.New = false
 		had[t] = true
 	}
-	for _, t := range tools {
-		if t.Policy != "auto" && !had[t] {
-			return true
+	n := 0
+	for i := range tools {
+		key := tools[i]
+		key.New = false
+		if tools[i].Policy != "auto" && !had[key] {
+			tools[i].New = true
+			n++
 		}
 	}
 	on := map[string]bool{}
@@ -229,12 +246,30 @@ func (p *privilegeSnapshot) widenedBy(tools []privilegeGrant, flags []privilegeF
 			on[f.Field] = true
 		}
 	}
-	for _, f := range flags {
-		if f.On && !on[f.Field] {
-			return true
+	for i := range flags {
+		if flags[i].On && !on[flags[i].Field] {
+			flags[i].New = true
+			n++
 		}
 	}
-	return false
+	return n
+}
+
+// privilegeNewSummary names the new rows for the log: "post_update (ask,
+// credential: loud_api), flag fleet".
+func privilegeNewSummary(tools []privilegeGrant, flags []privilegeFlag) string {
+	var parts []string
+	for _, t := range tools {
+		if t.New {
+			parts = append(parts, t.Name+" ("+t.Policy+", "+t.Detail+")")
+		}
+	}
+	for _, f := range flags {
+		if f.New {
+			parts = append(parts, "flag "+f.Field)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // emitPrivilegeCard builds the card for a just-saved agent and hands it to the
@@ -260,8 +295,16 @@ func emitPrivilegeCard(sess *ToolSession, rec AgentRecord, bundled []TempTool, p
 	if !privilegeCardWorthShowing(tools, flags) {
 		return
 	}
-	if prev != nil && !prev.widenedBy(tools, flags) {
-		return
+	// Why it is showing, in the log: a card someone reads as asking for
+	// nothing new is a misfire or a grant they missed, and only this line
+	// tells the two apart afterwards.
+	if prev != nil {
+		if prev.markNew(tools, flags) == 0 {
+			return
+		}
+		Log("[privileges] card for agent %q (%s): this save granted %s", rec.Name, rec.ID, privilegeNewSummary(tools, flags))
+	} else {
+		Log("[privileges] card for new agent %q (%s): %d tool row(s) and %d flag(s) to review", rec.Name, rec.ID, len(tools), len(flags))
 	}
 	toolsJSON, _ := json.Marshal(tools)
 	flagsJSON, _ := json.Marshal(flags)

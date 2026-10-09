@@ -220,6 +220,8 @@
 .ui-orch-priv-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, monospace); }
 .ui-orch-priv-detail { flex: 1 1 auto; color: var(--text-mute); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ui-orch-priv-fixed { color: var(--text-mute); font-size: 0.78rem; white-space: nowrap; }
+.ui-orch-priv-new { color: var(--accent); font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--accent); border-radius: 999px; padding: 0 0.4rem; white-space: nowrap; }
+.ui-orch-priv-whatsnew { color: var(--text); font-size: 0.82rem; margin: 0.2rem 0 0.4rem; }
 .ui-orch-priv-sep { margin-top: 0.6rem; padding-top: 0.5rem; border-top: 1px solid var(--border); }
 .ui-orch-priv select { font-family: inherit; font-size: 0.8rem; padding: 0.1rem 0.3rem; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
 .ui-orch-priv-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.7rem; }
@@ -1185,11 +1187,20 @@ select.ui-orch-intake-input {
         ? 'A sub-agent carries its parent’s authority, so its tools run unattended without asking. Its capabilities follow the parent.'
         : 'Ask = refused on an unattended run and queued for you. Allow = runs on a schedule with nobody watching.']);
       wrap.appendChild(sub);
+      // What the save that raised this card granted, by name: the rows below
+      // list everything the agent holds, and without this the card read as a
+      // request for permissions nobody had asked for.
+      var fresh = tools.filter(function(t) { return t.new; }).map(function(t) { return String(t.name || ''); })
+        .concat(flags.filter(function(f) { return f.new; }).map(function(f) { return String(f.label || f.field); }));
+      if (fresh.length) {
+        wrap.appendChild(el('div', {class: 'ui-orch-priv-whatsnew'}, ['New with this change: ' + fresh.join(', ') + '.']));
+      }
 
       var rows = el('div', {class: 'ui-orch-priv-rows'});
       tools.forEach(function(t) {
         var row = el('div', {class: 'ui-orch-priv-row'});
         row.appendChild(el('span', {class: 'ui-orch-priv-name'}, [String(t.name || '')]));
+        if (t.new) row.appendChild(el('span', {class: 'ui-orch-priv-new'}, ['new']));
         row.appendChild(el('span', {class: 'ui-orch-priv-detail'}, [String(t.detail || '')]));
         if (t.policy === 'auto') {
           row.appendChild(el('span', {class: 'ui-orch-priv-fixed'}, ['runs freely']));
@@ -1212,6 +1223,7 @@ select.ui-orch-intake-input {
         flags.forEach(function(f) {
           var row = el('div', {class: 'ui-orch-priv-row'});
           row.appendChild(el('span', {class: 'ui-orch-priv-detail', style: 'flex:1 1 auto'}, [String(f.label || f.field)]));
+          if (f.new) row.appendChild(el('span', {class: 'ui-orch-priv-new'}, ['new']));
           if (f.locked) {
             row.appendChild(el('span', {class: 'ui-orch-priv-fixed'}, [f.on ? 'on' : 'off']));
           } else {
