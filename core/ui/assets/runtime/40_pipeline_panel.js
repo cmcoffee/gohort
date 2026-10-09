@@ -629,13 +629,18 @@
         try { data = JSON.parse(dataStr); } catch (_) {}
         // Legacy report stream uses Type field on anonymous events.
         var type = ev !== 'message' ? ev : (data.Type || data.type || '');
-        // Text goes to the pacer; any other event first lets out the text
-        // held before it, so the report's end lands after its words.
+        // Text goes to the pacer; any other event waits behind the text that
+        // arrived before it, so the report's end lands after its words.
         if (type === 'report_stream' || type === 'chunk') {
           modalPacer.chunk('report', data.Body || data.text || '');
           return;
         }
-        modalPacer.flush();
+        modalPacer.after(function() { applyModalEvent(type, data); });
+      }
+
+      // applyModalEvent is one report event other than text, in order
+      // behind the text that arrived before it.
+      function applyModalEvent(type, data) {
         switch (type) {
           case 'report_header':
           case 'header':
@@ -1267,10 +1272,15 @@
       }
       var data = {};
       if (dataStr) { try { data = JSON.parse(dataStr); } catch(e) {} }
-      // Text goes to the pacer; any other event first lets out the text
-      // held before it, so a block's end lands after its words, as sent.
+      // Text goes to the pacer; any other event waits behind the text that
+      // arrived before it, so a block's end lands after its words, as sent.
       if (ev === 'chunk') { blockPacer.chunk(data.id || 'main', data.text || ''); return; }
-      blockPacer.flush();
+      blockPacer.after(function() { applyEvent(ev, data); });
+    }
+
+    // applyEvent is one event other than text, applied in order behind the
+    // text that arrived before it.
+    function applyEvent(ev, data) {
       switch (ev) {
         case 'session':
           if (data.id) {

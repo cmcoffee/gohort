@@ -1026,10 +1026,15 @@
         if (!ev) return;
         var data = {};
         if (dataStr) { try { data = JSON.parse(dataStr); } catch(e) {} }
-        // Text goes to the pacer; any other event first lets out the text
-        // held before it, so it lands after those words, as sent.
+        // Text goes to the pacer; any other event waits behind the text that
+        // arrived before it, so it lands after those words, as sent.
         if (ev === 'chunk') { chatPacer.chunk('reply', data.text || ''); return; }
-        chatPacer.flush();
+        chatPacer.after(function() { applyEvent(ev, data); });
+      }
+
+      // applyEvent is one event other than text, applied in order behind
+      // the text that arrived before it.
+      function applyEvent(ev, data) {
         switch (ev) {
           case 'thinking_chunk':
             // Stage 1: ignore. Stage 2 will surface in a collapsible block.

@@ -39,6 +39,7 @@ function handleEvent(ev) { handled.push(ev.n); if (ev.done) sawTurnEnd = true; }
 function enableInput() { log.push('idle'); }
 function openSession(sid) { log.push('reload ' + sid); }
 function addActivity(k, id, t) { log.push('note'); }
+var chunkPacer = {flush: function() {}}; // nothing held: handleEvent here applies at once
 eval(lift(panel, 'function subscribeEvents(sid, skip)', 'subscribeEvents'));
 function send(es, n, extra) { es.onmessage({data: JSON.stringify(Object.assign({n: n}, extra || {}))}); }
 

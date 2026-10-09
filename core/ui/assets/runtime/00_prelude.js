@@ -514,29 +514,30 @@
   // time from a hosted API, or a burst after a network stall. The renderer
   // behind deliver is the panel's own and does not change.
   //
-  // Order is the caller's to keep, with one call: flush() before handling
-  // any other event. A tool call, a replace or the end of a message then
-  // lands after all the text that came before it, exactly as it was sent.
+  // Every other event goes through after(fn), which runs fn once the text
+  // that arrived before it is on screen: at once when none is held. So a
+  // tool card or the end of a block lands after the words before it, as
+  // sent, and a status line arriving mid-reply waits a moment instead of
+  // forcing the held text out in one burst (what flushing on every event
+  // did to a pipeline whose status lines arrive while a stage streams).
   //
   // The reveal runs about PACER_LAG behind the stream. A backlog past that
   // (a reconnect replaying a reply, a tab coming back from the background)
   // is caught up within a few frames rather than typed out at speed.
   //
   //   chunk(id, text) a chunk arrived
-  //   flush([id])     deliver everything held now, for one id or all
-  //   drop([id])      forget what is held, for a stream being thrown away
+  //   after(fn)       run fn once the text before it is delivered
+  //   flush()         deliver everything held and run what waits, now
+  //   drop()          forget what is held and what waits (a view reset)
   var PACER_LAG = 0.3; // seconds of text that may wait to be revealed
   window.uiChunkPacer = function(deliver) {
-    var streams = {}, order = [], cancel = null, lastTick = 0;
+    // queue holds, in arrival order, {id, text} pieces and {fn} events.
+    var queue = [], rates = {}, cancel = null, lastTick = 0;
     function now() {
       return (window.performance && performance.now) ? performance.now() : Date.now();
     }
-    function pending() {
-      for (var i = 0; i < order.length; i++) if (streams[order[i]].held) return true;
-      return false;
-    }
     function schedule() {
-      if (cancel || !pending()) return;
+      if (cancel || !queue.length) return;
       if (typeof requestAnimationFrame === 'function') {
         var id = requestAnimationFrame(tick);
         cancel = function() { cancelAnimationFrame(id); };
@@ -545,50 +546,79 @@
         cancel = function() { clearTimeout(t); };
       }
     }
-    // take is the next n characters of a stream's held text, never ending
-    // between the two halves of a surrogate pair (an emoji).
-    function take(st, n) {
-      n = Math.min(st.held.length, n);
-      var c = st.held.charCodeAt(n - 1);
-      if (n < st.held.length && c >= 0xD800 && c <= 0xDBFF) n++;
-      var out = st.held.slice(0, n);
-      st.held = st.held.slice(n);
-      return out;
+    function halt() {
+      if (cancel) { cancel(); cancel = null; }
+      lastTick = 0;
+    }
+    // heldFor is how much text waits for one id.
+    function heldFor(id) {
+      var n = 0;
+      for (var i = 0; i < queue.length; i++) if (queue[i].fn == null && queue[i].id === id) n += queue[i].text.length;
+      return n;
+    }
+    // cutAt is where to end a piece taken from text, never between the two
+    // halves of a surrogate pair (an emoji).
+    function cutAt(text, n) {
+      n = Math.min(text.length, n);
+      var c = text.charCodeAt(n - 1);
+      if (n < text.length && c >= 0xD800 && c <= 0xDBFF) n++;
+      return n;
+    }
+    // drain runs queued events at the head and delivers up to budget[id]
+    // characters of each piece, stopping at the first piece it cannot finish
+    // so nothing after it runs early. A budget of Infinity empties the queue.
+    function drain(budget) {
+      while (queue.length) {
+        var head = queue[0];
+        if (head.fn) {
+          queue.shift();
+          head.fn();
+          continue;
+        }
+        var allow = budget(head.id);
+        if (allow <= 0) return;
+        var n = cutAt(head.text, allow);
+        var piece = head.text.slice(0, n);
+        head.text = head.text.slice(n);
+        head.spent = (head.spent || 0) + n;
+        if (!head.text) queue.shift();
+        deliver(head.id, piece);
+        if (head.text) return;
+      }
     }
     function tick() {
       cancel = null;
       var t = now(), dt = lastTick ? t - lastTick : 16;
       lastTick = t;
-      order.slice().forEach(function(id) {
-        var st = streams[id];
-        var backlog = st.held.length;
-        if (!backlog) return;
-        var n;
-        if (dt > 250) {
-          n = backlog; // no frames for a while: the tab was hidden
-        } else if (!st.rate) {
-          n = backlog / 8; // no rate yet: ease the first text in
-        } else {
-          n = st.rate * dt / 1000 + st.carry;
-          var room = st.rate * PACER_LAG;
-          if (backlog > room) n += (backlog - room) / 8;
+      var left = {};
+      drain(function(id) {
+        if (!(id in left)) {
+          var st = rates[id] || {rate: 0, carry: 0};
+          var backlog = heldFor(id), n;
+          if (dt > 250) {
+            n = backlog; // no frames for a while: the tab was hidden
+          } else if (!st.rate) {
+            n = backlog / 8; // no rate yet: ease the first text in
+          } else {
+            n = st.rate * dt / 1000 + st.carry;
+            var room = st.rate * PACER_LAG;
+            if (backlog > room) n += (backlog - room) / 8;
+          }
+          var step = Math.max(1, Math.floor(n));
+          st.carry = n - Math.floor(n);
+          left[id] = step;
         }
-        var step = Math.max(1, Math.floor(n));
-        st.carry = n - Math.floor(n);
-        deliver(id, take(st, step));
+        var give = left[id];
+        left[id] = 0; // one piece per id per frame, the rest next frame
+        return give;
       });
-      if (pending()) schedule();
+      if (queue.length) schedule();
       else lastTick = 0;
     }
-    function ids(id) { return id == null ? order.slice() : (streams[id] ? [id] : []); }
     return {
       chunk: function(id, text) {
         if (!text) return;
-        var st = streams[id];
-        if (!st) {
-          st = streams[id] = {held: '', rate: 0, carry: 0, lastPush: 0};
-          order.push(id);
-        }
+        var st = rates[id] || (rates[id] = {rate: 0, carry: 0, lastPush: 0});
         var t = now();
         // The arrival rate, from the gap since this stream's last chunk. A
         // long gap is the model thinking or calling a tool, not its speed.
@@ -597,19 +627,23 @@
           st.rate = st.rate ? st.rate * 0.8 + inst * 0.2 : inst;
         }
         st.lastPush = t;
-        st.held += text;
+        var tail = queue[queue.length - 1];
+        if (tail && tail.fn == null && tail.id === id) tail.text += text;
+        else queue.push({id: id, text: text});
         schedule();
       },
-      flush: function(id) {
-        ids(id).forEach(function(k) {
-          var st = streams[k];
-          if (st.held) deliver(k, take(st, st.held.length));
-        });
-        if (!pending() && cancel) { cancel(); cancel = null; lastTick = 0; }
+      after: function(fn) {
+        if (!queue.length) { fn(); return; }
+        queue.push({fn: fn});
+        schedule();
       },
-      drop: function(id) {
-        ids(id).forEach(function(k) { streams[k].held = ''; });
-        if (!pending() && cancel) { cancel(); cancel = null; lastTick = 0; }
+      flush: function() {
+        halt();
+        drain(function() { return Infinity; });
+      },
+      drop: function() {
+        halt();
+        queue = [];
       },
     };
   };

@@ -173,13 +173,37 @@ emo.flush();
 check('no delivery ends between the halves of a surrogate pair',
   got.every(function(t) { var c = t.charCodeAt(t.length - 1); return !(c >= 0xD800 && c <= 0xDBFF); }));
 
+// Other events wait behind the text before them, in order, and a status
+// line mid-reply no longer forces the held text out in one burst.
+var log = [];
+var q = window.uiChunkPacer(function(id, text) { log.push('t:' + text); });
+q.after(function() { log.push('e:first'); });
+check('with nothing held an event runs at once', log.join() === 'e:first');
+log = [];
+for (var k = 0; k < 10; k++) { clock += 10; q.chunk('r', 'word '); }
+q.after(function() { log.push('e:status'); });
+q.chunk('r', 'more ');
+clock += 16; frame();
+check('a status line waits behind the text before it', log.indexOf('e:status') === -1);
+check('and does not push that text out at once', log.join('').length < 'word word word word word word word word word word more '.length + 20);
+for (var f = 0; f < 60; f++) { clock += 16; frame(); }
+var at = log.indexOf('e:status');
+var before = log.slice(0, at).join('').replace(/t:/g, ''), afterIt = log.slice(at + 1).join('').replace(/t:/g, '');
+check('it runs once the earlier text is out, before the later text', at > 0 && before === new Array(11).join('word ') && afterIt === 'more ');
+log = [];
+q.chunk('r', 'tail text');
+q.after(function() { log.push('e:done'); });
+q.flush();
+check('flush delivers the text, then runs what waited, in order', log[log.length - 1] === 'e:done' && log.slice(0, -1).join('').replace(/t:/g, '') === 'tail text');
+
 // drop forgets what is held: a view switched to another thread.
 got = [];
 var dropped = window.uiChunkPacer(function(id, text) { got.push(text); });
 dropped.chunk('d', 'stale text for a thread no longer on screen');
+dropped.after(function() { got.push('stale event'); });
 dropped.drop();
 clock += 16; frame();
-check('dropped text is never delivered', got.length === 0);
+check('dropped text and the events behind it never land', got.length === 0);
 
 // The panel's own repaint is once per frame through the shared painter.
 renders = [];

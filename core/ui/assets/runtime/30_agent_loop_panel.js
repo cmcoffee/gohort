@@ -1833,6 +1833,7 @@
                 try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
               };
               es.onerror = function() {
+                chunkPacer.flush(); // apply what waits behind held text, a turn end included
                 if (es.readyState === EventSource.CLOSED) {
                   if (activeEventSource === es) activeEventSource = null;
                   enableInput();
@@ -4662,14 +4663,19 @@
       // one server-Seq tick on the run buffer (Ping/keepalives stay
       // out of the buffer; see sseWriter.emit in runner.go).
       runSeqReceived++;
-      // Text goes to the pacer; any other event first lets out the text
-      // held before it, so a tool card or the end of a message lands after
-      // the words that preceded it, as sent.
+      // Text goes to the pacer; any other event waits behind the text that
+      // arrived before it, so a tool card or the end of a message lands
+      // after the words that preceded it, as sent.
       if (ev.kind === 'chunk') {
         chunkPacer.chunk(ev.id, ev.text || '');
         return;
       }
-      chunkPacer.flush();
+      chunkPacer.after(function() { applyEvent(ev); });
+    }
+
+    // applyEvent is one event other than text, applied in order behind the
+    // text that arrived before it.
+    function applyEvent(ev) {
       // Drop the thinking indicator only on events that PRODUCE
       // CONVERSATION-PANE content. activity rows go to the activity
       // pane (which some apps lock off entirely), so they
@@ -5404,6 +5410,9 @@
       function pump() {
         return reader.read().then(function(r) {
           if (r.done) {
+            // What waits behind held text is applied first: the turn's end
+            // may be among it, and without it this would read as a drop.
+            chunkPacer.flush();
             if (activeRunId && !sawTurnEnd && cfg.runs_url_base) streamLost();
             else enableInput();
             return;
@@ -5453,6 +5462,7 @@
         try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
       };
       es.onerror = function() {
+        chunkPacer.flush(); // apply what waits behind held text, a turn end included
         if (activeEventSource !== es) return;
         var refused = es.readyState === EventSource.CLOSED && n === 0;
         es.close();
@@ -7007,6 +7017,7 @@
         try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
       };
       es.onerror = function() {
+        chunkPacer.flush(); // apply what waits behind held text, a turn end included
         if (activeEventSource !== es) return;
         // Never the browser's own reconnect: it asks again with the since
         // this stream opened with and replays everything after it a second
