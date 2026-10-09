@@ -388,6 +388,10 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		h.handleTool(conn, req.Params)
 	case "ask":
 		h.handleAsk(conn, req.Params)
+	case "run_agent":
+		h.handleRunAgent(conn, req.Params)
+	case "run_pipeline":
+		h.handleRunPipeline(conn, req.Params)
 	default:
 		Log("[hook] unknown method: %s", req.Method)
 		writeHookError(conn, "unknown method: "+req.Method)
@@ -438,6 +442,10 @@ func hookMethodDeadline(method string, params map[string]interface{}) time.Durat
 		// can be slow; a script's whole run is capped well under this, which
 		// is the real bound.
 		return 120 * time.Second
+	case "run_agent", "run_pipeline":
+		// A whole agent turn, tools and all, or a pipeline of them. A script
+		// that declares either gets the long run cap to match (appscript).
+		return 300 * time.Second
 	}
 	return 10 * time.Second
 }
@@ -585,6 +593,47 @@ func (h *SandboxHook) handleAsk(conn net.Conn, params map[string]interface{}) {
 		return
 	}
 	writeHookResult(conn, map[string]any{"text": text})
+}
+
+// handleRunAgent serves gohort.run_agent: one of the app's agents, run with
+// its tools on the prompt, and its reply. Granted by "run_agent"; which agents
+// an app may run and what they may spend are the host's, inside RunAgent.
+func (h *SandboxHook) handleRunAgent(conn net.Conn, params map[string]interface{}) {
+	if h.Sess == nil || h.Sess.RunAgent == nil {
+		writeHookError(conn, "run_agent is only for a custom app's data sources and actions")
+		return
+	}
+	prompt := strings.TrimSpace(stringFromParams(params, "prompt"))
+	if prompt == "" {
+		writeHookError(conn, "run_agent needs a prompt")
+		return
+	}
+	text, err := h.Sess.RunAgent(strings.TrimSpace(stringFromParams(params, "agent")), prompt)
+	if err != nil {
+		writeHookError(conn, "run_agent: "+err.Error())
+		return
+	}
+	writeHookResult(conn, map[string]any{"text": text})
+}
+
+// handleRunPipeline serves gohort.run_pipeline: the app's pipeline run to the
+// end on the input, and its final output. Granted by "run_pipeline".
+func (h *SandboxHook) handleRunPipeline(conn net.Conn, params map[string]interface{}) {
+	if h.Sess == nil || h.Sess.RunPipeline == nil {
+		writeHookError(conn, "run_pipeline is only for a custom app's data sources and actions")
+		return
+	}
+	input := strings.TrimSpace(stringFromParams(params, "input"))
+	if input == "" {
+		writeHookError(conn, "run_pipeline needs an input")
+		return
+	}
+	out, err := h.Sess.RunPipeline(strings.TrimSpace(stringFromParams(params, "pipeline")), input)
+	if err != nil {
+		writeHookError(conn, "run_pipeline: "+err.Error())
+		return
+	}
+	writeHookResult(conn, map[string]any{"text": out})
 }
 
 // --- method handlers ---
@@ -1855,6 +1904,23 @@ class _Gohort:
         result = self._call("ask", {"prompt": str(prompt), "json": bool(json)})
         return Output(result.get("text", "") if isinstance(result, dict) else result)
 
+    def run_agent(self, prompt, agent=None):
+        """Run one of the app's agents WITH its tools on prompt and return
+        its reply as text (it reads as its JSON when the reply is JSON).
+        agent=None is the app's own agent; otherwise name one made for the
+        app. Under the app's daily caps; a tool that stops to ask before
+        running is refused. The script must declare "run_agent"."""
+        result = self._call("run_agent", {"prompt": str(prompt), "agent": str(agent or "")})
+        return Output(result.get("text", "") if isinstance(result, dict) else result)
+
+    def run_pipeline(self, input, pipeline=None):
+        """Run the app's pipeline to the end on input and return its final
+        output as text. pipeline=None is the app's own. Under the app's
+        daily caps, and inside this script's run, so keep it to a short
+        pipeline. The script must declare "run_pipeline"."""
+        result = self._call("run_pipeline", {"input": str(input), "pipeline": str(pipeline or "")})
+        return Output(result.get("text", "") if isinstance(result, dict) else result)
+
     def log(self, msg, level="info"):
         """Route a message into gohort's log stream.
         level: debug, info, warn, error."""
@@ -1961,6 +2027,14 @@ def call_tool(name, **args):
 
 def ask(prompt, json=False):
     return gohort.ask(prompt, json=json)
+
+
+def run_agent(prompt, agent=None):
+    return gohort.run_agent(prompt, agent=agent)
+
+
+def run_pipeline(input, pipeline=None):
+    return gohort.run_pipeline(input, pipeline=pipeline)
 
 
 def secret(name):

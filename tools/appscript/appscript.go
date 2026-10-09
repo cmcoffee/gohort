@@ -48,7 +48,23 @@ type Job struct {
 	// Libs are the app's shared Python modules (AppSpec.Libraries), which a
 	// Python script imports by name.
 	Libs map[string]string
+	// Spec is the app as the run should see it, for a check of an app not
+	// saved yet (a folder's run). Nil: the saved app.
+	Spec *AppSpec
 }
+
+// AppRunAgent and AppRunPipeline answer a script's gohort.run_agent and
+// gohort.run_pipeline: one of the app's agents with its tools, or its pipeline
+// to the end, under the same daily caps as ask. Set by the custom-apps host;
+// nil, and refused.
+var (
+	AppRunAgent    func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, error)
+	AppRunPipeline func(ctx context.Context, spec AppSpec, caller, pipeline, input string) (string, error)
+)
+
+// longRunSecs is the run cap of a script that runs an agent or a pipeline: a
+// whole turn with its tools does not fit the ordinary 90 seconds.
+const longRunSecs = 300
 
 // AppAsk answers a script's gohort.ask: the app's agent, no tools, the owner
 // paying under the app's daily caps. Set by the custom-apps host, which owns
@@ -109,6 +125,11 @@ func (j Job) Run() (string, error) {
 		HookCapabilities: caps,
 		Params:           params,
 	}
+	for _, c := range caps {
+		if c == "run_agent" || c == "run_pipeline" {
+			tt.TimeoutSec = longRunSecs
+		}
+	}
 	sess := &ToolSession{
 		Username:     user,
 		WorkspaceDir: ws,
@@ -124,15 +145,45 @@ func (j Job) Run() (string, error) {
 	if caller == "" {
 		caller = user
 	}
+	app := func() (AppSpec, error) {
+		if j.Spec != nil {
+			return *j.Spec, nil
+		}
+		spec, ok := LoadAppSpec(user, slug)
+		if !ok {
+			return AppSpec{}, fmt.Errorf("no app %q", slug)
+		}
+		return spec, nil
+	}
 	sess.Ask = func(prompt string, jsonMode bool) (string, error) {
 		if AppAsk == nil {
 			return "", fmt.Errorf("ask is not available here")
 		}
-		spec, ok := LoadAppSpec(user, slug)
-		if !ok {
-			return "", fmt.Errorf("no app %q to ask for", slug)
+		spec, err := app()
+		if err != nil {
+			return "", err
 		}
 		return AppAsk(sess.Context(), spec, caller, prompt, jsonMode)
+	}
+	sess.RunAgent = func(agent, prompt string) (string, error) {
+		if AppRunAgent == nil {
+			return "", fmt.Errorf("run_agent is not available here")
+		}
+		spec, err := app()
+		if err != nil {
+			return "", err
+		}
+		return AppRunAgent(sess.Context(), spec, caller, agent, prompt)
+	}
+	sess.RunPipeline = func(pipeline, input string) (string, error) {
+		if AppRunPipeline == nil {
+			return "", fmt.Errorf("run_pipeline is not available here")
+		}
+		spec, err := app()
+		if err != nil {
+			return "", err
+		}
+		return AppRunPipeline(sess.Context(), spec, caller, pipeline, input)
 	}
 	return temptool.DispatchTempToolDirect(sess, tt, args)
 }
@@ -203,13 +254,14 @@ func SanitizeName(s string) string {
 }
 
 // onlyAddedCaps reports a capability list made only of grants that add to the
-// defaults rather than replace them: "tool:<name>" and "ask".
+// defaults rather than replace them: "tool:<name>", "ask", "run_agent" and
+// "run_pipeline".
 func onlyAddedCaps(caps []string) bool {
 	if len(caps) == 0 {
 		return false
 	}
 	for _, c := range caps {
-		if !strings.HasPrefix(c, "tool:") && c != "ask" {
+		if !strings.HasPrefix(c, "tool:") && c != "ask" && c != "run_agent" && c != "run_pipeline" {
 			return false
 		}
 	}

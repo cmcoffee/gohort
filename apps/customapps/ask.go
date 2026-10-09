@@ -1,6 +1,7 @@
 package customapps
 
-// POST ask: an app's page asks the app's agent one question.
+// POST ask: an app's page asks the app's agent one question. And the caps
+// every model call an app makes is held to (appModelCall).
 //
 // {"prompt": "...", "json": true?} -> {"text": "..."}. Answered by the
 // owner's app agent with no tools (orchestrate.AppAgentAsk), so the owner
@@ -106,6 +107,17 @@ func askAppAgent(ctx context.Context, ownerDB Database, owner, user string, spec
 	if len([]rune(prompt)) > askMaxPrompt {
 		return "", http.StatusRequestEntityTooLarge, fmt.Errorf("the prompt is over %d characters", askMaxPrompt)
 	}
+	return appModelCall(ownerDB, spec, user, "ask", func() (string, float64, error) {
+		return appAgentAsk(ctx, owner, spec.AgentID, prompt, jsonMode)
+	})
+}
+
+// appModelCall makes one model call for spec on user's behalf, under the
+// app's and user's daily caps, and counts what it cost against both: an ask,
+// or a script's run_agent or run_pipeline, which share the one allowance so a
+// backend cannot spend around it by calling the other way. Returns the text,
+// or why not with the HTTP status that says so.
+func appModelCall(ownerDB Database, spec AppSpec, user, what string, call func() (string, float64, error)) (string, int, error) {
 	if ownerDB == nil {
 		return "", http.StatusInternalServerError, fmt.Errorf("the app's store is not available")
 	}
@@ -136,7 +148,7 @@ func askAppAgent(ctx context.Context, ownerDB Database, owner, user string, spec
 	if why != "" {
 		return "", http.StatusTooManyRequests, fmt.Errorf("%s: it resets at midnight UTC", why)
 	}
-	text, cost, err := appAgentAsk(ctx, owner, spec.AgentID, prompt, jsonMode)
+	text, cost, err := call()
 	if cost > 0 {
 		askMu.Lock()
 		ownerDB.Get(askSpendTable, ak, &appSpent)
@@ -148,7 +160,7 @@ func askAppAgent(ctx context.Context, ownerDB Database, owner, user string, spec
 		askMu.Unlock()
 	}
 	if err != nil {
-		Log("[customapps] ask %q for %s failed: %v", spec.Slug, user, err)
+		Log("[customapps] %s %q for %s failed: %v", what, spec.Slug, user, err)
 		return "", http.StatusBadGateway, fmt.Errorf("the app's agent could not answer: %w", err)
 	}
 	return text, http.StatusOK, nil
@@ -160,4 +172,46 @@ func init() {
 		text, _, err := askAppAgent(ctx, appscript.RecordBase(spec, spec.Owner), spec.Owner, caller, spec, prompt, jsonMode)
 		return text, err
 	}
+	// run_agent and run_pipeline: the agent or pipeline with its tools, held
+	// to the same allowance as ask.
+	appscript.AppRunAgent = func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, error) {
+		if len([]rune(prompt)) > runMaxPrompt {
+			return "", fmt.Errorf("the prompt is over %d characters", runMaxPrompt)
+		}
+		text, _, err := appModelCall(appscript.RecordBase(spec, spec.Owner), spec, caller, "run_agent", func() (string, float64, error) {
+			return appAgentRun(ctx, spec, caller, agent, prompt)
+		})
+		return text, err
+	}
+	appscript.AppRunPipeline = func(ctx context.Context, spec AppSpec, caller, pipeline, input string) (string, error) {
+		if len([]rune(input)) > runMaxPrompt {
+			return "", fmt.Errorf("the input is over %d characters", runMaxPrompt)
+		}
+		text, _, err := appModelCall(appscript.RecordBase(spec, spec.Owner), spec, caller, "run_pipeline", func() (string, float64, error) {
+			return appPipelineRun(ctx, spec, caller, pipeline, input)
+		})
+		return text, err
+	}
+}
+
+// runMaxPrompt bounds what a script hands an agent or a pipeline: room for a
+// game's whole state, not a document.
+const runMaxPrompt = 32000
+
+// appAgentRun and appPipelineRun run the app's agent with its tools, or its
+// pipeline; tests replace them.
+var appAgentRun = func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, float64, error) {
+	orch := findOrchestrate()
+	if orch == nil {
+		return "", 0, fmt.Errorf("agents are not available on this deployment")
+	}
+	return orch.AppAgentRun(ctx, spec.Owner, caller, spec.Slug, spec.AgentID, agent, prompt)
+}
+
+var appPipelineRun = func(ctx context.Context, spec AppSpec, caller, pipeline, input string) (string, float64, error) {
+	orch := findOrchestrate()
+	if orch == nil {
+		return "", 0, fmt.Errorf("pipelines are not available on this deployment")
+	}
+	return orch.AppPipelineRun(ctx, spec.Owner, caller, spec.Slug, spec.PipelineID, pipeline, input)
 }

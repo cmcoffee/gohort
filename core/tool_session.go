@@ -44,6 +44,13 @@ type ToolSession struct {
 	// tools, for an app script that declared "ask". Set only by an app
 	// script's run, like CallTool. Nil: ask is refused.
 	Ask func(prompt string, jsonMode bool) (string, error)
+	// RunAgent and RunPipeline, when set, are what gohort.run_agent and
+	// gohort.run_pipeline reach: one of the app's own agents run WITH its
+	// tools, or its pipeline run to the end ("" names the app's own). Set
+	// only by an app script's run, for one that declared "run_agent" /
+	// "run_pipeline". Nil: refused.
+	RunAgent    func(agent, prompt string) (string, error)
+	RunPipeline func(pipeline, input string) (string, error)
 
 	// imageBackends memoizes ReachableImageBackends for this turn. Resolving it
 	// reads the connector table, and the grouped `image` tool's schema is

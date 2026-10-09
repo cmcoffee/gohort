@@ -596,6 +596,10 @@ type syncRunResult struct {
 	// an owner unprompted.
 	Detections  int
 	TaintBlocks int
+	// Usage is what the run spent. It bills to a tracker of its own, which
+	// shadows the caller's, so a caller held to a budget (an app's daily cap
+	// on its agent) learns the cost here or not at all.
+	Usage UsageDiff
 }
 
 // runAgentSyncConfirm runs one agent turn with no conversation around it and
@@ -726,6 +730,12 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// shadows the tracker above it.
 	ctx, reportUsage := WithSubUsage(ctx, "dispatch "+target.Name+" "+liveRun.ID)
 	defer reportUsage()
+	spent := func() UsageDiff {
+		if t := RequestUsage(ctx); t != nil {
+			return t.Diff(UsageSnapshot{})
+		}
+		return UsageDiff{}
+	}
 	defer bankScopedSpend(ctx, spendOwner(target, agentOwner), target) // the same tracker, banked per agent (agent_spend.go)
 	// Hand the turn's context to the session. Two things depend on it and both
 	// were silently off: a tool can only DETACH when it can find the run that
@@ -994,10 +1004,10 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// reaching here — a genuine setup failure).
 	liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
 	if runErr != nil {
-		return syncRunResult{Trace: toolTrace}, runErr
+		return syncRunResult{Trace: toolTrace, Usage: spent()}, runErr
 	}
 	if resp == nil {
-		return syncRunResult{Trace: toolTrace}, errors.New("agent returned no response")
+		return syncRunResult{Trace: toolTrace, Usage: spent()}, errors.New("agent returned no response")
 	}
 	return syncRunResult{
 		Text:        strings.TrimSpace(resp.Content),
@@ -1005,6 +1015,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		Trace:       toolTrace,
 		Detections:  subTurn.scanDetectionCount(),
 		TaintBlocks: subTurn.taintBlockCount(),
+		Usage:       spent(),
 	}, nil
 }
 

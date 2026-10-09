@@ -241,6 +241,8 @@ func appKeys(m map[string]any) string {
 var (
 	callToolRE = regexp.MustCompile(`call_tool\(\s*["']([A-Za-z0-9_.-]+)["']`)
 	askCallRE  = regexp.MustCompile(`(^|[^A-Za-z0-9_])ask\(`)
+	runAgentRE = regexp.MustCompile(`(^|[^A-Za-z0-9_])run_agent\(`)
+	runPipeRE  = regexp.MustCompile(`(^|[^A-Za-z0-9_])run_pipeline\(`)
 )
 
 // appScriptBody is the source of the data source or action named name.
@@ -271,7 +273,25 @@ func appToolCapNotes(user string, spec AppSpec) []string {
 		for _, c := range caps {
 			declared[c] = true
 		}
-		body := appScriptBody(spec, kind, script)
+		// With the libraries it imports: a call made in lib/engine.py is the
+		// importing script's call, and its grant.
+		body := appScriptBody(spec, kind, script) + appImportedLibs(spec, appScriptBody(spec, kind, script))
+		if runAgentRE.MatchString(body) {
+			switch {
+			case !declared["run_agent"]:
+				notes = append(notes, fmt.Sprintf("%s %q calls run_agent(...) but does not declare \"run_agent\" in its capabilities, so the call will be refused: add it", kind, script))
+			case strings.TrimSpace(spec.AgentID) == "" && !appNamesAnAgent(body):
+				notes = append(notes, fmt.Sprintf("%s %q calls run_agent(...), and the app has no agent: set agent_id, or name one made for the app (owning_app) with agent=", kind, script))
+			}
+		}
+		if runPipeRE.MatchString(body) {
+			switch {
+			case !declared["run_pipeline"]:
+				notes = append(notes, fmt.Sprintf("%s %q calls run_pipeline(...) but does not declare \"run_pipeline\" in its capabilities, so the call will be refused: add it", kind, script))
+			case strings.TrimSpace(spec.PipelineID) == "" && !strings.Contains(body, "pipeline="):
+				notes = append(notes, fmt.Sprintf("%s %q calls run_pipeline(...), and the app has no pipeline: set pipeline_id, or name one made for the app (owning_app) with pipeline=", kind, script))
+			}
+		}
 		if askCallRE.MatchString(body) {
 			switch {
 			case !declared["ask"]:
@@ -389,4 +409,30 @@ func appPlaceholderHits(v any) int {
 	}
 	visit(v)
 	return n
+}
+
+// appImportRE is a Python import of a module by name.
+var appImportRE = regexp.MustCompile(`(?m)^\s*(?:from\s+([A-Za-z_][A-Za-z0-9_]*)\s+import|import\s+([A-Za-z_][A-Za-z0-9_]*))`)
+
+// appImportedLibs is the source of the app's libraries a script imports.
+func appImportedLibs(spec AppSpec, body string) string {
+	if len(spec.Libraries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	seen := map[string]bool{}
+	for _, m := range appImportRE.FindAllStringSubmatch(body, -1) {
+		name := firstNonEmptyStr(m[1], m[2])
+		if src, ok := spec.Libraries[name]; ok && !seen[name] {
+			seen[name] = true
+			b.WriteString("\n")
+			b.WriteString(src)
+		}
+	}
+	return b.String()
+}
+
+// appNamesAnAgent reports a run_agent call that names its agent.
+func appNamesAnAgent(body string) bool {
+	return strings.Contains(body, "agent=")
 }

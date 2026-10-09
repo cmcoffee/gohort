@@ -658,7 +658,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		for k, v := range baseArgs {
 			scriptArgs[k] = v
 		}
-		out, err := appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: kind, Name: name, Language: lang, Script: script, Caps: caps, Args: scriptArgs, Libs: spec.Libraries}.Run()
+		out, err := appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: kind, Name: name, Language: lang, Script: script, Caps: caps, Args: scriptArgs, Libs: spec.Libraries, Spec: &spec}.Run()
 		if err != nil {
 			fail++
 			fmt.Fprintf(&b, "FAIL %s, could not run: %v\n", label, err)

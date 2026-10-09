@@ -388,3 +388,52 @@ print(isinstance(out, str), out.startswith("{"))
 		t.Fatalf("got:\n%s\nwant:\n%s", b, want)
 	}
 }
+
+// gohort.run_agent and gohort.run_pipeline in a script, over the real hook:
+// each granted by its own capability, answered by the session's RunAgent /
+// RunPipeline with the agent or pipeline named (or "" for the app's own), and
+// a JSON reply reads as its JSON.
+func TestPythonRunAgentAndPipelineReachTheHook(t *testing.T) {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not installed")
+	}
+	lib := t.TempDir()
+	if err := os.WriteFile(filepath.Join(lib, "gohort.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(caps []string, code string) string {
+		h, err := NewSandboxHook(t.TempDir(), caps, &ToolSession{Username: "owner",
+			RunAgent: func(agent, p string) (string, error) {
+				return fmt.Sprintf(`{"agent": %q, "said": %q}`, agent, p), nil
+			},
+			RunPipeline: func(pipeline, in string) (string, error) {
+				return fmt.Sprintf("pipeline %q ran on %q", pipeline, in), nil
+			}})
+		if err != nil || h == nil {
+			t.Fatalf("hook: %v", err)
+		}
+		defer h.Close()
+		cmd := exec.Command(py, "-c", "from gohort import run_agent, run_pipeline, HookError\ntry:\n"+code+"except HookError as e:\n    print('refused:', e)\n")
+		cmd.Env = append(os.Environ(), "GOHORT_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("python: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+	agent := "    r = run_agent('roll for it')\n    print(r.get('agent') == '' and r['said'])\n    print(run_agent('x', agent='Quartermaster').get('agent'))\n"
+	if got := run([]string{"fetch", "run_agent"}, agent); !strings.Contains(got, "roll for it") || !strings.Contains(got, "Quartermaster") {
+		t.Fatalf("run_agent granted: %s", got)
+	}
+	if got := run([]string{"fetch", "ask"}, agent); !strings.Contains(got, "refused:") {
+		t.Fatalf("run_agent without its grant: %s", got)
+	}
+	pipe := "    print(run_pipeline('a topic'))\n"
+	if got := run([]string{"run_pipeline"}, pipe); !strings.Contains(got, `pipeline "" ran on "a topic"`) {
+		t.Fatalf("run_pipeline granted: %s", got)
+	}
+	if got := run([]string{"run_agent"}, pipe); !strings.Contains(got, "refused:") {
+		t.Fatalf("run_pipeline on run_agent's grant: %s", got)
+	}
+}

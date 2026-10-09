@@ -459,7 +459,8 @@ func (t *chatTurn) appDefRun(args map[string]any) (string, error) {
 	}
 	ds, _ := appDataSources(in["data_sources"])
 	acts, _ := appActionDefs(in["actions"])
-	spec := AppSpec{Owner: t.user, Slug: m.Slug, Name: m.Name, SharedCollections: m.SharedCollections, Settings: m.Settings, AgentID: m.AgentID}
+	spec := AppSpec{Owner: t.user, Slug: m.Slug, Name: m.Name, SharedCollections: m.SharedCollections, Settings: m.Settings,
+		AgentID: m.AgentID, PipelineID: m.PipelineID, AskDailyUSD: m.AskDailyUSD, AskUserDailyUSD: m.AskUserDailyUSD}
 	if libs, err := appLibraries(in["libraries"]); err != nil {
 		return "", fmt.Errorf("%s/lib: %w", rel, err)
 	} else if len(libs) > 0 {
