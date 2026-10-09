@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -271,6 +272,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 	if !a.requireAdmin(w, r) {
 		return
 	}
+	started := time.Now()
 	page := ui.Page{
 		Title:     "Administrator",
 		ShowTitle: true,
@@ -369,8 +371,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 	// The Apps tab: one row per compiled app. Custom apps land on the SAME tab
 	// through the runtime section source below, which is why this is appended
 	// first — compiled apps, then whatever people have authored.
+	builtOwn := time.Since(started)
 	panes := newPanes(r)
 	page.Sections = append(page.Sections, panes.sections()...)
+	builtSources := time.Since(started) - builtOwn
 	// App-contributed admin sections — framework tuning that belongs in admin
 	// (e.g. the prompt-block editor), self-registered via core so admin doesn't
 	// import the app. Each carries its own Group/Wide; its Head brings any
@@ -384,6 +388,16 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 			order[e.Section.Title] = e.Order
 		}
 	}
+	// A builder can hand back a placeholder: no title, no body. Each one
+	// made a tab (its empty group reads as General) with nothing on it, which
+	// loaded as a blank page. Nothing to show is no section.
+	filled := page.Sections[:0:0]
+	for _, s := range page.Sections {
+		if s.Title != "" || s.Body != nil {
+			filled = append(filled, s)
+		}
+	}
+	page.Sections = filled
 	for i := range page.Sections {
 		t := page.Sections[i].Title
 		// The map keys on TITLE, and an Apps row's title is an app's NAME —
@@ -441,6 +455,14 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 	}
 	page.ExtraHeadHTML += adminTabRedirectScript(tabs, tabs[cur].slug)
 	page.ServeHTTP(w, r)
+	// A slow page says where its time went, in the log an operator already
+	// reads: the admin's own sections, the sections other apps contribute
+	// (every source runs for each page), or the page itself.
+	if total := time.Since(started); total > 300*time.Millisecond {
+		Log("[admin] the %s page took %s to build: own sections %s, contributed sections %s, render %s",
+			tabs[cur].name, total.Round(time.Millisecond), builtOwn.Round(time.Millisecond),
+			builtSources.Round(time.Millisecond), (total - builtOwn - builtSources).Round(time.Millisecond))
+	}
 }
 
 // adminTab is one of the administrator pages: a tab's name, its slug and

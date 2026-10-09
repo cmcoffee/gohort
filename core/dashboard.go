@@ -378,6 +378,7 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 	sortDashDefault(visible)
 	orderDash(visible, prefs.Order)
 	sortDashGroups(visible)
+	lastDash(visible)
 	// Notices from any app with something the viewer must act on. Walked over
 	// the ORIGINAL list, like card sources, so a hidden app can still speak —
 	// but never a switched-off one, whose links would land on the 503 the
@@ -838,8 +839,19 @@ func (d dashboardHost) orderedCards(r *http.Request, p dashPrefs) []dashApp {
 	sortDashDefault(all)
 	orderDash(all, p.Order)
 	sortDashGroups(all)
+	lastDash(all)
 	return all
 }
+
+// lastDash keeps the administrator's card at the end, on the dashboard and
+// on the Customize page, however the other cards are arranged: it is the
+// way out of trouble, and it stays where it has always been, after
+// everything else, whatever apps are on or off and whatever a person pins.
+func lastDash(list []dashApp) {
+	sort.SliceStable(list, func(i, j int) bool { return !isLastDash(list[i]) && isLastDash(list[j]) })
+}
+
+func isLastDash(a dashApp) bool { return a.path == adminAppPath }
 
 // sortDashGroups puts cards of a kind together, keeping their order within
 // it: the dashboard's own apps, then each source's group in its declared
@@ -904,7 +916,8 @@ func (d dashboardHost) handleDashboardMove(w http.ResponseWriter, r *http.Reques
 	for j >= 0 && j < len(all) && (all[j].group != all[i].group || dashSection(all[j]) != dashSection(all[i])) {
 		j += step
 	}
-	if j >= 0 && j < len(all) {
+	// The administrator's card is not moved and not moved past: it is last.
+	if j >= 0 && j < len(all) && !isLastDash(all[i]) && !isLastDash(all[j]) {
 		all[i], all[j] = all[j], all[i]
 	}
 	p.Order = p.Order[:0:0]

@@ -171,3 +171,42 @@ func TestTheCustomizePageGroupsCardsByKind(t *testing.T) {
 		}
 	}
 }
+
+// The administrator's card is last on the dashboard and on the Customize
+// page whatever else is there, and the arrows do not move anything past it.
+func TestTheAdministratorCardStaysLast(t *testing.T) {
+	withUsers(t)
+	host := dashboardHost{apps: []dashApp{
+		{name: "Administrator", desc: "admin", path: adminAppPath, app: pinApp{}, order: 99},
+		{name: "Notes", desc: "notes", path: "/notes", app: pinApp{pins: []DashboardCard{{Name: "Voidrunner", Desc: "a space RPG", Path: "/apps/voidrunner", Group: "My apps", GroupOrder: 10}}}},
+	}}
+	w := httptest.NewRecorder()
+	r := asUser(t, "/api/dashboard/show?path=/apps/voidrunner", "craig")
+	r.Method, r.Body = http.MethodPost, io.NopCloser(strings.NewReader(`{"shown": true}`))
+	host.handleDashboardShow(w, r)
+	last := func(where string) string {
+		w := httptest.NewRecorder()
+		if where == "page" {
+			host.handleRoot(w, asUser(t, "/", "craig"))
+			paths := []string{"/notes/", "/apps/voidrunner/", adminAppPath + "/"}
+			sortByIndex(paths, w.Body.String())
+			return paths[len(paths)-1]
+		}
+		host.handleDashboardItems(w, asUser(t, "/api/dashboard/items", "craig"))
+		var got struct{ Records []dashItem }
+		json.Unmarshal(w.Body.Bytes(), &got)
+		return got.Records[len(got.Records)-1].Path + "/"
+	}
+	for _, where := range []string{"page", "items"} {
+		if got := last(where); got != adminAppPath+"/" {
+			t.Errorf("%s: last card is %s, want the administrator", where, got)
+		}
+	}
+	w = httptest.NewRecorder()
+	r = asUser(t, "/api/dashboard/move?path="+adminAppPath+"&dir=up", "craig")
+	r.Method = http.MethodPost
+	host.handleDashboardMove(w, r)
+	if got := last("page"); got != adminAppPath+"/" {
+		t.Errorf("after a move: last card is %s, want the administrator", got)
+	}
+}
