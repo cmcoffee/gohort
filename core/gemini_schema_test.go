@@ -116,3 +116,49 @@ func TestParamDefaultInSchema(t *testing.T) {
 		t.Errorf("q has no default and must not carry the key; schema %s", raw)
 	}
 }
+
+// Gemini 3 signs each tool-calling turn and refuses the next request unless
+// the signature comes back with the call ("Function call is missing a
+// thought_signature"). Every lead round after the first failed that way and
+// fell back to the worker. The signature is read off the response and sent
+// back; a call with none of its own (a worker round, an old stored turn) gets
+// the documented skip value so the request still goes through.
+func TestGeminiEchoesThoughtSignature(t *testing.T) {
+	var resp gemResponse
+	if err := json.Unmarshal([]byte(`{"candidates":[{"content":{"parts":[
+		{"functionCall":{"name":"web_search","args":{"q":"x"}},"thoughtSignature":"SIG1"}
+	]}}]}`), &resp); err != nil {
+		t.Fatal(err)
+	}
+	_, _, calls := parseGeminiResponse(resp)
+	if len(calls) != 1 || calls[0].Signature != "SIG1" {
+		t.Fatalf("signature not read off the response: %+v", calls)
+	}
+
+	c := &geminiClient{model: "gemini-3.5-flash"}
+	got := c.buildMessages([]Message{
+		{Role: "user", Content: "look it up"},
+		{Role: "assistant", ToolCalls: calls},
+		{Role: "user", ToolResults: []ToolResult{{ID: calls[0].ID, Content: "found"}}},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "w1", Name: "a"}, {ID: "w2", Name: "b"}}},
+	})
+	if s := got[1].Parts[0].ThoughtSignature; s != "SIG1" {
+		t.Errorf("the lead's own signature should go back, got %q", s)
+	}
+	worker := got[3].Parts
+	if worker[0].ThoughtSignature != geminiSkipSignature {
+		t.Errorf("an unsigned first call should carry the skip value, got %q", worker[0].ThoughtSignature)
+	}
+	if worker[1].ThoughtSignature != "" {
+		t.Errorf("only the first call of a turn is signed, got %q on the second", worker[1].ThoughtSignature)
+	}
+
+	// Older models never signed anything, so nothing is invented for them.
+	old := (&geminiClient{model: "gemini-2.5-flash"}).buildMessages([]Message{
+		{Role: "user", Content: "go"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "w1", Name: "a"}}},
+	})
+	if s := old[1].Parts[0].ThoughtSignature; s != "" {
+		t.Errorf("gemini-2.5 got a signature it never sent: %q", s)
+	}
+}

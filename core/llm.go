@@ -425,6 +425,10 @@ type ToolCall struct {
 	// model goes looking for the cause everywhere except its own JSON. The
 	// agent loop refuses the call and says why.
 	ArgsError string `json:"args_error,omitempty"`
+	// Signature is a provider's opaque token for the reasoning behind this
+	// call (Gemini 3's thoughtSignature). It must go back with the call when
+	// the history is replayed, or the provider refuses the next request.
+	Signature string `json:"signature,omitempty"`
 }
 
 // parseToolArgs converts a raw JSON map into a tool argument map.

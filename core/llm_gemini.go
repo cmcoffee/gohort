@@ -142,6 +142,7 @@ type gemPart struct {
 	Thought          bool                 `json:"thought,omitempty"`
 	FunctionCall     *gemFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *gemFunctionResponse `json:"functionResponse,omitempty"`
+	ThoughtSignature string               `json:"thoughtSignature,omitempty"`
 }
 
 type gemFunctionCall struct {
@@ -218,7 +219,7 @@ func (c *geminiClient) buildMessages(messages []Message) []gemContent {
 			if m.Content != "" {
 				parts = append(parts, gemPart{Text: m.Content})
 			}
-			for _, tc := range m.ToolCalls {
+			for i, tc := range m.ToolCalls {
 				args := make(map[string]interface{})
 				for k, v := range tc.Args {
 					args[k] = v
@@ -228,6 +229,7 @@ func (c *geminiClient) buildMessages(messages []Message) []gemContent {
 						Name: tc.Name,
 						Args: args,
 					},
+					ThoughtSignature: c.callSignature(i, tc),
 				})
 			}
 			contents = append(contents, gemContent{Role: "model", Parts: parts})
@@ -400,13 +402,33 @@ func parseGeminiResponse(resp gemResponse) (string, string, []ToolCall) {
 		if part.FunctionCall != nil {
 			args := parseToolArgs(part.FunctionCall.Args)
 			toolCalls = append(toolCalls, ToolCall{
-				ID:   fmt.Sprintf("gem:%s:%s", part.FunctionCall.Name, UUIDv4()),
-				Name: part.FunctionCall.Name,
-				Args: args,
+				ID:        fmt.Sprintf("gem:%s:%s", part.FunctionCall.Name, UUIDv4()),
+				Name:      part.FunctionCall.Name,
+				Args:      args,
+				Signature: part.ThoughtSignature,
 			})
 		}
 	}
 	return strings.Join(textParts, ""), strings.Join(thinkParts, ""), toolCalls
+}
+
+// geminiSkipSignature is the value Google documents for a function call
+// that has no signature of its own: one another model made (a worker round
+// between two lead rounds), or one from a turn stored before signatures were
+// kept. Without it Gemini 3 refuses the whole request.
+const geminiSkipSignature = "skip_thought_signature_validator"
+
+// callSignature is the thoughtSignature to send with the i-th call of a model
+// turn. Gemini 3 signs the first call of a turn (later parallel calls carry
+// none), so only that one is filled in when the call came without its own.
+func (c *geminiClient) callSignature(i int, tc ToolCall) string {
+	if tc.Signature != "" {
+		return tc.Signature
+	}
+	if i == 0 && strings.Contains(c.model, "gemini-3") {
+		return geminiSkipSignature
+	}
+	return ""
 }
 
 // geminiSupportsThinking reports whether the model accepts a ThinkingConfig.
@@ -697,9 +719,10 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 				if part.FunctionCall != nil {
 					args := parseToolArgs(part.FunctionCall.Args)
 					toolCalls = append(toolCalls, ToolCall{
-						ID:   fmt.Sprintf("gem:%s:%s", part.FunctionCall.Name, UUIDv4()),
-						Name: part.FunctionCall.Name,
-						Args: args,
+						ID:        fmt.Sprintf("gem:%s:%s", part.FunctionCall.Name, UUIDv4()),
+						Name:      part.FunctionCall.Name,
+						Args:      args,
+						Signature: part.ThoughtSignature,
 					})
 				}
 			}
