@@ -93,6 +93,10 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 
 	sub := http.NewServeMux()
 
+	// The Extensions page gets a Templates section for administrators only,
+	// registered here because only here is the admin API's mount path known.
+	a.registerTemplatesExtensionSection(prefix)
+
 	// Admin page — framework-rendered (core/ui). Lives at /admin/ (root).
 	// Every section is declarative now; the old hand-rolled /admin/legacy
 	// surface has been retired.
