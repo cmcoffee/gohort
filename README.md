@@ -32,9 +32,9 @@
 
 ![The Oddjob dashboard: every installed app on one page, running from a single binary](docs/images/dashboard.png)
 
-You still talk to one thing. The specialization is underneath: a front agent reads what you want and hands it to whichever agent owns that job, each with its own tools, its own memory, and the right to delegate further. Think of an executive with a cabinet rather than a jack-of-all-trades fixer: the executive's actual skill is knowing who to turn to.
+You still talk to one thing, and it takes any job. The trick is that it never does one alone: a front agent reads what you want and hands it to whichever agent owns that part, each with its own tools, its own memory, and the right to delegate further. Oddjob is the odd-job man who knows a specialist for everything, and whose real skill is knowing who to call.
 
-That shape is not decoration. **Tool selection degrades as the tool surface widens**, and an agent choosing among four relevant tools beats the same model choosing among forty, while the context it never loads is context left for the work. Which is also the honest reason oddjob runs on local models: not because small models became clever, but because a narrow job is a job they can do. **Specialization and local-first are the same argument.**
+That shape is not decoration. **Tool selection degrades as the tool surface widens**, and an agent choosing among four relevant tools beats the same model choosing among forty, while the context it never loads is context left for the work. Which is also the honest reason Oddjob runs on local models: not because small models became clever, but because a narrow job is a job they can do. **Specialization and local-first are the same argument.**
 
 ```bash
 make build && ./build/oddjob --setup && ./build/oddjob serve :8080
