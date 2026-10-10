@@ -1,7 +1,7 @@
 // An objective is a schedule that knows when it is finished.
 //
 // Two surfaces schedule work that repeats: a recurring task (an agent's own
-// `recurring` tool) and a standing agent (the Fleet path, `create_standing_agent`).
+// `recurring` tool) and a standing agent (the Fleet path, `schedule(when="every")`).
 // Both ran until a cap or until somebody stopped them, and neither ever asked
 // whether the thing had been achieved. Giving either an `until` turns it from a
 // cadence into a goal: every fire is judged against that sentence from what the

@@ -64,17 +64,21 @@ This is the step that goes wrong, and it goes wrong in one direction: reaching
 for an event monitor because the request contains "every 5 minutes", when the
 job is unconditional work on a clock.
 
+Everything goes through one tool, `schedule`, and its `when` is the decision.
 **Does the user want to hear from it every time it looks?**
 
-- **Yes → a standing agent** (`create_standing_agent`). "Fetch the status and
+- **Yes → `when="every"`** (a standing agent underneath). "Fetch the status and
   tell me the value" has no trigger to wait for: the schedule *is* the trigger.
-  Give it `interval_seconds` or `cron`, and a `mission` saying what to do and
-  what to report.
-- **No, only when something changes or crosses a line → an event monitor**
-  (`create_event_monitor`). A monitor exists to stay SILENT until then.
+  Give it `time` ("daily 08:00", "every 15 minutes") and `then` saying what to
+  do and what to report.
+- **No, only when something changes or crosses a line → one of the monitor
+  whens** (`value_crosses`, `output_changes`, `posted`, `agent_says`). A
+  monitor exists to stay SILENT until then.
+- **Once, at a time of day → `when="at"`.** Never a monitor against a clock
+  API: nothing is checked, the clock is the trigger.
 
-**Two signs you picked the monitor for a schedule's job.** Both mean stop and
-use a standing agent instead:
+**Two signs you picked a monitor for a schedule's job.** Both mean stop and
+use `when="every"` instead:
 
 - You are writing a checker brief that tells the agent to always end its answer
   with the match word, so it fires every interval.
@@ -88,31 +92,32 @@ A condition you cannot write down is a condition that does not exist.
 An unbounded watch runs until somebody remembers to stop it. If the user put a
 limit in the request, it belongs on the record, not in the agent's head:
 
-- **A count of alerts** → `stop_after` on the monitor. It pauses itself on the
-  last fire, kept and resumable.
-- **A count of runs** → `max_attempts` on the standing agent.
+- **A count of alerts** → `stop_after` on a monitor when. It pauses itself on
+  the last fire, kept and resumable.
+- **A count of runs** → `max_attempts` on `when="every"`.
 - **A finish line in words** → `until` on either: "the ready field reports
   true", "the PR is merged". Every fire is judged against that sentence, and
   the one that reaches it is the last. On a standing agent, pair it with
   `max_attempts` so a goal that never arrives stops and says so instead of
   going quiet.
 
-"Check it twice and stop" is `until` + `max_attempts` on a standing agent: not
-a monitor with a fire cap, because the monitor only counts fires it actually
+"Check it twice and stop" is `until` + `max_attempts` on `when="every"`: not a
+monitor with a fire cap, because the monitor only counts fires it actually
 made.
 
-## Picking a monitor kind: cheapest that detects the change
+## Picking a monitor when: cheapest that detects the change
 
-1. **`webhook`**: the external system POSTs to a minted URL. No polling at all.
-2. **`http_poll`**: fetches a URL, extracts a value (`json_path` or `regex`),
-   compares it (`compare_op` + `threshold`). No LLM.
-3. **`watch`**: invokes a TOOL each interval and hashes its output; wakes only
-   when the output changes. No LLM until something does. This is the one for
-   "tell me when this chat/page/roster changes".
-4. **`poll`**: runs an LLM checker agent every interval. The most expensive by
-   a wide margin. Reserve it for a fuzzy condition no value or hash can express.
+1. **`posted`**: the external system POSTs to a minted URL. No polling at all.
+2. **`value_crosses`**: fetches a URL, extracts a value (`json_path` or
+   `regex`), compares it (`compare_op` + `threshold`). No LLM.
+3. **`output_changes`**: invokes a TOOL each check and hashes its output; wakes
+   only when the output changes. No LLM until something does. This is the one
+   for "tell me when this chat/page/roster changes".
+4. **`agent_says`**: runs an LLM checker agent every check. The most expensive
+   by a wide margin. Reserve it for a fuzzy condition no value or hash can
+   express.
 
-`interval_seconds` has a floor of 30 and should match how fast the thing can
+`check_every` has a floor of 30s and should match how fast the thing can
 actually change; a human reply or a deploy is minutes, not seconds.
 
 **The edge-trigger rule, which surprises people:** a monitor fires on the
@@ -130,9 +135,8 @@ is what you want, or the job was a standing agent all along.
   it should not carry authoring, messaging or destructive tools unless the user
   asked for a watcher that also acts.
 - **Conductor tools ON** if this agent is the one that will SET UP its own
-  watches. Without it there is no `create_standing_agent` and no
-  `create_event_monitor`, and the agent will improvise something else rather
-  than say it cannot. An agent that is merely *run by* a schedule does not need
+  watches. Without it there is no `schedule` tool, and the agent will
+  improvise something else rather than say it cannot. An agent that is merely *run by* a schedule does not need
   them.
 - **Memory ON**. A watcher that cannot remember what it saw last time reports
   every observation as if it were new. Findings it saves are what make "it went

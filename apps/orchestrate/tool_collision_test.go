@@ -63,7 +63,7 @@ func TestFrameworkToolNamesAreReserved(t *testing.T) {
 	for _, n := range []string{
 		"tool_def", "create_agent", "update_agent", "agents", "recall",
 		"remember", "forget", "query_source", "load_tool", "request_build",
-		"hand_to_builder", "collection", "recurring", "app_def",
+		"hand_to_builder", "collection", "schedule", "app_def",
 	} {
 		if !IsReservedToolName(n) {
 			t.Errorf("%q is a framework tool but not reserved", n)

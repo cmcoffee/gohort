@@ -22,6 +22,11 @@ var renamedToolAliases = map[string]string{
 	"read_phantom_chat":  "read_chat",
 	"list_phantom_chats": "list_chats",
 	"get_local_time":     "time_in_zone",
+	// The scheduling tools folded into `schedule` (operator_schedule_tool.go).
+	"create_standing_agent": "schedule", "list_standing_agents": "schedule", "run_standing_now": "schedule",
+	"set_standing_paused": "schedule", "delete_standing_agent": "schedule",
+	"create_event_monitor": "schedule", "list_event_monitors": "schedule", "delete_event_monitor": "schedule",
+	"set_timer": "schedule",
 }
 
 // canonicalToolName maps a possibly-retired tool name to the live name, or
@@ -84,7 +89,7 @@ func init() {
 		"message_contact", "notify_owner", "await_result", "delegate",
 		"request_thread_binding", "release_thread_binding", "set_thread_wake",
 		"authorize_channel_sender",
-		"create_event_monitor", "delete_event_monitor", "list_event_monitors",
+		"create_event_monitor", "delete_event_monitor", "list_event_monitors", "set_timer", "schedule",
 		"create_standing_agent", "delete_standing_agent", "list_standing_agents",
 		"set_standing_paused", "run_standing_now", "inspect_run", "list_runs",
 	)

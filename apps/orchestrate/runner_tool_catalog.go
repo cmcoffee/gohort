@@ -317,27 +317,27 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// owner controls. Seeds load with Owner unset until shadowed; treat that as
 	// the caller's own so the owner keeps Fleet on their own seed.
 	// (ownerRun computed above, alongside the authoring-grant gate.)
-	// The Builder gets the operator toolset too — create_event_monitor,
-	// recurring, create_standing_agent — so it can WIRE a tool it just authored
-	// into a schedule/watch. "Build X and run it every 30s" was structurally
+	// The Builder gets the operator toolset too — schedule, with every
+	// when — so it can WIRE a tool it just authored into a schedule/watch. "Build X and run it every 30s" was structurally
 	// impossible for an author-only agent: it could build the tool and then had
 	// no way to schedule it, so it stopped half-done or handed off.
 	if (t.agent.Fleet || agentCanAuthor(t.agent)) && forOrchestrator && ownerRun {
-		om := operatorManagementTools(sess, t.agent.ID)
+		// A FLEET agent schedules through the fleet only (proper cron /
+		// start+interval timing, surfaces in Enabled agents), so its
+		// `schedule` folds no recurring tasks; the BUILDER keeps its own
+		// recurring tasks folded in as the when="every" that names no runner,
+		// because it is authoring a scheduled TOOL and "run this tool on an
+		// interval" is exactly that.
+		var rec recurringImpl
+		if !t.agent.Fleet {
+			rec = t
+		}
+		om := operatorManagementToolsFor(sess, t.agent.ID, rec)
 		// No standalone history pair: `recall` spans folded-away history, and
 		// two tools that search the past is the choice the collapse removed.
 		tools = append(tools, om...)
 		for _, td := range om {
 			toolNames = append(toolNames, td.Tool.Name)
-		}
-		// FLEET drops the generic interval scheduler — the Operator schedules
-		// through the fleet (create_standing_agent, proper cron / start+interval
-		// timing, surfaces in Enabled agents); without this the LLM reaches for
-		// "recurring" and bypasses the fleet. The BUILDER keeps recurring: it's
-		// authoring a scheduled TOOL, and recurring / create_event_monitor are
-		// exactly the right primitives for "run this tool on an interval".
-		if t.agent.Fleet {
-			tools, toolNames = dropToolsByName(tools, toolNames, "recurring")
 		}
 	}
 	// request_build — the COMPLEMENT of Fleet's live Builder dispatch. A Fleet

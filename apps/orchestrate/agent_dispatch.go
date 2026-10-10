@@ -805,11 +805,9 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// behaves the same as on its own chat surface. Mirrors the runner.go
 	// catalog hook. Drop the generic interval scheduler (it schedules
 	// through the fleet instead). Authors also get these so a delegated
-	// build can wire its tool into a schedule/monitor (create_event_monitor).
+	// build can wire its tool into a schedule/monitor (schedule).
 	if target.Fleet || mayAuthor {
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
-		// No standalone history pair: `recall` spans folded-away history.
-		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
 	// Channel-scoped chat tools — any agent that has channels gets list_chats /
 	// read_chat over ITS channels (independent of Fleet). Mirrors runner.go.
@@ -1673,8 +1671,6 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// tools. Authors also get these so a delegated build can schedule/monitor.
 	if target.Fleet || mayAuthor {
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
-		// No standalone history pair: `recall` spans folded-away history.
-		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
 	// Channel-scoped chat tools — any agent that has channels gets list_chats /
 	// read_chat over ITS channels (independent of Fleet). Mirrors runner.go.

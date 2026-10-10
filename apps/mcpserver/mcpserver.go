@@ -56,7 +56,7 @@ func init() {
 const MCPFeatureKey = "mcp"
 
 // defaultAgent is where an un-targeted ask lands. seed-chat absorbed the
-// Operator, so it carries the scheduling tools (create_standing_agent, etc).
+// Operator, so it carries the scheduling tool (schedule).
 const defaultAgent = "seed-chat"
 
 // mcpSession is the single rolling thread Claude Desktop talks to. It is

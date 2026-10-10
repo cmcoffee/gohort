@@ -139,7 +139,7 @@ func TestAnAuthorCannotPutItselfOnAClock(t *testing.T) {
 	if err == nil {
 		t.Fatal("Builder scheduled itself to replay a build prompt on a clock")
 	}
-	if !strings.Contains(err.Error(), "create_standing_agent") || !strings.Contains(err.Error(), "agent_id") {
+	if !strings.Contains(err.Error(), `when="every"`) || !strings.Contains(err.Error(), "agent set to") {
 		t.Errorf("the refusal does not name the tool that does this properly: %v", err)
 	}
 
@@ -147,7 +147,7 @@ func TestAnAuthorCannotPutItselfOnAClock(t *testing.T) {
 	// is exactly this tool's job.
 	plain := &chatTurn{agent: AgentRecord{ID: "a1", Name: "Helper"}, session: &ChatSession{ID: "s1"}}
 	if _, err := plain.recurringSchedule(map[string]any{"prompt": "check the thing", "pattern": "hourly"}); err != nil {
-		if strings.Contains(err.Error(), "create_standing_agent") {
+		if strings.Contains(err.Error(), `when="every"`) {
 			t.Errorf("an ordinary agent was refused its own recurring task: %v", err)
 		}
 	}

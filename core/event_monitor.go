@@ -58,6 +58,13 @@ const (
 	EventKindPoll    = "poll"
 	EventKindHTTP    = "http_poll"
 	EventKindWatch   = "watch"
+	// timer = the clock is the trigger. Nothing is fetched or checked: it
+	// fires at FireAt, once, and stops. "Remind me at 3pm" is this kind, and
+	// it was the kind that did not exist: an agent asked for a 1:10pm alert
+	// polled a public time API every 20s and compared an ISO datetime string
+	// as a number, which failed on every check and parked the monitor before
+	// 1:10 arrived.
+	EventKindTimer = "timer"
 
 	// Notify modes — where a fire is delivered.
 	//   channel (default): wake the channel agent in its home thread (an LLM
@@ -168,6 +175,11 @@ type EventMonitor struct {
 	// since midnight in the owner's zone, ascending. A watch feeding a morning
 	// bulletin looks at 08:00, not every N seconds from whenever it was made.
 	DailyAt []int `json:"daily_at,omitempty"`
+
+	// timer kind: the one moment it fires. A timer always carries MaxFires=1,
+	// so fireWake's allowance stops it; a resumed timer whose moment has
+	// passed goes off again at once (the owner asked for it again).
+	FireAt time.Time `json:"fire_at,omitempty"`
 
 	// http_poll kind
 	URL       string `json:"url,omitempty"`        // endpoint fetched each interval
@@ -367,6 +379,8 @@ func monitorSignature(m EventMonitor) (source, delivery string, ok bool) {
 		source = "http:" + m.URL + "|" + m.JSONPath + "|" + m.Regex + "|" + m.CompareOp + "|" + m.Threshold
 	case EventKindPoll:
 		source = "poll:" + m.CheckAgent + ":" + strings.TrimSpace(m.Check)
+	case EventKindTimer:
+		source = "timer:" + m.FireAt.UTC().Format(time.RFC3339) + ":" + strings.TrimSpace(m.WakeBrief)
 	default: // webhook / unknown — no comparable polling source
 		return "", "", false
 	}
@@ -865,7 +879,7 @@ func eventMatch(answer, match string) bool {
 // isScheduledKind reports whether a monitor runs on the interval scheduler
 // (poll, http_poll, and watch do; webhook is push-only).
 func isScheduledKind(kind string) bool {
-	return kind == EventKindPoll || kind == EventKindHTTP || kind == EventKindWatch
+	return kind == EventKindPoll || kind == EventKindHTTP || kind == EventKindWatch || kind == EventKindTimer
 }
 
 // IsScheduledEventKind is the exported predicate for the above — a webhook
@@ -874,6 +888,11 @@ func isScheduledKind(kind string) bool {
 func IsScheduledEventKind(kind string) bool { return isScheduledKind(kind) }
 
 func nextPoll(m EventMonitor, from time.Time) time.Time {
+	if m.Kind == EventKindTimer && !m.FireAt.IsZero() {
+		// A moment already behind us is due now, not never: the scheduler
+		// fires a past RunAt on its next pass.
+		return m.FireAt
+	}
 	if len(m.DailyAt) > 0 {
 		return nextDailyTime(m.DailyAt, from.In(UserLocation(m.Owner)))
 	}
@@ -1078,6 +1097,8 @@ func StartEventMonitorScheduler() {
 				executeHTTPPoll(ctx, RootDB, m)
 			case EventKindWatch:
 				executeWatchPoll(ctx, RootDB, m)
+			case EventKindTimer:
+				executeTimer(ctx, RootDB, m)
 			}
 		}
 	})
@@ -1135,8 +1156,34 @@ func RunEventMonitorCheck(ctx context.Context, db Database, owner, name string) 
 		executeHTTPPoll(ctx, db, m)
 	case EventKindWatch:
 		executeWatchPoll(ctx, db, m)
+	case EventKindTimer:
+		executeTimer(ctx, db, m)
 	}
 	return nil
+}
+
+// executeTimer is a timer going off. There is no condition to test and no
+// value to compare: the check IS the fire. The summary names the moment in
+// the owner's zone, since "it is 1:10pm" is the whole message; the brief
+// says what the agent does with it. A timer is created with MaxFires=1, so
+// fireWake's allowance stops it after this; the belt-and-braces stop below
+// covers a record edited out of that cap, because a timer that fires on
+// every re-arm is an alarm nobody can switch off.
+func executeTimer(ctx context.Context, db Database, m EventMonitor) {
+	now := time.Now().In(UserLocation(m.Owner))
+	summary := fmt.Sprintf("Timer %q went off: it is %s.", m.Name, now.Format("3:04 PM MST, Mon Jan 2"))
+	cur, ok := GetEventMonitor(db, m.Owner, m.Name)
+	if !ok {
+		return
+	}
+	cur.LastFired = now
+	cur.LastResult = now.Format(time.RFC3339)
+	SaveEventMonitor(db, cur)
+	fireWake(ctx, db, m.Owner, m.Name, summary, EventKindTimer)
+	if cur, ok := GetEventMonitor(db, m.Owner, m.Name); ok && !cur.Paused && !cur.FireAt.IsZero() {
+		StopEventMonitor(db, m.Owner, m.Name, MonitorStopFinished,
+			"Went off at "+now.Format("3:04 PM")+" and stopped. Nothing is broken: a timer fires once. Resume it to fire again now, or set a new one.")
+	}
 }
 
 // executeEventPoll runs the checker agent and, when its answer matches and
@@ -2108,6 +2155,23 @@ func ValidCompareOp(op string) bool {
 		return true
 	}
 	return false
+}
+
+// ValidateThreshold reports whether threshold can ever be compared with op.
+// The numeric operators parse both sides as floats at every check, so a
+// threshold that is not a number fails every check from the first one: the
+// monitor is created, reported as set up, and parked as failing a minute
+// later with nothing delivered. Refusing it here, with the operator that
+// would work, is the difference between a tool error the agent can fix in
+// the same turn and an alert that silently never comes.
+func ValidateThreshold(op, threshold string) error {
+	switch op {
+	case "<", ">", "<=", ">=":
+		if _, err := strconv.ParseFloat(strings.TrimSpace(threshold), 64); err != nil {
+			return fmt.Errorf("compare_op %s needs a numeric threshold, got %q: for text use == or contains; for a time of day, set a timer instead of a monitor", op, threshold)
+		}
+	}
+	return nil
 }
 
 // FireEventMonitor wakes the Operator for a webhook event. Public so the
