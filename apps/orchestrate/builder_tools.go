@@ -158,6 +158,12 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 	if t != nil {
 		tools = append(tools, bulletinsToolDef(t))
 	}
+	// save_template — package what was built as a template in Admin >
+	// Templates. An administrator's only, and every call stops for their
+	// approval (save_template_tool.go).
+	if UserIsAdmin(authoringUser) {
+		tools = append(tools, saveTemplateToolDef(authoringUser))
+	}
 	return tools
 }
 
