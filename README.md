@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="docs/images/logo-light.svg">
-    <img alt="gohort" src="docs/images/logo-light.svg" width="369">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/gohort-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/gohort-logo-light.svg">
+    <img alt="gohort" src="docs/images/gohort-logo-light.svg" width="369">
   </picture>
 </p>
 
