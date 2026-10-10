@@ -65,7 +65,7 @@ func TestSetTimerCreatesAnArmedOneShotTimer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "4 minutes from now") || !strings.Contains(out, "fires once") {
+	if !strings.Contains(out, "4 minutes from now") || !strings.Contains(out, "removes itself") {
 		t.Errorf("the confirmation does not say when or that it is one-shot: %q", out)
 	}
 	ms := ListEventMonitors(db, "craig")
@@ -73,7 +73,7 @@ func TestSetTimerCreatesAnArmedOneShotTimer(t *testing.T) {
 		t.Fatalf("expected 1 monitor, got %d", len(ms))
 	}
 	m := ms[0]
-	if m.Kind != EventKindTimer || m.MaxFires != 1 || m.FireAt.IsZero() || m.WakeBrief != "tell the user it's 1:10pm" {
+	if m.Kind != EventKindTimer || !m.OneShot || m.FireAt.IsZero() || m.WakeBrief != "tell the user it's 1:10pm" {
 		t.Errorf("timer record wrong: %+v", m)
 	}
 	if m.WakeAgent != "agent-1" || m.WakeSession != "sess-1" {

@@ -176,9 +176,10 @@ type EventMonitor struct {
 	// bulletin looks at 08:00, not every N seconds from whenever it was made.
 	DailyAt []int `json:"daily_at,omitempty"`
 
-	// timer kind: the one moment it fires. A timer always carries MaxFires=1,
-	// so fireWake's allowance stops it; a resumed timer whose moment has
-	// passed goes off again at once (the owner asked for it again).
+	// timer kind: the one moment it fires. A timer is created OneShot, so
+	// fireWake removes it once it has gone off: a fired timer has nothing to
+	// resume, and the run ledger row says it went off. One edited out of that
+	// is stopped by executeTimer instead.
 	FireAt time.Time `json:"fire_at,omitempty"`
 
 	// http_poll kind
@@ -1165,10 +1166,10 @@ func RunEventMonitorCheck(ctx context.Context, db Database, owner, name string) 
 // executeTimer is a timer going off. There is no condition to test and no
 // value to compare: the check IS the fire. The summary names the moment in
 // the owner's zone, since "it is 1:10pm" is the whole message; the brief
-// says what the agent does with it. A timer is created with MaxFires=1, so
-// fireWake's allowance stops it after this; the belt-and-braces stop below
-// covers a record edited out of that cap, because a timer that fires on
-// every re-arm is an alarm nobody can switch off.
+// says what the agent does with it. A timer is created OneShot, so fireWake
+// removes it after this (the ledger row keeps the outcome); the stop below
+// covers a record edited out of that, because a timer that fires on every
+// re-arm is an alarm nobody can switch off.
 func executeTimer(ctx context.Context, db Database, m EventMonitor) {
 	now := time.Now().In(UserLocation(m.Owner))
 	summary := fmt.Sprintf("Timer %q went off: it is %s.", m.Name, now.Format("3:04 PM MST, Mon Jan 2"))
