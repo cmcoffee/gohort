@@ -148,7 +148,7 @@ miss. It returns the banner and drops the payload.
 offending text so the user can see what was found. That quote is attacker-authored text being
 placed inside a trusted-looking framework marker, by the mechanism that just flagged it. Left
 raw, a page could get arbitrary text carried into context, including a forged `[ATTACH: …]` or
-`<gohort-meta>` marker, or a second injection riding in on the detection of the first.
+`<oddjob-meta>` marker, or a second injection riding in on the detection of the first.
 
 `sanitizeScanSpan` closes it in three passes: `textutil.StripMetaTags` for the framework's own
 directive vocabulary, bracket characters folded to lookalikes so a span can never close the

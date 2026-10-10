@@ -42,7 +42,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const webhookSecretTable = "bridges_webhook_secrets" // connector name → signing secret (encrypted)

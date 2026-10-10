@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/notices"
-	"github.com/cmcoffee/gohort/core/shareledger"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/notices"
+	"github.com/cmcoffee/oddjob/core/shareledger"
 )
 
 // depStores wires every store the path touches onto one in-memory root, with

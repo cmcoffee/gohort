@@ -4,7 +4,7 @@
   "description": "A minimal general-purpose research agent template. Installs under your account; open it in Agency to customize the persona, rules, and tools.",
   "category": "Agents",
   "bundle": {
-    "bundle": "gohort.bundle/v1",
+    "bundle": "oddjob.bundle/v1",
     "artifacts": [
       {
         "type": "agent",

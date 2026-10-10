@@ -14,8 +14,8 @@ import (
 	"net/url"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 const (
@@ -29,7 +29,7 @@ const (
 	// web_assets) with the currently selected agent ID, so the server can
 	// honor the last-accessed preference at page render without a
 	// per-switch API write.
-	lastAgentCookie = "gohort_last_agent"
+	lastAgentCookie = "oddjob_last_agent"
 )
 
 // accountSection builds the "Agents" preferences block for /account.

@@ -367,7 +367,7 @@ func NormalizeHeadingLinks(md string) string {
 var internalAnchorLinkRe = regexp.MustCompile(`\[([^\]\n]+)\]\(#[^)\n]*\)`)
 
 // HeadingSlug is one heading of a markdown document: its text, without
-// inline markdown, and the anchor gohort's renderer gives it.
+// inline markdown, and the anchor oddjob's renderer gives it.
 type HeadingSlug = headingSlug
 
 // HeadingSlugs lists a markdown document's headings in order with their

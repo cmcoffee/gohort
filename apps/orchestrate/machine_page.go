@@ -24,8 +24,8 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func init() {
@@ -298,7 +298,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		Sticky: machineMapCard(def),
 		Head: ui.NewHead().
 			JS(ArtifactClientJS).
-			ClientAction("export_machine", `function(ctx){ window.gohortArtifacts.exportAction('machine', 'id', 'name')(ctx); }`).
+			ClientAction("export_machine", `function(ctx){ window.oddjobArtifacts.exportAction('machine', 'id', 'name')(ctx); }`).
 			ClientAction("machine_remove_step", machineRemoveStepJS).
 			ClientAction("machine_move_step", machineMoveStepJS).
 			ClientAction("machine_try", machineTryJS).

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // A declarative app has no ExtraHeadHTML, so the ONLY way it can register a

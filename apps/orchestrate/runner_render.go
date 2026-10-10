@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // activityCheapID returns a monotonic short id for an activity row.

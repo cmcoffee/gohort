@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/sources"
+	"github.com/cmcoffee/oddjob/core/sources"
 )
 
 // The pages these tools read, as sources a pipeline run can number and cite

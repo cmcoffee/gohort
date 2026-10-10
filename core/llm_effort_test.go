@@ -234,7 +234,7 @@ func TestOpenAISendsReasoningEffortAndBelievesARefusal(t *testing.T) {
 		t.Errorf("reasoning_effort = %v, want medium", first["reasoning_effort"])
 	}
 	if _, ok := first["think"]; ok {
-		t.Error("the gohort-local think flag went to a hosted OpenAI endpoint alongside reasoning_effort")
+		t.Error("the oddjob-local think flag went to a hosted OpenAI endpoint alongside reasoning_effort")
 	}
 
 	// A model that refuses it: one 400, one retry without it, then never again.

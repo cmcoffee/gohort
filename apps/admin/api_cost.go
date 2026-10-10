@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registerCostRoutes wires the cost API under the admin sub-mux.

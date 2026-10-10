@@ -1,7 +1,7 @@
 package admin
 
 import (
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // importExportSections opens the Extensions tab: bringing an extension in
@@ -27,7 +27,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		{
 			Title:    "MCP Servers",
 			Subtitle: "Remote Model Context Protocol (MCP) servers this server connects to, such as Confluence.",
-			Detail:   "The gohort SERVER connects to them over HTTP.\n\n\"Expose tools\" registers each server's tools as <name>.<tool> for agents. \"Expose as a reference source\" makes it selectable in writer and research source pickers.\n\nBearer tokens are stored encrypted; secure_api mode mints and refreshes an OAuth2 bearer per request from an API Credential. Test verifies reachability and auth before you enable.",
+			Detail:   "The oddjob SERVER connects to them over HTTP.\n\n\"Expose tools\" registers each server's tools as <name>.<tool> for agents. \"Expose as a reference source\" makes it selectable in writer and research source pickers.\n\nBearer tokens are stored encrypted; secure_api mode mints and refreshes an OAuth2 bearer per request from an API Credential. Test verifies reachability and auth before you enable.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -120,7 +120,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "MCP Tools (exposed to external clients)",
-			Subtitle: "App-contributed tools on gohort's own inbound MCP endpoint (/mcp/).",
+			Subtitle: "App-contributed tools on oddjob's own inbound MCP endpoint (/mcp/).",
 			Detail:   "This is what an external MCP client, say Claude Desktop authenticated with a bridge key, can call to drive your apps. Each tool is OFF by default: expose only the ones you want reachable from outside. The built-in ask_agent and recent_results tools are always available.",
 			Body: ui.Stack{
 				Children: []ui.Component{
@@ -238,7 +238,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 					//
 					// Export — per-row Export (in the table above) grabs one
 					// connector; these buttons grab whole sets as one secret-free
-					// gohort.bundle/v1. "Export everything" spans every artifact
+					// oddjob.bundle/v1. "Export everything" spans every artifact
 					// type (connectors + tools + future types).
 					ui.Toolbar{
 						Actions: []ui.ToolbarAction{
@@ -273,7 +273,7 @@ func mcpServerFormFields() []ui.FormField {
 		{Field: "token", Label: "Bearer token", Type: "password", ShowWhen: "auth_mode:bearer", Help: "Stored encrypted. Leave blank when editing to keep the existing token."},
 		{Field: "secure_cred", Label: "SecureAPI credential name", Placeholder: "confluence_oauth", ShowWhen: "auth_mode:secure_api", Help: "An OAuth2 credential configured under API Credentials. Its bearer token is minted/refreshed per request."},
 		{Field: "oauth_note", Type: "header", Label: "Hosted login: Save first, then click Connect on the server's row to authorize. Each user connects their own account, from here or from Extensions → Connections. The callback host must be https or localhost. With a pre-registered client, register both redirect URIs listed under Client ID below.", ShowWhen: "auth_mode:oauth"},
-		{Field: "oauth_client_id", Label: "Client ID (only if no auto-registration)", ShowWhen: "auth_mode:oauth", Help: "Leave it BLANK for the normal flow, where gohort auto-registers a client.",
+		{Field: "oauth_client_id", Label: "Client ID (only if no auto-registration)", ShowWhen: "auth_mode:oauth", Help: "Leave it BLANK for the normal flow, where oddjob auto-registers a client.",
 			Detail: "That is Dynamic Client Registration. Fill this in ONLY when the provider does not support auto-registration: pre-register an OAuth app at the provider and paste the issued client_id here.\n\nRegister BOTH redirect URIs on it. <this host>/admin/api/mcp-servers/oauth/callback serves the Connect button on this page, and <this host>/account/mcp/callback serves every user connecting their own account from Extensions or a chat prompt.\n\nThey are different paths because the admin area is admin-only, so a non-admin cannot complete a consent that lands there. A provider that has only the first will reject the second with \"the app's callback URL is invalid\"."},
 		{Field: "oauth_client_secret", Label: "Client secret (optional)", Type: "password", ShowWhen: "auth_mode:oauth;oauth_client_id", Help: "Only for a manual Client ID that the provider made confidential.",
 			Detail: "Stored encrypted. Leave it blank to keep the existing one, and blank for public PKCE clients."},
@@ -304,10 +304,10 @@ func (a *AdminApp) templatesSection() ui.Section {
 	yesNo := []ui.SelectOption{{Value: "", Label: "No"}, {Value: "yes", Label: "Yes"}}
 	return ui.Section{
 		Title:    "Templates",
-		Subtitle: "Recipes for integrating a service with gohort: answer a few questions, and its credential, tools and the rest are set up as drafts for review.",
+		Subtitle: "Recipes for integrating a service with oddjob: answer a few questions, and its credential, tools and the rest are set up as drafts for review.",
 		Detail: "A template asks what it needs (a site address, your email, an API token), fills the answers in, and adds its pieces through the same importer as a bundle file: credentials disabled until you test them, tools pending approval. " +
 			"A secret you give goes straight into its credential's secret store and never into a tool or a file.\n\n" +
-			"Built-in templates ship with gohort. Import one someone shared, or Save as template to make one from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
+			"Built-in templates ship with oddjob. Import one someone shared, or Save as template to make one from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
 			"Built-in forms are the older kind, written in code: each authors one connector or tool from its fields.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Toolbar{Actions: []ui.ToolbarAction{

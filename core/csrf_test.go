@@ -35,13 +35,13 @@ func TestSameOriginRequest(t *testing.T) {
 		{"neither present fails open", "app.example.com", "", "", true},
 		{"malformed origin rejected", "app.example.com", "://bad", "", false},
 		{"host compare is case-insensitive", "App.Example.com", "https://app.example.com", "", true},
-		// gohort-desktop webview: loopback origin → remote server host. Allowed.
-		{"desktop loopback 127.0.0.1", "gohort.example.com", "http://127.0.0.1:34567", "", true},
-		{"desktop localhost", "gohort.example.com", "http://localhost:8080", "", true},
-		{"desktop wails.localhost", "gohort.example.com", "http://wails.localhost", "", true},
-		{"desktop ipv6 loopback", "gohort.example.com", "http://[::1]:9000", "", true},
+		// oddjob-desktop webview: loopback origin → remote server host. Allowed.
+		{"desktop loopback 127.0.0.1", "oddjob.example.com", "http://127.0.0.1:34567", "", true},
+		{"desktop localhost", "oddjob.example.com", "http://localhost:8080", "", true},
+		{"desktop wails.localhost", "oddjob.example.com", "http://wails.localhost", "", true},
+		{"desktop ipv6 loopback", "oddjob.example.com", "http://[::1]:9000", "", true},
 		// A remote site can never present a loopback origin — normal cross-origin stays blocked.
-		{"remote evil not loopback", "gohort.example.com", "https://evil.com", "", false},
+		{"remote evil not loopback", "oddjob.example.com", "https://evil.com", "", false},
 	}
 	for _, c := range cases {
 		if got := SameOriginRequest(csrfReq(c.host, c.origin, c.referer)); got != c.want {

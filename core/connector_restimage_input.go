@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/oddjob/core/media"
 )
 
 // maxInputImageBytes caps one source photo. Generous for a phone photo, small
@@ -446,7 +446,7 @@ func uniqueUploadName(name string) string {
 	if ext == "" {
 		ext = ".png"
 	}
-	return "gohort-" + UUIDv4() + ext
+	return "oddjob-" + UUIDv4() + ext
 }
 
 func decodeBase64Image(b64 string) ([]byte, error) {
@@ -514,7 +514,7 @@ func (s RestImageSpec) uploadImage(sess *ToolSession, img inputImage) (ComfyUplo
 		Reader:    bytes.NewReader(img.data),
 		FieldName: field,
 		FileName:  uniqueUploadName(img.name),
-		Fields:    map[string]string{"subfolder": "gohort", "type": "input"},
+		Fields:    map[string]string{"subfolder": "oddjob", "type": "input"},
 	}
 
 	raw, err := s.dispatchImageUpload(sess, s.UploadURL, up)

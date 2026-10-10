@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/oddjob/core/bundle"
 )
 
 // Caps. These are deliberately not configurable.

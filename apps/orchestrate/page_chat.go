@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // handleChatPage renders the orchestrate chat surface — a single
@@ -811,7 +811,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "copy_session"},
 						{Group: "Session", Label: "Save log", Title: "Download the current session as a Markdown transcript (full trace with tool calls). Useful for sharing or debugging.",
 							Method: "client", URL: "orchestrate_export_session"},
-						{Group: "Session", Label: "Export", Title: "Download this conversation as a file another gohort can import. It opens there read-only, with a Continue to carry it on.",
+						{Group: "Session", Label: "Export", Title: "Download this conversation as a file another oddjob can import. It opens there read-only, with a Continue to carry it on.",
 							Method: "client", URL: "orchestrate_bundle_session"},
 						{Group: "Session", Label: "Continue", Title: "Carry an imported conversation into a new one. The imported transcript goes along as quoted background, never as the agent's own history.",
 							Method: "client", URL: "orchestrate_continue_session"},

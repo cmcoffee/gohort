@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/promotion"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/promotion"
 )
 
 func skillDefCall(t *testing.T, sess *ToolSession, args map[string]any) (string, error) {

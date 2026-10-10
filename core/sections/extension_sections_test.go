@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func TestExtensionSectionsSortByOrderThenRegistration(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // knowledgeHints/memoryHints are the pure converters behind the scored sources:

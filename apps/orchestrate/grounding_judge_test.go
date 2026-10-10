@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The judge asks for a verbatim quote and gets one — quotation marks included,

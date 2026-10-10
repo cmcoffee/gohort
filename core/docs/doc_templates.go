@@ -3,7 +3,7 @@
 
 package docs
 
-import "github.com/cmcoffee/gohort/core/ui"
+import "github.com/cmcoffee/oddjob/core/ui"
 
 // MarkdownDocTemplates are the starting skeletons a writer app offers for
 // a new markdown document. They exist to kill the blank page for the

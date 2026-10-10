@@ -28,7 +28,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/sourcehooks"
+	"github.com/cmcoffee/oddjob/core/sourcehooks"
 )
 
 // remotePeersTable holds RemotePeer records in RootDB, keyed by Name.

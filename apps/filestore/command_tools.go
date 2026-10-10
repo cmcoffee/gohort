@@ -35,9 +35,9 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 
-	"github.com/cmcoffee/gohort/tools/temptool"
+	"github.com/cmcoffee/oddjob/tools/temptool"
 )
 
 // SaveCommandTools records what a mapping conversation worked out, onto the
@@ -191,7 +191,7 @@ func (s storeSource) commandToolDefs(sess *ToolSession, user string, st Store) [
 // the agent only supplies values, but "{name}" standing alone in the command
 // line lets a value like "--output=/elsewhere" or "-e ..." become an option of
 // that binary, which is choosing its behaviour rather than its input. Same
-// rule gohort-desktop applies to declared commands. A folder resolved by
+// rule oddjob-desktop applies to declared commands. A folder resolved by
 // path_scope is an absolute path and never trips it.
 func refuseOptionArgs(tools []*TempTool, defName string, h ToolHandlerFunc) ToolHandlerFunc {
 	if h == nil {

@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // overviewCard is one card in either pane. The card renderer shows values,

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxSchemaKeptRefs is how many references are named before the list defers to

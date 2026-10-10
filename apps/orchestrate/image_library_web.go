@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // urlQ escapes a value for a query string. An agent id is a uuid and a kept

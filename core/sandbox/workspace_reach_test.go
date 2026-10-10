@@ -13,7 +13,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 func argvHasUnshareNet(allowNetwork bool) bool {

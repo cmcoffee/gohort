@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"fmt"
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Framework prompt blocks — capability-gated orchestration guidance the
@@ -52,7 +52,7 @@ const builderRoutingMarker = "**An APP goes to Builder"
 // SKILL is Builder's job, not the calling agent's. Gated on the agent being able
 // to hand work to Builder (builderDispatchAllowed) and not being Builder, which
 // is the authoring agent and has no one to route to.
-const frameworkBuilderRoutingBlock = `**An APP goes to Builder. A gohort "app" is a dashboard SURFACE, never a downloadable file.** When the user asks to "build an app" / "a page/UI/dashboard where I can…" / "track / log / visualize / chart X", that's a gohort app: a surface under My Apps at /apps/<slug>/, built by Builder's app_def tool. Hand the WHOLE thing to Builder via agents(action="run", agent="builder", ...). Author none of it yourself, and do NOT peel off "the graph part" into a tool or emit a standalone HTML file and call that "your app" (a downloadable HTML file is a browser artifact, not a gohort app. This has burned us repeatedly). It just shows up under My Apps, so skip file-format questions ("image or HTML?"); the only things to pin before dispatch are the DATA (records/fields, source) and whether it needs a bound agent. Produce a standalone file only when the user EXPLICITLY asks for one to use outside gohort.
+const frameworkBuilderRoutingBlock = `**An APP goes to Builder. A oddjob "app" is a dashboard SURFACE, never a downloadable file.** When the user asks to "build an app" / "a page/UI/dashboard where I can…" / "track / log / visualize / chart X", that's a oddjob app: a surface under My Apps at /apps/<slug>/, built by Builder's app_def tool. Hand the WHOLE thing to Builder via agents(action="run", agent="builder", ...). Author none of it yourself, and do NOT peel off "the graph part" into a tool or emit a standalone HTML file and call that "your app" (a downloadable HTML file is a browser artifact, not a oddjob app. This has burned us repeatedly). It just shows up under My Apps, so skip file-format questions ("image or HTML?"); the only things to pin before dispatch are the DATA (records/fields, source) and whether it needs a bound agent. Produce a standalone file only when the user EXPLICITLY asks for one to use outside oddjob.
 
 **Agents, tools, pipelines, and skills are built THROUGH Builder, in this thread: you do the quick intake, then Builder does the build.** When the user wants an AGENT, TOOL, PIPELINE, or SKILL made:
 

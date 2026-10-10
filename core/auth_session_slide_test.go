@@ -31,7 +31,7 @@ func TestNoRenewalBeforeHalfway(t *testing.T) {
 }
 
 // Past the halfway mark an active session slides out to a full window from now.
-// This is the whole point: working in gohort must not log you out.
+// This is the whole point: working in oddjob must not log you out.
 func TestRenewalPastHalfway(t *testing.T) {
 	withSessionDays(7, 90, func() {
 		now := time.Now()

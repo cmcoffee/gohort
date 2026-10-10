@@ -3,7 +3,7 @@ package orchestrate
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The catalog is assembled from several independent appends, and a name can

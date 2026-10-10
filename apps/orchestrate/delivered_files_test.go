@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // What a turn delivered that is not a picture is kept with enough to offer it

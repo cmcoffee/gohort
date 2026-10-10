@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Only Builder fetches a credential's API directly by default. Another agent

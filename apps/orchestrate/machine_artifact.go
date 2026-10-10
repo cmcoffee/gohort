@@ -1,5 +1,5 @@
 // Machine as a portable artifact: wires MachineDef into the unified
-// gohort.bundle/v1 surface (core/artifact_pack.go).
+// oddjob.bundle/v1 surface (core/artifact_pack.go).
 //
 // Machines already had a portable recipe (ExportMachine / ImportMachine)
 // and their own HTTP export/import; what was missing was membership in
@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // RegisterMachineArtifactType wires the "machine" type into the

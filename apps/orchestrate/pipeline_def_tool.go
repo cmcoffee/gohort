@@ -26,7 +26,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
@@ -724,7 +724,7 @@ func (t *chatTurn) runPipelineDefInline(def PipelineDef, input string) (string, 
 	ctx := t.guardedRunContext(t.ctx)
 	// Status callback fans out to BOTH the activity pane (SSE chip)
 	// AND the diag log. Without the Log fan-out, pipeline stage events
-	// vanished from gohort.log — making "did the pipeline actually run
+	// vanished from oddjob.log — making "did the pipeline actually run
 	// these stages?" un-greppable. Same string in both places so the
 	// SSE chip and log line correlate by content.
 	status := func(s string) {

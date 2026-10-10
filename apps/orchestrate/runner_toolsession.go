@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/temptool"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/temptool"
 )
 
 // Framework tools this app assembles per turn, reserved so a temp tool cannot
@@ -493,7 +493,7 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	}
 	// Credential scope — the set of credentials this agent has been denied
 	// (scope pill). Carried on the session so the fetch_url auto-route (LLM
-	// tool + script gohort.fetch_url) blocks a covered host whose credential
+	// tool + script oddjob.fetch_url) blocks a covered host whose credential
 	// is revoked, closing the bypass that the tool-kit filter alone leaves
 	// open (a plain fetch to the host instead of a credential-bound tool).
 	// One background-job allowance for the whole turn, not one per session. A

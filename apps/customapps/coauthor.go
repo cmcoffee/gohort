@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // activeTable holds the open-record id per app slug (within a user's store).

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // "all" is printed back by update_phase and offered by the schema enum, while

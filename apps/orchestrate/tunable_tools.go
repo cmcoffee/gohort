@@ -16,7 +16,7 @@
 
 package orchestrate
 
-import "github.com/cmcoffee/gohort/core/prompts"
+import "github.com/cmcoffee/oddjob/core/prompts"
 
 var authoringToolNames = []string{
 	"survey", "create_agent", "update_agent", "list_reference_sources", "archetype", "clone_agent",

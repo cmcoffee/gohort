@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // renamedToolAliases maps retired tool names to their current equivalents.

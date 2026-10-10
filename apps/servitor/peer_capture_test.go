@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // An exec run for a peer returns its capture whole, and the calling side

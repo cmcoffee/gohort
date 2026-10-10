@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // everyAdminSection is every section the page appends, by title.

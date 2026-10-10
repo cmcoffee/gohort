@@ -3,7 +3,7 @@ package bridges
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // An empty sender handle is the owner only on iMessage, where the daemon

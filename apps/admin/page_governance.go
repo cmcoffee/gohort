@@ -1,7 +1,7 @@
 package admin
 
 import (
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // governanceSections is the governance part of the admin page: User-owned credentials, Global tools, User-owned agents, User-owned pipelines, User-owned machines, Pending promotions.

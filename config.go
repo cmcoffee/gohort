@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/buildledger"
-	"github.com/cmcoffee/gohort/core/media"
-	"github.com/cmcoffee/gohort/core/replyguard"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/buildledger"
+	"github.com/cmcoffee/oddjob/core/media"
+	"github.com/cmcoffee/oddjob/core/replyguard"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"github.com/cmcoffee/snugforge/machineid"
 
@@ -378,7 +378,7 @@ func maybeQuickstart() {
 // the one part of first-run setup that never worked right. A fresh install
 // serves with no model configured, and the first admin sets one up at /admin.
 func setup_quickstart() {
-	Stdout("\n=== Gohort first-time setup ===\n")
+	Stdout("\n=== Oddjob first-time setup ===\n")
 	Stdout("A few questions to get you running. Everything else has a safe\n")
 	Stdout("default you can tune afterward in the full menu.\n")
 
@@ -415,7 +415,7 @@ func setup_quickstart() {
 		saveWebString("addr", addr)
 	}
 
-	Stdout("\nDone. Start the server with:\n\n  gohort serve\n\n")
+	Stdout("\nDone. Start the server with:\n\n  oddjob serve\n\n")
 	Stdout("Then finish setting up in the browser:\n\n  %s\n\n", setupDashboardURL())
 	Stdout("Sign in as the admin account above. The model, search, embeddings,\n")
 	Stdout("transcription and the rest are configured there: this menu only\n")
@@ -475,7 +475,7 @@ func setup_fuzz() {
 	global.db.Get(MailTable, "password", &mailPass)
 	global.db.Get(MailTable, "recipient", &mailRecipient)
 
-	setup := NewOptions("--- Gohort Configuration ---", "(selection or 'q' to save & exit)", 'q')
+	setup := NewOptions("--- Oddjob Configuration ---", "(selection or 'q' to save & exit)", 'q')
 
 	// LLM settings are NOT here. Routing, providers and image generation all
 	// live at /admin, which owns the whole surface — worker and lead tiers,
@@ -493,7 +493,7 @@ func setup_fuzz() {
 	var webAdminIPs string
 	var webAdminUser, webAdminPass string
 	var webMaxLoginAttempts int
-	// Operator-set-once settings live in gohort.ini (with one-time
+	// Operator-set-once settings live in oddjob.ini (with one-time
 	// migration from the kvlite store baked into the helpers). The
 	// remaining DB-only settings stay on the global.db.Get path.
 	webAddr = loadWebString("addr", "")
@@ -924,7 +924,38 @@ func cfgFilePath() string {
 	if global.cfg_path != "" {
 		return FormatPath(global.cfg_path)
 	}
-	return FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME))
+	p := FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME))
+	// An install from before the rename has its settings, and the database
+	// padlock, in gohort.ini. That file stays the one read and written for
+	// as long as it is there and no oddjob.ini has been made beside it.
+	if legacy := FormatPath(fmt.Sprintf("%s/%s.ini", global.root, legacyAppName)); !fileExists(p) && fileExists(legacy) {
+		return legacy
+	}
+	return p
+}
+
+// legacyAppName is what the project was called before it was Oddjob. The
+// data files and the config file of an install from then carry it, and they
+// go on carrying it: renaming a running deployment's databases is a migration
+// nobody asked for, and a wrong guess starts the server on empty ones.
+const legacyAppName = "gohort"
+
+// storageName is the name this install's data files carry: the app's, unless
+// the main database already exists under the old name and not the new.
+func storageName(dataDir string) string {
+	if fileExists(FormatPath(fmt.Sprintf("%s/%s.db", dataDir, APPNAME))) {
+		return APPNAME
+	}
+	if fileExists(FormatPath(fmt.Sprintf("%s/%s.db", dataDir, legacyAppName))) {
+		Log("data files keep their %s names: %s.db is here and no %s.db is", legacyAppName, legacyAppName, APPNAME)
+		return legacyAppName
+	}
+	return APPNAME
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
 }
 
 // loadWebString reads a web setting, preferring the INI file and
@@ -1028,7 +1059,7 @@ func saveWebBool(key string, value bool) {
 }
 
 // init_config_file loads the operator-tuned INI config file
-// (<root>/gohort.ini) into global.cfg. Missing-file is not fatal —
+// (<root>/oddjob.ini) into global.cfg. Missing-file is not fatal —
 // the cfg.Store still records the path so the next TrimSave creates
 // it on disk. Defaults from defaultINITemplate seed any keys absent
 // from both the file and (later) the kvlite-mirror migration.
@@ -1066,12 +1097,12 @@ func init_config_file() {
 	}
 }
 
-// defaultINITemplate seeds a fresh gohort.ini with the operator-tuned
+// defaultINITemplate seeds a fresh oddjob.ini with the operator-tuned
 // settings, each commented so a human editing the file knows what
 // every entry means. Defaults are deliberately empty for paths/IPs
 // (so an unset cert path falls through to self-signed generation)
 // and conservative for capacity (max_concurrent=1).
-const defaultINITemplate = `# gohort configuration file
+const defaultINITemplate = `# oddjob configuration file
 #
 # Settings here are operator-set-once infrastructure: bind address,
 # TLS paths, capacity ceilings, IP allowlists. Edit then restart the
@@ -1121,13 +1152,13 @@ lock = portable
 # to the historical layout under the binary's directory:
 #   data_dir → <binary-dir>/data
 #   logs_dir → <binary-dir>/logs
-# Override to put state on a separate volume (e.g. /var/lib/gohort,
-# /var/log/gohort) without symlinks. Sub-directories (images,
+# Override to put state on a separate volume (e.g. /var/lib/oddjob,
+# /var/log/oddjob) without symlinks. Sub-directories (images,
 # browser, geocode, workspaces, the kvlite database) live inside
 # data_dir and follow it automatically.
 data_dir =
 logs_dir =
-# vector_dir holds the embedding/vector store (gohort_vectors.db)
+# vector_dir holds the embedding/vector store (oddjob_vectors.db)
 # a derived, regenerable cache that is the hot path for semantic
 # search. Empty = co-located with data_dir (unchanged behavior).
 # Point it at a fast LOCAL disk (e.g. an SSD) when data_dir lives on
@@ -1137,7 +1168,7 @@ logs_dir =
 vector_dir =
 
 # repo_dir holds the repo browser's cloned+encrypted source cache
-# (gohort_repos.db). Like vector_dir it is a bulk, re-clonable cache
+# (oddjob_repos.db). Like vector_dir it is a bulk, re-clonable cache
 # point it at a fast LOCAL disk when data_dir lives on network storage,
 # and it need not be backed up (if lost, re-clone). Empty = co-located
 # with data_dir.
@@ -1155,7 +1186,7 @@ func init_database() {
 
 	// data_dir holds the kvlite database and every per-app
 	// subdirectory (images, browser, geocode, workspaces). Operators
-	// override via [paths] data_dir = ... in gohort.ini to relocate
+	// override via [paths] data_dir = ... in oddjob.ini to relocate
 	// state onto a dedicated volume.
 	data_dir := loadPath("data_dir", fmt.Sprintf("%s/data", global.root))
 	MkDir(data_dir + "/")
@@ -1167,7 +1198,8 @@ func init_database() {
 	// at /custom/<slug>/assets/<name>.
 	SetAppAssetsDir(data_dir + "/app_assets")
 
-	db_filename := FormatPath(fmt.Sprintf("%s/%s.db", data_dir, APPNAME))
+	storeName := storageName(data_dir)
+	db_filename := FormatPath(fmt.Sprintf("%s/%s.db", data_dir, storeName))
 	global.db, err = SecureDatabase(db_filename)
 	Critical(err)
 	// RootDB is set HERE, not by the caller. It used to be assigned on one
@@ -1201,7 +1233,7 @@ func init_database() {
 	// on first boot after upgrade.
 	vector_dir := loadPath("vector_dir", data_dir)
 	MkDir(vector_dir + "/")
-	vec_filename := FormatPath(fmt.Sprintf("%s/%s_vectors.db", vector_dir, APPNAME))
+	vec_filename := FormatPath(fmt.Sprintf("%s/%s_vectors.db", vector_dir, storeName))
 	VectorDB, err = SecureDatabase(vec_filename)
 	Critical(err)
 	// Build the chunk snapshot now, in the background, so the first person to
@@ -1215,7 +1247,7 @@ func init_database() {
 	// are encrypted on disk automatically.
 	repo_dir := loadPath("repo_dir", data_dir)
 	MkDir(repo_dir + "/")
-	repo_filename := FormatPath(fmt.Sprintf("%s/%s_repos.db", repo_dir, APPNAME))
+	repo_filename := FormatPath(fmt.Sprintf("%s/%s_repos.db", repo_dir, storeName))
 	RepoFilesDB, err = SecureDatabase(repo_filename)
 	Critical(err)
 
@@ -1229,7 +1261,7 @@ func init_database() {
 	// wherever os.TempDir happens to point.
 	bundle_dir := loadPath("bundle_dir", data_dir)
 	MkDir(bundle_dir + "/")
-	bundle_filename := FormatPath(fmt.Sprintf("%s/%s_bundles.db", bundle_dir, APPNAME))
+	bundle_filename := FormatPath(fmt.Sprintf("%s/%s_bundles.db", bundle_dir, storeName))
 	BundleFilesDB, err = SecureDatabase(bundle_filename)
 	Critical(err)
 	SetBulkStagingDir(FormatPath(bundle_dir + "/staging"))
@@ -1240,7 +1272,7 @@ func init_database() {
 	// owns the padlock + data dir, so it injects the concrete open here; core
 	// caches the handle per name.
 	SetPrivateDBOpener(func(name string) (Database, error) {
-		return SecureDatabase(FormatPath(fmt.Sprintf("%s/%s_%s.db", data_dir, APPNAME, name)))
+		return SecureDatabase(FormatPath(fmt.Sprintf("%s/%s_%s.db", data_dir, storeName, name)))
 	})
 
 	// Wire the persistent source hook cache to the global cache sub-database.
@@ -1308,8 +1340,8 @@ func init_database() {
 }
 
 // init_logging initializes the logging system. STD/AUX go to the
-// main gohort.log; TRACE (wire-level HTTP / streaming chatter) goes
-// to a sibling gohort.trace.log so the main log stays readable. The
+// main oddjob.log; TRACE (wire-level HTTP / streaming chatter) goes
+// to a sibling oddjob.trace.log so the main log stays readable. The
 // trace file is only opened when --trace or --snoop is set —
 // creating an empty rotating file on every run for nothing wastes
 // inodes and confuses anyone debugging.
@@ -1372,7 +1404,7 @@ func setupTraceFile(logs_dir string) {
 // setting asks for (padlockPlan), moving one still under an older padlock to
 // it in place. When no padlock this machine has opens it, its encrypted
 // values (API keys, credential secrets, OAuth tokens) are cleared and the
-// rest opens, as gohort always did: the owner's choice, over refusing to
+// rest opens, as oddjob always did: the owner's choice, over refusing to
 // start or keeping copies.
 func SecureDatabase(file string) (Database, error) {
 	return secureDatabaseWith(file, currentPadlocks())
@@ -1474,11 +1506,11 @@ func currentPadlocks() padlockPlan {
 
 // planPadlocks decides the padlock from the [database] lock setting.
 //
-//   - portable (the default): random bytes kept in gohort.ini under
+//   - portable (the default): random bytes kept in oddjob.ini under
 //     [do_not_modify] db_locker; the data directory opens anywhere with that
 //     ini.
 //   - machine (opt-in): this machine's OS install identity, hashed for
-//     gohort (snugforge/machineid). Never stored: the database opens only on
+//     oddjob (snugforge/machineid). Never stored: the database opens only on
 //     this machine. Not a MAC address: those reorder between starts.
 //
 // Before either, every database was under the first MAC address, so the MAC
@@ -1493,9 +1525,9 @@ func planPadlocks(store *ConfigStore, iniPath string, id func(string) ([]byte, e
 	lock := strings.ToLower(strings.TrimSpace(store.Get("database", "lock")))
 	if lock == "machine" {
 		if idErr == nil {
-			return padlockPlan{target: mid, fallbacks: [][]byte{saved, mac}, names: []string{"gohort.ini's saved", "network-address (MAC)"}, mode: "machine"}, ""
+			return padlockPlan{target: mid, fallbacks: [][]byte{saved, mac}, names: []string{"oddjob.ini's saved", "network-address (MAC)"}, mode: "machine"}, ""
 		}
-		note = "lock = machine is set, but this machine has no usable machine ID, so the database is not machine-locked: its padlock is kept in gohort.ini instead (as with lock = portable)."
+		note = "lock = machine is set, but this machine has no usable machine ID, so the database is not machine-locked: its padlock is kept in oddjob.ini instead (as with lock = portable)."
 	}
 	var others [][]byte
 	var otherNames []string
@@ -1507,13 +1539,13 @@ func planPadlocks(store *ConfigStore, iniPath string, id func(string) ([]byte, e
 	otherNames = append(otherNames, "network-address (MAC)")
 	target, err := ensureSavedPadlock(store, iniPath, saved)
 	if err == nil {
-		return padlockPlan{target: target, fallbacks: append([][]byte{saved}, others...), names: append([]string{"gohort.ini's saved"}, otherNames...), mode: "portable"}, note
+		return padlockPlan{target: target, fallbacks: append([][]byte{saved}, others...), names: append([]string{"oddjob.ini's saved"}, otherNames...), mode: "portable"}, note
 	}
 	if len(mac) == 0 {
 		// Nothing stable to use at all; refusing at open says so.
 		return padlockPlan{target: saved, fallbacks: others, names: otherNames, mode: "portable"}, "Could not save a database padlock to " + iniPath + " (" + err.Error() + "), and this machine has no network address to fall back on."
 	}
-	return padlockPlan{target: mac, fallbacks: [][]byte{saved}, names: []string{"gohort.ini's saved"}, mode: "network address"},
+	return padlockPlan{target: mac, fallbacks: [][]byte{saved}, names: []string{"oddjob.ini's saved"}, mode: "network address"},
 		"Could not save a database padlock to " + iniPath + " (" + err.Error() + "), so the database stays under this machine's network address until it can be."
 }
 

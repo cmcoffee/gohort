@@ -3,7 +3,7 @@ package temptool
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Tool names are per-user, and the cache was keyed by the bare name, so a

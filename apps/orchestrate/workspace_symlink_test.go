@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func TestAWorkspaceSymlinkIsNotFollowedOut(t *testing.T) {

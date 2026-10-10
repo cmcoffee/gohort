@@ -37,7 +37,7 @@ import (
 	"image/png"
 	"sort"
 
-	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/oddjob/core/media"
 	xdraw "golang.org/x/image/draw"
 )
 

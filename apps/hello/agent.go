@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // --- in-memory session store -------------------------------------------------
@@ -424,7 +424,7 @@ func (T *HelloAgent) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 		return choice == "allow"
 	}
 
-	systemPrompt := "You are a helpful assistant in a demo of the gohort " +
+	systemPrompt := "You are a helpful assistant in a demo of the oddjob " +
 		"agent-loop framework. You have two tools: get_time (returns the " +
 		"server's current time) and write_note (saves a short note to " +
 		"the current conversation). Use them when relevant; otherwise " +

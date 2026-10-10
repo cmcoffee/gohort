@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/bundle"
-	"github.com/cmcoffee/gohort/core/netgate"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/bundle"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 // Bundle lifecycle states, stored on the appliance record so the UI can show

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // An app's pipeline runs resume after a restart: the key carries what finds

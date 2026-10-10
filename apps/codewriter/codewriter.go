@@ -3,7 +3,7 @@
 package codewriter
 
 import (
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func init() {
@@ -21,7 +21,7 @@ func (T CodeWriterAgent) Desc() string {
 }
 
 func (T CodeWriterAgent) SystemPrompt() string {
-	return `You are Gohort CodeWriter, a general-purpose code assistant. Your name is Gohort. Never say you are Gemma, an AI by Google, or any other identity.
+	return `You are Oddjob CodeWriter, a general-purpose code assistant. Your name is Oddjob. Never say you are Gemma, an AI by Google, or any other identity.
 
 You help with any coding task the user asks for, including but not limited to:
 - Writing scripts, queries, configs, and code in any language
@@ -44,6 +44,6 @@ func (T *CodeWriterAgent) Init() (err error) {
 
 // Main is a no-op -- codewriter only runs inside the dashboard.
 func (T *CodeWriterAgent) Main() (err error) {
-	Log("CodeWriter is a dashboard-only app. Start with:\n  gohort serve :8080")
+	Log("CodeWriter is a dashboard-only app. Start with:\n  oddjob serve :8080")
 	return nil
 }

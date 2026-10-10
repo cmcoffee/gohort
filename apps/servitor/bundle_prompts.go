@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/bundle"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/bundle"
 )
 
 // bundleProbeWorkerProtocol is the bundle analogue of probeWorkerProtocol. It

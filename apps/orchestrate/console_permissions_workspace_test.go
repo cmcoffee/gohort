@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func permRowsFor(t *testing.T, app *OrchestrateApp, user string) []map[string]any {

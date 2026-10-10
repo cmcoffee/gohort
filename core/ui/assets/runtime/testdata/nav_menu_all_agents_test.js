@@ -25,7 +25,7 @@ check('visibility is one shared predicate',
 check('record_too shows an item for a record agent',
   /var isRecord = !!recordPinnedSession\(agentId\);/.test(src));
 check('an action on a record agent refreshes its list rather than a home thread',
-  /var rec = recordPinnedSession\(window\.GOHORT_AGENT_ID\);[\s\S]{0,200}?loadSessions\(\);/.test(src));
+  /var rec = recordPinnedSession\(window\.ODDJOB_AGENT_ID\);[\s\S]{0,200}?loadSessions\(\);/.test(src));
 
 check('a menu is shown when it still holds something',
   /m\.control\.style\.display = m\.items\.some\(navOn\) \? '' : 'none';/.test(src));

@@ -1,0 +1,536 @@
+package main
+
+import (
+	"context"
+	_ "embed"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/cmcoffee/oddjob/apps/ollama_proxy"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/netgate"
+	"github.com/cmcoffee/oddjob/core/tlsconf"
+
+	"github.com/cmcoffee/snugforge/eflag"
+	"github.com/cmcoffee/snugforge/nfo"
+)
+
+// APPNAME is the application name.
+const APPNAME = "oddjob"
+
+//go:embed version.txt
+var versionRaw string
+
+// VERSION holds the application's version string. version.txt carries a
+// trailing newline (most editors add one on save); trim it so the
+// embedded value is clean everywhere VERSION is interpolated — HTTP
+// headers, window titles, log banners, AppVersion.
+var VERSION = strings.TrimSpace(versionRaw)
+
+// global holds application-wide configuration and state.
+var global struct {
+	cfg           ConfigStore
+	db            Database
+	cache         Database
+	root          string
+	cfg_path      string // override for oddjob.ini path; empty = next-to-binary default
+	debug         bool
+	snoop         bool
+	trace         bool
+	single_thread bool
+}
+
+// get_runtime_info returns the name of the executable.
+func get_runtime_info() string {
+	exec, err := os.Executable()
+	Critical(err)
+
+	localExec := filepath.Base(exec)
+
+	global.root, err = filepath.Abs(filepath.Dir(exec))
+	Critical(err)
+
+	global.root = GetPath(global.root)
+
+	return localExec
+}
+
+// registerModifiers wires the global verbosity / threading toggles
+// onto a flagset. Used by both the top-level parser and the serve
+// sub-command so a user can drop `--debug` / `--trace` / `--snoop`
+// / `--serial` on either side of the command name. Values bind
+// against the same global struct fields, so order doesn't matter:
+//
+//	oddjob --debug serve :8080
+//	oddjob serve --debug :8080
+//
+// both end with global.debug == true.
+func registerModifiers(set *eflag.EFlagSet) {
+	set.BoolVar(&global.single_thread, "serial", NONE)
+	set.BoolVar(&global.debug, "debug", NONE)
+	set.BoolVar(&global.snoop, "snoop", NONE)
+	set.BoolVar(&global.trace, "trace", NONE)
+	// --config <path> overrides the default <binary-dir>/oddjob.ini
+	// lookup. Useful for running multiple instances side-by-side, or
+	// pointing a single binary at different environments. Same
+	// modifier shape as --debug etc. — works on either side of the
+	// subcommand:
+	//   oddjob --config /etc/oddjob/dev.ini serve :8080
+	//   oddjob serve --config /etc/oddjob/dev.ini :8080
+	set.StringVar(&global.cfg_path, "config", NONE,
+		"Path to the INI config file (default: <binary-dir>/oddjob.ini)")
+}
+
+func main() {
+	AppVersion = VERSION
+	nfo.HideTS()
+	defer Exit(0)
+
+	// Install the process-lifetime app context. SIGINT handlers below
+	// call ShutdownApp() to cancel it so in-flight LLM streams,
+	// persistent pipelines, and the interactive REPL all wind down
+	// cleanly instead of being killed mid-call on daemon close.
+	InitAppContext(context.Background())
+
+	get_runtime_info()
+
+	// Initial modifier flags. Top-level only — command-specific flags
+	// (TLS, max-concurrent) live on the serve sub-command's own
+	// flagset so `oddjob --help` doesn't show them on every other
+	// command, and `oddjob serve --help` shows the right scope.
+	flags := eflag.NewFlagSet(NONE, eflag.ReturnErrorOnly)
+	version := flags.Bool("version", "")
+	setup := flags.Bool("setup", "Fuzz configuration (LLM, mail, etc).")
+	doctor := flags.Bool("sandbox-doctor", "Report what is confining shell commands, and how to fix it.")
+
+	flags.Footer = " "
+
+	registerModifiers(flags)
+
+	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
+
+	f_err := flags.Parse(os.Args[1:])
+
+	loadAgents()
+	loadTools()
+
+	// Wire up agent-to-agent delegation.
+	RunAgentFunc = func(name string, args []string) (string, error) {
+		command.mutex.RLock()
+		entry, ok := command.entries[name]
+		command.mutex.RUnlock()
+		if !ok {
+			return "", fmt.Errorf("unknown agent: %s", name)
+		}
+		return execAgent(entry, args)
+	}
+
+	// Wire up mail config loader.
+	LoadMailConfigFunc = func() MailConfig {
+		return dbcfg.mail()
+	}
+
+	// Wire up web search config loader.
+	LoadWebSearchConfigFunc = func() WebSearchConfig {
+		return dbcfg.search()
+	}
+
+	// Wire up Ollama proxy backend. Returns the base URL and model for the
+	// configured worker LLM when it is Ollama; empty strings otherwise.
+	OllamaBackendFunc = func() (string, string, int) {
+		cfg := dbcfg.llm()
+		if cfg.Provider != "ollama" {
+			return "", "", 0
+		}
+		ep := cfg.Endpoint
+		if ep == "" {
+			ep = "http://localhost:11434"
+		}
+		return ep, cfg.Model, cfg.ContextSize
+	}
+	LlamaCppBackendFunc = func() (string, string) {
+		cfg := dbcfg.llm()
+		// vLLM serves the same OpenAI-compatible API, so the proxy fronts it
+		// the same way.
+		if cfg.Provider != "llama.cpp" && cfg.Provider != "vllm" {
+			return "", ""
+		}
+		ep := cfg.Endpoint
+		if ep == "" {
+			ep = "http://localhost:8080/v1"
+			if cfg.Provider == "vllm" {
+				ep = "http://localhost:8000/v1"
+			}
+		}
+		return ep, cfg.Model
+	}
+	OllamaProxyEnabledFunc = func() bool {
+		var enabled bool
+		global.db.Get(WebTable, "ollama_proxy_enabled", &enabled)
+		return enabled
+	}
+	OllamaProxyPortFunc = func() int {
+		var port int
+		global.db.Get(WebTable, "ollama_proxy_port", &port)
+		return port
+	}
+	OllamaProxyBindFunc = func() string {
+		var bind string
+		global.db.Get(WebTable, "ollama_proxy_bind", &bind)
+		return bind
+	}
+
+	// Wire up LLM routing lookup. Reads per-stage setting from db.
+	LookupRouteFunc = func(key string) string {
+		var val string
+		global.db.Get(RoutingTable, key, &val)
+		return val
+	}
+	LookupRouteThinkBudgetFunc = func(key string) *int {
+		var n int
+		if global.db.Get(RoutingTable, key+".think_budget", &n) && n > 0 {
+			return &n
+		}
+		return nil
+	}
+
+	// Wire up web agent setup for the central dashboard.
+	// Initialize LLMs once and share across all web apps.
+	var shared_llm, shared_lead_llm LLM
+	var shared_prompt_tools bool
+	SetupWebAgentFunc = func(agent Agent) {
+		set_agent_db(agent, get_agentstore(AppStoreName(agent), wantsPrivateDB(agent)))
+		if shared_llm == nil {
+			set_agent_llm(agent)
+			T := agent.Get()
+			// Register the concrete worker/lead as the process shared pair (also
+			// what stateless tools read via SharedWorkerLLM), then hand THIS agent
+			// and every later one RELOADABLE handles instead of the concrete LLM —
+			// so an admin LLM-config change (core.ReloadLLMs) swaps the concretes
+			// live and every app's reference follows, no restart.
+			SetSharedLLMs(T.LLM, T.LeadLLM)
+			// Boot's own record of what is running, so the admin page can show
+			// it from the first request rather than only after a save. See
+			// SetLiveLLMs for why stored and running are different questions.
+			SetLiveLLMs(describeLLMConfig(dbcfg.llm()), describeLLMConfig(dbcfg.leadLLM()))
+			shared_llm = ReloadableWorkerLLM()
+			shared_lead_llm = ReloadableLeadLLM()
+			shared_prompt_tools = T.PromptTools
+			T.LLM = shared_llm
+			T.LeadLLM = shared_lead_llm
+		} else {
+			T := agent.Get()
+			T.LLM = shared_llm
+			T.LeadLLM = shared_lead_llm
+			T.PromptTools = shared_prompt_tools
+		}
+	}
+	// Wire the live LLM-config reload (admin UI applies model/provider/key
+	// changes without a restart) — rebuilds from DB and swaps the shared pair.
+	RegisterLLMReloader(reloadSharedLLMs)
+	// And retry a lead that failed to START, which the reloader cannot help
+	// with: it only runs when an admin saves the settings, and the settings are
+	// not what is wrong. See leadRetryInterval.
+	start_lead_llm_retry()
+
+	if global.debug {
+		enable_debug()
+	}
+
+	if global.snoop || global.trace {
+		enable_trace()
+	}
+
+	if *version {
+		Stdout(`
+      ____       _                _
+     / ___| ___ | |__   ___  _ __| |_
+    | |  _ / _ \| '_ \ / _ \| '__| __|
+    | |_| | (_) | | | | (_) | |  | |_
+     \____|\___/|_| |_|\___/|_|   \__|
+
+      v%s
+
+      Oddjob Agent Framework
+`, VERSION)
+		Exit(0)
+	}
+
+	if *setup {
+		setup_fuzz()
+		Exit(0)
+	}
+
+	// Diagnose confinement without starting the daemon. Exits non-zero when
+	// shell tools would be refused, so a provisioning run can gate on it
+	// rather than parse the report.
+	if *doctor {
+		report, ok := SandboxDoctor()
+		Stdout("%s", report)
+		if !ok {
+			Exit(1)
+		}
+		Exit(0)
+	}
+
+	// "serve" subcommand — start the long-running dashboard daemon.
+	// Owns its own flagset so TLS / max-concurrent options don't
+	// pollute the top-level help. Bind address is the lone
+	// positional arg: `oddjob serve [flags] [addr]` (default :8080).
+	serveArgs := flags.Args()
+	if len(serveArgs) > 0 && serveArgs[0] == "serve" {
+		serveFlags := eflag.NewFlagSet("serve", eflag.ReturnErrorOnly)
+		// AdaptArgs lets flags appear in any position relative to
+		// the bind-address positional, so `oddjob serve :9090
+		// --debug` parses identically to `oddjob serve --debug
+		// :9090`. Eflag re-orders trailing non-flags after the
+		// flag list before handing it to the underlying parser.
+		serveFlags.AdaptArgs = true
+		max_concurrent := serveFlags.Int("max_concurrent", 1, "Max simultaneous apps. Others are queued.")
+		tls_cert := serveFlags.String("tls_cert", "", "Path to TLS certificate file (PEM).")
+		tls_key := serveFlags.String("tls_key", "", "Path to TLS private key file (PEM).")
+		tls_self := serveFlags.Bool("tls", "Enable TLS with auto-generated self-signed certificate.")
+		serveFlags.Order("tls", "tls_cert", "tls_key", "max_concurrent")
+		// Modifier flags also visible on the sub-command so
+		// `oddjob serve --debug :8080` works the same as
+		// `oddjob --debug serve :8080`.
+		registerModifiers(serveFlags)
+		serveFlags.Header = fmt.Sprintf("Usage: %s serve [flags] [addr]\n\n  addr defaults to :8080. TLS flags apply only when --tls is set\n  or both tls_cert and tls_key are provided.\n", os.Args[0])
+		if err := serveFlags.Parse(serveArgs[1:]); err != nil {
+			if err != eflag.ErrHelp {
+				Stderr(err)
+				Stderr(NONE)
+			}
+			serveFlags.Usage()
+			if err == eflag.ErrHelp {
+				return
+			}
+			Exit(1)
+		}
+		bindAddr := ":8080"
+		if rest := serveFlags.Args(); len(rest) > 0 && rest[0] != "" {
+			bindAddr = rest[0]
+		}
+		// Re-apply modifier side-effects in case --debug/--trace
+		// landed on the serve sub-command rather than the top-level
+		// (the top-level enable_debug call ran before serveFlags
+		// parsed). Mirrors the kitebroker pattern where each task
+		// re-checks debug/snoop/trace post-parse.
+		if global.debug {
+			enable_debug()
+		}
+		if global.snoop || global.trace {
+			enable_trace()
+		}
+		Log("### %s v%s ###", APPNAME, VERSION)
+		go LogDependencyHealth() // probe external tools; warn on any missing or stale (e.g. an out-of-date yt-dlp)
+		init_database()          // sets RootDB itself — see the note there
+		// Legacy chunk homes to fold into the dedicated VectorDB on the
+		// first boot after the split: RootDB root (deployment-collection
+		// chunks) and the orchestrate bucket (agent knowledge + user
+		// collections). wireToolDB() registers the private-side homes
+		// (research / debate buckets). Phantom's bucket is deliberately
+		// never registered — its personal corpus stays isolated.
+		RegisterLegacyChunkSource(global.db)
+		RegisterLegacyChunkSource(global.db.Bucket("orchestrate"))
+		wireToolDB()
+		MigrateLegacyChunksToVectorDB()
+		init_logging()
+
+		// Load saved web config as defaults; CLI flags override.
+		// Values come from the INI file (oddjob.ini) with a one-time
+		// fallback to the kvlite-backed mirror so existing installs
+		// don't lose their settings on first boot after this migration.
+		saved_max := loadWebInt("max_concurrent", 1)
+		saved_cert := loadWebString("tls_cert", "")
+		saved_key := loadWebString("tls_key", "")
+		saved_self_signed := loadWebBool("tls_self_signed", false)
+
+		if *max_concurrent != 1 {
+			MaxConcurrentTasks = *max_concurrent
+		} else if saved_max > 0 {
+			MaxConcurrentTasks = saved_max
+		}
+		if *tls_cert != "" {
+			tlsconf.TLSCert = *tls_cert
+		} else {
+			tlsconf.TLSCert = saved_cert
+		}
+		if *tls_key != "" {
+			tlsconf.TLSKey = *tls_key
+		} else {
+			tlsconf.TLSKey = saved_key
+		}
+		if *tls_self {
+			tlsconf.TLSSelfSigned = true
+		} else {
+			tlsconf.TLSSelfSigned = saved_self_signed
+		}
+
+		// Wire auth database.
+		AuthDB = func() Database { return global.db }
+
+		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
+		AuthSignupAllowed = func() bool {
+			var allowed bool
+			global.db.Get(WebTable, "allow_signup", &allowed)
+			return allowed
+		}
+		AuthSessionDays = func() int {
+			var days int
+			global.db.Get(WebTable, "session_days", &days)
+			if days == 0 {
+				days = 7
+			}
+			return days
+		}
+		// The ceiling a session cannot slide past, counted from when it was
+		// created. session_days is now the IDLE window (it renews while you
+		// work); this is what still ends a session that never goes idle, and
+		// what bounds a stolen cookie. 0 = no ceiling.
+		AuthSessionAbsoluteDays = func() int {
+			var days int
+			if !global.db.Get(WebTable, "session_absolute_days", &days) {
+				return DefaultSessionAbsoluteDays
+			}
+			return days // an explicit 0 is the operator choosing no ceiling
+		}
+		AuthAPIKey = func() string {
+			var key string
+			global.db.Get(WebTable, "api_key", &key)
+			return key
+		}
+		// Off unless the operator has said otherwise. Stored as a string
+		// rather than a bool because gob omits a false bool, which would make
+		// "turned off" and "never set" indistinguishable on read — the same
+		// trap the framework's other on/off settings hit.
+		AuthAPIKeyAllowQuery = func() bool {
+			var v string
+			global.db.Get(WebTable, "api_key_allow_query", &v)
+			return v == "on"
+		}
+
+		WebBaseURL = func() string {
+			var url string
+			global.db.Get(WebTable, "external_url", &url)
+			return url
+		}
+		ServiceNameFunc = func() string {
+			var name string
+			global.db.Get(WebTable, "service_name", &name)
+			return name
+		}
+		AuthMaxAttempts = func() int {
+			var n int
+			global.db.Get(WebTable, "max_login_attempts", &n)
+			if n == 0 {
+				n = 5
+			}
+			return n
+		}
+		AuthLockoutMinutes = func() int {
+			var n int
+			global.db.Get(WebTable, "lockout_minutes", &n)
+			if n == 0 {
+				n = 15
+			}
+			return n
+		}
+		NotifyFromFunc = func() string {
+			var from string
+			global.db.Get(WebTable, "notify_from", &from)
+			return from
+		}
+
+		// Wire persistent queue.
+		SetQueueDB(func() Database { return global.db })
+
+		// Wire CMS config loader AND saver. Both on global.db, not a per-agent
+		// bucket — setup writes here and the publisher reads here, so anything
+		// that saves anywhere else is invisible to both.
+		LoadGhostConfigFunc = func() GhostConfig {
+			var cfg GhostConfig
+			global.db.Get("ghost_config", "url", &cfg.URL)
+			global.db.Get("ghost_config", "api_key", &cfg.APIKey)
+			return cfg
+		}
+		SaveGhostConfigFunc = func(cfg GhostConfig) {
+			global.db.Set("ghost_config", "url", cfg.URL)
+			if cfg.APIKey != "" {
+				global.db.CryptSet("ghost_config", "api_key", cfg.APIKey)
+			}
+		}
+
+		// Wire admin IP allowlist. Sourced from oddjob.ini with a
+		// one-time fallback to the legacy DB-backed value. Set on the
+		// netgate leaf directly — a mutable func var can't be re-exported
+		// through core.go (the alias would copy it, not share it).
+		netgate.LoadAdminAllowedIPsFunc = func() string {
+			return loadWebString("admin_allowed_ips", "")
+		}
+
+		ollama_proxy.StartOllamaServer(OllamaProxyPortFunc())
+		if err := ServeDashboard(bindAddr); err != nil {
+			Fatal(err)
+		}
+		Exit(0)
+	}
+
+	// Check for chat mode before processing other flags.
+	nfo.SignalCallback(syscall.SIGINT, func() bool {
+		Log("Application interrupt received. (shutting down)")
+		ShutdownApp()
+		return true
+	})
+
+	if f_err != nil {
+		if f_err != eflag.ErrHelp {
+			Stderr(f_err)
+			Stderr(NONE)
+		}
+		flags.Usage()
+		command.Show()
+		return
+	}
+
+	// Read and process CLI arguments.
+	args := flags.Args()
+
+	// No command given — say what this is and how to start it.
+	//
+	// This used to drop into a single-model CLI chat: one agent, one model, no
+	// fleet, no delegation, no scoped memory, no guardrails. It was the first
+	// thing anyone typed after downloading a release, and it demonstrated an
+	// early version of the product at the front door of the current one.
+	// Terminal access is servitor over MCP now — a governed agent with its own
+	// loop and memory — and the dashboard is where the rest lives.
+	if len(args) == 0 {
+		Stdout("oddjob: run a fleet of agents on your own hardware.\n\n")
+		Stdout("  %s --setup    first-time setup: admin account, listen address, TLS\n", os.Args[0])
+		Stdout("  %s serve      start the web dashboard\n", os.Args[0])
+		Stdout("\nEverything else (models, agents, credentials, schedules), is configured\nin the dashboard once it is running.\n\n")
+		flags.Usage()
+		command.Show()
+		return
+	}
+
+	var task_args [][]string
+	args = append(args, "cli")
+	task_args = append(task_args, args)
+
+	if err := command.Select(task_args); err != nil {
+		if err != eflag.ErrHelp {
+			Stderr(err)
+		}
+		flags.Usage()
+		command.Show()
+		if err == eflag.ErrHelp {
+			return
+		} else {
+			Exit(1)
+		}
+	}
+}

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The page's calls against the app's endpoints: a call to one the app does

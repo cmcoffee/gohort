@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -26,7 +26,7 @@ func TestAdminSkillCreateRefusesANameYouHave(t *testing.T) {
 	a.registerSkillsRoutes(mux)
 	call := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+		r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: token})
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, r)
 		return w

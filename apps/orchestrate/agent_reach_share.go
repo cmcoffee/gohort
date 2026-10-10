@@ -18,7 +18,7 @@ package orchestrate
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // shareLendTable records credential lends made through an agent share: key is

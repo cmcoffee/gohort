@@ -1,5 +1,5 @@
 // ScheduledTrigger: the unified {when, gate, action, target} record that all of
-// gohort's timer/condition surfaces converge onto. It generalizes the event
+// oddjob's timer/condition surfaces converge onto. It generalizes the event
 // monitor (change/rule gates, wake/notify delivery) and the phantom scheduler
 // (timed callbacks, calendar/window timing, stop conditions) into one engine.
 //

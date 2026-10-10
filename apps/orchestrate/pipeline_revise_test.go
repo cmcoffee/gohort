@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func reviseP(t *testing.T, app *OrchestrateApp, user, id, body string) *httptest.ResponseRecorder {

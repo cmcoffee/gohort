@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // feed replays rounds into the telemetry the way the agent loop does.

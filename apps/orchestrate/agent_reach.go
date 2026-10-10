@@ -3,7 +3,7 @@ package orchestrate
 // What an agent reaches, and whether the people it is shared with reach it too.
 //
 // Sharing an agent is one request — "my team and I should all be working from
-// this" — and gohort answers it with seven. The tools it calls, the documents
+// this" — and oddjob answers it with seven. The tools it calls, the documents
 // it reads, the skills it activates, the recipes it dispatches and the key
 // underneath all of it are separate records on separate rungs, each shared by
 // its own door. Nothing was wrong with that except that the person has to hold
@@ -38,7 +38,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // How far a dependency reaches. Ordered, so "does this reach as far as the

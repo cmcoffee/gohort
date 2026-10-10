@@ -1,4 +1,4 @@
-// MCP controls for Servitor: READ-ONLY tools exposed on gohort's inbound MCP
+// MCP controls for Servitor: READ-ONLY tools exposed on oddjob's inbound MCP
 // server (/mcp/) so an external MCP client (e.g. Claude Desktop) can query the
 // user's accumulated system knowledge — list their systems and search the facts
 // Servitor has gathered about them. Each handler is scoped to the bridge-key
@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func registerServitorMCPTools() {

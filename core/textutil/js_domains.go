@@ -1,12 +1,12 @@
 // Shared knowledge: domains whose plain-HTTP responses are useless
 // (anti-bot 403 / JS-skeleton / login wall) and which both fetch_url
-// and the sandbox-hook gohort.fetch need to auto-route through a real
+// and the sandbox-hook oddjob.fetch need to auto-route through a real
 // browser (browse_page / headless Chromium).
 //
 // Lives here in core/ so the script-side fetch and the LLM-side
 // fetch_url consult the SAME list. Previously fetch_url owned its
 // own copy and silently routed Reddit URLs through Chromium, while
-// gohort.fetch went straight to plain HTTP and got 403'd — giving
+// oddjob.fetch went straight to plain HTTP and got 403'd — giving
 // the LLM the false signal that "fetch_url works but the same URL
 // in a script doesn't." Same list, same behavior, one place to
 // update when a new domain joins the JS-heavy club.

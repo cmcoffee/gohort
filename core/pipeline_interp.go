@@ -29,8 +29,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/cmcoffee/gohort/core/factcheck"
-	"github.com/cmcoffee/gohort/core/sources"
+	"github.com/cmcoffee/oddjob/core/factcheck"
+	"github.com/cmcoffee/oddjob/core/sources"
 )
 
 // PipelineDispatch runs a single agent stage: dispatch `input` to the

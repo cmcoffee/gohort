@@ -278,7 +278,7 @@ func (s AppSetting) PerUser() bool { return strings.EqualFold(strings.TrimSpace(
 // renders, instead of the generic record store. It receives the app's stored
 // records (JSON) plus the request's query params as environment variables, and
 // must print a JSON value to stdout — an array for a table, an object for a
-// display. The script may reach out via the gohort sandbox hook (capabilities
+// display. The script may reach out via the oddjob sandbox hook (capabilities
 // like "fetch", "log") so it can pull + transform external data (an API,
 // Confluence, …). Owner-only: custom apps are per-owner, and the script runs in
 // the owner's sandbox with the owner's network gate.

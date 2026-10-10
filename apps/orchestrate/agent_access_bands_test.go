@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The bands, in precedence order. What a call REACHES decides, not where the

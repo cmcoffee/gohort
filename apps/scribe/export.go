@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleExport serves a guide as pdf | html | md. GET ?id=&format=…
@@ -90,7 +90,7 @@ func renderGuidePDF(g Guide) ([]byte, error) {
 
 // renderGuideStandaloneHTML wraps the rendered guide in a self-contained HTML
 // document with inline styling (concrete colors, not theme tokens) so it reads
-// correctly outside gohort — shared, printed, or saved as a file. brand renders
+// correctly outside oddjob — shared, printed, or saved as a file. brand renders
 // as a small header label above the title; siteName + date as a footer.
 func renderGuideStandaloneHTML(g Guide, brand, siteName string) string {
 	head := ""

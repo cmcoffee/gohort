@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // uiMountRuntime exposes core/ui's MountRuntime under a stable name so
@@ -88,7 +88,7 @@ type WebAppAccess interface {
 	WebAccessCheck(r *http.Request) bool // returns the flag value for this request
 }
 
-// DashboardCard is a single tile rendered on the gohort dashboard.
+// DashboardCard is a single tile rendered on the oddjob dashboard.
 // Most tiles come from registered WebApps (one per app); apps that
 // contribute MULTIPLE tiles (e.g. one per published agent) return
 // them via DashboardCardSource.

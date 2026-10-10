@@ -43,10 +43,10 @@ var (
 	// read-only when it is set.
 	BulkStagingDir func() string
 
-	// GohortLibDir returns the host directory holding the gohort python helper,
-	// bind-mounted read-only at GohortLibMountPath. Empty = the helper is not
+	// OddjobLibDir returns the host directory holding the oddjob python helper,
+	// bind-mounted read-only at OddjobLibMountPath. Empty = the helper is not
 	// available and scripts importing it will fail; the sandbox still runs.
-	GohortLibDir func() string
+	OddjobLibDir func() string
 
 	// NewHook starts the capability broker for one run. sess is the caller's
 	// session, passed straight through — this package never looks inside it.
@@ -69,11 +69,11 @@ func bulkStagingDir() string {
 	return BulkStagingDir()
 }
 
-func gohortLibDir() string {
-	if GohortLibDir == nil {
+func oddjobLibDir() string {
+	if OddjobLibDir == nil {
 		return ""
 	}
-	return GohortLibDir()
+	return OddjobLibDir()
 }
 
 func newHook(workspaceDir string, capabilities []string, sess any) (HookServer, error) {
@@ -83,23 +83,23 @@ func newHook(workspaceDir string, capabilities []string, sess any) (HookServer, 
 	return NewHook(workspaceDir, capabilities, sess)
 }
 
-// GohortLibMountPath is the in-sandbox path where the gohort helper package is
+// OddjobLibMountPath is the in-sandbox path where the oddjob helper package is
 // bind-mounted (read-only). Scripts get this path in PYTHONPATH so
-// `from gohort import fetch` resolves regardless of where the running script
+// `from oddjob import fetch` resolves regardless of where the running script
 // lives within the workspace.
 //
 // It lives here rather than with the broker because WHERE something is mounted
 // inside the sandbox is a confinement fact: the mount args are built here.
-const GohortLibMountPath = "/opt/gohort-lib"
+const OddjobLibMountPath = "/opt/oddjob-lib"
 
-// GohortBinMountPath is a shim bin dir under the RO-mounted gohort lib,
+// OddjobBinMountPath is a shim bin dir under the RO-mounted oddjob lib,
 // prepended to PATH inside every sandbox. It holds tiny executables
-// (fetch_url / fetch_via / browse_page) so a script can call gohort's fetch
+// (fetch_url / fetch_via / browse_page) so a script can call oddjob's fetch
 // family as ORDINARY COMMANDS instead of subprocessing an LLM tool name — which
 // is not a shell binary and only fails with FileNotFoundError, the exact footgun
 // that sent authored watch scripts down a "the API is impossible" rewrite
-// spiral. The shims proxy to the SAME broker that `from gohort import ...` uses,
+// spiral. The shims proxy to the SAME broker that `from oddjob import ...` uses,
 // so granted capabilities are still enforced there: an ungranted credential is
 // denied at the broker, not the shim. No new privilege — just symmetry between
 // "call the tool" and "shell out to the tool".
-const GohortBinMountPath = GohortLibMountPath + "/bin"
+const OddjobBinMountPath = OddjobLibMountPath + "/bin"

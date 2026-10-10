@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A machine step, and a pipeline run inline from a turn, reach the owner's

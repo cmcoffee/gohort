@@ -62,7 +62,7 @@ func TestAppDefStillSteersDataAppsToTypedSections(t *testing.T) {
 // the help text is only read when the model calls action="help". So the
 // headline is where a scope belief actually forms.
 //
-// It used to open with "data-driven gohort APPS ... with no hand-written
+// It used to open with "data-driven oddjob APPS ... with no hand-written
 // HTML/CSS/JS", and Builder refused a game twice on exactly that basis — even
 // after the help text was fixed, because the headline framed everything it
 // read afterward.

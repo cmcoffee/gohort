@@ -15,10 +15,10 @@ import (
 	"strconv"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/buildledger"
-	"github.com/cmcoffee/gohort/core/sections"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/buildledger"
+	"github.com/cmcoffee/oddjob/core/sections"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // buildStamper carries one loop's prompt clauses to the build ledger and

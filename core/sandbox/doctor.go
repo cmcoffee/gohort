@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/deps"
+	"github.com/cmcoffee/oddjob/core/deps"
 )
 
 // Doctor renders the report. Returns the text and whether the host is in a
@@ -81,7 +81,7 @@ func Doctor() (string, bool) {
 // which is the single most useful line in the report: "none" alone does not say
 // whether nobody configured anything or whether podman was requested and failed.
 func requestedSuffix() string {
-	pick := strings.ToLower(strings.TrimSpace(os.Getenv("GOHORT_SANDBOX_BACKEND")))
+	pick := strings.ToLower(strings.TrimSpace(getenv("ODDJOB_SANDBOX_BACKEND")))
 	if pick == "" || pick == "auto" {
 		return ""
 	}
@@ -100,7 +100,7 @@ func located(bin string) string {
 }
 
 func wantsContainer() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("GOHORT_SANDBOX_BACKEND"))) {
+	switch strings.ToLower(strings.TrimSpace(getenv("ODDJOB_SANDBOX_BACKEND"))) {
 	case "podman", "docker", "container":
 		return true
 	}
@@ -139,9 +139,9 @@ func cgroupNote() string {
 		return ""
 	}
 	// Worth stating rather than leaving to be discovered, and worth stating
-	// that it does not matter here: gohort's own ceiling is enforced with
+	// that it does not matter here: oddjob's own ceiling is enforced with
 	// ulimit inside the command, which is independent of cgroups entirely.
-	return " (podman cannot enforce --memory/--cpus rootless on v1; gohort's own limits still apply)"
+	return " (podman cannot enforce --memory/--cpus rootless on v1; oddjob's own limits still apply)"
 }
 
 // subuidState reports whether this user can build a user namespace, which is
@@ -247,7 +247,7 @@ func remedies(st SandboxStatus) []string {
 		}
 	}
 	if len(out) == 0 {
-		out = append(out, "GOHORT_ALLOW_UNSANDBOXED=admin   # accept unconfined runs for an admin's own commands")
+		out = append(out, "ODDJOB_ALLOW_UNSANDBOXED=admin   # accept unconfined runs for an admin's own commands")
 	}
 	return out
 }
@@ -293,7 +293,7 @@ func pythonSkewAdvice(maj, min int) []string {
 	return []string{
 		"the default image runs a much newer Python, so COMPILED wheels (numpy, lxml,",
 		fmt.Sprintf("pillow) will not import: they are built here for %d.%d. Pure Python is fine.", maj, min),
-		"pin a matching image via GOHORT_SANDBOX_IMAGE (a vendor image for this OS, e.g.",
+		"pin a matching image via ODDJOB_SANDBOX_IMAGE (a vendor image for this OS, e.g.",
 		"registry.access.redhat.com/ubi8/python-36), or accept the loss.",
 	}
 }

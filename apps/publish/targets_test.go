@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/docs"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/docs"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -76,7 +76,7 @@ func TestTheTargetControls(t *testing.T) {
 			b, _ = json.Marshal(body)
 		}
 		r := httptest.NewRequest(method, path, bytes.NewReader(b))
-		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+		r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: token})
 		w := httptest.NewRecorder()
 		app.handleTargets(w, r)
 		return w

@@ -17,7 +17,7 @@
 package orchestrate
 
 import (
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const authoringTable = "orchestrate_authoring"

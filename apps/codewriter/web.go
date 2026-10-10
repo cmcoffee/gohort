@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const (
@@ -160,7 +160,7 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		// alongside the manual Context block. Empty = no collection RAG.
 		Collections []string `json:"collections"`
 		// References are reference-source selections the user picked in
-		// the chat header ([{kind, item_id}]) — knowledge another gohort
+		// the chat header ([{kind, item_id}]) — knowledge another oddjob
 		// service gathered (servitor systems, MCP doc sources). Each
 		// source's cached text is injected into the system prompt, and
 		// its per-item tools (search / facts / live investigate) ride the
@@ -252,7 +252,7 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		system_prompt += "\n\nDISCUSSION MODE: the user is chatting about the code, not asking for it to be changed. Do NOT write out a revised full script or propose an applyable change. Do NOT emit a fenced code block (```). Explain your thinking, ask clarifying questions, or describe the approach you'd take. Short inline snippets using single backticks are fine. If the user asks for the actual edit, tell them to click Edit instead of Chat."
 	}
 
-	// Reference sources — knowledge gathered by other gohort services
+	// Reference sources — knowledge gathered by other oddjob services
 	// (servitor systems, MCP doc sources) that the user attached in the
 	// chat header. Cached material is injected into the system prompt
 	// (closest to the user message), and each attached item's own tools

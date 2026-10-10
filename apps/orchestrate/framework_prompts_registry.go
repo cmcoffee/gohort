@@ -1,6 +1,6 @@
 package orchestrate
 
-import . "github.com/cmcoffee/gohort/core"
+import . "github.com/cmcoffee/oddjob/core"
 
 // Register the capability-gated framework blocks (framework_prompts.go). The
 // assembler reads each block's effective text by these Keys (an override when

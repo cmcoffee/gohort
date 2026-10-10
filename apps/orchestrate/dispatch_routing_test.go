@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A run another agent asked for, a bridge message, a monitor wake or a

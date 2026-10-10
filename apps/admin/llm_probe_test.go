@@ -71,7 +71,7 @@ func TestProbeAdvice(t *testing.T) {
 		"Server: vLLM, serving qwen, context 204,800 tokens.",
 		"The provider is set to llama.cpp, but this endpoint is vLLM: pick vLLM",
 		"vLLM ignores the thinking budget",
-		"Context size is blank, so gohort works within 65,536 tokens; the server allows 204,800.",
+		"Context size is blank, so oddjob works within 65,536 tokens; the server allows 204,800.",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("advice missing %q:\n%s", want, msg)

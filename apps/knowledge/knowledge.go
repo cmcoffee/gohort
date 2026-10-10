@@ -25,8 +25,8 @@ import (
 	"net/url"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func init() { RegisterApp(new(KnowledgeApp)) }
@@ -44,7 +44,7 @@ func (T KnowledgeApp) Desc() string {
 
 func (T *KnowledgeApp) Init() error { return T.Flags.Parse() }
 func (T *KnowledgeApp) Main() error {
-	Log("Knowledge is a web-only app. Start with:\n  gohort serve :8080")
+	Log("Knowledge is a web-only app. Start with:\n  oddjob serve :8080")
 	return nil
 }
 

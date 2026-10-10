@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // pipelineMachineRunner returns the hook a kind=machine stage runs through,

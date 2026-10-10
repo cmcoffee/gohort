@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // runCorrectedTurn runs one turn through planRun's hooks and persists it the
@@ -77,7 +77,7 @@ func TestAnUnkeptClaimStaysStruckInTheSavedTurn(t *testing.T) {
 	}
 	// The model's next turn reads it as retracted, never as its own fact.
 	hist := toLLMMessages(sess.Messages)
-	if !strings.Contains(hist[0].Content, "<gohort-meta>") || !strings.Contains(hist[0].Content, "retracted and does not stand") {
+	if !strings.Contains(hist[0].Content, "<oddjob-meta>") || !strings.Contains(hist[0].Content, "retracted and does not stand") {
 		t.Errorf("a retracted reply must reach the model with its retraction noted, got %q", hist[0].Content)
 	}
 	if strings.HasPrefix(hist[0].Content, claim) {

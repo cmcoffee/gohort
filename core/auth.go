@@ -16,14 +16,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/media"
-	"github.com/cmcoffee/gohort/core/netgate"
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/media"
+	"github.com/cmcoffee/oddjob/core/netgate"
+	"github.com/cmcoffee/oddjob/core/ui"
 	"golang.org/x/crypto/bcrypt"
 )
 
 const (
-	auth_cookie_name = "gohort_session"
+	auth_cookie_name = "oddjob_session"
+	// The cookie's name before the rename. A session issued under it keeps
+	// working, so an upgrade signs nobody out; logout clears both.
+	legacy_cookie_name = "gohort_session"
 )
 
 // AuthEnabled reports whether authentication is configured (at least
@@ -772,7 +775,7 @@ func isValidEmail(email string) bool {
 
 // passwordDigest returns a fixed-length, NUL-free representation of a password
 // (hex SHA-256, 64 ASCII bytes) to feed into bcrypt. This sidesteps bcrypt's
-// 72-byte input cap and its NUL-byte truncation — gohort allows passwords up to
+// 72-byte input cap and its NUL-byte truncation — oddjob allows passwords up to
 // 128 chars, which would otherwise be silently truncated or rejected. Pre-
 // hashing before bcrypt is a standard, safe pattern (no length-extension concern
 // because the output is then bcrypt'd with a per-user salt).
@@ -799,7 +802,7 @@ func hashPassword(password string) string {
 // legacyPasswordHash is the OLD fixed-salt SHA-256 scheme, kept ONLY to verify
 // pre-migration hashes. Never used to create new hashes.
 func legacyPasswordHash(password string) string {
-	h := sha256.Sum256([]byte("gohort:" + password))
+	h := sha256.Sum256([]byte("oddjob:" + password))
 	return hex.EncodeToString(h[:])
 }
 
@@ -1406,7 +1409,7 @@ func AuthDestroySession(db Database, token string) {
 
 // AuthIsAdmin checks whether the currently authenticated user is an admin.
 func AuthIsAdmin(db Database, r *http.Request) bool {
-	cookie, err := r.Cookie(auth_cookie_name)
+	cookie, err := authCookie(r)
 	if err != nil {
 		return false
 	}
@@ -1423,7 +1426,7 @@ func AuthCurrentUser(r *http.Request) string {
 	if AuthDB == nil {
 		return ""
 	}
-	cookie, err := r.Cookie(auth_cookie_name)
+	cookie, err := authCookie(r)
 	if err != nil {
 		return ""
 	}
@@ -1479,7 +1482,7 @@ func SameOriginRequest(r *http.Request) bool {
 	if strings.EqualFold(u.Host, r.Host) {
 		return true
 	}
-	// gohort-desktop: the desktop app serves its UI from a LOOPBACK origin
+	// oddjob-desktop: the desktop app serves its UI from a LOOPBACK origin
 	// (http://127.0.0.1:<port>, or wails.localhost on Windows WebView2) and makes
 	// cookie-authenticated requests to the remote server, so its Origin never
 	// matches the server host. A loopback origin cannot be forged by a remote
@@ -1524,7 +1527,7 @@ func isLoopbackHost(host string) bool {
 // renewal belongs to the one path that sees every browser request and can write
 // a cookie, and a refusal check is not that path.
 func hasValidSession(db Database, r *http.Request) bool {
-	cookie, err := r.Cookie(auth_cookie_name)
+	cookie, err := authCookie(r)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return false
 	}
@@ -1544,7 +1547,7 @@ func deploymentKeyQueryAllowed() bool {
 
 // deploymentKeyHeader is the preferred way to present the deployment-wide API
 // key. See the bypass in AuthMiddleware for why the ?key= spelling is worse.
-const deploymentKeyHeader = "X-Gohort-Key"
+const deploymentKeyHeader = "X-Oddjob-Key"
 
 var deploymentKeyWarnOnce sync.Once
 
@@ -1617,7 +1620,7 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		// bare `proxy_pass` every request in the world arrived on loopback
 		// with nothing to disqualify it, and anything that did not look like a
 		// browser — curl's default behaviour — skipped authentication. The
-		// deployment's safety rested on a config file gohort does not own.
+		// deployment's safety rested on a config file oddjob does not own.
 		//
 		// The browser check is kept as a second line rather than deleted. It
 		// is no longer what stops a person at 127.0.0.1, since they cannot
@@ -1699,7 +1702,7 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		}
 
 		// Check session cookie.
-		cookie, err := r.Cookie(auth_cookie_name)
+		cookie, err := authCookie(r)
 		if err != nil {
 			redirectToLogin(w, r)
 			return
@@ -1707,7 +1710,7 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		// Sliding renewal lives HERE and only here: the one path that sees
 		// every browser request and can write a cookie. Past the halfway mark
 		// the session's expiry moves out to a full duration from now, bounded
-		// by an absolute ceiling from its creation — so working in gohort keeps
+		// by an absolute ceiling from its creation — so working in oddjob keeps
 		// you logged in, and walking away still logs you out. See
 		// auth_session_slide.go.
 		_, ok := authValidateSessionSliding(db, w, r, cookie.Value)
@@ -1792,7 +1795,7 @@ func LoginHandler(db Database) http.HandlerFunc {
 				return
 			}
 			// If already authenticated, redirect to dashboard.
-			if cookie, err := r.Cookie(auth_cookie_name); err == nil {
+			if cookie, err := authCookie(r); err == nil {
 				if _, ok := AuthValidateSession(db, cookie.Value); ok {
 					http.Redirect(w, r, "/", http.StatusFound)
 					return
@@ -1886,20 +1889,24 @@ func LogoutHandler(db Database) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
-		if cookie, err := r.Cookie(auth_cookie_name); err == nil {
+		if cookie, err := authCookie(r); err == nil {
 			username, _ := AuthValidateSession(db, cookie.Value)
 			AuthDestroySession(db, cookie.Value)
 			if username != "" {
 				Log("[auth] user %q logged out", username)
 			}
 		}
-		http.SetCookie(w, &http.Cookie{
-			Name:     auth_cookie_name,
-			Value:    "",
-			Path:     "/",
-			HttpOnly: true,
-			MaxAge:   -1,
-		})
+		// Both names expire: a session issued before the rename lives under
+		// the old one, and a logout that left it would not be a logout.
+		for _, name := range []string{auth_cookie_name, legacy_cookie_name} {
+			http.SetCookie(w, &http.Cookie{
+				Name:     name,
+				Value:    "",
+				Path:     "/",
+				HttpOnly: true,
+				MaxAge:   -1,
+			})
+		}
 		http.Redirect(w, r, "/login", http.StatusFound)
 	}
 }
@@ -1916,7 +1923,7 @@ func SignupHandler(db Database) http.HandlerFunc {
 		switch r.Method {
 		case http.MethodGet:
 			// If already authenticated, redirect to dashboard.
-			if cookie, err := r.Cookie(auth_cookie_name); err == nil {
+			if cookie, err := authCookie(r); err == nil {
 				if _, ok := AuthValidateSession(db, cookie.Value); ok {
 					http.Redirect(w, r, "/", http.StatusFound)
 					return
@@ -2068,7 +2075,7 @@ func serveSignupPage(w http.ResponseWriter, errMsg string) {
 		error_html = fmt.Sprintf(`<div class="error">%s</div>`, html.EscapeString(errMsg))
 	}
 
-	body := `    <div class="ascii-logo">Gohort</div>
+	body := `    <div class="ascii-logo">Oddjob</div>
     ` + error_html + `
     <form method="POST" action="/signup">
       <div class="form-group">
@@ -2275,7 +2282,7 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
 		links += `<a class="alt-link" href="/signup">Don't have an account? Sign up</a>`
 	}
 
-	body := `    <div class="ascii-logo">Gohort</div>
+	body := `    <div class="ascii-logo">Oddjob</div>
     ` + error_html + `
     <form method="POST" action="/login">
       <div class="form-group">
@@ -2438,4 +2445,13 @@ func UserCandidatesJSON(db Database, except string) []byte {
 	sort.Slice(out, func(i, j int) bool { return out[i].Value < out[j].Value })
 	data, _ := json.Marshal(out)
 	return data
+}
+
+// authCookie is the session cookie on a request, under its name or the one
+// it had before the rename.
+func authCookie(r *http.Request) (*http.Cookie, error) {
+	if c, err := r.Cookie(auth_cookie_name); err == nil {
+		return c, nil
+	}
+	return r.Cookie(legacy_cookie_name)
 }

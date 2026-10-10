@@ -3,7 +3,7 @@ package orchestrate
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // credentialTools returns every tool that declares cred — scanning the shared

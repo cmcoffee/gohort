@@ -1,7 +1,7 @@
 package webui
 
 // Add to Home Screen: the tags, the manifest and the PNG icons that let a
-// phone keep gohort on its home screen and open it without the browser's
+// phone keep oddjob on its home screen and open it without the browser's
 // chrome.
 //
 // The icons are drawn from IconSVG itself (its rectangles are read out of the
@@ -29,7 +29,7 @@ const AppHeadTags = `<link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="gohort">
+<meta name="apple-mobile-web-app-title" content="oddjob">
 `
 
 // AppIconPaths are the public paths the icons are served at, for the router.
@@ -42,8 +42,8 @@ func ManifestJSON(themeColor string) []byte {
 		themeColor = iconBackground()
 	}
 	m := map[string]any{
-		"name":             "gohort",
-		"short_name":       "gohort",
+		"name":             "oddjob",
+		"short_name":       "oddjob",
 		"start_url":        "/",
 		"scope":            "/",
 		"display":          "standalone",

@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // dashboardGroupMyApps puts "My apps" right after the dashboard's own apps on

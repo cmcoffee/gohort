@@ -41,7 +41,7 @@ const StyleKey = "framework.style"
 type StyleRule struct {
 	Key     string // stable id, e.g. "style.no_em_dash"
 	Text    string // the instruction, as injected
-	Builtin bool   // shipped with gohort, vs added by an operator
+	Builtin bool   // shipped with oddjob, vs added by an operator
 }
 
 var (

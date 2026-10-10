@@ -36,7 +36,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleSessionStatus feeds the chat toolbar's status pill

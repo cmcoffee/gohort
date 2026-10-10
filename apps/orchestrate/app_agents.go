@@ -16,8 +16,8 @@ import (
 	"strings"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
 )
 
 // isAppAgent reports whether id belongs to a code-registered App Agent. This is

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The model's reasoning becomes progress a person can watch: one event the

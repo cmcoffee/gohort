@@ -33,8 +33,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // tryTimeout bounds a dry run. Each transient hop is a model call, and

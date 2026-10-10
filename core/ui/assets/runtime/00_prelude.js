@@ -321,7 +321,7 @@
 
   function fetchJSON(url, opts) {
     // Live dashboard data — never serve a stale HTTP-cached copy. Embedded
-    // webviews (e.g. the gohort-desktop WKWebView behind its proxy) will
+    // webviews (e.g. the oddjob-desktop WKWebView behind its proxy) will
     // otherwise cache a list GET on first fetch and keep returning the old
     // body, so a list that was empty when first opened stays empty even
     // after the underlying data changes (the "Add conversation picker is
@@ -456,7 +456,7 @@
   // with rendered markdown — it is what keeps headings / code / lists
   // consistent across every surface.
   // uiStripMetaTags removes framework-internal markers from anything rendered
-  // for the user — the reserved <gohort-meta>…</gohort-meta> convention plus
+  // for the user — the reserved <oddjob-meta>…</oddjob-meta> convention plus
   // leaked delivery markers ([ATTACH:…], <<<ATTACH:…>>>…<<<END>>>). Mirrors core
   // StripMetaTags (Go) so the saved copy and the rendered copy agree.
   // The half-block rules matter as much as the balanced one: a reply cut at
@@ -465,12 +465,12 @@
   // Mid-stream this also hides a block from its opener until its closer lands,
   // instead of flashing the internal note and then removing it.
   window.uiStripMetaTags = function(s) {
-    if (!s || (!/gohort-meta/i.test(s) && s.indexOf('[ATTACH') < 0 && s.indexOf('<<<ATTACH') < 0)) return s;
+    if (!s || (!/oddjob-meta/i.test(s) && s.indexOf('[ATTACH') < 0 && s.indexOf('<<<ATTACH') < 0)) return s;
     return s
-      .replace(/<gohort-meta\b[^>]*>[\s\S]*?<\/\s*gohort-meta\s*>/gi, '')
-      .replace(/(^|[^<])gohort-meta\b[^>]*>[\s\S]*?<\/\s*gohort-meta\s*>/gi, '$1')
-      .replace(/<gohort-meta\b[^>]*>[\s\S]*$/i, '')
-      .replace(/^[\s\S]*?<\/\s*gohort-meta\s*>/i, '')
+      .replace(/<oddjob-meta\b[^>]*>[\s\S]*?<\/\s*oddjob-meta\s*>/gi, '')
+      .replace(/(^|[^<])oddjob-meta\b[^>]*>[\s\S]*?<\/\s*oddjob-meta\s*>/gi, '$1')
+      .replace(/<oddjob-meta\b[^>]*>[\s\S]*$/i, '')
+      .replace(/^[\s\S]*?<\/\s*oddjob-meta\s*>/i, '')
       .replace(/\[ATTACH:\s*[^\]]*\]/g, '')
       .replace(/<<<ATTACH:[\s\S]*?(?:ATTACH_END>>>|<<<END>>>)/gi, '')
       .replace(/[ \t]+\n/g, '\n')
@@ -802,7 +802,7 @@
   // false, alert() does nothing, prompt() returns null. Resolution
   // order:
   //   1. a host-injected impl (window.__uiConfirmImpl / __uiAlertImpl /
-  //      __uiPromptImpl) — e.g. gohort-desktop's native-styled modal;
+  //      __uiPromptImpl) — e.g. oddjob-desktop's native-styled modal;
   //   2. otherwise uiDefaultModal — a themed in-page dialog that matches
   //      the rest of the UI.
   // We NO LONGER fall through to native confirm/alert/prompt, so every
@@ -936,7 +936,7 @@
 
   // window.uiOpenModal — THE shared modal primitive. A plain fixed-overlay
   // div, NOT native <dialog>: <dialog>+showModal renders blank on some iOS /
-  // older-Android WebViews, so every gohort modal routes through this. It
+  // older-Android WebViews, so every oddjob modal routes through this. It
   // owns the overlay, centered card, scrollable body, Escape-to-close, and
   // teardown. No backdrop-click-to-close — a text-selection drag that ends on
   // the backdrop would dismiss the modal mid-copy; dismiss via Escape or a
@@ -1216,7 +1216,7 @@
   //          document has an opaque origin — no cookies, no parent DOM,
   //          no direct same-origin fetches. Dashboards, reports, mockups.
   //          Live data reaches it ONLY through the declared-allowlist
-  //          bridge below (data_urls + gohort.fetch).
+  //          bridge below (data_urls + oddjob.fetch).
   //   url  — a SAME-ORIGIN relative path ("/apps/foo/"), rendered as a
   //          normal iframe WITHOUT sandbox: it's this app's own page,
   //          the same trust as the user opening it in a tab. Used to
@@ -1234,7 +1234,7 @@
   //   url       string — same-origin relative path to preview (wins over html)
   //   data_urls array  — html mode only: same-origin GET paths the document
   //             may fetch live through the postMessage bridge. The pane
-  //             injects a gohort.fetch(path) helper into the document; a
+  //             injects a oddjob.fetch(path) helper into the document; a
   //             request for any path NOT on this list is refused up here
   //             in the privileged side, so the artifact can only see the
   //             endpoints it declared.
@@ -1303,7 +1303,7 @@
       return typeof u === 'string' && u.charAt(0) === '/' && u.charAt(1) !== '/';
     }
     var state = {id: '', html: '', url: '', dataUrls: [], dataKey: ''};
-    // gohort.fetch shim, injected into authored documents that declared
+    // oddjob.fetch shim, injected into authored documents that declared
     // data_urls. Child side of the bridge: postMessage the request up,
     // resolve/reject on the reply. The parent side (onBridgeMsg below) is
     // the privileged half that enforces the allowlist and does the real
@@ -1313,17 +1313,17 @@
     // isolated frame (ISOLATE_SHIM, 70_misc.js) takes the same polyfill.
     var BRIDGE_SHIM = '<script>(function(){var seq=0,pend={};' +
       'window.addEventListener("message",function(ev){if(ev.source!==window.parent)return;' +
-      'var d=ev.data;if(!d||d.gohort_fetch_id==null||!pend[d.gohort_fetch_id])return;' +
-      'var p=pend[d.gohort_fetch_id];delete pend[d.gohort_fetch_id];' +
+      'var d=ev.data;if(!d||d.oddjob_fetch_id==null||!pend[d.oddjob_fetch_id])return;' +
+      'var p=pend[d.oddjob_fetch_id];delete pend[d.oddjob_fetch_id];' +
       'if(d.ok)p.res({ok:true,status:d.status,body:d.body});' +
       'else p.rej(new Error(d.body||("HTTP "+d.status)));});' +
-      'window.gohort={fetch:function(url){seq++;var id=seq;' +
+      'window.oddjob={fetch:function(url){seq++;var id=seq;' +
       'return new Promise(function(res,rej){pend[id]={res:res,rej:rej};' +
-      'window.parent.postMessage({gohort_fetch:url,gohort_fetch_id:id},"*");' +
-      'setTimeout(function(){if(pend[id]){delete pend[id];rej(new Error("gohort.fetch timeout"));}},20000);});}};' +
+      'window.parent.postMessage({oddjob_fetch:url,oddjob_fetch_id:id},"*");' +
+      'setTimeout(function(){if(pend[id]){delete pend[id];rej(new Error("oddjob.fetch timeout"));}},20000);});}};' +
       '})();<' + '/script>';
     // Both shims go in as early as the document allows — a page that reads
-    // storage or calls gohort.fetch in its first inline script must find them
+    // storage or calls oddjob.fetch in its first inline script must find them
     // already installed.
     function withShims(html, dataUrls) {
       var shim = STORAGE_SHIM + ((dataUrls && dataUrls.length) ? BRIDGE_SHIM : '');
@@ -1377,10 +1377,10 @@
     function onBridgeMsg(ev) {
       if (ev.source !== frame.contentWindow) return;
       var d = ev.data;
-      if (!d || typeof d.gohort_fetch !== 'string' || d.gohort_fetch_id == null) return;
-      var url = d.gohort_fetch, id = d.gohort_fetch_id;
+      if (!d || typeof d.oddjob_fetch !== 'string' || d.oddjob_fetch_id == null) return;
+      var url = d.oddjob_fetch, id = d.oddjob_fetch_id;
       function reply(ok, status, body) {
-        try { frame.contentWindow.postMessage({gohort_fetch_id: id, ok: ok, status: status, body: body}, '*'); } catch (_) {}
+        try { frame.contentWindow.postMessage({oddjob_fetch_id: id, ok: ok, status: status, body: body}, '*'); } catch (_) {}
       }
       if (!pathAllowed(url)) {
         reply(false, 0, 'path not in this artifact\'s data_urls allowlist');

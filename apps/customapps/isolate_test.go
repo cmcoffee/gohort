@@ -40,7 +40,7 @@ func TestAnAppsPageWritesNoRawHTML(t *testing.T) {
 }
 
 // Every endpoint an app's page fetches or posts to stays inside the app: one
-// naming another gohort endpoint is blanked, while the app's own relative
+// naming another oddjob endpoint is blanked, while the app's own relative
 // (or absolute, under its address) endpoints, client action names and plain
 // links pass unchanged.
 func TestAnAppsPageEndpointsStayInTheApp(t *testing.T) {

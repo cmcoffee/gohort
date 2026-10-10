@@ -15,7 +15,7 @@ package knowledge
 import (
 	"net/http"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func init() { RegisterApp(new(documentsRedirectApp)) }

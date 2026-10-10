@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // SubAgentToolException is one sub-agent reaching past its parent.

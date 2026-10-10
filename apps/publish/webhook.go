@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/docs"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/docs"
 )
 
 // WebhookKind is the destination kind a producer routes to.
@@ -110,7 +110,7 @@ func webhookBody(cfg PublishConfig, req docs.PublishRequest) (string, string, er
 			"external_id": req.ExternalID,
 			// The document's headings, its links to them and its table of
 			// contents, so a receiver can rebuild them its own way: the
-			// markdown's anchors are gohort's.
+			// markdown's anchors are oddjob's.
 			"nav": req.Nav,
 		})
 		if err != nil {

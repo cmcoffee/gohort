@@ -287,9 +287,9 @@ Prompt overrides are global today: `EffectivePromptText` reads one table, from
 nine call sites, none of which carries a request context. A variant applied on
 the live server changes every user's prompts for the length of the run.
 Rather than thread a variant through every one of those sites, the harness
-runs a disposable gohort:
+runs a disposable oddjob:
 
-1. A scratch directory with the same binary and its own `gohort.ini`, so the
+1. A scratch directory with the same binary and its own `oddjob.ini`, so the
    data directory, database and workspaces are fresh (the data directory
    follows the binary unless `[paths] data_dir` says otherwise).
 2. LLM endpoints copied from the live configuration. The lead's key is the one
@@ -851,6 +851,6 @@ spend against the hours. On the extended run each is roughly two hours.
 - **Where a task's expected output comes from for machines.** Hand-written for
   now; a machine whose job is judgement may only be gradable by reading it,
   which makes it a poor task.
-- **Sandbox resources.** A second gohort plus headless Chrome for app checks
+- **Sandbox resources.** A second oddjob plus headless Chrome for app checks
   on the same box as the live server. Runs give way to people on the model
   they use, but the CPU and memory of the sandbox are not yielded.

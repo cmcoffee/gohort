@@ -7,7 +7,7 @@ package core
 import (
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/revisions"
+	"github.com/cmcoffee/oddjob/core/revisions"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

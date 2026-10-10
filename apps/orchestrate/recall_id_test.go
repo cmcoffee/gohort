@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The live failure, 2026-09-03: an agent three messages into a session with no

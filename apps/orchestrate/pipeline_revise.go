@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handlePipelineRevise redrafts an existing pipeline from a description

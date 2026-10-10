@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // finalizeAuthoredTool routes a freshly-authored tool (currently a
@@ -146,7 +146,7 @@ func createGroupedMode(args map[string]any, sess *ToolSession) (string, error) {
 		// without a word: an update carrying one reported "did not land", and
 		// the author deleted and recreated the tool five times over it.
 		if cred := strings.TrimSpace(StringArg(args, "credential")); cred != "" {
-			return "", fmt.Errorf("credential applies to api and toolbox tools only: a shell tool has no credential, so %q would be dropped. A script reaches a credential from inside: fetch_url(url) on the credential's own host is routed through it automatically, or fetch_via(%q, url, ...) with hook_capabilities [\"fetch_via:%s\"] names it explicitly (the only way for a Secured credential). If gohort should make the call itself, use mode=\"api\" with credential=%q", cred, cred, cred, cred)
+			return "", fmt.Errorf("credential applies to api and toolbox tools only: a shell tool has no credential, so %q would be dropped. A script reaches a credential from inside: fetch_url(url) on the credential's own host is routed through it automatically, or fetch_via(%q, url, ...) with hook_capabilities [\"fetch_via:%s\"] names it explicitly (the only way for a Secured credential). If oddjob should make the call itself, use mode=\"api\" with credential=%q", cred, cred, cred, cred)
 		}
 		// Shell mode — call the existing CreateTempToolTool path by
 		// reconstructing its expected args.

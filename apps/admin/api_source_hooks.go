@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registerSourceHooksRoutes wires the source hooks API under the admin sub-mux.

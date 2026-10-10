@@ -25,7 +25,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxHandoffFiles caps how many files ride one handoff. Builder reads these

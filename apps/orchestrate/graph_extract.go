@@ -30,7 +30,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // TunableGraphExtract gates automatic entity extraction. Off by default: it costs

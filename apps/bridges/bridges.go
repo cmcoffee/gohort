@@ -8,7 +8,7 @@
 // POST inbound to /bridges/api/hook, poll /bridges/api/poll for outbound, and
 // authenticate with a bridge key (which declares the service). That contract is
 // written up for connector authors in docs/bridges-connector-contract.md. HOW a bridge
-// sources messages varies — iMessage runs as the gohort-desktop daemon
+// sources messages varies — iMessage runs as the oddjob-desktop daemon
 // (device-side, Mac-only); Telegram/Slack would be server-side pollers/webhooks
 // — but to Bridges they're all just connectors speaking the same contract.
 //
@@ -26,7 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func init() {
@@ -65,7 +65,7 @@ func (T *Bridges) WebOrder() int { return -900 }
 func (T *Bridges) Init() error { return T.Flags.Parse() }
 
 func (T *Bridges) Main() error {
-	Log("Bridges is a dashboard app. Start with:\n  gohort serve :8080")
+	Log("Bridges is a dashboard app. Start with:\n  oddjob serve :8080")
 	return nil
 }
 
@@ -116,7 +116,7 @@ type Convo struct {
 	// list shows only these; raw inbound stays in the "Add" picker until added.
 	Added  bool   `json:"added,omitempty"`
 	LastAt string `json:"last_at,omitempty"`
-	// Owner is the gohort user this conversation belongs to: stamped from the
+	// Owner is the oddjob user this conversation belongs to: stamped from the
 	// authenticating key or connector when inbound first records it, or from
 	// the signed-in user who adds it by hand. Empty on conversations recorded
 	// before ownership existed; those belong to the deployment admin (see
@@ -525,14 +525,14 @@ func firstNonEmpty(vals ...string) string {
 
 // --- Bridge key: a connector's credential + the service it speaks -------------
 
-// BridgeKey authenticates one connector (e.g. the gohort-desktop iMessage
+// BridgeKey authenticates one connector (e.g. the oddjob-desktop iMessage
 // daemon) and declares which Service it bridges. The key's LastSeen drives the
 // dashboard's connection status.
 type BridgeKey struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`    // friendly label, e.g. "Craig's MacBook"
 	Key      string `json:"key"`     // the secret; shown once on creation
-	Owner    string `json:"owner"`   // gohort user this bridge belongs to
+	Owner    string `json:"owner"`   // oddjob user this bridge belongs to
 	Service  string `json:"service"` // "imessage", "telegram", … (the bridge's service id)
 	Enabled  bool   `json:"enabled"` // per-bridge switch; create sets true. Disabled = inbound recorded, not routed/delivered
 	Created  string `json:"created"`
@@ -682,7 +682,7 @@ func (T *Bridges) validateBridgeKey(secret string) (BridgeKey, bool) {
 		T.DB.Set(bridgeKeysTable, match.ID, match)
 		return match, true
 	}
-	// Accept the core desktop key — the gohort-desktop daemon's auto-negotiated
+	// Accept the core desktop key — the oddjob-desktop daemon's auto-negotiated
 	// credential — as the iMessage bridge, so the existing daemon authenticates
 	// without minting a separate key. Backed by a PERSISTENT record (created on
 	// first sight) so the desktop bridge shows in the dashboard and has its own
@@ -769,7 +769,7 @@ type OutboxItem struct {
 	// so recipients can tell an agent's message from the owner's own texts.
 	// Empty = the agent didn't opt in (or is unknown) → untagged.
 	Agent   string   `json:"agent,omitempty"`
-	// Owner is the gohort user this outbound belongs to. enqueueOutbox resolves
+	// Owner is the oddjob user this outbound belongs to. enqueueOutbox resolves
 	// the bound channel's tag overrides with it, and drainOutbox hands an item
 	// only to a connector of the same owner. Stored (kvlite encodes with gob,
 	// which ignores json tags) but never serialized to a connector: the poll

@@ -80,7 +80,7 @@ func TestComposeGraphKeepsBothImagesInNodeOrder(t *testing.T) {
 	}
 	body, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, ComfyBuildInput{
 		Prompt: "p",
-		Images: []ComfyUploadedImage{{Name: "first.png"}, {Name: "second.png", Subfolder: "gohort"}},
+		Images: []ComfyUploadedImage{{Name: "first.png"}, {Name: "second.png", Subfolder: "oddjob"}},
 	})
 	if err != nil {
 		t.Fatalf("BuildComfyBody: %v", err)
@@ -90,8 +90,8 @@ func TestComposeGraphKeepsBothImagesInNodeOrder(t *testing.T) {
 		t.Errorf("node 1 image = %v, want the caller's FIRST image", got)
 	}
 	// A subfolder has to be joined on, or the backend looks in the wrong place.
-	if got := nodeInput(t, g, "2", "image"); got != "gohort/second.png" {
-		t.Errorf("node 2 image = %v, want \"gohort/second.png\"", got)
+	if got := nodeInput(t, g, "2", "image"); got != "oddjob/second.png" {
+		t.Errorf("node 2 image = %v, want \"oddjob/second.png\"", got)
 	}
 }
 

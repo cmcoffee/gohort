@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleFacts returns all stored facts for a given appliance (GET)

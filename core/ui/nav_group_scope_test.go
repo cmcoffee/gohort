@@ -55,7 +55,7 @@ func TestFleetScopedSourceDropsTheAgent(t *testing.T) {
 	fn := src[i : i+end+len("\n      }")]
 
 	harness := `
-global.window = {GOHORT_AGENT_ID: 'agent-7'};
+global.window = {ODDJOB_AGENT_ID: 'agent-7'};
 ` + fn + `
 var perAgent = orchSourceURL('api/console/overview', {label: 'Agent overview'});
 if (perAgent !== 'api/console/overview?agent=agent-7') throw new Error('per-agent source lost its agent: ' + perAgent);

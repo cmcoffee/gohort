@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // explorerHardCap is the DEFAULT absolute round ceiling once explorer

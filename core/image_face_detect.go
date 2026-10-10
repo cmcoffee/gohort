@@ -25,7 +25,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/cmcoffee/gohort/core/pigo"
+	"github.com/cmcoffee/oddjob/core/pigo"
 	_ "golang.org/x/image/webp"
 )
 

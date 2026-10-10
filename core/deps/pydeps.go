@@ -5,12 +5,12 @@
 // install anything from inside: site-packages is read-only and there's
 // no network. Any third-party library a generator needs (openpyxl,
 // python-docx, python-pptx, pandas, ...) has to be installed HOST-side,
-// by the gohort process, into a directory the sandbox then binds RO.
+// by the oddjob process, into a directory the sandbox then binds RO.
 //
-// This mirrors the gohort-helper mechanism in sandbox_hook.go exactly:
+// This mirrors the oddjob-helper mechanism in sandbox_hook.go exactly:
 // a host dir living OUTSIDE any workspace, bind-mounted read-only into
 // every sandbox with PYTHONPATH pointing at it. The difference is only
-// what populates it — EnsureGohortLibDir writes an embedded __init__.py,
+// what populates it — EnsureOddjobLibDir writes an embedded __init__.py,
 // EnsurePyDeps shells out to `pip install --target`.
 //
 // Trust posture: fetching packages from PyPI is a privileged host
@@ -42,7 +42,7 @@ import (
 // python-deps dir is bind-mounted (read-only). Scripts get this path in
 // PYTHONPATH so `import openpyxl` resolves against the managed install
 // rather than the (empty) system site-packages.
-const SandboxPyDepsMountPath = "/opt/gohort-pydeps"
+const SandboxPyDepsMountPath = "/opt/oddjob-pydeps"
 
 // pyDepsInstalledMarker is the filename (inside the deps dir) that
 // records which pip specs have already been installed, one per line.
@@ -69,8 +69,8 @@ var (
 
 // EnsurePyDepsDir returns the host-side directory that holds the managed
 // python packages, creating it if needed. It is a sibling of
-// WorkspacesDir named "_gohort_pydeps" (the "_" prefix keeps it out of
-// the valid-user-id namespace, same trick EnsureGohortLibDir uses), and
+// WorkspacesDir named "_oddjob_pydeps" (the "_" prefix keeps it out of
+// the valid-user-id namespace, same trick EnsureOddjobLibDir uses), and
 // is the target of `pip install --target` — so packages land directly
 // under it (e.g. <dir>/openpyxl/) and PYTHONPATH points here.
 //
@@ -100,7 +100,7 @@ func ensurePyDepsDirLocked() string {
 	if base == "" {
 		return ""
 	}
-	dir := filepath.Join(filepath.Dir(base), "_gohort_pydeps")
+	dir := filepath.Join(filepath.Dir(base), "_oddjob_pydeps")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		nfo.Debug("[pydeps] failed to mkdir %s: %v", dir, err)
 		return ""

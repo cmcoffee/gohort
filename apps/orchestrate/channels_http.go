@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/messaging"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/messaging"
 )
 
 // handleChannels manages an agent's attached messaging Channels. Phase 1 is

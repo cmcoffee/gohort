@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/provenance"
+	"github.com/cmcoffee/oddjob/core/provenance"
 )
 
 // TestSweepMergeDedupBackfillsSuccessor: when a sweep-merge's combined text

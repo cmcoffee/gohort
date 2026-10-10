@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const alwaysAssistPrompt = "You write operator rules that bind an AI assistant's conduct: short imperative " +

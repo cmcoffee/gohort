@@ -27,7 +27,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/cmcoffee/gohort/core/provenance"
+	"github.com/cmcoffee/oddjob/core/provenance"
 )
 
 // MemoryFactsTable is the kvlite table name. One table shared across

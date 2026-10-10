@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // withHeartbeat runs fn in the foreground while a background goroutine emits a

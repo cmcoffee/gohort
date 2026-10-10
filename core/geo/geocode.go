@@ -25,7 +25,7 @@ import (
 
 const (
 	nominatimEndpoint = "https://nominatim.openstreetmap.org/reverse"
-	geocodeUserAgent  = "gohort (https://github.com/cmcoffee/gohort)"
+	geocodeUserAgent  = "oddjob (https://github.com/cmcoffee/oddjob)"
 )
 
 // nominatimAddress mirrors the subset of /reverse fields we use.

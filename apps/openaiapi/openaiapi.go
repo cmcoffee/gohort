@@ -1,12 +1,12 @@
 // Package openaiapi serves an OpenAI-compatible /v1/chat/completions endpoint
 // so an external platform that only knows how to talk to "an OpenAI API" can
-// drive gohort — either a raw model or a full agent.
+// drive oddjob — either a raw model or a full agent.
 //
 // The motivating case is a voice platform's custom-LLM setting (Vapi and
 // friends): you give it a base URL and a key, it POSTs the OpenAI chat shape
 // with stream:true and expects SSE deltas back. Nothing else about those
 // platforms is negotiable, so the adapter lives here rather than asking the
-// caller to speak gohort's own protocol.
+// caller to speak oddjob's own protocol.
 //
 // The `model` field is the router, which is what lets one endpoint serve both
 // readings of "use my LLM":
@@ -32,7 +32,7 @@
 //
 // Not enabled by default — add a blank import to agents.go to mount it:
 //
-//	_ "github.com/cmcoffee/gohort/apps/openaiapi"
+//	_ "github.com/cmcoffee/oddjob/apps/openaiapi"
 package openaiapi
 
 import (
@@ -44,9 +44,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 // OpenAIFeatureKey is the shareable-feature id gating the /v1 endpoint. The
@@ -81,7 +81,7 @@ func (T OpenAIAPI) Desc() string {
 func (T *OpenAIAPI) Init() error { return T.Flags.Parse() }
 
 func (T *OpenAIAPI) Main() error {
-	Log("openai_api is an endpoint-only app. Start with: gohort serve")
+	Log("openai_api is an endpoint-only app. Start with: oddjob serve")
 	return nil
 }
 
@@ -149,18 +149,18 @@ func textContent(v any) string {
 // something that should resolve to a conversation.
 func isTierName(m string) bool {
 	switch strings.ToLower(strings.TrimSpace(m)) {
-	case "worker", "lead", "gohort", "gohort-worker", "gohort-lead", "default":
+	case "worker", "lead", "oddjob", "oddjob-worker", "oddjob-lead", "default":
 		return true
 	}
 	return false
 }
 
 // canonicalTier maps a tier name (with its aliases) to the exact string the key
-// scope stores — "worker" or "lead". "lead"/"gohort-lead" → "lead"; everything
+// scope stores — "worker" or "lead". "lead"/"oddjob-lead" → "lead"; everything
 // else that isTierName accepts → "worker".
 func canonicalTier(m string) string {
 	switch strings.ToLower(strings.TrimSpace(m)) {
-	case "lead", "gohort-lead":
+	case "lead", "oddjob-lead":
 		return "lead"
 	default:
 		return "worker"
@@ -270,10 +270,10 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 	allow := func(canonical string) bool { return token == nil || token.AllowsTarget(canonical) }
 	data := []map[string]any{}
 	if allow("worker") {
-		data = append(data, map[string]any{"id": "worker", "object": "model", "owned_by": "gohort"})
+		data = append(data, map[string]any{"id": "worker", "object": "model", "owned_by": "oddjob"})
 	}
 	if allow("lead") {
-		data = append(data, map[string]any{"id": "lead", "object": "model", "owned_by": "gohort"})
+		data = append(data, map[string]any{"id": "lead", "object": "model", "owned_by": "oddjob"})
 	}
 	for _, a := range orchestrate.ExternalAgents(T.agentStore(), user) {
 		// App-owned agents live behind their app's FEATURE checkbox, not the
@@ -282,7 +282,7 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 		if k := AppFeatureKeyForAgent(a.ID); k != "" {
 			if ok, _ := KeyAllowsAppAgent(RootDB, user, token, a.ID); ok {
 				data = append(data, map[string]any{
-					"id": "agent:" + a.ID, "object": "model", "owned_by": "gohort",
+					"id": "agent:" + a.ID, "object": "model", "owned_by": "oddjob",
 					"description": a.Name,
 				})
 			}
@@ -290,7 +290,7 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 		}
 		if allow("agent:" + a.ID) {
 			data = append(data, map[string]any{
-				"id": "agent:" + a.ID, "object": "model", "owned_by": "gohort",
+				"id": "agent:" + a.ID, "object": "model", "owned_by": "oddjob",
 				"description": a.Name,
 			})
 		}
@@ -300,7 +300,7 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 		for _, c := range orch.ExternalChannels(user) {
 			if allow("channel:" + c.ChatID) {
 				data = append(data, map[string]any{
-					"id": "channel:" + c.ChatID, "object": "model", "owned_by": "gohort",
+					"id": "channel:" + c.ChatID, "object": "model", "owned_by": "oddjob",
 					"description": c.Name + " - " + c.AgentName,
 				})
 			}
@@ -550,7 +550,7 @@ func (T *OpenAIAPI) serveAgent(w http.ResponseWriter, r *http.Request, user, age
 // speaking to the agent is not the same act as the agent posting to everyone,
 // and sending on the room's behalf is exactly the kind of thing that should be
 // deliberate rather than a side effect of picking a model string. The turn is
-// recorded in the thread either way, so it shows up in gohort's transcript.
+// recorded in the thread either way, so it shows up in oddjob's transcript.
 func (T *OpenAIAPI) serveChannel(w http.ResponseWriter, r *http.Request, user, chatKey string, req chatReq) {
 	if chatKey == "" {
 		writeErr(w, http.StatusBadRequest, "model \"channel:\" needs a chat id, handle, or room name, GET /v1/models lists the reachable ones")

@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // TranscribeTool's standalone registration is dropped — surfaces via

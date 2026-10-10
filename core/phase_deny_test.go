@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/toolrules"
+	"github.com/cmcoffee/oddjob/core/toolrules"
 )
 
 func denyCatalog() []AgentToolDef {

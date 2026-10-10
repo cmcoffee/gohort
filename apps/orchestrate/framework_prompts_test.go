@@ -3,7 +3,7 @@ package orchestrate
 import "strings"
 import "testing"
 
-import core "github.com/cmcoffee/gohort/core"
+import core "github.com/cmcoffee/oddjob/core"
 
 func chatSeed(t *testing.T) AgentRecord {
 	t.Helper()

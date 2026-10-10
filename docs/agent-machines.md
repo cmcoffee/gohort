@@ -95,7 +95,7 @@ several agents.
 
 ## Why
 
-gohort has two ways to run an LLM and they sit at opposite corners:
+oddjob has two ways to run an LLM and they sit at opposite corners:
 
 - **Pipelines** (`core/pipeline_def.go`, `core/pipeline_interp.go`). Durable control flow, zero
   memory. `RunPipelineDefSync(ctx, def, input string, ...) (string, error)`: a run starts empty,

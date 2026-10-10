@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // tempToolCacheTable holds memoized temp-tool results. One row per

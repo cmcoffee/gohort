@@ -33,7 +33,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/oddjob/core"
 )
 
 var maintenanceListRe = regexp.MustCompile(`maintenanceList\(\s*"([^"]+)"`)

@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // systemNeedsSetup reports whether this install has never had an LLM provider
@@ -145,7 +145,7 @@ func (a *AdminApp) setupWizardPage() ui.Page {
 	}
 
 	page := ui.Page{
-		Title:     "Welcome to gohort",
+		Title:     "Welcome to oddjob",
 		ShowTitle: true,
 		MaxWidth:  "760px",
 		Sections: []ui.Section{{
@@ -268,7 +268,7 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		// Resolve the identity up front and report it either way. A bare
 		// "denied" is unactionable: the expensive question in a Bedrock setup
 		// is always WHICH credential got denied, and the AWS error names a
-		// role that may appear nowhere in gohort's configuration.
+		// role that may appear nowhere in oddjob's configuration.
 		if req.APIKey == "" {
 			src, err := DescribeBedrockCredentials(req.AWSProfile)
 			if err != nil {

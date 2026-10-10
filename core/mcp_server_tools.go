@@ -12,7 +12,7 @@ import (
 // user's data — resolve the user's store with UserDB(RootDB, owner).
 type MCPToolHandler func(ctx context.Context, owner string, args map[string]any) (string, error)
 
-// MCPToolSpec is an app-contributed tool exposed on gohort's INBOUND MCP server
+// MCPToolSpec is an app-contributed tool exposed on oddjob's INBOUND MCP server
 // (apps/mcpserver, served at /mcp/). Apps register these so an external MCP
 // client (e.g. Claude Desktop) can DRIVE the app — list/read/create/edit its
 // records — not just talk to agents. This is the registry seam that keeps the

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // captureVerify records every verification verdict for the test's duration.

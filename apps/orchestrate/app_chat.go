@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // AppChat is where an app routes its agent chat.

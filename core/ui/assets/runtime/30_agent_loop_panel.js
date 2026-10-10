@@ -88,7 +88,7 @@
     // Last surface this agent was on — so opening it later lands the same way: its
     // standing thread (cortex/home) → the cortex; a session → a NEW session.
     // Per-agent, browser-local (a landing preference, not synced state).
-    function landingKey(agentId) { return 'gohort_landing_' + (agentId || ''); }
+    function landingKey(agentId) { return 'oddjob_landing_' + (agentId || ''); }
     function getLanding(agentId) { try { return localStorage.getItem(landingKey(agentId)) || ''; } catch (e) { return ''; } }
     function setLanding(agentId, surface) { try { localStorage.setItem(landingKey(agentId), surface); } catch (e) {} }
 
@@ -376,7 +376,7 @@
         // rather than merely unused.
         function fireViewAction(a, reload) {
           if (!a || !a.url) { return; }
-          var agent = window.GOHORT_AGENT_ID || '';
+          var agent = window.ODDJOB_AGENT_ID || '';
           if (a.method === 'client') {
             var fn = (window.UIClientActions || {})[a.url];
             if (typeof fn !== 'function') { console.error('client action not registered: ' + a.url); return; }
@@ -416,7 +416,7 @@
             return v == null ? '' : String(v);
           }
           function openRowPicker(a, row) {
-            var agent = window.GOHORT_AGENT_ID || '';
+            var agent = window.ODDJOB_AGENT_ID || '';
             var src = a.picker_source + (a.picker_source.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
             // Which ROW the choice is for. A picker_source is one URL for a
             // whole column of rows, and the right choices are not always the
@@ -495,12 +495,12 @@
               if (found < 0) { console.error('nav view not found: ' + want); return; }
               // {agent} resolves to the agent in view, so a per-agent summary can
               // hand its own scope to a view that is otherwise fleet-wide.
-              var q = String(a.query || '').replace(/\{agent\}/g, encodeURIComponent(window.GOHORT_AGENT_ID || ''));
+              var q = String(a.query || '').replace(/\{agent\}/g, encodeURIComponent(window.ODDJOB_AGENT_ID || ''));
               closeNavMenus();
               selectOrchNav(found, q, a.note);
               return;
             }
-            var rowURL = a.url + '?id=' + encodeURIComponent(rowActionID(a, row)) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+            var rowURL = a.url + '?id=' + encodeURIComponent(rowActionID(a, row)) + '&agent=' + encodeURIComponent(window.ODDJOB_AGENT_ID || '');
             if (a.show_result) {
               fetch(rowURL, {method: a.method || 'GET'})
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
@@ -590,7 +590,7 @@
                     onclick: function(ev) {
                       if (ev) ev.stopPropagation();
                       if (active) return;
-                      var u = opt.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '') + '&value=' + encodeURIComponent(opt.value);
+                      var u = opt.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.ODDJOB_AGENT_ID || '') + '&value=' + encodeURIComponent(opt.value);
                       fetch(u, {method: opt.method || 'POST'}).then(function() { if (reload) reload(); }).catch(function(err) { console.error('state set failed: ' + err.message); });
                     }}, [opt.label]);
                   seg.appendChild(segBtn);
@@ -848,18 +848,18 @@
         // ?agent= stamp below, which a query-keyed handler still wants: a
         // source can need either, and one that names {agent} has said which.
         if (url.indexOf('{agent}') >= 0) {
-          url = url.replace(/\{agent\}/g, encodeURIComponent(window.GOHORT_AGENT_ID || ''));
+          url = url.replace(/\{agent\}/g, encodeURIComponent(window.ODDJOB_AGENT_ID || ''));
         }
         if (extra) url += (url.indexOf('?') >= 0 ? '&' : '?') + extra;
         if (item && item.scope === 'fleet') return url;
-        return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+        return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.ODDJOB_AGENT_ID || '');
       }
       // openHomeThread lands on the agent's home thread — a pinned session in
       // the normal list, not a nav row (channel model: the home thread is just
       // a session). Used on entering a channel agent and after a channel-wide
       // action. Non-channel agents have no pinned thread, so it's a no-op there.
       function openHomeThread() {
-        var hs = altPinnedSession(window.GOHORT_AGENT_ID);
+        var hs = altPinnedSession(window.ODDJOB_AGENT_ID);
         if (hs) openSession(hs);
       }
       // Auto-refresh timer for the currently-open nav data view (items with
@@ -950,13 +950,13 @@
         if (item.action_url) {
           (async function() {
             if (item.confirm && window.uiConfirm && !(await window.uiConfirm(item.confirm))) return;
-            var url = item.action_url + (item.action_url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+            var url = item.action_url + (item.action_url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.ODDJOB_AGENT_ID || '');
             fetch(url, {method: 'POST'})
               .then(function() {
                 refreshChannelBadges(); closeDrawer();
                 // A record agent has no home thread to land on: refresh its
                 // list, and the record if it is the thread on screen.
-                var rec = recordPinnedSession(window.GOHORT_AGENT_ID);
+                var rec = recordPinnedSession(window.ODDJOB_AGENT_ID);
                 if (rec) {
                   if (activeSessionId === rec) openSession(rec);
                   loadSessions();
@@ -1058,7 +1058,7 @@
           // The Channel (chat) row: hide the overlay so the conversation
           // shows, and resume this agent's pinned home thread.
           orchView.style.display = 'none';
-          var altSid = altPinnedSession(window.GOHORT_AGENT_ID);
+          var altSid = altPinnedSession(window.ODDJOB_AGENT_ID);
           // Use this panel's own session var (activeSessionId). currentSessionId
           // belongs to a different component (chat_panel) and is undeclared here
           // — referencing it threw a ReferenceError that swallowed the channel
@@ -1380,12 +1380,12 @@
         }
         lastOrchAgent = agentId;
       }
-      window.addEventListener('gohort-agent-id-changed', function(e) {
+      window.addEventListener('oddjob-agent-id-changed', function(e) {
         applyOrchMode(e && e.detail && e.detail.agent_id);
       });
       // web_assets dispatches the change event after picker init; apply now
       // too in case the default-selected agent is already an orchestrator.
-      setTimeout(function() { applyOrchMode(window.GOHORT_AGENT_ID || ''); }, 0);
+      setTimeout(function() { applyOrchMode(window.ODDJOB_AGENT_ID || ''); }, 0);
 
       // Unread/badge poll. A channel agent receives background wakes (a
       // monitor fires, a standing agent reports, a goal conversation
@@ -1399,7 +1399,7 @@
         setInterval(function() {
           if (document.hidden) return;
           if (bulkState && bulkState.mode) return;
-          if (!isAltNavAgent(window.GOHORT_AGENT_ID)) {
+          if (!isAltNavAgent(window.ODDJOB_AGENT_ID)) {
             // Not a channel agent: there is no session list to reload, which is
             // what this tick was written for. But an approval queue belongs to
             // the USER, not to whichever agent is on screen — that is what
@@ -2293,10 +2293,10 @@
       // go to .documents[] where the server extracts the text and
       // prepends it to the user message. accept covers both.
       // Build accept conditionally — only include audio types when
-      // transcription is enabled at the server. window.GOHORT_TRANSCRIBE_ENABLED
+      // transcription is enabled at the server. window.ODDJOB_TRANSCRIBE_ENABLED
       // is set by TranscribeRuntimeFlagScript at page render time.
       var attachAccept = 'image/*,.pdf,application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.doc,application/msword,.txt,.md,text/*';
-      if (window.GOHORT_TRANSCRIBE_ENABLED) {
+      if (window.ODDJOB_TRANSCRIBE_ENABLED) {
         attachAccept += ',audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm,.opus';
       }
       attachInput = el('input', {
@@ -2494,7 +2494,7 @@
           // Which conversation the bubble is in, for an action that
           // files something about it on the server.
           sessionId: activeSessionId,
-          agentId: window.GOHORT_AGENT_ID || '',
+          agentId: window.ODDJOB_AGENT_ID || '',
           // Redraw this bubble's action bar, after the action changed
           // what its active() reports.
           refresh: function() { window.uiRefreshBubbleActions(bubble); },
@@ -2644,14 +2644,14 @@
         var body = {};
         body[m.field] = next;
         // Per-(user, agent) scoping — include agent_id so the server
-        // saves the toggle as a per-agent override. window.GOHORT_AGENT_ID
+        // saves the toggle as a per-agent override. window.ODDJOB_AGENT_ID
         // is set by the host page (Agency dropdown / public agent app
         // page render). Empty string when not set = falls back to the
         // global user-level toggle on the server.
-        body.agent_id = window.GOHORT_AGENT_ID || '';
+        body.agent_id = window.ODDJOB_AGENT_ID || '';
         try {
-          console.log('[gohort/mode-toggle:agent] sending', m.field, '=', next,
-            'agent_id=', JSON.stringify(window.GOHORT_AGENT_ID || ''));
+          console.log('[oddjob/mode-toggle:agent] sending', m.field, '=', next,
+            'agent_id=', JSON.stringify(window.ODDJOB_AGENT_ID || ''));
         } catch (_) {}
         fetchJSON(m.post_url, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -2666,13 +2666,13 @@
       modesRow.appendChild(btn);
       // Initial state from GET — fire-and-forget; runs after the
       // panel mounts. Appends agent_id when the host page has set
-      // window.GOHORT_AGENT_ID, so the server returns the per-agent
+      // window.ODDJOB_AGENT_ID, so the server returns the per-agent
       // override (falls back to global when no override exists).
       // withAgentParam (defined in ChatPanel's scope) isn't reachable
       // here — inline the URL building rather than chasing scope.
       var refresh = function() {
         var url = m.get_url;
-        var aid = window.GOHORT_AGENT_ID;
+        var aid = window.ODDJOB_AGENT_ID;
         if (aid && url) {
           url += (url.indexOf('?') >= 0 ? '&' : '?') + 'agent_id=' + encodeURIComponent(aid);
         }
@@ -2713,7 +2713,7 @@
       refresh();
       // Re-fetch when the agent changes so the toggle state reflects
       // the new agent's override.
-      window.addEventListener('gohort-agent-id-changed', refresh);
+      window.addEventListener('oddjob-agent-id-changed', refresh);
     });
     if ((cfg.modes || []).length > 0) modesRow.style.display = '';
 
@@ -5127,7 +5127,7 @@
     // page, hidden, because a question card answers through it.
     var lockNote = null;
     function applyRecordLock(sid) {
-      var agentId = window.GOHORT_AGENT_ID;
+      var agentId = window.ODDJOB_AGENT_ID;
       var altLocked = !!(cfg.alt_locked && sid && sid === altPinnedSession(agentId));
       recordLocked = altLocked || !!(sid && sid === recordPinnedSession(agentId));
       inputArea.disabled = recordLocked;
@@ -6058,10 +6058,10 @@
         // it first below. For a channel agent whose home thread has no turns yet
         // (not in the items list), synthesize a placeholder row so there's always
         // an entry point — sending into it creates it on the first turn.
-        var chanSid = altPinnedSession(window.GOHORT_AGENT_ID);
+        var chanSid = altPinnedSession(window.ODDJOB_AGENT_ID);
         var isRecord = false;
         if (!chanSid) {
-          chanSid = recordPinnedSession(window.GOHORT_AGENT_ID);
+          chanSid = recordPinnedSession(window.ODDJOB_AGENT_ID);
           isRecord = !!chanSid;
         }
         var homeRec = null;
@@ -6251,7 +6251,7 @@
                 onclick: function(ev) {
                   ev.stopPropagation();
                   // uiPrompt (not native prompt) so this works on hosts where
-                  // window.prompt is unsupported — e.g. the gohort-desktop
+                  // window.prompt is unsupported — e.g. the oddjob-desktop
                   // Wails webview, which injects __uiPromptImpl + a modal.
                   uiPrompt('Rename to:', ttl).then(function(next) {
                     if (next == null) return;

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // channelLabelForRow returns the friendly name of a bridge's target channel

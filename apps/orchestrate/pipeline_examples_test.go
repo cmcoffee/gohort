@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/extras"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/extras"
 )
 
 // Builder starts a debate or a research build from a shipped recipe: the list

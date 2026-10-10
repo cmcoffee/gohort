@@ -1,7 +1,7 @@
 // How long the user waited before their message reached a model.
 //
 // The turn already accounts for itself once the loop is running: "[agent_loop]
-// turn time: 3.268s total = 2.78s in 1 LLM call(s) + 488ms gohort (14%)". That
+// turn time: 3.268s total = 2.78s in 1 LLM call(s) + 488ms oddjob (14%)". That
 // clock starts INSIDE RunAgentLoop, with the system prompt already assembled,
 // the tool catalog already built and the recall already done — so everything
 // between the request landing and that point was unmeasured, and a turn that
@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // prepClock measures request-received to first-LLM-call, and collects what the
@@ -61,7 +61,7 @@ func (p *prepClock) mark(name string, d time.Duration) {
 }
 
 // done logs the wait, once. Called where the turn's own model call begins,
-// which is the moment the person stops waiting on gohort and starts waiting on
+// which is the moment the person stops waiting on oddjob and starts waiting on
 // the model.
 //
 // Once, because the loop calls a model many times per turn and only the first

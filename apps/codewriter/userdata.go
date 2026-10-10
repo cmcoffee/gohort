@@ -3,7 +3,7 @@ package codewriter
 import (
 	"errors"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // codeWriterUserData exposes snippets/values/contexts for the admin

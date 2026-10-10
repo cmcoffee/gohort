@@ -9,23 +9,23 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/deps"
+	"github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/deps"
 )
 
 // ytDlpAuthArgs returns yt-dlp cookie flags when the operator has configured a
 // session, so login-gated sites can be fetched. Instagram now returns an empty
 // media response to logged-out requests, so reels need this. Set
-// GOHORT_YTDLP_COOKIES to a Netscape cookies.txt exported from a logged-in
-// browser session, or GOHORT_YTDLP_COOKIES_FROM_BROWSER to a local browser name
+// ODDJOB_YTDLP_COOKIES to a Netscape cookies.txt exported from a logged-in
+// browser session, or ODDJOB_YTDLP_COOKIES_FROM_BROWSER to a local browser name
 // (e.g. "firefox") on desktop hosts. Empty when neither is set.
 func ytDlpAuthArgs() []string {
-	if path := strings.TrimSpace(os.Getenv("GOHORT_YTDLP_COOKIES")); path != "" {
+	if path := strings.TrimSpace(envOr("ODDJOB_YTDLP_COOKIES", "GOHORT_YTDLP_COOKIES")); path != "" {
 		if _, err := os.Stat(path); err == nil {
 			return []string{"--cookies", path}
 		}
 	}
-	if b := strings.TrimSpace(os.Getenv("GOHORT_YTDLP_COOKIES_FROM_BROWSER")); b != "" {
+	if b := strings.TrimSpace(envOr("ODDJOB_YTDLP_COOKIES_FROM_BROWSER", "GOHORT_YTDLP_COOKIES_FROM_BROWSER")); b != "" {
 		return []string{"--cookies-from-browser", b}
 	}
 	return nil
@@ -126,7 +126,7 @@ func downloadViaYtDlp(url string) ([]byte, error) {
 		// actionable error (not the raw yt-dlp wall of text) so the agent can
 		// tell the user the truth instead of guessing at the video's content.
 		if needsAuth(msg) && len(ytDlpAuthArgs()) == 0 {
-			return nil, fmt.Errorf("this video requires a logged-in session to download; the site (e.g. Instagram) blocks anonymous access. Set GOHORT_YTDLP_COOKIES to a cookies.txt exported from a logged-in browser session, then retry. Underlying error: %s", firstLine(msg))
+			return nil, fmt.Errorf("this video requires a logged-in session to download; the site (e.g. Instagram) blocks anonymous access. Set ODDJOB_YTDLP_COOKIES to a cookies.txt exported from a logged-in browser session, then retry. Underlying error: %s", firstLine(msg))
 		}
 		// The server already knows whether this build is out of date; say so
 		// here, or the agent explains a 403 with a guess. Appended, so the
@@ -164,4 +164,15 @@ func downloadViaYtDlp(url string) ([]byte, error) {
 		return nil, fmt.Errorf("read output: %w", err)
 	}
 	return data, nil
+}
+
+// envOr reads the first variable that is set: the name since the rename,
+// then the one an operator set before it.
+func envOr(names ...string) string {
+	for _, n := range names {
+		if v := os.Getenv(n); v != "" {
+			return v
+		}
+	}
+	return ""
 }

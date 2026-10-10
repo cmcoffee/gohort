@@ -32,7 +32,7 @@ import (
 	"errors"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // memoryScope is the two axes, separated.

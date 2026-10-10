@@ -16,10 +16,10 @@ func TestScriptCallsHookSpotsBothImportAndCall(t *testing.T) {
 		body, name string
 		want       bool
 	}{
-		{"from gohort import browse_page\nx = browse_page(u)", "browse_page", true},
-		{"from gohort import fetch_url, log", "log", true},
-		{"resp = gohort.fetch_via(\"cred\", url)", "fetch_via", true},
-		{"from gohort import fetch_url\nx = fetch_url(u)", "browse_page", false},
+		{"from oddjob import browse_page\nx = browse_page(u)", "browse_page", true},
+		{"from oddjob import fetch_url, log", "log", true},
+		{"resp = oddjob.fetch_via(\"cred\", url)", "fetch_via", true},
+		{"from oddjob import fetch_url\nx = fetch_url(u)", "browse_page", false},
 		{"", "fetch_url", false},
 	}
 	for _, c := range cases {
@@ -47,28 +47,28 @@ func TestHookCapabilityDeclaredMatchesTheServerGate(t *testing.T) {
 	}
 }
 
-// A script that imports a name the gohort module does not export is refused at
+// A script that imports a name the oddjob module does not export is refused at
 // authoring, and a credential's catalog-tool name is answered with the call that
 // actually works from a script.
-func TestAScriptCannotImportWhatTheGohortModuleDoesNotExport(t *testing.T) {
-	why := unknownGohortName("import os\nfrom gohort import fetch_url_gemini_api\n")
-	for _, want := range []string{"fetch_url_gemini_api", "from gohort import fetch_url", "no grant", `fetch_via("gemini_api"`, "fetch_via:gemini_api"} {
+func TestAScriptCannotImportWhatTheOddjobModuleDoesNotExport(t *testing.T) {
+	why := unknownOddjobName("import os\nfrom oddjob import fetch_url_gemini_api\n")
+	for _, want := range []string{"fetch_url_gemini_api", "from oddjob import fetch_url", "no grant", `fetch_via("gemini_api"`, "fetch_via:gemini_api"} {
 		if !strings.Contains(why, want) {
 			t.Errorf("the refusal should carry %q:\n%s", want, why)
 		}
 	}
-	if why := unknownGohortName("from gohort import (\n    fetch_via,\n    made_up as m,\n)\n"); !strings.Contains(why, `"made_up"`) || !strings.Contains(why, "fetch_via") {
+	if why := unknownOddjobName("from oddjob import (\n    fetch_via,\n    made_up as m,\n)\n"); !strings.Contains(why, `"made_up"`) || !strings.Contains(why, "fetch_via") {
 		t.Errorf("a parenthesized import is read name by name: %q", why)
 	}
-	if why := unknownGohortName("import gohort\nr = gohort.call_weather(url)\n"); !strings.Contains(why, `fetch_via("weather"`) {
+	if why := unknownOddjobName("import oddjob\nr = oddjob.call_weather(url)\n"); !strings.Contains(why, `fetch_via("weather"`) {
 		t.Errorf("a method call on the module is checked too: %q", why)
 	}
 	for _, ok := range []string{
-		"from gohort import fetch_url, fetch_via as fv, log\n",
-		"from gohort import secret  # the key\nimport gohort\ngohort.fetch_url(u)\n",
-		"# see docs.gohort.example(1) for more\nprint('from gohort import nothing')\n",
+		"from oddjob import fetch_url, fetch_via as fv, log\n",
+		"from oddjob import secret  # the key\nimport oddjob\noddjob.fetch_url(u)\n",
+		"# see docs.oddjob.example(1) for more\nprint('from oddjob import nothing')\n",
 	} {
-		if why := unknownGohortName(ok); why != "" {
+		if why := unknownOddjobName(ok); why != "" {
 			t.Errorf("a script using only real names must pass: %q\n%s", ok, why)
 		}
 	}
@@ -82,7 +82,7 @@ func TestAToolCannotCallTheAuthorsOwnTools(t *testing.T) {
 		"import os\nfrom default_api import bulletins\nprint(bulletins(action='create'))\n",
 	} {
 		why := callsOwnTools(src)
-		for _, want := range []string{"default_api", "allow_poster", "allowed tools", "gohort module"} {
+		for _, want := range []string{"default_api", "allow_poster", "allowed tools", "oddjob module"} {
 			if !strings.Contains(why, want) {
 				t.Errorf("%q: the refusal should carry %q:\n%s", src, want, why)
 			}
@@ -91,7 +91,7 @@ func TestAToolCannotCallTheAuthorsOwnTools(t *testing.T) {
 	if !strings.Contains(callsOwnTools("default_api.bulletins(x)"), "your bulletins tool") {
 		t.Error("the tool it reached for is named")
 	}
-	if why := callsOwnTools("from gohort import fetch_url\nprint(fetch_url('https://example.com'))\n"); why != "" {
+	if why := callsOwnTools("from oddjob import fetch_url\nprint(fetch_url('https://example.com'))\n"); why != "" {
 		t.Errorf("an ordinary script passes: %s", why)
 	}
 }

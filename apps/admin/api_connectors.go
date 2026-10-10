@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registerConnectorsRoutes wires the connectors API under the admin sub-mux.

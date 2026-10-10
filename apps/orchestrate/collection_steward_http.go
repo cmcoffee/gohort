@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func (T *OrchestrateApp) handleCollectionSteward(w http.ResponseWriter, r *http.Request, user string, c Collection) {

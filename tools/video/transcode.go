@@ -33,7 +33,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // transcodeTimeout caps the total ffmpeg work. A 3-minute clip at

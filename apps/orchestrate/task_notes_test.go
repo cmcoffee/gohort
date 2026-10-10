@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/notes"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/notes"
 )
 
 // The identity a recurring task's notes hang on has to survive a fire, and that

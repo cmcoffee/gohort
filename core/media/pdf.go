@@ -1,4 +1,4 @@
-// Package media holds gohort's pure media-processing leaves — PDF rendering,
+// Package media holds oddjob's pure media-processing leaves — PDF rendering,
 // image/video metadata extraction, and frame sampling. It depends only on
 // stdlib, third-party codecs, and snugforge/nfo (logging); it does NOT import
 // core, so core (and apps) import it one-directionally with no cycle. This is
@@ -18,7 +18,7 @@ import (
 
 // PDFBranding is the branding line shown in PDF exports.
 // Override this in an init() function to customize.
-var PDFBranding = "Gohort"
+var PDFBranding = "Oddjob"
 
 // PDF layout constants. Tuned to match the browser export's CSS:
 //

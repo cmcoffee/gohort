@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/replyguard"
+	"github.com/cmcoffee/oddjob/core/replyguard"
 )
 
 func TestAPromiseToActIsNotAFinishedTurn(t *testing.T) {

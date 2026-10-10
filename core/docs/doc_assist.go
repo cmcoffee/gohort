@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/oddjob/core/textutil"
 )
 
 // DocFence returns a code fence long enough to wrap s without being

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/temptool"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/temptool"
 )
 
 // --- LLM rounds -------------------------------------------------------------
@@ -77,7 +77,7 @@ func (t *chatTurn) turnRouting() (pin LLMTier, routeKey string) {
 			// Said out loud, in the place the reader is already looking. A step
 			// configured for the lead that runs on the worker is indistinguishable
 			// from a step that ignored its configuration, and this is the
-			// difference between "gohort is broken" and "turn private mode off".
+			// difference between "oddjob is broken" and "turn private mode off".
 			t.turnDiag("machine-tier-denied", "Step "+t.machine.Name()+" asks for the lead model, but this turn may not reach it (private mode, or this agent forces private). It ran on the worker.")
 			Log("[orchestrate.routing] agent=%s step=%q pinned LEAD but privacy holds this turn on the worker (private=%v force=%v)",
 				t.agent.ID, t.machine.Name(), t.privateMode, t.agent.ForcePrivate)

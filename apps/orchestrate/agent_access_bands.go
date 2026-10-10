@@ -5,7 +5,7 @@
 // read_file and a shell on a connected appliance were the same row with the
 // same two controls. That is wrong twice over. It buries the handful of tools
 // worth a decision under the sixty that are not, and it presents a door into
-// somebody else's system as though it were part of gohort.
+// somebody else's system as though it were part of oddjob.
 //
 // So: four bands, in descending order of what a call can touch.
 //
@@ -43,7 +43,7 @@ package orchestrate
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The bands, in the order they render. Values are the heading text: the field
@@ -139,7 +139,7 @@ func credentialSystemName(cred string) string {
 // bandGoverns says whether the per-call controls are offered in this band.
 //
 // The internal band is not: those tools always run. Every other band reaches
-// something outside gohort, which is the whole of what makes a per-call
+// something outside oddjob, which is the whole of what makes a per-call
 // decision worth making.
 func bandGoverns(band string) bool { return band != bandInternal && band != bandOff }
 

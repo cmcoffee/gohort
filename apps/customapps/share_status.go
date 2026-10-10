@@ -8,8 +8,8 @@ package customapps
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appadmin"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appadmin"
 )
 
 // promotionState reports a request's current state for (kind, owner, slug)

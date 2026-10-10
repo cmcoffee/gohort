@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	// Imported directly rather than through a core alias: a shell run needs a
 	// working directory, and core is at its export ceiling.
-	"github.com/cmcoffee/gohort/core/sandbox"
+	"github.com/cmcoffee/oddjob/core/sandbox"
 )
 
 // DispatchTempToolDirect dispatches a TempTool directly without
@@ -84,7 +84,7 @@ func canonicalizeArgKeys(args map[string]any, required []string, params map[stri
 // since temp tools use snake_case params by convention.
 func buildEnvArgs(args map[string]any) map[string]string {
 	// Always return a writable map, never nil: the dispatcher writes
-	// GOHORT_HOOK_PATH into this map when the tool has a sandbox hook, and
+	// ODDJOB_HOOK_PATH into this map when the tool has a sandbox hook, and
 	// a param-less tool (no args) with a hook — e.g. a poll-an-endpoint
 	// script that takes no arguments — would otherwise panic with
 	// "assignment to entry in nil map" at that write. len(args)==0 is the
@@ -317,7 +317,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		}
 		// Restore persistent state for stateful tools.
 		if tt.StatePath != "" {
-			// The gohort process does this copy, not the sandbox, so the
+			// The oddjob process does this copy, not the sandbox, so the
 			// path must stay inside the run dir: no absolute path, no "..",
 			// no symlink along the way (a recipe or a prior run can plant
 			// one). StatePath travels in imported recipes.
@@ -540,7 +540,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// RawNetwork=true (the documented escape hatch for persistent-
 	// mode REPLs and legacy tools). For everything else, the
 	// authoring contract is: declare hook_capabilities=["fetch"]
-	// and call gohort.fetch(...). Override layers DOWNWARD only —
+	// and call oddjob.fetch(...). Override layers DOWNWARD only —
 	// if the session connector is already blocking, this can't
 	// undo that.
 	if !tt.RawNetwork {
@@ -569,11 +569,11 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 
 	// SandboxHook: when the tool declared HookCapabilities, start a
 	// per-dispatch UDS server inside the workspace, deploy the Python
-	// helper module (`gohort.py`) so scripts can `from gohort import
-	// fetch`, and expose the socket path via GOHORT_HOOK_PATH in the
-	// sandbox env. The hook lets the script call back into gohort
+	// helper module (`oddjob.py`) so scripts can `from oddjob import
+	// fetch`, and expose the socket path via ODDJOB_HOOK_PATH in the
+	// sandbox env. The hook lets the script call back into oddjob
 	// for narrow capabilities (HTTP fetch, log, secret, fetch_via)
-	// WITHOUT opening the sandbox's network namespace — gohort
+	// WITHOUT opening the sandbox's network namespace — oddjob
 	// proxies on its behalf. Empty HookCapabilities ⇒ no hook
 	// started, no env var set, zero extra surface area.
 	hook, hookErr := NewSandboxHook(workspaceDir, tt.HookCapabilities, sess)
@@ -587,7 +587,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		hook.ToolName = tt.Name
 		// A tool already in the owner's pool may reach the network through
 		// this broker even when the agent's workspace may not dial out on its
-		// own. The grant is the point: somebody approved this tool, and gohort
+		// own. The grant is the point: somebody approved this tool, and oddjob
 		// does the dialling rather than the sandbox. A draft the agent wrote
 		// this turn gets no such lift, or tool_def would be the way around the
 		// ceiling. See SandboxHook.WorkspaceNetExempt.
@@ -595,10 +595,10 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		// Somebody else's tool (adopted from their pool) is not handed the
 		// runner's raw keys: see SandboxHook.ForeignTool.
 		hook.ForeignTool = toolIsForeign(sess, tt)
-		envArgs["GOHORT_HOOK_PATH"] = hook.SocketPath
-		// The gohort helper package is bind-mounted RO into the
+		envArgs["ODDJOB_HOOK_PATH"] = hook.SocketPath
+		// The oddjob helper package is bind-mounted RO into the
 		// sandbox from a host-side library dir (see
-		// EnsureGohortLibDir, wired in bwrapArgv). Nothing to deploy
+		// EnsureOddjobLibDir, wired in bwrapArgv). Nothing to deploy
 		// into the workspace.
 		Debug("[temptool] %q hook attached: %s caps=%v", tt.Name, hook.SocketPath, tt.HookCapabilities)
 	}
@@ -695,7 +695,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 			// Observed: a script that re-executed itself forever was tested
 			// again and again with a longer timeout each time, five minutes
 			// and a full model round per try, while it never once called out.
-			notice = fmt.Sprintf("\n[TIMED OUT after %s: command killed. It made no gohort call (fetch_via, fetch_url, log) in that time, so it never reached its service: it is stuck in its own code before the first request (an endless loop, a wait on input, a script that cannot start). A longer timeout will not help; read the script.]", runTimeout)
+			notice = fmt.Sprintf("\n[TIMED OUT after %s: command killed. It made no oddjob call (fetch_via, fetch_url, log) in that time, so it never reached its service: it is stuck in its own code before the first request (an endless loop, a wait on input, a script that cannot start). A longer timeout will not help; read the script.]", runTimeout)
 		}
 		if output == "" {
 			return strings.TrimPrefix(notice, "\n"), nil

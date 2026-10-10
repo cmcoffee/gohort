@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/oddjob/core/netgate"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -94,7 +94,7 @@ func loginFixture(t *testing.T) Database {
 // loginPost builds a login form post. remote and origin may be empty.
 func loginPost(remote, origin, proto string) *http.Request {
 	form := url.Values{"username": {"user-a"}, "password": {"pw-a-123"}}
-	r := httptest.NewRequest(http.MethodPost, "http://gohort.test/login", strings.NewReader(form.Encode()))
+	r := httptest.NewRequest(http.MethodPost, "http://oddjob.test/login", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if remote != "" {
 		r.RemoteAddr = remote
@@ -130,7 +130,7 @@ func TestLoginRefusesCrossOriginPost(t *testing.T) {
 		t.Error("a cross-origin login post was handed a session")
 	}
 
-	for _, origin := range []string{"http://gohort.test", ""} {
+	for _, origin := range []string{"http://oddjob.test", ""} {
 		w = httptest.NewRecorder()
 		login(w, loginPost("198.51.100.21:4000", origin, ""))
 		if w.Code != http.StatusFound || sessionCookie(w) == nil {

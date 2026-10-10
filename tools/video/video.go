@@ -24,10 +24,10 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/transcribe"
-	"github.com/cmcoffee/gohort/tools/videodl"
-	"github.com/cmcoffee/gohort/tools/videofind"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/transcribe"
+	"github.com/cmcoffee/oddjob/tools/videodl"
+	"github.com/cmcoffee/oddjob/tools/videofind"
 )
 
 func init() { RegisterChatTool(&VideoTool{}) }

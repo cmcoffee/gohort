@@ -104,7 +104,7 @@ So the boundary became a question rather than a prefix: *how do we confine a pro
 confined process ask the host for* (credentials, secrets, fetch_via). The first left as
 `core/sandbox`; the second stayed beside the SecureAPI that answers it.
 
-Cost: three hook vars (`WorkspacesDir`, `BulkStagingDir`, `GohortLibDir`), one interface
+Cost: three hook vars (`WorkspacesDir`, `BulkStagingDir`, `OddjobLibDir`), one interface
 (`HookServer`: `Path()` and `Close()`, which is everything the mechanics need of a broker),
 and `sess any` for a session this package passes through and never reads. `Error` became a
 local type; `NetworkConnector` disappeared entirely because `NetworkAllowedFromContext`

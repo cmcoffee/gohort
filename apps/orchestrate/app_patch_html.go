@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // patch_html — change part of an html section without re-sending the document.

@@ -1,6 +1,6 @@
 // THIRD_PARTY_NOTICES for a release binary.
 //
-// A compiled gohort contains the object code of every module it links, and
+// A compiled oddjob contains the object code of every module it links, and
 // each of those arrives with terms that ask for their notice to travel with it.
 // The source tree does not need this file — the dependencies are not in it, and
 // NOTICE says so — but a downloaded binary is a redistribution of all of them at
@@ -216,7 +216,7 @@ func entry(m mod, texts map[string]string, note string) string {
 	b.WriteString("\n" + strings.Repeat("=", 74) + "\n\n")
 	if note != "" {
 		b.WriteString("This module ships no license file. The terms below were supplied by the\n")
-		b.WriteString("gohort project from: " + note + "\n\n")
+		b.WriteString("oddjob project from: " + note + "\n\n")
 	}
 	names := make([]string, 0, len(texts))
 	for n := range texts {
@@ -243,18 +243,18 @@ func fail(format string, args ...any) {
 
 const header = `THIRD-PARTY NOTICES
 
-This binary is built from gohort, which is licensed under the Apache License,
+This binary is built from oddjob, which is licensed under the Apache License,
 Version 2.0 (see LICENSE), and it links the third-party modules listed below.
 Each remains under its own terms, reproduced here in full. Nothing in this file
-changes gohort's license, and gohort's license changes nothing about theirs.
+changes oddjob's license, and oddjob's license changes nothing about theirs.
 
 Generated from the modules ACTUALLY LINKED into this build. Modules that go.mod
 requires but nothing imports are absent on purpose, as are test-only and build
 tooling dependencies.
 
-Third-party code that lives IN the gohort source tree, rather than being fetched
+Third-party code that lives IN the oddjob source tree, rather than being fetched
 as a module, is listed in NOTICE instead.
 
 Where a module ships no license file of its own, its terms are supplied by the
-gohort project and the entry says so, along with where the text was obtained.
+oddjob project and the entry says so, along with where the text was obtained.
 `

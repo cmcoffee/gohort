@@ -7,40 +7,40 @@ import (
 
 // Generic internal meta marker — reserved for framework/agent-internal
 // directives that must NEVER reach the user. Anything an agent wraps in
-// <gohort-meta>…</gohort-meta> is stripped from the final reply, so a leaked
+// <oddjob-meta>…</oddjob-meta> is stripped from the final reply, so a leaked
 // internal note can't be mistaken for content. The XML-style, namespaced
 // element name is collision-proof (it will never appear in real prose or
 // markdown). Case-insensitive; non-greedy; matches inline or multi-line.
 var (
 	// The balanced block, the normal shape. Deliberately LOOSER than the
-	// convention it enforces: attributes are tolerated (`<gohort-meta x="y">`)
+	// convention it enforces: attributes are tolerated (`<oddjob-meta x="y">`)
 	// and so is whitespace inside the closer, because a stripper that is
 	// stricter about the syntax than the thing writing it fails open, and
 	// failing open here means an internal directive is read as an answer.
-	metaTagRe = regexp.MustCompile(`(?is)<gohort-meta\b[^>]*>.*?</\s*gohort-meta\s*>`)
+	metaTagRe = regexp.MustCompile(`(?is)<(?:oddjob|gohort)-meta\b[^>]*>.*?</\s*(?:oddjob|gohort)-meta\s*>`)
 
 	// The same block with the opening "<" lost. A reply cut at the output
 	// limit resumes in a fresh segment, and the cut can land INSIDE the
 	// opening tag: the first half ends with "<", the second half starts
-	// "gohort-meta>…</gohort-meta>" and matches nothing. $1 keeps whatever
+	// "oddjob-meta>…</oddjob-meta>" and matches nothing. $1 keeps whatever
 	// character preceded the mangled opener.
-	metaMangledOpenRe = regexp.MustCompile(`(?is)(^|[^<])gohort-meta\b[^>]*>.*?</\s*gohort-meta\s*>`)
+	metaMangledOpenRe = regexp.MustCompile(`(?is)(^|[^<])(?:oddjob|gohort)-meta\b[^>]*>.*?</\s*(?:oddjob|gohort)-meta\s*>`)
 
 	// An opener with no closer: the block ran off the end of the text
 	// (truncated at max_tokens, a dropped stream, a model that forgot). Every
 	// byte after the opener was declared internal, so it goes with it.
-	metaOpenRunRe = regexp.MustCompile(`(?is)<gohort-meta\b[^>]*>.*$`)
+	metaOpenRunRe = regexp.MustCompile(`(?is)<(?:oddjob|gohort)-meta\b[^>]*>.*$`)
 
 	// A closer with no opener: the tail of a block whose opener is in an
 	// earlier segment. Same reasoning in the other direction, so everything up
 	// to and including the closer goes. This can cost a fragment of real prose
 	// when a model emits a lone closer by mistake; that trade is deliberate,
 	// since the alternative is publishing text the agent marked internal.
-	metaCloseRunRe = regexp.MustCompile(`(?is)^.*?</\s*gohort-meta\s*>`)
+	metaCloseRunRe = regexp.MustCompile(`(?is)^.*?</\s*(?:oddjob|gohort)-meta\s*>`)
 
 	// Any single meta tag, in any of the shapes above. Used to defuse markers
 	// inside text that is ABOUT to be wrapped in a fence.
-	metaAnyTagRe = regexp.MustCompile(`(?is)</?\s*gohort-meta\b[^>]*>`)
+	metaAnyTagRe = regexp.MustCompile(`(?is)</?\s*(?:oddjob|gohort)-meta\b[^>]*>`)
 
 	// Known framework delivery markers. These are normally CONSUMED (the file
 	// is attached) and stripped by the surface that handles them; this is the
@@ -70,7 +70,7 @@ var (
 )
 
 // StripMetaTags removes framework-internal markers from a final, user-facing
-// reply: the reserved <gohort-meta>…</gohort-meta> convention plus known
+// reply: the reserved <oddjob-meta>…</oddjob-meta> convention plus known
 // delivery markers ([ATTACH: …], <<<ATTACH:…>>>…<<<END>>>) that leak when
 // unconsumed. Safe to call on any reply — a fast no-op when none are present.
 //
@@ -83,8 +83,8 @@ func StripMetaTags(s string) string {
 	}
 	// Case-INSENSITIVE guard. The regexes below all carry (?i); a
 	// case-sensitive fast path in front of them silently un-did that, so
-	// <GOHORT-META> sailed through untouched.
-	if !containsFold(s, "gohort-meta") && !containsFold(s, "[ATTACH") && !containsFold(s, "<<<ATTACH") {
+	// <ODDJOB-META> sailed through untouched.
+	if !containsFold(s, "oddjob-meta") && !containsFold(s, "[ATTACH") && !containsFold(s, "<<<ATTACH") {
 		return s
 	}
 	// Order matters: balanced blocks first, then the two half-blocks, so a
@@ -183,13 +183,13 @@ func StripToolCallTags(s string) string {
 // or any other outside source would otherwise be able to close the fence early
 // and walk the rest of itself back out into user-facing text.
 func FenceMeta(s string) string {
-	return "<gohort-meta>" + NeutralizeMeta(s) + "</gohort-meta>"
+	return "<oddjob-meta>" + NeutralizeMeta(s) + "</oddjob-meta>"
 }
 
 // NeutralizeMeta removes meta tags from text that is about to be fenced or
 // stored, leaving the words but not the markup. Fast no-op when clean.
 func NeutralizeMeta(s string) string {
-	if !containsFold(s, "gohort-meta") {
+	if !containsFold(s, "oddjob-meta") {
 		return s
 	}
 	return metaAnyTagRe.ReplaceAllString(s, "")

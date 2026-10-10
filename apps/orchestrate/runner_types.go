@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // inflightCancels keys per-session cancel funcs so /api/cancel can
@@ -317,7 +317,7 @@ type chatTurn struct {
 	inferredDisabled bool
 	isNewSession     bool     // first turn for this session; gates background title generation
 	userImages       [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
-	// fromDesktopClient is true when THIS request came from the gohort-desktop
+	// fromDesktopClient is true when THIS request came from the oddjob-desktop
 	// viewer (its proxy stamped the bridge key). Gates the from_client_* tool
 	// surface so local-machine capabilities are reachable only from the
 	// desktop app, never a remote browser/phone on the same account.

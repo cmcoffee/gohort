@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -16,13 +16,13 @@ import (
 // back (a copy, a bridge, an export of the raw content) got it verbatim.
 func TestCleanBubbleTextScrubsBothMarkupKinds(t *testing.T) {
 	tests := []struct{ name, in, want string }{
-		{"framework marker", "answer <gohort-meta>internal note</gohort-meta> here", "answer  here"},
+		{"framework marker", "answer <oddjob-meta>internal note</oddjob-meta> here", "answer  here"},
 		{"tool-call markup typed as prose", "before <tool_call>{\"name\":\"x\"}</tool_call> after", "before  after"},
-		{"both at once", "<gohort-meta>plan</gohort-meta>ok <tool_call>{}</tool_call>", "ok"},
+		{"both at once", "<oddjob-meta>plan</oddjob-meta>ok <tool_call>{}</tool_call>", "ok"},
 		// A reply cut at the output limit settles as its own bubble, so the
 		// opener can be the last thing in it and the closer arrives in the
 		// continuation. The half that settles first must not ship the marker.
-		{"unterminated marker", "partial answer <gohort-meta>note that never closes", "partial answer"},
+		{"unterminated marker", "partial answer <oddjob-meta>note that never closes", "partial answer"},
 		{"ordinary reply untouched", "just a normal answer", "just a normal answer"},
 	}
 	for _, tc := range tests {
@@ -39,14 +39,14 @@ func TestCleanBubbleTextScrubsBothMarkupKinds(t *testing.T) {
 // hands over text that never passed through cleanBubbleText.
 func TestCaptureMidTurnBubbleScrubsMarkers(t *testing.T) {
 	var turn chatTurn
-	turn.captureMidTurnBubble("narration <gohort-meta>internal</gohort-meta> continues")
-	turn.captureMidTurnBubble("<gohort-meta>nothing but a note</gohort-meta>")
+	turn.captureMidTurnBubble("narration <oddjob-meta>internal</oddjob-meta> continues")
+	turn.captureMidTurnBubble("<oddjob-meta>nothing but a note</oddjob-meta>")
 
 	bubbles := turn.drainMidTurnBubbles()
 	if len(bubbles) != 1 {
 		t.Fatalf("got %d captured bubbles, want 1 (a marker-only bubble is empty once scrubbed)", len(bubbles))
 	}
-	if strings.Contains(bubbles[0].Content, "gohort-meta") {
+	if strings.Contains(bubbles[0].Content, "oddjob-meta") {
 		t.Errorf("marker persisted into the transcript: %q", bubbles[0].Content)
 	}
 	if want := "narration  continues"; bubbles[0].Content != want {
@@ -89,7 +89,7 @@ func TestTurnDiagAppliesTheDeliveryScrub(t *testing.T) {
 		session: &ChatSession{ID: "conv-1", AgentID: "lead"},
 	}
 	turn.turnDiag("guardrail-blocked",
-		"Guardrail check could not run—BLOCKED. <gohort-meta>internal</gohort-meta>")
+		"Guardrail check could not run—BLOCKED. <oddjob-meta>internal</oddjob-meta>")
 
 	trail := decorateSessionDiags(parentTrailOf(udb, "lead", "conv-1"))
 	if len(trail) != 1 {
@@ -98,7 +98,7 @@ func TestTurnDiagAppliesTheDeliveryScrub(t *testing.T) {
 	if strings.ContainsRune(trail[0].Detail, '—') {
 		t.Errorf("em-dash reached the trail: %q", trail[0].Detail)
 	}
-	if strings.Contains(trail[0].Detail, "gohort-meta") {
+	if strings.Contains(trail[0].Detail, "oddjob-meta") {
 		t.Errorf("marker reached the trail: %q", trail[0].Detail)
 	}
 	if want := "Guardrail check could not run, BLOCKED."; trail[0].Detail != want {

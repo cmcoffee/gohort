@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/apijob"
-	"github.com/cmcoffee/gohort/tools/workspace"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/apijob"
+	"github.com/cmcoffee/oddjob/tools/workspace"
 )
 
 // jobFileDir is where a job's file lands in the session workspace before it

@@ -1,12 +1,12 @@
 package servitor
 
-// A local command appliance runs `sh -c` on the gohort host itself, so only an
+// A local command appliance runs `sh -c` on the oddjob host itself, so only an
 // admin-owned one may run: owning one is owning the server.
 
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

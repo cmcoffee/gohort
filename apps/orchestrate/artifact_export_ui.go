@@ -9,8 +9,8 @@ package orchestrate
 import (
 	"encoding/json"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // artifactExportHead loads the shared client and registers the row and
@@ -19,7 +19,7 @@ import (
 func artifactExportHead() string {
 	h := ui.NewHead().JS(ArtifactClientJS)
 	for _, typ := range []string{"agent", "pipeline", "machine"} {
-		h.ClientAction("export_"+typ, `function(ctx){ window.gohortArtifacts.exportAction('`+typ+`', 'id', 'name')(ctx); }`)
+		h.ClientAction("export_"+typ, `function(ctx){ window.oddjobArtifacts.exportAction('`+typ+`', 'id', 'name')(ctx); }`)
 	}
 	return h.Render()
 }

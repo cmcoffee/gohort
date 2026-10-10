@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleConsoleMachineOptions lists the machines a schedule may fire: this

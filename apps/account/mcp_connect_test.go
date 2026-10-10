@@ -26,7 +26,7 @@ func TestTheConnectPopupAlwaysRendersAPage(t *testing.T) {
 	if !strings.Contains(body, "<!DOCTYPE html>") || !strings.Contains(body, "no integration called") {
 		t.Fatalf("a failure should render a page that says what happened:\n%s", body)
 	}
-	if strings.Contains(body, "gohort-mcp-connected") {
+	if strings.Contains(body, "oddjob-mcp-connected") {
 		t.Error("a failure must not tell the opener it connected")
 	}
 	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
@@ -37,7 +37,7 @@ func TestTheConnectPopupAlwaysRendersAPage(t *testing.T) {
 	// the connection looks like it failed.
 	w = httptest.NewRecorder()
 	mcpConnectResultPage(w, "Connected. You can close this tab and return to your conversation.")
-	if !strings.Contains(w.Body.String(), "postMessage('gohort-mcp-connected'") {
+	if !strings.Contains(w.Body.String(), "postMessage('oddjob-mcp-connected'") {
 		t.Error("a successful connect should wake the card that opened it")
 	}
 

@@ -359,7 +359,7 @@ func TestLinkedInputsAreNeverOverwritten(t *testing.T) {
 		Prompt: "make the hands correct",
 		Steps:  99,
 		Seed:   123,
-		Images: []ComfyUploadedImage{{Name: "photo.png", Subfolder: "gohort"}},
+		Images: []ComfyUploadedImage{{Name: "photo.png", Subfolder: "oddjob"}},
 	})
 	if err != nil {
 		t.Fatalf("BuildComfyBody: %v", err)
@@ -378,7 +378,7 @@ func TestLinkedInputsAreNeverOverwritten(t *testing.T) {
 	if got := nodeInput(t, g, "170:151", "prompt"); got != "make the hands correct" {
 		t.Errorf("prompt = %v, want the caller's text", got)
 	}
-	if got := nodeInput(t, g, "41", "image"); got != "gohort/photo.png" {
+	if got := nodeInput(t, g, "41", "image"); got != "oddjob/photo.png" {
 		t.Errorf("image = %v, want the uploaded reference", got)
 	}
 	if got := nodeInput(t, g, "170:169", "seed"); got == nil {
@@ -519,18 +519,18 @@ func TestQwenBlendPlacesCallerImagesInOrder(t *testing.T) {
 	body, err := BuildComfyBody(spec.ComfyWorkflow, spec.ComfyMap, ComfyBuildInput{
 		Prompt: "a clown terminator",
 		Images: []ComfyUploadedImage{
-			{Name: "terminator.png", Subfolder: "gohort"},
-			{Name: "clown.png", Subfolder: "gohort"},
+			{Name: "terminator.png", Subfolder: "oddjob"},
+			{Name: "clown.png", Subfolder: "oddjob"},
 		},
 	})
 	if err != nil {
 		t.Fatalf("BuildComfyBody: %v", err)
 	}
 	g := parseBody(t, body)
-	if got := nodeInput(t, g, "41", "image"); got != "gohort/terminator.png" {
+	if got := nodeInput(t, g, "41", "image"); got != "oddjob/terminator.png" {
 		t.Errorf("node 41 = %v, want the caller's FIRST image", got)
 	}
-	if got := nodeInput(t, g, "42", "image"); got != "gohort/clown.png" {
+	if got := nodeInput(t, g, "42", "image"); got != "oddjob/clown.png" {
 		t.Errorf("node 42 = %v, want the caller's SECOND image", got)
 	}
 	// The base image is what the latent is encoded from — swapping that would

@@ -20,7 +20,7 @@ package temptool
 import (
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // commandTimeout caps wall-clock time per temp-tool invocation. Same as

@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/apijob"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/apijob"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

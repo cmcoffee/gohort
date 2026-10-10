@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleKnowledgeExport serves a per-appliance markdown brief of all the

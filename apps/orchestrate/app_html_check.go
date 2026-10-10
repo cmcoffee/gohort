@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Save-time syntax check for an html section's inline JavaScript.

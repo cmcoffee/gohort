@@ -1046,12 +1046,12 @@ select.ui-orch-intake-input {
       var btn = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Connect']);
       if (!url) { btn.disabled = true; }
       btn.addEventListener('click', function() {
-        var w = window.open(url, 'gohort-connect', 'width=600,height=760');
+        var w = window.open(url, 'oddjob-connect', 'width=600,height=760');
         if (!w) { window.open(url, '_blank'); }
       });
       wrap.appendChild(btn);
       window.addEventListener('message', function(e) {
-        if (e && e.data === 'gohort-mcp-connected') {
+        if (e && e.data === 'oddjob-mcp-connected') {
           wrap.classList.add('connected');
           btn.textContent = 'Connected';
           btn.disabled = true;
@@ -1957,9 +1957,9 @@ select.ui-orch-intake-input {
       // Seed the per-(user, agent) toggle scope from the initial
       // selection so the runtime's ChatMode toggle reads the right
       // override on first paint.
-      window.GOHORT_AGENT_ID = sel.value || '';
-      window.dispatchEvent(new CustomEvent('gohort-agent-id-changed',
-        {detail: {agent_id: window.GOHORT_AGENT_ID}}));
+      window.ODDJOB_AGENT_ID = sel.value || '';
+      window.dispatchEvent(new CustomEvent('oddjob-agent-id-changed',
+        {detail: {agent_id: window.ODDJOB_AGENT_ID}}));
       // pinAgentInURL keeps the URL bar synced with the picker so
       // refresh / edit-and-back / share-link all stay on the chosen
       // agent. /orchestrate/ (no param) still defaults to seed-chat
@@ -1983,12 +1983,12 @@ select.ui-orch-intake-input {
         // Empty id (placeholder row) keeps the previous value.
         if (id) {
           try {
-            document.cookie = 'gohort_last_agent=' + encodeURIComponent(id) +
+            document.cookie = 'oddjob_last_agent=' + encodeURIComponent(id) +
               ';path=/;max-age=31536000;SameSite=Lax';
           } catch (_) {}
         }
       }
-      pinAgentInURL(window.GOHORT_AGENT_ID);
+      pinAgentInURL(window.ODDJOB_AGENT_ID);
       // Track current value so the first listener invocation (which
       // can fire as a no-op when the runtime reads cfg.default into
       // the select) doesn't reset a still-active session.
@@ -1999,10 +1999,10 @@ select.ui-orch-intake-input {
         // Update the per-(user, agent) scope BEFORE the new-session
         // click — the runtime's toggle GETs run on session refresh
         // and need the new agent id to read the right override.
-        window.GOHORT_AGENT_ID = sel.value || '';
-        window.dispatchEvent(new CustomEvent('gohort-agent-id-changed',
-          {detail: {agent_id: window.GOHORT_AGENT_ID}}));
-        pinAgentInURL(window.GOHORT_AGENT_ID);
+        window.ODDJOB_AGENT_ID = sel.value || '';
+        window.dispatchEvent(new CustomEvent('oddjob-agent-id-changed',
+          {detail: {agent_id: window.ODDJOB_AGENT_ID}}));
+        pinAgentInURL(window.ODDJOB_AGENT_ID);
         var newBtn = document.querySelector('.ui-chat-new');
         if (newBtn) {
           newBtn.click();
@@ -2373,13 +2373,13 @@ select.ui-orch-intake-input {
       // Configure > Security is a shortcut to the Security button: the same
       // view, in the panel. Never a page of its own.
       window.uiRegisterClientAction('orchestrate_share_agent', function() {
-        if (!window.GOHORT_AGENT_ID) { window.uiAlert('No agent is selected.'); return; }
+        if (!window.ODDJOB_AGENT_ID) { window.uiAlert('No agent is selected.'); return; }
         if (!(window.uiOpenNavItem && window.uiOpenNavItem('Security', {tab: 'Share'}))) {
           window.uiAlert('Sharing is not available here: use the Security button, then Share.');
         }
       });
       window.uiRegisterClientAction('orchestrate_secure_agent', function() {
-        if (!window.GOHORT_AGENT_ID) { window.uiAlert('No agent is selected.'); return; }
+        if (!window.ODDJOB_AGENT_ID) { window.uiAlert('No agent is selected.'); return; }
         if (!(window.uiOpenNavItem && window.uiOpenNavItem('Security'))) {
           window.uiAlert('Security is not available here: use the Security button.');
         }
@@ -2532,7 +2532,7 @@ select.ui-orch-intake-input {
         // of the agent's shared tools, skills, collections and pipelines go
         // with it. Tools that belong to this agent alone are part of the
         // agent and always travel.
-        window.gohortArtifacts.exportFlow({
+        window.oddjobArtifacts.exportFlow({
           type: 'agent', name: id, label: getAgentLabel() || id,
           note: 'Tools that belong to this agent alone are part of it and always go with it. These are the other things it uses.'
         });
@@ -2564,7 +2564,7 @@ select.ui-orch-intake-input {
         var agentID = getAgentID();
         var sessionID = (ctx && ctx.sessionId) || '';
         if (!agentID || !sessionID) { window.uiAlert('Open a conversation first: there is nothing to export yet.'); return; }
-        window.gohortArtifacts.exportFlow({
+        window.oddjobArtifacts.exportFlow({
           type: 'session', name: agentID + '/' + sessionID,
           label: (getAgentLabel() || 'conversation') + '-' + sessionID.slice(0, 8)
         });
@@ -5718,7 +5718,7 @@ select.ui-orch-intake-input {
             if (gExempt(text)) { names.unshift('authorized people'); }
             return names.join(', ');
           }
-          // The picker. Built-in first (gohort settles it itself), then the
+          // The picker. Built-in first (oddjob settles it itself), then the
           // owner's own conditions, which the warden reads under the rule.
           function openExceptionPicker(idx) {
             var chosen = gLinks(grules[idx]).slice();   // [{name, off}]
@@ -5788,7 +5788,7 @@ select.ui-orch-intake-input {
                     drawRow({
                       label: 'Anyone on the authorized list',
                       hint: 'The older whole-list carve-out. Untick it and link people individually for finer control.',
-                      badge: 'checked by gohort', linked: true,
+                      badge: 'checked by oddjob', linked: true,
                       onLink: function(on) { builtin = on; commit(); redraw(); },
                     });
                   }
@@ -6664,7 +6664,7 @@ select.ui-orch-intake-input {
                 } else if (gExcEchoesRule(ex)) {
                   var warn = document.createElement('div');
                   warn.style.cssText = 'color:var(--warning,#d29922);margin-top:0.15rem';
-                  warn.textContent = 'This says nothing the rule it is linked to does not already say, so there is no narrower case in it for the check to find. Read underneath that rule it lands as "the rule does not concern this" and lifts it for everyone. Give the condition its own words for WHEN it applies. If you meant "this PERSON may bypass it", do not write it here at all: add them to Authorized people and mark the rule itself as yielding to them, which gohort settles without showing any of it to the model.';
+                  warn.textContent = 'This says nothing the rule it is linked to does not already say, so there is no narrower case in it for the check to find. Read underneath that rule it lands as "the rule does not concern this" and lifts it for everyone. Give the condition its own words for WHEN it applies. If you meant "this PERSON may bypass it", do not write it here at all: add them to Authorized people and mark the rule itself as yielding to them, which oddjob settles without showing any of it to the model.';
                   note.appendChild(warn);
                 }
                 excList.appendChild(note);
@@ -7371,11 +7371,11 @@ select.ui-orch-intake-input {
 
       // Create a NEW recurring task from the Scheduler modal's "New recurring
       // task" button (cfg.schedule_creators → this client action). The agent is
-      // the rail's current agent (window.GOHORT_AGENT_ID); the task attaches to
+      // the rail's current agent (window.ODDJOB_AGENT_ID); the task attaches to
       // the open thread (ctx.sessionId), or the agent's home thread when none is
       // open (the server defaults it). Posts to the create route.
       window.uiRegisterClientAction('orchestrate_new_recurring', function(ctx) {
-        var agentId = window.GOHORT_AGENT_ID || '';
+        var agentId = window.ODDJOB_AGENT_ID || '';
         if (!agentId) { window.uiAlert('Pick an agent first.'); return; }
         var m = openOrchModal('New recurring task');
         var help = document.createElement('div');
@@ -7510,7 +7510,7 @@ select.ui-orch-intake-input {
             name: name,
             machine_id: machineSel.value,
             mission: (subjectIn.value || '').trim(),
-            agent_id: window.GOHORT_AGENT_ID || '',
+            agent_id: window.ODDJOB_AGENT_ID || '',
           };
           var every = everySel.value || '60';
           if (every.indexOf('cron:') === 0) { body.cron = every.slice(5); }

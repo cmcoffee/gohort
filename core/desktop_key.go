@@ -1,4 +1,4 @@
-// Desktop bridge key — a per-user credential the gohort-desktop daemon
+// Desktop bridge key — a per-user credential the oddjob-desktop daemon
 // uses to authenticate the WS tool bridge (and, as phantom adopts it, the
 // iMessage hook/poll) when it can't present the viewer's session cookie.
 //
@@ -29,7 +29,7 @@ const desktopKeyTable = "desktop_keys"
 type DesktopKey struct {
 	ID       string `json:"id"`
 	Key      string `json:"key"`   // the secret token (shown to the client)
-	Owner    string `json:"owner"` // gohort username the key belongs to
+	Owner    string `json:"owner"` // oddjob username the key belongs to
 	Created  string `json:"created"`
 	LastSeen string `json:"last_seen,omitempty"`
 }

@@ -1,7 +1,7 @@
 // Package ollama_proxy exposes a fair-queued, standalone plain-HTTP server
 // that mimics the Ollama API. External clients (Claude Code, open-webui, etc.)
-// point their Ollama base URL to http://<gohort-host>:<port> and interact with
-// the virtual model "gohort". When the active provider is Ollama the proxy
+// point their Ollama base URL to http://<oddjob-host>:<port> and interact with
+// the virtual model "oddjob". When the active provider is Ollama the proxy
 // forwards requests directly. When the active provider is llama.cpp the proxy
 // translates between Ollama's API format and OpenAI's /v1/chat/completions format.
 package ollama_proxy
@@ -19,11 +19,11 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/netgate"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
-const virtualModel = "gohort" // model name exposed to proxy clients
+const virtualModel = "oddjob" // model name exposed to proxy clients
 
 // StartOllamaServer starts a standalone plain-HTTP Ollama-compatible server on
 // the given port. If port <= 0 or neither Ollama nor llama.cpp is configured,
@@ -109,7 +109,7 @@ func StartOllamaServer(port int) {
 		// reading "Ollama Proxy: http://localhost:11435" while the thing is
 		// bound to every interface has been told the reassuring half.
 		if isLoopbackBind(host) {
-			Log("Ollama Proxy: http://%s  (model: gohort, loopback only)\n", addr)
+			Log("Ollama Proxy: http://%s  (model: oddjob, loopback only)\n", addr)
 		} else {
 			Warn("Ollama Proxy listening on %s, reachable from the network, and every request needs an API key (X-API-Key or Authorization: Bearer). Bind it to 127.0.0.1 in Admin if you did not mean to expose it.", addr)
 		}
@@ -162,7 +162,7 @@ type ollamaProxy struct {
 // is a separate http.Server on its own port, so AuthMiddleware, the admin IP
 // allowlist and the session cookie never see these requests.
 //
-// The rule is the one the rest of gohort already uses. A request that genuinely
+// The rule is the one the rest of oddjob already uses. A request that genuinely
 // arrives on loopback is inside the trust boundary a local tool assumes, and
 // Ollama clients speak no authentication at all — requiring a key there would
 // break the ordinary case for no gain, since anyone on the box can reach the
@@ -191,8 +191,8 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	Warn("[ollama-proxy] refused unauthenticated request from %s %s %s", directPeer(r), r.Method, r.URL.Path)
-	w.Header().Set("WWW-Authenticate", `Bearer realm="gohort"`)
-	http.Error(w, "this endpoint needs a gohort personal access token in X-API-Key or Authorization: Bearer (create one on your Account page)", http.StatusUnauthorized)
+	w.Header().Set("WWW-Authenticate", `Bearer realm="oddjob"`)
+	http.Error(w, "this endpoint needs a oddjob personal access token in X-API-Key or Authorization: Bearer (create one on your Account page)", http.StatusUnauthorized)
 	return false
 }
 
@@ -440,7 +440,7 @@ func (p *ollamaProxy) llamaCppChat(w http.ResponseWriter, ctx context.Context, e
 		}
 	}
 
-	// Thinking budget: gohort:no-think or think:false → budget 0.
+	// Thinking budget: oddjob:no-think or think:false → budget 0.
 	if tag == "no-think" || (req.Think != nil && !*req.Think) {
 		zero := 0
 		oai.ThinkingBudgetTokens = &zero
@@ -754,7 +754,7 @@ func callerIsAdmin(r *http.Request) bool {
 // holdToLentModel keeps a non-administrator's request to the model this proxy
 // lends: one naming any other installed model is refused, since loading it
 // evicts the deployment's own, and a keep_alive is dropped, since keep_alive:0
-// unloads the model gohort is working with on every call. Reports false to
+// unloads the model oddjob is working with on every call. Reports false to
 // refuse. A body without a model (or not JSON) passes as it came.
 func holdToLentModel(data []byte, lent string) ([]byte, bool) {
 	var obj map[string]json.RawMessage

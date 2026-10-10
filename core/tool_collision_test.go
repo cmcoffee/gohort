@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/shareledger"
+	"github.com/cmcoffee/oddjob/core/shareledger"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

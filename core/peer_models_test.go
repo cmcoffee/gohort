@@ -474,7 +474,7 @@ func putTestPeer(p RemotePeer) {
 
 // TestAPeerRequestQueuesBehindTheLocalScheduler — the correctness half.
 //
-// The serializer is enforced CLIENT-side, inside gohort's llama.cpp client, and
+// The serializer is enforced CLIENT-side, inside oddjob's llama.cpp client, and
 // this endpoint is a raw proxy — so a peer's request used to go straight at the
 // inference server while local turns waited behind the mutex. That is not a
 // fairness nicety: stock llama.cpp is single-threaded and answers 503 under

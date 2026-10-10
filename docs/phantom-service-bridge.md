@@ -14,7 +14,7 @@ into phantom's agent engine and deliver its replies.
 > **Terminology.** We call a messaging platform (iMessage, Telegram,
 > Slack, email, a generic webhook source) a **service**, not a "channel."
 > "Channel" already means the Master Control agent-thread concept
-> elsewhere in gohort. A service is identified by a short lowercase id:
+> elsewhere in oddjob. A service is identified by a short lowercase id:
 > `imessage`, `telegram`, `slack`, etc. Empty/unset always normalizes to
 > `imessage` for backward compatibility.
 
@@ -51,7 +51,7 @@ The server accepts either:
 1. a **phantom API key** (`POST {phantom}/api/keys`), whose `service`
    field selects the bridge's service; or
 2. the **core desktop-bridge key** (auto-provisioned for the
-   gohort-desktop daemon), which is treated as `imessage`.
+   oddjob-desktop daemon), which is treated as `imessage`.
 
 The service is derived from the **key**, not from the request body. A
 bridge cannot poll or post for a service other than its key's. Minting a

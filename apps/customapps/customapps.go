@@ -20,7 +20,7 @@
 //
 // Not enabled by default. Turn it on with a blank import in agents.go:
 //
-//	_ "github.com/cmcoffee/gohort/apps/customapps"
+//	_ "github.com/cmcoffee/oddjob/apps/customapps"
 package customapps
 
 import (
@@ -36,13 +36,13 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appadmin"
-	"github.com/cmcoffee/gohort/core/promotion"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appadmin"
+	"github.com/cmcoffee/oddjob/core/promotion"
+	"github.com/cmcoffee/oddjob/core/ui"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
-	"github.com/cmcoffee/gohort/tools/appscript"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
+	"github.com/cmcoffee/oddjob/tools/appscript"
 )
 
 func init() {
@@ -72,7 +72,7 @@ func (T *CustomApps) Init() error { return T.Flags.Parse() }
 const customAppsLegacyPath = "/custom"
 
 func (T *CustomApps) Main() error {
-	Log("customapps is dashboard-only. Start with: gohort serve")
+	Log("customapps is dashboard-only. Start with: oddjob serve")
 	return nil
 }
 
@@ -491,9 +491,9 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 		// ArtifactClientJS) against the person's own account endpoints.
 		ExtraHeadHTML: shareModalScript + ui.NewHead().
 			JS(ArtifactClientJS).
-			ClientAction("export_custom_app", `function(ctx){ window.gohortArtifacts.exportAction('custom_app', 'slug', 'name')(ctx); }`).
+			ClientAction("export_custom_app", `function(ctx){ window.oddjobArtifacts.exportAction('custom_app', 'slug', 'name')(ctx); }`).
 			ClientAction("customapps_import", `function(){
-  window.gohortArtifacts.importFlow({
+  window.oddjobArtifacts.importFlow({
     previewURL: '/account/api/artifacts/preview',
     importURL: '/account/api/artifacts/import',
     invalidate: ['_apps'],
@@ -1639,7 +1639,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
-// and its assets. Nothing else in gohort.
+// and its assets. Nothing else in oddjob.
 var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets", "shared/", "changes", "ask"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
@@ -1707,7 +1707,7 @@ func appRelative(u, appBase string) bool {
 // and turns off the page's other routes to raw HTML (see below). Links and
 // navigation are guarded in the runtime itself (uiSafeURL), for every page.
 // An app's page HTML is its author's, shown to whoever opens the app,
-// administrators included; on the gohort origin its script could act as the
+// administrators included; on the oddjob origin its script could act as the
 // viewer against every endpoint the viewer can reach. Isolated, it runs in a
 // sandbox with no origin and reaches only the app's own endpoints (see the
 // runtime's isolatedFrame). Rewritten at serve time, so every stored app,
@@ -1741,9 +1741,9 @@ func isolateAppHTML(page json.RawMessage, base ...string) json.RawMessage {
 			delete(t, "preview_url")
 			// Every endpoint the page fetches or posts to stays inside the
 			// app. The page runs as the viewer, so a button, form or table
-			// naming another gohort endpoint (an approval, a credential)
+			// naming another oddjob endpoint (an approval, a credential)
 			// acted there with the viewer's session on one click; an app
-			// reaches gohort through its own data sources and actions.
+			// reaches oddjob through its own data sources and actions.
 			// An app's run panel offers its pipeline's follow-ups. Added
 			// here, at serve time, so an app built before follow-ups existed
 			// offers them too, without being rebuilt.

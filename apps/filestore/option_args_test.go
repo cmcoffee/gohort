@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A two-phase response is one whole argv element of the admin's binary, so a

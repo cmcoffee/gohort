@@ -8,8 +8,8 @@ package scribe
 import (
 	"net/http"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
@@ -313,7 +313,7 @@ const scribeExportBundleAction = `function(ctx){
             window.uiAlert('Only the owner can export this as a bundle. The HTML, PDF and Markdown exports work for everyone it is shared with.');
             return;
           }
-          window.gohortArtifacts.exportFlow({type: 'guide', name: id, label: g.title || id});
+          window.oddjobArtifacts.exportFlow({type: 'guide', name: id, label: g.title || id});
         })
         .catch(function(err){ window.uiAlert('Export failed: ' + (err && err.message || err)); });
 }`
@@ -321,7 +321,7 @@ const scribeExportBundleAction = `function(ctx){
 // scribeImportBundleAction brings a bundle into the library through the shared
 // preview-then-import flow.
 const scribeImportBundleAction = `function(ctx){
-      window.gohortArtifacts.importFlow({
+      window.oddjobArtifacts.importFlow({
         previewURL: '/account/api/artifacts/preview',
         importURL: '/account/api/artifacts/import',
         invalidate: ['guides'],
@@ -674,7 +674,7 @@ const guideSourcesAction = `function(ctx){
           name_field:'id', label_field:'name', desc_field:'desc',
           group_by_field:'group',
           noun:'source',
-          intro:'Attach knowledge other gohort services have gathered: your Systems (servitor) and connected document sources (e.g. Confluence). The Guide Author builds the guide from the sources you pick here.',
+          intro:'Attach knowledge other oddjob services have gathered: your Systems (servitor) and connected document sources (e.g. Confluence). The Guide Author builds the guide from the sources you pick here.',
           empty_text:'No reference sources available yet. Systems appear once you have appliances in the servitor app; document sources appear once connected.'
         }, body);
       }});

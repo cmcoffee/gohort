@@ -416,9 +416,9 @@ func collapseHTMLWhitespace(s string) string {
 func extractAudio(ctx context.Context, doc DocumentAttachment) (string, error) {
 	cfg := GetTranscribeConfig()
 	if !cfg.Enabled {
-		nfo.Log("[transcribe] refused %q (%d bytes mime=%q): transcription disabled, configure via `gohort --setup`",
+		nfo.Log("[transcribe] refused %q (%d bytes mime=%q): transcription disabled, configure via `oddjob --setup`",
 			doc.Name, len(doc.Data), doc.MimeType)
-		return "", fmt.Errorf("audio attachments need transcription enabled: configure via `gohort --setup` (Audio transcription section)")
+		return "", fmt.Errorf("audio attachments need transcription enabled: configure via `oddjob --setup` (Audio transcription section)")
 	}
 	name := strings.TrimSpace(doc.Name)
 	if name == "" {
@@ -470,7 +470,7 @@ func extractWithPandoc(ctx context.Context, data []byte, inputFmt string) (strin
 	}
 	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout())
 	defer cancel()
-	tmp, err := os.CreateTemp("", "gohort-doc-*."+inputFmt)
+	tmp, err := os.CreateTemp("", "oddjob-doc-*."+inputFmt)
 	if err != nil {
 		return "", fmt.Errorf("temp file: %w", err)
 	}
@@ -500,7 +500,7 @@ func extractWithPandoc(ctx context.Context, data []byte, inputFmt string) (strin
 func extractWithAntiword(ctx context.Context, data []byte) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout())
 	defer cancel()
-	tmp, err := os.CreateTemp("", "gohort-doc-*.doc")
+	tmp, err := os.CreateTemp("", "oddjob-doc-*.doc")
 	if err != nil {
 		return "", fmt.Errorf("temp file: %w", err)
 	}

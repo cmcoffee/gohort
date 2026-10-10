@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // consoleBrokenToolRow is one card. Field order is display order: the action

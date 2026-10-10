@@ -23,8 +23,8 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/notes"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/notes"
 )
 
 // taskNotes is one task's notes row, resolved for a fire. The zero value means

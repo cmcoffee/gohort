@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registerSkillsRoutes wires the skills API under the admin sub-mux.

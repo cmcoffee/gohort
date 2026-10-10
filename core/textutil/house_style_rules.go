@@ -12,7 +12,7 @@
 
 package textutil
 
-import "github.com/cmcoffee/gohort/core/prompts"
+import "github.com/cmcoffee/oddjob/core/prompts"
 
 // Keys for the two shipped style rules. Exported so a surface can name them and
 // so one key gates both halves: the sentence in the clause and the transform at

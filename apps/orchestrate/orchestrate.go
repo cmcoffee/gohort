@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func init() {
@@ -175,7 +175,7 @@ func (T *OrchestrateApp) Desc() string {
 func (T *OrchestrateApp) Init() error { return T.Flags.Parse() }
 
 func (T *OrchestrateApp) Main() error {
-	Log("Agents is a dashboard-only app. Start with:\n  gohort serve :8080")
+	Log("Agents is a dashboard-only app. Start with:\n  oddjob serve :8080")
 	return nil
 }
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // show_html — the chat-side viewer/previewer pane (the "Claude Desktop
@@ -63,7 +63,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "show_html",
-			Description: "Show the user a rendered HTML surface in a viewer pane beside the chat: a dashboard, report, diagram, front-end mockup, or a live preview of a gohort page. Two modes (pass exactly one): `html` = a COMPLETE, self-contained document you author, with ALL CSS and JavaScript inline (it renders sandboxed, no access to the app, its cookies, or external files); `url` = a same-origin path to preview a page this server already serves (e.g. a custom app you just created: \"/apps/<slug>/\"). Authored pages are offline snapshots by default; to make one LIVE, declare data_urls: the page then refreshes itself by calling the injected gohort.fetch(path) helper. Use this tool when the user asks for a dashboard/visualization/mockup, or to show an app/page you just built: NOT for ordinary answers, lists, or code; reply in text for those. To UPDATE an artifact you already showed, call again with the SAME id (returned by the first call) and the full revised content.",
+			Description: "Show the user a rendered HTML surface in a viewer pane beside the chat: a dashboard, report, diagram, front-end mockup, or a live preview of a oddjob page. Two modes (pass exactly one): `html` = a COMPLETE, self-contained document you author, with ALL CSS and JavaScript inline (it renders sandboxed, no access to the app, its cookies, or external files); `url` = a same-origin path to preview a page this server already serves (e.g. a custom app you just created: \"/apps/<slug>/\"). Authored pages are offline snapshots by default; to make one LIVE, declare data_urls: the page then refreshes itself by calling the injected oddjob.fetch(path) helper. Use this tool when the user asks for a dashboard/visualization/mockup, or to show an app/page you just built: NOT for ordinary answers, lists, or code; reply in text for those. To UPDATE an artifact you already showed, call again with the SAME id (returned by the first call) and the full revised content.",
 			Parameters: map[string]ToolParam{
 				"title": {
 					Type:        "string",
@@ -79,7 +79,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 				},
 				"data_urls": {
 					Type:        "array",
-					Description: "Optional, html mode only: up to 8 same-origin GET paths (each starting with \"/\", e.g. \"/apps/myapp/data/metrics\") the page may fetch LIVE while the user views it. The viewer injects window.gohort.fetch(path): returns a Promise of {ok, status, body} (body is the response text; JSON.parse it yourself). Combine with setInterval for an auto-refreshing dashboard. Paths NOT listed here are blocked, so declare everything the page needs up front.",
+					Description: "Optional, html mode only: up to 8 same-origin GET paths (each starting with \"/\", e.g. \"/apps/myapp/data/metrics\") the page may fetch LIVE while the user views it. The viewer injects window.oddjob.fetch(path): returns a Promise of {ok, status, body} (body is the response text; JSON.parse it yourself). Combine with setInterval for an auto-refreshing dashboard. Paths NOT listed here are blocked, so declare everything the page needs up front.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"id": {

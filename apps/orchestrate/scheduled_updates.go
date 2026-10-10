@@ -34,8 +34,8 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/pacing"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/pacing"
 )
 
 const OrchestrateScheduledUpdateKind = "orchestrate.scheduled_update"

@@ -3,7 +3,7 @@ package orchestrate
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The Scheduler's monitor editor switches a monitor to set times and back,

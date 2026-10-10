@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // TestTextContentShapes: clients send message content either as a plain string
@@ -211,7 +211,7 @@ func TestCallerNamePrecedence(t *testing.T) {
 // to the bare worker tier — which answers plausibly with no persona, tools,
 // memory or thread, and is therefore the hardest failure to notice.
 func TestIsTierName(t *testing.T) {
-	for _, m := range []string{"worker", "lead", "WORKER", " Lead ", "gohort-worker", "default"} {
+	for _, m := range []string{"worker", "lead", "WORKER", " Lead ", "oddjob-worker", "default"} {
 		if !isTierName(m) {
 			t.Errorf("%q should name a tier", m)
 		}
@@ -225,9 +225,9 @@ func TestIsTierName(t *testing.T) {
 
 func TestCanonicalTier(t *testing.T) {
 	cases := map[string]string{
-		"worker": "worker", "gohort-worker": "worker", "gohort": "worker",
+		"worker": "worker", "oddjob-worker": "worker", "oddjob": "worker",
 		"default": "worker", "": "worker",
-		"lead": "lead", "GOHORT-LEAD": "lead", " Lead ": "lead",
+		"lead": "lead", "ODDJOB-LEAD": "lead", " Lead ": "lead",
 	}
 	for in, want := range cases {
 		if got := canonicalTier(in); got != want {

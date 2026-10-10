@@ -1,4 +1,4 @@
-// Example: using gohort's core as an agent SDK — no server, no boot, no
+// Example: using oddjob's core as an agent SDK — no server, no boot, no
 // database. Build an LLM, define a tool, run one agentic turn. This whole file
 // is the "getting started" surface: import core, NewAgent, RunOnce.
 //
@@ -12,18 +12,18 @@ import (
 	"fmt"
 	"strconv"
 
-	gohort "github.com/cmcoffee/gohort/core"
+	oddjob "github.com/cmcoffee/oddjob/core"
 )
 
 func main() {
 	// A local model on llama.cpp / Ollama:
-	agent, err := gohort.NewAgent(gohort.LLMProviderConfig{
+	agent, err := oddjob.NewAgent(oddjob.LLMProviderConfig{
 		Provider: "llama.cpp",
 		Endpoint: "http://localhost:8080/v1",
 		Model:    "your-model",
 	})
 	// ...or a hosted one:
-	//   gohort.NewAgent(gohort.LLMProviderConfig{
+	//   oddjob.NewAgent(oddjob.LLMProviderConfig{
 	//       Provider: "anthropic", APIKey: os.Getenv("ANTHROPIC_API_KEY"),
 	//       Model: "claude-sonnet-5",
 	//   })
@@ -33,11 +33,11 @@ func main() {
 
 	// Tools are plain structs: a schema plus a Go handler. No registration,
 	// no framework, the handler is whatever code you want.
-	tools := []gohort.AgentToolDef{{
-		Tool: gohort.Tool{
+	tools := []oddjob.AgentToolDef{{
+		Tool: oddjob.Tool{
 			Name:        "add",
 			Description: "Add two integers and return the sum.",
-			Parameters: map[string]gohort.ToolParam{
+			Parameters: map[string]oddjob.ToolParam{
 				"a": {Type: "integer", Description: "first addend"},
 				"b": {Type: "integer", Description: "second addend"},
 			},

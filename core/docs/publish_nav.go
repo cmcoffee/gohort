@@ -3,7 +3,7 @@ package docs
 // A published document's navigation within itself: its table of contents and
 // the links it makes to its own sections.
 //
-// In gohort those are anchors gohort's renderer gives each heading. Published
+// In oddjob those are anchors oddjob's renderer gives each heading. Published
 // somewhere else they point at nothing: Confluence names its heading anchors
 // its own way, and a destination reached through an MCP server or an agent
 // converts the markdown with whatever it has. So the links went out as written
@@ -21,13 +21,13 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/oddjob/core/textutil"
 )
 
 // DocNav is a document's navigation within itself.
 type DocNav struct {
 	// Headings are the document's headings in order, with the anchors
-	// gohort's renderer gives them.
+	// oddjob's renderer gives them.
 	Headings []NavHeading `json:"headings,omitempty"`
 	// Links are the links the document makes to its own sections.
 	Links []NavLink `json:"links,omitempty"`

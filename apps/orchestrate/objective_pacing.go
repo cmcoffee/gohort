@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/pacing"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/pacing"
 )
 
 // maxPacingDelay is the furthest any attempt may push its successor. A week is

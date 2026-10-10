@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/prompts"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // guardrailCheckHook builds the AgentLoopConfig.GuardrailCheck for this turn,

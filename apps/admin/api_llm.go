@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registerLLMRoutes wires the llm API under the admin sub-mux.

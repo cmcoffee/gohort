@@ -7,7 +7,7 @@ import (
 )
 
 func TestMergeSpecPreservesUnknown(t *testing.T) {
-	// A field a newer gohort added ("future_field") must survive a rebuild.
+	// A field a newer oddjob added ("future_field") must survive a rebuild.
 	existing := json.RawMessage(`{"credential":"no_auth","future_field":{"a":1},"default_width":512}`)
 	updates := json.RawMessage(`{"credential":"cred1","default_width":768}`)
 	merged := MergeSpec(existing, updates)

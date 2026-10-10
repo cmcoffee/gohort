@@ -1,4 +1,4 @@
-module github.com/cmcoffee/gohort
+module github.com/cmcoffee/oddjob
 
 go 1.25.0
 

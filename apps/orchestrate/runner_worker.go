@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/temptool"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/temptool"
 
-	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // runWorkerStep dispatches one plan step to the worker (no-think) LLM.
@@ -424,7 +424,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// Escalation policy hook (confirm.go) — same policy as the
 		// orchestrator loop: flagged-credential calls park on the
 		// in-chat approval card; everything else auto-approves (no
-		// stdin fallback — gohort runs as a service).
+		// stdin fallback — oddjob runs as a service).
 		Confirm:             t.confirmFuncFor(sess),
 		GuardrailCheck:      t.guardrailEnforcer().Check,
 		GuardrailActionGate: t.guardrailEnforcer().ActionGate,

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func mkTool(name string) AgentToolDef {
@@ -49,7 +49,7 @@ func TestAssertOnlyAllowedTools_RejectsDisallowed(t *testing.T) {
 
 // TestServitorAllowLists_NoOutboundTools is the privacy invariant:
 // neither allow-list contains any tool name commonly used to reach
-// third-party services. If gohort grows a new outbound tool with a
+// third-party services. If oddjob grows a new outbound tool with a
 // name matching one of these, this test will catch the moment it's
 // (mis-)added to the servitor allow-list.
 func TestServitorAllowLists_NoOutboundTools(t *testing.T) {

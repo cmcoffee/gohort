@@ -22,7 +22,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // sessionContextView is the drawer's content: numbers first, the summary

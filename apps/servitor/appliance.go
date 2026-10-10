@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const applianceTable = "ssh_appliances"
@@ -95,7 +95,7 @@ type Appliance struct {
 	// docs/servitor-toolset-type.md.
 	Toolset []ToolBinding `json:"toolset,omitempty"`
 	// Peer fields — a STUB pointing at an appliance that lives on another
-	// gohort instance, because that instance is on the network the system
+	// oddjob instance, because that instance is on the network the system
 	// answers and this one is not. Asking it a question sends the question
 	// there; the credentials, the SSH config and the accumulated knowledge
 	// never leave the far side. See peer_appliance.go.

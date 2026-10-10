@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Reads and writes must never read the same in the list. "Shared with 2" tells

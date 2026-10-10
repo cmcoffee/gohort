@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // knownAgentToolNames is every tool name a phase could legitimately hold,

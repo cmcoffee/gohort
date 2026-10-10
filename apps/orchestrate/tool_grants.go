@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // toolGrantTable holds ToolGrant records in the granting user's own store.

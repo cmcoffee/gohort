@@ -9,8 +9,8 @@ package orchestrate
 // field ends up holding a name nobody ever checked.
 
 import (
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // registerAgentNamer installs the closure core calls to list a user's agents.

@@ -9,19 +9,19 @@
 // Judged only on confinement this is a downgrade. What it changes is the
 // USERSPACE: bwrap ro-binds the host's /usr, so a sandboxed command sees exactly
 // the toolchain the operator installed globally, as root, for every user on the
-// box. gohort currently needs python3, pandoc, pdftotext, node, yt-dlp, ffmpeg
+// box. oddjob currently needs python3, pandoc, pdftotext, node, yt-dlp, ffmpeg
 // and aws that way, and core/deps exists to work around the same problem for
 // Python packages. An image supplies those without touching the host.
 //
 // So it is OPT-IN and never auto-selected. Swapping the entire filesystem a
 // command sees is a deployment decision, not a "strongest available" one, and a
 // host with bwrap installed should keep using it unless somebody says otherwise.
-// GOHORT_SANDBOX_BACKEND is that somebody.
+// ODDJOB_SANDBOX_BACKEND is that somebody.
 //
 // PODMAN FIRST, DELIBERATELY. Reaching /var/run/docker.sock is root-equivalent:
 // anything that can make the daemon run a container can mount / and own the
 // host. A backend that confines the CHILD better while handing the PARENT root
-// is a bad trade, and it is not hypothetical — the gohort daemon is the process
+// is a bad trade, and it is not hypothetical — the oddjob daemon is the process
 // holding that socket. Rootless podman has no daemon and no such socket, so it
 // is preferred whenever both are present, and docker is accepted because some
 // deployments have only it.
@@ -46,7 +46,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/deps"
+	"github.com/cmcoffee/oddjob/core/deps"
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
@@ -76,7 +76,7 @@ type containerSandbox struct {
 func (c containerSandbox) name() string   { return c.kind }
 func (c containerSandbox) confines() bool { return true }
 
-// remapsPaths is true for the same reason bubblewrap's is: the gohort helper
+// remapsPaths is true for the same reason bubblewrap's is: the oddjob helper
 // and the managed deps appear at their mount points, not their host paths. The
 // WORKSPACE is deliberately mounted at the same path inside as out, so an
 // absolute path in a tool argument means the same thing on both sides — but
@@ -142,16 +142,16 @@ func (c containerSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	} else {
 		args = append(args, "--workdir", "/tmp")
 	}
-	if libDir := gohortLibDir(); libDir != "" {
-		args = append(args, mount(libDir, GohortLibMountPath, "ro")...)
+	if libDir := oddjobLibDir(); libDir != "" {
+		args = append(args, mount(libDir, OddjobLibMountPath, "ro")...)
 	}
 	if pyDir := deps.EnsurePyDepsDir(); pyDir != "" {
 		args = append(args, mount(pyDir, deps.SandboxPyDepsMountPath, "ro")...)
 	}
 	// The hook socket, by FILE rather than by directory, so a sandboxed script
 	// gets its own and cannot list anyone else's. Same path inside as out, so
-	// GOHORT_HOOK_PATH needs no translation.
-	if p := run.Env["GOHORT_HOOK_PATH"]; p != "" && !withinDir(p, run.WorkspaceDir) {
+	// ODDJOB_HOOK_PATH needs no translation.
+	if p := run.Env["ODDJOB_HOOK_PATH"]; p != "" && !withinDir(p, run.WorkspaceDir) {
 		args = append(args, mount(p, p, "")...)
 	}
 	// ReadOnly and Reach mount identically — a container has to be told about
@@ -202,7 +202,7 @@ func containerEnv(extra map[string]string) []string {
 		}
 		out = append(out, kv)
 	}
-	out = append(out, "PATH="+GohortBinMountPath+":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	out = append(out, "PATH="+OddjobBinMountPath+":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 	for k, v := range extra {
 		out = append(out, k+"="+v)
 	}
@@ -313,7 +313,7 @@ func warnPythonSkew(probeOutput string) {
 	nfo.Log("[sandbox] WARNING: the container image runs Python %d.%d and this host runs %d.%d. "+
 		"The managed Python packages are built on the host and mounted in, so PURE-python ones still "+
 		"import and COMPILED ones (numpy, lxml, pillow) will not. Pin an image whose Python is %d.%d, "+
-		"via GOHORT_SANDBOX_IMAGE.",
+		"via ODDJOB_SANDBOX_IMAGE.",
 		imgMaj, imgMin, hostMaj, hostMin, hostMaj, hostMin)
 }
 
@@ -351,7 +351,7 @@ func firstLine(s string) string {
 
 // containerImage is the image to run, overridable per deployment.
 func containerImage() string {
-	if s := strings.TrimSpace(os.Getenv("GOHORT_SANDBOX_IMAGE")); s != "" {
+	if s := strings.TrimSpace(getenv("ODDJOB_SANDBOX_IMAGE")); s != "" {
 		return s
 	}
 	return defaultContainerImage
@@ -366,7 +366,7 @@ func containerImage() string {
 // cannot read a bind mount carrying the host's own label — a workspace shows up
 // empty or permission-denied, and nothing in the error says "SELinux". This
 // backend shipped without it, which made it broken on precisely the platform
-// gohort most often runs on: RHEL and Rocky ship SELinux enforcing, and this
+// oddjob most often runs on: RHEL and Rocky ship SELinux enforcing, and this
 // dev box has container-selinux installed while sitting Disabled, so the bug
 // was invisible here and would have appeared on the first real deployment.
 //
@@ -396,7 +396,7 @@ var (
 
 // relabelMounts reports whether --volume specs should carry `z`.
 //
-//	GOHORT_SANDBOX_SELINUX_RELABEL=auto  (default) relabel when SELinux enforces
+//	ODDJOB_SANDBOX_SELINUX_RELABEL=auto  (default) relabel when SELinux enforces
 //	                              =on              always
 //	                              =off             never
 //
@@ -404,18 +404,18 @@ var (
 // the host directory, and for a scoped read-only path — somebody's registered
 // corpus, which core/path_scope.go proved the tool may read — that directory
 // may be labeled for another service entirely (httpd_sys_content_t, say).
-// Turning it into container_file_t would fix gohort and break the web server.
+// Turning it into container_file_t would fix oddjob and break the web server.
 // An operator in that position needs a way to say no, and then to fix the
 // label themselves rather than have this decide for them.
 func relabelMounts() bool {
 	relabelOnce.Do(func() {
-		switch strings.ToLower(strings.TrimSpace(os.Getenv("GOHORT_SANDBOX_SELINUX_RELABEL"))) {
+		switch strings.ToLower(strings.TrimSpace(getenv("ODDJOB_SANDBOX_SELINUX_RELABEL"))) {
 		case "on", "1", "true", "yes":
 			relabelOK = true
 			return
 		case "off", "0", "false", "no":
 			if selinuxEnforcing() {
-				nfo.Log("[sandbox] SELinux is enforcing and GOHORT_SANDBOX_SELINUX_RELABEL=off: " +
+				nfo.Log("[sandbox] SELinux is enforcing and ODDJOB_SANDBOX_SELINUX_RELABEL=off: " +
 					"bind mounts are NOT relabeled, so a container will likely be unable to read its " +
 					"workspace. Label the paths yourself (chcon -Rt container_file_t <path>) or unset this.")
 			}
@@ -427,8 +427,8 @@ func relabelMounts() bool {
 			// the change outlives the process that made it.
 			nfo.Log("[sandbox] SELinux is enforcing: container bind mounts are relabeled shared " +
 				"(container_file_t) so the sandbox can read them. This rewrites the label on the " +
-				"workspace, the gohort lib and deps dirs, and any path a scoped tool reads. " +
-				"`restorecon -R <path>` puts a path back; GOHORT_SANDBOX_SELINUX_RELABEL=off disables it.")
+				"workspace, the oddjob lib and deps dirs, and any path a scoped tool reads. " +
+				"`restorecon -R <path>` puts a path back; ODDJOB_SANDBOX_SELINUX_RELABEL=off disables it.")
 		}
 	})
 	return relabelOK

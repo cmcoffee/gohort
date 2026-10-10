@@ -17,7 +17,7 @@ func TestSetupDashboardURLIsSomethingYouCanOpen(t *testing.T) {
 		{"0.0.0.0:8181", "", true, "https://localhost:8181"},
 		{":8080", "", false, "http://localhost:8080"},
 		{"[::]:9000", "", false, "http://localhost:9000"},
-		{"gohort.example.com:443", "/etc/tls/x.pem", false, "https://gohort.example.com:443"},
+		{"oddjob.example.com:443", "/etc/tls/x.pem", false, "https://oddjob.example.com:443"},
 	}
 	for _, c := range cases {
 		got := renderDashboardURL(c.addr, c.selfSigned, c.cert)

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // servitorWorkerToolAllowList is the set of tool names ANY servitor worker may
@@ -57,11 +57,11 @@ var servitorWorkerToolAllowList = map[string]bool{
 	"search_knowledge":   true, // local: vector search over owner's linked collections (embeds via local llama.cpp)
 	"watch_condition":    true, // local: watcher setup against the same appliance
 	"list_watches":       true, // local: watcher state
-	"save_to_codewriter": true, // local: gohort CodeWriter DB write
-	"save_to_scribe":     true, // local: gohort Scribe DB write
+	"save_to_codewriter": true, // local: oddjob CodeWriter DB write
+	"save_to_scribe":     true, // local: oddjob Scribe DB write
 	"record_finding":     true, // local: queues a finding in the Guides inbox (via core FindingTarget)
-	"push_to_guide":      true, // local: gohort Guides DB write (via core DocumentTarget)
-	"list_guides":        true, // local: gohort Guides read
+	"push_to_guide":      true, // local: oddjob Guides DB write (via core DocumentTarget)
+	"list_guides":        true, // local: oddjob Guides read
 }
 
 // servitorOrchestratorToolAllowList is the corresponding set for the

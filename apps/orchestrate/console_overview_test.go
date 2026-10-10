@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Every menu entry says which question it answers, and a fleet entry must be

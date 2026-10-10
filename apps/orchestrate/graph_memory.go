@@ -17,7 +17,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // entityRelatedPassages bridges graph → vector: it runs the hybrid knowledge

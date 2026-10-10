@@ -10,7 +10,7 @@ package filestore
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // legacyToolboxesTable held mapped toolboxes, keyed by name, when a mapping was

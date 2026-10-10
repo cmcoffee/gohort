@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/buildledger"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/buildledger"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

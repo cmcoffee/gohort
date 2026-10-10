@@ -151,8 +151,8 @@ func TestGuardsSurviveTheTransportSplit(t *testing.T) {
 	const native = "iMessage;-;+16505550142"
 	const sms = "SMS;-;+16505550142"
 
-	noteOutbound(native, "", "[Gohort] On my way.")
-	if !isOwnEcho(sms, "", "[Gohort] On my way.", true) {
+	noteOutbound(native, "", "[Oddjob] On my way.")
+	if !isOwnEcho(sms, "", "[Oddjob] On my way.", true) {
 		t.Error("a reply sent over iMessage and reflected over SMS is still ours")
 	}
 
@@ -190,21 +190,21 @@ func TestIdentityNormalization(t *testing.T) {
 }
 
 // TestTagGuardCatchesRephrasedEchoes — the conclusive signal. The live loop
-// showed the agent receiving "[Gohort] " + its own previous reply; the tag is
+// showed the agent receiving "[Oddjob] " + its own previous reply; the tag is
 // something WE put on the wire, so anything wearing it is ours coming back,
 // no matter how it was worded or how long ago.
 func TestTagGuardCatchesRephrasedEchoes(t *testing.T) {
 	LoopGuardReset()
-	if carriesOurTag("[Gohort] anything at all") {
+	if carriesOurTag("[Oddjob] anything at all") {
 		t.Fatal("no tag has been emitted yet — nothing should match")
 	}
-	noteOutboundTag("[Gohort] ")
+	noteOutboundTag("[Oddjob] ")
 
-	if !carriesOurTag("[Gohort] Yep! Just keeping everything humming along.") {
+	if !carriesOurTag("[Oddjob] Yep! Just keeping everything humming along.") {
 		t.Error("an inbound wearing our tag is our own message returning")
 	}
 	// Different words, same tag — this is the case the fingerprint cannot catch.
-	if !carriesOurTag("[gohort] a completely different sentence") {
+	if !carriesOurTag("[oddjob] a completely different sentence") {
 		t.Error("the tag must hold regardless of the text after it, and of case")
 	}
 	// Someone else's bracketed text is not ours.

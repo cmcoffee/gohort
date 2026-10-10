@@ -27,7 +27,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // rollUpDepth bounds the walk. The link layer already refuses a cycle, so this

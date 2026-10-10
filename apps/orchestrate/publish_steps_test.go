@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/docs"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/docs"
 )
 
 // Each tool call of a publish run is a step the person watching can read:

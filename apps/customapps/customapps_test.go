@@ -2,9 +2,9 @@ package customapps
 
 import (
 	"encoding/json"
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/promotion"
-	"github.com/cmcoffee/gohort/tools/appscript"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/promotion"
+	"github.com/cmcoffee/oddjob/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"net/http"
 	"net/http/httptest"
@@ -19,12 +19,12 @@ import (
 // "call once" in production; the sandbox pins a global pydeps path under the
 // first workspace root, so per-test dirs that were created and then deleted
 // mid-run left later sandbox tests pointing at a vanished path (bwrap: "Can't
-// find source path …/_gohort_pydeps"). One dir for the whole package run keeps
+// find source path …/_oddjob_pydeps"). One dir for the whole package run keeps
 // the sandbox consistent. Built under $HOME because the sandbox mounts a fresh
 // tmpfs over /tmp (which would shadow a workspace placed there).
 func TestMain(m *testing.M) {
 	if home, err := os.UserHomeDir(); err == nil {
-		if ws, e := os.MkdirTemp(home, "gohort-customapps-test-"); e == nil {
+		if ws, e := os.MkdirTemp(home, "oddjob-customapps-test-"); e == nil {
 			SetWorkspacesDir(filepath.Join(ws, "workspaces"))
 			code := m.Run()
 			os.RemoveAll(ws)

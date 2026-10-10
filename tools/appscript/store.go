@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"sort"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // StoreName is the custom-apps host's store, the bucket of the global

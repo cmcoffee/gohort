@@ -6,7 +6,7 @@ package orchestrate
 // collection was never shared, the agent was, and nothing said the documents
 // came with it.
 //
-// The rest of gohort already resolves a shared agent's dependencies in the
+// The rest of oddjob already resolves a shared agent's dependencies in the
 // RECIPIENT's namespace — AgentRecord.AllowedUsers says "no secret travels with
 // the share", and credentials and tools have always worked that way. These
 // tests pin that collections now do too.
@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/notices"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/notices"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

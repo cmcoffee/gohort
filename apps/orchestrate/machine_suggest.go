@@ -25,7 +25,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxAssistPrompt bounds the field framing a client may send. Advisory

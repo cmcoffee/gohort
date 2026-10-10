@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // What a message sent reaches the model's copy of the history, so a later turn

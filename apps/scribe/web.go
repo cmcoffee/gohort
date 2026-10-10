@@ -12,10 +12,10 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
-	"github.com/cmcoffee/gohort/apps/publish"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
+	"github.com/cmcoffee/oddjob/apps/publish"
 )
 
 // activeTable holds the per-user "which guide is open" marker, so the co-author

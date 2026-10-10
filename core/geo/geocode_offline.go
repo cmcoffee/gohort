@@ -43,7 +43,7 @@ const (
 	citiesDataFile       = "cities500.json"
 	geonamesCountryFile  = "countryInfo.txt"
 	offlineMaxDistanceKM = 50.0 // farther than this: fall through to Nominatim
-	geocodeDownloadUA    = "gohort (https://github.com/cmcoffee/gohort)"
+	geocodeDownloadUA    = "oddjob (https://github.com/cmcoffee/oddjob)"
 )
 
 // geocodeIdleTimeout is the moving-window timeout applied to the

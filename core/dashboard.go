@@ -8,11 +8,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 
-	"github.com/cmcoffee/gohort/core/netgate"
-	"github.com/cmcoffee/gohort/core/notices"
-	"github.com/cmcoffee/gohort/core/webui"
+	"github.com/cmcoffee/oddjob/core/netgate"
+	"github.com/cmcoffee/oddjob/core/notices"
+	"github.com/cmcoffee/oddjob/core/webui"
 )
 
 // ServeDashboard starts the unified web dashboard on the given address.
@@ -170,7 +170,7 @@ func ServeDashboard(addr string) error {
 		mux.HandleFunc("/reset", ResetHandler(db))
 	}
 
-	// Desktop bridge — gohort-desktop / gohort-bridge opens a
+	// Desktop bridge — oddjob-desktop / oddjob-bridge opens a
 	// WebSocket here, announces its locally-installed tools, and the
 	// orchestrate runner exposes those to the LLM as local.<name>
 	// tools (see core/desktop_bridge.go). Marked public so the
@@ -187,15 +187,15 @@ func ServeDashboard(addr string) error {
 	// a credential. (Core-owned; phantom no longer owns the bridge key.)
 	mux.HandleFunc("/api/desktop/key", HandleDesktopKey)
 
-	// Resource sharing: the surface a PEER gohort instance calls to use this
+	// Resource sharing: the surface a PEER oddjob instance calls to use this
 	// one's infrastructure. Public paths because they carry their own
-	// credential (X-Gohort-Peer-Key / Bearer) and must NOT fall through to
+	// credential (X-Oddjob-Peer-Key / Bearer) and must NOT fall through to
 	// cookie auth — a peer key is a capability grant, not a user session, and
 	// nothing here consults AuthCurrentUser. See core/peer_key.go.
 	RegisterPublicPath("/api/peer/manifest")
 	mux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
 	// Mounted at the OpenAI path so a peer points its ordinary embedding config
-	// at <base>/api/peer/v1 and needs no gohort-specific client at all.
+	// at <base>/api/peer/v1 and needs no oddjob-specific client at all.
 	RegisterPublicPath("/api/peer/v1/embeddings")
 	mux.HandleFunc("/api/peer/v1/embeddings", HandlePeerEmbeddings)
 	// Public in the session-auth sense ONLY: the peer key is the credential, and
@@ -217,7 +217,7 @@ func ServeDashboard(addr string) error {
 	mux.HandleFunc("/api/peer/v1/images/render", HandlePeerImageRender)
 	// Speech-to-text for a peer, at the OpenAI path for the same reason as
 	// embeddings: the far side points its ordinary TranscribeConfig at
-	// <base>/api/peer/v1 and needs no gohort-specific client.
+	// <base>/api/peer/v1 and needs no oddjob-specific client.
 	RegisterPublicPath("/api/peer/v1/audio/transcriptions")
 	mux.HandleFunc("/api/peer/v1/audio/transcriptions", HandlePeerTranscribe)
 	// Search in the SearXNG JSON shape, so the far side drives it with an

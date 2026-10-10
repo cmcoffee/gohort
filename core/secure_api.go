@@ -45,10 +45,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/notices"
-	"github.com/cmcoffee/gohort/core/peershare"
-	"github.com/cmcoffee/gohort/core/promotion"
-	"github.com/cmcoffee/gohort/core/shareledger"
+	"github.com/cmcoffee/oddjob/core/notices"
+	"github.com/cmcoffee/oddjob/core/peershare"
+	"github.com/cmcoffee/oddjob/core/promotion"
+	"github.com/cmcoffee/oddjob/core/shareledger"
 	"github.com/cmcoffee/snugforge/mimebody"
 )
 
@@ -2106,7 +2106,7 @@ func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, me
 			AllowedURLPattern: "https://**",
 			Description:       "Synthesized unauthenticated dispatch: back-compat for tools authored before fetch_url subsumed this path.",
 			// The reach of a plain fetch, which is what it stands in for:
-			// "https://**" otherwise let an old api tool call gohort itself,
+			// "https://**" otherwise let an old api tool call oddjob itself,
 			// the metadata address or the LAN.
 			publicOnly: true,
 		}
@@ -2198,7 +2198,7 @@ func IsWriteMethod(method string) bool {
 }
 
 // reachesInternal says whether requests through c may go to internal
-// addresses (loopback, private, link-local: gohort itself, the cloud metadata
+// addresses (loopback, private, link-local: oddjob itself, the cloud metadata
 // address, the LAN). A deployment credential may: an administrator set it up,
 // often for exactly that (a firewall, a NAS). So may a personal one an
 // administrator owns. A personal credential anybody else owns may not, or
@@ -2575,7 +2575,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// dumb anti-bot heuristics that trip on "Go-http-client",
 	// "+http://" reference patterns, or words like "hook"/"bot".
 	// Caller-supplied request_headers["User-Agent"] overrides.
-	req.Header.Set("User-Agent", "gohort/call")
+	req.Header.Set("User-Agent", "oddjob/call")
 
 	// Caller-supplied headers first; auth applied last so it can't
 	// be overridden.

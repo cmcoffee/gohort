@@ -10,14 +10,14 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/buildledger"
-	"github.com/cmcoffee/gohort/tools/appscript"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/buildledger"
+	"github.com/cmcoffee/oddjob/tools/appscript"
 )
 
-// gohortScriptHelpers is everything the sandbox's gohort module actually
+// oddjobScriptHelpers is everything the sandbox's oddjob module actually
 // exports. Kept beside the hint because the point of the hint is this list.
-var gohortScriptHelpers = []string{"fetch_url", "fetch", "fetch_via", "browse_page", "log", "secret", "call_tool", "HookError"}
+var oddjobScriptHelpers = []string{"fetch_url", "fetch", "fetch_via", "browse_page", "log", "secret", "call_tool", "HookError"}
 
 // uncalledPythonFunctions lists the functions a python script defines at its
 // top level and never calls. A build wrapped its whole data source in
@@ -50,12 +50,12 @@ func uncalledHint(names []string) string {
 // resolves it, when the traceback is one we recognize.
 //
 // A tool is not importable from a script. An author reached for
-// "from gohort import create_docx", got Python's bare ImportError, tried
-// "from gohort import workspace", got the same, then tried default_api.create_docx
+// "from oddjob import create_docx", got Python's bare ImportError, tried
+// "from oddjob import workspace", got the same, then tried default_api.create_docx
 // — three rounds against a message that names the missing symbol and nothing
 // about what IS available.
 func scriptFailureHint(output string) string {
-	if !strings.Contains(output, "ImportError") || !strings.Contains(output, "gohort") {
+	if !strings.Contains(output, "ImportError") || !strings.Contains(output, "oddjob") {
 		return ""
 	}
 	name := ""
@@ -65,13 +65,13 @@ func scriptFailureHint(output string) string {
 			name = strings.TrimPrefix(rest, "'")[:j]
 		}
 	}
-	msg := "HINT: the gohort module exports only " + strings.Join(gohortScriptHelpers, ", ") + ", that is the network/secret channel, NOT the tool catalog."
+	msg := "HINT: the oddjob module exports only " + strings.Join(oddjobScriptHelpers, ", ") + ", that is the network/secret channel, NOT the tool catalog."
 	call := "the tool"
 	if name != "" {
-		msg += " " + strconv.Quote(name) + " is a gohort TOOL, and a tool cannot be imported or subprocessed from a script."
+		msg += " " + strconv.Quote(name) + " is a oddjob TOOL, and a tool cannot be imported or subprocessed from a script."
 		call = strconv.Quote(name)
 	}
-	return msg + " To reuse one of the owner's tools, CALL it: add \"tool:<name>\" to the script's capabilities and run out = call_tool(" + call + ", param=value) (from gohort import call_tool), whose output reads as its JSON directly (out.get('key')) or as text; only the owner's own tools or ones added from the catalog, and only ones that never ask before running. Otherwise a script does its own work in plain Python (with fetch_url for anything off-box), and a job for a tool that asks first belongs in a pipeline tool stage."
+	return msg + " To reuse one of the owner's tools, CALL it: add \"tool:<name>\" to the script's capabilities and run out = call_tool(" + call + ", param=value) (from oddjob import call_tool), whose output reads as its JSON directly (out.get('key')) or as text; only the owner's own tools or ones added from the catalog, and only ones that never ask before running. Otherwise a script does its own work in plain Python (with fetch_url for anything off-box), and a job for a tool that asks first belongs in a pipeline tool stage."
 }
 
 func (t *chatTurn) appDefDelete(args map[string]any) (string, error) {
@@ -742,7 +742,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 					// It reads a tool or an API: the empty list is far more often
 					// a key the response does not have than a query param, and
 					// the query-param hint sent a build looking in the wrong place.
-					fmt.Fprintf(&b, "WARN %s: printed an EMPTY array though the app has %d saved record(s). It reads a tool or an API, so the likely cause is a key the response does not have: log what it returns (from gohort import log; log(raw)) and read the keys it actually has.\n", label, len(recs))
+					fmt.Fprintf(&b, "WARN %s: printed an EMPTY array though the app has %d saved record(s). It reads a tool or an API, so the likely cause is a key the response does not have: log what it returns (from oddjob import log; log(raw)) and read the keys it actually has.\n", label, len(recs))
 				} else if len(arr) == 0 && len(recs) > 0 {
 					// Valid JSON, but empty output while the app HAS records is the
 					// signature of a script that reads a query param nothing supplies
@@ -783,13 +783,13 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				// N/A°F" in a markdown block a display shows, which the per-value
 				// count above cannot see.
 				fail++
-				fmt.Fprintf(&b, "FAIL %s: shows %d placeholder(s) (N/A, None, null) where values belong, on the real path: the script reads fields its input does not have. Log what the tool or API returns (from gohort import log; log(raw)) and read the keys it has.%s\n", label, hits, shown)
+				fmt.Fprintf(&b, "FAIL %s: shows %d placeholder(s) (N/A, None, null) where values belong, on the real path: the script reads fields its input does not have. Log what the tool or API returns (from oddjob import log; log(raw)) and read the keys it has.%s\n", label, hits, shown)
 			} else if empty, total := appEmptyValues(v); len(recs) > 0 && total >= 3 && empty*2 >= total {
 				// The real path ran and the values came back empty: None°F,
 				// null, "". A build read keys a tool's output does not have
 				// and passed verify on {"temperature": "None°F", ...}.
 				fail++
-				fmt.Fprintf(&b, "FAIL %s: %d of its %d values are empty (null, None, \"\") on the real path: the script reads fields its input does not have. Log what the tool or API actually returns (from gohort import log; log(raw)) and read the keys it has.%s\n", label, empty, total, shown)
+				fmt.Fprintf(&b, "FAIL %s: %d of its %d values are empty (null, None, \"\") on the real path: the script reads fields its input does not have. Log what the tool or API actually returns (from oddjob import log; log(raw)) and read the keys it has.%s\n", label, empty, total, shown)
 			} else {
 				pass++
 				fmt.Fprintf(&b, "OK   %s: printed a JSON object; good for a display (a table section needs a JSON array).%s%s\n", label, emptyStoreNote(recs), shown)

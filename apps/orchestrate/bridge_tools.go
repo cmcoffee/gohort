@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // bridgeToolName is the catalog name + the call_<cred> watch-tool prefix used

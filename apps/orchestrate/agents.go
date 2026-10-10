@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
-	"github.com/cmcoffee/gohort/core/peershare"
-	"github.com/cmcoffee/gohort/core/revisions"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
+	"github.com/cmcoffee/oddjob/core/peershare"
+	"github.com/cmcoffee/oddjob/core/revisions"
 )
 
 const (
@@ -716,7 +716,7 @@ func dropAgentSideData(db Database, owner, agentID string) {
 	// Knowledge chunks live in AuthDB (the deployment-wide root)
 	// because the vector index is shared across apps. Scan its
 	// EmbeddedChunks table for any chunk whose Source belongs to
-	// this (user, agent) and remove them. Cheap at gohort scale
+	// this (user, agent) and remove them. Cheap at oddjob scale
 	// (table walked once on delete, not on every read).
 	authDB := db
 	if AuthDB != nil {

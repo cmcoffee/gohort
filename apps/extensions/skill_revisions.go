@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/revisions"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/revisions"
 )
 
 // handleUserSkillOne serves /api/skills/{id}/revisions[/preview|/restore].

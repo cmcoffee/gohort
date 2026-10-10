@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleConsoleMonitorRelink re-points a broken monitor's wake agent at a live

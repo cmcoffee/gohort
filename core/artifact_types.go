@@ -1387,7 +1387,7 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	// spec whose sections would render empty and read as the author's bug.
 	upgraded, ok := upgradeAppSpec(spec)
 	if !ok {
-		return slug, "", fmt.Errorf("this app was authored for a newer gohort (app schema %d; this install reads schema %d): upgrade gohort before importing it", spec.SchemaVersion(), appSpecSchema)
+		return slug, "", fmt.Errorf("this app was authored for a newer oddjob (app schema %d; this install reads schema %d): upgrade oddjob before importing it", spec.SchemaVersion(), appSpecSchema)
 	}
 	spec = upgraded
 	if _, exists := LoadAppSpec(owner, slug); exists {

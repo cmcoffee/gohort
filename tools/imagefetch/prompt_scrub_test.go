@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func person(name string) ImageSubject { return ImageSubject{Person: true, Name: name} }

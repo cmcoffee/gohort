@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func strp(s string) *string { return &s }

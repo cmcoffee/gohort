@@ -96,11 +96,11 @@ func TestPythonSkewAdviceOnlyFiresWhenItHasSomethingToSay(t *testing.T) {
 // asked for and is not running". Those are different problems and only the
 // second one is urgent.
 func TestTheReportNamesAnUnmetRequest(t *testing.T) {
-	t.Setenv("GOHORT_SANDBOX_BACKEND", "")
+	t.Setenv("ODDJOB_SANDBOX_BACKEND", "")
 	if s := requestedSuffix(); s != "" {
 		t.Errorf("an unconfigured host should not claim a request: %q", s)
 	}
-	t.Setenv("GOHORT_SANDBOX_BACKEND", "podman")
+	t.Setenv("ODDJOB_SANDBOX_BACKEND", "podman")
 	if s := requestedSuffix(); !strings.Contains(s, "NOT what is running") {
 		// activeSandbox() on this host is bubblewrap or none, never podman.
 		t.Errorf("an unmet request must say so: %q", s)

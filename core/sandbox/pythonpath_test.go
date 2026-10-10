@@ -6,19 +6,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/deps"
+	"github.com/cmcoffee/oddjob/core/deps"
 )
 
-// resetGohortLibDir clears the process-level cache so a test controls the lib
+// resetOddjobLibDir clears the process-level cache so a test controls the lib
 // dir rather than inheriting whatever an earlier test populated.
-func resetGohortLibDir(t *testing.T) {
+func resetOddjobLibDir(t *testing.T) {
 	t.Helper()
 	// The host facts this package reads are hooks now, so a test supplies them
 	// directly instead of reaching into the broker's cache. Restored afterwards:
 	// they are process-wide, and a later test running a real sandbox would
 	// otherwise bind a temp dir this one has already deleted.
-	prevWS, prevLib := WorkspacesDir, GohortLibDir
-	t.Cleanup(func() { WorkspacesDir, GohortLibDir = prevWS, prevLib })
+	prevWS, prevLib := WorkspacesDir, OddjobLibDir
+	t.Cleanup(func() { WorkspacesDir, OddjobLibDir = prevWS, prevLib })
 
 	base := filepath.Join(t.TempDir(), "workspaces")
 	WorkspacesDir = func() string { return base }
@@ -27,13 +27,13 @@ func resetGohortLibDir(t *testing.T) {
 	// mechanics MOUNT the helper and name it in PYTHONPATH and PATH, not about
 	// what is in it — but the shapes they look for have to be there: the python
 	// package, and executable shims in bin. That the REAL ones get written is
-	// core's test (TestEnsureGohortLibDirWritesShims), which is where the
+	// core's test (TestEnsureOddjobLibDirWritesShims), which is where the
 	// writing now lives.
-	lib := filepath.Join(t.TempDir(), "_gohort-lib")
-	if err := os.MkdirAll(filepath.Join(lib, "gohort"), 0o755); err != nil {
+	lib := filepath.Join(t.TempDir(), "_oddjob-lib")
+	if err := os.MkdirAll(filepath.Join(lib, "oddjob"), 0o755); err != nil {
 		t.Fatalf("stage helper dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(lib, "gohort", "__init__.py"), []byte("# test stand-in\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(lib, "oddjob", "__init__.py"), []byte("# test stand-in\n"), 0o644); err != nil {
 		t.Fatalf("stage helper package: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(lib, "bin"), 0o755); err != nil {
@@ -44,7 +44,7 @@ func resetGohortLibDir(t *testing.T) {
 			t.Fatalf("stage shim %s: %v", shim, err)
 		}
 	}
-	GohortLibDir = func() string { return lib }
+	OddjobLibDir = func() string { return lib }
 }
 
 // Without bwrap nothing is bind-mounted, so PYTHONPATH must name the HOST
@@ -52,22 +52,22 @@ func resetGohortLibDir(t *testing.T) {
 // only inside a sandbox that was never entered.
 //
 // Observed on a macOS deployment, where bwrap does not exist at all: every
-// shell tool doing `from gohort import fetch_url` died with ModuleNotFoundError
+// shell tool doing `from oddjob import fetch_url` died with ModuleNotFoundError
 // on its first line, while the hook socket sat there working. That combination
 // sends you looking for a broken install rather than a wrong path, and looking
 // fails too — the helper really is on disk, just nowhere PYTHONPATH mentions.
 // A tool author burned a session rediscovering the socket protocol by hand and
 // shipping a shim for a module the framework already provides.
 func TestSandboxPythonPathPointsAtRealDirsWithoutBwrap(t *testing.T) {
-	resetGohortLibDir(t)
+	resetOddjobLibDir(t)
 
 	got := sandboxPythonPath(false, "")
 	if got == "" {
-		t.Fatal("no PYTHONPATH at all — `from gohort import fetch_url` cannot resolve")
+		t.Fatal("no PYTHONPATH at all — `from oddjob import fetch_url` cannot resolve")
 	}
-	if strings.Contains(got, GohortLibMountPath) {
+	if strings.Contains(got, OddjobLibMountPath) {
 		t.Errorf("PYTHONPATH names the in-sandbox mount %q with no sandbox to mount it: %q",
-			GohortLibMountPath, got)
+			OddjobLibMountPath, got)
 	}
 
 	// Every entry must exist, and one of them must actually hold the package.
@@ -80,12 +80,12 @@ func TestSandboxPythonPathPointsAtRealDirsWithoutBwrap(t *testing.T) {
 			t.Errorf("PYTHONPATH entry %q does not exist: %v", p, err)
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(p, "gohort", "__init__.py")); err == nil {
+		if _, err := os.Stat(filepath.Join(p, "oddjob", "__init__.py")); err == nil {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("no PYTHONPATH entry contains gohort/__init__.py: %q", got)
+		t.Errorf("no PYTHONPATH entry contains oddjob/__init__.py: %q", got)
 	}
 }
 
@@ -93,10 +93,10 @@ func TestSandboxPythonPathPointsAtRealDirsWithoutBwrap(t *testing.T) {
 // there and the host paths do not exist inside the namespace. Pinning both
 // directions keeps a fix for one from silently breaking the other.
 func TestSandboxPythonPathUsesMountPathsUnderBwrap(t *testing.T) {
-	resetGohortLibDir(t)
+	resetOddjobLibDir(t)
 
 	got := sandboxPythonPath(true, "")
-	for _, want := range []string{GohortLibMountPath, deps.SandboxPyDepsMountPath} {
+	for _, want := range []string{OddjobLibMountPath, deps.SandboxPyDepsMountPath} {
 		if !strings.Contains(got, want) {
 			t.Errorf("PYTHONPATH %q missing the sandbox mount %q", got, want)
 		}
@@ -110,13 +110,13 @@ func TestSandboxPythonPathUsesMountPathsUnderBwrap(t *testing.T) {
 // hook is present and granted, so the documented shell interface is silently
 // absent everywhere bwrap is not installed.
 func TestSandboxShimBinDirResolvesWithoutBwrap(t *testing.T) {
-	resetGohortLibDir(t)
+	resetOddjobLibDir(t)
 
 	dir := sandboxShimBinDir(false)
 	if dir == "" {
 		t.Fatal("no shim bin dir — fetch_url / browse_page are unreachable as commands")
 	}
-	if dir == GohortBinMountPath {
+	if dir == OddjobBinMountPath {
 		t.Fatalf("returned the in-sandbox mount %q with no sandbox to mount it", dir)
 	}
 	for _, shim := range []string{"fetch_url", "fetch_via", "browse_page"} {
@@ -134,39 +134,39 @@ func TestSandboxShimBinDirResolvesWithoutBwrap(t *testing.T) {
 // Under bwrap the mount path is correct: that is where the host bin dir is
 // bound, and the host path does not resolve inside the namespace.
 func TestSandboxShimBinDirUsesMountPathUnderBwrap(t *testing.T) {
-	resetGohortLibDir(t)
+	resetOddjobLibDir(t)
 
-	if dir := sandboxShimBinDir(true); dir != GohortBinMountPath {
-		t.Errorf("shim bin dir = %q, want the mount %q", dir, GohortBinMountPath)
+	if dir := sandboxShimBinDir(true); dir != OddjobBinMountPath {
+		t.Errorf("shim bin dir = %q, want the mount %q", dir, OddjobBinMountPath)
 	}
 }
 
 // A caller-supplied PYTHONPATH has to survive — clobbering it would break a
 // tool that ships its own helper modules alongside its script.
 func TestSandboxPythonPathKeepsCallerEntries(t *testing.T) {
-	resetGohortLibDir(t)
+	resetOddjobLibDir(t)
 
 	got := sandboxPythonPath(true, "/caller/libs")
 	if !strings.Contains(got, "/caller/libs") {
 		t.Errorf("caller PYTHONPATH dropped: %q", got)
 	}
-	// Framework entries come first so a caller cannot shadow `gohort`.
-	if strings.Index(got, GohortLibMountPath) > strings.Index(got, "/caller/libs") {
+	// Framework entries come first so a caller cannot shadow `oddjob`.
+	if strings.Index(got, OddjobLibMountPath) > strings.Index(got, "/caller/libs") {
 		t.Errorf("caller entry precedes the framework helper, so it can shadow it: %q", got)
 	}
 }
 
 // A response pipe had no PYTHONPATH and no helper mounts, so `from
-// gohort import ...` and `import openpyxl` both raised
+// oddjob import ...` and `import openpyxl` both raised
 // ModuleNotFoundError there while working in every other sandboxed
 // context. It is also the one context where that is completely silent:
 // a pipe has no workspace to inspect and nobody sitting next to it.
 func TestPipeArgvCarriesTheHelperMounts(t *testing.T) {
-	resetGohortLibDir(t)
+	resetOddjobLibDir(t)
 
 	argv := strings.Join(bwrapPipeArgv("cat"), " ")
-	if !strings.Contains(argv, GohortLibMountPath) {
-		t.Errorf("pipe argv never mounts the gohort helper:\n%s", argv)
+	if !strings.Contains(argv, OddjobLibMountPath) {
+		t.Errorf("pipe argv never mounts the oddjob helper:\n%s", argv)
 	}
 	// The mount must land BEFORE the "--" separator, or bwrap tries to
 	// exec "--ro-bind" as a binary.
@@ -174,7 +174,7 @@ func TestPipeArgvCarriesTheHelperMounts(t *testing.T) {
 	if sep < 0 {
 		t.Fatal("pipe argv lost its -- separator")
 	}
-	if strings.Index(argv, GohortLibMountPath) > sep {
+	if strings.Index(argv, OddjobLibMountPath) > sep {
 		t.Error("the mount landed after --, where bwrap reads it as the command")
 	}
 	// And the command itself is still the last thing on the line.

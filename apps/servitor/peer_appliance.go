@@ -25,9 +25,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
 )
 
 // registerPeerInvestigation wires servitor into core's peer surface. Called

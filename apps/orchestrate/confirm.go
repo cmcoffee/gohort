@@ -46,7 +46,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // toolConfirmTimeout is how long an escalated call waits for the

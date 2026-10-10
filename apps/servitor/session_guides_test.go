@@ -5,7 +5,7 @@ import (
 
 	"github.com/cmcoffee/snugforge/kvlite"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // An investigation could write a guide and a guide could be read, and nothing

@@ -1,4 +1,4 @@
-// Package hello is a minimal reference app showing the gohort
+// Package hello is a minimal reference app showing the oddjob
 // framework's app shape end-to-end: agent registration, the WebApp
 // interface, a routed sub-mux, declarative ui.Page surfaces, and
 // SSE-driven AgentLoopPanel wiring.
@@ -10,7 +10,7 @@
 // Not enabled by default. To turn it on, add a blank import to
 // agents.go:
 //
-//	_ "github.com/cmcoffee/gohort/apps/hello"
+//	_ "github.com/cmcoffee/oddjob/apps/hello"
 //
 // Two surfaces are mounted:
 //
@@ -25,8 +25,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func init() { RegisterApp(new(HelloAgent)) }
@@ -51,7 +51,7 @@ func (T *HelloAgent) Main() error {
 	// HelloAgent does not implement core.CLIApp, so it's dashboard-only.
 	// Main() is unreachable through the CLI; included only because the
 	// Agent interface requires it.
-	Log("Hello is a dashboard-only app. Start with:\n  gohort serve :8080")
+	Log("Hello is a dashboard-only app. Start with:\n  oddjob serve :8080")
 	return nil
 }
 

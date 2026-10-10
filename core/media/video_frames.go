@@ -84,7 +84,7 @@ func extractVideoFrames(data []byte, count int) ([][]byte, error) {
 		}
 	}
 
-	tmpDir, err := os.MkdirTemp("", "gohort-frames-*")
+	tmpDir, err := os.MkdirTemp("", "oddjob-frames-*")
 	if err != nil {
 		return nil, fmt.Errorf("frame dir: %w", err)
 	}
@@ -195,7 +195,7 @@ func ExtractVideoAudio(data []byte) ([]byte, error) {
 // to 16 kHz mono 16-bit PCM WAV — the one format whisper.cpp decodes NATIVELY,
 // without needing its own ffmpeg/codec build. Inbound voice memos arrive as m4a
 // (AAC in an mp4 container); a stock whisper server rejects those with a 400.
-// Normalizing here, on the gohort host (which already has ffmpeg for video),
+// Normalizing here, on the oddjob host (which already has ffmpeg for video),
 // makes transcription independent of the STT server's format support. ffmpeg
 // probes the container, so the input's extension is irrelevant.
 func TranscodeAudioToWAV(data []byte) ([]byte, error) {

@@ -79,7 +79,7 @@ serves `search_code` / `read_file` / `list_dir` by decrypting in memory. That is
 the shape a bundle store wants, with one difference noted under slice 3.
 
 **A gated local-exec path exists for the transform stage.** `exec_local_ctx`
-(`apps/servitor/sysprobe.go:1312`) runs a command on the gohort host with a
+(`apps/servitor/sysprobe.go:1312`) runs a command on the oddjob host with a
 working directory and env. Every run already gets a private scratch directory
 where writes and deletes are ungated and teardown runs through the raw exec path
 so the gate cannot refuse it (`apps/servitor/scratch.go`). Permission to run
@@ -266,8 +266,8 @@ until there is a real bundle to measure it against.
   appliance list.
 - **Transform trust model.** Per-(agent, appliance) grant, consistent with
   `command_grants.go`, rather than a single "this user may define transforms"
-  capability. A transform is a command running on the gohort host; it should be
-  governed like every other command running on the gohort host.
+  capability. A transform is a command running on the oddjob host; it should be
+  governed like every other command running on the oddjob host.
 - **Bundle as appliance vs. attachment to an existing appliance.** Spec assumes
   appliance type. Attachment is cheaper to build and gets none of sharing,
   collections, linked repos, or workspace membership.

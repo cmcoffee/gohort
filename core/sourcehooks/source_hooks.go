@@ -17,7 +17,7 @@ import (
 	"github.com/cmcoffee/snugforge/apiclient"
 	"github.com/cmcoffee/snugforge/iotimeout"
 
-	"github.com/cmcoffee/gohort/core/costledger"
+	"github.com/cmcoffee/oddjob/core/costledger"
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
@@ -698,7 +698,7 @@ func queryEDGAR(hook SourceHook, query string) (string, error) {
 		VerifySSL:      true,
 		ConnectTimeout: HTTPConnectTimeout,
 		RequestTimeout: HTTPRequestTimeout,
-		AgentString:    fmt.Sprintf("Gohort/%s (%s)", appVersion(), contact),
+		AgentString:    fmt.Sprintf("Oddjob/%s (%s)", appVersion(), contact),
 	}
 
 	search_path := fmt.Sprintf("/LATEST/search-index?q=%s&dateRange=custom&startdt=2024-01-01&enddt=2026-12-31&forms=10-K,10-Q,8-K&from=0&size=10",

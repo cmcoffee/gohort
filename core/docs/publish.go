@@ -1,7 +1,7 @@
 // Publish destinations — the OUTBOUND third of the document registries.
 //
 // ReferenceSource pulls knowledge from another service INTO a document.
-// DocumentTarget pushes a section from one gohort app into another's document.
+// DocumentTarget pushes a section from one oddjob app into another's document.
 // PublishDestination pushes a FINISHED document OUT to an external system — a
 // Confluence space, a wiki, a webhook — and hands back where it landed.
 //
@@ -44,7 +44,7 @@ type PublishDoc struct {
 	Subtitle string `json:"subtitle,omitempty"`
 	Markdown string `json:"markdown"`
 	HTML     string `json:"html,omitempty"` // self-contained rendering, when the producer has one
-	// SourceKind/SourceID identify the gohort document this came from ("guide",
+	// SourceKind/SourceID identify the oddjob document this came from ("guide",
 	// the guide id) — carried so a destination can record provenance and a
 	// producer can match a PublishRecord back to what it published.
 	SourceKind string `json:"source_kind,omitempty"`

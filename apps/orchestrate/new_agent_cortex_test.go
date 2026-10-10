@@ -3,7 +3,7 @@ package orchestrate
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // An agent Builder creates without saying decides for itself whether it

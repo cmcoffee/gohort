@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The fleet page shows ONLY what binds every agent. An agent's own decision

@@ -22,8 +22,8 @@ package orchestrate
 import (
 	"net/http"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // fleetSecurityID is the reserved id in the agent path that means "all of

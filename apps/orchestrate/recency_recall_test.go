@@ -6,7 +6,7 @@ import (
 
 	"github.com/cmcoffee/snugforge/kvlite"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func withRecencyWeight(t *testing.T, w float64) func() {

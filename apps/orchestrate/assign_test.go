@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func pillsGET(t *testing.T, app *OrchestrateApp, user, path string) map[string]any {

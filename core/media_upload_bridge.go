@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/oddjob/core/media"
 )
 
 // mediaUploadCredential is the credential the media package's uploads ride.

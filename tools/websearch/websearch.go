@@ -20,9 +20,9 @@ import (
 	"time"
 	"unicode"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/textutil"
-	"github.com/cmcoffee/gohort/tools/browser"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/textutil"
+	"github.com/cmcoffee/oddjob/tools/browser"
 	"github.com/cmcoffee/snugforge/apiclient"
 	readability "github.com/go-shiori/go-readability"
 )
@@ -279,7 +279,7 @@ func (t *FetchURLTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 
 func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, error) {
 	// Keys beginning "__" are dispatch internals (a raised timeout, the
-	// script read cap, an upload), set by gohort's own callers. From the
+	// script read cap, an upload), set by oddjob's own callers. From the
 	// model they are ignored, or it could lift the limits on its own calls.
 	args = modelArgs(args)
 	if sess != nil && !sess.NetworkAllowed() {
@@ -498,7 +498,7 @@ func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, er
 	if err != nil {
 		return "", "", 0, err
 	}
-	req.Header.Set("User-Agent", "gohort/fetch_url")
+	req.Header.Set("User-Agent", "oddjob/fetch_url")
 	resp, err := NewPublicHTTPClient().Do(req)
 	if err != nil {
 		return "", "", 0, err
@@ -802,7 +802,7 @@ func fetchURLToFile(sess *ToolSession, target, absPath, displayPath string) (str
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("User-Agent", "gohort/fetch_url")
+	req.Header.Set("User-Agent", "oddjob/fetch_url")
 	resp, err := NewPublicHTTPClient().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch failed: %w", err)
@@ -847,7 +847,7 @@ func peekContentType(target string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "gohort/fetch_url")
+	req.Header.Set("User-Agent", "oddjob/fetch_url")
 	req.Header.Set("Range", "bytes=0-0")
 	resp, err := NewPublicHTTPClient().Do(req)
 	if err != nil {
@@ -1251,7 +1251,7 @@ func query(sr SearchRequest) string { return sr.Query }
 // searchSearXNG uses a SearXNG instance's JSON API.
 //
 // apiKey is optional and sent as a bearer. A public SearXNG needs none, but an
-// instance behind an authenticating proxy does — and so does a gohort PEER,
+// instance behind an authenticating proxy does — and so does a oddjob PEER,
 // which serves this exact shape at /api/peer/v1/search precisely so that
 // borrowing another instance's search needs no client of its own.
 func searchSearXNG(sr SearchRequest) (string, error) {
@@ -1339,7 +1339,7 @@ func FetchArticle(target_url string, max_chars int) (string, error) {
 }
 
 // JS-heavy URL detection lives in core/ (see ShouldAutoBrowseURL) so
-// the sandbox-hook gohort.fetch_url routes the same URLs through
+// the sandbox-hook oddjob.fetch_url routes the same URLs through
 // browse_page that fetch_url does. Both call sites here and in
 // core/sandbox_hook.go consult ShouldAutoBrowseURL directly.
 
@@ -1361,9 +1361,9 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 
 	// Known JS-heavy URLs: skip the HTTP path and go straight to the browser.
 	// Uses the shared ShouldAutoBrowseURL (core/js_domains.go) so the
-	// script-side gohort.fetch_url makes the EXACT SAME routing decision —
+	// script-side oddjob.fetch_url makes the EXACT SAME routing decision —
 	// the LLM probes a URL with fetch_url, sees it work, and the same URL
-	// in a script via gohort.fetch_url succeeds via the same Chromium path.
+	// in a script via oddjob.fetch_url succeeds via the same Chromium path.
 	// Falls through to HTTP on browser failure so the caller's never left empty-handed.
 	if ShouldAutoBrowseURL(target_url) {
 		text, berr := browser.Fetch(target_url, max_chars)

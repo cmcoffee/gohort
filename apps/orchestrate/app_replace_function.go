@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // appDefReplaceFunction replaces a named function in an app's html section

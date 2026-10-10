@@ -277,7 +277,7 @@ func AllTemplates() []Template {
 }
 
 // MergeSpec overlays `updates` onto `existing` at the JSON-object level, so keys
-// present only in `existing` — including fields a newer gohort added that this
+// present only in `existing` — including fields a newer oddjob added that this
 // version doesn't know — survive the round-trip (forward compatibility). Values in
 // `updates` win. Falls back to `updates` if either side isn't a JSON object.
 func MergeSpec(existing, updates json.RawMessage) json.RawMessage {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The cortex feed — the "feed, don't act" half of the cortex model. An agent's

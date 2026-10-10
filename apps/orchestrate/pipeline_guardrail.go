@@ -64,7 +64,7 @@ import (
 	"errors"
 	"strconv"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // stageGuardrails is the enforcement set to hand DOWN into a pipeline run, so

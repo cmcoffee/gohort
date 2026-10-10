@@ -50,7 +50,7 @@ func TestTheManifestNamesTheAppAndItsIcons(t *testing.T) {
 	if err := json.Unmarshal(bytes.ReplaceAll(bytes.ReplaceAll(raw, []byte(`"start_url"`), []byte(`"StartURL"`)), []byte(`"theme_color"`), []byte(`"ThemeColor"`)), &m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "gohort" || m.Display != "standalone" || m.StartURL != "/" || m.ThemeColor != "#101010" || len(m.Icons) != 3 {
+	if m.Name != "oddjob" || m.Display != "standalone" || m.StartURL != "/" || m.ThemeColor != "#101010" || len(m.Icons) != 3 {
 		t.Errorf("manifest: %+v", m)
 	}
 	served := map[string]bool{}

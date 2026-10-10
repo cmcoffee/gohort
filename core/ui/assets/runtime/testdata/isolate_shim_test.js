@@ -125,7 +125,7 @@ function codePaths() {
     Event: Event, ProgressEvent: ProgressEvent, TextDecoder: TextDecoder,
     HTMLImageElement: HTMLImageElement, Image: HTMLImageElement, HTMLMediaElement: HTMLMediaElement, Audio: Audio,
     XMLHttpRequest: NativeXHR,
-    document: {documentElement: {}, baseURI: 'https://gohort.example/apps/game/'},
+    document: {documentElement: {}, baseURI: 'https://oddjob.example/apps/game/'},
   };
   w.window = w;
   var ctx = vm.createContext(w);
@@ -140,10 +140,10 @@ function codePaths() {
 
   // A loader hands fetch a Request, already absolute against the page.
   var n = posted.length;
-  w.fetch(new Request('https://gohort.example/apps/game/assets/ship.glb'));
+  w.fetch(new Request('https://oddjob.example/apps/game/assets/ship.glb'));
   check('a Request for the app\'s own file is relayed as its relative path', posted.length === n + 1 && last().url === 'assets/ship.glb');
   var outside = 0;
-  w.fetch('https://gohort.example/apps/other/assets/x.glb').catch(function() { outside++; });
+  w.fetch('https://oddjob.example/apps/other/assets/x.glb').catch(function() { outside++; });
   w.fetch('https://cdn.example/model.glb').catch(function() { outside++; });
 
   var img = new w.Image();

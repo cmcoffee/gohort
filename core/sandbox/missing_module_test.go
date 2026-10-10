@@ -9,10 +9,10 @@ import (
 // the script's import and not the deployment that failed. The model
 // cannot tell those apart, so it reports an unspecified environmental
 // fault and routes around the tool — the expensive half.
-func TestMissingGohortModuleExplainsItself(t *testing.T) {
+func TestMissingOddjobModuleExplainsItself(t *testing.T) {
 	raw := "Traceback (most recent call last):\n  File \"tool.py\", line 1\n" +
-		"ModuleNotFoundError: No module named 'gohort'\n"
-	got := explainMissingGohortModule(raw, true)
+		"ModuleNotFoundError: No module named 'oddjob'\n"
+	got := explainMissingOddjobModule(raw, true)
 	if got == raw {
 		t.Fatal("the failure was passed through unexplained")
 	}
@@ -29,7 +29,7 @@ func TestMissingGohortModuleExplainsItself(t *testing.T) {
 	}
 	// Unrelated output is untouched — this runs on every sandboxed call.
 	clean := "hello\nModuleNotFoundError: No module named 'requests'\n"
-	if explainMissingGohortModule(clean, true) != clean {
+	if explainMissingOddjobModule(clean, true) != clean {
 		t.Error("a different missing module must not be explained as this one")
 	}
 }

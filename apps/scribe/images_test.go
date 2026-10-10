@@ -1,7 +1,7 @@
 package scribe
 
 // Pictures in a guide are stored once beside it and linked from its markdown,
-// so History copies a link and not the picture. What leaves gohort (exports,
+// so History copies a link and not the picture. What leaves oddjob (exports,
 // publish, bundles) carries them embedded, and what arrives embedded (a bundle,
 // a re-imported export) lands back in the store.
 
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

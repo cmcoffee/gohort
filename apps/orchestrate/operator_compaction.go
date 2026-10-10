@@ -17,7 +17,7 @@ import (
 	"strings"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const operatorCompactStateTable = "operator_compact_state"

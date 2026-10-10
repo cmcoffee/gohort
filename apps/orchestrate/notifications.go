@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/notices"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/notices"
 )
 
 // notify records a notice for an owner and forwards it if they asked for that.
@@ -71,18 +71,18 @@ func (T *OrchestrateApp) noticeSource(owner, agentID string) string {
 //
 // "[<agent>@<service>]:" when there is an agent, "[<service>]:" when there is
 // not, so the shape is always the same and the deployment is always named: a
-// person with two gohorts needs to know which one is talking.
+// person with two oddjobs needs to know which one is talking.
 //
 // The source is passed as EMPTY on any path whose transport already names the
 // agent. The bridge tags an agent-aware send with "[<name>] " of its own
 // (apps/bridges/bridges.go), which is per-channel configurable and the owner's
-// to turn off, so repeating it here produced "[Wren] [Wren@Gohort] ...". The
+// to turn off, so repeating it here produced "[Wren] [Wren@Oddjob] ...". The
 // caller decides, rather than this function re-deriving the bridge's tagging
 // rules and drifting from them the first time one of those options changes.
 func noticePrefix(source string) string {
 	service := strings.TrimSpace(ServiceName())
 	if service == "" {
-		service = "gohort"
+		service = "oddjob"
 	}
 	if source = strings.TrimSpace(source); source != "" {
 		return "[" + source + "@" + service + "]:"

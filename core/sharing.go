@@ -16,8 +16,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/notices"
-	"github.com/cmcoffee/gohort/core/shareledger"
+	"github.com/cmcoffee/oddjob/core/notices"
+	"github.com/cmcoffee/oddjob/core/shareledger"
 )
 
 // SetSharedOwner adds or removes a record from a shared index. shared && owner!=""

@@ -1,4 +1,4 @@
-APPNAME   := gohort
+APPNAME   := oddjob
 VERSION   := $(shell cat version.txt)
 
 # Default output directory
@@ -69,7 +69,7 @@ endif
 check: vet
 	go test ./...
 
-# What a downloaded binary has to carry. A compiled gohort contains the object
+# What a downloaded binary has to carry. A compiled oddjob contains the object
 # code of ~40 modules, each asking for its notice to travel with it, and the
 # source tree cannot answer that question — the dependencies are not in it.
 # Generated from what is ACTUALLY LINKED, and it FAILS the build if a module's
@@ -148,7 +148,7 @@ release:
 	@cd $(DISTDIR) && ls -1 $(APPNAME)_$(VERSION)_* SHA256SUMS | sed 's/^/  /'
 
 # Removes what the build put in $(OUTDIR), and only that. `rm -rf build` would
-# be shorter and would also take out the data/, logs/ and gohort.ini of anyone
+# be shorter and would also take out the data/, logs/ and oddjob.ini of anyone
 # who runs the binary where it was built — which is the obvious thing to do
 # with a self-contained binary, and a database is not a build artifact.
 clean:

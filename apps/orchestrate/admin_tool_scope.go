@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleToolScope serves the in-chat pill control (Tools modal). GET returns

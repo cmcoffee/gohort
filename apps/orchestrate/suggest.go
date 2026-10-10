@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // suggestableFields lists agent fields the suggest endpoint will honor,

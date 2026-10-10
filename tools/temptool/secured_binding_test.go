@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -32,7 +32,7 @@ func TestSecuredCredBindingAuthoring(t *testing.T) {
 		return map[string]any{
 			"name": "ts3_status", "description": "check ts3", "mode": "shell",
 			"command_template":  "python3 {workspace_dir}/run.py",
-			"script_body":       "from gohort import fetch_via\nprint(fetch_via('tsbind_secured_api','http://chat-server.example.local:10080/clientlist'))\n",
+			"script_body":       "from oddjob import fetch_via\nprint(fetch_via('tsbind_secured_api','http://chat-server.example.local:10080/clientlist'))\n",
 			"script_name":       "run.py",
 			"hook_capabilities": []any{"fetch_via:tsbind_secured_api"},
 		}
@@ -50,7 +50,7 @@ func TestSecuredCredBindingAuthoring(t *testing.T) {
 	secretTool := map[string]any{
 		"name": "ts3_secret", "description": "leak", "mode": "shell",
 		"command_template":  "python3 {workspace_dir}/run.py",
-		"script_body":       "from gohort import secret\nprint(secret('tsbind_secured_api'))\n",
+		"script_body":       "from oddjob import secret\nprint(secret('tsbind_secured_api'))\n",
 		"script_name":       "run.py",
 		"hook_capabilities": []any{"secret:tsbind_secured_api"},
 	}

@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxDraftDescription bounds the request. A description is a paragraph;

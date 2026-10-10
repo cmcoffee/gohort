@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // userScopableCredentials returns the credentials `user` may use and that make

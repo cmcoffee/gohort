@@ -1,4 +1,4 @@
-// The bot_framework connector kind: gohort as a first-class Microsoft Teams
+// The bot_framework connector kind: oddjob as a first-class Microsoft Teams
 // participant, rather than a reader of one channel's message list.
 //
 // Where rest_messaging polls a service's REST API (or receives its native
@@ -35,7 +35,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/jwks"
+	"github.com/cmcoffee/oddjob/core/jwks"
 )
 
 // BotFrameworkConnectorKind is the Kind value for a Bot Framework bridge.

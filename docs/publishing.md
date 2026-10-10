@@ -46,10 +46,10 @@ built-in has a similar name.
 
 Navigation is presentation, and presentation belongs to where a document is
 published. A guide's table of contents and its links to its own sections use
-gohort's heading anchors, which point at nothing on a Confluence page (or
+oddjob's heading anchors, which point at nothing on a Confluence page (or
 wherever an MCP or agent route converts the markdown).
 
-`docs.AnalyzeNav` reads the navigation (headings with gohort's anchors, each
+`docs.AnalyzeNav` reads the navigation (headings with oddjob's anchors, each
 in-page link and the heading it means, by anchor or else by its words, and
 the table of contents' heading). `PublishDocument`, which every publish path
 goes through, puts it on the request (`PublishRequest.Nav`), so no producer

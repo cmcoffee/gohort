@@ -15,8 +15,8 @@ import (
 	"regexp"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/docs"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/docs"
 )
 
 // registerAgentPublisher installs the closure core/docs calls when a publish is

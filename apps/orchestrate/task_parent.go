@@ -1,6 +1,6 @@
 // Containment: one schedule saying it exists to serve another.
 //
-// The question this answers is the one the vocabulary could not. gohort has
+// The question this answers is the one the vocabulary could not. oddjob has
 // three words that sound like the same thing at different sizes, and they are
 // not: a TASK is a record that runs, a MISSION is what it does each time it
 // runs, and a GOAL is the condition under which it should stop existing. A
@@ -38,7 +38,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // taskParentRef is how one schedule names another: the surface it lives on and

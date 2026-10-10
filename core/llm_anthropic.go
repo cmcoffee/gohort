@@ -60,7 +60,7 @@ type anthropicClient struct {
 	// hoistSystem folds system-role turns out of the message list. Bedrock
 	// rejects them on BOTH its endpoints ("use the top-level 'system'
 	// parameter"), while the first-party API accepts them mid-conversation on
-	// current models and gohort relies on that — so this is opt-in per client
+	// current models and oddjob relies on that — so this is opt-in per client
 	// rather than a change to the shared builder.
 	hoistSystem bool
 	// contextSize is the operator-configured working context cap (tokens);

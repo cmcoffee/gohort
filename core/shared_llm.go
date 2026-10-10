@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // Process-wide default worker and lead LLM references. Set at startup by the

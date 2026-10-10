@@ -56,7 +56,7 @@ func TestResetTokensAreHashedAndEndWithAPasswordChange(t *testing.T) {
 
 // With no accounts, only a Host a third-party site cannot point here is served.
 func TestHostsThatCannotBeRebound(t *testing.T) {
-	for _, h := range []string{"127.0.0.1:8080", "[::1]:8080", "localhost", "gohort:8080", "nas.local", "box.lan:9000", "10.0.0.5"} {
+	for _, h := range []string{"127.0.0.1:8080", "[::1]:8080", "localhost", "oddjob:8080", "nas.local", "box.lan:9000", "10.0.0.5"} {
 		if !hostCannotBeRebound(h) {
 			t.Errorf("%s refused", h)
 		}

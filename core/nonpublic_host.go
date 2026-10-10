@@ -7,7 +7,7 @@ import (
 	neturl "net/url"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/sourcehooks"
+	"github.com/cmcoffee/oddjob/core/sourcehooks"
 )
 
 // RefuseNonPublicHost rejects a URL that names loopback, private, link-local or

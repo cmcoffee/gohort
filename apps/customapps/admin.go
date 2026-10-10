@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appadmin"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appadmin"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // customAppsAdminGroup is the admin TAB these rows land on. The same one the
@@ -451,7 +451,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		}
 		pageCode := "none"
 		if n := len(pageBrowserCode(spec)); n > 0 {
-			pageCode = fmt.Sprintf("%d block(s) of HTML or script that run in each viewer's browser, isolated (no gohort session, only this app's own endpoints): read them under Show scripts", n)
+			pageCode = fmt.Sprintf("%d block(s) of HTML or script that run in each viewer's browser, isolated (no oddjob session, only this app's own endpoints): read them under Show scripts", n)
 		}
 		writeJSON(w, map[string]any{
 			"sources":      len(spec.DataSources),
@@ -479,7 +479,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		// in an isolated frame with no origin, reaching only the app's own
 		// endpoints (isolateAppHTML): not as the viewer on this site.
 		for i, code := range pageBrowserCode(spec) {
-			fmt.Fprintf(&b, "\n=== page code %d (runs in each viewer's browser, isolated: no gohort session, only this app's own endpoints) ===\n\n%s\n", i+1, code)
+			fmt.Fprintf(&b, "\n=== page code %d (runs in each viewer's browser, isolated: no oddjob session, only this app's own endpoints) ===\n\n%s\n", i+1, code)
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte(b.String()))

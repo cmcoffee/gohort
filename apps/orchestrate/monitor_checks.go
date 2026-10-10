@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // monitorCheckLines is m's recent checks, newest first, at most n, one line

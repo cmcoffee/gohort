@@ -2,8 +2,8 @@ package admin
 
 import (
 	"encoding/json"
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"net/http"
 	"net/http/httptest"

@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // orchestratorPromptSections is the outline the prompt editor offers.

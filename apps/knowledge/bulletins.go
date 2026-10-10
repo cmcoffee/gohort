@@ -4,7 +4,7 @@ package knowledge
 // following agent sees on each turn. The boards live in orchestrate
 // (/orchestrate/api/bulletins); this only lays out the controls.
 
-import "github.com/cmcoffee/gohort/core/ui"
+import "github.com/cmcoffee/oddjob/core/ui"
 
 const bulletinsAPI = "/orchestrate/api/bulletins"
 

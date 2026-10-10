@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	_ "golang.org/x/image/webp" // register the WebP decoder for image.Decode
 )
 

@@ -1,4 +1,4 @@
-// Package filestore makes a folder of files on the gohort host
+// Package filestore makes a folder of files on the oddjob host
 // searchable by an agent, without ever handing a model a whole file.
 //
 // It exists because there was no good way to give the system a folder of
@@ -48,7 +48,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registeredFileStoreApp is the instance the registrations below close
@@ -229,7 +229,7 @@ func (T *FileStoreApp) Desc() string {
 }
 func (T *FileStoreApp) Init() error { return T.Flags.Parse() }
 func (T *FileStoreApp) Main() error {
-	Log("File stores are configured from the admin page. Start with:\n  gohort serve :8080")
+	Log("File stores are configured from the admin page. Start with:\n  oddjob serve :8080")
 	return nil
 }
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/internal/mcpclient"
+	"github.com/cmcoffee/oddjob/core/internal/mcpclient"
 )
 
 // The distinction the whole recovery turns on: a dead refresh token needs a

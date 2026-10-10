@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/netgate"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 func TestDocumentUploadRaisesTheServerBodyCap(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // bellGlyphSVG is the same bell the framework header draws, inline because

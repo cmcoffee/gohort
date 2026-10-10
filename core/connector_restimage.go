@@ -10,7 +10,7 @@
 // chat tool `generate_image_<name>` that agents can be granted. Because the whole
 // backend is just the Spec (endpoints + a request-body template + response
 // dot-paths + an optional poll stage), a rest_image connector EXPORTS and IMPORTS
-// through the same gohort.bundle machinery as every other connector — the
+// through the same oddjob.bundle machinery as every other connector — the
 // "easily shared based on need" goal — with zero extra wiring: the credential is
 // referenced by name (never a secret), so a bundle carries the whole capability.
 //
@@ -1843,7 +1843,7 @@ var restImagePresets = map[string]RestImageSpec{
 			`"6":{"class_type":"CLIPTextEncode","inputs":{"text":"{prompt}","clip":["4",1]}},` +
 			`"7":{"class_type":"CLIPTextEncode","inputs":{"text":"{negative}","clip":["4",1]}},` +
 			`"8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},` +
-			`"9":{"class_type":"SaveImage","inputs":{"filename_prefix":"gohort","images":["8",0]}}}}`,
+			`"9":{"class_type":"SaveImage","inputs":{"filename_prefix":"oddjob","images":["8",0]}}}}`,
 		SubmitIDPath: "prompt_id",
 		// Input images are POSTed here first; the returned name is written into
 		// the graph's LoadImage node. Harmless on a txt2img backend (nothing

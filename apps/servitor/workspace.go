@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/bundle"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/bundle"
 )
 
 // A workspace is a master appliance whose configuration is a list of OTHER

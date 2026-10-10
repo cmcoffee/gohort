@@ -10,9 +10,9 @@ package codewriter
 import (
 	"net/http"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/editor"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/editor"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Request) {

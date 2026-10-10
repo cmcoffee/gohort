@@ -28,7 +28,6 @@ package sandbox
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -216,7 +215,7 @@ func (noSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	case sandboxPipeRun:
 		c := exec.CommandContext(ctx, "sh", "-c", run.Command)
 		// /tmp rather than the process's cwd: a pipe command has no workspace,
-		// and leaving it in gohort's own directory points relative paths at the
+		// and leaving it in oddjob's own directory points relative paths at the
 		// install tree.
 		c.Dir = "/tmp"
 		return c
@@ -257,7 +256,7 @@ func activeSandbox() sandboxBackend {
 func detectSandbox() sandboxBackend {
 	return detectSandboxFor(sandboxSelection{
 		GOOS:      runtime.GOOS,
-		Pick:      strings.ToLower(strings.TrimSpace(os.Getenv("GOHORT_SANDBOX_BACKEND"))),
+		Pick:      strings.ToLower(strings.TrimSpace(getenv("ODDJOB_SANDBOX_BACKEND"))),
 		Image:     containerImage(),
 		Look:      exec.LookPath,
 		Seatbelt:  seatbeltUsable,
@@ -274,7 +273,7 @@ func detectSandbox() sandboxBackend {
 // this whole file was written to stop repeating.
 type sandboxSelection struct {
 	GOOS  string
-	Pick  string // GOHORT_SANDBOX_BACKEND, lowercased
+	Pick  string // ODDJOB_SANDBOX_BACKEND, lowercased
 	Image string
 	Look  func(string) (string, error)
 	// Seatbelt and Container report whether a located runtime actually WORKS.
@@ -288,7 +287,7 @@ type sandboxSelection struct {
 // without naming one.
 //
 // podman first, and not as a style preference: reaching /var/run/docker.sock is
-// root-equivalent, so a docker backend hands the gohort daemon a capability it
+// root-equivalent, so a docker backend hands the oddjob daemon a capability it
 // did not have in order to confine the commands it runs. Rootless podman has no
 // daemon and no such socket. docker stays available because some deployments
 // have only it, and an operator who types it gets it.
@@ -303,7 +302,7 @@ var containerRuntimes = []string{"podman", "docker"}
 func detectSandboxFor(sel sandboxSelection) sandboxBackend {
 	switch sel.Pick {
 	case "none":
-		nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=none: confinement is disabled by configuration")
+		nfo.Log("[sandbox] ODDJOB_SANDBOX_BACKEND=none: confinement is disabled by configuration")
 		return noSandbox{}
 	case "podman", "docker", "container":
 		if sb := pickContainer(sel); sb != nil {
@@ -314,7 +313,7 @@ func detectSandboxFor(sel sandboxSelection) sandboxBackend {
 		if p, err := sel.Look("bwrap"); err == nil {
 			return bwrapSandbox{path: p}
 		}
-		nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=bubblewrap but bwrap is not on PATH: falling back to unconfined")
+		nfo.Log("[sandbox] ODDJOB_SANDBOX_BACKEND=bubblewrap but bwrap is not on PATH: falling back to unconfined")
 		return noSandbox{}
 	case "", "auto":
 		// The historical behaviour, unchanged.
@@ -325,7 +324,7 @@ func detectSandboxFor(sel sandboxSelection) sandboxBackend {
 		// that here the safe answer is the platform default rather than a
 		// refusal — an unrecognized name is not a request for less
 		// confinement, it is a request nobody can act on.
-		nfo.Log("[sandbox] WARNING: GOHORT_SANDBOX_BACKEND=%q is not a known backend "+
+		nfo.Log("[sandbox] WARNING: ODDJOB_SANDBOX_BACKEND=%q is not a known backend "+
 			"(auto, bubblewrap, podman, docker, container, none): using the platform default",
 			sel.Pick)
 	}
@@ -388,7 +387,7 @@ func pickContainer(sel sandboxSelection) sandboxBackend {
 		}
 		return c
 	}
-	nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=%s but no container runtime is usable [%s]: "+
+	nfo.Log("[sandbox] ODDJOB_SANDBOX_BACKEND=%s but no container runtime is usable [%s]: "+
 		"falling back to unconfined, which under the default policy means shell tools are REFUSED",
 		sel.Pick, strings.Join(tried, ", "))
 	return nil
@@ -472,10 +471,10 @@ func unsandboxedAdvice() string { return unsandboxedAdviceFor(runtime.GOOS) }
 // alone would leave the one message that matters most verified by nothing but a
 // cross-compile — which proves it parses, not that it says anything useful.
 func unsandboxedAdviceFor(goos string) string {
-	const optOut = " Or set GOHORT_ALLOW_UNSANDBOXED=1 to accept that shell tools run at this account's full privilege."
+	const optOut = " Or set ODDJOB_ALLOW_UNSANDBOXED=1 to accept that shell tools run at this account's full privilege."
 	// Named on every platform because it is the one remedy that does not depend
 	// on which one you are reading this from.
-	const container = " A container runtime also works: install podman (rootless) and set GOHORT_SANDBOX_BACKEND=podman."
+	const container = " A container runtime also works: install podman (rootless) and set ODDJOB_SANDBOX_BACKEND=podman."
 	switch goos {
 	case "linux":
 		return "Install bubblewrap (apt install bubblewrap / dnf install bubblewrap)." + container + optOut
@@ -484,7 +483,7 @@ func unsandboxedAdviceFor(goos string) string {
 			"check the log for the refusal. Nothing can be installed to fix that; sandbox-exec ships with macOS or not at all." +
 			container + optOut
 	default:
-		return "gohort has no sandbox backend for " + goos + "." + optOut
+		return "oddjob has no sandbox backend for " + goos + "." + optOut
 	}
 }
 
@@ -494,7 +493,7 @@ func unsandboxedAdviceFor(goos string) string {
 // operator to install bubblewrap, which on macOS is an instruction to do
 // something impossible in order to fix something that was never going to work.
 func sandboxUnavailableErr() error {
-	return Error("this host has no OS sandbox, and gohort refuses to run shell tools unconfined by default: the tool did not run. " +
+	return Error("this host has no OS sandbox, and oddjob refuses to run shell tools unconfined by default: the tool did not run. " +
 		unsandboxedAdvice())
 }
 
@@ -525,7 +524,7 @@ func warnRefusing(what string) {
 func warnUnsandboxed(what string) {
 	sandboxWarnOnce.Do(func() {
 		nfo.Log("[sandbox] WARNING: no OS sandbox on this host (%s) and unsandboxed execution was explicitly permitted "+
-			"(GOHORT_ALLOW_UNSANDBOXED): %s run with this account's full permissions. %s",
+			"(ODDJOB_ALLOW_UNSANDBOXED): %s run with this account's full permissions. %s",
 			runtime.GOOS, what, unsandboxedAdvice())
 	})
 }

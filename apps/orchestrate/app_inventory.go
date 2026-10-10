@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // appInventoryLine lists the app's stored parts and forbids going beyond them.

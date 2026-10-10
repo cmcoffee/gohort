@@ -7,8 +7,8 @@ package orchestrate
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // TestAgentNameOptionsIsSafeBeforeAnythingRegisters pins the degradation the

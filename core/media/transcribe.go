@@ -152,7 +152,7 @@ func SaveTranscribeConfigToDB(db ConfigStore, cfg TranscribeConfig) error {
 }
 
 // TranscribeRuntimeFlagScript returns a `<script>` snippet that sets
-// the client-side runtime flag `window.GOHORT_TRANSCRIBE_ENABLED`.
+// the client-side runtime flag `window.ODDJOB_TRANSCRIBE_ENABLED`.
 // Apps embed this in Page.ExtraHeadHTML so the paperclip's file-picker
 // JS can build its accept attribute conditionally — audio file types
 // only appear in the picker when whisper is actually configured.
@@ -160,9 +160,9 @@ func SaveTranscribeConfigToDB(db ConfigStore, cfg TranscribeConfig) error {
 // concat without branching.
 func TranscribeRuntimeFlagScript() string {
 	if GetTranscribeConfig().Enabled {
-		return `<script>window.GOHORT_TRANSCRIBE_ENABLED = true;</script>`
+		return `<script>window.ODDJOB_TRANSCRIBE_ENABLED = true;</script>`
 	}
-	return `<script>window.GOHORT_TRANSCRIBE_ENABLED = false;</script>`
+	return `<script>window.ODDJOB_TRANSCRIBE_ENABLED = false;</script>`
 }
 
 // GovernedUploadFunc, when set, is how Transcribe reaches the network. The

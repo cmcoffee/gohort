@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/shareledger"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/shareledger"
 )
 
 func guidedFixture(t *testing.T) (Database, AgentRecord) {

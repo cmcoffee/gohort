@@ -23,10 +23,10 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
 )
 
 // curatorAgentID is the curated Curator agent.

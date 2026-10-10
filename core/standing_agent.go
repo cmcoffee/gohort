@@ -25,9 +25,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 
-	"github.com/cmcoffee/gohort/core/notes"
+	"github.com/cmcoffee/oddjob/core/notes"
 )
 
 const (

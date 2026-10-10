@@ -83,10 +83,10 @@ const adminResetPasswordAction = `function(ctx){
 
 // artifactDownload is the shared client-action body, over the core
 // ArtifactClientJS download: the browser downloads a secret-free
-// gohort.bundle/v1. All the export buttons below are one-liners
+// oddjob.bundle/v1. All the export buttons below are one-liners
 // over it, differing only in the query (individual vs all-of-type vs all).
 const artifactDownloadHelper = `function __artifactDownload(href, filename){
-  window.gohortArtifacts.download(href, filename);
+  window.oddjobArtifacts.download(href, filename);
 }`
 
 // artifactExportControls layers the "Include dependencies" export preference on
@@ -94,7 +94,7 @@ const artifactDownloadHelper = `function __artifactDownload(href, filename){
 // above the first export toolbar on the page; every export action routes its
 // URL through __artifactExport, which appends deps=0 only when the admin opts
 // out. Default-on means a fresh export carries the credentials (and referenced
-// tools) the artifact needs, so it installs cleanly on another gohort. This is
+// tools) the artifact needs, so it installs cleanly on another oddjob. This is
 // app-specific export behavior — it lives here in the admin app, NOT in
 // core/ui, so the toolkit stays domain-agnostic.
 const artifactExportControls = `
@@ -145,12 +145,12 @@ function __artifactExport(query, filename){
 const connectorsExportAction = `function(ctx){
   var n = ctx && ctx.record && ctx.record.name;
   if(!n){ window.uiAlert && window.uiAlert('No connector selected.'); return; }
-  __artifactExport('?type=connector&name=' + encodeURIComponent(n), n + '.gohort.json');
+  __artifactExport('?type=connector&name=' + encodeURIComponent(n), n + '.oddjob.json');
 }`
 
 // connectorsExportAllAction downloads every connector as one bundle.
 const connectorsExportAllAction = `function(){
-  __artifactExport('?all=connector', 'connectors.gohort.json');
+  __artifactExport('?all=connector', 'connectors.oddjob.json');
 }`
 
 // connectorFormDef defines the GENERIC template renderer on window (idempotent):
@@ -351,7 +351,7 @@ const connectorWebhookAction = `function(ctx){
   var url = location.origin + '/bridges/api/webhook/' + encodeURIComponent(r.name);
   window.uiOpenSimpleModal({title: 'Webhook: ' + r.name, width: '600px', mount: function(body, dlg){
     function note(text){ body.appendChild(el('p', {style: 'margin:0 0 0.6rem;font-size:var(--fs-sm, 0.86rem);line-height:1.45;color:var(--text-mute)', text: text})); }
-    note('Give the service this address to send its pushes to. It must be able to reach this gohort.');
+    note('Give the service this address to send its pushes to. It must be able to reach this oddjob.');
     var addr = el('input', {class: 'ui-input', type: 'text', readonly: 'readonly', value: url, style: 'width:100%;box-sizing:border-box;font-family:var(--mono, monospace);font-size:var(--fs-sm, 0.8rem)'});
     addr.addEventListener('focus', function(){ addr.select(); });
     var copy = el('button', {class: 'ui-row-btn', text: 'Copy'});
@@ -362,7 +362,7 @@ const connectorWebhookAction = `function(ctx){
     });
     body.appendChild(el('div', {style: 'display:flex;gap:0.5rem;align-items:center'}, [addr, copy]));
     note(r.webhook === 'graph'
-      ? 'Microsoft Graph pushes carry a secret gohort makes itself; set one here only to replace it.'
+      ? 'Microsoft Graph pushes carry a secret oddjob makes itself; set one here only to replace it.'
       : 'Every push is checked against the secret below (the service calls it a signing secret or a token). Setting it replaces the one kept now; it is stored encrypted and never shown again.');
     var inp = el('input', {class: 'ui-input', type: 'password', autocomplete: 'off', placeholder: 'Secret or token', style: 'width:100%;box-sizing:border-box'});
     body.appendChild(inp);
@@ -391,12 +391,12 @@ const toolsExportAction = `function(ctx){
   var n = (r.tool && r.tool.name) || r.name;
   var o = r.owner || '';
   if(!n){ window.uiAlert && window.uiAlert('No tool selected.'); return; }
-  __artifactExport('?type=tool&name=' + encodeURIComponent(n) + '&owner=' + encodeURIComponent(o), n + '.gohort.json');
+  __artifactExport('?type=tool&name=' + encodeURIComponent(n) + '&owner=' + encodeURIComponent(o), n + '.oddjob.json');
 }`
 
 // toolsExportAllAction downloads every persistent tool (all owners) as one bundle.
 const toolsExportAllAction = `function(){
-  __artifactExport('?all=tool', 'tools.gohort.json');
+  __artifactExport('?all=tool', 'tools.oddjob.json');
 }`
 
 // scopeManageActionJS builds a scope-pill client action for one KIND
@@ -535,9 +535,9 @@ var categoryScopeManageAction = scopeManageActionJS("category",
 
 // artifactsExportAllAction downloads EVERYTHING — connectors + tools +
 // credentials + agents + skills + any future registered type — as one
-// gohort.bundle/v1.
+// oddjob.bundle/v1.
 const artifactsExportAllAction = `function(){
-  __artifactExport('', 'gohort-bundle.json');
+  __artifactExport('', 'oddjob-bundle.json');
 }`
 
 // credentialsExportAction downloads ONE API credential's CONFIG as a 1-item
@@ -546,19 +546,19 @@ const artifactsExportAllAction = `function(){
 const credentialsExportAction = `function(ctx){
   var n = ctx && ctx.record && ctx.record.name;
   if(!n){ window.uiAlert && window.uiAlert('No credential selected.'); return; }
-  __artifactExport('?type=credential&name=' + encodeURIComponent(n), n + '.gohort.json');
+  __artifactExport('?type=credential&name=' + encodeURIComponent(n), n + '.oddjob.json');
 }`
 
 // credentialsExportAllAction downloads every API credential's config as one bundle.
 const credentialsExportAllAction = `function(){
-  __artifactExport('?all=credential', 'credentials.gohort.json');
+  __artifactExport('?all=credential', 'credentials.oddjob.json');
 }`
 
 // artifactImportPreviewJS points the shared preview-then-confirm import flow
 // (core ArtifactClientJS) at the admin's deployment-wide endpoints.
 const artifactImportPreviewJS = `
 window.__artifactImportPreview = function(){
-  window.gohortArtifacts.importFlow({
+  window.oddjobArtifacts.importFlow({
     previewURL: 'api/artifacts/preview',
     importURL: 'api/artifacts/import',
     invalidate: ['api/connectors','api/persistent-tools','api/secure-api','api/skills'],
@@ -576,12 +576,12 @@ const artifactsImportPreviewAction = `function(){ window.__artifactImportPreview
 const skillsExportAction = `function(ctx){
   var n = ctx && ctx.record && ctx.record.name;
   if(!n){ window.uiAlert && window.uiAlert('No skill selected.'); return; }
-  __artifactExport('?type=skill&name=' + encodeURIComponent(n), n + '.gohort.json');
+  __artifactExport('?type=skill&name=' + encodeURIComponent(n), n + '.oddjob.json');
 }`
 
 // skillsExportAllAction downloads every skill (all owners) as one bundle.
 const skillsExportAllAction = `function(){
-  __artifactExport('?all=skill', 'skills.gohort.json');
+  __artifactExport('?all=skill', 'skills.oddjob.json');
 }`
 
 // templateInstallAction (Templates row "Add", on a template) asks the
@@ -656,7 +656,7 @@ const templateInstallAction = `function(ctx){
 const templateExportAction = `function(ctx){
   var id = ctx && ctx.record && ctx.record.id;
   if(!id){ return; }
-  __artifactDownload('api/templates/export?id=' + encodeURIComponent(id), 'gohort-template-' + id + '.json');
+  __artifactDownload('api/templates/export?id=' + encodeURIComponent(id), 'oddjob-template-' + id + '.json');
 }`
 
 // templateImportAction ("Import a template…") uploads a template file.

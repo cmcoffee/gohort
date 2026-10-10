@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // generateHeaderImage produces a banner for a guide from its title through

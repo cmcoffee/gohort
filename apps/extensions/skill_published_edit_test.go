@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/promotion"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/promotion"
 )
 
 func TestAnAuthorCanEditAndMuteTheirPublishedSkill(t *testing.T) {

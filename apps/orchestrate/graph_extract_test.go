@@ -8,7 +8,7 @@ import (
 
 	"github.com/cmcoffee/snugforge/kvlite"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // fakeChat is a FactChatFunc that returns canned content, standing in for the

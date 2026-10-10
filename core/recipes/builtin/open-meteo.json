@@ -4,7 +4,7 @@
   "description": "A no-auth API credential scoped to https://api.open-meteo.com — a free weather/forecast service that needs no key. Demonstrates the credential type. No secret travels; it installs DISABLED, so review the URL scope and enable it in Admin > APIs.",
   "category": "APIs",
   "bundle": {
-    "bundle": "gohort.bundle/v1",
+    "bundle": "oddjob.bundle/v1",
     "artifacts": [
       {
         "type": "credential",

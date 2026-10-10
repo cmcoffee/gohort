@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/appscript"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -80,7 +80,7 @@ func TestAppAsksAreCappedPerAppAndPerUser(t *testing.T) {
 	}
 }
 
-// A script's gohort.ask is held to the same caps as the page's, charged to
+// A script's oddjob.ask is held to the same caps as the page's, charged to
 // the person the run is for.
 func TestAScriptsAskSharesThePagesCaps(t *testing.T) {
 	saved, savedAsk := RootDB, appAgentAsk

@@ -146,7 +146,7 @@ func generateSelfSigned(cert_file, key_file string) error {
 	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{Organization: []string{"Gohort"}, CommonName: "localhost"},
+		Subject:      pkix.Name{Organization: []string{"Oddjob"}, CommonName: "localhost"},
 		NotBefore:    now,
 		NotAfter:     now.Add(365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,

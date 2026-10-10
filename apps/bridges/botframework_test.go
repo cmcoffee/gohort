@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func bfSpec() BotFrameworkSpec {
@@ -21,9 +21,9 @@ const channelActivityJSON = `{
   "id": "1700000000001",
   "timestamp": "2026-08-28T10:00:00.000Z",
   "serviceUrl": "https://smba.trafficmanager.net/amer/",
-  "text": "<at>gohort</at> what is the deploy status?",
+  "text": "<at>oddjob</at> what is the deploy status?",
   "from": {"id": "29:abc", "name": "Craig Coffee", "aadObjectId": "aad-craig"},
-  "recipient": {"id": "28:app-1", "name": "gohort"},
+  "recipient": {"id": "28:app-1", "name": "oddjob"},
   "conversation": {"id": "19:thread@thread.tacv2", "conversationType": "channel", "tenantId": "tenant-9"},
   "channelData": {"tenant": {"id": "tenant-9"}, "team": {"id": "T", "name": "Platform"}, "channel": {"id": "C", "name": "deploys"}}
 }`
@@ -102,7 +102,7 @@ func TestActivityToInboundIgnoresNonMessages(t *testing.T) {
 
 // An @mention with no words after it is a nudge, not a turn.
 func TestActivityToInboundIgnoresMentionOnlyText(t *testing.T) {
-	raw := `{"type":"message","id":"m1","text":"<at>gohort</at>   ",
+	raw := `{"type":"message","id":"m1","text":"<at>oddjob</at>   ",
 	  "from":{"id":"29:x"},"conversation":{"id":"c1","conversationType":"channel"}}`
 	req, err := activityToInbound(parseActivity(t, raw), bfSpec())
 	if err != nil {
@@ -152,11 +152,11 @@ func TestActivityToInboundHonoursTenantPin(t *testing.T) {
 
 func TestStripMentions(t *testing.T) {
 	tests := []struct{ in, want string }{
-		{"<at>gohort</at> hello", "hello"},
-		{"hey <at>gohort</at> ship it", "hey ship it"},
-		{`<at id="0">gohort bot</at> status?`, "status?"},
+		{"<at>oddjob</at> hello", "hello"},
+		{"hey <at>oddjob</at> ship it", "hey ship it"},
+		{`<at id="0">oddjob bot</at> status?`, "status?"},
 		{"<at>a</at> <at>b</at> both of you", "both of you"},
-		{"<AT>gohort</AT> upper", "upper"},
+		{"<AT>oddjob</AT> upper", "upper"},
 		{"no mention here", "no mention here"},
 		{"a  b   c", "a b c"},
 		{"<at>only</at>", ""},

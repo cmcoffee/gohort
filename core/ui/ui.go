@@ -1,4 +1,4 @@
-// Package ui provides a declarative component framework for gohort web
+// Package ui provides a declarative component framework for oddjob web
 // apps. Apps describe a page as a Go struct tree (Page → Sections →
 // Components); the framework renders an HTML shell with a JSON config
 // blob, and a single shared runtime (ui.js + ui.css) hydrates the page
@@ -7,7 +7,7 @@
 //
 // The shared runtime handles iOS-style switches, sticky bars, tables
 // with row actions, auto-refresh, pull-to-refresh, modals, toasts, and
-// the gohort theme tokens (Blackboard scheme by default). Per-component
+// the oddjob theme tokens (Blackboard scheme by default). Per-component
 // static state is in the JSON blob; per-component handlers are URLs
 // the runtime fetches with the right method/body.
 //
@@ -36,7 +36,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/webui"
+	"github.com/cmcoffee/oddjob/core/webui"
 )
 
 // Component is anything that can describe itself as a runtime
@@ -54,7 +54,7 @@ type Page struct {
 	// Title for the <title> tag and (when ShowHeader is true) the page header.
 	Title string
 	// BackURL renders a "← Back" link at the top-left of the page.
-	// Empty omits the back link. Set to "/" to return to the gohort
+	// Empty omits the back link. Set to "/" to return to the oddjob
 	// app menu, or to any path the operator wants.
 	//
 	// It is the page's SEMANTIC parent, and a FALLBACK rather than the whole

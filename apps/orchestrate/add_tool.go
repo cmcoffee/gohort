@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/buildledger"
-	"github.com/cmcoffee/gohort/tools/temptool"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/buildledger"
+	"github.com/cmcoffee/oddjob/tools/temptool"
 )
 
 // add_tool is NOT globally registered. The struct exists as a Go
@@ -73,7 +73,7 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"script_body": {
 			Type:        "string",
-			Description: "(shell) The script's source, shipped WITH the tool record so it survives workspace wipes and travels on export: the preferred way to author a shell tool. The framework writes it into the workspace and, if you omit command_template, infers one (e.g. python3 {workspace_dir}/script.py) from the extension. Declared params reach the script as ENVIRONMENT VARIABLES, not positional argv: read them with os.environ['name']. Network calls: use `from gohort import fetch_url`, urllib/requests/curl/wget are blocked in the sandbox. What the script PRINTS is the tool's result: emit one record per item with a stable id, and print an explicit null for a field the item lacks rather than omitting it.",
+			Description: "(shell) The script's source, shipped WITH the tool record so it survives workspace wipes and travels on export: the preferred way to author a shell tool. The framework writes it into the workspace and, if you omit command_template, infers one (e.g. python3 {workspace_dir}/script.py) from the extension. Declared params reach the script as ENVIRONMENT VARIABLES, not positional argv: read them with os.environ['name']. Network calls: use `from oddjob import fetch_url`, urllib/requests/curl/wget are blocked in the sandbox. What the script PRINTS is the tool's result: emit one record per item with a stable id, and print an explicit null for a field the item lacks rather than omitting it.",
 		},
 		"script_name": {
 			Type:        "string",

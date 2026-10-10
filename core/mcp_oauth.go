@@ -295,7 +295,7 @@ func mcpRegisterClient(ctx context.Context, registrationEndpoint string, redirec
 		return "", "", fmt.Errorf("no redirect URI to register")
 	}
 	reqBody, _ := json.Marshal(map[string]any{
-		"client_name":                "gohort",
+		"client_name":                "oddjob",
 		"redirect_uris":              uris,
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},

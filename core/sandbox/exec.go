@@ -1,5 +1,5 @@
 // Sandboxed shell execution. Used by run_local and temp tools to run
-// LLM-issued shell commands without giving the LLM the gohort process's
+// LLM-issued shell commands without giving the LLM the oddjob process's
 // full filesystem and resource access.
 //
 // Mechanism: when the `bwrap` (bubblewrap) binary is available, the
@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/deps"
-	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/oddjob/core/deps"
+	"github.com/cmcoffee/oddjob/core/netgate"
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
@@ -58,12 +58,12 @@ const sandboxWaitDelay = 5 * time.Second
 // testable — the whole point is what happens on a machine whose sandbox does
 // not remap paths, which is not the machine the tests run on.
 func sandboxPythonPath(remaps bool, existing string) string {
-	libPath, depsPath := GohortLibMountPath, deps.SandboxPyDepsMountPath
+	libPath, depsPath := OddjobLibMountPath, deps.SandboxPyDepsMountPath
 	if !remaps {
 		// Ensure* both deploys the helper and reports where it landed. On this
 		// path it is also the only thing that deploys it at all: it used to run
 		// solely as a side effect of building the bwrap argv.
-		libPath, depsPath = gohortLibDir(), deps.EnsurePyDepsDir()
+		libPath, depsPath = oddjobLibDir(), deps.EnsurePyDepsDir()
 	}
 	// Prepend rather than clobber so a caller-supplied PYTHONPATH stays
 	// searchable; empty entries are dropped.
@@ -79,9 +79,9 @@ func sandboxPythonPath(remaps bool, existing string) string {
 // and the hook, and they went wrong the same way for the same reason.
 func sandboxShimBinDir(remaps bool) string {
 	if remaps {
-		return GohortBinMountPath
+		return OddjobBinMountPath
 	}
-	libDir := gohortLibDir()
+	libDir := oddjobLibDir()
 	if libDir == "" {
 		return ""
 	}
@@ -115,8 +115,8 @@ func RunSandboxedShell(ctx context.Context, command, workspaceDir string) Sandbo
 }
 
 // RunSandboxedShellWithHook is the iterate-and-test variant: starts a
-// SandboxHook with the given capabilities, threads GOHORT_HOOK_PATH
-// into the sandbox env so `from gohort import fetch` works exactly
+// SandboxHook with the given capabilities, threads ODDJOB_HOOK_PATH
+// into the sandbox env so `from oddjob import fetch` works exactly
 // the way it would inside a registered shell-mode tool, runs the
 // command, then closes the hook.
 //
@@ -124,7 +124,7 @@ func RunSandboxedShell(ctx context.Context, command, workspaceDir string) Sandbo
 // shell tool's sandbox got a hook (via temptool dispatch), but the
 // iterate-and-test path (workspace action="run") didn't. The same
 // script that worked when dispatched as a tool raised
-// `HookError: GOHORT_HOOK_PATH not set` when iterated via shell,
+// `HookError: ODDJOB_HOOK_PATH not set` when iterated via shell,
 // teaching Builder that "fetch doesn't work" and sending it down a
 // wrong-direction rewrite spiral. Wiring the hook here equalizes
 // the two contexts — what works in iterate-and-test works in
@@ -150,7 +150,7 @@ func RunSandboxedShellWithHook(ctx context.Context, command, workspaceDir string
 }
 
 // RunSandboxedShellWithHookEnv is RunSandboxedShellWithHook plus caller-supplied
-// env: extraEnv is merged with the gohort hook path and exposed to the script
+// env: extraEnv is merged with the oddjob hook path and exposed to the script
 // (shell $VAR / Python os.environ). The hook path always wins over a colliding
 // caller key. Used by workspace(action="run", env={...}) so a manual debug run
 // can pass variables — the same way a registered shell tool receives its params.
@@ -256,7 +256,7 @@ type ShellRun struct {
 	ReadOnly []string
 	// RawNetwork is the command's own declaration that it needs raw TCP/UDP
 	// from inside the sandbox — a persistent REPL over a non-HTTP protocol, or
-	// a tool that cannot use the gohort.fetch hook. It only ever NARROWS
+	// a tool that cannot use the oddjob.fetch hook. It only ever NARROWS
 	// against the ceilings on the context; it can never hand back a network
 	// privacy mode or a workspace setting took away.
 	//
@@ -272,7 +272,7 @@ type ShellRun struct {
 	Reach []string
 	// HookCapabilities are the hook capabilities to expose to the command, and
 	// HookSession the opaque session the broker resolves credentials against.
-	// Both empty means no hook, and the command's gohort.fetch raises HookError.
+	// Both empty means no hook, and the command's oddjob.fetch raises HookError.
 	HookCapabilities []string
 	HookSession      any
 }
@@ -281,7 +281,7 @@ type ShellRun struct {
 // wins over a colliding caller key.
 //
 // A copy rather than a mutation: the caller's map belongs to the caller, and a
-// run that writes GOHORT_HOOK_PATH into it would hand the next run a stale
+// run that writes ODDJOB_HOOK_PATH into it would hand the next run a stale
 // socket that no longer exists.
 func (r ShellRun) withHookPath(hookPath string) ShellRun {
 	env := make(map[string]string, len(r.Env)+1)
@@ -289,7 +289,7 @@ func (r ShellRun) withHookPath(hookPath string) ShellRun {
 		env[k] = v
 	}
 	if hookPath != "" {
-		env["GOHORT_HOOK_PATH"] = hookPath
+		env["ODDJOB_HOOK_PATH"] = hookPath
 	}
 	r.Env = env
 	return r
@@ -324,7 +324,7 @@ func RunSandboxedShellIn(ctx context.Context, spec ShellRun) SandboxedShellResul
 	hook, err := newHook(spec.WorkspaceDir, spec.HookCapabilities, spec.HookSession)
 	if err != nil || hook == nil {
 		if err != nil {
-			nfo.Log("[sandbox] hook init failed for iterate-and-test run (%v): running without hook; gohort.fetch in this script will raise HookError", err)
+			nfo.Log("[sandbox] hook init failed for iterate-and-test run (%v): running without hook; oddjob.fetch in this script will raise HookError", err)
 		}
 		return runSandboxedShellWithBinds(ctx, spec.withHookPath(""))
 	}
@@ -368,9 +368,9 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 		allowNetwork = false
 	}
 
-	// PYTHONPATH := GohortLibMountPath so `from gohort import
-	// fetch` resolves against the bind-mounted gohort helper package
-	// (which lives OUTSIDE the workspace — see EnsureGohortLibDir).
+	// PYTHONPATH := OddjobLibMountPath so `from oddjob import
+	// fetch` resolves against the bind-mounted oddjob helper package
+	// (which lives OUTSIDE the workspace — see EnsureOddjobLibDir).
 	// Without this, a script at any depth under workspaceDir can't
 	// find the helper because the workspace doesn't contain it.
 	// Prepend rather than clobber so a caller-supplied PYTHONPATH
@@ -378,7 +378,7 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 	if extraEnv == nil {
 		extraEnv = map[string]string{}
 	}
-	// PYTHONPATH must include both the gohort helper (so `from gohort import
+	// PYTHONPATH must include both the oddjob helper (so `from oddjob import
 	// fetch` resolves) and the managed python-deps (so `import openpyxl` and
 	// friends resolve). WHERE those are depends on whether we are about to run
 	// under bwrap.
@@ -386,11 +386,11 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 	// The mount paths are real only INSIDE the sandbox — they are where bwrap
 	// binds the host directories. Without bwrap nothing is mounted anywhere and
 	// the only real location is the host directory itself, so pointing
-	// PYTHONPATH at /opt/gohort-lib there names a path that does not exist.
+	// PYTHONPATH at /opt/oddjob-lib there names a path that does not exist.
 	//
 	// This is every macOS deployment, where bwrap does not exist at all, plus
 	// any Linux host without bubblewrap installed. The symptom is that
-	// `from gohort import fetch_url` raises ModuleNotFoundError on the FIRST
+	// `from oddjob import fetch_url` raises ModuleNotFoundError on the FIRST
 	// line of every hook-using script, while the hook socket itself is present
 	// and working — so it reads as a broken install rather than a wrong path,
 	// and the obvious next move (hunting for the module) fails too: the helper
@@ -400,6 +400,15 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 	// all. It used to be written only as a side effect of building the bwrap
 	// argv, so on a host with no bwrap the package was never even created.
 	extraEnv["PYTHONPATH"] = sandboxPythonPath(sb.remapsPaths(), extraEnv["PYTHONPATH"])
+	// A script written before the rename reads GOHORT_AGENT_ID and its
+	// siblings; every ODDJOB_* name is set under the old prefix too.
+	for k, v := range extraEnv {
+		if strings.HasPrefix(k, "ODDJOB_") {
+			if old := "GOHORT_" + strings.TrimPrefix(k, "ODDJOB_"); extraEnv[old] == "" {
+				extraEnv[old] = v
+			}
+		}
+	}
 
 	if !sb.confines() {
 		if sandboxRequired(ctx) {
@@ -468,14 +477,14 @@ func runSandboxedShellWithBinds(ctx context.Context, spec ShellRun) SandboxedShe
 	timedOut := ctx.Err() == context.DeadlineExceeded
 	nfo.Debug("[sandbox] exit: err=%v timedOut=%v bytes=%d dur=%s", runErr, timedOut, buf.Len(), dur)
 	return SandboxedShellResult{
-		Output:   explainMissingGohortModule(buf.String(), built.Remaps),
+		Output:   explainMissingOddjobModule(buf.String(), built.Remaps),
 		Err:      runErr,
 		Sandbox:  built.Confined,
 		TimedOut: timedOut,
 	}
 }
 
-// explainMissingGohortModule appends the real cause when a script died
+// explainMissingOddjobModule appends the real cause when a script died
 // because the helper package was not there.
 //
 // ModuleNotFoundError names the script's IMPORT, never the deployment
@@ -488,22 +497,22 @@ func runSandboxedShellWithBinds(ctx context.Context, spec ShellRun) SandboxedShe
 // The bwrap argv already calls this outcome "the right shape" when it
 // skips the bind mount. It is the right shape for a human reading a
 // stack trace and the wrong one for the only reader it actually has.
-func explainMissingGohortModule(out string, remaps bool) string {
-	if !strings.Contains(out, "No module named 'gohort'") &&
-		!strings.Contains(out, "No module named \"gohort\"") {
+func explainMissingOddjobModule(out string, remaps bool) string {
+	if !strings.Contains(out, "No module named 'oddjob'") &&
+		!strings.Contains(out, "No module named \"oddjob\"") {
 		return out
 	}
-	libDir := gohortLibDir()
-	note := "\n[gohort] The `gohort` helper package could not be deployed on this host, so it is " +
+	libDir := oddjobLibDir()
+	note := "\n[oddjob] The `oddjob` helper package could not be deployed on this host, so it is " +
 		"not present in the sandbox. This is a DEPLOYMENT fault, not a problem with the arguments " +
 		"you passed, and no retry or different argument will get around it: say so plainly and do " +
 		"not work around it by guessing at what the tool would have returned. "
 	if libDir == "" {
 		note += "Nothing was written: the server log carries the reason under [hook/helpers]."
 	} else {
-		note += "The package is on disk at " + libDir + "/gohort/__init__.py"
+		note += "The package is on disk at " + libDir + "/oddjob/__init__.py"
 		if remaps {
-			note += " and should be mounted at " + GohortLibMountPath +
+			note += " and should be mounted at " + OddjobLibMountPath +
 				"; it is not, so the bind mount is the thing to check."
 		} else {
 			note += "; this host does not remap paths, so PYTHONPATH should name that directory directly."
@@ -560,8 +569,8 @@ func bwrapArgvWithEnv(workspaceDir, shellCmd string, extraEnv map[string]string,
 	//
 	// The FILE, not its directory: a sandboxed script gets its own
 	// socket and cannot list anyone else's. Same path inside as out, so
-	// GOHORT_HOOK_PATH is correct on both sides with no translation.
-	if p := extraEnv["GOHORT_HOOK_PATH"]; p != "" && !withinDir(p, workspaceDir) {
+	// ODDJOB_HOOK_PATH is correct on both sides with no translation.
+	if p := extraEnv["ODDJOB_HOOK_PATH"]; p != "" && !withinDir(p, workspaceDir) {
 		out = append(out, "--bind", p, p)
 	}
 	for k, v := range extraEnv {
@@ -614,17 +623,17 @@ func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 		"--bind", workspaceDir, workspaceDir,
 		"--chdir", workspaceDir,
 	)
-	// Bind the host-side gohort helper library RO into the sandbox at
-	// a fixed mount point (GohortLibMountPath). PYTHONPATH is
-	// set to this path in the env so `from gohort import fetch`
+	// Bind the host-side oddjob helper library RO into the sandbox at
+	// a fixed mount point (OddjobLibMountPath). PYTHONPATH is
+	// set to this path in the env so `from oddjob import fetch`
 	// resolves regardless of the running script's location. The mount
 	// is RO: no shell escape inside the sandbox can modify the helper
 	// source, and the LLM can't see it from the workspace at all.
-	// Best-effort: if EnsureGohortLibDir failed (e.g., WorkspacesDir
-	// unset), skip the bind — the script's gohort import will fail
+	// Best-effort: if EnsureOddjobLibDir failed (e.g., WorkspacesDir
+	// unset), skip the bind — the script's oddjob import will fail
 	// loudly with ModuleNotFoundError, which is the right shape.
-	if libDir := gohortLibDir(); libDir != "" {
-		args = append(args, "--ro-bind", libDir, GohortLibMountPath)
+	if libDir := oddjobLibDir(); libDir != "" {
+		args = append(args, "--ro-bind", libDir, OddjobLibMountPath)
 	}
 	// Managed python deps (openpyxl, python-docx, ...) live in a host
 	// dir populated by EnsurePyDeps; bind RO so `import openpyxl`
@@ -684,7 +693,7 @@ func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) Sandb
 	c := buildRun(ctx, sb, sandboxRun{Kind: sandboxPipeRun, Command: command})
 	sandbox := sb.confines()
 	c.Env = sandboxEnv(sb.remapsPaths())
-	// A pipe got NO PYTHONPATH at all, so `from gohort import ...` and
+	// A pipe got NO PYTHONPATH at all, so `from oddjob import ...` and
 	// `import openpyxl` both died with ModuleNotFoundError in a pipe while
 	// working in every other sandboxed context. Same value the shell path
 	// computes, so the two agree about where the helpers are.
@@ -692,7 +701,7 @@ func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) Sandb
 	// This does not make a pipe able to FETCH — it has no hook socket and
 	// --unshare-net — and it is not meant to. What it buys is that the
 	// import resolves and the failure becomes the helper's own sentence
-	// ("GOHORT_HOOK_PATH not set"), which says what is wrong, instead of a
+	// ("ODDJOB_HOOK_PATH not set"), which says what is wrong, instead of a
 	// missing-module error that says the tool is broken.
 	c.Env = append(c.Env, "PYTHONPATH="+sandboxPythonPath(sb.remapsPaths(), ""))
 	c.Stdin = strings.NewReader(stdinData)
@@ -745,8 +754,8 @@ func bwrapPipeArgv(shellCmd string) []string {
 	// Same two RO binds the shell path gets, and the same best-effort
 	// posture: a deployment that could not write them still runs, the
 	// imports just fail.
-	if libDir := gohortLibDir(); libDir != "" {
-		args = append(args, "--ro-bind", libDir, GohortLibMountPath)
+	if libDir := oddjobLibDir(); libDir != "" {
+		args = append(args, "--ro-bind", libDir, OddjobLibMountPath)
 	}
 	if pyDir := deps.EnsurePyDepsDir(); pyDir != "" {
 		args = append(args, "--ro-bind", pyDir, deps.SandboxPyDepsMountPath)
@@ -854,7 +863,7 @@ func bwrapScriptArgv(interpreter, script string) []string {
 }
 
 // sandboxEnv returns the environment for sandboxed commands. PATH must
-// survive so common utilities resolve; secrets the gohort process holds
+// survive so common utilities resolve; secrets the oddjob process holds
 // must NOT survive — env vars like API keys, AWS creds, etc. would
 // otherwise leak straight into LLM-controlled shell scope.
 func sandboxEnv(remaps bool) []string {
@@ -889,7 +898,7 @@ func sandboxEnv(remaps bool) []string {
 	if !hasPath {
 		env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 	}
-	// Prepend the gohort shim bin dir so a script can invoke fetch_url /
+	// Prepend the oddjob shim bin dir so a script can invoke fetch_url /
 	// fetch_via / browse_page as ordinary commands (they proxy to the hook,
 	// which still enforces capabilities).
 	//

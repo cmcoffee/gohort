@@ -18,9 +18,9 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/promotion"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/promotion"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func init() { RegisterApp(new(Extensions)) }
@@ -43,7 +43,7 @@ func (T Extensions) Desc() string {
 }
 func (T *Extensions) Init() error { return T.Flags.Parse() }
 func (T *Extensions) Main() error {
-	Log("gateways is a dashboard-only app. Start with: gohort serve")
+	Log("gateways is a dashboard-only app. Start with: oddjob serve")
 	return nil
 }
 
@@ -2442,10 +2442,10 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		// Export and Import go through the shared bundle client (core
 		// ArtifactClientJS) against the person's own account endpoints.
 		JS(ArtifactClientJS).
-		ClientAction("export_tool", `function(ctx){ window.gohortArtifacts.exportAction('tool', 'name', 'name')(ctx); }`).
-		ClientAction("export_skill", `function(ctx){ window.gohortArtifacts.exportAction('skill', 'id', 'name')(ctx); }`).
+		ClientAction("export_tool", `function(ctx){ window.oddjobArtifacts.exportAction('tool', 'name', 'name')(ctx); }`).
+		ClientAction("export_skill", `function(ctx){ window.oddjobArtifacts.exportAction('skill', 'id', 'name')(ctx); }`).
 		ClientAction("extensions_import", `function(){
-  window.gohortArtifacts.importFlow({
+  window.oddjobArtifacts.importFlow({
     previewURL: '/account/api/artifacts/preview',
     importURL: '/account/api/artifacts/import',
     invalidate: ['api/tools', 'api/skills'],

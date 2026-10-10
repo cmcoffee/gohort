@@ -36,7 +36,7 @@ Tests: `apps/orchestrate/objective_test.go`, `core/event_monitor_test.go`.
 
 ## The gap
 
-gohort already loops four ways. A recurring task re-fires on its cadence until its `max_fires`
+oddjob already loops four ways. A recurring task re-fires on its cadence until its `max_fires`
 cap. A standing agent runs on cron. An event monitor polls until its condition matches and wakes
 an agent. A pipeline loop stage repeats until a bool field flips. The machinery for "do it again"
 is not the problem.

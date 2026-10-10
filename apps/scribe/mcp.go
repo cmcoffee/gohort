@@ -1,4 +1,4 @@
-// MCP controls for Scribe: tools exposed on gohort's inbound MCP server (/mcp/)
+// MCP controls for Scribe: tools exposed on oddjob's inbound MCP server (/mcp/)
 // so an external MCP client (e.g. Claude Desktop) can drive a user's guides —
 // list, read, create, and add sections — over the bridge-key auth. Each handler
 // is scoped to the bridge-key owner and operates on that user's guide store via
@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func registerGuidesMCPTools() {

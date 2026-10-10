@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/oddjob/core/textutil"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -870,7 +870,7 @@ func TestRoundCapExitStillAsksTheOutputGuardrail(t *testing.T) {
 		t.Error("something has to be delivered — a blocked reply becomes a decline, not silence")
 	}
 	// And whatever is delivered carries no framework marker to the reader.
-	if strings.Contains(textutil.StripMetaTags(resp.Content), "<gohort-meta") {
+	if strings.Contains(textutil.StripMetaTags(resp.Content), "<oddjob-meta") {
 		t.Errorf("a meta marker survived delivery: %q", resp.Content)
 	}
 }

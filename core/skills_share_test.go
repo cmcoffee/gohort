@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/notices"
-	"github.com/cmcoffee/gohort/core/peershare"
-	"github.com/cmcoffee/gohort/core/revisions"
-	"github.com/cmcoffee/gohort/core/shareledger"
+	"github.com/cmcoffee/oddjob/core/notices"
+	"github.com/cmcoffee/oddjob/core/peershare"
+	"github.com/cmcoffee/oddjob/core/revisions"
+	"github.com/cmcoffee/oddjob/core/shareledger"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

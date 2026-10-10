@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestAPIKeyUserAcceptsBothEnvelopes: gohort's own clients send X-API-Key, but
+// TestAPIKeyUserAcceptsBothEnvelopes: oddjob's own clients send X-API-Key, but
 // most third-party integrations send "Authorization: Bearer" and some can send
 // nothing else — an OpenAI-compatible client library, a voice platform's
 // custom-LLM config. Same token, different envelope; both must resolve.
@@ -31,7 +31,7 @@ func TestAPIKeyUserAcceptsBothEnvelopes(t *testing.T) {
 		{"bearer", map[string]string{"Authorization": "Bearer " + good}, "alice"},
 		{"bearer lowercase scheme", map[string]string{"Authorization": "bearer " + good}, "alice"},
 		{"bearer with padding", map[string]string{"Authorization": "Bearer   " + good + "  "}, "alice"},
-		// X-API-Key wins when both are present — gohort's own clients keep
+		// X-API-Key wins when both are present — oddjob's own clients keep
 		// their path even behind a proxy that adds an Authorization header.
 		{"both", map[string]string{"X-API-Key": good, "Authorization": "Bearer nope"}, "alice"},
 		{"unknown token", map[string]string{"Authorization": "Bearer nope"}, ""},

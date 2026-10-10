@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func init() {

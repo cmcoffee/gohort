@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/archive"
+	"github.com/cmcoffee/oddjob/core/archive"
 	"github.com/cmcoffee/snugforge/nfo"
 )
 

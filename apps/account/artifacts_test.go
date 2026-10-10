@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -32,7 +32,7 @@ func accountFixture(t *testing.T) (*Account, map[string]string) {
 }
 
 func as(r *http.Request, token string) *http.Request {
-	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+	r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: token})
 	return r
 }
 

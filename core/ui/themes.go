@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cmcoffee/gohort/core/webui"
+	"github.com/cmcoffee/oddjob/core/webui"
 )
 
 // ThemeSpec is one selectable UI theme: Name is the data-theme value, Label is

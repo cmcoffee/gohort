@@ -1200,7 +1200,7 @@
     // The page's own dialogs, from inside the frame: uiConfirm, uiAlert and
     // uiPrompt here ask the page to show its modal and answer with what was
     // chosen, so a question an app asks looks like every other question
-    // gohort asks, and is answered where the browser's own would show
+    // oddjob asks, and is answered where the browser's own would show
     // nothing. alert() is rebound to it too, since nothing waits on an
     // alert; confirm() and prompt() must return at once and stay the
     // browser's, so a document uses the promise forms instead.
@@ -1260,7 +1260,7 @@
     // permitted is checked on the URL as the BROWSER will fetch it, not as
     // written: the parser turns "%2e%2e" into "..", a backslash into "/", and
     // resolves dot segments, so a string test for ".." let "data/%2e%2e/..."
-    // and "data\\..\\..." walk out of the app to any gohort endpoint, with
+    // and "data\\..\\..." walk out of the app to any oddjob endpoint, with
     // the viewer's session. Encoded separators and dots are refused outright:
     // the server resolves those in its own way.
     function permitted(u) {

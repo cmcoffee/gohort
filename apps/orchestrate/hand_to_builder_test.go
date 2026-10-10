@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // withWorkspace points EnsureWorkspaceDir at a temp dir for the test user.

@@ -17,7 +17,7 @@
 
 package orchestrate
 
-import . "github.com/cmcoffee/gohort/core"
+import . "github.com/cmcoffee/oddjob/core"
 
 // phantomInheritableToolDefs returns the OWNER-SAFE tools an inheriting
 // sub-agent / dispatched Builder may use: the read-only chat pair (list_chats,

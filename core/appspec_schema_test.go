@@ -37,7 +37,7 @@ func TestAppSpecImportHonorsSchema(t *testing.T) {
 
 	newer, _ := json.Marshal(AppSpec{Slug: "new", Name: "New", Page: json.RawMessage(`{}`), Schema: appSpecSchema + 1})
 	_, _, err := art.ImportArtifact(RootDB, newer, "bob")
-	if err == nil || !strings.Contains(err.Error(), "newer gohort") {
+	if err == nil || !strings.Contains(err.Error(), "newer oddjob") {
 		t.Fatalf("newer recipe should be refused by name: %v", err)
 	}
 	if _, exists := LoadAppSpec("bob", "new"); exists {
@@ -45,9 +45,9 @@ func TestAppSpecImportHonorsSchema(t *testing.T) {
 	}
 }
 
-// The bundle envelope carries the writer's gohort version and the import
+// The bundle envelope carries the writer's oddjob version and the import
 // result echoes it, so a report can say where the recipes came from.
-func TestBundleCarriesGohortVersion(t *testing.T) {
+func TestBundleCarriesOddjobVersion(t *testing.T) {
 	verifyTestStore(t)
 	adb := &DBase{Store: kvlite.MemStore()}
 	adb.Set(AuthTable, "user:alice", AuthUser{Username: "alice"})
@@ -63,8 +63,8 @@ func TestBundleCarriesGohortVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.GohortVersion != "0.6.696-test" {
-		t.Fatalf("bundle version = %q", bundle.GohortVersion)
+	if bundle.OddjobVersion != "0.6.696-test" {
+		t.Fatalf("bundle version = %q", bundle.OddjobVersion)
 	}
 	var spec AppSpec
 	if err := json.Unmarshal(bundle.Artifacts[0].Recipe, &spec); err != nil {
@@ -79,7 +79,7 @@ func TestBundleCarriesGohortVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.GohortVersion != "0.6.696-test" || !strings.Contains(res.Summary(), "exported by gohort 0.6.696-test") {
+	if res.OddjobVersion != "0.6.696-test" || !strings.Contains(res.Summary(), "exported by oddjob 0.6.696-test") {
 		t.Fatalf("import result should name the writer: %+v / %q", res, res.Summary())
 	}
 }

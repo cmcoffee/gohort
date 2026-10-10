@@ -18,7 +18,7 @@
 // unprivileged process can lower a limit and can never raise it again, so the
 // LLM cannot undo this by putting its own `ulimit` in front of the command.
 //
-// WHAT IS ON BY DEFAULT, AND WHY SO LITTLE. gohort has legitimate workloads
+// WHAT IS ON BY DEFAULT, AND WHY SO LITTLE. oddjob has legitimate workloads
 // that consume real resources — tools/video/transcode.go runs ffmpeg through
 // RunSandboxedShell with a five-minute wall clock, which on a many-core host is
 // a lot of CPU-seconds and a large output file. A default that broke transcode
@@ -88,7 +88,7 @@ func (l Limits) Any() bool {
 }
 
 // Default limits. See the file comment for why CPU, memory and process count
-// are absent: each has a real gohort workload behind it.
+// are absent: each has a real oddjob workload behind it.
 const (
 	// defaultFileSizeMB is far above any legitimate single output —
 	// transcode's largest realistic result is a fraction of it — and far
@@ -107,22 +107,22 @@ const (
 // limit should not have to restart the daemon, and a test should not have to
 // reach around a sync.Once to vary one.
 //
-//	GOHORT_SANDBOX_MAX_FILE_MB    single file the command may write (default 8192)
-//	GOHORT_SANDBOX_MAX_OPEN_FILES fd table size                     (default 512)
-//	GOHORT_SANDBOX_MAX_CPU_SEC    CPU seconds                       (default off)
-//	GOHORT_SANDBOX_MAX_MEM_MB     address space                     (default off)
-//	GOHORT_SANDBOX_MAX_PROCS      processes, per-UID                (default off)
+//	ODDJOB_SANDBOX_MAX_FILE_MB    single file the command may write (default 8192)
+//	ODDJOB_SANDBOX_MAX_OPEN_FILES fd table size                     (default 512)
+//	ODDJOB_SANDBOX_MAX_CPU_SEC    CPU seconds                       (default off)
+//	ODDJOB_SANDBOX_MAX_MEM_MB     address space                     (default off)
+//	ODDJOB_SANDBOX_MAX_PROCS      processes, per-UID                (default off)
 //
 // Each accepts "0", "none" or "unlimited" to switch that limit off, so a
 // deployment that needs to write a file larger than the default has a way to
 // say so that does not involve turning off the other four.
 func resourceLimits() Limits {
 	return Limits{
-		FileSizeMB: limitEnv("GOHORT_SANDBOX_MAX_FILE_MB", defaultFileSizeMB),
-		OpenFiles:  limitEnv("GOHORT_SANDBOX_MAX_OPEN_FILES", defaultOpenFiles),
-		CPUSeconds: limitEnv("GOHORT_SANDBOX_MAX_CPU_SEC", 0),
-		MemoryMB:   limitEnv("GOHORT_SANDBOX_MAX_MEM_MB", 0),
-		MaxProcs:   limitEnv("GOHORT_SANDBOX_MAX_PROCS", 0),
+		FileSizeMB: limitEnv("ODDJOB_SANDBOX_MAX_FILE_MB", defaultFileSizeMB),
+		OpenFiles:  limitEnv("ODDJOB_SANDBOX_MAX_OPEN_FILES", defaultOpenFiles),
+		CPUSeconds: limitEnv("ODDJOB_SANDBOX_MAX_CPU_SEC", 0),
+		MemoryMB:   limitEnv("ODDJOB_SANDBOX_MAX_MEM_MB", 0),
+		MaxProcs:   limitEnv("ODDJOB_SANDBOX_MAX_PROCS", 0),
 	}
 }
 
@@ -179,7 +179,7 @@ func (l Limits) shellPrefix() string {
 	// Not a knob, because nobody wants these: the signals a limit raises —
 	// SIGXFSZ from -f, SIGXCPU from -t — are dump-by-default, so the mechanism
 	// that just refused to let the command write 8MB would answer by writing a
-	// core file of its own into the same workspace. Nothing in gohort reads it
+	// core file of its own into the same workspace. Nothing in oddjob reads it
 	// and the LLM sees only the signal.
 	//
 	// Note the shell still PRINTS "(core dumped)" when it reports the death.

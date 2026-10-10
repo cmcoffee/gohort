@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // appSpecSections reads the stored AUTHORING sections off a spec — the shape
@@ -647,7 +647,7 @@ var appLibraryNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // appLibraryShadowed are module names a library may not take: the helper
 // every script imports, and the standard modules app scripts use, which a
 // library of the same name would replace for every script of the app.
-var appLibraryShadowed = map[string]bool{"gohort": true, "json": true, "os": true, "sys": true, "re": true,
+var appLibraryShadowed = map[string]bool{"oddjob": true, "json": true, "os": true, "sys": true, "re": true,
 	"math": true, "random": true, "time": true, "datetime": true, "hashlib": true, "secrets": true,
 	"string": true, "collections": true, "itertools": true, "functools": true, "urllib": true,
 	"base64": true, "struct": true, "zlib": true, "statistics": true, "typing": true, "types": true}

@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/revisions"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/revisions"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

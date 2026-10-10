@@ -30,9 +30,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/archive"
-	"github.com/cmcoffee/gohort/core/netgate"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/archive"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 // maxExpandBytes bounds what one upload may unpack to. Generous, so a

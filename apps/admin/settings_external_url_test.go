@@ -9,20 +9,20 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 func TestSettingsReturnTheExternalURLUntouched(t *testing.T) {
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
-	a.db.Set(WebTable, "external_url", "https://gohort.example")
+	a.db.Set(WebTable, "external_url", "https://oddjob.example")
 	a.db.Set(WebTable, "ollama_proxy_port", 11434)
 	a.db.Set(WebTable, "ollama_proxy_bind", "127.0.0.1")
 	w := httptest.NewRecorder()
 	a.handleGetSettings(w, httptest.NewRequest("GET", "/api/settings", nil))
 	var got map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
-	if got["external_url"] != "https://gohort.example" {
+	if got["external_url"] != "https://oddjob.example" {
 		t.Fatalf("external_url came back as %v", got["external_url"])
 	}
 	if got["ollama_proxy_url"] != "http://localhost:11434" {

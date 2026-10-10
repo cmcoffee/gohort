@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // agentMutationTools is the set of agent-CRUD tools whose successful
@@ -286,7 +286,7 @@ func (t *chatTurn) toolKindFor(name string) string {
 	}
 	// Walk session-resolved TempTools first (faster, hits the common
 	// case). Persistent store is consulted only if not found inline.
-	// Cheap either way at gohort scale.
+	// Cheap either way at oddjob scale.
 	for _, attached := range LoadSessionTempTools(t.udb, t.session.ID) {
 		if attached.Name == name && attached.Mode == TempToolModePipeline {
 			return "pipeline"

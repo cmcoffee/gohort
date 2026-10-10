@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func sessionWith(t *testing.T, custom []string, callable []string) *ToolSession {
@@ -71,7 +71,7 @@ func TestALoadedToolIsToldToCallItDirectly(t *testing.T) {
 func TestTheFetchFamilyIsNotFlagged(t *testing.T) {
 	sess := sessionWith(t, nil, []string{"fetch_url", "fetch_via", "browse_page", "web_search"})
 	for _, cmd := range []string{
-		`python3 -c "from gohort import fetch_url; print(fetch_url('https://x.test'))"`,
+		`python3 -c "from oddjob import fetch_url; print(fetch_url('https://x.test'))"`,
 		`fetch_url --url https://x.test`,
 		`fetch_via --credential ts3_api --url /1/clientlist`,
 		`browse_page https://x.test`,

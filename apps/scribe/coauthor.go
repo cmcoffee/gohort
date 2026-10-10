@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
 )
 
 // coauthorTools builds the Guide Author's tool kit for one chat turn. canEdit
@@ -440,7 +440,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	}
 
 	// list_reference_sources + pull_reference expose the cross-app reference
-	// registry: knowledge OTHER gohort services have gathered — servitor Systems
+	// registry: knowledge OTHER oddjob services have gathered — servitor Systems
 	// (facts about the user's appliances) and connected document sources like
 	// Confluence (any ExposeReference MCP server). This is how a guide gets BUILT
 	// FROM internal knowledge, not just web research. Per-user and access-gated by
@@ -448,7 +448,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	listReferences := AgentToolDef{
 		Tool: Tool{
 			Name:        "list_reference_sources",
-			Description: "List the internal knowledge sources you can pull into the guide from OTHER gohort services: e.g. Systems (facts gathered about the user's own servers/appliances) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
+			Description: "List the internal knowledge sources you can pull into the guide from OTHER oddjob services: e.g. Systems (facts gathered about the user's own servers/appliances) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Reader of a shared guide: only the sources the OWNER linked to this

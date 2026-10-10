@@ -3,7 +3,7 @@ package orchestrate
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A form field with no matching key in the record it edits renders EMPTY over

@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // (Registration dropped — sandbox_probe's logic folded into

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/notices"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/notices"
 )
 
 func TestAskingTheOwnerReachesTheirNotifications(t *testing.T) {

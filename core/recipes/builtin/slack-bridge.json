@@ -27,7 +27,7 @@
     }
   ],
   "bundle": {
-    "bundle": "gohort.bundle/v1",
+    "bundle": "oddjob.bundle/v1",
     "artifacts": [
       {
         "type": "credential",

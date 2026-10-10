@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/oddjob/core/appagents"
 )
 
 // Feature access: the ADMIN gate on outward-facing surfaces a user can expose

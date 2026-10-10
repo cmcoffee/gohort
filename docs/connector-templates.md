@@ -132,10 +132,10 @@ Then:
 
 ## Forward compatibility (must-ignore + preserve)
 
-A template or connector spec authored on a **newer** gohort may carry fields this
+A template or connector spec authored on a **newer** oddjob may carry fields this
 version doesn't know (a feature added later, imported into an older install).
 Rule: **never error, always preserve**, keep the unknown fields dormant until a
-gohort that understands them runs. No version arithmetic required; it's emergent.
+oddjob that understands them runs. No version arithmetic required; it's emergent.
 
 1. **Lenient parse.** Never `json.DisallowUnknownFields`. Unknown keys in a spec,
    a template, or a field-values payload are ignored, not rejected. `Validate`
@@ -154,7 +154,7 @@ any flow that **rebuilds** a spec (the template Configure/Save), MERGES the
    c.Spec = marshal(merged)
    ```
 
-   Unknown keys survive; a newer gohort later recognizes and acts on them.
+   Unknown keys survive; a newer oddjob later recognizes and acts on them.
    (Today's `/api/image-gen/comfy` save replaces the whole spec via
    `json.Marshal(struct)` and *would* drop them: Stage 1 switches to this merge.)
 
@@ -166,7 +166,7 @@ any flow that **rebuilds** a spec (the template Configure/Save), MERGES the
 4. **Templates-as-data (Stage 2+)** obey the same rule: an imported template
    definition with an unknown field `Type` or feature is skipped by the older
    renderer and preserved, never rejected, so a template shared from a newer
-   gohort still installs (minus the parts this version can't render).
+   oddjob still installs (minus the parts this version can't render).
 
 ## Where things live (generalization discipline)
 

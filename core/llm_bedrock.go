@@ -20,12 +20,12 @@ package core
 // Credentials are resolved through `aws configure export-credentials` before
 // falling back to the static credentials file, which is what makes SSO work
 // without reimplementing the SSO token exchange: the CLI redeems the cached
-// session for role credentials and gohort just signs with them. Because those
+// session for role credentials and oddjob just signs with them. Because those
 // expire (typically hourly), credentials are cached with their expiry and
 // re-resolved shortly before it rather than captured once at startup.
 //
 // Deliberately NOT wired: no model-list browsing (Bedrock has no Models API),
-// no server-side tools, no structured outputs. gohort uses none of those on
+// no server-side tools, no structured outputs. oddjob uses none of those on
 // the Anthropic path today, so nothing degrades; if that changes, the gap is
 // per-provider, not per-call.
 
@@ -89,12 +89,12 @@ type awsCreds struct {
 // distinction is the whole point of this function:
 //
 //   - Explicit profile: ambient AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in
-//     gohort's process environment are IGNORED, and a failure to resolve the
+//     oddjob's process environment are IGNORED, and a failure to resolve the
 //     profile is an error rather than a fallback. Naming a profile is a
 //     deliberate "use THIS identity" instruction; honouring stray env vars
 //     over it, or quietly falling back to some other identity, produces the
 //     worst possible failure — a 403 naming a role the operator never chose
-//     and cannot find in any gohort setting. AWS's own chain puts env first,
+//     and cannot find in any oddjob setting. AWS's own chain puts env first,
 //     but that ordering assumes no application-level profile setting exists.
 //
 //   - No profile: the usual chain — environment, then the CLI (which itself
@@ -305,7 +305,7 @@ func awsCLITooOld(ver string) bool {
 // bedrockCreds caches resolved credentials and re-resolves them when they are
 // close to expiring. Static keys never expire and are resolved once; SSO and
 // assumed-role credentials are typically good for an hour, so a long-running
-// gohort has to refresh rather than sign with a dead session.
+// oddjob has to refresh rather than sign with a dead session.
 type bedrockCreds struct {
 	mu sync.Mutex
 	// profile is the resolved profile name; explicit records whether it was
@@ -349,7 +349,7 @@ func (c *bedrockCreds) get() (awsCreds, error) {
 // configured for SSO has no keys here, which is what the CLI step above is for.
 //
 // Hand-parsed rather than run through snugforge/cfg because that store owns a
-// file it can also write, and this one belongs to the AWS CLI: gohort has no
+// file it can also write, and this one belongs to the AWS CLI: oddjob has no
 // business rewriting it, and a parser that cannot write cannot corrupt it.
 func awsCredsFromFile(profile string) (awsCreds, error) {
 	path := os.Getenv("AWS_SHARED_CREDENTIALS_FILE")
@@ -469,7 +469,7 @@ func DescribeBedrockCredentials(profile string) (string, error) {
 
 // bedrockProfile picks the AWS profile: explicit config first, then the
 // environment, then empty (which lets the AWS tooling pick its own default).
-// Configurable rather than env-only because gohort usually runs as a service:
+// Configurable rather than env-only because oddjob usually runs as a service:
 // requiring a unit-file edit and a daemon-reload to change profile, when the
 // region next to it is a form field, is the kind of asymmetry that wastes an
 // afternoon. Credentials themselves stay out of the config, in the AWS chain.
@@ -788,7 +788,7 @@ func bedrockHint(model, msg string) string {
 	switch {
 	case strings.Contains(low, "on-demand throughput isn") || strings.Contains(low, "inference profile"):
 		// The model is served only through a cross-region inference profile,
-		// whose id is the model id with a region-group prefix. gohort does not
+		// whose id is the model id with a region-group prefix. oddjob does not
 		// add one on its own: which group is right (us, eu, apac, global)
 		// depends on the account, and guessing wrong fails identically.
 		return "This model is only served through a cross-region inference profile, so the Model setting needs the region-group prefix: try \"us." +
@@ -798,21 +798,21 @@ func bedrockHint(model, msg string) string {
 		// the wrong one costs more than saying nothing.
 		//
 		// If the configured model is ALREADY a profile, the foundation-model
-		// ARN in the message is not what gohort asked for: AWS expands a
+		// ARN in the message is not what oddjob asked for: AWS expands a
 		// cross-region profile and authorizes against the underlying model in
 		// EVERY region the profile can route to, so the region in that ARN is
 		// one of the profile's members and not where the call went. The policy
-		// grants the profile and not all of its members. Nothing in gohort can
+		// grants the profile and not all of its members. Nothing in oddjob can
 		// fix that, and telling the reader to change a model id that is already
 		// right sends them to the one place with no answer in it.
 		if bedrockIsProfile(model) {
-			hint := "gohort asked for the inference profile \"" + model + "\", not that model id"
+			hint := "oddjob asked for the inference profile \"" + model + "\", not that model id"
 			if r := bedrockARNRegion(msg); r != "" {
 				hint += ": AWS expands a cross-region profile and authorizes against the underlying model in every region it can route to, and " +
 					r + " is one of those members rather than where this call went"
 			}
 			return endSentence(hint + ". The policy grants the profile but not all of its member regions -" +
-				" the action is needed on the foundation-model ARN in each of them, which is an AWS policy change and not a gohort setting")
+				" the action is needed on the foundation-model ARN in each of them, which is an AWS policy change and not a oddjob setting")
 		}
 		// Otherwise the model id really is bare, and that is the config error.
 		hint := "The resource in that ARN is a bare foundation-model id"

@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/cmcoffee/gohort/core/replyguard"
+	"github.com/cmcoffee/oddjob/core/replyguard"
 )
 
 // deliveryMarkerRe matches the framework's own "send this file" marker. Shared
@@ -233,8 +233,8 @@ func StripToolCallMarkup(s string) string {
 //     in markdown fences (Qwen variant where the LLM writes what a
 //     tool_calls field WOULD look like as JSON content)
 //   - ::tool_name(arg=val, ...):: cascade-style invocations (a
-//     gohort-shaped fake that Qwen has invented in training data;
-//     looks like Smalltalk/Ruby cascade with gohort tool names)
+//     oddjob-shaped fake that Qwen has invented in training data;
+//     looks like Smalltalk/Ruby cascade with oddjob tool names)
 //
 // Used by the agent loop to detect "model wrote a tool call as
 // narrative text" and inject a corrective re-prompt instead of

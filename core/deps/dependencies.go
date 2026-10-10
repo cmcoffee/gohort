@@ -1,4 +1,4 @@
-// External-binary dependency reporting. gohort shells out to a handful of
+// External-binary dependency reporting. oddjob shells out to a handful of
 // optional host tools (yt-dlp for video, ffmpeg for media, pdftotext/pandoc for
 // documents, git for repo appliances, bwrap for the shell sandbox). When one is
 // missing OR stale the dependent feature degrades silently — an operator only
@@ -35,7 +35,7 @@ type DependencyStatus struct {
 }
 
 // knownDependencies is the static catalog of external binaries the SERVER
-// invokes (gohort-desktop's Mac-only tools are not included). Keep this in sync
+// invokes (oddjob-desktop's Mac-only tools are not included). Keep this in sync
 // with the actual exec.Command call sites — a new shell-out should add a row so
 // the operator can see the requirement.
 var knownDependencies = []struct {

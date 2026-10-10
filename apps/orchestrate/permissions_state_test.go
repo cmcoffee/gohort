@@ -17,10 +17,10 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 
-	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/oddjob/core/notices"
 )
 
 // The round trip, driven: choosing "Needs approval" has to leave something
@@ -331,7 +331,7 @@ func TestAForwardedNoticeSaysWhereItCameFrom(t *testing.T) {
 	if got := noticePrefix("Nightly digest"); got != "[Nightly digest@"+ServiceName()+"]:" {
 		t.Errorf("an agent's notice does not name the agent and the deployment: %q", got)
 	}
-	// No agent: still names the deployment, because somebody with two gohorts
+	// No agent: still names the deployment, because somebody with two oddjobs
 	// needs to know which one is talking.
 	got := noticePrefix("")
 	if !strings.HasPrefix(got, "[") || !strings.Contains(got, ServiceName()) || strings.Contains(got, "@") {
@@ -340,7 +340,7 @@ func TestAForwardedNoticeSaysWhereItCameFrom(t *testing.T) {
 
 	// The agent-aware send is the one the bridge already tags "[<name>] " on
 	// the wire, so notify_owner asks for the sourceless form. Both together read
-	// "[Wren] [Wren@Gohort] ...", which is the duplication this pins against.
+	// "[Wren] [Wren@Oddjob] ...", which is the duplication this pins against.
 	src := readFile(t, "operator_tools.go")
 	start := strings.Index(src, "func notifyOwnerToolDef(")
 	if start < 0 {

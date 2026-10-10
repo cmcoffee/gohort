@@ -14,8 +14,8 @@
 package orchestrate
 
 import (
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/prompts"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // BuilderPromptKey is the prompt-registry key for Builder's instructions.

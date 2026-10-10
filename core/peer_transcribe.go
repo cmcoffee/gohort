@@ -8,7 +8,7 @@
 // a Bearer token. Mounted at /api/peer/v1, a consuming instance points its
 // ordinary TranscribeConfig at the peer and every caller — the transcribe tool,
 // the video pipeline, inbound voice notes — keeps working with no idea the
-// whisper model is on another machine. A gohort-shaped protocol would have
+// whisper model is on another machine. A oddjob-shaped protocol would have
 // meant writing that side again and keeping the two in step forever.
 package core
 
@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/oddjob/core/media"
 )
 
 // peerTranscribeBudget bounds one transcription. Whisper on a busy GPU is
@@ -136,8 +136,8 @@ func HandlePeerTranscribe(w http.ResponseWriter, r *http.Request) {
 		Debug("[peer] %q transcribed %d bytes to %d chars", k.Label, len(audio), len(text))
 	}
 
-	// response_format is honoured for "text" (what every gohort client asks
-	// for) and defaults to the OpenAI JSON envelope otherwise, so a non-gohort
+	// response_format is honoured for "text" (what every oddjob client asks
+	// for) and defaults to the OpenAI JSON envelope otherwise, so a non-oddjob
 	// client pointed here still gets the shape it expects.
 	if strings.EqualFold(strings.TrimSpace(r.FormValue("response_format")), "text") {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

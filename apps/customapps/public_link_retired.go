@@ -17,8 +17,8 @@ package customapps
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/notices"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/notices"
 )
 
 // publicAppsIndexRetired is the table anonymous tokens used to live in. Named

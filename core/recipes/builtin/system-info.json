@@ -4,7 +4,7 @@
   "description": "A minimal shell tool that reports the host operating system and kernel via `uname -a`. Demonstrates the tool type. Installs into the pending pool for review before it can run.",
   "category": "Tools",
   "bundle": {
-    "bundle": "gohort.bundle/v1",
+    "bundle": "oddjob.bundle/v1",
     "artifacts": [
       {
         "type": "tool",

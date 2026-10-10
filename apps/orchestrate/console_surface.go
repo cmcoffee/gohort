@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // cortexSessionID is the session id of a channel agent's persistent home

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registerMCPRoutes wires the mcp API under the admin sub-mux.
@@ -109,7 +109,7 @@ func (a *AdminApp) registerMCPRoutes(sub *http.ServeMux) {
 	})
 
 	// Inbound MCP tool governance: which app-contributed MCP tools are exposed on
-	// gohort's own /mcp/ endpoint to external clients. GET lists every registered
+	// oddjob's own /mcp/ endpoint to external clients. GET lists every registered
 	// tool with its exposed state; POST?action=expose|hide&name= flips one. Tools
 	// default OFF so adding an app tool never silently widens the surface.
 	sub.HandleFunc("/api/mcp-tools", func(w http.ResponseWriter, r *http.Request) {

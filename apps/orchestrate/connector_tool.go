@@ -1,5 +1,5 @@
 // The "connector" authoring tool — Builder's front-end for declaring a new
-// BRIDGE TYPE at runtime, no code change. A connector points gohort at an
+// BRIDGE TYPE at runtime, no code change. A connector points oddjob at an
 // external capability (today: a remote MCP server — many services publish one:
 // calendars, ticketing, CRMs) so its tools become available to agents once an
 // admin approves it. Pure composition over core.Connector + the registered kind
@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // connectorDefTool builds the grouped "connector" authoring tool. Mirrors
@@ -26,7 +26,7 @@ import (
 // (you author one connector at a time).
 func connectorDefTool() ChatTool {
 	gt := NewGroupedTool("connector",
-		"Declare a new BRIDGE TYPE with no code change: point gohort at an external capability (e.g. a calendar or CRM via its MCP server) so its tools become available to agents. YOU author the config; an admin APPROVES it in Admin > Connectors before it goes live.")
+		"Declare a new BRIDGE TYPE with no code change: point oddjob at an external capability (e.g. a calendar or CRM via its MCP server) so its tools become available to agents. YOU author the config; an admin APPROVES it in Admin > Connectors before it goes live.")
 	gt.SetSingleFirePerBatch(true)
 	gt.SetHelpPreamble(strings.TrimSpace(`
 A connector is a reusable "bridge type": a declared external capability that
@@ -42,7 +42,7 @@ lives in one governed surface (Admin > Connectors). Six kinds ship:
   credential, so it goes LIVE on create; an admin can still unapprove/delete it.
 
   desktop_mcp, run a LOCAL MCP server (a subprocess: command + args) on the
-  user's OWN machine via their gohort desktop app; its tools register as
+  user's OWN machine via their oddjob desktop app; its tools register as
   <name>.<tool>. Created UNAPPROVED (it runs code on the user's machine): an
   admin approves it, and the user's desktop then asks the user to confirm before
   it applies. The user's desktop app must be running.
@@ -97,11 +97,11 @@ lives in one governed surface (Admin > Connectors). Six kinds ship:
   is one message needs no list_path). The admin sets the secret from the
   connector's "Webhook..." button in Admin > Connectors, which also shows the
   address to give the service. Add skip rules so the bridge's own replies are
-  not read back as messages, and display_name/markdown for a service gohort
+  not read back as messages, and display_name/markdown for a service oddjob
   does not know. Templates (Admin > Extensions > Templates) can install whole
   bridges like this as data.
 
-  bot_framework: gohort as a real Microsoft Teams BOT rather than a reader of
+  bot_framework: oddjob as a real Microsoft Teams BOT rather than a reader of
   one channel. It answers 1:1 DMs, group chats and channel @mentions, and
   replies under the bot's own identity. Reach for this when rest_messaging's
   teams preset cannot deliver: Microsoft Graph's application permissions can
@@ -112,7 +112,7 @@ lives in one governed surface (Admin > Connectors). Six kinds ship:
   whose Messaging endpoint points at /bridges/api/bot/<connector-name> on this
   deployment's PUBLIC https URL, its Teams channel enabled, and a Teams app
   manifest naming the same app id installed in the tenant. The Azure resources
-are a registration, not hosting (gohort still runs where it runs), and the
+are a registration, not hosting (oddjob still runs where it runs), and the
   free tier covers Teams.
 
   Needs, here: app_id (the registration's application id; public, it is the
@@ -154,7 +154,7 @@ Typical flow for a calendar:
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",
 		Params: map[string]ToolParam{
-			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec, use preset=\"a1111\" (turnkey) or preset=\"comfyui\" with vars={\"base_url\":\"http://localhost:7860\"}; materializes a generate_image_<name> tool. Created UNAPPROVED."},
+			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = oddjob as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec, use preset=\"a1111\" (turnkey) or preset=\"comfyui\" with vars={\"base_url\":\"http://localhost:7860\"}; materializes a generate_image_<name> tool. Created UNAPPROVED."},
 			"name":                 {Type: "string", Description: "Short unique id (letters/digits/underscore/dash), e.g. \"gcal\". Namespaces the capability's tools."},
 			"url":                  {Type: "string", Description: "(remote_mcp) the MCP server's https endpoint. (rest_poll) the full URL to poll each interval."},
 			"auth_mode":            {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) How the server authenticates. none = public; secure_api = mint a bearer from a registered SecureAPI credential (set secure_cred); oauth = per-user hosted login. NEVER pass a static token."},
@@ -192,8 +192,8 @@ Typical flow for a calendar:
 			"webhook_provider":     {Type: "string", Enum: []string{"slack", "graph", "generic"}, Description: "(rest_messaging, optional) switch inbound from POLL to real-time PUSH. \"slack\" (Slack Events API, turnkey: paste the webhook URL into the Slack app, admin sets the signing secret), \"graph\", or \"generic\" (any service pushing JSON: describe the check in webhook and the fields in map). The poll fields become unused; send_url/credential still deliver replies."},
 			"webhook":              {Type: "object", Description: "(rest_messaging, with webhook_provider=\"generic\") how each push is checked: {\"verify\":\"hmac_sha256\" or \"token\", \"header\": the header carrying the signature or token, \"token_path\": a body dot-path instead of a header (token), \"prefix\": stripped first (e.g. \"sha256=\"), \"encoding\": \"hex\" or \"base64\" (hmac), \"challenge_path\": a body dot-path echoed back for a URL-verification handshake}. The secret itself is set by the admin, never here."},
 			"skip":                 {Type: "array", Description: "(rest_messaging, optional) messages to drop, each {\"path\": element dot-path, \"values\": [...]}: dropped when the path has a value, or one of the listed values. Use it to skip the bridge's own replies (e.g. {\"path\":\"bot_id\"}) and system events, or the agent answers itself."},
-			"display_name":         {Type: "string", Description: "(rest_messaging, optional) how a service gohort does not know is named to people (e.g. \"Mattermost\"). A known service keeps its own name."},
-			"markdown":             {Type: "boolean", Description: "(rest_messaging, optional) the service renders markdown, so replies keep their formatting. Only for a service gohort does not know."},
+			"display_name":         {Type: "string", Description: "(rest_messaging, optional) how a service oddjob does not know is named to people (e.g. \"Mattermost\"). A known service keeps its own name."},
+			"markdown":             {Type: "boolean", Description: "(rest_messaging, optional) the service renders markdown, so replies keep their formatting. Only for a service oddjob does not know."},
 			"image_spec":           {Type: "object", Description: "(rest_image, optional) explicit backend fields overriding/extending the preset: submit_url, submit_method, submit_body (a JSON template with {prompt}/{negative}/{width}/{height}/{steps}/{seed} tokens), image_b64_path or image_url_path (synchronous result), or the poll set submit_id_path/poll_url/poll_ready_path/poll_b64_path/poll_url_path/poll_url_template/poll_fields (async). Omit when a preset + vars is enough. For rest_image, `credential` names the SecureAPI credential (or \"no_auth\" for a local endpoint) and `vars` fills preset tokens like {\"base_url\":\"http://localhost:7860\"}."},
 			"description":          {Type: "string", Description: "(optional) What this connector is for. For desktop_command it is also the tool's description shown to callers."},
 		},
@@ -234,7 +234,7 @@ Typical flow for a calendar:
 			"webhook_provider": {Type: "string", Enum: []string{"slack", "graph", "generic"}, Description: "(rest_messaging) switch inbound to a real-time webhook provider."},
 			"webhook":          {Type: "object", Description: "(rest_messaging, generic webhook) new push check (replaces the whole block)."},
 			"skip":             {Type: "array", Description: "(rest_messaging) new skip rules (replaces the whole list)."},
-			"display_name":     {Type: "string", Description: "(rest_messaging) new display name for a service gohort does not know."},
+			"display_name":     {Type: "string", Description: "(rest_messaging) new display name for a service oddjob does not know."},
 			"markdown":         {Type: "boolean", Description: "(rest_messaging) the service renders markdown."},
 		},
 		Required: []string{"name"},

@@ -13,7 +13,7 @@
 package orchestrate
 
 import (
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // workPlanTools mounts the group for this turn, or returns nothing when the

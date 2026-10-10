@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // dispatchPriorReports is the standing activity dispatchSystemPrompt shows the

@@ -265,7 +265,7 @@ func TestAPickedJobIsEnoughToDraftFrom(t *testing.T) {
 	}
 }
 
-// TestTheFirstRunFlowAsksWhoBeforeWhat. Somebody meeting gohort for the first
+// TestTheFirstRunFlowAsksWhoBeforeWhat. Somebody meeting oddjob for the first
 // time is not configuring an agent, they are deciding who their agent is. The
 // flow opens by saying what is being made, asks about character before
 // capability, and leaves the name until last — where the suggest endpoint has

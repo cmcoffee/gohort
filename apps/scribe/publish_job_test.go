@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/docs"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/docs"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

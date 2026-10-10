@@ -24,8 +24,8 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // settingOptions is the option list for one per-agent tri-state: the inherited
@@ -628,9 +628,9 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 							Help: workspaceNetworkSource(RootDB, agent),
 							Detail: "Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way. For an agent that should process text or files locally and never phone anywhere from in there - it can still read, write and run commands in there.\n\n" +
 								"The default is set once for the whole deployment, by an administrator.\n\n" +
-								"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script from one to the other.\n\n" +
+								"Enforced at both ways out: the sandbox gets no network namespace, and the oddjob.fetch helper refuses. Closing one alone would just move a script from one to the other.\n\n" +
 								"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright.\n\n" +
-								"A tool already in your pool is not stopped by this: it reaches out through the brokered fetch helper, which is a path you approved and which gohort dials on its behalf. What this stops is code the agent writes and runs on the spot."},
+								"A tool already in your pool is not stopped by this: it reaches out through the brokered fetch helper, which is a path you approved and which oddjob dials on its behalf. What this stops is code the agent writes and runs on the spot."},
 					},
 				},
 			},
@@ -721,7 +721,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			{
 				Group:    "Share",
 				Title:    "Reachable from outside",
-				Subtitle: "Whether an external MCP client can dispatch to this agent over gohort's /mcp/ endpoint.",
+				Subtitle: "Whether an external MCP client can dispatch to this agent over oddjob's /mcp/ endpoint.",
 				Detail: "For example a desktop client with a bridge key calling ask_agent. Off by default, and REQUESTED rather than applied for the same reason publishing is: it takes this agent, with your tools and your documents, outside the deployment. Turning it back off is yours.\n\n" +
 					"Independent of the audience above. An agent nobody else may run can still be reachable this way, and one published to everyone need not be.",
 				Body: ui.FormPanel{

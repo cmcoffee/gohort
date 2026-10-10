@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -30,7 +30,7 @@ func TestUpdateShellPreservesHookCapabilities(t *testing.T) {
 		"description":       "list clients via the ts3 api",
 		"mode":              "shell",
 		"command_template":  "python3 {workspace_dir}/run.py",
-		"script_body":       "from gohort import fetch_via\nprint(fetch_via('ts3_api', 'https://x.test/clients'))\n",
+		"script_body":       "from oddjob import fetch_via\nprint(fetch_via('ts3_api', 'https://x.test/clients'))\n",
 		"script_name":       "run.py",
 		"hook_capabilities": []any{"fetch_via:ts3_api"},
 	}
@@ -120,7 +120,7 @@ func TestUpdateShellPreservesRawNetworkAndState(t *testing.T) {
 
 // TestBuildEnvArgsNeverNil pins the invariant behind the WiWee crash: a
 // param-less hook-enabled tool (dispatched with empty args) must still get a
-// WRITABLE env map, because the dispatcher writes GOHORT_HOOK_PATH into it
+// WRITABLE env map, because the dispatcher writes ODDJOB_HOOK_PATH into it
 // (temptool.go:1509). A nil map there panics "assignment to entry in nil map"
 // — the exact panic that took down ts3_list_clients (no params + a hook).
 func TestBuildEnvArgsNeverNil(t *testing.T) {
@@ -135,10 +135,10 @@ func TestBuildEnvArgsNeverNil(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := buildEnvArgs(tc.args)
 			if env == nil {
-				t.Fatalf("buildEnvArgs(%v) returned a nil map — the dispatcher's GOHORT_HOOK_PATH write would panic", tc.args)
+				t.Fatalf("buildEnvArgs(%v) returned a nil map — the dispatcher's ODDJOB_HOOK_PATH write would panic", tc.args)
 			}
 			// The write that panicked at temptool.go:1509 must be safe now.
-			env["GOHORT_HOOK_PATH"] = "/tmp/x.sock"
+			env["ODDJOB_HOOK_PATH"] = "/tmp/x.sock"
 		})
 	}
 }
@@ -171,7 +171,7 @@ func TestUpdateCanGrantANewCredential(t *testing.T) {
 	}
 	if _, err := updateGrouped(map[string]any{
 		"name":              "song",
-		"script_body":       "from gohort import fetch_via\nprint(fetch_via('music_api', 'https://x.test/gen'))\n",
+		"script_body":       "from oddjob import fetch_via\nprint(fetch_via('music_api', 'https://x.test/gen'))\n",
 		"hook_capabilities": []any{"fetch_via:music_api"},
 	}, sess); err != nil {
 		t.Fatalf("update with a new grant: %v", err)

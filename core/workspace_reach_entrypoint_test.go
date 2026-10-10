@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 // The decision is a property of the RUN. Reading it off the session is what

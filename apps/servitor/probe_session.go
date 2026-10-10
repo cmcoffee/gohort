@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/bundle"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -1476,7 +1476,7 @@ func (pr *probeRun) reportTools() {
 	pr.save_to_codewriter_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "save_to_codewriter",
-			Description: "Save a SQL query, shell script, or code snippet to the user's CodeWriter library in gohort. This is a local save action: do NOT run anything on the appliance. Use this when the user asks to save the script/query for later reuse rather than (or in addition to) running it immediately.",
+			Description: "Save a SQL query, shell script, or code snippet to the user's CodeWriter library in oddjob. This is a local save action: do NOT run anything on the appliance. Use this when the user asks to save the script/query for later reuse rather than (or in addition to) running it immediately.",
 			Parameters: map[string]ToolParam{
 				"name": {Type: "string", Description: "Short descriptive name for the snippet (e.g. 'Active connections by database')."},
 				"lang": {Type: "string", Description: "Language or type: 'sql', 'bash', 'python', 'go', 'javascript', 'text', etc."},
@@ -1506,7 +1506,7 @@ func (pr *probeRun) reportTools() {
 	pr.save_to_scribe_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "save_to_scribe",
-			Description: "Save a report, runbook, findings summary, or any prose document as a new guide in the user's Scribe library in gohort. This is a local save action: do NOT run anything on the appliance or search for Scribe on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
+			Description: "Save a report, runbook, findings summary, or any prose document as a new guide in the user's Scribe library in oddjob. This is a local save action: do NOT run anything on the appliance or search for Scribe on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
 			Parameters: map[string]ToolParam{
 				"subject": {Type: "string", Description: "Title or subject of the document (e.g. 'Disk usage report – web01', 'MySQL slow query runbook')."},
 				"body":    {Type: "string", Description: "Full document body in markdown. Use ## headings for its main parts: each becomes a section of the guide."},
@@ -1539,7 +1539,7 @@ func (pr *probeRun) reportTools() {
 	pr.list_guides_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "list_guides",
-			Description: "List the user's existing guides (living multi-section documents in the gohort Guides app), so you can pick the right one to push a finding into with push_to_guide. Local read: do NOT look for guides on the remote system. No arguments.",
+			Description: "List the user's existing guides (living multi-section documents in the oddjob Guides app), so you can pick the right one to push a finding into with push_to_guide. Local read: do NOT look for guides on the remote system. No arguments.",
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			ds := ListDocuments(pr.userID, "guide")
@@ -1607,7 +1607,7 @@ func (pr *probeRun) reportTools() {
 	pr.push_to_guide_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "push_to_guide",
-			Description: "Add a finding from this investigation to one of the user's GUIDES (living documents in the gohort Guides app) as a new section. Local save action: do NOT run anything on the appliance or look for Guides on the remote system. Use when the user asks to add/document something you looked up into a guide (\"add the cron jobs to my Ops guide\"). If a guide with the given name exists it's appended to; otherwise a new guide by that name is created. Call list_guides first if unsure of the exact name.",
+			Description: "Add a finding from this investigation to one of the user's GUIDES (living documents in the oddjob Guides app) as a new section. Local save action: do NOT run anything on the appliance or look for Guides on the remote system. Use when the user asks to add/document something you looked up into a guide (\"add the cron jobs to my Ops guide\"). If a guide with the given name exists it's appended to; otherwise a new guide by that name is created. Call list_guides first if unsure of the exact name.",
 			Parameters: map[string]ToolParam{
 				"guide":         {Type: "string", Description: "The target guide's name (e.g. 'Ops', 'DB Runbook'). If none matches an existing guide, a new guide with this name is created."},
 				"section_title": {Type: "string", Description: "Title for the new section (e.g. 'Cron jobs', 'Disk layout')."},

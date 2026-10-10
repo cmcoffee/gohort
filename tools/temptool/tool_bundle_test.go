@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -23,10 +23,10 @@ func TestAToolPacksToAFileAndUnpacksToAFolder(t *testing.T) {
 		"notes":           "Kelvin; conversion in units.py.",
 		"workspace_files": []any{map[string]any{"path": "units.py", "content": "def c(x):\n    return x\n"}}})
 	out, err := toolPack(map[string]any{"name": "wx"}, sess)
-	if err != nil || !strings.Contains(out, "wx.gohorttool") {
+	if err != nil || !strings.Contains(out, "wx.oddjobtool") {
 		t.Fatalf("pack: %q %v", out, err)
 	}
-	out, err = toolUnpack(map[string]any{"file": "wx.gohorttool", "dir": "copy.tool"}, sess)
+	out, err = toolUnpack(map[string]any{"file": "wx.oddjobtool", "dir": "copy.tool"}, sess)
 	if err != nil || !strings.Contains(out, "Nothing was installed") {
 		t.Fatalf("unpack: %q %v", out, err)
 	}

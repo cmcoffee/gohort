@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // machineRunTurn is a turn whose owner can actually run a machine: a catalog

@@ -91,7 +91,7 @@ func uploadServer(t *testing.T, got *captured, reply string) *httptest.Server {
 func TestUploadSendsMultipartThroughTheGovernedDispatch(t *testing.T) {
 	secureAPITestStore(t)
 	var got captured
-	srv := uploadServer(t, &got, `{"name":"stored.png","subfolder":"gohort","type":"input"}`)
+	srv := uploadServer(t, &got, `{"name":"stored.png","subfolder":"oddjob","type":"input"}`)
 	defer srv.Close()
 
 	s := RestImageSpec{
@@ -107,13 +107,13 @@ func TestUploadSendsMultipartThroughTheGovernedDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uploadImage: %v", err)
 	}
-	if up.Name != "stored.png" || up.Subfolder != "gohort" {
+	if up.Name != "stored.png" || up.Subfolder != "oddjob" {
 		t.Errorf("upload result = %+v, want the server's name + subfolder", up)
 	}
 	// The graph references "subfolder/name"; dropping either half sends the
 	// backend looking in the wrong place.
-	if up.Ref() != "gohort/stored.png" {
-		t.Errorf("Ref() = %q, want gohort/stored.png", up.Ref())
+	if up.Ref() != "oddjob/stored.png" {
+		t.Errorf("Ref() = %q, want oddjob/stored.png", up.Ref())
 	}
 	// Content-Type is the thing the local dispatch path used to have no way to
 	// set — a multipart body sent as application/json is rejected outright.

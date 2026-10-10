@@ -225,7 +225,7 @@ func (s *SecureAPI) OAuthStart(c SecureCredential, user, redirectURI string) (st
 // completingUser is whoever is signed in on the callback, and it must be the
 // user who STARTED the flow. The state alone cannot say that: somebody could
 // start a flow, send the resulting consent link to a colleague, and have the
-// colleague's provider account land in their own gohort account. A mismatch
+// colleague's provider account land in their own oddjob account. A mismatch
 // burns the state and stores nothing.
 func (s *SecureAPI) OAuthCallback(ctx context.Context, state, code, completingUser string) (credName, user string, err error) {
 	oauthPendingMu.Lock()

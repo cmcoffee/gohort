@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/bundle"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/bundle"
 )
 
 // The workspace lead. It has no transport of its own — every fact it reports

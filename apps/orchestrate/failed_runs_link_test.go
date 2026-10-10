@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A View names its target "<Menu>/<Label>". Nothing resolves it until someone

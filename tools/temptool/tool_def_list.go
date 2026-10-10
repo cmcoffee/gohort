@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // listGrouped reuses the existing ListTempToolsTool logic via a

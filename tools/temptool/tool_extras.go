@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // carriedWorkspaceFiles is the create-args key an update uses for the helper

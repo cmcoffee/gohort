@@ -18,8 +18,8 @@ import (
 	rodutils "github.com/go-rod/rod/lib/utils"
 	readability "github.com/go-shiori/go-readability"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/textutil"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/textutil"
 )
 
 func init() {
@@ -27,7 +27,7 @@ func init() {
 	// MustX helpers that panic on error; the default Panic logs a
 	// full stack trace before re-panicking. Try catches the re-panic
 	// and we surface the actual error normally, but the noisy stack
-	// dump still hits gohort.log on every navigation failure (e.g.
+	// dump still hits oddjob.log on every navigation failure (e.g.
 	// HTTP/2 protocol errors from picky sites). Override to a clean
 	// panic-only — the recovered error message is enough.
 	rodutils.Panic = func(v interface{}) { panic(v) }
@@ -37,7 +37,7 @@ func init() {
 // SingletonSocket files left behind when a previous Chromium instance
 // crashed or was killed. Without this, a fresh launch fails with
 // "Failed to create .../SingletonLock: File exists (17)". Safe because
-// only one gohort process owns this profile dir.
+// only one oddjob process owns this profile dir.
 func clearStaleSingleton(profileDir string) {
 	for _, name := range []string{"SingletonLock", "SingletonCookie", "SingletonSocket"} {
 		path := filepath.Join(profileDir, name)
@@ -49,8 +49,8 @@ func clearStaleSingleton(profileDir string) {
 
 func init() {
 	RegisterChatTool(&BrowsePageTool{})
-	// Wire the sandbox-hook's raw-text shim so gohort.fetch_url's
-	// JS-heavy auto-route and gohort.browse_page can call Fetch
+	// Wire the sandbox-hook's raw-text shim so oddjob.fetch_url's
+	// JS-heavy auto-route and oddjob.browse_page can call Fetch
 	// directly — getting just the page text without the LLM-shaped
 	// "Fetched X via browser (N chars):" preamble that
 	// BrowsePageTool.Run wraps on for the LLM consumer.
@@ -121,7 +121,7 @@ func (t *BrowsePageTool) launch() {
 		// "File exists (17)" until it's removed. Verifying the symlink
 		// target is non-trivial across distros — simplest and safest
 		// is to remove it unconditionally at our own startup, since
-		// only one gohort process owns this profile.
+		// only one oddjob process owns this profile.
 		clearStaleSingleton(profileDir)
 
 		// The browser's only way out (dial_guard.go). Without it Chromium
@@ -135,7 +135,7 @@ func (t *BrowsePageTool) launch() {
 
 		// Chromium's own sandbox is what contains a renderer exploit from a
 		// page somebody asked the agent to read; without it that exploit runs
-		// as the gohort process. It is used whenever it can be: root cannot
+		// as the oddjob process. It is used whenever it can be: root cannot
 		// run it at all, and some container hosts lack the namespaces it
 		// needs, which is the one case the fallback below is for.
 		launch := func(noSandbox bool) (string, error) {
@@ -157,7 +157,7 @@ func (t *BrowsePageTool) launch() {
 		noSandbox := os.Geteuid() == 0
 		u, err := launch(noSandbox)
 		if err != nil && !noSandbox {
-			Log("[browser] WARNING: Chromium would not start with its sandbox (%v); starting WITHOUT it. A renderer exploit from a browsed page would then run as this process: run gohort where user namespaces are available to keep it.", err)
+			Log("[browser] WARNING: Chromium would not start with its sandbox (%v); starting WITHOUT it. A renderer exploit from a browsed page would then run as this process: run oddjob where user namespaces are available to keep it.", err)
 			clearStaleSingleton(profileDir)
 			u, err = launch(true)
 		}
@@ -224,7 +224,7 @@ func (t *BrowsePageTool) fetch(target string, maxChars int) (string, error) {
 		return r.text, r.err
 	case <-time.After(budget):
 		Log("[browse_page] outer budget %v exceeded for %s: Chromium likely wedged (page creation / CDP / idle wait); goroutine leaks until rod errors out", budget, target)
-		return "", fmt.Errorf("browse_page timed out after %v on %s: Chromium appears wedged. Try fetch_url for static content, or wait and retry if this is transient. Persistent wedge → restart the gohort process.", budget, target)
+		return "", fmt.Errorf("browse_page timed out after %v on %s: Chromium appears wedged. Try fetch_url for static content, or wait and retry if this is transient. Persistent wedge → restart the oddjob process.", budget, target)
 	}
 }
 

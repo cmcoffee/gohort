@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/toolgroups"
+	"github.com/cmcoffee/oddjob/core/toolgroups"
 )
 
 // appGroupsTable holds AppGroup records keyed by ID, in AuthDB() so the admin

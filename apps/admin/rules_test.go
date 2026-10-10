@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	rules "github.com/cmcoffee/gohort/core/prompts"
+	. "github.com/cmcoffee/oddjob/core"
+	rules "github.com/cmcoffee/oddjob/core/prompts"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -53,7 +53,7 @@ func TestGovernanceRulesRoundTripAndAreAdminOnly(t *testing.T) {
 	AuthDB = func() Database { return db }
 	t.Cleanup(func() { AuthDB = prevAuth })
 	tok := AuthCreateSession(db, "bob")
-	if w := call("POST", `{"rules":"nothing"}`, &http.Cookie{Name: "gohort_session", Value: tok}); w.Code != http.StatusForbidden {
+	if w := call("POST", `{"rules":"nothing"}`, &http.Cookie{Name: "oddjob_session", Value: tok}); w.Code != http.StatusForbidden {
 		t.Errorf("a non-admin changed the deployment's rules: %d", w.Code)
 	}
 }

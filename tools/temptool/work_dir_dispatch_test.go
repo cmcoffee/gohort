@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -24,7 +24,7 @@ import (
 // WorkspacesDir, not /tmp.
 func workDirTestWorkspace(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/var/tmp", "gohort-workdir-")
+	dir, err := os.MkdirTemp("/var/tmp", "oddjob-workdir-")
 	if err != nil {
 		t.Skipf("no writable dir outside /tmp: %v", err)
 	}

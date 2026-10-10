@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/images/logo-light.svg">
-    <img alt="gohort" src="docs/images/logo-light.svg" width="369">
+    <img alt="oddjob" src="docs/images/logo-light.svg" width="369">
   </picture>
 </p>
 
@@ -16,7 +16,7 @@
 
 -->
 
-# Gohort: deputies, not tools
+# Oddjob: deputies, not tools
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -30,14 +30,14 @@
      chat content, and a README image is in git history for good. Drop the files
      at the paths below and these render as-is. -->
 
-![The Gohort dashboard: every installed app on one page, running from a single binary](docs/images/dashboard.png)
+![The Oddjob dashboard: every installed app on one page, running from a single binary](docs/images/dashboard.png)
 
 You still talk to one thing. The specialization is underneath: a front agent reads what you want and hands it to whichever agent owns that job, each with its own tools, its own memory, and the right to delegate further. Think of an executive with a cabinet rather than a jack-of-all-trades fixer: the executive's actual skill is knowing who to turn to.
 
-That shape is not decoration. **Tool selection degrades as the tool surface widens**, and an agent choosing among four relevant tools beats the same model choosing among forty, while the context it never loads is context left for the work. Which is also the honest reason gohort runs on local models: not because small models became clever, but because a narrow job is a job they can do. **Specialization and local-first are the same argument.**
+That shape is not decoration. **Tool selection degrades as the tool surface widens**, and an agent choosing among four relevant tools beats the same model choosing among forty, while the context it never loads is context left for the work. Which is also the honest reason oddjob runs on local models: not because small models became clever, but because a narrow job is a job they can do. **Specialization and local-first are the same argument.**
 
 ```bash
-make build && ./build/gohort --setup && ./build/gohort serve :8080
+make build && ./build/oddjob --setup && ./build/oddjob serve :8080
 ```
 
 That's the whole install. One static binary, no runtime, no venv, or skip the toolchain entirely and [download one](#download-a-release). Ten direct dependencies, and source you can read end to end.
@@ -46,20 +46,20 @@ That's the whole install. One static binary, no runtime, no venv, or skip the to
 
 The lowest-friction way to try this: add a few lines to an MCP config you already have open, and delete them if you hate it.
 
-Most MCP servers expose flat tools and the client does the reasoning. **gohort exposes agents as endpoints.** Claude Desktop talks to `servitor`; servitor runs its own plan-driven loop under gohort's harness and returns a synthesized answer. Two loops, not one, and the consequences are the point:
+Most MCP servers expose flat tools and the client does the reasoning. **oddjob exposes agents as endpoints.** Claude Desktop talks to `servitor`; servitor runs its own plan-driven loop under oddjob's harness and returns a synthesized answer. Two loops, not one, and the consequences are the point:
 
 - **It remembers your systems** between sessions, because the memory belongs to the agent, not to the chat.
-- **The investigation is governed by gohort's loop** (round budget, loop-guard, failure-streak pivots), rather than by the client's tool-calling behaviour.
+- **The investigation is governed by oddjob's loop** (round budget, loop-guard, failure-streak pivots), rather than by the client's tool-calling behaviour.
 - **Credentials never surface to the client at all.** They attach server-side, at call time.
 - **Twenty rounds of work happen on your hardware** and only the summary crosses the wire.
 
-It also fills a gap the desktop clients leave: one assistant, one persona, one tool set, one instructions box. You cannot scope tools per workflow, keep separate memory per domain, or route stages by sensitivity. gohort is where you configure that; Claude Desktop stays the client.
+It also fills a gap the desktop clients leave: one assistant, one persona, one tool set, one instructions box. You cannot scope tools per workflow, keep separate memory per domain, or route stages by sensitivity. oddjob is where you configure that; Claude Desktop stays the client.
 
 The worked case is **servitor**: Claude Desktop investigating your machines over SSH, plan-driven, behind a governed agent, with credentials the model never sees.
 
 ## What actually makes it different
 
-Single binary, local-first, multi-provider, sandboxing, memory, no-code authoring: real, all present below, and all claimed by bigger projects. These four are the ones worth choosing gohort for.
+Single binary, local-first, multi-provider, sandboxing, memory, no-code authoring: real, all present below, and all claimed by bigger projects. These four are the ones worth choosing oddjob for.
 
 ### 1. The harness
 
@@ -73,7 +73,7 @@ The checkable version of the claim: **a frontier model and a local Qwen run on t
 
 Most projects mean the key stays on your disk. This means **the model demonstrably cannot exfiltrate it**. There has been no external security review of that design: it is set out above, and in the source, so you can judge it rather than take it on faith.
 
-One thing to be straight about, because it is the question a careful reader asks: gohort **skills can carry tools**, and activating one is the opt-in that lets its bundled scripts run. They are not merely prompt text. What bounds them is that they are per-user and authored in-product rather than installed from a public registry, and that anything they bring still runs inside the sandbox and under the same credential allowlist as everything else.
+One thing to be straight about, because it is the question a careful reader asks: oddjob **skills can carry tools**, and activating one is the opt-in that lets its bundled scripts run. They are not merely prompt text. What bounds them is that they are per-user and authored in-product rather than installed from a public registry, and that anything they bring still runs inside the sandbox and under the same credential allowlist as everything else.
 
 ### 3. Machines
 
@@ -89,7 +89,7 @@ Because a step can narrow its own tools, a router agent can be built with **no c
 
 ## Bringing your own keys
 
-gohort registers credentials **per user**: each person brings their own API key, and no key is shared between accounts. It does not support subscription OAuth tokens for programmatic use: API keys only.
+oddjob registers credentials **per user**: each person brings their own API key, and no key is shared between accounts. It does not support subscription OAuth tokens for programmatic use: API keys only.
 
 That is a design choice, and it also happens to be the shape that keeps you on the right side of most providers' terms, which generally expect each end user to authenticate with their own credential and treat subscription plans as individual usage rather than a backend for automation. Check your provider's current terms rather than taking a README's word for it: especially for scheduled or autonomous agents, which are exactly the case those limits are written about.
 
@@ -119,7 +119,7 @@ That's the loop: **describe it, approve it, it runs.**
 
 - **Build it in the browser, not just for it.** The chat *is* the authoring surface. Tell the Builder agent "make me an agent for X" or "set up a workflow that does Y" and it assembles the right thing from primitives: a new agent, an attached pipeline, a skill, a runtime-defined tool. No code, no visual flow editor, no separate IDE. Persistence of anything consequential goes through an admin approval queue.
 
-- **Your keys never reach the model.** Credentials are registered once, stored encrypted, and injected **server-side** at call time: the LLM drives the wiring but never sees the secret, and a universal rule forbids any agent from asking for one in chat. Every external call is checked against a Base-URL + endpoint allow-list before the secret is attached. Shell tools run in a network-isolated `bwrap` sandbox whose *only* path to the network is a narrow, audited gohort hook (urllib/requests/curl/wget are refused at authoring time). An agent that holds your keys in its memory is a liability; here the model orchestrates access it can't exfiltrate.
+- **Your keys never reach the model.** Credentials are registered once, stored encrypted, and injected **server-side** at call time: the LLM drives the wiring but never sees the secret, and a universal rule forbids any agent from asking for one in chat. Every external call is checked against a Base-URL + endpoint allow-list before the secret is attached. Shell tools run in a network-isolated `bwrap` sandbox whose *only* path to the network is a narrow, audited oddjob hook (urllib/requests/curl/wget are refused at authoring time). An agent that holds your keys in its memory is a liability; here the model orchestrates access it can't exfiltrate.
 
 - **Memory that's governed, not just persistent.** "Memory that grows with you" is table stakes; the real question is whether you control it. Each agent gets several distinct layers: always-in-prompt facts (with semantic dedup and supersession, so a changed fact *replaces* the stale one instead of piling up), vector-grown reference memory, a graph layer of entities and relationships, a rewritable working-notes scratchpad, and drillable conversation history that archives on compaction rather than collapsing into a lossy summary. Every layer is toggled **per agent**, isolated **per (user, agent)**, and bounded by admin-tunable caps and a background prune sweep. And because credentials are injected server-side, **secrets never land in a memory layer**: the failure mode where a persistent store quietly accumulates your API keys simply can't occur.
 
@@ -139,20 +139,20 @@ A local GPU (Ollama / llama.cpp) is optional: point the worker tier at a hosted 
 
 ### Download a release
 
-Binaries for linux, macOS and Windows (amd64 and arm64 where the platform has both) are on the [releases page](https://github.com/cmcoffee/gohort/releases), each archive carrying the binary, `LICENSE`, `NOTICE` and the third-party notices for that build. No toolchain, no runtime, nothing to install beside it.
+Binaries for linux, macOS and Windows (amd64 and arm64 where the platform has both) are on the [releases page](https://github.com/cmcoffee/oddjob/releases), each archive carrying the binary, `LICENSE`, `NOTICE` and the third-party notices for that build. No toolchain, no runtime, nothing to install beside it.
 
 ```bash
 # Verify what you downloaded — SHA256SUMS sits beside the archives
 sha256sum --ignore-missing -c SHA256SUMS     # macOS: shasum -a 256 -c SHA256SUMS
 
-tar xzf gohort_<version>_linux_amd64.tar.gz
-cd gohort_<version>_linux_amd64
+tar xzf oddjob_<version>_linux_amd64.tar.gz
+cd oddjob_<version>_linux_amd64
 
-./gohort --setup                     # TLS, listen addr, admin account (LLM + the rest: web UI)
-./gohort serve 127.0.0.1:8080        # the web dashboard
+./oddjob --setup                     # TLS, listen addr, admin account (LLM + the rest: web UI)
+./oddjob serve 127.0.0.1:8080        # the web dashboard
 ```
 
-On macOS the download is unsigned, so Gatekeeper quarantines it: `xattr -d com.apple.quarantine gohort` before the first run.
+On macOS the download is unsigned, so Gatekeeper quarantines it: `xattr -d com.apple.quarantine oddjob` before the first run.
 
 ### Build from source
 
@@ -163,13 +163,13 @@ On macOS the download is unsigned, so Gatekeeper quarantines it: `xattr -d com.a
 make build
 
 # First-boot setup (TLS, listen addr, admin account — the rest is configured in the web UI)
-./build/gohort --setup
+./build/oddjob --setup
 
 # Run the web dashboard (the primary surface)
-./build/gohort serve :8080
-./build/gohort serve :8443 --tls     # with a self-signed cert
+./build/oddjob serve :8080
+./build/oddjob serve :8443 --tls     # with a self-signed cert
 
-./build/gohort --version
+./build/oddjob --version
 ```
 
 Then sign in and visit **/admin**: nearly all operator config (LLM routing, embeddings, STT, image gen, web search, SMTP, cost rates, tunables) lives there, each with an inline **Test connectivity** button.
@@ -183,7 +183,7 @@ Then sign in and visit **/admin**: nearly all operator config (LLM routing, embe
 ```go
 package myapp
 
-import . "github.com/cmcoffee/gohort/core"
+import . "github.com/cmcoffee/oddjob/core"
 
 func init() { RegisterApp(new(MyApp)) }
 
@@ -212,7 +212,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | `servitor` | SSH system investigator + git-repo Q&A, plan-driven, with an xterm pane; systems are shareable |
 | `guides` | Living multi-section guide documents co-authored with an AI Guide Author; source-grounded, exportable, shareable |
 | `scribe` - `codewriter` | Living guides with an AI co-author; script/query co-editor |
-| `mcpserver` | Expose gohort agents to an external MCP client (e.g. Claude Desktop) |
+| `mcpserver` | Expose oddjob agents to an external MCP client (e.g. Claude Desktop) |
 | `customapps` | Host for Builder-authored apps (the My Apps tile) at `/apps/<slug>/`: declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, and per-user sharing or an anonymous link |
 | `hello` | Minimal scaffold for a new app |
 | `ollama_proxy` | Ollama-compatible HTTP proxy |
@@ -221,7 +221,7 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 
 ## Companion client
 
-**`gohort-desktop`**, a native Wails host (macOS): a viewer window plus an always-on menu-bar **Bridge** daemon that owns the host's OS permissions (filesystem, screenshot, contacts) and, on macOS, relays iMessage into the Bridges app. Its tool surface is expandable at runtime: the server can push an admin-approved, user-consented capability that lands as a new local tool without reshipping. See [`gohort-desktop/README.md`](gohort-desktop/README.md).
+**`oddjob-desktop`**, a native Wails host (macOS): a viewer window plus an always-on menu-bar **Bridge** daemon that owns the host's OS permissions (filesystem, screenshot, contacts) and, on macOS, relays iMessage into the Bridges app. Its tool surface is expandable at runtime: the server can push an admin-approved, user-consented capability that lands as a new local tool without reshipping. See [`oddjob-desktop/README.md`](oddjob-desktop/README.md).
 
 ## Where it's going
 
@@ -254,7 +254,7 @@ On deck:
 
 Apache License 2.0: see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-Product names are used descriptively, to say what gohort interoperates with. Claude and Claude Desktop are trademarks of Anthropic, PBC; Ollama, llama.cpp and every other project named here belong to their respective owners. gohort is an independent project and is not affiliated with, endorsed by, or sponsored by any of them.
+Product names are used descriptively, to say what oddjob interoperates with. Claude and Claude Desktop are trademarks of Anthropic, PBC; Ollama, llama.cpp and every other project named here belong to their respective owners. oddjob is an independent project and is not affiliated with, endorsed by, or sponsored by any of them.
 
 `make release` builds an export of `HEAD` for every supported platform with
 `GOWORK=off`, and packages each binary with `LICENSE`, `NOTICE` and a

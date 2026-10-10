@@ -1,12 +1,12 @@
-// Package mcpserver exposes gohort's agents to an external MCP client
+// Package mcpserver exposes oddjob's agents to an external MCP client
 // (Claude Desktop) over a minimal JSON-RPC endpoint. It is the inverse of
 // core/mcp_manager.go: that dials OUT to remote MCP servers; this lets a
-// remote MCP client call IN and drive a gohort agent.
+// remote MCP client call IN and drive a oddjob agent.
 //
 // Why this exists: Claude Desktop is a stateless client with no daemon, so it
-// cannot do "every morning at 8". gohort is a persistent server that already
+// cannot do "every morning at 8". oddjob is a persistent server that already
 // schedules (standing agents). This bridges the gap: Claude asks the agent to
-// set something up, gohort owns the durable execution and delivery.
+// set something up, oddjob owns the durable execution and delivery.
 //
 // Auth reuses the bridge key (X-API-Key -> owner) so there is nothing new to
 // mint. Dispatch reuses core.RunChannelAgent, which is synchronous and returns
@@ -19,7 +19,7 @@
 //
 // Not enabled by default. Turn it on with a blank import in agents.go:
 //
-//	_ "github.com/cmcoffee/gohort/apps/mcpserver"
+//	_ "github.com/cmcoffee/oddjob/apps/mcpserver"
 package mcpserver
 
 import (
@@ -31,9 +31,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/netgate"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/netgate"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func init() {
@@ -73,11 +73,11 @@ type MCPServer struct {
 func (T MCPServer) Name() string         { return "mcpserver" }
 func (T MCPServer) SystemPrompt() string { return "" }
 func (T MCPServer) Desc() string {
-	return "Apps: MCP server - expose gohort agents to an external MCP client."
+	return "Apps: MCP server - expose oddjob agents to an external MCP client."
 }
 func (T *MCPServer) Init() error { return T.Flags.Parse() }
 func (T *MCPServer) Main() error {
-	Log("mcpserver is dashboard/endpoint-only. Start with: gohort serve")
+	Log("mcpserver is dashboard/endpoint-only. Start with: oddjob serve")
 	return nil
 }
 
@@ -211,7 +211,7 @@ func (T *MCPServer) authorize(r *http.Request, action string) (owner, refusal st
 	}
 	if owner == "" {
 		Log("[mcpserver] %s REJECTED: no valid X-API-Key (mint a bridge key in Bridges admin)", action)
-		return "", "Unauthorized: this endpoint needs a valid gohort personal access token in the X-API-Key header. Create one on your Account page (/account) and put it in the connector config.", http.StatusUnauthorized
+		return "", "Unauthorized: this endpoint needs a valid oddjob personal access token in the X-API-Key header. Create one on your Account page (/account) and put it in the connector config.", http.StatusUnauthorized
 	}
 	if !FeatureAllowedForUser(RootDB, MCPFeatureKey, owner) {
 		Log("[mcpserver] %s REJECTED: admin policy denies MCP for user=%s", action, owner)
@@ -322,7 +322,7 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		resp.Result = map[string]any{
 			"protocolVersion": pv,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "gohort", "version": AppVersion},
+			"serverInfo":      map[string]any{"name": "oddjob", "version": AppVersion},
 		}
 		Log("[mcpserver] initialize (protocol=%s)", pv)
 	case "tools/list":
@@ -464,7 +464,7 @@ func toolDefs() []map[string]any {
 	defs := []map[string]any{
 		{
 			"name":        "ask_agent",
-			"description": "Send a message to a gohort agent and get its reply. The agent has persistent memory, scheduling (it can set up recurring tasks that run on gohort's server), and delivery channels. To schedule something, just ask in plain language, e.g. 'every weekday at 8am, summarize my calendar and text it to me'. Pass times exactly as the user said them; do NOT convert to UTC.",
+			"description": "Send a message to a oddjob agent and get its reply. The agent has persistent memory, scheduling (it can set up recurring tasks that run on oddjob's server), and delivery channels. To schedule something, just ask in plain language, e.g. 'every weekday at 8am, summarize my calendar and text it to me'. Pass times exactly as the user said them; do NOT convert to UTC.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -476,7 +476,7 @@ func toolDefs() []map[string]any {
 		},
 		{
 			"name":        "list_agents",
-			"description": "List the gohort agents you can send messages to, with what each one is for. Call this before ask_agent when you don't already know which agent to use, or when the user names an agent you haven't seen: the `id` on each row is what ask_agent's `agent` argument takes. Only agents the account has made reachable from outside appear here.",
+			"description": "List the oddjob agents you can send messages to, with what each one is for. Call this before ask_agent when you don't already know which agent to use, or when the user names an agent you haven't seen: the `id` on each row is what ask_agent's `agent` argument takes. Only agents the account has made reachable from outside appear here.",
 			"inputSchema": map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
@@ -484,7 +484,7 @@ func toolDefs() []map[string]any {
 		},
 		{
 			"name":        "recent_results",
-			"description": "List recent results from gohort's scheduled and background runs, newest first. Use this to report back on what scheduled tasks have produced since you last checked.",
+			"description": "List recent results from oddjob's scheduled and background runs, newest first. Use this to report back on what scheduled tasks have produced since you last checked.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -629,7 +629,7 @@ func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error
 	if len(agents) == 0 {
 		// Say which switch turns this on. An empty list otherwise reads as "you
 		// have no agents", which is almost never what happened.
-		return "No agents are reachable over MCP. Open the agent's editor in gohort → Access & visibility → turn on \"Reachable over MCP\", then reconnect this connector so it re-reads the list. Only your own agents appear here; an app's built-in agents (Servitor, Guides, …) are reached by app name, not listed.", nil
+		return "No agents are reachable over MCP. Open the agent's editor in oddjob → Access & visibility → turn on \"Reachable over MCP\", then reconnect this connector so it re-reads the list. Only your own agents appear here; an app's built-in agents (Servitor, Guides, …) are reached by app name, not listed.", nil
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d agent(s) you can ask:\n", len(agents))
@@ -731,7 +731,7 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	// rather than sent — better than a block the other side drops silently.
 	text := reply.Text
 	if n := len(reply.Videos); n > 0 {
-		text += fmt.Sprintf("\n\n[%d video(s) produced; this connector carries images only. Ask the agent to deliver them over a messaging channel, or open the thread in gohort.]", n)
+		text += fmt.Sprintf("\n\n[%d video(s) produced; this connector carries images only. Ask the agent to deliver them over a messaging channel, or open the thread in oddjob.]", n)
 	}
 	return text, reply.Images, nil
 }

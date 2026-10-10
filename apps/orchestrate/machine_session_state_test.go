@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The drawer shows the whole cursor — blackboard in phase order, transitions

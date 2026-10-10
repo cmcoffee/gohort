@@ -31,7 +31,7 @@ package orchestrate
 import (
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const toolFlattenBackupTable = "orchestrate_tool_flatten_backup"

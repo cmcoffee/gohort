@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -52,12 +52,12 @@ func TestAnAppRunsOnlyItsOwnAgentsAndPipelines(t *testing.T) {
 // to run.
 func TestSaveNotesUndeclaredRunAgent(t *testing.T) {
 	spec := AppSpec{Slug: "game", AgentID: "dm",
-		Libraries: map[string]string{"engine": "from gohort import run_agent\ndef turn(s):\n    return run_agent(s)\n"},
+		Libraries: map[string]string{"engine": "from oddjob import run_agent\ndef turn(s):\n    return run_agent(s)\n"},
 		DataSources: []AppDataSource{
-			{Name: "direct", Script: "from gohort import run_agent\nprint(run_agent('x'))", Capabilities: []string{"fetch"}},
+			{Name: "direct", Script: "from oddjob import run_agent\nprint(run_agent('x'))", Capabilities: []string{"fetch"}},
 			{Name: "via-lib", Script: "from engine import turn\nprint(turn('x'))"},
 			{Name: "fine", Script: "from engine import turn\nprint(turn('x'))", Capabilities: []string{"run_agent"}},
-			{Name: "pipe", Script: "from gohort import run_pipeline\nprint(run_pipeline('x'))", Capabilities: []string{"run_pipeline"}},
+			{Name: "pipe", Script: "from oddjob import run_pipeline\nprint(run_pipeline('x'))", Capabilities: []string{"run_pipeline"}},
 		}}
 	notes := strings.Join(appToolCapNotes("u", spec), "\n")
 	for _, want := range []string{

@@ -18,8 +18,8 @@ import (
 
 func TestLimitsDefaultToWhatNoRealWorkloadNeeds(t *testing.T) {
 	for _, k := range []string{
-		"GOHORT_SANDBOX_MAX_FILE_MB", "GOHORT_SANDBOX_MAX_OPEN_FILES",
-		"GOHORT_SANDBOX_MAX_CPU_SEC", "GOHORT_SANDBOX_MAX_MEM_MB", "GOHORT_SANDBOX_MAX_PROCS",
+		"ODDJOB_SANDBOX_MAX_FILE_MB", "ODDJOB_SANDBOX_MAX_OPEN_FILES",
+		"ODDJOB_SANDBOX_MAX_CPU_SEC", "ODDJOB_SANDBOX_MAX_MEM_MB", "ODDJOB_SANDBOX_MAX_PROCS",
 	} {
 		t.Setenv(k, "")
 	}
@@ -43,11 +43,11 @@ func TestLimitsDefaultToWhatNoRealWorkloadNeeds(t *testing.T) {
 func TestAnUnparseableLimitTakesTheDefaultRatherThanUnlimited(t *testing.T) {
 	// Same rule bypassPolicy applies to a typo in a security switch: a mistake
 	// must not resolve to the permissive answer.
-	t.Setenv("GOHORT_SANDBOX_MAX_FILE_MB", "1gb")
+	t.Setenv("ODDJOB_SANDBOX_MAX_FILE_MB", "1gb")
 	if got := resourceLimits().FileSizeMB; got != defaultFileSizeMB {
 		t.Errorf("a malformed limit should fall back to the default, got %d", got)
 	}
-	t.Setenv("GOHORT_SANDBOX_MAX_FILE_MB", "-5")
+	t.Setenv("ODDJOB_SANDBOX_MAX_FILE_MB", "-5")
 	if got := resourceLimits().FileSizeMB; got != defaultFileSizeMB {
 		t.Errorf("a negative limit should fall back to the default, got %d", got)
 	}
@@ -55,7 +55,7 @@ func TestAnUnparseableLimitTakesTheDefaultRatherThanUnlimited(t *testing.T) {
 	// distinguishable from a typo. A deployment writing a file bigger than the
 	// default needs a way to say so without disabling the other four.
 	for _, off := range []string{"0", "none", "unlimited", "off"} {
-		t.Setenv("GOHORT_SANDBOX_MAX_FILE_MB", off)
+		t.Setenv("ODDJOB_SANDBOX_MAX_FILE_MB", off)
 		if got := resourceLimits().FileSizeMB; got != 0 {
 			t.Errorf("%q should switch the limit off, got %d", off, got)
 		}
@@ -92,7 +92,7 @@ func TestTheLimitPrefixDoesNotChangeWhatACompoundCommandMeans(t *testing.T) {
 // Prefixing it would be a syntax error inside the interpreter, which would
 // break every export generator and event-monitor evaluator at once.
 func TestAScriptRunIsNeverPrefixed(t *testing.T) {
-	t.Setenv("GOHORT_SANDBOX_MAX_FILE_MB", "64")
+	t.Setenv("ODDJOB_SANDBOX_MAX_FILE_MB", "64")
 	script := "import sys\nprint('hi')\n"
 	c := buildRun(context.Background(), noSandbox{}, sandboxRun{
 		Kind: sandboxScriptRun, Interpreter: "python3", Command: script,
@@ -114,7 +114,7 @@ func TestAFileSizeLimitActuallyStopsARunawayWrite(t *testing.T) {
 		// test that will one day flip it for everyone.
 		t.Skip("no confining backend on this host")
 	}
-	t.Setenv("GOHORT_SANDBOX_MAX_FILE_MB", "1")
+	t.Setenv("ODDJOB_SANDBOX_MAX_FILE_MB", "1")
 
 	ws := limitTestWorkspace(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*1e9)
@@ -141,12 +141,12 @@ func TestAFileSizeLimitActuallyStopsARunawayWrite(t *testing.T) {
 // covered by the tmpfs and bwrap dies with "Can't chdir". That failure looks
 // like the limit working — the command never runs, so it never writes 8MiB and
 // never prints rc=0 — which is how the first version of this test passed while
-// proving nothing. Production workspaces live under WorkspacesDir in the gohort
+// proving nothing. Production workspaces live under WorkspacesDir in the oddjob
 // data directory, not /tmp, so this is a property of the test environment
 // rather than a bug in the argv.
 func limitTestWorkspace(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/var/tmp", "gohort-limits-")
+	dir, err := os.MkdirTemp("/var/tmp", "oddjob-limits-")
 	if err != nil {
 		t.Skipf("no writable dir outside /tmp: %v", err)
 	}

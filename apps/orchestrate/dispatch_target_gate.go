@@ -26,7 +26,7 @@ package orchestrate
 import (
 	"fmt"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // targetAcceptsDispatch returns "" when caller may reach target, or the

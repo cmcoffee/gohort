@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // groundingJudgeSysPrompt is deliberately narrow. A judge given "is this reply

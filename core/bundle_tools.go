@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/oddjob/core/bundle"
 )
 
 // errBundleNotLoaded is returned when the store is empty — an unambiguous

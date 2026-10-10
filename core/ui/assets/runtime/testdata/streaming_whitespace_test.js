@@ -42,7 +42,7 @@ check('the break shows once the next paragraph arrives',
 check('indentation on the first line survives (a code block can open a reply)',
   streamingText('\n    indented code') === '    indented code');
 check('an internal note stripped from the front leaves no gap',
-  streamingText('<gohort-meta>note</gohort-meta>\n\nVisible.') === 'Visible.');
+  streamingText('<oddjob-meta>note</oddjob-meta>\n\nVisible.') === 'Visible.');
 check('nothing visible reads as empty',
   streamingText('\n\n ') === '' && streamingText('') === '' && streamingText(undefined) === '');
 

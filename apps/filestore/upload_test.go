@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/netgate"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/netgate"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -36,7 +36,7 @@ func uploadFixture(t *testing.T) (*FileStoreApp, string, *http.Cookie) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return app, st.Slug, &http.Cookie{Name: "gohort_session", Value: token}
+	return app, st.Slug, &http.Cookie{Name: "oddjob_session", Value: token}
 }
 
 // multipartBody is one file part of size n. The reader hides the length, so

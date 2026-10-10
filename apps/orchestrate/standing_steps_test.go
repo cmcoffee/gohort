@@ -3,7 +3,7 @@ package orchestrate
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A standing fire is the run nobody watches happen — it goes off at 5am with

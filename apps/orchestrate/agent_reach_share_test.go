@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The reason the lends are recorded: taking somebody off the agent takes back

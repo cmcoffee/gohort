@@ -141,7 +141,7 @@ func RecommendAllLLMsPrivate() (recommended bool, verdicts []LLMPrivacyVerdict) 
 			continue
 		}
 		// A peer provider inherits the peer's own judgement. The endpoint is
-		// this instance reaching another gohort, and what matters is whether
+		// this instance reaching another oddjob, and what matters is whether
 		// THAT instance runs a local model — which it does, because inference
 		// sharing lends llama.cpp and ollama only and never relays a hosted
 		// provider (see peer_models.go).

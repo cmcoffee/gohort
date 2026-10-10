@@ -33,11 +33,11 @@ func TestNoBackendIsEverSilent(t *testing.T) {
 //
 // It names the OPT-OUT, not the old opt-in: an operator reading this is being
 // refused BY the default, so the actionable sentence is how to permit what was
-// refused. Pointing at GOHORT_SANDBOX_REQUIRED would name a switch they never
+// refused. Pointing at ODDJOB_SANDBOX_REQUIRED would name a switch they never
 // set and cannot usefully unset.
 func TestTheRefusalNamesSomethingActionable(t *testing.T) {
 	msg := sandboxUnavailableErr().Error()
-	if !strings.Contains(msg, "GOHORT_ALLOW_UNSANDBOXED") {
+	if !strings.Contains(msg, "ODDJOB_ALLOW_UNSANDBOXED") {
 		t.Error("the refusal never names the way out of it")
 	}
 	if !strings.Contains(msg, unsandboxedAdvice()) {
@@ -101,7 +101,7 @@ func TestEveryPlatformGetsUsableAdvice(t *testing.T) {
 	// It has to leave the operator somewhere to go, not just state a lack.
 	// On macOS that road cannot be "install a package", so it is the opt-out:
 	// this is the one platform where accepting the risk may be the only move.
-	if !strings.Contains(mac, "GOHORT_ALLOW_UNSANDBOXED") {
+	if !strings.Contains(mac, "ODDJOB_ALLOW_UNSANDBOXED") {
 		t.Errorf("macOS advice offers no way forward at all: %q", mac)
 	}
 
@@ -175,7 +175,7 @@ func TestTheNoneBackendKeepsTheOldShapes(t *testing.T) {
 	c = noSandbox{}.build(ctx, sandboxRun{Kind: sandboxPipeRun, Command: "cat"})
 	if c.Dir != "/tmp" {
 		t.Errorf("pipe run cwd = %q, want /tmp — a pipe has no workspace and must not "+
-			"inherit gohort's own directory", c.Dir)
+			"inherit oddjob's own directory", c.Dir)
 	}
 
 	c = noSandbox{}.build(ctx, sandboxRun{Kind: sandboxScriptRun, Interpreter: "python3", Command: "print(1)"})
@@ -250,7 +250,7 @@ func restoreEnv(t *testing.T, names ...string) {
 // shell command unconfined on a host with no backend, and an operator who never
 // heard of the env var got the dangerous answer silently.
 func TestConfinementIsRequiredByDefault(t *testing.T) {
-	restoreEnv(t, "GOHORT_SANDBOX_REQUIRED", "GOHORT_ALLOW_UNSANDBOXED")
+	restoreEnv(t, "ODDJOB_SANDBOX_REQUIRED", "ODDJOB_ALLOW_UNSANDBOXED")
 	if !sandboxRequired(context.Background()) {
 		t.Fatal("with nothing set, an unconfinable run is permitted — the default must fail closed")
 	}
@@ -261,17 +261,17 @@ func TestConfinementIsRequiredByDefault(t *testing.T) {
 // the old variable must keep the behavior it asked for.
 func TestUnsandboxedExecutionIsOptIn(t *testing.T) {
 	for _, on := range []string{"1", "true", "yes", "on", "TRUE"} {
-		restoreEnv(t, "GOHORT_SANDBOX_REQUIRED", "GOHORT_ALLOW_UNSANDBOXED")
-		os.Setenv("GOHORT_ALLOW_UNSANDBOXED", on)
+		restoreEnv(t, "ODDJOB_SANDBOX_REQUIRED", "ODDJOB_ALLOW_UNSANDBOXED")
+		os.Setenv("ODDJOB_ALLOW_UNSANDBOXED", on)
 		if sandboxRequired(context.Background()) {
-			t.Errorf("GOHORT_ALLOW_UNSANDBOXED=%q did not permit unconfined execution", on)
+			t.Errorf("ODDJOB_ALLOW_UNSANDBOXED=%q did not permit unconfined execution", on)
 		}
 	}
 	for _, off := range []string{"0", "false", "no", "off"} {
-		restoreEnv(t, "GOHORT_SANDBOX_REQUIRED", "GOHORT_ALLOW_UNSANDBOXED")
-		os.Setenv("GOHORT_SANDBOX_REQUIRED", off)
+		restoreEnv(t, "ODDJOB_SANDBOX_REQUIRED", "ODDJOB_ALLOW_UNSANDBOXED")
+		os.Setenv("ODDJOB_SANDBOX_REQUIRED", off)
 		if sandboxRequired(context.Background()) {
-			t.Errorf("GOHORT_SANDBOX_REQUIRED=%q did not permit unconfined execution", off)
+			t.Errorf("ODDJOB_SANDBOX_REQUIRED=%q did not permit unconfined execution", off)
 		}
 	}
 }
@@ -280,12 +280,12 @@ func TestUnsandboxedExecutionIsOptIn(t *testing.T) {
 // meaning it, and a contradictory pair resolves the safe way. A config saying
 // both things is a mistake; the safe reading of a mistake is the confining one.
 func TestExplicitlyRequiredStillWins(t *testing.T) {
-	restoreEnv(t, "GOHORT_SANDBOX_REQUIRED", "GOHORT_ALLOW_UNSANDBOXED")
-	os.Setenv("GOHORT_SANDBOX_REQUIRED", "1")
+	restoreEnv(t, "ODDJOB_SANDBOX_REQUIRED", "ODDJOB_ALLOW_UNSANDBOXED")
+	os.Setenv("ODDJOB_SANDBOX_REQUIRED", "1")
 	if !sandboxRequired(context.Background()) {
-		t.Fatal("GOHORT_SANDBOX_REQUIRED=1 stopped meaning what it always meant")
+		t.Fatal("ODDJOB_SANDBOX_REQUIRED=1 stopped meaning what it always meant")
 	}
-	os.Setenv("GOHORT_ALLOW_UNSANDBOXED", "1")
+	os.Setenv("ODDJOB_ALLOW_UNSANDBOXED", "1")
 	if !sandboxRequired(context.Background()) {
 		t.Fatal("a contradictory pair resolved to the permissive reading")
 	}
@@ -295,7 +295,7 @@ func TestExplicitlyRequiredStillWins(t *testing.T) {
 // "not confined" no longer tells an operator whether anything runs. Refusing
 // does, and the two states demand opposite fixes.
 func TestRefusingSeparatesTwoOppositeDiagnoses(t *testing.T) {
-	restoreEnv(t, "GOHORT_SANDBOX_REQUIRED", "GOHORT_ALLOW_UNSANDBOXED")
+	restoreEnv(t, "ODDJOB_SANDBOX_REQUIRED", "ODDJOB_ALLOW_UNSANDBOXED")
 	st := GetSandboxStatus()
 	if st.Confined && st.Refusing {
 		t.Error("a confined host reports that it is refusing tools")
@@ -304,7 +304,7 @@ func TestRefusingSeparatesTwoOppositeDiagnoses(t *testing.T) {
 		t.Error("an unconfined host with the default policy should be refusing")
 	}
 
-	os.Setenv("GOHORT_ALLOW_UNSANDBOXED", "1")
+	os.Setenv("ODDJOB_ALLOW_UNSANDBOXED", "1")
 	if GetSandboxStatus().Refusing {
 		t.Error("a host that opted into unconfined execution reports refusing")
 	}
@@ -315,8 +315,8 @@ func TestRefusingSeparatesTwoOppositeDiagnoses(t *testing.T) {
 // wants their own shell tools back WITHOUT handing unconfined execution to
 // every agent, schedule and channel wake on the box.
 func TestAdminOnlyBypassSplitsCallerFromDeployment(t *testing.T) {
-	restoreEnv(t, "GOHORT_SANDBOX_REQUIRED", "GOHORT_ALLOW_UNSANDBOXED")
-	os.Setenv("GOHORT_ALLOW_UNSANDBOXED", "admin")
+	restoreEnv(t, "ODDJOB_SANDBOX_REQUIRED", "ODDJOB_ALLOW_UNSANDBOXED")
+	os.Setenv("ODDJOB_ALLOW_UNSANDBOXED", "admin")
 
 	if sandboxRequired(WithAdminCaller(context.Background(), true)) {
 		t.Error("an admin's own run is still refused under the admin bypass")
@@ -332,12 +332,12 @@ func TestAdminOnlyBypassSplitsCallerFromDeployment(t *testing.T) {
 // TestAdminStampIsInertUnlessTheDeploymentAsked — stamping a caller as admin
 // must not, by itself, weaken anything. The deployment decides first.
 func TestAdminStampIsInertUnlessTheDeploymentAsked(t *testing.T) {
-	restoreEnv(t, "GOHORT_SANDBOX_REQUIRED", "GOHORT_ALLOW_UNSANDBOXED")
+	restoreEnv(t, "ODDJOB_SANDBOX_REQUIRED", "ODDJOB_ALLOW_UNSANDBOXED")
 	admin := WithAdminCaller(context.Background(), true)
 	if !sandboxRequired(admin) {
 		t.Fatal("an admin bypassed confinement on a deployment that never enabled a bypass")
 	}
-	os.Setenv("GOHORT_ALLOW_UNSANDBOXED", "off")
+	os.Setenv("ODDJOB_ALLOW_UNSANDBOXED", "off")
 	if !sandboxRequired(admin) {
 		t.Fatal("an admin bypassed confinement with the bypass explicitly off")
 	}
@@ -346,9 +346,9 @@ func TestAdminStampIsInertUnlessTheDeploymentAsked(t *testing.T) {
 // TestATypoIsNotThePermissiveAnswer — an unrecognized value in a security
 // switch has exactly one safe reading.
 func TestATypoIsNotThePermissiveAnswer(t *testing.T) {
-	restoreEnv(t, "GOHORT_SANDBOX_REQUIRED", "GOHORT_ALLOW_UNSANDBOXED")
+	restoreEnv(t, "ODDJOB_SANDBOX_REQUIRED", "ODDJOB_ALLOW_UNSANDBOXED")
 	for _, junk := range []string{"yes-please", "ADMINS-ONLY-PLZ", "true(ish)", " "} {
-		os.Setenv("GOHORT_ALLOW_UNSANDBOXED", junk)
+		os.Setenv("ODDJOB_ALLOW_UNSANDBOXED", junk)
 		if !sandboxRequired(WithAdminCaller(context.Background(), true)) {
 			t.Errorf("%q was read as permission to run unconfined", junk)
 		}
@@ -359,15 +359,15 @@ func TestATypoIsNotThePermissiveAnswer(t *testing.T) {
 // settings is live, since "required: false" alone cannot distinguish "everyone
 // may" from "admins may".
 func TestBypassIsReportedToTheOperator(t *testing.T) {
-	restoreEnv(t, "GOHORT_SANDBOX_REQUIRED", "GOHORT_ALLOW_UNSANDBOXED")
+	restoreEnv(t, "ODDJOB_SANDBOX_REQUIRED", "ODDJOB_ALLOW_UNSANDBOXED")
 	for env, want := range map[string]string{"": "off", "on": "on", "admin": "admin", "off": "off"} {
 		if env == "" {
-			os.Unsetenv("GOHORT_ALLOW_UNSANDBOXED")
+			os.Unsetenv("ODDJOB_ALLOW_UNSANDBOXED")
 		} else {
-			os.Setenv("GOHORT_ALLOW_UNSANDBOXED", env)
+			os.Setenv("ODDJOB_ALLOW_UNSANDBOXED", env)
 		}
 		if got := GetSandboxStatus().Bypass; got != want {
-			t.Errorf("GOHORT_ALLOW_UNSANDBOXED=%q reported as %q, want %q", env, got, want)
+			t.Errorf("ODDJOB_ALLOW_UNSANDBOXED=%q reported as %q, want %q", env, got, want)
 		}
 	}
 }

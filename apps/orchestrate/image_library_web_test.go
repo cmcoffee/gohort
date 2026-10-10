@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func TestOriginIsNeverBlank(t *testing.T) {

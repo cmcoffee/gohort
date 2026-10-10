@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func newRetentionBridges() *Bridges { return &Bridges{AppCore{DB: OpenCache()}} }
@@ -162,7 +162,7 @@ func TestLegacyMessagesMigrate(t *testing.T) {
 // The crash this cost us: the dedup table's value type changed from int to a
 // timestamp string, and kvlite decodes through gob while DBase.Get routes a
 // decode error to Critical — so reading one legacy entry did not fail softly,
-// it terminated gohort on startup ("gob: decoding into local type *string,
+// it terminated oddjob on startup ("gob: decoding into local type *string,
 // received remote type int"). Legacy entries must be DROPPED, never read.
 func TestLegacyDedupTableIsDroppedNotRead(t *testing.T) {
 	T := newRetentionBridges()

@@ -3,7 +3,7 @@ package codewriter
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The same reference picked on the writer and again for the turn is one

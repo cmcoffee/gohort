@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // TestRunRegistryActivity pins the live-activity view: user-scoped, running
@@ -17,7 +17,7 @@ func TestRunRegistryActivity(t *testing.T) {
 
 	sched := rr.Create("u", "agent-1", "", nil).Describe("scheduled", "Moltbook", "Run your standing task now.")
 	sched.SetProgress(3, []ToolCall{{Name: "get_feed"}, {Name: "reply_to_post"}})
-	rr.Create("u", "agent-2", "sess-1", nil).Describe("chat", "Gohort", "what's up")
+	rr.Create("u", "agent-2", "sess-1", nil).Describe("chat", "Oddjob", "what's up")
 	other := rr.Create("someone-else", "agent-9", "", nil).Describe("standing", "Theirs", "")
 	doneRun := rr.Create("u", "agent-3", "", nil).Describe("standing", "Daily Laughs", "morning meme")
 	doneRun.Complete(RunStatusCompleted)
@@ -33,7 +33,7 @@ func TestRunRegistryActivity(t *testing.T) {
 	if rows[0].Round != 3 || rows[0].LastTool != "reply_to_post" {
 		t.Fatalf("progress should ride the snapshot; got round=%d tool=%q", rows[0].Round, rows[0].LastTool)
 	}
-	if rows[1].AgentName != "Gohort" || rows[1].Kind != "chat" {
+	if rows[1].AgentName != "Oddjob" || rows[1].Kind != "chat" {
 		t.Fatalf("row 1 should be the chat run; got %+v", rows[1])
 	}
 	if rows[2].Status != RunStatusCompleted || rows[2].AgentName != "Daily Laughs" {

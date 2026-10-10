@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // guardrailInputDirective is the pre_input pre-pass: it runs the warden on the

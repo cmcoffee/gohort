@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/pacing"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/pacing"
 )
 
 // objectiveEvidence is what the check reasons over: the goal, the attempt's

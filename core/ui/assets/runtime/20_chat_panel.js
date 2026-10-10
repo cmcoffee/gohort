@@ -126,12 +126,12 @@
       });
     }
     // withAgentParam appends agent_id=<id> to a URL when the host
-    // page has set window.GOHORT_AGENT_ID. Used by Per-(user, agent)
+    // page has set window.ODDJOB_AGENT_ID. Used by Per-(user, agent)
     // settings so toggle GETs read per-agent overrides. No-op when
     // the global isn't set (single-app pages, surfaces that don't
     // care about agent scoping).
     function withAgentParam(url) {
-      var aid = window.GOHORT_AGENT_ID;
+      var aid = window.ODDJOB_AGENT_ID;
       if (!aid || !url) return url;
       var sep = url.indexOf('?') >= 0 ? '&' : '?';
       return url + sep + 'agent_id=' + encodeURIComponent(aid);
@@ -305,7 +305,7 @@
     var sessionStats = {rounds: 0, in: 0, out: 0, think: 0, ms: 0, cost: 0};
     // --- Mode toggles ----------------------------------------------------
     // Per-button refreshers — collected so we can re-fire all of them
-    // when window.GOHORT_AGENT_ID changes (e.g. Agency agent dropdown
+    // when window.ODDJOB_AGENT_ID changes (e.g. Agency agent dropdown
     // switches to a different agent and the per-(user, agent) override
     // for the new agent needs to load).
     var modeRefreshers = [];
@@ -330,7 +330,7 @@
         };
         modeRefreshers.push(refresh);
         // Initial state — same fetcher, fired now. Per-(user, agent)
-        // scoping: when window.GOHORT_AGENT_ID is set by the host page,
+        // scoping: when window.ODDJOB_AGENT_ID is set by the host page,
         // withAgentParam appends it so the server returns the per-agent
         // override (falls back to global user-level when no override
         // exists). Lets each agent remember its own Private/Clean stance.
@@ -387,10 +387,10 @@
       // when empty so the server-side diagnostic log can distinguish
       // "JS didn't send it" (would be missing) from "JS sent it but
       // the global was empty at click time" (sent as "").
-      body.agent_id = window.GOHORT_AGENT_ID || '';
+      body.agent_id = window.ODDJOB_AGENT_ID || '';
       try {
-        console.log('[gohort/mode-toggle] sending', m.field, '=', next,
-          'agent_id=', JSON.stringify(window.GOHORT_AGENT_ID || ''));
+        console.log('[oddjob/mode-toggle] sending', m.field, '=', next,
+          'agent_id=', JSON.stringify(window.ODDJOB_AGENT_ID || ''));
       } catch (_) {}
       fetchJSON(m.post_url, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -541,7 +541,7 @@
     function openSession(id) {
       currentSessionId = id;
       // Record the surface for this agent's next open (cortex hero vs a session).
-      var landAg = window.GOHORT_AGENT_ID || '';
+      var landAg = window.ODDJOB_AGENT_ID || '';
       setLanding(landAg, (id && id === altPinnedSession(landAg)) ? 'cortex' : 'session');
       thread.innerHTML = '';
       history = [];
@@ -1080,7 +1080,7 @@
               // details body. Server sends as a map; we keep it raw
               // and let renderToolPanel format on display so a long
               // command_template value (e.g. "python3
-              // /opt/gohort/data/workspaces/foo/script.py …") is
+              // /opt/oddjob/data/workspaces/foo/script.py …") is
               // fully visible instead of clipped to 60 chars.
               argsFull: data.args_full || null,
               output: null,
@@ -1357,11 +1357,11 @@
     }
 
     // When the host page swaps the active agent (Agency dropdown,
-    // or any surface that updates window.GOHORT_AGENT_ID + dispatches
-    // 'gohort-agent-id-changed'), refresh every mode button's state
+    // or any surface that updates window.ODDJOB_AGENT_ID + dispatches
+    // 'oddjob-agent-id-changed'), refresh every mode button's state
     // so toggles reflect the new agent's per-agent override (not the
     // stale previous agent's value).
-    window.addEventListener('gohort-agent-id-changed', function() {
+    window.addEventListener('oddjob-agent-id-changed', function() {
       modeRefreshers.forEach(function(fn) { fn(); });
     });
 

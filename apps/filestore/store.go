@@ -1,6 +1,6 @@
 // Admin-registered file stores.
 //
-// A path on the gohort host is a DEPLOYMENT fact, not a per-user
+// A path on the oddjob host is a DEPLOYMENT fact, not a per-user
 // preference: it is the same folder whoever is asking, and letting a
 // user name their own would make every account a filesystem reader. So
 // the list lives in the root store and only an admin edits it, which
@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // storesTable holds the admin-registered roots, keyed by slug.

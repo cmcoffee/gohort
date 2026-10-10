@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registerGroupsRoutes wires the groups API under the admin sub-mux.
@@ -259,7 +259,7 @@ func (a *AdminApp) registerGroupsRoutes(sub *http.ServeMux) {
 		}
 		// Walk every user's persistent temp tools. Lives in RootDB
 		// (see tempToolStore), keyed by username; one Get per user
-		// returns their full pool. Cheap at gohort scale.
+		// returns their full pool. Cheap at oddjob scale.
 		store := RootDB
 		if store == nil {
 			store = a.db

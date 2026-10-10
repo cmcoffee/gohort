@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleCuratorRuns GETs the digest list: recent runs, newest first, with their

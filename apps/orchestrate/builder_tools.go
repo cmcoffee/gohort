@@ -31,8 +31,8 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/temptool"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/temptool"
 )
 
 // builderAuthoringTools constructs the FULL authoring catalog —
@@ -81,7 +81,7 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 	}
 	tools := []AgentToolDef{
 		// survey — Builder's "read the repo" move: one call maps the user's whole
-		// gohort (agents, tools, credentials + wired tools, apps, pipelines,
+		// oddjob (agents, tools, credentials + wired tools, apps, pipelines,
 		// monitors). Listed FIRST so it reads as the natural orient-before-build
 		// reflex the lean prompt now asks for.
 		surveyWorkspaceToolDef(t),
@@ -648,7 +648,7 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 // this, orienting meant firing list_agents + tool_def(list) + list credentials +
 // list_apps + list_pipelines + list_event_monitors separately, so the model
 // skipped it and guessed/rebuilt instead. This returns a compact inventory of
-// the user's whole gohort world in one call: agents (+ their tool surface),
+// the user's whole oddjob world in one call: agents (+ their tool surface),
 // tools (mode + credential), credentials (+ which tools are wired to each), apps,
 // pipelines, monitors, standing agents. The reflex it enables — survey, reuse,
 // stay consistent — is behind most of the friction the user surfaced (guessing an
@@ -661,7 +661,7 @@ func surveyWorkspaceToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "survey",
-			Description: "ORIENT before you build: return a compact map of everything that already exists in this user's gohort, agents (+ their tool surface), tools (mode + credential), credentials (+ the tools wired to each), apps, pipelines, event monitors, standing agents. This is your 'read the repo' move: call it FIRST when a request could reuse or must stay consistent with existing work (a new tool on a credential others already use, an app like one that exists, an agent with a similar job). Reuse what it shows instead of re-guessing or re-building. Read-only; takes no arguments.",
+			Description: "ORIENT before you build: return a compact map of everything that already exists in this user's oddjob, agents (+ their tool surface), tools (mode + credential), credentials (+ the tools wired to each), apps, pipelines, event monitors, standing agents. This is your 'read the repo' move: call it FIRST when a request could reuse or must stay consistent with existing work (a new tool on a credential others already use, an app like one that exists, an agent with a similar job). Reuse what it shows instead of re-guessing or re-building. Read-only; takes no arguments.",
 			Parameters:  map[string]ToolParam{},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -678,7 +678,7 @@ func surveyWorkspace(owner string) string {
 	const cap = 60
 	udb := agentUserDB(RootDB, owner)
 	var b strings.Builder
-	fmt.Fprintf(&b, "gohort workspace for %s: orient before you build; REUSE what already exists rather than re-guessing or rebuilding.\n", owner)
+	fmt.Fprintf(&b, "oddjob workspace for %s: orient before you build; REUSE what already exists rather than re-guessing or rebuilding.\n", owner)
 
 	// Map credential -> the api tools already wired to it, so both the TOOLS
 	// and CREDENTIALS sections can show the working endpoint shapes.
@@ -1051,7 +1051,7 @@ func orchestratorRouteKey(agentID string, leadModel bool) string {
 // the orchestrator prompt — only their brief + per-tool fragments.
 // Without this block, workers were writing scripts that pip-install
 // (won't work in the shipped sandbox), build URLs without encoding
-// (breaks on spaces), or use urllib instead of the gohort hook
+// (breaks on spaces), or use urllib instead of the oddjob hook
 // (sandbox cuts the network namespace). Injected at runWorkerStep
 // in runner.go when the parent agent is Builder.
 //
@@ -1061,9 +1061,9 @@ const builderWorkerDirectives = `## Worker discipline: sandbox + script rules
 
 You're a Builder-spawned worker executing one focused step (research / draft / smoke-test). When you write scripts or run shell commands, the following constraints apply:
 
-- **Network goes through gohort.** All HTTP from inside a script flows through ` + "gohort.fetch_url" + ` / ` + "gohort.browse_page" + `, available by default: no ` + "hook_capabilities" + ` declaration needed for the bare set. Canonical: ` + "from gohort import fetch_url; data = fetch_url(url)" + `. ` + "fetch_url" + ` auto-routes JS-heavy hosts through ` + "browse_page" + ` so the same URL that worked for your LLM-tool probe works in the script. **For binary downloads (image, PDF, audio, video, archive)**: pass ` + "save_to=" + ` and the response streams to a workspace file: never try to write ` + "result['body']" + ` to disk for binary data (the string conversion mangles bytes). Example: ` + "r = fetch_url(image_url, save_to='meme.png'); if r['status'] != 200: return f'fetch failed: {r[\"status\"]}'; # file is now at <workspace>/meme.png" + `. **Any network-doing standard library is BLOCKED**: curl, wget, urllib (network parts), requests, http.client, socket, the framework refuses tool_def calls that use them.
+- **Network goes through oddjob.** All HTTP from inside a script flows through ` + "oddjob.fetch_url" + ` / ` + "oddjob.browse_page" + `, available by default: no ` + "hook_capabilities" + ` declaration needed for the bare set. Canonical: ` + "from oddjob import fetch_url; data = fetch_url(url)" + `. ` + "fetch_url" + ` auto-routes JS-heavy hosts through ` + "browse_page" + ` so the same URL that worked for your LLM-tool probe works in the script. **For binary downloads (image, PDF, audio, video, archive)**: pass ` + "save_to=" + ` and the response streams to a workspace file: never try to write ` + "result['body']" + ` to disk for binary data (the string conversion mangles bytes). Example: ` + "r = fetch_url(image_url, save_to='meme.png'); if r['status'] != 200: return f'fetch failed: {r[\"status\"]}'; # file is now at <workspace>/meme.png" + `. **Any network-doing standard library is BLOCKED**: curl, wget, urllib (network parts), requests, http.client, socket, the framework refuses tool_def calls that use them.
 
-- **For credentialed endpoints, declare the credential.** ` + "secret:<name>" + ` returns the decrypted value (script injects it itself); ` + "fetch_via:<name>" + ` routes the request through that credential's secure dispatch (auth applied server-side, URL allow-list enforced, script never sees the secret: prefer this). Example: ` + "hook_capabilities=[\"fetch_via:openweather\"]" + `, then ` + "from gohort import fetch_via; data = fetch_via(\"openweather\", url)" + `. If the credential isn't registered, tell the user to register it via the admin UI; don't invent a credential name.
+- **For credentialed endpoints, declare the credential.** ` + "secret:<name>" + ` returns the decrypted value (script injects it itself); ` + "fetch_via:<name>" + ` routes the request through that credential's secure dispatch (auth applied server-side, URL allow-list enforced, script never sees the secret: prefer this). Example: ` + "hook_capabilities=[\"fetch_via:openweather\"]" + `, then ` + "from oddjob import fetch_via; data = fetch_via(\"openweather\", url)" + `. If the credential isn't registered, tell the user to register it via the admin UI; don't invent a credential name.
 
 - **Params arrive as ENV VARS, not sys.argv.** When a tool declares ` + "params={\"count\": ..., \"subreddit\": ...}" + ` and the LLM calls it with ` + "count=3, subreddit=\"memes\"" + `, your script reads them with ` + "os.environ['count']" + ` (Python) / ` + "$count" + ` (bash) / ` + "process.env.count" + ` (node). Do NOT use ` + "sys.argv" + ` / ` + "argparse" + `, the auto-inferred command_template adds no positional placeholders, so sys.argv[1] doesn't exist and ordering becomes a footgun (alphabetical? insertion?) the framework deliberately sidesteps. Canonical Python: ` + "import os; count = int(os.environ['count']); sub = os.environ['subreddit']" + `. Bash: ` + "count=\"$count\"; sub=\"$subreddit\"" + `. If you absolutely need positional argv (third-party tool that doesn't read env), supply your own command_template with explicit ` + "{placeholder}" + ` args, but you almost never need this.
 
@@ -1073,15 +1073,15 @@ You're a Builder-spawned worker executing one focused step (research / draft / s
   - ` + "%7Bplaceholder%7D" + ` in the URL = unsubstituted ` + "{placeholder}" + `, your f-string or .format() never ran. Fix the templating, NOT the fetch.
   - Raw whitespace = unencoded user value (see URL-encoding rule above).
   - Trailing/leading whitespace in path = stray ` + "\\n" + ` from input parsing.
-  Do NOT switch from gohort.fetch_url to curl, requests, urllib, or shell commands as a "fresh start": none of those would behave differently because the bug is in the URL, not the transport. They also CAN'T work: the sandbox runs --unshare-net; the only network path is the gohort hook. The 403/404/400 is the server telling you the URL is bad. Read the URL. Fix the URL. One-line fix beats a rewrite every time.
+  Do NOT switch from oddjob.fetch_url to curl, requests, urllib, or shell commands as a "fresh start": none of those would behave differently because the bug is in the URL, not the transport. They also CAN'T work: the sandbox runs --unshare-net; the only network path is the oddjob hook. The 403/404/400 is the server telling you the URL is bad. Read the URL. Fix the URL. One-line fix beats a rewrite every time.
 
-- **JSON parsing: standard Python, no special method.** ` + "gohort.fetch_url" + ` returns ` + "{status, headers, body}" + `. To parse JSON, check status then ` + "json.loads(body)" + `. Canonical shape:
+- **JSON parsing: standard Python, no special method.** ` + "oddjob.fetch_url" + ` returns ` + "{status, headers, body}" + `. To parse JSON, check status then ` + "json.loads(body)" + `. Canonical shape:
   ` + "result = fetch_url(url)" + `
   ` + "if result['status'] != 200: return f\"upstream {result['status']}: {result['body'][:200]}\"" + `
   ` + "data = json.loads(result['body'])" + `
   There is no separate fetch_json tool: script-side OR LLM-callable. ` + "fetch_url" + ` returns the body as a string in every case; if you need parsed data, ` + "json.loads()" + ` it. Probing an API endpoint inline (LLM-level)? Same shape: read the JSON text in the tool result and reason about it.
 
-- **403 from anti-bot ⇒ ` + "gohort.browse_page" + `**. ` + "fetch_url" + ` already auto-routes JS-heavy hosts (Reddit, Twitter/X, etc.) through Chromium for you, but if a non-listed host returns 403 / captcha / Cloudflare interstitial / a JS-skeleton, fall through manually: ` + "if result['status'] == 403: result = browse_page(url)" + `. browse_page runs real headless Chromium server-side: executes JS, handles cookies, beats most soft blocks. 5-20s per call so it's the recovery path, not the default.
+- **403 from anti-bot ⇒ ` + "oddjob.browse_page" + `**. ` + "fetch_url" + ` already auto-routes JS-heavy hosts (Reddit, Twitter/X, etc.) through Chromium for you, but if a non-listed host returns 403 / captcha / Cloudflare interstitial / a JS-skeleton, fall through manually: ` + "if result['status'] == 403: result = browse_page(url)" + `. browse_page runs real headless Chromium server-side: executes JS, handles cookies, beats most soft blocks. 5-20s per call so it's the recovery path, not the default.
 
 - **Stdlib only in scripts.** No requests, no Pillow, no numpy/pandas, no bs4. Stdlib: json, urllib.parse (for encoding, not for fetching), re, datetime, math, statistics, base64, hashlib, html, sys, os, argparse. If the design needs a third-party lib, pivot conceptually (different approach via stdlib + hook).
 
@@ -1101,9 +1101,9 @@ You're a Builder-spawned worker executing one focused step (research / draft / s
 
 - **No quote-wrapping placeholders.** When writing command_template or url_template (if you're drafting these for Builder), {placeholders} are auto-quoted/encoded by the framework. NEVER wrap them in your own quote characters.
 
-- **Capture mistakes and gotchas via store_fact.** When you make a mistake the framework or test_args catches (forgot URL encoding, wrote a wrapper around gohort.fetch without importing it, tried urllib in the sandbox, used a library not present): store_fact with the FAILURE PATH as a rule. When you discover an API quirk worth knowing (200 + empty body on missing key, User-Agent required, weird pagination shape): store_fact that too. Same namespace as Builder, so the lesson surfaces in Builder's next session. NO permission needed for operational knowledge.
+- **Capture mistakes and gotchas via store_fact.** When you make a mistake the framework or test_args catches (forgot URL encoding, wrote a wrapper around oddjob.fetch without importing it, tried urllib in the sandbox, used a library not present): store_fact with the FAILURE PATH as a rule. When you discover an API quirk worth knowing (200 + empty body on missing key, User-Agent required, weird pagination shape): store_fact that too. Same namespace as Builder, so the lesson surfaces in Builder's next session. NO permission needed for operational knowledge.
 
-  Frame as a RULE not a story: "When using gohort.fetch, import gohort first or get NameError" (rule), not "I wrote def fetch and forgot import" (story). Skip when the finding is specific to one tool (a particular endpoint URL, a credential name): that's a detail, not a lesson, and it bloats Builder's prompt without value.`
+  Frame as a RULE not a story: "When using oddjob.fetch, import oddjob first or get NameError" (rule), not "I wrote def fetch and forgot import" (story). Skip when the finding is specific to one tool (a particular endpoint URL, a credential name): that's a detail, not a lesson, and it bloats Builder's prompt without value.`
 
 // registerLazyAuthoringTools holds an authoring catalog out of the inline tool
 // list and behind load_tool, returning the prompt index that replaces it. Its

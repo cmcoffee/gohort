@@ -1,7 +1,7 @@
 package servitor
 
 import (
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The investigation plan, in servitor's words.

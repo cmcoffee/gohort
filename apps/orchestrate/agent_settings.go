@@ -23,8 +23,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/prompts"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // The settings that can carry a fleet default. Named, not open: a key nobody

@@ -48,8 +48,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/revisions"
-	"github.com/cmcoffee/gohort/core/toolrules"
+	"github.com/cmcoffee/oddjob/core/revisions"
+	"github.com/cmcoffee/oddjob/core/toolrules"
 )
 
 // MachineDefsTable stores per-user machine definitions.

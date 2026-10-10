@@ -7,7 +7,7 @@ package admin
 // failure that actually took the lead away: Gemini 3 answered the first round
 // of every turn and refused every follow-up, because the client dropped the
 // signature it must send back with a tool call. That only shows on the SECOND
-// call of a tool round, and gohort's lead and worker take turns in one
+// call of a tool round, and oddjob's lead and worker take turns in one
 // conversation, so each model also has to accept a call the other one made.
 // Every provider has its own rules for that (Gemini's signatures, Anthropic's
 // ID pattern, OpenAI's ID length), and a provider changing them breaks the
@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const (

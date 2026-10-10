@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/oddjob/core/textutil"
 	"github.com/cmcoffee/snugforge/apiclient"
 )
 
@@ -246,7 +246,7 @@ type Tool struct {
 
 	// FetchesExternal marks a tool with no network capability of its own
 	// whose output still carries content from outside: a script that fetches
-	// through gohort's hooks (fetch, fetch_via, browse_page). The untrusted-
+	// through oddjob's hooks (fetch, fetch_via, browse_page). The untrusted-
 	// content fence reads it as it reads CapNetwork; nothing else does, so
 	// the tool's reach and where it may run are unchanged. Not serialized.
 	FetchesExternal bool `json:"-"`

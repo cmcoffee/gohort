@@ -31,7 +31,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // stewardActions are the four an agent needs to KEEP a collection, and no more.

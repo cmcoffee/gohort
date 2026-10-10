@@ -1,7 +1,7 @@
 package admin
 
 // Resource sharing — the admin surface for lending this instance's
-// infrastructure to another gohort instance.
+// infrastructure to another oddjob instance.
 //
 // A peer key is minted here, granted a capability allowlist, and pasted into
 // the OTHER instance's config. It is not a user account and cannot become one
@@ -15,8 +15,8 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // peerKeyRow is one row of the keys table. Separate from core's PeerKey so the
@@ -669,7 +669,7 @@ func peerSharingSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title: "Resource Sharing",
-			Subtitle: "Let another gohort instance use this one's infrastructure. Mint a key, grant it " +
+			Subtitle: "Let another oddjob instance use this one's infrastructure. Mint a key, grant it " +
 				"only the capabilities you mean to lend, and paste it into the OTHER instance's " +
 				"configuration. A peer key is not an account: it cannot sign in, read conversations, " +
 				"or reach anything outside the capabilities checked here.",
@@ -709,7 +709,7 @@ func peerSharingSections() []ui.Section {
 							// these. Somebody could mint a peer key trying to connect
 							// a laptop and find nothing that accepts it.
 							Placeholder: "app-box",
-							Help:        "Which gohort instance you are lending to: how you'll recognize it later. Shown only to you."},
+							Help:        "Which oddjob instance you are lending to: how you'll recognize it later. Shown only to you."},
 						{Field: "caps", Label: "Capabilities", Type: "checklist",
 							Options: peerCapOptions(),
 							Help:    "The key can do these and nothing else.",
@@ -869,7 +869,7 @@ this instance cannot work that out for you, since behind a proxy or a tunnel the
 is usually not it.</p>
 <p style="margin:0 0 .5rem">Once connected, the peer appears as a provider option in the matching setting
 an embeddings grant shows up in that instance's <em>Embeddings</em> provider dropdown. To check a key by hand:</p>
-<pre style="margin:0 0 .75rem;padding:.6rem .8rem;overflow-x:auto"><code>curl -H "X-Gohort-Peer-Key: &lt;key&gt;" https://THIS-HOST/api/peer/manifest</code></pre>
+<pre style="margin:0 0 .75rem;padding:.6rem .8rem;overflow-x:auto"><code>curl -H "X-Oddjob-Peer-Key: &lt;key&gt;" https://THIS-HOST/api/peer/manifest</code></pre>
 <p style="margin:0;opacity:.75">The manifest names every capability, whether this build serves it, and whether
 that key was granted it, so a refusal tells you which of the two it is.</p>
 `

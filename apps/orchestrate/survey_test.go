@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/oddjob/core/appagents"
 )
 
 // survey is Builder's orient-first tool: zero-arg, read-only, named "survey".

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/temptool"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/temptool"
 )
 
 // resolveWorkerTools builds the agent's effective tool surface for
@@ -217,7 +217,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	//             (raw call_<credential> for API probing); authoring
 	//             tools stay with the orchestrator.
 	// Owner-only, same guarantee as the Fleet/operator block below: the
-	// authoring toolset mutates the OWNER's gohort (creates agents/tools/apps,
+	// authoring toolset mutates the OWNER's oddjob (creates agents/tools/apps,
 	// drafts credentials) and reaches owner-scoped stores, so it attaches ONLY
 	// when the runtime user IS the agent's owner. Without this an EXPOSED Author
 	// agent would hand create_agent / tool_def / draft_*_credential to a public
@@ -405,8 +405,8 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// at turn start. A skill's tools are surfaced by the per-round
 	// DynamicTools feed (dynamicNewTempTools → AppendSkillGrantedTools) the
 	// round AFTER activate_skill fires, so they appear this same turn.)
-	// Local tools from the user's gohort-desktop surface (from_client_*).
-	// Exposed ONLY when this request came from the gohort-desktop viewer
+	// Local tools from the user's oddjob-desktop surface (from_client_*).
+	// Exposed ONLY when this request came from the oddjob-desktop viewer
 	// itself (its proxy stamps the bridge key — see t.fromDesktopClient). A
 	// remote browser / phone logged into the same account never sees them, so
 	// the local machine's filesystem / screenshot / contacts can't be reached

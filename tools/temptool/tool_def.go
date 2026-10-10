@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // jobDesc documents the job spec for an api tool whose API answers with a job
@@ -101,8 +101,8 @@ func BuildToolDef() *GroupedTool {
 			"test_args":         {Type: "object", Description: "(optional) Sample {param: value} to run the saved tool with once, as action=\"test\" would; the result is added to this reply. On a toolbox, include action: the endpoint to run."},
 			"cases":             {Type: "array", Items: &ToolParam{Type: "object"}, Description: "(optional) Test cases to run the saved tool with, as action=\"test\" takes them: [{action?: \"<toolbox action>\", args: {param: value}}]. The result is added to this reply."},
 			"timeout_sec":       {Type: "integer", Description: "(api/toolbox/shell, optional) Seconds, up to 300, for a tool slower than the default cap: one request of an api/toolbox tool, or the whole run of a shell tool. A script's own fetch_via/fetch_url also takes timeout= for the call itself."},
-			"raw_network":       {Type: "boolean", Description: "(shell, advanced) Allow direct outbound network from the script instead of the gohort fetch shims. See action=\"help\" before using."},
-			"confirm_in_chat":   {Type: "boolean", Description: "Stop and ask the person watching before every call to this tool. Use for anything that changes something outside gohort and is worth a look before it happens: a post, a delete, a payment. In chat only: on a run with nobody watching the call is refused instead, since there is no one to ask."},
+			"raw_network":       {Type: "boolean", Description: "(shell, advanced) Allow direct outbound network from the script instead of the oddjob fetch shims. See action=\"help\" before using."},
+			"confirm_in_chat":   {Type: "boolean", Description: "Stop and ask the person watching before every call to this tool. Use for anything that changes something outside oddjob and is worth a look before it happens: a post, a delete, a payment. In chat only: on a run with nobody watching the call is refused instead, since there is no one to ask."},
 			// Pipeline-mode params. Either pipeline_prompt OR pipeline_steps is required.
 			"pipeline_prompt": {Type: "string", Description: "(pipeline, ADAPTIVE) System prompt for a sub-agent that picks its own steps. Either this or pipeline_steps. See action=\"help\"."},
 			"pipeline_steps": {Type: "array", Description: "(pipeline mode, DETERMINISTIC variant) Ordered list of step objects {tool, args, name?}, executed in sequence with no inner LLM. Args undergo template substitution: {param_name} → caller arg; $N → output of step N (1-indexed); $N.field.path → JSON field path. Mutually exclusive with pipeline_prompt.",
@@ -196,10 +196,10 @@ func BuildToolDef() *GroupedTool {
 	})
 
 	gt.AddAction("pack", &GroupedToolAction{
-		Description: "Write a saved tool as one file in your workspace (<name>.gohorttool: the whole tool, script, helpers and notes) to hand over. Anyone imports it at Extensions, Tools, Import.",
+		Description: "Write a saved tool as one file in your workspace (<name>.oddjobtool: the whole tool, script, helpers and notes) to hand over. Anyone imports it at Extensions, Tools, Import.",
 		Params: map[string]ToolParam{
 			"name": folderParams["name"],
-			"file": {Type: "string", Description: "(optional) Where to write it; defaults to <name>.gohorttool."},
+			"file": {Type: "string", Description: "(optional) Where to write it; defaults to <name>.oddjobtool."},
 		},
 		Handler: toolPack,
 	})

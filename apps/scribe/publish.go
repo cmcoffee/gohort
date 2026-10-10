@@ -16,11 +16,11 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/docs"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/docs"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
-	"github.com/cmcoffee/gohort/apps/publish"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
+	"github.com/cmcoffee/oddjob/apps/publish"
 )
 
 // publishDoc renders a guide as the document a destination receives: the same

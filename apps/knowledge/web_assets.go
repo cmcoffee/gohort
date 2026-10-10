@@ -109,8 +109,8 @@ const documentsListAssets = `<style>
   // loaded in the page head) against the person's own account endpoints.
   var importBtn = $('#docs-import');
   if (importBtn) importBtn.addEventListener('click', function() {
-    if (!window.gohortArtifacts) return;
-    window.gohortArtifacts.importFlow({
+    if (!window.oddjobArtifacts) return;
+    window.oddjobArtifacts.importFlow({
       previewURL: '/account/api/artifacts/preview',
       importURL: '/account/api/artifacts/import',
       subtitle: 'A collection lands as your own, and its documents are indexed again in the background, so search reaches them a little after the import finishes. A name you already have is skipped.',
@@ -120,7 +120,7 @@ const documentsListAssets = `<style>
 
   newBtn.addEventListener('click', function() {
     // Div-overlay modal instead of a native <dialog>/showModal(): WKWebView
-    // (gohort-desktop) renders dynamically-built <dialog> content
+    // (oddjob-desktop) renders dynamically-built <dialog> content
     // unreliably (the body doesn't expand), which is why the framework's
     // own modals are div overlays too. overlay = full-screen scrim; dlg =
     // the card.
@@ -1045,7 +1045,7 @@ const documentsDetailAssets = `<style>
 
   $('#docs-export').addEventListener('click', function() {
     // Navigates a hidden anchor at the export endpoint; the server sets
-    // Content-Disposition so the browser downloads a gohort.bundle/v1.
+    // Content-Disposition so the browser downloads a oddjob.bundle/v1.
     var a = document.createElement('a');
     a.href = api('/api/collections/' + encodeURIComponent(cid) + '/export');
     a.download = '';

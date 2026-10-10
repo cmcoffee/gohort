@@ -32,7 +32,7 @@ import (
 
 // ConnectorPackBundle identifies the pack wire format. Bumped only on a
 // breaking change to the envelope; importers should accept older minor forms.
-const ConnectorPackBundle = "gohort.connectors/v1"
+const ConnectorPackBundle = "oddjob.connectors/v1"
 
 // PortableConnector is the identity-free, secret-free recipe shape: exactly the
 // fields that describe WHAT an integration is, none of the fields that describe

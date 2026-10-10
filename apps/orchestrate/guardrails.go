@@ -18,8 +18,8 @@ package orchestrate
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/prompts"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // Guardrail hook points — WHERE the warden runs. Owner-configurable per agent

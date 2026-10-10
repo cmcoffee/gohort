@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
 )
 
 // registerToolsRoutes wires the tools API under the admin sub-mux.

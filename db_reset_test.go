@@ -13,14 +13,14 @@ import (
 
 var (
 	fakeMAC = []byte{0x02, 0x42, 0xac, 0x11, 0x00, 0x02}
-	fakeID  = func(string) ([]byte, error) { return []byte("machine-id-for-gohort"), nil }
+	fakeID  = func(string) ([]byte, error) { return []byte("machine-id-for-oddjob"), nil }
 	noID    = func(string) ([]byte, error) { return nil, errors.New("no machine id") }
 )
 
 // iniWith is an ini file holding body, and a store reading it.
 func iniWith(t *testing.T, body string) (*cfg.Store, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "gohort.ini")
+	path := filepath.Join(t.TempDir(), "oddjob.ini")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func iniWith(t *testing.T, body string) (*cfg.Store, string) {
 func TestMachineLockUsesTheMachineID(t *testing.T) {
 	store, path := iniWith(t, "[web]\naddr = :8181\n[database]\nlock = machine\n")
 	plan, note := planPadlocks(store, path, fakeID, fakeMAC)
-	if plan.mode != "machine" || string(plan.target) != "machine-id-for-gohort" || note != "" {
+	if plan.mode != "machine" || string(plan.target) != "machine-id-for-oddjob" || note != "" {
 		t.Fatalf("plan %+v, note %q", plan, note)
 	}
 	if len(plan.fallbacks) != 2 || string(plan.fallbacks[1]) != string(fakeMAC) {
@@ -78,9 +78,9 @@ func TestNoMachineIDFallsBackSafely(t *testing.T) {
 		t.Fatalf("plan %+v note %q", plan, note)
 	}
 	unwritable := &cfg.Store{}
-	unwritable.File(filepath.Join(t.TempDir(), "missing-dir", "gohort.ini"))
+	unwritable.File(filepath.Join(t.TempDir(), "missing-dir", "oddjob.ini"))
 	unwritable.Set("database", "lock", "machine")
-	plan, note = planPadlocks(unwritable, filepath.Join(t.TempDir(), "missing-dir", "gohort.ini"), noID, fakeMAC)
+	plan, note = planPadlocks(unwritable, filepath.Join(t.TempDir(), "missing-dir", "oddjob.ini"), noID, fakeMAC)
 	if plan.mode != "network address" || string(plan.target) != string(fakeMAC) || !strings.Contains(note, "Could not save") {
 		t.Fatalf("unwritable ini: plan %+v note %q", plan, note)
 	}
@@ -91,7 +91,7 @@ func TestNoMachineIDFallsBackSafely(t *testing.T) {
 // opens with the machine ID alone; switching to portable moves it again.
 func TestAnExistingDatabaseMovesToTheMachineID(t *testing.T) {
 	dir := t.TempDir()
-	file := filepath.Join(dir, "gohort.db")
+	file := filepath.Join(dir, "oddjob.db")
 	st, err := kvlite.Open(file, fakeMAC...)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestAnExistingDatabaseMovesToTheMachineID(t *testing.T) {
 	if _, err := kvlite.Open(file, fakeMAC...); err != kvlite.ErrBadPadlock {
 		t.Fatalf("the MAC still opens it: %v", err)
 	}
-	if st, err := kvlite.Open(file, []byte("machine-id-for-gohort")...); err != nil {
+	if st, err := kvlite.Open(file, []byte("machine-id-for-oddjob")...); err != nil {
 		t.Fatalf("the machine ID does not open it: %v", err)
 	} else {
 		st.Close()
@@ -145,7 +145,7 @@ func TestAnExistingDatabaseMovesToTheMachineID(t *testing.T) {
 // A database no padlock this machine has opens gets its secrets cleared and
 // opens, keeping its plain values, under the target padlock.
 func TestNoPadlockOpensItResets(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "gohort.db")
+	file := filepath.Join(t.TempDir(), "oddjob.db")
 	st, _ := kvlite.Open(file, []byte("somewhere-else")...)
 	st.CryptSet("secrets", "api_key", "lost")
 	st.Set("plain", "name", "kept")

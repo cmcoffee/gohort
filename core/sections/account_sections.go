@@ -3,7 +3,7 @@ package sections
 import (
 	"net/http"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // AccountSectionEntry is a personal-preferences surface an app contributes to

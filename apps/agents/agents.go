@@ -22,10 +22,10 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
 )
 
 func init() { RegisterApp(new(AgentsApp)) }
@@ -46,7 +46,7 @@ func (T AgentsApp) Desc() string {
 
 func (T *AgentsApp) Init() error { return T.Flags.Parse() }
 func (T *AgentsApp) Main() error {
-	Log("Agents is a dashboard-only app. Start with:\n  gohort serve :8080")
+	Log("Agents is a dashboard-only app. Start with:\n  oddjob serve :8080")
 	return nil
 }
 
@@ -261,7 +261,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 			intakeJSON = string(b)
 		}
 	}
-	// window.GOHORT_AGENT_ID seeds the per-(user, agent) scope so
+	// window.ODDJOB_AGENT_ID seeds the per-(user, agent) scope so
 	// the toggle endpoints read/write per-agent overrides instead of
 	// the global user-level fallback. Fixed per-page on the public
 	// agent app (one slug → one agent); no need for a dropdown-change
@@ -276,7 +276,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	// is on, else the visitor's own namespace — so the agent shows up already
 	// aware without anyone being able to open/read/manage the thread itself.
 	intakeHead := "<script>window.AGENT_INTAKE_FORM = " + intakeJSON + ";" +
-		"window.GOHORT_AGENT_ID = " + string(agentIDJSON) + ";</script>" +
+		"window.ODDJOB_AGENT_ID = " + string(agentIDJSON) + ";</script>" +
 		intakeFormAssets
 	// Private-mode toggle only renders when the agent's admin opted
 	// in via AllowPrivateMode AND ForcePrivate isn't on. ForcePrivate

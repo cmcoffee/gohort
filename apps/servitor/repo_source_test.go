@@ -1,6 +1,6 @@
 package servitor
 
-// A repo appliance is cloned by git on the gohort server itself, from a URL
+// A repo appliance is cloned by git on the oddjob server itself, from a URL
 // any user typed. Only plain remote sources may reach that command line.
 
 import "testing"
@@ -11,7 +11,7 @@ func TestRepoSourceRefusesWhatGitWouldRunOrReadLocally(t *testing.T) {
 		{"-oProxyCommand=x", ""},
 		{"ext::sh -c touch% /tmp/x", ""},
 		{"file:///etc", ""},
-		{"/var/lib/gohort/repo", ""},
+		{"/var/lib/oddjob/repo", ""},
 		{"../other", ""},
 		{"git://host-a/repo.git", ""},
 		{"http://host-a/repo.git", ""},

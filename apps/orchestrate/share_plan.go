@@ -19,8 +19,8 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/shareledger"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/shareledger"
 )
 
 // The answers a decision can carry. Values rather than booleans because a

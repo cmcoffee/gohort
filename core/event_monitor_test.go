@@ -301,7 +301,7 @@ func TestWatchPollFailed(t *testing.T) {
 		{"tool error", "", errors.New("boom"), true},
 		{"nonzero exit", "partial\n[exit: exit status 1]", nil, true},
 		{"timeout", "[TIMED OUT after 1m30s — command killed.]", nil, true},
-		{"python traceback", "Traceback (most recent call last):\n  File x\ngohort.HookError: fetch refused", nil, true},
+		{"python traceback", "Traceback (most recent call last):\n  File x\noddjob.HookError: fetch refused", nil, true},
 	}
 	for _, c := range cases {
 		if got, _ := watchPollFailed(c.body, c.err); got != c.want {
@@ -314,7 +314,7 @@ func TestWatchPollFailed(t *testing.T) {
 // broken + paused (no delivery), and a success before K resets the streak.
 func TestWatchFailureCircuitBreaker(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
-	const traceback = "Traceback (most recent call last):\ngohort.HookError: binding revoked\n[exit: exit status 1]"
+	const traceback = "Traceback (most recent call last):\noddjob.HookError: binding revoked\n[exit: exit status 1]"
 
 	result := traceback
 	RegisterWatchToolInvoker(func(owner, agentID, toolName string, args map[string]any) (string, error) {
@@ -352,15 +352,15 @@ func TestWatchFailureCircuitBreaker(t *testing.T) {
 }
 
 const watchCommentsA = `HTTP 200 OK
-{"count":1,"has_more":false,"comments":[{"id":"4272e6b5","author":{"name":"gohort_agent","karma":709,"lastActive":"2026-09-05T05:34:54.685Z","createdAt":"2026-07-15T16:49:27.914Z"},"content":"first","created_at":"2026-09-02T10:00:00Z","parent_id":null}]}`
+{"count":1,"has_more":false,"comments":[{"id":"4272e6b5","author":{"name":"oddjob_agent","karma":709,"lastActive":"2026-09-05T05:34:54.685Z","createdAt":"2026-07-15T16:49:27.914Z"},"content":"first","created_at":"2026-09-02T10:00:00Z","parent_id":null}]}`
 
 // The production case: the only difference is the author's lastActive.
 const watchCommentsAgain = `HTTP 200 OK
-{"count":1,"has_more":false,"comments":[{"id":"4272e6b5","author":{"name":"gohort_agent","karma":709,"lastActive":"2026-09-05T06:01:12.001Z","createdAt":"2026-07-15T16:49:27.914Z"},"content":"first","created_at":"2026-09-02T10:00:00Z","parent_id":null}]}`
+{"count":1,"has_more":false,"comments":[{"id":"4272e6b5","author":{"name":"oddjob_agent","karma":709,"lastActive":"2026-09-05T06:01:12.001Z","createdAt":"2026-07-15T16:49:27.914Z"},"content":"first","created_at":"2026-09-02T10:00:00Z","parent_id":null}]}`
 
 // A real change: a second comment.
 const watchCommentsB = `HTTP 200 OK
-{"count":2,"has_more":false,"comments":[{"id":"4272e6b5","author":{"name":"gohort_agent","karma":709,"lastActive":"2026-09-05T06:01:12.001Z","createdAt":"2026-07-15T16:49:27.914Z"},"content":"first","created_at":"2026-09-02T10:00:00Z","parent_id":null},{"id":"9f9f9f9f","author":{"name":"ClawdClawderberg","karma":12,"lastActive":"2026-09-05T06:00:00Z"},"content":"finally a reply","created_at":"2026-09-05T05:59:00Z","parent_id":null}]}`
+{"count":2,"has_more":false,"comments":[{"id":"4272e6b5","author":{"name":"oddjob_agent","karma":709,"lastActive":"2026-09-05T06:01:12.001Z","createdAt":"2026-07-15T16:49:27.914Z"},"content":"first","created_at":"2026-09-02T10:00:00Z","parent_id":null},{"id":"9f9f9f9f","author":{"name":"ClawdClawderberg","karma":12,"lastActive":"2026-09-05T06:00:00Z"},"content":"finally a reply","created_at":"2026-09-05T05:59:00Z","parent_id":null}]}`
 
 // A presence timestamp changing is not a change. The watch used to fire on
 // exactly this every cycle and wake the agent for nothing.
@@ -417,7 +417,7 @@ func TestWatchComparableStaysJSONWithStatus(t *testing.T) {
 		t.Fatalf("comparable body must still parse as JSON: %v\n%s", err, body)
 	}
 	reordered := `HTTP 200 OK
-{"has_more":false,"comments":[{"parent_id":null,"content":"first","created_at":"2026-09-02T10:00:00Z","id":"4272e6b5","author":{"createdAt":"2026-07-15T16:49:27.914Z","karma":709,"name":"gohort_agent"}}],"count":1}`
+{"has_more":false,"comments":[{"parent_id":null,"content":"first","created_at":"2026-09-02T10:00:00Z","id":"4272e6b5","author":{"createdAt":"2026-07-15T16:49:27.914Z","karma":709,"name":"oddjob_agent"}}],"count":1}`
 	if watchComparable(reordered) != c {
 		t.Error("key order must not matter")
 	}

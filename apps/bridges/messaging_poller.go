@@ -28,7 +28,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const pollCursorTable = "bridges_poll_cursor" // connector name → pollCursor

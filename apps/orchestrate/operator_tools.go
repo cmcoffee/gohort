@@ -27,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // operatorAttachMarkerRe matches the phantom [ATTACH: file] delivery marker an
@@ -1527,7 +1527,7 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 				if kind == EventKindWebhook {
 					m.Token = NewEventToken()
 					SaveEventMonitor(RootDB, m)
-					return fmt.Sprintf("Webhook monitor %q created. Have the external system POST JSON {\"summary\":\"...\"} to:\n  <your gohort base URL>/orchestrate/api/operator/event/%s\nEach POST wakes me in this thread.%s", name, m.Token, fireLimitSentence(m)), nil
+					return fmt.Sprintf("Webhook monitor %q created. Have the external system POST JSON {\"summary\":\"...\"} to:\n  <your oddjob base URL>/orchestrate/api/operator/event/%s\nEach POST wakes me in this thread.%s", name, m.Token, fireLimitSentence(m)), nil
 				}
 				if kind == EventKindHTTP {
 					m.URL = strings.TrimSpace(oArgStr(args, "url"))
@@ -2330,7 +2330,7 @@ func notifyOwnerToolDef(sess *ToolSession, owner, agentID, controllerAgentID str
 			//
 			// WITHOUT the agent, because this path is the agent-aware send
 			// and the bridge already tags it "[<name>] " on the wire. Both
-			// produced "[Wren] [Wren@Gohort] ...". The deployment name is
+			// produced "[Wren] [Wren@Oddjob] ...". The deployment name is
 			// the part the tag does not carry, so that is the part this
 			// adds; an owner who has turned the bridge tag off gets the
 			// deployment and not the agent, which is the setting they chose.

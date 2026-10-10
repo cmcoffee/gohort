@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
 )
 
 // noToolsSentinel is the reserved AllowedTools[0] marker meaning
@@ -279,7 +279,7 @@ func selfHealAllowedTools(db Database, a AgentRecord) AgentRecord {
 }
 
 // isResolvableToolName reports whether the given name maps to either
-// a registered ChatTool, a connected gohort-desktop local tool, or
+// a registered ChatTool, a connected oddjob-desktop local tool, or
 // one of the agent owner's persistent temp tools. Used to detect
 // orphan entries left in AllowedTools after a tool gets unregistered
 // or a temp tool gets deleted.

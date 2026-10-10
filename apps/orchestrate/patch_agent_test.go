@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // PATCH exists so ONE record can be edited from several forms. A FormPanel

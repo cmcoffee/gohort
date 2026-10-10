@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/sandbox"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/sandbox"
 )
 
 func accessRowsFor(t *testing.T, app *OrchestrateApp, id, view string) []map[string]any {

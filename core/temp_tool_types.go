@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/apijob"
+	"github.com/cmcoffee/oddjob/core/apijob"
 )
 
 // TempToolMode determines how a temp tool's body is interpreted at
@@ -247,7 +247,7 @@ type TempTool struct {
 	// "the call worked, the calendar is empty," which is how a broken read
 	// tool passes verification and ships.
 	//
-	// The sandbox hook has always accepted headers (gohort.fetch_via(...,
+	// The sandbox hook has always accepted headers (oddjob.fetch_via(...,
 	// headers={"Depth": "1"})), so a shell tool could do this and an api
 	// tool could not — the asymmetry this field closes.
 	//
@@ -360,9 +360,9 @@ type TempTool struct {
 	// HookCapabilities lists the SandboxHook methods this tool's
 	// script is allowed to invoke. When non-empty, the dispatcher
 	// starts a per-dispatch UDS hook server inside the workspace,
-	// exposes its path via the GOHORT_HOOK_PATH env var, and the
-	// shipped `gohort.py` helper module lets the script call back
-	// into gohort for those narrow operations (fetch, log, secret,
+	// exposes its path via the ODDJOB_HOOK_PATH env var, and the
+	// shipped `oddjob.py` helper module lets the script call back
+	// into oddjob for those narrow operations (fetch, log, secret,
 	// fetch_via) WITHOUT opening the sandbox's network namespace.
 	// Empty list means no hook is wired — zero surface area, same
 	// posture as before the hook existed. Recognized methods:
@@ -375,7 +375,7 @@ type TempTool struct {
 	// namespace cut, so a script that does urllib.request /
 	// socket.connect / curl from inside the sandbox fails. Such
 	// tools must declare hook_capabilities=["fetch"] and call
-	// gohort.fetch(...) instead — gohort proxies HTTP on their
+	// oddjob.fetch(...) instead — oddjob proxies HTTP on their
 	// behalf with auditing.
 	//
 	// Reserve RawNetwork=true for the narrow cases where the tool

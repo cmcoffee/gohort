@@ -7,7 +7,7 @@ import (
 
 	"github.com/cmcoffee/snugforge/kvlite"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Sharing an appliance has always meant lending the owner's stored credentials.

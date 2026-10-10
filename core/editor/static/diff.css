@@ -1,7 +1,7 @@
 /* editor-diff — shared line-diff widget used in chat messages that
  * preview an "apply" operation. Designed to sit inline in a chat
  * message bubble: max-height + scroll prevents very large diffs from
- * overtaking the chat pane. Uses the existing gohort color palette. */
+ * overtaking the chat pane. Uses the existing oddjob color palette. */
 
 .editor-diff {
   font-family: ui-monospace, Menlo, Consolas, monospace;

@@ -11,7 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/cmcoffee/gohort/core/sourcehooks"
+	"github.com/cmcoffee/oddjob/core/sourcehooks"
 )
 
 // DESIGN NOTE — no temporal decay in this store. An earlier version decayed
@@ -41,7 +41,7 @@ import (
 // Capped at a handful of Databases, LRU-evicted, since each snapshot holds a
 // full chunk corpus in memory.
 //
-// At gohort scale (thousands of chunks, low write rate, interactive reads)
+// At oddjob scale (thousands of chunks, low write rate, interactive reads)
 // invalidate-on-write + lazy-rebuild is the right trade: the cost of a write
 // is 1 extra db.Keys walk per cached Database on the next read, and reads
 // drop from N×gob-decode to a single slice walk.

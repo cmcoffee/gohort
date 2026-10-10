@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // sessionGuidesTable maps a probe session to the guides it wrote.

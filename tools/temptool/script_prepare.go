@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // inferCommandTemplate produces a sensible default command_template
@@ -207,16 +207,16 @@ type ungrantedCalls struct {
 	suggest string
 }
 
-// findUngrantedCredentialCalls scans script_body for gohort.secret(...)
-// and gohort.fetch_via(...) calls, extracts the credential name from
+// findUngrantedCredentialCalls scans script_body for oddjob.secret(...)
+// and oddjob.fetch_via(...) calls, extracts the credential name from
 // the first string-literal arg, and returns any names that aren't
 // covered by the existing HookCapabilities. Used to produce a
 // directive error at authoring time instead of letting the tool fail
 // at dispatch with a confusing "HookError: secret %q not granted".
 //
 // Best-effort parse — only catches the common shape with a string
-// literal as the first arg (`gohort.secret("openweather")`,
-// `gohort.fetch_via("github", url)`). Dynamic args (variable, f-string,
+// literal as the first arg (`oddjob.secret("openweather")`,
+// `oddjob.fetch_via("github", url)`). Dynamic args (variable, f-string,
 // dict lookup) slip through silently — they'll surface at dispatch
 // where the hook denies the unknown credential.
 //
@@ -257,15 +257,15 @@ func findUngrantedCredentialCalls(script string, granted []string) ungrantedCall
 			name := script[start+1 : start+1+end]
 			needed := capKind + ":" + name
 			if !grantedSet[needed] {
-				missingCalls = append(missingCalls, fmt.Sprintf("gohort.%s(%q)", capKind, name))
+				missingCalls = append(missingCalls, fmt.Sprintf("oddjob.%s(%q)", capKind, name))
 				suggestParts = append(suggestParts, fmt.Sprintf("%q", needed))
 				grantedSet[needed] = true // dedupe across multiple call sites
 			}
 			idx = idx + pos + len(prefix)
 		}
 	}
-	scan("gohort.secret(", "secret")
-	scan("gohort.fetch_via(", "fetch_via")
+	scan("oddjob.secret(", "secret")
+	scan("oddjob.fetch_via(", "fetch_via")
 	if len(missingCalls) == 0 {
 		return ungrantedCalls{}
 	}
@@ -346,21 +346,21 @@ func paramNamesInDefinitionOrder(v any) ([]string, error) {
 }
 
 var (
-	gohortFromImport = regexp.MustCompile(`(?m)^[ \t]*from[ \t]+gohort[ \t]+import[ \t]+(\([^)]*\)|[^\n#]+)`)
-	gohortAttrCall   = regexp.MustCompile(`(?:^|[^\w.])gohort\.([A-Za-z_]\w*)\s*\(`)
+	oddjobFromImport = regexp.MustCompile(`(?m)^[ \t]*from[ \t]+oddjob[ \t]+import[ \t]+(\([^)]*\)|[^\n#]+)`)
+	oddjobAttrCall   = regexp.MustCompile(`(?:^|[^\w.])oddjob\.([A-Za-z_]\w*)\s*\(`)
 	credentialToolRe = regexp.MustCompile(`^(?:fetch_url|call)_(\w+)$`)
 )
 
-// unknownGohortName reports a name a script takes from the gohort module that
+// unknownOddjobName reports a name a script takes from the oddjob module that
 // the module does not export, with what to write instead; "" when every name is
 // real. Observed: a script imported fetch_url_gemini_api, which is the name of
 // the credential's catalog tool, not a function. It passed authoring and died
 // on its first run with an ImportError, and the "fix" that followed dropped the
 // import on the belief that the runtime injects the name. Nothing does.
-func unknownGohortName(script string) string {
+func unknownOddjobName(script string) string {
 	known := SandboxReachableNames()
 	var names []string
-	for _, m := range gohortFromImport.FindAllStringSubmatch(script, -1) {
+	for _, m := range oddjobFromImport.FindAllStringSubmatch(script, -1) {
 		list := strings.Trim(strings.TrimSpace(m[1]), "()")
 		for _, item := range strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == '\n' }) {
 			if f := strings.Fields(item); len(f) > 0 && f[0] != "*" && f[0] != "\\" {
@@ -368,7 +368,7 @@ func unknownGohortName(script string) string {
 			}
 		}
 	}
-	for _, m := range gohortAttrCall.FindAllStringSubmatch(script, -1) {
+	for _, m := range oddjobAttrCall.FindAllStringSubmatch(script, -1) {
 		names = append(names, m[1])
 	}
 	for _, n := range names {
@@ -376,7 +376,7 @@ func unknownGohortName(script string) string {
 			continue
 		}
 		if c := credentialToolRe.FindStringSubmatch(n); c != nil {
-			return fmt.Sprintf("script_body takes %q from the gohort module, but that is the name of a tool an agent calls, not a function a script can import: nothing provides it, and the script fails on its first run. From a script, the simplest route is `from gohort import fetch_url` and `fetch_url(url, method=\"POST\", body=..., headers={...})` on a URL at the credential's own host: the call goes through %q automatically, with no grant to declare. To name the credential explicitly (the only way for a Secured credential), use `from gohort import fetch_via` and `fetch_via(%q, url, ...)` and add \"fetch_via:%s\" to hook_capabilities. Both return {status, status_line, body}, and either way the key is attached server-side and the script never sees it", n, c[1], c[1], c[1])
+			return fmt.Sprintf("script_body takes %q from the oddjob module, but that is the name of a tool an agent calls, not a function a script can import: nothing provides it, and the script fails on its first run. From a script, the simplest route is `from oddjob import fetch_url` and `fetch_url(url, method=\"POST\", body=..., headers={...})` on a URL at the credential's own host: the call goes through %q automatically, with no grant to declare. To name the credential explicitly (the only way for a Secured credential), use `from oddjob import fetch_via` and `fetch_via(%q, url, ...)` and add \"fetch_via:%s\" to hook_capabilities. Both return {status, status_line, body}, and either way the key is attached server-side and the script never sees it", n, c[1], c[1], c[1])
 		}
 		exports := make([]string, 0, len(known))
 		for k := range known {
@@ -385,7 +385,7 @@ func unknownGohortName(script string) string {
 			}
 		}
 		sort.Strings(exports)
-		return fmt.Sprintf("script_body takes %q from the gohort module, which has no such name: it exports only %s. Nothing else is injected into a script", n, strings.Join(exports, ", "))
+		return fmt.Sprintf("script_body takes %q from the oddjob module, which has no such name: it exports only %s. Nothing else is injected into a script", n, strings.Join(exports, ", "))
 	}
 	return ""
 }
@@ -408,7 +408,7 @@ func callsOwnTools(src string) string {
 	if m[1] != "" {
 		what = fmt.Sprintf("your %s tool", m[1])
 	}
-	return fmt.Sprintf("this calls %s through `default_api`, which does not exist inside a tool: default_api is only how your tools are named to you, and a tool's command or script cannot call any of them. Nothing to build here: if an agent needs what one of your tools gives, grant it to that agent with the tool that manages it (an agent posts to a bulletin board once bulletins allow_poster lets it, which gives it post_bulletin; an agent uses a catalog tool once it is in its allowed tools). A script itself has only the gohort module (fetch_url, fetch_via, ...) for reaching outside", what)
+	return fmt.Sprintf("this calls %s through `default_api`, which does not exist inside a tool: default_api is only how your tools are named to you, and a tool's command or script cannot call any of them. Nothing to build here: if an agent needs what one of your tools gives, grant it to that agent with the tool that manages it (an agent posts to a bulletin board once bulletins allow_poster lets it, which gives it post_bulletin; an agent uses a catalog tool once it is in its allowed tools). A script itself has only the oddjob module (fetch_url, fetch_via, ...) for reaching outside", what)
 }
 
 // NormalizeScriptBody undoes a script that arrived escaped a second time: the

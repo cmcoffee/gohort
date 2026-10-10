@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // servitorSource exposes each appliance servitor knows about as a generic
@@ -262,7 +262,7 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 	searchTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "search_" + slug + "_knowledge",
-			Description: fmt.Sprintf("Search the knowledge gohort has ALREADY gathered about %s %q (its recorded facts, structured docs, and linked collections) for material relevant to a query, and return the best matches. Read-only and instant: it does NOT %s. Use this FIRST; only reach for investigate_%s when you need something the gathered knowledge does not already contain.", noun, name, live.searchCaveat, slug),
+			Description: fmt.Sprintf("Search the knowledge oddjob has ALREADY gathered about %s %q (its recorded facts, structured docs, and linked collections) for material relevant to a query, and return the best matches. Read-only and instant: it does NOT %s. Use this FIRST; only reach for investigate_%s when you need something the gathered knowledge does not already contain.", noun, name, live.searchCaveat, slug),
 			Parameters: map[string]ToolParam{
 				"query": {Type: "string", Description: "What you're writing about: a focused topic, e.g. 'network interfaces and firewall zones'."},
 			},
@@ -282,7 +282,7 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 	factsTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "get_" + slug + "_facts",
-			Description: fmt.Sprintf("Return the discrete structured facts gohort has recorded about %q (versions, ports, paths, hostnames, service names) as a key/value list. Read-only and instant; no live access. Use to ground EXACT values in a guide section without re-investigating.", name),
+			Description: fmt.Sprintf("Return the discrete structured facts oddjob has recorded about %q (versions, ports, paths, hostnames, service names) as a key/value list. Read-only and instant; no live access. Use to ground EXACT values in a guide section without re-investigating.", name),
 			Caps:        []Capability{CapRead},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -293,7 +293,7 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 	investigateTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "investigate_" + slug,
-			Description: fmt.Sprintf("Investigate %s %q to answer a specific question, by dispatching gohort's investigator %s. Use this only when the gathered knowledge (search_%s_knowledge / get_%s_facts) does not already hold what you need. Slow (tens of seconds). %s Call it deliberately, then ground what you write strictly in what it returns.", noun, name, live.dispatchPhrase, slug, slug, live.safetyNote),
+			Description: fmt.Sprintf("Investigate %s %q to answer a specific question, by dispatching oddjob's investigator %s. Use this only when the gathered knowledge (search_%s_knowledge / get_%s_facts) does not already hold what you need. Slow (tens of seconds). %s Call it deliberately, then ground what you write strictly in what it returns.", noun, name, live.dispatchPhrase, slug, slug, live.safetyNote),
 			Parameters: map[string]ToolParam{
 				"question": {Type: "string", Description: "The specific thing to find out on the live system, e.g. 'which TLS versions does the nginx config enable?'"},
 			},
@@ -472,6 +472,6 @@ func refTargetWords(a Appliance) (noun string, live refLiveWords) {
 // descriptions differ by.
 type refLiveWords struct {
 	searchCaveat   string // completes "it does NOT …"
-	dispatchPhrase string // completes "dispatching gohort's investigator …"
+	dispatchPhrase string // completes "dispatching oddjob's investigator …"
 	safetyNote     string // a full sentence about what the dispatch may do
 }

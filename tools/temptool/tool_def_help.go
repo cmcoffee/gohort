@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // suppress unused import — json is used by future expansions; keep
@@ -41,7 +41,7 @@ memory for whoever edits it next: read it first, and update it
 before every publish with what you learned (an API quirk it works around, why a param is
 optional, what you tried that failed, the output's shape). Any
 tool takes notes="..." on create and update too. action="pack"
-writes a saved tool as one file (<name>.gohorttool) to hand
+writes a saved tool as one file (<name>.oddjobtool) to hand
 over; action="unpack" turns a bundle somebody sent into a
 folder to read and change, installing nothing.
 
@@ -72,7 +72,7 @@ PYTHON
     it is a network call and tool_def REFUSES scripts that use it;
     see NETWORK.)
   * Need a third-party package? PIVOT: jq/awk for parsing,
-    gohort.fetch_url for HTTP, or api mode usually reaches the
+    oddjob.fetch_url for HTTP, or api mode usually reaches the
     same outcome.
 
 SHELL
@@ -90,8 +90,8 @@ NETWORK
     curl, wget, urllib.request, socket: they ALL FAIL inside a
     shell-mode tool, and tool_def refuses a script_body that uses
     any of them at authoring time.
-  * HTTP from a script goes through the gohort bridge instead:
-    "from gohort import fetch_url" then fetch_url(url): granted
+  * HTTP from a script goes through the oddjob bridge instead:
+    "from oddjob import fetch_url" then fetch_url(url): granted
     by default, no declaration needed. Authenticated or scoped
     endpoints: hook_capabilities=["fetch_via:<credential>"].
   * api mode is usually the better fit for HTTPS work anyway. It
@@ -413,7 +413,7 @@ the tool record:
            script_name="weather.py",
            script_body="""
              import sys
-             from gohort import fetch_url
+             from oddjob import fetch_url
              city = sys.argv[1]; state = sys.argv[2]
              url = f"https://wttr.in/{city},{state}?format=j1"
              print(fetch_url(url)["body"])
@@ -457,14 +457,14 @@ means: urllib.request, socket.connect, curl, wget, ALL FAIL from
 inside the sandbox, and tool_def REFUSES a script_body that uses
 any of them at authoring time.
 
-HTTP goes through the gohort bridge instead. The bare hooks
+HTTP goes through the oddjob bridge instead. The bare hooks
 fetch_url, browse_page, log: are granted BY DEFAULT for any
 shell-mode tool with script_body; no declaration needed:
 
   tool_def(action=create, mode="shell",
            name="get_weather_by_city",
            script_body="""
-             from gohort import fetch_url
+             from oddjob import fetch_url
              import sys, json
              city, state = sys.argv[1], sys.argv[2]
              data = fetch_url(f"https://wttr.in/{city},{state}?format=j1")
@@ -475,7 +475,7 @@ shell-mode tool with script_body; no declaration needed:
            test_args={"city": "Santa Cruz", "state": "CA"})
 
 Why this shape (vs raw network):
-  - Every outbound call is logged in gohort's audit trail
+  - Every outbound call is logged in oddjob's audit trail
   - Secrets stay in the credential store, out of the script's hands
   - Same posture across sessions: no surprises on a fresh workspace
 
@@ -487,7 +487,7 @@ the script never sees the secret):
 
 Then in the script:
 
-  from gohort import fetch_via
+  from oddjob import fetch_via
   data = fetch_via("openweather",
                    "https://api.openweathermap.org/data/2.5/weather?q=Seattle")
   print(data["body"])
@@ -824,8 +824,8 @@ Shape:
 Called as:
 
     github(action="get_user", username="octocat")
-    github(action="get_repo", owner="cmcoffee", repo="gohort")
-    github(action="list_issues", owner="cmcoffee", repo="gohort", state="open")
+    github(action="get_repo", owner="cmcoffee", repo="oddjob")
+    github(action="list_issues", owner="cmcoffee", repo="oddjob", state="open")
 
 Each action is structurally a single api-mode endpoint: same URL
 template substitution, same method/body_template/response_pipe
@@ -1113,14 +1113,14 @@ func pruneRequired(required, params any) any {
 	return kept
 }
 
-// scriptCallsHook reports whether a script body invokes one of the gohort hook
+// scriptCallsHook reports whether a script body invokes one of the oddjob hook
 // helpers. Matches the forms that actually appear — a call, a qualified call,
 // or membership in an import list (where the name may be first, middle, or
 // last, so substring matching on "import <name>" misses two of the three).
 // Scoped to syntactic positions rather than any mention, because this check
 // FAILS a verification and a comment shouldn't be able to do that.
 func scriptCallsHook(body, name string) bool {
-	if strings.Contains(body, name+"(") || strings.Contains(body, "gohort."+name) {
+	if strings.Contains(body, name+"(") || strings.Contains(body, "oddjob."+name) {
 		return true
 	}
 	for _, line := range strings.Split(body, "\n") {

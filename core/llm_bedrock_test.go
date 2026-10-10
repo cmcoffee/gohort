@@ -261,7 +261,7 @@ func TestBedrockProfilePrecedence(t *testing.T) {
 }
 
 // An operator who NAMES a profile must not be silently signed in as whatever
-// ambient credentials happen to be in gohort's environment. This is the bug
+// ambient credentials happen to be in oddjob's environment. This is the bug
 // that produced a 403 naming a role that appeared nowhere in the config.
 func TestExplicitProfileIgnoresAmbientEnvCredentials(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "AKIDAMBIENT")

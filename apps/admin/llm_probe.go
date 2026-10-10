@@ -17,7 +17,7 @@ import (
 //
 // The case it exists for: a worker set to llama.cpp that had been pointed at
 // a vLLM server. Chat worked, so nothing looked wrong, while the thinking
-// budget gohort sent was silently ignored for as long as it ran. The server
+// budget oddjob sent was silently ignored for as long as it ran. The server
 // names itself in /v1/models; asking costs one request.
 
 // serverProbe is what a model server reported. Kind is "" when it could not
@@ -137,7 +137,7 @@ func serverKindLabel(kind string) string {
 	return kind
 }
 
-// localContextDefault is the context gohort assumes for a local provider when
+// localContextDefault is the context oddjob assumes for a local provider when
 // the field is blank (core's ollamaDefaultCtx).
 const localContextDefault = 65536
 
@@ -157,7 +157,7 @@ func (p serverProbe) describe(provider string, contextSize int) string {
 	}
 	b.WriteString(".")
 	if p.Kind != provider {
-		b.WriteString(fmt.Sprintf(" The provider is set to %s, but this endpoint is %s: pick %s, so gohort speaks to it the way it expects.",
+		b.WriteString(fmt.Sprintf(" The provider is set to %s, but this endpoint is %s: pick %s, so oddjob speaks to it the way it expects.",
 			serverKindLabel(provider), serverKindLabel(p.Kind), serverKindLabel(p.Kind)))
 		if p.Kind == "vllm" {
 			b.WriteString(" (vLLM ignores the thinking budget; effort is what controls its thinking.)")
@@ -166,7 +166,7 @@ func (p serverProbe) describe(provider string, contextSize int) string {
 	if p.Context > 0 && p.Kind != "ollama" {
 		switch {
 		case contextSize <= 0 && p.Context != localContextDefault:
-			b.WriteString(fmt.Sprintf(" Context size is blank, so gohort works within %s tokens; the server allows %s.",
+			b.WriteString(fmt.Sprintf(" Context size is blank, so oddjob works within %s tokens; the server allows %s.",
 				commaInt(localContextDefault), commaInt(p.Context)))
 		case contextSize > p.Context:
 			b.WriteString(fmt.Sprintf(" Context size is %s, more than the server's %s: the longest conversations would be refused. Set it to %s.",

@@ -6,40 +6,40 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/appassets"
-	"github.com/cmcoffee/gohort/core/appgroups"
-	"github.com/cmcoffee/gohort/core/bundle"
-	"github.com/cmcoffee/gohort/core/costledger"
-	"github.com/cmcoffee/gohort/core/deps"
-	"github.com/cmcoffee/gohort/core/docs"
-	"github.com/cmcoffee/gohort/core/extrasessions"
-	"github.com/cmcoffee/gohort/core/factcheck"
-	"github.com/cmcoffee/gohort/core/geo"
-	"github.com/cmcoffee/gohort/core/injection"
-	"github.com/cmcoffee/gohort/core/looptune"
-	"github.com/cmcoffee/gohort/core/media"
-	"github.com/cmcoffee/gohort/core/messaging"
-	"github.com/cmcoffee/gohort/core/migrate"
-	"github.com/cmcoffee/gohort/core/netgate"
-	"github.com/cmcoffee/gohort/core/notes"
-	"github.com/cmcoffee/gohort/core/ollama"
-	"github.com/cmcoffee/gohort/core/promotion"
-	"github.com/cmcoffee/gohort/core/prompts"
-	"github.com/cmcoffee/gohort/core/provenance"
-	"github.com/cmcoffee/gohort/core/pushsub"
-	"github.com/cmcoffee/gohort/core/sandbox"
-	"github.com/cmcoffee/gohort/core/sections"
-	"github.com/cmcoffee/gohort/core/sourcehooks"
-	"github.com/cmcoffee/gohort/core/sources"
-	"github.com/cmcoffee/gohort/core/sse"
-	"github.com/cmcoffee/gohort/core/subsession"
-	"github.com/cmcoffee/gohort/core/textutil"
-	"github.com/cmcoffee/gohort/core/tlsconf"
-	"github.com/cmcoffee/gohort/core/toolgroups"
-	"github.com/cmcoffee/gohort/core/toolrules"
+	"github.com/cmcoffee/oddjob/core/appassets"
+	"github.com/cmcoffee/oddjob/core/appgroups"
+	"github.com/cmcoffee/oddjob/core/bundle"
+	"github.com/cmcoffee/oddjob/core/costledger"
+	"github.com/cmcoffee/oddjob/core/deps"
+	"github.com/cmcoffee/oddjob/core/docs"
+	"github.com/cmcoffee/oddjob/core/extrasessions"
+	"github.com/cmcoffee/oddjob/core/factcheck"
+	"github.com/cmcoffee/oddjob/core/geo"
+	"github.com/cmcoffee/oddjob/core/injection"
+	"github.com/cmcoffee/oddjob/core/looptune"
+	"github.com/cmcoffee/oddjob/core/media"
+	"github.com/cmcoffee/oddjob/core/messaging"
+	"github.com/cmcoffee/oddjob/core/migrate"
+	"github.com/cmcoffee/oddjob/core/netgate"
+	"github.com/cmcoffee/oddjob/core/notes"
+	"github.com/cmcoffee/oddjob/core/ollama"
+	"github.com/cmcoffee/oddjob/core/promotion"
+	"github.com/cmcoffee/oddjob/core/prompts"
+	"github.com/cmcoffee/oddjob/core/provenance"
+	"github.com/cmcoffee/oddjob/core/pushsub"
+	"github.com/cmcoffee/oddjob/core/sandbox"
+	"github.com/cmcoffee/oddjob/core/sections"
+	"github.com/cmcoffee/oddjob/core/sourcehooks"
+	"github.com/cmcoffee/oddjob/core/sources"
+	"github.com/cmcoffee/oddjob/core/sse"
+	"github.com/cmcoffee/oddjob/core/subsession"
+	"github.com/cmcoffee/oddjob/core/textutil"
+	"github.com/cmcoffee/oddjob/core/tlsconf"
+	"github.com/cmcoffee/oddjob/core/toolgroups"
+	"github.com/cmcoffee/oddjob/core/toolrules"
 )
 
-// core.go — the seam that assembles the core namespace from gohort's extracted
+// core.go — the seam that assembles the core namespace from oddjob's extracted
 // leaf packages, re-exporting their surface as core symbols. Each leaf (media,
 // textutil, factcheck, …) holds a pure,
 // independently-testable slice of functionality and must NOT import core; this
@@ -228,8 +228,8 @@ type (
 )
 
 const (
-	SandboxGohortLibMountPath = sandbox.GohortLibMountPath
-	SandboxGohortBinMountPath = sandbox.GohortBinMountPath
+	SandboxOddjobLibMountPath = sandbox.OddjobLibMountPath
+	SandboxOddjobBinMountPath = sandbox.OddjobBinMountPath
 )
 
 var (
@@ -285,7 +285,7 @@ func init() {
 
 	sandbox.WorkspacesDir = WorkspacesDir
 	sandbox.BulkStagingDir = BulkStagingDir
-	sandbox.GohortLibDir = EnsureGohortLibDir
+	sandbox.OddjobLibDir = EnsureOddjobLibDir
 	// The broker. Typed adapter rather than a plain assignment: the mechanics
 	// take the session as `any` (they never read it) while NewSandboxHook wants
 	// the real thing, and Go function types are invariant.
@@ -473,7 +473,7 @@ var (
 
 // netgate.LoadAdminAllowedIPsFunc is deliberately NOT re-exported: it is a
 // mutable func var, and a var alias would copy it — the assignment in
-// gohort.go must land on the leaf's own var to be seen by IsAdminAllowed.
+// oddjob.go must land on the leaf's own var to be seen by IsAdminAllowed.
 
 // --- appassets (per-app static files an app can reference) -------------------
 

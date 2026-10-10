@@ -15,7 +15,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxImportBytes bounds a pasted or uploaded recipe or bundle. A bundle can

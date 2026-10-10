@@ -83,7 +83,7 @@ func TestEveryAppFrameCarriesTheHelper(t *testing.T) {
 }
 
 // The helper's dialogs are the page's: a question an app asks is shown by
-// the page the app sits in, as gohort's own modal, not by the browser.
+// the page the app sits in, as oddjob's own modal, not by the browser.
 func TestThePageHelpersDialogsAreThePages(t *testing.T) {
 	for _, want := range []string{
 		`confirm:function(m){return window.uiConfirm(m);}`,

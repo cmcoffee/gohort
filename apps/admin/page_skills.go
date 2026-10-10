@@ -1,7 +1,7 @@
 package admin
 
 import (
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // skillsSections is the skills part of the admin page: Skills, Pipelines, Agent Capabilities — Outward & Spending.

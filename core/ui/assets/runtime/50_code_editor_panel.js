@@ -244,7 +244,7 @@
       // uiPrompt, NOT window.prompt. Wails' WKWebView leaves
       // runJavaScriptTextInputPanel unimplemented, so native prompt() returns
       // null with no dialog ever shown — the button simply did nothing in
-      // gohort-desktop, silently and identically to a cancel. The async
+      // oddjob-desktop, silently and identically to a cancel. The async
       // wrappers exist for exactly this and route to the host's own dialog
       // where one is injected.
       window.uiPrompt('Save the current settings as:', '').then(function(name) {

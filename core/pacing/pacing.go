@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/oddjob/core"
 )
 
 // ToolName is exported because a host has to be able to tell this call apart

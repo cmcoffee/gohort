@@ -3,8 +3,8 @@ package bridges
 import (
 	"net/http"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // handleDashboard renders the Bridges control surface: the panic kill-switch,
@@ -58,7 +58,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			{
 				Title:    "Message bridges",
 				Subtitle: "PUSH sources: a messaging connector delivers inbound into a channel.",
-				Detail:   "iMessage runs as the gohort-desktop daemon; others, Telegram and Slack, are server-side. Toggle one off to pause just that bridge; status shows the last check-in.",
+				Detail:   "iMessage runs as the oddjob-desktop daemon; others, Telegram and Slack, are server-side. Toggle one off to pause just that bridge; status shows the last check-in.",
 				Body: ui.Table{
 					Source: "/bridges/api/bridges",
 					RowKey: "id",
@@ -75,7 +75,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							PostTo:  "/bridges/api/keys/{id}",
 							Confirm: "Revoke this bridge key? Its connector will stop authenticating.", Compact: true},
 					},
-					EmptyText: "No message bridges yet. The gohort-desktop daemon registers itself automatically the first time it connects to /bridges/api/hook.",
+					EmptyText: "No message bridges yet. The oddjob-desktop daemon registers itself automatically the first time it connects to /bridges/api/hook.",
 				},
 			},
 			{
@@ -88,7 +88,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				// storage. (Poll → CHANNEL target and unified creation are
 				// Stages B/C; today a poll bridge wakes its agent's thread.)
 				Title:    "Polling bridges",
-				Subtitle: "POLL sources: gohort calls an API on a schedule and delivers what changed.",
+				Subtitle: "POLL sources: oddjob calls an API on a schedule and delivers what changed.",
 				Detail:   "The call goes through a saved credential, and when the response changes it delivers into the target: a channel, where its agent reacts in that conversation, or an agent's own thread.\n\nAgents create these with the bridge tool; pause or delete one here. Zero LLM cost until something changes.",
 				Body: ui.Table{
 					Source: "/orchestrate/api/console/bridges",

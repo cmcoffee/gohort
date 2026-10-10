@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // wizardPanel digs the FormPanel out of a freshly built wizard page.

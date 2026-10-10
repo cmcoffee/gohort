@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // appAskMaxTokens bounds one reply.
@@ -72,7 +72,7 @@ func appAskUsage(resp *Response) UsageDiff {
 }
 
 // AppAgentRun runs one of an app's agents WITH its tools, for an app script's
-// gohort.run_agent, and returns its reply and what it cost.
+// oddjob.run_agent, and returns its reply and what it cost.
 //
 // ask is one answer from the agent's prompt and no tools: right for a summary,
 // wrong for a game master that should roll its dice with calculate rather than
@@ -140,7 +140,7 @@ func (T *OrchestrateApp) appOwnAgent(owner, slug, agentID, agentKey string) (Age
 }
 
 // AppPipelineRun runs an app's pipeline to the end, for an app script's
-// gohort.run_pipeline, and returns its final output and what it cost. The
+// oddjob.run_pipeline, and returns its final output and what it cost. The
 // app's own (pipelineID, its pipeline_id) unless pipelineKey names one made
 // for it (owning_app = slug). Its agent stages run as AppAgentRun runs an
 // agent: the owner's definitions, the person's run, nothing approved unasked.

@@ -150,7 +150,7 @@ func InternalURL(path string) string {
 
 // --- internal inter-app calls ------------------------------------------------
 //
-// One gohort subsystem sometimes reaches another over HTTP rather than by a
+// One oddjob subsystem sometimes reaches another over HTTP rather than by a
 // direct call: the blogger scheduler drives /blogger/api/auto-blog, research
 // asks blogger for keywords, and so on. Those requests loop back to this same
 // process and have no user behind them, so they need a way past the session
@@ -159,12 +159,12 @@ func InternalURL(path string) string {
 // That way used to be inference: a request whose TCP peer was loopback and
 // which carried no X-Forwarded-For was treated as one of ours. The trouble is
 // that "carries no forwarding header" is a property of the OPERATOR'S REVERSE
-// PROXY, not of gohort. nginx does not add X-Forwarded-For on its own — a plain
+// PROXY, not of oddjob. nginx does not add X-Forwarded-For on its own — a plain
 // `location / { proxy_pass http://127.0.0.1:8181; }`, which is what most people
 // write first, forwards nothing of the sort. Behind one of those, every request
 // in the world arrives on loopback with nothing to disqualify it, and any
 // client that does not look like a browser walks straight past authentication.
-// The safety of the whole deployment rested on a config file gohort does not
+// The safety of the whole deployment rested on a config file oddjob does not
 // own and cannot see.
 //
 // So an internal call now PROVES it is one. The token below is minted per
@@ -173,7 +173,7 @@ func InternalURL(path string) string {
 // nothing an external client can send will match it.
 
 // internalAuthHeader carries the per-process secret on inter-app calls.
-const internalAuthHeader = "X-Gohort-Internal"
+const internalAuthHeader = "X-Oddjob-Internal"
 
 // internalAuthToken is minted once per process. Deliberately not persisted:
 // it needs to be unguessable, not durable, and a restart invalidating it costs
@@ -184,7 +184,7 @@ var internalAuthToken = func() string {
 		// Failing closed here would disable inter-app calls entirely on a
 		// system with no entropy, which is not a state worth shipping a
 		// silent degradation for.
-		panic("gohort: cannot generate internal auth token: " + err.Error())
+		panic("oddjob: cannot generate internal auth token: " + err.Error())
 	}
 	return hex.EncodeToString(b)
 }()

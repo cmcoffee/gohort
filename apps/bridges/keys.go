@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleKeys lists / creates bridge keys (a connector's credential + service).
@@ -59,7 +59,7 @@ func (T *Bridges) handleKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		if svc == "" {
 			// A MANUALLY minted key is for the MCP server or a server-side
-			// connector — never iMessage, whose key the gohort-bridge daemon
+			// connector — never iMessage, whose key the oddjob-bridge daemon
 			// auto-registers (with Service:"imessage" set explicitly). So an
 			// unspecified service here means a generic API key, not iMessage.
 			svc = "api"

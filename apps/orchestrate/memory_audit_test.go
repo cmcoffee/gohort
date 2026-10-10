@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

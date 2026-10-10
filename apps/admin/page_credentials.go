@@ -1,7 +1,7 @@
 package admin
 
 import (
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // credentialsSections is the credentials part of the admin page: API Credentials.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registerMediaRoutes wires the media API under the admin sub-mux.
@@ -106,7 +106,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 		defer SetEmbeddingConfig(prev)
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		vec, err := Embed(ctx, "hello from gohort admin connectivity test")
+		vec, err := Embed(ctx, "hello from oddjob admin connectivity test")
 		if err != nil {
 			writeTestResult(w, false, "", err.Error())
 			return

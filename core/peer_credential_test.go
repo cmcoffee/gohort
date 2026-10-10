@@ -29,8 +29,8 @@ func readGoSource(t *testing.T, name string) string {
 
 func TestThePeerKeyIsSecuredAndManaged(t *testing.T) {
 	// The name it lands under, so the test is about the real record.
-	name := peerCredentialName("gohort local")
-	if name != "peer_gohort_local_key" {
+	name := peerCredentialName("oddjob local")
+	if name != "peer_oddjob_local_key" {
 		t.Fatalf("unexpected credential name: %q", name)
 	}
 

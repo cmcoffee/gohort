@@ -199,7 +199,7 @@ func bedrockPathModel(model string) string {
 //	messages.0: use the top-level 'system' parameter for the initial system prompt
 //
 // The first-party API accepts a mid-conversation system message on current
-// models and gohort uses that, so the generic builder emits the role verbatim.
+// models and oddjob uses that, so the generic builder emits the role verbatim.
 // Bedrock supports it on neither endpoint, so it has to be rendered into
 // something the endpoint does accept, per position:
 //

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 // readRepoFile reads a source file outside this package, for the guards that
@@ -55,12 +55,12 @@ func TestTheCeilingInheritsDownADispatch(t *testing.T) {
 }
 
 // Both doors out of the sandbox. Closing the namespace and leaving the proxy
-// hook open would just move a script from curl to gohort.fetch, which is the
+// hook open would just move a script from curl to oddjob.fetch, which is the
 // route the sandbox docs tell it to prefer.
 func TestBothWaysOutAreClosed(t *testing.T) {
 	src := readRepoFile(t, "../../core/sandbox_hook.go")
 	if !strings.Contains(src, "!h.Sess.WorkspaceNetworkAllowed()") {
-		t.Error("the gohort.fetch hook does not honour the workspace ceiling")
+		t.Error("the oddjob.fetch hook does not honour the workspace ceiling")
 	}
 	exec := readRepoFile(t, "../../core/sandbox/exec.go")
 	if !strings.Contains(exec, "netgate.WorkspaceNetworkFrom(ctx)") {

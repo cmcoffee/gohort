@@ -15,7 +15,7 @@
 // not in a different word for the same decision.
 package orchestrate
 
-import "github.com/cmcoffee/gohort/core/ui"
+import "github.com/cmcoffee/oddjob/core/ui"
 
 // The three, in the order they escalate: freely, with a person, never.
 //

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // TestWriteDocAtKeepsTheOriginTimestamp — the single most important property of

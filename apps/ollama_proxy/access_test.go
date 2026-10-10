@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -140,7 +140,7 @@ func TestProxyPathsAreNarrowed(t *testing.T) {
 			t.Errorf("%s from %s key=%v: allowed=%v want %v (%d)", path, addr, key != "", got, want, w.Code)
 		}
 	}
-	for _, path := range []string{"/api/chat", "/api/generate", "/api/embed", "/api/show", "/v1/chat/completions", "/v1/models/gohort"} {
+	for _, path := range []string{"/api/chat", "/api/generate", "/api/embed", "/api/show", "/v1/chat/completions", "/v1/models/oddjob"} {
 		check(path, "127.0.0.1:5555", "", true)
 	}
 	for _, path := range []string{"/api/delete", "/api/pull", "/api/push", "/api/create", "/api/copy", "/api/blobs/sha256:00"} {
@@ -202,11 +202,11 @@ func TestTheProxyHoldsCallersToTheLentModel(t *testing.T) {
 	if _, ok := holdToLentModel([]byte(`{"model":"other-model:7b","prompt":"x"}`), "qwen3"); ok {
 		t.Error("another installed model was offered")
 	}
-	out, ok := holdToLentModel([]byte(`{"model":"gohort","keep_alive":0}`), "qwen3")
+	out, ok := holdToLentModel([]byte(`{"model":"oddjob","keep_alive":0}`), "qwen3")
 	if !ok || strings.Contains(string(out), "keep_alive") {
 		t.Errorf("keep_alive reached the backend: %s %v", out, ok)
 	}
-	for _, m := range []string{"gohort:no-think", "qwen3"} {
+	for _, m := range []string{"oddjob:no-think", "qwen3"} {
 		if _, ok := holdToLentModel([]byte(`{"model":"`+m+`"}`), "qwen3"); !ok {
 			t.Errorf("%s was refused", m)
 		}

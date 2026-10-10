@@ -224,7 +224,7 @@ observability exactly where it is needed.
 Revised 2026-08-29 after review. The `PromptBlock` shape above is display-only
 metadata; the operator model is a **rule registry** in the shape of the
 markdown extension registry (`uiRegisterMarkdownExtension`): a base set that
-ships with gohort, plus adds and removes on top.
+ships with oddjob, plus adds and removes on top.
 
 The unit that matters is not the prompt text. It is the **rule**, and a rule
 can have two halves:

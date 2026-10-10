@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A published agent chatted by a visitor writes its memory into the VISITOR's
@@ -38,7 +38,7 @@ func TestPublishedAgentMemoryReadableByVisitor(t *testing.T) {
 
 	get := func(user, path string, h func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
-		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(adb, user)})
+		r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: AuthCreateSession(adb, user)})
 		w := httptest.NewRecorder()
 		h(w, r)
 		return w
@@ -104,7 +104,7 @@ func TestUnpublishedAgentMemoryStaysPrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := httptest.NewRequest(http.MethodGet, "/agents/private/api/facts", nil)
-	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(adb, "bob")})
+	r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: AuthCreateSession(adb, "bob")})
 	w := httptest.NewRecorder()
 	T.PublicHandleAgentFacts(w, r, ag.ID)
 	if w.Code != http.StatusNotFound {

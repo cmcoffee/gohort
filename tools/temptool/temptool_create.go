@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // captureExportScript populates t.ScriptBody (+ ScriptName/CanonicalScriptName)
@@ -309,7 +309,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// (the sandbox runs with --unshare-net regardless of session
 	// connector). Reserve for persistent-mode REPLs and the small
 	// set of legacy tools that haven't been migrated to the hook
-	// (hook_capabilities=["fetch"] + gohort.fetch(...) is the
+	// (hook_capabilities=["fetch"] + oddjob.fetch(...) is the
 	// preferred path for everything else).
 	if BoolArg(args, "raw_network") {
 		tool.RawNetwork = true
@@ -413,14 +413,14 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// hook_capabilities=["fetch"] — the framework adds them
 	// automatically. Same security posture: the bwrap sandbox is still
 	// --unshare-net, the connector still gates Private mode, every
-	// call still goes through gohort's HTTP client with audit. Just
-	// removes the "tool exits 1 on first dispatch because GOHORT_HOOK_PATH
+	// call still goes through oddjob's HTTP client with audit. Just
+	// removes the "tool exits 1 on first dispatch because ODDJOB_HOOK_PATH
 	// wasn't set" footgun.
 	//
 	// Parameterized capabilities (secret:<name> / fetch_via:<name>)
 	// stay explicit. Those bind to specific credentials the framework
 	// can't safely guess, so they still need declaration. Script that
-	// calls gohort.secret("openweather") without "secret:openweather"
+	// calls oddjob.secret("openweather") without "secret:openweather"
 	// declared fails authoring with a directive error.
 	if scriptBody != "" {
 		existing := map[string]bool{}
@@ -443,9 +443,9 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 					"Register the credential via the admin UI first if it doesn't exist yet.",
 				missing.calls, missing.suggest)
 		}
-		// A name the gohort module does not export fails the first run, not
+		// A name the oddjob module does not export fails the first run, not
 		// the save; refuse it here, while the author is still looking.
-		if why := unknownGohortName(scriptBody); why != "" {
+		if why := unknownOddjobName(scriptBody); why != "" {
 			return "", fmt.Errorf("%s", why)
 		}
 		// Refuse network primitives. Builder repeatedly rewrites
@@ -455,7 +455,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		// rewrite path is closed off entirely.
 		if forbidden := detectForbiddenNetworkPatterns(scriptBody); forbidden != "" {
 			return "", fmt.Errorf(
-				"script_body uses %s: that's BLOCKED. Any network-doing standard library (urllib / requests / curl / wget / http.client / socket) is blocked in the script sandbox. All HTTP goes through gohort: `from gohort import fetch_url; data = fetch_url(url)`. If gohort.fetch_url is returning a 4xx, the fix is NOT a different HTTP client, diagnose the URL itself, escalate to gohort.browse_page for JS-heavy / anti-bot hosts, or add hook_capabilities=[\"fetch_via:<credential_name>\"] for authenticated endpoints.",
+				"script_body uses %s: that's BLOCKED. Any network-doing standard library (urllib / requests / curl / wget / http.client / socket) is blocked in the script sandbox. All HTTP goes through oddjob: `from oddjob import fetch_url; data = fetch_url(url)`. If oddjob.fetch_url is returning a 4xx, the fix is NOT a different HTTP client, diagnose the URL itself, escalate to oddjob.browse_page for JS-heavy / anti-bot hosts, or add hook_capabilities=[\"fetch_via:<credential_name>\"] for authenticated endpoints.",
 				forbidden)
 		}
 	}

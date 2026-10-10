@@ -47,7 +47,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/oddjob/core/textutil"
 )
 
 // Scan statuses. Two values the scanner may return, plus one it is never told
@@ -347,7 +347,7 @@ func ParseToolScanVerdict(reply string) ToolScanVerdict {
 // mechanism that flagged the first one.
 //
 // Three passes, each closing one shape:
-//   - StripMetaTags removes the reserved <gohort-meta> element and leaked
+//   - StripMetaTags removes the reserved <oddjob-meta> element and leaked
 //     delivery markers, the framework's own directive vocabulary.
 //   - Bracket characters are folded to lookalikes, so a span can never close
 //     the banner it sits in or open one of its own — every framework marker in

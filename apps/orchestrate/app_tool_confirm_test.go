@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // appToolConfirmation is what decides whether a host-app tool stops for the

@@ -25,7 +25,7 @@ import (
 	"net/http"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // AppBlockPublisher carries a host app's block emissions into a live turn.

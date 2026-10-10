@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Self-thread loop protection.
@@ -27,7 +27,7 @@ import (
 //
 // Four guards, ordered by how conclusive they are:
 //
-//  1. carriesOurTag — the outbound name tag ("[Gohort] ") is a marker WE put on
+//  1. carriesOurTag — the outbound name tag ("[Oddjob] ") is a marker WE put on
 //     the wire, so anything wearing it is our own message returning. Survives
 //     rephrasing and transport changes alike, and needs no timing assumption.
 //     This is the one that catches the observed loop.
@@ -193,7 +193,7 @@ var loopGuard struct {
 	replies map[string][]time.Time
 	// tripped: identity → when the budget blew, for the cooldown.
 	tripped map[string]time.Time
-	// tags: outbound name-tag prefixes we have emitted ("[gohort] ").
+	// tags: outbound name-tag prefixes we have emitted ("[oddjob] ").
 	tags map[string]bool
 }
 
@@ -207,7 +207,7 @@ func loopGuardInit() {
 	}
 }
 
-// noteOutboundTag remembers a name-tag prefix we put on the wire ("[Gohort] ").
+// noteOutboundTag remembers a name-tag prefix we put on the wire ("[Oddjob] ").
 // The tag exists so a recipient can tell an agent's message from the owner's
 // own texts — which makes it, for free, the most reliable mark of OUR message
 // coming back. Unlike the content fingerprint it survives rephrasing, and

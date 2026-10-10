@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleConsoleAgentOptions lists the owner's agents as picker options

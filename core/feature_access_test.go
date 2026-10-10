@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/oddjob/core/appagents"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

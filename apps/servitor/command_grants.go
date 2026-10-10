@@ -27,7 +27,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // commandGrantsTable holds the per-(agent, appliance) records. Separate from

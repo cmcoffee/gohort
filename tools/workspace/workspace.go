@@ -28,12 +28,12 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	// Imported directly rather than through a core alias: the shell run needs a
 	// working directory, and two more symbols in core put it over
 	// TestCoreStaysUnderItsCeiling.
-	"github.com/cmcoffee/gohort/core/sandbox"
-	"github.com/cmcoffee/gohort/tools/files"
+	"github.com/cmcoffee/oddjob/core/sandbox"
+	"github.com/cmcoffee/oddjob/tools/files"
 )
 
 const (
@@ -254,7 +254,7 @@ func init() {
 	})
 
 	gt.AddAction("run", &GroupedToolAction{
-		Description: "Run a shell command inside the active workspace, confined by whichever sandbox this host has. The workspace is the only writable path it allows. What is READABLE outside it is NOT the same everywhere (bubblewrap hides it, the macOS backend does not), so never rely on a read outside the workspace either succeeding or failing. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation, use sparingly. YOUR TOOLS ARE NOT REACHABLE FROM THIS SHELL: a tool is not on PATH and not an importable Python module, so `<tool_name> ...`, `python -m <tool_name>` and `from tools import <tool_name>` all just fail. Call the tool directly by name instead, and if its schema isn't loaded yet, load_tool(names=[\"<tool_name>\"]) first. (The one exception is fetch_url / browse_page: they work here as commands and as `from gohort import ...`, when this agent's workspace may reach the network. fetch_via does NOT work here: a call with a credential runs in an app's data source or action, or a registered tool that declares fetch_via:<cred>, and to probe an endpoint call the credential's own fetch tool directly.) For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead: no-confirmation, validated-input, purpose-built for that check.",
+		Description: "Run a shell command inside the active workspace, confined by whichever sandbox this host has. The workspace is the only writable path it allows. What is READABLE outside it is NOT the same everywhere (bubblewrap hides it, the macOS backend does not), so never rely on a read outside the workspace either succeeding or failing. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation, use sparingly. YOUR TOOLS ARE NOT REACHABLE FROM THIS SHELL: a tool is not on PATH and not an importable Python module, so `<tool_name> ...`, `python -m <tool_name>` and `from tools import <tool_name>` all just fail. Call the tool directly by name instead, and if its schema isn't loaded yet, load_tool(names=[\"<tool_name>\"]) first. (The one exception is fetch_url / browse_page: they work here as commands and as `from oddjob import ...`, when this agent's workspace may reach the network. fetch_via does NOT work here: a call with a credential runs in an app's data source or action, or a registered tool that declares fetch_via:<cred>, and to probe an endpoint call the credential's own fetch tool directly.) For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead: no-confirmation, validated-input, purpose-built for that check.",
 		Params: map[string]ToolParam{
 			"command":  {Type: "string", Description: "Shell command to execute. Standard sh -c semantics: pipes, redirects, quoting work normally."},
 			"env":      {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command, reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
@@ -680,10 +680,10 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 	defer cancel()
 	ctx = sess.ContextWithNetworkConnector(ctx)
 	ctx = sess.ContextWithSandboxCaller(ctx)
-	// Run with the iterate-and-test hook attached so `from gohort
+	// Run with the iterate-and-test hook attached so `from oddjob
 	// import fetch` works exactly as it does when this same script
 	// gets dispatched later as a registered shell-mode tool. Without
-	// this the script would raise HookError("GOHORT_HOOK_PATH not
+	// this the script would raise HookError("ODDJOB_HOOK_PATH not
 	// set"), Builder would conclude fetch doesn't work in the shell,
 	// and rewrite the tool wrongly. Capabilities: fetch / log /
 	// browse_page — the common probe surface. secret:* and fetch_via:*
@@ -711,7 +711,7 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	// A credential is never granted here (see HookCapabilities above), and
 	// the hook's refusal says only that. Observed: Builder probed an LLM
-	// endpoint with `from gohort import fetch_via`, got "not granted", and
+	// endpoint with `from oddjob import fetch_via`, got "not granted", and
 	// had to work out by trial where a credentialed call does run.
 	if strings.Contains(output, `"fetch_via" not granted`) {
 		output += "\n[fetch_via is not available in the workspace shell. Probe the endpoint with the credential's own fetch tool, or put the call in an app data source/action or a registered tool that declares fetch_via:<cred>.]"
@@ -738,7 +738,7 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 var cmdIdent = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
 
 // flagToolInvocation returns a corrective message when a command tries to
-// reach a gohort TOOL as though it were a shell binary or a Python module,
+// reach a oddjob TOOL as though it were a shell binary or a Python module,
 // and "" when the command is ordinary shell.
 //
 // Observed twice, once with the tool absent from the catalog and once with it

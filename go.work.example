@@ -1,17 +1,17 @@
 // A local development workspace. Copy it OUTSIDE this repo — to the directory
-// that CONTAINS gohort and its sibling modules — and fix the paths:
+// that CONTAINS oddjob and its sibling modules — and fix the paths:
 //
 //	.../github.com/cmcoffee/
-//	├── go.work        <- here, not inside gohort
-//	├── gohort/
+//	├── go.work        <- here, not inside oddjob
+//	├── oddjob/
 //	└── snugforge/
 //
-// You need this ONLY if you develop gohort alongside a local checkout of one of
+// You need this ONLY if you develop oddjob alongside a local checkout of one of
 // its dependencies. Building a release from a clean clone does not need it:
 // go.mod resolves published modules by itself, which is the entire reason the
 // overrides are not in go.mod any more.
 //
-// What it buys: edit snugforge, and gohort picks the change up on the next
+// What it buys: edit snugforge, and oddjob picks the change up on the next
 // build. No tag, no version bump, nothing to remember to undo before pushing.
 //
 // TWO PATH RULES, both learned the hard way on a tree reachable through a
@@ -35,7 +35,7 @@ go 1.25.0
 // the module graph has to resolve a version even when the code is local. Tagging
 // it removed that.)
 use (
-	./gohort
+	./oddjob
 	./snugforge
 )
 

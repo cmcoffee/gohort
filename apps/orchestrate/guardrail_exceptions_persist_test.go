@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -45,7 +45,7 @@ func authAs(t *testing.T) *http.Cookie {
 	if token == "" {
 		t.Fatal("could not mint a session")
 	}
-	return &http.Cookie{Name: "gohort_session", Value: token}
+	return &http.Cookie{Name: "oddjob_session", Value: token}
 }
 
 // postGuardrails drives the real endpoint with a body carrying one exception

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -61,7 +61,7 @@ func asAdmin(t *testing.T, r *http.Request, user string) *http.Request {
 	prev := AuthDB
 	AuthDB = func() Database { return adb }
 	t.Cleanup(func() { AuthDB = prev })
-	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(adb, user)})
+	r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: AuthCreateSession(adb, user)})
 	return r
 }
 
@@ -335,7 +335,7 @@ func TestDescribeStoreCommandsTellsTheAgentWhatToAskFor(t *testing.T) {
 		t.Error("commands belong to one store; another store's must not appear")
 	}
 	// The two-phase one cannot be driven from here at all — its answer is looked
-	// up outside gohort. Saying so is the difference between the agent asking a
+	// up outside oddjob. Saying so is the difference between the agent asking a
 	// person and the agent trying.
 	if !strings.Contains(got, "Response key") || !strings.Contains(got, "cannot be run unattended") {
 		t.Errorf("a two-phase command must name the input AND say a person is required:\n%s", got)

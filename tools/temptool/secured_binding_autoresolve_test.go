@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -37,7 +37,7 @@ func TestSecuredBindingAutoResolveEdits(t *testing.T) {
 			"hook_capabilities": []any{"fetch_via:" + cred},
 		}
 	}
-	body1 := "from gohort import fetch_via\nprint(fetch_via('" + cred + "','http://ts.local:10080/x'))\n"
+	body1 := "from oddjob import fetch_via\nprint(fetch_via('" + cred + "','http://ts.local:10080/x'))\n"
 
 	// Author → auto-bound.
 	if _, err := createGrouped(tool(body1), sess); err != nil {
@@ -50,7 +50,7 @@ func TestSecuredBindingAutoResolveEdits(t *testing.T) {
 	// Material edit (script_body) → STILL bound (auto-resolves; no re-review).
 	if _, err := updateGrouped(map[string]any{
 		"name":        "p2_tool",
-		"script_body": "from gohort import fetch_via\nprint('changed', fetch_via('" + cred + "','http://ts.local:10080/y'))\n",
+		"script_body": "from oddjob import fetch_via\nprint('changed', fetch_via('" + cred + "','http://ts.local:10080/y'))\n",
 	}, sess); err != nil {
 		t.Fatalf("material update: %v", err)
 	}

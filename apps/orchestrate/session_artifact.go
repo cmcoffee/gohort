@@ -29,14 +29,14 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // ImportedSession marks a session that came in from a file: read-only, and
 // the one thing Continue works from.
 type ImportedSession struct {
 	At   time.Time `json:"at"`
-	From string    `json:"from,omitempty"` // gohort version that exported it
+	From string    `json:"from,omitempty"` // oddjob version that exported it
 }
 
 const (

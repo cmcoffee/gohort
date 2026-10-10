@@ -1,5 +1,5 @@
 // External-agent exposure — the shared gate for every machine-facing surface
-// that lets something outside gohort address an agent by name.
+// that lets something outside oddjob address an agent by name.
 //
 // The MCP server (ask_agent) already had this rule embedded in its own wiring.
 // Once a second surface needed it (an OpenAI-compatible endpoint for clients
@@ -17,8 +17,8 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
 )
 
 // ExternalAgent is the minimal public view of an externally-reachable agent:
@@ -29,7 +29,7 @@ type ExternalAgent struct {
 }
 
 // ExternalAgents lists the owner's agents that are reachable from outside
-// gohort. db is the app's base store; the per-user store is resolved here so
+// oddjob. db is the app's base store; the per-user store is resolved here so
 // callers don't have to know the layering.
 // externallyReachable answers "may external key-authenticated surfaces (/v1,
 // MCP) see and resolve this agent at all". For USER agents that consent is the
@@ -138,7 +138,7 @@ type ExternalChannelTarget struct {
 // ResolveExternalChannel maps a chat identifier — chat id, handle, or the room's
 // display name — to the agent and THREAD that already serve it.
 //
-// This is what lets a call from outside gohort land IN a group chat rather than
+// This is what lets a call from outside oddjob land IN a group chat rather than
 // beside it. The session key comes from ChannelSessionKey + effectiveChannelSession,
 // the same pair the inbound-message path uses, so the external turn appends to
 // the very thread the room has been accumulating: same history, same agent, same

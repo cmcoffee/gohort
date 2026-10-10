@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/sources"
+	"github.com/cmcoffee/oddjob/core/sources"
 )
 
 // A run numbers what it reads so its stages can cite it, a stage's citations

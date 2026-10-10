@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/docs"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/docs"
 )
 
 // ConfluenceKind is the destination kind a producer routes to.
@@ -153,7 +153,7 @@ func (d *confluenceDest) update(user string, cfg PublishConfig, req docs.Publish
 		"body":   map[string]any{"representation": "storage", "value": storage},
 		"version": map[string]any{
 			"number":  version + 1,
-			"message": "Updated from gohort",
+			"message": "Updated from oddjob",
 		},
 	})
 	if err != nil {

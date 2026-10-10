@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // GET  ?appliance_id=<id>  → {guides:[{id,title}]}  — only guides that reference this system

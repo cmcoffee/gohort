@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request) {

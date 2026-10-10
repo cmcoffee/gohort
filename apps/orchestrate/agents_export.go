@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // agentExport is the portable recipe shape: the agent itself plus any

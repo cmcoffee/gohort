@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // stubDelegationRunner installs the real reporter with a runner that records

@@ -1,7 +1,7 @@
 // The serving half of resource sharing: the HTTP surface a peer instance calls.
 //
 // Shape note. The embeddings endpoint speaks the OpenAI /embeddings wire format
-// rather than something gohort-specific, and that is the entire consumer-side
+// rather than something oddjob-specific, and that is the entire consumer-side
 // implementation. EmbedWith already POSTs {model, input:[...]} to
 // <endpoint>/embeddings with a bearer token and already parses the OpenAI
 // response shape, so a peer points its existing embedding config at
@@ -22,9 +22,9 @@ import (
 )
 
 // peerKeyHeader is the dedicated header. Authorization: Bearer also works,
-// because that is what an OpenAI-shaped client (including gohort's own
+// because that is what an OpenAI-shaped client (including oddjob's own
 // EmbedWith) sends without being taught anything new.
-const peerKeyHeader = "X-Gohort-Peer-Key"
+const peerKeyHeader = "X-Oddjob-Peer-Key"
 
 // peerFromRequest authenticates a peer request. Returns false for anything
 // unrecognized, disabled, or absent.

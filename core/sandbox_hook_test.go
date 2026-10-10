@@ -27,26 +27,26 @@ func TestIsNonPublicHost(t *testing.T) {
 	}
 }
 
-// The gohort python helper is deployed best-effort, and every failure
+// The oddjob python helper is deployed best-effort, and every failure
 // path used to be Debug-only or silent. That is the wrong volume for
 // this particular failure: the only symptom that reaches anyone is a
 // ModuleNotFoundError on the first line of a script, which names the
 // script's import rather than the deployment that never happened.
 
-func TestGohortLibReportsWhyItCouldNotDeploy(t *testing.T) {
+func TestOddjobLibReportsWhyItCouldNotDeploy(t *testing.T) {
 	// A run with no workspaces dir configured said nothing at all, at
 	// any level — the case that leaves an operator with a broken tool
 	// and an empty log.
 	prevDir := WorkspacesDir()
 	SetWorkspacesDir("")
-	gohortLibDirMu.Lock()
-	gohortLibDirPath, gohortLibWarned = "", false
-	gohortLibDirMu.Unlock()
+	oddjobLibDirMu.Lock()
+	oddjobLibDirPath, oddjobLibWarned = "", false
+	oddjobLibDirMu.Unlock()
 	t.Cleanup(func() {
 		SetWorkspacesDir(prevDir)
-		gohortLibDirMu.Lock()
-		gohortLibDirPath, gohortLibWarned = "", false
-		gohortLibDirMu.Unlock()
+		oddjobLibDirMu.Lock()
+		oddjobLibDirPath, oddjobLibWarned = "", false
+		oddjobLibDirMu.Unlock()
 	})
 
 	var lines []string
@@ -58,7 +58,7 @@ func TestGohortLibReportsWhyItCouldNotDeploy(t *testing.T) {
 	}
 	t.Cleanup(func() { Log = prevLog })
 
-	if got := EnsureGohortLibDir(); got != "" {
+	if got := EnsureOddjobLibDir(); got != "" {
 		t.Fatalf("with no workspaces dir there is nowhere to deploy, got %q", got)
 	}
 	if len(lines) == 0 {
@@ -76,36 +76,36 @@ func TestGohortLibReportsWhyItCouldNotDeploy(t *testing.T) {
 	// Once per process, not once per dispatch: this runs on every
 	// sandboxed tool call.
 	before := len(lines)
-	EnsureGohortLibDir()
-	EnsureGohortLibDir()
+	EnsureOddjobLibDir()
+	EnsureOddjobLibDir()
 	if len(lines) != before {
 		t.Errorf("warned again on later dispatches: %d → %d lines", before, len(lines))
 	}
 }
 
 // And the happy path still deploys something importable.
-func TestGohortLibDeploysAnImportablePackage(t *testing.T) {
+func TestOddjobLibDeploysAnImportablePackage(t *testing.T) {
 	dir := t.TempDir()
 	prevDir := WorkspacesDir()
 	SetWorkspacesDir(filepath.Join(dir, "workspaces"))
-	gohortLibDirMu.Lock()
-	gohortLibDirPath, gohortLibWarned = "", false
-	gohortLibDirMu.Unlock()
+	oddjobLibDirMu.Lock()
+	oddjobLibDirPath, oddjobLibWarned = "", false
+	oddjobLibDirMu.Unlock()
 	t.Cleanup(func() {
 		SetWorkspacesDir(prevDir)
-		gohortLibDirMu.Lock()
-		gohortLibDirPath, gohortLibWarned = "", false
-		gohortLibDirMu.Unlock()
+		oddjobLibDirMu.Lock()
+		oddjobLibDirPath, oddjobLibWarned = "", false
+		oddjobLibDirMu.Unlock()
 	})
 
-	lib := EnsureGohortLibDir()
+	lib := EnsureOddjobLibDir()
 	if lib == "" {
 		t.Fatal("deployment failed on a writable path")
 	}
 	// PYTHONPATH points at the directory CONTAINING the package, so
-	// `import gohort` resolves the package dir beneath it.
-	if _, err := os.Stat(filepath.Join(lib, "gohort", "__init__.py")); err != nil {
-		t.Errorf("no importable gohort package under %s: %v", lib, err)
+	// `import oddjob` resolves the package dir beneath it.
+	if _, err := os.Stat(filepath.Join(lib, "oddjob", "__init__.py")); err != nil {
+		t.Errorf("no importable oddjob package under %s: %v", lib, err)
 	}
 }
 
@@ -119,8 +119,8 @@ func TestHookSocketFitsUnderADeepWorkspace(t *testing.T) {
 	// The real path from the failure, rebuilt: a per-agent workspace is
 	// <root>/.agents/<email>/<uuid>/, which is 92 characters before the socket
 	// name has even started.
-	deep := "/opt/gohort/data/workspaces/.agents/owner@example.test/45dbd021-4c1d-494b-a2ab-6416c355cbd8"
-	old := filepath.Join(deep, ".gohort_hook_084099fb5aee06bf.sock")
+	deep := "/opt/oddjob/data/workspaces/.agents/owner@example.test/45dbd021-4c1d-494b-a2ab-6416c355cbd8"
+	old := filepath.Join(deep, ".oddjob_hook_084099fb5aee06bf.sock")
 	if len(old) <= maxUnixSocketPath {
 		t.Fatalf("the path that failed is %d bytes — this test has lost its subject", len(old))
 	}
@@ -134,7 +134,7 @@ func TestHookSocketFitsUnderADeepWorkspace(t *testing.T) {
 	}
 	// And it is NOT in the workspace, which is the whole point — shortening
 	// the name could never have been enough, since the prefix alone leaves 15
-	// characters and ".gohort_hook_.sock" is 18 with no token.
+	// characters and ".oddjob_hook_.sock" is 18 with no token.
 	if strings.HasPrefix(got, deep) {
 		t.Errorf("a deep workspace cannot host the socket: %s", got)
 	}
@@ -263,7 +263,7 @@ func TestHookCallsOnlyDeclaredTools(t *testing.T) {
 	}
 }
 
-// The whole path a script takes: python's gohort.call_tool over the real
+// The whole path a script takes: python's oddjob.call_tool over the real
 // hook socket, back with the tool's output. Skips without python3.
 func TestPythonCallToolReachesTheHook(t *testing.T) {
 	py, err := exec.LookPath("python3")
@@ -279,10 +279,10 @@ func TestPythonCallToolReachesTheHook(t *testing.T) {
 	}
 	defer h.Close()
 	lib := t.TempDir()
-	if err := os.WriteFile(filepath.Join(lib, "gohort.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(lib, "oddjob.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	script := `from gohort import call_tool, HookError
+	script := `from oddjob import call_tool, HookError
 print(call_tool("get_weather", city="Reno", forecast=True))
 try:
     call_tool("send_email", to="x")
@@ -290,7 +290,7 @@ except HookError as e:
     print("refused:", e)
 `
 	cmd := exec.Command(py, "-c", script)
-	cmd.Env = append(os.Environ(), "GOHORT_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
+	cmd.Env = append(os.Environ(), "ODDJOB_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("python: %v\n%s", err, out)
@@ -314,7 +314,7 @@ func TestAnUndeclaredToolCallNamesTheGrant(t *testing.T) {
 	}
 }
 
-// gohort.ask in a script, over the real hook: granted by the "ask"
+// oddjob.ask in a script, over the real hook: granted by the "ask"
 // capability, answered by the session's Ask, refused without the grant.
 func TestPythonAskReachesTheHook(t *testing.T) {
 	py, err := exec.LookPath("python3")
@@ -322,7 +322,7 @@ func TestPythonAskReachesTheHook(t *testing.T) {
 		t.Skip("python3 not installed")
 	}
 	lib := t.TempDir()
-	if err := os.WriteFile(filepath.Join(lib, "gohort.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(lib, "oddjob.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	run := func(caps []string) string {
@@ -333,8 +333,8 @@ func TestPythonAskReachesTheHook(t *testing.T) {
 			t.Fatalf("hook: %v", err)
 		}
 		defer h.Close()
-		cmd := exec.Command(py, "-c", "from gohort import ask, HookError\ntry:\n    print(ask('hello', json=True))\nexcept HookError as e:\n    print('refused:', e)\n")
-		cmd.Env = append(os.Environ(), "GOHORT_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
+		cmd := exec.Command(py, "-c", "from oddjob import ask, HookError\ntry:\n    print(ask('hello', json=True))\nexcept HookError as e:\n    print('refused:', e)\n")
+		cmd.Env = append(os.Environ(), "ODDJOB_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("python: %v\n%s", err, out)
@@ -358,7 +358,7 @@ func TestPythonToolOutputIsTextAndJSON(t *testing.T) {
 		t.Skip("python3 not installed")
 	}
 	lib := t.TempDir()
-	if err := os.WriteFile(filepath.Join(lib, "gohort.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(lib, "oddjob.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h, err := NewSandboxHook(t.TempDir(), []string{"tool:get_weather"}, &ToolSession{Username: "owner", CallTool: func(name string, args map[string]any) (string, error) {
@@ -369,7 +369,7 @@ func TestPythonToolOutputIsTextAndJSON(t *testing.T) {
 	}
 	defer h.Close()
 	script := `import json
-from gohort import call_tool
+from oddjob import call_tool
 out = call_tool("get_weather", city="Reno")
 print(out.get("current")["temperature_f"])
 print(out["forecast"][0]["date"])
@@ -378,7 +378,7 @@ print(json.loads(out)["current"]["temperature_f"])
 print(isinstance(out, str), out.startswith("{"))
 `
 	cmd := exec.Command(py, "-c", script)
-	cmd.Env = append(os.Environ(), "GOHORT_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
+	cmd.Env = append(os.Environ(), "ODDJOB_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("python: %v\n%s", err, b)
@@ -389,7 +389,7 @@ print(isinstance(out, str), out.startswith("{"))
 	}
 }
 
-// gohort.run_agent and gohort.run_pipeline in a script, over the real hook:
+// oddjob.run_agent and oddjob.run_pipeline in a script, over the real hook:
 // each granted by its own capability, answered by the session's RunAgent /
 // RunPipeline with the agent or pipeline named (or "" for the app's own), and
 // a JSON reply reads as its JSON.
@@ -399,7 +399,7 @@ func TestPythonRunAgentAndPipelineReachTheHook(t *testing.T) {
 		t.Skip("python3 not installed")
 	}
 	lib := t.TempDir()
-	if err := os.WriteFile(filepath.Join(lib, "gohort.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(lib, "oddjob.py"), []byte(SandboxHookPythonShim), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	run := func(caps []string, code string) string {
@@ -414,8 +414,8 @@ func TestPythonRunAgentAndPipelineReachTheHook(t *testing.T) {
 			t.Fatalf("hook: %v", err)
 		}
 		defer h.Close()
-		cmd := exec.Command(py, "-c", "from gohort import run_agent, run_pipeline, HookError\ntry:\n"+code+"except HookError as e:\n    print('refused:', e)\n")
-		cmd.Env = append(os.Environ(), "GOHORT_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
+		cmd := exec.Command(py, "-c", "from oddjob import run_agent, run_pipeline, HookError\ntry:\n"+code+"except HookError as e:\n    print('refused:', e)\n")
+		cmd.Env = append(os.Environ(), "ODDJOB_HOOK_PATH="+h.SocketPath, "PYTHONPATH="+lib)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("python: %v\n%s", err, out)

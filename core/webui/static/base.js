@@ -1,4 +1,4 @@
-// gohort shared web UI utilities.
+// oddjob shared web UI utilities.
 //
 // Loaded by every app's RenderPage. Provides:
 //   - Access-control hook (hides push-to-writer buttons unless caller IP allowed)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // An app goes out as one file and comes back as a folder: its page, scripts,
@@ -26,13 +26,13 @@ func TestAnAppPacksToAFileAndUnpacksToAFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := turn.appDefPack(map[string]any{"id": "voidrunner"})
-	if err != nil || !strings.Contains(out, "voidrunner.gohortapp") {
+	if err != nil || !strings.Contains(out, "voidrunner.oddjobapp") {
 		t.Fatalf("pack: %q %v", out, err)
 	}
-	if _, err := os.Stat(filepath.Join(ws, "voidrunner.gohortapp")); err != nil {
+	if _, err := os.Stat(filepath.Join(ws, "voidrunner.oddjobapp")); err != nil {
 		t.Fatal("no bundle file written")
 	}
-	out, err = turn.appDefUnpack(map[string]any{"file": "voidrunner.gohortapp", "dir": "copy.app"})
+	out, err = turn.appDefUnpack(map[string]any{"file": "voidrunner.oddjobapp", "dir": "copy.app"})
 	if err != nil || !strings.Contains(out, "Nothing was installed") {
 		t.Fatalf("unpack: %q %v", out, err)
 	}
@@ -55,8 +55,8 @@ func TestAnAppPacksToAFileAndUnpacksToAFolder(t *testing.T) {
 	if _, err := turn.appDefPublish(map[string]any{"dir": "copy.app"}); err == nil || !strings.Contains(err.Error(), "no record") {
 		t.Errorf("publishing an unpacked folder over the live app went through: %v", err)
 	}
-	os.WriteFile(filepath.Join(ws, "notes.gohortapp"), []byte(`{"bundle": "gohort.bundle/v1", "artifacts": [{"type": "skill", "name": "x", "recipe": "{}"}]}`), 0o644)
-	if _, err := turn.appDefUnpack(map[string]any{"file": "notes.gohortapp"}); err == nil || !strings.Contains(err.Error(), "holds no app") {
+	os.WriteFile(filepath.Join(ws, "notes.oddjobapp"), []byte(`{"bundle": "oddjob.bundle/v1", "artifacts": [{"type": "skill", "name": "x", "recipe": "{}"}]}`), 0o644)
+	if _, err := turn.appDefUnpack(map[string]any{"file": "notes.oddjobapp"}); err == nil || !strings.Contains(err.Error(), "holds no app") {
 		t.Errorf("a bundle with no app: %v", err)
 	}
 }

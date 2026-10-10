@@ -4,7 +4,7 @@
 // Not inlined into the markdown: every revision copies the guide, so an
 // embedded image would be copied into History on every edit.
 //
-// What leaves gohort carries the pictures with it: the export formats and a
+// What leaves oddjob carries the pictures with it: the export formats and a
 // publish get each image embedded (inlineGuideImages). Bundles carry them too
 // (guide_artifact.go).
 package scribe
@@ -17,7 +17,7 @@ import (
 	"regexp"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // guideImagesTable holds a guide's pictures, keyed "<guide id>/<image id>".
@@ -183,7 +183,7 @@ func (T *Scribe) handleImageServe(w http.ResponseWriter, r *http.Request, udb Da
 }
 
 // inlineGuideImages returns a copy of g whose pictures are embedded as data
-// URLs, for what leaves gohort (an export, a publish) where /scribe/img means
+// URLs, for what leaves oddjob (an export, a publish) where /scribe/img means
 // nothing. A reference to a picture that is not stored is left as it was.
 func inlineGuideImages(g Guide, udb Database) Guide {
 	if udb == nil {

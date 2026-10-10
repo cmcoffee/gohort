@@ -41,7 +41,7 @@ import (
 	"syscall"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const (
@@ -323,7 +323,7 @@ func startSandboxedShell(ctx context.Context, workspaceDir, openCmd string) (*sa
 	}
 	if !built.Confined {
 		// Reachable only when the deployment explicitly opted out
-		// (GOHORT_ALLOW_UNSANDBOXED). core/sandbox has already logged the
+		// (ODDJOB_ALLOW_UNSANDBOXED). core/sandbox has already logged the
 		// warning once; this names the shell that took the exemption, because
 		// a long-lived one is the one worth being able to find later.
 		Log("[temptool/persistent] WARNING: opening persistent shell UNCONFINED (backend=%s), the deployment permits it", built.Backend)

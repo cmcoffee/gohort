@@ -20,8 +20,8 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/docs"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/docs"
 )
 
 // registeredApp is the live instance the destinations read their configuration
@@ -61,7 +61,7 @@ func (T PublishApp) Desc() string {
 func (T PublishApp) SystemPrompt() string { return "" }
 func (T *PublishApp) Init() error         { return T.Flags.Parse() }
 func (T *PublishApp) Main() error {
-	Log("publish is configured from the admin UI. Start with: gohort serve")
+	Log("publish is configured from the admin UI. Start with: oddjob serve")
 	return nil
 }
 

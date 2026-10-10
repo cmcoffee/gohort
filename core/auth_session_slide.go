@@ -2,7 +2,7 @@
 //
 // A session was stamped with an expiry once, at login, and never moved. So the
 // clock ran against wall time rather than against use: someone working in
-// gohort all week was logged out mid-task on the seventh day, and the only
+// oddjob all week was logged out mid-task on the seventh day, and the only
 // signal was the login page appearing over whatever they were doing. Nothing
 // was wrong with the session and nothing had gone stale — the deadline simply
 // arrived. Re-authenticating changed nothing except restarting the same timer.

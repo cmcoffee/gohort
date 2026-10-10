@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // stagedSession builds a workspace holding the named files and a session that

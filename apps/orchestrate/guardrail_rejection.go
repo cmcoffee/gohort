@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/textutil"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/textutil"
 )
 
 // notifyOwnerGuardrail drops a cortex observation for the owner when a turn is

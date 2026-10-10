@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -77,7 +77,7 @@ func TestAppStandingFollowsTheAppsChanges(t *testing.T) {
 func TestAnUndeclaredCallToolIsNotedOnSave(t *testing.T) {
 	pinRootDB(t)
 	spec := AppSpec{Owner: "u", Slug: "wx", DataSources: []AppDataSource{{Name: "now",
-		Script: "from gohort import call_tool\nprint(call_tool(\"get_weather\", city=\"Reno\"))\n"}}}
+		Script: "from oddjob import call_tool\nprint(call_tool(\"get_weather\", city=\"Reno\"))\n"}}}
 	notes := appToolCapNotes("u", spec)
 	if len(notes) != 1 || !strings.Contains(notes[0], `call_tool("get_weather")`) || !strings.Contains(notes[0], "tool:get_weather") {
 		t.Fatalf("notes = %q", notes)
@@ -88,7 +88,7 @@ func TestAnUndeclaredCallToolIsNotedOnSave(t *testing.T) {
 // told at save.
 func TestAnAskWithoutGrantOrAgentIsNoted(t *testing.T) {
 	pinRootDB(t)
-	ds := []AppDataSource{{Name: "sum", Script: "from gohort import ask\nprint(ask('hi'))\n"}}
+	ds := []AppDataSource{{Name: "sum", Script: "from oddjob import ask\nprint(ask('hi'))\n"}}
 	notes := appToolCapNotes("u", AppSpec{Owner: "u", Slug: "x", DataSources: ds})
 	if len(notes) != 1 || !strings.Contains(notes[0], `declare "ask"`) {
 		t.Fatalf("no grant: %q", notes)

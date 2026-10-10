@@ -13,7 +13,7 @@ type PromptBlock struct {
 	Category string // grouping shown as a section, e.g. "Orchestration"
 	Gate     string // human description of when the block applies
 	Text     string // the block text as injected
-	// Builtin marks a block that shipped with gohort, as opposed to one an
+	// Builtin marks a block that shipped with oddjob, as opposed to one an
 	// operator added. Set by RegisterPromptBlock, so a code-registered block is
 	// always builtin and only the custom-block store can produce a false. It
 	// decides what a surface may offer: a builtin can be disabled (reversible,

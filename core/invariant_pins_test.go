@@ -3,7 +3,7 @@ package core
 import (
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/sourcehooks"
+	"github.com/cmcoffee/oddjob/core/sourcehooks"
 )
 
 // Claims that HOLD in core with nothing pinning them. core is the layer every

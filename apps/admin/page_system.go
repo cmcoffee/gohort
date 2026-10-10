@@ -1,8 +1,8 @@
 package admin
 
 import (
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // systemSections is the system part of the admin page: System Status, Site Settings, Channel Wake Rules, Add account, Users, Feature Access, Default Apps, App Groups.
@@ -54,14 +54,14 @@ func (a *AdminApp) systemSections() []ui.Section {
 						Options: themePickerOptions(),
 						Help:    "Platform-wide UI theme. Reload the page after saving to see it."},
 					{Field: "service_name", Label: "Service name", Type: "text",
-						Placeholder: "gohort", Help: "Shown in the page title and email From: line."},
+						Placeholder: "oddjob", Help: "Shown in the page title and email From: line."},
 					{Field: "doc_brand", Label: "Document brand", Type: "text",
 						Placeholder: "e.g. SnugLab Research",
 						Help:        "Header label on exported documents (guide PDF/HTML) and the PDF branding line. Falls back to the site name."},
 					{Field: "site_name", Label: "Site name", Type: "text",
 						Placeholder: "e.g. SnugLab", Help: "Shown in exported-document footers."},
 					{Field: "external_url", Label: "External URL", Type: "text",
-						Placeholder: "https://gohort.example.com",
+						Placeholder: "https://oddjob.example.com",
 						Help:        "Used to build links in notification emails. Include scheme."},
 					{Field: "timezone", Label: "Timezone", Type: "select",
 						Options: TimezoneSelectOptions("System default (host zone)"),
@@ -70,7 +70,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 					{Field: "notify_from", Label: "Notification From", Type: "text",
 						Placeholder: "noreply@example.com"},
 					{Field: "api_key_allow_query", Label: "Accept the deployment API key in the URL", Type: "toggle",
-						Help:   "Off, the recommended setting, accepts the key only as the X-Gohort-Key header.",
+						Help:   "Off, the recommended setting, accepts the key only as the X-Oddjob-Key header.",
 						Detail: "A credential in a URL reaches browser history, Referer headers on any outbound link, and the log of every proxy in between, and the key is a blanket authentication bypass.\n\nTurn this on only while an integration that cannot send a header is being moved, and expect a refused call to say exactly this."},
 					{Field: "session_days", Label: "Session idle lifetime (days)", Type: "number",
 						Min: 1, Max: 90, Help: "Default 7. How long a session survives WITHOUT use.",

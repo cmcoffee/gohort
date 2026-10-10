@@ -93,12 +93,12 @@ func lookupImageBackend(name string) (ImageBackendFunc, bool) {
 }
 
 // ImageDir returns the directory where generated images are stored.
-// Defaults to os.TempDir()/gohort-images if not set via SetImageDir.
+// Defaults to os.TempDir()/oddjob-images if not set via SetImageDir.
 func ImageDir() string {
 	if imageDir != "" {
 		return imageDir
 	}
-	return filepath.Join(os.TempDir(), "gohort-images")
+	return filepath.Join(os.TempDir(), "oddjob-images")
 }
 
 // SetImageDir configures the persistent image storage directory.
@@ -110,12 +110,12 @@ func SetImageDir(dir string) {
 var imageDir string
 
 // BrowserDir returns the directory where go-rod stores its Chromium binary and
-// user data. Defaults to os.TempDir()/gohort-browser if not set via SetBrowserDir.
+// user data. Defaults to os.TempDir()/oddjob-browser if not set via SetBrowserDir.
 func BrowserDir() string {
 	if browserDir != "" {
 		return browserDir
 	}
-	return filepath.Join(os.TempDir(), "gohort-browser")
+	return filepath.Join(os.TempDir(), "oddjob-browser")
 }
 
 // SetBrowserDir configures the directory used for Chromium binary caching.

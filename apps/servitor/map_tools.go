@@ -29,8 +29,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
-	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const (

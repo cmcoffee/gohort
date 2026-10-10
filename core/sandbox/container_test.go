@@ -121,7 +121,7 @@ func TestTheContainerArgvCarriesTheConfinementPromises(t *testing.T) {
 	ws := t.TempDir()
 	argv := strings.Join(c.build(context.Background(), sandboxRun{
 		Kind: sandboxShellRun, Command: "ls", WorkspaceDir: ws,
-		Env: map[string]string{"GOHORT_HOOK_PATH": "/run/gohort/h.sock"},
+		Env: map[string]string{"ODDJOB_HOOK_PATH": "/run/oddjob/h.sock"},
 	}).Args, " ")
 
 	for _, want := range []string{
@@ -133,7 +133,7 @@ func TestTheContainerArgvCarriesTheConfinementPromises(t *testing.T) {
 		"--network none",                   // AllowNetwork was false
 		ws + ":" + ws + ":rw",              // workspace, same path inside as out
 		"--workdir " + ws,
-		"/run/gohort/h.sock:/run/gohort/h.sock", // the hook socket, by file
+		"/run/oddjob/h.sock:/run/oddjob/h.sock", // the hook socket, by file
 		"testimg sh -c ls",                      // image, then the command
 	} {
 		if !strings.Contains(argv, want) {
@@ -189,7 +189,7 @@ func TestContainerEnvDropsTheDaemonsSecretsAndReplacesPATH(t *testing.T) {
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "PATH=") {
 			paths++
-			if !strings.HasPrefix(kv, "PATH="+GohortBinMountPath+":") {
+			if !strings.HasPrefix(kv, "PATH="+OddjobBinMountPath+":") {
 				t.Errorf("the shim dir must lead PATH, got %q", kv)
 			}
 		}
@@ -276,9 +276,9 @@ func TestPythonVersionParsing(t *testing.T) {
 // as container_t and cannot read a bind mount carrying the host's own label, so
 // the workspace reads as empty or permission-denied with nothing naming
 // SELinux. It was invisible on the dev box (SELinux Disabled) and would have
-// appeared on the first RHEL deployment, which is where gohort mostly runs.
+// appeared on the first RHEL deployment, which is where oddjob mostly runs.
 func TestMountsCarryTheRelabelOptionWhenSELinuxEnforces(t *testing.T) {
-	t.Setenv("GOHORT_SANDBOX_SELINUX_RELABEL", "on")
+	t.Setenv("ODDJOB_SANDBOX_SELINUX_RELABEL", "on")
 	resetRelabel(t)
 
 	got := mount("/host/ws", "/host/ws", "rw")
@@ -304,7 +304,7 @@ func TestMountsCarryTheRelabelOptionWhenSELinuxEnforces(t *testing.T) {
 // sequence — and a private label would have each one relabel the tree away from
 // the last.
 func TestRelabelIsSharedNotPrivate(t *testing.T) {
-	t.Setenv("GOHORT_SANDBOX_SELINUX_RELABEL", "on")
+	t.Setenv("ODDJOB_SANDBOX_SELINUX_RELABEL", "on")
 	resetRelabel(t)
 	if spec := mount("/ws", "/ws", "rw")[1]; strings.Contains(spec, ",Z") {
 		t.Errorf("private relabeling would fight between runs: %q", spec)
@@ -316,7 +316,7 @@ func TestRelabelIsSharedNotPrivate(t *testing.T) {
 // service. An operator whose web root is httpd_sys_content_t needs to be able
 // to refuse.
 func TestRelabelCanBeRefused(t *testing.T) {
-	t.Setenv("GOHORT_SANDBOX_SELINUX_RELABEL", "off")
+	t.Setenv("ODDJOB_SANDBOX_SELINUX_RELABEL", "off")
 	resetRelabel(t)
 	if spec := mount("/ws", "/ws", "rw")[1]; strings.Contains(spec, "z") {
 		t.Errorf("relabeling was disabled but happened anyway: %q", spec)
@@ -326,7 +326,7 @@ func TestRelabelCanBeRefused(t *testing.T) {
 // On a host with no SELinux, nothing is added — the flag would be a no-op on
 // most kernels and an error on some.
 func TestNoRelabelWithoutSELinux(t *testing.T) {
-	t.Setenv("GOHORT_SANDBOX_SELINUX_RELABEL", "")
+	t.Setenv("ODDJOB_SANDBOX_SELINUX_RELABEL", "")
 	resetRelabel(t)
 	spec := mount("/ws", "/ws", "rw")[1]
 	if SELinuxState() == "enforcing" {

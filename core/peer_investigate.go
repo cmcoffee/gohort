@@ -2,7 +2,7 @@
 //
 // The problem this solves is WHERE THINGS ARE, not who owns them. An appliance
 // on the lab network is reachable from the instance that sits on that network
-// and from nowhere else; a laptop running gohort cannot open an SSH session to
+// and from nowhere else; a laptop running oddjob cannot open an SSH session to
 // it however many credentials it holds. Copying the appliance across would not
 // help — it would just move credentials onto a laptop and still fail to route.
 //

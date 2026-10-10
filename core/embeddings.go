@@ -306,7 +306,7 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 		// Include the URL and response body in the error so the
 		// operator can see at a glance whether the request even
 		// reached the intended endpoint, or accidentally landed on
-		// a different HTTP server (e.g., gohort itself, a proxy).
+		// a different HTTP server (e.g., oddjob itself, a proxy).
 		bodySnip := strings.TrimSpace(string(body))
 		if len(bodySnip) > 160 {
 			bodySnip = bodySnip[:160] + "..."

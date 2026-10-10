@@ -23,9 +23,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/peershare"
-	"github.com/cmcoffee/gohort/core/promotion"
-	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/oddjob/core/peershare"
+	"github.com/cmcoffee/oddjob/core/promotion"
+	"github.com/cmcoffee/oddjob/core/textutil"
 )
 
 const (

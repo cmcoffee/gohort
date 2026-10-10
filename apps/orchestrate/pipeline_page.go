@@ -21,8 +21,8 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func init() {
@@ -178,7 +178,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		Sticky: pipelineMapCard(def),
 		Head: ui.NewHead().CSS(pipelineStageCSS).
 			JS(ArtifactClientJS).
-			ClientAction("export_pipeline", `function(ctx){ window.gohortArtifacts.exportAction('pipeline', 'id', 'name')(ctx); }`).
+			ClientAction("export_pipeline", `function(ctx){ window.oddjobArtifacts.exportAction('pipeline', 'id', 'name')(ctx); }`).
 			JS(pipelineMapHereJS).
 			ClientAction("pipeline_duplicate", pipelineDuplicateJS),
 		Sections: []ui.Section{{

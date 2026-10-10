@@ -1,7 +1,7 @@
 package admin
 
 import (
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // costSections is the cost part of the admin page: Cost History (Last 30 Days), Cost by source, Prices.

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/oddjob/core/textutil"
 )
 
 // SourceRef is a single numbered source entry.
@@ -315,7 +315,7 @@ func fetchCitationMetadata(ctx context.Context, rawURL string) (authors, title, 
 	if err != nil {
 		return "", "", ""
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; gohort-research/1.0; +https://github.com/cmcoffee/gohort)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; oddjob-research/1.0; +https://github.com/cmcoffee/oddjob)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	client := &http.Client{
 		Timeout: 8 * time.Second,

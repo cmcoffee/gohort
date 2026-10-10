@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // fullBodyArg marks an api call whose response feeds another tool rather than a
@@ -334,7 +334,7 @@ func dispatchPublicAPICall(ctx context.Context, urlStr, method, body, contentTyp
 const (
 	publicAPITimeout          = 30 * time.Second
 	publicAPIMaxResponseBytes = 1 * 1024 * 1024 // 1 MB
-	publicAPIUserAgent        = "gohort-public-api-tool/1.0"
+	publicAPIUserAgent        = "oddjob-public-api-tool/1.0"
 )
 
 // splitStatusLine separates the leading "HTTP <code> <text>" line from

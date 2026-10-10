@@ -3,7 +3,7 @@ package core
 import (
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/oddjob/core/promotion"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

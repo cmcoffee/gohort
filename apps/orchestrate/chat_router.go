@@ -14,9 +14,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cmcoffee/gohort/tools/temptool"
+	"github.com/cmcoffee/oddjob/tools/temptool"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // resolveAgent loads the agent named by `agent_id` (query first, then

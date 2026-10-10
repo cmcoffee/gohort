@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -46,7 +46,7 @@ func newTestOrchestrate(t *testing.T) (*OrchestrateApp, Database, string) {
 var token string
 
 func asUser(r *http.Request, user string) *http.Request {
-	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+	r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: token})
 	return r
 }
 

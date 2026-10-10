@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // machineRunTrace is what a scheduled machine run leaves behind.

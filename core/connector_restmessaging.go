@@ -28,7 +28,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/messaging"
+	"github.com/cmcoffee/oddjob/core/messaging"
 )
 
 // RestMessagingConnectorKind is the Kind value for a server-polled messaging bridge.
@@ -131,7 +131,7 @@ type RestMessagingSpec struct {
 	// Skip drops messages the agent should not see (see RestMessagingSkip).
 	Skip []RestMessagingSkip `json:"skip,omitempty"`
 
-	// DisplayName and Markdown name a service gohort has no entry for, and say
+	// DisplayName and Markdown name a service oddjob has no entry for, and say
 	// whether it renders markdown; a known service keeps its own.
 	DisplayName string `json:"display_name,omitempty"`
 	Markdown    bool   `json:"markdown,omitempty"`

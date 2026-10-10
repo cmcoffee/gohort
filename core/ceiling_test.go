@@ -189,7 +189,7 @@ const (
 	// a method, which the count excludes.
 	//
 	// Raised 2170 -> 2171 for AppStoreName, ONE func: the resolver of the
-	// name an app's store is keyed by, which main (gohort.go, menu.go) calls
+	// name an app's store is keyed by, which main (oddjob.go, menu.go) calls
 	// where it used to call Name() and so cannot be unexported. The interface
 	// an app satisfies to override it stays unexported — an app only needs the
 	// method — and the writer that motivated it (a doc-rules save) went to

@@ -19,7 +19,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleToolGroupMembers serves GET/POST /api/tool-groups/{id}/members.

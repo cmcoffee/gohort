@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/prompts"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // channelSurfaceContext renders a one-line provenance note for a channel
@@ -265,7 +265,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// ERROR (endpoint down / 404 / format whisper can't decode) vs. empty (no
 		// speech) — instead of reporting every miss as "not configured", which is
 		// actively misleading when STT IS on and the endpoint is just failing. The
-		// underlying error is logged so a broken endpoint is greppable in gohort.log.
+		// underlying error is logged so a broken endpoint is greppable in oddjob.log.
 		// nameHint carries a real extension (whisper picks its decoder from it — a
 		// bogus ".audio" gets the request rejected).
 		transcribeAudio := func(data []byte, nameHint string) string {
@@ -431,7 +431,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// Strip framework-internal markers at the channel boundary — the same
 		// safety net phantom applies on its outbox (phantom.go) and the web loop
 		// applies on its reply (runner.go). Without it, a leaked delivery marker
-		// ([ATTACH: …]) or a <gohort-meta> note rides out verbatim in the text.
+		// ([ATTACH: …]) or a <oddjob-meta> note rides out verbatim in the text.
 		// Attachments for channels travel via res.Images (workspace attach), so
 		// stripping the textual marker here doesn't drop a real attachment.
 		// A channel reply leaves the web UI entirely, so the browser-side strip

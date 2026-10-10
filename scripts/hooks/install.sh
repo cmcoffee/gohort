@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the gohort git hooks by symlinking them into .git/hooks/.
+# Install the oddjob git hooks by symlinking them into .git/hooks/.
 # Run from anywhere inside the repo:
 #   scripts/hooks/install.sh
 

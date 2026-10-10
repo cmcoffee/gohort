@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func TestASessionWithoutTheTurnContextCannotDetach(t *testing.T) {

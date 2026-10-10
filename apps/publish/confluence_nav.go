@@ -3,11 +3,11 @@ package publish
 // The document's navigation within itself, rebuilt in Confluence storage
 // format for the API route (docs.DocNav says what it is).
 //
-// The converter writes an in-page link as <a href="#install">, gohort's anchor,
+// The converter writes an in-page link as <a href="#install">, oddjob's anchor,
 // and Confluence names its heading anchors its own way, so every such link and
 // every table-of-contents entry pointed at nothing. Here, after conversion:
 //
-//   - a heading a link points at gets an Anchor macro carrying its gohort
+//   - a heading a link points at gets an Anchor macro carrying its oddjob
 //     anchor, and the link becomes an ac:link to that anchor: Confluence's
 //     own way to link within a page, independent of how it names headings;
 //   - a link that points at no heading keeps its words and loses the link;
@@ -20,7 +20,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/oddjob/core/docs"
 )
 
 var (

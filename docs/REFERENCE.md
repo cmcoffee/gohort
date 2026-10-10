@@ -1,4 +1,4 @@
-# Gohort: Reference
+# Oddjob: Reference
 
 The full feature surface, built-in apps, SDK interfaces, CLI flags, and project layout.
 For the overview and quick start, see the [README](../README.md).
@@ -16,7 +16,7 @@ For the overview and quick start, see the [README](../README.md).
 - **Paste into a collection**, a collection takes text you already have, not just files and web pulls: markdown or plain prose as written, or a JSON object/array, which is flattened to one section per top-level key (or per record of an array) with nested fields as `path: value` lines, so it chunks and retrieves instead of embedding as brace noise. The title is the document's handle, so pasting again under the same title replaces it: a collection can hold a note that changes. Builder reaches the same door with `collections(action="add_text")`.
 - **Hidden + allowlist controls**: agents can be hidden from the fleet's `agents(action="run")` dispatch, or restricted to a specific allowlist of callers. Per-(user, agent) memory + knowledge stores keep tenants isolated.
 - **Runtime-defined tools**: Builder authors shell-mode and api-mode tools mid-conversation and they persist immediately to the user's own pool; every other agent's land scoped to that agent's own record. (The pending-approval queue still gates tools arriving by artifact *import*: a recipe from elsewhere is a different trust question from one you just watched get built.) Unconfirmed tools carry a **trial** badge and a reaper clock, so what nobody kept doesn't accumulate. Multi-stage work is authored as a declarative **pipeline** (above), not a tool.
-- **Sandbox-isolated shell tools with a narrow callback**: shell-mode scripts run in a network-isolated `bwrap` sandbox with one capability-gated callback channel back into gohort. The Python shim exposes `gohort.fetch_url` / `gohort.browse_page` / `gohort.log` (default-on for any tool with a `script_body`) and `gohort.fetch_via("<credential>", url)` / `gohort.secret("<credential>")` (explicit declaration required, gated by per-credential allow-list). urllib / requests / curl / wget / socket-dialing are refused at authoring time: the gohort hook is the only network path, and every script-side call uses the same HTTP client, headers, auto-routing, and audit log as the LLM-callable equivalents.
+- **Sandbox-isolated shell tools with a narrow callback**: shell-mode scripts run in a network-isolated `bwrap` sandbox with one capability-gated callback channel back into oddjob. The Python shim exposes `oddjob.fetch_url` / `oddjob.browse_page` / `oddjob.log` (default-on for any tool with a `script_body`) and `oddjob.fetch_via("<credential>", url)` / `oddjob.secret("<credential>")` (explicit declaration required, gated by per-credential allow-list). urllib / requests / curl / wget / socket-dialing are refused at authoring time: the oddjob hook is the only network path, and every script-side call uses the same HTTP client, headers, auto-routing, and audit log as the LLM-callable equivalents.
 - **Tool groups + classifier-trim**: admin-curated bundles collapse related tools into one expandable catalog entry; the runtime vector-classifier surfaces only the top-K most relevant tools per turn when the catalog gets large.
 
 ### LLM infrastructure
@@ -31,14 +31,14 @@ For the overview and quick start, see the [README](../README.md).
 - **Source hooks**: admin-managed external sources (PubMed, OpenAlex, EDGAR, or any custom API/RAG endpoint, from templates or hand-rolled). Each can be exposed as a per-hook agent tool (`pubmed_search`, …) that surfaces live in every agent's catalog, and/or auto-queried by topic in research/debate pipelines. Auth stored encrypted; paywall hooks transparently add headers to `fetch_url`.
 - **API credentials (credential-first, secret never reaches the LLM)**: register an authenticated external API once; the secret is stored encrypted and injected server-side at call time. Types: bearer, custom header, query param, HTTP basic, and OAuth2 (`client_credentials` / `jwt_bearer` / `refresh_token` / `password` grants, with access tokens minted and refreshed automatically). The allow-list is a **Base URL + an add/remove list of Allowed Endpoints** (or a legacy single glob); any request outside it is refused before the secret is attached. A per-credential **skip-TLS-verify** toggle handles self-signed / IP-addressed LAN appliances (firewalls, NAS, switches), where no certificate can validate. Authoring agents (Builder, Chat) scaffold the credential config themselves via `draft_api_credential` / `draft_oauth_credential`: it lands disabled, the admin pastes the secret in the admin UI and enables it, and the LLM drives the wiring without ever seeing the key. A universal framework rule forbids any agent from soliciting a key/secret in chat.
 - **Remote MCP servers (server-side client)**: admin-registered Model Context Protocol servers reachable over Streamable HTTP. Each server's tools surface as native `<server>.<tool>` agent tools and, optionally, as a reference source in the writer/research source picker. Auth modes: static bearer, SecureAPI OAuth2 (client_credentials / jwt_bearer), and per-user OAuth 2.1 (authorization_code + PKCE + dynamic client registration) for hosted SaaS like Atlassian Cloud. Tokens are stored encrypted; OAuth connections are per-user so results respect each user's own permissions.
-- **MCP server (inbound)**, the inverse direction: gohort can expose its own agents to an external MCP client (e.g. Claude Desktop) over a JSON-RPC endpoint, authenticated by a bridge key. An external client calls `tools/list` / `tools/call` to dispatch a task to a gohort agent and read back recent results: useful for reaching gohort's durable, scheduled, channel-connected agents from a client that has none of that itself.
+- **MCP server (inbound)**, the inverse direction: oddjob can expose its own agents to an external MCP client (e.g. Claude Desktop) over a JSON-RPC endpoint, authenticated by a bridge key. An external client calls `tools/list` / `tools/call` to dispatch a task to a oddjob agent and read back recent results: useful for reaching oddjob's durable, scheduled, channel-connected agents from a client that has none of that itself.
 - **Connectors (LLM-authored integration types)**: an authoring agent declares a whole new "bridge type" at runtime with no code change, drafted via the `connector` tool and reviewed by an admin in **Admin › Connectors**. One `core.Connector` record + a per-kind handler registry (`RegisterConnectorKind`); create leaves it unapproved and inert, approval materializes the real capability. Four kinds ship: `remote_mcp` (register a remote MCP server, wrapping the server-side MCP client above), `rest_poll` (poll one authenticated URL every N minutes and wake an agent when it changes; goes live on create since it reuses an already-approved credential), `desktop_mcp` (host a local MCP server on the user's own machine via their desktop bridge), and `desktop_command` (run a fixed local command as one tool). Desktop kinds are pushed to the user's daemon over the WebSocket and sit behind three gates: admin approval, a daemon user-consent prompt on install, and the normal per-invocation approval.
 - **Vision + multimodal**: image and video attachments flow through to vision-capable models with sensible per-call defaults.
 
 ### Web platform
 - **Declarative UI framework** (`core/ui`): `FormPanel`, `Table`, `ChatPanel`, `PipelinePanel`, `DisplayPanel`, `ChipPicker`, `Stack`, `RecordView`, `JSONView`, plus per-field affordances like `Presets` (static one-click fills), `ChipsSource` (dynamic chips), `SuggestURL` (per-field AI fill), `TestURL` (connectivity check button), and `Templates` (a "start from template" picker that prefills a create-form from named presets).
 - **Channel agents (Master Control)**: a fleet-capable agent gets a persistent **Master Control** home thread pinned above its ordinary sessions, where its event-monitor wakes and standing-agent reports land as distinct titled cards (producer + fire time) rather than chat bubbles. A pinned **Permissions** page is the agent's permission center: a Claude-Desktop-style three-state policy control per delegation target / contact (Always allow - Needs approval - **Blocked**, the last enforced server-side as auto-deny) plus the live approval queue, all on one page. Fleet-management views collapse into a topbar **Manage** menu; the rail stays a clean list of threads.
-- **Reserved internal marker**: anything an agent wraps in `<gohort-meta>…</gohort-meta>` is scrubbed from user-facing output (both the saved/exported copy and the client render), so framework-internal directives and stray delivery markers can never leak into a reply.
+- **Reserved internal marker**: anything an agent wraps in `<oddjob-meta>…</oddjob-meta>` is scrubbed from user-facing output (both the saved/exported copy and the client render), so framework-internal directives and stray delivery markers can never leak into a reply.
 - **Web-based admin**: most operator config (LLM provider/model/key, embeddings, STT, image gen, web search, SMTP, cost rates, routing, worker thinking) lives in the admin web UI with inline test buttons. `--setup` is now mostly first-boot bootstrap (TLS, listen addr, admin user).
 - **Data-driven tunables**: framework knobs that used to be hardcoded constants (timeouts, caps, budgets, thresholds across the core) self-register via `RegisterTunable` and read through `TuneInt` / `TuneFloat` / `TuneDuration`; the admin **Tuning** tab generates an editable row per knob, grouped by area, each with revert-to-default. Add a tunable in one line and it appears in the UI automatically.
 - **Cost telemetry**, a dedicated **Costs** tab: per-day spend chart with per-tier breakdown (worker in/out, lead in/out, search calls, image calls), inline per-tier rates, and a **cost-by-source** table. Apps plug in record scanners via `RegisterCostRecordScanner` so the chart stays generic; source hooks and API credentials carry an optional **per-call cost** that accrues per-source via `RecordExternalCost`, so external API spend shows up next to model spend.
@@ -52,7 +52,7 @@ For the overview and quick start, see the [README](../README.md).
 - **Detached agent runs**: turns survive client disconnect. The HTTP request's context drives only the SSE delivery leg; the agent loop runs against an independent context and tees every frame into a per-run ring buffer. A reconnecting client picks up where it left off via `/api/runs/<id>/stream`. Active runs show a pulsing indicator on their session in the rail, and sessions with live background work (event-monitor watchers or in-flight dispatched agents) lift into an "Active" group at the top of the rail with a count badge, so ongoing work stays findable.
 - **Pipeline framework**, `RunPipelineAsync` / `RestorePipeline` for long-running tasks: session registration, persistent queue (survives restarts), per-app concurrency cap, completion notifications without duplicates.
 - **Mid-flight interjections**: queue notes via `/api/inject` while a turn is running; drained at per-step boundaries and folded into the next worker brief.
-- **Encrypted config + credentials**: AES-CFB kvlite database whose padlock is kept in `gohort.ini` by default, or tied to the machine with `[database] lock = machine` (see "The database padlock" below); each credential carries a Base URL + add/remove allowed-endpoints allow-list, audit log, rate limits, and an optional per-credential TLS-skip for self-signed / IP-addressed LAN appliances.
+- **Encrypted config + credentials**: AES-CFB kvlite database whose padlock is kept in `oddjob.ini` by default, or tied to the machine with `[database] lock = machine` (see "The database padlock" below); each credential carries a Base URL + add/remove allowed-endpoints allow-list, audit log, rate limits, and an optional per-credential TLS-skip for self-signed / IP-addressed LAN appliances.
 - **Maintenance functions**: apps register one-shot repair operations (re-embed, migrate, dedupe); admin UI surfaces them as Run-button rows.
 
 ## Configure (web admin)
@@ -79,7 +79,7 @@ Apps register themselves in `init()`. The framework discovers CLI and web capabi
 ```go
 package myapp
 
-import . "github.com/cmcoffee/gohort/core"
+import . "github.com/cmcoffee/oddjob/core"
 
 func init() { RegisterApp(new(MyApp)) }
 
@@ -100,7 +100,7 @@ Then add a blank import so the package is compiled in and its `init()` runs:
 
 ```go
 // agents.go  (or private.go for the private tree)
-import _ "github.com/cmcoffee/gohort/apps/myapp"
+import _ "github.com/cmcoffee/oddjob/apps/myapp"
 ```
 
 That one line is the only wiring. Everything else (the CLI command, the web dashboard) is discovered from the type.
@@ -180,12 +180,12 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 | `orchestrate` | Agency: central agent fleet runner. Chat with seed agents (Chat, Builder, Research, Code Reviewer, …) or user-authored ones; per-(user, agent) memory across four layers (always-in-prompt facts, vector-grown reference memory, semantic knowledge, and a **graph layer** of entities + relationships via `link_entities` / `recall_about`); plan-driven multi-step authoring; sub-agent dispatch with per-caller allowlists; attachable pipelines surfaced as callable tools; SSE streaming + interjections. App agents (Scribe's Guide Author, Servitor's investigator) are their app's: not listed here, not deletable, and set up in the app through its chat's **Agent settings** (budgets, reasoning, **Reset to default**), which `AppChat` serves along with orchestrate's chat endpoints |
 | `agents` | Dashboard per-agent surface: agents an admin publishes from Agency ("Publish App to Dashboard") get individual `/agents/<slug>/` URLs. Streamlined chat-first; permission-gated (a granted user gets a chat surface scoped to that one agent, with their own per-(user, agent) sessions + data). Not management: config lives in admin-only Agency |
 | `knowledge` | Document Collections: shared / per-user RAG buckets agents attach to. Upload PDFs/DOCX/text; autofill from web with optional LLM judge; FilterRules-driven scope |
-| `bridges` | Messaging transport, connect a messaging service (iMessage, Telegram, …) to a channel agent: inbound routes to the bound agent, its replies route back out. Wake-rule gatekeeper (a deployment-wide master ruleset set in admin, merged with per-channel rules, evaluated by a cheap worker-LLM call before an inbound wakes the agent, with a turn-taking bypass for follow-ups), per-conversation curation, auto-reply policy, outbound de-markdown at the single send chokepoint, and per-service key management. Pure transport: the agent intelligence is an `orchestrate` channel agent; the macOS iMessage relay runs in `gohort-desktop`. (Replaces the retired `phantom` app, whose own agent engine was folded into `orchestrate`.) |
+| `bridges` | Messaging transport, connect a messaging service (iMessage, Telegram, …) to a channel agent: inbound routes to the bound agent, its replies route back out. Wake-rule gatekeeper (a deployment-wide master ruleset set in admin, merged with per-channel rules, evaluated by a cheap worker-LLM call before an inbound wakes the agent, with a turn-taking bypass for follow-ups), per-conversation curation, auto-reply policy, outbound de-markdown at the single send chokepoint, and per-service key management. Pure transport: the agent intelligence is an `orchestrate` channel agent; the macOS iMessage relay runs in `oddjob-desktop`. (Replaces the retired `phantom` app, whose own agent engine was folded into `orchestrate`.) |
 | `servitor` | SSH-based system investigator with plan-driven flow (set_plan / execute / revise / gap-detect / skip-and-revisit), persistent technique recording, mapping runs saved as sessions, exportable knowledge brief (`.md`, secrets redacted), private-only routing, xterm terminal pane. Also does **git-repository Q&A** (ask questions about a checked-out repo: absorbed from the retired `enginseer` app). **Systems are shareable**: an owner publishes an appliance/repo to all users, who operate it in the owner's scoped context while keeping their own chat sessions. Findings can be **pushed into a Guide**: conversationally (the `push_to_guide` agent tool) or via a per-reply **↗ Guide** button that lists only guides which already have this appliance/repo as a source; the Guide Author then incorporates it coherently. All through the generic `core` document-target registry (the write-side mirror of reference sources), so servitor never imports guides |
 | `codewriter` | Script/query co-author with saved snippets, reusable values, and saved context blocks |
 | `scribe` | The writing app: living multi-section **guides**, co-authored with an AI Guide Author. A guide renders as a formatted document with an optional generated header image (a table of contents once it has three sections), edited a section at a time (edit/move/delete), as one markdown page (Edit all; each `##` heading is a section), or by the co-author. Former single-body articles read as guides split at their `##` headings. Shared: revision history, PDF / HTML / Markdown export, publish-out, knowledge collections + cross-app Sources, freshness audit, the Curator, and per-user house-style rules. Absorbed `guides` and `techwriter` (both paths redirect here; TechWriter libraries migrate in on first start) |
 | `hello` | Minimal scaffold app: canonical reference for authoring a new app with the declarative `core/ui` framework |
-| `mcpserver` | MCP server (inbound): exposes gohort agents to an external MCP client (e.g. Claude Desktop) over a bridge-key-authenticated JSON-RPC endpoint: `tools/list` advertises agent dispatch + recent-results, `tools/call` runs a gohort agent and returns its reply |
+| `mcpserver` | MCP server (inbound): exposes oddjob agents to an external MCP client (e.g. Claude Desktop) over a bridge-key-authenticated JSON-RPC endpoint: `tools/list` advertises agent dispatch + recent-results, `tools/call` runs a oddjob agent and returns its reply |
 | `customapps` | Generic host for data-driven apps: a page composed from `core/ui` primitives is stored as JSON (`AppSpec`) and served via `RenderPageJSON`, backed by a per-app record store with generic CRUD. Builder authors these with `app_def`: declarative sections (form, table, display, chart, actions, chat, workbench, **pipeline**, or a raw HTML canvas), sandboxed data-source / action scripts, scheduled self-updating actions, per-user sharing, and an anonymous capability link. A `pipeline` section proxies to core's run surface, so an app can submit a run, stream its stages, and keep its history |
 | `ollama_proxy` | Ollama-compatible HTTP proxy for clients that expect that API shape |
 | `extensions` | A user's outward reach: their own API credentials, connected accounts (per-user OAuth/MCP), authored tools, **skills** (incl. the playbook editor), and the global-tool catalog they opt into. The user-namespace counterpart to admin's global management; everything here is scoped to the calling user. Mounted at `/extensions`; was `gateways` until v0.6.817, and its data bucket still carries that name |
@@ -193,13 +193,13 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 | `filestore` | Folders on this server an agent can search, as a named store with retention |
 | `monitor` | Live view of what is happening across the deployment: runs, agents, schedules, in one hub tab |
 | `account` | Identity + preferences: password, timezone, and the inbound personal-access tokens an external MCP client uses to reach THIS user's agents. Deliberately separate from `extensions`, which is the outbound side |
-| `openaiapi` | OpenAI-compatible chat endpoint: lets an external client drive a model or a gohort agent over the API shape it already speaks |
+| `openaiapi` | OpenAI-compatible chat endpoint: lets an external client drive a model or a oddjob agent over the API shape it already speaks |
 
 ## Companion clients
 
 | Client | Purpose |
 |--------|---------|
-| `gohort-desktop` | Native desktop host (Wails), shipped as **two apps**: **Gohort.app**, the viewer window (reverse-proxies the gohort web UI; no special permissions), and **Gohort-Bridge.app**, an always-on menu-bar daemon that owns the host's OS permissions and exposes local capabilities (filesystem read/write, screenshot, contacts) plus, on macOS, the iMessage relay that feeds the **Bridges** transport app, all dispatched from the gohort server over a per-user WebSocket. One unified API key authenticates both the tool bridge and `/bridges/api/*`. Per-invocation approval (auto-approve toggle), read/write folder consent, MCP host, and a **declared-command host**. The daemon's tool surface is expandable at runtime: the server can push a capability install (a `desktop_mcp` or `desktop_command` connector, once admin-approved and user-consented) and it lands as a new local tool, persisted, without reshipping the app. See `gohort-desktop/README.md`. |
+| `oddjob-desktop` | Native desktop host (Wails), shipped as **two apps**: **Oddjob.app**, the viewer window (reverse-proxies the oddjob web UI; no special permissions), and **Oddjob-Bridge.app**, an always-on menu-bar daemon that owns the host's OS permissions and exposes local capabilities (filesystem read/write, screenshot, contacts) plus, on macOS, the iMessage relay that feeds the **Bridges** transport app, all dispatched from the oddjob server over a per-user WebSocket. One unified API key authenticates both the tool bridge and `/bridges/api/*`. Per-invocation approval (auto-approve toggle), read/write folder consent, MCP host, and a **declared-command host**. The daemon's tool surface is expandable at runtime: the server can push a capability install (a `desktop_mcp` or `desktop_command` connector, once admin-approved and user-consented) and it lands as a new local tool, persisted, without reshipping the app. See `oddjob-desktop/README.md`. |
 
 ## CLI Flags
 
@@ -208,25 +208,25 @@ Top-level flags (work before or after a subcommand, kitebroker-style):
 | Flag | Description |
 |------|-------------|
 | `--setup` | Run configuration wizard |
-| `--config <path>` | Override the INI lookup (default: `<binary-dir>/gohort.ini`) |
+| `--config <path>` | Override the INI lookup (default: `<binary-dir>/oddjob.ini`) |
 | `--debug` / `--trace` / `--snoop` / `--serial` | Diagnostic modifiers |
 | `--version` | Show version |
 
 ### The database padlock
 
 The database's encrypted values (API keys, credential secrets, OAuth tokens)
-are under a padlock chosen by `[database] lock` in `gohort.ini`:
+are under a padlock chosen by `[database] lock` in `oddjob.ini`:
 
-- `lock = portable` (default): random bytes kept in `gohort.ini` under
+- `lock = portable` (default): random bytes kept in `oddjob.ini` under
   `[do_not_modify] db_locker`, saved and read back from the file before use.
   The data directory opens anywhere alongside that ini: move and back them up
   together.
 - `lock = machine` (opt-in): the operating system's install ID
   (`/etc/machine-id` on Linux and WSL2, `IOPlatformUUID` on macOS,
-  `MachineGuid` on Windows), hashed for gohort and never stored. The
+  `MachineGuid` on Windows), hashed for oddjob and never stored. The
   database opens only on this machine. To move it: set `portable`, start once
   on the old machine, move the data directory with its ini, set it back.
-  With no usable machine ID, gohort says so and stays portable.
+  With no usable machine ID, oddjob says so and stays portable.
 
 Switching re-wraps the database key in place on the next start (the values
 are encrypted under a random key the padlock only wraps, so nothing is
@@ -239,7 +239,7 @@ The `serve` subcommand starts the web dashboard and has its own flags:
 
 | Flag | Description |
 |------|-------------|
-| `gohort serve [addr]` | Start the dashboard on the given address (default `:8080`) |
+| `oddjob serve [addr]` | Start the dashboard on the given address (default `:8080`) |
 | `--max_concurrent <n>` | Max simultaneous tasks (default: 1) |
 | `--tls` | Enable TLS with auto-generated self-signed certificate |
 | `--tls_cert <path>` | Path to TLS certificate file (PEM) |
@@ -253,7 +253,7 @@ Create a `private/` directory (gitignored) and a `private.go` file:
 package main
 
 import (
-    _ "github.com/cmcoffee/gohort/private/myapp"
+    _ "github.com/cmcoffee/oddjob/private/myapp"
 )
 ```
 
@@ -262,8 +262,8 @@ Private apps use the same registration pattern. The framework discovers them at 
 ## Project Structure
 
 ```
-gohort/
-├── gohort.go            # Entry point, CLI flags, global state
+oddjob/
+├── oddjob.go            # Entry point, CLI flags, global state
 ├── agents.go            # App registration (blank imports)
 ├── tools.go             # Tool registration (blank imports)
 ├── config.go            # Configuration wizard
@@ -307,12 +307,12 @@ gohort/
 ├── apps/                # Built-in apps
 │   ├── admin/               # Administrator panel — users, settings, credentials, pending tools, skills, tool groups, all service config
 │   ├── agents/              # Dashboard per-agent surface — one URL per published agent
-│   ├── bridges/             # Messaging transport — services (iMessage/Telegram/…) → channel agents (Mac relay lives in gohort-desktop)
+│   ├── bridges/             # Messaging transport — services (iMessage/Telegram/…) → channel agents (Mac relay lives in oddjob-desktop)
 │   ├── codewriter/          # Script/query co-author with snippets, values, saved contexts
 │   ├── customapps/          # Generic host for data-driven apps (AppSpec = stored ui page + record store), authored by app_def
 │   ├── hello/               # Minimal scaffold app — canonical core/ui reference
 │   ├── knowledge/           # Document Collections — RAG buckets agents attach to (upload, autofill, filter rules)
-│   ├── mcpserver/           # MCP server (inbound) — expose gohort agents to an external MCP client (e.g. Claude Desktop)
+│   ├── mcpserver/           # MCP server (inbound) — expose oddjob agents to an external MCP client (e.g. Claude Desktop)
 │   ├── ollama_proxy/        # Ollama-compatible HTTP proxy
 │   ├── orchestrate/         # Agency — agent fleet runner, plan-driven authoring, memory + knowledge per (user, agent), skill activation, sub-agent dispatch
 │   ├── scribe/              # Writing app: living guides with an AI co-author
@@ -339,5 +339,5 @@ gohort/
     ├── watcher/             # watcher: poll-and-alert framework
     ├── websearch/           # web_search, fetch_url + article extraction
     └── workspace/           # workspace state primitives — create/use/ls/cat/write/run + head/tail/grep/read_lines/stat query actions for spilled / large files
-gohort-desktop/         # Native macOS host (Wails) — separate module, see its README
+oddjob-desktop/         # Native macOS host (Wails) — separate module, see its README
 ```

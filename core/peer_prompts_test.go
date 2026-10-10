@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/oddjob/core/prompts"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

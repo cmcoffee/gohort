@@ -26,7 +26,7 @@ function run(opts) {
     {history: opts.noHistoryAPI ? undefined : hist},
     {referrer: opts.referrer},
     hist,
-    {href: 'https://gohort.example/page-b', origin: 'https://gohort.example'},
+    {href: 'https://oddjob.example/page-b', origin: 'https://oddjob.example'},
     URL
   )();
 }
@@ -40,7 +40,7 @@ function check(label, cond) {
 // The case this exists for: one hub page linked to from another. Both declare
 // the dashboard as their parent, so only history knows where the reader was.
 check('a link from elsewhere in the deployment retraces',
-  run({historyLength: 3, referrer: 'https://gohort.example/page-a/'}) === true);
+  run({historyLength: 3, referrer: 'https://oddjob.example/page-a/'}) === true);
 
 // A bookmark, a pasted link, a fresh tab: no referrer, so no trail.
 check('no referrer falls back to the declared parent',
@@ -49,7 +49,7 @@ check('no referrer falls back to the declared parent',
 // A tab that has been elsewhere first still has history entries, and going
 // back into them leaves the app.
 check('a first entry in this tab falls back even with a long history',
-  run({historyLength: 1, referrer: 'https://gohort.example/page-a/'}) === false);
+  run({historyLength: 1, referrer: 'https://oddjob.example/page-a/'}) === false);
 
 // Arriving from another site: history.back() would return the reader there.
 check('a cross-origin referrer falls back',
@@ -67,9 +67,9 @@ check('a nonsense relative referrer is same-origin and harmless',
 // that goes somewhere merely unideal.
 var threw = arrived(
   {history: {length: 3}},
-  {referrer: 'https://gohort.example/x'},
+  {referrer: 'https://oddjob.example/x'},
   {length: 3},
-  {href: 'https://gohort.example/page-b', origin: 'https://gohort.example'},
+  {href: 'https://oddjob.example/page-b', origin: 'https://oddjob.example'},
   function() { throw new Error('no URL in this browser'); }
 );
 var caught = true;
@@ -79,7 +79,7 @@ check('the throwing case did not escape the function', caught);
 
 // Defensive: no history API at all.
 check('no history API falls back',
-  run({historyLength: 3, referrer: 'https://gohort.example/x', noHistoryAPI: true}) === false);
+  run({historyLength: 3, referrer: 'https://oddjob.example/x', noHistoryAPI: true}) === false);
 
 // --- in-page depth ----------------------------------------------------------
 //

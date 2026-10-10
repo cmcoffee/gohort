@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/prompts"
-	"github.com/cmcoffee/gohort/core/textutil"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/prompts"
+	"github.com/cmcoffee/oddjob/core/textutil"
 )
 
 // handleAgentGuardrails is the DEDICATED owner-only surface for an agent's

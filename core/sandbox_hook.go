@@ -1,12 +1,12 @@
 // Sandbox hook: a per-dispatch Unix domain socket that lets a script
-// running inside the no-network bwrap sandbox call back into gohort
+// running inside the no-network bwrap sandbox call back into oddjob
 // for narrow, capability-gated operations (HTTP fetch, log, etc.).
 //
 // Why UDS works inside --unshare-net: a Unix domain socket lives in
 // the filesystem namespace, not the network namespace. The sandbox's
 // workspace dir is bind-mounted into the sandbox at the same path it
-// has on the host, so a socket file gohort listens on at
-// <workspace>/.gohort_hook_<token>.sock is reachable from inside via
+// has on the host, so a socket file oddjob listens on at
+// <workspace>/.oddjob_hook_<token>.sock is reachable from inside via
 // the same path. socket.AF_UNIX connections work normally.
 //
 // Wire format: newline-delimited JSON over a connection-per-call
@@ -20,7 +20,7 @@
 // HookCapabilities are answered; others return a clear error. Empty
 // HookCapabilities ⇒ no hook is started at all (no socket file, no
 // env var). This keeps the privacy posture clean — a tool without
-// declared capabilities has zero surface area to gohort, same as
+// declared capabilities has zero surface area to oddjob, same as
 // before the hook existed.
 
 package core
@@ -44,10 +44,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/sandbox"
+	"github.com/cmcoffee/oddjob/core/sandbox"
 	"github.com/cmcoffee/snugforge/iotimeout"
 
-	"github.com/cmcoffee/gohort/core/sourcehooks"
+	"github.com/cmcoffee/oddjob/core/sourcehooks"
 )
 
 // BrowserFetchFunc is the registration shim that lets the sandbox-hook
@@ -63,7 +63,7 @@ var BrowserFetchFunc func(url string, maxChars int) (string, error)
 
 // SandboxHook is the per-dispatch UDS server. SocketPath is the
 // listener's filesystem path; expose it to the sandbox via the env
-// var GOHORT_HOOK_PATH. Capabilities is the allowed-method list —
+// var ODDJOB_HOOK_PATH. Capabilities is the allowed-method list —
 // only these are dispatched, everything else returns an error.
 //
 // Sess carries the calling ToolSession for handlers that need it
@@ -97,7 +97,7 @@ type SandboxHook struct {
 	// WorkspaceNetExempt lifts the workspace's REACH ceiling for this run, and
 	// only this run. It is set for a tool already in the owner's pool: a
 	// granted tool reaching out through this broker is a path somebody
-	// approved, and gohort does the dialling, so it is not the thing the
+	// approved, and oddjob does the dialling, so it is not the thing the
 	// ceiling exists to stop.
 	//
 	// It is NOT set for a session draft the agent authored this turn.
@@ -158,7 +158,7 @@ func NewSandboxHook(workspaceDir string, capabilities []string, sess *ToolSessio
 	if err != nil {
 		return nil, fmt.Errorf("hook listen %s: %w", path, err)
 	}
-	// Tighten perms — only the gohort process user can connect.
+	// Tighten perms — only the oddjob process user can connect.
 	// Inside the sandbox the script runs as the same UID (bwrap
 	// inherits), so it can still open it; an unrelated user on the
 	// host can't.
@@ -185,18 +185,18 @@ const maxUnixSocketPath = 107
 
 // hookSocketDirName is the host directory hook sockets bind under. Kept
 // SHORT and deliberately outside the workspace.
-const hookSocketDirName = "gohort-hk"
+const hookSocketDirName = "oddjob-hk"
 
 // hookSocketPath picks where this hook's socket lives.
 //
-// It used to be <workspace>/.gohort_hook_<token>.sock, because the
+// It used to be <workspace>/.oddjob_hook_<token>.sock, because the
 // workspace is bind-mounted into the sandbox at its own path and a
 // socket inside it is therefore reachable from both sides for free.
 // That works until the workspace path gets long. A per-agent workspace
 // is <root>/.agents/<email>/<uuid>/ — 92 characters on a plain install
 // — and the socket name is another 34, which is 126 against a hard
 // limit of 107. Shortening the NAME cannot fix it: the prefix alone
-// leaves 15 characters, and ".gohort_hook_.sock" is 18 with no token
+// leaves 15 characters, and ".oddjob_hook_.sock" is 18 with no token
 // at all. The location had to move.
 //
 // So: a short host dir, and the single socket FILE bind-mounted into
@@ -223,7 +223,7 @@ func hookSocketPath(workspaceDir, token string) (string, error) {
 	// TMPDIR itself is unusable or absurdly deep. The workspace is the
 	// only other place both sides can reach, so try it and say plainly
 	// what is wrong if it does not fit either.
-	p := filepath.Join(workspaceDir, ".gohort_hook_"+name)
+	p := filepath.Join(workspaceDir, ".oddjob_hook_"+name)
 	if len(p) > maxUnixSocketPath {
 		return "", fmt.Errorf("no usable socket path: %q is %d bytes and a unix socket cannot exceed %d. "+
 			"The short path under %s could not be created either: check that the temp dir is writable",
@@ -344,7 +344,7 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 	_ = conn.SetDeadline(time.Now().Add(methodDeadline))
 	Log("[hook] req method=%s params=%v deadline=%s", req.Method, paramKeySummary(req.Params), methodDeadline)
 	// Private-mode network gate. fetch / fetch_via reach outside the
-	// sandbox via gohort's HTTP stack — those have to honor the
+	// sandbox via oddjob's HTTP stack — those have to honor the
 	// session-level NetworkConnector the same way the bwrap
 	// --unshare-net path does. Without this check a shell tool with
 	// hook_capabilities=["fetch"] could still phone home in Private
@@ -357,7 +357,7 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 	//
 	// The second one has to be here as well as at --unshare-net, or the
 	// control is cosmetic: cutting the network namespace and leaving this open
-	// just moves a script from curl to gohort.fetch, which is the route the
+	// just moves a script from curl to oddjob.fetch, which is the route the
 	// sandbox docs tell it to prefer anyway.
 	if req.Method == "fetch" || req.Method == "fetch_via" || req.Method == "browse_page" {
 		if h.Sess != nil && !h.Sess.NetworkAllowed() {
@@ -534,7 +534,7 @@ func (h *SandboxHook) grantedFetchVia(credName string) bool {
 	return false
 }
 
-// handleTool serves gohort.call_tool: the way an app's script reuses a tool
+// handleTool serves oddjob.call_tool: the way an app's script reuses a tool
 // the owner already has (a forecast, a lookup) instead of re-implementing it
 // and letting the two drift. The session's CallTool does the running. Only a tool named by an exact
 // "tool:<name>" capability runs; a bare "tool" grants nothing, the same way
@@ -573,7 +573,7 @@ func (h *SandboxHook) handleTool(conn net.Conn, params map[string]interface{}) {
 	writeHookResult(conn, map[string]any{"output": out})
 }
 
-// handleAsk serves gohort.ask: one question to the app's agent, its text.
+// handleAsk serves oddjob.ask: one question to the app's agent, its text.
 // The grant is the "ask" capability (checked before dispatch); the caps on
 // spending are the host's, inside the session's Ask.
 func (h *SandboxHook) handleAsk(conn net.Conn, params map[string]interface{}) {
@@ -595,7 +595,7 @@ func (h *SandboxHook) handleAsk(conn net.Conn, params map[string]interface{}) {
 	writeHookResult(conn, map[string]any{"text": text})
 }
 
-// handleRunAgent serves gohort.run_agent: one of the app's agents, run with
+// handleRunAgent serves oddjob.run_agent: one of the app's agents, run with
 // its tools on the prompt, and its reply. Granted by "run_agent"; which agents
 // an app may run and what they may spend are the host's, inside RunAgent.
 func (h *SandboxHook) handleRunAgent(conn net.Conn, params map[string]interface{}) {
@@ -616,7 +616,7 @@ func (h *SandboxHook) handleRunAgent(conn net.Conn, params map[string]interface{
 	writeHookResult(conn, map[string]any{"text": text})
 }
 
-// handleRunPipeline serves gohort.run_pipeline: the app's pipeline run to the
+// handleRunPipeline serves oddjob.run_pipeline: the app's pipeline run to the
 // end on the input, and its final output. Granted by "run_pipeline".
 func (h *SandboxHook) handleRunPipeline(conn net.Conn, params map[string]interface{}) {
 	if h.Sess == nil || h.Sess.RunPipeline == nil {
@@ -638,7 +638,7 @@ func (h *SandboxHook) handleRunPipeline(conn net.Conn, params map[string]interfa
 
 // --- method handlers ---
 
-// handleFetch proxies an HTTP request through gohort's network
+// handleFetch proxies an HTTP request through oddjob's network
 // stack. Capped at 10MiB response and 30s default timeout — the
 // sandbox can't escalate either. The request's ctx derives from
 // the session's NetworkConnector so a Private toggle mid-flight
@@ -680,7 +680,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// Credential auto-route — symmetry with the LLM-callable fetch_url
 	// (tools/websearch): a plain fetch to a credential-covered host dispatches
 	// THROUGH the credential (auth injected server-side) instead of going out
-	// anonymous and 401'ing. Lets a script rely on gohort.fetch / fetch_url for
+	// anonymous and 401'ing. Lets a script rely on oddjob.fetch / fetch_url for
 	// covered APIs without declaring fetch_via — the common case just works.
 	// NOTE: this intentionally does NOT require a fetch_via:<cred> capability
 	// (matching the LLM tool, which has no per-credential gate); the credential
@@ -762,7 +762,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			}
 			result := map[string]interface{}{
 				"status":  status,
-				"headers": map[string]string{"X-Gohort-Fetched-Via": "credential:" + credName},
+				"headers": map[string]string{"X-Oddjob-Fetched-Via": "credential:" + credName},
 				"body":    respBody,
 			}
 			if saveTo != "" {
@@ -787,7 +787,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// browser (Reddit, Twitter/X, etc. — see core/js_domains.go),
 	// dispatch through browse_page and return its raw output as body.
 	// No preamble, no "Fetched X (N chars)" wrapper — same shape the
-	// script would have received if it called gohort.browse_page(url)
+	// script would have received if it called oddjob.browse_page(url)
 	// directly. Status synthesized as 200 so the caller's normal
 	// `if status != 200` guard passes; a special header marks the
 	// route taken so anyone curious can see what happened. Plain-HTTP
@@ -807,7 +807,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			Log("[hook/fetch] browse_page auto-route done elapsed=%s chars=%d", time.Since(callStart).Round(time.Millisecond), len(out))
 			writeHookResult(conn, map[string]interface{}{
 				"status":  200,
-				"headers": map[string]string{"X-Gohort-Fetched-Via": "browse_page"},
+				"headers": map[string]string{"X-Oddjob-Fetched-Via": "browse_page"},
 				"body":    out,
 			})
 			return
@@ -871,7 +871,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	}
 	// NewBoundedHTTPClient applies the operator-configured Network
 	// Timeouts (HTTPConnectTimeout for dial/TLS, HTTPRequestTimeout
-	// for response-headers / TTFB). Matches the rest of gohort's
+	// for response-headers / TTFB). Matches the rest of oddjob's
 	// outbound HTTP — fetch_url, source hooks, etc. — so a dead host
 	// fails at the configured request-timeout instead of stalling
 	// until the script-side socket times out.
@@ -1000,9 +1000,9 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 // framework's BrowsePageTool — a real headless Chromium that executes
 // JavaScript and handles cookies. This is the script-callable
 // counterpart of the LLM's browse_page tool: when a Python script's
-// gohort.fetch(url) comes back blocked (403, captcha, Cloudflare
+// oddjob.fetch(url) comes back blocked (403, captcha, Cloudflare
 // interstitial, JS-required skeleton), the script can fall through to
-// gohort.browse_page(url) for the same URL without leaving the sandbox.
+// oddjob.browse_page(url) for the same URL without leaving the sandbox.
 //
 // Capability gate: requires "browse_page" in HookCapabilities. The
 // Private-mode network gate above also covers this (browse_page makes
@@ -1019,7 +1019,7 @@ func (h *SandboxHook) handleBrowsePage(conn net.Conn, params map[string]interfac
 		writeHookError(conn, "browse_page requires url")
 		return
 	}
-	// Same URL validation + SSRF guard as gohort.fetch_url. browse_page
+	// Same URL validation + SSRF guard as oddjob.fetch_url. browse_page
 	// IS a fetch backend — Chromium dialing out to a URL — so the same
 	// guards apply: http/https only, no loopback/private/localhost. The
 	// LLM-callable browse_page tool has its own SSRF guard inside Run;
@@ -1067,19 +1067,19 @@ func (h *SandboxHook) handleBrowsePage(conn net.Conn, params map[string]interfac
 		return
 	}
 	Log("[hook/browse_page] done elapsed=%s chars=%d", time.Since(callStart).Round(time.Millisecond), len(out))
-	// Return shape matches gohort.fetch_url's {status, headers, body}
+	// Return shape matches oddjob.fetch_url's {status, headers, body}
 	// so the script-side parsing pattern is identical:
 	//   result = browse_page(url)
 	//   if result["status"] != 200: ...
 	//   text = result["body"]
 	writeHookResult(conn, map[string]interface{}{
 		"status":  200,
-		"headers": map[string]string{"X-Gohort-Fetched-Via": "browse_page"},
+		"headers": map[string]string{"X-Oddjob-Fetched-Via": "browse_page"},
 		"body":    out,
 	})
 }
 
-// handleHookLog routes script-side log messages through gohort's log
+// handleHookLog routes script-side log messages through oddjob's log
 // stream. Level maps to Debug / Log / Err so a misbehaving script
 // surfaces in the right channel.
 func handleHookLog(conn net.Conn, params map[string]interface{}) {
@@ -1217,7 +1217,7 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 //
 // For unauth, public endpoints, register a no_auth credential with
 // an AllowedURLPattern scoping which public endpoints are reachable,
-// then grant fetch_via:<that-name>. The script gets gohort's full
+// then grant fetch_via:<that-name>. The script gets oddjob's full
 // audit trail without the credential machinery injecting any auth.
 func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{}) {
 	credName, _ := params["credential"].(string)
@@ -1389,7 +1389,7 @@ func randomHookToken() (string, error) {
 // --- Python helper ---
 
 // The two in-sandbox mount paths those shims are reached through
-// (SandboxGohortLibMountPath / SandboxGohortBinMountPath) moved out with the
+// (SandboxOddjobLibMountPath / SandboxOddjobBinMountPath) moved out with the
 // confinement mechanics — where something is mounted inside a sandbox is a fact
 // about the sandbox, and the mount args are built there. core.go re-exports them
 // under the same names, so this file's use of them is unchanged.
@@ -1400,24 +1400,24 @@ type sandboxToolShim struct {
 	content string
 }
 
-// sandboxToolShims are written (0755) into <lib>/bin by EnsureGohortLibDir.
-// _gohort_shim.py carries the logic; the three bare-named wrappers are what
+// sandboxToolShims are written (0755) into <lib>/bin by EnsureOddjobLibDir.
+// _oddjob_shim.py carries the logic; the three bare-named wrappers are what
 // a script actually invokes (fetch_url, fetch_via, browse_page). A wrapper
-// runs from the bin dir, so `from _gohort_shim import main` resolves the
-// sibling, and `import gohort` inside it resolves via PYTHONPATH.
+// runs from the bin dir, so `from _oddjob_shim import main` resolves the
+// sibling, and `import oddjob` inside it resolves via PYTHONPATH.
 var sandboxToolShims = []sandboxToolShim{
-	{"_gohort_shim.py", gohortShimDispatcher},
-	{"fetch_url", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"fetch_url\", sys.argv[1:]))\n"},
-	{"fetch_via", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"fetch_via\", sys.argv[1:]))\n"},
-	{"browse_page", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"browse_page\", sys.argv[1:]))\n"},
+	{"_oddjob_shim.py", oddjobShimDispatcher},
+	{"fetch_url", "#!/usr/bin/env python3\nimport sys\nfrom _oddjob_shim import main\nraise SystemExit(main(\"fetch_url\", sys.argv[1:]))\n"},
+	{"fetch_via", "#!/usr/bin/env python3\nimport sys\nfrom _oddjob_shim import main\nraise SystemExit(main(\"fetch_via\", sys.argv[1:]))\n"},
+	{"browse_page", "#!/usr/bin/env python3\nimport sys\nfrom _oddjob_shim import main\nraise SystemExit(main(\"browse_page\", sys.argv[1:]))\n"},
 }
 
 // SandboxReachableNames returns the identifiers a sandboxed script may
-// legitimately name to reach gohort: the PATH shims written into <lib>/bin,
-// plus the hook methods `from gohort import ...` exposes.
+// legitimately name to reach oddjob: the PATH shims written into <lib>/bin,
+// plus the hook methods `from oddjob import ...` exposes.
 //
 // Callers that flag a shell command for naming an LLM tool MUST exclude these.
-// They are the one case where a gohort name inside a shell command is correct,
+// They are the one case where a oddjob name inside a shell command is correct,
 // and refusing them would break the documented iterate-and-test flow (a script
 // under test calls fetch_url exactly as the authored tool will at dispatch).
 func SandboxReachableNames() map[string]bool {
@@ -1426,32 +1426,32 @@ func SandboxReachableNames() map[string]bool {
 		out[strings.TrimSuffix(s.name, ".py")] = true
 	}
 	// The hook surface itself — see SandboxHookPythonShim's import forms.
-	for _, n := range []string{"fetch", "fetch_url", "fetch_via", "browse_page", "secret", "log", "gohort", "HookError"} {
+	for _, n := range []string{"fetch", "fetch_url", "fetch_via", "browse_page", "secret", "log", "oddjob", "HookError"} {
 		out[n] = true
 	}
 	return out
 }
 
-// gohortShimDispatcher is the shared logic behind the bin-dir wrappers. It
+// oddjobShimDispatcher is the shared logic behind the bin-dir wrappers. It
 // parses a small curl-ish arg surface (--url / --method / --header / --body
-// / --credential, or a bare positional URL), calls the matching gohort hook
+// / --credential, or a bare positional URL), calls the matching oddjob hook
 // method, prints the response body to stdout, and exits non-zero on a non-2xx
 // upstream status so a shell caller can branch on it. No backticks (keeps
 // this a clean Go raw string).
-const gohortShimDispatcher = `#!/usr/bin/env python3
-# gohort tool shims: let a sandboxed script call gohort's fetch family as
+const oddjobShimDispatcher = `#!/usr/bin/env python3
+# oddjob tool shims: let a sandboxed script call oddjob's fetch family as
 # ordinary commands -- fetch_url / fetch_via / browse_page -- instead of
 # subprocessing an LLM tool name (fetch_url_<cred>, send_message, ...),
 # which is NOT a shell binary and only fails with FileNotFoundError. These
-# proxy to the SAME hook that "from gohort import ..." uses, so the hook
+# proxy to the SAME hook that "from oddjob import ..." uses, so the hook
 # still enforces this tool's granted capabilities. No new privilege.
 import sys
 import json
 
 try:
-    import gohort
+    import oddjob
 except Exception as e:
-    sys.stderr.write("gohort shim: cannot import gohort helper (%s)\n" % e)
+    sys.stderr.write("oddjob shim: cannot import oddjob helper (%s)\n" % e)
     raise SystemExit(2)
 
 _USAGE = {
@@ -1514,7 +1514,7 @@ def main(op, argv):
         if not cred or not url:
             return _die("usage: " + _USAGE["fetch_via"])
         try:
-            r = gohort.fetch_via(cred, url, method=method, body=body, headers=headers)
+            r = oddjob.fetch_via(cred, url, method=method, body=body, headers=headers)
         except Exception as e:
             return _die("fetch_via error: %s" % e)
     elif op == "browse_page":
@@ -1522,7 +1522,7 @@ def main(op, argv):
         if not url:
             return _die("usage: " + _USAGE["browse_page"])
         try:
-            r = gohort.browse_page(url)
+            r = oddjob.browse_page(url)
         except Exception as e:
             return _die("browse_page error: %s" % e)
     else:
@@ -1531,9 +1531,9 @@ def main(op, argv):
             return _die("usage: " + _USAGE["fetch_url"])
         try:
             if cred:
-                r = gohort.fetch_via(cred, url, method=method, body=body, headers=headers)
+                r = oddjob.fetch_via(cred, url, method=method, body=body, headers=headers)
             else:
-                r = gohort.fetch_url(url, method=method, headers=headers, body=body)
+                r = oddjob.fetch_url(url, method=method, headers=headers, body=body)
         except Exception as e:
             return _die("fetch_url error: %s" % e)
     if isinstance(r, dict):
@@ -1548,7 +1548,7 @@ def main(op, argv):
     if not body_out.endswith("\n"):
         sys.stdout.write("\n")
     if isinstance(status, int) and not (200 <= status < 300):
-        sys.stderr.write("gohort: upstream HTTP %s\n" % status)
+        sys.stderr.write("oddjob: upstream HTTP %s\n" % status)
         return 1
     return 0
 
@@ -1557,16 +1557,16 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else "fetch_url", sys.argv[2:]))
 `
 
-// gohortLibDirOnce caches the host-side path to the gohort library
-// dir so EnsureGohortLibDir doesn't redo the filesystem work on
+// oddjobLibDirOnce caches the host-side path to the oddjob library
+// dir so EnsureOddjobLibDir doesn't redo the filesystem work on
 // every sandbox dispatch.
 var (
-	gohortLibDirMu   sync.Mutex
-	gohortLibDirPath string
-	gohortLibWarned  bool // one loud line per process, not per dispatch
+	oddjobLibDirMu   sync.Mutex
+	oddjobLibDirPath string
+	oddjobLibWarned  bool // one loud line per process, not per dispatch
 )
 
-// gohortLibUnavailable reports that the helper could not be deployed,
+// oddjobLibUnavailable reports that the helper could not be deployed,
 // once, at Log level.
 //
 // Everything here used to be best-effort and Debug-only, and one path
@@ -1578,20 +1578,20 @@ var (
 // environmental fault it cannot describe, and goes off to improvise an
 // answer some other way — which is how a missing directory becomes a
 // confidently wrong result three tool calls later.
-func gohortLibUnavailable(why string, args ...any) {
-	if gohortLibWarned {
+func oddjobLibUnavailable(why string, args ...any) {
+	if oddjobLibWarned {
 		return
 	}
-	gohortLibWarned = true
-	Log("[hook/helpers] the gohort python helper is NOT available to sandboxed tools: " + fmt.Sprintf(why, args...) +
-		". Scripts using `from gohort import fetch_url` will fail with ModuleNotFoundError, and the tool will look broken rather than unconfigured.")
+	oddjobLibWarned = true
+	Log("[hook/helpers] the oddjob python helper is NOT available to sandboxed tools: " + fmt.Sprintf(why, args...) +
+		". Scripts using `from oddjob import fetch_url` will fail with ModuleNotFoundError, and the tool will look broken rather than unconfigured.")
 }
 
-// EnsureGohortLibDir writes the gohort helper package to a host-side
+// EnsureOddjobLibDir writes the oddjob helper package to a host-side
 // library directory (sibling of WorkspacesDir, prefixed with "_" so
 // it can't be a valid user name) and returns the absolute path. The
 // directory is bind-mounted READ-ONLY into every sandbox at
-// SandboxGohortLibMountPath, with PYTHONPATH pointing there.
+// SandboxOddjobLibMountPath, with PYTHONPATH pointing there.
 //
 // Living OUTSIDE the workspace is the security property: an LLM
 // authoring scripts can't see, write, or delete the helper because
@@ -1603,17 +1603,17 @@ func gohortLibUnavailable(why string, args ...any) {
 // Idempotent: rewrites the __init__.py only when content differs
 // from the embedded source. Returns the host path on success,
 // empty string on failure (best-effort — the sandbox still works,
-// just without gohort imports).
-func EnsureGohortLibDir() string {
-	gohortLibDirMu.Lock()
-	defer gohortLibDirMu.Unlock()
-	if gohortLibDirPath != "" {
+// just without oddjob imports).
+func EnsureOddjobLibDir() string {
+	oddjobLibDirMu.Lock()
+	defer oddjobLibDirMu.Unlock()
+	if oddjobLibDirPath != "" {
 		// Already populated this process; re-verify content hasn't
 		// drifted (cheap stat + read).
-		path := filepath.Join(gohortLibDirPath, "gohort", "__init__.py")
+		path := filepath.Join(oddjobLibDirPath, "oddjob", "__init__.py")
 		if existing, err := os.ReadFile(path); err == nil {
 			if string(existing) == SandboxHookPythonShim {
-				return gohortLibDirPath
+				return oddjobLibDirPath
 			}
 			// Drifted — re-write below.
 		}
@@ -1624,17 +1624,17 @@ func EnsureGohortLibDir() string {
 		// deployment with no workspaces dir configured produced a
 		// helper that simply never existed, with nothing anywhere
 		// saying so.
-		gohortLibUnavailable("no workspaces directory is configured, so there is nowhere to deploy it")
+		oddjobLibUnavailable("no workspaces directory is configured, so there is nowhere to deploy it")
 		return ""
 	}
-	// Sibling of the workspaces dir: same parent, name "_gohort_lib".
+	// Sibling of the workspaces dir: same parent, name "_oddjob_lib".
 	// User-id validation in EnsureWorkspaceDir rejects names with
-	// `/`, `..`, etc., so a malicious "_gohort_lib" user-id can't
+	// `/`, `..`, etc., so a malicious "_oddjob_lib" user-id can't
 	// collide with this path either.
-	libBase := filepath.Join(filepath.Dir(base), "_gohort_lib")
-	pkgDir := filepath.Join(libBase, "gohort")
+	libBase := filepath.Join(filepath.Dir(base), "_oddjob_lib")
+	pkgDir := filepath.Join(libBase, "oddjob")
 	if err := os.MkdirAll(pkgDir, 0755); err != nil {
-		gohortLibUnavailable("cannot create %s (%v)", pkgDir, err)
+		oddjobLibUnavailable("cannot create %s (%v)", pkgDir, err)
 		return ""
 	}
 	path := filepath.Join(pkgDir, "__init__.py")
@@ -1646,23 +1646,23 @@ func EnsureGohortLibDir() string {
 	}
 	if needWrite {
 		if err := os.WriteFile(path, []byte(SandboxHookPythonShim), 0644); err != nil {
-			gohortLibUnavailable("cannot write %s (%v)", path, err)
+			oddjobLibUnavailable("cannot write %s (%v)", path, err)
 			return ""
 		}
-		Debug("[hook/helpers] deployed gohort package (%dB) at %s (host): mounted RO at %s (sandbox)", len(SandboxHookPythonShim), path, SandboxGohortLibMountPath)
+		Debug("[hook/helpers] deployed oddjob package (%dB) at %s (host): mounted RO at %s (sandbox)", len(SandboxHookPythonShim), path, SandboxOddjobLibMountPath)
 	}
-	ensureGohortShims(libBase)
-	gohortLibDirPath = libBase
+	ensureOddjobShims(libBase)
+	oddjobLibDirPath = libBase
 	return libBase
 }
 
-// ensureGohortShims writes the executable fetch-family shims into
-// <libBase>/bin (mounted RO at SandboxGohortBinMountPath, on PATH). Content-
+// ensureOddjobShims writes the executable fetch-family shims into
+// <libBase>/bin (mounted RO at SandboxOddjobBinMountPath, on PATH). Content-
 // idempotent like the package file; best-effort — a write failure just means
-// scripts fall back to `from gohort import ...` (still works), so failures are
+// scripts fall back to `from oddjob import ...` (still works), so failures are
 // logged at Debug, never fatal. The exec bit is re-asserted even on a content
 // match so a prior umask-clobbered file self-heals.
-func ensureGohortShims(libBase string) {
+func ensureOddjobShims(libBase string) {
 	binDir := filepath.Join(libBase, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		Debug("[hook/helpers] failed to mkdir shim bin %s: %v", binDir, err)
@@ -1683,45 +1683,45 @@ func ensureGohortShims(libBase string) {
 }
 
 // SandboxHookPythonShim is the canonical helper file, deployed as
-// gohort.py. Every import shape works from this one source:
+// oddjob.py. Every import shape works from this one source:
 //
-//	from gohort import fetch, secret, fetch_via, log
+//	from oddjob import fetch, secret, fetch_via, log
 //	data = fetch("https://...")
 //
-//	from gohort import gohort                # singleton style
-//	data = gohort.fetch("https://...")
+//	from oddjob import oddjob                # singleton style
+//	data = oddjob.fetch("https://...")
 //
-//	import gohort                            # module dot access
-//	data = gohort.fetch("https://...")
+//	import oddjob                            # module dot access
+//	data = oddjob.fetch("https://...")
 //
-//	from gohort import HookError             # exception
+//	from oddjob import HookError             # exception
 //
 // All three shapes resolve against this one file. There is no
-// gohort_hook.py — old back-compat was retired since the small
+// oddjob_hook.py — old back-compat was retired since the small
 // number of approved tools using it will be re-authored.
-const SandboxHookPythonShim = `# gohort.py: script-side helper for sandboxed tool dispatches.
+const SandboxHookPythonShim = `# oddjob.py: script-side helper for sandboxed tool dispatches.
 #
-# Provides a narrow callback channel back to gohort for capabilities
+# Provides a narrow callback channel back to oddjob for capabilities
 # the tool was granted (fetch, log, secret, fetch_via). The sandbox
 # runs with --unshare-net by default: raw HTTP from urllib / curl
-# fails. Use this module's fetch() to do HTTP through gohort instead.
+# fails. Use this module's fetch() to do HTTP through oddjob instead.
 #
 # Every reasonable Python import shape works:
 #
-#   from gohort import fetch_url                      # function style
+#   from oddjob import fetch_url                      # function style
 #   data = fetch_url("https://api.example.com/x")
 #
-#   from gohort import gohort                         # singleton style
-#   data = gohort.fetch_url("https://api.example.com/x")
+#   from oddjob import oddjob                         # singleton style
+#   data = oddjob.fetch_url("https://api.example.com/x")
 #
-#   import gohort                                     # module dot access
-#   data = gohort.fetch_url("https://api.example.com/x")
+#   import oddjob                                     # module dot access
+#   data = oddjob.fetch_url("https://api.example.com/x")
 #
 # fetch is a back-compat alias for fetch_url: older authored tools
 # still work; new scripts should use fetch_url to match the
 # LLM-callable tool of the same name.
 #
-# If GOHORT_HOOK_PATH isn't set in env, the tool wasn't granted hook
+# If ODDJOB_HOOK_PATH isn't set in env, the tool wasn't granted hook
 # capabilities: calls raise HookError with a clear remediation hint.
 
 import json
@@ -1786,14 +1786,14 @@ class Output(str):
         return str.__iter__(self)
 
 
-class _Gohort:
+class _Oddjob:
     def __init__(self):
-        self._path = os.environ.get("GOHORT_HOOK_PATH")
+        self._path = os.environ.get("ODDJOB_HOOK_PATH")
 
     def _call(self, method, params=None):
         if not self._path:
             raise HookError(
-                "GOHORT_HOOK_PATH not set: this tool was not granted hook "
+                "ODDJOB_HOOK_PATH not set: this tool was not granted hook "
                 "capabilities. Re-author the tool with "
                 "hook_capabilities=[\"fetch\", ...] to enable."
             )
@@ -1838,7 +1838,7 @@ class _Gohort:
         return resp["result"]
 
     def fetch_url(self, url, method="GET", headers=None, body=None, timeout=30, save_to=None, request_headers=None):
-        """HTTP request via gohort. Returns dict {status, headers, body}.
+        """HTTP request via oddjob. Returns dict {status, headers, body}.
         body is a string. Capped at 10MiB response (text mode) or
         100MiB (save_to mode).
 
@@ -1922,7 +1922,7 @@ class _Gohort:
         return Output(result.get("text", "") if isinstance(result, dict) else result)
 
     def log(self, msg, level="info"):
-        """Route a message into gohort's log stream.
+        """Route a message into oddjob's log stream.
         level: debug, info, warn, error."""
         return self._call("log", {"level": level, "msg": str(msg)})
 
@@ -1933,7 +1933,7 @@ class _Gohort:
         return result["secret"] if isinstance(result, dict) else result
 
     def fetch_via(self, credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None, save_to=None):
-        """HTTP via a named gohort credential: URL allowlist enforced,
+        """HTTP via a named oddjob credential: URL allowlist enforced,
         auth injected server-side, audit logged. Tool must declare
         "fetch_via:<credential>" in hook_capabilities. headers is an
         optional dict of extra request headers (e.g. {"Depth": "1"} for
@@ -1988,61 +1988,61 @@ class _Gohort:
             text = result["body"]
 
         Use directly when you KNOW the page needs JS (Reddit, Twitter/X,
-        SPA news): gohort.fetch_url already auto-routes these hosts
+        SPA news): oddjob.fetch_url already auto-routes these hosts
         through browse_page transparently, so you usually don't need to
         reach for browse_page yourself. Slow (5-20s) and heavier than
         fetch_url, so prefer fetch_url when the page might be static."""
         return self._call("browse_page", {"url": url})
 
 
-gohort = _Gohort()
+oddjob = _Oddjob()
 
 
 # Module-level function aliases: same operations, function-call style.
 # Every method on the singleton has a matching free function here so
-# the "from gohort import X" import shape works for any X the
+# the "from oddjob import X" import shape works for any X the
 # singleton exposes.
 def fetch_url(url, method="GET", headers=None, body=None, timeout=30, save_to=None, request_headers=None):
-    return gohort.fetch_url(url, method=method, headers=headers,
+    return oddjob.fetch_url(url, method=method, headers=headers,
                             body=body, timeout=timeout, save_to=save_to,
                             request_headers=request_headers)
 
 
 def fetch(url, method="GET", headers=None, body=None, timeout=30, save_to=None):
-    return gohort.fetch_url(url, method=method, headers=headers,
+    return oddjob.fetch_url(url, method=method, headers=headers,
                             body=body, timeout=timeout, save_to=save_to)
 
 
 def browse_page(url):
-    return gohort.browse_page(url)
+    return oddjob.browse_page(url)
 
 
 def log(msg, level="info"):
-    return gohort.log(msg, level=level)
+    return oddjob.log(msg, level=level)
 
 
 def call_tool(name, **args):
-    return gohort.call_tool(name, **args)
+    return oddjob.call_tool(name, **args)
 
 
 def ask(prompt, json=False):
-    return gohort.ask(prompt, json=json)
+    return oddjob.ask(prompt, json=json)
 
 
 def run_agent(prompt, agent=None):
-    return gohort.run_agent(prompt, agent=agent)
+    return oddjob.run_agent(prompt, agent=agent)
 
 
 def run_pipeline(input, pipeline=None):
-    return gohort.run_pipeline(input, pipeline=pipeline)
+    return oddjob.run_pipeline(input, pipeline=pipeline)
 
 
 def secret(name):
-    return gohort.secret(name)
+    return oddjob.secret(name)
 
 
 def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None, save_to=None):
-    return gohort.fetch_via(credential, url, method=method, body=body, headers=headers, request_headers=request_headers, timeout=timeout, save_to=save_to)
+    return oddjob.fetch_via(credential, url, method=method, body=body, headers=headers, request_headers=request_headers, timeout=timeout, save_to=save_to)
 `
 
 // --- the shell network default -------------------------------------------
@@ -2058,7 +2058,7 @@ def fetch_via(credential, url, method="GET", body=None, headers=None, request_he
 // ON by default since 2026-09 (security audit): an open shell reached loopback
 // and LAN services past every SSRF guard the fetch paths apply. A tool that
 // needs raw sockets declares raw_network (and asks before it runs); ordinary
-// HTTP goes through gohort.fetch, which is audited and public-only. A
+// HTTP goes through oddjob.fetch, which is audited and public-only. A
 // deployment that relied on the old behaviour can switch it back off.
 const tuneShellNetworkClosed = "tune_shell_network_closed"
 
@@ -2066,7 +2066,7 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key: tuneShellNetworkClosed, Category: "Security",
 		Label: "Shell tools reach the network only when they declare it",
-		Help:  "ON (the default): a shell command gets no network namespace unless its tool record sets raw_network, and ordinary HTTP goes through the audited gohort.fetch hook. OFF (the historical behaviour): every shell command shares the host's network, loopback and LAN included.",
+		Help:  "ON (the default): a shell command gets no network namespace unless its tool record sets raw_network, and ordinary HTTP goes through the audited oddjob.fetch hook. OFF (the historical behaviour): every shell command shares the host's network, loopback and LAN included.",
 		Kind:  KindBool, Default: 1, Min: 0, Max: 1,
 	})
 	sandbox.ShellNetworkClosedByDefault = func() bool { return TuneBool(tuneShellNetworkClosed) }

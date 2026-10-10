@@ -30,7 +30,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // effectivePipelineIDs is the set of pipelines this agent may run: its own

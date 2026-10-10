@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleSend drives one user turn against an agent:
@@ -379,7 +379,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	sse.Send(map[string]any{"kind": "session", "id": sess.ID})
 	sse.Send(map[string]any{"kind": "run", "id": run.ID})
 	// Surface any panic in the turn pipeline through the SSE stream
-	// AND the gohort log. The http server has its own panic recovery
+	// AND the oddjob log. The http server has its own panic recovery
 	// that just tears down the connection; without this, a silent
 	// panic in runPlan / runWorkerStep / synthesis looks like "no
 	// reply" to the user and shows no clue in the log.
@@ -589,7 +589,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		isNewSession:     isNewSession,
 		userImages:       decodeUserImages(req.Images),
 		// from_client_* tools are exposed only when the request came from the
-		// gohort-desktop viewer (its proxy stamps the bridge key) — never a
+		// oddjob-desktop viewer (its proxy stamps the bridge key) — never a
 		// remote browser/phone on the same account.
 		fromDesktopClient: user != "" && DesktopClientUser(r) == user,
 		// Flag the turn as having fresh external content if the user

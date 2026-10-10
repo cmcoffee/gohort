@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
-	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Connecting a conversation to an agent's channel — the "hook a source" control

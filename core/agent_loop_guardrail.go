@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/oddjob/core/textutil"
 	"math/rand/v2"
 )
 
@@ -248,7 +248,7 @@ func GuardrailDecline(custom []string) string { return guardrailSafeFallbackRepl
 // model to reason about the system it is inside, which is the deliberation the
 // one-shot thinking-off exists to stop. "Declined and closed" is the whole of
 // what the next turn needs — the outcome, not the machinery behind it.
-const guardrailClosedNote = "\n<gohort-meta>That request was declined and is closed. Do not answer it later, do not return to it unprompted, and do not treat it as unfinished business. Answer only what is asked from here.</gohort-meta>"
+const guardrailClosedNote = "\n<oddjob-meta>That request was declined and is closed. Do not answer it later, do not return to it unprompted, and do not treat it as unfinished business. Answer only what is asked from here.</oddjob-meta>"
 
 // guardrailRejectionReply produces the user-facing text for a halted turn: the
 // app's fresh-context rejection model when one is wired, else the canned

@@ -1,5 +1,5 @@
 // Artifact bundles: the ONE portable export/import format for every shareable
-// gohort artifact — connectors, tools, and (as they register) agents, APIs,
+// oddjob artifact — connectors, tools, and (as they register) agents, APIs,
 // pipelines. It generalizes the connector pack (core/connector_pack.go) into a
 // single envelope carrying a list of TYPED artifacts, so the whole surface has
 // one wire format, one import governance rule, and one file the marketplace
@@ -40,8 +40,8 @@ import (
 )
 
 // ArtifactClientJS is the shared browser half of the bundle format
-// (assets/artifact_client.js): window.gohortArtifacts.download(href, name) and
-// window.gohortArtifacts.importFlow({previewURL, importURL, invalidate,
+// (assets/artifact_client.js): window.oddjobArtifacts.download(href, name) and
+// window.oddjobArtifacts.importFlow({previewURL, importURL, invalidate,
 // subtitle, onDone}). A page that exports or imports bundles includes it in
 // its head and points it at its own endpoints.
 //
@@ -50,8 +50,8 @@ var ArtifactClientJS string
 
 // ArtifactBundleFormat identifies the unified wire format. Bumped only on a
 // breaking envelope change; importers accept older minor forms (and the legacy
-// gohort.connectors/v1 pack).
-const ArtifactBundleFormat = "gohort.bundle/v1"
+// oddjob.connectors/v1 pack).
+const ArtifactBundleFormat = "oddjob.bundle/v1"
 
 // PortableArtifact is one typed, identity-free, secret-free recipe. Type selects
 // the registered ArtifactType that knows how to reconstitute Recipe; Name is a
@@ -67,12 +67,12 @@ type PortableArtifact struct {
 type ArtifactBundle struct {
 	Bundle     string    `json:"bundle"`
 	ExportedAt time.Time `json:"exported_at"`
-	// GohortVersion is the version of the install that wrote the bundle. It
+	// OddjobVersion is the version of the install that wrote the bundle. It
 	// changes nothing on import by itself — recipes carry their own schema
 	// stamps where meaning can drift — but it is the one fact a reader needs
 	// when a recipe degrades: "authored on 0.6.4xx" turns a mystery into a
 	// diff. Empty on bundles written before it existed.
-	GohortVersion string             `json:"gohort_version,omitempty"`
+	OddjobVersion string             `json:"oddjob_version,omitempty"`
 	Artifacts     []PortableArtifact `json:"artifacts"`
 }
 
@@ -169,7 +169,7 @@ func RegisterArtifactDependencies(typ string, fn func(name, owner string) []Arti
 
 // exportableCredential reports whether a credential NAME is worth folding into
 // a bundle as a dependency. The bootstrap sentinels ("", "none", "no_auth")
-// name gohort's built-in open-pattern credential, which exists on every
+// name oddjob's built-in open-pattern credential, which exists on every
 // install — pulling it in as a dependency is noise, not portability. A caller
 // who genuinely wants to ship a custom-scoped no_auth selects it explicitly.
 func exportableCredential(name string) bool {
@@ -415,7 +415,7 @@ func ExportArtifactBundleShallow(db Database, sels []ArtifactSel) (ArtifactBundl
 // includeDeps is set. depFilter, when set, rewrites or drops each dependency
 // before it is resolved (false = leave it out).
 func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool, depFilter func(ArtifactSel) (ArtifactSel, bool), optIn map[string]bool) (ArtifactBundle, error) {
-	bundle := ArtifactBundle{Bundle: ArtifactBundleFormat, ExportedAt: time.Now(), GohortVersion: AppVersion}
+	bundle := ArtifactBundle{Bundle: ArtifactBundleFormat, ExportedAt: time.Now(), OddjobVersion: AppVersion}
 	seen := map[string]bool{}
 	// One artifact can be reached two ways: selected by id (a page knows the
 	// id) and pulled back in by NAME through a dependency that points at it.
@@ -569,7 +569,7 @@ func ExportAllArtifacts(db Database, types ...string) (ArtifactBundle, error) {
 
 // ParseArtifactBundle decodes bundle bytes, tolerating several shapes so both
 // this format and the legacy connector pack import through one path:
-//   - a full unified bundle ({"bundle":"gohort.bundle/v1","artifacts":[...]})
+//   - a full unified bundle ({"bundle":"oddjob.bundle/v1","artifacts":[...]})
 //   - a bare single artifact ({"type":...,"name":...,"recipe":{...}})
 //   - a legacy connector pack / bare connector(s) — lifted into connector
 //     artifacts (back-compat with everything exported before this format)
@@ -903,9 +903,9 @@ func recipeSecretHint(recipe json.RawMessage) string {
 // flat top-level display.
 type ArtifactImportResult struct {
 	Bundle string `json:"bundle"`
-	// GohortVersion echoes the bundle's stamp so a report can say where the
+	// OddjobVersion echoes the bundle's stamp so a report can say where the
 	// recipes came from next to what happened to them.
-	GohortVersion string                  `json:"gohort_version,omitempty"`
+	OddjobVersion string                  `json:"oddjob_version,omitempty"`
 	Imported      int                     `json:"imported"`
 	Skipped       int                     `json:"skipped"`
 	Outcomes      []ArtifactImportOutcome `json:"outcomes"`
@@ -924,8 +924,8 @@ func (r ArtifactImportResult) Summary() string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Imported %d, skipped %d.", r.Imported, r.Skipped)
-	if v := strings.TrimSpace(r.GohortVersion); v != "" && v != AppVersion {
-		fmt.Fprintf(&b, " Bundle exported by gohort %s (this install is %s).", v, AppVersion)
+	if v := strings.TrimSpace(r.OddjobVersion); v != "" && v != AppVersion {
+		fmt.Fprintf(&b, " Bundle exported by oddjob %s (this install is %s).", v, AppVersion)
 	}
 	if len(r.Checklist) > 0 {
 		b.WriteString("\nWhat is left to do:")
@@ -989,7 +989,7 @@ func importArtifactBundle(db Database, data []byte, owner string, userOnly bool)
 		return res, err
 	}
 	res.Bundle = bundle.Bundle
-	res.GohortVersion = bundle.GohortVersion
+	res.OddjobVersion = bundle.OddjobVersion
 	if len(bundle.Artifacts) == 0 {
 		return res, Error("no artifacts in bundle")
 	}

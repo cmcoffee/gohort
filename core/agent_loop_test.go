@@ -263,7 +263,7 @@ func TestNormalizeFailureShapeCollapsesVolatileIDs(t *testing.T) {
 // on a turn that is actually making progress.
 func TestNormalizeFailureShapeKeepsDistinctFailuresApart(t *testing.T) {
 	a := normalizeFailureShape("Error: Failed to create calendar: [exit: exit status 1]")
-	b := normalizeFailureShape(`ERROR: agent "Gohort" has no attached tools to run`)
+	b := normalizeFailureShape(`ERROR: agent "Oddjob" has no attached tools to run`)
 	if a == b {
 		t.Fatalf("distinct failures must not share a shape: %q", a)
 	}

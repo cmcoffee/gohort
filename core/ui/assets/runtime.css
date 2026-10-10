@@ -481,7 +481,7 @@ select:-webkit-autofill {
   text-overflow: ellipsis;
 }
 
-/* The gohort mark before the page title: the favicon's three squares, the
+/* The oddjob mark before the page title: the favicon's three squares, the
  * top one in the accent and the pair below it a step darker, as on the icon. */
 .ui-page-mark { display: inline-flex; flex: 0 0 auto; }
 .ui-page-mark svg { display: block; }
@@ -2984,7 +2984,7 @@ select:-webkit-autofill {
 .ui-modal-sub { margin: 0 0 0.8rem; font-size: var(--fs-sm); color: var(--text-mute); line-height: 1.45; }
 /* Themed confirm / alert / prompt dialog (uiDefaultModal) — the in-page
  * replacement for native browser dialogs, so the chrome matches the app
- * and mirrors the gohort-desktop host modal. */
+ * and mirrors the oddjob-desktop host modal. */
 .ui-modal-dialog {
   background: var(--bg-1); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--modal-radius);

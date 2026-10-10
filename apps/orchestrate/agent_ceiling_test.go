@@ -12,7 +12,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -36,7 +36,7 @@ func reachCeilingFixture(t *testing.T) *OrchestrateApp {
 func signedInAs(t *testing.T, who string) *http.Request {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodGet, "/agents/tro", nil)
-	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), who)})
+	r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: AuthCreateSession(AuthDB(), who)})
 	return r
 }
 

@@ -15,7 +15,7 @@ package admin
 import (
 	"context"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // peerTranscribeTestResult probes a peer for the Test button. Returns the

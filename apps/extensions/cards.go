@@ -33,7 +33,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
   if (window.uiLoading) { box.textContent = ''; box.appendChild(window.uiLoading()); }
   var API = '/account/api/connections';
   // A consent popup reports success via postMessage; refresh so the badge flips.
-  window.addEventListener('message', function(e){ if (e && e.data === 'gohort-mcp-connected') load(); });
+  window.addEventListener('message', function(e){ if (e && e.data === 'oddjob-mcp-connected') load(); });
   function el(t, a, k){ var n=document.createElement(t); if(a) for(var x in a){ if(x==='text') n.textContent=a[x]; else if(x==='class') n.className=a[x]; else n.setAttribute(x,a[x]); } (k||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
   function post(body, btn){
     btn.disabled = true; var orig = btn.textContent; btn.textContent = '…';
@@ -63,7 +63,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
           if (c.connect_url){
             var conn = el('button', {class:'ui-row-btn primary', text: c.connected?'Reconnect':'Connect'});
             conn.addEventListener('click', function(){
-              var w = window.open(c.connect_url, 'gohort-connect', 'width=600,height=760');
+              var w = window.open(c.connect_url, 'oddjob-connect', 'width=600,height=760');
               if (!w) { window.open(c.connect_url, '_blank'); }
             });
             row.appendChild(conn);

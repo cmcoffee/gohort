@@ -28,9 +28,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/netgate"
-	"github.com/cmcoffee/gohort/core/textutil"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/netgate"
+	"github.com/cmcoffee/oddjob/core/textutil"
 )
 
 // maxDispatchDepth caps recursive agent dispatch. 3 levels covers
@@ -314,7 +314,7 @@ func (T *OrchestrateApp) ImportAgentNotes(owner, agentID string, notes []string)
 //
 // Two identities are passed for a reason:
 //
-//   - agentOwner is the gohort user whose agent store contains the
+//   - agentOwner is the oddjob user whose agent store contains the
 //     TARGET RECORD (the persona, allowed_tools, etc. an admin built
 //     in Agency). Typically the deployment owner.
 //   - runtimeUser is the identity the SUB-AGENT RUNS AS. Its memory,
@@ -2435,7 +2435,7 @@ func sentAttachmentRefs(args map[string]any) []string {
 func llmHistoryText(m ChatMessage) string {
 	// Automated reports store a clean body (the UI shows the producer in a card
 	// header); re-attach an origin marker for the LLM so it reads as an
-	// automated report, not something it said itself. Wrapped in <gohort-meta>
+	// automated report, not something it said itself. Wrapped in <oddjob-meta>
 	// so that if the model echoes it into a reply it's scrubbed (a bare
 	// [standing agent …] would leak); the model still reads it as input
 	// (StripMetaTags only touches output).
@@ -2478,7 +2478,7 @@ const roleBreakRetraction = "as if written by its sender"
 // nothing. They are written for a PERSON reading the standing thread.
 var observationMarkers = []string{"↳ replied:", "↳ stayed silent"}
 
-// fenceObservationMarkers wraps those lines in <gohort-meta> on the way to the
+// fenceObservationMarkers wraps those lines in <oddjob-meta> on the way to the
 // model, for the reason the report-origin marker above is wrapped: a bare
 // framework token in history is one the model copies.
 //
@@ -2486,7 +2486,7 @@ var observationMarkers = []string{"↳ replied:", "↳ stayed silent"}
 // "↳ replied: <the inbound message>" — the marker AND the echo, delivered to
 // the contact, because every card in its standing thread is shaped
 // "<what came in>\n↳ replied: <what I said>" and nothing scrubbed the shape on
-// the way out. StripMetaTags removes <gohort-meta> and attach markers and
+// the way out. StripMetaTags removes <oddjob-meta> and attach markers and
 // nothing else, so the arrow went to a human.
 //
 // Wrapped rather than removed: the model SHOULD know what it already said to

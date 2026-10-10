@@ -177,7 +177,7 @@ func TestFakeIsAnLLM(t *testing.T) {
 // matched anything looking for a whole one.
 func TestLoopStreamsChunksThroughToTheHandler(t *testing.T) {
 	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{
-		Chunks: []string{"here is the answer <", "gohort-meta>a note</gohort-meta> and the rest"},
+		Chunks: []string{"here is the answer <", "oddjob-meta>a note</oddjob-meta> and the rest"},
 	}}}}
 
 	var streamed []string
@@ -196,12 +196,12 @@ func TestLoopStreamsChunksThroughToTheHandler(t *testing.T) {
 	if len(streamed) != 2 {
 		t.Fatalf("handler saw %d chunk(s): %q", len(streamed), streamed)
 	}
-	if !strings.HasSuffix(streamed[0], "<") || !strings.HasPrefix(streamed[1], "gohort-meta>") {
+	if !strings.HasSuffix(streamed[0], "<") || !strings.HasPrefix(streamed[1], "oddjob-meta>") {
 		t.Errorf("the boundary did not land inside the marker: %q", streamed)
 	}
 	// And the finished response is the whole thing, so a test can assert on the
 	// complete reply and on how it arrived in the same run.
-	if !strings.Contains(resp.Content, "<gohort-meta>a note</gohort-meta>") {
+	if !strings.Contains(resp.Content, "<oddjob-meta>a note</oddjob-meta>") {
 		t.Errorf("final content = %q", resp.Content)
 	}
 }

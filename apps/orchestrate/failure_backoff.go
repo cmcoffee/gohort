@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxBackoffDoublings caps the curve at 16x the schedule's own cadence. Past

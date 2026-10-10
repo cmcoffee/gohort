@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A scheduled machine run used to collect the walk's notes into a slice

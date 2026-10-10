@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/webui"
+	"github.com/cmcoffee/oddjob/core/webui"
 )
 
 // liveRibbonCSS is the CSS for the webui live session ribbon, inlined

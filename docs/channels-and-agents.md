@@ -86,7 +86,7 @@ inbound to that agent.
   iMessage and Telegram; each is a separate Channel record bound to it.
 - A Channel record carries: `id`, `service` (imessage/telegram/slack
   the Slice 1 transport id), the binding/address scope (whole service,
-  or a specific handle/room), `owner` (gohort user), and `agent_id`.
+  or a specific handle/room), `owner` (oddjob user), and `agent_id`.
 
 This makes "give my Support agent a phone number" a first-class action in
 the agent editor, alongside "attach a collection."
@@ -119,9 +119,9 @@ expensive agent run.
 
 ## Identity and tenancy
 
-- A messaging **contact** (a handle) is not a gohort user. It is an
+- A messaging **contact** (a handle) is not a oddjob user. It is an
   external party the agent talks to.
-- A **Channel is owned by one gohort user**; the bound agent runs under
+- A **Channel is owned by one oddjob user**; the bound agent runs under
   that owner (the agent's existing per-user memory/knowledge apply).
 - Phantom is single-tenant today (the device owner); orchestrate agents
   are already per-user. The binding is therefore `(channel, owner,
@@ -198,6 +198,6 @@ collide with the new Channel records.)
   policy) or does that move onto the agent? Lean: channel-layer policy
   (auto-reply, gatekeeper) on the Channel record; everything else on the
   agent.
-- The desktop bridge (gohort-desktop) exposing multiple services maps to
+- The desktop bridge (oddjob-desktop) exposing multiple services maps to
   multiple Channel records sharing one bridge. Confirm the key→service
   model covers it (it does: one key per service).

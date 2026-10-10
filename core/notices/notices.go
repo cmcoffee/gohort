@@ -1,7 +1,7 @@
 // What an agent needs to tell its owner.
 //
 // One-way, which is why it is Notifications and not an inbox: an inbox is
-// something you reply into, and gohort already has that in threads. Nothing
+// something you reply into, and oddjob already has that in threads. Nothing
 // here is answered. It is the record that something happened while nobody was
 // looking, kept so that the looking can happen later.
 //

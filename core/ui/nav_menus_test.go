@@ -125,7 +125,7 @@ var cfg = {orchestrator_nav: [
   {menu: 'Fleet',  label: 'Runs'},
   {label: 'Leftovers'},
 ]};
-global.window = {GOHORT_AGENT_ID: 'agent-7'};
+global.window = {ODDJOB_AGENT_ID: 'agent-7'};
 var closed = 0, picked = null;
 function closeNavMenus() { closed++; }
 function selectOrchNav(i, q) { picked = {i: i, q: q}; }

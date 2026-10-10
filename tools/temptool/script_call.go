@@ -6,7 +6,7 @@ package temptool
 // credentials but not the owner's tools, so a weather app re-implemented
 // get_weather by reading its definition and copying its code into the
 // script: two copies of the same logic, free to drift. A script that declares
-// "tool:<name>" can now run that tool through the hook (gohort.call_tool).
+// "tool:<name>" can now run that tool through the hook (oddjob.call_tool).
 //
 // What may run is decided here, not by the script:
 //   - the owner's own ACTIVE tools, and tools they added from the catalog.
@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // ScriptCallableTool finds the tool named name that user's scripts may call,

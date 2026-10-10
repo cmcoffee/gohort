@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // canonicalScriptName builds the on-disk filename for a tool's
@@ -191,7 +191,7 @@ var shSourceRe = regexp.MustCompile(`(?m)^[ \t]*(?:source|\.)[ \t]+["']?(?:\./)?
 // scriptHelperRefs returns the LITERAL sibling filenames a script body pulls
 // in that could resolve to a helper file next to it — Python module imports
 // (foo -> foo.py) and bash sources (foo.sh). Best-effort and language-scoped
-// to Python/bash (where env-var params + gohort helpers already steer
+// to Python/bash (where env-var params + oddjob helpers already steer
 // authoring); anything it doesn't recognize simply isn't followed, which is a
 // no-op (the helper still sits in the shared workspace at runtime, it just
 // doesn't travel). ext picks which import grammar to scan.
@@ -274,7 +274,7 @@ func gatherWorkspaceHelpers(primaryName, primaryBody, workspaceDir string) []Rec
 // rawNetworkPatterns names script-side APIs that bypass the hook and
 // reach the network directly. Tools that use any of these MUST
 // declare raw_network=true (to leave the bwrap namespace networked)
-// or migrate to the hook (gohort.fetch / gohort.fetch_via). Detection
+// or migrate to the hook (oddjob.fetch / oddjob.fetch_via). Detection
 // is substring-match against the script_body — coarse but
 // catches the common authoring mistakes (mostly Python urllib and
 // shell curl/wget) without false positives in normal prose.
@@ -314,7 +314,7 @@ func networkGrantMismatch(tt *TempTool) string {
 		return ""
 	}
 	// Hook grants "fetch" or any "fetch_via:..." count as a network
-	// grant via the proxy path — the script SHOULD use gohort.fetch,
+	// grant via the proxy path — the script SHOULD use oddjob.fetch,
 	// but we can't easily tell whether it does without parsing.
 	// Accept the grant and move on; the actual mismatch (script uses
 	// urllib AND has fetch capability) is a possible authoring smell
@@ -338,5 +338,5 @@ func networkGrantMismatch(tt *TempTool) string {
 	if len(found) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("script_body uses raw-network API(s) %v but the tool has no network grant. Either (a) re-author with the hook: `from gohort import fetch` then `fetch(url)` instead of urllib.request.urlopen(url), and declare hook_capabilities=[\"fetch\"]; or (b) declare raw_network=true (escape hatch for persistent-mode REPLs and non-HTTP TCP). Without one of these the sandbox runs --unshare-net and every outbound call fails with a DNS-resolution error", found)
+	return fmt.Sprintf("script_body uses raw-network API(s) %v but the tool has no network grant. Either (a) re-author with the hook: `from oddjob import fetch` then `fetch(url)` instead of urllib.request.urlopen(url), and declare hook_capabilities=[\"fetch\"]; or (b) declare raw_network=true (escape hatch for persistent-mode REPLs and non-HTTP TCP). Without one of these the sandbox runs --unshare-net and every outbound call fails with a DNS-resolution error", found)
 }

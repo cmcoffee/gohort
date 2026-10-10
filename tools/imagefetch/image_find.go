@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/browser"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/browser"
 	_ "golang.org/x/image/webp" // register the WebP decoder for image.Decode
 )
 

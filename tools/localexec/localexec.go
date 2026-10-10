@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const (
@@ -87,7 +87,7 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// and the workspace's REACH ceiling, which this tool is squarely subject
 	// to - run_local runs in sess.WorkspaceDir, so it IS the workspace.
 	//
-	// Nothing reachable leaks today: there is no hook here, so gohort.fetch
+	// Nothing reachable leaks today: there is no hook here, so oddjob.fetch
 	// raises HookError, and the hardcoded blocked connector below already
 	// cuts the namespace. The root still matters, because that makes the
 	// confinement depend on one hardcoded line rather than on the agent's
@@ -114,8 +114,8 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// mode), this is a no-op.
 	ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
 
-	// The gohort helper package is bind-mounted RO into the sandbox
-	// from a host-side library dir (see EnsureGohortLibDir, wired in
+	// The oddjob helper package is bind-mounted RO into the sandbox
+	// from a host-side library dir (see EnsureOddjobLibDir, wired in
 	// bwrapArgv). Nothing to deploy into the workspace.
 
 	res := RunSandboxedShell(ctx, cmd, sess.WorkspaceDir)

@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // toolGroupMin is how many tools a group needs before it collapses: two

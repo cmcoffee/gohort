@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // shareSectionSource is the run of page_agent_access.go that builds the Share

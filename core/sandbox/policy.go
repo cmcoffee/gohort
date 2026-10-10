@@ -58,23 +58,23 @@ func (p BypassPolicy) String() string {
 //
 // Two spellings, because the variable that expressed the old opt-IN should not
 // become the opt-OUT by inversion — a deployment carrying
-// GOHORT_SANDBOX_REQUIRED=1 still means exactly what it said:
+// ODDJOB_SANDBOX_REQUIRED=1 still means exactly what it said:
 //
-//	GOHORT_ALLOW_UNSANDBOXED=off|admin|on   the tri-state (default off)
-//	GOHORT_SANDBOX_REQUIRED=1               forces off, whatever the above says
-//	GOHORT_SANDBOX_REQUIRED=0               equivalent to =on, for anyone who scripted it
+//	ODDJOB_ALLOW_UNSANDBOXED=off|admin|on   the tri-state (default off)
+//	ODDJOB_SANDBOX_REQUIRED=1               forces off, whatever the above says
+//	ODDJOB_SANDBOX_REQUIRED=0               equivalent to =on, for anyone who scripted it
 //
 // Set contradictorily, the CONFINING reading wins. A configuration that says
 // two things is a mistake, and the safe reading of a mistake is the strict one.
 //
 // An unrecognized value is also off. A typo in a security switch must not be
-// the permissive answer — "GOHORT_ALLOW_UNSANDBOXED=yes-please" should refuse,
+// the permissive answer — "ODDJOB_ALLOW_UNSANDBOXED=yes-please" should refuse,
 // not open the host.
 func bypassPolicy() BypassPolicy {
-	if envTruthy("GOHORT_SANDBOX_REQUIRED") {
+	if envTruthy("ODDJOB_SANDBOX_REQUIRED") {
 		return BypassOff
 	}
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("GOHORT_ALLOW_UNSANDBOXED"))) {
+	switch strings.ToLower(strings.TrimSpace(getenv("ODDJOB_ALLOW_UNSANDBOXED"))) {
 	case "on", "1", "true", "yes", "all":
 		return BypassOn
 	case "admin", "admins", "admin_only", "admin-only", "adminonly":
@@ -82,7 +82,7 @@ func bypassPolicy() BypassPolicy {
 	case "off", "0", "false", "no", "none":
 		return BypassOff
 	}
-	if envFalsy("GOHORT_SANDBOX_REQUIRED") {
+	if envFalsy("ODDJOB_SANDBOX_REQUIRED") {
 		return BypassOn
 	}
 	return BypassOff
@@ -92,7 +92,7 @@ func bypassPolicy() BypassPolicy {
 // set-and-negative, or absent. Absent is neither, which is what lets the two
 // variables above compose without a third "unset" sentinel value.
 func envTruthy(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	switch strings.ToLower(strings.TrimSpace(getenv(name))) {
 	case "1", "true", "yes", "on":
 		return true
 	}
@@ -100,7 +100,7 @@ func envTruthy(name string) bool {
 }
 
 func envFalsy(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	switch strings.ToLower(strings.TrimSpace(getenv(name))) {
 	case "0", "false", "no", "off":
 		return true
 	}
@@ -165,4 +165,17 @@ func sandboxRequired(ctx context.Context) bool {
 		return !CallerIsAdmin(ctx)
 	}
 	return true
+}
+
+// getenv reads an ODDJOB_* variable, or the GOHORT_* one an operator set
+// before the rename: a unit file or a shell profile is not something an
+// upgrade should silently stop reading.
+func getenv(name string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	if strings.HasPrefix(name, "ODDJOB_") {
+		return os.Getenv("GOHORT_" + strings.TrimPrefix(name, "ODDJOB_"))
+	}
+	return ""
 }

@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxExportedRecords bounds one app's rows in a bundle. Past it the export

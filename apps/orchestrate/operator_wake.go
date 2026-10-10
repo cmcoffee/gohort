@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/pacing"
-	"github.com/cmcoffee/gohort/tools/temptool"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/pacing"
+	"github.com/cmcoffee/oddjob/tools/temptool"
 )
 
 // monitorWakeMessage is the turn a fired monitor hands its agent: the event, the

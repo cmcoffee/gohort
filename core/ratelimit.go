@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 // RateLimiter counts events per key within a rolling window.

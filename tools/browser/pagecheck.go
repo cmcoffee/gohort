@@ -16,7 +16,7 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func init() {
@@ -60,7 +60,7 @@ func CheckPage(target string, cookies []PageCheckCookie, probeJS string, insecur
 		return r.rep, r.err
 	case <-time.After(budget):
 		Log("[browser] page check outer budget %v exceeded for %s: Chromium likely wedged", budget, target)
-		return nil, fmt.Errorf("page check timed out after %v on %s: Chromium appears wedged; wait and retry, or restart the gohort process if it persists", budget, target)
+		return nil, fmt.Errorf("page check timed out after %v on %s: Chromium appears wedged; wait and retry, or restart the oddjob process if it persists", budget, target)
 	}
 }
 

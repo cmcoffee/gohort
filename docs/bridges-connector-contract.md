@@ -1,9 +1,9 @@
 # Bridge connector contract, and iMessage without the desktop app
 
-A **bridge** is any process that relays a messaging service to gohort. It is
+A **bridge** is any process that relays a messaging service to oddjob. It is
 defined entirely by a contract, not by a codebase: POST inbound to
 `/bridges/api/hook`, poll `/bridges/api/poll` for outbound, authenticate with a
-bridge key that declares its service. The gohort-desktop daemon is one
+bridge key that declares its service. The oddjob-desktop daemon is one
 implementation of that contract for iMessage, not a requirement: anything that
 speaks it is a bridge, including a shell script under `launchd`.
 
@@ -34,7 +34,7 @@ replace the first. The server prunes same-service records that have **never**
 been seen, on the grounds that a secret which authenticated nothing cannot be
 in use; one that has been seen is treated as a real second connector and kept.
 
-## Inbound: service → gohort
+## Inbound: service → oddjob
 
 `POST /bridges/api/hook`, JSON body, `202` on acceptance. Fields:
 
@@ -65,7 +65,7 @@ arrive as two more messages.
 **Send a real timestamp.** Without one every inbound looks like it happened now,
 which is how replayed history wakes an agent as if it were live conversation.
 
-## Outbound: gohort → service
+## Outbound: oddjob → service
 
 `GET /bridges/api/poll` with the same header, on an interval (2–5s is typical).
 It returns this service's pending items oldest-first **and removes them**: a
@@ -119,4 +119,4 @@ endpoints are the whole story.
 - Poll on a fixed interval: outbound latency is your poll interval, and there
   is no push.
 - Log a send failure loudly. A drained item that never reached the service is
-  invisible to gohort, which believes it delivered.
+  invisible to oddjob, which believes it delivered.

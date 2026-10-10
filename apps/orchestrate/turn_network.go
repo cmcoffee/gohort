@@ -24,8 +24,8 @@ package orchestrate
 import (
 	"context"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/netgate"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 // withAgentNetwork stamps ctx with this agent's network state and hands back

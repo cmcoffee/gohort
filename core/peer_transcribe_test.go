@@ -78,7 +78,7 @@ func TestPeerTranscribeReturnsTheText(t *testing.T) {
 	}
 }
 
-// response_format is what every gohort client asks for, but a non-gohort client
+// response_format is what every oddjob client asks for, but a non-oddjob client
 // pointed here must still get the OpenAI JSON envelope it expects.
 func TestPeerTranscribeAnswersJSONWhenTextWasNotAsked(t *testing.T) {
 	peerImageDB(t)

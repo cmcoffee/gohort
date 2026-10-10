@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/oddjob/core"
 )
 
 // The one property everything else hangs off: what the model is TOLD is what the

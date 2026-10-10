@@ -2,7 +2,7 @@ package orchestrate
 
 // An app as one file, and back into a folder.
 //
-// The bundle is the one My Apps' Export writes (gohort.bundle/v1): the app's
+// The bundle is the one My Apps' Export writes (oddjob.bundle/v1): the app's
 // spec, its assets, its notes, and what it depends on (the agent it binds).
 // pack writes it into the workspace from the app as published, so Builder can
 // hand an app over as a file; unpack writes a bundle somebody sent into a
@@ -18,11 +18,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // appBundleExt is an app bundle's file extension.
-const appBundleExt = ".gohortapp"
+const appBundleExt = ".oddjobapp"
 
 // appDefPack writes an app's bundle into the workspace.
 func (t *chatTurn) appDefPack(args map[string]any) (string, error) {
@@ -86,7 +86,7 @@ func (t *chatTurn) appDefPack(args map[string]any) (string, error) {
 func (t *chatTurn) appDefUnpack(args map[string]any) (string, error) {
 	file := strings.TrimSpace(stringArg(args, "file"))
 	if file == "" {
-		return "", errors.New("file is required: the bundle in your workspace, e.g. \"voidrunner.gohortapp\"")
+		return "", errors.New("file is required: the bundle in your workspace, e.g. \"voidrunner.oddjobapp\"")
 	}
 	ws, _, _ := t.turnWorkspace()
 	p, err := ResolveWorkspacePath(ws, file)
@@ -99,7 +99,7 @@ func (t *chatTurn) appDefUnpack(args map[string]any) (string, error) {
 	}
 	bundle, err := ParseArtifactBundle(data)
 	if err != nil {
-		return "", fmt.Errorf("%s is not a gohort bundle: %v", file, err)
+		return "", fmt.Errorf("%s is not a oddjob bundle: %v", file, err)
 	}
 	want := strings.TrimSpace(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "name")))
 	var recipe json.RawMessage

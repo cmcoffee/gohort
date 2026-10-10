@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/revisions"
+	"github.com/cmcoffee/oddjob/core/revisions"
 )
 
 // --- storage (per-user) ---------------------------------------------

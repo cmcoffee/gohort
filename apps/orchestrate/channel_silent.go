@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // sessionAppendMu serializes short load→append→save critical sections on a

@@ -1,4 +1,4 @@
-// Resource-sharing keys — how one gohort instance lends its infrastructure to
+// Resource-sharing keys — how one oddjob instance lends its infrastructure to
 // another.
 //
 // The problem this solves: a deployment with a GPU, a local model server and an

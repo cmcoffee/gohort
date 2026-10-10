@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/messaging"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/messaging"
 )
 
 const configTable = "bridges_config"
@@ -98,7 +98,7 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 
 	// Resolve bridge keys to their owner for userFromAPIKey / DesktopClientUser.
 	// Phantom used to register this; when it retired, the ONLY surviving
-	// API-key validator was the core desktop key — so the gohort-desktop
+	// API-key validator was the core desktop key — so the oddjob-desktop
 	// daemon authenticating its WS bridge (/api/desktop/ws) with a bridges-
 	// minted X-API-Key got 401'd and never connected, and from_client_*
 	// (filesystem, screenshot, …) calls failed with "desktop isn't connected"
@@ -231,7 +231,7 @@ func (T *Bridges) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // hookRequest is the inbound contract a connector POSTs. Mirrors the existing
-// bridge protocol so the gohort-desktop daemon needs only a URL change.
+// bridge protocol so the oddjob-desktop daemon needs only a URL change.
 type hookRequest struct {
 	ChatID           string   `json:"chat_id"`
 	Handle           string   `json:"handle"`

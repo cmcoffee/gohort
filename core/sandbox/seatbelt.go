@@ -11,7 +11,7 @@
 // worse than no backend at all.
 //
 // PATHS ARE NOT REMAPPED, which is why seatbeltSandbox.remapsPaths() is false.
-// The gohort helper library and the managed python deps are allowed at their
+// The oddjob helper library and the managed python deps are allowed at their
 // real host locations, and sandboxPythonPath already points PYTHONPATH there
 // when the backend does not remap. That is the whole reason remapsPaths()
 // exists rather than a bwrap check.
@@ -45,7 +45,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/deps"
+	"github.com/cmcoffee/oddjob/core/deps"
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
@@ -147,7 +147,7 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	spec := seatbeltSpec{
 		Workspace:    run.WorkspaceDir,
 		AllowNetwork: run.AllowNetwork,
-		HookSocket:   run.Env["GOHORT_HOOK_PATH"],
+		HookSocket:   run.Env["ODDJOB_HOOK_PATH"],
 	}
 	// The pipe and script shapes are pure data transformation: no workspace, no
 	// outbound. Mirrors bwrapPipeArgv / bwrapScriptArgv, which both pass
@@ -166,7 +166,7 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	// That field is gone: an unrendered list of paths reads as a constraint in
 	// force, and it was the reason run.ReadOnly went missing here without
 	// anybody noticing.
-	gohortLibDir()
+	oddjobLibDir()
 	deps.EnsurePyDepsDir()
 
 	profile := seatbeltProfile(spec)
@@ -328,7 +328,7 @@ func sbLiteral(p string) string { return `(literal ` + sbString(p) + `)` }
 // THE injection point. A profile is one argv string, and a workspace path
 // containing a quote would end the string and let the rest of the path be
 // parsed as policy — a directory named `"))(allow default)(deny nothing` would
-// otherwise switch the sandbox off. Workspace paths are gohort-generated today
+// otherwise switch the sandbox off. Workspace paths are oddjob-generated today
 // and this must keep holding when they stop being.
 func sbString(p string) string {
 	var b strings.Builder
@@ -378,7 +378,7 @@ func seatbeltProbe(binary string, runner func(profile string) error) bool {
 	}
 	if err := runner(seatbeltProfile(seatbeltSpec{})); err != nil {
 		nfo.Log("[sandbox] WARNING: %s is present but refused a probe profile (%v): "+
-			"falling back to unconfined execution. Shell tools run with gohort user permissions.",
+			"falling back to unconfined execution. Shell tools run with oddjob user permissions.",
 			binary, err)
 		return false
 	}

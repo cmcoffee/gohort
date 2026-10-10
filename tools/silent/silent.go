@@ -1,6 +1,6 @@
 package silent
 
-import . "github.com/cmcoffee/gohort/core"
+import . "github.com/cmcoffee/oddjob/core"
 
 func init() { RegisterChatTool(new(StaySilentTool)) }
 

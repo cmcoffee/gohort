@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // tierTextStore is a prompt-override store that round-trips through JSON, as

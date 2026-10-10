@@ -8,7 +8,7 @@
 //     capability that costs money per call rather than electricity, which is
 //     why it carries its own rate ceiling (see peerSearchRatePerMin) instead of
 //     inheriting one sized for bulk embedding.
-//   - BROWSE spends CPU and RAM on a headless Chromium that gohort downloads
+//   - BROWSE spends CPU and RAM on a headless Chromium that oddjob downloads
 //     per install. That is the same story as the GPU capabilities, and the
 //     reason a laptop should be able to borrow it.
 //

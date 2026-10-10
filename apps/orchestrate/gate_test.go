@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -39,7 +39,7 @@ func gateFixture(t *testing.T) (*OrchestrateApp, Database, func()) {
 func sessionReq(t *testing.T, root Database, user string) *http.Request {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodGet, "/orchestrate/api/agents", nil)
-	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(root, user)})
+	r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: AuthCreateSession(root, user)})
 	return r
 }
 

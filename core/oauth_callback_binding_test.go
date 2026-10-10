@@ -44,11 +44,11 @@ func TestAnOAuthCallbackRefusesADifferentAccount(t *testing.T) {
 // A registered MCP client gains new callback PATHS on its own hosts, never a
 // new host: the host comes from the request when no External URL is set.
 func TestAnMCPClientIsNeverReRegisteredToANewHost(t *testing.T) {
-	reg := []string{"https://gohort.example/account/mcp/callback"}
-	if !redirectHostKnown(reg, "https://gohort.example/admin/api/mcp-servers/oauth/callback") {
+	reg := []string{"https://oddjob.example/account/mcp/callback"}
+	if !redirectHostKnown(reg, "https://oddjob.example/admin/api/mcp-servers/oauth/callback") {
 		t.Error("a sibling path on the same host should be allowed")
 	}
-	for _, u := range []string{"https://evil.example/account/mcp/callback", "http://gohort.example/account/mcp/callback", "not a url"} {
+	for _, u := range []string{"https://evil.example/account/mcp/callback", "http://oddjob.example/account/mcp/callback", "not a url"} {
 		if redirectHostKnown(reg, u) {
 			t.Errorf("%s should not count as a known host", u)
 		}

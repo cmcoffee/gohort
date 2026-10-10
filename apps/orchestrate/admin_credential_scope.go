@@ -14,7 +14,7 @@ package orchestrate
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // credentialDenySet builds the set of credentials the agent — running in a

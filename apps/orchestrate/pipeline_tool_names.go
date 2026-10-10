@@ -25,7 +25,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // unknownStageToolFindings reports stage tool names nothing in the catalog

@@ -2,7 +2,7 @@
 // remote_mcp/rest_poll (server-only) or desktop_mcp/desktop_command
 // (client-only), a messaging bridge has a mandatory server half (a BridgeKey +
 // routing in the bridges app) AND a client half (a built-in relay compiled into
-// the user's gohort-desktop daemon — e.g. iMessage). Materializing provisions
+// the user's oddjob-desktop daemon — e.g. iMessage). Materializing provisions
 // BOTH: it ensures the server-side routing key exists + enabled, and pushes an
 // enable frame to the owner's desktop so the built-in relay turns on.
 //

@@ -20,9 +20,9 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
-	"github.com/cmcoffee/gohort/tools/appscript"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
+	"github.com/cmcoffee/oddjob/tools/appscript"
 )
 
 // settingsTable holds each person's set values, keyed by app slug, in their

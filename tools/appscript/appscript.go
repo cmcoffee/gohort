@@ -17,14 +17,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/temptool"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/temptool"
 )
 
 // Run executes one custom-app script and returns its stdout. The script is just
 // a TempTool the framework dispatches on the app owner's behalf: it runs in the
 // owner's workspace under the bwrap sandbox, reaches external data only through
-// the gohort hook (fetch/log/…), and receives args as environment variables.
+// the oddjob hook (fetch/log/…), and receives args as environment variables.
 // The script file is named per (kind, slug, name) so concurrent apps/scripts
 // don't collide in the owner's workspace.
 func Run(user string, db Database, slug, kind, name, language, script string, caps []string, args map[string]any) (string, error) {
@@ -53,8 +53,8 @@ type Job struct {
 	Spec *AppSpec
 }
 
-// AppRunAgent and AppRunPipeline answer a script's gohort.run_agent and
-// gohort.run_pipeline: one of the app's agents with its tools, or its pipeline
+// AppRunAgent and AppRunPipeline answer a script's oddjob.run_agent and
+// oddjob.run_pipeline: one of the app's agents with its tools, or its pipeline
 // to the end, under the same daily caps as ask. Set by the custom-apps host;
 // nil, and refused.
 var (
@@ -66,7 +66,7 @@ var (
 // whole turn with its tools does not fit the ordinary 90 seconds.
 const longRunSecs = 300
 
-// AppAsk answers a script's gohort.ask: the app's agent, no tools, the owner
+// AppAsk answers a script's oddjob.ask: the app's agent, no tools, the owner
 // paying under the app's daily caps. Set by the custom-apps host, which owns
 // the caps; nil, and ask is refused.
 var AppAsk func(ctx context.Context, spec AppSpec, caller, prompt string, jsonMode bool) (string, error)
@@ -112,7 +112,7 @@ func (j Job) Run() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		// Ahead of what the sandbox already puts there (the gohort helper).
+		// Ahead of what the sandbox already puts there (the oddjob helper).
 		command = "PYTHONPATH={workspace_dir}/" + dir + `:"$PYTHONPATH" ` + command
 	}
 	tt := &TempTool{

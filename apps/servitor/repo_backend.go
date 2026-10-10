@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 const (
@@ -152,7 +152,7 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 			return nil
 		}
 		// Regular files only. A repo is attacker-authored content, and a
-		// symlink in it (to /etc, the gohort data dir, a key file) would
+		// symlink in it (to /etc, the oddjob data dir, a key file) would
 		// otherwise pass the Lstat-based size check and then be FOLLOWED by
 		// ReadFile, landing a host file in the store for read_file to return.
 		if !d.Type().IsRegular() {
@@ -213,7 +213,7 @@ var repoBranchRe = regexp.MustCompile(`^[A-Za-z0-9._][A-Za-z0-9._/-]*$`)
 
 // validateRepoSource decides whether a repo appliance may be cloned from url.
 //
-// The clone runs git ON THE GOHORT SERVER, as the gohort process, with a URL
+// The clone runs git ON THE ODDJOB SERVER, as the oddjob process, with a URL
 // any user typed. Unchecked, that was a way to run a program there ("ext::"
 // transport, "--upload-pack=..." read as an option), to read the server's own
 // repositories ("file://", a bare local path) into a store the user can then
@@ -253,7 +253,7 @@ func validateRepoSource(rawURL, branch string, ownerIsAdmin bool) error {
 		return fmt.Errorf("repo url must be https:// (or, for an admin, ssh:// or git@host:path); other transports such as file://, ext:: or a local path are not allowed")
 	}
 	if !ownerIsAdmin {
-		return fmt.Errorf("an ssh repo url clones with the gohort server's own ssh keys, so only an admin-owned repo may use one: use an https:// url with an access token instead")
+		return fmt.Errorf("an ssh repo url clones with the oddjob server's own ssh keys, so only an admin-owned repo may use one: use an https:// url with an access token instead")
 	}
 	return nil
 }

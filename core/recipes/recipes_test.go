@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/messaging"
+	"github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/messaging"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -205,7 +205,7 @@ func TestAHelperFillsItsOutputsIn(t *testing.T) {
 	bad = r
 	bad.Questions = []Question{r.Questions[0], {Name: "thing", Label: "Thing", Helper: "no_such_helper"}}
 	if Validate(bad) == nil {
-		t.Error("a helper this gohort does not have is refused")
+		t.Error("a helper this oddjob does not have is refused")
 	}
 	bad = r
 	bad.Bundle.Artifacts = []core.PortableArtifact{{Type: "connector", Name: "c", Recipe: json.RawMessage(`{"spec":"{{host.obj}}"}`)}}
@@ -215,7 +215,7 @@ func TestAHelperFillsItsOutputsIn(t *testing.T) {
 	bad = r
 	bad.Questions = []Question{{Name: "host", Label: "Host", Kind: "uri"}, r.Questions[1]}
 	if Validate(bad) == nil {
-		t.Error("a kind gohort does not know is refused, not read as text")
+		t.Error("a kind oddjob does not know is refused, not read as text")
 	}
 }
 
@@ -284,7 +284,7 @@ func TestBridgeTemplatesAddConnectors(t *testing.T) {
 	spec = core.RestMessagingSpec{}
 	json.Unmarshal(c.Spec, &spec)
 	if spec.WebhookProvider != "generic" || spec.Webhook == nil || spec.Webhook.TokenPath != "token" ||
-		spec.SendURL != "https://chat.example.com/api/v4/posts" || spec.Skip[0].Values[0] != "gohort" {
+		spec.SendURL != "https://chat.example.com/api/v4/posts" || spec.Skip[0].Values[0] != "oddjob" {
 		t.Errorf("a generic webhook spec with the answers in: %+v", spec)
 	}
 	if strings.Contains(string(c.Spec), "tok-") {

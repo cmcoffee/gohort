@@ -31,9 +31,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/media"
-	"github.com/cmcoffee/gohort/core/netgate"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/media"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 // (Collection data layer moved to core/collections.go — Collection
@@ -436,7 +436,7 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 	case action == "suggest-description":
 		T.handleCollectionSuggestDescription(w, r, udb, user, c)
 	case action == "export":
-		// Download this collection as a 1-item gohort.bundle/v1 — the same
+		// Download this collection as a 1-item oddjob.bundle/v1 — the same
 		// wire format the admin artifact surface uses, so the file imports
 		// anywhere bundles do. Owner-gated by the loadCollection above (a
 		// user can only reach collections they can see); addressed by ID so
@@ -451,7 +451,7 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		filename := strings.ReplaceAll(strings.TrimSpace(c.Name), `"`, "") + ".gohort.json"
+		filename := strings.ReplaceAll(strings.TrimSpace(c.Name), `"`, "") + ".oddjob.json"
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 		enc := json.NewEncoder(w)
@@ -1869,7 +1869,7 @@ func fetchAutofillURL(ctx context.Context, u string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	// Polite UA so servers don't 403 us as a default "Go-http-client".
-	req.Header.Set("User-Agent", "gohort-autofill/1.0 (+https://github.com/cmcoffee/gohort)")
+	req.Header.Set("User-Agent", "oddjob-autofill/1.0 (+https://github.com/cmcoffee/oddjob)")
 	// Bounded client (shared with fetch_url) — ties connect + time-to-
 	// first-byte to the configured Network Timeouts so a dead URL fails
 	// fast instead of stalling autofill for the full autofillPerFetch

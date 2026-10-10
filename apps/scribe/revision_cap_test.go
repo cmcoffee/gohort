@@ -3,7 +3,7 @@ package scribe
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The failure this guards is silent and destructive. TuneInt returns 0 for a key

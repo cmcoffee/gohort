@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/oddjob/core/textutil"
 )
 
 // thinkStateOf resolves a built option slice the way the LLM layer does and
@@ -107,7 +107,7 @@ func TestClosedNoteIsForTheModelOnly(t *testing.T) {
 	}
 	// Every delivery boundary strips it.
 	delivered := textutil.StripMetaTags(substituted)
-	if strings.Contains(delivered, "gohort-meta") || strings.Contains(delivered, "declined and is closed") {
+	if strings.Contains(delivered, "oddjob-meta") || strings.Contains(delivered, "declined and is closed") {
 		t.Errorf("the note reached the reader: %q", delivered)
 	}
 	if strings.TrimSpace(delivered) != "I can't help with that one." {

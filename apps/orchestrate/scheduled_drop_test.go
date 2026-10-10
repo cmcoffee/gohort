@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	core "github.com/cmcoffee/gohort/core"
+	core "github.com/cmcoffee/oddjob/core"
 )
 
 // A schedule that dies before its agent runs used to Log and return, which is

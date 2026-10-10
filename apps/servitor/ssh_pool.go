@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -96,7 +96,7 @@ const hostKeyTable = "ssh_host_keys"
 // pinnedHostKey is trust on first use. The first key a host presents is
 // recorded; a later connection presenting a different one is refused rather
 // than handed the saved password, which is what accepting any key did for
-// anybody able to sit between gohort and the machine. Saving the appliance
+// anybody able to sit between oddjob and the machine. Saving the appliance
 // again (forgetHostKey) re-trusts the host's current key, for a machine that
 // was really rebuilt.
 func pinnedHostKey(addr string) ssh.HostKeyCallback {

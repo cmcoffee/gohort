@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // withMemRootDB swaps RootDB for an in-memory kvlite store for the

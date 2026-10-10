@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A run with no web session (a channel inbound, a wake, a delegation) keeps

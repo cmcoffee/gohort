@@ -34,8 +34,8 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
 )
 
 // DashboardCards implements core.DashboardCardSource — one card per
@@ -216,7 +216,7 @@ type ExposedAgentEntry struct {
 // app's own bucket (T.DB.Sub("user:<uid>")). Don't conflate the
 // two — passing the wrong DB silently returns empty results.
 //
-// Performance: O(users × agents) per call. Fine at gohort scale
+// Performance: O(users × agents) per call. Fine at oddjob scale
 // (<100 users, <20 agents/user); add a deployment-wide index if a
 // scan becomes noticeable.
 // publiclyExposable reports whether an agent may be served on the public

@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // Store is the slice of the host's database this package uses.

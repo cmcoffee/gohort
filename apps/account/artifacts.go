@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // maxAccountImportBytes matches the admin importer: a bundle can carry a
@@ -34,24 +34,24 @@ var unsafeFilenameRE = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 func downloadName(base, typ string) string {
 	base = strings.Trim(unsafeFilenameRE.ReplaceAllString(base, "-"), "-.")
 	if base == "" {
-		base = "gohort"
+		base = "oddjob"
 	}
 	return base + bundleExt(typ)
 }
 
-// bundleExt names what a download holds: an app is a .gohortapp and a tool a
-// .gohorttool, the same files Builder packs (the content is the one bundle
-// format either way); anything else, or several kinds, a .gohort.json. Named
-// .gohort.json, an app's export read as "just a JSON file" rather than the
+// bundleExt names what a download holds: an app is a .oddjobapp and a tool a
+// .oddjobtool, the same files Builder packs (the content is the one bundle
+// format either way); anything else, or several kinds, a .oddjob.json. Named
+// .oddjob.json, an app's export read as "just a JSON file" rather than the
 // app.
 func bundleExt(typ string) string {
 	switch strings.TrimSpace(typ) {
 	case "custom_app":
-		return ".gohortapp"
+		return ".oddjobapp"
 	case "tool":
-		return ".gohorttool"
+		return ".oddjobtool"
 	}
-	return ".gohort.json"
+	return ".oddjob.json"
 }
 
 // handleArtifactExport downloads the requester's own artifacts as a bundle:
@@ -102,7 +102,7 @@ func (T *Account) handleArtifactExport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// The whole set is already its own closure; the walk only confirms it.
-		filename = downloadName("gohort-"+user+"-"+time.Now().Format("2006-01-02"), "")
+		filename = downloadName("oddjob-"+user+"-"+time.Now().Format("2006-01-02"), "")
 	default:
 		http.Error(w, "name what to export (type and name), or all=1 for everything you own", http.StatusBadRequest)
 		return
@@ -204,10 +204,10 @@ func artifactsHead() string {
 	return ui.NewHead().
 		JS(ArtifactClientJS).
 		ClientAction("account_export_all", `function(){
-  window.gohortArtifacts.download('/account/api/artifacts/export?all=1');
+  window.oddjobArtifacts.download('/account/api/artifacts/export?all=1');
 }`).
 		ClientAction("account_import", `function(){
-  window.gohortArtifacts.importFlow({
+  window.oddjobArtifacts.importFlow({
     previewURL: '/account/api/artifacts/preview',
     importURL: '/account/api/artifacts/import',
     subtitle: 'Everything lands in your own account for review: agents private, tools waiting for approval, skills and apps switched off, monitors paused. A name you already have is skipped.'

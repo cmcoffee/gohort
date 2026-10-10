@@ -14,7 +14,7 @@ import (
 
 	"github.com/cmcoffee/snugforge/nfo"
 
-	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // ToolHandlerFunc is a function that executes a tool call and returns its
@@ -298,14 +298,14 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	lr := &loopRun{T: T, ctx: ctx, messages: messages, cfg: cfg}
 	lr.setupTools()
 	// Turn-time split. Everything the loop spends that is NOT waiting on a
-	// provider is gohort's own overhead — prompt assembly, knowledge
+	// provider is oddjob's own overhead — prompt assembly, knowledge
 	// injection, tool resolution, guardrails, and the tool calls themselves.
 	// Until now that number could only be inferred by subtracting a separate
 	// direct-to-provider probe from a wall-clock stopwatch, so "is the
 	// framework adding latency?" was never answerable from a running
 	// deployment. The provider span is measured between the two existing
 	// LLM breadcrumbs; a round that errors out mid-call leaves its span
-	// uncounted, which biases the report toward OVER-reporting gohort's
+	// uncounted, which biases the report toward OVER-reporting oddjob's
 	// share on a failed turn — the safe direction for a diagnostic.
 	defer func() {
 		total := time.Since(lr.turnStarted)
@@ -317,7 +317,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		if total > 0 {
 			pct = int(own * 100 / total)
 		}
-		Log("[agent_loop] turn time: %s total = %s in %d LLM call(s) + %s gohort (%d%%)",
+		Log("[agent_loop] turn time: %s total = %s in %d LLM call(s) + %s oddjob (%d%%)",
 			total.Round(time.Millisecond), lr.llmWall.Round(time.Millisecond), lr.llmCalls,
 			own.Round(time.Millisecond), pct)
 	}()
@@ -784,14 +784,14 @@ func (lr *loopRun) rebuildToolMaps(active []AgentToolDef) {
 
 func (lr *loopRun) setupTools() {
 	// Turn-time split. Everything the loop spends that is NOT waiting on a
-	// provider is gohort's own overhead — prompt assembly, knowledge
+	// provider is oddjob's own overhead — prompt assembly, knowledge
 	// injection, tool resolution, guardrails, and the tool calls themselves.
 	// Until now that number could only be inferred by subtracting a separate
 	// direct-to-provider probe from a wall-clock stopwatch, so "is the
 	// framework adding latency?" was never answerable from a running
 	// deployment. The provider span is measured between the two existing
 	// LLM breadcrumbs; a round that errors out mid-call leaves its span
-	// uncounted, which biases the report toward OVER-reporting gohort's
+	// uncounted, which biases the report toward OVER-reporting oddjob's
 	// share on a failed turn — the safe direction for a diagnostic.
 	lr.turnStarted = time.Now()
 	lr.maxRounds = lr.cfg.MaxRounds
@@ -2581,7 +2581,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 	} else if containsFakeToolCodeBlock(lr.rs.resp.Content) {
 		// Training-data artifact: the model writes its tool call
 		// as plain text in a <tool_code> block (Gemini format) or
-		// with ::name(...):: cascade syntax (gohort-shaped fake).
+		// with ::name(...):: cascade syntax (oddjob-shaped fake).
 		// This happens most often near the round cap when the
 		// wrap-up nudge fires and the model interprets "respond
 		// directly now" as "polish a final message" — so it

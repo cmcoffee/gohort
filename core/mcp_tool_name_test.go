@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/internal/mcpclient"
+	"github.com/cmcoffee/oddjob/core/internal/mcpclient"
 )
 
 // llmToolNamePattern is the character class every provider validates a tool

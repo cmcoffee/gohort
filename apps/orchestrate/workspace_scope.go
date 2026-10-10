@@ -1,6 +1,6 @@
 package orchestrate
 
-import . "github.com/cmcoffee/gohort/core"
+import . "github.com/cmcoffee/oddjob/core"
 
 // agentTurnWorkspace answers where a turn for one agent should run, and what
 // it may read outside that.

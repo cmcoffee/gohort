@@ -16,20 +16,20 @@ import (
 // the ribbon's reach without the ribbon's disclosure.
 
 func TestMaskedLabel_OwnerSeesTheRealThing(t *testing.T) {
-	e := LiveEntry{Label: "how do I tell my boss I'm leaving", App: "Gohort", Owner: "craig"}
+	e := LiveEntry{Label: "how do I tell my boss I'm leaving", App: "Oddjob", Owner: "craig"}
 	if got := e.MaskedLabel("craig"); got != e.Label {
 		t.Errorf("owner must see the real label, got %q", got)
 	}
 }
 
 func TestMaskedLabel_EveryoneElseGetsGeneric(t *testing.T) {
-	e := LiveEntry{Label: "how do I tell my boss I'm leaving", App: "Gohort", Owner: "craig"}
+	e := LiveEntry{Label: "how do I tell my boss I'm leaving", App: "Oddjob", Owner: "craig"}
 	for _, viewer := range []string{"dana", "", "admin"} {
 		got := e.MaskedLabel(viewer)
 		if got == e.Label {
 			t.Errorf("viewer %q must not see the label", viewer)
 		}
-		if got != "Gohort - craig" {
+		if got != "Oddjob - craig" {
 			t.Errorf("viewer %q: got %q", viewer, got)
 		}
 	}
@@ -60,13 +60,13 @@ func TestMaskedLabel_PreservesTreeIndent(t *testing.T) {
 	// The nested run view renders depth from the label's own prefix; masking
 	// that away would flatten the tree.
 	cases := []struct{ label, want string }{
-		{"↳ sub-question about severance", "↳ Gohort - craig"},
-		{"  ↳ deeper", "  ↳ Gohort - craig"},
-		{"    ↳ deeper still", "    ↳ Gohort - craig"},
-		{"top level", "Gohort - craig"},
+		{"↳ sub-question about severance", "↳ Oddjob - craig"},
+		{"  ↳ deeper", "  ↳ Oddjob - craig"},
+		{"    ↳ deeper still", "    ↳ Oddjob - craig"},
+		{"top level", "Oddjob - craig"},
 	}
 	for _, c := range cases {
-		e := LiveEntry{Label: c.label, App: "Gohort", Owner: "craig"}
+		e := LiveEntry{Label: c.label, App: "Oddjob", Owner: "craig"}
 		if got := e.MaskedLabel("dana"); got != c.want {
 			t.Errorf("label %q → %q, want %q", c.label, got, c.want)
 		}

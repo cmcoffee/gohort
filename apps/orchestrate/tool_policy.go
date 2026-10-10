@@ -36,7 +36,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // autoToolPolicyTable stores one decision per (owner, agent, tool). Deployment

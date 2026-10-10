@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -36,7 +36,7 @@ func TestSSEStreamNeedsTheSameAuthAsToolsCall(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/mcp/", nil).WithContext(ctx)
 		r.Header.Set("Accept", "text/event-stream")
 		if withCookie {
-			r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+			r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: token})
 		}
 		w := httptest.NewRecorder()
 		app.handle(w, r)

@@ -21,13 +21,13 @@ func TestSandboxEnvPrependsShimBin(t *testing.T) {
 		return ""
 	}
 
-	if path := pathFor(true); !strings.HasPrefix(path, GohortBinMountPath+":") {
-		t.Errorf("with remapping, PATH %q not prefixed with the shim mount %q", path, GohortBinMountPath)
+	if path := pathFor(true); !strings.HasPrefix(path, OddjobBinMountPath+":") {
+		t.Errorf("with remapping, PATH %q not prefixed with the shim mount %q", path, OddjobBinMountPath)
 	}
 
 	path := pathFor(false)
-	if strings.HasPrefix(path, GohortBinMountPath+":") {
-		t.Errorf("without remapping, PATH leads with the unmounted %q: %q", GohortBinMountPath, path)
+	if strings.HasPrefix(path, OddjobBinMountPath+":") {
+		t.Errorf("without remapping, PATH leads with the unmounted %q: %q", OddjobBinMountPath, path)
 	}
 	if want := sandboxShimBinDir(false); want != "" && !strings.HasPrefix(path, want+":") {
 		t.Errorf("without remapping, PATH %q should lead with the host shim dir %q", path, want)

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/internal/mcpclient"
+	"github.com/cmcoffee/oddjob/core/internal/mcpclient"
 )
 
 // A failed CALL and a failed CONNECTION need opposite handling: one is

@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // substituteURL replaces {param} placeholders in a URL template with

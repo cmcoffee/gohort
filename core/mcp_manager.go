@@ -5,7 +5,7 @@
 // for the writer apps' source picker).
 //
 // This is the server-side counterpart to the per-user stdio host in
-// gohort-desktop/mcp. Here the connections are shared and always-on, so
+// oddjob-desktop/mcp. Here the connections are shared and always-on, so
 // an org knowledge source (Confluence, etc.) is available to every
 // agent and pipeline without a user's laptop in the loop.
 //
@@ -28,7 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/internal/mcpclient"
+	"github.com/cmcoffee/oddjob/core/internal/mcpclient"
 )
 
 const (
@@ -86,7 +86,7 @@ type MCPServerConfig struct {
 	// server does NOT support Dynamic Client Registration (RFC 7591). The admin
 	// pre-registers an OAuth app at the provider and supplies its client_id here
 	// (client_secret goes through the encrypted store, like the bearer token).
-	// Left blank ⇒ gohort auto-registers via DCR (the default). AuthorizeURL /
+	// Left blank ⇒ oddjob auto-registers via DCR (the default). AuthorizeURL /
 	// TokenURL / Scopes are an additional fallback for providers that don't expose
 	// .well-known discovery either; blank ⇒ discovered.
 	OAuthClientID     string `json:"oauth_client_id,omitempty"`
@@ -1602,7 +1602,7 @@ func mcpLooksMutating(name string) bool {
 // per-property shape ToolParam uses. Nested object/array properties keep
 // their top-level type and fold a compact JSON of their sub-schema into
 // the description (ToolParam can't nest), so the model still sees the
-// expected shape. Ported from gohort-desktop/mcp/tool.go.
+// expected shape. Ported from oddjob-desktop/mcp/tool.go.
 func mcpMapSchema(schema map[string]any) (map[string]ToolParam, []string) {
 	out := map[string]ToolParam{}
 	if schema == nil {

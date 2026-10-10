@@ -1,7 +1,7 @@
 package core
 
 // ResolveWorkspacePath is the containment check for every host-side read or
-// write the gohort process does on a sandbox's behalf (tool state copies
+// write the oddjob process does on a sandbox's behalf (tool state copies
 // among them), so each escape it exists to stop is pinned here.
 
 import (

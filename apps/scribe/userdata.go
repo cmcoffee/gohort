@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 type scribeUserData struct {

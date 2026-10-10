@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // handleAttachment serves one stored attachment: /api/attachment?id=att_…

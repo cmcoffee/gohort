@@ -3,7 +3,7 @@ package servitor
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The agent editor links "Machines" to this URL. It pointed at a Manage page

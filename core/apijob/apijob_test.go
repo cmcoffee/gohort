@@ -61,7 +61,7 @@ func TestAFailedJobSaysWhy(t *testing.T) {
 func TestAJobFindsItsFile(t *testing.T) {
 	comfy := &fakeAPI{bodies: []string{
 		`{}`,
-		`{"p1":{"outputs":{"9":{"images":[{"filename":"gohort 01.png","subfolder":"","type":"output"}]}}}}`,
+		`{"p1":{"outputs":{"9":{"images":[{"filename":"oddjob 01.png","subfolder":"","type":"output"}]}}}}`,
 	}}
 	s := fast(Spec{IDPath: "prompt_id", PollURL: "/history/{id}", ReadyPath: "{id}.outputs.9.images.0.filename",
 		FileURLTemplate: "/view?filename={filename}&type={type}",
@@ -73,7 +73,7 @@ func TestAJobFindsItsFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.FileURL != "http://comfy.lan:8188/view?filename=gohort+01.png&type=output" || res.FileName != "gohort_01.png" {
+	if res.FileURL != "http://comfy.lan:8188/view?filename=oddjob+01.png&type=output" || res.FileName != "oddjob_01.png" {
 		t.Errorf("the file URL is built from the fields: %q named %q", res.FileURL, res.FileName)
 	}
 

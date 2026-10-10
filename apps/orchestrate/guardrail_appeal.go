@@ -35,7 +35,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // guardrailAppealOffer is a live invitation to dispute one block.

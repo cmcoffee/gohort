@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // pipelineRunSurface assembles what core needs to serve one pipeline's runs

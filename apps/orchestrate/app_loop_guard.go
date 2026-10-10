@@ -21,7 +21,7 @@ package orchestrate
 import (
 	"context"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // AppLoopGuard is orchestrate's guardrails for one run of an app agent.

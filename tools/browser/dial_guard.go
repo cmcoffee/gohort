@@ -27,7 +27,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/sourcehooks"
+	"github.com/cmcoffee/oddjob/core/sourcehooks"
 )
 
 // dialGuard is the proxy: CONNECT for https and websockets, absolute-URI

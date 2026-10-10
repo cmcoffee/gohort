@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/bundle"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/bundle"
 )
 
 // --- Appliance CRUD ---
@@ -86,10 +86,10 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		isRemote := false
 		switch req.Type {
 		case "command":
-			// Runs `sh -c` on the gohort host as the gohort process: owning
+			// Runs `sh -c` on the oddjob host as the oddjob process: owning
 			// one is owning the server. See localCommandAllowed.
 			if !servitorIsAdmin(r) {
-				http.Error(w, "a local command system runs commands on the gohort server itself, so only an admin can create or change one", http.StatusForbidden)
+				http.Error(w, "a local command system runs commands on the oddjob server itself, so only an admin can create or change one", http.StatusForbidden)
 				return
 			}
 			if req.Name == "" || req.Command == "" {

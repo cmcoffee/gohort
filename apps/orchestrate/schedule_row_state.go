@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // scheduleFailingLabel is what a schedule in trouble says on its row. Empty

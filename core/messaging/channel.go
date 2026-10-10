@@ -30,7 +30,7 @@ import (
 // path. See [[project_channels_to_agents]].
 type Channel struct {
 	ID          string `json:"id"`
-	Owner       string `json:"owner"`                 // gohort user who owns this channel
+	Owner       string `json:"owner"`                 // oddjob user who owns this channel
 	Name        string `json:"name,omitempty"`        // friendly label
 	Description string `json:"description,omitempty"` // what this interface is for
 	// A Channel is the INTERFACE — the pipe to/from the bound agent's LLM. On
@@ -175,7 +175,7 @@ const DefaultDMGatekeeperRule = "WAKE when the incoming message mentions or addr
 	"WAKE when the incoming message is a fragment, direct reply, or continuation of a message that was directed at the agent specifically: it answers or clearly follows up on something the agent said or was asked in this thread. Otherwise (unrelated topics, or an exchange between other people the agent isn't part of), stay silent (recorded only)."
 
 // BridgeService describes a known transport. Adding a new bridge is, on the
-// gohort side, ONE entry here: the routing id is the lowercase map key (stays
+// oddjob side, ONE entry here: the routing id is the lowercase map key (stays
 // lowercase everywhere internally); DisplayName is the brand label shown to the
 // user; RendersMarkdown reports whether the surface renders markdown — when
 // false the outbound chokepoint flattens **bold** / # / `code` to plain text so
@@ -192,14 +192,14 @@ var bridgeServices = map[string]BridgeService{
 	"imessage": {"iMessage", false},
 	"sms":      {"SMS", false},
 	// Telegram renders markdown, but only when the connector sends parse_mode
-	// MarkdownV2 with proper escaping. Default false = gohort delivers plain
+	// MarkdownV2 with proper escaping. Default false = oddjob delivers plain
 	// text (always safe); flip to true once a connector implements MarkdownV2.
 	"telegram": {"Telegram", false},
 	"slack":    {"Slack", true},
 	// Teams renders markdown when an activity says textFormat "markdown", but the
 	// other Teams transport (the rest_messaging graph preset) posts contentType
 	// "html", where the same text shows literal asterisks. One service id, two
-	// wire formats, so the conservative answer wins: gohort sends plain text and
+	// wire formats, so the conservative answer wins: oddjob sends plain text and
 	// the bot_framework connector stamps textFormat "plain" to match. Flip to
 	// true only once BOTH transports render it.
 	"teams":    {"Microsoft Teams", false},

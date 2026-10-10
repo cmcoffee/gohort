@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A finding is usually a note about an EXTERNAL system — an API's request

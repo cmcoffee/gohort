@@ -3,7 +3,7 @@
   "title": "Mattermost bridge (webhook)",
   "category": "Bridges",
   "description": "Brings Mattermost messages to your agents the moment they are posted (an outgoing webhook) and posts replies back as a bot account. A bridge described entirely as data: the generic webhook checks Mattermost's token and reads its fields by path.",
-  "setup_notes": "Mattermost must be able to reach this gohort's address. In Mattermost: under Integrations > Bot Accounts, add a bot and copy its access token, then add the bot to the channel. Under Integrations > Outgoing Webhooks, add one with Content Type application/json, the channel (or trigger words), and the Callback URL https://<this gohort's address>/bridges/api/webhook/<connector name>; save it and copy the Token it shows. Everything lands as a draft: enable the credential under API Credentials, approve the connector under Connectors, then bind the conversation to an agent in Bridges.",
+  "setup_notes": "Mattermost must be able to reach this oddjob's address. In Mattermost: under Integrations > Bot Accounts, add a bot and copy its access token, then add the bot to the channel. Under Integrations > Outgoing Webhooks, add one with Content Type application/json, the channel (or trigger words), and the Callback URL https://<this oddjob's address>/bridges/api/webhook/<connector name>; save it and copy the Token it shows. Everything lands as a draft: enable the credential under API Credentials, approve the connector under Connectors, then bind the conversation to an agent in Bridges.",
   "questions": [
     {
       "name": "site",
@@ -22,7 +22,7 @@
       "name": "bot_username",
       "label": "Bot's username",
       "help": "Its own posts are skipped, so it never answers itself.",
-      "default": "gohort"
+      "default": "oddjob"
     },
     {
       "name": "bot_token",
@@ -42,7 +42,7 @@
     }
   ],
   "bundle": {
-    "bundle": "gohort.bundle/v1",
+    "bundle": "oddjob.bundle/v1",
     "artifacts": [
       {
         "type": "credential",

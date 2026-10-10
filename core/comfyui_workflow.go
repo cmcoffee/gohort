@@ -34,7 +34,7 @@ const comfyDefaultGraph = `{
   "6":{"class_type":"CLIPTextEncode","inputs":{"text":"a scenic landscape","clip":["4",1]}},
   "7":{"class_type":"CLIPTextEncode","inputs":{"text":"","clip":["4",1]}},
   "8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},
-  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"gohort","images":["8",0]}}
+  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"oddjob","images":["8",0]}}
 }`
 
 // comfyEditDefaultGraph is a minimal SD1.5 IMG2IMG graph: LoadImage → VAEEncode
@@ -47,7 +47,7 @@ const comfyEditDefaultGraph = `{
   "6":{"class_type":"CLIPTextEncode","inputs":{"text":"a scenic landscape","clip":["4",1]}},
   "7":{"class_type":"CLIPTextEncode","inputs":{"text":"","clip":["4",1]}},
   "8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},
-  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"gohort","images":["8",0]}},
+  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"oddjob","images":["8",0]}},
   "10":{"class_type":"VAEEncode","inputs":{"pixels":["11",0],"vae":["4",2]}},
   "11":{"class_type":"LoadImage","inputs":{"image":"example.png"}}
 }`
@@ -62,7 +62,7 @@ const comfyBlendDefaultGraph = `{
   "1":{"class_type":"LoadImage","inputs":{"image":"example.png"}},
   "2":{"class_type":"LoadImage","inputs":{"image":"example.png"}},
   "3":{"class_type":"ImageBlend","inputs":{"blend_factor":0.5,"blend_mode":"normal","image1":["1",0],"image2":["2",0]}},
-  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"gohort","images":["3",0]}}
+  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"oddjob","images":["3",0]}}
 }`
 
 // Workflow types the setup form offers. A ComfyUI backend IS its workflow, so

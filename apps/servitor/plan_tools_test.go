@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Chat must be able to launch a real investigation on a FOLLOW-UP. Before this,

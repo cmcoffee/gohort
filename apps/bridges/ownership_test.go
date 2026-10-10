@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -41,7 +41,7 @@ func newOwnershipFixture(t *testing.T) *ownershipFixture {
 // call runs one handler as user and returns the recorder.
 func (f *ownershipFixture) call(user, method, path, body string, h http.HandlerFunc) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
-	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(f.adb, user)})
+	r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: AuthCreateSession(f.adb, user)})
 	w := httptest.NewRecorder()
 	h(w, r)
 	return w

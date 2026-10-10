@@ -11,7 +11,7 @@ import (
 )
 
 // AccountToken is a per-user PERSONAL ACCESS TOKEN: the credential a user pastes
-// into an external client (the X-API-Key header) to reach THEIR OWN gohort agents
+// into an external client (the X-API-Key header) to reach THEIR OWN oddjob agents
 // and MCP tools. It is the account-page-native equivalent of a Bridges key —
 // minted/managed under /account, scoped to the user — so personal access lives
 // with the user's account instead of being coupled to the messaging Bridges app.

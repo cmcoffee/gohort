@@ -7,7 +7,7 @@
 // Lives in core (with the bundle format), NOT core/ui: it knows the bundle
 // endpoints' request and response shapes. Served through ArtifactClientJS.
 (function () {
-  if (window.gohortArtifacts) return;
+  if (window.oddjobArtifacts) return;
 
   function fail(prefix, e) {
     (window.uiAlert || window.alert)(prefix + (e && e.message || e));
@@ -166,7 +166,7 @@
     var input = document.createElement('input');
     input.type = 'file';
     // A packed app or tool is the same bundle under its own extension.
-    input.accept = '.json,.gohortapp,.gohorttool,application/json';
+    input.accept = '.json,.oddjobapp,.oddjobtool,application/json';
     input.style.display = 'none';
     document.body.appendChild(input);
     input.addEventListener('change', function () {
@@ -317,5 +317,5 @@
     };
   }
 
-  window.gohortArtifacts = {download: download, importFlow: importFlow, exportFlow: exportFlow, exportAction: exportAction};
+  window.oddjobArtifacts = {download: download, importFlow: importFlow, exportFlow: exportFlow, exportAction: exportAction};
 })();

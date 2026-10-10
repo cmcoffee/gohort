@@ -1,8 +1,8 @@
 package admin
 
 import (
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // capabilitiesSections is the capabilities part of the admin page: Embeddings, Audio Transcription (STT), System Dependencies, Image Generation, Web Search, Page Rendering (Browser), Mail (SMTP), Network Timeouts.
@@ -22,7 +22,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Audio Transcription (STT)",
 			Subtitle: "Transcription for video and audio attachments.",
-			Detail:   "An OpenAI-compatible /audio/transcriptions endpoint. The endpoint you give includes the API version prefix; gohort appends /audio/transcriptions.",
+			Detail:   "An OpenAI-compatible /audio/transcriptions endpoint. The endpoint you give includes the API version prefix; oddjob appends /audio/transcriptions.",
 			Body: ui.FormPanel{
 				Source:    "api/transcribe",
 				TestURL:   "api/transcribe/test",
@@ -32,8 +32,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "System Dependencies",
-			Subtitle: "External tools gohort shells out to for media and document handling.",
-			Detail:   "A missing one disables the feature it gates: no ffmpeg means inbound voice memos cannot be transcribed.\n\nDate-versioned tools like yt-dlp are flagged when they go stale. Its extractors rot fast, so a stale yt-dlp silently breaks video downloads. Install or update on the gohort host and restart; this list refreshes on reload.",
+			Subtitle: "External tools oddjob shells out to for media and document handling.",
+			Detail:   "A missing one disables the feature it gates: no ffmpeg means inbound voice memos cannot be transcribed.\n\nDate-versioned tools like yt-dlp are flagged when they go stale. Its extractors rot fast, so a stale yt-dlp silently breaks video downloads. Install or update on the oddjob host and restart; this list refreshes on reload.",
 			Body: ui.Table{
 				Source: "api/dependencies",
 				RowKey: "name",
@@ -221,7 +221,7 @@ func embeddingFormFields() []ui.FormField {
 	return append(fields,
 		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
 			Placeholder: "http://localhost:11434/api",
-			Help:        "Base URL including the API version prefix. gohort appends /embeddings.",
+			Help:        "Base URL including the API version prefix. oddjob appends /embeddings.",
 			Detail:      "Pick a preset below for the canonical path on common platforms.",
 			ShowWhen:    local,
 			Presets: []ui.FieldPreset{
@@ -294,7 +294,7 @@ func transcribeFormFields() []ui.FormField {
 	return append(fields,
 		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
 			Placeholder: "http://localhost:8089/v1",
-			Help:        "Base URL with the version prefix: gohort appends /audio/transcriptions.",
+			Help:        "Base URL with the version prefix: oddjob appends /audio/transcriptions.",
 			ShowWhen:    local,
 			Presets: []ui.FieldPreset{
 				{Label: "whisper.cpp", Value: "http://localhost:8089/v1", Hint: "Default whisper.cpp HTTP server port"},

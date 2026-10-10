@@ -417,7 +417,7 @@ func TestPreview_NoWarnWhenDependencySatisfied(t *testing.T) {
 
 func TestPreview_EmptyAndInvalid(t *testing.T) {
 	withFakeTypes(t, &fakeArtifact{typ: "tool"})
-	if _, err := PreviewArtifactBundle(nil, []byte(`{"bundle":"gohort.bundle/v1","artifacts":[]}`), "u"); err == nil {
+	if _, err := PreviewArtifactBundle(nil, []byte(`{"bundle":"oddjob.bundle/v1","artifacts":[]}`), "u"); err == nil {
 		t.Fatal("empty bundle must error, same as import")
 	}
 	if _, err := PreviewArtifactBundle(nil, []byte("not json"), "u"); err == nil {

@@ -1,8 +1,8 @@
 package admin
 
 import (
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // llmSections is the llm part of the admin page: Worker LLM, Lead LLM, Model Privacy, LLM Routing, Ollama Proxy, Agent Loop Tuning, Local Model Scheduler.
@@ -45,7 +45,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
 						ShowWhen: "provider:bedrock",
 						Help:     "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
-						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the gohort host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +
+						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the oddjob host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +
 							"Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
 						Presets: bedrockRegionPresets()},
 					{Field: "bedrock_api", Label: "Bedrock API", Type: "select", ShowWhen: "provider:bedrock",
@@ -57,7 +57,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "aws_profile", Label: "AWS profile", Type: "text", Placeholder: "(default)",
 						ShowWhen: "provider:bedrock",
 						Help:     "AWS Bedrock only. Blank uses $AWS_PROFILE.",
-						Detail:   "Credentials are never stored here. For SSO, run `aws sso login` on the gohort host. The API key field above is optional, and means a Bedrock bearer token instead."},
+						Detail:   "Credentials are never stored here. For SSO, run `aws sso login` on the oddjob host. The API key field above is optional, and means a Bedrock bearer token instead."},
 					{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 1000000,
 						ShowWhen: "provider:!openai|gemini",
 						Help:     "0 uses the default: 65K for ollama, llama.cpp and vLLM, 200K for Anthropic and Bedrock.",
@@ -122,7 +122,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
 						ShowWhen: "provider:bedrock",
 						Help:     "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
-						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the gohort host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +
+						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the oddjob host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +
 							"Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
 						Presets: bedrockRegionPresets()},
 					{Field: "bedrock_api", Label: "Bedrock API", Type: "select", ShowWhen: "provider:bedrock",
@@ -134,7 +134,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "aws_profile", Label: "AWS profile", Type: "text", Placeholder: "(default)",
 						ShowWhen: "provider:bedrock",
 						Help:     "AWS Bedrock only. Blank uses $AWS_PROFILE.",
-						Detail:   "Credentials are never stored here. For SSO, run `aws sso login` on the gohort host. The API key field above is optional, and means a Bedrock bearer token instead."},
+						Detail:   "Credentials are never stored here. For SSO, run `aws sso login` on the oddjob host. The API key field above is optional, and means a Bedrock bearer token instead."},
 					{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 1000000,
 						ShowWhen: "provider;provider:!openai|gemini",
 						Help:     "0 uses the default: 200K for Anthropic and Bedrock, 65K for local providers.",
@@ -191,8 +191,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 		},
 		{
 			Title:    "Ollama Proxy",
-			Subtitle: "Expose gohort as a fair-queued Ollama endpoint.",
-			Detail:   "Point Ollama clients at gohort's port instead of Ollama's and they share the local model scheduler.\n\nThis is a separate listener on its own port. It is not behind the dashboard login, the admin IP allowlist, or TLS, so what it is bound to is what decides who can reach it. Changing the port or interface requires a restart.",
+			Subtitle: "Expose oddjob as a fair-queued Ollama endpoint.",
+			Detail:   "Point Ollama clients at oddjob's port instead of Ollama's and they share the local model scheduler.\n\nThis is a separate listener on its own port. It is not behind the dashboard login, the admin IP allowlist, or TLS, so what it is bound to is what decides who can reach it. Changing the port or interface requires a restart.",
 			Body: ui.FormPanel{
 				Source: "api/settings",
 				Method: settingsSaveMethod,
@@ -210,7 +210,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 								Confirm: "Expose the Ollama proxy on every network interface? It is not behind the dashboard login. Off-box requests will be refused without a personal access token, but the port becomes reachable."},
 						},
 						Help:     "This machine only is the default, and needs no credential.",
-						Detail:   "That is the same trust gohort extends to anything else running on the box. Choosing the network means every request from off-box must carry a personal access token in X-API-Key or Authorization: Bearer. Check your Ollama client can send a header before switching, because most cannot.",
+						Detail:   "That is the same trust oddjob extends to anything else running on the box. Choosing the network means every request from off-box must carry a personal access token in X-API-Key or Authorization: Bearer. Check your Ollama client can send a header before switching, because most cannot.",
 						ShowWhen: "ollama_proxy_enabled"},
 				},
 			},

@@ -11,7 +11,7 @@ never read back.
 
 ## Why this instead of authentication
 
-The want behind "can gohort host a separate web app" is usually a surface
+The want behind "can oddjob host a separate web app" is usually a surface
 strangers can *submit to*, not one they *log into*. Those are very different
 features. A login means a second identity stack living next to `core/auth.go`
 (1982 lines of lockout, session sliding, CSRF, reset and signup that took real

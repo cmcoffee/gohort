@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // BuilderTriage is a handed-off session's triage state: what could be at

@@ -26,7 +26,7 @@ import (
 	"strings"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // delegatedQuestion holds what a delegated Builder asked, for the caller to

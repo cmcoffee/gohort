@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/oddjob/core/netgate"
 )
 
 // ToolSession carries mutable per-session state shared between the caller
@@ -34,18 +34,18 @@ type ToolSession struct {
 	// workspace or the separation means nothing. Empty = no fallback.
 	WorkspaceFallback string
 
-	// CallTool, when set, is what gohort.call_tool reaches: one of the
+	// CallTool, when set, is what oddjob.call_tool reaches: one of the
 	// session user's tools, run for a script that declared "tool:<name>".
 	// Only an app's own script runs set it (appscript.Run), so a tool in a
 	// chat cannot use the hook to call further tools behind its own
 	// confirmation. Nil: call_tool is refused.
 	CallTool func(name string, args map[string]any) (string, error)
-	// Ask, when set, is what gohort.ask reaches: the app's agent with no
+	// Ask, when set, is what oddjob.ask reaches: the app's agent with no
 	// tools, for an app script that declared "ask". Set only by an app
 	// script's run, like CallTool. Nil: ask is refused.
 	Ask func(prompt string, jsonMode bool) (string, error)
-	// RunAgent and RunPipeline, when set, are what gohort.run_agent and
-	// gohort.run_pipeline reach: one of the app's own agents run WITH its
+	// RunAgent and RunPipeline, when set, are what oddjob.run_agent and
+	// oddjob.run_pipeline reach: one of the app's own agents run WITH its
 	// tools, or its pipeline run to the end ("" names the app's own). Set
 	// only by an app script's run, for one that declared "run_agent" /
 	// "run_pipeline". Nil: refused.
@@ -175,7 +175,7 @@ type ToolSession struct {
 	// DeniedCredentials is the set of SecureAPI credential names the running
 	// agent may NOT dispatch through (mirrors AgentRecord.DisabledCredentials).
 	// The app populates it at session setup for an agent turn. Enforced at the
-	// fetch_url auto-route (LLM tool + script gohort.fetch_url): a covered host
+	// fetch_url auto-route (LLM tool + script oddjob.fetch_url): a covered host
 	// whose credential is denied is BLOCKED rather than routed, so credential
 	// scope can't be bypassed by fetching the host directly. Empty = no
 	// restriction. nil-safe via CredentialDenied.

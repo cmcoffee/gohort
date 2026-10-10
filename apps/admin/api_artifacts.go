@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registerArtifactsRoutes wires the artifacts API under the admin sub-mux.
@@ -19,7 +19,7 @@ func (a *AdminApp) registerArtifactsRoutes(sub *http.ServeMux) {
 	// functions they called are still used by the orchestrate connector tool.
 
 	// Artifact export — the UNIFIED, cross-type download. Builds a
-	// gohort.bundle/v1 carrying any registered artifact (connector, tool, …).
+	// oddjob.bundle/v1 carrying any registered artifact (connector, tool, …).
 	// An individual export is just a one-item bundle:
 	//   ?type=<t>&name=<n>[&owner=<u>]  → one artifact (owner scopes tools)
 	//   ?all=<t1,t2>                    → every artifact of those types
@@ -54,7 +54,7 @@ func (a *AdminApp) registerArtifactsRoutes(sub *http.ServeMux) {
 		var (
 			bundle   ArtifactBundle
 			err      error
-			filename = "gohort-bundle.json"
+			filename = "oddjob-bundle.json"
 		)
 		switch {
 		case typ != "" && name != "":
@@ -68,7 +68,7 @@ func (a *AdminApp) registerArtifactsRoutes(sub *http.ServeMux) {
 				owner = AuthCurrentUser(r)
 			}
 			bundle, err = exportSels([]ArtifactSel{{Type: typ, Name: name, Owner: owner}})
-			filename = name + ".gohort.json"
+			filename = name + ".oddjob.json"
 		case strings.TrimSpace(q.Get("all")) != "":
 			bundle, err = exportSels(ArtifactSelectionForTypes(RootDB, strings.Split(q.Get("all"), ",")...))
 		default:
@@ -85,7 +85,7 @@ func (a *AdminApp) registerArtifactsRoutes(sub *http.ServeMux) {
 		_ = enc.Encode(bundle)
 	})
 
-	// Artifact import — accept a gohort.bundle/v1 (or a legacy connector pack, or
+	// Artifact import — accept a oddjob.bundle/v1 (or a legacy connector pack, or
 	// a bare single artifact) and reconstitute every artifact as a DRAFT owned by
 	// the importing admin: connectors land unapproved, tools land in the pending
 	// pool. Nothing goes live without a separate approval. Returns the per-

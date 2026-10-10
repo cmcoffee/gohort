@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/appscript"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/appscript"
 )
 
 const (
@@ -95,7 +95,7 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 
 // askAppAgent asks spec's agent prompt on user's behalf, under the app's and
 // user's daily caps, and returns the text, or why not with the HTTP status
-// that says so. The page's ask and a script's gohort.ask both come here, so
+// that says so. The page's ask and a script's oddjob.ask both come here, so
 // a backend call is held to exactly the caps a page call is.
 func askAppAgent(ctx context.Context, ownerDB Database, owner, user string, spec AppSpec, prompt string, jsonMode bool) (string, int, error) {
 	if strings.TrimSpace(spec.AgentID) == "" {
@@ -166,7 +166,7 @@ func appModelCall(ownerDB Database, spec AppSpec, user, what string, call func()
 	return text, http.StatusOK, nil
 }
 
-// A script's gohort.ask reaches the same caps, against the owner's store.
+// A script's oddjob.ask reaches the same caps, against the owner's store.
 func init() {
 	appscript.AppAsk = func(ctx context.Context, spec AppSpec, caller, prompt string, jsonMode bool) (string, error) {
 		text, _, err := askAppAgent(ctx, appscript.RecordBase(spec, spec.Owner), spec.Owner, caller, spec, prompt, jsonMode)

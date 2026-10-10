@@ -38,7 +38,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxAdvertisedMachines caps how many machine names the agents tool lists in

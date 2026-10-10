@@ -21,7 +21,7 @@ import (
 	"context"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 type nonOwnerRequesterKey struct{}

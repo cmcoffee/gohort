@@ -3,7 +3,7 @@ package temptool
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A non-JSON content type (XML/CalDAV/SOAP) must substitute placeholders VERBATIM

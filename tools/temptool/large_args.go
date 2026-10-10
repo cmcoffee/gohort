@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxEnvArgBytes is the largest parameter value handed to a shell tool as an
@@ -54,7 +54,7 @@ func passLargeArgs(tt *TempTool, args map[string]any, envArgs map[string]string,
 	}
 	var moved []fileArg
 	for k, val := range envArgs {
-		if len(val) <= maxEnvArgBytes || strings.HasPrefix(k, "GOHORT_") {
+		if len(val) <= maxEnvArgBytes || strings.HasPrefix(k, "ODDJOB_") {
 			continue
 		}
 		dir := filepath.Join(workspaceDir, ".tool_args")

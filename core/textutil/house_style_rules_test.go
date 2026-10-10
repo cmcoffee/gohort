@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // The two shipped style rules must be registered WITH their enforcers, and this

@@ -22,7 +22,7 @@ import (
 	"regexp"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxQueryReturnBytes caps any query-helper's return string. Smaller

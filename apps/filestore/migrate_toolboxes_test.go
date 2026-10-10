@@ -3,7 +3,7 @@ package filestore
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A mapping conversation is real work. Coming up to find the folder empty with

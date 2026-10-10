@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 
-	"github.com/cmcoffee/gohort/core/toolrules"
+	"github.com/cmcoffee/oddjob/core/toolrules"
 )
 
 // turnMachine is what a machine contributes to ONE turn: the phase that

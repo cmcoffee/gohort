@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The bounded view was gated to persistent "channel:" threads, on the stated

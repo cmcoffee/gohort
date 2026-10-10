@@ -7,7 +7,7 @@ import (
 
 const navDoc = "# Runbook\n\n## Contents\n\n1. [Install](#install)\n2. [Run It](#1-run-it)\n\n## Install\n\nSee [running it](#run-it) and [the old page](#gone).\n\n```\n## not a heading\n[nope](#nope)\n```\n\n## 1. Run It\n\nText.\n"
 
-// The navigation is read off the markdown: headings with gohort's anchors,
+// The navigation is read off the markdown: headings with oddjob's anchors,
 // each in-page link and the heading it means (by anchor, else by its words),
 // and the table of contents' heading. Fenced code is not navigation.
 func TestAnalyzeNav(t *testing.T) {

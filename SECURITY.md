@@ -1,6 +1,6 @@
 # Security
 
-Gohort runs code an LLM wrote, holds credentials on your behalf, and answers on a network
+Oddjob runs code an LLM wrote, holds credentials on your behalf, and answers on a network
 port. Those three together are the whole security story, and this file is where its terms
 are written down.
 
@@ -8,12 +8,12 @@ are written down.
 
 Use GitHub's private vulnerability reporting:
 
-**https://github.com/cmcoffee/gohort/security/advisories/new**
+**https://github.com/cmcoffee/oddjob/security/advisories/new**
 
 Please do not open a public issue for a security problem. This is a project that holds
 people's API keys; a public issue is a disclosure with no fix available yet.
 
-Useful to include: the version (`gohort --version` or `version.txt`), the platform, whether
+Useful to include: the version (`oddjob --version` or `version.txt`), the platform, whether
 the deployment is single- or multi-user, and the smallest sequence that reproduces it. If
 it involves a tool or an agent, the definition matters more than the transcript.
 
@@ -64,9 +64,9 @@ persistent shells, response pipes, and event-monitor evaluator scripts all fail 
 an error naming the cause. To permit unconfined execution, say so explicitly:
 
 ```
-GOHORT_ALLOW_UNSANDBOXED=off      # default — nothing runs unconfined, ever
-GOHORT_ALLOW_UNSANDBOXED=admin    # an admin's own runs may; everything else refused
-GOHORT_ALLOW_UNSANDBOXED=on       # anything may
+ODDJOB_ALLOW_UNSANDBOXED=off      # default — nothing runs unconfined, ever
+ODDJOB_ALLOW_UNSANDBOXED=admin    # an admin's own runs may; everything else refused
+ODDJOB_ALLOW_UNSANDBOXED=on       # anything may
 ```
 
 `admin` is the setting that makes an unconfinable host livable. It splits the two decisions
@@ -80,14 +80,14 @@ A run is "an admin's" only if it reaches exec through a session owned by an admi
 the model says can stamp it: anything with no known human behind it is not an admin. An
 unrecognized value is read as `off`, so a typo in this switch refuses rather than opens.
 
-This used to be the other way round: unconfined was the default and `GOHORT_SANDBOX_REQUIRED=1`
+This used to be the other way round: unconfined was the default and `ODDJOB_SANDBOX_REQUIRED=1`
 was the opt-in to safety. The argument for that default was that a host with no backend would
 otherwise have no working shell tools at all, with nothing installable to fix it on macOS
 which is true, and is not a reason to default open. The remedy was never "install something",
 it is "say you accept the risk", and that is one flag either way. Dangerous by default and
 safe on request is the wrong way round.
 
-`GOHORT_SANDBOX_REQUIRED` is still honored in both directions (`=0` is equivalent to the opt-out
+`ODDJOB_SANDBOX_REQUIRED` is still honored in both directions (`=0` is equivalent to the opt-out
 above), so a deployment carrying it keeps the behavior it asked for. If both are set
 contradictorily, confinement wins.
 
@@ -108,7 +108,7 @@ backups: a copied database does not open on a different machine.
 
 ## Deployment posture
 
-Gohort binds a port and serves a dashboard. A few things worth deciding before it faces
+Oddjob binds a port and serves a dashboard. A few things worth deciding before it faces
 anything wider than localhost:
 
 - Put TLS in front of it, or bind it to a local interface and reach it through something
@@ -139,7 +139,7 @@ anything wider than localhost:
   crosses a capability boundary **is** in scope, and the distinction is the whole point.
 - An admin authoring a tool that does something dangerous on their own deployment.
 - Running unconfined on a host with no sandbox backend, when that state is reported
-  correctly and the operator opted in with `GOHORT_ALLOW_UNSANDBOXED`. A sandbox that
+  correctly and the operator opted in with `ODDJOB_ALLOW_UNSANDBOXED`. A sandbox that
   silently reports `Confined: true` while not confining is in scope, and so is an
   unconfined run on a host that opted into nothing.
 - Resource exhaustion from a schedule or agent the operator configured themselves.

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A monitor firing is not something the owner said.
@@ -33,7 +33,7 @@ func TestAnEventInputIsStoredAsACardNotAsTheUsersMessage(t *testing.T) {
 	// The card shape is what earns the fenced origin marker on the way back
 	// into the model — the same treatment a standing report gets.
 	marked := llmHistoryContent(got)
-	if !strings.Contains(marked, "molty") || !strings.HasPrefix(marked, "<gohort-meta>") {
+	if !strings.Contains(marked, "molty") || !strings.HasPrefix(marked, "<oddjob-meta>") {
 		t.Errorf("a stored event must reach the model saying where it came from: %q", marked)
 	}
 }

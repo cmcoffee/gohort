@@ -6,7 +6,7 @@ import (
 )
 
 // Regression test for the EDGAR query sanitizer. All input queries are
-// from the gohort.log — LLM-generated EDGAR queries that returned empty
+// from the oddjob.log — LLM-generated EDGAR queries that returned empty
 // because EDGAR's API doesn't parse field-tag syntax. The sanitizer
 // should strip the scaffolding and produce valid keyword-style queries.
 func TestSanitizeEDGARQuery_productionFailures(t *testing.T) {

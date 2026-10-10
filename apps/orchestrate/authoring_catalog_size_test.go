@@ -10,7 +10,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

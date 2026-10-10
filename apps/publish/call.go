@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // truncationMarker is what dispatch appends when a response exceeded its read

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // replyLink is a messaging bridge that resolves any recipient to a 1:1 chat
@@ -113,7 +113,7 @@ func TestOneApprovalSendsAndBindsTheReply(t *testing.T) {
 
 	app := &OrchestrateApp{AppCore: AppCore{DB: orchestrateBaseDB}}
 	r := httptest.NewRequest(http.MethodPost, "/api/approvals/approve?id="+auths[0].ID, nil)
-	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), "u")})
+	r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: AuthCreateSession(AuthDB(), "u")})
 	w := httptest.NewRecorder()
 	app.resolveApproval(w, r, false)
 	if w.Code != http.StatusNoContent {

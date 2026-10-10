@@ -3,10 +3,10 @@ package servitor
 import (
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/oddjob/core/appagents"
 	"github.com/cmcoffee/snugforge/kvlite"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // THE RULE: with "All LLMs are private" OFF, nothing in servitor reaches the

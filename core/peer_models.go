@@ -40,7 +40,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/oddjob/core/prompts"
 	"github.com/cmcoffee/snugforge/iotimeout"
 )
 
@@ -336,7 +336,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Queue behind the SAME serializer local turns use, labelled as this peer.
 	//
 	// Without it a peer's request went straight at the inference server while
-	// gohort's own turns waited politely behind the mutex — and the serializer
+	// oddjob's own turns waited politely behind the mutex — and the serializer
 	// is not a fairness nicety: stock llama.cpp is single-threaded and answers
 	// 503 under concurrent load, so an overlapping peer turn could fail a local
 	// one outright, with nothing on either machine explaining why.

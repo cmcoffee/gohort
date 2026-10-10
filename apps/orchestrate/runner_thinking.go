@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // thinkProgress turns the model's reasoning stream into something a person

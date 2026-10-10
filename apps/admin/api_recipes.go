@@ -13,8 +13,8 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/recipes"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/recipes"
 )
 
 // templateRow is one line of the Templates table.
@@ -137,7 +137,7 @@ func (a *AdminApp) registerRecipeRoutes(sub *http.ServeMux) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="gohort-template-%s.json"`, id))
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="oddjob-template-%s.json"`, id))
 		w.Write(data)
 	})
 

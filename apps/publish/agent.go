@@ -13,8 +13,8 @@
 package publish
 
 import (
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
 )
 
 // PublisherAgentID is the curated agent a writer app binds its Publish chat to.

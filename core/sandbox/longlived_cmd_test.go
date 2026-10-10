@@ -36,8 +36,8 @@ func TestALongLivedShellIsRefusedWhenTheHostCannotConfineIt(t *testing.T) {
 	withBackend(t, noSandbox{})
 	// Default policy. Named explicitly rather than relied upon: the whole
 	// point is that an operator who set nothing gets the strict answer.
-	t.Setenv("GOHORT_ALLOW_UNSANDBOXED", "")
-	t.Setenv("GOHORT_SANDBOX_REQUIRED", "")
+	t.Setenv("ODDJOB_ALLOW_UNSANDBOXED", "")
+	t.Setenv("ODDJOB_SANDBOX_REQUIRED", "")
 
 	built, err := NewSandboxedShellCmd(context.Background(), "psql -h db", t.TempDir(), nil)
 	if err == nil {
@@ -56,7 +56,7 @@ func TestALongLivedShellIsRefusedWhenTheHostCannotConfineIt(t *testing.T) {
 
 func TestALongLivedShellOpensUnconfinedOnlyWhenAskedTo(t *testing.T) {
 	withBackend(t, noSandbox{})
-	t.Setenv("GOHORT_ALLOW_UNSANDBOXED", "on")
+	t.Setenv("ODDJOB_ALLOW_UNSANDBOXED", "on")
 
 	built, err := NewSandboxedShellCmd(context.Background(), "psql -h db", t.TempDir(), nil)
 	if err != nil {
@@ -81,7 +81,7 @@ func TestALongLivedShellOpensUnconfinedOnlyWhenAskedTo(t *testing.T) {
 // at the keyboard, and must stay refused on a BypassAdmin host.
 func TestALongLivedShellUnderTheAdminBypassStillRefusesAnUnstampedCaller(t *testing.T) {
 	withBackend(t, noSandbox{})
-	t.Setenv("GOHORT_ALLOW_UNSANDBOXED", "admin")
+	t.Setenv("ODDJOB_ALLOW_UNSANDBOXED", "admin")
 
 	if _, err := NewSandboxedShellCmd(context.Background(), "psql", t.TempDir(), nil); err == nil {
 		t.Error("an unstamped caller is not an admin and must be refused")
@@ -96,7 +96,7 @@ func TestALongLivedShellUnderTheAdminBypassStillRefusesAnUnstampedCaller(t *test
 // LLM's reach for the rest of the session.
 func TestALongLivedShellGetsTheScrubbedEnvironment(t *testing.T) {
 	withBackend(t, noSandbox{})
-	t.Setenv("GOHORT_ALLOW_UNSANDBOXED", "on")
+	t.Setenv("ODDJOB_ALLOW_UNSANDBOXED", "on")
 	t.Setenv("SOME_PROVIDER_API_KEY", "sk-do-not-leak-this")
 
 	built, err := NewSandboxedShellCmd(context.Background(), "env", t.TempDir(), nil)

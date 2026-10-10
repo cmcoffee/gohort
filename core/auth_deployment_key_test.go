@@ -43,7 +43,7 @@ func keyAuthFixture(t *testing.T, allowQuery bool) (http.Handler, *bool) {
 func TestTheKeyIsAcceptedInItsHeader(t *testing.T) {
 	h, reached := keyAuthFixture(t, false)
 	r := httptest.NewRequest("GET", "/anything", nil)
-	r.Header.Set("X-Gohort-Key", "s3cret")
+	r.Header.Set("X-Oddjob-Key", "s3cret")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if !*reached || w.Code != 200 {
@@ -65,7 +65,7 @@ func TestTheKeyInAURLIsRefusedAndSaysWhy(t *testing.T) {
 		t.Fatalf("status = %d, want 401", w.Code)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"X-Gohort-Key", "?key=", "setup menu"} {
+	for _, want := range []string{"X-Oddjob-Key", "?key=", "setup menu"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the refusal does not mention %q:\n%s", want, body)
 		}
@@ -114,7 +114,7 @@ func TestAWrongKeyInAURLIsNotToldAboutTheHeader(t *testing.T) {
 	if *reached {
 		t.Fatal("a wrong key was accepted")
 	}
-	if strings.Contains(w.Body.String(), "X-Gohort-Key") {
+	if strings.Contains(w.Body.String(), "X-Oddjob-Key") {
 		t.Error("a wrong key was told how the right one should be presented")
 	}
 }
@@ -146,7 +146,7 @@ func TestAValidSessionSurvivesTheKeyRefusal(t *testing.T) {
 	// not refused OVER THE KEY — whatever the per-app gate decides about a
 	// made-up path afterwards is a different question and not this one.
 	r := httptest.NewRequest("GET", "/anything?key=s3cret", nil)
-	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+	r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: token})
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code == http.StatusUnauthorized || strings.Contains(w.Body.String(), deploymentKeyHeader) {

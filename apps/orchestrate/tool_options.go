@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // availableWorkerToolOptions returns the worker tool catalog as
@@ -165,7 +165,7 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 		// here would create a confusing UX: the LLM would see the
 		// tool in the catalog regardless of the toggle state. If a
 		// user wants to disable the bridge surface entirely, they
-		// close gohort-desktop; per-tool gating belongs on the
+		// close oddjob-desktop; per-tool gating belongs on the
 		// desktop side (the approval modal).
 	}
 

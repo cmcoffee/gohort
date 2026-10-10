@@ -2,7 +2,7 @@
 // the owner's own machine — a fixed executable the daemon runs per tool-call,
 // with {placeholder} args filled from the call and stdout returned. The
 // lightweight sibling of desktop_mcp: for a simple local capability (run a
-// script, a CLI) that doesn't warrant a whole MCP server. Mirrors how gohort's
+// script, a CLI) that doesn't warrant a whole MCP server. Mirrors how oddjob's
 // own skills bundle shell scripts.
 //
 // Approval is MANDATORY and never auto (it runs a command on the user's

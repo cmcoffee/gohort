@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Assist: a conversation about the WHOLE agent, which proposes changes you

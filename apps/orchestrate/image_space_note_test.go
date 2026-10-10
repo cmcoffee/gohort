@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // notePNG is a real, decodable image — the space verifies what it stores.

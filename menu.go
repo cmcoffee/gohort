@@ -9,7 +9,7 @@ import (
 	"sync"
 	"text/tabwriter"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 
 	"github.com/cmcoffee/snugforge/eflag"
 	"github.com/cmcoffee/snugforge/nfo"
@@ -317,7 +317,7 @@ func (m *menu) Select(input [][]string) (err error) {
 		}
 		if x, ok := m.entries[args[0]]; ok {
 			if _, cli := x.agent.(CLIApp); !cli {
-				Stderr("%s is a dashboard-only app. Start the dashboard with:\n  gohort serve :8080\n", args[0])
+				Stderr("%s is a dashboard-only app. Start the dashboard with:\n  oddjob serve :8080\n", args[0])
 				Exit(1)
 			}
 		}
@@ -408,7 +408,7 @@ func (m *menu) Select(input [][]string) (err error) {
 	Info("### %s v%s ###", APPNAME, VERSION)
 	Info(NONE)
 
-	// Single-shot run — gohort used to support --repeat for cron-
+	// Single-shot run — oddjob used to support --repeat for cron-
 	// style loops, but the framework's Scheduled Tasks (and the
 	// per-app schedulers) cover that use case now without holding
 	// the CLI process resident.

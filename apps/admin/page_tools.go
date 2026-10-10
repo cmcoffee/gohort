@@ -1,7 +1,7 @@
 package admin
 
 import (
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // toolsSections is the tools part of the admin page: Persistent Tools (Pending), Global Tools, Agent-Scoped Tools, Orphaned Tools, Categories.

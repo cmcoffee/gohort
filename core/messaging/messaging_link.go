@@ -6,7 +6,7 @@
 // app, hence the historical PhantomLink name in older commits.)
 //
 // Owner-scoped at the interface even though the transport store is currently
-// single-tenant (one device owner). Callers pass the gohort user; the transport
+// single-tenant (one device owner). Callers pass the oddjob user; the transport
 // decides whether that user owns the bridge and returns nothing otherwise.
 
 package messaging

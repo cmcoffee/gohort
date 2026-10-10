@@ -1,7 +1,7 @@
 package orchestrate
 
 // Pipeline as a portable artifact: wires PipelineDef into the unified
-// gohort.bundle/v1 surface (core/artifact_pack.go). Pipelines already had a
+// oddjob.bundle/v1 surface (core/artifact_pack.go). Pipelines already had a
 // portable recipe (ExportPipeline / ImportPipeline in core/pipeline_def.go);
 // this exposes it as the "pipeline" artifact type and closes the portability
 // gap that recipe documented: stage agent references are normalized to agent
@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // RegisterPipelineArtifactType wires the "pipeline" type into the

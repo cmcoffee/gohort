@@ -4,7 +4,7 @@
 //
 //   - "webhook": mints a tokenized URL an external system POSTs to. Each POST
 //     wakes the Operator with the posted summary. This is the TeamSpeak model —
-//     an outside watcher notices an event and pokes gohort.
+//     an outside watcher notices an event and pokes oddjob.
 //   - "poll": runs a checker agent on an interval; when the checker's answer
 //     contains the match string, the Operator is woken with that answer. This
 //     is "watch X and tell me when Y" with no external integration needed.
@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/notes"
+	"github.com/cmcoffee/oddjob/core/notes"
 )
 
 // EventPollKind is the scheduler task kind for interval poll monitors. Exported
@@ -1992,7 +1992,7 @@ func fetchExtractURLFor(ctx context.Context, url, jsonPath, regex string, allowI
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "gohort-operator-monitor")
+	req.Header.Set("User-Agent", "oddjob-operator-monitor")
 	client := &http.Client{Timeout: 20 * time.Second}
 	if !allowInternal {
 		if err := RefuseNonPublicHost(url); err != nil {

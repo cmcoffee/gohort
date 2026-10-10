@@ -9,7 +9,7 @@ package recipes
 //	{"name": "workflow", "helper": "comfyui_workflow", "with": {"base_url": "{{base_url}}"}}
 //
 // and use what it made as {{workflow.spec}}. A helper is reviewed Go shipped
-// with gohort; a template only names it, so importing a template never runs
+// with oddjob; a template only names it, so importing a template never runs
 // code that came with the file.
 
 import (
@@ -18,7 +18,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/oddjob/core"
 )
 
 // Helper turns one answer (and its With inputs) into named outputs. Run

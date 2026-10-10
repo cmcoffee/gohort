@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // AgentRecord is the single first-class concept — the persona AND the
@@ -356,7 +356,7 @@ type AgentRecord struct {
 	// not a decision anybody else has a stake in.
 	ShowOnDashboard bool `json:"show_on_dashboard,omitempty"`
 
-	// MCPExposed makes this agent reachable through gohort's INBOUND MCP server
+	// MCPExposed makes this agent reachable through oddjob's INBOUND MCP server
 	// (apps/mcpserver, /mcp/) — an external MCP client (e.g. Claude Desktop) can
 	// dispatch to it via the ask_agent tool. Default off so a bridge key can't
 	// reach every agent; the owner opts each one in. Independent of Exposed (the
@@ -541,7 +541,7 @@ type AgentRecord struct {
 	//
 	// A CEILING, never a grant: privacy mode still blocks a turn outright, and
 	// nothing here can reopen it. Enforced at BOTH doors out of the sandbox —
-	// the network namespace (--unshare-net) and the gohort.fetch hook —
+	// the network namespace (--unshare-net) and the oddjob.fetch hook —
 	// because closing one alone just moves a script to the other.
 	//
 	// Negative, so the zero value is what every deployment does today. A bool
@@ -1021,7 +1021,7 @@ type AgentRecord struct {
 	// that reached whichever was stored first), and this is the only place an
 	// identity lives now. Per-rule exemption went with it: "@" is the whole
 	// roster or nobody. Entries are
-	// identities the FRAMEWORK can verify: a gohort account name (matched
+	// identities the FRAMEWORK can verify: a oddjob account name (matched
 	// against the authenticated acting identity) or a messaging handle — phone,
 	// email, chat-id — matched by the bridge's own comparison.
 	//
@@ -1417,7 +1417,7 @@ type UIBlock struct {
 	Text string `json:"text,omitempty"`
 	// DataURLs is the html mode's declared live-data allowlist: the
 	// same-origin GET paths the rendered document may fetch through the
-	// pane's postMessage bridge (gohort.fetch). Persisted so a replayed
+	// pane's postMessage bridge (oddjob.fetch). Persisted so a replayed
 	// artifact keeps exactly the grants it was created with.
 	DataURLs []string `json:"data_urls,omitempty"`
 	// Data carries renderer-specific string fields that don't warrant

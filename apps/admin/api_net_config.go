@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // secretUnchanged is what a stored secret reads as on a GET. The admin forms
@@ -136,7 +136,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 
 	// Web search connectivity test — temporarily swap in the form's
 	// working WebSearchConfig via LoadWebSearchConfigFunc, run a one-
-	// shot WebSearch("gohort connectivity test") call, restore the
+	// shot WebSearch("oddjob connectivity test") call, restore the
 	// loader on exit. Empty result counts as failure (most providers
 	// return SOMETHING for any term; an empty result implies a config
 	// problem rather than a genuinely empty corpus).
@@ -176,7 +176,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 		// is dropped with it rather than running out its own timeout.
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
-		out, serr := webSearchCtx(ctx, "gohort connectivity test")
+		out, serr := webSearchCtx(ctx, "oddjob connectivity test")
 		if serr != nil {
 			writeTestResult(w, false, "", serr.Error())
 			return
@@ -259,8 +259,8 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 		// blocked instead of leaving it to the server's timeout.
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
-		if err := req.SendNotification(ctx, to, "Gohort Admin Test Email",
-			"This is a test from the gohort admin UI.\n\nIf you received this, mail is configured correctly.\n"); err != nil {
+		if err := req.SendNotification(ctx, to, "Oddjob Admin Test Email",
+			"This is a test from the oddjob admin UI.\n\nIf you received this, mail is configured correctly.\n"); err != nil {
 			if ctx.Err() != nil {
 				writeTestResult(w, false, "", "cancelled before the mail server answered")
 				return

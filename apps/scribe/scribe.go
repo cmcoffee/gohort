@@ -17,10 +17,10 @@ import (
 	"errors"
 	"net/http"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
 )
 
 // guideAgentID is the curated Guide Author agent this app binds its chat to.
@@ -62,7 +62,7 @@ func init() {
 			"Shared tools:\n" +
 			"- research(topic): search the web and get a CITED synthesis before writing accuracy-critical content. Use it for anything where being wrong matters: exact commands, flags, ports, version numbers, API/config details. Don't write technical specifics from memory; research first, then write grounded in what it returns, carrying the source links through into the body. Skip it for general/conceptual sections you can write well without sources.\n" +
 			"- search_knowledge(query): search the knowledge collections attached to this document (the user's own curated documents) for relevant passages. Prefer this over research when the document is about the user's internal/private material.\n" +
-			"- list_reference_sources() / pull_reference(kind, item_id, query): pull knowledge that OTHER gohort services have gathered, Systems (facts about the user's own servers/appliances, from servitor) and connected document sources like Confluence. This is how you BUILD a document FROM internal knowledge. When the user asks to build or document a specific system or from internal docs, call list_reference_sources to see what's available, pull_reference to load the right item, then write grounded in it. Use only details the reference contains.\n" +
+			"- list_reference_sources() / pull_reference(kind, item_id, query): pull knowledge that OTHER oddjob services have gathered, Systems (facts about the user's own servers/appliances, from servitor) and connected document sources like Confluence. This is how you BUILD a document FROM internal knowledge. When the user asks to build or document a specific system or from internal docs, call list_reference_sources to see what's available, pull_reference to load the right item, then write grounded in it. Use only details the reference contains.\n" +
 			"- ATTACHED SOURCES SHOW UP AS THEIR OWN TOOLS, for ANY kind of source, not just systems. When the user attaches a Source via the Sources button, it appears in your toolbox as dedicated, named tools. A servitor system named 'firewall01' gives you search_firewall01_knowledge(query) (already-gathered facts/docs, instant, read-only), get_firewall01_facts() (its exact recorded values), and investigate_firewall01(question) (dispatch a live read-only investigation of the real machine: slow; only when the gathered knowledge lacks what you need). A connected document source (e.g. a Confluence space named 'runbooks') gives you search_runbooks(query) over its content. PREFER these per-source tools over generic research when the document is about an attached source. Their presence tells you which Sources are attached: ground the document in them.\n\n" +
 			"- ask_user(question, options?) / ask_user_form(steps): pause and ask the user when what they want is genuinely ambiguous, the audience, the scope, which system, the format. Pass options for bounded choices (click instead of type); use ask_user_form for several decisions at once. Ask rather than guess on anything that would change what you write; don't re-ask what they already told you.\n\n" +
 			"GROUNDING: draw on BOTH kinds of backing when both exist. A document can be backed at the same time by your KNOWLEDGE (the attached collections) AND by attached SOURCES (systems, connected docs). For any section that should rest on that backing, the RIGHT move is draft_section: it gathers from BOTH deterministically and writes from what it finds, so nothing gets skipped. Reach for the individual tools (search_knowledge, the per-source search_<system>_knowledge / pull_reference, or a live investigate_<system>) when you need to READ or verify something yourself: e.g. to answer the user in chat, to check a value before editing, or to pull current live state the cached gather wouldn't have. When knowledge and a Source conflict, prefer the more specific/live Source and call out the discrepancy if it matters to the reader.\n\n" +
@@ -92,7 +92,7 @@ func (T Scribe) StoreName() string { return "guides" }
 
 func (T *Scribe) Init() error { return T.Flags.Parse() }
 func (T *Scribe) Main() error {
-	Log("scribe is a dashboard-only app. Start with: gohort serve")
+	Log("scribe is a dashboard-only app. Start with: oddjob serve")
 	return nil
 }
 

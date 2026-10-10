@@ -21,9 +21,9 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/textutil"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/textutil"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 const bulletinTable = "orchestrate_bulletins"

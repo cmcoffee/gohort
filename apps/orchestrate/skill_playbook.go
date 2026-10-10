@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // playbookRunner is the resolver with its one dependency — establishing a

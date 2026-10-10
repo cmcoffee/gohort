@@ -17,12 +17,12 @@ import (
 // hookSocketDirName mirrors the broker's short-path directory. Duplicated
 // rather than imported: a leaf cannot import the package it left, and these
 // tests only need a plausible path shape to reason about the bind.
-const hookSocketDirName = "gohort-hooks"
+const hookSocketDirName = "oddjob-hooks"
 
 func TestASocketOutsideTheWorkspaceGetsItsOwnBind(t *testing.T) {
 	ws := "/tmp/ws"
 	sock := filepath.Join(os.TempDir(), hookSocketDirName, "deadbeef.sock")
-	argv := bwrapArgvWithEnv(ws, "true", map[string]string{"GOHORT_HOOK_PATH": sock}, false)
+	argv := bwrapArgvWithEnv(ws, "true", map[string]string{"ODDJOB_HOOK_PATH": sock}, false)
 
 	var bound bool
 	for i := 0; i+2 < len(argv); i++ {
@@ -55,8 +55,8 @@ func TestASocketInsideTheWorkspaceIsNotBoundTwice(t *testing.T) {
 	// taking down every hook-using tool on a deployment whose paths were
 	// short enough that nothing was ever broken.
 	ws := "/tmp/ws"
-	sock := filepath.Join(ws, ".gohort_hook_deadbeef.sock")
-	argv := bwrapArgvWithEnv(ws, "true", map[string]string{"GOHORT_HOOK_PATH": sock}, false)
+	sock := filepath.Join(ws, ".oddjob_hook_deadbeef.sock")
+	argv := bwrapArgvWithEnv(ws, "true", map[string]string{"ODDJOB_HOOK_PATH": sock}, false)
 	for i := 0; i+1 < len(argv); i++ {
 		if argv[i] == "--bind" && argv[i+1] == sock {
 			t.Errorf("a socket already inside the workspace was bound again:\n%v", argv)
@@ -64,7 +64,7 @@ func TestASocketInsideTheWorkspaceIsNotBoundTwice(t *testing.T) {
 	}
 	// It is still handed to the script either way.
 	joined := strings.Join(argv, " ")
-	if !strings.Contains(joined, "GOHORT_HOOK_PATH") {
+	if !strings.Contains(joined, "ODDJOB_HOOK_PATH") {
 		t.Errorf("the path must still reach the sandbox env:\n%v", argv)
 	}
 }

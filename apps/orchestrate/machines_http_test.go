@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -42,7 +42,7 @@ func authedApp(t *testing.T) (*OrchestrateApp, func(method, path string, body an
 			}
 			r = httptest.NewRequest(method, path, bytes.NewReader(b))
 		}
-		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+		r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: token})
 		return r
 	}
 	return app, req, UserDB(root, "alice")

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -49,7 +49,7 @@ func realAdmin(t *testing.T, r *http.Request) *http.Request {
 	prev := AuthDB
 	AuthDB = func() Database { return adb }
 	t.Cleanup(func() { AuthDB = prev })
-	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(adb, "boss")})
+	r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: AuthCreateSession(adb, "boss")})
 	return r
 }
 

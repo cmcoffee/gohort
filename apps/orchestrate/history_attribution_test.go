@@ -45,7 +45,7 @@ func TestLLMHistoryContentMarksReportCards(t *testing.T) {
 	if !strings.Contains(got, "Dana - iPhone (iMessage)") {
 		t.Errorf("report card lost its origin: %q", got)
 	}
-	if !strings.HasPrefix(got, "<gohort-meta>") {
+	if !strings.HasPrefix(got, "<oddjob-meta>") {
 		t.Errorf("origin marker must be fenced so an echo is scrubbed: %q", got)
 	}
 	if !strings.HasSuffix(got, "I'm making pasta") {

@@ -1,7 +1,7 @@
 # SDK decoupling scope
 
-Goal: let someone build an agent app by importing `github.com/cmcoffee/gohort/core`
-without booting the whole gohort server. This is the "gohort as an SDK, not the
+Goal: let someone build an agent app by importing `github.com/cmcoffee/oddjob/core`
+without booting the whole oddjob server. This is the "oddjob as an SDK, not the
 whole framework" path.
 
 ## The two facts that frame everything
@@ -19,7 +19,7 @@ whole framework" path.
    functions (`StoreMemoryFact`, `ListMemoryFacts`, `SearchCollections`, graph
    store, `UserDB`) already take a `Database` param, so the seam exists; it's the
    globals as *ambient defaults* that need threading. Boot already lives in
-   `package main` (gohort.go, config.go), not `core`.
+   `package main` (oddjob.go, config.go), not `core`.
 
 ## Phases
 
@@ -67,7 +67,7 @@ between "works if you know the internals" and "a real SDK."
 ### Phase 3: Multi-instance isolation. Skip unless needed.
 A few globals (scheduler singletons, route registry, tunables cache) are
 process-wide. Fine for one SDK consumer; only matters for multiple isolated
-gohort instances in one process. Defer until a concrete use case.
+oddjob instances in one process. Defer until a concrete use case.
 
 ## Bottom line
 - "Just the agent loop" SDK: done (Phase 0).

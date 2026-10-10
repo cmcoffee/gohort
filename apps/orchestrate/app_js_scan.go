@@ -237,7 +237,7 @@ var jsGlobals = map[string]bool{
 	"window": true, "document": true, "console": true, "navigator": true, "location": true,
 	"localStorage": true, "sessionStorage": true, "history": true, "screen": true, "performance": true,
 	"crypto": true, "top": true, "parent": true, "self": true, "globalThis": true,
-	// gohort's own page runtime, available to any html section.
+	// oddjob's own page runtime, available to any html section.
 	"uiOpenModal": true, "uiRegisterClientAction": true, "uiRegisterBlockRenderer": true,
 	"uiRegisterMarkdownExtension": true, "fetchJSON": true,
 }

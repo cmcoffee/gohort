@@ -32,7 +32,7 @@ import (
 	"strings"
 	"unicode"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // minScrubName is the shortest name worth matching. Two-letter names exist, but

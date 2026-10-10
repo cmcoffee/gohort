@@ -1,8 +1,8 @@
-# Authoring a gohort App
+# Authoring a oddjob App
 
 ## What this framework is for
 
-gohort is a platform for assembling small AI-backed apps. The goal of the `core/ui` framework is to make it **simple for an app developer with no prior web experience to add new capabilities to gohort** by reusing primitives and structures already in place. You should not have to write HTML, CSS, or DOM-manipulation JavaScript to ship a working app. You write a Go struct, declare a page in terms of pre-built components (Table, FormPanel, ChatPanel, PipelinePanel, …), and the framework renders it.
+oddjob is a platform for assembling small AI-backed apps. The goal of the `core/ui` framework is to make it **simple for an app developer with no prior web experience to add new capabilities to oddjob** by reusing primitives and structures already in place. You should not have to write HTML, CSS, or DOM-manipulation JavaScript to ship a working app. You write a Go struct, declare a page in terms of pre-built components (Table, FormPanel, ChatPanel, PipelinePanel, …), and the framework renders it.
 
 Every primitive in `core/ui` is intentionally generic: *no* primitive knows what "debate" or "research" or "techwriter" means. When an app needs behavior beyond what the primitives offer, it plugs into one of four extension registries (block renderer, markdown extension, client action, `ExtraHeadHTML`) from its own package. This separation is enforced; see `CLAUDE.md` at the repo root for the rule and `scripts/hooks/pre-commit` for the guard.
 
@@ -10,7 +10,7 @@ The payoff: each new app pulls from a growing toolkit of reusable parts. You don
 
 ## App anatomy
 
-A gohort "app" is a Go package that:
+A oddjob "app" is a Go package that:
 
 1. Defines a struct embedding `core.AppCore`
 2. Implements the `core.Agent` interface
@@ -30,8 +30,8 @@ import (
     "encoding/json"
     "net/http"
 
-    . "github.com/cmcoffee/gohort/core"
-    "github.com/cmcoffee/gohort/core/ui"
+    . "github.com/cmcoffee/oddjob/core"
+    "github.com/cmcoffee/oddjob/core/ui"
 )
 
 func init() { RegisterApp(new(HelloAgent)) }
@@ -46,7 +46,7 @@ func (T HelloAgent) Desc() string         { return "Apps: A minimal hello-world 
 func (T HelloAgent) SystemPrompt() string { return "" }
 func (T *HelloAgent) Init() error         { return T.Flags.Parse() }
 func (T *HelloAgent) Main() error {
-    Log("Hello is a dashboard-only app. Start with:\n  gohort serve :8080")
+    Log("Hello is a dashboard-only app. Start with:\n  oddjob serve :8080")
     return nil
 }
 
@@ -117,10 +117,10 @@ func (T *HelloAgent) handleEcho(w http.ResponseWriter, r *http.Request) {
 Add a blank import in `apps.go` to register it:
 
 ```go
-import _ "github.com/cmcoffee/gohort/apps/hello"
+import _ "github.com/cmcoffee/oddjob/apps/hello"
 ```
 
-Run `gohort serve :8080`. The Hello page is live at `/hello/`.
+Run `oddjob serve :8080`. The Hello page is live at `/hello/`.
 
 ### What's happening here
 
@@ -594,13 +594,13 @@ The runtime appends `class` to the wrap div. Your CSS in `ExtraHeadHTML` targets
 The shared runtime stays domain-agnostic. If you find yourself wanting to add an `if (type === "verdict")` to `core/ui/runtime.go`, that's a sign: it should be a registered renderer in your app's package instead.
 
 ### CLI-mode hiding
-Apps that only make sense in the dashboard (most of them) should NOT implement `core.CLIApp`. Without that marker, they're hidden from `gohort --help` and from CLI dispatch, with a friendly "use serve" hint if anyone tries.
+Apps that only make sense in the dashboard (most of them) should NOT implement `core.CLIApp`. Without that marker, they're hidden from `oddjob --help` and from CLI dispatch, with a friendly "use serve" hint if anyone tries.
 
 ### Private (no-lead) apps
 For apps handling sensitive data (servitor SSH probes, phantom messages) call `T.Private()` in `Init()`. Sets `NoLead` on the AppCore: any reference to `T.LeadChat()` / `T.LeadLLM` silently routes to the worker instead. Combine with `Private: true` on registered route stages so the admin UI can't accidentally route the app to a remote LLM.
 
 ### Email-shaped usernames
-gohort usernames ARE email addresses. `AuthCurrentUser(r)` returns the username and that's a valid email recipient. Use this instead of asking the user for their email on every form.
+oddjob usernames ARE email addresses. `AuthCurrentUser(r)` returns the username and that's a valid email recipient. Use this instead of asking the user for their email on every form.
 
 ### Avoid hardcoding paths
 URLs in components are relative to the page that serves them. `Source: "api/records"` resolves to `<prefix>/api/records`. Don't hardcode `/myapp/api/records`: it breaks if the app gets remounted at a different prefix.

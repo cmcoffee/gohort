@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // transcribeVideoAudio extracts the audio track from a downloaded video and runs

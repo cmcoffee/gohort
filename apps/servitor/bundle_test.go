@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // withBundleDB points the evidence store at a throwaway database for one test.

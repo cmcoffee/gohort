@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // toolsetProbeWorkerProtocol keeps the exact status envelope every other

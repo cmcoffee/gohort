@@ -1,4 +1,4 @@
-// Package webui provides shared web UI scaffolding for gohort apps.
+// Package webui provides shared web UI scaffolding for oddjob apps.
 //
 // Goal: eliminate duplicated CSS, JS, and HTML chrome across web
 // frontends. Each app supplies its own body HTML, app-specific CSS,
@@ -180,7 +180,7 @@ func RenderPage(opts PageOpts) string {
 	return sb.String()
 }
 
-// IconSVG is the raw inline SVG markup for gohort's mark, and the single
+// IconSVG is the raw inline SVG markup for oddjob's mark, and the single
 // source of truth for it. Used wherever a surface wants the icon as inline
 // HTML, so the favicon and the on-page branding cannot disagree. Apps that
 // want a different icon override via WebIconer.WebIcon() in core; an empty

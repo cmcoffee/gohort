@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // appScriptRef points at one script body on a spec: which list it lives in

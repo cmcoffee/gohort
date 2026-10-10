@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/subsession"
+	"github.com/cmcoffee/oddjob/core/subsession"
 	"github.com/cmcoffee/snugforge/nfo"
 )
 

@@ -39,7 +39,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // agentIsNarrowed reports whether an owner has restricted this agent's tools.

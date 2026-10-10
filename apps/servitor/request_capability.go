@@ -28,7 +28,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // applianceEnabledForAgent reports whether the owner has connected this agent

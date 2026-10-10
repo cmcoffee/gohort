@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 	"strconv"
 )
 
@@ -28,7 +28,7 @@ func (T Account) SystemPrompt() string { return "" }
 func (T Account) Desc() string         { return "Apps: your personal account + preferences." }
 func (T *Account) Init() error         { return T.Flags.Parse() }
 func (T *Account) Main() error {
-	Log("account is a dashboard-only app. Start with: gohort serve")
+	Log("account is a dashboard-only app. Start with: oddjob serve")
 	return nil
 }
 
@@ -222,7 +222,7 @@ func mcpConnectResultPage(w http.ResponseWriter, msg string) {
 	connected := strings.HasPrefix(msg, "Connected")
 	notify := ""
 	if connected {
-		notify = `<script>try{if(window.opener)window.opener.postMessage('gohort-mcp-connected','*');}catch(e){}setTimeout(function(){try{window.close();}catch(e){}},1200);</script>`
+		notify = `<script>try{if(window.opener)window.opener.postMessage('oddjob-mcp-connected','*');}catch(e){}setTimeout(function(){try{window.close();}catch(e){}},1200);</script>`
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect</title>` +
@@ -534,7 +534,7 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 	sections = append(sections,
 		ui.Section{
 			Title:    "API keys (personal access)",
-			Subtitle: "Tokens for connecting an external client to your own gohort agents.",
+			Subtitle: "Tokens for connecting an external client to your own oddjob agents.",
 			Detail:   "For example Claude Desktop over MCP, or a voice platform over the OpenAI /v1 endpoint. Send it as the client's X-API-Key header, or as \"Authorization: Bearer <token>\". It is shown once at creation and can be revoked any time.\n\nEach key is SCOPED: a new key reaches nothing until you grant it features and targets, under Configure access. Keys created before scoping existed are marked Unrestricted; set a scope to lock them down.",
 			Body:     ui.Card{HTML: tokensHTML},
 		},

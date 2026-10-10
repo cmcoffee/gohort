@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // recipeTestApp is newTestOrchestrate plus the save hook the running app wires

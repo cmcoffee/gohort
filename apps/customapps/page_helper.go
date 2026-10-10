@@ -5,7 +5,7 @@ package customapps
 //
 // An app is a web page and a Python backend: the page draws and calls its
 // endpoints; the endpoints (data sources and actions) do the work and reach
-// gohort. Pages wrote that plumbing by hand, and the same bugs came back:
+// oddjob. Pages wrote that plumbing by hand, and the same bugs came back:
 // absolute paths the frame refuses, endpoint names spelled differently from
 // the saved ones, a polling loop written for every live page, a refresh that
 // never fired. window.app is that plumbing written once:
@@ -24,8 +24,8 @@ package customapps
 //	app.alert(msg)                a notice, resolved when read
 //	app.prompt(msg, default)      a line of text, or null
 //
-// The three dialogs are gohort's own, shown by the page the app sits in, so
-// a question an app asks looks like every other question gohort asks. The
+// The three dialogs are oddjob's own, shown by the page the app sits in, so
+// a question an app asks looks like every other question oddjob asks. The
 // browser's confirm() and prompt() are not these: they block the page, look
 // foreign, and a frame's are shown by the browser alone.
 //

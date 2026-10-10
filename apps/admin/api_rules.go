@@ -21,9 +21,9 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	rules "github.com/cmcoffee/gohort/core/prompts"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	rules "github.com/cmcoffee/oddjob/core/prompts"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func (a *AdminApp) registerRulesRoutes(sub *http.ServeMux) {

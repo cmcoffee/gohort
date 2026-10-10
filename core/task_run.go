@@ -272,7 +272,7 @@ func ShouldDetach(ct ChatTool, args map[string]any, sess *ToolSession) (time.Dur
 // Randomized per process, because the alternative — recognizing the notice by
 // its opening words — is forgeable: a fetched page that begins with the right
 // sentence would slip its payload past the fence.
-var frameworkResultMark = "\x00gohort-framework:" + UUIDv4() + "\x00"
+var frameworkResultMark = "\x00oddjob-framework:" + UUIDv4() + "\x00"
 
 // MarkFrameworkResult tags a result as OURS. Exported as the pair to
 // TakeFrameworkResultMark: a tool that returns framework control text — a

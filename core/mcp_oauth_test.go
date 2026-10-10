@@ -159,7 +159,7 @@ func TestMCPApplyResourceParam(t *testing.T) {
 func TestMCPRegisterClient(t *testing.T) {
 	as := newStubAS(t)
 	defer as.Close()
-	id, _, err := mcpRegisterClient(context.Background(), as.URL+"/register", "https://gohort.local/cb")
+	id, _, err := mcpRegisterClient(context.Background(), as.URL+"/register", "https://oddjob.local/cb")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestMCPExchangeAndRefresh(t *testing.T) {
 	defer as.Close()
 	cfg := mcpOAuthConfig{ClientID: "client-xyz", TokenEndpoint: as.URL + "/token", Resource: "https://mcp.example/mcp"}
 
-	tok, err := mcpExchangeCode(context.Background(), cfg, "the-code", "the-verifier", "https://gohort.local/cb")
+	tok, err := mcpExchangeCode(context.Background(), cfg, "the-code", "the-verifier", "https://oddjob.local/cb")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestMCPExchangeRequiresPKCEAndResource(t *testing.T) {
 	defer as.Close()
 	cfg := mcpOAuthConfig{ClientID: "client-xyz", TokenEndpoint: as.URL + "/token", Resource: ""}
 	// Empty resource -> stub returns 400.
-	if _, err := mcpExchangeCode(context.Background(), cfg, "c", "v", "https://gohort.local/cb"); err == nil || !strings.Contains(err.Error(), "400") {
+	if _, err := mcpExchangeCode(context.Background(), cfg, "c", "v", "https://oddjob.local/cb"); err == nil || !strings.Contains(err.Error(), "400") {
 		t.Fatalf("expected 400 for missing resource, got %v", err)
 	}
 }
@@ -216,7 +216,7 @@ func TestMCPExchangeRequiresPKCEAndResource(t *testing.T) {
 // Reported as: an Atlassian connector that worked from the admin page
 // answered "the app's callback URL is invalid" on Reconnect.
 func TestClientRegistrationCoversEveryCallbackThisDeploymentSends(t *testing.T) {
-	const base = "https://gohort.example.com"
+	const base = "https://oddjob.example.com"
 	got := MCPRedirectURIs(base + "/account/mcp/callback")
 	if len(got) != 2 {
 		t.Fatalf("both callbacks should be registered, got %v", got)

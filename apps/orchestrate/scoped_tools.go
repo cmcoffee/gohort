@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // registerScopedToolLister installs the enumerator. Call once at startup.

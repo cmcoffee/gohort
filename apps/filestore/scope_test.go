@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -206,7 +206,7 @@ func TestAdminGateReadsTheAuthStoreNotTheAppStore(t *testing.T) {
 
 	req := func() *http.Request {
 		r := httptest.NewRequest(http.MethodGet, "/filestore/api/stores", nil)
-		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+		r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: token})
 		return r
 	}
 
@@ -224,7 +224,7 @@ func TestAdminGateReadsTheAuthStoreNotTheAppStore(t *testing.T) {
 	root.Set(AuthTable, "user:temp", AuthUser{Username: "temp"})
 	plain := AuthCreateSession(root, "temp")
 	r2 := httptest.NewRequest(http.MethodGet, "/filestore/api/stores", nil)
-	r2.AddCookie(&http.Cookie{Name: "gohort_session", Value: plain})
+	r2.AddCookie(&http.Cookie{Name: "oddjob_session", Value: plain})
 	w2 := httptest.NewRecorder()
 	if adminOnly(w2, r2) {
 		t.Error("a non-admin was let through")

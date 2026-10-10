@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // liveProviderOnce guards one-time registration of the agent-activity

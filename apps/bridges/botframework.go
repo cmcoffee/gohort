@@ -32,7 +32,7 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/jwcrypt"
 )
 
@@ -122,7 +122,7 @@ var atTagRE = regexp.MustCompile(`(?is)<at\b[^>]*>.*?</at>`)
 
 // stripMentions removes the mention markup Teams puts in the text of any
 // message that addresses the bot. Without this every channel turn reaches the
-// agent starting with a literal "<at>gohort</at>", which is markup the agent
+// agent starting with a literal "<at>oddjob</at>", which is markup the agent
 // then has to reason about and sometimes echoes back.
 func stripMentions(text string) string {
 	return strings.TrimSpace(collapseSpaces(atTagRE.ReplaceAllString(text, " ")))

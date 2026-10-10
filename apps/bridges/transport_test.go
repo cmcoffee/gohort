@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // A bridge key stands in for its owner beyond the bridge hook only when it is

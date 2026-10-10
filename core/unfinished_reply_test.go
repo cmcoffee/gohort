@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/replyguard"
+	"github.com/cmcoffee/oddjob/core/replyguard"
 )
 
 // A reply whose last line visibly stops is unfinished; a complete one is not,

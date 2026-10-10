@@ -18,7 +18,7 @@ package orchestrate
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // blockedMarkAction is the client action the glyph runs. Registered by the app

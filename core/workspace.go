@@ -121,8 +121,8 @@ func EnsureWorkspaceDir(userID string) (string, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("create workspace: %w", err)
 	}
-	// The gohort helper package is bind-mounted into the sandbox
-	// from a host-side library dir (see EnsureGohortLibDir); we
+	// The oddjob helper package is bind-mounted into the sandbox
+	// from a host-side library dir (see EnsureOddjobLibDir); we
 	// don't deploy anything into the workspace here. Keeps the
 	// helper invisible + immutable from the LLM's perspective.
 	return dir, nil

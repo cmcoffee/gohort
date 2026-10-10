@@ -183,7 +183,7 @@ func TestImagesIsReportedAsServed(t *testing.T) {
 // workspace root, and resolveInputImages resolves every ref against
 // sess.WorkspaceDir and rejects absolute paths outright. So every peer edit
 // died at the last branch of ref resolution with "no workspace available to
-// read /opt/gohort/data/images/….png from": an error quoting a serving-side
+// read /opt/oddjob/data/images/….png from": an error quoting a serving-side
 // absolute path, returned over HTTP to a different machine, about a directory
 // that exists and a file that had just been written into it.
 func TestPeerEditReachesTheBackend(t *testing.T) {

@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/oddjob/core/prompts"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // foldCountPhrase renders how many times a thread has been folded, for the

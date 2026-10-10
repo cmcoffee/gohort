@@ -1,7 +1,7 @@
 package orchestrate
 
 import (
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // --- handlers ---------------------------------------------------------------

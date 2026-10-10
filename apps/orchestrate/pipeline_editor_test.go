@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func stageEditFixture(t *testing.T) (*OrchestrateApp, Database, string, PipelineDef) {

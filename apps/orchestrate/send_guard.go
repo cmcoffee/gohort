@@ -3,7 +3,7 @@ package orchestrate
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // sendGuardKey feeds AgentLoopConfig.SendGuardKey: it recognizes the

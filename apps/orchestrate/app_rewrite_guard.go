@@ -30,7 +30,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // appRewriteShrinkRatio is how much of the previous document has to survive

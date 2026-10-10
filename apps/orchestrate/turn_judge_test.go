@@ -2,7 +2,7 @@ package orchestrate
 
 import (
 	"context"
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"strings"
 	"testing"
 )

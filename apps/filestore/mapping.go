@@ -2,7 +2,7 @@
 // writing it down on that command's own row.
 //
 // A registered command is one binary an admin pointed at a folder, called as
-// `<cmd> <folder>`. That shape is all gohort knows about it — enough for a
+// `<cmd> <folder>`. That shape is all oddjob knows about it — enough for a
 // person to click, not enough for an agent to use well. What it can actually DO
 // lives in its --help and in trying it, and only a person had ever read that.
 //
@@ -29,9 +29,9 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/oddjob/apps/orchestrate"
 )
 
 // mapAgentID is the agent that maps. Builder, because this IS authoring — it

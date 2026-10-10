@@ -1,7 +1,7 @@
 package temptool
 
 // A tool as one file, and back into a folder: the same bundle Extensions'
-// Export writes (gohort.bundle/v1), whose tool recipe is the whole tool
+// Export writes (oddjob.bundle/v1), whose tool recipe is the whole tool
 // record, script, helpers and notes included. pack writes it into the
 // workspace from the tool as saved; unpack writes a bundled script tool into
 // a project folder to read and change before anything is installed.
@@ -14,10 +14,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
-const toolBundleExt = ".gohorttool"
+const toolBundleExt = ".oddjobtool"
 
 // toolPack writes a tool's bundle into the workspace.
 func toolPack(args map[string]any, sess *ToolSession) (string, error) {
@@ -66,7 +66,7 @@ func toolUnpack(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	file := strings.TrimSpace(StringArg(args, "file"))
 	if file == "" {
-		return "", errors.New("file is required: the bundle in your workspace, e.g. \"weather_lookup.gohorttool\"")
+		return "", errors.New("file is required: the bundle in your workspace, e.g. \"weather_lookup.oddjobtool\"")
 	}
 	root, err := EnsureSessionWorkspace(sess)
 	if err != nil {
@@ -82,7 +82,7 @@ func toolUnpack(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	bundle, err := ParseArtifactBundle(data)
 	if err != nil {
-		return "", fmt.Errorf("%s is not a gohort bundle: %v", file, err)
+		return "", fmt.Errorf("%s is not a oddjob bundle: %v", file, err)
 	}
 	want := strings.TrimSpace(StringArg(args, "name"))
 	var tt *TempTool

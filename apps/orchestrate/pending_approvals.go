@@ -3,7 +3,7 @@ package orchestrate
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Pending approvals, in the conversation instead of only on the 🔑 tile.

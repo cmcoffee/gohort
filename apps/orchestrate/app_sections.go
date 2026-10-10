@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // ensureSectionIDs returns the sections array with every section carrying an

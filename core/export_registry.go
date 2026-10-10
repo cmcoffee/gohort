@@ -33,7 +33,7 @@ import (
 // ExportB64Marker prefixes the stdout line carrying a script generator's
 // base64 output. Kept distinctive so incidental library prints on stdout
 // can't be mistaken for the payload.
-const ExportB64Marker = "@@GOHORT_EXPORT_B64@@"
+const ExportB64Marker = "@@ODDJOB_EXPORT_B64@@"
 
 // exportRunTimeout caps a single generator run.
 const exportRunTimeout = 90 * time.Second
@@ -241,7 +241,7 @@ func init() {
 const xlsxGeneratorPy = `
 import sys, json, base64, io
 import openpyxl
-MARKER = "@@GOHORT_EXPORT_B64@@"
+MARKER = "@@ODDJOB_EXPORT_B64@@"
 payload = json.load(sys.stdin)
 data = payload.get("data") or {}
 if isinstance(data, str):
@@ -272,7 +272,7 @@ print(MARKER + base64.b64encode(buf.getvalue()).decode())
 const docxGeneratorPy = `
 import sys, json, base64, io
 from docx import Document
-MARKER = "@@GOHORT_EXPORT_B64@@"
+MARKER = "@@ODDJOB_EXPORT_B64@@"
 payload = json.load(sys.stdin)
 title = payload.get("title", "")
 data = payload.get("data")
@@ -302,7 +302,7 @@ print(MARKER + base64.b64encode(buf.getvalue()).decode())
 const pptxGeneratorPy = `
 import sys, json, base64, io
 from pptx import Presentation
-MARKER = "@@GOHORT_EXPORT_B64@@"
+MARKER = "@@ODDJOB_EXPORT_B64@@"
 payload = json.load(sys.stdin)
 data = payload.get("data") or {}
 if isinstance(data, str):

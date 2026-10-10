@@ -41,7 +41,7 @@ func TestMonitorArtifact_ExportStripsAndNormalizes(t *testing.T) {
 		Name: "repo-watch", Owner: "alice", Kind: EventKindWatch,
 		WakeBrief: "summarize the change", WakeAgent: "agent-9",
 		WakeSession: "sess-1", DeliverChatID: "chat-2", Token: "tok",
-		ToolName: "list_commits", ToolArgs: map[string]any{"repo": "gohort"},
+		ToolName: "list_commits", ToolArgs: map[string]any{"repo": "oddjob"},
 		IntervalSeconds: 300,
 		LastHash:        "abc", LastBody: "old", LastResult: "r",
 		LastBreached: true, LastMatched: true, Paused: true,

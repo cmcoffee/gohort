@@ -191,7 +191,7 @@ func labelOr(label, fallback string) string {
 type ToolConfirmation struct {
 	// Prompt is the question the user reads. It is prose, and it is the
 	// tool author's job because only they can write one worth interrupting
-	// for: "Allow run?" is a reflex click, "Run a command in gohort?" over
+	// for: "Allow run?" is a reflex click, "Run a command in oddjob?" over
 	// the command itself is a decision.
 	//
 	// FAILS CLOSED. A run with no interactive viewer (a schedule, a

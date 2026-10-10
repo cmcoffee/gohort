@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // memoryAuditIgnoredTable holds, per agent, the IDs of findings the owner set

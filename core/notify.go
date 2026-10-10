@@ -49,7 +49,7 @@ func (cfg MailConfig) SendNotification(ctx context.Context, to, subject, body st
 	}
 	if from == "" {
 		hostname, _ := os.Hostname()
-		from = fmt.Sprintf("gohort@%s", hostname)
+		from = fmt.Sprintf("oddjob@%s", hostname)
 	}
 
 	// Format the From header with a display name if available.
@@ -183,7 +183,7 @@ func NotifyUser(username, subject, body string) {
 var WebBaseURL func() string
 
 // ServiceNameFunc returns the configured service name for notifications.
-// Defaults to "Gohort".
+// Defaults to "Oddjob".
 var ServiceNameFunc func() string
 
 // ServiceName returns the configured service name for email subjects and bodies.
@@ -193,7 +193,7 @@ func ServiceName() string {
 			return name
 		}
 	}
-	return "Gohort"
+	return "Oddjob"
 }
 
 // DashboardURL returns the base URL for constructing links in notifications.

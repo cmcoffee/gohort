@@ -19,7 +19,7 @@ import (
 // holding a quote would terminate the string and let the remainder parse as
 // policy, so a directory named `"))(allow default)(deny nothing` would switch
 // the sandbox off from inside the thing it is meant to confine. Paths are
-// gohort-generated today; this has to keep holding when they stop being.
+// oddjob-generated today; this has to keep holding when they stop being.
 func TestAPathCannotEscapeTheProfile(t *testing.T) {
 	evil := `/ws/"))(allow default)(deny nothing`
 	profile := seatbeltProfile(seatbeltSpec{Workspace: evil})
@@ -61,7 +61,7 @@ func TestTheProfileDeniesByDefault(t *testing.T) {
 
 // TestOnlyTheWorkspaceIsWritable — the property the whole sandbox exists for.
 // A command may write its working directory and scratch space, and nothing
-// else; the user's home, their keys and the gohort install stay read-only at
+// else; the user's home, their keys and the oddjob install stay read-only at
 // best.
 func TestOnlyTheWorkspaceIsWritable(t *testing.T) {
 	p := seatbeltProfile(seatbeltSpec{Workspace: "/ws/agent-1"})
@@ -142,10 +142,10 @@ func TestNetworkFollowsTheCaller(t *testing.T) {
 // TestTheHookStaysReachableWithNetworkDenied — the hook is HOW a sandboxed
 // script performs the calls it may not make itself, under capability checks on
 // the host side. A unix socket connect is network-outbound in SBPL, so denying
-// outbound wholesale would sever it and every `from gohort import fetch` would
+// outbound wholesale would sever it and every `from oddjob import fetch` would
 // fail on a run that is supposed to support it.
 func TestTheHookStaysReachableWithNetworkDenied(t *testing.T) {
-	sock := "/var/run/gohort/h1.sock"
+	sock := "/var/run/oddjob/h1.sock"
 	p := seatbeltProfile(seatbeltSpec{Workspace: "/ws", AllowNetwork: false, HookSocket: sock})
 
 	if !strings.Contains(p, `(allow network-outbound (literal "`+sock+`"))`) {
@@ -156,7 +156,7 @@ func TestTheHookStaysReachableWithNetworkDenied(t *testing.T) {
 	}
 	// Named as a literal, never a subpath — a subpath rule on its directory
 	// would expose every OTHER agent's socket in the same directory.
-	if strings.Contains(p, `(subpath "/var/run/gohort")`) {
+	if strings.Contains(p, `(subpath "/var/run/oddjob")`) {
 		t.Errorf("the hook's DIRECTORY was granted, exposing other agents' sockets:\n%s", p)
 	}
 }
@@ -173,7 +173,7 @@ func TestDataShapesGetNoWorkspaceAndNoNetwork(t *testing.T) {
 		c := sb.build(ctx, sandboxRun{
 			Kind: kind, Command: "cat", Interpreter: "python3",
 			WorkspaceDir: "/ws/secret", AllowNetwork: true,
-			Env: map[string]string{"GOHORT_HOOK_PATH": "/var/run/h.sock"},
+			Env: map[string]string{"ODDJOB_HOOK_PATH": "/var/run/h.sock"},
 		})
 		profile := profileArg(t, c.Args)
 		if strings.Contains(profile, "/ws/secret") {
@@ -223,7 +223,7 @@ func TestSeatbeltDoesNotClaimToRemapPaths(t *testing.T) {
 		t.Error("seatbelt does not claim to confine")
 	}
 	// And the helpers must then hand back HOST paths, not mount points.
-	if got := sandboxPythonPath(sb.remapsPaths(), ""); strings.Contains(got, GohortLibMountPath) {
+	if got := sandboxPythonPath(sb.remapsPaths(), ""); strings.Contains(got, OddjobLibMountPath) {
 		t.Errorf("PYTHONPATH points at a bubblewrap mount that does not exist on macOS: %q", got)
 	}
 }

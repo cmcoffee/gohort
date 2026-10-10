@@ -12,8 +12,8 @@ import (
 	"net/url"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 func init() {
@@ -37,14 +37,14 @@ func (T MonitorApp) Desc() string {
 }
 func (T *MonitorApp) Init() error { return T.Flags.Parse() }
 func (T *MonitorApp) Main() error {
-	Log("monitor is a dashboard-only app. Start with:\n  gohort serve :8080")
+	Log("monitor is a dashboard-only app. Start with:\n  oddjob serve :8080")
 	return nil
 }
 
 // --- core.WebApp ---
 func (T *MonitorApp) WebPath() string { return "/monitor" }
 func (T *MonitorApp) WebName() string { return "Monitor" }
-func (T *MonitorApp) WebDesc() string { return "Live view of everything happening on gohort." }
+func (T *MonitorApp) WebDesc() string { return "Live view of everything happening on oddjob." }
 
 // WebHidden: Monitor is NOT a discoverable app — no dashboard tile, no hub tab.
 // It's the expanded view you reach by clicking the live area (the floating live

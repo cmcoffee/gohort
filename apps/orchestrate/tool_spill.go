@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // spillThresholdBytes is the inline cap. Anything above this gets

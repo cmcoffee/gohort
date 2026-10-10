@@ -19,7 +19,7 @@ package orchestrate
 import (
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // channelSenderAuthorized reports whether agentID may deliver to a channel WITHOUT

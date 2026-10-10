@@ -2,7 +2,7 @@ package orchestrate
 
 import (
 	"encoding/json"
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"strings"
 	"testing"
@@ -284,7 +284,7 @@ func TestExportTextAppliesTheDeliveryScrub(t *testing.T) {
 			"If you need anything before bed, I'm around—otherwise, hope you sleep well!",
 			"If you need anything before bed, I'm around, otherwise, hope you sleep well!"},
 		{"framework markers never reach a transcript",
-			"visible<gohort-meta>internal note</gohort-meta>",
+			"visible<oddjob-meta>internal note</oddjob-meta>",
 			"visible"},
 		{"both rules at once",
 			"That's a classic slip — easy to make",

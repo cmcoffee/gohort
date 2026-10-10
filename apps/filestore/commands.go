@@ -47,7 +47,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // commandsTable holds registered commands, keyed "<store-slug>/<name>".
@@ -431,7 +431,7 @@ func describeStoreCommands(db Database, st Store) string {
 			if ask == "" {
 				ask = "a value"
 			}
-			fmt.Fprintf(&b, "\n  Asks the person for %s partway through, looked up outside gohort, so it cannot be run unattended.", ask)
+			fmt.Fprintf(&b, "\n  Asks the person for %s partway through, looked up outside oddjob, so it cannot be run unattended.", ask)
 		}
 	}
 	b.WriteString("\n\nIf a folder looks empty or unreadable, say which of these to run on it and let the user click it.")

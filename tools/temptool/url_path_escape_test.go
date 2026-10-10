@@ -3,7 +3,7 @@ package temptool
 import (
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // TestSubstituteURLPathVsQuery guards the CalDAV url-encoding bug: a path-valued

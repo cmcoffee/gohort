@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // askSystemTimeout bounds one investigation. The lead+worker loop is tens of

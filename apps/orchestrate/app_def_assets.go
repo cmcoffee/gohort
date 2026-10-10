@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/tools/imagefetch"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/tools/imagefetch"
 )
 
 // appDefAddAsset saves the workspace file at path as the app's asset `asset`

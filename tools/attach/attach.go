@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // maxAttachmentBytes caps a single attachment to keep payloads sane.

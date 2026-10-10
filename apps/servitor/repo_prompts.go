@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // repoProbeWorkerProtocol is the repo analogue of probeWorkerProtocol. It keeps

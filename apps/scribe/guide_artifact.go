@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // portableGuide is the recipe. Everything a reader or the Guide Author reads,

@@ -1,15 +1,15 @@
-// Desktop bridge — accepts WebSocket connections from gohort-desktop
-// clients and exposes their locally-registered tools to the gohort
+// Desktop bridge — accepts WebSocket connections from oddjob-desktop
+// clients and exposes their locally-registered tools to the oddjob
 // server's agent loop as per-user ChatTools.
 //
-// The motivating use case: an admin runs gohort serve remotely (e.g.
-// on a home server) and gohort-desktop on their Mac. The desktop
+// The motivating use case: an admin runs oddjob serve remotely (e.g.
+// on a home server) and oddjob-desktop on their Mac. The desktop
 // registers local tools (filesystem_read_local_file, eventually
 // notify / screenshot / shell). Without this bridge those tools are
 // only reachable from the in-window JS bridge — agents running on
 // the remote server can't call them. The bridge fills that gap:
 //
-//   1. Desktop opens GET /api/desktop/ws with the gohort_session cookie.
+//   1. Desktop opens GET /api/desktop/ws with the oddjob_session cookie.
 //   2. Server validates the cookie → user.
 //   3. Desktop announces its tool catalog with `{type:"announce",...}`.
 //   4. Server registers each tool as a DesktopChatTool under that user
@@ -47,7 +47,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/oddjob/core/notices"
 )
 
 // desktopInvokeDeadline caps how long an LLM tool call can wait
@@ -74,7 +74,7 @@ func init() {
 }
 
 // DesktopToolDescriptor is the wire shape for one tool the desktop
-// has registered locally. Mirrors gohort-desktop/core/tool.go's
+// has registered locally. Mirrors oddjob-desktop/core/tool.go's
 // shape — the server doesn't care what implements it on the desktop
 // side, only what to surface to the LLM.
 type DesktopToolDescriptor struct {
@@ -165,7 +165,7 @@ type desktopInstallMsg struct {
 	DesktopInstall
 }
 
-// desktopClient is one live connection from a gohort-desktop.
+// desktopClient is one live connection from a oddjob-desktop.
 type desktopClient struct {
 	user string
 	// source is the client address it connected from (RequestSource), so a
@@ -233,9 +233,9 @@ func desktopCheckOrigin(r *http.Request) bool {
 
 // --- API-key authentication hook ---
 //
-// The desktop bridge normally authenticates via the gohort_session
+// The desktop bridge normally authenticates via the oddjob_session
 // cookie (the viewer logs in through its webview). The headless
-// gohort-bridge daemon has no cookie — it authenticates with an
+// oddjob-bridge daemon has no cookie — it authenticates with an
 // X-API-Key header instead, the same key it uses for its other
 // server endpoints (e.g. phantom's /api/hook).
 //
@@ -243,7 +243,7 @@ func desktopCheckOrigin(r *http.Request) bool {
 // registers a validator here once its key store is live. The desktop
 // WS mount (core/webapp.go) resolves the user by trying the cookie
 // first, then walking these validators against the X-API-Key header.
-// A validator returns the gohort username the key belongs to (the WS
+// A validator returns the oddjob username the key belongs to (the WS
 // bridge is per-user) and ok=false when the key is unknown.
 var (
 	apiKeyValidatorsMu sync.RWMutex
@@ -271,7 +271,7 @@ func APIKeyUser(r *http.Request) string { return userFromAPIKey(r) }
 // registered validators. Returns "" when no credential is present or no
 // validator recognizes it.
 //
-// Two spellings are accepted: X-API-Key (gohort's own clients — desktop
+// Two spellings are accepted: X-API-Key (oddjob's own clients — desktop
 // bridge, MCP) and "Authorization: Bearer <token>", which is what most
 // third-party integrations send and the only thing some of them CAN send
 // (an OpenAI-compatible client library, a voice platform's custom-LLM
@@ -305,8 +305,8 @@ func userFromAPIKey(r *http.Request) string {
 	return ""
 }
 
-// DesktopClientUser resolves the X-Gohort-Desktop-Client-Key header to a
-// username, proving the request came from the gohort-desktop VIEWER on the
+// DesktopClientUser resolves the X-Oddjob-Desktop-Client-Key header to a
+// username, proving the request came from the oddjob-desktop VIEWER on the
 // same machine as the user's bridge (the viewer's reverse proxy stamps its
 // API key into this header). It gates the from_client_* tool surface so the
 // local machine's capabilities (filesystem, screenshot, contacts) are
@@ -318,7 +318,7 @@ func userFromAPIKey(r *http.Request) string {
 // shouldn't silently gain local-machine tools; this surface is opt-in by the
 // desktop proxy alone.
 func DesktopClientUser(r *http.Request) string {
-	key := r.Header.Get("X-Gohort-Desktop-Client-Key")
+	key := r.Header.Get("X-Oddjob-Desktop-Client-Key")
 	if key == "" {
 		return ""
 	}
@@ -344,7 +344,7 @@ func init() {
 	RegisterShareableFeature(ShareableFeature{
 		Key:   desktopBridgeFeatureKey,
 		Label: "Desktop bridge",
-		Desc:  "Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.",
+		Desc:  "Let a user's personal access tokens connect oddjob-desktop, whose tools then run on that machine for the user's agents.",
 	})
 }
 
@@ -385,7 +385,7 @@ func DesktopBridgeUserOf(r *http.Request) string {
 // rest of the app — by the time we get here the user is resolved.
 //
 // userOf returns the authenticated username for the request; pass
-// in whatever helper the surrounding webapp uses (gohort's
+// in whatever helper the surrounding webapp uses (oddjob's
 // AuthSessionFromRequest, etc.). Returning empty rejects the
 // connection.
 func HandleDesktopBridge(userOf func(r *http.Request) string) http.HandlerFunc {
@@ -420,7 +420,7 @@ func HandleDesktopBridge(userOf func(r *http.Request) string) http.HandlerFunc {
 				notices.Record(RootDB, notices.Notice{
 					Owner: user, Kind: notices.KindReport,
 					Title: "Another desktop connection took over your desktop tools",
-					Body: "A second gohort-desktop connection signed in with your key while one was already connected, and desktop tool calls now go to it. " +
+					Body: "A second oddjob-desktop connection signed in with your key while one was already connected, and desktop tool calls now go to it. " +
 						"If that was you opening the app on another machine, nothing needs doing. If not, rotate your desktop key and any personal access token with the Desktop bridge scope on your Account page.",
 				})
 			}
@@ -625,7 +625,7 @@ func (c *desktopClient) writeFrame(frame []byte) error {
 func InstallToDesktop(user string, inst DesktopInstall) (int, error) {
 	clients := desktopReg.clientsFor(user)
 	if len(clients) == 0 {
-		return 0, fmt.Errorf("no connected desktop bridge for user %q: the user must have the gohort desktop app running to install a desktop capability", user)
+		return 0, fmt.Errorf("no connected desktop bridge for user %q: the user must have the oddjob desktop app running to install a desktop capability", user)
 	}
 	frame, err := json.Marshal(desktopInstallMsg{Type: "install", DesktopInstall: inst})
 	if err != nil {
@@ -721,7 +721,7 @@ func loadDesktopKnownTools(user string) []DesktopToolDescriptor {
 }
 
 // ClientToolPrefix marks a tool in the LLM-visible catalog as one that runs on
-// the user's gohort-desktop rather than on the server.
+// the user's oddjob-desktop rather than on the server.
 //
 // An UNDERSCORE, not the dot this used to be. Every provider validates tool
 // names against ^[a-zA-Z0-9_-]{1,128}$ (see validLLMToolName), and a dot is
@@ -770,7 +770,7 @@ func ClientToolName(raw string) string {
 // is currently connected or not — agents see a stable catalog instead
 // of tools appearing / disappearing as the desktop comes and goes.
 // At call time, the wrapper resolves a live client; if none is
-// connected, the call returns a clean "your gohort-desktop isn't
+// connected, the call returns a clean "your oddjob-desktop isn't
 // connected" error the LLM can relay to the user.
 //
 // Returns nil only when the user has NEVER registered a desktop
@@ -862,7 +862,7 @@ func (t *desktopChatTool) Name() string {
 }
 
 func (t *desktopChatTool) Desc() string {
-	return t.desc.Desc + " (runs on the user's gohort-desktop client: works when the desktop is connected; returns a clean error otherwise)"
+	return t.desc.Desc + " (runs on the user's oddjob-desktop client: works when the desktop is connected; returns a clean error otherwise)"
 }
 
 func (t *desktopChatTool) Params() map[string]ToolParam {
@@ -872,7 +872,7 @@ func (t *desktopChatTool) Params() map[string]ToolParam {
 func (t *desktopChatTool) Run(args map[string]any) (string, error) {
 	clients := desktopReg.clientsFor(t.user)
 	if len(clients) == 0 {
-		return "", fmt.Errorf("your gohort-desktop client isn't connected: open it (it's the gohort app on your Mac / Windows) and try again. The %q tool runs there, not on the server", t.desc.Name)
+		return "", fmt.Errorf("your oddjob-desktop client isn't connected: open it (it's the oddjob app on your Mac / Windows) and try again. The %q tool runs there, not on the server", t.desc.Name)
 	}
 	// Newest-connected wins (matches LocalToolsForUser's dedup order
 	// for live announces).

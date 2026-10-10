@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/oddjob/core/ui"
 )
 
 // TimezoneKey is the WebTable key holding the deployment IANA zone name.

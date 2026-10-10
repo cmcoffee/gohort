@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // peerWordingLine is the line for a worker whose provider is provider, or ""

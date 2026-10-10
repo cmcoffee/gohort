@@ -528,7 +528,7 @@ func TestPeerEmbeddingsRefusesUngrantedKey(t *testing.T) {
 	}
 }
 
-// Bearer is accepted because that is what gohort's own EmbedWith sends. If this
+// Bearer is accepted because that is what oddjob's own EmbedWith sends. If this
 // breaks, the consumer side stops being zero-code.
 func TestPeerAcceptsBearerAsWellAsHeader(t *testing.T) {
 	peerTestDB(t)

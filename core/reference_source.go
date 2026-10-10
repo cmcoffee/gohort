@@ -514,7 +514,7 @@ func FetchReferences(ctx context.Context, user, query string, sel []ReferenceSel
 	if len(b) == 0 {
 		return ""
 	}
-	out := "## Reference context\n\nBackground gathered by other gohort services, provided to ground this draft. Use it where relevant; do not invent details it doesn't contain.\n\n"
+	out := "## Reference context\n\nBackground gathered by other oddjob services, provided to ground this draft. Use it where relevant; do not invent details it doesn't contain.\n\n"
 	for i, blk := range b {
 		if i > 0 {
 			out += "\n\n---\n\n"

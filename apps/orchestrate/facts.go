@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // factsNamespace returns the MemoryFact namespace for one agent.

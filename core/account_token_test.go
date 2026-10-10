@@ -354,7 +354,7 @@ func TestScopedTokenNeedsDesktopFeature(t *testing.T) {
 		t.Errorf("a legacy unscoped key was refused (%q)", u)
 	}
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("X-Gohort-Desktop-Client-Key", narrow.Token)
+	r.Header.Set("X-Oddjob-Desktop-Client-Key", narrow.Token)
 	if u := DesktopClientUser(r); u != "" {
 		t.Errorf("a key scoped away from the desktop reached the client-tool surface as %q", u)
 	}

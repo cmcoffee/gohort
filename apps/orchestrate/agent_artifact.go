@@ -1,7 +1,7 @@
 package orchestrate
 
 // Agent as a portable artifact: wires agent export/import into the unified
-// gohort.bundle/v1 surface (core/artifact_pack.go). Agents already had a
+// oddjob.bundle/v1 surface (core/artifact_pack.go). Agents already had a
 // recipe (agentExport: identity-stripped record + owned sub-agents, reborn on
 // import) — this exposes that recipe as the "agent" artifact type so a single
 // bundle can carry agents alongside connectors and tools.
@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // RegisterAgentArtifactType wires the "agent" type into the artifact-bundle

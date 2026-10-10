@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/prompts"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/prompts"
 )
 
 // runPlan asks the orchestrator (thinking LLM) to decide its next
@@ -864,11 +864,11 @@ func (pr *planRun) catalogKnowTools() error {
 			// change_phase.
 			t.machineGroupedToolDef(),
 			// app_def (create / update / list / get / delete) — author
-			// data-driven gohort APPS (real in-dashboard surfaces served
+			// data-driven oddjob APPS (real in-dashboard surfaces served
 			// by customapps at /apps/<slug>/). Builder-only, same
 			// rationale as pipeline: composing an app is authoring work.
 			// This is what lets Builder answer "build me an app" with an
-			// actual gohort app instead of a standalone HTML file.
+			// actual oddjob app instead of a standalone HTML file.
 			t.appDefToolDef(),
 		)
 		// A session handed to Builder must name what it is fixing before it

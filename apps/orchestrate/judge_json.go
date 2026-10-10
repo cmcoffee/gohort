@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // The judges ask a model to quote sentences verbatim inside a JSON object.

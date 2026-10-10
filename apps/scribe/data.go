@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/docs"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/docs"
 )
 
 const guidesTable = "guides"
@@ -385,7 +385,7 @@ type guideRevisions struct {
 // co-author tools. Capped at the operator's revision-history setting (oldest dropped).
 // sanitizeGuideArtifacts strips stray LLM output that leaked into a section body
 // during drafting/co-authoring but is NOT part of the guide: reasoning
-// delimiters (<think>…</think>), framework markers (<gohort-meta>, [ATTACH:…]),
+// delimiters (<think>…</think>), framework markers (<oddjob-meta>, [ATTACH:…]),
 // and tool-call markup (<tool_call>, <function=…>, <tool_code>). Returns the
 // cleaned markdown and whether anything changed. Composes the core strippers so
 // the definition of "artifact" stays in one place across the app.

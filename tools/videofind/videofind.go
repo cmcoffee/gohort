@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // FindVideoTool's standalone registration is dropped — surfaces via

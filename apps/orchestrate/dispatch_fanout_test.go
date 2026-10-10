@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Depth is read off the dispatch chain, not a counter. The counter it replaced

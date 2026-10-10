@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/appagents"
 )
 
 // An app agent declares ForcePrivate in its SPEC because its per-user shadow

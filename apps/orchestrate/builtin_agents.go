@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // Seed agents live in builtin/*.md, one file per agent, rather than as

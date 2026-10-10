@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/extras"
+	. "github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/extras"
 )
 
 // The shipped recipes, for Builder to start from. A debate or a deep-research

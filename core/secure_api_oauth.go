@@ -1,6 +1,6 @@
 // OAuth2 support for the secure-API credential system, built on snugforge
 // apiclient (the same OAuth2 client + pluggable encrypted TokenStore +
-// refresh machinery gohort already uses for the LLM API). One `oauth2`
+// refresh machinery oddjob already uses for the LLM API). One `oauth2`
 // credential TYPE, grant-driven:
 //
 //   client_credentials  secret = client_secret      (eBay, most vendor APIs)

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/peershare"
+	"github.com/cmcoffee/oddjob/core/peershare"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 

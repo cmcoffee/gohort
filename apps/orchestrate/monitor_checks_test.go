@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -41,7 +41,7 @@ func TestRecentChecksReadNewestFirstAndOnlyForTheOwner(t *testing.T) {
 	app := &OrchestrateApp{AppCore: AppCore{DB: orchestrateBaseDB}}
 	ask := func(who string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "/api/console/monitors/checks?id=cve-watch", nil)
-		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), who)})
+		r.AddCookie(&http.Cookie{Name: "oddjob_session", Value: AuthCreateSession(AuthDB(), who)})
 		w := httptest.NewRecorder()
 		app.handleConsoleMonitorChecks(w, r)
 		return w

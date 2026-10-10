@@ -3,7 +3,7 @@ package orchestrate
 import (
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/oddjob/core/appagents"
 )
 
 // A Hidden app-agent (Servitor Investigator / Guide Author style) must never be

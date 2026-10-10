@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/sources"
+	"github.com/cmcoffee/oddjob/core/sources"
 )
 
 // Gathering as a step: a pipeline names what to look up, and the run

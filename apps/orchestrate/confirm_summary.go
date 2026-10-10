@@ -19,7 +19,7 @@ import (
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 // reachWords turns a tool's capabilities into what they mean for the reader.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/webui"
+	"github.com/cmcoffee/oddjob/core/webui"
 )
 
 // dashboardHTML renders the dashboard the way a browser gets it.

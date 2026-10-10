@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func genericSpec(wh RestMessagingWebhook) RestMessagingSpec {
@@ -72,13 +72,13 @@ func TestGenericWebhookChecksAToken(t *testing.T) {
 // the bridge's own posts; a handshake is answered only through checkedChallenge.
 func TestGenericWebhookReadsAndSkips(t *testing.T) {
 	spec := genericSpec(RestMessagingWebhook{Verify: "token", TokenPath: "token", ChallengePath: "challenge"})
-	spec.Skip = []RestMessagingSkip{{Path: "from", Values: []string{"GOHORT"}}, {Path: "system"}}
+	spec.Skip = []RestMessagingSkip{{Path: "from", Values: []string{"ODDJOB"}}, {Path: "system"}}
 	msgs, err := (genericProvider{}).extract([]byte(`{"id":"1","room":{"id":"r"},"from":"ann","text":"hi"}`), spec, "")
 	if err != nil || len(msgs) != 1 || msgs[0].ChatID != "r" || msgs[0].Handle != "ann" || msgs[0].Text != "hi" {
 		t.Fatalf("one message read by its paths: %+v %v", msgs, err)
 	}
 	for _, body := range []string{
-		`{"room":{"id":"r"},"from":"gohort","text":"my own reply"}`,
+		`{"room":{"id":"r"},"from":"oddjob","text":"my own reply"}`,
 		`{"room":{"id":"r"},"from":"ann","text":"joined","system":true}`,
 	} {
 		if msgs, _ := (genericProvider{}).extract([]byte(body), spec, ""); len(msgs) != 0 {

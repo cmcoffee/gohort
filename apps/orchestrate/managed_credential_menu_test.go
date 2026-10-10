@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func TestManagedCredentialsAreNotOfferedAsBindingTargets(t *testing.T) {

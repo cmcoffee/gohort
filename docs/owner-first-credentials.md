@@ -67,7 +67,7 @@ An API lives in one of two places:
   per service, in one catalog, with an **allow list** of who may use it.
   Tools refer to it; nobody holds a copy. A fix (a new endpoint, a corrected
   base URL) reaches everyone at once. The allow list and the endpoint lists
-  are the administrator's governance: who may use GitLab from gohort at all,
+  are the administrator's governance: who may use GitLab from oddjob at all,
   and what any tool on it may call, whosever account it is.
 - **Personal APIs, for what only their creator uses.** The creator owns it
   and edits it freely.
@@ -135,7 +135,7 @@ has one:
 - **The user's token** is the connected account: personal, made by clicking
   Connect, never shared.
 - **The app registration's client secret** is part of the API, not of any
-  account. It never reaches the adopter: gohort keeps it on the server and
+  account. It never reaches the adopter: oddjob keeps it on the server and
   uses it only to exchange the code for a token.
 
 So an adopted OAuth API references the owner's app registration, and two
@@ -146,7 +146,7 @@ things differ from a key, both made visible:
   account connected through it stops. The adopter's API says whose
   registration it uses; the owner sees who depends on it before deleting.
 - **A registration is tied to this deployment's callback URL,** so an OAuth
-  API is not shareable to another gohort instance. The far side registers
+  API is not shareable to another oddjob instance. The far side registers
   its own app with the provider and makes its own API.
 
 ## Agents
@@ -166,18 +166,18 @@ recipient.
 
 **What an account may do is set at the provider.** An owner who shares their
 GitLab account sets that account up read-only at GitLab (a token scoped to
-read). Gohort does not guess "read" from HTTP methods. Its own reads-only
+read). Oddjob does not guess "read" from HTTP methods. Its own reads-only
 setting (GET and HEAD) stays as an option for providers whose tokens cannot
 be scoped.
 
-**Gohort keeps the boundaries around a shared account:**
+**Oddjob keeps the boundaries around a shared account:**
 
 - Reachable only through the tools on that shared agent: not from tools the
   recipient builds, not from a copy of the agent.
 - Ends immediately when the owner revokes the share or switches the API to
   bring your own; the API then shows as "connect your account".
 - Every call through it records which recipient made it. At the provider it
-  arrives as the owner, so gohort's audit is the only place that says who.
+  arrives as the owner, so oddjob's audit is the only place that says who.
 
 **The list covers every route an agent reaches an API by:** its own tools
 (api and toolbox tools, scripts that declare `fetch_via`), deployment tools it
@@ -354,7 +354,7 @@ Settled in discussion (2026-10-07):
   the same boundary as an agent share. It is reachable only through those
   tools, every call records who made it, and the secret stays on the server.
 
-- **An OAuth API is not shareable across gohort instances.** Its app
+- **An OAuth API is not shareable across oddjob instances.** Its app
   registration is tied to this deployment's callback URL; another instance
   registers its own.
 

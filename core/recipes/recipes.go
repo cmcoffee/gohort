@@ -1,10 +1,10 @@
 // Package recipes holds templates: recipes for integrating a service into
-// gohort without writing Go.
+// oddjob without writing Go.
 //
 // A template is a file: a title and setup notes, the QUESTIONS it asks when it
 // is added (your site's address, your email, an API token), and a bundle of
 // the pieces it installs (an API credential, tools, a skill, an agent) in the
-// ordinary gohort.bundle/v1 shape, with {{question}} marking where an answer
+// ordinary oddjob.bundle/v1 shape, with {{question}} marking where an answer
 // goes. Adding one fills the answers in and runs the same importer a bundle
 // file does, so everything lands as a draft for review: credentials disabled,
 // tools pending, connectors unapproved.
@@ -28,8 +28,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/messaging"
+	"github.com/cmcoffee/oddjob/core"
+	"github.com/cmcoffee/oddjob/core/messaging"
 )
 
 //go:embed builtin/*.json
@@ -168,7 +168,7 @@ func Validate(r Recipe) error {
 				return fmt.Errorf("secret question %q cannot go to a helper", q.Name)
 			}
 			if _, ok := LookupHelper(q.Helper); !ok {
-				return fmt.Errorf("question %q names helper %q, which this gohort does not have", q.Name, q.Helper)
+				return fmt.Errorf("question %q names helper %q, which this oddjob does not have", q.Name, q.Helper)
 			}
 		}
 	}
@@ -462,7 +462,7 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, Secrets, []
 		}
 		h, ok := LookupHelper(q.Helper)
 		if !ok {
-			return core.ArtifactBundle{}, Secrets{}, nil, fmt.Errorf("the helper %q is not on this gohort", q.Helper)
+			return core.ArtifactBundle{}, Secrets{}, nil, fmt.Errorf("the helper %q is not on this oddjob", q.Helper)
 		}
 		with := map[string]string{}
 		for k, v := range q.With {
@@ -643,7 +643,7 @@ func Save(db core.Database, meta Recipe, sels []core.ArtifactSel, questions []Sa
 		mark := "{{" + q.Name + "}}"
 		bundle = walkStrings(bundle, func(s string) string { return strings.ReplaceAll(s, v, mark) })
 	}
-	bundle.ExportedAt, bundle.GohortVersion = time.Time{}, ""
+	bundle.ExportedAt, bundle.OddjobVersion = time.Time{}, ""
 	meta.Bundle = bundle
 	if err := Validate(meta); err != nil {
 		return meta, err

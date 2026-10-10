@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	. "github.com/cmcoffee/oddjob/core"
 )
 
 func writeWorkspaceFile(t *testing.T, dir, name string, age time.Duration) {

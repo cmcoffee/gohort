@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/oddjob/core/media"
 	"github.com/cmcoffee/snugforge/apiclient"
 	"github.com/cmcoffee/snugforge/iotimeout"
 )
@@ -312,7 +312,7 @@ var llamacppEffortBudgets = map[string]int{
 // templateEffortLevels names each effort level the way a llama.cpp chat
 // template that takes one spells it. Qwen 3.8's top level is xhigh and it has
 // no plain high, so High maps to it: the template's own highest, as High is
-// gohort's. Off is absent; enable_thinking=false already says it.
+// oddjob's. Off is absent; enable_thinking=false already says it.
 var templateEffortLevels = map[string]string{
 	effortLow:    "low",
 	effortMedium: "medium",
@@ -400,7 +400,7 @@ func noteIfReasoningEffortRefused(payload oaiRequest, err error) error {
 // applyThinkFields sets the thinking fields for a hosted OpenAI-compatible
 // request (not llama.cpp, not Ollama). With no effort in play it is exactly
 // the old behaviour. With one, reasoning_effort carries it and the
-// gohort-local `think` flag stays off the wire - it was never OpenAI's, and
+// oddjob-local `think` flag stays off the wire - it was never OpenAI's, and
 // effort resolution sets Think itself rather than the caller asking.
 func (c *openAIClient) applyThinkFields(payload *oaiRequest, cfg ChatConfig) {
 	if cfg.Effort == "" {
@@ -930,7 +930,7 @@ func (c *openAIClient) warmupContext() {
 // and a turn that should cost ~200ms pays a full multi-second prefill. Every
 // one of them was found by hand-diffing request bodies against llama-server's
 // own log. The server has been reporting the answer all along in
-// timings.prompt_n; it was parsed and dropped. This puts it in gohort's log so
+// timings.prompt_n; it was parsed and dropped. This puts it in oddjob's log so
 // "did the prefix hold?" is a grep, not an investigation.
 //
 // Silent on backends that don't report timings, and on the first call of a
