@@ -215,7 +215,8 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | `mcpserver` | Expose oddjob agents to an external MCP client (e.g. Claude Desktop) |
 | `customapps` | Host for Builder-authored apps (the My Apps tile) at `/apps/<slug>/`: declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, and per-user sharing or an anonymous link |
 | `hello` | Minimal scaffold for a new app |
-| `ollama_proxy` | Ollama-compatible HTTP proxy |
+| `openai_api` | OpenAI-compatible `/v1` endpoint: an external client drives a raw model tier or a full agent over the API shape it already speaks |
+| `ollama_proxy` | Ollama-protocol proxy on its own port, for clients that speak only Ollama; lends the worker model as `oddjob` |
 
 Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 

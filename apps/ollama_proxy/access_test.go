@@ -140,8 +140,16 @@ func TestProxyPathsAreNarrowed(t *testing.T) {
 			t.Errorf("%s from %s key=%v: allowed=%v want %v (%d)", path, addr, key != "", got, want, w.Code)
 		}
 	}
-	for _, path := range []string{"/api/chat", "/api/generate", "/api/embed", "/api/show", "/v1/chat/completions", "/v1/models/oddjob"} {
+	for _, path := range []string{"/api/chat", "/api/generate", "/api/embed", "/api/show"} {
 		check(path, "127.0.0.1:5555", "", true)
+	}
+	// The OpenAI shape is the main server's /v1 endpoint, not this proxy's:
+	// here it only ever worked against an Ollama backend and 404ed on
+	// llama.cpp, so a client is told where to go instead of which backend
+	// is behind the curtain.
+	for _, path := range []string{"/v1/chat/completions", "/v1/models", "/v1/models/oddjob"} {
+		check(path, "127.0.0.1:5555", "", false)
+		check(path, "203.0.113.9:5555", adminKey, false)
 	}
 	for _, path := range []string{"/api/delete", "/api/pull", "/api/push", "/api/create", "/api/copy", "/api/blobs/sha256:00"} {
 		check(path, "127.0.0.1:5555", "", false)

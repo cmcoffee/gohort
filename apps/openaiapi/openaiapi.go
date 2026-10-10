@@ -30,9 +30,10 @@
 // toggle that gates the MCP server, so external exposure stays one switch per
 // agent instead of two that can disagree.
 //
-// Not enabled by default — add a blank import to agents.go to mount it:
-//
-//	_ "github.com/cmcoffee/oddjob/apps/openaiapi"
+// Mounted by the blank import in agents.go, hidden from the dashboard (no
+// human-facing page, only the machine endpoint). The Ollama-protocol proxy
+// (apps/ollama_proxy) is the sibling for clients that speak only Ollama; it
+// lends the same models under the same token feature.
 package openaiapi
 
 import (
@@ -62,8 +63,8 @@ func init() {
 	// admin narrows it under Admin → Feature Access.
 	RegisterShareableFeature(ShareableFeature{
 		Key:   OpenAIFeatureKey,
-		Label: "OpenAI-compatible /v1 endpoint",
-		Desc:  "Let a user expose their agents to external clients (voice platforms, OpenAI SDKs) through their own personal access tokens.",
+		Label: "Model API (OpenAI-compatible /v1 endpoint and the Ollama proxy)",
+		Desc:  "Let a user drive the deployment's models, and expose their agents, to external clients (voice platforms, OpenAI SDKs, Ollama-protocol apps) through their own personal access tokens.",
 	})
 }
 
@@ -193,11 +194,11 @@ func (T *OpenAIAPI) gateFeature(w http.ResponseWriter, user string, token *Accou
 		return false
 	}
 	if !FeatureAllowedForUser(RootDB, OpenAIFeatureKey, user) {
-		writeErr(w, http.StatusForbidden, "the OpenAI /v1 endpoint is not enabled for your account: ask an admin to grant it under Feature Access")
+		writeErr(w, http.StatusForbidden, "the model API is not enabled for your account: ask an admin to grant it under Feature Access")
 		return false
 	}
 	if token != nil && !token.AllowsFeature(OpenAIFeatureKey) {
-		writeErr(w, http.StatusForbidden, "this API key is not scoped for the OpenAI endpoint: enable it under Account → API keys → Scope")
+		writeErr(w, http.StatusForbidden, "this API key is not scoped for the model API: enable it under Account → API keys → Scope")
 		return false
 	}
 	if token != nil && token.IsLegacyUnscoped() {

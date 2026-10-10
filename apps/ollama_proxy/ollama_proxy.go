@@ -1,9 +1,16 @@
 // Package ollama_proxy exposes a fair-queued, standalone plain-HTTP server
-// that mimics the Ollama API. External clients (Claude Code, open-webui, etc.)
-// point their Ollama base URL to http://<oddjob-host>:<port> and interact with
-// the virtual model "oddjob". When the active provider is Ollama the proxy
-// forwards requests directly. When the active provider is llama.cpp the proxy
+// that speaks the Ollama protocol: the liveness reply, /api/tags, /api/chat
+// with NDJSON chunks. Clients that only know how to talk to an Ollama server
+// point their Ollama base URL to http://<oddjob-host>:<port> and use the
+// virtual model "oddjob", the deployment's worker model with no agent in
+// front of it. When the active provider is Ollama the proxy forwards
+// requests directly. When the active provider is llama.cpp the proxy
 // translates between Ollama's API format and OpenAI's /v1/chat/completions format.
+//
+// This is the Ollama protocol only. A client that speaks the OpenAI shape
+// uses the main server's /v1 endpoint (apps/openaiapi), which serves a raw
+// tier or a full agent over any provider; the two share one token feature,
+// "openai", because both lend the deployment's models.
 package ollama_proxy
 
 import (
@@ -219,7 +226,7 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		Warn("[ollama-proxy] refused %s's key for %s %s: not a token scoped for model access", user, r.Method, r.URL.Path)
-		http.Error(w, "this key may not use the model proxy: it needs a personal access token with the OpenAI endpoint enabled (Account > API keys), for an account the admin allows it", http.StatusForbidden)
+		http.Error(w, "this key may not use the model proxy: it needs a personal access token with the model API enabled (Account > API keys > Scope), for an account the admin allows it", http.StatusForbidden)
 		return false
 	}
 	Warn("[ollama-proxy] refused unauthenticated request from %s %s %s", directPeer(r), r.Method, r.URL.Path)
@@ -232,21 +239,20 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 // named here rather than imported: both surfaces lend the same models.
 const inferenceFeatureKey = "openai"
 
-// ollamaClientPaths are the Ollama and OpenAI-compatible endpoints an inference
-// client needs: chat, completion, embedding and model listing. Everything else
-// the pass-through would forward is model management on the real server.
+// ollamaClientPaths are the Ollama endpoints an inference client needs:
+// chat, completion, embedding and model listing. Everything else the
+// pass-through would forward is model management on the real server. The
+// OpenAI-shaped /v1 paths are NOT here: they only ever passed through when
+// the backend was Ollama itself and 404ed on llama.cpp, and the main
+// server's /v1 endpoint serves that shape for every provider.
 var ollamaClientPaths = map[string]bool{
-	"/api/chat":            true,
-	"/api/generate":        true,
-	"/api/embed":           true,
-	"/api/embeddings":      true,
-	"/api/show":            true,
-	"/api/ps":              true,
-	"/api/version":         true,
-	"/v1/chat/completions": true,
-	"/v1/completions":      true,
-	"/v1/embeddings":       true,
-	"/v1/models":           true,
+	"/api/chat":       true,
+	"/api/generate":   true,
+	"/api/embed":      true,
+	"/api/embeddings": true,
+	"/api/show":       true,
+	"/api/ps":         true,
+	"/api/version":    true,
 }
 
 // ollamaManagePaths change what the model server holds (delete, pull, push,
@@ -268,8 +274,12 @@ var ollamaManagePaths = map[string]bool{
 // otherwise reach.
 func (p *ollamaProxy) allowPath(w http.ResponseWriter, r *http.Request) bool {
 	path := r.URL.Path
-	if ollamaClientPaths[path] || strings.HasPrefix(path, "/v1/models/") {
+	if ollamaClientPaths[path] {
 		return true
+	}
+	if strings.HasPrefix(path, "/v1/") {
+		http.Error(w, "this is the Ollama-protocol proxy; OpenAI-shaped clients use the main server's /v1 endpoint with a personal access token", http.StatusNotFound)
+		return false
 	}
 	if ollamaManagePaths[path] || strings.HasPrefix(path, "/api/blobs/") {
 		if user := APIKeyUser(r); user != "" && UserIsAdmin(user) {
