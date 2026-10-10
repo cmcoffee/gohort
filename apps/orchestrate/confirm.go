@@ -327,8 +327,17 @@ func (t *chatTurn) appToolConfirmation(name string) *ToolConfirmation {
 			return td.Confirmation
 		}
 	}
-	return nil
+	return frameworkToolConfirmations[name]
 }
+
+// frameworkToolConfirmations are the questions the framework's OWN tools ask
+// before they run. The agent loop escalates any call whose definition carries
+// a confirmation, but the web hook only looked the question up among the
+// host app's tools, so one declared on a framework tool was never put in
+// front of anybody and the call simply ran. Matching by name is safe here
+// where it would not be for app tools: every name in this map is reserved,
+// so no custom tool can take it. Written at init, read-only after.
+var frameworkToolConfirmations = map[string]*ToolConfirmation{}
 
 // confirmAppToolCall is the whole policy for one host-app tool call: a
 // standing grant answers it silently, otherwise the user is asked, and their

@@ -314,7 +314,8 @@ func (a *AdminApp) templatesSection() ui.Section {
 		Subtitle: "Recipes for integrating a service with oddjob: answer a few questions, and its credential, tools and the rest are set up as drafts for review.",
 		Detail: "A template asks what it needs (a site address, your email, an API token), fills the answers in, and adds its pieces through the same importer as a bundle file: credentials disabled until you test them, tools pending approval. " +
 			"A secret you give goes straight into its credential's secret store and never into a tool or a file.\n\n" +
-			"Built-in templates ship with oddjob. Import one someone shared, or Save as template to make one from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.",
+			"Built-in templates ship with oddjob. Import one someone shared, or Save as template to make one from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
+			"Builder can do both halves for you: ask it to integrate a service, then to make that a template. It only saves a template when an administrator asks, and stops to show you the title, pieces and questions before it does.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Toolbar{Actions: []ui.ToolbarAction{
 				{Label: "Import a template…", Method: "client", URL: "template_import"},
