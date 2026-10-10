@@ -8,14 +8,15 @@ import (
 )
 
 // A timer is the clock as the trigger: it fires at its moment with no
-// condition to test, and stops itself afterwards. Before the kind existed,
+// condition to test, and removes itself afterwards; the ledger row is what
+// says it went off. Before the kind existed,
 // "tell me at 1:10pm" became an http_poll against a public time API with an
 // ISO datetime compared as a number, which failed every check.
 func TestTimerFiresOnceAndStops(t *testing.T) {
 	db := memDB(t)
 	at := time.Now().Add(-time.Second)
 	m := EventMonitor{Name: "notify-110pm", Owner: "craig", Kind: EventKindTimer,
-		WakeBrief: "tell the user it's 1:10pm", FireAt: at, MaxFires: 1}
+		WakeBrief: "tell the user it's 1:10pm", FireAt: at, OneShot: true}
 	SaveEventMonitor(db, m)
 
 	var wakes []string
@@ -32,23 +33,17 @@ func TestTimerFiresOnceAndStops(t *testing.T) {
 	if !strings.Contains(wakes[0], "went off") || !strings.Contains(wakes[0], "it is ") {
 		t.Errorf("the wake does not say the time: %q", wakes[0])
 	}
-	cur, _ := GetEventMonitor(db, "craig", "notify-110pm")
-	if !cur.Paused {
-		t.Error("a timer that went off is still armed: it would go off again on the next re-arm")
+	if _, ok := GetEventMonitor(db, "craig", "notify-110pm"); ok {
+		t.Error("a timer that went off is still in the list: there is nothing to resume")
 	}
-	if cur.StopReason != MonitorStopFinished {
-		t.Errorf("stop reason %q, want %q: nothing broke, it finished", cur.StopReason, MonitorStopFinished)
-	}
-	if cur.LastFired.IsZero() {
-		t.Error("LastFired not recorded")
-	}
-	if cur.FireCount != 1 {
-		t.Errorf("fire count %d, want 1", cur.FireCount)
+	runs := ListRuns(db, "craig", RunFilter{})
+	if len(runs) == 0 || !strings.Contains(runs[0].Summary, "went off") {
+		t.Errorf("the ledger does not say the timer went off: %+v", runs)
 	}
 }
 
-// A timer edited out of its fire cap still stops after going off: an alarm
-// that re-fires on every re-arm is one nobody can switch off.
+// A timer edited out of OneShot still stops after going off: an alarm that
+// re-fires on every re-arm is one nobody can switch off.
 func TestTimerWithoutCapStillStops(t *testing.T) {
 	db := memDB(t)
 	m := EventMonitor{Name: "t", Owner: "craig", Kind: EventKindTimer, FireAt: time.Now()}

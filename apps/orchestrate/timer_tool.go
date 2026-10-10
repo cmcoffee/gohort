@@ -19,9 +19,9 @@ import (
 // no threshold and no interval, so the tool takes a time and a note and
 // nothing else it can get wrong.
 //
-// Underneath it is an event monitor of the timer kind with a fire cap of 1,
-// so the console, pause/resume, the run ledger and the wake path all apply
-// unchanged.
+// Underneath it is a one-shot event monitor of the timer kind, so the
+// console, the run ledger and the wake path all apply unchanged, and it
+// removes itself once it has gone off.
 func timerToolDef(sess *ToolSession, owner, agentID string) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
@@ -72,13 +72,13 @@ func timerToolDef(sess *ToolSession, owner, agentID string) AgentToolDef {
 					}
 					return ""
 				}(),
-				WakeBrief: note, FireAt: at, MaxFires: 1, Created: time.Now(),
+				WakeBrief: note, FireAt: at, OneShot: true, Created: time.Now(),
 			}
 			SaveEventMonitor(RootDB, m)
 			if err := ScheduleEventMonitor(RootDB, m); err != nil {
 				return "", fmt.Errorf("saved but scheduling failed: %w", err)
 			}
-			return fmt.Sprintf("Timer %q set for %s (%s from now). When it goes off I am woken here with: %s. It fires once and then stops itself.",
+			return fmt.Sprintf("Timer %q set for %s (%s from now). When it goes off I am woken here with: %s. It fires once and then removes itself.",
 				name, at.Format("Mon Jan 2 3:04 PM MST"), humanUntil(at.Sub(now)), note), nil
 		},
 	}
