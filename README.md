@@ -16,14 +16,14 @@
 
 -->
 
-# Oddjob: Your agent has agents.
+# Oddjob: Improvise, Adapt, Dispatch.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Single binary](https://img.shields.io/badge/deploy-single%20binary-success)](#quick-start)
 [![Local-first](https://img.shields.io/badge/LLM-local--first-6366f1)](#1-the-harness)
 
-**Many specialized agents that delegate to each other. A local tier and a lead tier on one harness, a single Go binary, and the model never sees a credential.**
+**Your agent has agents. Hand it any technical job: it delegates to the specialist that owns it, and builds the tools, agents and apps it lacks. A local tier and a lead tier on one harness, a single Go binary, and the model never sees a credential.**
 
 <!-- Screenshots: take these from a FRESH deployment with demo data, never from a
      live instance: a real dashboard carries private app names, contacts and
