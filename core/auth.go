@@ -1549,6 +1549,10 @@ func deploymentKeyQueryAllowed() bool {
 // key. See the bypass in AuthMiddleware for why the ?key= spelling is worse.
 const deploymentKeyHeader = "X-Oddjob-Key"
 
+// legacyDeploymentKeyHeader is the header's name before the rename; a client
+// configured then keeps working.
+const legacyDeploymentKeyHeader = "X-Gohort-Key"
+
 var deploymentKeyWarnOnce sync.Once
 
 // warnDeploymentKeyInQuery says once, per process, that the deployment key
@@ -1648,7 +1652,7 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		// handlers then call RequireUser and answer 401 regardless.
 		if AuthAPIKey != nil {
 			if configured := strings.TrimSpace(AuthAPIKey()); configured != "" {
-				presented := strings.TrimSpace(r.Header.Get(deploymentKeyHeader))
+				presented := headerOr(r, deploymentKeyHeader, legacyDeploymentKeyHeader)
 				fromQuery := false
 				if presented == "" {
 					presented = strings.TrimSpace(r.URL.Query().Get("key"))

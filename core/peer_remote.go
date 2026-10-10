@@ -160,6 +160,7 @@ func ProbeRemotePeer(ctx context.Context, baseURL, key string) (PeerManifest, er
 		return PeerManifest{}, err
 	}
 	req.Header.Set(peerKeyHeader, strings.TrimSpace(key))
+	req.Header.Set(legacyPeerKeyHeader, strings.TrimSpace(key)) // for a peer on an older release
 
 	// No redirects: the key rides a header of our own, which Go carries to a
 	// redirect's new host, so following one handed the key to wherever the

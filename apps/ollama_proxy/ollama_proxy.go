@@ -25,6 +25,38 @@ import (
 
 const virtualModel = "oddjob" // model name exposed to proxy clients
 
+// legacyVirtualModel is the name clients configured before the rename. A
+// request for it is read as one for the virtual model.
+const legacyVirtualModel = "gohort"
+
+// normalizeLegacyModel rewrites a request's "model" from the old virtual name
+// (with any tag) to the current one, so everything after reads one name.
+func normalizeLegacyModel(data []byte) []byte {
+	var obj map[string]json.RawMessage
+	if len(data) == 0 || json.Unmarshal(data, &obj) != nil {
+		return data
+	}
+	raw, ok := obj["model"]
+	if !ok {
+		return data
+	}
+	var m string
+	if json.Unmarshal(raw, &m) != nil {
+		return data
+	}
+	t := strings.TrimSpace(m)
+	if t != legacyVirtualModel && !strings.HasPrefix(t, legacyVirtualModel+":") && !strings.HasPrefix(t, legacyVirtualModel+"-") {
+		return data
+	}
+	nm, _ := json.Marshal(virtualModel + t[len(legacyVirtualModel):])
+	obj["model"] = nm
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return data
+	}
+	return out
+}
+
 // StartOllamaServer starts a standalone plain-HTTP Ollama-compatible server on
 // the given port. If port <= 0 or neither Ollama nor llama.cpp is configured,
 // this is a no-op. The server shuts down when AppContext is cancelled.
@@ -291,6 +323,7 @@ func (p *ollamaProxy) handleOllama(w http.ResponseWriter, r *http.Request, backe
 			http.Error(w, "read error", http.StatusBadRequest)
 			return
 		}
+		bodyBytes = normalizeLegacyModel(bodyBytes)
 		if !callerIsAdmin(r) {
 			var ok bool
 			if bodyBytes, ok = holdToLentModel(bodyBytes, model); !ok {

@@ -762,7 +762,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			}
 			result := map[string]interface{}{
 				"status":  status,
-				"headers": map[string]string{"X-Oddjob-Fetched-Via": "credential:" + credName},
+				"headers": map[string]string{"X-Oddjob-Fetched-Via": "credential:" + credName, "X-Gohort-Fetched-Via": "credential:" + credName},
 				"body":    respBody,
 			}
 			if saveTo != "" {
@@ -807,7 +807,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			Log("[hook/fetch] browse_page auto-route done elapsed=%s chars=%d", time.Since(callStart).Round(time.Millisecond), len(out))
 			writeHookResult(conn, map[string]interface{}{
 				"status":  200,
-				"headers": map[string]string{"X-Oddjob-Fetched-Via": "browse_page"},
+				"headers": map[string]string{"X-Oddjob-Fetched-Via": "browse_page", "X-Gohort-Fetched-Via": "browse_page"},
 				"body":    out,
 			})
 			return
@@ -1074,7 +1074,7 @@ func (h *SandboxHook) handleBrowsePage(conn net.Conn, params map[string]interfac
 	//   text = result["body"]
 	writeHookResult(conn, map[string]interface{}{
 		"status":  200,
-		"headers": map[string]string{"X-Oddjob-Fetched-Via": "browse_page"},
+		"headers": map[string]string{"X-Oddjob-Fetched-Via": "browse_page", "X-Gohort-Fetched-Via": "browse_page"},
 		"body":    out,
 	})
 }

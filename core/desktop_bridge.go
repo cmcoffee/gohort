@@ -318,7 +318,8 @@ func userFromAPIKey(r *http.Request) string {
 // shouldn't silently gain local-machine tools; this surface is opt-in by the
 // desktop proxy alone.
 func DesktopClientUser(r *http.Request) string {
-	key := r.Header.Get("X-Oddjob-Desktop-Client-Key")
+	// Both names: a desktop app built before the rename sends the old one.
+	key := headerOr(r, "X-Oddjob-Desktop-Client-Key", "X-Gohort-Desktop-Client-Key")
 	if key == "" {
 		return ""
 	}

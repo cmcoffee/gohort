@@ -26,6 +26,20 @@ import (
 // EmbedWith) sends without being taught anything new.
 const peerKeyHeader = "X-Oddjob-Peer-Key"
 
+// legacyPeerKeyHeader is the header's name before the rename. A peer still
+// on an older release sends it; this one reads both and sends both.
+const legacyPeerKeyHeader = "X-Gohort-Peer-Key"
+
+// headerOr is the first of the named headers that is set.
+func headerOr(r *http.Request, names ...string) string {
+	for _, n := range names {
+		if v := strings.TrimSpace(r.Header.Get(n)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // peerFromRequest authenticates a peer request. Returns false for anything
 // unrecognized, disabled, or absent.
 func peerFromRequest(r *http.Request) (PeerKey, bool) {
@@ -50,7 +64,7 @@ func peerFromRequest(r *http.Request) (PeerKey, bool) {
 // One extractor, so a door that reads it a second way cannot end up disagreeing
 // with the one that authenticates.
 func peerPresentedSecret(r *http.Request) string {
-	secret := strings.TrimSpace(r.Header.Get(peerKeyHeader))
+	secret := headerOr(r, peerKeyHeader, legacyPeerKeyHeader)
 	if secret == "" {
 		if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
 			if lower := strings.ToLower(auth); strings.HasPrefix(lower, "bearer ") {

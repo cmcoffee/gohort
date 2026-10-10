@@ -728,6 +728,7 @@ func setPeerAuth(req *http.Request, cred string) {
 	}
 	req.Header.Set("Authorization", "Bearer "+cred)
 	req.Header.Set(peerKeyHeader, cred)
+	req.Header.Set(legacyPeerKeyHeader, cred) // for a peer on an older release
 }
 
 // renewRefusedPeerCredential reacts to a 401 by dropping the access token the

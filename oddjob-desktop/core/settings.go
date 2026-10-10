@@ -28,6 +28,8 @@ import (
 
 const (
 	SETTINGS_DIR_NAME = "oddjob-desktop"
+	// LEGACY_SETTINGS_DIR_NAME is the directory's name before the rename.
+	LEGACY_SETTINGS_DIR_NAME = "gohort-desktop"
 	// Two stores so the always-on daemon and the on-demand viewer
 	// never contend on one bolt file (kvlite takes an exclusive OS
 	// lock). SETTINGS_DB_NAME is the daemon's config authority;
@@ -101,7 +103,20 @@ func settings_dir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, SETTINGS_DIR_NAME), nil
+	dir := filepath.Join(base, SETTINGS_DIR_NAME)
+	// The directory's name before the rename. Found and the new one absent,
+	// it is moved, once, so the server address and keys set up then carry
+	// over instead of the app starting as if never configured.
+	if legacy := filepath.Join(base, LEGACY_SETTINGS_DIR_NAME); legacy != dir {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			if st, err := os.Stat(legacy); err == nil && st.IsDir() {
+				if err := os.Rename(legacy, dir); err != nil {
+					return legacy, nil
+				}
+			}
+		}
+	}
+	return dir, nil
 }
 
 // ConfigDir returns the resolved config directory (where the sidecars

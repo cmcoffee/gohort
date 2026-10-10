@@ -149,7 +149,8 @@ func textContent(v any) string {
 // something that should resolve to a conversation.
 func isTierName(m string) bool {
 	switch strings.ToLower(strings.TrimSpace(m)) {
-	case "worker", "lead", "oddjob", "oddjob-worker", "oddjob-lead", "default":
+	case "worker", "lead", "oddjob", "oddjob-worker", "oddjob-lead", "default",
+		"gohort", "gohort-worker", "gohort-lead": // the ids before the rename, still in clients' configs
 		return true
 	}
 	return false
@@ -160,7 +161,7 @@ func isTierName(m string) bool {
 // else that isTierName accepts → "worker".
 func canonicalTier(m string) string {
 	switch strings.ToLower(strings.TrimSpace(m)) {
-	case "lead", "oddjob-lead":
+	case "lead", "oddjob-lead", "gohort-lead":
 		return "lead"
 	default:
 		return "worker"
