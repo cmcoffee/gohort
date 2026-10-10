@@ -22,7 +22,8 @@ func testDB(t *testing.T) core.Database {
 
 // Every built-in template is valid, and the starters are all there.
 func TestTheBuiltInTemplatesAreValid(t *testing.T) {
-	want := map[string]bool{"github": false, "slack": false, "jira-cloud": false, "open-meteo": false, "system-info": false, "scout": false}
+	want := map[string]bool{"github": false, "slack": false, "jira-cloud": false, "open-meteo": false, "system-info": false, "scout": false,
+		"a1111": false, "a1111-img2img": false, "rest-call": false, "openapi": false}
 	for _, r := range builtins() {
 		if err := Validate(r); err != nil {
 			t.Errorf("%s: %v", r.ID, err)

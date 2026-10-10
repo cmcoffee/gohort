@@ -1,6 +1,6 @@
 # Templates: connectors, tools, and the const→data path
 
-**Status:** vision spec, pending lock (2026-07-21). Extends
+**Status:** vision spec (2026-07-21); adding moved to recipe templates in v0.8.15, see Stage C. Extends
 `docs/connector-templates.md` (connector templates, Stages 1–2 shipped).
 
 ## Goal
@@ -141,9 +141,15 @@ scope, the verify gate, and approval: same as a hand-authored `tool_def`. See
 - **Stage B5: NEXT (smaller).** (a) A user-facing tools/Extensions entry so a user
   reaches tool templates without the Builder; (b) Configure-existing-tool using the
   `TempTool.Template` provenance (field exists; the edit flow isn't wired).
-- **Stage C: data declarations.** DB registry for declarations (strategy-by-name),
-  admin-curated, bundle-shareable, catalog-listed. Migrates the const declarations
-  with no engine change.
+- **Stage C: data declarations. DONE another way (v0.8.15).** Adding no longer
+  goes through these forms at all: every one is a recipe template in
+  `core/recipes/builtin` (exportable, importable, listed with the rest). The two
+  Automatic1111 presets are plain data; REST call and OpenAPI import reach their
+  strategy through the named `form` helper, because their output depends on what
+  the user types. ComfyUI and GitHub already had recipes. The forms stay in Go
+  as the editor Configure opens on what they made (each piece records its form
+  in `template`) and as what the `tool_template` agent tool builds from; they are
+  no longer listed under Admin > Templates.
 
 ## Open questions
 
