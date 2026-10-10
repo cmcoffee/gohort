@@ -1,10 +1,6 @@
 package admin
 
 import (
-	"net/http"
-	"strings"
-
-	. "github.com/cmcoffee/oddjob/core"
 	"github.com/cmcoffee/oddjob/core/ui"
 )
 
@@ -312,6 +308,7 @@ func mcpServerFormFields() []ui.FormField {
 // read every artifact of every kind for every user on every administrator
 // page, which was most of the second each page took.
 func (a *AdminApp) templatesSection() ui.Section {
+	yesNo := []ui.SelectOption{{Value: "", Label: "No"}, {Value: "yes", Label: "Yes"}}
 	return ui.Section{
 		Title:    "Templates",
 		Subtitle: "Recipes for integrating a service with oddjob: answer a few questions, and its credential, tools and the rest are set up as drafts for review.",
@@ -323,7 +320,44 @@ func (a *AdminApp) templatesSection() ui.Section {
 			ui.Toolbar{Actions: []ui.ToolbarAction{
 				{Label: "Import a template…", Method: "client", URL: "template_import"},
 			}},
-			saveTemplateModal(""),
+			ui.ModalButton{
+				Label: "Save as template…", Title: "Save as a template",
+				Subtitle: "Pick what goes in, then turn the values that differ between deployments into questions.",
+				Width:    "720px",
+				Body: ui.FormPanel{
+					PostURL: "api/templates/save", SubmitLabel: "Save template",
+					Invalidate: []string{"api/templates"},
+					Fields: []ui.FormField{
+						{Field: "title", Label: "Title", Type: "text", Required: true, Placeholder: "Acme wiki"},
+						{Field: "id", Label: "Id", Type: "text", Placeholder: "acme-wiki",
+							Help: "Lowercase letters, digits and dashes. Left empty, it is made from the title."},
+						{Field: "description", Label: "What it sets up", Type: "text"},
+						{Field: "category", Label: "Category", Type: "text", Placeholder: "Project tracking"},
+						{Field: "setup_notes", Label: "Setup notes", Type: "textarea", Rows: 3,
+							Help: "Shown when someone adds it: where to get a token, what to enable afterwards."},
+						{Field: "pieces", Label: "What goes in", Type: "checklist", OptionsSource: "api/templates/pieces", Required: true,
+							Help: "What each needs (the credential a tool uses, say) comes along."},
+						{Field: "questions", Label: "Questions", Type: "rows", AddLabel: "Add a question",
+							Help: "Each value is replaced by the answer wherever it appears. A secret question asks for a credential's secret instead, which never travels.",
+							Columns: []ui.FormField{
+								{Field: "name", Label: "Name", Type: "text", Placeholder: "site", Width: 2},
+								{Field: "label", Label: "Asked as", Type: "text", Placeholder: "Wiki address", Width: 3},
+								{Field: "required", Label: "Required", Type: "select", Options: yesNo, Width: 1},
+								{Field: "secret", Label: "Secret", Type: "select", Options: yesNo, Width: 1},
+								{Field: "value", Label: "Value to replace", Type: "text", OwnLine: true, HideWhen: "secret:yes",
+									Placeholder: "https://wiki.acme.example"},
+								{Field: "kind", Label: "Kind", Type: "select", OwnLine: true, HideWhen: "secret:yes", Options: []ui.SelectOption{
+									{Value: "", Label: "Text"}, {Value: "url", Label: "An https address"},
+									{Value: "http_url", Label: "An http or https address (a server on your network)"},
+									{Value: "long", Label: "Long text (asked in a multi-line box)"},
+								}},
+								{Field: "credential", Label: "The credential whose secret it asks for", Type: "text", OwnLine: true, ShowWhen: "secret:yes",
+									Placeholder: "wiki"},
+								{Field: "help", Label: "Help", Type: "text", OwnLine: true},
+							}},
+					},
+				},
+			},
 			ui.Table{
 				Source: "api/templates",
 				RowKey: "id",
@@ -344,84 +378,4 @@ func (a *AdminApp) templatesSection() ui.Section {
 			},
 		}},
 	}
-}
-
-// saveTemplateModal is the Save as template dialog. base is where the admin
-// API lives relative to the page showing it: "" on the Administrator page,
-// "/admin/" on the Extensions page, whose relative URLs would otherwise
-// resolve under /extensions.
-func saveTemplateModal(base string) ui.ModalButton {
-	yesNo := []ui.SelectOption{{Value: "", Label: "No"}, {Value: "yes", Label: "Yes"}}
-	var invalidate []string
-	if base == "" {
-		invalidate = []string{"api/templates"}
-	}
-	return ui.ModalButton{
-		Label: "Save as template…", Title: "Save as a template",
-		Subtitle: "Pick what goes in, then turn the values that differ between deployments into questions.",
-		Width:    "720px",
-		Body: ui.FormPanel{
-			PostURL: base + "api/templates/save", SubmitLabel: "Save template",
-			Invalidate: invalidate,
-			Fields: []ui.FormField{
-				{Field: "title", Label: "Title", Type: "text", Required: true, Placeholder: "Acme wiki"},
-				{Field: "id", Label: "Id", Type: "text", Placeholder: "acme-wiki",
-					Help: "Lowercase letters, digits and dashes. Left empty, it is made from the title."},
-				{Field: "description", Label: "What it sets up", Type: "text"},
-				{Field: "category", Label: "Category", Type: "text", Placeholder: "Project tracking"},
-				{Field: "setup_notes", Label: "Setup notes", Type: "textarea", Rows: 3,
-					Help: "Shown when someone adds it: where to get a token, what to enable afterwards."},
-				{Field: "pieces", Label: "What goes in", Type: "checklist", OptionsSource: base + "api/templates/pieces", Required: true,
-					Help: "What each needs (the credential a tool uses, say) comes along."},
-				{Field: "questions", Label: "Questions", Type: "rows", AddLabel: "Add a question",
-					Help: "Each value is replaced by the answer wherever it appears. A secret question asks for a credential's secret instead, which never travels.",
-					Columns: []ui.FormField{
-						{Field: "name", Label: "Name", Type: "text", Placeholder: "site", Width: 2},
-						{Field: "label", Label: "Asked as", Type: "text", Placeholder: "Wiki address", Width: 3},
-						{Field: "required", Label: "Required", Type: "select", Options: yesNo, Width: 1},
-						{Field: "secret", Label: "Secret", Type: "select", Options: yesNo, Width: 1},
-						{Field: "value", Label: "Value to replace", Type: "text", OwnLine: true, HideWhen: "secret:yes",
-							Placeholder: "https://wiki.acme.example"},
-						{Field: "kind", Label: "Kind", Type: "select", OwnLine: true, HideWhen: "secret:yes", Options: []ui.SelectOption{
-							{Value: "", Label: "Text"}, {Value: "url", Label: "An https address"},
-							{Value: "http_url", Label: "An http or https address (a server on your network)"},
-							{Value: "long", Label: "Long text (asked in a multi-line box)"},
-						}},
-						{Field: "credential", Label: "The credential whose secret it asks for", Type: "text", OwnLine: true, ShowWhen: "secret:yes",
-							Placeholder: "wiki"},
-						{Field: "help", Label: "Help", Type: "text", OwnLine: true},
-					}},
-			},
-		},
-	}
-}
-
-// registerTemplatesExtensionSection puts Save as template on the Extensions
-// page, where an administrator is looking at the things they built, without
-// sending them to the Administrator page for it. Everyone else gets no
-// section at all: the dialog posts to the admin API, which refuses them, and
-// a button that can only fail is worse than none. prefix is the admin app's
-// mount path, so the dialog reaches the admin API from a page that is not
-// under it.
-func (a *AdminApp) registerTemplatesExtensionSection(prefix string) {
-	base := strings.TrimRight(prefix, "/") + "/"
-	if prefix == "" {
-		base = "/"
-	}
-	RegisterExtensionSection(ExtensionSectionEntry{
-		Order: 90,
-		Build: func(r *http.Request, user string) (ui.Section, bool) {
-			if !UserIsAdmin(user) {
-				return ui.Section{}, false
-			}
-			return ui.Section{
-				Title:    "Templates",
-				Subtitle: "Package what you built as a template, so it can be added again or shared with another oddjob.",
-				Detail: "Pick the pieces (an API credential, its tools, a connector, a skill, an agent) and turn the values that differ between deployments, such as a site address, into questions. A credential's secret never goes in. " +
-					"Saved templates are listed under Administrator, Extensions, Templates, where they can be added or exported.\n\n" +
-					"Builder can do this too: ask it to make a template of what it built. Only administrators see this section.",
-				Body: saveTemplateModal(base),
-			}, true
-		},
-	})
 }
