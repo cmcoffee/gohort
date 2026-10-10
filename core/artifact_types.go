@@ -243,7 +243,21 @@ func (toolArtifact) Dependencies(db Database, name, owner string) []ArtifactSel 
 	if !ok {
 		return nil
 	}
-	return tempToolCredDeps(t)
+	deps := tempToolCredDeps(t)
+	// The credential a tool dispatches through is resolved for its owner:
+	// their own key first, then one lent to them, then the deployment's.
+	// The dependency names that same record. By name alone it always meant
+	// the deployment's, so a tool on its owner's own credential exported
+	// either nothing ("no credential named") or, worse, a deployment
+	// credential that happened to share the name, with another address.
+	for i := range deps {
+		if api := Secure(); api != nil && strings.TrimSpace(owner) != "" {
+			if c, ok := api.Resolve(deps[i].Name, owner); ok && strings.TrimSpace(c.Owner) != "" {
+				deps[i].Owner = c.Owner
+			}
+		}
+	}
+	return deps
 }
 
 // RecipeDependencies extracts the same credential reference straight from a
@@ -1055,12 +1069,22 @@ func (credentialArtifact) ListArtifacts(_ Database) []ArtifactSel {
 	return out
 }
 
-func (credentialArtifact) ExportArtifact(_ Database, name, _ string) (json.RawMessage, error) {
+func (credentialArtifact) ExportArtifact(_ Database, name, owner string) (json.RawMessage, error) {
 	api := Secure()
 	if api == nil {
 		return nil, Error("secure-api store not initialized")
 	}
-	c, ok := api.Load(name)
+	// An owner names a person's own credential, reached as a tool's
+	// dependency (toolArtifact.Dependencies); none is the deployment's.
+	var (
+		c  SecureCredential
+		ok bool
+	)
+	if owner = strings.TrimSpace(owner); owner != "" {
+		c, ok = api.LoadUser(owner, name)
+	} else {
+		c, ok = api.Load(name)
+	}
 	if !ok {
 		return nil, fmt.Errorf("no credential named %q", name)
 	}
@@ -1070,6 +1094,13 @@ func (credentialArtifact) ExportArtifact(_ Database, name, _ string) (json.RawMe
 	c.LastUsedAt = time.Time{}
 	c.Pending = false
 	c.Disabled = false
+	// Whose it was and who it was lent to describe this deployment's people,
+	// not the credential: it lands as a deployment credential, disabled,
+	// for whoever imports it to give a key and enable.
+	c.Owner = ""
+	c.AllowedUsers = nil
+	c.SharedReadOnly, c.SharedReadWrite, c.SharedForAgents = nil, nil, nil
+	c.AdminDisabled, c.AdminLendLocked = false, false
 	return json.Marshal(c)
 }
 

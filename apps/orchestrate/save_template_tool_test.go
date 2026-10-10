@@ -146,3 +146,80 @@ func TestSaveTemplateNamesWhatIsMissing(t *testing.T) {
 		t.Errorf("a pending tool was not named as pending: %v", err)
 	}
 }
+
+// An agent mapped an API on its user's own credential, and an administrator
+// makes a template of it: the template carries the credential the tools run
+// on, Alice's, not a deployment credential that happens to share the name.
+func TestSaveTemplateCarriesTheToolOwnersCredential(t *testing.T) {
+	adb := &DBase{Store: kvlite.MemStore()}
+	adb.Set(AuthTable, "user:root", AuthUser{Username: "root", Admin: true})
+	adb.Set(AuthTable, "user:alice", AuthUser{Username: "alice"})
+	adb.Set(AuthTable, "user:dave", AuthUser{Username: "dave"})
+	prev := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prev })
+	db := pinRootDB(t)
+
+	const cred = "tpl_owned_acme"
+	for _, c := range []SecureCredential{
+		{Name: cred, Type: SecureCredBearer, BaseURL: "https://deployment.acme.example"},
+		{Name: cred, Owner: "alice", Type: SecureCredBearer, BaseURL: "https://alice.acme.example"},
+	} {
+		if err := Secure().Save(c, "k"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tool := TempTool{Name: "tpl_acme_orders", Description: "Orders.", Mode: TempToolModeAPI, Credential: cred, Method: "GET",
+		CommandTemplate: "https://alice.acme.example/v1/orders"}
+	if err := QueuePendingTempTool(db, "alice", tool, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApprovePendingTempTool(db, "alice", tool.Name); err != nil {
+		t.Fatal(err)
+	}
+
+	h := saveTemplateToolDef("root").Handler
+	if _, err := h(context.Background(), map[string]any{
+		"title":     "Acme orders from alice",
+		"pieces":    []any{map[string]any{"type": "tool", "name": tool.Name}},
+		"questions": []any{map[string]any{"name": "site", "label": "Acme address", "value": "https://alice.acme.example", "kind": "url"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _, ok := recipes.Get(db, "acme-orders-from-alice")
+	if !ok {
+		t.Fatal("not saved")
+	}
+	var credRecipe string
+	for _, a := range rec.Bundle.Artifacts {
+		if a.Type == "credential" {
+			credRecipe = string(a.Recipe)
+		}
+	}
+	if !strings.Contains(credRecipe, `"base_url":"{{site}}"`) || strings.Contains(credRecipe, "deployment.acme.example") || strings.Contains(credRecipe, "alice\"") {
+		t.Errorf("the template does not carry alice's credential as a question, without her name: %s", credRecipe)
+	}
+
+	// Named directly, a person's own credential is found in their namespace,
+	// and two people's of the same name are refused with both named.
+	if sels, err := resolveTemplatePieces("root", []any{map[string]any{"type": "credential", "name": "tpl_only_alice"}}); err == nil || len(sels) != 0 {
+		t.Errorf("a credential nobody has was accepted: %v", sels)
+	}
+	if err := Secure().Save(SecureCredential{Name: "tpl_only_alice", Owner: "alice", Type: SecureCredBearer, BaseURL: "https://a.example"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	sels, err := resolveTemplatePieces("root", []any{map[string]any{"type": "credential", "name": "tpl_only_alice"}})
+	if err != nil || len(sels) != 1 || sels[0].Owner != "alice" {
+		t.Errorf("alice's own credential was not found: %v %v", sels, err)
+	}
+	if err := Secure().Save(SecureCredential{Name: "tpl_only_alice", Owner: "dave", Type: SecureCredBearer, BaseURL: "https://d.example"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveTemplatePieces("root", []any{map[string]any{"type": "credential", "name": "tpl_only_alice"}}); err == nil || !strings.Contains(err.Error(), "alice") || !strings.Contains(err.Error(), "dave") {
+		t.Errorf("two people's credentials of one name were not refused with both named: %v", err)
+	}
+	sels, err = resolveTemplatePieces("root", []any{map[string]any{"type": "credential", "name": "tpl_only_alice", "owner": "dave"}})
+	if err != nil || len(sels) != 1 || sels[0].Owner != "dave" {
+		t.Errorf("owner did not pick dave's: %v %v", sels, err)
+	}
+}
