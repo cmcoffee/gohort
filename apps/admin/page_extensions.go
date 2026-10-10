@@ -336,7 +336,7 @@ func (a *AdminApp) templatesSection() ui.Section {
 						{Field: "setup_notes", Label: "Setup notes", Type: "textarea", Rows: 3,
 							Help: "Shown when someone adds it: where to get a token, what to enable afterwards."},
 						{Field: "pieces", Label: "What goes in", Type: "checklist", OptionsSource: "api/templates/pieces", Required: true,
-							Help: "What each needs (the credential a tool uses, say) comes along."},
+							Help: "What each needs comes along: a tool brings the credential it runs on, including a person's own key, which is why those are not listed on their own. No secret is ever included."},
 						{Field: "questions", Label: "Questions", Type: "rows", AddLabel: "Add a question",
 							Help: "Each value is replaced by the answer wherever it appears. A secret question asks for a credential's secret instead, which never travels.",
 							Columns: []ui.FormField{

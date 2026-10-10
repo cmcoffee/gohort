@@ -54,7 +54,7 @@ func saveTemplateToolDef(user string) AgentToolDef {
 				"description": {Type: "string", Description: "What it sets up, one sentence."},
 				"category":    {Type: "string", Description: "(optional) A grouping, e.g. \"Project tracking\"."},
 				"setup_notes": {Type: "string", Description: "(optional) Shown when someone adds it: where to get a token, what to enable afterwards."},
-				"pieces": {Type: "array", Description: "What goes in, each {type, name}: type is credential, tool, connector, skill, agent or pipeline; name is its name here.",
+				"pieces": {Type: "array", Description: "What goes in, each {type, name, owner?}: type is credential, tool, connector, skill, agent or pipeline; name is its name here; owner is whose it is, needed only when several people have one by that name. A tool's credential comes along by itself, the one the tool actually runs on (its owner's own key when they have one), so name a credential only when no tool uses it.",
 					Items: &ToolParam{Type: "object"}},
 				"questions": {Type: "array", Description: "(optional) Each {name, label, value, help?, kind?, required?} replaces that literal value everywhere in the pieces with the answer. kind: url (https), http_url (a server on the local network), long (multi-line). For a credential's secret: {name, label, secret: true, credential: \"<credential name>\"}.",
 					Items: &ToolParam{Type: "object"}},
@@ -115,6 +115,8 @@ func resolveTemplatePieces(user string, raw any) ([]ArtifactSel, error) {
 		if m == nil || typ == "" || typ == "<nil>" || name == "" || name == "<nil>" {
 			return nil, fmt.Errorf("each piece needs a type and a name, got %v", item)
 		}
+		wantOwner, _ := m["owner"].(string)
+		wantOwner = strings.TrimSpace(wantOwner)
 		var matches []ArtifactSel
 		var names []string
 		for _, s := range ArtifactSelectionForTypes(RootDB, typ) {
@@ -122,9 +124,15 @@ func resolveTemplatePieces(user string, raw any) ([]ArtifactSel, error) {
 				continue
 			}
 			names = append(names, s.Name)
-			if s.Name == name {
+			if s.Name == name && (wantOwner == "" || s.Owner == wantOwner) {
 				matches = append(matches, s)
 			}
+		}
+		// A person's own credential is not listed deployment-wide; it
+		// usually travels with the tool that runs on it. Named directly, it
+		// is looked up in each person's namespace.
+		if typ == "credential" && len(matches) == 0 {
+			matches = ownedCredentialSels(name, wantOwner)
 		}
 		switch {
 		case len(matches) == 0 && typ == "tool" && pendingToolNamed(user, name):
@@ -160,6 +168,32 @@ func resolveTemplatePieces(user string, raw any) ([]ArtifactSel, error) {
 		}
 	}
 	return sels, nil
+}
+
+// ownedCredentialSels finds people's own credentials of that name: just
+// owner's when one is given, otherwise everyone's who has one.
+func ownedCredentialSels(name, owner string) []ArtifactSel {
+	api := Secure()
+	if api == nil {
+		return nil
+	}
+	var users []string
+	if owner != "" {
+		users = []string{owner}
+	} else if AuthDB != nil {
+		if adb := AuthDB(); adb != nil {
+			for _, u := range AuthListUsers(adb) {
+				users = append(users, u.Username)
+			}
+		}
+	}
+	var out []ArtifactSel
+	for _, u := range users {
+		if _, ok := api.LoadUser(u, name); ok {
+			out = append(out, ArtifactSel{Type: "credential", Name: name, Owner: u})
+		}
+	}
+	return out
 }
 
 // pendingToolNamed reports whether user has a tool of that name waiting for
