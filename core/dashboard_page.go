@@ -217,10 +217,13 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     font-size: var(--fs-lg, 1rem); line-height: 1; white-space: pre; letter-spacing: 0;
     margin-bottom: 0.9rem; text-align: left;
   }
-  .ascii-logo .r0 { color: var(--text-hi, #f0f6fc); }
-  .ascii-logo .r1 { color: color-mix(in srgb, var(--text-hi, #f0f6fc) 78%, var(--text-mute, #8b949e)); }
-  .ascii-logo .r2 { color: color-mix(in srgb, var(--text-hi, #f0f6fc) 56%, var(--text-mute, #8b949e)); }
-  .ascii-logo .r3 { color: color-mix(in srgb, var(--text-hi, #f0f6fc) 34%, var(--text-mute, #8b949e)); }
+  /* The fade starts at the page's text colour, not its brightest white:
+     ODDJOB's top row is nearly all flat letter-caps, and in pure white it
+     read as one bright bar above the word instead of the tops of letters. */
+  .ascii-logo .r0 { color: var(--text, #c9d1d9); }
+  .ascii-logo .r1 { color: color-mix(in srgb, var(--text, #c9d1d9) 78%, var(--text-mute, #8b949e)); }
+  .ascii-logo .r2 { color: color-mix(in srgb, var(--text, #c9d1d9) 56%, var(--text-mute, #8b949e)); }
+  .ascii-logo .r3 { color: color-mix(in srgb, var(--text, #c9d1d9) 34%, var(--text-mute, #8b949e)); }
   .ascii-logo .r4 { color: var(--text-mute, #8b949e); }
   .ascii-logo .s1 { color: var(--accent, #6366f1); }
   .ascii-logo .s2, .ascii-logo .s3 { color: color-mix(in srgb, var(--accent, #6366f1) 55%, var(--bg-0, #0d1117)); }
