@@ -222,7 +222,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 				if runCount == 0 {
 					b.WriteString("- No scheduled runs (standing agents) run as you.\n")
 				}
-				// Recurring tasks (the `recurring` tool) that post back into your
+				// Recurring tasks (schedule, when="every" with no agent named) that post back into your
 				// own sessions on an interval. Distinct from monitors (wake-on-change)
 				// and standing runs (scheduled) — this is the third scheduling surface,
 				// scoped by the agent that runs it.

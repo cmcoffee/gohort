@@ -166,3 +166,19 @@ These records are firing on a live box. The engagement cycle behind most of this
 runs every thirty minutes. A slice that strands a schedule is worse than a slice that ships late
 which is why every slice above is a refactor with the storage untouched, and why slice 4 is the only
 one that moves a record and is deliberately last.
+
+## Postscript (2026-10-10, v0.8.11): the tool surface did merge
+
+Everything above is about the RECORDS, and it stands: standing agents, recurring tasks and event
+monitors keep their own stores, runners and cadence policies. What changed is the surface the model
+sees. An agent asked for a 1:10pm alert built an http_poll against a public time API and compared an
+ISO datetime with `>=`; it parked itself before the time came. Another agent said outright that
+picking between the tools was confusing. So the LLM-facing tools (`create_standing_agent` and its
+four siblings, `create_event_monitor` and its two, the `recurring` group, and a `set_timer` that
+lived for an afternoon) are now one tool, `schedule`, whose `when` option is the decision in the
+user's words: `at`, `every`, `value_crosses`, `output_changes`, `posted`, `agent_says`. It parses the
+time as the user said it ("1:10pm", "in 20 minutes", "every morning at 8") and calls the retired
+tools' handlers underneath (`apps/orchestrate/operator_schedule_tool.go`). The old names stay
+reserved and alias to `schedule` in allowlists. A timer is a new monitor kind (`EventKindTimer`):
+the clock is the trigger, it fires once and stops. "The `recurring` tool's API does not change"
+above is therefore no longer true at the surface; the stores it fed are untouched.

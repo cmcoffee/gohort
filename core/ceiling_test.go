@@ -332,7 +332,12 @@ const (
 	// 2269: ToolSessionFromContext, so a tool an app hands the loop can reach
 	// the turn's session: the pictures the user attached to the message, which
 	// only built-in tools could see before.
-	coreExportCeiling = 2269
+	// 2297: the slack had been spent (HEAD stood at 2295 with the ceiling at
+	// 2269), plus EventKindTimer and ValidateThreshold: a monitor kind whose
+	// trigger is the clock, and the refusal of a numeric comparison against a
+	// threshold that is not a number, both from the 1:10pm alert that polled a
+	// time API and parked itself before the time came.
+	coreExportCeiling = 2297
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

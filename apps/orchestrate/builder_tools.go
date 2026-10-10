@@ -810,7 +810,7 @@ func surveyWorkspace(owner string) string {
 
 	monitors := ListEventMonitors(RootDB, owner)
 	section("EVENT MONITORS", len(monitors))
-	fmt.Fprintf(&b, "  (create_event_monitor)\n")
+	fmt.Fprintf(&b, "  (schedule)\n")
 	for i, m := range monitors {
 		if i >= cap {
 			break
@@ -1246,7 +1246,7 @@ func (t *chatTurn) deferKnownAuthoringTools(tools []AgentToolDef) []AgentToolDef
 var onDemandTools = map[string]bool{
 	// ~2.1k tokens, the largest schema on a non-Fleet agent once tool_def was
 	// deferred, and used only on the turn that sets up or manages a schedule.
-	"recurring": true,
+	"schedule": true,
 	// The entity-graph trio, ~1.1k tokens together on every agent with explicit
 	// memory. The graph fills itself from conversation (graph_extract.go), so
 	// hand-linking is the supplement, not the source; the recall_about hints

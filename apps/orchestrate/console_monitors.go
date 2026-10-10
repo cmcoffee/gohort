@@ -330,6 +330,9 @@ func applyMonitorUpdate(m *EventMonitor, body monitorUpdateBody) error {
 		if strings.TrimSpace(threshold) == "" {
 			return Error("an http_poll monitor needs a threshold: the value its extracted one is compared against")
 		}
+		if err := ValidateThreshold(op, threshold); err != nil {
+			return Error(err.Error())
+		}
 		m.URL, m.CompareOp, m.Threshold = url, op, threshold
 		if body.JSONPath != nil {
 			m.JSONPath = strings.TrimSpace(*body.JSONPath)
@@ -511,6 +514,8 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 			}
 		case EventKindWebhook:
 			detail = "webhook (POST .../event/" + m.Token + ")"
+		case EventKindTimer:
+			detail = monitorCadence(m)
 		}
 		if detail != "" {
 			var dests []string
@@ -826,6 +831,9 @@ func scheduleRowState(name, cause, note string) map[string]any {
 // monitorCadence says how often a monitor checks, for the confirmations and
 // the Scheduler row: "every 900s", or "daily at 08:00" for set times.
 func monitorCadence(m EventMonitor) string {
+	if m.Kind == EventKindTimer && !m.FireAt.IsZero() {
+		return "goes off " + m.FireAt.In(UserLocation(m.Owner)).Format("Mon Jan 2 3:04 PM MST")
+	}
 	if len(m.DailyAt) > 0 {
 		return "daily at " + fmtDailyAt(m.DailyAt)
 	}

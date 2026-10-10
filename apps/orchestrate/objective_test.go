@@ -350,29 +350,29 @@ func TestStandingObjectiveSharesTheRecurringMachinery(t *testing.T) {
 	}
 }
 
-// TestCreateStandingAgentOffersTheObjective: the Fleet path is the ONLY
-// scheduling path a Fleet agent has — it is not given the recurring tool — so
-// without these parameters an objective is unreachable for exactly the agents
-// most likely to be handed a goal.
-func TestCreateStandingAgentOffersTheObjective(t *testing.T) {
+// TestScheduleOffersTheObjective: schedule is the ONLY scheduling path a
+// Fleet agent has — it is not given the recurring tool — so without these
+// parameters an objective is unreachable for exactly the agents most likely
+// to be handed a goal.
+func TestScheduleOffersTheObjective(t *testing.T) {
 	var params map[string]ToolParam
 	for _, td := range operatorManagementTools(nil, "") {
-		if td.Tool.Name == "create_standing_agent" {
+		if td.Tool.Name == "schedule" {
 			params = td.Tool.Parameters
 		}
 	}
 	if params == nil {
-		t.Fatal("create_standing_agent is no longer registered")
+		t.Fatal("schedule is no longer registered")
 	}
 	until, ok := params["until"]
 	if !ok {
-		t.Fatal("create_standing_agent no longer offers `until` — a Fleet agent cannot be given a goal")
+		t.Fatal("schedule no longer offers `until` — a Fleet agent cannot be given a goal")
 	}
-	if !strings.Contains(until.Description, "OBJECTIVE") {
+	if !strings.Contains(until.Description, "DONE") {
 		t.Error("until's description does not say what it turns the schedule into")
 	}
 	if _, ok := params["max_attempts"]; !ok {
-		t.Fatal("create_standing_agent no longer offers `max_attempts`")
+		t.Fatal("schedule no longer offers `max_attempts`")
 	}
 }
 
@@ -501,12 +501,12 @@ func TestAMonitorWithNoConditionIsNeverJudged(t *testing.T) {
 func TestCreateEventMonitorOffersTheStoppingControls(t *testing.T) {
 	var tool Tool
 	for _, td := range operatorManagementTools(&ToolSession{Username: "craig"}, "agent-1") {
-		if td.Tool.Name == "create_event_monitor" {
+		if td.Tool.Name == "schedule" {
 			tool = td.Tool
 		}
 	}
 	if tool.Name == "" {
-		t.Fatal("create_event_monitor is gone")
+		t.Fatal("schedule is gone")
 	}
 	stop, ok := tool.Parameters["stop_after"]
 	if !ok {
@@ -525,30 +525,35 @@ func TestCreateEventMonitorOffersTheStoppingControls(t *testing.T) {
 }
 
 // TestTheTwoSchedulingToolsSayWhichJobIsTheirs. A live session spent ten
-// create_event_monitor calls on "every 5 minutes, fetch X and report the
-// value, stop after 2" — unconditional work on a clock, which is a standing
-// agent with until/max_attempts, and which the agent had in its toolset the
-// whole time. It never considered it. The pull got stronger when stop_after
-// gave the monitor tool a home for "stop after 2" while the tool that was
-// actually right said nothing about counts, so the routing lives in the
-// descriptions and its absence is the fix missing.
+// monitor calls on "every 5 minutes, fetch X and report the value, stop after
+// 2" — unconditional work on a clock, which is when="every" with
+// until/max_attempts. The two were separate tools then and the agent never
+// considered the right one; now they are two options of one tool, and the
+// option list itself has to say which is for hearing every time and which
+// stays silent, with the error at the moment of contortion naming the other.
 func TestTheTwoSchedulingToolsSayWhichJobIsTheirs(t *testing.T) {
 	tools := map[string]Tool{}
 	for _, td := range operatorManagementTools(&ToolSession{Username: "craig"}, "agent-1") {
 		tools[td.Tool.Name] = td.Tool
 	}
 
-	mon, ok := tools["create_event_monitor"]
+	sched, ok := tools["schedule"]
 	if !ok {
-		t.Fatal("create_event_monitor is gone")
+		t.Fatal("schedule is gone")
 	}
-	// It has to state the NEGATIVE case — and only that. The description is
-	// re-sent on every turn the tool is in the catalog, so the detail lives
-	// where it is read only when needed: the error the model gets while it is
-	// already stuck (see below).
-	for _, want := range []string{"NOT for work", "create_standing_agent"} {
-		if !strings.Contains(mon.Description, want) {
-			t.Errorf("the monitor tool no longer routes away from the job that is not its own: missing %q", want)
+	for _, want := range []string{`when="every"`, "hear from it every time", "silently", "stop_after", "until", `when="at"`} {
+		if !strings.Contains(sched.Description, want) {
+			t.Errorf("the schedule tool does not say which option is which: missing %q", want)
+		}
+	}
+	whenParam := sched.Parameters["when"]
+	for _, opt := range []string{"at", "every", "value_crosses", "output_changes", "posted", "agent_says"} {
+		found := false
+		for _, e := range whenParam.Enum {
+			found = found || e == opt
+		}
+		if !found {
+			t.Errorf("when has no %q option", opt)
 		}
 	}
 
@@ -558,7 +563,7 @@ func TestTheTwoSchedulingToolsSayWhichJobIsTheirs(t *testing.T) {
 	// session before the agent gave up on the kind.
 	pinRootDB(t)
 	var create func(context.Context, map[string]any) (string, error)
-	for _, td := range operatorManagementTools(&ToolSession{Username: "craig"}, "agent-1") {
+	for _, td := range operatorToolDefsUnfolded(&ToolSession{Username: "craig"}, "agent-1") {
 		if td.Tool.Name == "create_event_monitor" {
 			create = td.Handler
 		}
@@ -570,25 +575,25 @@ func TestTheTwoSchedulingToolsSayWhichJobIsTheirs(t *testing.T) {
 	if err == nil {
 		t.Fatal("an http_poll with no threshold was accepted")
 	}
-	if !strings.Contains(err.Error(), "create_standing_agent") {
+	if !strings.Contains(err.Error(), `when="every"`) {
 		t.Errorf("the error names no alternative, so the next attempt is another guess: %v", err)
 	}
 
-	stand, ok := tools["create_standing_agent"]
+	stand, ok := tools["schedule"]
 	if !ok {
-		t.Fatal("create_standing_agent is gone")
+		t.Fatal("schedule is gone")
 	}
-	// And the right tool has to claim the job in the words people use for it,
-	// including the finish line — otherwise it reads as "cron" and loses to
-	// the tool that mentions stopping.
-	for _, want := range []string{"RUNS on a clock", "until", "max_attempts", "stop after 2"} {
+	// And the clock option has to claim the job in the words people use for
+	// it, including the finish line — otherwise it reads as "cron" and loses
+	// to the option that mentions stopping.
+	for _, want := range []string{"on a clock", "until", "max_attempts"} {
 		if !strings.Contains(stand.Description, want) {
-			t.Errorf("the standing-agent tool does not claim the job it is for: missing %q", want)
+			t.Errorf("the schedule tool does not claim the clock job: missing %q", want)
 		}
 	}
 
 	// stop_after must not read as "run this N times".
-	if p := mon.Parameters["stop_after"]; !strings.Contains(p.Description, "bounds the ALERTS") {
+	if p := sched.Parameters["stop_after"]; !strings.Contains(p.Description, "alerts") || !strings.Contains(p.Description, "(monitors") {
 		t.Errorf("stop_after does not distinguish alerts from runs: %s", p.Description)
 	}
 }
@@ -851,11 +856,11 @@ func TestMonitorWakeWithoutAGoalSaysNothingAboutAttempts(t *testing.T) {
 func TestStandingAgentsSayTheyAreNotForOneRun(t *testing.T) {
 	var desc string
 	for _, td := range operatorManagementTools(nil, "") {
-		if td.Tool.Name == "create_standing_agent" {
+		if td.Tool.Name == "schedule" {
 			desc = td.Tool.Description
 		}
 	}
-	if !strings.Contains(desc, "NOT for running something once") || !strings.Contains(desc, `machine(action=\"run\"`) && !strings.Contains(desc, `machine(action="run"`) {
+	if !strings.Contains(desc, "once right now, don't schedule it") || !strings.Contains(desc, `agents(action=\"run\"`) && !strings.Contains(desc, `agents(action="run"`) {
 		t.Errorf("the description does not route a one-off run away: %q", desc)
 	}
 	if !strings.Contains(standingNotOnce, `machine(action="run"`) || !strings.Contains(standingNotOnce, "until deleted") {

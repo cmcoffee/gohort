@@ -342,14 +342,14 @@ func TestRecurringDeferredUnderItsOwnSection(t *testing.T) {
 		if got := namesOf(kept); len(got) != 1 || got[0] != "show_link" {
 			t.Fatalf("%s: only show_link should stay direct, got %v", id, got)
 		}
-		if !strings.Contains(turn.authoringLazyPrompt, onDemandToolIndexHeader) || !strings.Contains(turn.authoringLazyPrompt, "- `recurring`") {
+		if !strings.Contains(turn.authoringLazyPrompt, onDemandToolIndexHeader) || !strings.Contains(turn.authoringLazyPrompt, "- `schedule`") {
 			t.Fatalf("%s: recurring must be indexed under its own section, got %q", id, turn.authoringLazyPrompt)
 		}
 		if strings.Contains(turn.authoringLazyPrompt, "Authoring tools") {
 			t.Fatalf("%s: a scheduler must not be presented as an authoring tool", id)
 		}
-		if h, ok := turn.lazyToolFallback("recurring"); !ok || h == nil {
-			t.Fatalf("%s: recurring must still resolve when called directly", id)
+		if h, ok := turn.lazyToolFallback("schedule"); !ok || h == nil {
+			t.Fatalf("%s: schedule must still resolve when called directly", id)
 		}
 	}
 
@@ -359,7 +359,7 @@ func TestRecurringDeferredUnderItsOwnSection(t *testing.T) {
 	if _, ok := turn.deferredAuthoringDefs["tool_def"]; !ok {
 		t.Fatal("deferring recurring must not wipe the authoring catalog")
 	}
-	if _, ok := turn.deferredAuthoringDefs["recurring"]; !ok {
+	if _, ok := turn.deferredAuthoringDefs["schedule"]; !ok {
 		t.Fatal("recurring must join the existing deferred set")
 	}
 }

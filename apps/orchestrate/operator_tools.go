@@ -872,17 +872,25 @@ func findAgentBoundChannel(owner, agentID, to string) (Channel, bool) {
 // history. Someone else on a channel can ask the agent things; they cannot
 // have it do these on their word (nonOwnerRequester).
 var ownerOnlyFleetTools = map[string]bool{
-	"create_standing_agent": true, "run_standing_now": true, "set_standing_paused": true, "delete_standing_agent": true,
-	"create_event_monitor": true, "delete_event_monitor": true,
+	// schedule folds the standing-agent, monitor and timer tools; their
+	// handlers run inside its own, so the gate on it covers them all.
+	"schedule":                 true,
 	"authorize_channel_sender": true,
 	"request_thread_binding":   true, "set_thread_wake": true, "release_thread_binding": true,
-	"list_standing_agents": true, "list_event_monitors": true, "list_runs": true, "inspect_run": true,
+	"list_runs": true, "inspect_run": true,
 	// Its wake runs as the owner's, with a note written on the stranger's word.
 	"await_result": true,
 }
 
 func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
-	tools := operatorManagementToolDefs(sess, agentID)
+	return operatorManagementToolsFor(sess, agentID, nil)
+}
+
+// operatorManagementToolsFor is operatorManagementTools with the agent's own
+// recurring tasks folded into `schedule` too (an author keeps them; a Fleet
+// agent passes nil and schedules through the fleet only).
+func operatorManagementToolsFor(sess *ToolSession, agentID string, rec recurringImpl) []AgentToolDef {
+	tools := operatorManagementToolDefs(sess, agentID, rec)
 	for i := range tools {
 		if !ownerOnlyFleetTools[tools[i].Tool.Name] {
 			continue
@@ -898,7 +906,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 	return tools
 }
 
-func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDef {
+// operatorToolDefsUnfolded is the operator toolset with every scheduling
+// tool separate. The model sees operatorManagementToolDefs instead, which
+// folds the scheduling ones into `schedule` (operator_schedule_tool.go);
+// their handlers here are that tool's implementation.
+func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef {
 	owner := ""
 	if sess != nil {
 		owner = sess.Username
@@ -1412,7 +1424,7 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 		{
 			Tool: Tool{
 				Name:        "create_event_monitor",
-				Description: "Set up a monitor that WAKES you when something happens (vs a standing agent, which RUNS on a clock). Pick the CHEAPEST kind that detects the change, deterministic beats an LLM checker: \"webhook\" mints a secret URL an external system POSTs to (push, no polling); \"http_poll\" fetches a URL, extracts a value, and wakes you when it crosses a threshold (no LLM, best for numeric/value conditions); \"watch\" invokes a TOOL each interval, hashes its output, and wakes you ONLY when it changes (no LLM until it does, best for \"tell me when X changes\", e.g. a chat via read_chat); \"poll\" runs an LLM checker agent every interval (MOST expensive: reserve for FUZZY conditions a value or hash can't capture). On wake you react in this thread (report / delegate). NOT for work that must run and REPORT every interval whatever it finds: that is a standing agent (create_standing_agent, with until/max_attempts), not a monitor.",
+				Description: "Set up a monitor that WAKES you when something happens (vs a standing agent, which RUNS on a clock). Pick the CHEAPEST kind that detects the change, deterministic beats an LLM checker: \"webhook\" mints a secret URL an external system POSTs to (push, no polling); \"http_poll\" fetches a URL, extracts a value, and wakes you when it crosses a threshold (no LLM, best for numeric/value conditions); \"watch\" invokes a TOOL each interval, hashes its output, and wakes you ONLY when it changes (no LLM until it does, best for \"tell me when X changes\", e.g. a chat via read_chat); \"poll\" runs an LLM checker agent every interval (MOST expensive: reserve for FUZZY conditions a value or hash can't capture). On wake you react in this thread (report / delegate). NOT for work that must run and REPORT every interval whatever it finds: that is a standing agent (create_standing_agent, with until/max_attempts), not a monitor. NOT for a time of day: \"tell me at 1:10pm\" / \"in 20 minutes\" is set_timer, which needs no URL and no threshold.",
 				Parameters: map[string]ToolParam{
 					"name":             {Type: "string", Description: "Short unique name for this monitor, e.g. \"nvda-below\" or \"ts-join\"."},
 					"kind":             {Type: "string", Description: "\"webhook\", \"http_poll\", \"watch\", or \"poll\": prefer the cheapest that fits (see the tool description)."},
@@ -1542,8 +1554,11 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 					if err := missingArgs("http_poll monitor "+strconv.Quote(name),
 						reqArg{"url", m.URL, "the address fetched each interval, e.g. \"https://example.com/status\""},
 						reqArg{"compare_op", m.CompareOp, "one of < > <= >= == != contains"},
-						reqArg{"threshold", m.Threshold, "the value compared against, always as a string: \"200\" with compare_op \"==\", or \"error\" with compare_op \"contains\". If you have no threshold because this should report the value WHATEVER it is, that is not a monitor: a monitor stays silent until something changes. Use create_standing_agent (until = what makes it done, max_attempts = how many runs it gets)"},
+						reqArg{"threshold", m.Threshold, "the value compared against, always as a string: \"200\" with compare_op \"==\", or \"error\" with compare_op \"contains\". If you have no threshold because this should report the value WHATEVER it is, that is not a monitor: a monitor stays silent until something changes. Use schedule(when=\"every\", then=the work, until = what makes it done, max_attempts = how many runs it gets)"},
 					); err != nil {
+						return "", err
+					}
+					if err := ValidateThreshold(m.CompareOp, m.Threshold); err != nil {
 						return "", err
 					}
 					if !ValidCompareOp(m.CompareOp) {
@@ -1603,7 +1618,7 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 				m.IntervalSeconds = oArgInt(args, "interval_seconds")
 				if err := missingArgs("poll monitor "+strconv.Quote(name),
 					reqArg{"check_agent", wantAgent, "name or id of an existing agent that runs the check"},
-					reqArg{"check", m.Check, "the question that agent is asked each interval, whose answer decides whether to wake you. If there is no question (the agent should just do the work and report every time), use create_standing_agent instead; telling a checker to always answer the match word makes a schedule out of a monitor"},
+					reqArg{"check", m.Check, "the question that agent is asked each interval, whose answer decides whether to wake you. If there is no question (the agent should just do the work and report every time), use schedule(when=\"every\") instead; telling a checker to always answer the match word makes a schedule out of a monitor"},
 				); err != nil {
 					return "", err
 				}
@@ -1626,6 +1641,7 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 					name, monitorCadence(got), m.CheckAgent, m.Check, match, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 			},
 		},
+		timerToolDef(sess, owner, agentID),
 		{
 			Tool: Tool{
 				Name:        "await_result",
@@ -1941,7 +1957,7 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 		{
 			Tool: Tool{
 				Name:        "list_event_monitors",
-				Description: "List the user's event monitors (webhook + poll) with their kind, schedule, paused state, and when each last fired.",
+				Description: "List the user's event monitors (webhook, http_poll, watch, poll, timer) with their kind, schedule, paused state, and when each last fired.",
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				// Scope to THIS agent's monitors (WakeAgent set on create), not
@@ -1970,6 +1986,8 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 						fmt.Fprintf(&b, ": every %ds fetch %s, value %s %s", m.IntervalSeconds, m.URL, m.CompareOp, m.Threshold)
 					case EventKindWebhook:
 						fmt.Fprintf(&b, ": POST .../orchestrate/api/operator/event/%s", m.Token)
+					case EventKindTimer:
+						fmt.Fprintf(&b, ": goes off %s", m.FireAt.In(UserLocation(owner)).Format("Mon Jan 2 3:04 PM MST"))
 					}
 					if !m.LastFired.IsZero() {
 						fmt.Fprintf(&b, "; last fired %s", m.LastFired.Local().Format("Jan 2 3:04 PM"))
@@ -2017,6 +2035,16 @@ func operatorManagementToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 // dropToolsByName removes the named tools from a parallel (tools, names) pair.
 // Used to keep the generic interval scheduler ("recurring") off the Operator —
 // it schedules through the fleet (create_standing_agent) instead.
+// toolsHaveName reports whether a tool of that name is in the list.
+func toolsHaveName(tools []AgentToolDef, name string) bool {
+	for _, td := range tools {
+		if td.Tool.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func dropToolsByName(tools []AgentToolDef, names []string, drop ...string) ([]AgentToolDef, []string) {
 	dropSet := map[string]bool{}
 	for _, d := range drop {

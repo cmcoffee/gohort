@@ -232,7 +232,7 @@ can offer:
 
 | | recurring task | standing agent |
 |---|---|---|
-| authored with | `recurring(action="schedule", until=…)` | `create_standing_agent(until=…)` |
+| authored with | `schedule(when="every", until=…)`, no agent named | `schedule(when="every", agent=…, until=…)` |
 | attempt number | `FireCount + 1 - AttemptsBase` | `UnmetCount + 1`: there is no lifetime fire count to subtract from |
 | met | cancels the pre-armed successor, task retires | sets `Paused`, schedule stays listed and can be started again |
 | stalled | parks via `parkRecurringBroken` | `MarkStandingAgentBroken`, which pauses and unschedules |

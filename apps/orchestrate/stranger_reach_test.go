@@ -31,14 +31,14 @@ func TestAStrangerCannotRunTheFleet(t *testing.T) {
 		}
 	}
 	for _, td := range operatorManagementTools(&ToolSession{Username: "owner"}, "a1") {
-		if td.Tool.Name == "list_standing_agents" {
-			if out, _ := td.Handler(context.Background(), map[string]any{}); strings.Contains(out, "is the owner's to use") {
+		if td.Tool.Name == "schedule" {
+			if out, _ := td.Handler(context.Background(), map[string]any{"action": "list"}); strings.Contains(out, "is the owner's to use") {
 				t.Errorf("the owner's own run was refused: %q", out)
 			}
 		}
 	}
 	rec, err := (&chatTurn{}).recurringToolDef().Handler(stranger, map[string]any{"action": "list"})
-	if err != nil || !strings.Contains(rec, "owner's to manage") {
+	if err != nil || !strings.Contains(rec, "owner's to use") {
 		t.Errorf("a stranger reached the recurring tasks: %q %v", rec, err)
 	}
 }

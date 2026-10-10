@@ -158,7 +158,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		tools = append(tools, t.agentsGroupedToolDef(true))
 	}
 	if !t.agent.Fleet {
-		// Fleet agents schedule through create_standing_agent, not the generic
+		// Fleet agents schedule through schedule(when="every"), not the generic
 		// per-session recurring scheduler — see runPlan's note.
 		tools = append(tools, t.recurringToolDef())
 	}

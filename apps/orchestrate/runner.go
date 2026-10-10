@@ -914,13 +914,13 @@ func (pr *planRun) catalogKnowTools() error {
 		pr.cat.knowTools = append(pr.cat.knowTools, t.enterExplorerModeToolDef())
 	}
 	// Recurring per-session interval tasks — but NOT for Fleet agents. A Fleet
-	// agent schedules recurring work through create_standing_agent (real cron
+	// agent schedules recurring work through schedule(when="every") (real cron
 	// timing, and it surfaces in the Enabled-agents console where the user can
 	// pause/cancel it); the generic per-session "recurring" scheduler bypasses
 	// the fleet and stays invisible to the console, so we keep it off them.
 	// (The earlier dropToolsByName in resolveWorkerTools was dead — recurring
 	// is added HERE, after that assembly, so it was never in that list.)
-	if !t.agent.Fleet {
+	if !t.agent.Fleet && !toolsHaveName(pr.cat.workerTools, "schedule") {
 		pr.cat.knowTools = append(pr.cat.knowTools, t.recurringToolDef())
 	}
 	// Session spin-off — web chat only (this assembly path is never used by
