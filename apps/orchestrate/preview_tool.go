@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	. "github.com/cmcoffee/oddjob/core"
@@ -22,6 +23,19 @@ import (
 // page with inline CSS/JS; small enough that a runaway generation can't
 // balloon the session record or the SSE stream.
 const maxArtifactHTML = 300 * 1024
+
+// artifactRecordNote is what the session's record of a show_html call holds in
+// place of the page, which already lives on the session artifact. Replayed
+// history shows the model its own earlier call with this in the html field,
+// so it says plainly that the page was delivered whole: the older wording
+// ("N-byte HTML document: stored as session artifact") read as a cut-off
+// push, and an agent would apologise for truncation and write the whole page
+// out again, or copy the note itself back in as the next page.
+const artifactRecordNote = "(show_html delivered the full %d-byte document to the user's pane as artifact %q. It is left out of this record only to save space: it was NOT truncated. To show it again, call show_html with just this id; to change it, write the complete document.)"
+
+// artifactNoteRe matches a record note, either wording, when it comes back
+// as the html of a new call.
+var artifactNoteRe = regexp.MustCompile(`(?s)^\(\s*(?:\d+-byte HTML document: stored as session artifact|show_html delivered the full \d+-byte document)`)
 
 // upsert_ui_block replaces the first persisted block whose ID matches
 // blk (or that same_surface says is the same destination — e.g. a link
@@ -84,7 +98,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 				},
 				"id": {
 					Type:        "string",
-					Description: "Omit when showing a NEW artifact (an id is generated and returned). Pass a previously returned id to update that artifact in place instead of adding another.",
+					Description: "Omit when showing a NEW artifact (an id is generated and returned). Pass a previously returned id to update that artifact in place instead of adding another. With an id and NEITHER html nor url, the earlier artifact reopens in the pane unchanged.",
 				},
 			},
 			Required: []string{"title"},
@@ -94,6 +108,21 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 			html := stringArg(args, "html")
 			url := strings.TrimSpace(stringArg(args, "url"))
 			hasHTML := strings.TrimSpace(html) != ""
+			// The record of an earlier call copied back in as a page: the
+			// pane would show the note instead of the page, which is what
+			// the user saw. Refused, with the two things the agent meant.
+			if hasHTML && artifactNoteRe.MatchString(strings.TrimSpace(html)) {
+				return "", fmt.Errorf("that html is the record of an earlier artifact, not a page: the page was delivered whole and is still in the user's pane. To show it again, call show_html with only its id; to change it, write the complete document")
+			}
+			if hasHTML && !strings.Contains(html, "<") {
+				return "", fmt.Errorf("html has no markup at all, so it is not a document: write the complete HTML page (doctype through </html>), or pass only the id of an earlier artifact to show it again")
+			}
+			// An id alone reopens that artifact as it was.
+			if !hasHTML && url == "" {
+				if id := strings.TrimSpace(stringArg(args, "id")); id != "" {
+					return t.reopenArtifact(id, title)
+				}
+			}
 			if hasHTML == (url != "") {
 				return "", fmt.Errorf("pass exactly ONE of html (an authored document) or url (a same-origin path to preview)")
 			}
@@ -187,12 +216,16 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 			// let the activity wrapper persist a second full copy in the
 			// tool-call record (args are recorded AFTER the handler runs).
 			if hasHTML {
-				args["html"] = fmt.Sprintf("(%d-byte HTML document: stored as session artifact %q)", len(html), id)
+				args["html"] = fmt.Sprintf(artifactRecordNote, len(html), id)
+			}
+			whole := ""
+			if hasHTML {
+				whole = fmt.Sprintf(" It shows the full %d-byte document.", len(html))
 			}
 			if isUpdate {
-				return fmt.Sprintf("Artifact %q (id %q) updated in place: the user's pane refreshed.", title, id), nil
+				return fmt.Sprintf("Artifact %q (id %q) updated in place: the user's pane refreshed.%s", title, id, whole), nil
 			}
-			return fmt.Sprintf("Artifact %q is now showing beside the chat (id %q). Call show_html again with this id to update it in place.", title, id), nil
+			return fmt.Sprintf("Artifact %q is now showing beside the chat (id %q).%s Call show_html again with this id to update it in place, or with only the id to show it again unchanged.", title, id, whole), nil
 		},
 	}
 }
@@ -291,4 +324,39 @@ func (t *chatTurn) showLinkToolDef() AgentToolDef {
 			return fmt.Sprintf("Link card %q → %s is now showing in the chat. Don't repeat the raw URL in your reply: the card carries it.", title, url), nil
 		},
 	}
+}
+
+// reopenArtifact shows an artifact from earlier in this conversation again,
+// as it was. It is what an agent means when it re-sends an earlier call: the
+// page is on the session, so nothing has to be written out again.
+func (t *chatTurn) reopenArtifact(id, title string) (string, error) {
+	var blk UIBlock
+	found := false
+	if t.session != nil {
+		t.toolMu.Lock()
+		for _, b := range t.session.UIBlocks {
+			if b.Type == "html_artifact" && b.ID == id {
+				blk, found = b, true
+				break
+			}
+		}
+		t.toolMu.Unlock()
+	}
+	if !found {
+		return "", fmt.Errorf("no artifact %q in this conversation: to show a page, pass html (a complete document) or url", id)
+	}
+	if title == "" {
+		title = blk.Title
+	}
+	payload := map[string]any{"kind": "block", "type": "html_artifact", "id": blk.ID, "title": title, "open": true}
+	if blk.HTML != "" {
+		payload["html"] = blk.HTML
+		if len(blk.DataURLs) > 0 {
+			payload["data_urls"] = blk.DataURLs
+		}
+	} else {
+		payload["url"] = blk.URL
+	}
+	t.sse.Send(payload)
+	return fmt.Sprintf("Artifact %q (id %q) is showing again, unchanged.", title, blk.ID), nil
 }
