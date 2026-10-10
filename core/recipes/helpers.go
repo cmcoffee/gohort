@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/cmcoffee/oddjob/core"
@@ -98,6 +99,63 @@ func init() {
 				return nil, nil, err
 			}
 			return map[string]any{"spec": v}, warns, nil
+		},
+	})
+}
+
+// The form helper runs a built-in form's own strategy, for the two forms whose
+// output depends on what the user types and so cannot be written down as
+// data: a REST call's arguments come from the {placeholders} in the address
+// it is given, and an OpenAPI toolbox's actions come from the document pasted
+// in. The form stays in Go as the editor behind Configure; this lets a
+// template reach it, so adding goes through templates like everything else.
+//
+// With: form ("tool/<name>" or "connector/<name>", required), answer (the
+// form field this question's own answer fills), name (stamped on a tool),
+// and any other form field by its key. Output "piece": the tool definition
+// (with its name and the form recorded, so Configure opens that form) or the
+// connector's spec.
+func init() {
+	RegisterHelper("form", Helper{
+		Desc:    "Builds a tool or connector spec with a built-in form's strategy. With: form (tool/<name> or connector/<name>), answer (the form field this answer fills), name, and any form field.",
+		Outputs: []string{"piece"},
+		Run: func(answer string, with map[string]string) (map[string]any, []string, error) {
+			target, name, ok := strings.Cut(with["form"], "/")
+			if !ok || name == "" {
+				return nil, nil, fmt.Errorf("the form helper needs form as tool/<name> or connector/<name>")
+			}
+			tpl, found := core.GetTemplate(target, name)
+			if !found {
+				return nil, nil, fmt.Errorf("this oddjob has no %s form %q", target, name)
+			}
+			vals := map[string]any{}
+			for k, v := range with {
+				switch k {
+				case "form", "answer", "name":
+					continue
+				}
+				if strings.TrimSpace(v) != "" {
+					vals[k] = v
+				}
+			}
+			if f := strings.TrimSpace(with["answer"]); f != "" {
+				vals[f] = answer
+			}
+			raw, warns, err := tpl.BuildSpec(vals)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%s: %v", tpl.Label, err)
+			}
+			var piece map[string]any
+			if err := json.Unmarshal(raw, &piece); err != nil {
+				return nil, nil, err
+			}
+			if target == core.TargetTool {
+				if n := strings.TrimSpace(with["name"]); n != "" {
+					piece["name"] = n
+				}
+				piece["template"] = name
+			}
+			return map[string]any{"piece": piece}, warns, nil
 		},
 	})
 }

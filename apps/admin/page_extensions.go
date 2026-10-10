@@ -301,8 +301,7 @@ func mcpServerFormFields() []ui.FormField {
 }
 
 // templatesSection is one list of every template: recipes that integrate a
-// service without Go (core/recipes: built-in, imported or saved here), and
-// the built-in forms that author one connector or tool.
+// service without Go (core/recipes: built-in, imported or saved here).
 //
 // The "What goes in" checklist lists every artifact in the store. It is read
 // when the dialog opens (api/templates/pieces), not here: building it here
@@ -315,8 +314,7 @@ func (a *AdminApp) templatesSection() ui.Section {
 		Subtitle: "Recipes for integrating a service with oddjob: answer a few questions, and its credential, tools and the rest are set up as drafts for review.",
 		Detail: "A template asks what it needs (a site address, your email, an API token), fills the answers in, and adds its pieces through the same importer as a bundle file: credentials disabled until you test them, tools pending approval. " +
 			"A secret you give goes straight into its credential's secret store and never into a tool or a file.\n\n" +
-			"Built-in templates ship with oddjob. Import one someone shared, or Save as template to make one from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
-			"Built-in forms are the older kind, written in code: each authors one connector or tool from its fields. They ship with every oddjob, so there is nothing to export; to share what one made, add it, then Save as template picking the connector or tool it created.",
+			"Built-in templates ship with oddjob. Import one someone shared, or Save as template to make one from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Toolbar{Actions: []ui.ToolbarAction{
 				{Label: "Import a template…", Method: "client", URL: "template_import"},
@@ -364,10 +362,6 @@ func (a *AdminApp) templatesSection() ui.Section {
 				RowKey: "id",
 				Columns: []ui.Col{
 					{Field: "title", Flex: 2},
-					{Field: "kind", Label: "Kind", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: "template", Label: "Template", Color: "info"},
-						{Value: "form", Label: "Built-in form", Color: "mute"},
-					}},
 					{Field: "source", Label: "", Mute: true},
 					{Field: "category", Mute: true},
 					{Field: "description", Mute: true, Flex: 4, Line: 2},
@@ -375,7 +369,6 @@ func (a *AdminApp) templatesSection() ui.Section {
 				},
 				RowActions: []ui.RowAction{
 					{Type: "button", Label: "Add", Method: "client", PostTo: "template_install", Variant: "primary", OnlyIf: "_recipe"},
-					{Type: "button", Label: "Add", Method: "client", PostTo: "add_extension", Variant: "primary", OnlyIf: "_form"},
 					{Type: "button", Label: "Export", Method: "client", PostTo: "template_export", Compact: true, OnlyIf: "_recipe"},
 					{Type: "button", Label: "Delete", Variant: "danger", Compact: true, OnlyIf: "_imported",
 						PostTo: "api/templates/delete?id={id}", Confirm: "Delete this template? What was already added from it stays."},

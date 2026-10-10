@@ -1,0 +1,63 @@
+{
+  "id": "openapi",
+  "title": "Import from an OpenAPI spec",
+  "description": "Paste an OpenAPI or Swagger document: its endpoints become one toolbox, an action per endpoint, with arguments taken from each path and query.",
+  "category": "Tools",
+  "setup_notes": "For an authenticated API, add its credential first (Admin > Credentials) and give its name below. The toolbox installs pending: approve it in Admin > Tools. A large API is easier to work with narrowed by a path prefix.",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Toolbox name",
+      "help": "Letters, digits and underscores, e.g. petstore.",
+      "required": true
+    },
+    {
+      "name": "openapi",
+      "label": "OpenAPI / Swagger document (JSON)",
+      "help": "Paste the whole document.",
+      "kind": "long",
+      "required": true,
+      "helper": "form",
+      "with": {
+        "form": "tool/openapi_tool",
+        "answer": "spec",
+        "name": "{{name}}",
+        "base_url": "{{base_url}}",
+        "credential": "{{credential}}",
+        "filter": "{{filter}}",
+        "description": "{{description}}"
+      }
+    },
+    {
+      "name": "base_url",
+      "label": "Base address (optional)",
+      "help": "Taken from the document's server; set it only if that is wrong.",
+      "kind": "url"
+    },
+    {
+      "name": "credential",
+      "label": "Credential",
+      "help": "The name of an API credential, or no_auth for a public API.",
+      "default": "no_auth"
+    },
+    {
+      "name": "filter",
+      "label": "Path prefix (optional)",
+      "help": "Only import endpoints under this path, e.g. /pets."
+    },
+    {
+      "name": "description",
+      "label": "Toolbox description (optional)"
+    }
+  ],
+  "bundle": {
+    "bundle": "oddjob.bundle/v1",
+    "artifacts": [
+      {
+        "type": "tool",
+        "name": "{{name}}",
+        "recipe": "{{openapi.piece}}"
+      }
+    ]
+  }
+}

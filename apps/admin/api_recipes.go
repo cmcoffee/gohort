@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/oddjob/core"
@@ -20,18 +19,14 @@ import (
 // templateRow is one line of the Templates table.
 type templateRow struct {
 	ID          string `json:"id"`
-	Kind        string `json:"kind"` // "template" | "form"
+	Kind        string `json:"kind"` // "template"
 	Title       string `json:"title"`
 	Category    string `json:"category,omitempty"`
 	Description string `json:"description,omitempty"`
 	Contains    string `json:"contains,omitempty"`
 	Source      string `json:"source"`
-	// A built-in form's own name and target, for the form that opens it.
-	Name   string `json:"name,omitempty"`
-	Target string `json:"target,omitempty"`
-	Recipe bool   `json:"_recipe,omitempty"`
-	Form   bool   `json:"_form,omitempty"`
-	Owned  bool   `json:"_imported,omitempty"`
+	Recipe      bool   `json:"_recipe,omitempty"`
+	Owned       bool   `json:"_imported,omitempty"`
 }
 
 func (a *AdminApp) registerRecipeRoutes(sub *http.ServeMux) {
@@ -46,14 +41,11 @@ func (a *AdminApp) registerRecipeRoutes(sub *http.ServeMux) {
 				Description: s.Description, Contains: s.Contains, Source: s.Source,
 				Recipe: true, Owned: s.Source == recipes.Imported})
 		}
-		var forms []templateRow
-		for _, t := range AllTemplates() {
-			forms = append(forms, templateRow{ID: "form:" + t.Target + "/" + t.Name, Kind: "form", Title: t.Label,
-				Category: t.Category, Description: t.Description, Source: recipes.BuiltIn,
-				Name: t.Name, Target: t.Target, Form: true})
-		}
-		sort.SliceStable(forms, func(i, j int) bool { return forms[i].Title < forms[j].Title })
-		writeJSONOut(w, append(rows, forms...))
+		// The built-in forms are not listed: each is a template now (the
+		// image presets as data, REST call and OpenAPI through the form
+		// helper), and a form stays only as the editor Configure opens on
+		// what it made, and what agents build tools from.
+		writeJSONOut(w, rows)
 	})
 
 	// GET ?id=: a template's questions and setup notes, for its Add form.

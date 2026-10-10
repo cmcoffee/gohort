@@ -1,0 +1,71 @@
+{
+  "id": "rest-call",
+  "title": "REST API call",
+  "description": "One tool that makes an HTTP call you describe. Put {placeholders} in the address or body: each becomes an argument the agent fills in.",
+  "category": "Tools",
+  "setup_notes": "For an authenticated API, add its credential first (Admin > Credentials) and give its name below; it is matched against the credential's allowed addresses on every call. The tool installs pending: approve it in Admin > Tools. Configure on the tool edits it afterwards.",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Tool name",
+      "help": "Letters, digits and underscores, e.g. acme_get_order.",
+      "required": true
+    },
+    {
+      "name": "description",
+      "label": "What the tool does",
+      "help": "Shown to the model when it decides whether to call it.",
+      "required": true
+    },
+    {
+      "name": "url",
+      "label": "Address",
+      "help": "e.g. https://api.example.com/v1/orders/{id}; {id} becomes an argument.",
+      "required": true,
+      "helper": "form",
+      "with": {
+        "form": "tool/rest_call",
+        "answer": "url",
+        "name": "{{name}}",
+        "description": "{{description}}",
+        "method": "{{method}}",
+        "body": "{{body}}",
+        "credential": "{{credential}}"
+      }
+    },
+    {
+      "name": "method",
+      "label": "Method",
+      "options": [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ],
+      "default": "GET"
+    },
+    {
+      "name": "body",
+      "label": "Body template (optional)",
+      "help": "JSON with {placeholders}, for POST, PUT and PATCH.",
+      "kind": "long"
+    },
+    {
+      "name": "credential",
+      "label": "Credential",
+      "help": "The name of an API credential, or no_auth for a public API.",
+      "default": "no_auth"
+    }
+  ],
+  "bundle": {
+    "bundle": "oddjob.bundle/v1",
+    "artifacts": [
+      {
+        "type": "tool",
+        "name": "{{name}}",
+        "recipe": "{{url.piece}}"
+      }
+    ]
+  }
+}

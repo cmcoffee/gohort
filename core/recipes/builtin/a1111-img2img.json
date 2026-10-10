@@ -1,0 +1,60 @@
+{
+  "id": "a1111-img2img",
+  "title": "Automatic1111 (edit a photo)",
+  "description": "An Automatic1111 server wired for img2img: it takes a source photo and a prompt and returns a changed version. Add the plain Automatic1111 template as well if you also want text-to-image.",
+  "category": "Images",
+  "setup_notes": "Automatic1111 (stable-diffusion-webui) must be started with --api and be reachable from the oddjob server; the default port is 7860. It installs unapproved: approve it in Admin > Extensions > Connectors. Configure on its row edits the defaults (size, steps, timeouts) afterwards.",
+  "questions": [
+    {
+      "name": "base_url",
+      "label": "Automatic1111 address",
+      "help": "The address oddjob reaches it at, e.g. http://192.168.1.20:7860",
+      "kind": "http_url",
+      "required": true
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Letters, digits and underscores; the tool is named after it.",
+      "default": "a1111_edit"
+    },
+    {
+      "name": "prompt_suffix",
+      "label": "Append to every prompt (optional)",
+      "help": "House style added to every prompt, e.g. crisp, high-contrast, sharp typography."
+    },
+    {
+      "name": "prompt_guidance",
+      "label": "Prompt guidance for the model (optional)",
+      "help": "Added to the image tool's description: this backend's quirks, e.g. put any words you want rendered as text inside double quotes.",
+      "kind": "long"
+    }
+  ],
+  "bundle": {
+    "bundle": "oddjob.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "rest_image",
+          "template": "a1111_img2img",
+          "desc": "Automatic1111 photo editing at {{base_url}}",
+          "spec": {
+            "credential": "no_auth",
+            "default_height": 512,
+            "default_steps": 20,
+            "default_width": 512,
+            "image_b64_path": "images.0",
+            "prompt_guidance": "{{prompt_guidance}}",
+            "prompt_suffix": "{{prompt_suffix}}",
+            "submit_body": "{\"init_images\":{images},\"prompt\":\"{prompt}\",\"negative_prompt\":\"{negative}\",\"denoising_strength\":0.6,\"width\":{width},\"height\":{height},\"steps\":{steps},\"seed\":{seed}}",
+            "submit_method": "POST",
+            "submit_url": "{{base_url}}/sdapi/v1/img2img"
+          }
+        }
+      }
+    ]
+  }
+}
