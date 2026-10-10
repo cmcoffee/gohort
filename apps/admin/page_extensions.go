@@ -188,10 +188,16 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 					ui.Table{
 						Source: "api/connectors",
 						RowKey: "name",
+						// A connector row carries a name, a type, who drafted it,
+						// its state, a summary (an address and an auth mode) and
+						// six controls. Across one line the summary and the
+						// drafter were the first things ellipsized, and the
+						// summary is the part that says what the thing reaches.
+						// The summary and the last error take the second line
+						// at full width.
 						Columns: []ui.Col{
-							{Field: "name", Flex: 1},
+							{Field: "name", Flex: 2},
 							{Field: "kind", Label: "Type", Mute: true},
-							{Field: "summary", Mute: true, Flex: 2},
 							{Field: "owner", Label: "Drafted by", Mute: true},
 							{
 								Field: "approved", Type: "badge",
@@ -200,6 +206,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 									{Value: false, Label: "Pending", Color: "warning"},
 								},
 							},
+							{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
+							{Field: "last_error", Label: "", Mute: true, Flex: 3, Line: 2},
 						},
 						RowActions: []ui.RowAction{
 							{Type: "button", Label: "Approve",
@@ -308,7 +316,7 @@ func (a *AdminApp) templatesSection() ui.Section {
 		Detail: "A template asks what it needs (a site address, your email, an API token), fills the answers in, and adds its pieces through the same importer as a bundle file: credentials disabled until you test them, tools pending approval. " +
 			"A secret you give goes straight into its credential's secret store and never into a tool or a file.\n\n" +
 			"Built-in templates ship with oddjob. Import one someone shared, or Save as template to make one from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
-			"Built-in forms are the older kind, written in code: each authors one connector or tool from its fields.",
+			"Built-in forms are the older kind, written in code: each authors one connector or tool from its fields. They ship with every oddjob, so there is nothing to export; to share what one made, add it, then Save as template picking the connector or tool it created.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Toolbar{Actions: []ui.ToolbarAction{
 				{Label: "Import a template…", Method: "client", URL: "template_import"},
