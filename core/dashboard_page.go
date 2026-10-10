@@ -506,7 +506,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 <span class="r2"><span class="mk">       </span>   <span class="lt" style="--i:0">█   █</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">    █</span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">████ </span></span>
 <span class="r3"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0">█   █</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">█   █</span></span>
 <span class="r4"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0"> ███ </span> <span class="lt" style="--i:1">████ </span> <span class="lt" style="--i:2">████ </span> <span class="lt" style="--i:3"> ███ </span> <span class="lt" style="--i:4"> ███ </span> <span class="lt" style="--i:5">████ </span></span></div>
-  <p class="subtitle">Agent Dashboard</p>
+  <p class="subtitle">Any job. Any time. Agents standing by.</p>
   %NOTICES%
   <div class="grid">%CARDS%</div>
   <div id="live-panel"><h3><a href="/monitor" style="color:inherit;text-decoration:none">Live Sessions &rarr;</a></h3><div id="live-list"></div></div>
