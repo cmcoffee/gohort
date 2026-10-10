@@ -1651,9 +1651,40 @@ func EnsureOddjobLibDir() string {
 		}
 		Debug("[hook/helpers] deployed oddjob package (%dB) at %s (host): mounted RO at %s (sandbox)", len(SandboxHookPythonShim), path, SandboxOddjobLibMountPath)
 	}
+	ensureLegacyAlias(libBase)
 	ensureOddjobShims(libBase)
 	oddjobLibDirPath = libBase
 	return libBase
+}
+
+// SandboxHookLegacyAlias is the gohort package: the helper's name before the
+// rename, kept so every tool and app script written then still imports. It
+// is the oddjob module under a second name, not a copy: sys.modules binds
+// the name to the same object, so `import gohort`, `from gohort import
+// fetch_url` and `from gohort import gohort` all resolve to oddjob's.
+const SandboxHookLegacyAlias = `# gohort: the name the oddjob helper had before the rename.
+# A script written then keeps working; this is the oddjob module itself.
+import sys as _sys
+import oddjob as _oddjob
+_sys.modules[__name__] = _oddjob
+`
+
+// ensureLegacyAlias writes the gohort alias package next to the oddjob one.
+// Best-effort like the rest: a failure is logged and the sandbox still works,
+// only without the old name.
+func ensureLegacyAlias(libBase string) {
+	pkgDir := filepath.Join(libBase, "gohort")
+	if err := os.MkdirAll(pkgDir, 0755); err != nil {
+		Warn("[hook/helpers] cannot create the gohort alias package at %s (%v): scripts that import gohort will fail", pkgDir, err)
+		return
+	}
+	path := filepath.Join(pkgDir, "__init__.py")
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == SandboxHookLegacyAlias {
+		return
+	}
+	if err := os.WriteFile(path, []byte(SandboxHookLegacyAlias), 0644); err != nil {
+		Warn("[hook/helpers] cannot write the gohort alias package at %s (%v): scripts that import gohort will fail", path, err)
+	}
 }
 
 // ensureOddjobShims writes the executable fetch-family shims into
@@ -1996,6 +2027,9 @@ class _Oddjob:
 
 
 oddjob = _Oddjob()
+# The singleton under the name it had before the rename: a script written
+# then says "from gohort import gohort" and gets the same object.
+gohort = oddjob
 
 
 # Module-level function aliases: same operations, function-call style.
