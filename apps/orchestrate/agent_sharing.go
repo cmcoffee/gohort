@@ -229,8 +229,11 @@ func agentChangeGate(ask func(prompt, detail string, yes []string) string, db Da
 // agentLockGate reads as a no. Mirrors ToolSession.AskInChat, which is only
 // wired on a turn with a live viewer.
 func (t *chatTurn) chatAsker() func(prompt, detail string, yes []string) string {
-	if t == nil || t.sse == nil {
+	if t == nil {
 		return nil
+	}
+	if t.sse == nil {
+		return t.askVia // the dispatching turn's card, or nil
 	}
 	return t.askInChat
 }

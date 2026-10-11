@@ -151,3 +151,30 @@ func (b *syncBuf) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// A confirmation scoped to one action of a grouped tool stops that action and
+// no other. tool_def's delete asks; its get runs. Unattended, the delete is
+// denied rather than allowed, as every confirmation is.
+func TestAConfirmationScopedToOneActionStopsOnlyThatAction(t *testing.T) {
+	spec := frameworkToolConfirmations["tool_def"]
+	if !spec.Asks() || spec.Action != "delete" || !spec.NeverRemember {
+		t.Fatalf("tool_def delete should ask, once-or-deny: %+v", spec)
+	}
+	if !confirmationCoversCall(spec, "action: delete\nname: post_news") {
+		t.Fatal("the delete call is covered")
+	}
+	if confirmationCoversCall(spec, "action: get\nname: post_news") {
+		t.Fatal("a get is not the delete's question")
+	}
+	if !confirmationCoversCall(&ToolConfirmation{Prompt: "Run?"}, "anything: x") {
+		t.Fatal("an unscoped confirmation covers every call")
+	}
+	turn := &chatTurn{user: "u"} // nobody watching
+	confirm := turn.confirmFuncFor(&ToolSession{Username: "u"})
+	if confirm("tool_def", "action: delete\nname: post_news") {
+		t.Fatal("an unattended delete was approved")
+	}
+	if !confirm("tool_def", "action: get\nname: post_news") {
+		t.Fatal("a get must not be held by the delete's question")
+	}
+}

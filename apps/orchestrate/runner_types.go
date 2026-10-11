@@ -113,11 +113,18 @@ type chatTurn struct {
 	// prep measures how long the person waited before their message reached a
 	// model. nil on every turn that is not a live send — a fire, a dispatch, a
 	// test — and every method on it tolerates that.
-	prep  *prepClock
-	sse   *sseWriter
-	udb   Database
-	user  string
-	agent AgentRecord
+	prep *prepClock
+	sse  *sseWriter
+	// askVia is the question card of the turn that DISPATCHED this one, for a
+	// sub-turn that has no viewer of its own. A run an agent starts for the
+	// user is the user's run: a locked agent the sub-run wants to change asks
+	// the person watching the calling turn, as a direct run asks them, rather
+	// than refusing because nobody watches the sub-run. Set by the inline
+	// agents(run) path; nil everywhere else.
+	askVia func(prompt, detail string, yes []string) string
+	udb    Database
+	user   string
+	agent  AgentRecord
 	// machineTools is the catalog a machine's steps draw from, built at
 	// most once per turn and only when a step actually names tools (see
 	// chatTurn.machineCatalog). The turn's own session does not exist

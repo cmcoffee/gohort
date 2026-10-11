@@ -259,3 +259,35 @@ func TestRetiringAPipelineLeavesALockedAgentOnTheOldOne(t *testing.T) {
 		t.Errorf("the result should say v1 was kept and for whom:\n%s", out)
 	}
 }
+
+// A run an agent starts for the user is the user's run: the sub-turn has no
+// viewer of its own, so its question card is the calling turn's. Before, a
+// dispatched Builder that wanted to change a locked agent was refused where a
+// direct one asked.
+func TestASubTurnAsksThroughTheCallingTurn(t *testing.T) {
+	parent := &chatTurn{user: "asker", sse: &sseWriter{live: &syncBuf{}}}
+	sub := &chatTurn{user: "asker", askVia: parent.chatAsker()}
+	if sub.chatAsker() == nil {
+		t.Fatal("the sub-turn should ask through the calling turn")
+	}
+	if (&chatTurn{user: "asker"}).chatAsker() != nil {
+		t.Fatal("a turn with no viewer and no caller has no card")
+	}
+	// The gate reads the forwarded card: a locked agent is asked about, and
+	// the parent's answer decides.
+	db := &DBase{Store: kvlite.MemStore()}
+	wren, _ := saveAgent(db, AgentRecord{Name: "Wren", Owner: "asker", OrchestratorPrompt: "p"})
+	lockAgent(t, db, wren)
+	answered := ""
+	sub = &chatTurn{user: "asker", udb: db, askVia: func(prompt, detail string, yes []string) string { answered = prompt; return lockAllowOnce }}
+	tool := bulletinsToolDef(sub)
+	if _, err := tool.Handler(context.Background(), map[string]any{"action": "create", "name": "news"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tool.Handler(context.Background(), map[string]any{"action": "allow_poster", "board": "news", "agent": "Wren"}); err != nil {
+		t.Fatalf("the forwarded card allowed the change once, got: %v", err)
+	}
+	if !strings.Contains(answered, "locked") {
+		t.Fatalf("the calling turn's card should have been asked, got %q", answered)
+	}
+}

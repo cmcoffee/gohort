@@ -78,7 +78,7 @@ func TestSaveTemplateAlwaysAsksFirst(t *testing.T) {
 	if spec := turn.appToolConfirmation(saveTemplateToolName); !spec.Asks() {
 		t.Error("the web confirm hook does not find save_template's question, so the call would run unasked")
 	}
-	if spec := turn.appToolConfirmation("tool_def"); spec.Asks() {
+	if spec := turn.appToolConfirmation("survey"); spec.Asks() {
 		t.Error("a framework tool that declared no question is now asked about")
 	}
 	if !IsReservedToolName(saveTemplateToolName) {

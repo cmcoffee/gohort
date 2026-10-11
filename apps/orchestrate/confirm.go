@@ -223,7 +223,7 @@ func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) boo
 		// A host-app tool that asked to be confirmed is asked about first:
 		// it declared its own sentence, which is more specific than
 		// anything the credential path would generate for the same call.
-		if spec := t.appToolConfirmation(name); spec.Asks() {
+		if spec := t.appToolConfirmation(name); spec.Asks() && confirmationCoversCall(spec, args) {
 			return t.confirmAppToolCall(name, spec, args)
 		}
 		// The TOOL's own declaration, before anything inferred from what it
@@ -338,6 +338,29 @@ func (t *chatTurn) appToolConfirmation(name string) *ToolConfirmation {
 // where it would not be for app tools: every name in this map is reserved,
 // so no custom tool can take it. Written at init, read-only after.
 var frameworkToolConfirmations = map[string]*ToolConfirmation{}
+
+func init() {
+	// tool_def's delete carried NeedsConfirm, which on the web is not a
+	// prompt (see AgentToolDef.NeedsConfirm): a Builder deleted an approved
+	// tool within a second of deciding to, and the person watching was never
+	// asked. This is the question; the group's other actions run unasked.
+	// Fails closed on a run nobody watches, which is right for a delete.
+	frameworkToolConfirmations["tool_def"] = &ToolConfirmation{
+		Prompt:        "Delete this tool? Its actions, credential wiring and approval go with it, and a rebuild rarely gets every detail back.",
+		Action:        "delete",
+		GrantArg:      "name",
+		NeverRemember: true,
+	}
+}
+
+// confirmationCoversCall reports whether a confirmation scoped to one action
+// of a grouped tool applies to this call. Unscoped, it covers every call.
+func confirmationCoversCall(spec *ToolConfirmation, args string) bool {
+	if spec == nil || spec.Action == "" {
+		return true
+	}
+	return strings.EqualFold(argFromPreview(args, "action"), spec.Action)
+}
 
 // confirmAppToolCall is the whole policy for one host-app tool call: a
 // standing grant answers it silently, otherwise the user is asked, and their

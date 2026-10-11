@@ -219,6 +219,12 @@ type ToolConfirmation struct {
 	// once-or-deny. For calls where a standing yes should not be obtainable
 	// by clicking a third button in the middle of something else.
 	NeverRemember bool
+
+	// Action, on a grouped tool, is the one action this question is about;
+	// every other action of the group runs unasked. A group's NeedsConfirm
+	// is the OR of its actions, so without this a question on tool_def
+	// would stop its reads along with its delete.
+	Action string
 }
 
 // asks reports whether this confirmation actually gates anything. A nil

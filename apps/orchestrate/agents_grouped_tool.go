@@ -1109,6 +1109,13 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	} else {
 		subSess.WorkspaceDir, subSess.WorkspaceID, subSess.WorkspaceFallback = t.turnWorkspace()
 	}
+	// A run an agent starts for the user is the user's run, so whatever the
+	// sub-run needs to put in front of a person goes to the person watching
+	// THIS turn: status lines, connect prompts, approval cards, and the
+	// blocking question card a locked agent raises. Without this a dispatched
+	// Builder got a refusal where a direct one got a card. No-op with nobody
+	// watching, when the owner's unattended gates apply instead.
+	t.wireLiveCallbacks(subSess)
 	defer clearAuthoringInProgress(t.udb, subSessID)
 	defer DeleteSessionTempTools(t.udb, subSessID)
 
@@ -1163,7 +1170,8 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		agent:   target,
 		user:    t.user,
 		udb:     t.udb,
-		ctx:     t.ctx, // inherit caller's ctx so NetworkConnector propagates
+		askVia:  t.chatAsker(), // the calling turn's question card, see chatTurn.askVia
+		ctx:     t.ctx,         // inherit caller's ctx so NetworkConnector propagates
 		topic:   t.resolveTopic(),
 		network: t.network,
 		// Carry the caller's chain + the caller's own agent ID forward.
