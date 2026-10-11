@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/cmcoffee/snugforge/apiclient"
@@ -114,7 +115,29 @@ type gemFunctionDecl struct {
 }
 
 type gemThinkingConfig struct {
-	ThinkingBudget *int `json:"thinkingBudget,omitempty"` // Max thinking tokens; nil = model default, -1 = disabled.
+	ThinkingBudget *int   `json:"thinkingBudget,omitempty"` // Max thinking tokens; nil = model default, -1 = disabled.
+	ThinkingLevel  string `json:"thinkingLevel,omitempty"`  // Gemini 3: minimal|low|medium|high. Never sent with ThinkingBudget; the API refuses both.
+}
+
+// geminiThinkingOff is the thinkingConfig for a call that should not think,
+// or nil where the model cannot be told so.
+//
+// Gemini 2.5 Flash turns thinking off with a zero budget. Gemini 3 replaced
+// budgets with levels, and its Flash models think at least a little at every
+// level, so "off" is the lowest one, "minimal". A zero budget still worked on
+// 3.1 Flash-Lite, but 3.5 Flash-Lite refuses it as "Request contains an
+// invalid argument", which failed every no-think call (the admin Test among
+// them) while every thinking call succeeded. Pro models cannot be told not to
+// think at all, so they get nothing and use their default.
+func geminiThinkingOff(model string) *gemThinkingConfig {
+	if !strings.Contains(model, "flash") {
+		return nil
+	}
+	if strings.Contains(model, "gemini-3") {
+		return &gemThinkingConfig{ThinkingLevel: "minimal"}
+	}
+	zero := 0
+	return &gemThinkingConfig{ThinkingBudget: &zero}
 }
 
 type gemGenerationConfig struct {
@@ -455,9 +478,8 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		genCfg.ResponseMimeType = "application/json"
 	}
 	// Enable thinking for models that support it (gemini-2.5-* and gemini-3.*).
-	// Flash supports thinkingBudget:0 to fully disable thinking. Pro models
-	// require a minimum positive budget and reject 0 — for those, omitting
-	// ThinkingConfig lets the model use its default (Pro always thinks anyway).
+	// Turning it off is per family (geminiThinkingOff): a zero budget on 2.5
+	// Flash, the "minimal" level on Gemini 3 Flash, nothing on Pro.
 	// When thinking is on, bump maxOutputTokens so visible output isn't
 	// starved by thinking tokens.
 	if c.disableThinking {
@@ -466,11 +488,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	}
 	if geminiSupportsThinking(cfg.Model) {
 		if cfg.Think != nil && !*cfg.Think {
-			if strings.Contains(cfg.Model, "flash") {
-				zero := 0
-				genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: &zero}
-			}
-			// Pro: leave ThinkingConfig nil — can't disable, model uses default.
+			genCfg.ThinkingConfig = geminiThinkingOff(cfg.Model)
 			Debug("[gemini]: thinking disabled: model=%s", cfg.Model)
 		} else {
 			budget := c.thinkBudgetFor(cfg)
@@ -507,7 +525,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		if json.Unmarshal(respBody, &gemResp) == nil && gemResp.Error != nil {
 			msg = gemResp.Error.Message
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "gemini"}
+		return nil, refused(&APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "gemini"}, cfg.Model)
 	}
 
 	var result gemResponse
@@ -579,10 +597,7 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 	}
 	if geminiSupportsThinking(cfg.Model) {
 		if cfg.Think != nil && !*cfg.Think {
-			if strings.Contains(cfg.Model, "flash") {
-				zero := 0
-				genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: &zero}
-			}
+			genCfg.ThinkingConfig = geminiThinkingOff(cfg.Model)
 		} else {
 			budget := c.thinkBudgetFor(cfg)
 			genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: &budget}
@@ -616,7 +631,7 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 		if json.Unmarshal(respBody, &gemResp) == nil && gemResp.Error != nil {
 			msg = gemResp.Error.Message
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "gemini"}
+		return nil, refused(&APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "gemini"}, cfg.Model)
 	}
 
 	var full strings.Builder
@@ -789,4 +804,45 @@ func geminiStopReason(finish string) string {
 		// so callers can tell a filtered response from a finished one.
 		return strings.ToLower(finish)
 	}
+}
+
+// geminiModelList reads Google's model catalog, keeping the models that
+// answer generateContent: the catalog also lists embedding and image models,
+// which the chat client cannot use. Ids come back as "models/<id>"; the Model
+// field takes the bare id.
+func geminiModelList(ctx context.Context, apiKey string) ([]string, error) {
+	if apiKey == "" {
+		return nil, Error("enter the Gemini API key first")
+	}
+	var ids []string
+	page := ""
+	for i := 0; i < 10; i++ {
+		q := url.Values{"pageSize": {"1000"}}
+		if page != "" {
+			q.Set("pageToken", page)
+		}
+		var result struct {
+			Models []struct {
+				Name    string   `json:"name"`
+				Methods []string `json:"supportedGenerationMethods"`
+			} `json:"models"`
+			Next string `json:"nextPageToken"`
+		}
+		auth := func(req *http.Request) { req.Header.Set("x-goog-api-key", apiKey) }
+		if err := getModelList(ctx, "gemini", geminiEndpoint+"/models?"+q.Encode(), auth, &result); err != nil {
+			return nil, err
+		}
+		for _, m := range result.Models {
+			for _, meth := range m.Methods {
+				if meth == "generateContent" {
+					ids = append(ids, strings.TrimPrefix(m.Name, "models/"))
+					break
+				}
+			}
+		}
+		if page = result.Next; page == "" {
+			break
+		}
+	}
+	return ids, nil
 }

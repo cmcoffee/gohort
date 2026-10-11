@@ -16,6 +16,10 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 	// provider. Each tier falls back to its OWN stored key.
 	sub.HandleFunc("/api/worker-llm/test", a.handleLLMTest(LLMTable))
 	sub.HandleFunc("/api/lead-llm/test", a.handleLLMTest(LeadLLMTable))
+	// The models each tier's provider offers, for the Model field's picker.
+	// Same form values and same key fallback as the test above.
+	sub.HandleFunc("/api/worker-llm/models", a.handleLLMModels(LLMTable))
+	sub.HandleFunc("/api/lead-llm/models", a.handleLLMModels(LeadLLMTable))
 
 	// LLM routing: GET returns all stages + current values, POST updates one.
 	sub.HandleFunc("/api/routing", func(w http.ResponseWriter, r *http.Request) {
@@ -527,4 +531,81 @@ func effortLevel(v string) string {
 		return l
 	}
 	return ""
+}
+
+// handleLLMModels answers the Model field's "List models" button: what the
+// provider in the form offers, asked with the form's current (possibly
+// unsaved) provider, endpoint, region and key. The key falls back to the
+// tier's own stored one, never the other tier's. A refusal is answered as
+// {error} with status 200, because the reason the list cannot be had is what
+// the picker shows in its place.
+func (a *AdminApp) handleLLMModels(table string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Provider   string `json:"provider"`
+			Model      string `json:"model"`
+			APIKey     string `json:"api_key"`
+			Endpoint   string `json:"endpoint"`
+			AWSRegion  string `json:"aws_region"`
+			AWSProfile string `json:"aws_profile"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if req.APIKey == "" && a.db != nil {
+			a.db.Get(table, "api_key", &req.APIKey)
+		}
+		reply := func(v map[string]any) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(v)
+		}
+		if strings.TrimSpace(req.Provider) == "" {
+			reply(map[string]any{"error": "Pick a provider first."})
+			return
+		}
+		ids, err := ListModels(r.Context(), LLMProviderConfig{
+			Provider: req.Provider,
+			APIKey:   req.APIKey,
+			Endpoint: req.Endpoint,
+			Region:   req.AWSRegion,
+			Profile:  req.AWSProfile,
+		})
+		if err != nil {
+			reply(map[string]any{"error": "Could not list the models: " + err.Error()})
+			return
+		}
+		note := fmt.Sprintf("What %s offers. Pick one, or type any id in the field.", modelListSource(req.Provider))
+		if req.Model != "" && !containsString(ids, req.Model) {
+			note += fmt.Sprintf(" The current value, %s, is not in this list.", req.Model)
+		}
+		reply(map[string]any{"suggestions": ids, "note": note})
+	}
+}
+
+// modelListSource names where a model list came from, for the picker's note.
+func modelListSource(provider string) string {
+	if strings.HasPrefix(provider, "peer:") {
+		return "peer " + strings.TrimPrefix(provider, "peer:")
+	}
+	if provider == "bedrock" {
+		return "your AWS account (Claude models only)"
+	}
+	return provider
+}
+
+func containsString(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }

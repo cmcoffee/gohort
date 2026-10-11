@@ -133,9 +133,10 @@ func (a *AdminApp) setupWizardPage() ui.Page {
 		Intro: "Name the model to use. Leave it blank to take the provider's default, which is a reasonable starting point if you are not sure.",
 		Fields: []ui.FormField{
 			{Field: "model", Label: "Model", Type: "text",
-				Placeholder: "e.g. qwen3.6-27b, claude-sonnet-5, us.anthropic.claude-opus-4-8",
-				Help:        "For a local provider, the name the server knows it by (`ollama list`).",
-				Detail:      "On Bedrock, bare names get the `anthropic.` prefix added, giving anthropic.claude-opus-4-8. Many AWS accounts require a region-prefixed inference profile instead, such as us.anthropic.claude-opus-4-8, and deny a bare id. Anything already containing `anthropic.` is sent as typed."},
+				Placeholder:       "e.g. qwen3.6-27b, claude-sonnet-5, us.anthropic.claude-opus-4-8",
+				SuggestionsSource: "api/worker-llm/models", SuggestionsLabel: "List models",
+				Help:   "List models asks the provider what it offers. For a local provider, the name the server knows it by (`ollama list`).",
+				Detail: "On Bedrock, bare names get the `anthropic.` prefix added, giving anthropic.claude-opus-4-8. Many AWS accounts require a region-prefixed inference profile instead, such as us.anthropic.claude-opus-4-8, and deny a bare id. Anything already containing `anthropic.` is sent as typed."},
 		},
 	}
 

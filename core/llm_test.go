@@ -2,9 +2,12 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"github.com/cmcoffee/snugforge/nfo"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -414,3 +417,68 @@ func benchSnoop(b *testing.B, traceOn bool) {
 
 func BenchmarkSnoopRequestTraceOff(b *testing.B) { benchSnoop(b, false) }
 func BenchmarkSnoopRequestTraceOn(b *testing.B)  { benchSnoop(b, true) }
+
+// ListModels is what the admin Model field's picker shows. Ollama keeps its
+// list at the server root whatever path the chat endpoint was given, and a
+// refusal has to come back as the provider's own reason.
+func TestListModelsOllamaAndRefusal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"models":[{"name":"llama3:8b"},{"name":"gemma:2b"},{"name":"llama3:8b"}]}`))
+	}))
+	defer srv.Close()
+	ids, err := ListModels(context.Background(), LLMProviderConfig{Provider: "ollama", Endpoint: srv.URL + "/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ids, ",") != "gemma:2b,llama3:8b" {
+		t.Errorf("ids = %v, want sorted and de-duplicated", ids)
+	}
+
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"message":"not authorized to list"}`))
+	}))
+	defer bad.Close()
+	_, err = ListModels(context.Background(), LLMProviderConfig{Provider: "vllm", Endpoint: bad.URL})
+	if err == nil || !strings.Contains(err.Error(), "not authorized to list") {
+		t.Errorf("err = %v, want the provider's reason", err)
+	}
+	if _, err := ListModels(context.Background(), LLMProviderConfig{}); err == nil {
+		t.Error("no provider should be an error")
+	}
+}
+
+func TestModelListReasonShapes(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"error":{"message":"API key not valid"}}`: "API key not valid",
+		`{"error":"bad key"}`:                       "bad key",
+		`{"message":"denied"}`:                      "denied",
+		`{"Message":"User is not authorized"}`:      "User is not authorized",
+		`plain text failure`:                        "plain text failure",
+	} {
+		if got := modelListReason([]byte(body)); got != want {
+			t.Errorf("modelListReason(%s) = %q, want %q", body, got, want)
+		}
+	}
+}
+
+func TestOpenAIChatModelFilter(t *testing.T) {
+	for id, want := range map[string]bool{
+		"gpt-5":                  true,
+		"o4-mini":                true,
+		"text-embedding-3-large": false,
+		"whisper-1":              false,
+		"tts-1-hd":               false,
+		"dall-e-3":               false,
+		"gpt-image-1":            false,
+		"omni-moderation-latest": false,
+	} {
+		if got := openAIChatModel(id); got != want {
+			t.Errorf("openAIChatModel(%q) = %v, want %v", id, got, want)
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -105,9 +106,9 @@ const anthropicDefaultContextSize = 200_000
 // that went to Bedrock sends a reader to the wrong settings page.
 func (c *anthropicClient) apiError(status int, msg string) *APIError {
 	if c.pathPrefix == bedrockPathPrefix {
-		return &APIError{StatusCode: status, Message: withBedrockHint(c.model, msg), Provider: "bedrock"}
+		return refused(&APIError{StatusCode: status, Message: withBedrockHint(c.model, msg), Provider: "bedrock"}, c.model)
 	}
-	return &APIError{StatusCode: status, Message: msg, Provider: "anthropic"}
+	return refused(&APIError{StatusCode: status, Message: msg, Provider: "anthropic"}, c.model)
 }
 
 func (c *anthropicClient) ContextSize() int {
@@ -1164,4 +1165,41 @@ func noteIfAdaptiveThinking(model string, err error) error {
 		noteAdaptiveThinking(model)
 	}
 	return err
+}
+
+// anthropicModelList reads Anthropic's /v1/models, following its pages.
+func anthropicModelList(ctx context.Context, apiKey string) ([]string, error) {
+	if apiKey == "" {
+		return nil, Error("enter the Anthropic API key first")
+	}
+	var ids []string
+	after := ""
+	for i := 0; i < 10; i++ {
+		q := url.Values{"limit": {"1000"}}
+		if after != "" {
+			q.Set("after_id", after)
+		}
+		var result struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+			HasMore bool   `json:"has_more"`
+			LastID  string `json:"last_id"`
+		}
+		auth := func(req *http.Request) {
+			req.Header.Set("x-api-key", apiKey)
+			req.Header.Set("anthropic-version", anthropicAPIVersion)
+		}
+		if err := getModelList(ctx, "anthropic", anthropicEndpoint+"/models?"+q.Encode(), auth, &result); err != nil {
+			return nil, err
+		}
+		for _, m := range result.Data {
+			ids = append(ids, m.ID)
+		}
+		if !result.HasMore || result.LastID == "" {
+			break
+		}
+		after = result.LastID
+	}
+	return ids, nil
 }

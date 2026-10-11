@@ -462,3 +462,34 @@ func TestAgentLoopEffortReachesTheCall(t *testing.T) {
 		t.Errorf("no effort configured, but %q was sent", got.Effort)
 	}
 }
+
+// A call that should not think tells each Gemini family so in the one form it
+// accepts. 3.5 Flash-Lite refuses a zero budget as an invalid argument, which
+// failed every no-think call to it (the admin Test among them); Gemini 3 Flash
+// takes the "minimal" level instead, and the two are never sent together.
+func TestGeminiThinkingOffPerFamily(t *testing.T) {
+	const ok = `{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1}}`
+	for model, want := range map[string]string{
+		"gemini-3.5-flash-lite": `{"thinkingLevel":"minimal"}`,
+		"gemini-3.1-flash-lite": `{"thinkingLevel":"minimal"}`,
+		"gemini-3.5-flash":      `{"thinkingLevel":"minimal"}`,
+		"gemini-2.5-flash":      `{"thinkingBudget":0}`,
+		"gemini-3.1-pro":        ``,
+	} {
+		srv, sent := captureServer(t, http.StatusOK, func([]byte) (int, string) { return http.StatusOK, ok })
+		c := newGeminiLLM("test-key", model, false, 0, &apiclient.APIClient{URLScheme: "http", VerifySSL: false}).(*geminiClient)
+		c.api.Server = strings.TrimPrefix(srv.URL, "http://")
+		if _, err := c.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, WithThink(false)); err != nil {
+			t.Fatalf("%s: %v", model, err)
+		}
+		var body struct {
+			GenerationConfig struct {
+				ThinkingConfig json.RawMessage `json:"thinkingConfig"`
+			} `json:"generationConfig"`
+		}
+		json.Unmarshal(sent()[0], &body)
+		if got := string(body.GenerationConfig.ThinkingConfig); got != want {
+			t.Errorf("%s: thinkingConfig = %s, want %s", model, got, want)
+		}
+	}
+}

@@ -685,126 +685,80 @@ func NewOpenAILLM(apiKey string, model string) LLM {
 	return newOpenAILLM(apiKey, model, openAIEndpoint, nil)
 }
 
-// OpenAIModels queries the OpenAI API and returns available model IDs.
-func OpenAIModels(apiKey string) ([]string, error) {
-	client := &apiclient.APIClient{
-		Server:         "api.openai.com",
-		VerifySSL:      true,
-		ConnectTimeout: llmConnectTimeout(),
-		RequestTimeout: 15 * time.Second, // small, fast models listing
-		AuthFunc: func(req *http.Request) {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		},
+// openAIModelList reads an OpenAI-compatible /v1/models: OpenAI itself,
+// llama.cpp, vLLM and a peer. The endpoint is the one chat goes to, with or
+// without its /v1. chatOnly narrows OpenAI's catalog, which lists its
+// embedding, speech, image and moderation models beside the chat ones; a
+// local server lists only what it was started with, so nothing is dropped.
+func openAIModelList(ctx context.Context, provider, endpoint, apiKey string, chatOnly bool) ([]string, error) {
+	u, err := url.Parse(strings.TrimSuffix(strings.TrimSpace(endpoint), "/"))
+	if err != nil || u.Host == "" {
+		return nil, Error("the endpoint " + endpoint + " is not a URL")
 	}
-	req, err := client.NewRequest("GET", "/v1/models")
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.SendRawRequest("", req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	resp.Body = iotimeout.NewReadCloser(resp.Body, client.RequestTimeout)
-	var result struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, m := range result.Data {
-		names = append(names, m.ID)
-	}
-	return names, nil
-}
-
-// LlamaCppModels queries the llama.cpp HTTP server at the given base URL
-// (e.g. "http://localhost:8080" or "http://localhost:8080/v1") and returns
-// the model IDs it advertises via its OpenAI-compatible /v1/models endpoint.
-func LlamaCppModels(baseURL string) ([]string, error) {
-	u, err := url.Parse(strings.TrimSuffix(baseURL, "/"))
-	if err != nil {
-		return nil, err
-	}
-	// llama.cpp's models endpoint is /v1/models. Honor an existing /v1 path
-	// if the user already included it; otherwise add it.
 	path := strings.TrimSuffix(u.Path, "/")
+	path = strings.TrimSuffix(path, "/chat/completions")
 	if !strings.HasSuffix(path, "/v1") {
 		path += "/v1"
 	}
-	path += "/models"
-	client := &apiclient.APIClient{
-		Server:         u.Host,
-		URLScheme:      u.Scheme,
-		ConnectTimeout: llmConnectTimeout(),
-		RequestTimeout: 15 * time.Second,
-		AuthFunc:       func(req *http.Request) {},
-	}
-	req, err := client.NewRequest("GET", path)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.SendRawRequest("", req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	resp.Body = iotimeout.NewReadCloser(resp.Body, client.RequestTimeout)
+	u.Path = path + "/models"
+	u.RawQuery = ""
 	var result struct {
 		Data []struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	auth := func(req *http.Request) {
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+	}
+	if err := getModelList(ctx, provider, u.String(), auth, &result); err != nil {
 		return nil, err
 	}
-	var names []string
+	var ids []string
 	for _, m := range result.Data {
-		names = append(names, m.ID)
+		if chatOnly && !openAIChatModel(m.ID) {
+			continue
+		}
+		ids = append(ids, m.ID)
 	}
-	return names, nil
+	return ids, nil
 }
 
-// OllamaModels queries the ollama instance at the given base URL
-// (e.g. "http://localhost:11434") and returns the names of installed models.
-func OllamaModels(baseURL string) ([]string, error) {
-	u, err := url.Parse(strings.TrimSuffix(baseURL, "/"))
-	if err != nil {
-		return nil, err
+// openAIChatModel reports whether an OpenAI catalog id is a model the chat
+// client can use, by leaving out the families that are not.
+func openAIChatModel(id string) bool {
+	id = strings.ToLower(id)
+	for _, not := range []string{"embedding", "whisper", "tts", "dall-e", "moderation", "image", "transcribe", "realtime", "audio", "davinci", "babbage", "sora"} {
+		if strings.Contains(id, not) {
+			return false
+		}
 	}
-	client := &apiclient.APIClient{
-		Server:         u.Host,
-		URLScheme:      u.Scheme,
-		ConnectTimeout: llmConnectTimeout(),
-		RequestTimeout: 15 * time.Second,
-		AuthFunc:       func(req *http.Request) {},
+	return true
+}
+
+// ollamaModelList reads Ollama's installed models from /api/tags, which sits
+// at the server root whatever path the chat endpoint was given.
+func ollamaModelList(ctx context.Context, endpoint string) ([]string, error) {
+	u, err := url.Parse(strings.TrimSuffix(strings.TrimSpace(endpoint), "/"))
+	if err != nil || u.Host == "" {
+		return nil, Error("the endpoint " + endpoint + " is not a URL")
 	}
-	req, err := client.NewRequest("GET", "/api/tags")
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.SendRawRequest("", req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	resp.Body = iotimeout.NewReadCloser(resp.Body, client.RequestTimeout)
+	u.Path = "/api/tags"
+	u.RawQuery = ""
 	var result struct {
 		Models []struct {
 			Name string `json:"name"`
 		} `json:"models"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := getModelList(ctx, "ollama", u.String(), nil, &result); err != nil {
 		return nil, err
 	}
-	var names []string
+	var ids []string
 	for _, m := range result.Models {
-		names = append(names, m.Name)
+		ids = append(ids, m.Name)
 	}
-	return names, nil
+	return ids, nil
 }
 
 // NewOllamaLLM creates an LLM client for a local Ollama instance.
@@ -1703,7 +1657,7 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 		if !cfg.MaskDebug {
 			Debug("[ollama] outgoing payload (truncated to 4KB):\n%s", truncateForDebug(string(body), 4096))
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: string(respBody), Provider: "ollama"}
+		return nil, refused(&APIError{StatusCode: resp.StatusCode, Message: string(respBody), Provider: "ollama"}, c.model)
 	}
 
 	var result nativeOllamaChatResponse
@@ -1804,7 +1758,7 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: string(errBody), Provider: "ollama"}
+		return nil, refused(&APIError{StatusCode: resp.StatusCode, Message: string(errBody), Provider: "ollama"}, c.model)
 	}
 
 	var content, reasoning strings.Builder
@@ -2012,7 +1966,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			msg = apiErr.Error.Message
 		}
-		return nil, noteIfReasoningEffortRefused(payload, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: c.provider()})
+		return nil, noteIfReasoningEffortRefused(payload, refused(&APIError{StatusCode: resp.StatusCode, Message: msg, Provider: c.provider()}, c.model))
 	}
 
 	var result oaiResponse
@@ -2240,7 +2194,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			msg = apiErr.Error.Message
 		}
-		return nil, noteIfReasoningEffortRefused(payload, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: c.provider()})
+		return nil, noteIfReasoningEffortRefused(payload, refused(&APIError{StatusCode: resp.StatusCode, Message: msg, Provider: c.provider()}, c.model))
 	}
 
 	var full strings.Builder

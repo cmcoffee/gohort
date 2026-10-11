@@ -330,8 +330,8 @@ func (c *bedrockRuntimeClient) Chat(ctx context.Context, messages []Message, opt
 		}
 		// AWS words this for somebody holding the API reference. Where the
 		// refusal has a setting behind it, say which one - see bedrockHint.
-		return nil, noteIfAdaptiveThinking(c.model, &APIError{
-			StatusCode: resp.StatusCode, Message: withBedrockHint(c.model, msg), Provider: "bedrock-runtime"})
+		return nil, noteIfAdaptiveThinking(c.model, refused(&APIError{
+			StatusCode: resp.StatusCode, Message: withBedrockHint(c.model, msg), Provider: "bedrock-runtime"}, c.model))
 	}
 
 	var result anthResponse
@@ -397,8 +397,8 @@ func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Messag
 		}
 		// AWS words this for somebody holding the API reference. Where the
 		// refusal has a setting behind it, say which one - see bedrockHint.
-		return nil, noteIfAdaptiveThinking(c.model, &APIError{
-			StatusCode: resp.StatusCode, Message: withBedrockHint(c.model, msg), Provider: "bedrock-runtime"})
+		return nil, noteIfAdaptiveThinking(c.model, refused(&APIError{
+			StatusCode: resp.StatusCode, Message: withBedrockHint(c.model, msg), Provider: "bedrock-runtime"}, c.model))
 	}
 
 	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler}
@@ -486,3 +486,90 @@ func applyBedrockMetrics(st *anthStreamState, event []byte) {
 
 // bedrockMetricsKey is the JSON key Bedrock appends to the last streamed chunk.
 const bedrockMetricsKey = "amazon-bedrock-invocationMetrics"
+
+// bedrockModelList reads the account's Claude models from the Bedrock control
+// plane (bedrock.{region}.amazonaws.com, the same for either API setting):
+// the inference profiles, which most accounts must call newer models through,
+// then the foundation models that can be called by bare id. Only Anthropic's
+// are kept, because both Bedrock clients here speak Claude's format. The
+// listing needs bedrock:ListInferenceProfiles and bedrock:ListFoundationModels,
+// which a role that may only invoke will not have; either one is enough to
+// offer something, and the error comes back only when both are refused.
+func bedrockModelList(ctx context.Context, cfg LLMProviderConfig) ([]string, error) {
+	region := bedrockRegion(cfg.Region)
+	host := fmt.Sprintf("https://bedrock.%s.amazonaws.com", region)
+	var creds *bedrockCreds
+	if cfg.APIKey == "" {
+		creds = &bedrockCreds{profile: bedrockProfile(cfg.Profile), explicit: cfg.Profile != ""}
+		if _, err := creds.get(); err != nil {
+			return nil, err
+		}
+	}
+	auth := func(req *http.Request) {
+		if cfg.APIKey != "" {
+			req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+			return
+		}
+		c, err := creds.get()
+		if err != nil {
+			return
+		}
+		// Content-Type is among the headers SigV4 signs here; a GET has
+		// none, so it is set rather than signed as blank.
+		req.Header.Set("Content-Type", "application/json")
+		signAWSV4(req, nil, c, region, bedrockRuntimeService, time.Now().UTC())
+	}
+	claude := func(id string) bool { return strings.Contains(id, "anthropic.") }
+
+	var ids []string
+	var profileErr error
+	next := ""
+	for i := 0; i < 10; i++ {
+		q := url.Values{"maxResults": {"1000"}, "typeEquals": {"SYSTEM_DEFINED"}}
+		if next != "" {
+			q.Set("nextToken", next)
+		}
+		var result struct {
+			Profiles []struct {
+				ID     string `json:"inferenceProfileId"`
+				Status string `json:"status"`
+			} `json:"inferenceProfileSummaries"`
+			Next string `json:"nextToken"`
+		}
+		if profileErr = getModelList(ctx, "bedrock", host+"/inference-profiles?"+q.Encode(), auth, &result); profileErr != nil {
+			break
+		}
+		for _, p := range result.Profiles {
+			if claude(p.ID) && (p.Status == "" || p.Status == "ACTIVE") {
+				ids = append(ids, p.ID)
+			}
+		}
+		if next = result.Next; next == "" {
+			break
+		}
+	}
+
+	var result struct {
+		Models []struct {
+			ID        string   `json:"modelId"`
+			Inference []string `json:"inferenceTypesSupported"`
+		} `json:"modelSummaries"`
+	}
+	q := url.Values{"byOutputModality": {"TEXT"}}
+	modelErr := getModelList(ctx, "bedrock", host+"/foundation-models?"+q.Encode(), auth, &result)
+	for _, m := range result.Models {
+		if !claude(m.ID) {
+			continue
+		}
+		for _, t := range m.Inference {
+			if t == "ON_DEMAND" {
+				ids = append(ids, m.ID)
+				break
+			}
+		}
+	}
+	if profileErr != nil && modelErr != nil {
+		return nil, profileErr
+	}
+	return ids, nil
+}

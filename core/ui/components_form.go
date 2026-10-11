@@ -488,6 +488,18 @@ type FormField struct {
 	// "calendars"). A select would be wrong there: it forbids the new value
 	// that the field exists to allow.
 	Suggestions []string `json:"suggestions,omitempty"`
+	// SuggestionsSource is where a text field gets choices that depend on
+	// the rest of the form: the field grows a button that POSTs the form's
+	// CURRENT values (unsaved ones included, the way TestURL does) and opens
+	// a filterable list to pick from. The answer is {suggestions: [...],
+	// note?, error?} or a bare array, each entry a string or {value, label?,
+	// help?}. An error is shown in the list in place of choices, since the
+	// reason a list cannot be had (a refused key, a host not answering) is
+	// itself worth reading. Picking fills the field; typing stays allowed.
+	// The choices also feed the field's typing suggestions once fetched.
+	SuggestionsSource string `json:"suggestions_source,omitempty"`
+	// SuggestionsLabel is the button's text; "Choose…" when empty.
+	SuggestionsLabel string `json:"suggestions_label,omitempty"`
 	// Links renders extra buttons in the same row as a textarea's ✎ Edit
 	// button, styled as its siblings. For a value that has another place it
 	// can be edited: the button that edits it here, and the one that goes

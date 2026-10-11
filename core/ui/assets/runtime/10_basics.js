@@ -1647,6 +1647,110 @@
     // stepper.
     var suggestOnOpen = [];
 
+    // attachSuggestionsSource gives a text field a button that asks
+    // f.suggestions_source for choices built from the form's current values
+    // (see FormField.SuggestionsSource) and opens them in a filterable list.
+    // The button spins while it waits, and a second click stops the wait.
+    function attachSuggestionsSource(f, input, dl, host) {
+      var row = el('div', {class: 'ui-form-presets'});
+      var btn = el('button', {class: 'ui-form-preset-chip', type: 'button'}, [f.suggestions_label || 'Choose…']);
+      row.appendChild(btn);
+      host.appendChild(row);
+      var inflight = null;
+      function normalize(raw) {
+        var list = Array.isArray(raw) ? raw : ((raw && (raw.suggestions || raw.items || raw.options)) || []);
+        return list.map(function(x) {
+          if (x == null) return null;
+          if (typeof x !== 'object') return {value: String(x), label: String(x)};
+          var v = String(x.value != null ? x.value : (x.id != null ? x.id : ''));
+          return {value: v, label: String(x.label || x.name || v), help: x.help || ''};
+        }).filter(function(x) { return x && x.value !== ''; });
+      }
+      function pick(v, modal) {
+        input.value = v;
+        save(f.field, v);
+        modal.close();
+      }
+      function show(items, note, errText) {
+        window.uiOpenModal({
+          title: f.label || 'Choose',
+          subtitle: note || '',
+          width: '34rem',
+          mount: function(body, modal) {
+            if (errText) {
+              body.appendChild(el('div', {class: 'ui-suggest-empty', style: 'color:var(--danger, #e06c75);white-space:pre-line'}, [errText]));
+              return;
+            }
+            if (!items.length) {
+              body.appendChild(el('div', {class: 'ui-suggest-empty'}, ['Nothing to choose from.']));
+              return;
+            }
+            var filter = el('input', {type: 'text', class: 'ui-form-input', placeholder: 'Filter ' + items.length + '…'});
+            var list = el('div', {class: 'ui-suggest-list'});
+            var count = el('div', {class: 'ui-suggest-empty'});
+            body.appendChild(filter);
+            body.appendChild(count);
+            body.appendChild(list);
+            var visible = [];
+            function paint() {
+              var q = filter.value.trim().toLowerCase();
+              list.innerHTML = '';
+              visible = items.filter(function(it) {
+                return !q || it.value.toLowerCase().indexOf(q) >= 0 || it.label.toLowerCase().indexOf(q) >= 0;
+              });
+              visible.forEach(function(it) {
+                var b = el('button', {type: 'button', class: 'ui-suggest-item', style: 'text-align:left;cursor:pointer;font:inherit'});
+                var bodyEl = el('div', {class: 'ui-suggest-item-body'}, [el('div', {class: 'ui-suggest-item-q'}, [it.label])]);
+                if (it.help) bodyEl.appendChild(el('div', {class: 'ui-suggest-item-hook'}, [it.help]));
+                if (it.value === input.value) b.style.borderColor = 'var(--accent)';
+                b.appendChild(bodyEl);
+                b.addEventListener('click', function() { pick(it.value, modal); });
+                list.appendChild(b);
+              });
+              count.textContent = q ? (visible.length + ' of ' + items.length) : (items.length + ' to choose from');
+            }
+            filter.addEventListener('input', paint);
+            filter.addEventListener('keydown', function(ev) {
+              if (ev.key === 'Enter' && visible.length) { ev.preventDefault(); pick(visible[0].value, modal); }
+            });
+            paint();
+          },
+        });
+      }
+      btn.addEventListener('click', function() {
+        if (inflight) { inflight.ctl && inflight.ctl.abort(); return; }
+        var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        inflight = {ctl: ctl, busy: busyButton(btn, true)};
+        // The field's own value is what is being chosen, so it rides along
+        // only as it is; everything else is the form as it stands now.
+        var body = {};
+        Object.keys(current).forEach(function(k) { body[k] = current[k]; });
+        body[f.field] = input.value;
+        fetch(f.suggestions_source, {
+          method: 'POST', cache: 'no-store',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+          signal: ctl ? ctl.signal : undefined,
+        }).then(function(r) {
+          if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+          return r.json();
+        }).then(function(raw) {
+          var items = normalize(raw);
+          if (dl) {
+            dl.innerHTML = '';
+            items.forEach(function(it) { var o = el('option'); o.value = it.value; dl.appendChild(o); });
+          }
+          show(items, raw && !Array.isArray(raw) ? raw.note : '', raw && !Array.isArray(raw) ? raw.error : '');
+        }).catch(function(err) {
+          if (err && err.name === 'AbortError') return;
+          show([], '', String((err && err.message) || err));
+        }).then(function() {
+          if (inflight) inflight.busy.stop();
+          inflight = null;
+        });
+      });
+    }
+
     function save(field, value) {
       if (submitMode) {
         // In submit-button mode field changes just update local
@@ -2983,10 +3087,11 @@
         // an existing name OR coin a new one (claiming a category, tagging).
         // Native datalist — no popup to manage, no keyboard handling to
         // reimplement, and it degrades to a plain text box everywhere.
-        if (Array.isArray(f.suggestions) && f.suggestions.length) {
-          var dl = el('datalist');
+        var dl = null;
+        if ((Array.isArray(f.suggestions) && f.suggestions.length) || f.suggestions_source) {
+          dl = el('datalist');
           dl.id = 'ui-sugg-' + Math.random().toString(36).slice(2, 10);
-          f.suggestions.forEach(function(s) {
+          (f.suggestions || []).forEach(function(s) {
             if (s == null || s === '') return;
             var o = el('option');
             o.value = String(s);
@@ -2995,6 +3100,7 @@
           input.setAttribute('list', dl.id);
           fieldWrap.appendChild(dl);
         }
+        if (f.suggestions_source) attachSuggestionsSource(f, input, dl, fieldWrap);
         // A reload_on_change field is COMMIT-ON-BLUR, never debounced:
         // it renames the thing the page is addressing, and a mid-typing
         // save would rename it to whatever half-word was on screen 600ms

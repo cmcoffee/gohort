@@ -29,6 +29,21 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("%s api error (%d): %s", e.Provider, e.StatusCode, e.Message)
 }
 
+// refused logs a provider refusing a request and returns the error unchanged.
+//
+// The provider's own message (the parameter it rejected, the quota it hit)
+// otherwise reached only whoever got the error back: a Test button's result,
+// a turn that failed. When gemini-3.5-flash-lite refused the Lead's test,
+// the log said nothing at all, and the reason had to be asked for.
+func refused(e *APIError, model string) *APIError {
+	msg := strings.TrimSpace(e.Message)
+	if r := []rune(msg); len(r) > 600 {
+		msg = string(r[:600]) + "..."
+	}
+	Log("[%s] %s refused the request (HTTP %d): %s", e.Provider, chooseStr(model, "the model"), e.StatusCode, msg)
+	return e
+}
+
 // LLM defines a generic interface for interacting with large language models.
 type LLM interface {
 	// Chat sends messages and returns a complete response.
@@ -1985,6 +2000,125 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 	}
 
 	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName}, nil
+}
+
+// ListModels asks a provider which models it offers, from the same settings a
+// client is built from, so the admin form can offer them instead of asking
+// for an id typed from memory. The answer is ids exactly as the Model field
+// takes them, sorted, and an error carries the provider's own reason: a key
+// it refused, a permission the account lacks, an endpoint that is not there.
+//
+// A provider that serves models other than the chat ones (OpenAI lists its
+// speech and image models beside them; Bedrock lists every vendor's) is
+// narrowed to what a client of that provider here can actually talk to.
+func ListModels(ctx context.Context, cfg LLMProviderConfig) ([]string, error) {
+	resolved, err := ResolveModelProvider(cfg, cfg.Provider)
+	if err != nil {
+		return nil, err
+	}
+	cfg = resolved
+	var ids []string
+	switch cfg.Provider {
+	case "anthropic":
+		ids, err = anthropicModelList(ctx, cfg.APIKey)
+	case "bedrock":
+		ids, err = bedrockModelList(ctx, cfg)
+	case "gemini":
+		ids, err = geminiModelList(ctx, cfg.APIKey)
+	case "openai":
+		ids, err = openAIModelList(ctx, "openai", openAIEndpoint, cfg.APIKey, true)
+	case "ollama":
+		ids, err = ollamaModelList(ctx, chooseStr(cfg.Endpoint, ollamaEndpoint))
+	case "llama.cpp", "vllm":
+		ep := cfg.Endpoint
+		if ep == "" {
+			ep = "http://localhost:8080/v1"
+			if cfg.Provider == "vllm" {
+				ep = "http://localhost:8000/v1"
+			}
+		}
+		ids, err = openAIModelList(ctx, cfg.Provider, ep, cfg.APIKey, false)
+	case "":
+		return nil, Error("pick a provider first")
+	default:
+		return nil, Error("listing models is not supported for provider " + cfg.Provider)
+	}
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	out := ids[:0]
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// getModelList GETs a provider's model listing into out. A refusal comes back
+// as the provider's own message, which is the whole of what an operator needs
+// to see under the field ("API key not valid", "not authorized to perform
+// bedrock:ListFoundationModels").
+func getModelList(ctx context.Context, provider, rawURL string, auth func(*http.Request), out any) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	if auth != nil {
+		auth(req)
+	}
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return fmt.Errorf("could not reach %s: %w", req.URL.Host, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode/100 != 2 {
+		return refused(&APIError{Provider: provider, StatusCode: resp.StatusCode, Message: modelListReason(body)}, "model listing")
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("%s answered something other than a model list: %w", req.URL.Host, err)
+	}
+	return nil
+}
+
+// modelListReason pulls the message out of a provider's error body, which
+// every provider here nests differently ({error:{message}}, {message},
+// {Message}), falling back to the body itself.
+func modelListReason(body []byte) string {
+	var e struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+		Upper   string          `json:"Message"`
+	}
+	if json.Unmarshal(body, &e) == nil {
+		var inner struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(e.Error, &inner) == nil && inner.Message != "" {
+			return inner.Message
+		}
+		var s string
+		if json.Unmarshal(e.Error, &s) == nil && s != "" {
+			return s
+		}
+		if e.Message != "" {
+			return e.Message
+		}
+		if e.Upper != "" {
+			return e.Upper
+		}
+	}
+	return strings.TrimSpace(string(body))
 }
 
 // --- a scripted LLM, for tests -------------------------------------------------
