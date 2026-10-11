@@ -4382,6 +4382,7 @@
                 fetch(act.url, {method: act.method || 'POST'})
                   .then(function(r) {
                     if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+                    if (act.redirect_url) { window.uiGoTo(act.redirect_url); return; }
                     reload();
                     btn.disabled = false;
                   })
@@ -5662,6 +5663,7 @@
         }
         if (method.toUpperCase() === 'GET') { window.location.href = window.uiSafeURL(url); return; }
         fetch(url, {method: method, headers: {'Content-Type': 'application/json'}, body: '{}'})
+          .then(function(r) { if (r.ok && a.redirect_url) window.uiGoTo(a.redirect_url); })
           .catch(function(err){ console.error('toolbar action failed: ' + err.message); });
       }}, [a.label || '?']);
       bar.appendChild(btn);

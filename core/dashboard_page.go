@@ -590,5 +590,8 @@ setInterval(refreshLive, 10000);
 	html = strings.Replace(html, "%CARDS%", cards.String(), 1)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Drawn from live state on every request, as a ui.Page is. With no header
+	// a browser may serve its earlier copy when the back arrow returns here.
+	w.Header().Set("Cache-Control", "no-store")
 	fmt.Fprint(w, html)
 }

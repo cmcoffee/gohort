@@ -23,14 +23,14 @@ import (
 )
 
 // AppHeadTags go in every page's <head>: the manifest, the home-screen icon,
-// and the flags that open the saved page as an app. theme-color is added by
+// the flags that open the saved page as an app, and the stale-restore reload. theme-color is added by
 // callers that know the page's theme.
 const AppHeadTags = `<link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="gohort">
-`
+` + StaleRestoreScript
 
 // AppIconPaths are the public paths the icons are served at, for the router.
 var AppIconPaths = []string{"/manifest.webmanifest", "/apple-touch-icon.png", "/_ui/icon-192.png", "/_ui/icon-512.png", "/_ui/icon-maskable-512.png"}

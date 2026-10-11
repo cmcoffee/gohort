@@ -196,7 +196,9 @@
         if (method === 'open')          { window.open(window.uiSafeURL(url), '_blank', 'noopener'); }
         else if (method === 'redirect') { window.location.href = window.uiSafeURL(url); }
         else {
-          fetchJSON(url, {method: 'POST'}).catch(function(err){
+          fetchJSON(url, {method: 'POST'}).then(function() {
+            if (action.redirect_url) window.uiGoTo(action.redirect_url);
+          }).catch(function(err){
             showToast('Failed: ' + err.message);
           });
         }

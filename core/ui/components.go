@@ -188,4 +188,10 @@ type ToolbarAction struct {
 	// Composed with the ordinary composer, never instead of it: the buttons are
 	// the way in, and the box is still there for everything after.
 	Prompt string `json:"prompt,omitempty"`
+	// RedirectURL is where the page goes after the action succeeds, for one
+	// whose success leaves the current page with nothing to show: a Delete on
+	// the record's own page left it reading "not found" until the person
+	// found their own way out. Relative URLs resolve against the page. Not
+	// used by GET (which navigates to URL), client or prompt actions.
+	RedirectURL string `json:"redirect_url,omitempty"`
 }

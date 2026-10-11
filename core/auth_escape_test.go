@@ -17,13 +17,15 @@ func TestAuthPagesDoNotReflectMarkup(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
 		w := httptest.NewRecorder()
 		ResetHandler(db)(w, httptest.NewRequest(method, "/reset?token="+strings.ReplaceAll(evil, " ", "%20"), nil))
-		if strings.Contains(w.Body.String(), "<script>") {
+		// The payload itself, not any <script>: every page's head carries the
+		// framework's own (webui.StaleRestoreScript).
+		if strings.Contains(w.Body.String(), "<script>alert(1)") {
 			t.Errorf("%s /reset reflected the token: %s", method, w.Body.String())
 		}
 	}
 	w := httptest.NewRecorder()
 	serveResetPage(w, evil, "")
-	if strings.Contains(w.Body.String(), "<script>") || strings.Contains(w.Body.String(), `"><`) {
+	if strings.Contains(w.Body.String(), "<script>alert(1)") || strings.Contains(w.Body.String(), `"><`) {
 		t.Errorf("the reset form wrote the token raw: %s", w.Body.String())
 	}
 

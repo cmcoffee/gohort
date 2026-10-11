@@ -603,6 +603,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// cascades sub-agents and cleans channels / monitors / standing agents /
 	// dispatch-allowlist references.
 	if id != "" && !isSeedID(id) {
+		deleteRedirect := ".."
+		if editRec.OwnedBy != "" {
+			deleteRedirect = "..?agent=" + url.QueryEscape(editRec.OwnedBy)
+		}
 		sections = append(sections, ui.Section{
 			Title:    "Delete agent",
 			Subtitle: "Permanently remove this agent. This cannot be undone.",
@@ -617,6 +621,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 						URL:     "../api/agents/" + id,
 						Confirm: "Delete this agent permanently? Its sessions, memory, knowledge, and any sub-agents it owns are removed, and its channels / monitors / standing agents are cleaned up. This can't be undone.",
 						Variant: "danger",
+						// Its page has nothing left to show. A sub-agent goes
+						// back to its parent, anything else to the agent list.
+						RedirectURL: deleteRedirect,
 					},
 				},
 			},

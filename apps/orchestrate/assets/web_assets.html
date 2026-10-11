@@ -2039,15 +2039,19 @@ select.ui-orch-intake-input {
     function mountSubAgentPicker() {
       var sel = document.querySelector('.ui-agent-extras select');
       if (!sel) { setTimeout(mountSubAgentPicker, 200); return; }
-      var subMap = window.ORCH_SUB_AGENTS || {};
+      // Read live, never kept: refreshAgentDropdown replaces the map when an
+      // agent is created or deleted, and a copy taken at mount kept listing a
+      // sub-agent Builder had just deleted until the page was reloaded.
+      function subMap() { return window.ORCH_SUB_AGENTS || {}; }
 
       // Track the "parent" the secondary picker is scoped to. When the
       // active value IS a sub-agent (user picked one earlier and the
       // page reloaded), find its parent so the secondary picker still
       // renders correctly.
       function findParentOf(id) {
-        for (var pid in subMap) {
-          var kids = subMap[pid] || [];
+        var subs = subMap();
+        for (var pid in subs) {
+          var kids = subs[pid] || [];
           for (var i = 0; i < kids.length; i++) {
             if (kids[i].id === id) return pid;
           }
@@ -2136,7 +2140,7 @@ select.ui-orch-intake-input {
       // specialists; the row reappears the moment the selected parent
       // does have sub-agents.
       function populate(parentID, activeID) {
-        var kids = (parentID && subMap[parentID]) || [];
+        var kids = (parentID && subMap()[parentID]) || [];
         if (!kids.length) {
           label.style.display = 'none';
           subSel.innerHTML = '';
@@ -2168,7 +2172,7 @@ select.ui-orch-intake-input {
         var selOpt = sel.options[sel.selectedIndex];
         var parentID = selOpt && selOpt.getAttribute('data-orch-original-value');
         if (!parentID) {
-          parentID = subMap[cur] ? cur : findParentOf(cur);
+          parentID = subMap()[cur] ? cur : findParentOf(cur);
         }
         populate(parentID, cur);
       }
@@ -2186,6 +2190,10 @@ select.ui-orch-intake-input {
         }
         syncFromMain();
       });
+      // The agent list was rebuilt without the selection changing, so no
+      // change event fired: the specialists of the agent on screen may still
+      // have changed.
+      window.addEventListener('orch-sub-agents-refreshed', syncFromMain);
 
       // Picking a sub-agent → rewrite the CURRENTLY SELECTED option's
       // value to the sub-agent's ID while leaving its label alone. The
@@ -9062,6 +9070,7 @@ select.ui-orch-intake-input {
             sel.dispatchEvent(new Event('change'));
           } else {
             refreshAgentCounts();
+            window.dispatchEvent(new Event('orch-sub-agents-refreshed'));
           }
         }).catch(function(){});
       }
