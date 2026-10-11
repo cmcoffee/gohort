@@ -177,7 +177,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			break
 		}
 		ogImage, pageMentions := inspectPage(r.Link, query)
-		textMatch := candidateTextMatch(query, pageMentions, r.Title, []string{r.ImageURL, ogImage}, identityRequired)
+		textMatch := candidateTextMatch(query, pageMentions, r.Title, []string{r.ImageURL, ogImage})
 		// Prefer the page's real image; fall back to the (accessible) result
 		// image URL when the source blocks the direct fetch.
 		var data []byte
@@ -355,15 +355,15 @@ func findOutcome(usable, scored, bestScore int) findResolution {
 // blocks the fetch. A meaningless one (IMG_1234.jpg, a CDN hash) just doesn't
 // match.
 //
-// Not for a named subject: there the text match is the provenance a vision
-// score cannot replace, and anyone can name a file anything. So for those
-// the page or the title has to say it.
-func candidateTextMatch(query string, pageMentions bool, title string, imageURLs []string, identityRequired bool) bool {
+// It counts for a named person too, because a picture of someone is often
+// filed under their name, and it carries the same weight a page naming them
+// does: every capitalized name in the query must appear (pageMentionsSubject),
+// so jane-doe-portrait.jpg names Jane Doe and jane.jpg does not, and the
+// vision screen still has to agree the picture shows what was asked for. A
+// mislabelled file or a namesake can pass, as a page about a namesake can.
+func candidateTextMatch(query string, pageMentions bool, title string, imageURLs []string) bool {
 	if pageMentions || pageMentionsSubject(strings.ToLower(title), query) {
 		return true
-	}
-	if identityRequired {
-		return false
 	}
 	for _, u := range imageURLs {
 		if words := imageFileWords(u); words != "" && pageMentionsSubject(words, query) {

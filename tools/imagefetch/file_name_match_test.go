@@ -3,8 +3,8 @@ package imagefetch
 import "testing"
 
 // An image's file name counts as text about it, and a name that says nothing
-// changes nothing. For a named subject it is not proof on its own: the page
-// or the title has to say it.
+// changes nothing. For a named person it counts when it carries their whole
+// name, as a page naming them would.
 func TestTheImageFileNameHelpsFindTheRightImage(t *testing.T) {
 	cases := map[string]string{
 		"https://upload.wikimedia.org/x/Golden_Gate_Bridge_at_sunset.jpg": "golden gate bridge at sunset",
@@ -20,19 +20,22 @@ func TestTheImageFileNameHelpsFindTheRightImage(t *testing.T) {
 	}
 
 	bridge := []string{"https://upload.wikimedia.org/x/Golden_Gate_Bridge_at_sunset.jpg"}
-	if !candidateTextMatch("golden gate bridge sunset", false, "", bridge, false) {
+	if !candidateTextMatch("golden gate bridge sunset", false, "", bridge) {
 		t.Error("a file name naming the subject did not count")
 	}
-	if candidateTextMatch("golden gate bridge sunset", false, "", []string{"https://cdn.example.com/IMG_1234.jpg"}, false) {
+	if candidateTextMatch("golden gate bridge sunset", false, "", []string{"https://cdn.example.com/IMG_1234.jpg"}) {
 		t.Error("a meaningless file name counted as a match")
 	}
-	if !candidateTextMatch("golden gate bridge sunset", true, "", nil, false) {
+	if !candidateTextMatch("golden gate bridge sunset", true, "", nil) {
 		t.Error("the page's own mention stopped counting")
 	}
-	if candidateTextMatch("Taylor Swift on stage", false, "", []string{"https://x.example/taylor-swift-on-stage.jpg"}, true) {
-		t.Error("a file name alone was taken as proof of a named person")
+	if !candidateTextMatch("Jane Doe on stage", false, "", []string{"https://x.example/jane-doe-on-stage.jpg"}) {
+		t.Error("a file name carrying the person's whole name did not count")
 	}
-	if !candidateTextMatch("Taylor Swift on stage", false, "Taylor Swift on stage in Denver", nil, true) {
+	if candidateTextMatch("Jane Doe on stage", false, "", []string{"https://x.example/jane-on-stage.jpg"}) {
+		t.Error("a file name with only part of the person's name counted")
+	}
+	if !candidateTextMatch("Jane Doe on stage", false, "Jane Doe on stage in Denver", nil) {
 		t.Error("a title naming the person stopped counting")
 	}
 }
