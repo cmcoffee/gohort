@@ -1306,10 +1306,15 @@
     var popBtn = document.createElement('button');
     popBtn.type = 'button'; popBtn.className = 'ui-row-btn'; popBtn.textContent = '↗';
     popBtn.title = 'Open in a new tab';
+    // Print: the browser's dialog, which is also how an artifact becomes a PDF
+    // (Save as PDF). It prints the artifact's own document, not this page.
+    var printBtn = document.createElement('button');
+    printBtn.type = 'button'; printBtn.className = 'ui-row-btn'; printBtn.textContent = '⎙';
+    printBtn.title = 'Print, or save as PDF';
     var closeBtn = document.createElement('button');
     closeBtn.type = 'button'; closeBtn.className = 'ui-row-btn'; closeBtn.textContent = '✕';
     closeBtn.title = 'Close';
-    hdr.appendChild(ttl); hdr.appendChild(popBtn); hdr.appendChild(closeBtn);
+    hdr.appendChild(ttl); hdr.appendChild(printBtn); hdr.appendChild(popBtn); hdr.appendChild(closeBtn);
     pane.appendChild(hdr);
     // Left-edge drag handle — resize by dragging toward/away from the chat.
     var grip = document.createElement('div');
@@ -1370,11 +1375,16 @@
       'window.parent.postMessage({gohort_fetch:url,gohort_fetch_id:id},"*");' +
       'setTimeout(function(){if(pend[id]){delete pend[id];rej(new Error("gohort.fetch timeout"));}},20000);});}};' +
       '})();<' + '/script>';
-    // Both shims go in as early as the document allows — a page that reads
+    // PRINT_SHIM lets the pane's Print button print the authored document.
+    // The page cannot call print() on a sandboxed frame from outside, so it
+    // asks: one message, honoured only when it comes from the parent.
+    var PRINT_SHIM = '<script>addEventListener("message",function(e){' +
+      'if(e.source===window.parent&&e.data&&e.data.__uiArtifactPrint)window.print();});<' + '/script>';
+    // The shims go in as early as the document allows — a page that reads
     // storage or calls gohort.fetch in its first inline script must find them
     // already installed.
     function withShims(html, dataUrls) {
-      var shim = STORAGE_SHIM + ((dataUrls && dataUrls.length) ? BRIDGE_SHIM : '');
+      var shim = STORAGE_SHIM + PRINT_SHIM + ((dataUrls && dataUrls.length) ? BRIDGE_SHIM : '');
       var m = html.match(/<head[^>]*>/i);
       if (m) return html.replace(m[0], m[0] + shim);
       return shim + html;
@@ -1397,15 +1407,18 @@
       } else if (o.html != null) {
         // Authored-document mode: sandboxed srcdoc. allow-scripts WITHOUT
         // allow-same-origin — opaque origin, no cookies/storage/parent
-        // DOM. Do not widen this. Sandbox must be in place before the
-        // content attribute so the new document loads under it.
+        // DOM. Do not widen that. allow-modals is the one addition: a
+        // sandboxed frame cannot print without it (Print, and so Save as
+        // PDF), and what else it allows is the page's own alert and confirm,
+        // which reach nothing outside the frame. Sandbox must be in place
+        // before the content attribute so the new document loads under it.
         var dataUrls = Array.isArray(o.data_urls) ? o.data_urls.filter(sameOriginPath) : [];
         var dataKey = dataUrls.join('|');
         if (o.html !== state.html || dataKey !== state.dataKey) {
           state.html = o.html; state.url = '';
           state.dataUrls = dataUrls; state.dataKey = dataKey;
           frame.removeAttribute('src');
-          frame.setAttribute('sandbox', 'allow-scripts');
+          frame.setAttribute('sandbox', 'allow-scripts allow-modals');
           frame.setAttribute('srcdoc', withShims(o.html, dataUrls));
         }
       }
@@ -1449,6 +1462,14 @@
         if (state.url) { window.open(safeURL(state.url), '_blank'); return; }
         var blob = new Blob([state.html || ''], {type: 'text/html'});
         window.open(URL.createObjectURL(blob), '_blank');
+      } catch (_) {}
+    });
+    printBtn.addEventListener('click', function() {
+      try {
+        // Our own served page is same-origin and unsandboxed: print it
+        // directly. An authored document is asked to print itself.
+        if (state.url) { frame.contentWindow.print(); return; }
+        frame.contentWindow.postMessage({__uiArtifactPrint: 1}, '*');
       } catch (_) {}
     });
     closeBtn.addEventListener('click', close);
