@@ -54,7 +54,8 @@ func init() {
 	// ---- lifecycle actions ----
 
 	gt.AddAction("create", &GroupedToolAction{
-		Description: "Create a new workspace and switch the session's active path to it. All subsequent file-writing tools (fetch_url save_to, generate_image, workspace write, etc.) put their output here for the rest of this turn. Returns the workspace id. Optional: pin=true creates it pinned (survives session end + idle timeout); name is a human-friendly label.",
+		FrameworkOutput: true,
+		Description:     "Create a new workspace and switch the session's active path to it. All subsequent file-writing tools (fetch_url save_to, generate_image, workspace write, etc.) put their output here for the rest of this turn. Returns the workspace id. Optional: pin=true creates it pinned (survives session end + idle timeout); name is a human-friendly label.",
 		Params: map[string]ToolParam{
 			"name": {Type: "string", Description: "Human-friendly label for the workspace (snake_case recommended). Optional but useful for `list` and admin views."},
 			"pin":  {Type: "boolean", Description: "If true, creates the workspace as pinned: won't be auto-cleaned. Default false (ephemeral)."},
@@ -64,7 +65,8 @@ func init() {
 	})
 
 	gt.AddAction("use", &GroupedToolAction{
-		Description: "Switch the session's active workspace to an existing one. Subsequent file actions read/write here for the rest of this turn. Touches the workspace's last-used time so the cleanup reconciler doesn't reap it.",
+		FrameworkOutput: true,
+		Description:     "Switch the session's active workspace to an existing one. Subsequent file actions read/write here for the rest of this turn. Touches the workspace's last-used time so the cleanup reconciler doesn't reap it.",
 		Params: map[string]ToolParam{
 			"id": {Type: "string", Description: "Workspace ID (from list or create)."},
 		},
@@ -81,7 +83,8 @@ func init() {
 	})
 
 	gt.AddAction("pin", &GroupedToolAction{
-		Description: "Mark a workspace as pinned: survives session end and is not auto-cleaned by the idle reconciler. Use when you want to keep work product around for a future session.",
+		FrameworkOutput: true,
+		Description:     "Mark a workspace as pinned: survives session end and is not auto-cleaned by the idle reconciler. Use when you want to keep work product around for a future session.",
 		Params: map[string]ToolParam{
 			"id": {Type: "string", Description: "Workspace ID."},
 		},
@@ -91,7 +94,8 @@ func init() {
 	})
 
 	gt.AddAction("unpin", &GroupedToolAction{
-		Description: "Revert a workspace to ephemeral. The cleanup reconciler will reap it after 24h idle.",
+		FrameworkOutput: true,
+		Description:     "Revert a workspace to ephemeral. The cleanup reconciler will reap it after 24h idle.",
 		Params: map[string]ToolParam{
 			"id": {Type: "string", Description: "Workspace ID."},
 		},
@@ -101,7 +105,8 @@ func init() {
 	})
 
 	gt.AddAction("delete", &GroupedToolAction{
-		Description: "Permanently delete a workspace and all its files. Irreversible. Use when you're done with a task and don't want to wait for the cleanup reconciler. To remove a single file inside the active workspace use rm instead.",
+		FrameworkOutput: true,
+		Description:     "Permanently delete a workspace and all its files. Irreversible. Use when you're done with a task and don't want to wait for the cleanup reconciler. To remove a single file inside the active workspace use rm instead.",
 		Params: map[string]ToolParam{
 			"id": {Type: "string", Description: "Workspace ID."},
 		},
@@ -203,7 +208,8 @@ func init() {
 	})
 
 	gt.AddAction("stat", &GroupedToolAction{
-		Description: "Inspect a workspace file: size, mtime, line count, and a kind hint (json-like / log-lines / csv-like / html / xml-like / text / binary / empty). Call FIRST when you encounter an unfamiliar file (e.g. a spilled tool result): the kind hint tells you which query action to reach for next (json-like → grep for the field you want; log-lines → tail; csv-like → head for the header).",
+		FrameworkOutput: true,
+		Description:     "Inspect a workspace file: size, mtime, line count, and a kind hint (json-like / log-lines / csv-like / html / xml-like / text / binary / empty). Call FIRST when you encounter an unfamiliar file (e.g. a spilled tool result): the kind hint tells you which query action to reach for next (json-like → grep for the field you want; log-lines → tail; csv-like → head for the header).",
 		Params: map[string]ToolParam{
 			"path": {Type: "string", Description: "Workspace-relative path to inspect."},
 		},
@@ -215,7 +221,8 @@ func init() {
 	})
 
 	gt.AddAction("write", &GroupedToolAction{
-		Description: "Write content to a file in the active workspace (creates or overwrites). Auto-mints a workspace on first call if none is active. Use to drop scripts you want to test via run, or to save work product you'll attach later.",
+		FrameworkOutput: true,
+		Description:     "Write content to a file in the active workspace (creates or overwrites). Auto-mints a workspace on first call if none is active. Use to drop scripts you want to test via run, or to save work product you'll attach later.",
 		Params: map[string]ToolParam{
 			"path":    {Type: "string", Description: "Workspace-relative path."},
 			"content": {Type: "string", Description: "Bytes to write."},
@@ -229,7 +236,8 @@ func init() {
 	})
 
 	gt.AddAction("edit", &GroupedToolAction{
-		Description: "Change part of a file in the active workspace in place: find is the EXACT text to replace (copied from the file, whitespace included) and must appear exactly once; replace is what goes there. Use it instead of rewriting a whole file to change a few lines: re-typing a long file is how working code gets silently changed around the fix. all=true replaces every occurrence instead.",
+		FrameworkOutput: true,
+		Description:     "Change part of a file in the active workspace in place: find is the EXACT text to replace (copied from the file, whitespace included) and must appear exactly once; replace is what goes there. Use it instead of rewriting a whole file to change a few lines: re-typing a long file is how working code gets silently changed around the fix. all=true replaces every occurrence instead.",
 		Params: map[string]ToolParam{
 			"path":    {Type: "string", Description: "Workspace-relative path of the file."},
 			"find":    {Type: "string", Description: "The exact text to replace."},
@@ -243,7 +251,8 @@ func init() {
 	})
 
 	gt.AddAction("rm", &GroupedToolAction{
-		Description: "Delete a single file inside the active workspace. Rejects paths outside the workspace. For removing a whole workspace use delete instead.",
+		FrameworkOutput: true,
+		Description:     "Delete a single file inside the active workspace. Rejects paths outside the workspace. For removing a whole workspace use delete instead.",
 		Params: map[string]ToolParam{
 			"path": {Type: "string", Description: "Workspace-relative path to delete."},
 		},

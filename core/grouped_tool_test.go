@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -415,5 +416,35 @@ func TestGroupedTool_KeyOfSiblingActionNamed(t *testing.T) {
 	}
 	if strings.Contains(msg, "hook_capabilities") {
 		t.Errorf("must not guess a look-alike for a sibling's param; got: %s", msg)
+	}
+}
+
+// A confirmation the framework prints is marked so the fence leaves it alone;
+// an action that returns what it read is not, and neither is an error.
+func TestGroupedToolFrameworkOutputIsMarked(t *testing.T) {
+	gt := NewGroupedTool("files_like", "test")
+	gt.AddAction("write", &GroupedToolAction{
+		FrameworkOutput: true,
+		Handler:         func(map[string]any, *ToolSession) (string, error) { return "wrote 3 bytes to a.txt", nil },
+	})
+	gt.AddAction("cat", &GroupedToolAction{
+		Handler: func(map[string]any, *ToolSession) (string, error) { return "whatever the file said", nil },
+	})
+	gt.AddAction("fail", &GroupedToolAction{
+		FrameworkOutput: true,
+		Handler:         func(map[string]any, *ToolSession) (string, error) { return "", errors.New("no such file") },
+	})
+	sess := &ToolSession{}
+	out, _ := gt.RunWithSession(map[string]any{"action": "write"}, sess)
+	if body, marked := TakeFrameworkResultMark(out); !marked || body != "wrote 3 bytes to a.txt" {
+		t.Errorf("write: marked=%v body=%q, want marked confirmation", marked, body)
+	}
+	out, _ = gt.RunWithSession(map[string]any{"action": "cat"}, sess)
+	if _, marked := TakeFrameworkResultMark(out); marked {
+		t.Error("cat returns what it read and must stay fenced")
+	}
+	out, err := gt.RunWithSession(map[string]any{"action": "fail"}, sess)
+	if _, marked := TakeFrameworkResultMark(out); marked || err == nil {
+		t.Errorf("an error came back marked=%v err=%v", marked, err)
 	}
 }

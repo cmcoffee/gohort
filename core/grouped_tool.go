@@ -52,7 +52,15 @@ type GroupedToolAction struct {
 	// needs fencing. See OwnModelReachTool for what this does and does
 	// not claim.
 	OwnModelReach bool
-	Handler       func(args map[string]any, sess *ToolSession) (string, error)
+	// FrameworkOutput marks an action whose result is the framework's own
+	// report of what it did ("wrote 812 bytes to x.py"), never content read
+	// from a file or the network. The result is marked so it is not fenced
+	// as untrusted: a tool whose OTHER actions reach the network otherwise
+	// gets every confirmation it prints wrapped as fetched web content,
+	// which costs tokens per call and teaches the model to skim the fence.
+	// Never set it on an action that returns anything it read.
+	FrameworkOutput bool
+	Handler         func(args map[string]any, sess *ToolSession) (string, error)
 }
 
 // typoHint scans supplied args for keys that are NOT known params of this
@@ -625,7 +633,11 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 		}
 		return "", fmt.Errorf("action %q %s (call %q with action=\"help\" for the full param list; re-send the COMPLETE call: every required param in one go)", action, strings.Join(parts, " - "), g.name)
 	}
-	return def.Handler(args, sess)
+	out, err = def.Handler(args, sess)
+	if def.FrameworkOutput && err == nil {
+		out = MarkFrameworkResult(out)
+	}
+	return out, err
 }
 
 // --- internals ---

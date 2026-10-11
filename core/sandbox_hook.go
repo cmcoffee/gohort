@@ -368,7 +368,9 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		if h.Sess != nil && !h.WorkspaceNetExempt && !h.Sess.WorkspaceNetworkAllowed() {
 			Log("[hook/%s] DENIED: this agent's workspace may not open connections", req.Method)
 			writeHookError(conn, fmt.Sprintf("hook %q refused: this agent's workspace may not open connections. "+
-				"It can still read and write files and run commands; only reaching the network from in here is off.", req.Method))
+				"It can still read and write files and run commands; only reaching the network from in here is off. "+
+				"To test code that fetches, run it the way it will run for real: an app's script through app_def run, "+
+				"a tool through its own test. Those carry the network access the app or tool declares.", req.Method))
 			return
 		}
 	}

@@ -20,6 +20,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -267,6 +269,54 @@ type AppSetting struct {
 	Options []string `json:"options,omitempty"`
 	Min     int      `json:"min,omitempty"`
 	Max     int      `json:"max,omitempty"`
+}
+
+// UnmarshalJSON reads min and max quoted or not. A model writing app.json
+// quotes them more often than not, since default beside them is a string, and
+// a strict int made that a whole-file decode error at the first run instead of
+// a number. Anything that is not a whole number is still refused, by name.
+func (s *AppSetting) UnmarshalJSON(b []byte) error {
+	type plain AppSetting
+	var raw struct {
+		plain
+		Min json.RawMessage `json:"min,omitempty"`
+		Max json.RawMessage `json:"max,omitempty"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*s = AppSetting(raw.plain)
+	var err error
+	if s.Min, err = settingBound("min", raw.Min); err != nil {
+		return err
+	}
+	s.Max, err = settingBound("max", raw.Max)
+	return err
+}
+
+// settingBound reads one of a setting's bounds: a number, a quoted number, or
+// absent (zero).
+func settingBound(field string, v json.RawMessage) (int, error) {
+	txt := strings.TrimSpace(string(v))
+	if txt == "" || txt == "null" {
+		return 0, nil
+	}
+	if strings.HasPrefix(txt, `"`) {
+		var q string
+		if err := json.Unmarshal(v, &q); err != nil {
+			return 0, err
+		}
+		if txt = strings.TrimSpace(q); txt == "" {
+			return 0, nil
+		}
+	}
+	if n, err := strconv.Atoi(txt); err == nil {
+		return n, nil
+	}
+	if f, err := strconv.ParseFloat(txt, 64); err == nil && f == float64(int(f)) {
+		return int(f), nil
+	}
+	return 0, fmt.Errorf("setting %s must be a whole number, got %s", field, string(v))
 }
 
 // PerUser reports whether a set value of this setting is one person's own

@@ -185,8 +185,53 @@ func (j Job) Run() (string, error) {
 		}
 		return AppRunPipeline(sess.Context(), spec, caller, pipeline, input)
 	}
-	return temptool.DispatchTempToolDirect(sess, tt, args)
+	out, err := temptool.DispatchTempToolDirect(sess, tt, args)
+	names := scriptPathNames(ws, scriptName, slug, kind, name, ext)
+	out = names.Replace(out)
+	if err != nil {
+		if msg := names.Replace(err.Error()); msg != err.Error() {
+			err = renamedError{msg: msg, err: err}
+		}
+	}
+	return out, err
 }
+
+// scriptPathNames maps where a script and its libraries are staged to run to
+// the names its author knows them by, for the output and errors that come back.
+//
+// The staged copy sits at the owner's workspace root under a generated name
+// (data_<app>_<name>.py), which is not in the author's own workspace and is
+// named nowhere they wrote: a traceback pointing there sent an author to cd
+// into a directory it could not reach, then search the disk for the file. The
+// folder layout is fixed (data/, actions/, lib/), so the names are known.
+func scriptPathNames(ws, scriptName, slug, kind, name, ext string) *strings.Replacer {
+	dir := kind
+	switch kind {
+	case "data":
+		dir = "data"
+	case "action":
+		dir = "actions"
+	}
+	shown := dir + "/" + name + "." + ext
+	libDir := filepath.Join(".applib", SanitizeName(slug)) + "/"
+	// Longest first: the full staged path before its bare file name.
+	return strings.NewReplacer(
+		filepath.Join(ws, scriptName), shown,
+		filepath.Join(ws, libDir)+"/", "lib/",
+		libDir, "lib/",
+		scriptName, shown,
+	)
+}
+
+// renamedError is an error whose text names the author's paths, still
+// unwrapping to what the run returned.
+type renamedError struct {
+	msg string
+	err error
+}
+
+func (e renamedError) Error() string { return e.msg }
+func (e renamedError) Unwrap() error { return e.err }
 
 // ownerFetchViaCaps returns a fetch_via:<name> capability for every credential
 // the owner may use (their own + globals they're permitted). Empty owner → none.
