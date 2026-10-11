@@ -475,6 +475,9 @@ func TestGeminiThinkingOffPerFamily(t *testing.T) {
 		"gemini-3.5-flash":      `{"thinkingLevel":"minimal"}`,
 		"gemini-2.5-flash":      `{"thinkingBudget":0}`,
 		"gemini-3.1-pro":        ``,
+		// An alias names no version and answers as the current model.
+		"gemini-flash-lite-latest": `{"thinkingLevel":"minimal"}`,
+		"gemini-pro-latest":        ``,
 	} {
 		srv, sent := captureServer(t, http.StatusOK, func([]byte) (int, string) { return http.StatusOK, ok })
 		c := newGeminiLLM("test-key", model, false, 0, &apiclient.APIClient{URLScheme: "http", VerifySSL: false}).(*geminiClient)
@@ -491,5 +494,35 @@ func TestGeminiThinkingOffPerFamily(t *testing.T) {
 		if got := string(body.GenerationConfig.ThinkingConfig); got != want {
 			t.Errorf("%s: thinkingConfig = %s, want %s", model, got, want)
 		}
+	}
+}
+
+// Gemini 3 rules (thinking levels, a thought signature on every call in
+// history) follow the model's generation, and an alias names none: it gets
+// them as the current generation it answers as. Older families and Gemma,
+// served through the same API, do not.
+func TestGeminiThirdGen(t *testing.T) {
+	for model, want := range map[string]bool{
+		"gemini-3.5-flash-lite":    true,
+		"gemini-3.1-pro":           true,
+		"gemini-flash-lite-latest": true,
+		"gemini-flash-latest":      true,
+		"gemini-pro-latest":        true,
+		"gemini-2.5-flash":         false,
+		"gemini-2.0-flash":         false,
+		"gemini-1.5-pro":           false,
+		"gemma-3-27b-it":           false,
+	} {
+		if got := geminiThirdGen(model); got != want {
+			t.Errorf("geminiThirdGen(%q) = %v, want %v", model, got, want)
+		}
+	}
+	alias := &geminiClient{model: "gemini-flash-lite-latest"}
+	if got := alias.callSignature(0, ToolCall{}); got != geminiSkipSignature {
+		t.Errorf("an alias's unsigned call should carry the skip signature, got %q", got)
+	}
+	old := &geminiClient{model: "gemini-2.5-flash"}
+	if got := old.callSignature(0, ToolCall{}); got != "" {
+		t.Errorf("Gemini 2.5 should get no signature, got %q", got)
 	}
 }

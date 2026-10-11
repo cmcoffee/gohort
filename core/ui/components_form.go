@@ -373,6 +373,12 @@ type FormField struct {
 	// renames the record to half a word and pulls the page out from
 	// under the person still typing the rest.
 	ReloadOnChange bool `json:"reload_on_change,omitempty"`
+	// SaveOnBlur makes a text field save when it is left (or on Enter)
+	// rather than on the typing debounce. For a field whose every save is
+	// expensive or acts at once, such as one that rebuilds a live
+	// connection: a pause mid-word saved the half-typed value and acted on
+	// it, once per pause, before the real value was in.
+	SaveOnBlur bool `json:"save_on_blur,omitempty"`
 
 	// A note that applies to "select" and "checklist" alike: Options
 	// usually come from a LIVE set, and things leave those sets. A

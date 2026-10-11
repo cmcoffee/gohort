@@ -116,3 +116,19 @@ func TestLLMModelFieldsHaveAList(t *testing.T) {
 		}
 	}
 }
+
+// The connection fields rebuild the live model on every save, so they save
+// when left, not on each pause in typing (which tried half-typed model ids).
+func TestLLMConnectionFieldsSaveOnBlur(t *testing.T) {
+	want := map[string]bool{"model": true, "api_key": true, "endpoint": true, "aws_region": true, "aws_profile": true}
+	for _, sec := range (&AdminApp{}).llmSections() {
+		if sec.Title != "Worker LLM" && sec.Title != "Lead LLM" {
+			continue
+		}
+		for _, f := range sec.Body.(ui.FormPanel).Fields {
+			if want[f.Field] && !f.SaveOnBlur {
+				t.Errorf("%s: %s saves while typing", sec.Title, f.Field)
+			}
+		}
+	}
+}

@@ -3105,8 +3105,18 @@
         // it renames the thing the page is addressing, and a mid-typing
         // save would rename it to whatever half-word was on screen 600ms
         // ago and then reload the page underneath the person typing.
-        if (!f.reload_on_change) {
+        // save_on_blur is the same commit for a field whose every save acts
+        // at once, so a pause mid-word must not act on half a value. Enter
+        // commits it too, since there is no other button to press.
+        if (!f.reload_on_change && !f.save_on_blur) {
           input.addEventListener('input', function(){ debounced(f.field, input.value); });
+        }
+        if (f.save_on_blur) {
+          input.addEventListener('keydown', function(ev){
+            if (ev.key !== 'Enter') return;
+            ev.preventDefault();
+            if (current[f.field] !== input.value) save(f.field, input.value);
+          });
         }
         input.addEventListener('blur', function(){
           clearTimeout(debounceTimers[f.field]);

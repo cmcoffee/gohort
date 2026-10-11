@@ -133,7 +133,7 @@ func geminiThinkingOff(model string) *gemThinkingConfig {
 	if !strings.Contains(model, "flash") {
 		return nil
 	}
-	if strings.Contains(model, "gemini-3") {
+	if geminiThirdGen(model) {
 		return &gemThinkingConfig{ThinkingLevel: "minimal"}
 	}
 	zero := 0
@@ -409,17 +409,30 @@ func (c *geminiClient) callSignature(i int, tc ToolCall) string {
 	if tc.Signature != "" {
 		return tc.Signature
 	}
-	if i == 0 && strings.Contains(c.model, "gemini-3") {
+	if i == 0 && geminiThirdGen(c.model) {
 		return geminiSkipSignature
 	}
 	return ""
 }
 
 // geminiSupportsThinking reports whether the model accepts a ThinkingConfig.
-// Covers gemini-2.5-* and gemini-3.* families; older models ignore the field
+// Covers gemini-2.5-* and Gemini 3 onward; older models ignore the field
 // but some return an error, so we gate it explicitly.
 func geminiSupportsThinking(model string) bool {
-	return strings.Contains(model, "2.5") || strings.Contains(model, "gemini-3")
+	return strings.Contains(model, "2.5") || geminiThirdGen(model)
+}
+
+// geminiThirdGen reports whether a model is Gemini 3 or later, whose rules
+// differ: thinking is set by level, and every function call in history must
+// carry a thought signature. Asked by ruling OUT the older families rather
+// than matching the version, because the aliases name no version at all:
+// gemini-flash-lite-latest answers as gemini-3.5-flash-lite, and matched by
+// version it got none of these rules, so Google refused its tool calls for a
+// missing thought signature. A model that is not Gemini (Gemma, served
+// through the same API) gets none of them either.
+func geminiThirdGen(model string) bool {
+	m := strings.ToLower(model)
+	return strings.Contains(m, "gemini") && !strings.Contains(m, "gemini-1") && !strings.Contains(m, "gemini-2")
 }
 
 func (c *geminiClient) doRequest(ctx context.Context, urlPath string, body []byte) (*http.Response, error) {

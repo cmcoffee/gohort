@@ -256,7 +256,7 @@ func TestReloadOnChangeFieldsCommitOnBlur(t *testing.T) {
 	}
 
 	src := readRuntimeFile(t, "10_basics.js")
-	if !strings.Contains(src, "if (!f.reload_on_change) {\n          input.addEventListener('input', function(){ debounced(f.field, input.value); });") {
+	if !strings.Contains(src, "if (!f.reload_on_change && !f.save_on_blur) {\n          input.addEventListener('input', function(){ debounced(f.field, input.value); });") {
 		t.Error("a reload_on_change text field must skip the typing debounce and commit on blur")
 	}
 	if !strings.Contains(src, "if (fdef && fdef.reload_on_change) window.location.reload()") {
