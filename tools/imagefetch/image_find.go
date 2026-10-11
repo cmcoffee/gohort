@@ -5,7 +5,9 @@ import (
 	_ "image/gif"
 	_ "image/png"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -165,12 +167,17 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	var fallbackData []byte
 	var fallbackMeta SerperImageResult
 	fallbackTextMatch := false
+	// Candidates whose file name names the subject go first: only the first
+	// few are fetched and screened, and a search for a person often has the
+	// right picture lower down with a file name that says who it is. Ordering
+	// is not proof; the checks below still decide.
+	results = fileNameMatchesFirst(results, query)
 	for _, r := range results {
 		if usable >= maxFindCandidates {
 			break
 		}
 		ogImage, pageMentions := inspectPage(r.Link, query)
-		textMatch := pageMentions || pageMentionsSubject(strings.ToLower(r.Title), query)
+		textMatch := candidateTextMatch(query, pageMentions, r.Title, []string{r.ImageURL, ogImage}, identityRequired)
 		// Prefer the page's real image; fall back to the (accessible) result
 		// image URL when the source blocks the direct fetch.
 		var data []byte
@@ -210,7 +217,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		if score == scoreScreenBlind {
 			blind++
 		}
-		Log("[imagefetch/find_image] query=%q candidate %d (title %q) text=%v vision=%d/100", query, usable, r.Title, textMatch, score)
+		Log("[imagefetch/find_image] query=%q candidate %d (title %q, file %q) text=%v vision=%d/100", query, usable, r.Title, imageFileWords(r.ImageURL), textMatch, score)
 		if textMatch && score >= imageMatchThreshold {
 			return saveAndReturn(data, r) // confident match — stop here
 		}
@@ -338,4 +345,68 @@ func findOutcome(usable, scored, bestScore int) findResolution {
 		_ = bestScore
 		return findAllRejected
 	}
+}
+
+// candidateTextMatch is whether a candidate's text says it shows the subject:
+// the page it sits on, the search result's title, or the image's own file
+// name. The file name is often the most specific text there is
+// (Golden_Gate_Bridge_at_sunset.jpg) and costs no request, which matters
+// most where the other two are thin: image hosts, galleries, a page that
+// blocks the fetch. A meaningless one (IMG_1234.jpg, a CDN hash) just doesn't
+// match.
+//
+// Not for a named subject: there the text match is the provenance a vision
+// score cannot replace, and anyone can name a file anything. So for those
+// the page or the title has to say it.
+func candidateTextMatch(query string, pageMentions bool, title string, imageURLs []string, identityRequired bool) bool {
+	if pageMentions || pageMentionsSubject(strings.ToLower(title), query) {
+		return true
+	}
+	if identityRequired {
+		return false
+	}
+	for _, u := range imageURLs {
+		if words := imageFileWords(u); words != "" && pageMentionsSubject(words, query) {
+			return true
+		}
+	}
+	return false
+}
+
+// imageFileWords is an image URL's file name as lower-case words: the last
+// path segment, unescaped, extension dropped, separators as spaces.
+func imageFileWords(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Path == "" {
+		return ""
+	}
+	name := path.Base(u.Path)
+	if un, err := url.PathUnescape(name); err == nil {
+		name = un
+	}
+	if i := strings.LastIndex(name, "."); i > 0 {
+		name = name[:i]
+	}
+	name = strings.Map(func(r rune) rune {
+		switch r {
+		case '-', '_', '.', '+', ',', '~':
+			return ' '
+		}
+		return r
+	}, name)
+	return strings.ToLower(strings.Join(strings.Fields(name), " "))
+}
+
+// fileNameMatchesFirst moves the results whose image file name names the
+// subject ahead of the rest, keeping each group in the search's own order.
+func fileNameMatchesFirst(results []SerperImageResult, query string) []SerperImageResult {
+	var named, rest []SerperImageResult
+	for _, r := range results {
+		if words := imageFileWords(r.ImageURL); words != "" && pageMentionsSubject(words, query) {
+			named = append(named, r)
+		} else {
+			rest = append(rest, r)
+		}
+	}
+	return append(named, rest...)
 }
