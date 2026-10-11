@@ -103,7 +103,7 @@ func main() {
 	// command, and `gohort serve --help` shows the right scope.
 	flags := eflag.NewFlagSet(NONE, eflag.ReturnErrorOnly)
 	version := flags.Bool("version", "")
-	setup := flags.Bool("setup", "Fuzz configuration (LLM, mail, etc).")
+	setup := flags.Bool("setup", "First-run setup and server settings: listen address, TLS, admin account, mail.")
 	doctor := flags.Bool("sandbox-doctor", "Report what is confining shell commands, and how to fix it.")
 
 	flags.Footer = " "

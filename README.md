@@ -154,6 +154,8 @@ cd gohort_<version>_linux_amd64
 
 On macOS the download is unsigned, so Gatekeeper quarantines it: `xattr -d com.apple.quarantine gohort` before the first run.
 
+**On Windows, run the Linux build under WSL2.** Native Windows has no sandbox backend, and gohort refuses to run shell commands unconfined, so the Windows build runs chat, agents and every tool that needs no shell, but not shell commands, script tools or custom-app scripts. Under WSL2, unpack `gohort_<version>_linux_amd64.tar.gz` in your Linux home directory (not under `/mnt/c`), `sudo apt install bubblewrap`, and check with `./gohort --sandbox-doctor`: it should report `confined true`. On Ubuntu 23.10 and later, if bubblewrap is installed but `confined` is false, AppArmor is blocking it: `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
+
 ### Build from source
 
 **Requires:** Go 1.25+.
