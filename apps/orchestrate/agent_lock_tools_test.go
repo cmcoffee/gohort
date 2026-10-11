@@ -8,8 +8,9 @@ package orchestrate
 // that.
 //
 // The lock is the user's say-so, so with the user watching a write to a locked
-// agent ASKS them (allow this change, unlock, deny), and with nobody watching
-// it is refused. The tests below with no AskInChat are the unattended case.
+// agent ASKS them (allow this change, unlock for this session, deny), and with
+// nobody watching it is refused. The tests below with no AskInChat are the
+// unattended case.
 
 import (
 	"context"
@@ -36,7 +37,7 @@ func lockAgent(t *testing.T, db Database, a AgentRecord) AgentRecord {
 // whatever anyone answers, since it is not this person's to waive.
 func TestTheChangeGateRefusesALockedAgentUnattended(t *testing.T) {
 	a := AgentRecord{ID: "a1", Name: "Ledger", Owner: "alice", Locked: true}
-	msg := agentChangeGate(nil, nil, &a, "alice", "attach skill \"x\"")
+	msg := agentChangeGate(lockCheck{}, &a, "alice", "attach skill \"x\"")
 	if msg == "" {
 		t.Fatal("the owner's own tools could change a locked agent with nobody watching")
 	}
@@ -44,7 +45,7 @@ func TestTheChangeGateRefusesALockedAgentUnattended(t *testing.T) {
 		t.Errorf("the refusal should name the agent and say it is locked: %s", msg)
 	}
 	a.Locked = false
-	if msg := agentChangeGate(nil, nil, &a, "alice", "x"); msg != "" {
+	if msg := agentChangeGate(lockCheck{}, &a, "alice", "x"); msg != "" {
 		t.Errorf("an unlocked own agent was refused: %s", msg)
 	}
 	if msg := agentEditRefusal(AgentRecord{ID: "a1", Owner: "alice", Locked: true}, "alice"); msg != "" {
@@ -53,50 +54,138 @@ func TestTheChangeGateRefusesALockedAgentUnattended(t *testing.T) {
 	asked := false
 	yes := func(string, string, []string) string { asked = true; return lockAllowOnce }
 	shared := AgentRecord{ID: "s1", Name: "Theirs", Owner: "bob", Locked: true}
-	if msg := agentChangeGate(yes, nil, &shared, "alice", "x"); msg == "" || asked {
+	if msg := agentChangeGate(lockCheck{Ask: yes}, &shared, "alice", "x"); msg == "" || asked {
 		t.Errorf("another user's agent must be refused without asking (asked=%v): %q", asked, msg)
 	}
 }
 
-// Each answer on the card does what its button says.
-func TestTheLockCardsThreeAnswers(t *testing.T) {
+// Each answer on the card does what its button says. Allow this change lets
+// one through and the next asks again; Unlock for this session lets this chat
+// through without asking while the agent stays locked for everyone else; no
+// answer is a deny. Turning the lock off for good is not on the card.
+func TestTheLockCardsAnswers(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	base, _ := saveAgent(db, AgentRecord{Name: "Ledger", Owner: "u", OrchestratorPrompt: "p"})
+	ag := lockAgent(t, db, base)
 
+	asked := 0
 	answer := func(pick string) func(string, string, []string) string {
 		return func(prompt, detail string, yes []string) string {
+			asked++
 			if !strings.Contains(prompt, "Ledger") || !strings.Contains(detail, "attach skill") {
 				t.Errorf("the card should name the agent and the change: %q / %q", prompt, detail)
 			}
-			if len(yes) != 2 || yes[0] != lockAllowOnce || yes[1] != lockUnlock {
+			if len(yes) != 2 || yes[0] != lockAllowOnce || yes[1] != lockUnlockSession {
 				t.Errorf("buttons = %v", yes)
 			}
 			return pick
 		}
 	}
+	chat := func(pick string) lockCheck { return lockCheck{Ask: answer(pick), DB: db, Session: "chat-1"} }
 
-	ag := lockAgent(t, db, base)
-	if msg := agentLockGate(answer(lockAllowOnce), db, &ag, "attach skill \"x\""); msg != "" {
+	if msg := chat(lockAllowOnce).gate(&ag, "attach skill \"x\""); msg != "" {
 		t.Errorf("allow this change was refused: %s", msg)
 	}
 	if got, _ := loadAgent(db, ag.ID); !got.Locked {
 		t.Error("allowing one change unlocked the agent")
 	}
-
-	if msg := agentLockGate(answer(lockUnlock), db, &ag, "attach skill \"x\""); msg != "" {
-		t.Errorf("unlock was refused: %s", msg)
-	}
-	if got, _ := loadAgent(db, ag.ID); got.Locked || ag.Locked {
-		t.Errorf("unlock left it locked: store=%v copy=%v", got.Locked, ag.Locked)
+	asked = 0
+	chat(lockAllowOnce).gate(&ag, "attach skill \"x\"")
+	if asked != 1 {
+		t.Error("after allowing one change, the next change did not ask again")
 	}
 
-	ag = lockAgent(t, db, ag)
-	msg := agentLockGate(answer(""), db, &ag, "attach skill \"x\"")
+	if msg := chat(lockUnlockSession).gate(&ag, "attach skill \"x\""); msg != "" {
+		t.Errorf("unlock for this session was refused: %s", msg)
+	}
+	if got, _ := loadAgent(db, ag.ID); !got.Locked {
+		t.Error("unlocking for a session turned the lock off; it must stay on for everyone else")
+	}
+	asked = 0
+	if msg := chat("").gate(&ag, "attach skill \"y\""); msg != "" || asked != 0 {
+		t.Errorf("the same chat was asked again inside its session unlock (asked=%d): %q", asked, msg)
+	}
+	other := lockCheck{Ask: answer(""), DB: db, Session: "chat-2"}
+	if msg := other.gate(&ag, "attach skill \"z\""); msg == "" {
+		t.Error("another chat got through on the first chat's session unlock")
+	}
+	endLockPasses(ag.ID)
+	asked = 0
+	chat("").gate(&ag, "attach skill \"x\"")
+	if asked != 1 {
+		t.Error("switching the lock did not end the session unlock")
+	}
+
+	msg := chat("").gate(&ag, "attach skill \"x\"")
 	if !strings.Contains(msg, "declined") || !strings.Contains(msg, "Do not retry") {
 		t.Errorf("a deny should say the user declined and not to retry: %q", msg)
 	}
-	if got, _ := loadAgent(db, ag.ID); !got.Locked {
-		t.Error("a deny unlocked the agent")
+
+	// A card with no chat session to hold an unlock offers the one-off only.
+	lone := lockCheck{Ask: func(_, _ string, yes []string) string {
+		if len(yes) != 1 || yes[0] != lockAllowOnce {
+			t.Errorf("without a session the card should offer only %q, got %v", lockAllowOnce, yes)
+		}
+		return lockAllowOnce
+	}, DB: db}
+	lone.gate(&ag, "x")
+}
+
+// One lock per family: a sub-agent answers to its parent's lock, the card says
+// so, and a session unlock on the parent covers the sub-agent too.
+func TestASubAgentIsLockedWithItsParent(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	parent, _ := saveAgent(db, AgentRecord{Name: "OSINT", Owner: "u", OrchestratorPrompt: "p"})
+	child, _ := saveAgent(db, AgentRecord{Name: "Social", Owner: "u", OwnedBy: parent.ID, OrchestratorPrompt: "p"})
+	if agentLocked(db, child) {
+		t.Fatal("an unlocked family read as locked")
+	}
+	parent = lockAgent(t, db, parent)
+	if !agentLocked(db, child) {
+		t.Fatal("a sub-agent of a locked parent was not locked")
+	}
+	msg := lockCheck{DB: db}.gate(&child, "update its prompt")
+	if msg == "" || !strings.Contains(msg, "OSINT") {
+		t.Errorf("unattended, the sub-agent should be refused naming its parent's lock: %q", msg)
+	}
+	grantLockPass(parent.ID, "chat-1")
+	t.Cleanup(func() { endLockPasses(parent.ID) })
+	if msg := (lockCheck{DB: db, Session: "chat-1"}).gate(&child, "update its prompt"); msg != "" {
+		t.Errorf("a session unlock on the parent did not cover its sub-agent: %q", msg)
+	}
+}
+
+// Builder in a chat with the user may change the user's sub-agents; Builder
+// dispatched by an agent may change only that agent's own. The refusal used
+// to fire for the first case too, before any card could ask.
+func TestBuilderChangesASubAgentForTheUser(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	parent, _ := saveAgent(db, AgentRecord{Name: "OSINT", Owner: "u", OrchestratorPrompt: "p"})
+	child, _ := saveAgent(db, AgentRecord{Name: "Social", Owner: "u", OwnedBy: parent.ID, OrchestratorPrompt: "p"})
+	builder := ""
+	for _, a := range coreSeedAgents() {
+		if isBuilderAgent(a.ID) {
+			builder = a.ID
+		}
+	}
+	if builder == "" {
+		t.Fatal("no Builder seed")
+	}
+	direct := &ToolSession{DB: db, AgentID: builder}
+	if msg := agentMutationLock(&child, direct, "update its prompt"); msg != "" {
+		t.Errorf("Builder talking to the user could not change a sub-agent: %s", msg)
+	}
+	byParent := &ToolSession{DB: db, AgentID: builder, DispatchParentAgentID: parent.ID}
+	if msg := agentMutationLock(&child, byParent, "update its prompt"); msg != "" {
+		t.Errorf("the parent's own Builder dispatch could not change its sub-agent: %s", msg)
+	}
+	byStranger := &ToolSession{DB: db, AgentID: builder, DispatchParentAgentID: "someone-else"}
+	if msg := agentMutationLock(&child, byStranger, "update its prompt"); !strings.Contains(msg, "belongs to another agent") {
+		t.Errorf("another agent's Builder dispatch reached this sub-agent: %q", msg)
+	}
+	notBuilder := &ToolSession{DB: db, AgentID: "some-agent"}
+	if msg := agentMutationLock(&child, notBuilder, "update its prompt"); !strings.Contains(msg, "belongs to another agent") {
+		t.Errorf("an agent that is not Builder changed another's sub-agent: %q", msg)
 	}
 }
 
@@ -107,7 +196,7 @@ func TestAddToolAsksAboutALockedAgent(t *testing.T) {
 		pick       string
 		lands      bool
 		lockedTail bool
-	}{{lockAllowOnce, true, true}, {lockUnlock, true, false}, {"", false, true}} {
+	}{{lockAllowOnce, true, true}, {lockUnlockSession, true, true}, {"", false, true}} {
 		sess, _, helper := addToolTestSess(t)
 		lockAgent(t, sess.DB, helper)
 		sess.AskInChat = func(string, string, []string) string { return c.pick }
@@ -124,9 +213,9 @@ func TestAddToolAsksAboutALockedAgent(t *testing.T) {
 
 // The card's buttons resolve through the same path the browser's click does,
 // and a custom yes reads as a yes there. Before, only allow/always did, so an
-// "Unlock agent" click would have parked the tool as a deny.
+// unlock click would have parked the tool as a deny.
 func TestAskInChatReturnsThePickedLabel(t *testing.T) {
-	for _, c := range []struct{ value, want string }{{"yes1", lockUnlock}, {"yes0", lockAllowOnce}, {"deny", ""}} {
+	for _, c := range []struct{ value, want string }{{"yes1", lockUnlockSession}, {"yes0", lockAllowOnce}, {"deny", ""}} {
 		buf := &syncBuf{}
 		turn := &chatTurn{user: "asker", sse: &sseWriter{live: buf}}
 		done := make(chan struct{})
@@ -149,12 +238,12 @@ func TestAskInChatReturnsThePickedLabel(t *testing.T) {
 				time.Sleep(2 * time.Millisecond)
 			}
 		}()
-		got := turn.askInChat("🔒 Ledger is locked.", "Change: x", []string{lockAllowOnce, lockUnlock})
+		got := turn.askInChat("🔒 Ledger is locked.", "Change: x", []string{lockAllowOnce, lockUnlockSession})
 		<-done
 		if got != c.want {
 			t.Errorf("clicked %q: got %q, want %q", c.value, got, c.want)
 		}
-		if out := buf.String(); !strings.Contains(out, lockUnlock) || !strings.Contains(out, "\"kind\":\"confirm\"") {
+		if out := buf.String(); !strings.Contains(out, lockUnlockSession) || !strings.Contains(out, "\"kind\":\"confirm\"") {
 			t.Errorf("the card did not offer the buttons:\n%s", out)
 		}
 	}

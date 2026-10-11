@@ -79,6 +79,14 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	name := chFirst(agent.Name, agent.ID)
+	// One lock per family: a sub-agent's toggle is its parent's lock, so it
+	// says so, and the parent's says it covers its sub-agents.
+	lockLabel, lockHelp := "Locked: no agent may edit this one", "You can still edit it. This stops agents, including the one being configured. Its sub-agents are locked with it."
+	if holder := lockHolder(udb, agent); holder.ID != agent.ID {
+		pn := chFirst(holder.Name, holder.ID)
+		lockLabel = "Locked with its parent, " + pn
+		lockHelp = "A sub-agent has no lock of its own: this is " + pn + "'s lock, and switching it here switches it for " + pn + " and all of its sub-agents."
+	}
 	src := T.WebPrefix() + "/api/agent-access?id=" + url.QueryEscape(agent.ID)
 	// {name} is the row's own name FIELD, substituted per row. Not {row_key}:
 	// the substituter resolves a placeholder by looking that key up ON THE
@@ -522,20 +530,19 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Title:    "Who may change any of this",
 				Subtitle: "Every other control on this page is set by you and enforced by the framework. This one decides whether an AGENT can come back and edit them.",
 				Detail: "An agent holding the authoring toolset (Builder, or one you gave it to) can call update_agent on any agent you own. It cannot LOOSEN a ceiling - the spend cap, the action limits and the privacy lock only ratchet tighter, and an attempt to raise one is reverted and reported - but it can change everything else about the agent, including its prompt, its rules and its tool allowlist.\n\n" +
-					"Locked closes that door completely: no agent may edit or delete this one, and restoring an earlier revision is blocked too, since a restore is the largest edit there is. You keep editing it from here and from the editor either way.\n\n" +
+					"Locked means no agent may edit or delete this one, or any of its sub-agents, without you. With you watching, the agent asks: allow one change, or unlock it for that chat for two hours while it stays locked for everyone else. With nobody watching, the change is refused. Restoring an earlier revision is blocked too, since a restore is the largest edit there is. You keep editing it from here and from the editor either way.\n\n" +
 					"Worth setting on anything that runs unattended, holds a credential, or reaches a system you connected.",
 				Body: ui.FormPanel{
-					// Source is the agent record, which carries the flag;
-					// PostURL is the lock's OWN endpoint, because Locked is
-					// deliberately not patchable. setAgentLocked is the single
-					// door through it, so an ordinary form save cannot clobber
-					// a lock somebody set.
-					Source:  patchURL,
+					// Source and PostURL are both the lock's OWN endpoint: it
+					// answers with the family's lock (the parent's, for a
+					// sub-agent), and Locked is deliberately not patchable.
+					// setAgentLocked is the single door through it, so an
+					// ordinary form save cannot clobber a lock somebody set.
+					Source:  lockURL,
 					PostURL: lockURL,
 					Method:  "POST",
 					Fields: []ui.FormField{
-						{Field: "locked", Type: "toggle", Label: "Locked: no agent may edit this one",
-							Help: "You can still edit it. This stops agents, including the one being configured."},
+						{Field: "locked", Type: "toggle", Label: lockLabel, Help: lockHelp},
 					},
 				},
 			},

@@ -405,7 +405,7 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 					// they keep on the old pipeline keeps the old pipeline
 					// too (below), or the swap would leave it attached to a
 					// deleted one.
-					if msg := agentLockGate(t.chatAsker(), t.udb, &ag,
+					if msg := t.lockCheck().gate(&ag,
 						fmt.Sprintf("swap pipeline %q for %q, which retires %q", oldDef.Name, saved.Name, oldDef.Name)); msg != "" {
 						keptLocked = append(keptLocked, chFirst(ag.Name, ag.ID))
 						continue
@@ -467,7 +467,7 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 			attached = append(attached, agent.Name+" (already attached)")
 			continue
 		}
-		if msg := agentChangeGate(t.chatAsker(), t.udb, &agent, t.user, fmt.Sprintf("attach pipeline %q", saved.Name)); msg != "" {
+		if msg := agentChangeGate(t.lockCheck(), &agent, t.user, fmt.Sprintf("attach pipeline %q", saved.Name)); msg != "" {
 			missing = append(missing, key+" ("+msg+")")
 			continue
 		}

@@ -392,7 +392,7 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 		http.Error(w, "not your agent", http.StatusForbidden)
 		return
 	}
-	if existing.Locked {
+	if agentLocked(udb, existing) {
 		http.Error(w, "this agent is locked: unlock it (the 🔒 icon) before editing", http.StatusConflict)
 		return
 	}
@@ -839,7 +839,7 @@ func tempToolDefEqual(a, b TempTool) bool {
 // is changed ONLY here — the main agent save preserves the stored value — so the
 // icon is the single source of truth and a form save can't clobber it.
 func (T *OrchestrateApp) handleAgentLock(w http.ResponseWriter, r *http.Request, user, id string) {
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -851,19 +851,29 @@ func (T *OrchestrateApp) handleAgentLock(w http.ResponseWriter, r *http.Request,
 		http.NotFound(w, r)
 		return
 	}
+	// One lock per family: a sub-agent's lock IS its parent's, so reading or
+	// switching it here reads or switches the parent's.
+	holder := lockHolder(udb, a)
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodGet {
+		_ = json.NewEncoder(w).Encode(map[string]any{"locked": holder.Locked})
+		return
+	}
 	var req struct {
 		Locked bool `json:"locked"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	a.Owner = user
+	holder.Owner = user
 	// The RETURNED record, not the local one: setAgentLocked takes a by value,
 	// so the caller's copy still carries the old flag and would report it.
-	saved, err := setAgentLocked(udb, a, req.Locked)
+	saved, err := setAgentLocked(udb, holder, req.Locked)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	// Switching the lock either way is the user saying what they want now, so
+	// any session pass a chat was holding on this family ends here.
+	endLockPasses(saved.ID)
 	_ = json.NewEncoder(w).Encode(map[string]any{"locked": saved.Locked})
 }
 

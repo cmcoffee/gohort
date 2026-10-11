@@ -216,18 +216,24 @@ func agentEditRefusal(a AgentRecord, user string) string {
 // agentChangeGate is the check every tool runs before it attaches something TO
 // an agent (a tool, skill, machine, pipeline, a bulletin board). Another user's
 // agent is refused outright: a share is not this person's to waive. A locked
-// one asks them (agentLockGate). "" means go ahead; target is updated if they
+// one asks them (lockCheck.gate). "" means go ahead; target is updated if they
 // chose to unlock it.
-func agentChangeGate(ask func(prompt, detail string, yes []string) string, db Database, target *AgentRecord, user, change string) string {
+func agentChangeGate(lc lockCheck, target *AgentRecord, user, change string) string {
 	if msg := agentEditRefusal(*target, user); msg != "" {
 		return msg
 	}
-	return agentLockGate(ask, db, target, change)
+	return lc.gate(target, change)
 }
 
 // chatAsker is this turn's question card, or nil with nobody watching, which
-// agentLockGate reads as a no. Mirrors ToolSession.AskInChat, which is only
+// lockCheck.gate reads as a no. Mirrors ToolSession.AskInChat, which is only
 // wired on a turn with a live viewer.
+// lockCheck is this turn's side of the agent lock: its question card, its
+// store, and its chat session, which a session pass is granted to.
+func (t *chatTurn) lockCheck() lockCheck {
+	return lockCheck{Ask: t.chatAsker(), DB: t.udb, Session: t.chatSessionID()}
+}
+
 func (t *chatTurn) chatAsker() func(prompt, detail string, yes []string) string {
 	if t == nil {
 		return nil

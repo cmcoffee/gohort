@@ -102,7 +102,7 @@ func bulletinsToolDef(t *chatTurn) AgentToolDef {
 				if strings.EqualFold(stringArg(args, "action"), "allow_poster") {
 					change = fmt.Sprintf("%s post to bulletin board %q", chIf(on, "let it", "stop it being able to"), board.Name)
 				}
-				if msg := agentChangeGate(t.chatAsker(), t.udb, &ag, t.user, change); msg != "" {
+				if msg := agentChangeGate(t.lockCheck(), &ag, t.user, change); msg != "" {
 					return "", errors.New(msg)
 				}
 				if strings.EqualFold(stringArg(args, "action"), "allow_poster") {

@@ -185,7 +185,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	// Both ways of naming the target, not only the explicit one: the focus
 	// path had no check at all, so an agent opened with agents(action="get")
 	// could be re-equipped however it was locked.
-	if msg := agentChangeGate(sess.AskInChat, sess.DB, &target, sess.Username,
+	if msg := agentChangeGate(lockCheck{Ask: sess.AskInChat, DB: sess.DB, Session: sess.ChatSessionID}, &target, sess.Username,
 		fmt.Sprintf("attach a new tool %q", strings.TrimSpace(stringArg(args, "name")))); msg != "" {
 		return "", errors.New("add_tool: " + msg)
 	}
