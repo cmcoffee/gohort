@@ -4,8 +4,8 @@ Images referenced from the top-level `README.md`:
 
 | file | what it shows | where it appears |
 |---|---|---|
-| `logo-dark.svg`, `logo-light.svg` | the logo: the favicon's three squares and GOHORT in the dashboard's block letters, one per GitHub theme (a `<picture>` picks) | the very top, with the same logo as text in a comment below it for raw readers |
-| `dashboard.png` | the dashboard with its apps: the "this is a platform, not a bot" shot | under the badges, above **Three ways to think about it** |
+| `wordmark-dark.svg`, `wordmark-light.svg` | the logo: the favicon's three squares and GOHORT in the dashboard's block letters, one per GitHub theme (a `<picture>` picks) | the very top, with the same logo as text in a comment below it for raw readers |
+| `dashboard-overview.png` | the dashboard with its apps: the "this is a platform, not a bot" shot. Taken from a public-only build (`git archive` export, no private apps) on a fresh instance, a placeholder `admin` account, and a worker model set so the setup notice is absent | under the badges, above **Three ways to think about it** |
 | `agent-turn.png` | one agent turn with its tool trace visible: the reply *and* what produced it | under **What it looks like in practice**, making the status-page story concrete |
 
 The logo copies the app's, it is not a separate design: the letter grid is the
@@ -32,3 +32,7 @@ than with the week.
 
 Referenced by relative path so they render on GitHub, in forks, and from the
 source tarball.
+
+When an image changes, give it a new filename. GitHub serves README images
+through a proxy that caches by URL, so a replaced file under the same name
+keeps showing the old picture for a long time.

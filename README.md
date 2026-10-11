@@ -30,7 +30,7 @@
      chat content, and a README image is in git history for good. Drop the files
      at the paths below and these render as-is. -->
 
-![The Gohort dashboard: every installed app on one page, running from a single binary](docs/images/dashboard.png)
+![The Gohort dashboard: every installed app on one page, running from a single binary](docs/images/dashboard-overview.png)
 
 You still talk to one thing, and it takes any job. The trick is that it never does one alone: a front agent reads what you want and hands it to whichever agent owns that part, each with its own tools, its own memory, and the right to delegate further. Gohort is the odd-job man who knows a specialist for everything, and whose real skill is knowing who to call.
 
