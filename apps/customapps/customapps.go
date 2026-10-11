@@ -1266,6 +1266,14 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 	if trimmed != "" && json.Unmarshal([]byte(trimmed), &result) != nil {
 		return res, fmt.Errorf("the action script must print a JSON object {message?, records?, result?, shared?, shared_delete?} to stdout (got %.200s)", trimmed)
 	}
+	// Keys outside the reply are dropped here, and the page shows nothing
+	// with no error anywhere; leave the reason in the log.
+	var printed map[string]any
+	if json.Unmarshal([]byte(trimmed), &printed) == nil {
+		if dropped := appscript.DroppedActionKeys(printed); len(dropped) > 0 {
+			Log("[customapps] action %q/%q printed %s, which the page never receives: only message, records and result reach it", spec.Slug, act.Name, strings.Join(dropped, ", "))
+		}
+	}
 	// Shared writes first, and all or nothing: a refused one (an undeclared
 	// collection, an oversized record) leaves the user's records untouched too.
 	sharedN, err := applySharedWrites(owner, ownerDB, spec, by, result.Shared, result.SharedDelete)

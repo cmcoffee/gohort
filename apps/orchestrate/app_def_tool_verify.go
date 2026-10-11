@@ -798,7 +798,14 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 			if e := appPrintedError(v); e != "" {
 				fail++
 				fmt.Fprintf(&b, "FAIL %s: printed an error: %s. A caught exception is still a failure: fix what raised it.\n", label, truncate(e, 400))
-			} else if _, isObj := v.(map[string]any); isObj {
+			} else if obj, isObj := v.(map[string]any); isObj && len(appscript.DroppedActionKeys(obj)) > 0 {
+				// Valid object, and the page gets none of it: only message,
+				// records and result reach the page. A hot-take action printed
+				// {"take", "symbol"}, passed as OK, and the page said "no response".
+				fail++
+				dropped := strings.Join(appscript.DroppedActionKeys(obj), ", ")
+				fmt.Fprintf(&b, "FAIL %s: printed top-level %s, which the page never receives: an action's reply carries only message, records and result. Put what the page reads under result ({\"result\": {...}}) and read it in the page as reply.result.%s\n", label, dropped, shown)
+			} else if isObj {
 				pass++
 				fmt.Fprintf(&b, "OK   %s: printed a JSON object {message?, records?, result?}.%s\n", label, shown)
 			} else {
