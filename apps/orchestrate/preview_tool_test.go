@@ -3,11 +3,16 @@ package orchestrate
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // paneFrames reads the html_artifact blocks a turn sent to the pane.
@@ -85,5 +90,53 @@ func TestShowHTMLRefusesItsOwnRecordAsAPage(t *testing.T) {
 	}
 	if _, err := tool.Handler(context.Background(), map[string]any{"id": "artifact-nope"}); err == nil {
 		t.Error("an id from nowhere was accepted")
+	}
+}
+
+// A picture goes into an artifact by name: the page says <img src="chart">,
+// the call says images=["chart=<handle>"], and what reaches the pane, and the
+// stored artifact, carries the picture embedded. The model never writes the
+// image data; a name the page never uses is refused, as is a handle that
+// resolves to nothing.
+func TestAnArtifactEmbedsItsPicturesByName(t *testing.T) {
+	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "chart.png"), png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := &ToolSession{WorkspaceDir: dir}
+	ctx := sess.ContextWithSession(context.Background())
+
+	rec := httptest.NewRecorder()
+	turn := &chatTurn{session: &ChatSession{ID: "s1"}, sse: newSSEWriter(rec)}
+	tool := turn.showHTMLToolDef()
+	page := `<!doctype html><html><head><style>.hero{background:url(chart)}</style></head><body><h1>Sales</h1><img src="chart" alt="Sales"></body></html>`
+	out, err := tool.Handler(ctx, map[string]any{"title": "Sales", "html": page, "images": []any{"chart=chart.png"}})
+	if err != nil {
+		t.Fatalf("show_html with a picture: %v", err)
+	}
+	if !strings.Contains(out, "1 picture(s) embedded") {
+		t.Errorf("the result should say the picture was embedded: %s", out)
+	}
+	frames := paneFrames(t, rec)
+	if len(frames) != 1 {
+		t.Fatalf("frames: %d", len(frames))
+	}
+	shown, _ := frames[0]["html"].(string)
+	if strings.Count(shown, "data:image/png;base64,") != 2 || strings.Contains(shown, `src="chart"`) {
+		t.Errorf("both uses of the name should carry the picture: %.300s", shown)
+	}
+	if blocks := turn.session.UIBlocks; len(blocks) != 1 || !strings.Contains(blocks[0].HTML, "data:image/png;base64,") {
+		t.Error("the stored artifact does not carry the picture, so a reopened chat would lose it")
+	}
+
+	if _, err := tool.Handler(ctx, map[string]any{"title": "Sales", "html": page, "images": []any{"logo=chart.png", "chart=chart.png"}}); err == nil || !strings.Contains(err.Error(), "never uses it") {
+		t.Errorf("a picture the page never uses should be refused: %v", err)
+	}
+	if _, err := tool.Handler(ctx, map[string]any{"title": "Sales", "html": page, "images": []any{"chart=missing.png"}}); err == nil {
+		t.Error("a handle that resolves to nothing should be refused")
+	}
+	if _, err := tool.Handler(ctx, map[string]any{"title": "Sales", "html": page, "images": []any{"chart"}}); err == nil || !strings.Contains(err.Error(), "name=handle") {
+		t.Errorf("an entry with no handle should say the form: %v", err)
 	}
 }

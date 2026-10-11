@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"regexp"
 	"strings"
@@ -77,7 +78,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "show_html",
-			Description: "Show the user a rendered HTML surface in a viewer pane beside the chat: a dashboard, report, diagram, front-end mockup, or a live preview of a gohort page. Two modes (pass exactly one): `html` = a COMPLETE, self-contained document you author, with ALL CSS and JavaScript inline (it renders sandboxed, no access to the app, its cookies, or external files); `url` = a same-origin path to preview a page this server already serves (e.g. a custom app you just created: \"/apps/<slug>/\"). Authored pages are offline snapshots by default; to make one LIVE, declare data_urls: the page then refreshes itself by calling the injected gohort.fetch(path) helper. Use this tool when the user asks for a dashboard/visualization/mockup, or to show an app/page you just built: NOT for ordinary answers, lists, or code; reply in text for those. To UPDATE an artifact you already showed, call again with the SAME id (returned by the first call) and the full revised content.",
+			Description: "Show the user a rendered HTML surface in a viewer pane beside the chat: a dashboard, report, diagram, front-end mockup, or a live preview of a gohort page. Two modes (pass exactly one): `html` = a COMPLETE, self-contained document you author, with ALL CSS and JavaScript inline (it renders sandboxed, no access to the app, its cookies, or external files); `url` = a same-origin path to preview a page this server already serves (e.g. a custom app you just created: \"/apps/<slug>/\"). Pictures go in by name through `images` (\"chart=image#1\", then <img src=\"chart\">): never paste image data into the html. Authored pages are offline snapshots by default; to make one LIVE, declare data_urls: the page then refreshes itself by calling the injected gohort.fetch(path) helper. Use this tool when the user asks for a dashboard/visualization/mockup, or to show an app/page you just built: NOT for ordinary answers, lists, or code; reply in text for those. To UPDATE an artifact you already showed, call again with the SAME id (returned by the first call) and the full revised content.",
 			Parameters: map[string]ToolParam{
 				"title": {
 					Type:        "string",
@@ -85,11 +86,16 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 				},
 				"html": {
 					Type:        "string",
-					Description: "Authored mode: the complete HTML document (doctype through </html>), fully self-contained, inline all CSS and JS, no external stylesheets/scripts/images. Keep it under ~300KB. Omit when passing url.",
+					Description: "Authored mode: the complete HTML document (doctype through </html>), fully self-contained, inline all CSS and JS, no external stylesheets or scripts. Pictures: name them in images and refer to them by that name. Keep it under ~300KB. Omit when passing url.",
 				},
 				"url": {
 					Type:        "string",
 					Description: "Preview mode: a same-origin path starting with \"/\" (e.g. \"/apps/myapp/\") to render that served page in the pane. External URLs are refused. Omit when passing html.",
+				},
+				"images": {
+					Type:        "array",
+					Description: "Optional, html mode only: pictures for the page, each \"name=handle\". The handle is anything you hold for a picture: media#N for one the user attached, image#N or the workspace filename a generate or fetch tool handed back, or an http(s) URL. Refer to it in the page by its name alone, <img src=\"chart\"> or url(chart) in CSS, and the picture is embedded for you. Never write image data into the html yourself: name it here. Up to 12 pictures, 8 MB together.",
+					Items:       &ToolParam{Type: "string"},
 				},
 				"data_urls": {
 					Type:        "array",
@@ -128,6 +134,23 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 			}
 			if hasHTML && len(html) > maxArtifactHTML {
 				return "", fmt.Errorf("html too large (%d bytes; cap %d): trim the document (inline data tables are the usual culprit) and call again", len(html), maxArtifactHTML)
+			}
+			// Pictures by name: the model names a handle it holds and refers to
+			// it in the page; the server embeds it. Writing image data into a
+			// tool call is where a model fails, and replays what it already
+			// has instead (eight refused calls in one turn, the page never
+			// getting its picture). The page's own size cap is checked above,
+			// on what the model wrote; pictures have their own allowance.
+			authoredLen := len(html)
+			if imgs := stringSliceFromArgs(args, "images"); len(imgs) > 0 {
+				if !hasHTML {
+					return "", fmt.Errorf("images applies to html mode only")
+				}
+				embedded, err := embedArtifactImages(ToolSessionFromContext(ctx), html, imgs)
+				if err != nil {
+					return "", err
+				}
+				html = embedded
 			}
 			// The url mode renders WITHOUT a sandbox (it's this server's own
 			// page), so it must never point off-origin: require a single
@@ -216,11 +239,14 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 			// let the activity wrapper persist a second full copy in the
 			// tool-call record (args are recorded AFTER the handler runs).
 			if hasHTML {
-				args["html"] = fmt.Sprintf(artifactRecordNote, len(html), id)
+				args["html"] = fmt.Sprintf(artifactRecordNote, authoredLen, id)
 			}
 			whole := ""
 			if hasHTML {
-				whole = fmt.Sprintf(" It shows the full %d-byte document.", len(html))
+				whole = fmt.Sprintf(" It shows the full %d-byte document.", authoredLen)
+				if n := len(stringSliceFromArgs(args, "images")); n > 0 {
+					whole += fmt.Sprintf(" %d picture(s) embedded.", n)
+				}
 			}
 			if isUpdate {
 				return fmt.Sprintf("Artifact %q (id %q) updated in place: the user's pane refreshed.%s", title, id, whole), nil
@@ -359,4 +385,74 @@ func (t *chatTurn) reopenArtifact(id, title string) (string, error) {
 	}
 	t.sse.Send(payload)
 	return fmt.Sprintf("Artifact %q (id %q) is showing again, unchanged.", title, blk.ID), nil
+}
+
+// Pictures in an artifact: limits on what embedArtifactImages will carry.
+const (
+	maxArtifactImages     = 12
+	maxArtifactImageBytes = 8 << 20
+)
+
+// artifactImageNameRe is what a picture's name may be: a word the page can
+// use as a src without escaping.
+var artifactImageNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// embedArtifactImages resolves each "name=handle" through the turn's session
+// and puts the picture into the page wherever the page refers to the name: a
+// src attribute or a CSS url(). A name the page never uses is an error, since
+// the model meant it to show somewhere and it would not.
+func embedArtifactImages(sess *ToolSession, html string, entries []string) (string, error) {
+	if len(entries) > maxArtifactImages {
+		return "", fmt.Errorf("images is capped at %d pictures (got %d)", maxArtifactImages, len(entries))
+	}
+	if sess == nil {
+		return "", fmt.Errorf("images could not be resolved: no session on this turn")
+	}
+	total := 0
+	for _, e := range entries {
+		name, handle, ok := strings.Cut(e, "=")
+		name, handle = strings.TrimSpace(name), strings.TrimSpace(handle)
+		if !ok || name == "" || handle == "" {
+			return "", fmt.Errorf("images entry %q must be name=handle, for example chart=image#1", e)
+		}
+		if !artifactImageNameRe.MatchString(name) {
+			return "", fmt.Errorf("image name %q must be letters, digits, dots, dashes or underscores", name)
+		}
+		data, mime, err := sess.ResolveImageRef(handle)
+		if err != nil {
+			return "", fmt.Errorf("image %q (%s): %v", name, handle, err)
+		}
+		total += len(data)
+		if total > maxArtifactImageBytes {
+			return "", fmt.Errorf("the pictures come to more than %d MB together: use fewer or smaller ones", maxArtifactImageBytes>>20)
+		}
+		uri := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+		out, n := replaceImageName(html, name, uri)
+		if n == 0 {
+			return "", fmt.Errorf("image %q is named in images but the page never uses it: write <img src=%q> or url(%s) where it should show", name, name, name)
+		}
+		html = out
+	}
+	return html, nil
+}
+
+// replaceImageName swaps a picture's name for its data where the page uses it
+// as a src or a CSS url(), and reports how many uses it found. Exact matches
+// only, so a name that is also ordinary text is left alone.
+func replaceImageName(html, name, uri string) (string, int) {
+	q := regexp.QuoteMeta(name)
+	n := 0
+	srcRe := regexp.MustCompile(`(\bsrc\s*=\s*)(["'])` + q + `(["'])`)
+	html = srcRe.ReplaceAllStringFunc(html, func(m string) string {
+		n++
+		parts := srcRe.FindStringSubmatch(m)
+		return parts[1] + parts[2] + uri + parts[3]
+	})
+	urlRe := regexp.MustCompile(`\burl\(\s*(["']?)` + q + `(["']?)\s*\)`)
+	html = urlRe.ReplaceAllStringFunc(html, func(m string) string {
+		n++
+		parts := urlRe.FindStringSubmatch(m)
+		return "url(" + parts[1] + uri + parts[2] + ")"
+	})
+	return html, n
 }
