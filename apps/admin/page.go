@@ -586,8 +586,9 @@ var configureBackendPickAction = `function(ctx){
     if(!img.length){ window.uiAlert && window.uiAlert('No image backend yet: add one first.'); return; }
     if(img.length===1){ window.uiConfigureBackend(img[0].name, function(){ location.reload(); }); return; }
     var names=img.map(function(x){return x.name;});
-    var pick=window.prompt('Configure which backend?\n'+names.join(', '), names[0]);
-    if(pick){ window.uiConfigureBackend(pick.trim(), function(){ location.reload(); }); }
+    window.uiChoose('Configure which backend?', names).then(function(pick){
+      if(pick){ window.uiConfigureBackend(pick, function(){ location.reload(); }); }
+    });
   }).catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
 }`
 

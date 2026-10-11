@@ -264,9 +264,8 @@ window.uiAddBackend=function(category, reload){
       if(!list||!list.length){ window.uiAlert && window.uiAlert('No backend templates available.'); return; }
       function open(name){ fetch('api/connector-template?name='+encodeURIComponent(name),{cache:'no-store',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(sc){ window.uiTemplateForm(sc, reload); }); }
       if(list.length===1){ open(list[0].name); return; }
-      var labels=list.map(function(x){return x.label+' ('+x.name+')';});
-      var pick=window.prompt('Add which backend?\n'+labels.join('\n'), list[0].name);
-      if(pick){ open(pick.trim()); }
+      var options=list.map(function(x){return {label:x.label, value:x.name, detail:x.name};});
+      window.uiChoose('Add which backend?', options).then(function(pick){ if(pick){ open(pick); } });
     })
     .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
 };
@@ -277,9 +276,8 @@ window.uiAddTool=function(reload){
       if(!list||!list.length){ window.uiAlert && window.uiAlert('No tool templates available.'); return; }
       function open(name){ fetch('api/tool-template?name='+encodeURIComponent(name),{cache:'no-store',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(sc){ window.uiTemplateForm(sc, reload); }); }
       if(list.length===1){ open(list[0].name); return; }
-      var labels=list.map(function(x){return x.label+' ('+x.name+')';});
-      var pick=window.prompt('Add which tool?\n'+labels.join('\n'), list[0].name);
-      if(pick){ open(pick.trim()); }
+      var options=list.map(function(x){return {label:x.label, value:x.name, detail:x.name};});
+      window.uiChoose('Add which tool?', options).then(function(pick){ if(pick){ open(pick); } });
     })
     .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
 };

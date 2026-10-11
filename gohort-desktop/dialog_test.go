@@ -36,3 +36,28 @@ func TestAPagesConfirmIsAskedNatively(t *testing.T) {
 		t.Errorf("with no app, the dialog answered: %s", w.Body.String())
 	}
 }
+
+// The desktop's own card stands in for the framework's confirm, alert and
+// prompt, so it has to wear the PAGE's theme: it used to be painted in a fixed
+// dark-grey palette with the system font, and read as a popup from some other
+// product on an indigo page. Each colour is read from the page's tokens at
+// open time, with the old value only as a fallback.
+func TestTheDesktopModalWearsThePageTheme(t *testing.T) {
+	js := popup_shim_js
+	a := strings.Index(js, "function __desktop_modal_open(")
+	b := strings.Index(js, "window.__uiConfirmImpl=")
+	if a < 0 || b < a {
+		t.Fatal("could not find the modal in the shim")
+	}
+	modal := js[a:b]
+	for _, want := range []string{"getPropertyValue(n)", "tk('--bg-1'", "tk('--text'", "tk('--border'", "tk('--accent'", "tk('--modal-scrim'", "style.font='inherit'"} {
+		if !strings.Contains(modal, want) {
+			t.Errorf("the modal does not read the page theme: missing %s", want)
+		}
+	}
+	for _, fixed := range []string{"='#161b22'", "='#e6edf3'", "'13px -apple-system", "'14px -apple-system"} {
+		if strings.Contains(modal, fixed) {
+			t.Errorf("the modal still paints a fixed value: %s", fixed)
+		}
+	}
+}

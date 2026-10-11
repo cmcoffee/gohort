@@ -896,6 +896,54 @@
     return uiDefaultModal({kind: 'prompt', msg: msg, def: def,
       multiline: opts.multiline, rows: opts.rows, placeholder: opts.placeholder, ok: opts.ok});
   };
+  // uiChoose(msg, options) — one of several, as a list of buttons in the
+  // shared modal, for the place a page used to window.prompt() a list and
+  // ask the person to type a name back from it. options: strings, or
+  // {label, value, detail}. Resolves the chosen value, or null when the
+  // dialog is dismissed by Cancel, Escape or the backdrop.
+  window.uiChoose = function(msg, options) {
+    return new Promise(function(resolve) {
+      var done = false;
+      var m = window.uiOpenModal({
+        title: msg,
+        width: '480px',
+        actions: [{label: 'Cancel'}],
+        mount: function(body, api) {
+          var list = document.createElement('div');
+          list.className = 'ui-choose';
+          (options || []).forEach(function(o) {
+            var opt = (o && typeof o === 'object') ? o : {label: String(o), value: o};
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'ui-choose-opt';
+            var lab = document.createElement('span');
+            lab.className = 'ui-choose-label';
+            lab.textContent = opt.label == null ? String(opt.value) : String(opt.label);
+            b.appendChild(lab);
+            if (opt.detail) {
+              var d = document.createElement('span');
+              d.className = 'ui-choose-detail';
+              d.textContent = String(opt.detail);
+              b.appendChild(d);
+            }
+            b.addEventListener('click', function() { done = true; resolve(opt.value); api.close(); });
+            list.appendChild(b);
+          });
+          body.appendChild(list);
+          var first = list.querySelector('button');
+          if (first) first.focus();
+        },
+      });
+      // The modal has no close hook; its overlay leaving the document is the
+      // dismissal, whichever way it happened.
+      var obs = new MutationObserver(function() {
+        if (document.body.contains(m.overlay)) return;
+        obs.disconnect();
+        if (!done) resolve(null);
+      });
+      obs.observe(document.body, {childList: true});
+    });
+  };
   // Data-source invalidation. Apps and components fire this when a
   // write completes so any list/table fetched from the same source
   // can refetch. Pattern:

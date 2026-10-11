@@ -2999,6 +2999,17 @@ select:-webkit-autofill {
   padding: 0.45rem 0.6rem; border-radius: var(--btn-radius);
   border: 1px solid var(--border); background: var(--bg-0); color: var(--text); font: inherit;
 }
+/* uiChoose: one button per option, stacked, in the shared modal. */
+.ui-choose { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.2rem 0 0.4rem; }
+.ui-choose-opt {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem;
+  width: 100%; box-sizing: border-box; text-align: left; cursor: pointer;
+  padding: 0.55rem 0.75rem; border-radius: var(--btn-radius);
+  border: 1px solid var(--border); background: var(--bg-0); color: var(--text); font: inherit;
+}
+.ui-choose-opt:hover, .ui-choose-opt:focus-visible { border-color: var(--accent); color: var(--text-hi); outline: none; }
+.ui-choose-label { font-weight: 600; }
+.ui-choose-detail { font-size: var(--fs-sm); color: var(--text-mute); }
 /* The multiline variant of the same box (uiPrompt opts.multiline). */
 textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; }
 .ui-modal-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }

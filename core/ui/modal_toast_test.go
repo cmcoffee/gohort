@@ -103,7 +103,7 @@ func TestASubmitFailureIsWrittenIntoTheFormItFailedIn(t *testing.T) {
 	if at < 0 {
 		t.Fatal("the submit failure path moved")
 	}
-	window := rest[max0(at-700) : at]
+	window := rest[max0(at-700):at]
 	if !strings.Contains(window, "msgEl.textContent = String((err && err.message) || err)") {
 		t.Errorf("a failed submit should say so in the form:\n%s", window)
 	}
@@ -231,5 +231,22 @@ func TestModalKeepsKeyboardFocus(t *testing.T) {
 	top := strings.Index(fn, "if ((Number(others[i].style.zIndex) || 0) > mine) return;")
 	if top < 0 || tab < top {
 		t.Error("the Tab trap must sit behind the topmost-dialog check")
+	}
+}
+
+// Every question a page asks goes through the shared modal, so it carries
+// the app's chrome on both clients. A list the person had to type a name back
+// from was the last browser prompt on a shipped page; uiChoose is its
+// replacement, and the shipped pages use it.
+func TestAChoiceIsAskedThroughTheSharedModal(t *testing.T) {
+	prelude := readRuntimeFile(t, "00_prelude.js")
+	for _, want := range []string{"window.uiChoose = function(msg, options)", "ui-choose-opt", "resolve(null)"} {
+		if !strings.Contains(prelude, want) {
+			t.Errorf("uiChoose is missing %q", want)
+		}
+	}
+	css := readRuntimeCSSForTest(t)
+	if !strings.Contains(css, ".ui-choose-opt") {
+		t.Error("the chooser has no styling")
 	}
 }
