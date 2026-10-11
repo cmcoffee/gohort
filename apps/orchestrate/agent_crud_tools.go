@@ -286,12 +286,12 @@ func promptToolGapNote(db Database, a AgentRecord) string {
 		case name == "post_bulletin":
 			poster := false
 			for _, b := range listBulletins(db) {
-				if b.canPost(a.ID) {
+				if b.allowsAgent(a) {
 					poster = true
 				}
 			}
 			if !poster {
-				gaps = append(gaps, "post_bulletin (no board lets this agent post: grant it with bulletins allow_poster {board, agent})")
+				gaps = append(gaps, "post_bulletin (no board lets this agent post: grant it with bulletins allow_poster {board, agent}; a sub-agent posts under its parent's right)")
 			}
 		case !open && !allowed[name] && isResolvableToolName(db, a.Owner, name):
 			gaps = append(gaps, name+" (not in its allowed_tools)")

@@ -2145,6 +2145,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// thread, and relayed to the agent that sent the brief as the result.
 	if ask.asked() {
 		cleanReply = ask.forThread()
+		if note := buildCheck.questionNote(); note != "" {
+			cleanReply += "\n\n" + note
+		}
 	}
 	// Round-cap fallback: the loop ran out of its budget without producing any
 	// text (and even the loop's forced-final-answer rescue came up empty). Don't

@@ -84,6 +84,18 @@ func bulletinsToolDef(t *chatTurn) AgentToolDef {
 				if ag.ID == "" {
 					return "", fmt.Errorf("%s", chFirst(why, "no agent named "+key))
 				}
+				// Posting rights live on a top-level agent and cover the agents
+				// it owns, so a grant aimed at a sub-agent lands on its parent:
+				// the sub-agent is listed nowhere a board is set up.
+				var under string
+				if strings.EqualFold(stringArg(args, "action"), "allow_poster") && ag.OwnedBy != "" {
+					parent, ok := loadAgent(t.udb, ag.OwnedBy)
+					if !ok {
+						return "", fmt.Errorf("%s is a sub-agent of %s, which no longer exists; posting rights live on a top-level agent", chFirst(ag.Name, ag.ID), ag.OwnedBy)
+					}
+					under = fmt.Sprintf(" %s is a sub-agent of %s, so the right is %s's and covers every agent it owns.", chFirst(ag.Name, ag.ID), chFirst(parent.Name, parent.ID), chFirst(parent.Name, parent.ID))
+					ag = parent
+				}
 				// Both actions change the agent: follow rewrites what arrives on
 				// its turns, allow_poster hands it a post_bulletin tool.
 				change := fmt.Sprintf("%s bulletin board %q", chIf(on, "follow", "stop following"), board.Name)
@@ -99,8 +111,8 @@ func bulletinsToolDef(t *chatTurn) AgentToolDef {
 						board.Posters = append(board.Posters, ag.ID)
 					}
 					_ = saveBulletin(t.udb, board)
-					return fmt.Sprintf("%s %s post to %q%s.", chFirst(ag.Name, ag.ID), chIf(on, "may now", "may no longer"), board.Name,
-						chIf(on, " (it has a post_bulletin tool naming this board)", "")), nil
+					return fmt.Sprintf("%s %s post to %q%s.%s", chFirst(ag.Name, ag.ID), chIf(on, "may now", "may no longer"), board.Name,
+						chIf(on, " (it has a post_bulletin tool naming this board)", ""), under), nil
 				}
 				ag.Bulletins = removeString(ag.Bulletins, board.Name)
 				if on {

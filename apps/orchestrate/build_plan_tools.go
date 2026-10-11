@@ -728,6 +728,20 @@ func (d *dispatchBuildCheck) finishUnmet() func() {
 	return func() { d.note = buildGapsNote(nil, d.ts.DB, d.ts.ChatSessionID) }
 }
 
+// questionNote is what is still unmet when the run ends on a QUESTION rather
+// than a reply. A question is a control tool that closes the turn, so the
+// finish check never runs and annotate has nothing; and the question text
+// replaces the reply in the relay anyway. A delegated Builder whose posting
+// tool had failed every verification asked the user how to schedule it,
+// described the tool as running "on its first live run", and nothing said
+// otherwise. The note rides on the question, so the user reads it with it.
+func (d *dispatchBuildCheck) questionNote() string {
+	if d == nil {
+		return ""
+	}
+	return buildGapsNote(nil, d.ts.DB, d.ts.ChatSessionID)
+}
+
 // annotate adds what is still unmet to the reply the run hands back.
 func (d *dispatchBuildCheck) annotate(resp *Response) {
 	if d == nil || d.note == "" || resp == nil {

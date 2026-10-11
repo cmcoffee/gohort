@@ -210,3 +210,45 @@ func TestAnAgentsInstructionsMustMatchItsTools(t *testing.T) {
 		t.Errorf("snake_case words that are not tools are ignored: %s", note)
 	}
 }
+
+// A sub-agent is listed nowhere a board is set up, so posting rights live on
+// its parent and cover the agents it owns: the sub-agent gets post_bulletin
+// under the parent's right, a grant aimed at the sub-agent lands on the
+// parent, and the post names the parent with the agent that wrote it.
+func TestASubAgentPostsUnderItsParentsRight(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	wren, _ := saveAgent(db, AgentRecord{Name: "Wren", Owner: "u", OrchestratorPrompt: "p"})
+	radar, _ := saveAgent(db, AgentRecord{Name: "Local Radar", Owner: "u", OrchestratorPrompt: "p", OwnedBy: wren.ID, Hidden: true})
+	tool := bulletinsToolDef(&chatTurn{udb: db, user: "u"})
+	if _, err := tool.Handler(context.Background(), map[string]any{"action": "create", "name": "local-radar"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := tool.Handler(context.Background(), map[string]any{"action": "allow_poster", "board": "local-radar", "agent": "Local Radar"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Wren may now post") || !strings.Contains(out, "sub-agent of Wren") {
+		t.Fatalf("the grant should land on the parent and say so, got %q", out)
+	}
+	b, _ := loadBulletin(db, "local-radar")
+	if !b.canPost(wren.ID) || b.canPost(radar.ID) {
+		t.Fatalf("the board should name the parent, not the sub-agent: %v", b.Posters)
+	}
+	if !b.allowsAgent(radar) || !b.allowsAgent(wren) {
+		t.Fatal("both the parent and its sub-agent may post")
+	}
+	if b.allowsAgent(AgentRecord{ID: "stranger", OwnedBy: "someone-else"}) {
+		t.Fatal("an agent owned by a non-poster may not post")
+	}
+
+	post, ok := (&chatTurn{udb: db, user: "u", agent: radar}).postBulletinToolDef()
+	if !ok {
+		t.Fatal("the sub-agent should have post_bulletin under its parent's right")
+	}
+	if _, err := post.Handler(context.Background(), map[string]any{"board": "local-radar", "text": "Fog out by 11"}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := loadBulletin(db, "local-radar"); b.PostedBy != "Wren (Local Radar)" {
+		t.Fatalf("the post should name the parent with the writer, got %q", b.PostedBy)
+	}
+}

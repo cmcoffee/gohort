@@ -124,6 +124,15 @@ func (b bulletinBoard) canPost(agentID string) bool {
 	return false
 }
 
+// allowsAgent reports whether an agent may post: named on the board, or owned
+// by an agent that is. A sub-agent is listed nowhere a board is set up (the
+// picker offers the owner's visible agents, and the sub-agents stay out of
+// every list), so the right lives on the parent and covers every agent it
+// owns. The parent is what the board shows as its poster.
+func (b bulletinBoard) allowsAgent(a AgentRecord) bool {
+	return b.canPost(a.ID) || (a.OwnedBy != "" && b.canPost(a.OwnedBy))
+}
+
 // agentFollows reports whether an agent sees this board's posts.
 func agentFollows(a AgentRecord, b bulletinBoard) bool {
 	if b.AllAgents {
@@ -230,14 +239,21 @@ func (t *chatTurn) postBulletinToolDef() (AgentToolDef, bool) {
 	db, _ := t.ownerView()
 	var boards []string
 	for _, b := range listBulletins(db) {
-		if b.canPost(t.agent.ID) {
+		if b.allowsAgent(t.agent) {
 			boards = append(boards, b.Name)
 		}
 	}
 	if len(boards) == 0 {
 		return AgentToolDef{}, false
 	}
+	// A sub-agent posts under its parent's right, so the post names the
+	// parent the board authorises, with the agent that wrote it.
 	by := chFirst(t.agent.Name, t.agent.ID)
+	if t.agent.OwnedBy != "" {
+		if parent, ok := loadAgent(db, t.agent.OwnedBy); ok {
+			by = chFirst(parent.Name, parent.ID) + " (" + by + ")"
+		}
+	}
 	return AgentToolDef{
 		Tool: Tool{
 			Name: "post_bulletin",
@@ -254,7 +270,7 @@ func (t *chatTurn) postBulletinToolDef() (AgentToolDef, bool) {
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := bulletinName(stringArg(args, "board"))
 			b, ok := loadBulletin(db, name)
-			if !ok || !b.canPost(t.agent.ID) {
+			if !ok || !b.allowsAgent(t.agent) {
 				return "", fmt.Errorf("you may not post to %q; boards you may post to: %s", name, strings.Join(boards, ", "))
 			}
 			b, err := postBulletin(db, name, stringArg(args, "text"), by)

@@ -121,3 +121,29 @@ func TestReportBuildGapsFlagsUnverifiedToolOnDoneSteps(t *testing.T) {
 		t.Fatalf("a verified tool should clear the gate; got %q", out)
 	}
 }
+
+// A delegated Builder that ends on a QUESTION skips the finish check (a
+// question is a control tool closing the turn) and its question replaces the
+// reply the check would have annotated. The note rides on the question
+// instead, so the user who is asked how to schedule a tool also reads that
+// the tool has never passed a verification.
+func TestADelegatedQuestionCarriesTheUnverifiedNote(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	sess := &ToolSession{DB: db, ChatSessionID: "dispatch-1"}
+	recordToolVerify(db, "dispatch-1", "post_to_local_radar", false, "verification call failed: No module named 'default_api'")
+
+	check := newDispatchBuildCheck(AgentRecord{ID: "seed-builder"}, sess)
+	note := check.questionNote()
+	for _, want := range []string{"[Build check]", "post_to_local_radar", "default_api", "unconfirmed"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("the question's note should say %q, got %q", want, note)
+		}
+	}
+	recordToolVerify(db, "dispatch-1", "post_to_local_radar", true, "")
+	if note := check.questionNote(); note != "" {
+		t.Fatalf("a verified tool needs no note, got %q", note)
+	}
+	if note := newDispatchBuildCheck(AgentRecord{ID: "plain"}, sess).questionNote(); note != "" {
+		t.Fatalf("an agent that does not author gets no build check, got %q", note)
+	}
+}

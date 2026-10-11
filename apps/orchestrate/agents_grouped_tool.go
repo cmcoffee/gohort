@@ -1400,6 +1400,11 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
 		FinishCheck:          buildCheck.finishCheck(),
 		FinishUnmet:          buildCheck.finishUnmet(),
+		// Whether the reply describes things that happened, as the two
+		// sync-dispatch paths already ask; this inline path did not, so a
+		// dispatched Builder's claims went to the caller unread.
+		TurnClaimJudge:     subTurn.claimJudge(ctx),
+		TurnGroundingJudge: t.app.turnGroundingJudge(ctx),
 		ChatOptions: []ChatOption{
 			WithRouteKey(runRoute),
 			WithThink(think),
@@ -1422,6 +1427,9 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	asked := ask.asked()
 	if asked {
 		cleanReply = ask.forThread()
+		if note := buildCheck.questionNote(); note != "" {
+			cleanReply += "\n\n" + note
+		}
 	}
 	// What the sub-agent produced, judged by the caller's rules before it lands
 	// in the caller's context. The input check can be asked around; this one
