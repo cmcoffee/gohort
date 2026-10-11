@@ -78,3 +78,30 @@ func TestAllowNoneWithGrantListsBuilderOnly(t *testing.T) {
 		t.Fatalf("Allow none + grant must list Builder alone, got %v", names)
 	}
 }
+
+// Under Allow none the reach list holds exactly what the gate lets through:
+// the agent's own sub-agents, Hidden or not, and nothing else of the fleet.
+func TestAllowNoneListsOwnSubAgents(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	if _, err := saveAgent(udb, AgentRecord{Name: "Other", Owner: "u", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	// A real parent: the listing promotes a sub-agent whose parent is missing.
+	parent, err := saveAgent(udb, AgentRecord{Name: "Parent", Owner: "u", DispatchMode: dispatchNone, OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saveAgent(udb, AgentRecord{Name: "Child", Owner: "u", OwnedBy: parent.ID, Hidden: true, OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	turn := &chatTurn{agent: parent, udb: udb, user: "u"}
+	got := turn.computeDispatchableFleet()
+	if len(got) != 1 || got[0].Name != "Child" {
+		names := []string{}
+		for _, a := range got {
+			names = append(names, a.Name)
+		}
+		t.Fatalf("Allow none must list the agent's own sub-agent alone, got %v", names)
+	}
+}

@@ -969,6 +969,13 @@ func (T *OrchestrateApp) handleConsolePermissionGrant(w http.ResponseWriter, r *
 		// "always allow" about a call that does not happen, which is worse
 		// than refusing to write it.
 		if caller, ok := loadAgent(udb, agentID); ok {
+			// A parent always reaches its own sub-agent, so a Block there
+			// would read as a setting and do nothing.
+			if target, ok := loadAgent(udb, subject); ok && value == PolicyBlock && ownSubAgent(caller, target) {
+				http.Error(w, agentName(target)+" is a sub-agent of this agent, and an agent can always call its own sub-agents. "+
+					"To stop it being used, delete the sub-agent or narrow its tools.", http.StatusBadRequest)
+				return
+			}
 			if target, ok := loadAgent(udb, subject); ok && !dispatchReachable(caller, target) {
 				http.Error(w, "this agent's dispatch policy does not reach "+agentName(target)+
 					", so a decision about it could never take effect. Widen the policy above first, or pick a target it can already call.",

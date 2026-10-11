@@ -39,6 +39,12 @@ func targetAcceptsDispatch(owner string, caller, target AgentRecord) string {
 	if caller.ID == "" {
 		return ""
 	}
+	// A parent always reaches its own sub-agent (ownSubAgent): a Block there
+	// would strand the child, which nothing else can call. The Permissions
+	// pane refuses to set one; this holds for a block set before it did.
+	if ownSubAgent(caller, target) {
+		return ""
+	}
 	// The user's own Block on this target, which is about the TARGET and so
 	// holds whatever route reached it. This was already honoured by the
 	// Operator's delegate tool and by agents(run), and by neither of the two

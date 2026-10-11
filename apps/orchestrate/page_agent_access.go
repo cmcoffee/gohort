@@ -351,7 +351,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			{
 				Group:    "Delegation",
 				Title:    "Which agents it can call at all",
-				Subtitle: "The first of two layers, and the kill switch. Allow none stops every call to another agent whatever is decided further down; Builder answers only to its own switch below. The target list is read only by the two \"selected\" modes.",
+				Subtitle: "The first of two layers, and the kill switch. Allow none stops every call to another agent whatever is decided further down, except to this agent's own sub-agents, which it can always call; Builder answers only to its own switch below. The target list is read only by the two \"selected\" modes.",
 				Body: ui.FormPanel{
 					Source:  patchURL,
 					PostURL: patchURL,

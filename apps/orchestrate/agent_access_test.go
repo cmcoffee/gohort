@@ -70,14 +70,15 @@ func TestReachablePredicateMatchesTheGatesRules(t *testing.T) {
 	if !dispatchReachable(AgentRecord{ID: "parent", Name: "Parent"}, sub) {
 		t.Error("a parent must reach its own sub-agent")
 	}
-	// Allow-none is ABSOLUTE, own sub-agents included. The gate has always
-	// refused this - the observed failure was a dispatch-disabled agent
-	// dispatching its own sub-agent a hundred times in one autonomous turn -
-	// and the predicate had the ownership bypass without the guard in front of
-	// it, so the listing said reachable about a call that never happens.
+	// Allow none stops the rest of the fleet and never the agent's own
+	// sub-agents: those exist to be called by it. Runaways are the per-turn
+	// cap's job, not this switch's.
 	shutParent := AgentRecord{ID: "parent", Name: "Parent", DispatchMode: dispatchNone}
-	if dispatchReachable(shutParent, sub) {
-		t.Error("an agent with Allow none reached its own sub-agent, which the gate refuses")
+	if !dispatchReachable(shutParent, sub) {
+		t.Error("Allow none locked a parent out of its own sub-agent")
+	}
+	if dispatchReachable(shutParent, AgentRecord{ID: "peer", Name: "Peer"}) {
+		t.Error("Allow none reached an agent that is not its own sub-agent")
 	}
 }
 

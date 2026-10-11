@@ -228,19 +228,18 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	}
 	mode := effectiveDispatchMode(t.agent)
 	if mode == dispatchNone {
-		// Allow none stops the fleet; Builder answers to its own grant
-		// (builderDispatchAllowed), and is listed alone when that grant is on,
-		// so the one target the gate accepts is one the model can see.
-		if t.canDispatchBuilder() {
-			for _, a := range all {
-				if isBuilderAgent(a.ID) {
-					Debug("[orchestrate] available-agents: agent=%q is Allow none, listing Builder only (Can dispatch Builder is on)", t.agent.ID)
-					return []AgentRecord{a}
-				}
+		// Allow none still reaches this agent's own sub-agents (ownSubAgent),
+		// and Builder through its own grant (builderDispatchAllowed): list
+		// exactly those, so every target the gate accepts is one the model
+		// can see, and nothing it refuses.
+		var reach []AgentRecord
+		for _, a := range all {
+			if ownSubAgent(t.agent, a) || (isBuilderAgent(a.ID) && t.canDispatchBuilder()) {
+				reach = append(reach, a)
 			}
 		}
-		Debug("[orchestrate] available-agents: suppressed for agent=%q, dispatch policy is Allow none", t.agent.ID)
-		return nil
+		Debug("[orchestrate] available-agents: agent=%q is Allow none, listing %d (its own sub-agents, and Builder if granted)", t.agent.ID, len(reach))
+		return reach
 	}
 	listed := map[string]bool{}
 	for _, id := range t.agent.AllowedDispatchTargets {
@@ -275,6 +274,12 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 		// agent in those keeps nudging the model into calls the gate then
 		// refuses, a wedge of pure refusal noise. Drop it here so every
 		// steering surface goes quiet together.
+		// Its own sub-agents are listed whatever the policy, Hidden or Blocked:
+		// the gate lets them through (ownSubAgent), so the list says so too.
+		if ownSubAgent(t.agent, a) {
+			available = append(available, a)
+			continue
+		}
 		if IsDelegationBlocked(RootDB, fleetUser, t.agent.ID, a.Name) || IsDelegationBlocked(RootDB, fleetUser, t.agent.ID, a.ID) {
 			continue
 		}

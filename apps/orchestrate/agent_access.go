@@ -64,13 +64,13 @@ func dispatchReachable(caller, target AgentRecord) bool {
 	if target.ID == caller.ID {
 		return false
 	}
-	// Allow none stops every agent in the fleet, own sub-agents included, and it
-	// is checked before the ownership branch below for exactly the reason the
-	// gate checks it first: the observed failure was a dispatch-disabled agent
-	// dispatching its own sub-agent through the ownership bypass. This predicate
-	// had the bypass and not the guard, so the listing said reachable about a
-	// call the gate refuses. Builder is the one exception, through its own
-	// grant, exactly as in the gate.
+	// A parent always reaches its own sub-agents (ownSubAgent), whatever the
+	// policy says about the rest of the fleet. Checked first, as the gate does.
+	if ownSubAgent(caller, target) {
+		return true
+	}
+	// Allow none stops every OTHER agent. Builder is the one exception, through
+	// its own grant, exactly as in the gate.
 	if effectiveDispatchMode(caller) == dispatchNone && !(isBuilderAgent(target.ID) && builderDispatchAllowed(caller)) {
 		return false
 	}
@@ -364,6 +364,20 @@ const (
 	inboundNone = "none" // nothing reaches it
 )
 
+// ownSubAgent reports whether target is a sub-agent of caller.
+//
+// The one relationship every dispatch gate honours: a sub-agent runs with its
+// parent's authority and exists to be called by it. Creating it under the
+// parent (or approving the one Builder drafted for it) is the owner drawing
+// that link, so no later setting asks the question again: not Allow none, not
+// a Block in the Permissions pane, not the narrowed-tools approval. Runaways
+// are bounded by the per-turn dispatch cap and the depth limit, which apply to
+// sub-agents like any other target.
+func ownSubAgent(caller, target AgentRecord) bool {
+	sub := strings.TrimSpace(target.OwnedBy)
+	return sub != "" && caller.ID != "" && sub == caller.ID
+}
+
 // inboundAllows reports whether target accepts a dispatch from caller.
 //
 // Asked AFTER the caller's own policy, never instead of it: the two narrow
@@ -375,7 +389,7 @@ const (
 // rule that locked a parent out of its own child would strand the child with
 // no way to be reached at all.
 func inboundAllows(target, caller AgentRecord) bool {
-	if strings.TrimSpace(target.OwnedBy) != "" && target.OwnedBy == caller.ID {
+	if ownSubAgent(caller, target) {
 		return true
 	}
 	// The deployment's default reaches an agent that has not answered, the same

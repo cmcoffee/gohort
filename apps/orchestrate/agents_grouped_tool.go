@@ -354,6 +354,10 @@ type dispatchAuthority struct {
 // permissive, so an unrestricted originator constrains nothing and the check
 // costs nothing.
 func (a dispatchAuthority) allows(target AgentRecord) bool {
+	// The authority's own sub-agents, as in the immediate-caller gate.
+	if ownSubAgent(AgentRecord{ID: a.AgentID}, target) {
+		return true
+	}
 	switch a.Mode {
 	case dispatchNone:
 		return false
@@ -895,18 +899,18 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// fails on every sub-agent it just authored. Limited to sub-agents
 	// only (target.OwnedBy != "") so the override doesn't unlock
 	// arbitrary fleet access from Builder; just the specialists.
-	// "Allow none" stops every agent in the fleet, own sub-agents included.
-	// The ownership carve-out below widens WHICH targets are reachable under a
-	// permissive policy, but must never override an explicit "this agent
-	// dispatches to nobody". Checked before the carve-outs because the observed
-	// failure was exactly this: a dispatch-disabled agent dispatching its own
-	// sub-agent 100+ times in one autonomous turn via the ownership bypass.
+	// "Allow none" stops every agent in the fleet except this agent's own
+	// sub-agents (ownSubAgent), which exist to be called by it. It used to stop
+	// those too, after a dispatch-disabled agent called its own sub-agent 100+
+	// times in one autonomous turn; the per-turn dispatch cap and serial firing
+	// that landed with that fix bound the volume on their own, and they still
+	// apply to sub-agents below.
 	//
-	// Builder is the one exception, and only through the explicit "Can
+	// Builder is the other exception, and only through the explicit "Can
 	// dispatch Builder" grant (builderDispatchAllowed): it is not one of the
 	// user's agents, and the grant sits beside Allow none as its own switch.
-	if effectiveDispatchMode(t.agent) == dispatchNone && !(isBuilderAgent(target.ID) && t.canDispatchBuilder()) {
-		return AgentRecord{}, "", fmt.Errorf("agents(run): this agent's dispatch policy is Allow NONE (Security & Access), it may not dispatch to ANY agent, including its own sub-agents. Do the work directly with your own tools; do not retry this call. If delegation is genuinely needed, the user must change the dispatch policy first")
+	if effectiveDispatchMode(t.agent) == dispatchNone && !ownSubAgent(t.agent, target) && !(isBuilderAgent(target.ID) && t.canDispatchBuilder()) {
+		return AgentRecord{}, "", fmt.Errorf("agents(run): this agent's dispatch policy is Allow NONE (Security & Access), it may not dispatch to any agent other than its own sub-agents. Do the work directly with your own tools; do not retry this call. If delegation is genuinely needed, the user must change the dispatch policy first")
 	}
 	// What the agent being CALLED will accept: the user's Block on this target
 	// and the target's own inbound policy. Before the caller's own rules,

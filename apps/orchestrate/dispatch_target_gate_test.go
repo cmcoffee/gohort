@@ -52,6 +52,14 @@ func TestATargetAnswersTheSameWhicheverRouteAsked(t *testing.T) {
 		t.Errorf("a parent was locked out of its own sub-agent: %s", refusal)
 	}
 
+	// Nor can a Block: one set before the Permissions pane refused them would
+	// otherwise strand the child, which nothing else can call.
+	SetDelegationPolicy(RootDB, "alice", caller.ID, child.Name, PolicyBlock)
+	SetDelegationPolicy(RootDB, "alice", caller.ID, child.ID, PolicyBlock)
+	if refusal := targetAcceptsDispatch("alice", caller, child); refusal != "" {
+		t.Errorf("a Block locked a parent out of its own sub-agent: %s", refusal)
+	}
+
 	// The user's Block is about the target, so it holds whatever route reached
 	// it. This one governed only the surfaces that thought to ask.
 	SetDelegationPolicy(RootDB, "alice", caller.ID, open.Name, PolicyBlock)

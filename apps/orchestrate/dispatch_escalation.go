@@ -60,6 +60,14 @@ func (t *chatTurn) dispatchEdgeApproved(target AgentRecord) bool {
 	if !agentIsNarrowed(t.agent) {
 		return true // never restricted; delegation grants it nothing new
 	}
+	if ownSubAgent(t.agent, target) {
+		// The owner drew this link by creating the sub-agent under this agent,
+		// or by approving the one Builder drafted for it: the same say as an
+		// explicit dispatch-list entry, given earlier. Asking again at call
+		// time asked a question already answered, and on a run with nobody
+		// watching it failed closed and stranded the child.
+		return true
+	}
 	if dispatchListContains(t.agent, target.ID) {
 		return true // the owner drew this link themselves
 	}

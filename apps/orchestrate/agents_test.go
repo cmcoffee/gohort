@@ -26,16 +26,22 @@ func newRunGateTurn(t *testing.T, callerMode string) (*chatTurn, AgentRecord) {
 	return &chatTurn{user: "u", udb: udb, agent: caller}, target
 }
 
-// TestDispatchNoneBlocksOwnedSubAgent pins the "Allow none is absolute" rule.
-// Before the fix, the ownership carve-out ran FIRST, so a dispatch-disabled
-// agent could still dispatch its own sub-agents without limit — observed as a
-// Comedian storm (100+ dispatches in one autonomous turn) from an agent whose
-// dispatch policy the user had set to Allow none.
-func TestDispatchNoneBlocksOwnedSubAgent(t *testing.T) {
+// Allow none stops every agent except the caller's own sub-agents, which exist
+// to be called by it. It once stopped those too, after a dispatch-disabled
+// agent called its own sub-agent 100+ times in one autonomous turn; the
+// per-turn cap and serial firing that landed with that fix bound the volume,
+// and still apply. The refusal for anything else names the policy.
+func TestDispatchNoneStillReachesOwnSubAgent(t *testing.T) {
 	turn, _ := newRunGateTurn(t, dispatchNone)
-	out, err := turn.agentsRunAction(map[string]any{"agent": "Comedian", "message": "tell a joke"})
+	if target, _, err := turn.agentsRunGate(map[string]any{"agent": "Comedian", "message": "tell a joke"}); err != nil || target.Name != "Comedian" {
+		t.Fatalf("Allow none must still reach the caller's own sub-agent; got target=%q err=%v", target.Name, err)
+	}
+	if _, err := saveAgent(turn.udb, AgentRecord{Name: "Stranger", Owner: "u", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := turn.agentsRunGate(map[string]any{"agent": "Stranger", "message": "hello"})
 	if err == nil {
-		t.Fatalf("dispatch-none caller reached its owned sub-agent; out=%q", out)
+		t.Fatal("Allow none reached an agent that is not the caller's own sub-agent")
 	}
 	if !strings.Contains(err.Error(), "Allow NONE") {
 		t.Fatalf("refusal should name the Allow NONE policy; got: %v", err)
@@ -53,7 +59,10 @@ func TestDispatchNoneLetsTheBuilderGrantThrough(t *testing.T) {
 	if err != nil || !isBuilderAgent(target.ID) {
 		t.Fatalf("Allow none + grant must reach Builder; got target=%q err=%v", target.ID, err)
 	}
-	if _, _, err := turn.agentsRunGate(map[string]any{"agent": "Comedian", "message": "tell a joke"}); err == nil {
+	if _, err := saveAgent(turn.udb, AgentRecord{Name: "Stranger", Owner: "u", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := turn.agentsRunGate(map[string]any{"agent": "Stranger", "message": "hello"}); err == nil {
 		t.Fatal("the Builder grant must not reopen the rest of the fleet under Allow none")
 	}
 
@@ -70,16 +79,22 @@ func TestDispatchNoneLetsTheBuilderGrantThrough(t *testing.T) {
 // delegate tool. Before the fix agents(run) never consulted the policy, so a
 // blocked target kept getting dispatched by every standing-cycle fire.
 func TestPermissionBlockRefusesAgentsRun(t *testing.T) {
-	turn, target := newRunGateTurn(t, dispatchAll)
+	turn, _ := newRunGateTurn(t, dispatchAll)
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
+	// Not the harness's target: that one is the caller's own sub-agent, which
+	// no Block reaches (ownSubAgent).
+	target, err := saveAgent(turn.udb, AgentRecord{Name: "Stranger", Owner: "u", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Scope "" is the owner-wide block, which is what this table has always
 	// held and what the dispatch surfaces have always read: off limits to
 	// everyone, whatever route reaches it.
 	SetDelegationPolicy(RootDB, "u", "", target.Name, PolicyBlock)
 
-	out, err := turn.agentsRunAction(map[string]any{"agent": "Comedian", "message": "tell a joke"})
+	out, err := turn.agentsRunAction(map[string]any{"agent": "Stranger", "message": "hello"})
 	if err == nil {
 		t.Fatalf("permission-blocked target was dispatched anyway; out=%q", out)
 	}

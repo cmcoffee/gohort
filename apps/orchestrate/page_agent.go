@@ -888,7 +888,7 @@ func dispatchTargetSubtitle(mode string) string {
 	case dispatchExcept:
 		return "Currently **Allow all except selected**: this agent may call any non-hidden agent, and any pipeline, EXCEPT the ones ticked here." + where
 	case dispatchNone:
-		return "Currently **Allow none**: this agent dispatches to nobody, agents and pipelines alike, so this list has no effect until you change the policy." + where
+		return "Currently **Allow none**: this agent dispatches to no other agent or pipeline, so this list has no effect until you change the policy. Its own sub-agents stay reachable: an agent can always call its own." + where
 	default:
 		return "Currently **Allow all**: this agent may call any non-hidden agent and any of your pipelines, so this list has no effect. It applies only in \"Only allow selected\" or \"Allow all except selected\" mode." + where
 	}
@@ -899,7 +899,7 @@ func dispatchModeOptions(first string) []ui.SelectOption {
 		{Value: dispatchAll, Label: "Allow all: any non-hidden agent (default)"},
 		{Value: dispatchOnly, Label: "Only allow selected (target list below)"},
 		{Value: dispatchExcept, Label: "Allow all except selected (target list below)"},
-		{Value: dispatchNone, Label: "Allow none: no dispatch at all"},
+		{Value: dispatchNone, Label: "Allow none: only its own sub-agents"},
 	}
 	out := make([]ui.SelectOption, 0, len(all))
 	for _, o := range all {

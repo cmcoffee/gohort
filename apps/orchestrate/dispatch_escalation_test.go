@@ -223,3 +223,21 @@ func TestTheRecipeDoorUsesTheSameApprovals(t *testing.T) {
 		t.Error("a recipe that reaches no agent must not be gated")
 	}
 }
+
+// A narrowed agent's own sub-agent needs no approval: creating it under the
+// agent, or approving the one Builder drafted, was the owner drawing that link.
+// Asking again failed closed on an unattended run and stranded the child.
+func TestANarrowedAgentReachesItsOwnSubAgentWithoutAsking(t *testing.T) {
+	turn := narrowedTurn(t, AgentRecord{ID: "osint", Name: "OSINT", AllowedTools: []string{"web_search"}})
+	child := AgentRecord{ID: "isolate", Name: "Target Isolation", OwnedBy: "osint", AllowedTools: []string{"run_shell"}}
+	if !turn.dispatchEdgeApproved(child) {
+		t.Fatal("a narrowed agent had to ask to reach its own sub-agent")
+	}
+	if err := turn.confirmDispatchEdge(child); err != nil {
+		t.Fatalf("an unattended run refused the agent's own sub-agent: %v", err)
+	}
+	someoneElses := AgentRecord{ID: "x", Name: "X", OwnedBy: "another-parent"}
+	if turn.dispatchEdgeApproved(someoneElses) {
+		t.Fatal("another agent's sub-agent counted as this agent's own")
+	}
+}
