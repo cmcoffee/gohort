@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -285,5 +286,36 @@ func TestUpdateCardMarksWhatIsNew(t *testing.T) {
 	}
 	if s := privilegeNewSummary(rows, flags); !strings.Contains(s, "wipe_disk") || !strings.Contains(s, "flag fleet") || strings.Contains(s, "post_update") {
 		t.Errorf("summary = %q", s)
+	}
+}
+
+// A locked capability is not a decision: a sub-agent, whose tools all run via
+// its parent and whose flags are pinned to it, raises no card even when one of
+// those pinned flags is on. A card with nothing to change read as a request.
+func TestASubAgentRaisesNoPrivilegeCard(t *testing.T) {
+	viaParent := []privilegeGrant{{Name: "web_search", Policy: "auto"}, {Name: "browse_page", Policy: "auto"}}
+	pinned := []privilegeFlag{{Field: "fleet", On: false, Locked: true}, {Field: "exposed", On: true, Locked: true}}
+	if privilegeCardWorthShowing(viaParent, pinned) {
+		t.Error("a card with every tool running freely and every flag pinned was shown")
+	}
+	rec := AgentRecord{ID: "c", OwnedBy: "p", Everyone: true, AllowedTools: []string{"web_search"}}
+	for _, f := range privilegeFlagRows(rec) {
+		if !f.Locked {
+			t.Errorf("a sub-agent offered a switchable flag %q", f.Field)
+		}
+	}
+	if !privilegeCardWorthShowing(nil, []privilegeFlag{{Field: "fleet", On: true}}) {
+		t.Error("a switchable capability that is on no longer raises the card")
+	}
+}
+
+// The renderer draws no Apply when nothing on the card can change.
+func TestThePrivilegeCardHasNoApplyWithNothingToChange(t *testing.T) {
+	src, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "if (!editable) apply.remove();") {
+		t.Error("the privilege card offers Apply even when nothing on it can change")
 	}
 }

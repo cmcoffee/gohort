@@ -1247,6 +1247,11 @@ select.ui-orch-intake-input {
       actions.appendChild(note);
       wrap.appendChild(actions);
       if (!agentID) { apply.disabled = true; editor.disabled = true; }
+      // Nothing on the card can change (every tool runs freely, every flag is
+      // pinned): it is a record, not a form, so it offers no Apply.
+      var editable = tools.some(function(t) { return t.policy !== 'auto'; }) ||
+        flags.some(function(f) { return !f.locked; });
+      if (!editable) apply.remove();
 
       editor.addEventListener('click', function() {
         window.location.href = 'agent/' + encodeURIComponent(agentID);

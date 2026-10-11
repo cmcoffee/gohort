@@ -318,8 +318,12 @@ func emitPrivilegeCard(sess *ToolSession, rec AgentRecord, bundled []TempTool, p
 	sess.PrivilegePrompt(rec.ID, rec.Name, data)
 }
 
-// privilegeCardWorthShowing keeps the card off screen for an agent that gained
-// nothing to decide: every tool auto-runs and no capability flag is on.
+// privilegeCardWorthShowing keeps the card off screen unless it holds a
+// decision: a tool row with an Ask or Allow to pick, or a capability that is
+// on and the user may switch. A locked flag is the framework's call, not the
+// user's, so it never raises the card on its own; counting it put a sub-agent
+// (every tool runs via its parent, every flag pinned to it) in front of the
+// user as a card with nothing on it to change.
 func privilegeCardWorthShowing(tools []privilegeGrant, flags []privilegeFlag) bool {
 	for _, t := range tools {
 		if t.Policy != "auto" {
@@ -327,7 +331,7 @@ func privilegeCardWorthShowing(tools []privilegeGrant, flags []privilegeFlag) bo
 		}
 	}
 	for _, f := range flags {
-		if f.On {
+		if f.On && !f.Locked {
 			return true
 		}
 	}
