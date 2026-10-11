@@ -43,6 +43,9 @@ func init() {
 		"tool_template", "collections", "draft_oauth_credential",
 		"draft_api_credential", "update_api_credential",
 		"store_credential_secret", "check_credential",
+		// boards: on Builder's catalog on every surface, since it comes from
+		// the session rather than the turn (builderAuthoringTools)
+		"bulletins",
 		// the diagnose-first step on a session handed to Builder
 		"choose_target",
 	)

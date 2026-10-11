@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // TestReferenceSelectionsFromArgs — models produce a flat string list far more
@@ -152,4 +153,17 @@ func TestBuilderAuthoringToolsSurvivesNoSessionEither(t *testing.T) {
 		}
 	}()
 	_ = builderAuthoringTools(nil, nil)
+}
+
+// A dispatched Builder has no chat turn, and every dispatch path passes nil
+// here. The bulletins tool needs only the store and the user, so it comes from
+// the session: without it the dispatched Builder wrote a posting script.
+func TestBuilderAuthoringToolsCarryBulletinsWithoutATurn(t *testing.T) {
+	sess := &ToolSession{Username: "u", DB: &DBase{Store: kvlite.MemStore()}}
+	for _, td := range builderAuthoringTools(sess, nil) {
+		if td.Tool.Name == "bulletins" {
+			return
+		}
+	}
+	t.Fatal("builderAuthoringTools(sess, nil) must include bulletins")
 }

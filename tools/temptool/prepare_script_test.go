@@ -108,4 +108,10 @@ func TestGetWarnsWhenScriptCannotRun(t *testing.T) {
 	if n := cannotRunNote(TempTool{Name: "ok", ScriptBody: "from gohort import fetch_url\nprint(fetch_url('https://x'))\n"}); n != "" {
 		t.Fatalf("a sound script must get no note, got: %s", n)
 	}
+	if tag := cannotRunTag(broken); !strings.Contains(tag, "CANNOT RUN") {
+		t.Fatalf("the list tag should say CANNOT RUN, got %q", tag)
+	}
+	if tag := cannotRunTag(TempTool{Name: "ok", CommandTemplate: "echo hi"}); tag != "" {
+		t.Fatalf("a sound tool must get no list tag, got %q", tag)
+	}
 }

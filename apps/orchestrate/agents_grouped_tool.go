@@ -1132,6 +1132,13 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	mayAuthor, authoringWithheld := dispatchAuthoring(t.ctx, target, t.user, t.user)
 	if mayAuthor {
 		tools = append(tools, builderAuthoringTools(subSess, nil)...)
+		// The operator toolset too, as the sync-dispatch and wake paths
+		// (agent_dispatch.go) give an author, so a delegated build can wire
+		// what it built into a schedule or a monitor. This inline path left
+		// it out, so a Builder reached through agents(run) had no schedule
+		// tool, searched for one eight times, and asked the user to create
+		// the Friday run by hand.
+		tools = mergeToolsDedup(tools, operatorManagementTools(subSess, target.ID))
 		// A dispatched authoring agent (Builder seed, or an Author-flagged agent)
 		// inherits the parent's non-consequential catalog so it can inspect the
 		// parent's world while authoring — read_phantom_chat, web_search, etc. —

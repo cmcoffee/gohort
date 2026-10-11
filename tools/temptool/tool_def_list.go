@@ -64,7 +64,7 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		default:
 			tag = " [session-only]"
 		}
-		fmt.Fprintf(&b, "%d. %s%s [%s]: %s\n", i+1, t.Name, tag, modeLabel(t.Mode), t.Description)
+		fmt.Fprintf(&b, "%d. %s%s%s [%s]: %s\n", i+1, t.Name, tag, cannotRunTag(*t), modeLabel(t.Mode), t.Description)
 	}
 	// Orphan pending: tools queued for approval that aren't currently in
 	// sess.TempTools (e.g. requested in a prior session, still waiting).

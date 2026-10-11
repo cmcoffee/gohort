@@ -530,3 +530,12 @@ func cannotRunNote(t TempTool) string {
 	return "\nWARNING: this tool cannot run as saved, do not copy its script: " + why +
 		". Fix it with tool_def(action=\"update\", name=..., script_body=...)."
 }
+
+// cannotRunTag is the list's short form of cannotRunNote: enough to keep a
+// broken tool from being picked or copied, with get holding the detail.
+func cannotRunTag(t TempTool) string {
+	if callsOwnTools(t.CommandTemplate+"\n"+t.ScriptBody) == "" {
+		return ""
+	}
+	return " [CANNOT RUN: its script calls default_api; tool_def get says how to fix it]"
+}

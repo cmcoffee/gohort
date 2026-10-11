@@ -154,7 +154,15 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 	// temp tool record.
 	tools = append(tools, Secure().BuildTools(sess)...)
 	// Bulletin boards, so an agent built to keep others informed comes with
-	// the board it posts to, its permission to post, and its followers.
+	// the board it posts to, its permission to post, and its followers. The
+	// tool needs only the user's store and name, so a dispatch that has no
+	// turn (every path that passes nil here) gets it from the session: with
+	// the nil check alone, a Builder reached through another agent had no
+	// bulletins tool, wrote a script to post to a board instead, and asked
+	// the user to finish the job.
+	if t == nil && sess != nil && sess.DB != nil && sess.Username != "" {
+		t = &chatTurn{udb: sess.DB, user: sess.Username}
+	}
 	if t != nil {
 		tools = append(tools, bulletinsToolDef(t))
 	}
