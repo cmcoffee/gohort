@@ -103,16 +103,22 @@ func (t *chatTurn) turnRouting() (pin LLMTier, routeKey string) {
 // been paid for: whenever a shared identifier list gains a new kind of member,
 // re-check every place that reasons about the list being "empty" or "stale".
 func (t *chatTurn) dispatchListNamesARunnable() bool {
-	if len(t.agent.AllowedDispatchTargets) == 0 {
+	return dispatchListNamesARunnable(t.agent.AllowedDispatchTargets, t.udb, t.user)
+}
+
+// dispatchListNamesARunnable reports whether a dispatch list names one of the
+// user's pipelines or machines.
+func dispatchListNamesARunnable(list []string, udb Database, user string) bool {
+	if len(list) == 0 {
 		return false
 	}
-	for _, d := range ListPipelineDefs(t.udb, t.user) {
-		if dispatchListNames(t.agent.AllowedDispatchTargets, d.ID, d.Name) {
+	for _, d := range ListPipelineDefs(udb, user) {
+		if dispatchListNames(list, d.ID, d.Name) {
 			return true
 		}
 	}
-	for _, d := range ListMachineDefs(t.udb, t.user) {
-		if dispatchListNames(t.agent.AllowedDispatchTargets, d.ID, d.Name) {
+	for _, d := range ListMachineDefs(udb, user) {
+		if dispatchListNames(list, d.ID, d.Name) {
 			return true
 		}
 	}

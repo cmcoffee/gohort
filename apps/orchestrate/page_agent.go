@@ -339,20 +339,12 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help:   "Prefixes every message this agent sends over a channel with its name.",
 				Detail: "For example, \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
 
-			ui.FormField{Type: "header", Label: "Where it shows up",
-				Help:   "Whether this agent has a card on the dashboard.",
-				Detail: "Everything else that was under this heading is enforcement and moved to the agent's Security window: who may use it and whether it answers over MCP are the Share tab, Private mode is the Network tab, and the edit lock is under Limits (also still the 🔒 icon at the top-right of this page)."},
-			// Who may USE this agent, and whether it is reachable over MCP, are
-			// not here. They are the Share tab of its Security page.
-			//
-			// Both are reach that an administrator grants, not something the
-			// form for what the agent IS should be able to set: the "everyone"
-			// toggle here wrote the RETIRED exposed flag, which migrates to two
-			// decisions at once and welded the dashboard shortcut back onto
-			// publishing every time it was used.
-			ui.FormField{Field: "show_on_dashboard", Type: "toggle", Label: "Shortcut on the dashboard",
-				Help:   "A card on the dashboard and a page of its own, for the people who can already use it.",
-				Detail: "Presentation, not access: it grants nothing, so nobody has to approve it. Somebody who cannot use the agent does not see the card.\n\nUseful for an agent you reach often, and for one you have hidden from the fleet list, which otherwise leaves you no way to open it."},
+			// Where it shows up is not here. Your own dashboard is the
+			// dashboard's Customize page, which pins any of your agents; the
+			// card for the people it is shared with is the Share tab of its
+			// Security page, beside who they are. Who may USE it, and MCP,
+			// are that Share tab too: reach an administrator grants, not
+			// something the form for what the agent IS should set.
 			// None of the ENFORCEMENT is here any more. Private mode and the
 			// workspace ceiling are the Network tab of the agent's Security
 			// window; the switched-off sub-actions and the credential scoping
@@ -593,6 +585,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 					},
 				},
 			})
+		}
+	}
+
+	if id != "" {
+		if rec, ok := loadAgent(udb, id); ok {
+			if sec, ok := agentMoveSection(udb, user, rec); ok {
+				sections = append(sections, sec)
+			}
 		}
 	}
 

@@ -157,6 +157,10 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			} else {
 				// (Locked needs no restore here: saveAgent preserves the
 				// stored flag for every caller. See setAgentLocked.)
+				// Where the agent lives changes only through the move
+				// endpoint, which checks the destination. A whole-record
+				// save echoes it at best and re-parents unchecked at worst.
+				req.OwnedBy = existing.OwnedBy
 				// Guardrails are owned by the dedicated guardrails endpoint
 				// (handleAgentGuardrails), never the whole-record form — a
 				// wholesale-replace save must NOT be able to weaken or clear
@@ -317,6 +321,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 //     add a tool to its skip list, is a partial save that can arrange to be
 //     unwatched
 //   - locked — owned by the lock icon
+//   - owned_by — moving an agent is /api/agents/<id>/move, which checks where
 //   - id / owner / created — identity, not settings
 var patchAgentFields = map[string]bool{
 	"name": true, "description": true, "orchestrator_prompt": true,
@@ -344,7 +349,7 @@ var patchAgentFields = map[string]bool{
 	"share_cortex": true, "share_reference": true, "share_notes": true, "share_uploads": true, "disabled_tool_actions": true,
 	"allow_builder_dispatch": true, "dispatch_mode": true,
 	"inbound_mode": true, "allowed_callers": true, "consult_lead": true,
-	"intake_form": true, "owned_by": true,
+	"intake_form": true,
 	"work_plan": true,
 }
 
@@ -550,6 +555,10 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(clone)
+		return
+	}
+	if action == "move" {
+		T.handleAgentMove(w, r, user, udb, id)
 		return
 	}
 	if action == "assist" {

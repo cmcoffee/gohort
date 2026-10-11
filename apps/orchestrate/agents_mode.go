@@ -100,16 +100,23 @@ func effectiveDispatchMode(a AgentRecord) string {
 // Both surfaces call this now. A catalog that offers what the gate refuses is
 // the drift worth preventing, not the mode calculation itself.
 func (t *chatTurn) dispatchModeAfterSelfHeal(fleetDB Database, fleetUser string) string {
-	mode := effectiveDispatchMode(t.agent)
+	return healedDispatchMode(t.agent, fleetDB, fleetUser, t.udb, t.user)
+}
+
+// healedDispatchMode is dispatchModeAfterSelfHeal for an agent with no turn
+// around it. fleetDB/fleetUser name the agents its list can reach; udb/user
+// the pipelines and machines.
+func healedDispatchMode(a AgentRecord, fleetDB Database, fleetUser string, udb Database, user string) string {
+	mode := effectiveDispatchMode(a)
 	if mode != dispatchOnly {
 		return mode
 	}
-	for _, a := range listAgents(fleetDB, fleetUser) {
-		if dispatchListContains(t.agent, a.ID) {
+	for _, t := range listAgents(fleetDB, fleetUser) {
+		if dispatchListContains(a, t.ID) {
 			return mode // at least one named target still exists
 		}
 	}
-	if t.dispatchListNamesARunnable() {
+	if dispatchListNamesARunnable(a.AllowedDispatchTargets, udb, user) {
 		return mode // names a pipeline or machine instead of an agent
 	}
 	return dispatchAll

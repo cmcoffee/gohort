@@ -299,6 +299,9 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 	if strings.TrimSpace(a.OrchestratorPrompt) == "" {
 		return a, fmt.Errorf("orchestrator_prompt is required")
 	}
+	if err := checkOwnedByChain(db, a); err != nil {
+		return a, err
+	}
 	// Builder-specific invariants. Hidden must stay true — Builder's
 	// authoring flows require the user directly (one-question-at-a-
 	// time intake, ask_user_form, draft sessions), none of which
