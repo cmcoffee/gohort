@@ -1113,14 +1113,23 @@
       // them, so refreshing every badge on a timer means re-reading each of
       // those sources in full, every tick, to keep numbers nobody is waiting
       // on. Navigation can afford that; a clock cannot.
+      // Each badge keeps only the answer to its LATEST request. On load the
+      // view is drawn twice, once before the host has said which agent is on
+      // screen (no agent: the server counts every agent's rows) and once
+      // after; the two fetches race, and the all-agents one is the bigger
+      // read, so it could land last and leave the badge counting the wrong
+      // thing. A switch between agents raced the same way.
+      var badgeSeq = {};
       function refreshChannelBadges(onlyAllAgents, onlyQueues) {
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
           var badge = orchBadges[i];
           if (!item.source || !badge) return;
           if (onlyAllAgents && !item.all_agents) return;
           if (onlyQueues && !item.badge_field) return;
+          var seq = badgeSeq[i] = (badgeSeq[i] || 0) + 1;
           fetch(orchSourceURL(item.source, item)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) {
+              if (badgeSeq[i] !== seq) return; // a newer request owns this badge
               // BadgeField counts only matching rows (e.g. _pending on a page
               // that also lists granted permissions); empty counts every row.
               var n = item.badge_field
