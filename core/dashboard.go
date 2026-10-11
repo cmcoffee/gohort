@@ -10,6 +10,8 @@ import (
 
 	"github.com/cmcoffee/gohort/core/ui"
 
+	"github.com/cmcoffee/gohort/core/docsink"
+
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/webui"
@@ -137,6 +139,10 @@ func ServeDashboard(addr string) error {
 	mux.HandleFunc("/api/notifications/read", handleNotificationRead)
 	mux.HandleFunc("/api/notifications/dismiss", handleNotificationDismiss)
 	mux.HandleFunc("/api/notifications/forward", handleNotificationForward)
+	// Where a finished document can be saved (core/docsink): an app that keeps
+	// documents registers itself, and the artifact pane offers each one.
+	mux.HandleFunc("/api/document-sinks", handleDocSinks)
+	mux.HandleFunc("/api/document-sinks/save", handleDocSinkSave)
 	mux.HandleFunc("/api/access", host.handleAccess)
 
 	// Mount the shared declarative-UI runtime (CSS + JS at /_ui/*).
@@ -1072,4 +1078,63 @@ func (d dashboardHost) handleCustomize(w http.ResponseWriter, r *http.Request) {
 			},
 		}},
 	}.ServeHTTP(w, r)
+}
+
+// handleDocSinks lists the places this user may save a document: GET ->
+// [{name, label}]. Empty for nobody signed in, so a page renders no buttons.
+func handleDocSinks(w http.ResponseWriter, r *http.Request) {
+	type row struct {
+		Name  string `json:"name"`
+		Label string `json:"label"`
+	}
+	out := []row{}
+	if AuthCurrentUser(r) != "" {
+		for _, s := range docsink.For(r) {
+			out = append(out, row{Name: s.Name, Label: chooseStr(s.Label, s.Name)})
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// maxDocSinkBytes bounds a saved document: an artifact with its pictures
+// embedded, comfortably, and not a way to push anything larger.
+const maxDocSinkBytes = 16 << 20
+
+// handleDocSinkSave saves a document to one sink: POST ?name=<sink> with
+// {title, html} -> {url, title}.
+func handleDocSinkSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := AuthCurrentUser(r)
+	if user == "" {
+		http.Error(w, "sign in first", http.StatusUnauthorized)
+		return
+	}
+	sink, ok := docsink.Find(r, strings.TrimSpace(r.URL.Query().Get("name")))
+	if !ok {
+		http.Error(w, "no such place to save to", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+		HTML  string `json:"html"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxDocSinkBytes)).Decode(&body); err != nil {
+		http.Error(w, "send {\"title\", \"html\"}, under 16 MB", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.HTML) == "" {
+		http.Error(w, "nothing to save", http.StatusBadRequest)
+		return
+	}
+	url, stored, err := sink.Save(user, strings.TrimSpace(body.Title), body.HTML)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"url": url, "title": stored})
 }

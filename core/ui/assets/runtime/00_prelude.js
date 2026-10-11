@@ -1311,10 +1311,20 @@
     var printBtn = document.createElement('button');
     printBtn.type = 'button'; printBtn.className = 'ui-row-btn'; printBtn.textContent = '⎙';
     printBtn.title = 'Print, or save as PDF';
+    // Download: the authored document as an .html file that opens anywhere.
+    var downloadBtn = document.createElement('button');
+    downloadBtn.type = 'button'; downloadBtn.className = 'ui-row-btn'; downloadBtn.textContent = '⬇';
+    downloadBtn.title = 'Download as an HTML file';
+    // Save: one button per place this user may keep a document
+    // (/api/document-sinks, which apps register into). The pane names none
+    // of them; the server's list does.
+    var sinkBar = document.createElement('span');
+    sinkBar.style.cssText = 'display:inline-flex;gap:0.3rem';
     var closeBtn = document.createElement('button');
     closeBtn.type = 'button'; closeBtn.className = 'ui-row-btn'; closeBtn.textContent = '✕';
     closeBtn.title = 'Close';
-    hdr.appendChild(ttl); hdr.appendChild(printBtn); hdr.appendChild(popBtn); hdr.appendChild(closeBtn);
+    hdr.appendChild(ttl); hdr.appendChild(sinkBar); hdr.appendChild(printBtn); hdr.appendChild(downloadBtn);
+    hdr.appendChild(popBtn); hdr.appendChild(closeBtn);
     pane.appendChild(hdr);
     // Left-edge drag handle — resize by dragging toward/away from the chat.
     var grip = document.createElement('div');
@@ -1422,6 +1432,11 @@
           frame.setAttribute('srcdoc', withShims(o.html, dataUrls));
         }
       }
+      // Download and Save are for an authored document; a preview of one of
+      // our own pages is already at its address.
+      var authored = !!state.html;
+      downloadBtn.style.display = authored ? '' : 'none';
+      sinkBar.style.display = authored ? 'inline-flex' : 'none';
     }
     // Parent half of the live-data bridge. Only answers the CURRENT
     // frame's document, and only for GET paths on the artifact's declared
@@ -1464,6 +1479,63 @@
         window.open(URL.createObjectURL(blob), '_blank');
       } catch (_) {}
     });
+    // A file name from the title: what a person would type, not an id.
+    function artifactFileName() {
+      var t = String(ttl.textContent || 'Artifact').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim();
+      return (t || 'Artifact').slice(0, 120) + '.html';
+    }
+    downloadBtn.addEventListener('click', function() {
+      if (!state.html) return;
+      // The copy says what it is. A live artifact's data came through this
+      // page, which a file on disk does not have: its fetch helper is stubbed
+      // so the page shows its own starting state instead of failing.
+      var head = '<!-- Saved from gohort ' + new Date().toISOString() + '. A copy: it does not update. -->';
+      if (state.dataUrls && state.dataUrls.length) {
+        head += '<script>window.gohort={fetch:function(){return Promise.reject(new Error("This saved copy has no live data."));}};<' + '/script>';
+      }
+      var html = String(state.html);
+      var m = html.match(/<head[^>]*>/i);
+      var out = m ? html.replace(m[0], m[0] + head) : head + html;
+      try {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([out], {type: 'text/html'}));
+        a.download = artifactFileName();
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+      } catch (_) {}
+    });
+    function saveTo(sink, btn) {
+      if (!state.html) return;
+      var label = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Saving…';
+      fetch('/api/document-sinks/save?name=' + encodeURIComponent(sink.name), {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title: ttl.textContent || '', html: state.html})
+      }).then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+        return r.json();
+      }).then(function(d) {
+        btn.textContent = 'Saved';
+        window.uiToast(sink.label.replace(/^Save to /, 'Saved to ') + (d && d.title ? ' as "' + d.title + '"' : '') + '.');
+        setTimeout(function() { btn.textContent = label; btn.disabled = false; }, 2500);
+      }).catch(function(e) {
+        btn.textContent = label; btn.disabled = false;
+        window.uiAlert('Could not save: ' + String(e && e.message || e));
+      });
+    }
+    fetch('/api/document-sinks', {credentials: 'same-origin'})
+      .then(function(r) { return r.ok ? r.json() : []; })
+      .then(function(list) {
+        (list || []).forEach(function(sink) {
+          var b = document.createElement('button');
+          b.type = 'button'; b.className = 'ui-row-btn';
+          b.textContent = String(sink.label || sink.name);
+          b.addEventListener('click', function() { saveTo(sink, b); });
+          sinkBar.appendChild(b);
+        });
+      }).catch(function() {});
     printBtn.addEventListener('click', function() {
       try {
         // Our own served page is same-origin and unsandboxed: print it

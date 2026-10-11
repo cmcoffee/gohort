@@ -27,3 +27,26 @@ func TestTheArtifactPaneCanPrint(t *testing.T) {
 		t.Error("an authored artifact must never get allow-same-origin")
 	}
 }
+
+// The pane downloads an authored artifact as a file, stubbing the live-data
+// helper a file on disk cannot reach, and offers one Save button per place
+// the server lists, naming none of them itself.
+func TestTheArtifactPaneDownloadsAndSaves(t *testing.T) {
+	src := mustRuntimePart(t, "00_prelude.js")
+	for _, want := range []string{
+		"downloadBtn.title = 'Download as an HTML file';",
+		"a.download = artifactFileName();",
+		"This saved copy has no live data.",
+		"fetch('/api/document-sinks', {credentials: 'same-origin'})",
+		"fetch('/api/document-sinks/save?name=' + encodeURIComponent(sink.name)",
+		"downloadBtn.style.display = authored ? '' : 'none';",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the artifact pane lost download or save: missing %s", want)
+		}
+	}
+	// Each button's text is the server's label, not one the pane wrote.
+	if !strings.Contains(src, "b.textContent = String(sink.label || sink.name);") {
+		t.Error("a Save button's text no longer comes from the server's list of places")
+	}
+}

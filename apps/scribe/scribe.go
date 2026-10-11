@@ -111,6 +111,8 @@ func (T *Scribe) WebAccessCheck(r *http.Request) bool {
 }
 
 func (T *Scribe) Routes() {
+	// A place the artifact pane can save a page to (docsink.go).
+	T.registerDocSink()
 	// The two apps this one replaced: their paths redirect here, and the grants
 	// that named them move over so nobody loses access to what they could open
 	// yesterday. Both migrations run once and record that they did.
