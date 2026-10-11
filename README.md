@@ -220,6 +220,8 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 
 Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 
+![The administrator console: one tab per operator concern, from models and credentials to governance and maintenance](docs/images/admin.png)
+
 ## Companion client
 
 **`gohort-desktop`**, a native Wails host (macOS): a viewer window plus an always-on menu-bar **Bridge** daemon that owns the host's OS permissions (filesystem, screenshot, contacts) and, on macOS, relays iMessage into the Bridges app. Its tool surface is expandable at runtime: the server can push an admin-approved, user-consented capability that lands as a new local tool without reshipping. See [`gohort-desktop/README.md`](gohort-desktop/README.md).
