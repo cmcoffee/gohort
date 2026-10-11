@@ -129,10 +129,22 @@ func SetLeadInitError(provider, model string, err error) {
 // A description rather than the config: the thing worth showing is the model
 // and the host a call actually goes to, which for Bedrock is not derivable
 // from the model field alone.
+//
+// A different lead also starts its call counts over. They describe the model
+// that made the calls, and kept across a change they went on reporting the
+// failures of model ids already replaced (a typo saved on the way to the
+// right one) for the two hours the dashboard looks back.
 func SetLiveLLMs(worker, lead string) {
 	leadInitMu.Lock()
+	changed := liveLeadLLM != lead
 	liveWorkerLLM, liveLeadLLM = worker, lead
 	leadInitMu.Unlock()
+	if changed {
+		leadStatsMu.Lock()
+		leadHours = [24]leadHour{}
+		leadLastFailure = time.Time{}
+		leadStatsMu.Unlock()
+	}
 }
 
 // LiveLLMs returns those descriptions, empty before anything is installed.

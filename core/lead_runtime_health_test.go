@@ -244,3 +244,31 @@ func TestLeadCallsCountsAPartialFailure(t *testing.T) {
 		t.Errorf("after a day = %+v", got)
 	}
 }
+
+// The counts describe the model that made the calls. A different lead starts
+// them over; a reload that keeps the same lead (a worker save) does not.
+func TestLeadCallsStartOverWithANewLead(t *testing.T) {
+	leadStatsMu.Lock()
+	prevHours := leadHours
+	leadHours = [24]leadHour{}
+	leadStatsMu.Unlock()
+	prevWorker, prevLead := LiveLLMs()
+	t.Cleanup(func() {
+		SetLiveLLMs(prevWorker, prevLead)
+		leadStatsMu.Lock()
+		leadHours = prevHours
+		leadStatsMu.Unlock()
+	})
+	SetLiveLLMs("worker-a", "provider/typo-model")
+	noteLeadCall(errors.New("api error (404): model not found"))
+	noteLeadCall(errors.New("api error (404): model not found"))
+
+	SetLiveLLMs("worker-b", "provider/typo-model")
+	if got := LeadCalls(); got.Failed != 2 {
+		t.Fatalf("a reload keeping the same lead lost its counts: %+v", got)
+	}
+	SetLiveLLMs("worker-b", "provider/right-model")
+	if got := LeadCalls(); got.Calls != 0 || got.Failed != 0 || got.TopError != "" || !got.LastFailure.IsZero() {
+		t.Errorf("the old model's failures outlived it: %+v", got)
+	}
+}

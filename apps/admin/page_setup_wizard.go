@@ -406,27 +406,45 @@ func (a *AdminApp) DashboardNotices(r *http.Request) []DashboardNotice {
 // failed its handoff check after a save. Both are invisible from a chat, where
 // the only sign is answers getting worse.
 func (a *AdminApp) llmNotices() []DashboardNotice {
-	url := a.WebPath() + "/" + ui.SectionOnTab("LLMs", "Lead LLM")
 	var out []DashboardNotice
+	if n, ok := a.leadNotice(); ok {
+		out = append(out, n)
+	}
+	if model, first := handoffFailure(LLMTable); first != "" {
+		out = append(out, DashboardNotice{
+			Text:   fmt.Sprintf("The worker model (%s) failed its handoff check after the last save. %s", model, first),
+			Action: "Open LLM settings", URL: a.WebPath() + "/" + ui.SectionOnTab("LLMs", "Worker LLM")})
+	}
+	return out
+}
+
+// leadNotice is ONE card for whatever is wrong with the lead. Its problems
+// were separate cards, and they are rarely separate events: a model that
+// fails its handoff check goes on to fail its calls, so one fault put up two
+// cards with the same button, reading like two things to fix.
+func (a *AdminApp) leadNotice() (DashboardNotice, bool) {
+	var says []string
+	if e := strings.TrimSpace(LeadInitError()); e != "" {
+		says = append(says, strings.ToUpper(e[:1])+e[1:]+".")
+	}
+	if model, first := handoffFailure(LeadLLMTable); first != "" {
+		says = append(says, fmt.Sprintf("The lead model (%s) failed its handoff check after the last save. %s", model, first))
+	}
 	if st := LeadCalls(); st.RecentCalls >= 5 && st.RecentFailed*4 >= st.RecentCalls {
 		text := fmt.Sprintf("The lead model failed %d of its last %d calls, so that work ran on the worker.", st.RecentFailed, st.RecentCalls)
 		if st.TopError != "" {
 			text += " Most often: " + st.TopError
 		}
-		out = append(out, DashboardNotice{Text: text, Action: "Open LLM settings", URL: url})
+		says = append(says, text)
 	}
-	for _, table := range []string{LeadLLMTable, LLMTable} {
-		if model, first := handoffFailure(table); first != "" {
-			tier, sec := "lead", "Lead LLM"
-			if table == LLMTable {
-				tier, sec = "worker", "Worker LLM"
-			}
-			out = append(out, DashboardNotice{
-				Text:   fmt.Sprintf("The %s model (%s) failed its handoff check after the last save. %s", tier, model, first),
-				Action: "Open LLM settings", URL: a.WebPath() + "/" + ui.SectionOnTab("LLMs", sec)})
-		}
+	if len(says) == 0 {
+		return DashboardNotice{}, false
 	}
-	return out
+	return DashboardNotice{
+		Text:   strings.Join(says, " "),
+		Action: "Open LLM settings",
+		URL:    a.WebPath() + "/" + ui.SectionOnTab("LLMs", "Lead LLM"),
+	}, true
 }
 
 // firstRunNotices is the decision itself, separated from the request so it can
