@@ -9,9 +9,9 @@ import (
 )
 
 // CostRates holds the dollar prices used to convert UsageDiff into
-// an estimated run cost. All token rates are dollars per 1,000
-// tokens (the convention every commercial LLM provider prices in);
-// search is dollars per call. Zero values are legal and produce a
+// an estimated run cost. Token rates are stored as dollars per 1,000
+// tokens; the admin page shows and takes them per million, which is
+// how providers publish prices. Search is dollars per call. Zero values are legal and produce a
 // zero cost estimate — which is the correct signal when rates
 // haven't been configured for this deployment.
 //

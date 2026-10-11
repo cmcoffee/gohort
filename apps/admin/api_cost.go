@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 
@@ -63,12 +64,29 @@ func (a *AdminApp) handleGetCostRates(w http.ResponseWriter, r *http.Request) {
 	// as a blank box beside a cost that is plainly applying a multiplier.
 	// Outer fields shadow the embedded struct's, which is what makes this
 	// work without a second type.
+	//
+	// Token rates go out per MILLION tokens, which is how every provider
+	// publishes them, so a price page's "$1.50 / $9.00" is typed as it
+	// reads. They are stored per thousand (CostRates), and only this page
+	// sees the other unit.
 	json.NewEncoder(w).Encode(struct {
 		CostRates
 		CacheReadMultiplier  float64 `json:"cache_read_multiplier"`
 		CacheWriteMultiplier float64 `json:"cache_write_multiplier"`
 		Configured           bool    `json:"configured"`
-	}{rates, rates.EffectiveCacheReadMultiplier(), rates.EffectiveCacheWriteMultiplier(), RatesConfigured()})
+		WorkerInputPer1M     float64 `json:"worker_input_per_1m"`
+		WorkerOutputPer1M    float64 `json:"worker_output_per_1m"`
+		LeadInputPer1M       float64 `json:"lead_input_per_1m"`
+		LeadOutputPer1M      float64 `json:"lead_output_per_1m"`
+	}{rates, rates.EffectiveCacheReadMultiplier(), rates.EffectiveCacheWriteMultiplier(), RatesConfigured(),
+		perMillion(rates.WorkerInputPer1K), perMillion(rates.WorkerOutputPer1K),
+		perMillion(rates.LeadInputPer1K), perMillion(rates.LeadOutputPer1K)})
+}
+
+// perMillion turns a stored per-thousand rate into the per-million one the
+// page shows, rounded so 0.0015 reads 1.5 rather than 1.5000000000000002.
+func perMillion(per1K float64) float64 {
+	return math.Round(per1K*1000*1e6) / 1e6
 }
 
 // handleUpdateCostRates accepts a partial or full CostRates JSON body
@@ -82,6 +100,11 @@ func (a *AdminApp) handleUpdateCostRates(w http.ResponseWriter, r *http.Request)
 		WorkerOutputPer1K *float64 `json:"worker_output_per_1k,omitempty"`
 		LeadInputPer1K    *float64 `json:"lead_input_per_1k,omitempty"`
 		LeadOutputPer1K   *float64 `json:"lead_output_per_1k,omitempty"`
+		// What the page sends: per million tokens, stored per thousand.
+		WorkerInputPer1M  *float64 `json:"worker_input_per_1m,omitempty"`
+		WorkerOutputPer1M *float64 `json:"worker_output_per_1m,omitempty"`
+		LeadInputPer1M    *float64 `json:"lead_input_per_1m,omitempty"`
+		LeadOutputPer1M   *float64 `json:"lead_output_per_1m,omitempty"`
 		SearchPerCall     *float64 `json:"search_per_call,omitempty"`
 		ImagePerCall      *float64 `json:"image_per_call,omitempty"`
 		// Cached-prompt weights. Not rates in dollars — multipliers on the
@@ -126,6 +149,24 @@ func (a *AdminApp) handleUpdateCostRates(w http.ResponseWriter, r *http.Request)
 	if req.CacheWriteMultiplier != nil {
 		rates.CacheWriteMultiplier = *req.CacheWriteMultiplier
 		Log("[admin] user %q set cache_write_multiplier=%g", current, *req.CacheWriteMultiplier)
+	}
+	// Applied LAST: the form PUTs the whole record it loaded, which still
+	// carries the per-thousand fields, and those must not undo what was
+	// just typed per million.
+	for _, m := range []struct {
+		name string
+		in   *float64
+		dst  *float64
+	}{
+		{"worker_input", req.WorkerInputPer1M, &rates.WorkerInputPer1K},
+		{"worker_output", req.WorkerOutputPer1M, &rates.WorkerOutputPer1K},
+		{"lead_input", req.LeadInputPer1M, &rates.LeadInputPer1K},
+		{"lead_output", req.LeadOutputPer1M, &rates.LeadOutputPer1K},
+	} {
+		if m.in != nil {
+			*m.dst = *m.in / 1000
+			Log("[admin] user %q set %s=$%g per 1M tokens", current, m.name, *m.in)
+		}
 	}
 	if err := SaveCostRatesToDB(a.db, rates); err != nil {
 		http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
