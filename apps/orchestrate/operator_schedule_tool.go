@@ -155,7 +155,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		"then":         {Type: "string", Description: "(create) What to do when it fires, in plain words. every: the mission run each time (\"fetch the forecast and post it to the family chat\"). at / monitors: handed to you on wake (\"tell the user it's 1:10pm, as they asked\")."},
 		"time":         {Type: "string", Description: "(create) When, as the user said it, in their own zone (the one time_in_zone reports; never convert to UTC). at: \"13:10\", \"1:10pm\", \"in 20 minutes\", or ISO8601. every: \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\". Monitors: optional set times of day to check, \"08:00\" or \"08:00,18:00\", instead of check_every."},
 		"name":         {Type: "string", Description: "(create: optional, one is made up; pause/resume/run_now/delete: required) Short name, e.g. \"daily-weather\", \"nvda-below\"."},
-		"agent":        {Type: "string", Description: "(every: who runs it, default you; agent_says: who checks, default you; list / delete / move: WHOSE schedules to act on, another of your own agents by name or id, or \"all\" for every agent you own, list only) Name or id of an existing agent."},
+		"agent":        {Type: "string", Description: "(at: who is woken to do it, default you; every: who runs it, default you; agent_says: who checks, default you; list / delete / move: WHOSE schedules to act on, another of your own agents by name or id, or \"all\" for every agent you own, list only) Name or id of an existing agent."},
 		"pipeline":     {Type: "string", Description: "(every, instead of agent) A stored pipeline to run; `then` becomes its input."},
 		"machine":      {Type: "string", Description: "(every, instead of agent) A stored machine to run; `then` becomes its input."},
 		"start_at":     {Type: "string", Description: "(every with an interval, optional) ISO8601 first run, e.g. 2026-06-10T08:00:00-07:00; then the interval from there."},
@@ -283,7 +283,17 @@ func scheduleCreate(ctx context.Context, owner, controllerAgentID string, impl m
 			return scheduleOwnTimer(owner, rec, timeSpec, then, name, args)
 		}
 		m := map[string]any{"at": timeSpec, "note": then}
-		pass(m, "name", "name", "notify", "notify")
+		pass(m, "name", "name", "notify", "notify", "wake_agent", "wake_agent")
+		// agent names who is woken to do it, as it names who runs an every:
+		// "run QA Radar once in 4 minutes" is agent="QA Radar", when="at".
+		// Without this the one-off woke its author, and a Builder asked for
+		// a one-off run of the agent it had just built set a timer on
+		// itself instead.
+		if a := strings.TrimSpace(oArgStr(args, "agent")); a != "" {
+			if _, named := m["wake_agent"]; !named {
+				m["wake_agent"] = a
+			}
+		}
 		return forward("set_timer", m)
 	case "every":
 		if timeSpec == "" {

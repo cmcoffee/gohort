@@ -229,3 +229,30 @@ func TestOperatorSetShowsOneSchedulingTool(t *testing.T) {
 		}
 	}
 }
+
+// A one-off names the agent it wakes the way an every names who runs it:
+// agent="QA Radar", when="at". Without this the one-off woke its author, and
+// a Builder asked for one run of the agent it had just built set a timer on
+// itself instead.
+func TestAOneOffNamesTheAgentItWakes(t *testing.T) {
+	db := pinRootDB(t)
+	PreInitScheduler()
+	udb := UserDB(db, "craig")
+	radar, err := saveAgent(udb, AgentRecord{Name: "QA Radar", Owner: "craig", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := scheduleTool(t, &ToolSession{Username: "craig", DB: udb}, "agent-1")
+	if _, err := tool.Handler(context.Background(), map[string]any{
+		"when": "at", "name": "radar-once", "time": "in 4 minutes", "then": "write and post the digest", "agent": "QA Radar",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m, ok := GetEventMonitor(db, "craig", "radar-once")
+	if !ok || m.Kind != EventKindTimer {
+		t.Fatalf("the one-off was not set as a timer: %+v", m)
+	}
+	if m.WakeAgent != radar.ID {
+		t.Fatalf("the one-off should wake QA Radar (%s), wakes %q", radar.ID, m.WakeAgent)
+	}
+}

@@ -75,6 +75,14 @@ func ResolveZone(s string) (*time.Location, string, error) {
 	if loc, err := time.LoadLocation(raw); err == nil {
 		return loc, raw, nil
 	}
+	// A city that IS an IANA zone name under one of the regions, which most
+	// capitals are: Cairo, Lima, Reykjavik, Nairobi, Bogota, Karachi. The
+	// alias table above cannot list them all, and a chat agent asked for the
+	// time in three such cities lost a round to each before retrying with
+	// the full name.
+	if loc, iana, ok := zoneByCity(raw); ok {
+		return loc, iana, nil
+	}
 	return nil, "", fmt.Errorf(`unknown timezone %q: use an IANA name like "America/New_York" or "Asia/Tokyo", a major city ("Tokyo", "London"), or a US abbreviation (EST/CST/MST/PST)`, raw)
 }
 
@@ -202,4 +210,31 @@ func UserLocation(username string) *time.Location {
 		return time.Local
 	}
 	return loc
+}
+
+// zoneRegions are the IANA region prefixes a bare city name is tried under,
+// in the order a collision should resolve (Europe/Lisbon over Asia/...).
+var zoneRegions = []string{"Europe", "America", "Asia", "Africa", "Australia", "Pacific", "Atlantic", "Indian"}
+
+// zoneByCity resolves a bare city name as <Region>/<City_Name> under each
+// region, the name title-cased and its spaces made underscores.
+func zoneByCity(raw string) (*time.Location, string, bool) {
+	if strings.ContainsAny(raw, "/\\") {
+		return nil, "", false
+	}
+	words := strings.Fields(strings.ToLower(raw))
+	if len(words) == 0 {
+		return nil, "", false
+	}
+	for i, w := range words {
+		words[i] = strings.ToUpper(w[:1]) + w[1:]
+	}
+	city := strings.Join(words, "_")
+	for _, region := range zoneRegions {
+		iana := region + "/" + city
+		if loc, err := time.LoadLocation(iana); err == nil {
+			return loc, iana, true
+		}
+	}
+	return nil, "", false
 }

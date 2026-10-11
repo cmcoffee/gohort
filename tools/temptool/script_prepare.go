@@ -74,6 +74,14 @@ func PrepareScriptBody(sess *ToolSession, toolName, cmd, scriptBody, scriptName 
 	if strings.ContainsAny(scriptName, "/\\") {
 		return "", "", "", fmt.Errorf("script_name must be a single filename (no path separators)")
 	}
+	// A template that is only the script's own filename ("script.py",
+	// "./run.sh") names the script and nothing else: no interpreter, no
+	// workspace path, so the shell reported "command not found" and the
+	// author tried three placeholders before landing on the right one. It is
+	// inferred as an empty template is, interpreter and path included.
+	if c := strings.TrimSpace(cmd); c == scriptName || c == "./"+scriptName {
+		cmd = ""
+	}
 	if strings.TrimSpace(cmd) == "" {
 		paramOrder, perr := paramNamesInDefinitionOrder(params)
 		if perr == nil {

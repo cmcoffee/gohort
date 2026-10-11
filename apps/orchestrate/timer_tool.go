@@ -28,10 +28,11 @@ func timerToolDef(sess *ToolSession, owner, agentID string) AgentToolDef {
 			Name:        "set_timer",
 			Description: "Wake yourself ONCE at a time of day or after a delay: \"tell me when it's 1:10pm\", \"remind me at 3\", \"ping me in 20 minutes\". The clock is the trigger: nothing is fetched or checked, so never build a monitor for this. When it goes off you are woken here with the note and do what it says (tell the user, start the work). For something that repeats on a clock use create_standing_agent (cron); for \"when X happens\" use create_event_monitor.",
 			Parameters: map[string]ToolParam{
-				"at":     {Type: "string", Description: "When it goes off, in the user's own zone (the one time_in_zone reports): a time of day (\"13:10\", \"1:10pm\", \"3 PM\"; a time already past today means tomorrow), a delay (\"in 20 minutes\", \"in 1h30m\", \"in 90s\"), or an ISO8601 timestamp (\"2026-10-10T13:10:00-07:00\")."},
-				"note":   {Type: "string", Description: "What to do when it goes off, handed back to you on wake: \"tell the user it's 1:10pm, as they asked\", \"start the nightly export\"."},
-				"name":   {Type: "string", Description: "Optional short name; one is made from the time when omitted."},
-				"notify": {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "How the user hears about it. \"channel\" (default): wake you here so you can say it in your own words. \"direct\": post the note into the thread with NO LLM. \"text\": text the owner's phone with the note, no LLM."},
+				"at":         {Type: "string", Description: "When it goes off, in the user's own zone (the one time_in_zone reports): a time of day (\"13:10\", \"1:10pm\", \"3 PM\"; a time already past today means tomorrow), a delay (\"in 20 minutes\", \"in 1h30m\", \"in 90s\"), or an ISO8601 timestamp (\"2026-10-10T13:10:00-07:00\")."},
+				"note":       {Type: "string", Description: "What to do when it goes off, handed back to you on wake: \"tell the user it's 1:10pm, as they asked\", \"start the nightly export\"."},
+				"name":       {Type: "string", Description: "Optional short name; one is made from the time when omitted."},
+				"wake_agent": {Type: "string", Description: "Another agent to wake with the note instead of you, by name or id: one run of that agent at a time is a timer that wakes it."},
+				"notify":     {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "How the user hears about it. \"channel\" (default): wake you here so you can say it in your own words. \"direct\": post the note into the thread with NO LLM. \"text\": text the owner's phone with the note, no LLM."},
 			},
 			Required: []string{"at", "note"},
 		},
@@ -59,7 +60,9 @@ func timerToolDef(sess *ToolSession, owner, agentID string) AgentToolDef {
 			default:
 				notify = EventNotifyChannel
 			}
-			wakeAgentID, err := resolveMonitorWakeAgent(sess, agentID, "", notify, "")
+			// The agent to wake, when the timer is one run of another agent at a
+			// time; else the timer's own author, or nobody when it is delivered.
+			wakeAgentID, err := resolveMonitorWakeAgent(sess, agentID, oArgStr(args, "wake_agent"), notify, "")
 			if err != nil {
 				return "", err
 			}

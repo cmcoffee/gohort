@@ -115,3 +115,18 @@ func TestGetWarnsWhenScriptCannotRun(t *testing.T) {
 		t.Fatalf("a sound tool must get no list tag, got %q", tag)
 	}
 }
+
+// A template that is only the script's filename is inferred as an empty one:
+// Builder wrote command_template="script.py" beside a script_body, the shell
+// said "command not found", and three placeholder guesses followed.
+func TestABareScriptNameIsInferredLikeAnEmptyTemplate(t *testing.T) {
+	for _, cmd := range []string{"script.py", "./script.py", " script.py "} {
+		got, _, _, err := PrepareScriptBody(nil, "echo_hi", cmd, "print('hi')", "script.py", map[string]any{})
+		if err != nil && !strings.Contains(err.Error(), "workspace") {
+			t.Fatalf("%q: %v", cmd, err)
+		}
+		if err == nil && (!strings.Contains(got, "python3") || !strings.Contains(got, "{workspace_dir}/script.py")) {
+			t.Fatalf("%q became %q; want the interpreter and the workspace path", cmd, got)
+		}
+	}
+}
