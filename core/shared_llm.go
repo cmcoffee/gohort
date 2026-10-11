@@ -721,6 +721,14 @@ var (
 	laneMaxWait       = 2 * time.Minute
 	laneLowestMaxWait = 10 * time.Minute
 	laneTick          = 250 * time.Millisecond
+	// laneDeadlineFloor is what a call keeps for itself: a call whose context
+	// has less than this left is never held, and one with more is held only
+	// until this much remains. The guardrail warden's check (30s, or 90s
+	// when it reasons first), a title, a recall hint all run on a deadline of
+	// their own inside a run; held for the run's lane they expired waiting,
+	// and a warden that could not run blocked a lowest agent's turn. A run's
+	// own calls carry no deadline this short, so the lane still holds them.
+	laneDeadlineFloor = time.Minute
 )
 
 // interactiveInUse says whether a person's call to tier is out now, or ended
@@ -749,6 +757,15 @@ func holdForLane(ctx context.Context, tier LLMTier) (time.Duration, error) {
 	}
 	if !busy() {
 		return 0, nil
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		left := time.Until(dl)
+		if left <= laneDeadlineFloor {
+			return 0, nil
+		}
+		if room := left - laneDeadlineFloor; room < cap {
+			cap = room
+		}
 	}
 	start := time.Now()
 	for busy() {

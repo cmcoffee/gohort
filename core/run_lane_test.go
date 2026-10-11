@@ -77,3 +77,32 @@ func TestRunLaneDefaultsToBackground(t *testing.T) {
 		t.Fatal("the mark is not read back")
 	}
 }
+
+// A call with a short deadline of its own is never held, and one with a
+// longer deadline is held only until the floor remains: the warden's check
+// inside a held run used to expire waiting and block the turn.
+func TestAShortDeadlineIsNeverHeld(t *testing.T) {
+	q, mw, tick, floor := laneQuiet, laneMaxWait, laneTick, laneDeadlineFloor
+	laneQuiet, laneMaxWait, laneTick, laneDeadlineFloor = time.Second, 2*time.Second, 5*time.Millisecond, 100*time.Millisecond
+	defer func() { laneQuiet, laneMaxWait, laneTick, laneDeadlineFloor = q, mw, tick, floor }()
+	modelUseMu.Lock()
+	modelUses = map[LLMTier]*modelUse{}
+	modelUseMu.Unlock()
+
+	done, _ := reloadableLLM{}.beginModelUse(WithRunLane(context.Background(), LaneInteractive))
+	defer done()
+	short, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	if held, err := holdForLane(short, WORKER); held != 0 || err != nil {
+		t.Fatalf("a call with less than the floor left was held %s (%v)", held, err)
+	}
+	longer, cancel2 := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel2()
+	held, err := holdForLane(longer, WORKER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held < 150*time.Millisecond || held > 260*time.Millisecond {
+		t.Fatalf("held %s; want the deadline less the floor, about 200ms", held)
+	}
+}
