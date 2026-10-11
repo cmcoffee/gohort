@@ -1534,6 +1534,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// A delegated run carries its delegator's rules as well as its own. Read
 	// from the OWNER's store, where both records live, and applied to the local
 	// copy only — see delegated_guardrails.go.
+	// The lane this run's calls go out on: a person on the other end goes
+	// first, and the agent's own mark applies otherwise (run_lane.go).
+	ctx = agentRunLane(ctx, target, run.Interactive)
 	if id := strings.TrimSpace(run.DelegatorAgentID); id != "" && id != target.ID {
 		if from, ok := loadAgent(ownerDB, id); ok {
 			target = inheritDelegatorGuardrails(from, target)

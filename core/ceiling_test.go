@@ -337,7 +337,11 @@ const (
 	// trigger is the clock, and the refusal of a numeric comparison against a
 	// threshold that is not a number, both from the 1:10pm alert that polled a
 	// time API and parked itself before the time came.
-	coreExportCeiling = 2297
+	// 2303: the lanes on the model (run_lane.go): RunLane with its three
+	// values, WithRunLane and RunLaneOf, so a scheduled run gives way to the
+	// person asking a question, and an agent can be marked to give way to
+	// anything. The hold itself and its counters stay unexported.
+	coreExportCeiling = 2303
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

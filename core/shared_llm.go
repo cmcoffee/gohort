@@ -286,6 +286,9 @@ func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handl
 type modelUse struct {
 	now  int
 	last time.Time
+	// The person's calls among them, for the lanes (run_lane.go).
+	inter     int
+	interLast time.Time
 }
 
 var (
@@ -318,6 +321,11 @@ func ModelInUse(tier LLMTier, quiet time.Duration) bool {
 // someone's. done ends it.
 func (r reloadableLLM) beginModelUse(ctx context.Context) (done func(), err error) {
 	tier := r.serving()
+	// The lane first: a background call waits for people, a lowest one for
+	// anyone, before the yield gate sees it.
+	if _, err := holdForLane(ctx, tier); err != nil {
+		return nil, err
+	}
 	modelUseMu.Lock()
 	gate := yieldGate
 	modelUseMu.Unlock()
@@ -337,11 +345,19 @@ func (r reloadableLLM) beginModelUse(ctx context.Context) (done func(), err erro
 		modelUses[tier] = u
 	}
 	u.now++
+	interactive := RunLaneOf(ctx) == LaneInteractive
+	if interactive {
+		u.inter++
+	}
 	modelUseMu.Unlock()
 	return func() {
 		modelUseMu.Lock()
 		u.now--
 		u.last = time.Now()
+		if interactive {
+			u.inter--
+			u.interLast = u.last
+		}
 		modelUseMu.Unlock()
 	}, nil
 }
@@ -639,4 +655,116 @@ func init() {
 	prompts.SetUnstableToolLogger(func(name string) {
 		Log("[prompts] the %q tool's description changes from call to call (built per caller), so edits to it are not applied and it is left as the code builds it", name)
 	})
+}
+
+// Lanes on the model.
+//
+// Someone asking an agent a question should not wait behind a schedule's
+// run, a monitor's poll or a maintenance pass that happened to start first.
+// So every call carries a lane on its context, read where the call goes out
+// (beginModelUse): a person's call goes at once, a background call waits
+// while people are using the tier it reaches, and a call an agent's owner has
+// marked lowest waits while anything else at all is using it. Nothing is
+// dropped: a call already out runs to its end, and a wait has a cap so a
+// busy afternoon delays a schedule rather than cancelling it.
+//
+// The lane is set where a run starts, by what started it: a chat turn, a
+// channel message and an API call are a person; a scheduled fire, a monitor
+// wake and a maintenance pass are not, and so is every run nothing marked.
+// Sub-runs inherit through the context, so a Builder dispatched from a chat
+// turn runs at the chat turn's lane. An agent's run_priority overrides the
+// origin for its own runs (agentRunLane in orchestrate). This generalises
+// Optimize's giving way (SetYieldGate), which stays as it is: that gate sees
+// every call after this hold, and ModelInUse still counts everyone's calls.
+
+// RunLane says who is waiting on a call.
+type RunLane string
+
+const (
+	// LaneInteractive is a person waiting: a chat turn, a channel message, an
+	// API call, and every run those start. Never held.
+	LaneInteractive RunLane = "interactive"
+	// LaneBackground is nobody waiting: schedules, monitors, maintenance, and
+	// any run nothing marked. Held while people use the model.
+	LaneBackground RunLane = "background"
+	// LaneLowest gives way to anything at all, people or not: for an agent
+	// whose runs are the least urgent thing on the box.
+	LaneLowest RunLane = "lowest"
+)
+
+type runLaneKey struct{}
+
+// WithRunLane marks the lane every call under ctx goes out on.
+func WithRunLane(ctx context.Context, lane RunLane) context.Context {
+	return context.WithValue(ctx, runLaneKey{}, lane)
+}
+
+// RunLaneOf is the lane ctx carries; background when nothing set one.
+func RunLaneOf(ctx context.Context) RunLane {
+	if ctx == nil {
+		return LaneBackground
+	}
+	if l, ok := ctx.Value(runLaneKey{}).(RunLane); ok && l != "" {
+		return l
+	}
+	return LaneBackground
+}
+
+// The waits. A turn makes its calls with tool work between them, so a lane
+// also waits a little after the last call it gives way to (the quiet), or it
+// would be in the way of each next call; and it waits at most the cap, so a
+// busy day delays background work rather than stopping it. Variables so a
+// test can shorten them.
+var (
+	laneQuiet         = 10 * time.Second
+	laneLowestQuiet   = 20 * time.Second
+	laneMaxWait       = 2 * time.Minute
+	laneLowestMaxWait = 10 * time.Minute
+	laneTick          = 250 * time.Millisecond
+)
+
+// interactiveInUse says whether a person's call to tier is out now, or ended
+// within quiet.
+func interactiveInUse(tier LLMTier, quiet time.Duration) bool {
+	modelUseMu.Lock()
+	defer modelUseMu.Unlock()
+	u := modelUses[tier]
+	return u != nil && (u.inter > 0 || (!u.interLast.IsZero() && time.Since(u.interLast) < quiet))
+}
+
+// holdForLane holds a call back as its lane requires and says how long it
+// waited. A cancelled context ends the wait with its error.
+func holdForLane(ctx context.Context, tier LLMTier) (time.Duration, error) {
+	var busy func() bool
+	var cap time.Duration
+	switch RunLaneOf(ctx) {
+	case LaneInteractive:
+		return 0, nil
+	case LaneLowest:
+		busy = func() bool { return ModelInUse(tier, laneLowestQuiet) }
+		cap = laneLowestMaxWait
+	default:
+		busy = func() bool { return interactiveInUse(tier, laneQuiet) }
+		cap = laneMaxWait
+	}
+	if !busy() {
+		return 0, nil
+	}
+	start := time.Now()
+	for busy() {
+		if time.Since(start) >= cap {
+			Log("[llm.lane] a %s call to %s waited the full %s for the model and goes now", RunLaneOf(ctx), tier, cap)
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return time.Since(start), ctx.Err()
+		case <-time.After(laneTick):
+		}
+	}
+	held := time.Since(start)
+	if held >= time.Second {
+		Debug("[llm.lane] a %s call to %s waited %s for people", RunLaneOf(ctx), tier, held.Round(100*time.Millisecond))
+	}
+	return held, nil
 }

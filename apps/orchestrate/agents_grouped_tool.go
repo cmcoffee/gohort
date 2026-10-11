@@ -1377,6 +1377,9 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		abortTools = []string{"ask_user"}
 	}
 	buildCheck := newDispatchBuildCheck(target, subSess)
+	// The target's own standing on the model, if it has one; else the
+	// caller's lane rides down (run_lane.go).
+	ctx = agentRunLane(ctx, target, false)
 	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
 		TierOverride:    runPin,
 		RoundAbortTools: abortTools,

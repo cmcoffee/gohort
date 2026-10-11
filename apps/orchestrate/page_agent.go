@@ -1190,6 +1190,13 @@ func (T *OrchestrateApp) budgetReasoningFields(editRec AgentRecord, leadModelLoc
 			Placeholder: fmt.Sprintf("%d", defaultMaxWorkerRounds),
 			Help:        fmt.Sprintf("How many LLM call + tool-execution cycles the worker may use for a single step. Each round is one model call. Leave blank for the default (%d); raise when the worker chains many tool calls (research with cross-references, or surveying a command before writing it down); lower for fast single-tool answers. Anything under %d is raised to %d: a cap too low to finish an action is worse than no cap.", defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds),
 			SuggestURL:  "../api/agents/suggest"},
+		{Field: "run_priority", Type: "select", Label: "Model priority",
+			Options: []ui.SelectOption{
+				{Value: "", Label: "By how it runs: a person waiting goes first, a schedule waits for people"},
+				{Value: "lowest", Label: "Lowest: its scheduled runs wait for anything else to finish"},
+				{Value: "urgent", Label: "Urgent: its runs never wait"},
+			},
+			Help: "Where this agent's own runs stand on the model. A person chatting with it is never made to wait."},
 		// Hidden under a tracked plan: the gap pass reviews plan_set's steps,
 		// and a tracked plan replaces plan_set, so it would never fire.
 		{Field: "gap_check", Type: "toggle", Label: "Gap detection", ShowWhen: "!work_plan",

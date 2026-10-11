@@ -281,6 +281,14 @@ type AgentRecord struct {
 	// passing it into AgentLoopConfig.Effort at each run path.
 	Effort string `json:"effort,omitempty"`
 
+	// RunPriority is where this agent's own runs stand against everything
+	// else on the model: "" follows what started the run (a person waiting
+	// goes first, a schedule or monitor waits for people), "lowest" waits
+	// for anything at all to finish, and "urgent" never waits. Applied by
+	// agentRunLane at each run path; a person chatting with the agent is
+	// never made to wait by it.
+	RunPriority string `json:"run_priority,omitempty"`
+
 	// ActionQuotas caps how often one action may run in a rolling 24 hours,
 	// keyed by tool ("moltbook") or by a grouped tool's action
 	// ("moltbook/create_post"), the action winning where both are set. Empty

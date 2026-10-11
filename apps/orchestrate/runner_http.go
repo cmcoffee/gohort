@@ -324,6 +324,9 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// which is what silently took the per-turn "Worker/Lead tokens,
 	// Searches, Est. cost" block out of the log in v0.6.159.
 	ctx, cancel := context.WithCancel(CarryRequestUsage(context.Background(), r.Context()))
+	// A person is waiting on this turn, so its calls, and every dispatch it
+	// makes, go first on the model (core/run_lane.go).
+	ctx = WithRunLane(ctx, LaneInteractive)
 	// Bill this turn to the agent when it is done. The request tracker is
 	// this turn's own (a dispatched sub-agent shadows it with its own), so
 	// what it holds at return is exactly what this agent spent (agent_spend.go).

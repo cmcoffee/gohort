@@ -62,6 +62,9 @@ func (T *OrchestrateApp) RunScopedAgent(ctx context.Context, scope AgentScope, m
 	if owner == "" {
 		owner = seedOwner // app-registered + built-in agents live in the seed store
 	}
+	// Acting on a user's behalf: they are waiting on it, so its calls go
+	// first on the model.
+	ctx = WithRunLane(ctx, LaneInteractive)
 	return T.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
 		AgentOwner:     owner,
 		RuntimeUser:    scope.ScopeUser,
