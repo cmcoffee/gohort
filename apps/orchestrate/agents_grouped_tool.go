@@ -1416,6 +1416,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// dispatched Builder's claims went to the caller unread.
 		TurnClaimJudge:     subTurn.claimJudge(ctx),
 		TurnGroundingJudge: t.app.turnGroundingJudge(ctx),
+		OnWait:             t.waitNotice(target.Name),
 		ChatOptions: []ChatOption{
 			WithRouteKey(runRoute),
 			WithThink(think),

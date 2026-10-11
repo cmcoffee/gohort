@@ -321,11 +321,8 @@ func ModelInUse(tier LLMTier, quiet time.Duration) bool {
 // someone's. done ends it.
 func (r reloadableLLM) beginModelUse(ctx context.Context) (done func(), err error) {
 	tier := r.serving()
-	// The lane first: a background call waits for people, a lowest one for
-	// anyone, before the yield gate sees it.
-	if _, err := holdForLane(ctx, tier); err != nil {
-		return nil, err
-	}
+	// No hold here: a run gives way at its own calls, in the agent loop
+	// (callModel), so the short calls a round makes beside them never wait.
 	modelUseMu.Lock()
 	gate := yieldGate
 	modelUseMu.Unlock()
@@ -743,6 +740,15 @@ func interactiveInUse(tier LLMTier, quiet time.Duration) bool {
 // holdForLane holds a call back as its lane requires and says how long it
 // waited. A cancelled context ends the wait with its error.
 func holdForLane(ctx context.Context, tier LLMTier) (time.Duration, error) {
+	return holdForLaneWith(ctx, tier, nil)
+}
+
+// laneProgressEvery is how often a wait reports itself while it goes on.
+var laneProgressEvery = 2 * time.Second
+
+// holdForLaneWith is holdForLane reporting the wait so far to progress
+// every laneProgressEvery while it lasts, so a held run can look held.
+func holdForLaneWith(ctx context.Context, tier LLMTier, progress func(time.Duration)) (time.Duration, error) {
 	var busy func() bool
 	var cap time.Duration
 	switch RunLaneOf(ctx) {
@@ -768,7 +774,12 @@ func holdForLane(ctx context.Context, tier LLMTier) (time.Duration, error) {
 		}
 	}
 	start := time.Now()
+	reported := time.Duration(0)
 	for busy() {
+		if progress != nil && time.Since(start)-reported >= laneProgressEvery {
+			reported = time.Since(start)
+			progress(reported)
+		}
 		if time.Since(start) >= cap {
 			Log("[llm.lane] a %s call to %s waited the full %s for the model and goes now", RunLaneOf(ctx), tier, cap)
 			break

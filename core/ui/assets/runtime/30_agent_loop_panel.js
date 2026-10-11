@@ -3187,6 +3187,7 @@
           reasoning_tokens: meta.usage.reasoning_tokens,
           tokens_per_sec:   meta.usage.tokens_per_sec,
           think_ms:         meta.usage.think_ms,
+          wait_ms:          meta.usage.wait_ms,
           prompt_per_sec:   meta.usage.prompt_per_sec,
           elapsed_ms:       meta.usage.elapsed_ms,
         });

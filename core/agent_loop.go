@@ -309,7 +309,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// share on a failed turn — the safe direction for a diagnostic.
 	defer func() {
 		total := time.Since(lr.turnStarted)
-		own := total - lr.llmWall
+		own := total - lr.llmWall - lr.laneWait
 		if own < 0 {
 			own = 0
 		}
@@ -317,8 +317,12 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		if total > 0 {
 			pct = int(own * 100 / total)
 		}
-		Log("[agent_loop] turn time: %s total = %s in %d LLM call(s) + %s gohort (%d%%)",
-			total.Round(time.Millisecond), lr.llmWall.Round(time.Millisecond), lr.llmCalls,
+		waited := ""
+		if lr.laneWait > 0 {
+			waited = fmt.Sprintf(" + %s waiting for people", lr.laneWait.Round(time.Millisecond))
+		}
+		Log("[agent_loop] turn time: %s total = %s in %d LLM call(s)%s + %s gohort (%d%%)",
+			total.Round(time.Millisecond), lr.llmWall.Round(time.Millisecond), lr.llmCalls, waited,
 			own.Round(time.Millisecond), pct)
 	}()
 	lr.setupHistory()
@@ -459,6 +463,7 @@ type loopRun struct {
 	turnStarted time.Time
 	llmWall     time.Duration
 	llmCalls    int
+	laneWait    time.Duration // time the run gave way to people at its own calls (shared_llm.go)
 	maxRounds   int
 	confirmFn   ConfirmFunc
 	// Capability allow-set, computed once. Static tools and dynamic ones
@@ -1949,6 +1954,24 @@ func (lr *loopRun) callModel() loopAction {
 	// the provider — needs a per-call hard timeout or the
 	// provider's endpoint is wedged.
 	Log("[agent_loop] round %d: → LLM call (history=%d msgs)", lr.round, len(lr.history))
+	// The run gives way to people HERE, at its own call, so the checks a
+	// round makes (the warden, the judge, a title) never inherit the wait,
+	// and the wait is a figure of its own rather than the model's time
+	// (the lanes, shared_llm.go). Only the worker is contended: a distinct
+	// lead is a model elsewhere that nothing on the box queues for.
+	if !lr.roundGoesToDistinctLead() {
+		held, _ := holdForLaneWith(lr.ctx, WORKER, func(d time.Duration) {
+			if lr.cfg.OnWait != nil {
+				lr.cfg.OnWait(d, false)
+			}
+		})
+		if held > 0 {
+			lr.laneWait += held
+			if lr.cfg.OnWait != nil {
+				lr.cfg.OnWait(held, true)
+			}
+		}
+	}
 	lr.rs.llmStarted = time.Now()
 	// Assert the tool-result adjacency invariant before we hand the history
 	// to a provider. Violating it is a hard 400 from the chat template
@@ -2186,6 +2209,9 @@ func (lr *loopRun) callModel() loopAction {
 	lr.llmWall += time.Since(lr.rs.llmStarted)
 	lr.llmCalls++
 	Log("[agent_loop] round %d: ← LLM returned in %s (tier=%v, content=%d, tools=%d%s)", lr.round, time.Since(lr.rs.llmStarted).Round(time.Millisecond), lr.rs.resp.Tier, len(lr.rs.resp.Content), len(lr.rs.resp.ToolCalls), promptReuseNote(lr.rs.resp))
+	if lr.rs.resp != nil {
+		lr.rs.resp.LaneWait = lr.laneWait
+	}
 
 	// The turn's prompt digest, completed with what the provider charged
 	// and handed to whatever outlives the turn. Emitted here, after the
@@ -4422,3 +4448,20 @@ func (p *ToolProbe) Seen() []ProbeCall {
 // probeStoppedText is what a stopped call answers, for the moment before the
 // cancelled run notices.
 const probeStoppedText = "Stopped here: this run is a probe of what you reach for first, and the call was recorded, not made."
+
+// roundGoesToDistinctLead says whether this round's call reaches a lead
+// model of its own, by the same reading ChatStreamWithReport makes of the
+// call's options: the route's stage, overridden by an explicit pin.
+func (lr *loopRun) roundGoesToDistinctLead() bool {
+	if lr.T == nil || !lr.T.HasDistinctLead() {
+		return false
+	}
+	var probe ChatConfig
+	for _, opt := range lr.rs.callOpts {
+		opt(&probe)
+	}
+	if probe.TierOverride != TierUnset {
+		return probe.TierOverride == LEAD
+	}
+	return probe.RouteKey != "" && RouteToLead(probe.RouteKey)
+}

@@ -154,6 +154,12 @@ func (t *chatTurn) emitStats(msgID string, resp *Response, start time.Time) {
 		usage.ThinkMs = ms
 	}
 	if resp != nil {
+		// Time the run gave way to someone else using the model: its own
+		// figure, so a held reply reads as held rather than slow.
+		if resp.LaneWait > 0 {
+			payload["wait_ms"] = resp.LaneWait.Milliseconds()
+			usage.WaitMs = resp.LaneWait.Milliseconds()
+		}
 		// The prompt is the SUM. A provider reports input_tokens as the
 		// uncached remainder only, so on a conversation whose system prompt and
 		// history are a cache hit it is near zero — the turn looks free while

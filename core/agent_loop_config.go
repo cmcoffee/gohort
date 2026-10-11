@@ -152,6 +152,12 @@ type AgentLoopConfig struct {
 	// OnStep is called after each LLM round for logging/observability. Optional.
 	OnStep StepCallback
 
+	// OnWait reports the loop giving way to people (the lanes, shared_llm.go):
+	// called when a wait at its own model call passes a moment, then once
+	// with done when the call goes, carrying the whole wait. Nil = nothing
+	// reported. A held run should look held, not slow.
+	OnWait func(waited time.Duration, done bool)
+
 	// OnResponse is called with every LLM response the loop receives, one per
 	// call, including the rescue call that ends a turn at the round cap. The
 	// loop RETURNS only the last one, so a caller that totals the turn (the

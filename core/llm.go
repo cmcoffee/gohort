@@ -100,6 +100,10 @@ type Response struct {
 	// the Anthropic client; other backends may leave it empty. Lets callers
 	// distinguish a clean finish from a truncation or a refusal instead of
 	// inferring "done" purely from an empty ToolCalls slice.
+	// LaneWait is how long the run that produced this waited for the model
+	// to be free of people (the lanes, shared_llm.go): time that was neither
+	// the model's nor gohort's. The loop fills it on the reply it returns.
+	LaneWait   time.Duration `json:"-"`
 	StopReason string
 	// ReasoningTokens is the portion of OutputTokens spent on the
 	// thinking channel, as reported by the model when supported (e.g.

@@ -1645,6 +1645,7 @@ type ChatMessageUsage struct {
 	PromptPerSec     float64 `json:"prompt_per_sec,omitempty"`
 	ElapsedMs        int64   `json:"elapsed_ms,omitempty"`
 	ThinkMs          int64   `json:"think_ms,omitempty"` // time the model spent reasoning across the turn, from its streamed thinking
+	WaitMs           int64   `json:"wait_ms,omitempty"` // time the run gave way to people using the model
 }
 
 // PlanSnapshot captures the plan as it stood at the end of one user

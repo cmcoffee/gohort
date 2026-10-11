@@ -2198,6 +2198,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		ReasoningStream:      t.thinkChunk,
 		OnResponse:           t.thinkResponse,
 		OnStep:               pr.onStepHandler,
+		OnWait:               pr.t.waitNotice(""),
 		OnPromptDigest:       pr.stamp.digest,
 		OnRoundStart:         pr.onRoundStartHandler,
 		// Route the loop's silent correction guards into this session's ⚠

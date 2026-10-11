@@ -95,6 +95,8 @@
      title: 'Time from sending to the end of the reply, tool calls and every round included.'},
     {key: 'think_ms', fmt: function(v) { return 'thought ' + statsSeconds(v); },
      title: 'Time the model spent thinking before and between its answers.'},
+    {key: 'wait_ms', fmt: function(v) { return 'waited ' + statsSeconds(v) + ' for people'; },
+     title: 'Time this run spent giving way to someone else using the model: neither the model\'s time nor gohort\'s.'},
     {key: 'input_tokens', fmt: function(v) { return v.toLocaleString() + ' in'; },
      title: 'Prompt size: everything the model was sent for this reply, cached or not.'},
     {key: 'output_tokens', fmt: function(v) { return v.toLocaleString() + ' out'; },
