@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -85,6 +86,19 @@ func (t *FindToolsTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// Background ctx is fine — Embed() has its own timeout. The
 	// search itself is in-memory cosine; no per-call ctx needed.
 	hits := LookupToolsByQuery(context.Background(), query, k)
+	// The turn's load-before-use tools are not in the index: add the ones
+	// the query names, flagged so the caller loads them first.
+	loadable := map[string]bool{}
+	if sess != nil && sess.LoadableTools != nil {
+		for _, m := range loadableMatches(query, sess.LoadableTools()) {
+			loadable[m.Name] = true
+			hits = append(hits, m)
+		}
+		sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+		if len(hits) > k {
+			hits = hits[:k]
+		}
+	}
 	if len(hits) == 0 {
 		return fmt.Sprintf("No matching tools for %q. The deployment's tool index may be empty, OR the embedder is offline, OR no registered tool's description matches that intent. Try a different phrasing; if still nothing, the capability may genuinely not be installed.", query), nil
 	}
@@ -92,10 +106,14 @@ func (t *FindToolsTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		Name        string  `json:"name"`
 		Description string  `json:"description"`
 		Score       float32 `json:"score"`
+		Note        string  `json:"note,omitempty"`
 	}
 	rows := make([]out, len(hits))
 	for i, h := range hits {
 		rows[i] = out{Name: h.Name, Description: h.Description, Score: h.Score}
+		if loadable[h.Name] {
+			rows[i].Note = "not loaded yet: call load_tool(names=[\"" + h.Name + "\"]) first, then use it"
+		}
 	}
 	b, _ := json.Marshal(rows)
 	return string(b), nil
@@ -112,4 +130,72 @@ func stringArg(args map[string]any, key string) string {
 		return s
 	}
 	return fmt.Sprint(v)
+}
+
+// loadableMatches scores the turn's load-before-use tools against the query by
+// word overlap, name and description against the query's words. Overlap and
+// not embeddings, because these tools are assembled per turn and a handful of
+// names is not worth an embedding call per search. A hit needs a third of the
+// query's words, or its name in the query.
+func loadableMatches(query string, tools []ToolMatch) []ToolMatch {
+	qw := searchWords(query)
+	if len(qw) == 0 {
+		return nil
+	}
+	var out []ToolMatch
+	for _, t := range tools {
+		tw := map[string]bool{}
+		for _, w := range searchWords(t.Name + " " + t.Description) {
+			tw[w] = true
+		}
+		matched, nameHit := 0, false
+		name := strings.ToLower(t.Name)
+		for _, w := range qw {
+			if tw[w] {
+				matched++
+			}
+			if strings.Contains(name, w) {
+				nameHit = true
+			}
+		}
+		score := float32(matched) / float32(len(qw))
+		if nameHit && score < 0.5 {
+			score = 0.5
+		}
+		if score < 0.34 {
+			continue
+		}
+		out = append(out, ToolMatch{Name: t.Name, Description: t.Description, Score: score})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	return out
+}
+
+// searchWords lowercases, splits on anything but letters and digits, keeps
+// words of three letters or more, and trims the commonest English endings so
+// "scheduled", "scheduling" and "schedule" are one word. Distinct, in order.
+func searchWords(s string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		w = stemWord(w)
+		if len(w) < 3 || seen[w] {
+			continue
+		}
+		seen[w] = true
+		out = append(out, w)
+	}
+	return out
+}
+
+func stemWord(w string) string {
+	for _, suf := range []string{"ing", "ed", "es", "s"} {
+		if len(w)-len(suf) >= 3 && strings.HasSuffix(w, suf) {
+			w = strings.TrimSuffix(w, suf)
+			break
+		}
+	}
+	return strings.TrimSuffix(w, "e")
 }

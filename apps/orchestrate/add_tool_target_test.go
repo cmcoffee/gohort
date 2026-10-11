@@ -195,3 +195,20 @@ func TestAToolNameThatMatchesNothingIsReportedToItsAuthor(t *testing.T) {
 		t.Errorf("nothing to warn about:\n%s", got)
 	}
 }
+
+// TestAddToolRefusesDefaultAPIScript: add_tool goes through the same guard as
+// tool_def. Builder shipped a script importing default_api through add_tool,
+// which accepted it and failed only at the verification run, then rewrote
+// the same import twice more against the traceback.
+func TestAddToolRefusesDefaultAPIScript(t *testing.T) {
+	sess, parent, _ := addToolTestSess(t)
+	_, err := (addToolTool{}).RunWithSession(shellToolArgs(map[string]any{
+		"agent":       parent.Name,
+		"name":        "post_to_board",
+		"script_body": "import os\nfrom default_api import bulletins\nprint(bulletins(action='create', name='x', content=os.environ['news']))\n",
+		"script_name": "post.py",
+	}), sess)
+	if err == nil || !strings.Contains(err.Error(), "default_api") || !strings.Contains(err.Error(), "allow_poster") {
+		t.Fatalf("expected the default_api refusal naming allow_poster, got: %v", err)
+	}
+}

@@ -56,6 +56,15 @@ import (
 // template plus the LLM-facing and canonical script names. A blank scriptBody
 // is a no-op that echoes cmd back, so callers can call it unconditionally.
 func PrepareScriptBody(sess *ToolSession, toolName, cmd, scriptBody, scriptName string, params any) (outCmd, outScriptName, outCanonical string, err error) {
+	// A tool that calls the author's own tools through default_api dies on
+	// its first run. Refused HERE, the seam both authoring surfaces pass
+	// through, and before anything touches disk: tool_def had the check and
+	// add_tool did not, so add_tool accepted the import, failed only at the
+	// verification run, and the author rewrote the same script three times
+	// against the traceback.
+	if why := callsOwnTools(cmd + "\n" + scriptBody); why != "" {
+		return "", "", "", fmt.Errorf("%s", why)
+	}
 	if strings.TrimSpace(scriptBody) == "" {
 		return cmd, "", "", nil
 	}

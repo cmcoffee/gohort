@@ -212,6 +212,15 @@ type ToolSession struct {
 	// and the "zombie" keeps firing. Nil ⇒ no agent-bundled tools.
 	BundledToolNames map[string]bool
 
+	// LoadableTools lists the tools the turn keeps out of the catalog behind
+	// load_tool (the "load before use" index: schedule, bulletins, deferred
+	// authoring) with their descriptions. The deployment's tool index never
+	// holds them, since they are assembled per turn, so find_tools searched
+	// "recurring run" eight times and never named schedule while the prompt
+	// said the agent had it. find_tools matches these by keyword and says to
+	// load first. The app wires it at session setup. Nil = none.
+	LoadableTools func() []ToolMatch
+
 	// UnbundleTool, when set, removes a tool from the running agent's
 	// record (AgentRecord.Tools) and persists — the ONLY way to actually
 	// kill an agent-bundled tool, since it's reconstituted from the record

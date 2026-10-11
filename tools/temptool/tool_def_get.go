@@ -33,7 +33,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			if p.Shared {
 				src = "active (admin-approved), PUBLISHED deployment-wide. This is your own working copy: an update changes it for you and your agents only. Everyone else runs the version an administrator approved until you ask for an update (Request update, in Extensions › Tools) and it is approved"
 			}
-			return fmt.Sprintf("source: %s\n%s", src, string(body)), nil
+			return fmt.Sprintf("source: %s%s\n%s", src, cannotRunNote(p.Tool), string(body)), nil
 		}
 	}
 	// Pending review queue — recently authored by an LLM, awaiting admin.
@@ -43,7 +43,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("marshal tool %q: %w", name, err)
 			}
-			return fmt.Sprintf("source: pending (awaiting admin review)\n%s", string(body)), nil
+			return fmt.Sprintf("source: pending (awaiting admin review)%s\n%s", cannotRunNote(p.Tool), string(body)), nil
 		}
 	}
 	// Session draft — authored THIS turn but not yet propagated.
@@ -54,7 +54,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 				if err != nil {
 					return "", fmt.Errorf("marshal tool %q: %w", name, err)
 				}
-				return fmt.Sprintf("source: session draft (this turn)\n%s", string(body)), nil
+				return fmt.Sprintf("source: session draft (this turn)%s\n%s", cannotRunNote(t), string(body)), nil
 			}
 		}
 	}
@@ -91,7 +91,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			if owner, how := foreignToolOwner(sess, name); owner != "" {
 				src = fmt.Sprintf("owned by %s (%s): reading is always allowed, only editing is not. To change its behavior, copy it under a NEW name with action=\"create\" and edit that", owner, how)
 			}
-			return fmt.Sprintf("source: %s\n%s", src, string(body)), nil
+			return fmt.Sprintf("source: %s%s\n%s", src, cannotRunNote(*t), string(body)), nil
 		}
 	}
 	// Bundled to another of the user's agents — the case Builder hits when
@@ -516,4 +516,17 @@ func cacheToArgs(c *TempToolCache) map[string]any {
 		m["invalidate_when"] = inv
 	}
 	return m
+}
+
+// cannotRunNote flags, on a get, a saved tool whose script can never run, so
+// the reader does not take it as a working pattern. Observed: an approved
+// board-posting tool imported default_api; Builder read it with get, built a
+// new tool on the same import, and spent a turn on the traceback.
+func cannotRunNote(t TempTool) string {
+	why := callsOwnTools(t.CommandTemplate + "\n" + t.ScriptBody)
+	if why == "" {
+		return ""
+	}
+	return "\nWARNING: this tool cannot run as saved, do not copy its script: " + why +
+		". Fix it with tool_def(action=\"update\", name=..., script_body=...)."
 }

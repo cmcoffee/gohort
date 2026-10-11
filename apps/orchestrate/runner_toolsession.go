@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -290,6 +291,16 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	base := t.agent
 	agentID, owner, poolDBRef := t.agent.ID, poolUser, poolDB
 	sess.CanScopeGlobal = isBuilderAgent(agentID)
+	// find_tools reads the load-before-use index through this; read at call
+	// time, since the deferred set is filled after the session is set up.
+	sess.LoadableTools = func() []ToolMatch {
+		out := make([]ToolMatch, 0, len(t.deferredAuthoringDefs))
+		for _, td := range t.deferredAuthoringDefs {
+			out = append(out, ToolMatch{Name: td.Tool.Name, Description: td.Tool.Description})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+		return out
+	}
 	sess.BundleTool = func(tt TempTool) error {
 		return bundleAgentTool(poolDBRef, owner, base, tt)
 	}

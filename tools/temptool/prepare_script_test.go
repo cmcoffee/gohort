@@ -3,6 +3,8 @@ package temptool
 import (
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // TestPrepareScriptBodyNoOpWithoutScript — a blank script_body must echo the
@@ -66,5 +68,44 @@ func TestInferCommandTemplateByExtension(t *testing.T) {
 func TestInferCommandTemplateUnknownExtension(t *testing.T) {
 	if got := inferCommandTemplate("data.xyz", "blah", nil); got != "" {
 		t.Fatalf("inferCommandTemplate for an unknown extension = %q; want empty", got)
+	}
+}
+
+// TestPrepareScriptBodyRefusesDefaultAPI pins the guard at the shared seam: a
+// script, or a bare command, that calls the author's own tools through
+// default_api is refused before anything touches disk (nil session), on the
+// add_tool path as much as tool_def's. add_tool used to accept the import and
+// fail only at the verification run.
+func TestPrepareScriptBodyRefusesDefaultAPI(t *testing.T) {
+	cases := map[string][2]string{
+		"script body":  {"", "import os\nfrom default_api import bulletins\nprint(bulletins(action='create'))\n"},
+		"command only": {"python3 -c \"print(default_api.bulletins(action='list'))\"", ""},
+	}
+	for name, c := range cases {
+		_, _, _, err := PrepareScriptBody(nil, "post_board", c[0], c[1], "post.py", nil)
+		if err == nil {
+			t.Fatalf("%s: expected a refusal", name)
+		}
+		for _, want := range []string{"default_api", "allow_poster"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("%s: error should mention %q, got: %v", name, want, err)
+			}
+		}
+	}
+}
+
+// A saved tool whose script can never run is flagged on get, so a reader does
+// not copy it as a working pattern; a sound tool gets no note.
+func TestGetWarnsWhenScriptCannotRun(t *testing.T) {
+	broken := TempTool{Name: "post_news", CommandTemplate: "python3 {workspace_dir}/script.py",
+		ScriptBody: "from default_api import bulletins\nprint(bulletins(action='create', name='news'))\n"}
+	note := cannotRunNote(broken)
+	for _, want := range []string{"WARNING", "cannot run", "do not copy", "default_api", "allow_poster", "update"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("note should say %q, got: %s", want, note)
+		}
+	}
+	if n := cannotRunNote(TempTool{Name: "ok", ScriptBody: "from gohort import fetch_url\nprint(fetch_url('https://x'))\n"}); n != "" {
+		t.Fatalf("a sound script must get no note, got: %s", n)
 	}
 }
