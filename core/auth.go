@@ -2033,7 +2033,7 @@ func authPageHTML(title, body string) string {
   input:focus { outline: none; border-color: var(--accent); }
   button {
     width: 100%; padding: 0.7rem; background: var(--accent); border: 1px solid var(--accent);
-    border-radius: 6px; color: #fff; font-size: var(--fs-lg, 0.95rem); font-weight: 600; cursor: pointer;
+    border-radius: 6px; color: var(--text-on-accent, #fff); font-size: var(--fs-lg, 0.95rem); font-weight: 600; cursor: pointer;
     transition: filter 0.2s;
   }
   button:hover { filter: brightness(1.08); }

@@ -564,7 +564,7 @@
                 } else if (k === 'Status') {
                   var pend = /pending/i.test(s);
                   info.appendChild(el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.42rem;border-radius:999px;font-weight:700;align-self:center;' +
-                    (pend ? 'background:var(--accent, #4a9eff);color:#fff' : 'background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)')}, [s]));
+                    (pend ? 'background:var(--accent, #4a9eff);color:var(--text-on-accent, #fff)' : 'background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)')}, [s]));
                 } else {
                   info.appendChild(el('span', {style: 'color:var(--text-mute, #999);font-size:var(--fs-xs, 0.78rem);word-break:break-word'}, [s]));
                 }
@@ -586,7 +586,7 @@
                   var active = String(row[item.state_field]) === String(opt.value);
                   var segBtn = el('button', {type: 'button',
                     style: 'padding:0.22rem 0.6rem;border:none;' + (oi ? 'border-left:1px solid var(--border, rgba(127,127,127,0.35));' : '') + 'cursor:pointer;font:inherit;font-size:var(--fs-2xs, 0.73rem);white-space:nowrap;' +
-                      (active ? 'background:var(--accent, #4a9eff);color:#fff;font-weight:600' : 'background:transparent;color:var(--text-mute, #999)'),
+                      (active ? 'background:var(--accent, #4a9eff);color:var(--text-on-accent, #fff);font-weight:600' : 'background:transparent;color:var(--text-mute, #999)'),
                     onclick: function(ev) {
                       if (ev) ev.stopPropagation();
                       if (active) return;
@@ -2836,13 +2836,16 @@
       topBundle.appendChild(bundleTable);
       wrap.insertBefore(topBundle, wrap.firstChild);
       // Bypass CSS specificity battles by pinning the rail-button
-      // dimensions directly on each action button. Color and border
-      // are left UNSET inline so each variant's CSS still wins:
-      // .ui-row-btn.danger keeps its red text/border, everything
-      // else inherits .ui-row-btn's default text color.
+      // dimensions directly on each action button. Color, border and
+      // BACKGROUND are left UNSET inline so each variant's CSS still
+      // wins: .ui-row-btn.danger keeps its red text/border, .primary
+      // keeps its accent fill, .copied its flash. The flat look for the
+      // rest is the stylesheet's (.ui-agent-top-bundle .ui-agent-actions
+      // .ui-row-btn:not(.primary)). An inline transparent background
+      // stripped the primary's fill and left its on-accent text, which
+      // on a theme with dark on-accent text was dark text on a dark bar.
       actionsBar.querySelectorAll('button').forEach(function(b) {
         b.style.borderRadius = '6px';
-        b.style.background = 'transparent';
         b.style.padding = '0.2rem 0.55rem';
         b.style.fontSize = '0.75rem';
         b.style.minWidth = '0';

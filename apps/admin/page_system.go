@@ -50,9 +50,13 @@ func (a *AdminApp) systemSections() []ui.Section {
 				Fields: []ui.FormField{
 					{Field: "allow_signup", Label: "Allow public signup", Type: "toggle",
 						Help: "When off, only existing accounts can sign in. Approvals can still happen via the user list."},
+					// The page reloads into the new theme once it saves: every
+					// page draws its theme at render, so asking the person to
+					// reload was a step the form could take for them.
 					{Field: "ui_theme", Label: "Theme", Type: "select",
-						Options: themePickerOptions(),
-						Help:    "Platform-wide UI theme. Reload the page after saving to see it."},
+						Options:        themePickerOptions(),
+						ReloadOnChange: true,
+						Help:           "Platform-wide UI theme. The page reloads in it when you pick one."},
 					{Field: "service_name", Label: "Service name", Type: "text",
 						Placeholder: "gohort", Help: "Shown in the page title and email From: line."},
 					{Field: "doc_brand", Label: "Document brand", Type: "text",

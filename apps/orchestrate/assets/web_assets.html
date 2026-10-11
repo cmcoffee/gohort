@@ -642,7 +642,7 @@ select.ui-orch-intake-input {
   border-top: 1px solid var(--border);
 }
 .ui-orch-intake-actions .ui-row-btn.primary {
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: var(--text-on-accent, #fff);
   border: 1px solid var(--accent); border-radius: 10px;
   display: inline-flex; align-items: center; gap: 0.35rem;
   padding: 0 1.25rem; line-height: 1.2; font-size: 0.9rem; font-weight: 600;
@@ -4010,7 +4010,7 @@ select.ui-orch-intake-input {
           [grepBtn, recallBtn].forEach(function(b) {
             var on = b._mode === searchMode;
             b.style.background = on ? 'var(--accent, #6366f1)' : 'var(--bg-1)';
-            b.style.color = on ? '#fff' : 'var(--text-mute)';
+            b.style.color = on ? 'var(--text-on-accent, #fff)' : 'var(--text-mute)';
           });
         }
         styleModeBtns();
@@ -4218,7 +4218,7 @@ select.ui-orch-intake-input {
         var notesSave = document.createElement('button');
         notesSave.type = 'button';
         notesSave.className = 'ui-orch-btn';
-        notesSave.style.cssText = 'padding:0.2rem 0.6rem;background:var(--accent,#6366f1);border:1px solid var(--accent,#6366f1);border-radius:4px;color:#fff;font-size:0.76rem;cursor:pointer';
+        notesSave.style.cssText = 'padding:0.2rem 0.6rem;background:var(--accent,#6366f1);border:1px solid var(--accent,#6366f1);border-radius:4px;color:var(--text-on-accent,#fff);font-size:0.76rem;cursor:pointer';
         notesSave.textContent = 'Save';
         notesBar.appendChild(notesSave);
         var notesClear = document.createElement('button');

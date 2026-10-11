@@ -781,7 +781,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 .acct-tok-btn:hover { color:var(--danger); border-color:var(--danger); }
 .acct-tok-newrow { display:flex; gap:0.4rem; margin-top:0.3rem; }
 .acct-tok-input { flex:1; background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-sm, 0.85rem); }
-.acct-tok-create { cursor:pointer; background:var(--accent); color:#fff; border:0; border-radius:6px; padding:0.4rem 0.9rem; font:inherit; font-weight:600; }
+.acct-tok-create { cursor:pointer; background:var(--accent); color:var(--text-on-accent, #fff); border:0; border-radius:6px; padding:0.4rem 0.9rem; font:inherit; font-weight:600; }
 .acct-tok-create:disabled { opacity:0.6; cursor:default; }
 .acct-tok-reveal { border:1px solid var(--accent); border-radius:8px; padding:0.7rem 0.8rem; background:var(--bg-2); }
 .acct-tok-reveal code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:var(--fs-sm, 0.82rem); color:var(--text); word-break:break-all; display:block; margin-top:0.3rem; }

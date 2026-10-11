@@ -470,7 +470,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   .bell-count {
     display: none; position: absolute; top: -0.35rem; right: -0.55rem;
     min-width: 1.05rem; padding: 0 0.25rem; border-radius: 0.6rem;
-    background: var(--accent, #6366f1); color: #fff;
+    background: var(--accent, #6366f1); color: var(--text-on-accent, #fff);
     font-size: 0.65rem; line-height: 1.05rem; text-align: center;
   }
   .bell.unread .bell-count { display: inline-block; }
