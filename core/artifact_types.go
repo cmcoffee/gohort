@@ -1259,6 +1259,7 @@ func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.Ra
 	// a live capability token in THIS deployment). It must never travel in a
 	// bundle: the importer re-shares on their own terms.
 	spec.Shared = false
+	spec.SharedGroups = nil
 	spec.PublicToken = ""
 	return marshalAppWithAssets(spec, owner)
 }
@@ -1434,6 +1435,7 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	// flags — the importer shares on their own terms (and the token would be
 	// meaningless in this deployment's index anyway).
 	spec.Shared = false
+	spec.SharedGroups = nil
 	spec.PublicToken = ""
 	SaveAppSpec(spec)
 	// Its assets with it; each is checked as any asset save is (name, type,

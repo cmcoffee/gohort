@@ -116,6 +116,9 @@ func adminRowSubtitle(spec AppSpec, owner string) string {
 	if spec.Shared {
 		state = append(state, "shared")
 	}
+	if live, _ := sharedGroupNames(spec); len(live) > 0 {
+		state = append(state, "shared with "+strings.Join(live, ", "))
+	}
 	if len(state) == 0 {
 		return owner
 	}

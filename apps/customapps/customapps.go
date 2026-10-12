@@ -38,7 +38,6 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/ui"
 
@@ -156,6 +155,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	case "_app/share":
 		// POST ?slug=&on=… toggles authenticated (per-user-copy) sharing.
 		T.handleShareApp(w, r, user)
+		return
+	case "_app/share_group":
+		// POST ?slug=&group=&on=… shares with one of the owner's groups.
+		T.handleShareGroup(w, r, user)
 		return
 	case "_admin/revoke-link", "_admin/reach", "_admin/tiers", "_admin/review", "_admin/scripts":
 		// Operator controls on somebody else's app. Admin-gated inside the
@@ -680,6 +683,32 @@ const shareModalScript = `<script>
         }
       );
       body.appendChild(share);
+      // Groups: the owner's own call, no administrator in it. Only groups the
+      // owner is in, and whose administrator let members share, are offered.
+      var groups = [];
+      try { groups = JSON.parse(rec.share_groups || '[]') || []; } catch (e) { groups = []; }
+      var gwrap = document.createElement('div');
+      gwrap.style.cssText = 'margin-top:1.1rem';
+      var gh = document.createElement('div');
+      gh.style.cssText = 'font-weight:600;margin-bottom:0.25rem';
+      gh.textContent = 'Share with a group';
+      gwrap.appendChild(gh);
+      var gnote = document.createElement('div');
+      gnote.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin:0 0 0.5rem;line-height:1.4';
+      gnote.textContent = groups.length
+        ? 'Everyone in the group can open it, now and as people join, each with their own copy. No administrator needed; your scripts run with your credentials for them.'
+        : 'You are not in a group whose administrator lets members share.';
+      gwrap.appendChild(gnote);
+      groups.forEach(function(g){
+        var who = g.members + (g.members === 1 ? ' person' : ' people');
+        var t = makeToggle(g.name + ' (' + who + ')', '', g.on, function(on, cb){
+          post('_app/share_group?slug=' + encodeURIComponent(slug) + '&group=' + encodeURIComponent(g.id) + '&on=' + on, cb);
+        });
+        t.help.style.display = 'none';
+        t.style.marginBottom = '0.35rem';
+        gwrap.appendChild(t);
+      });
+      body.appendChild(gwrap);
     },
     actions: [{label: 'Done', primary: true, onClick: function(api){ api.close(); if (ctx.reload) ctx.reload(); }}]
   });
@@ -808,6 +837,15 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 			row["requested"], row["state"] = "1", "requested"
 			parts = append(parts, "publish requested")
 		}
+		// The Share dialog's group choices, and the state when a group is all
+		// that shares it.
+		row["share_groups"] = shareGroupsJSON(s)
+		if live, _ := sharedGroupNames(s); len(live) > 0 {
+			if row["state"] == "private" {
+				row["state"] = "shared"
+			}
+			parts = append(parts, "shared with "+strings.Join(live, ", "))
+		}
 		status := "private"
 		if len(parts) > 0 {
 			status = strings.Join(parts, " + ")
@@ -852,18 +890,24 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 			continue
 		}
 		s, ok := loadSpec(ownerName, slug)
-		if !ok || !s.Shared || s.Disabled {
+		if !ok || s.Disabled {
 			continue
 		}
 		// Listing an app the reader cannot open is worse than not listing it:
 		// they click it, get a 404, and read that as the app being broken.
-		if !T.sharedAppReachableBy(r, slug) || !appadmin.UserMayReach(RootDB, ownerName, slug, owner) {
+		if !T.sharedAppReachableBy(r, slug) || !appReaches(s, owner) {
 			continue
+		}
+		by := "shared by " + ownerName
+		if !s.Shared {
+			if live, _ := sharedGroupNames(s); len(live) > 0 {
+				by += " with " + strings.Join(live, ", ")
+			}
 		}
 		row := map[string]string{
 			"slug": s.Slug, "name": s.Name, "desc": s.Desc,
-			"status": "shared by " + ownerName,
-			"group":  "Shared with you", "note": "shared by " + ownerName,
+			"status": by,
+			"group":  "Shared with you", "note": by,
 		}
 		if len(visibleSettings(s, false)) > 0 {
 			row["has_settings"] = "1"
@@ -1456,14 +1500,9 @@ func (T *CustomApps) resolveSpec(reqUser, slug string) (AppSpec, string, bool) {
 		return s, reqUser, true
 	}
 	if owner, ok := LookupSharedOwner(T.DB, sharedAppsIndex, slug); ok && owner != reqUser {
-		if s, ok := loadSpec(owner, slug); ok && s.Shared {
-			// An operator may narrow who a shared app reaches. An unset
-			// allowlist is every signed-in user, which is what sharing has
-			// always meant — so this changes nothing until somebody sets one,
-			// and adding it locks nobody out of an app they already had.
-			if !appadmin.UserMayReach(RootDB, owner, slug, reqUser) {
-				return AppSpec{}, "", false
-			}
+		// Shared with everyone signed in (which an operator may narrow), or
+		// with a group reqUser is in: appReaches is the one rule.
+		if s, ok := loadSpec(owner, slug); ok && appReaches(s, reqUser) {
 			return s, owner, true
 		}
 	}
@@ -1534,7 +1573,8 @@ func (T *CustomApps) setShared(owner, slug string, on bool) error {
 	SaveAppSpec(spec)
 	if on {
 		SetSharedOwner(T.DB, sharedAppsIndex, slug, owner, true)
-	} else {
+	} else if len(spec.SharedGroups) == 0 {
+		// A group share still needs the index to find the owner.
 		T.unshareOwned(owner, slug)
 	}
 	return nil

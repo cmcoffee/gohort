@@ -135,6 +135,12 @@ type AppSpec struct {
 	// discovery source of truth; this bool mirrors it for the owner's list and
 	// export stripping. Deployment-local — cleared on export.
 	Shared bool `json:"shared,omitempty"`
+	// SharedGroups are the groups (app-group IDs) the owner shared the app
+	// with: the owner's call, no administrator, and only groups the owner is
+	// in whose administrator let members share. Membership is read when the
+	// app is opened. Per-user copies, like Shared. Deployment-local, cleared on
+	// export.
+	SharedGroups []string `json:"shared_groups,omitempty"`
 	// PublicToken, when non-empty, publishes the app at /apps/pub/<token>/ as a
 	// STATELESS, read/compute-only CAPABILITY URL: anyone with the (unguessable)
 	// link loads the page and runs its data sources — in the OWNER's sandbox,

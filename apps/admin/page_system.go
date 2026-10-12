@@ -288,6 +288,9 @@ func (a *AdminApp) systemSections() []ui.Section {
 										Fields: []ui.FormField{
 											{Field: "name", Type: "text", Label: "Name"},
 											{Field: "description", Type: "text", Label: "Description"},
+											{Field: "shareable", Type: "toggle", Label: "Members can share with this group",
+												Help:   "Lets members share their own apps with everyone in the group, with no request to you.",
+												Detail: "For a group that is a team. Leave it off for a broad bundle: sharing with a group most people are in is close to sharing with everyone, which stays your call. Members need My Apps among the group's apps to open what is shared with them. Turning it off stops every share to the group at once."},
 										},
 									},
 									// Which apps this group grants.

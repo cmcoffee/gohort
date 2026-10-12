@@ -52,7 +52,9 @@ func TestAppAsksAreCappedPerAppAndPerUser(t *testing.T) {
 	// The count cap, for a model that costs nothing.
 	freeDB := &DBase{Store: kvlite.MemStore()}
 	free := AppSpec{Slug: "free", Owner: "alice", AgentID: "npc"}
-	appAgentAsk = func(context.Context, string, string, string, string, bool) (string, float64, error) { return "ok", 0, nil }
+	appAgentAsk = func(context.Context, string, string, string, string, bool) (string, float64, error) {
+		return "ok", 0, nil
+	}
 	var last *httptest.ResponseRecorder
 	for i := 0; i <= askUserDailyCalls; i++ {
 		last = httptest.NewRecorder()

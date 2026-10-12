@@ -46,7 +46,7 @@ func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 		if owner == user || seen[slug] {
 			continue
 		}
-		if s, ok := loadSpec(owner, slug); ok && s.Shared {
+		if s, ok := loadSpec(owner, slug); ok && appReaches(s, user) {
 			add(s, "My apps")
 		}
 	}

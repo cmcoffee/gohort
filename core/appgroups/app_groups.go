@@ -38,6 +38,13 @@ type AppGroup struct {
 	Apps        []string  `json:"apps"`        // app web paths granted to members
 	Created     time.Time `json:"created"`
 	Updated     time.Time `json:"updated"`
+
+	// Shareable lets a member share what they own with the whole group, with
+	// no administrator in each share. Off by default: groups began as app
+	// bundles, and a broad bundle shared with is close to sharing with the
+	// deployment, which is the administrator's call. On for a group that is a
+	// team.
+	Shareable bool `json:"shareable,omitempty"`
 }
 
 // In-memory snapshot, refreshed on each mutation. Access checks are warm-path
