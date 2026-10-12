@@ -843,6 +843,17 @@ func (lr *loopRun) setupHistory() {
 	if n := collapseIncomingFailureStreaks(lr.history); n > 0 {
 		Debug("[agent_loop] failure-streak collapse: %d repeated failure result(s) in incoming history collapsed", n)
 	}
+	// Results a later call made stale (a file read before it was edited, the
+	// same read made twice) leave before the model re-reads them.
+	touches := map[string]func(map[string]any) (string, bool){}
+	for _, td := range lr.tools {
+		if td.Touches != nil {
+			touches[td.Tool.Name] = td.Touches
+		}
+	}
+	if n := dropSupersededResults(lr.history, touches); n > 0 {
+		Debug("[agent_loop] superseded results: ~%d tokens of stale tool results dropped from incoming history", n)
+	}
 
 	// Turn-scoped notes from the app, appended to the newest user turn BEFORE
 	// the stamp goes on the front — so the app is handed the user's own words,

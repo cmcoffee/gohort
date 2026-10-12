@@ -54,6 +54,7 @@ func init() {
 	// ---- lifecycle actions ----
 
 	gt.AddAction("create", &GroupedToolAction{
+		Touches:         wsSwitch,
 		FrameworkOutput: true,
 		Description:     "Create a new workspace and switch the session's active path to it. All subsequent file-writing tools (fetch_url save_to, generate_image, workspace write, etc.) put their output here for the rest of this turn. Returns the workspace id. Optional: pin=true creates it pinned (survives session end + idle timeout); name is a human-friendly label.",
 		Params: map[string]ToolParam{
@@ -65,6 +66,7 @@ func init() {
 	})
 
 	gt.AddAction("use", &GroupedToolAction{
+		Touches:         wsSwitch,
 		FrameworkOutput: true,
 		Description:     "Switch the session's active workspace to an existing one. Subsequent file actions read/write here for the rest of this turn. Touches the workspace's last-used time so the cleanup reconciler doesn't reap it.",
 		Params: map[string]ToolParam{
@@ -105,6 +107,7 @@ func init() {
 	})
 
 	gt.AddAction("delete", &GroupedToolAction{
+		Touches:         wsSwitch,
 		FrameworkOutput: true,
 		Description:     "Permanently delete a workspace and all its files. Irreversible. Use when you're done with a task and don't want to wait for the cleanup reconciler. To remove a single file inside the active workspace use rm instead.",
 		Params: map[string]ToolParam{
@@ -140,6 +143,7 @@ func init() {
 	})
 
 	gt.AddAction("cat", &GroupedToolAction{
+		Touches:     wsRead("cat"),
 		Description: "Read a file from the active workspace as text. Returns up to 64 KB; longer files are truncated with a notice. For large files (logs, JSON dumps, spilled tool results) prefer the targeted query actions (head / tail / read_lines / grep / stat), which return only the slice you need rather than the whole file.",
 		Params: map[string]ToolParam{
 			"path": {Type: "string", Description: "Workspace-relative path to read."},
@@ -152,6 +156,7 @@ func init() {
 	})
 
 	gt.AddAction("head", &GroupedToolAction{
+		Touches:     wsRead("head"),
 		Description: "Return the first N lines of a workspace file (default 50). Cheap targeted slice: use this when you need the start of a log, the header of a CSV, or just want to see the shape of a file without reading the whole thing.",
 		Params: map[string]ToolParam{
 			"path":  {Type: "string", Description: "Workspace-relative path to read."},
@@ -165,6 +170,7 @@ func init() {
 	})
 
 	gt.AddAction("tail", &GroupedToolAction{
+		Touches:     wsRead("tail"),
 		Description: "Return the last N lines of a workspace file (default 50). Use for log tails, recently-appended output, or the final summary of a tool spill.",
 		Params: map[string]ToolParam{
 			"path":  {Type: "string", Description: "Workspace-relative path to read."},
@@ -178,6 +184,7 @@ func init() {
 	})
 
 	gt.AddAction("read_lines", &GroupedToolAction{
+		Touches:     wsRead("read_lines"),
 		Description: "Return a specific line range from a workspace file. 1-indexed, inclusive on both ends. Use after stat / grep tells you roughly where to look; lets you pull exactly the slice you need without dragging the rest into context.",
 		Params: map[string]ToolParam{
 			"path":  {Type: "string", Description: "Workspace-relative path to read."},
@@ -192,6 +199,7 @@ func init() {
 	})
 
 	gt.AddAction("grep", &GroupedToolAction{
+		Touches:     wsRead("grep"),
 		Description: "Search a workspace file for a regex pattern. Returns matching lines with line numbers; optional `context` includes lines before/after each match (max 5). Right tool for finding specific records inside a spilled log, a large JSON dump, or any text you DON'T want to read end-to-end. Pattern is RE2 (Go's regexp): no PCRE-only constructs.",
 		Params: map[string]ToolParam{
 			"path":        {Type: "string", Description: "Workspace-relative path to search."},
@@ -208,6 +216,7 @@ func init() {
 	})
 
 	gt.AddAction("stat", &GroupedToolAction{
+		Touches:         wsRead("stat"),
 		FrameworkOutput: true,
 		Description:     "Inspect a workspace file: size, mtime, line count, and a kind hint (json-like / log-lines / csv-like / html / xml-like / text / binary / empty). Call FIRST when you encounter an unfamiliar file (e.g. a spilled tool result): the kind hint tells you which query action to reach for next (json-like → grep for the field you want; log-lines → tail; csv-like → head for the header).",
 		Params: map[string]ToolParam{
@@ -221,6 +230,7 @@ func init() {
 	})
 
 	gt.AddAction("write", &GroupedToolAction{
+		Touches:         wsWrite,
 		FrameworkOutput: true,
 		Description:     "Write content to a file in the active workspace (creates or overwrites). Auto-mints a workspace on first call if none is active. Use to drop scripts you want to test via run, or to save work product you'll attach later.",
 		Params: map[string]ToolParam{
@@ -236,6 +246,7 @@ func init() {
 	})
 
 	gt.AddAction("edit", &GroupedToolAction{
+		Touches:         wsWrite,
 		FrameworkOutput: true,
 		Description:     "Change part of a file in the active workspace in place: find is the EXACT text to replace (copied from the file, whitespace included) and must appear exactly once; replace is what goes there. Use it instead of rewriting a whole file to change a few lines: re-typing a long file is how working code gets silently changed around the fix. all=true replaces every occurrence instead.",
 		Params: map[string]ToolParam{
@@ -251,6 +262,7 @@ func init() {
 	})
 
 	gt.AddAction("rm", &GroupedToolAction{
+		Touches:         wsWrite,
 		FrameworkOutput: true,
 		Description:     "Delete a single file inside the active workspace. Rejects paths outside the workspace. For removing a whole workspace use delete instead.",
 		Params: map[string]ToolParam{
@@ -1148,3 +1160,48 @@ func handleEdit(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	return fmt.Sprintf("Replaced 1 occurrence in %s (%d bytes now).", rel, len(text)), nil
 }
+
+// What a workspace call reads or writes, so the agent loop can drop a result
+// a later call made stale (core's dropSupersededResults). Files are keyed
+// "file|<path>"; a read adds how it read ("|cat", "|grep:{...}"), so a write
+// to the path makes every earlier read of it stale and only an identical read
+// replaces another. Switching or removing a workspace re-points every path:
+// it writes "file", which is under all of them. run declares nothing: what a
+// command changed is unknown, and keeping a result is the safe side.
+func wsPath(args map[string]any) string {
+	p := strings.TrimSpace(StringArg(args, "path"))
+	if p == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(strings.TrimPrefix(p, "./")))
+}
+
+func wsRead(action string) func(map[string]any) (string, bool) {
+	return func(args map[string]any) (string, bool) {
+		p := wsPath(args)
+		if p == "" {
+			return "", false
+		}
+		rest := map[string]any{}
+		for k, v := range args {
+			if k != "action" && k != "path" {
+				rest[k] = v
+			}
+		}
+		how := action
+		if len(rest) > 0 {
+			b, _ := json.Marshal(rest) // map keys marshal sorted
+			how += ":" + string(b)
+		}
+		return "file|" + p + "|" + how, false
+	}
+}
+
+func wsWrite(args map[string]any) (string, bool) {
+	if p := wsPath(args); p != "" {
+		return "file|" + p, true
+	}
+	return "", false
+}
+
+func wsSwitch(map[string]any) (string, bool) { return "file", true }

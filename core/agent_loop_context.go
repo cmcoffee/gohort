@@ -797,3 +797,83 @@ func safeCutPoint(msgs []Message, idx int) int {
 	}
 	return idx
 }
+
+// supersededMinTokens is the least dropSupersededResults will act on. Dropping
+// a result changes history from that point, which costs the cached prefix
+// behind it one cold prefill; a few hundred tokens saved is not worth that.
+const supersededMinTokens = 4000
+
+// dropSupersededResults replaces tool results that a later call in the same
+// history made stale: a read of something written afterwards, or a read made
+// again with the identical key. Builder reads a 36k page, edits it four
+// times, reads it again, and every copy stayed in every later round: a
+// session's history was 94% old tool results. Only results change, never a
+// call's arguments, which a model reads as its own pattern and copies.
+//
+// Acts only when the total is at least supersededMinTokens, and copies a
+// message's results before changing them, so the caller's history is never
+// touched. Returns the tokens reclaimed.
+func dropSupersededResults(msgs []Message, touches map[string]func(map[string]any) (string, bool)) int {
+	if len(touches) == 0 {
+		return 0
+	}
+	type ref struct {
+		mi, ri int
+		key    string
+		write  bool
+	}
+	var refs []ref
+	calls := map[string]ToolCall{}
+	for mi := range msgs {
+		// A result answers a call in the assistant turn before it. IDs can
+		// repeat across turns ("call_0"), so the latest call with an id wins.
+		for _, tc := range msgs[mi].ToolCalls {
+			calls[tc.ID] = tc
+		}
+		for ri, tr := range msgs[mi].ToolResults {
+			tc, ok := calls[tr.ID]
+			if !ok {
+				continue
+			}
+			fn := touches[tc.Name]
+			if fn == nil {
+				continue
+			}
+			if key, w := fn(tc.Args); key != "" {
+				refs = append(refs, ref{mi, ri, key, w})
+			}
+		}
+	}
+	stale := map[[2]int]string{}
+	total := 0
+	for i, r := range refs {
+		tr := msgs[r.mi].ToolResults[r.ri]
+		if r.write || tr.IsError || len(tr.Content) < 400 {
+			continue
+		}
+		for _, later := range refs[i+1:] {
+			if later.write && (r.key == later.key || strings.HasPrefix(r.key, later.key+"|")) {
+				stale[[2]int{r.mi, r.ri}] = "it was changed after this read, so this copy no longer holds; read it again if you need it"
+			} else if !later.write && later.key == r.key {
+				stale[[2]int{r.mi, r.ri}] = "the same read was made again later; the newer copy is the one to use"
+			} else {
+				continue
+			}
+			total += len(tr.Content) / 4
+			break
+		}
+	}
+	if total < supersededMinTokens {
+		return 0
+	}
+	cloned := map[int]bool{}
+	for at, why := range stale {
+		mi, ri := at[0], at[1]
+		if !cloned[mi] {
+			msgs[mi].ToolResults = append([]ToolResult(nil), msgs[mi].ToolResults...)
+			cloned[mi] = true
+		}
+		msgs[mi].ToolResults[ri].Content = fmt.Sprintf("[earlier result dropped, %d bytes: %s]", len(msgs[mi].ToolResults[ri].Content), why)
+	}
+	return total
+}

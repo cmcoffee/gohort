@@ -194,7 +194,19 @@ func ChatToolToAgentToolDef(ct ChatTool) AgentToolDef {
 		},
 		Handler:      chatToolHandler(ct),
 		NeedsConfirm: confirm,
+		Touches:      chatToolTouches(ct),
 	}
+}
+
+// chatToolTouches is a tool's Touches when it declares one: a GroupedTool
+// answers per action.
+func chatToolTouches(ct ChatTool) func(map[string]any) (string, bool) {
+	if t, ok := ct.(interface {
+		Touches(map[string]any) (string, bool)
+	}); ok {
+		return t.Touches
+	}
+	return nil
 }
 
 // GetAgentTools looks up registered chat tools by name and returns them as
@@ -447,6 +459,7 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 		NeedsConfirm:       confirm,
 		SingleFirePerBatch: singleFire,
 		SerialFirePerBatch: serialFire,
+		Touches:            chatToolTouches(ct),
 	}
 }
 

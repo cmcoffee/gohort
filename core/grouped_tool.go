@@ -61,6 +61,8 @@ type GroupedToolAction struct {
 	// Never set it on an action that returns anything it read.
 	FrameworkOutput bool
 	Handler         func(args map[string]any, sess *ToolSession) (string, error)
+	// Touches is this action's answer to AgentToolDef.Touches.
+	Touches func(args map[string]any) (key string, writes bool)
 }
 
 // typoHint scans supplied args for keys that are NOT known params of this
@@ -247,6 +249,15 @@ type GroupedTool struct {
 // authoring tool like tool_def nearly every failure is the caller's arguments,
 // which a "broken definition" verdict tells the model to stop correcting.
 func (g *GroupedTool) SetTrackOutcomes(v bool) { g.trackOutcomes = v }
+
+// Touches answers for the action a call named (AgentToolDef.Touches).
+func (g *GroupedTool) Touches(args map[string]any) (string, bool) {
+	def := g.actions[strings.TrimSpace(StringArg(args, "action"))]
+	if def == nil || def.Touches == nil {
+		return "", false
+	}
+	return def.Touches(args)
+}
 
 // SetTrustedOutput marks this grouped tool's result as framework-generated
 // control / authoring output (not raw external content), suppressing the

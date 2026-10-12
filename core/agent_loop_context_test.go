@@ -556,3 +556,56 @@ func TestFoldCallsAreBounded(t *testing.T) {
 		t.Fatal("made no fold calls at all")
 	}
 }
+
+// A result a later call made stale leaves the history: a file read before it
+// was edited, the same read made twice. Fresh reads, other files, and results
+// too small to matter stay, and the caller's history is never changed.
+func TestStaleToolResultsLeaveTheHistory(t *testing.T) {
+	big := strings.Repeat("x", 20000)
+	touches := map[string]func(map[string]any) (string, bool){
+		"ws": func(a map[string]any) (string, bool) {
+			p, _ := a["path"].(string)
+			if a["action"] == "edit" {
+				return "file|" + p, true
+			}
+			return "file|" + p + "|cat", false
+		},
+	}
+	call := func(id, action, path string) Message {
+		return Message{Role: "assistant", ToolCalls: []ToolCall{{ID: id, Name: "ws", Args: map[string]any{"action": action, "path": path}}}}
+	}
+	result := func(id, body string) Message {
+		return Message{Role: "user", ToolResults: []ToolResult{{ID: id, Content: body}}}
+	}
+	orig := []Message{
+		call("c1", "cat", "page.html"), result("c1", big), // edited later: stale
+		call("c2", "cat", "notes.md"), result("c2", big), // read again later: superseded
+		call("c3", "cat", "other.py"), result("c3", big), // untouched since: stays
+		call("c4", "edit", "page.html"), result("c4", "edited"),
+		call("c5", "cat", "notes.md"), result("c5", big), // the newest read: stays
+		call("c6", "cat", "page.html"), result("c6", big), // read after the edit: stays
+	}
+	msgs := append([]Message(nil), orig...)
+	if n := dropSupersededResults(msgs, touches); n < 8000 {
+		t.Fatalf("reclaimed %d tokens, want two 20k results' worth", n)
+	}
+	for i, want := range map[int]string{1: "changed after", 3: "made again later"} {
+		if !strings.Contains(msgs[i].ToolResults[0].Content, want) {
+			t.Errorf("message %d: %.80q, want it dropped (%s)", i, msgs[i].ToolResults[0].Content, want)
+		}
+	}
+	for _, i := range []int{5, 9, 11} {
+		if msgs[i].ToolResults[0].Content != big {
+			t.Errorf("message %d was dropped but nothing made it stale", i)
+		}
+	}
+	if orig[1].ToolResults[0].Content != big {
+		t.Error("the caller's history was changed")
+	}
+
+	// Too little to be worth a cold prefill: nothing changes.
+	small := []Message{call("a", "cat", "x"), result("a", strings.Repeat("y", 2000)), call("b", "edit", "x"), result("b", "ok")}
+	if n := dropSupersededResults(small, touches); n != 0 || small[1].ToolResults[0].Content == "" || strings.HasPrefix(small[1].ToolResults[0].Content, "[earlier") {
+		t.Errorf("a %d-token saving acted", n)
+	}
+}

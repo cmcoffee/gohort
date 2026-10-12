@@ -10,6 +10,14 @@ type AgentToolDef struct {
 	Tool    Tool
 	Handler ToolHandlerFunc
 
+	// Touches says what a call reads or writes, by key, so a result a later
+	// call made stale can leave the history (dropSupersededResults). A write
+	// key ("file:a.txt") makes every earlier read under it stale ("file:a.txt"
+	// itself or "file:a.txt|..."); a read is also replaced by a later read
+	// with the identical key. "" touches nothing trackable; nil, the tool
+	// does not say, and its results stay.
+	Touches func(args map[string]any) (key string, writes bool)
+
 	// NeedsConfirm marks a call worth stopping on before it executes.
 	// What that COSTS depends on who supplied AgentLoopConfig.Confirm,
 	// and the two live callers differ:

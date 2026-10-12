@@ -142,6 +142,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			},
 			Required: []string{"action"},
 		},
+		Touches: appDefTouches,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
 			switch action {
@@ -305,4 +306,34 @@ var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
 func slugify(name string) string {
 	s := slugRE.ReplaceAllString(strings.ToLower(strings.TrimSpace(name)), "-")
 	return strings.Trim(s, "-")
+}
+
+// appDefTouches is what an app_def call reads or writes, so an app read before
+// it was changed, or the long help read twice, can leave the history
+// (AgentToolDef.Touches). Apps are keyed "app|<slug>": a get adds what it read,
+// a change writes the app. A folder publish writes the app the folder holds.
+func appDefTouches(args map[string]any) (string, bool) {
+	action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
+	slug := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
+	switch action {
+	case "help", "":
+		return "app_def|help", false
+	case "get":
+		if slug == "" {
+			return "", false
+		}
+		return "app|" + slug + "|get:" + strings.TrimSpace(stringArg(args, "script")), false
+	case "publish":
+		if d := strings.TrimSuffix(strings.Trim(strings.TrimSpace(stringArg(args, "dir")), "/"), ".app"); d != "" {
+			slug = slugify(d)
+		}
+	case "create", "update", "update_section", "add_section", "remove_section", "patch_html", "patch",
+		"replace_function", "patch_function", "revert", "undo", "restore", "delete", "add_asset", "remove_asset":
+	default:
+		return "", false
+	}
+	if slug == "" {
+		return "", false
+	}
+	return "app|" + slug, true
 }
