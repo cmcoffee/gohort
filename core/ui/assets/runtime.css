@@ -318,6 +318,71 @@ select:-webkit-autofill {
  * during normal use; pulses with a colored dot when something is
  * running. Click → dropdown listing each session with click-through
  * to its app page. */
+/* Top-bar tiles: controls that sit beside each other in the agent loop's
+ * action row (an app's Topbar nav items). One shape for all of them, so two
+ * side by side read as peers: a tinted icon chip over a short label, a faint
+ * accent edge at rest that brightens on hover. A pending count rides the
+ * corner, so a tile is the same size with or without one. Selection is the
+ * outline the runtime sets, which is why the rest state stays this faint. */
+.ui-topbar-tile {
+  position: relative;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.2rem; height: 100%; min-width: 5.25rem; padding: 0.3rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  color: var(--text); font-family: inherit; cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.ui-topbar-tile:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  transform: translateY(-1px);
+}
+.ui-topbar-tile:active { transform: none; }
+.ui-topbar-tile-glyph {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.65rem; height: 1.65rem; border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent); font-size: var(--fs-lg); line-height: 1;
+}
+.ui-topbar-tile-label {
+  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.02em;
+  white-space: nowrap; opacity: 0.9;
+}
+/* The count is a small pill in the tile's top-right corner, clear of the
+ * icon at the tile's minimum width: over the label it hid the word, over the
+ * chip it hid the icon, beside the icon it spilled past the edge. Out of
+ * flow, so a tile is the same size with or without one. */
+.ui-topbar-tile .ui-channel-badge {
+  position: absolute; top: 0.25rem; right: 0.25rem;
+  min-width: 0.95rem; padding: 0 0.25rem; border-radius: 999px;
+  font-size: 0.6rem; font-weight: 700; line-height: 0.95rem; text-align: center;
+  background: var(--accent); color: var(--text-on-accent, #fff);
+}
+/* The rail's marked rows light up the same way: the standing thread (gold)
+ * and a pinned queue (accent). Their fills are set inline, and change with
+ * state (selected, pending), so the hover is painted OVER them with an inset
+ * shadow and a ring rather than by replacing the background. */
+.ui-channel-hero, .ui-channel-pinned-row {
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.ui-channel-hero:hover {
+  box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--warning) 9%, transparent),
+              0 0 0 1px color-mix(in srgb, var(--warning) 55%, transparent);
+  transform: translateY(-1px);
+}
+.ui-channel-pinned-row:hover {
+  box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--accent) 9%, transparent),
+              0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+  transform: translateY(-1px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-topbar-tile, .ui-channel-hero, .ui-channel-pinned-row { transition: none; }
+  .ui-topbar-tile:hover, .ui-channel-hero:hover, .ui-channel-pinned-row:hover { transform: none; }
+}
+
 .ui-live-pill-wrap { position: relative; margin-left: auto; }
 .ui-live-pill {
   display: inline-flex; align-items: center; gap: 0.45rem;
