@@ -5140,6 +5140,10 @@
         if (ev.started_ms && serverClockOffset !== null) since = Math.min(since, Number(ev.started_ms) + serverClockOffset);
         d.think = {since: since, tokens: Number(ev.tokens) || 0};
         d.tool = '';
+      } else if (ev.tool) {
+        // A path whose calls are not drawn as cards says which one ran.
+        d.tool = String(ev.tool);
+        d.think = null;
       } else {
         d.think = null; // a new round, not yet thinking
       }

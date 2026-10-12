@@ -922,7 +922,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				}
 			}
 			// What runs beneath this call knows which card it belongs under.
-			ctx = withToolCard(ctx, toolCard{msgID: msgID, callID: callID})
+			ctx = withToolCard(ctx, toolCard{msgID: msgID, callID: callID, send: t.sse.Send})
 			imgN, vidN, fileN := sessAttachmentCounts(sess)
 			// Heartbeat. A tool that runs for minutes is indistinguishable
 			// from a hung one: the last thing the log or the pane says is

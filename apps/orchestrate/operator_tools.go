@@ -959,6 +959,9 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					// so the delegate can address the channels its delegator
 					// reaches instead of handing text back up to be relayed.
 					dctx := carryNonOwnerRequester(ctx, sess.ContextWithNetworkConnector(sess.Context()))
+					// And this call's card, so the delegated run's progress
+					// shows on it (dispatch_progress.go).
+					dctx = withToolCard(dctx, toolCardFrom(ctx))
 					rec := RunDelegation(dctx, RootDB, owner, agent, brief, controllerAgentID)
 					if rec.Status == RunFailed {
 						return fmt.Sprintf("Delegated to %q but it failed: %s", agent, rec.Err), nil

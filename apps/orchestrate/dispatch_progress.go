@@ -18,6 +18,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // toolCard is the chip a running tool call is drawn as: which reply bubble it
@@ -27,6 +29,9 @@ import (
 type toolCard struct {
 	msgID  string
 	callID string
+	// send reaches the page the card is on. A sub-agent run on the sync
+	// path has no stream of its own, so its progress travels with the card.
+	send func(map[string]any)
 }
 
 type toolCardKey struct{}
@@ -48,7 +53,7 @@ func toolCardFrom(ctx context.Context) toolCard {
 
 // dispatchProgress reports one dispatched agent's progress onto its card.
 type dispatchProgress struct {
-	t     *chatTurn
+	send  func(map[string]any)
 	card  toolCard
 	agent string
 
@@ -65,10 +70,48 @@ func (t *chatTurn) newDispatchProgress(card toolCard, agent string) *dispatchPro
 	if t == nil || card.callID == "" {
 		return nil
 	}
-	return &dispatchProgress{t: t, card: card, agent: agent}
+	if card.send == nil && t.sse != nil {
+		card.send = t.sse.Send
+	}
+	return dispatchProgressOn(card, agent)
 }
 
-func (p *dispatchProgress) send(round int, extra map[string]any) {
+// dispatchProgressFrom is the reporter for a run started under a card on ctx,
+// for the paths that run a sub-agent with no stream of their own (delegate, a
+// pipeline's agent stages). nil when there is no card.
+func dispatchProgressFrom(ctx context.Context, agent string) *dispatchProgress {
+	return dispatchProgressOn(toolCardFrom(ctx), agent)
+}
+
+func dispatchProgressOn(card toolCard, agent string) *dispatchProgress {
+	if card.callID == "" || card.send == nil {
+		return nil
+	}
+	return &dispatchProgress{send: card.send, card: card, agent: agent}
+}
+
+// hooks are the loop callbacks that report this run: nil funcs when there is
+// nothing to report on, which the loop treats as unset.
+func (p *dispatchProgress) hooks() (roundStart func() []Message, reasoning func(string)) {
+	if p == nil {
+		return nil, nil
+	}
+	return func() []Message { p.roundStart(); return nil }, p.chunk
+}
+
+// step reports the tool a round just ran, for a path whose calls are not
+// drawn as cards of their own: the line still says what it is doing.
+func (p *dispatchProgress) step(info StepInfo) {
+	if p == nil || len(info.ToolCalls) == 0 {
+		return
+	}
+	p.mu.Lock()
+	round := p.round
+	p.mu.Unlock()
+	p.emit(round, map[string]any{"tool": info.ToolCalls[len(info.ToolCalls)-1].Name})
+}
+
+func (p *dispatchProgress) emit(round int, extra map[string]any) {
 	ev := map[string]any{
 		"kind":    "tool_progress",
 		"msg_id":  p.card.msgID,
@@ -79,7 +122,7 @@ func (p *dispatchProgress) send(round int, extra map[string]any) {
 	for k, v := range extra {
 		ev[k] = v
 	}
-	p.t.sse.Send(ev)
+	p.send(ev)
 }
 
 // roundStart begins a round: its thinking is timed from its own first chunk.
@@ -92,7 +135,7 @@ func (p *dispatchProgress) roundStart() {
 	round := p.round
 	p.spanStart, p.chars, p.lastSent = time.Time{}, 0, time.Time{}
 	p.mu.Unlock()
-	p.send(round, nil)
+	p.emit(round, nil)
 }
 
 // chunk counts reasoning and reports on the thinking tick, at once for the
@@ -120,6 +163,6 @@ func (p *dispatchProgress) chunk(s string) {
 	}
 	p.mu.Unlock()
 	if extra != nil {
-		p.send(round, extra)
+		p.emit(round, extra)
 	}
 }

@@ -364,6 +364,12 @@ func (t *chatTurn) pipelineStageDispatch() func(context.Context, string, string)
 // agentsRunPipelineAction dispatches to a saved pipeline and returns its final
 // output.
 func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) {
+	return t.agentsRunPipelineActionFor(toolCard{}, args)
+}
+
+// agentsRunPipelineActionFor is agentsRunPipelineAction for a dispatch drawn as card: its agent stages report
+// their progress on it (dispatch_progress.go).
+func (t *chatTurn) agentsRunPipelineActionFor(card toolCard, args map[string]any) (string, error) {
 	def, msg, err := t.pipelineDispatchGate(args)
 	if err != nil {
 		return "", err
@@ -394,6 +400,7 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 	// Cancellable: the ctx it hands back is what the run uses below, so Stop
 	// and Cancel reach this pipeline instead of reporting success at nothing.
 	ctx, liveRun := t.app.runsRegistry().CreateCancellable(t.ctx, t.user, "", "")
+	ctx = withToolCard(ctx, card) // its stages report on the dispatching call's card
 	liveRun.Describe("pipeline", pipelineRunLabel(t, def), truncateObs(msg, 100)).
 		Parent(parentRunFromCtx(t.ctx))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win

@@ -290,6 +290,12 @@ func (t *chatTurn) machineDispatchGate(args map[string]any) (MachineDef, string,
 // agentsRunMachineAction dispatches to a saved machine and returns the result
 // of the step that finished it.
 func (t *chatTurn) agentsRunMachineAction(args map[string]any) (string, error) {
+	return t.agentsRunMachineActionFor(toolCard{}, args)
+}
+
+// agentsRunMachineActionFor is agentsRunMachineAction for a dispatch drawn as card: its agent stages report
+// their progress on it (dispatch_progress.go).
+func (t *chatTurn) agentsRunMachineActionFor(card toolCard, args map[string]any) (string, error) {
 	def, msg, err := t.machineDispatchGate(args)
 	if err != nil {
 		return "", err
@@ -316,6 +322,7 @@ func (t *chatTurn) agentsRunMachineAction(args map[string]any) (string, error) {
 	// Cancellable: the ctx it hands back is what the walk runs under, so Stop
 	// and Cancel reach this machine instead of reporting success at nothing.
 	ctx, liveRun := t.app.runsRegistry().CreateCancellable(t.ctx, t.user, "", "")
+	ctx = withToolCard(ctx, card) // its stages report on the dispatching call's card
 	liveRun.Describe("machine", machineRunLabel(t, def), truncateObs(msg, 100)).
 		Parent(parentRunFromCtx(t.ctx))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win

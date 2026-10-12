@@ -906,8 +906,15 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	subTurn.noteMountedTools(tools)
 	dispatchPin, dispatchRoute := dispatchRouting(ctx, subTurn)
 	buildCheck := newDispatchBuildCheck(target, subSess)
+	// Started from a chat turn's tool call (delegate, a pipeline's agent
+	// stage): its round, the tool it just ran and its thinking show on that
+	// call's card (dispatch_progress.go). nil from anywhere else.
+	prog := dispatchProgressFrom(ctx, target.Name)
+	progRoundStart, progReasoning := prog.hooks()
 	resp, syncTranscript, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
-		TierOverride: dispatchPin,
+		OnRoundStart:    progRoundStart,
+		ReasoningStream: progReasoning,
+		TierOverride:    dispatchPin,
 		// A terminal-rule pre_input block refused this request outright, or a
 		// machine step relays an earlier step's answer: the loop delivers this
 		// text and never calls a model. Empty on every other turn.
@@ -928,13 +935,17 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		// each one re-learns yesterday's dead endpoint from scratch. One
 		// attempt per run is what the memory buys back (see loadFailureMemory).
 		FailureMemoryKey: failureMemoryKey(target.ID, ""),
-		OnStep:           func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
-		TurnNotes:        func(user string) string { return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessID, user)) },
-		CapturePrompt:    target.CapturePrompt,
-		TurnClaimJudge:   subTurn.claimJudge(ctx),
-		PriorReports:     func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
-		FinishCheck:      buildCheck.finishCheck(),
-		FinishUnmet:      buildCheck.finishUnmet(),
+		OnStep: func(info StepInfo) {
+			telem.record(info)
+			liveRun.SetProgress(info.Round, info.ToolCalls)
+			prog.step(info)
+		},
+		TurnNotes:      func(user string) string { return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessID, user)) },
+		CapturePrompt:  target.CapturePrompt,
+		TurnClaimJudge: subTurn.claimJudge(ctx),
+		PriorReports:   func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
+		FinishCheck:    buildCheck.finishCheck(),
+		FinishUnmet:    buildCheck.finishUnmet(),
 		// And whether the reply KNOWS what it asserts. This site had the claim
 		// judge and not this one — an inconsistency rather than a decision, and
 		// the kind that is invisible because the path still works: a reply here

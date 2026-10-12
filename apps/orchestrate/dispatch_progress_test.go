@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // A call made beneath a dispatch names the dispatch's card, so the page draws
@@ -26,7 +28,7 @@ func TestADispatchReportsOnItsOwnCard(t *testing.T) {
 	}
 
 	card := toolCard{msgID: "m1", callID: "dispatch-1"}
-	if got := toolCardFrom(withToolCard(context.Background(), card)); got != card {
+	if got := toolCardFrom(withToolCard(context.Background(), card)); got.msgID != card.msgID || got.callID != card.callID {
 		t.Errorf("the card did not ride the context: %+v", got)
 	}
 
@@ -60,5 +62,30 @@ func TestADispatchReportsOnItsOwnCard(t *testing.T) {
 
 	if (*dispatchProgress)(nil) != turn.newDispatchProgress(toolCard{}, "x") {
 		t.Error("no card, no reporter")
+	}
+}
+
+// A run with no stream of its own (delegate, a pipeline stage) reports through
+// the card it was started under: the round and the tool each round ran.
+func TestASyncDispatchReportsThroughItsCard(t *testing.T) {
+	var got []map[string]any
+	card := toolCard{msgID: "m1", callID: "d1", send: func(ev map[string]any) { got = append(got, ev) }}
+	ctx := withToolCard(context.Background(), card)
+
+	p := dispatchProgressFrom(ctx, "Writer")
+	roundStart, reasoning := p.hooks()
+	if roundStart == nil || reasoning == nil {
+		t.Fatal("a run under a card should report")
+	}
+	roundStart()
+	p.step(StepInfo{Round: 1, ToolCalls: []ToolCall{{Name: "fetch_url"}, {Name: "web_search"}}})
+	if len(got) != 2 || got[1]["tool"] != "web_search" || got[1]["call_id"] != "d1" || got[1]["agent"] != "Writer" {
+		t.Errorf("events: %+v", got)
+	}
+	if p := dispatchProgressFrom(context.Background(), "Writer"); p != nil {
+		t.Error("a run with no card reported")
+	}
+	if rs, r := (*dispatchProgress)(nil).hooks(); rs != nil || r != nil {
+		t.Error("no reporter, no hooks")
 	}
 }

@@ -263,12 +263,12 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 				// Fenced like the agent path: a pipeline's stages run workers
 				// and dispatch agents whose tools reach the network, so the
 				// output can carry attacker-influenced content.
-				return fenceAgentsOutput(t.agentsRunPipelineAction(args))
+				return fenceAgentsOutput(t.agentsRunPipelineActionFor(toolCardFrom(ctx), args))
 			}
 			if strings.TrimSpace(stringArg(args, "machine")) != "" {
 				// Fenced for the same reason: a machine's steps run workers
 				// with tools, and one of them may delegate to an agent.
-				return fenceAgentsOutput(t.agentsRunMachineAction(args))
+				return fenceAgentsOutput(t.agentsRunMachineActionFor(toolCardFrom(ctx), args))
 			}
 			return fenceAgentsOutput(t.agentsRunActionFor(toolCardFrom(ctx), args))
 		case "run_tool":
@@ -1354,12 +1354,7 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	// The sub-agent's calls are drawn under this dispatch's card.
 	ctx = withToolCard(ctx, card)
 	prog := t.newDispatchProgress(card, target.Name)
-	var reasoning func(string)
-	var roundStart func() []Message
-	if prog != nil {
-		reasoning = prog.chunk
-		roundStart = func() []Message { prog.roundStart(); return nil }
-	}
+	roundStart, reasoning := prog.hooks()
 	defer cancel()
 	// ForcePrivate enforcement — same shape as the external dispatch
 	// paths. The parent's network connector already propagates via
