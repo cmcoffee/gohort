@@ -548,13 +548,39 @@ func normalizeAppPath(path string) string {
 // viewer is perfectly entitled to see renders blank.
 func appPathOf(url_path string) string {
 	switch url_path {
-	case "", "/", "/login", "/logout", "/signup", "/forgot", "/reset":
+	case "", "/", "/login", "/logout", "/signup", "/forgot", "/reset", "/manifest.webmanifest":
 		return ""
 	}
 	if strings.HasPrefix(url_path, "/api/") || strings.HasPrefix(url_path, "/_") {
 		return ""
 	}
+	// The dashboard's own pages (Customize) are the viewer's, not an app's.
+	// Read as an app named "/dashboard", which nobody can be granted, they
+	// refused every non-admin while admins, who skip the grant, saw them work.
+	if strings.HasPrefix(url_path, "/dashboard/") {
+		return ""
+	}
 	return normalizeAppPath(url_path)
+}
+
+// WebAppEveryUser is a WebApp every signed-in person may open without a
+// grant: a page about themselves, like their account. Hidden apps are left out
+// of the grant pickers, so a hidden app that every user needs could otherwise
+// be reached by none of them but the admins.
+type WebAppEveryUser interface {
+	WebEveryUser() bool
+}
+
+// appForEveryUser reports whether the app mounted at path is one of those.
+func appForEveryUser(path string) bool {
+	for _, wa := range AllWebApps() {
+		if wa.WebPath() != path {
+			continue
+		}
+		e, ok := wa.(WebAppEveryUser)
+		return ok && e.WebEveryUser()
+	}
+	return false
 }
 
 // AppAvailabilityMiddleware refuses every request bound for an app an

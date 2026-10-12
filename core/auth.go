@@ -1744,7 +1744,7 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		// grant is skipped. (Admins bypass UserHasAppAccess entirely, which is
 		// why this only ever bit restricted users.)
 		if app_path := appPathOf(r.URL.Path); app_path != "" {
-			if !UserHasAppAccess(r, app_path) {
+			if !UserHasAppAccess(r, app_path) && !appForEveryUser(app_path) {
 				writeForbidden(w, r, app_path)
 				return
 			}

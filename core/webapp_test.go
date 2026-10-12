@@ -409,6 +409,10 @@ func TestAppPathOf(t *testing.T) {
 		// gated user's every page renders blank.
 		"/_ui/ui.js":  "",
 		"/_ui/ui.css": "",
+		// The viewer's own dashboard pages and the install manifest: not apps,
+		// so not gated as apps nobody can be granted.
+		"/dashboard/customize":  "",
+		"/manifest.webmanifest": "",
 	}
 	for in, want := range cases {
 		if got := appPathOf(in); got != want {
@@ -525,5 +529,29 @@ func TestAllWebAppsSpansEveryRegistry(t *testing.T) {
 		if paths[i] != w {
 			t.Errorf("position %d is %q, want %q — registry order is the dashboard's order", i, paths[i], w)
 		}
+	}
+}
+
+type everyUserApp struct{ path string }
+
+func (a everyUserApp) WebPath() string                       { return a.path }
+func (a everyUserApp) WebName() string                       { return "x" }
+func (a everyUserApp) WebDesc() string                       { return "x" }
+func (a everyUserApp) RegisterRoutes(*http.ServeMux, string) {}
+func (a everyUserApp) WebEveryUser() bool                    { return true }
+
+// An app that is every user's own is reached without a grant; any other app
+// still needs one.
+func TestAnAppForEveryUserNeedsNoGrant(t *testing.T) {
+	savedWeb, savedApps, savedAgents := registeredWebApps, registeredApps, registeredAgents
+	t.Cleanup(func() { registeredWebApps, registeredApps, registeredAgents = savedWeb, savedApps, savedAgents })
+	registeredWebApps, registeredApps, registeredAgents = nil, nil, nil
+	RegisterWebApp(everyUserApp{path: "/account"})
+	RegisterWebApp(&mockHubApp{path: "/research", label: "Research"})
+	if !appForEveryUser("/account") {
+		t.Error("an app declaring WebEveryUser should be open to every signed-in user")
+	}
+	if appForEveryUser("/research") || appForEveryUser("/nowhere") {
+		t.Error("an ordinary or unknown app must still need its grant")
 	}
 }

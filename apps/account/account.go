@@ -41,6 +41,10 @@ func (T *Account) WebDesc() string { return "Your personal preferences + connect
 // the real apps.
 func (T *Account) WebHidden() bool { return true }
 
+// WebEveryUser: a person's own account is theirs to open. Hidden from the
+// grant pickers, it could not be granted, so it refused every non-admin.
+func (T *Account) WebEveryUser() bool { return true }
+
 func (T *Account) Routes() {
 	T.HandleFunc("/api/prefs", T.handlePrefs)
 	T.HandleFunc("/api/password", T.handlePassword)
