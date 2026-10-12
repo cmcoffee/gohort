@@ -156,3 +156,16 @@ func TestMovingOwnerKeepsTheRecipients(t *testing.T) {
 		t.Error("a change of owner sent a withdrawal notice")
 	}
 }
+
+// A deleted account's entries go, and only theirs: "bo" is not "bob".
+func TestDroppingARecipientTakesOnlyTheirs(t *testing.T) {
+	db := newStore()
+	SetRecipients(db, "idx_drop", "alice", "a1", []string{"bob", "bo"})
+	DropRecipient(db, "idx_drop", "bob")
+	if refs := List(db, "idx_drop", "bob"); len(refs) != 0 {
+		t.Errorf("bob still has %+v", refs)
+	}
+	if refs := List(db, "idx_drop", "bo"); len(refs) != 1 {
+		t.Errorf("dropping bob took bo's share: %+v", refs)
+	}
+}

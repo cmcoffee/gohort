@@ -112,6 +112,7 @@ func (h *orchUserData) Anonymize(string) error { return ErrUserDataActionNotSupp
 // through each kind's own delete, so whoever depended on it is told.
 func (h *orchUserData) Purge(uid string) error {
 	stopUserSchedules(uid)
+	h.forgetRecipient(uid)
 	udb := UserDB(h.app.DB, uid)
 	if udb == nil {
 		return nil
@@ -162,4 +163,56 @@ func stopUserSchedules(uid string) int {
 		Log("[orchestrate] stopped %d schedule(s) and channel(s) for deleted account %q", n, uid)
 	}
 	return n
+}
+
+// forgetRecipient takes a deleted account off every agent, pipeline and
+// machine shared with it, whoever owns them. Shares are filed by username, so
+// a name left in a list would reach whoever is next given it; and the agents'
+// index is rebuilt from the list on the owner's next save, so both go.
+func (h *orchUserData) forgetRecipient(uid string) {
+	if uid == "" || AuthDB == nil {
+		return
+	}
+	if RootDB != nil {
+		peershare.DropRecipient(RootDB, SharedAgentsTable, uid)
+	}
+	without := func(list []string) ([]string, bool) {
+		out := list[:0:0]
+		for _, u := range list {
+			if u != uid {
+				out = append(out, u)
+			}
+		}
+		return out, len(out) != len(list)
+	}
+	for _, u := range AuthListUsers(AuthDB()) {
+		udb := UserDB(h.app.DB, u.Username)
+		if udb == nil {
+			continue
+		}
+		for _, k := range udb.Keys(agentsTable) {
+			var a AgentRecord
+			if !udb.Get(agentsTable, k, &a) {
+				continue
+			}
+			if list, changed := without(a.AllowedUsers); changed {
+				a.AllowedUsers = list
+				udb.Set(agentsTable, k, a)
+			}
+		}
+		for _, d := range ListPipelineDefs(udb, "") {
+			if list, changed := without(d.AllowedUsers); changed {
+				d.AllowedUsers = list
+				udb.Set(PipelineDefsTable, d.ID, d)
+				syncPipelineShareIndex(d)
+			}
+		}
+		for _, m := range ListMachineDefs(udb, "") {
+			if list, changed := without(m.AllowedUsers); changed {
+				m.AllowedUsers = list
+				udb.Set(MachineDefsTable, m.ID, m)
+				syncMachineShareIndex(m)
+			}
+		}
+	}
 }

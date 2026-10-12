@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appadmin"
 )
 
 // A deleted account's apps move to someone else with their records and their
@@ -63,5 +64,20 @@ func TestADeletedAccountsAppsMoveOrGo(t *testing.T) {
 	}
 	if _, shared := LookupSharedOwner(T.DB, sharedAppsIndex, "poll"); shared {
 		t.Error("purge left the app in the shared index")
+	}
+}
+
+// A shared app an operator narrowed to a deleted account keeps a marker, so
+// it does not fall open to every signed-in user.
+func TestADeletedAccountLeavesAnAppsAudience(t *testing.T) {
+	sharingTestApp(t)
+	appadmin.Save(RootDB, "alice", "tally", appadmin.State{AllowedUsers: []string{"bob"}})
+	appadmin.Save(RootDB, "alice", "poll", appadmin.State{AllowedUsers: []string{"bob", "carol"}})
+	forgetAppReader("bob")
+	if st := appadmin.Load(RootDB, "alice", "tally"); len(st.AllowedUsers) != 1 || st.AllowedUsers[0] == "bob" {
+		t.Errorf("an audience of only bob: %v", st.AllowedUsers)
+	}
+	if st := appadmin.Load(RootDB, "alice", "poll"); len(st.AllowedUsers) != 1 || st.AllowedUsers[0] != "carol" {
+		t.Errorf("poll's audience: %v", st.AllowedUsers)
 	}
 }

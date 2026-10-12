@@ -60,7 +60,38 @@ func (h *appsUserData) Purge(uid string) error {
 	for _, s := range listSpecs(uid) {
 		h.app.deleteApp(uid, s.Slug)
 	}
+	forgetAppReader(uid)
 	return nil
+}
+
+// forgetAppReader takes a deleted account off every shared app's "who can
+// open it" list, whoever owns the app. Empty there means every signed-in
+// user, so a list it was the only name on keeps a marker that matches nobody
+// instead of opening the app to everyone.
+func forgetAppReader(uid string) {
+	if RootDB == nil || uid == "" {
+		return
+	}
+	for _, k := range RootDB.Keys(appadmin.Table) {
+		var st appadmin.State
+		if !RootDB.Get(appadmin.Table, k, &st) {
+			continue
+		}
+		kept := st.AllowedUsers[:0:0]
+		for _, u := range st.AllowedUsers {
+			if u != uid {
+				kept = append(kept, u)
+			}
+		}
+		if len(kept) == len(st.AllowedUsers) {
+			continue
+		}
+		if len(kept) == 0 {
+			kept = []string{"(removed account: " + uid + ")"}
+		}
+		st.AllowedUsers = kept
+		RootDB.Set(appadmin.Table, k, st)
+	}
 }
 
 // moveApp gives one app to a new owner, with what makes it the same app: the

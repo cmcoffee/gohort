@@ -4550,3 +4550,40 @@ func (s *SecureAPI) setLendScope(owner, name string, scope map[string][]string) 
 	s.db.Set(secureAPITable, key, c)
 	return nil
 }
+
+// forgetRecipient takes a deleted account off every credential it was lent or
+// allowed: the lend lists, the per-agent scope of a lend, and the allow list.
+// Metadata records only (keys without "__"); the encrypted secrets are other
+// keys and are not touched. An allow list that would be left empty, which
+// reads as everyone, keeps a marker for the removed account instead.
+func (s *SecureAPI) forgetRecipient(uid string) {
+	if !s.ready() || uid == "" {
+		return
+	}
+	s.mu.Lock()
+	for _, k := range s.db.Keys(secureAPITable) {
+		if strings.Contains(k, "__") {
+			continue
+		}
+		var c SecureCredential
+		if !s.db.Get(secureAPITable, k, &c) {
+			continue
+		}
+		var a, b, d bool
+		c.SharedReadOnly, a = dropListedUser(c.SharedReadOnly, uid, false)
+		c.SharedReadWrite, b = dropListedUser(c.SharedReadWrite, uid, false)
+		c.AllowedUsers, d = dropListedUser(c.AllowedUsers, uid, true)
+		_, scoped := c.SharedForAgents[uid]
+		if scoped {
+			delete(c.SharedForAgents, uid)
+			if len(c.SharedForAgents) == 0 {
+				c.SharedForAgents = nil
+			}
+		}
+		if a || b || d || scoped {
+			s.db.Set(secureAPITable, k, c)
+		}
+	}
+	s.mu.Unlock()
+	peershare.DropRecipient(s.db, sharedCredentialsTable, uid)
+}

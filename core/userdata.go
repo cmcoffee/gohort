@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sort"
 	"sync"
+
+	"github.com/cmcoffee/gohort/core/peershare"
 )
 
 // ErrUserDataActionNotSupported should be returned by a UserDataHandler when
@@ -252,5 +254,117 @@ func (coreUserData) Purge(uid string) error {
 	purgeTools(uid)
 	purgeSkills(uid)
 	purgeCollections(uid)
+	forgetRecipient(uid)
 	return nil
+}
+
+// removedUserMarker stands in a list that would be left empty by a deleted
+// account, where empty means everyone: it matches nobody (it cannot be a
+// username), and it says to whoever reads the list why it is there.
+func removedUserMarker(uid string) string { return "(removed account: " + uid + ")" }
+
+// dropListedUser takes uid out of list. When emptyMeansEveryone and uid was
+// the only name, the marker takes its place: removing the last allowed person
+// must not open the thing to the whole deployment.
+func dropListedUser(list []string, uid string, emptyMeansEveryone bool) ([]string, bool) {
+	out := list[:0:0]
+	found := false
+	for _, u := range list {
+		if u == uid {
+			found = true
+			continue
+		}
+		out = append(out, u)
+	}
+	if !found {
+		return list, false
+	}
+	if len(out) == 0 && emptyMeansEveryone {
+		out = []string{removedUserMarker(uid)}
+	}
+	return out, true
+}
+
+// forgetRecipient takes a deleted account off everything shared with it, the
+// core-held kinds: skills, collections (readers and contributors), tools (the
+// people it is shared with and its adopt list), credentials, and feature
+// access. Shares are filed by username, so an entry left behind would reach
+// whoever is next given the name. The share indexes go, and so do the names
+// in the records, or the owner's next save would rebuild the index from them.
+func forgetRecipient(uid string) {
+	if RootDB == nil || uid == "" {
+		return
+	}
+	for _, t := range []string{sharedSkillsTable, sharedCollectionsTable, sharedToolsTable} {
+		peershare.DropRecipient(RootDB, t, uid)
+	}
+	for _, owner := range RootDB.Keys(skillsTable) {
+		var rows []SkillRecord
+		if !RootDB.Get(skillsTable, owner, &rows) {
+			continue
+		}
+		changed := false
+		for i := range rows {
+			var c bool
+			if rows[i].AllowedUsers, c = dropListedUser(rows[i].AllowedUsers, uid, false); c {
+				changed = true
+			}
+		}
+		if changed {
+			RootDB.Set(skillsTable, owner, rows)
+		}
+	}
+	forgetCollection := func(db Database, table, key string) {
+		var c Collection
+		if !db.Get(table, key, &c) {
+			return
+		}
+		var a, b bool
+		c.AllowedUsers, a = dropListedUser(c.AllowedUsers, uid, false)
+		c.Contributors, b = dropListedUser(c.Contributors, uid, false)
+		if a || b {
+			db.Set(table, key, c)
+		}
+	}
+	if AuthDB != nil {
+		for _, u := range AuthListUsers(AuthDB()) {
+			if udb := UserDB(CollectionsDB(), u.Username); udb != nil {
+				for _, k := range udb.Keys(CollectionsTable) {
+					forgetCollection(udb, CollectionsTable, k)
+				}
+			}
+		}
+	}
+	for _, k := range RootDB.Keys(GlobalCollectionsTable) {
+		forgetCollection(RootDB, GlobalCollectionsTable, k)
+	}
+	tempToolPersistMu.Lock()
+	for _, owner := range RootDB.Keys(persistentTempToolsTable) {
+		var list []PersistentTempTool
+		if !RootDB.Get(persistentTempToolsTable, owner, &list) {
+			continue
+		}
+		changed := false
+		for i := range list {
+			var a, b bool
+			list[i].SharedWith, a = dropListedUser(list[i].SharedWith, uid, false)
+			list[i].AllowedUsers, b = dropListedUser(list[i].AllowedUsers, uid, true)
+			changed = changed || a || b
+		}
+		if changed {
+			RootDB.Set(persistentTempToolsTable, owner, list)
+		}
+	}
+	tempToolPersistMu.Unlock()
+	Secure().forgetRecipient(uid)
+	for _, f := range RootDB.Keys(featureAccessTable) {
+		var p FeatureAccessPolicy
+		if !RootDB.Get(featureAccessTable, f, &p) {
+			continue
+		}
+		var c bool
+		if p.AllowedUsers, c = dropListedUser(p.AllowedUsers, uid, true); c {
+			RootDB.Set(featureAccessTable, f, p)
+		}
+	}
 }

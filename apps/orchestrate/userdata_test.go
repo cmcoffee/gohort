@@ -62,3 +62,32 @@ func TestADeletedAccountsAgentsMoveOrGo(t *testing.T) {
 		t.Error("the pipeline survived the purge")
 	}
 }
+
+// An agent or pipeline shared WITH a deleted account is taken back from it,
+// in the record and in the index, so a reused name inherits nothing.
+func TestADeletedAccountLosesWhatWasSharedWithIt(t *testing.T) {
+	root := depStores(t, "alice", "bob", "carol")
+	app := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	alice := UserDB(root, "alice")
+	a, err := saveAgent(alice, AgentRecord{Owner: "alice", Name: "Lead", OrchestratorPrompt: "lead", AllowedUsers: []string{"bob", "carol"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipe := SavePipelineDefAs(alice, PipelineDef{Owner: "alice", Name: "Flow", AllowedUsers: []string{"bob"}}, "create")
+
+	(&orchUserData{app: app}).forgetRecipient("bob")
+
+	got, _ := loadAgent(alice, a.ID)
+	if len(got.AllowedUsers) != 1 || got.AllowedUsers[0] != "carol" {
+		t.Errorf("agent share list: %v", got.AllowedUsers)
+	}
+	if refs := peershare.List(RootDB, SharedAgentsTable, "bob"); len(refs) != 0 {
+		t.Errorf("bob is still in the agents index: %+v", refs)
+	}
+	if refs := peershare.List(RootDB, SharedAgentsTable, "carol"); len(refs) != 1 {
+		t.Error("carol's share went with bob's")
+	}
+	if d, _ := LoadPipelineDef(alice, "alice", pipe.ID); len(d.AllowedUsers) != 0 {
+		t.Errorf("pipeline still shared with %v", d.AllowedUsers)
+	}
+}

@@ -168,3 +168,19 @@ func MoveOwner(db Store, indexTable, from, to, id string) {
 		}
 	}
 }
+
+// DropRecipient removes every entry naming recipient, for an account that no
+// longer exists: what was shared with them has nobody to reach, and an entry
+// left behind would reach whoever is next given the name. No OnDropped
+// notice: there is nobody to tell.
+func DropRecipient(db Store, indexTable, recipient string) {
+	if db == nil || strings.TrimSpace(recipient) == "" {
+		return
+	}
+	prefix := recipient + "\x00"
+	for _, k := range db.Keys(indexTable) {
+		if strings.HasPrefix(k, prefix) {
+			db.Unset(indexTable, k)
+		}
+	}
+}

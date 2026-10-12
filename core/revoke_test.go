@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -324,5 +325,48 @@ func TestADeletedAccountsToolsSkillsAndCollectionsMove(t *testing.T) {
 	var c Collection
 	if !UserDB(CollectionsDB(), "alice").Get(CollectionsTable, "c1", &c) || c.Owner != "alice" {
 		t.Error("the collection did not move")
+	}
+}
+
+// What was shared WITH a deleted account is taken back from it, so a new
+// account given the same name does not inherit it. A list where empty means
+// everyone keeps a marker rather than opening up.
+func TestADeletedAccountIsTakenOffWhatWasSharedWithIt(t *testing.T) {
+	saved, savedAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return RootDB }
+	t.Cleanup(func() { RootDB, AuthDB = saved, savedAuth })
+	AuthSetUser(RootDB, "alice", "pw", false)
+	AuthSetUser(RootDB, "bob", "pw", false)
+
+	RootDB.Set(skillsTable, "alice", []SkillRecord{{ID: "s1", Owner: "alice", AllowedUsers: []string{"bob", "carol"}}})
+	peershare.SetRecipients(RootDB, sharedSkillsTable, "alice", "s1", []string{"bob", "carol"})
+	RootDB.Set(persistentTempToolsTable, "alice", []PersistentTempTool{{Tool: TempTool{Name: "w"}, SharedWith: []string{"bob"}, AllowedUsers: []string{"bob"}}})
+	RootDB.Set(featureAccessTable, "openai_api", FeatureAccessPolicy{Feature: "openai_api", AllowedUsers: []string{"bob"}})
+
+	forgetRecipient("bob")
+
+	var skills []SkillRecord
+	RootDB.Get(skillsTable, "alice", &skills)
+	if len(skills[0].AllowedUsers) != 1 || skills[0].AllowedUsers[0] != "carol" {
+		t.Errorf("skill share list: %v", skills[0].AllowedUsers)
+	}
+	if refs := peershare.List(RootDB, sharedSkillsTable, "bob"); len(refs) != 0 {
+		t.Errorf("bob is still in the skills index: %+v", refs)
+	}
+	if refs := peershare.List(RootDB, sharedSkillsTable, "carol"); len(refs) != 1 {
+		t.Error("carol's share went with bob's")
+	}
+	tools := LoadPersistentTempTools(nil, "alice")
+	if len(tools[0].SharedWith) != 0 {
+		t.Errorf("tool still shared with %v", tools[0].SharedWith)
+	}
+	if got := tools[0].AllowedUsers; len(got) != 1 || got[0] != removedUserMarker("bob") {
+		t.Errorf("an adopt list of only bob should keep a marker, not open to everyone: %v", got)
+	}
+	var p FeatureAccessPolicy
+	RootDB.Get(featureAccessTable, "openai_api", &p)
+	if len(p.AllowedUsers) != 1 || p.AllowedUsers[0] == "bob" {
+		t.Errorf("feature access: %v", p.AllowedUsers)
 	}
 }
