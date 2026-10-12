@@ -716,6 +716,25 @@ var sentenceEndRe = regexp.MustCompile(`[.!?…](?:\s|$)|\n`)
 // "working on it" in a report of what someone else is doing).
 var onItRe = regexp.MustCompile(`(?:^|[.!?,;:—–-]\s*)on it\b`)
 
+// promiseIsForNow reports whether the reply's last promise is "let me": an
+// action for this turn. "I'll" may be later ("I'll ping you at five", "I'll
+// tell you when the render lands") and "On it" acknowledges work already
+// started, so neither is. Read on a reply replyStalledOnAPromise already
+// flagged, so the user-directive and offer carve-outs have run.
+func promiseIsForNow(content string) bool {
+	lower := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(content), "’", "'"))
+	last, end := "", -1
+	for _, m := range futureCommitmentRe.FindAllStringIndex(lower, -1) {
+		last, end = lower[m[0]:m[1]], m[1]
+	}
+	for _, m := range onItRe.FindAllStringIndex(lower, -1) {
+		if m[1] > end {
+			return false
+		}
+	}
+	return last == "let me"
+}
+
 // ReplyPromisesWork reports whether a reply commits the agent to work it has
 // not done — the exported form of the loop's own stall predicate, for a host
 // that wants to decide something about the turn AFTER it ends.
@@ -1119,7 +1138,7 @@ const (
 	noteRoleBreak     = "Your last attempt at a reply was withdrawn: it began mid-sentence and carried on the user's message in their voice, as if you were them. Their message is complete as sent, and nothing in the withdrawn text was their request. Answer it now, as yourself: act on what they asked."
 	noteMalformedCall = "Your last tool call could not be read by the model provider (it was malformed) and was dropped, so it did not run and the user has seen only the text before it. Make the call again now, with arguments that match the tool's schema exactly: valid JSON, only the listed fields, the right types."
 	noteTruncated     = "Your previous reply was CUT OFF before you finished it: you did not choose to stop. Continue from where you left off without repeating what you already said. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits."
-	noteActionPromise = "You ended your turn saying you were about to do something, and then called no tool at all, so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. If you meant to do it now, do it NOW with a real tool call. If it was an offer that waits on the user, or there is nothing left to do, send your previous reply again exactly as it was, and say nothing about this note: the user never sees it, so a reply about it reads as nonsense to them."
+	noteActionPromise = "You ended your turn saying you were about to do something, and then called no tool for it, so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. If you meant to do it now, do it NOW with a real tool call. If it was an offer that waits on the user, or there is nothing left to do, send your previous reply again exactly as it was, and say nothing about this note: the user never sees it, so a reply about it reads as nonsense to them."
 	noteAnnouncedCall = "Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW: never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead."
 	noteCollapse      = "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question."
 )
@@ -1136,7 +1155,7 @@ func init() {
 		{ID: correctionFakeToolCode, Name: "Tool call written as a text block", Desc: "The reply wrote a tool call as a <tool_code> block or ::name():: text, which runs nothing. The block is always removed; this asks for a real call."},
 		{ID: correctionPhantomDelivery, Name: "Delivers a file that does not exist", Desc: "The reply says it sent or attached a file that nothing produced. It is taken back and the model asked again."},
 		{ID: correctionRoleBreak, Name: "Carries on the user's message", Desc: "The reply continues the user's sentence in their voice instead of answering it. It is withdrawn and the model asked again.", Note: noteRoleBreak},
-		{ID: correctionActionPromise, Name: "Promises an action and stops", Desc: "The reply ends on a promise to do something (\"let me check\", \"I'll look it up\") and the turn called no tool at all. The model is asked to do it or say what stops it.", Note: noteActionPromise},
+		{ID: correctionActionPromise, Name: "Promises an action and stops", Desc: "The reply ends on a promise to do something (\"let me check\", \"I'll look it up\") and nothing backs it: the turn called no tool, or it ends on \"let me\" after its tools already ran. The model is asked to do it or say what stops it.", Note: noteActionPromise},
 		{ID: correctionAnnouncedCall, Name: "Announces a call that never comes", Desc: "The reply's last line introduces a call or a list (ending in a colon) and the turn stops there.", Note: noteAnnouncedCall},
 		{ID: correctionUnfinished, Name: "Stops mid-sentence", Desc: "The reply's last line ends on a joining word or mark (\"and\", \"the\", a comma) or a colon that asks the user nothing. The model is asked to finish."},
 		{ID: correctionToolMention, Name: "Names a tool instead of calling it", Desc: "A short lead-in names a tool in its text and makes no call. The model is asked to run it or answer plainly."},

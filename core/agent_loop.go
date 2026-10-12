@@ -2872,8 +2872,15 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 	// notice explicitly ASKS for, and a detached call is a tool call —
 	// so a promise backed by work that actually started is left alone,
 	// and only a promise backed by nothing gets pushed.
+	//
+	// That carve-out was whole-turn, and it let the commonest stall through:
+	// Builder edits a file, then ends on "Now the page. Let me wire it in."
+	// Earlier tools kept nothing that sentence promises. "Let me" is work for
+	// THIS turn, which no earlier call can have done; the after-work replies
+	// the carve-out exists for say "I'll" or "On it". So a "let me" ending is
+	// a stall whatever ran before it, unless a background job is running.
 	stalledOnErrors := lr.cumulativeToolErrors > 0 && (len(trimmedContent) < 30 || promised)
-	stalledOnNothing := promised && !lr.toolFiredThisTurn
+	stalledOnNothing := promised && (!lr.toolFiredThisTurn || (promiseIsForNow(trimmedContent) && !lr.cfg.backgrounded()))
 	gaveUp := roundsLeft >= 5 && (stalledOnErrors || stalledOnNothing)
 	// Two guards, not one. With errors pending it is the give-up guard; a
 	// promise with nothing errored and nothing called is "Promises an action

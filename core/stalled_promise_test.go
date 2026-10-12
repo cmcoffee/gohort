@@ -337,3 +337,59 @@ func TestACorrectionLearnsWhatItCameTo(t *testing.T) {
 		t.Fatalf("a tool ran after the correction (ran=%d): %+v", ran, s)
 	}
 }
+
+// Builder edits a file, then ends on the next step: "Now the page: ... Let me
+// wire it in." Earlier tools in the turn exempted every promise, so the turn
+// ended there, again and again, and the user had to say "continue" each time.
+// "Let me" is work for now and is caught after tools too; "I'll" and "On it"
+// after work started are left alone.
+func TestALetMeAfterToolsIsStillAStall(t *testing.T) {
+	replyguard.SetStore(guardStore{})
+	defer replyguard.SetStore(nil)
+	run := func(ending string) int {
+		stub := &FakeLLM{Turns: []FakeTurn{
+			{ToolCalls: []ToolCall{{ID: "c1", Name: "edit", Args: map[string]any{}}}},
+			{Content: ending},
+			{Content: "Done: the page is wired.", Repeat: true},
+		}}
+		app := &AppCore{LLM: stub, LeadLLM: stub}
+		cfg := AgentLoopConfig{MaxRounds: 12, Tools: []AgentToolDef{{
+			Tool:    Tool{Name: "edit", Description: "edit a file"},
+			Handler: func(context.Context, map[string]any) (string, error) { return "edited", nil },
+		}}}
+		if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "add the button"}}, cfg); err != nil {
+			t.Fatal(err)
+		}
+		return stub.Calls()
+	}
+	for _, stall := range []string{
+		"Now the page: an \"Agent review\" toggle + button, verdict badges, and re-ranked picks. Let me wire it in.",
+		"Still over 3000. Let me trim the changelog/decisions sections.",
+	} {
+		if calls := run(stall); calls != 3 {
+			t.Errorf("a let-me ending after tools was delivered: calls=%d, want 3: %q", calls, stall)
+		}
+	}
+	for _, done := range []string{
+		"Scheduled. I'll ping you at five.",
+		"Render started. On it.",
+	} {
+		if calls := run(done); calls != 2 {
+			t.Errorf("an after-work reply was re-prompted: calls=%d, want 2: %q", calls, done)
+		}
+	}
+}
+
+func TestPromiseIsForNow(t *testing.T) {
+	for in, want := range map[string]bool{
+		"Let me wire it in.":                       true,
+		"I'll wire it in.":                         false,
+		"Let me check. On it.":                     false,
+		"I'll be quick. Let me trim the notes.":    true,
+		"Let me trim it, and I'll ping you after.": false,
+	} {
+		if got := promiseIsForNow(in); got != want {
+			t.Errorf("promiseIsForNow(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
