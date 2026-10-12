@@ -3960,37 +3960,54 @@
     function renderAgentToolPanel(panel) {
       var tools = panel.parentNode && panel.parentNode.tools || [];
       panel.innerHTML = '';
-      tools.forEach(function(t) {
-        // Pipeline-mode temp tools get a 🪈 prefix in the entry name
-        // so the user can see at a glance which calls dispatched a
-        // sub-agent loop vs a regular registered tool.
-        var displayName = (t.kind === 'pipeline' ? '🪈 ' : '') + '→ ' + t.name;
-        var summaryChildren = [el('span', {class: 'ui-agent-tool-name'}, [displayName])];
-        if (t.args) summaryChildren.push(el('span', {class: 'ui-agent-tool-args', title: toolArgsHover(t.argsFull)}, [t.args]));
-        var summary = el('summary', {class: 'ui-agent-tool-summary'}, summaryChildren);
-        var det = el('details', {class: 'ui-agent-tool'});
-        det.appendChild(summary);
-        var body = el('div', {class: 'ui-agent-tool-body'});
-        // The request as it was sent, above what came back: the summary line
-        // clips every value, so without this the only way to see what a call
-        // actually asked for was the server log.
-        var argBox = toolArgsBlock(t.argsFull, 'ui-agent-tool');
-        if (argBox) body.appendChild(argBox);
-        if (t.output === null) {
-          body.appendChild(el('div', {class: 'ui-agent-tool-empty'}, ['(running…)']));
+      tools.forEach(function(t) { panel.appendChild(renderAgentToolEntry(t)); });
+    }
+    // One call's entry; the calls made beneath it (a dispatched agent's) are
+    // listed inside it, in the order they ran.
+    function renderAgentToolEntry(t) {
+      // Pipeline-mode temp tools get a 🪈 prefix in the entry name
+      // so the user can see at a glance which calls dispatched a
+      // sub-agent loop vs a regular registered tool.
+      var displayName = (t.kind === 'pipeline' ? '🪈 ' : '') + '→ ' + t.name;
+      var summaryChildren = [el('span', {class: 'ui-agent-tool-name'}, [displayName])];
+      if (t.args) summaryChildren.push(el('span', {class: 'ui-agent-tool-args', title: toolArgsHover(t.argsFull)}, [t.args]));
+      var summary = el('summary', {class: 'ui-agent-tool-summary'}, summaryChildren);
+      var det = el('details', {class: 'ui-agent-tool'});
+      det.appendChild(summary);
+      var body = el('div', {class: 'ui-agent-tool-body'});
+      // The request as it was sent, above what came back: the summary line
+      // clips every value, so without this the only way to see what a call
+      // actually asked for was the server log.
+      var argBox = toolArgsBlock(t.argsFull, 'ui-agent-tool');
+      if (argBox) body.appendChild(argBox);
+      if (t.output === null) {
+        body.appendChild(el('div', {class: 'ui-agent-tool-empty'}, ['(running…)']));
+      } else {
+        var trimmed = String(t.output || '').trim();
+        if (!trimmed) {
+          body.appendChild(el('div', {class: 'ui-agent-tool-empty'}, ['(no output)']));
         } else {
-          var trimmed = String(t.output || '').trim();
-          if (!trimmed) {
-            body.appendChild(el('div', {class: 'ui-agent-tool-empty'}, ['(no output)']));
-          } else {
-            var pre = el('pre', {class: 'ui-agent-tool-result'});
-            pre.textContent = t.output;
-            body.appendChild(pre);
-          }
+          var pre = el('pre', {class: 'ui-agent-tool-result'});
+          pre.textContent = t.output;
+          body.appendChild(pre);
         }
-        det.appendChild(body);
-        panel.appendChild(det);
-      });
+      }
+      if (t.children && t.children.length) {
+        var kids = el('div', {class: 'ui-agent-tool-children'});
+        t.children.forEach(function(c) { kids.appendChild(renderAgentToolEntry(c)); });
+        body.appendChild(kids);
+      }
+      det.appendChild(body);
+      return det;
+    }
+    // findToolEntry finds a call by id at any depth.
+    function findToolEntry(list, id) {
+      for (var i = 0; list && i < list.length; i++) {
+        if (list[i].call_id === id) return list[i];
+        var hit = findToolEntry(list[i].children, id);
+        if (hit) return hit;
+      }
+      return null;
     }
     function attachAgentToolToggle(msgEl) {
       if (!msgEl || !msgEl.tools) return;
@@ -4742,6 +4759,28 @@
           renderMessageStats(ev);
           break;
         case 'tool_call': {
+          // A call made beneath a running one (a dispatched agent's) is drawn
+          // inside it, and named on the dispatch's live line as what it is
+          // doing now.
+          if (ev.parent_call_id) {
+            var pm = ensureMsgBubbleFor(ev.msg_id, 'assistant');
+            var phost = pm && pm.bubble ? toolHostFor(pm) : null;
+            var parentEntry = phost ? findToolEntry(phost.tools, ev.parent_call_id) : null;
+            if (parentEntry) {
+              if (!parentEntry.children) parentEntry.children = [];
+              parentEntry.children.push({
+                call_id: ev.call_id || '',
+                name: ev.name || 'tool',
+                args: ev.args || '',
+                argsFull: ev.args_full || null,
+                output: null,
+                kind: ev.tool_kind || '',
+              });
+              noteDispatchTool(ev.parent_call_id, ev.name || '');
+              attachAgentToolToggle(phost);
+              break;
+            }
+          }
           endThinkLive();
           // Inline tool-call card on the targeted bubble — OR on the
           // previous visible block when the bubble's still empty (so
@@ -4767,6 +4806,9 @@
           scrollConvo(false);
           break;
         }
+        case 'tool_progress':
+          noteDispatchProgress(ev);
+          break;
         case 'tool_result': {
           var bm2 = msgEls[ev.msg_id];
           if (!bm2 || !bm2.bubble) break;
@@ -4788,13 +4830,12 @@
           if (resultText == null) resultText = ev.output;
           var matched = false;
           if (ev.call_id) {
-            for (var ti = host2.tools.length - 1; ti >= 0; ti--) {
-              if (host2.tools[ti].call_id === ev.call_id) {
-                host2.tools[ti].output = String(resultText == null ? '' : resultText);
-                matched = true;
-                break;
-              }
+            var hit = findToolEntry(host2.tools, ev.call_id);
+            if (hit) {
+              hit.output = String(resultText == null ? '' : resultText);
+              matched = true;
             }
+            endDispatchLive(ev.call_id);
           }
           if (!matched) {
             for (var ti2 = host2.tools.length - 1; ti2 >= 0; ti2--) {
@@ -4999,6 +5040,8 @@
       scrollConvo(true);
     }
     function clearThinking() {
+      dispatchLive = {};
+      if (dispatchLiveTimer) { clearInterval(dispatchLiveTimer); dispatchLiveTimer = null; }
       endThinkLive();
       if (thinkingQuietTimer) { clearTimeout(thinkingQuietTimer); thinkingQuietTimer = null; }
       if (thinkingEl && thinkingEl.parentNode) thinkingEl.remove();
@@ -5065,7 +5108,68 @@
     function renderThinkLive() {
       var label = thinkingEl && thinkingEl.querySelector('.ui-agent-thinking-label');
       if (!label) return;
-      label.textContent = thinkLive ? thinkingLabel(Date.now() - thinkLive.since, thinkLive.tokens) : '';
+      // The reply's own thinking first; while it waits on a dispatched agent,
+      // what that agent is doing.
+      label.textContent = thinkLive ? thinkingLabel(Date.now() - thinkLive.since, thinkLive.tokens) : dispatchLiveText();
+    }
+
+    // What each running dispatch is doing, by its call id: the agent, its
+    // round, the tool it is running or how long it has been thinking. Fed by
+    // tool_progress and by the calls drawn under it; gone with its result.
+    var dispatchLive = {};
+    var dispatchLiveTimer = null;
+    function dispatchEntry(id, agent) {
+      var d = dispatchLive[id];
+      if (!d) d = dispatchLive[id] = {agent: agent || '', since: Date.now(), round: 0, tool: '', think: null};
+      if (agent) d.agent = agent;
+      return d;
+    }
+    function tickDispatchLive() {
+      var any = Object.keys(dispatchLive).length > 0;
+      if (any && !thinkingEl) showThinking();
+      if (any && !dispatchLiveTimer) dispatchLiveTimer = setInterval(renderThinkLive, 1000);
+      if (!any && dispatchLiveTimer) { clearInterval(dispatchLiveTimer); dispatchLiveTimer = null; }
+      renderThinkLive();
+    }
+    function noteDispatchProgress(ev) {
+      if (!ev.call_id) return;
+      var d = dispatchEntry(ev.call_id, ev.agent);
+      if (ev.round) d.round = Number(ev.round) || d.round;
+      if (ev.thinking_ms != null) {
+        var since = Date.now() - (Number(ev.thinking_ms) || 0);
+        if (ev.started_ms && serverClockOffset !== null) since = Math.min(since, Number(ev.started_ms) + serverClockOffset);
+        d.think = {since: since, tokens: Number(ev.tokens) || 0};
+        d.tool = '';
+      } else {
+        d.think = null; // a new round, not yet thinking
+      }
+      tickDispatchLive();
+    }
+    function noteDispatchTool(id, name) {
+      var d = dispatchEntry(id);
+      // The chip's name carries the agent ("↳ [Researcher] web_search"):
+      // the line names the agent once, so only the tool is kept here.
+      d.tool = String(name).replace(/^↳ \[[^\]]*\] /, '');
+      d.think = null;
+      tickDispatchLive();
+    }
+    function endDispatchLive(id) {
+      if (!dispatchLive[id]) return;
+      delete dispatchLive[id];
+      tickDispatchLive();
+    }
+    function dispatchLiveText() {
+      var parts = [];
+      Object.keys(dispatchLive).forEach(function(id) {
+        var d = dispatchLive[id], bits = [];
+        if (d.round) bits.push('round ' + d.round);
+        if (d.think) bits.push(thinkingLabel(Date.now() - d.think.since, d.think.tokens));
+        else if (d.tool) bits.push(d.tool);
+        var secs = Math.floor((Date.now() - d.since) / 1000);
+        if (secs >= 3) bits.push(secs >= 60 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's' : secs + 's');
+        parts.push((d.agent ? '[' + d.agent + '] ' : '') + bits.join(' · '));
+      });
+      return parts.join('  |  ');
     }
 
     function disableInput() {

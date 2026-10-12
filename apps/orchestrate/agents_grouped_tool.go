@@ -270,7 +270,7 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 				// with tools, and one of them may delegate to an agent.
 				return fenceAgentsOutput(t.agentsRunMachineAction(args))
 			}
-			return fenceAgentsOutput(t.agentsRunAction(args))
+			return fenceAgentsOutput(t.agentsRunActionFor(toolCardFrom(ctx), args))
 		case "run_tool":
 			if !allowRunTool {
 				return "", fmt.Errorf("agents(run_tool) is not available to this agent: it's a Builder-only allowance for verifying an agent's tools directly")
@@ -1003,6 +1003,13 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 }
 
 func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
+	return t.agentsRunActionFor(toolCard{}, args)
+}
+
+// agentsRunActionFor is agentsRunAction for a dispatch drawn as card: the
+// sub-agent's calls are drawn under it and its rounds and thinking reported
+// on it (dispatch_progress.go). A zero card reports nothing.
+func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (string, error) {
 	target, msg, err := t.agentsRunGate(args)
 	if err != nil {
 		return "", err
@@ -1344,6 +1351,15 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// the MAIN agent failed. WithCancel keeps cleanup + client-disconnect
 	// cancellation (t.ctx) without the bogus deadline.
 	ctx, cancel := context.WithCancel(t.ctx)
+	// The sub-agent's calls are drawn under this dispatch's card.
+	ctx = withToolCard(ctx, card)
+	prog := t.newDispatchProgress(card, target.Name)
+	var reasoning func(string)
+	var roundStart func() []Message
+	if prog != nil {
+		reasoning = prog.chunk
+		roundStart = func() []Message { prog.roundStart(); return nil }
+	}
 	defer cancel()
 	// ForcePrivate enforcement — same shape as the external dispatch
 	// paths. The parent's network connector already propagates via
@@ -1405,6 +1421,10 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		GuardrailReject:     subTurn.guardrailEnforcer().Reject,
 		GuardrailDeclines:   subTurn.agent.GuardrailDeclines,
 		OnStep:              stepNotice,
+		// Its round and thinking, on the dispatch's card. Never its prose or
+		// its reasoning text: see dispatch_progress.go.
+		OnRoundStart:    roundStart,
+		ReasoningStream: reasoning,
 		// The sub-agent's own missing references, which the parent's note
 		// does not cover: see dependencyTurnNote.
 		TurnNotes: func(string) string { return dependencyTurnNote(subSess) },

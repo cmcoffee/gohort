@@ -48,8 +48,16 @@ check('the line sits beside the dots',
   /ui-agent-thinking-label/.test(lift(panel, 'function showThinking(', 'showThinking')));
 check('visible text ends it',
   /case 'chunk':\s*if \(thinkLive && \(ev\.text \|\| ''\)\.trim\(\)\) endThinkLive\(\);/.test(panel));
+// A dispatched agent's call is drawn under its dispatch and named on that
+// dispatch's live line; every other call ends the thinking line.
+var toolCallCase = panel.slice(panel.indexOf("case 'tool_call': {"), panel.indexOf("case 'tool_progress':"));
 check('a tool call ends it',
-  /case 'tool_call': \{\s*endThinkLive\(\);/.test(panel));
+  toolCallCase.indexOf('if (ev.parent_call_id)') >= 0 &&
+  toolCallCase.indexOf('endThinkLive();') > toolCallCase.indexOf('if (ev.parent_call_id)'));
+check('a dispatched agent\'s call names what it is doing on the dispatch line',
+  /noteDispatchTool\(ev\.parent_call_id/.test(toolCallCase));
+check('the dispatch line shows when the reply itself is not thinking',
+  /dispatchLiveText\(\)/.test(lift(panel, 'function renderThinkLive(', 'renderThinkLive')));
 check('the turn ending ends it, timer included',
   /endThinkLive\(\)/.test(lift(panel, 'function clearThinking(', 'clearThinking')) &&
   /clearInterval\(thinkLiveTimer\)/.test(lift(panel, 'function endThinkLive(', 'endThinkLive')));

@@ -910,11 +910,19 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 					"id":   activityCheapID(),
 					"text": callLabel,
 				})
-				msgID = t.ensureBubbleForTool()
+				// A call made beneath another one (a dispatched agent's)
+				// is drawn under that call's card, in its bubble.
+				parent := toolCardFrom(ctx)
+				msgID = parent.msgID
+				if msgID == "" {
+					msgID = t.ensureBubbleForTool()
+				}
 				if msgID != "" {
-					callID = t.emitToolCall(msgID, name, shownArgs, "", prefix)
+					callID = t.emitToolCallUnder(parent.callID, msgID, name, shownArgs, "", prefix)
 				}
 			}
+			// What runs beneath this call knows which card it belongs under.
+			ctx = withToolCard(ctx, toolCard{msgID: msgID, callID: callID})
 			imgN, vidN, fileN := sessAttachmentCounts(sess)
 			// Heartbeat. A tool that runs for minutes is indistinguishable
 			// from a hung one: the last thing the log or the pane says is

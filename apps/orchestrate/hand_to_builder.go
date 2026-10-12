@@ -68,7 +68,7 @@ func handToBuilderTool(t *chatTurn) *AgentToolDef {
 			Required: []string{"brief"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			return t.handToBuilder(args)
+			return t.handToBuilder(toolCardFrom(ctx), args)
 		},
 	}
 }
@@ -76,7 +76,7 @@ func handToBuilderTool(t *chatTurn) *AgentToolDef {
 // handToBuilder validates the named files, composes the brief, and dispatches
 // Builder through the ordinary run path so every existing guard (depth cap,
 // dispatch policy, cap accounting) applies unchanged.
-func (t *chatTurn) handToBuilder(args map[string]any) (string, error) {
+func (t *chatTurn) handToBuilder(card toolCard, args map[string]any) (string, error) {
 	brief := strings.TrimSpace(stringArg(args, "brief"))
 	if brief == "" {
 		return "", fmt.Errorf("brief is required: say what you want built or fixed and what the files are")
@@ -119,7 +119,7 @@ func (t *chatTurn) handToBuilder(args map[string]any) (string, error) {
 		fmt.Fprintf(&b, "\n## Not handed over\n\n%s\n", strings.Join(warnings, "\n"))
 	}
 
-	res, err := t.agentsRunAction(map[string]any{
+	res, err := t.agentsRunActionFor(card, map[string]any{
 		"agent":   "Builder",
 		"message": b.String(),
 	})

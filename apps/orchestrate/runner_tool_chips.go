@@ -233,6 +233,12 @@ func (t *chatTurn) ensureBubbleForTool() string {
 // tool name passed to the LLM is unaffected — only the display
 // chip changes.
 func (t *chatTurn) emitToolCall(msgID, name string, args map[string]any, suffix string, namePrefix ...string) string {
+	return t.emitToolCallUnder("", msgID, name, args, suffix, namePrefix...)
+}
+
+// emitToolCallUnder is emitToolCall for a call made beneath another one, a
+// dispatched agent's call under the dispatch: parentCallID draws it there.
+func (t *chatTurn) emitToolCallUnder(parentCallID, msgID, name string, args map[string]any, suffix string, namePrefix ...string) string {
 	displayName := name
 	if len(namePrefix) > 0 && namePrefix[0] != "" {
 		displayName = namePrefix[0] + name
@@ -271,6 +277,9 @@ func (t *chatTurn) emitToolCall(msgID, name string, args map[string]any, suffix 
 	// the session's TempTools list — cheap, the list is small.
 	if kind := t.toolKindFor(name); kind != "" {
 		payload["tool_kind"] = kind
+	}
+	if parentCallID != "" {
+		payload["parent_call_id"] = parentCallID
 	}
 	t.sse.Send(payload)
 	return callID

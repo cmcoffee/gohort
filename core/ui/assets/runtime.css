@@ -318,6 +318,13 @@ select:-webkit-autofill {
  * during normal use; pulses with a colored dot when something is
  * running. Click → dropdown listing each session with click-through
  * to its app page. */
+/* The calls a dispatched agent made, inside the dispatch's own entry: set in
+ * and ruled so they read as that call's work rather than the reply's. */
+.ui-agent-tool-children {
+  margin: 0.4rem 0 0.1rem 0.35rem; padding-left: 0.6rem;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
 /* Top-bar tiles: controls that sit beside each other in the agent loop's
  * action row (an app's Topbar nav items). One shape for all of them, so two
  * side by side read as peers: a tinted icon chip over a short label, a faint
