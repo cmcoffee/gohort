@@ -18,7 +18,7 @@ func TestAnActionHandsBackItsResultAndTheRecordsAsSaved(t *testing.T) {
 	runAppScript = func(j appscript.Job) (string, error) {
 		return `{"records":[{"hull":70}],"result":{"narrative":"A barge drifts close."}}`, nil
 	}
-	res, err := runActionAndPersist("alice", db, db, spec, spec.Actions[0], map[string]any{}, "alice")
+	res, err := runActionAndPersist("alice", db, db, spec, spec.Actions[0], map[string]any{}, "alice", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestAnActionHandsBackItsResultAndTheRecordsAsSaved(t *testing.T) {
 	}
 
 	runAppScript = func(j appscript.Job) (string, error) { return `{"message":"ok"}`, nil }
-	res, _ = runActionAndPersist("alice", db, db, spec, spec.Actions[0], map[string]any{}, "alice")
+	res, _ = runActionAndPersist("alice", db, db, spec, spec.Actions[0], map[string]any{}, "alice", true)
 	if res.Records == nil || len(res.Records) != 0 || res.Result != nil {
 		t.Errorf("no records reads as an empty list and no result as none: %+v", res)
 	}

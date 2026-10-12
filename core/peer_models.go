@@ -350,6 +350,19 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// caller — so what is borrowing the GPU is a read of existing state rather
 	// than a second counter that could disagree with it.
 	ctx := WithCostAttribution(r.Context(), "peer:"+k.Label)
+	// The caller's lane, on this GPU's terms. A background call from a peer
+	// gives way to the people using this instance exactly as a local one does,
+	// under this instance's yield setting, since it is this hardware. And a
+	// person on the far side counts as a person here, so this instance's own
+	// background work gives way to them. Waited before the slot, so a held
+	// call does not sit on a slot it is not using.
+	lane := peerCallLane(r)
+	ctx = WithRunLane(ctx, lane)
+	served := peerServedTier(tier.Tier)
+	if _, err := holdForLane(ctx, served); err != nil {
+		peerDeny(w, http.StatusServiceUnavailable, "gave up waiting for this instance's people to finish with the model: "+err.Error())
+		return
+	}
 	release, err := acquirePeerModelSlot(ctx, tier.Provider, "peer:"+k.Label)
 	if err != nil {
 		// Queued and the caller went away, or the deadline passed while
@@ -364,6 +377,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// minutes; releasing at the header would free the slot immediately and make
 	// the serialization fictional for exactly the requests that need it most.
 	defer release()
+	defer countModelUse(served, lane == LaneInteractive)()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(string(body)))
 	if err != nil {
@@ -590,7 +604,31 @@ func peerModelAuth(name string) func(*http.Request) {
 		if cred := strings.TrimSpace(PeerCredentialNow(req.Context(), p)); cred != "" {
 			req.Header.Set("Authorization", "Bearer "+cred)
 		}
+		// The lane travels with the call, so the GPU's own people come first
+		// there too: see peerCallLane.
+		req.Header.Set(peerLaneHeader, string(RunLaneOf(req.Context())))
 	}
+}
+
+// peerLaneHeader carries the caller's lane on a borrowed model call.
+const peerLaneHeader = "X-Gohort-Run-Lane"
+
+// peerCallLane is the lane a borrowed call came in on. A caller that sends
+// none predates lanes and was never held, so it is not held now: interactive.
+func peerCallLane(r *http.Request) RunLane {
+	switch l := RunLane(strings.TrimSpace(r.Header.Get(peerLaneHeader))); l {
+	case LaneBackground, LaneLowest:
+		return l
+	}
+	return LaneInteractive
+}
+
+// peerServedTier is the LLMTier a lent tier counts against here.
+func peerServedTier(tier string) LLMTier {
+	if strings.EqualFold(strings.TrimSpace(tier), "lead") && LeadIsDistinct() {
+		return LEAD
+	}
+	return WORKER
 }
 
 // peerNameFromProvider returns the peer a provider string names, or "".

@@ -34,7 +34,7 @@ func TestAnActionWritesASharedCollectionEveryoneReads(t *testing.T) {
 		gotShared = append(gotShared, s)
 		return out, nil
 	}
-	res, err := runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob")
+	res, err := runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob", true)
 	if err != nil || res.Message != "saved" || res.Saved != 2 || len(res.Records) != 1 {
 		t.Fatalf("action: %+v %v", res, err)
 	}
@@ -52,7 +52,7 @@ func TestAnActionWritesASharedCollectionEveryoneReads(t *testing.T) {
 
 	// The next run sees what the first wrote, and an update keeps created.
 	out = `{"shared":{"leaderboard":[{"id":"bob","score":150}]}}`
-	runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob")
+	runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob", true)
 	if !strings.Contains(gotShared[1], `"score":120`) {
 		t.Errorf("the second run was not handed the first's record: %s", gotShared[1])
 	}
@@ -63,7 +63,7 @@ func TestAnActionWritesASharedCollectionEveryoneReads(t *testing.T) {
 	// Undeclared: refused, and the user's own records are not written either.
 	out = `{"shared":{"secrets":[{"id":"x"}]},"records":[{"note":"should not land"}]}`
 	before := len(bobDB.Keys(recTable("game")))
-	if _, err := runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob"); err == nil || !strings.Contains(err.Error(), "does not declare") {
+	if _, err := runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob", true); err == nil || !strings.Contains(err.Error(), "does not declare") {
 		t.Fatalf("an undeclared collection was written: %v", err)
 	}
 	if len(bobDB.Keys(recTable("game"))) != before {
@@ -72,7 +72,7 @@ func TestAnActionWritesASharedCollectionEveryoneReads(t *testing.T) {
 
 	// Delete.
 	out = `{"shared_delete":{"leaderboard":["bob"]}}`
-	runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob")
+	runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob", true)
 	if len(readShared(ownerDB, spec, "leaderboard")) != 0 {
 		t.Error("shared_delete left the record")
 	}

@@ -658,7 +658,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		for k, v := range baseArgs {
 			scriptArgs[k] = v
 		}
-		out, err := appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: kind, Name: name, Language: lang, Script: script, Caps: caps, Args: scriptArgs, Libs: spec.Libraries, Spec: &spec}.Run()
+		out, err := appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: kind, Name: name, Language: lang, Script: script, Caps: caps, Args: scriptArgs, Libs: spec.Libraries, Spec: &spec, Interactive: t.inPersonsLane()}.Run()
 		if err != nil {
 			fail++
 			fmt.Fprintf(&b, "FAIL %s, could not run: %v\n", label, err)
@@ -840,7 +840,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 			emptyArgs[k] = v
 		}
 		emptyArgs["records"] = "[]"
-		if out, err := (appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: emptyArgs, Libs: spec.Libraries}).Run(); err == nil {
+		if out, err := (appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: emptyArgs, Libs: spec.Libraries, Interactive: t.inPersonsLane()}).Run(); err == nil {
 			gapIn.empty[ds.Name] = strings.TrimSpace(out)
 		}
 	}
@@ -987,4 +987,11 @@ func appReadsRecords(spec AppSpec) bool {
 		}
 	}
 	return false
+}
+
+// inPersonsLane says whether this turn is a person's, so a check it runs
+// carries their lane: an app's run_agent tested from a chat turn otherwise
+// waited behind that same chat.
+func (t *chatTurn) inPersonsLane() bool {
+	return t != nil && t.ctx != nil && RunLaneOf(t.ctx) == LaneInteractive
 }

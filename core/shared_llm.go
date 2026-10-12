@@ -347,6 +347,14 @@ func (r reloadableLLM) beginModelUse(ctx context.Context) (done func(), err erro
 	if yielding {
 		return func() {}, nil
 	}
+	return countModelUse(tier, RunLaneOf(ctx) == LaneInteractive), nil
+}
+
+// countModelUse counts one call to tier as out until done is called, and as a
+// person's when interactive, which is what the lanes wait on. Split out so a
+// call that reaches the model without this handle, a peer's borrowed call,
+// is counted the same way.
+func countModelUse(tier LLMTier, interactive bool) (done func()) {
 	modelUseMu.Lock()
 	u := modelUses[tier]
 	if u == nil {
@@ -354,7 +362,6 @@ func (r reloadableLLM) beginModelUse(ctx context.Context) (done func(), err erro
 		modelUses[tier] = u
 	}
 	u.now++
-	interactive := RunLaneOf(ctx) == LaneInteractive
 	if interactive {
 		u.inter++
 	}
@@ -368,7 +375,7 @@ func (r reloadableLLM) beginModelUse(ctx context.Context) (done func(), err erro
 			u.interLast = u.last
 		}
 		modelUseMu.Unlock()
-	}, nil
+	}
 }
 
 // record credits the call to whichever tier this handle serves. Runs on the
@@ -740,6 +747,66 @@ var (
 	laneDeadlineFloor = time.Minute
 )
 
+// Whether background work yields to people at all. On a model running on the
+// deployment's own hardware it must: parallel slots on one GPU share its
+// compute and its cache, so a background run beside a person's turn slows the
+// turn and can push its cached prompt out. On a hosted API there is no shared
+// hardware to protect, and waiting is pure delay. Auto decides by that; Always
+// and Never are for what the code cannot see from outside, like a vLLM spread
+// over spare GPUs or a tight API rate limit. Lowest still gives way to
+// anything: that is an agent's own mark, not the deployment's.
+const (
+	BackgroundYieldAuto   = ""
+	BackgroundYieldAlways = "always"
+	BackgroundYieldNever  = "never"
+)
+
+var (
+	yieldMu    sync.Mutex
+	yieldMode  = BackgroundYieldAuto
+	yieldLocal = true // until a config says otherwise, the old behavior
+)
+
+// SetBackgroundYield records the deployment's setting and the worker's
+// provider, which Auto reads. Called at boot and on every LLM reload.
+func SetBackgroundYield(mode, workerProvider string) {
+	yieldMu.Lock()
+	defer yieldMu.Unlock()
+	switch mode {
+	case BackgroundYieldAlways, BackgroundYieldNever:
+		yieldMode = mode
+	default:
+		yieldMode = BackgroundYieldAuto
+	}
+	yieldLocal = ProviderIsLocal(workerProvider)
+}
+
+// ProviderIsLocal says whether a provider runs on hardware the deployment
+// shares: a local server, or a peer's. An OpenAI-compatible server on the same
+// box reads as hosted, which is what Always is for.
+func ProviderIsLocal(provider string) bool {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	switch {
+	case p == "llama.cpp" || p == "vllm" || p == "ollama":
+		return true
+	case strings.HasPrefix(p, peerProviderPrefix):
+		return true
+	}
+	return false
+}
+
+func backgroundYields() bool {
+	yieldMu.Lock()
+	defer yieldMu.Unlock()
+	switch yieldMode {
+	case BackgroundYieldAlways:
+		return true
+	case BackgroundYieldNever:
+		return false
+	}
+	return yieldLocal
+}
+
 // interactiveInUse says whether a person's call to tier is out now, or ended
 // within quiet.
 func interactiveInUse(tier LLMTier, quiet time.Duration) bool {
@@ -770,6 +837,9 @@ func holdForLaneWith(ctx context.Context, tier LLMTier, progress func(time.Durat
 		busy = func() bool { return ModelInUse(tier, laneLowestQuiet) }
 		cap = laneLowestMaxWait
 	default:
+		if !backgroundYields() {
+			return 0, nil
+		}
 		busy = func() bool { return interactiveInUse(tier, laneQuiet) }
 		cap = laneMaxWait
 	}

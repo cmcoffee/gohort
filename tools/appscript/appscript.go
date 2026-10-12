@@ -51,6 +51,11 @@ type Job struct {
 	// Spec is the app as the run should see it, for a check of an app not
 	// saved yet (a folder's run). Nil: the saved app.
 	Spec *AppSpec
+	// Interactive is a person waiting on this run: a page loading, a button
+	// pressed. Its ask and run_agent then go out in the person's lane rather
+	// than waiting behind that same person's chat. A timer's run leaves it
+	// false and stays background.
+	Interactive bool
 }
 
 // AppRunAgent and AppRunPipeline answer a script's gohort.run_agent and
@@ -137,6 +142,9 @@ func (j Job) Run() (string, error) {
 		// The owner is acting in their own app — allow the hook's fetch/browse to
 		// reach the network (the sandbox itself stays network-isolated).
 		Network: NewNetworkConnector(false),
+	}
+	if j.Interactive {
+		sess.Ctx = WithRunLane(context.Background(), LaneInteractive)
 	}
 	sess.CallTool = func(name string, args map[string]any) (string, error) {
 		return temptool.CallToolForScript(sess, name, args)

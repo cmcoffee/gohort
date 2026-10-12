@@ -987,7 +987,8 @@ func scriptSlug(name string) string {
 
 // runDataSource executes one data-source script and returns its stdout.
 func runDataSource(user string, db Database, spec AppSpec, ds AppDataSource, args map[string]any, caller string) (string, error) {
-	return runAppScript(appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries})
+	// A data source runs when a page asks for it: someone is looking.
+	return runAppScript(appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true})
 }
 
 // dataSourceCacheTTL is how long a data source's output is reused before it is
@@ -1209,7 +1210,7 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	}
 
 	T.applySettings(args, spec, uid) // last: neither a param nor the body overrides a setting
-	res, err := runActionAndPersist(owner, T.recordBase(spec, owner), udb, spec, *act, args, uid)
+	res, err := runActionAndPersist(owner, T.recordBase(spec, owner), udb, spec, *act, args, uid, true)
 	if err != nil {
 		Log("[customapps] action %q/%q failed: %v", spec.Slug, name, err)
 		http.Error(w, "action failed: "+err.Error(), http.StatusInternalServerError)
@@ -1247,11 +1248,11 @@ type actionOutcome struct {
 // never writes the store itself.
 //
 // by is who triggered the run, stamped on any shared record it writes.
-func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act AppAction, args map[string]any, by string) (res actionOutcome, err error) {
+func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act AppAction, args map[string]any, by string, interactive bool) (res actionOutcome, err error) {
 	if len(spec.SharedCollections) > 0 {
 		args["shared"] = sharedInput(ownerDB, spec)
 	}
-	out, err := runAppScript(appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries})
+	out, err := runAppScript(appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries, Interactive: interactive})
 	if err != nil {
 		return res, err
 	}

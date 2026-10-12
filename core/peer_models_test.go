@@ -734,3 +734,30 @@ func TestABuiltPeerModelClientPresentsTheLiveCredential(t *testing.T) {
 		t.Errorf("after a rotation the built client still sent %q — every turn 401s from here", got[len(got)-1])
 	}
 }
+
+// A borrowed model call carries its lane, so the GPU's own people come first
+// on the far side too. A caller that sends none predates lanes and is not held.
+func TestABorrowedModelCallCarriesItsLane(t *testing.T) {
+	defer scratchPeerStore(t)()
+	k := grantFor(t)
+	RootDB.Set(remotePeersTable, "gpu-box", RemotePeer{
+		Name: "gpu-box", BaseURL: "https://den.example", Key: k.Key,
+		Caps: []string{PeerCapModels},
+	})
+	InvalidatePeerResolution()
+	auth := peerModelAuth("gpu-box")
+	for _, lane := range []RunLane{LaneInteractive, LaneBackground, LaneLowest} {
+		r := httptest.NewRequest(http.MethodPost, "https://den.example/api/peer/v1/chat/completions", nil)
+		r = r.WithContext(WithRunLane(r.Context(), lane))
+		auth(r)
+		if got := r.Header.Get(peerLaneHeader); got != string(lane) {
+			t.Errorf("sent lane %q, want %q", got, lane)
+		}
+		if got := peerCallLane(r); got != lane {
+			t.Errorf("served lane %q, want %q", got, lane)
+		}
+	}
+	if got := peerCallLane(httptest.NewRequest(http.MethodPost, "/", nil)); got != LaneInteractive {
+		t.Errorf("a call with no lane is served as %q, want interactive (never held, as before)", got)
+	}
+}

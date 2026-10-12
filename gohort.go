@@ -212,6 +212,7 @@ func main() {
 			// so an admin LLM-config change (core.ReloadLLMs) swaps the concretes
 			// live and every app's reference follows, no restart.
 			SetSharedLLMs(T.LLM, T.LeadLLM)
+			applyBackgroundYield()
 			// Boot's own record of what is running, so the admin page can show
 			// it from the first request rather than only after a save. See
 			// SetLiveLLMs for why stored and running are different questions.

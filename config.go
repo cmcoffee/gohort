@@ -205,6 +205,15 @@ func describeLLMConfig(c LLMProviderConfig) string {
 	return out
 }
 
+// applyBackgroundYield hands core the deployment's "background work yields to
+// people" setting and the worker's provider, which its Auto reads. At boot and
+// on every reload, since a provider swap can change what Auto means.
+func applyBackgroundYield() {
+	var mode string
+	global.db.Get(LLMTable, "background_yield", &mode)
+	SetBackgroundYield(mode, dbcfg.llm().Provider)
+}
+
 func reloadSharedLLMs() error {
 	cfg := dbcfg.llm()
 	if cfg.Provider == "" {
@@ -230,6 +239,7 @@ func reloadSharedLLMs() error {
 	// cause is how somebody stops believing the diagnostics.
 	SetLeadInitError("", "", nil)
 	SetSharedLLMs(worker, lead)
+	applyBackgroundYield()
 	// Record what is now RUNNING, beside the form that shows what is stored.
 	// Only here and at boot, because only an install changes the answer - a
 	// save that failed to rebuild must leave this reading the OLD client, or

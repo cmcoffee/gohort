@@ -85,7 +85,9 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 		http.Error(w, fmt.Sprintf("the prompt is over %d characters", askMaxPrompt), http.StatusRequestEntityTooLarge)
 		return
 	}
-	text, status, err := askAppAgent(r.Context(), ownerDB, owner, user, spec, body.Prompt, body.JSON)
+	// A page's ask is a person waiting: their lane, so background work gives
+	// way to it.
+	text, status, err := askAppAgent(WithRunLane(r.Context(), LaneInteractive), ownerDB, owner, user, spec, body.Prompt, body.JSON)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

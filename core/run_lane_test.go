@@ -168,3 +168,41 @@ func TestTheLoopGivesWayAtItsOwnCall(t *testing.T) {
 		t.Fatalf("a person's run was held %s (%v)", resp.LaneWait, err)
 	}
 }
+
+// Whether background waits is the deployment's call. Auto waits on a model
+// that shares local hardware (parallel slots on one GPU share it) and not on a
+// hosted API; Always and Never override; Lowest waits whatever is set.
+func TestTheYieldSettingDecidesWhetherBackgroundWaits(t *testing.T) {
+	q, lq, mw, lmw, tick := laneQuiet, laneLowestQuiet, laneMaxWait, laneLowestMaxWait, laneTick
+	laneQuiet, laneLowestQuiet, laneMaxWait, laneLowestMaxWait, laneTick = 20*time.Millisecond, 20*time.Millisecond, 60*time.Millisecond, 60*time.Millisecond, 5*time.Millisecond
+	defer func() { laneQuiet, laneLowestQuiet, laneMaxWait, laneLowestMaxWait, laneTick = q, lq, mw, lmw, tick }()
+	defer SetBackgroundYield(BackgroundYieldAuto, "llama.cpp")
+	modelUseMu.Lock()
+	modelUses = map[LLMTier]*modelUse{}
+	modelUseMu.Unlock()
+
+	person := WithRunLane(context.Background(), LaneInteractive)
+	done, _ := reloadableLLM{}.beginModelUse(person)
+	defer done()
+	waits := func(mode, provider string, lane RunLane) bool {
+		SetBackgroundYield(mode, provider)
+		held, _ := holdForLane(WithRunLane(context.Background(), lane), WORKER)
+		return held > 0
+	}
+	for _, c := range []struct {
+		mode, provider string
+		lane           RunLane
+		want           bool
+	}{
+		{BackgroundYieldAuto, "vllm", LaneBackground, true},
+		{BackgroundYieldAuto, "peer:den", LaneBackground, true},
+		{BackgroundYieldAuto, "anthropic", LaneBackground, false},
+		{BackgroundYieldAlways, "openai", LaneBackground, true},
+		{BackgroundYieldNever, "vllm", LaneBackground, false},
+		{BackgroundYieldNever, "vllm", LaneLowest, true},
+	} {
+		if got := waits(c.mode, c.provider, c.lane); got != c.want {
+			t.Errorf("mode %q on %s, %s lane: waited=%v, want %v", c.mode, c.provider, c.lane, got, c.want)
+		}
+	}
+}

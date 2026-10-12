@@ -234,7 +234,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 		},
 		{
 			Title:    "Local Model Scheduler",
-			Subtitle: "Concurrent-request caps for local LLM backends. Default 1, strictly serial; 8 for vLLM, which batches.",
+			Subtitle: "How requests share the model: concurrent-request caps for local backends (default 1, strictly serial; 8 for vLLM, which batches), and whether background work waits for people.",
 			Detail:   "Raise it only when the backend supports parallel requests. Applies immediately on save, because the live LLM is rebuilt.",
 			Body: ui.FormPanel{
 				Source: "api/local-scheduler",
@@ -245,6 +245,13 @@ func (a *AdminApp) llmSections() []ui.Section {
 						Min: 1, Max: 64,
 						Help:   "One queue for the local model server, whichever it is.",
 						Detail: "vLLM batches concurrent requests, so it can take many more than llama.cpp; size it to the server's --max-num-seqs. A tier running on a peer goes through the same client, so this limit applies to it too."},
+					{Field: "background_yield", Label: "Background work yields to people", Type: "select",
+						Options: []ui.SelectOption{
+							{Value: "", Label: "Auto: on a local or peer model, not on a hosted API"},
+							{Value: "always", Label: "Always"},
+							{Value: "never", Label: "Never"}},
+						Help:   "Whether schedules, monitors and other unattended runs wait while someone is using the model.",
+						Detail: "Parallel slots on one GPU share its compute and its cache, so a background run beside a person's turn slows the turn; Auto waits on local and peer models. A hosted API has no shared hardware, so Auto does not wait there. Choose Always for an OpenAI-compatible server on your own machine or a tight API rate limit, Never for a server with GPUs to spare. A peer borrowing this model is held to this setting here. Agents marked Lowest wait either way."},
 				},
 			},
 		},
