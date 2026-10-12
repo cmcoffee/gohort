@@ -1830,7 +1830,7 @@ func (lr *loopRun) prepareCall() loopAction {
 	// worker actually granted. Otherwise every turn rebuilds to the claim
 	// and rediscovers the wall a round later.
 	lr.rs.window = effectiveContextSize(lr.cfg.ContextSize)
-	lr.rs.budget = compactHistory(lr.history, lr.systemPrompt, lr.rs.window, lr.rs.forceCompact)
+	lr.rs.budget = compactHistory(lr.history, lr.systemPrompt, ToolSchemaTokens(lr.toolDefs), lr.rs.window, lr.rs.forceCompact)
 	// One digest per TURN, measured on the prompt of the first round after
 	// compaction has run — the prompt that is actually sent. Later rounds
 	// grow history with results the model asked for; round 1 is the part a
@@ -2081,21 +2081,22 @@ func (lr *loopRun) callModel() loopAction {
 		window := recoveryWindow(lr.cfg.ContextSize, lr.rs.err, refused)
 		Debug("[agent_loop] round %d: context exceeded, recovering into a %d-token window (refused prompt ~%d tokens)", lr.round, window, refused)
 
-		compactHistory(lr.history, lr.systemPrompt, window, true)
+		toolTokens := ToolSchemaTokens(lr.toolDefs)
+		compactHistory(lr.history, lr.systemPrompt, toolTokens, window, true)
 		// Compaction only cuts bodies. If the bulk is ordinary
 		// conversation it is still there, so SUMMARIZE the older span
 		// before considering throwing any of it away — the recovery
 		// ladder is cheap-and-lossless, then costly-and-faithful, then
 		// cheap-and-lossy, in that order.
-		if stillTooBig(lr.history, lr.systemPrompt, window) {
+		if stillTooBig(lr.history, lr.systemPrompt, toolTokens, window) {
 			if folded, ok := lr.T.summarizeOldHistory(lr.ctx, lr.history, window, contextRecoveryKeepWhole); ok {
 				lr.history = folded
 			}
 		}
 		// Last resort. A summarizer that is unavailable or failing must
 		// not leave the turn dead when dropping old text would let it run.
-		if stillTooBig(lr.history, lr.systemPrompt, window) {
-			budget := window - EstimateTokens(lr.systemPrompt) - 34000
+		if stillTooBig(lr.history, lr.systemPrompt, toolTokens, window) {
+			budget := window - EstimateTokens(lr.systemPrompt) - roundReserve(toolTokens)
 			if n := elideOldMessageText(lr.history, budget, contextRecoveryKeepWhole); n > 0 {
 				Log("[agent_loop] context recovery: summarization unavailable, elided ~%d tokens of older message text", n)
 			}

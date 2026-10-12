@@ -20,7 +20,7 @@ import (
 type AgentLoopTuning struct {
 	// HistoryBudgetPercent is the steady-state cap on per-round
 	// history as a percent of the LLM context window. The agent loop
-	// uses min(window - sysprompt - genReserve, window × percent/100)
+	// uses min(window - sysprompt - tool schemas - genHeadroom, window × percent/100)
 	// as the compaction target. Lower = faster prefill, better cache
 	// reuse, more aggressive elision; higher = more retained context,
 	// slower prefill. 50% is a balanced default for the 200K-window

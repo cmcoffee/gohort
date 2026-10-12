@@ -1865,6 +1865,10 @@ func (pr *planRun) prepareMessages() {
 			pr.mach.Name(), pr.mach.phase.Tools, phaseUnmatched))
 	}
 	pr.allTools = narrowed
+	// Last change to the catalog: a model too small for all of it gets the
+	// largest schemas behind load_tool. Before the mounted note and the
+	// roster, so neither names a tool that was not sent.
+	pr.fitCatalogToWindow()
 	t.noteMountedTools(pr.allTools)
 	// The catalog the model ACTUALLY receives. The full-surface line above
 	// runs before this narrowing, so on a machine turn it reports the wider

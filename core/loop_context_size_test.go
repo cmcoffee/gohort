@@ -82,7 +82,7 @@ func TestCompactionIsOnByDefaultAndOptOutIsExplicit(t *testing.T) {
 		{Role: "assistant", ToolResults: []ToolResult{{ID: "2", Content: huge}}},
 	}
 	before := len(msgs[1].ToolResults[0].Content)
-	compactHistory(msgs, "system", -1, false)
+	compactHistory(msgs, "system", 0, -1, false)
 	if len(msgs[1].ToolResults[0].Content) != before {
 		t.Error("a negative context size must disable compaction — it is the explicit opt-out")
 	}

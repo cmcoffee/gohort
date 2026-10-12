@@ -35,13 +35,13 @@ func TestRecoveryWindowLandsBelowTheRefusedPrompt(t *testing.T) {
 	// The behavioural consequence, which is the thing that actually matters:
 	// a history that size must now read as too big, so summarize and elide run.
 	history := historyOfAboutTokens(refused)
-	if !stillTooBig(history, "", window) {
+	if !stillTooBig(history, "", 0, window) {
 		t.Error("history that was just refused does not read as too big in the recovery window")
 	}
 	// And the other half of the regression, pinned so it can't come back: the
 	// SAME history reads as fitting against the configured window. That is
 	// precisely why recovering into cfg.ContextSize did nothing at all.
-	if stillTooBig(history, "", configured) {
+	if stillTooBig(history, "", 0, configured) {
 		t.Error("test no longer reproduces the bug: the refused history reads as too big even against the configured window")
 	}
 }
@@ -151,7 +151,7 @@ func TestAnOversizedResultDoesNotBrickTheSession(t *testing.T) {
 		{Role: "assistant", ToolResults: []ToolResult{{Content: huge}}},
 	}
 
-	compactHistory(msgs, "system", window, true)
+	compactHistory(msgs, "system", 0, window, true)
 
 	got := msgs[1].ToolResults[0].Content
 	if len(got) >= len(huge) {
@@ -175,7 +175,7 @@ func TestSingleOversizedResultIsStillCut(t *testing.T) {
 	msgs := []Message{
 		{Role: "assistant", ToolResults: []ToolResult{{Content: strings.Repeat("y", 4<<20)}}},
 	}
-	compactHistory(msgs, "system", window, true)
+	compactHistory(msgs, "system", 0, window, true)
 	if len(msgs[0].ToolResults[0].Content) >= 4<<20 {
 		t.Fatal("a lone oversized result was left untouched, so the session cannot recover")
 	}
@@ -186,7 +186,7 @@ func TestSingleOversizedResultIsStillCut(t *testing.T) {
 func TestTruncationKeepsTheEndWhereTheErrorIs(t *testing.T) {
 	body := strings.Repeat("noise\n", 200000) + "FATAL: the actual error\n"
 	msgs := []Message{{Role: "assistant", ToolResults: []ToolResult{{Content: body}}}}
-	compactHistory(msgs, "system", 262144, true)
+	compactHistory(msgs, "system", 0, 262144, true)
 	if !strings.Contains(msgs[0].ToolResults[0].Content, "FATAL: the actual error") {
 		t.Fatal("truncation discarded the end of the output, which is where the error lives")
 	}
@@ -197,7 +197,7 @@ func TestTruncationKeepsTheEndWhereTheErrorIs(t *testing.T) {
 func TestOrdinaryResultsAreUntouched(t *testing.T) {
 	body := strings.Repeat("z", 64<<10) // 64 KiB — big, but usable
 	msgs := []Message{{Role: "assistant", ToolResults: []ToolResult{{Content: body}}}}
-	compactHistory(msgs, "system", 262144, true)
+	compactHistory(msgs, "system", 0, 262144, true)
 	if msgs[0].ToolResults[0].Content != body {
 		t.Fatalf("an ordinary %d-byte result was altered", len(body))
 	}
@@ -419,7 +419,7 @@ func TestUnknownWindowStillRecovers(t *testing.T) {
 	// stillTooBig must report TRUE for a large history against the fallback,
 	// or the ladder is skipped anyway.
 	msgs := []Message{{Role: "user", Content: strings.Repeat("x", 4<<20)}}
-	if !stillTooBig(msgs, "", fallbackRecoveryWindow) {
+	if !stillTooBig(msgs, "", 0, fallbackRecoveryWindow) {
 		t.Fatal("a 4 MiB history is not considered too big for the fallback window")
 	}
 }

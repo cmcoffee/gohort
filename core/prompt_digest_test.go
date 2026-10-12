@@ -79,14 +79,14 @@ func TestPromptDigestMakesNoHeadroomClaimWithoutAWindow(t *testing.T) {
 // described as 4,635 tokens and 151,251 tokens by two layers of itself.
 func TestCompactHistoryReportsTheBudgetItUsed(t *testing.T) {
 	msgs := []Message{{Role: "user", Content: "hi"}}
-	budget := compactHistory(msgs, "system", 100000, false)
+	budget := compactHistory(msgs, "system", 0, 100000, false)
 	if budget <= 0 {
 		t.Fatalf("expected a positive budget, got %d", budget)
 	}
 	if budget >= 100000 {
 		t.Errorf("budget should be under the window, got %d", budget)
 	}
-	if off := compactHistory(msgs, "system", 0, false); off != 0 {
+	if off := compactHistory(msgs, "system", 0, 0, false); off != 0 {
 		t.Errorf("no window and no force means compaction is off, got budget %d", off)
 	}
 }
@@ -301,5 +301,23 @@ func TestAWakeThatRunsNoTurnRecordsNoDigest(t *testing.T) {
 	}
 	if runs[0].Prompt.Window != 0 || runs[0].Prompt.Estimated != 0 {
 		t.Errorf("no turn ran, so there is nothing to report: %+v", runs[0].Prompt)
+	}
+}
+
+// The reserve is the tool schemas as measured, not a constant sized on a light
+// catalog: Builder's ~55k tokens of schemas left a 128k model a history budget
+// that overflowed the round.
+func TestTheHistoryBudgetLeavesRoomForTheMeasuredSchemas(t *testing.T) {
+	msgs := []Message{{Role: "user", Content: "hi"}}
+	light := compactHistory(msgs, "system", 7500, 128000, false)
+	heavy := compactHistory(msgs, "system", 55000, 128000, false)
+	if heavy >= light {
+		t.Fatalf("a heavy catalog should shrink the history budget: light=%d heavy=%d", light, heavy)
+	}
+	if fixed := 55000 + genHeadroom + EstimateTokens("system"); heavy+fixed > 128000 && heavy != 128000/4 {
+		t.Errorf("history %d + schemas and headroom %d overflow the window", heavy, fixed)
+	}
+	if got := ToolSchemaTokens([]Tool{{Name: "x", Description: strings.Repeat("d", 4000)}}); got < 1000 || got > 1100 {
+		t.Errorf("ToolSchemaTokens = %d, want ~1000 for a 4k-byte schema", got)
 	}
 }

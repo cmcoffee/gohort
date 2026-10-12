@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -139,17 +140,12 @@ func estimateMessageTokens(m Message) int {
 // recomputing the formula beside it. Two copies of one quantity is how a
 // standing thread came to be reported at 4,635 tokens and 151,251 tokens by
 // two layers of the same turn. 0 means compaction was off for this call.
-func compactHistory(msgs []Message, systemPrompt string, contextSize int, force bool) int {
+func compactHistory(msgs []Message, systemPrompt string, toolTokens, contextSize int, force bool) int {
 	if contextSize <= 0 && !force {
 		return 0
 	}
-	const (
-		// Headroom (tokens) reserved for tool schemas + a near-max thinking
-		// budget + the response — what the round needs ON TOP of history.
-		genReserve = 34000
-		// Don't bother eliding small bodies.
-		elideMinBytes = 400
-	)
+	// Don't bother eliding small bodies.
+	const elideMinBytes = 400
 	// Steady-state cap on history relative to the window. Pulled from
 	// operator tuning per compaction call so a live admin change tunes
 	// without restart. Default 50% — a 200K context targets ~100K of
@@ -167,7 +163,7 @@ func compactHistory(msgs []Message, systemPrompt string, contextSize int, force 
 		keepRecentToolMsgs = 1
 		budget = 0 // elide every elidable old body
 	} else {
-		budget = contextSize - EstimateTokens(systemPrompt) - genReserve
+		budget = contextSize - EstimateTokens(systemPrompt) - roundReserve(toolTokens)
 		// Steady-state cap layered ON TOP of the window-minus-sysprompt
 		// budget — whichever is tighter. Long sessions with a small
 		// sysprompt would otherwise let history fill 75-85% of the
@@ -544,11 +540,35 @@ const contextRecoveryKeepWhole = 6
 // stillTooBig estimates whether a round would still overflow. Deliberately an
 // estimate: the exact figure belongs to the provider's tokenizer, and the only
 // decision resting on this is whether to try one more salvage step.
-func stillTooBig(msgs []Message, systemPrompt string, contextSize int) bool {
+func stillTooBig(msgs []Message, systemPrompt string, toolTokens, contextSize int) bool {
 	if contextSize <= 0 {
 		return false
 	}
-	return estimatePromptTokens(msgs, systemPrompt) > contextSize-34000
+	return estimatePromptTokens(msgs, systemPrompt) > contextSize-roundReserve(toolTokens)
+}
+
+// genHeadroom is what a round needs beyond its prompt: the thinking and the
+// reply. The reserve was one constant, 34k, "for tool schemas + thinking +
+// reply", sized on a turn carrying ~7.5k tokens of schemas. Builder carries
+// ~55k, so its history budget was ~47k tokens too generous, and on a 128k
+// model the round overflowed. The schemas are measured now; this is the rest
+// of the old constant, so a turn with a typical catalog budgets as before.
+const genHeadroom = 26000
+
+// roundReserve is what a round holds back from history on top of the system
+// prompt: this turn's tool schemas, as measured, plus genHeadroom.
+func roundReserve(toolTokens int) int { return genHeadroom + toolTokens }
+
+// ToolSchemaTokens estimates what a catalog's schemas cost in every call: each
+// tool as serialized, at the ~4 bytes a token EstimateTokens uses.
+func ToolSchemaTokens(tools []Tool) int {
+	n := 0
+	for _, t := range tools {
+		if b, err := json.Marshal(t); err == nil {
+			n += len(b)
+		}
+	}
+	return n / 4
 }
 
 // estimatePromptTokens is what the next call will cost: the system prompt plus

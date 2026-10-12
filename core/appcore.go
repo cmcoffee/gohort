@@ -306,6 +306,11 @@ func (T *AppCore) LeadContextSize() int {
 //
 // Zero when no tier reports a window (a model that isn't a ContextSizer), which
 // leaves compaction off exactly as before — no invented number.
+// LoopContextWindow is the window an agent loop on this app plans against:
+// the smaller tier's configured size, lowered to what the provider actually
+// granted if it recently refused a prompt. 0 when no provider reports one.
+func (T *AppCore) LoopContextWindow() int { return effectiveContextSize(T.loopContextSize()) }
+
 func (T *AppCore) loopContextSize() int {
 	worker, lead := T.WorkerContextSize(), T.LeadContextSize()
 	switch {
