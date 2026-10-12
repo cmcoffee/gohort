@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -233,7 +234,11 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// one). Keyed by the app's owner, so a shared app the owner still watches
 		// keeps its owner-side tracker running.
 		T.touchAppView(spec)
-		_ = ui.RenderPageJSON(w, isolateAppHTML(spec.Page, T.WebPath()+"/"+slug+"/"), "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
+		page := isolateAppHTML(spec.Page, T.WebPath()+"/"+slug+"/")
+		if user == ownerUser {
+			page = withBuilderLink(page, slug)
+		}
+		_ = ui.RenderPageJSON(w, page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case rest == "_settings":
 		// The app's Settings page — a form over the tunables it declares.
 		T.handleSettingsPage(w, r, spec, user == ownerUser)
@@ -477,7 +482,40 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, udb Data
 
 // --- index (a normal Go-built page) ------------------------------------------
 
+// builderChangeURL opens a fresh Builder session with its starting form
+// pointed at one of the person's apps (kind App, that app picked), leaving
+// what to do to them; slug "{slug}" leaves the placeholder for a row action
+// to fill. "" when no Builder is running here.
+func builderChangeURL(slug string) string {
+	orch := findOrchestrate()
+	if orch == nil {
+		return ""
+	}
+	return orch.WebPath() + "/?agent=seed-builder&intake.kind=App&intake.target=" + slug
+}
+
+// withBuilderLink adds a "Change with Builder" link to an app page's header
+// nav, for the app's owner: changing an app meant finding Builder first.
+func withBuilderLink(page json.RawMessage, slug string) json.RawMessage {
+	link := builderChangeURL(url.QueryEscape(slug))
+	if link == "" {
+		return page
+	}
+	var m map[string]any
+	if json.Unmarshal(page, &m) != nil || m == nil {
+		return page
+	}
+	nav, _ := m["nav"].([]any)
+	m["nav"] = append(nav, map[string]any{"label": "Change with Builder", "url": link})
+	out, err := json.Marshal(m)
+	if err != nil {
+		return page
+	}
+	return out
+}
+
 func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
+	changeURL := builderChangeURL("{slug}")
 	ui.Page{
 		Title:     "My Apps",
 		ShowTitle: true,
@@ -531,6 +569,9 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					// Only an app that declares tunables gets the button; for a
 					// shared app, only when some of them are the reader's own.
 					{Type: "button", Label: "Settings", Method: "GET", PostTo: "{slug}/_settings", OnlyIf: "has_settings", HideIf: "disabled"},
+					// Builder, pointed at this app. Yours only: Builder changes
+					// what you own.
+					{Type: "button", Label: "Change", Method: "GET", PostTo: changeURL, OnlyIf: "mine", HideIf: "disabled"},
 					{Type: "button", Label: "Enable", Method: "POST", PostTo: "_app/enable?slug={slug}", OnlyIf: "disabled",
 						Confirm: "Enable this imported app? Review its data-source and action scripts first: they run in your sandbox once the app is live."},
 					// One Share button opens the sharing modal (customapps_share).

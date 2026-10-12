@@ -466,6 +466,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// Source stays alongside it for the badge, which counts
 						// pending requests and has to be a number this menu can
 						// read without rendering the page.
+						// Build: Builder one press from any agent, its starting
+						// form already pointed at the agent it was pressed on.
+						// Building is central and Builder is hidden from the
+						// rail, so it was a thing you had to go looking for.
+						{Label: "Build", Icon: "🛠", Topbar: true, AllAgents: true,
+							ActionMethod: "client", ActionURL: "orchestrate_build"},
 						{Label: "Security", Icon: "🔑", PageSource: "agent/{agent}/access?format=json",
 							Source: "api/console/permissions", Topbar: true, AllAgents: true, BadgeField: "_pending", Layout: "cards",
 							// Tabs along the top, because four different

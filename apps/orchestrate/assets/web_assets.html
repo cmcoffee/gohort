@@ -2647,6 +2647,26 @@ select.ui-orch-intake-input {
       // improve it. Stages the brief server-side (transcript is too big
       // for a URL), then deep-links into a fresh Builder session that
       // auto-sends the brief (see consumeBuilderBrief above).
+      // Build: a fresh Builder session, its starting form already pointed at
+      // the agent this was pressed on (kind Agent, that agent picked), with
+      // what to do (create, change, fix) left to the person. From Builder
+      // itself it is simply a new build.
+      window.uiRegisterClientAction('orchestrate_build', function() {
+        var agentID = getAgentID();
+        var u = new URL(window.location.href);
+        Array.from(u.searchParams.keys()).forEach(function(k) {
+          if (k.indexOf('intake.') === 0) u.searchParams.delete(k);
+        });
+        u.searchParams.set('agent', 'seed-builder');
+        u.searchParams.delete('session');
+        u.searchParams.delete('builder_brief');
+        if (agentID && agentID !== 'seed-builder') {
+          u.searchParams.set('intake.kind', 'Agent');
+          u.searchParams.set('intake.target', agentID);
+        }
+        window.location.href = u.toString();
+      });
+
       window.uiRegisterClientAction('orchestrate_send_to_builder', function(ctx) {
         var agentID = getAgentID();
         if (!agentID) { window.uiAlert('Pick an agent first.'); return; }
@@ -8117,6 +8137,32 @@ select.ui-orch-intake-input {
       // sendMessage path, after which the regular text input takes
       // over for the rest of the session.
       var intakeWrap = null;
+      // Answers handed in by the page address (?intake.<field>=value), so a
+      // button elsewhere can open an agent's starting form already pointed at
+      // something: Build from an agent's page lands on Builder with that agent
+      // picked. Read once and taken off the address, so a reload does not
+      // answer the form again. Held for the agent the address named, and
+      // dropped once a form is sent.
+      var intakePrefill = (function() {
+        var u, vals = {}, any = false;
+        try { u = new URL(window.location.href); } catch (_) { return null; }
+        var drop = [];
+        u.searchParams.forEach(function(v, k) {
+          if (k.indexOf('intake.') !== 0) return;
+          drop.push(k);
+          var name = k.slice(7);
+          if (name) { vals[name] = v; any = true; }
+        });
+        if (!drop.length) return null;
+        drop.forEach(function(k) { u.searchParams.delete(k); });
+        try { history.replaceState(history.state, '', u.toString()); } catch (_) {}
+        return any ? {agent: u.searchParams.get('agent') || '', values: vals} : null;
+      })();
+      function intakePrefillFor(agent) {
+        if (!intakePrefill || !agent) return {};
+        if (intakePrefill.agent && intakePrefill.agent !== agent.id) return {};
+        return intakePrefill.values;
+      }
       function activeIntakeForm() {
         var a = currentAgentForIntake;
         if (!a || !Array.isArray(a.intake_form) || a.intake_form.length === 0) return null;
@@ -8460,7 +8506,9 @@ select.ui-orch-intake-input {
                 var opt = document.createElement('option');
                 opt.value = optionValue(o);
                 opt.textContent = optionLabel(o);
-                if (opt.value === keep) opt.selected = true;
+                // A value handed in may be an id where the option reads
+                // "Name (id: <id>)", which is how agents are listed.
+                if (keep && (opt.value === keep || opt.value.slice(-(keep.length + 6)) === '(id: ' + keep + ')')) opt.selected = true;
                 sel.appendChild(opt);
               });
             }).catch(function() {
@@ -8618,7 +8666,7 @@ select.ui-orch-intake-input {
         if (!fields || !conversationIsEmpty()) return;
         var log = document.querySelector('.ui-agent-convo-log');
         if (!log) return;
-        var built = buildIntakeFormDOM(fields, {}, false);
+        var built = buildIntakeFormDOM(fields, intakePrefillFor(currentAgentForIntake), false);
         intakeWrap = built.root;
         var buttonOnly = fields.every(function(f){ return (f.type||'text') === 'button'; });
         if (buttonOnly) intakeWrap.classList.add('ui-orch-intake-button-only');
@@ -8640,6 +8688,7 @@ select.ui-orch-intake-input {
           if (!entries) return;
           if (entries.length === 0) { window.uiAlert('Fill in at least one field.'); return; }
           var values = valuesByNameFromEntries(entries);
+          intakePrefill = null;
           submitBtn.disabled = true;
           stageIntakeFiles(entries).then(function() {
             clearIntakeForm();
