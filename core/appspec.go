@@ -141,6 +141,11 @@ type AppSpec struct {
 	// app is opened. Per-user copies, like Shared. Deployment-local, cleared on
 	// export.
 	SharedGroups []string `json:"shared_groups,omitempty"`
+	// DataOwner is whose name a PrivateDB app's database file was made under,
+	// set when the app moves to someone else, so its data stays where it is
+	// rather than the new owner's name pointing at an empty file. Read through
+	// PrivateDBOwner. Deployment-local, cleared on export.
+	DataOwner string `json:"data_owner,omitempty"`
 	// PublicToken, when non-empty, publishes the app at /apps/pub/<token>/ as a
 	// STATELESS, read/compute-only CAPABILITY URL: anyone with the (unguessable)
 	// link loads the page and runs its data sources — in the OWNER's sandbox,
@@ -403,6 +408,15 @@ func (s *AppSchedule) Scheduled() bool {
 // owner so two owners' same-slug apps never share a file. Returns nil when the
 // private-DB opener isn't wired (non-serve context) — callers fall back to the
 // shared customapps store.
+// PrivateDBOwner is the owner a PrivateDB app's database file is named for:
+// the one it was made under, which a move to a new owner does not change.
+func (s AppSpec) PrivateDBOwner() string {
+	if s.DataOwner != "" {
+		return s.DataOwner
+	}
+	return s.Owner
+}
+
 func OpenCustomAppDB(owner, slug string) Database {
 	return OpenAppDB(customAppDBName(owner, slug))
 }

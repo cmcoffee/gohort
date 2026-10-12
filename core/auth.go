@@ -1095,6 +1095,19 @@ func AuthDeleteUser(db Database, username string) {
 	if revoked := FormatRevocation(RevokeUserCredentials(db, username)); revoked != "" {
 		Log("[auth] deleting %q: revoked %s", username, revoked)
 	}
+	// Each app clears what it holds for them. After an administrator moved
+	// things elsewhere this finds what was left (stopped schedules, their own
+	// data); from the command line, which asks nothing, it is everything.
+	for _, h := range RegisteredUserDataHandlers() {
+		if err := h.Purge(username); err != nil && err != ErrUserDataActionNotSupported {
+			Log("[auth] deleting %q: %s could not clear everything: %v", username, h.AppName(), err)
+		}
+	}
+	// What is still filed under the name goes too, or a new account created
+	// later with the same name inherits it (dropUserScopes).
+	if n := dropUserScopes(username); n > 0 {
+		Log("[auth] deleting %q: cleared their data from %d store(s)", username, n)
+	}
 	db.Unset(AuthTable, "user:"+username)
 }
 

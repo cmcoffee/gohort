@@ -147,3 +147,24 @@ func List(db Store, indexTable, recipient string) []Ref {
 func DropAll(db Store, indexTable, owner, id string) {
 	SetRecipients(db, indexTable, owner, id, nil)
 }
+
+// MoveOwner gives a record's entries to a new owner: every recipient keeps
+// their access, now under to. An ownership change, not a withdrawal, so no
+// OnDropped notice goes out; a recipient who IS the new owner simply loses an
+// entry that would be a share with themselves.
+func MoveOwner(db Store, indexTable, from, to, id string) {
+	if db == nil || from == "" || to == "" || id == "" || from == to {
+		return
+	}
+	suffix := "\x00" + from + "\x00" + id
+	for _, k := range db.Keys(indexTable) {
+		if !strings.HasSuffix(k, suffix) {
+			continue
+		}
+		recipient := strings.TrimSuffix(k, suffix)
+		db.Unset(indexTable, k)
+		if recipient != to {
+			db.Set(indexTable, key(recipient, to, id), true)
+		}
+	}
+}

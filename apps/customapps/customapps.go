@@ -38,6 +38,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/ui"
 
@@ -100,6 +101,9 @@ func (T *CustomApps) Routes() {
 	// Wire self-updating apps: register the scheduled-action trigger dispatcher and
 	// the spec-lifecycle hooks that keep each app's standing triggers in sync.
 	T.registerScheduling()
+	// An account's apps when the account is deleted: moved or deleted, never
+	// left behind (userdata.go).
+	RegisterUserDataHandler(&appsUserData{app: T})
 	// This app used to live at /custom. Bookmarks, pasted links and every
 	// published capability URL still say so, and a grant stored against the
 	// old path is rewritten once at startup (MigrateAppPathGrants) rather than
@@ -735,19 +739,28 @@ func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, use
 		http.Error(w, "slug required", http.StatusBadRequest)
 		return
 	}
+	T.deleteApp(user, slug)
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// deleteApp removes one of owner's apps and what it leaves behind: its spec,
+// the owner's records, its sharing, its operator settings and its asset files.
+// The delete button and an account's purge both come here.
+func (T *CustomApps) deleteApp(owner, slug string) {
 	// Drop the app's data from wherever it actually lives — the per-app private
 	// file for a private app, else the shared store — before removing the spec.
 	// Loaded before deletion so PrivateDB is still known.
-	spec, _ := loadSpec(user, slug)
-	appdb := T.recordBase(spec, user)
+	spec, _ := loadSpec(owner, slug)
+	appdb := T.recordBase(spec, owner)
 	// Clear any sharing this app carried so a deleted app leaves no dangling
 	// index entry. Only this owner's entry: slugs are per-owner, so another
 	// user's same-named shared app must stay shared.
-	T.unshareOwned(user, slug)
-	DeleteAppSpec(user, slug)      // shared per-owner spec store
+	T.unshareOwned(owner, slug)
+	DeleteAppSpec(owner, slug)     // shared per-owner spec store (and its triggers)
 	appdb.Drop(recTable(slug))     // this app's records
 	appdb.Unset(activeTable, slug) // workbench open-document marker
-	writeJSON(w, map[string]bool{"ok": true})
+	appadmin.Drop(RootDB, owner, slug)
+	DeleteAppAssets(owner, slug) // files on disk, which no store sweep reaches
 }
 
 // recordBase returns the per-user record store for one app: a dedicated private
@@ -758,7 +771,7 @@ func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, use
 // to the shared store so nothing breaks outside a serve context.
 func (T *CustomApps) recordBase(spec AppSpec, uid string) Database {
 	if spec.PrivateDB {
-		if db := OpenCustomAppDB(spec.Owner, spec.Slug); db != nil {
+		if db := OpenCustomAppDB(spec.PrivateDBOwner(), spec.Slug); db != nil {
 			return UserDB(db, uid)
 		}
 	}

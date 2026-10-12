@@ -1160,3 +1160,70 @@ func contributorsStillShared(c Collection) []string {
 	}
 	return out
 }
+
+// moveCollectionsTo gives to every collection from owns, documents included:
+// the documents are filed by the collection, not its owner, so they stay put.
+// The people it is shared with keep it, now under to; a deployment-wide one
+// just changes owner. Returns how many moved.
+func moveCollectionsTo(from, to string) int {
+	if from == "" || to == "" || from == to {
+		return 0
+	}
+	src, dst := UserDB(CollectionsDB(), from), UserDB(CollectionsDB(), to)
+	n := 0
+	if src != nil && dst != nil {
+		for _, k := range src.Keys(CollectionsTable) {
+			var c Collection
+			if !src.Get(CollectionsTable, k, &c) || c.Owner != from {
+				continue
+			}
+			c.Owner = to
+			dst.Set(CollectionsTable, c.ID, c)
+			src.Unset(CollectionsTable, k)
+			if RootDB != nil {
+				peershare.MoveOwner(RootDB, sharedCollectionsTable, from, to, c.ID)
+			}
+			n++
+		}
+	}
+	if RootDB != nil {
+		for _, k := range RootDB.Keys(GlobalCollectionsTable) {
+			var c Collection
+			if RootDB.Get(GlobalCollectionsTable, k, &c) && c.Owner == from {
+				c.Owner = to
+				RootDB.Set(GlobalCollectionsTable, k, c)
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// purgeCollections deletes every collection owner has, deployment-wide ones
+// included, with their documents, telling the people they were shared with.
+func purgeCollections(owner string) int {
+	if owner == "" {
+		return 0
+	}
+	udb := UserDB(CollectionsDB(), owner)
+	n := 0
+	if udb != nil {
+		for _, k := range udb.Keys(CollectionsTable) {
+			var c Collection
+			if udb.Get(CollectionsTable, k, &c) && c.Owner == owner {
+				DeleteCollection(udb, VectorDB, owner, c.ID)
+				n++
+			}
+		}
+	}
+	if RootDB != nil {
+		for _, k := range RootDB.Keys(GlobalCollectionsTable) {
+			var c Collection
+			if RootDB.Get(GlobalCollectionsTable, k, &c) && c.Owner == owner {
+				DeleteCollection(udb, VectorDB, owner, c.ID)
+				n++
+			}
+		}
+	}
+	return n
+}

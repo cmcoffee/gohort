@@ -2711,3 +2711,116 @@ func sameStringSet(a, b []string) bool {
 	}
 	return true
 }
+
+// moveToolsTo gives to every tool from owns. Tools are found by name, so a
+// name to already uses refuses the whole move, before anything changes,
+// rather than leaving two owners' tools answering to one name. What points at
+// a tool by its owner follows it: the people it is shared with, its approved
+// release, and everyone who adopted it. Its state folder goes too.
+func moveToolsTo(from, to string) error {
+	store := tempToolStore(nil)
+	if store == nil || from == "" || to == "" || from == to {
+		return nil
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	mine := LoadPersistentTempTools(store, from)
+	if len(mine) == 0 {
+		return nil
+	}
+	theirs := LoadPersistentTempTools(store, to)
+	taken := map[string]bool{}
+	for _, t := range theirs {
+		taken[t.Tool.Name] = true
+	}
+	var clash, names []string
+	moving := map[string]bool{}
+	for _, t := range mine {
+		if taken[t.Tool.Name] {
+			clash = append(clash, t.Tool.Name)
+		}
+		names = append(names, t.Tool.Name)
+		moving[t.Tool.Name] = true
+	}
+	if len(clash) > 0 {
+		sort.Strings(clash)
+		return errString(to + " already has a tool named " + strings.Join(clash, ", ") + ": tools are found by name, so rename one first, or move to someone else")
+	}
+	store.Set(persistentTempToolsTable, to, append(theirs, mine...))
+	store.Unset(persistentTempToolsTable, from)
+	for _, name := range names {
+		peershare.MoveOwner(store, sharedToolsTable, from, to, name)
+		var rel ToolRelease
+		if store.Get(toolReleasesTable, name, &rel) && rel.Owner == from {
+			rel.Owner = to
+			for i := range rel.History {
+				if rel.History[i].Owner == from {
+					rel.History[i].Owner = to
+				}
+			}
+			store.Set(toolReleasesTable, name, rel)
+		}
+	}
+	// Adopters name the owner of what they adopted.
+	for _, user := range store.Keys(adoptedGlobalToolsTable) {
+		var entries []string
+		if !store.Get(adoptedGlobalToolsTable, user, &entries) {
+			continue
+		}
+		changed := false
+		for i, e := range entries {
+			if name, owner := splitAdoption(e); owner == from && moving[name] {
+				entries[i] = name + adoptionOwnerSep + to
+				changed = true
+			}
+		}
+		if changed {
+			store.Set(adoptedGlobalToolsTable, user, entries)
+		}
+	}
+	for _, user := range store.Keys(toolAdoptionsTable) {
+		var recs []toolAdoption
+		if !store.Get(toolAdoptionsTable, user, &recs) {
+			continue
+		}
+		changed := false
+		for i := range recs {
+			if recs[i].Owner == from && moving[recs[i].Name] {
+				recs[i].Owner = to
+				changed = true
+			}
+		}
+		if changed {
+			store.Set(toolAdoptionsTable, user, recs)
+		}
+	}
+	moveToolStates(from, to, names)
+	return nil
+}
+
+// purgeTools deletes every tool owner has, the way the delete button does
+// (its release withdrawn, the people it was shared with told), and the rest of
+// what is filed under them: pending and orphaned tools, their adoptions, their
+// ask-in-chat choices, their state folders. Returns how many tools went.
+func purgeTools(owner string) int {
+	store := tempToolStore(nil)
+	if store == nil || owner == "" {
+		return 0
+	}
+	n := 0
+	for _, t := range LoadPersistentTempTools(store, owner) {
+		if DeletePersistentTempTool(store, owner, t.Tool.Name) == nil {
+			n++
+		}
+	}
+	for _, table := range []string{persistentTempToolsTable, pendingTempToolsTable, orphanedTempToolsTable, adoptedGlobalToolsTable, toolAdoptionsTable} {
+		store.Unset(table, owner)
+	}
+	for _, k := range store.Keys(askInChatToolsTable) {
+		if strings.HasPrefix(k, owner+":") {
+			store.Unset(askInChatToolsTable, k)
+		}
+	}
+	purgeToolStates(owner)
+	return n
+}

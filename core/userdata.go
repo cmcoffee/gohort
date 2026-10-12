@@ -131,3 +131,126 @@ func ListForeignUsers() []string {
 	}
 	return out
 }
+
+// dropUserScopes removes everything filed under uid: the "user:<uid>" scope
+// in the root store and in every registered app's store. Per-user data is
+// keyed by the username and nothing else, so an account deleted without this
+// left its agents, apps, memory and records in place for whoever was next
+// created with the same name. Dropping the scope root takes every table under
+// it in one call and cannot reach a longer name ("user:bob2"). Returns how
+// many stores it cleared.
+//
+// Runs after each app's own handler (UserDataHandler) has moved or purged
+// what it owns, so what is left is only the person's own: their sessions,
+// memory, records. An app with a private database file of its own clears it
+// in its handler; this reaches the stores the framework handed out.
+func dropUserScopes(uid string) int {
+	if uid == "" {
+		return 0
+	}
+	var done []Database
+	n := 0
+	drop := func(db Database) {
+		if db == nil {
+			return
+		}
+		for _, d := range done {
+			if sameStore(d, db) {
+				return
+			}
+		}
+		done = append(done, db)
+		db.Drop("user:" + uid)
+		n++
+	}
+	drop(RootDB)
+	for _, a := range append(append([]Agent(nil), RegisteredAgents()...), RegisteredApps()...) {
+		if c := a.Get(); c != nil {
+			drop(c.DB)
+		}
+	}
+	return n
+}
+
+// sameStore reports two handles on one store. A handle of a type that cannot
+// be compared is treated as distinct: dropping a scope twice is harmless.
+func sameStore(a, b Database) (same bool) {
+	defer func() {
+		if recover() != nil {
+			same = false
+		}
+	}()
+	return a == b
+}
+
+// The core-held things a person builds: tools, skills and collections. Their
+// handler is registered here because their storage is core's own.
+type coreUserData struct{}
+
+func init() { RegisterUserDataHandler(coreUserData{}) }
+
+func (coreUserData) AppName() string { return "tools, skills and collections" }
+
+func (coreUserData) Describe(uid string) UserDataSummary {
+	sum := UserDataSummary{AppName: "tools, skills and collections", Counts: map[string]int{}, Actions: []string{"reassign", "purge"}}
+	if uid == "" {
+		return sum
+	}
+	for _, t := range LoadPersistentTempTools(nil, uid) {
+		sum.Counts["tools"]++
+		if t.Shared || len(t.SharedWith) > 0 {
+			sum.Counts["shared"]++
+		}
+	}
+	for _, sk := range LoadSkills(nil, uid) {
+		sum.Counts["skills"]++
+		if len(sk.AllowedUsers) > 0 {
+			sum.Counts["shared"]++
+		}
+	}
+	if pub := PublishedSkillsBy(nil, uid); len(pub) > 0 {
+		sum.Counts["skills"] += len(pub)
+		sum.Counts["shared"] += len(pub)
+	}
+	if udb := UserDB(CollectionsDB(), uid); udb != nil {
+		for _, k := range udb.Keys(CollectionsTable) {
+			var c Collection
+			if udb.Get(CollectionsTable, k, &c) && c.Owner == uid {
+				sum.Counts["collections"]++
+				if len(c.AllowedUsers) > 0 {
+					sum.Counts["shared"]++
+				}
+			}
+		}
+	}
+	if RootDB != nil {
+		for _, k := range RootDB.Keys(GlobalCollectionsTable) {
+			var c Collection
+			if RootDB.Get(GlobalCollectionsTable, k, &c) && c.Owner == uid {
+				sum.Counts["collections"]++
+				sum.Counts["shared"]++
+			}
+		}
+	}
+	return sum
+}
+
+// Reassign moves tools first: they are the one kind a name clash can refuse,
+// and refusing before anything else has moved leaves the account whole.
+func (coreUserData) Reassign(from, to string) error {
+	if err := moveToolsTo(from, to); err != nil {
+		return err
+	}
+	moveSkillsTo(from, to)
+	moveCollectionsTo(from, to)
+	return nil
+}
+
+func (coreUserData) Anonymize(string) error { return ErrUserDataActionNotSupported }
+
+func (coreUserData) Purge(uid string) error {
+	purgeTools(uid)
+	purgeSkills(uid)
+	purgeCollections(uid)
+	return nil
+}

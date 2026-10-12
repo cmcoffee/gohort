@@ -136,3 +136,23 @@ func TestDroppingRecipientsIsReported(t *testing.T) {
 		t.Errorf("a drop on another index reached this one's callback: %v", got)
 	}
 }
+
+// An ownership change keeps every recipient, under the new owner, and is not
+// a withdrawal: no notice goes out.
+func TestMovingOwnerKeepsTheRecipients(t *testing.T) {
+	db := newStore()
+	notified := false
+	OnDropped("idx_move", func(string, string, []string) { notified = true })
+	defer OnDropped("idx_move", nil)
+	SetRecipients(db, "idx_move", "bob", "a1", []string{"carol", "alice"})
+	MoveOwner(db, "idx_move", "bob", "alice", "a1")
+	if refs := List(db, "idx_move", "carol"); len(refs) != 1 || refs[0].Owner != "alice" {
+		t.Errorf("carol's share should now be alice's: %+v", refs)
+	}
+	if refs := List(db, "idx_move", "alice"); len(refs) != 0 {
+		t.Errorf("the new owner should not be shared her own record: %+v", refs)
+	}
+	if notified {
+		t.Error("a change of owner sent a withdrawal notice")
+	}
+}

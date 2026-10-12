@@ -256,3 +256,73 @@ func TestSessionTokensAreStoredHashed(t *testing.T) {
 		t.Error("the legacy record was not moved to its hash")
 	}
 }
+
+// Deleting an account clears what is filed under its name, so a new account
+// created later with the same name starts empty. A longer name is untouched.
+func TestDeletingAUserClearsWhatIsFiledUnderTheName(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	UserDB(RootDB, "bob").Set("agents", "a1", "mine")
+	UserDB(RootDB, "bob").Sub("app").Set("records", "r1", "nested")
+	UserDB(RootDB, "bob2").Set("agents", "a2", "not bob's")
+
+	if n := dropUserScopes("bob"); n == 0 {
+		t.Fatal("nothing was cleared")
+	}
+	var v string
+	if UserDB(RootDB, "bob").Get("agents", "a1", &v) || UserDB(RootDB, "bob").Sub("app").Get("records", "r1", &v) {
+		t.Error("bob's data outlived his account: a new bob would inherit it")
+	}
+	if !UserDB(RootDB, "bob2").Get("agents", "a2", &v) {
+		t.Error("clearing bob took bob2's data with it")
+	}
+}
+
+// Moving a deleted account's tools: a name the new owner already uses refuses
+// the whole move with nothing changed; otherwise the tool arrives, and its
+// release and the people who adopted it name the new owner.
+func TestADeletedAccountsToolsSkillsAndCollectionsMove(t *testing.T) {
+	saved, savedVec := RootDB, VectorDB
+	RootDB, VectorDB = &DBase{Store: kvlite.MemStore()}, &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB, VectorDB = saved, savedVec })
+	h := coreUserData{}
+
+	RootDB.Set(persistentTempToolsTable, "bob", []PersistentTempTool{{Tool: TempTool{Name: "weather"}}, {Tool: TempTool{Name: "jokes"}}})
+	RootDB.Set(persistentTempToolsTable, "alice", []PersistentTempTool{{Tool: TempTool{Name: "jokes"}}})
+	if err := h.Reassign("bob", "alice"); err == nil {
+		t.Fatal("a tool name the new owner already uses should refuse the move")
+	}
+	if len(LoadPersistentTempTools(nil, "bob")) != 2 {
+		t.Fatal("a refused move changed something")
+	}
+
+	RootDB.Set(persistentTempToolsTable, "bob", []PersistentTempTool{{Tool: TempTool{Name: "weather"}}})
+	RootDB.Set(toolReleasesTable, "weather", ToolRelease{Owner: "bob", Name: "weather"})
+	RootDB.Set(adoptedGlobalToolsTable, "carol", []string{"weather" + adoptionOwnerSep + "bob"})
+	RootDB.Set(skillsTable, "bob", []SkillRecord{{ID: "skill-1", Name: "Tone", Owner: "bob"}})
+	UserDB(CollectionsDB(), "bob").Set(CollectionsTable, "c1", Collection{ID: "c1", Name: "Docs", Owner: "bob"})
+	if s := h.Describe("bob"); s.Counts["tools"] != 1 || s.Counts["skills"] != 1 || s.Counts["collections"] != 1 {
+		t.Fatalf("describe: %+v", s.Counts)
+	}
+	if err := h.Reassign("bob", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if len(LoadPersistentTempTools(nil, "bob")) != 0 || len(LoadPersistentTempTools(nil, "alice")) != 2 {
+		t.Error("the tool did not move")
+	}
+	var rel ToolRelease
+	if RootDB.Get(toolReleasesTable, "weather", &rel); rel.Owner != "alice" {
+		t.Errorf("the release still names %q", rel.Owner)
+	}
+	if pins := loadAdoptionPins(RootDB, "carol"); pins["weather"] != "alice" {
+		t.Errorf("carol's adoption still points at %q", pins["weather"])
+	}
+	if sk := LoadSkills(nil, "alice"); len(sk) != 1 || sk[0].Owner != "alice" {
+		t.Errorf("the skill did not move: %+v", sk)
+	}
+	var c Collection
+	if !UserDB(CollectionsDB(), "alice").Get(CollectionsTable, "c1", &c) || c.Owner != "alice" {
+		t.Error("the collection did not move")
+	}
+}

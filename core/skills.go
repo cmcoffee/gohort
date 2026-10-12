@@ -1921,3 +1921,71 @@ func addRecipients(have, add []string) []string {
 	}
 	return out
 }
+
+// moveSkillsTo gives to every skill from owns: their own list and the ones
+// they published to the deployment. People shared with keep them, now under
+// to. Kept versions do not move (a move carries what was built, not its
+// history). Returns how many moved.
+func moveSkillsTo(from, to string) int {
+	store := skillStore(nil)
+	if store == nil || from == "" || to == "" || from == to {
+		return 0
+	}
+	n := 0
+	if mine := LoadSkills(store, from); len(mine) > 0 {
+		for i := range mine {
+			mine[i].Owner = to
+			peershare.MoveOwner(store, sharedSkillsTable, from, to, mine[i].ID)
+			revisions.Delete(store, revisions.KindSkill, skillRingKey(from, mine[i].ID))
+		}
+		store.Set(skillsTable, to, append(LoadSkills(store, to), mine...))
+		store.Unset(skillsTable, from)
+		n += len(mine)
+	}
+	pool := allDeploymentSkills(store)
+	moved := false
+	for i := range pool {
+		if pool[i].Owner == from {
+			pool[i].Owner = to
+			moved = true
+			n++
+		}
+	}
+	if moved {
+		store.Set(deploymentSkillsTable, "all", pool)
+	}
+	return n
+}
+
+// purgeSkills deletes every skill owner has, published ones included, telling
+// the people they were shared with. Returns how many went.
+func purgeSkills(owner string) int {
+	store := skillStore(nil)
+	if store == nil || owner == "" {
+		return 0
+	}
+	n := 0
+	for _, s := range LoadSkills(store, owner) {
+		if DeleteSkill(store, owner, s.ID) {
+			n++
+		}
+	}
+	pool := allDeploymentSkills(store)
+	kept := pool[:0:0]
+	for _, s := range pool {
+		if s.Owner == owner {
+			shareledger.WithdrawnFromEverybody("skill", owner, s.ID, s.Name)
+			if chunksDB := skillChunksDB(owner); chunksDB != nil {
+				WipeChunksBySourcePrefix(chunksDB, skillSource(s.ID))
+			}
+			n++
+			continue
+		}
+		kept = append(kept, s)
+	}
+	if len(kept) != len(pool) {
+		store.Set(deploymentSkillsTable, "all", kept)
+	}
+	store.Unset(skillsTable, owner)
+	return n
+}

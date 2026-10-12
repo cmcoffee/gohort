@@ -198,10 +198,9 @@ func (a *AdminApp) systemSections() []ui.Section {
 						PostTo:  "api/users/{username}/revoke-sessions",
 						Confirm: "Sign this user out of every browser? They keep their account and can log back in.",
 						Compact: true, HideIf: "pending"},
-					// Delete with confirm — danger variant.
-					{Type: "button", Label: "Delete", PostTo: "api/users/{username}",
-						Method:  "DELETE",
-						Confirm: "Delete this user permanently? Their sessions, access tokens, desktop and bridge keys, and connected accounts are all revoked with them.",
+					// Delete asks first what happens to what they own: moved to
+					// someone, or deleted (delete_user.go).
+					{Type: "button", Label: "Delete", Method: "client", PostTo: "admin_delete_user",
 						Variant: "danger"},
 				},
 				EmptyText: "No users yet.",

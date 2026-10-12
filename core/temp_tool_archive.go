@@ -290,3 +290,35 @@ func copyTree(src, dst string) error {
 		return closeErr
 	})
 }
+
+// toolStatePath is where a tool's state would live, without creating it.
+func toolStatePath(owner, name string) string {
+	if validateOwnerForFS(owner) != nil || validateToolNameForFS(name) != nil || WorkspacesDir() == "" {
+		return ""
+	}
+	return filepath.Join(WorkspacesDir(), toolStatesSubdir, owner, name)
+}
+
+// moveToolStates carries each named tool's state folder to its new owner.
+func moveToolStates(from, to string, names []string) {
+	for _, name := range names {
+		src, dst := toolStatePath(from, name), toolStatePath(to, name)
+		if src == "" || dst == "" {
+			continue
+		}
+		if _, err := os.Stat(src); err != nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0700); err == nil {
+			os.Rename(src, dst)
+		}
+	}
+}
+
+// purgeToolStates removes every tool state folder an owner had.
+func purgeToolStates(owner string) {
+	if validateOwnerForFS(owner) != nil || WorkspacesDir() == "" {
+		return
+	}
+	os.RemoveAll(filepath.Join(WorkspacesDir(), toolStatesSubdir, owner))
+}

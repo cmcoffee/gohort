@@ -716,16 +716,20 @@ func dropAgentSideData(db Database, owner, agentID string) {
 	}
 	db.Unset(knowledgeTopicsTable, key)
 
-	// Knowledge chunks live in AuthDB (the deployment-wide root)
-	// because the vector index is shared across apps. Scan its
-	// EmbeddedChunks table for any chunk whose Source belongs to
-	// this (user, agent) and remove them. Cheap at gohort scale
-	// (table walked once on delete, not on every read).
-	authDB := db
-	if AuthDB != nil {
-		authDB = AuthDB()
+	// Knowledge chunks are ingested into VectorDB (knowledge.go), and this
+	// used to clear AuthDB, where they lived before that move: a deleted
+	// agent's knowledge stayed in the vector store, searchable by source. Both
+	// are cleared, so chunks from before the move go too.
+	var stores []Database
+	if VectorDB != nil {
+		stores = append(stores, VectorDB)
 	}
-	if authDB == nil {
+	if AuthDB != nil {
+		if a := AuthDB(); a != nil {
+			stores = append(stores, a)
+		}
+	}
+	if len(stores) == 0 {
 		return
 	}
 	prefix := knowledgeSource(owner, agentID, "")
@@ -737,9 +741,12 @@ func dropAgentSideData(db Database, owner, agentID string) {
 	// topic-suffixed variant. Both forms share the prefix. Also
 	// wipe the admin-curated agent-shared bucket — when the agent
 	// itself is deleted, its shared KB has nowhere to live.
-	removed := DeleteChunksWhere(authDB, func(x EmbeddedChunk) bool {
-		return sourceInScope(x.Source, prefix) || x.Source == sharedPrefix
-	})
+	removed := 0
+	for _, store := range stores {
+		removed += DeleteChunksWhere(store, func(x EmbeddedChunk) bool {
+			return sourceInScope(x.Source, prefix) || x.Source == sharedPrefix
+		})
+	}
 	if removed > 0 {
 		Log("[orchestrate.agents] dropped %d knowledge chunk(s) for deleted agent %s/%s", removed, owner, agentID)
 	}

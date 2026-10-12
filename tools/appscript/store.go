@@ -24,7 +24,7 @@ const StoreName = "customapps"
 // the databases are not open.
 func RecordBase(spec AppSpec, uid string) Database {
 	if spec.PrivateDB {
-		if db := OpenCustomAppDB(spec.Owner, spec.Slug); db != nil {
+		if db := OpenCustomAppDB(spec.PrivateDBOwner(), spec.Slug); db != nil {
 			return UserDB(db, uid)
 		}
 	}

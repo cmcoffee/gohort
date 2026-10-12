@@ -469,6 +469,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 		page.Nav = append(page.Nav, ui.NavLink{Label: t.name, URL: t.url, Active: i == cur})
 	}
 	page.ExtraHeadHTML += adminTabRedirectScript(tabs, tabs[cur].slug)
+	page.ExtraHeadHTML += deleteUserScript // the user table's Delete (delete_user.go)
 	page.ServeHTTP(w, r)
 	// A slow page says where its time went, in the log an operator already
 	// reads: the admin's own sections, the sections other apps contribute
