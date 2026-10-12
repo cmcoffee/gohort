@@ -1237,14 +1237,18 @@
             // control sits in its own table cell, outside .ui-agent-actions,
             // so none of the layout's button rules reach it and it rendered
             // with no visible edge at rest.
+            // One minimum width for every tile: each sized to its own label,
+            // two of them side by side read as two different kinds of thing.
             style: 'display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:0.15rem;' +
-              'height:100%;padding:0.3rem 0.7rem;border:1px solid var(--border, rgba(127,127,127,0.35));' +
+              'height:100%;min-width:4.75rem;padding:0.3rem 0.7rem;border:1px solid var(--border, rgba(127,127,127,0.35));' +
               'border-radius:6px;background:transparent',
             onclick: function() { selectOrchNav(i); }}, [
               // Glyph and count share the top line so the count reads as the
               // queue's depth; the label sits under it like a toolbar tile.
               el('div', {style: 'display:flex;align-items:center;gap:0.3rem'}, [
-                el('span', {style: 'color:' + tAccent + ';font-size:var(--fs-lg, 1.05rem)'}, [item.icon || '•']),
+                // A fixed square for the glyph: emoji draw at different sizes
+                // per font, which moved the tile's height with its icon.
+                el('span', {style: 'color:' + tAccent + ';font-size:var(--fs-lg, 1.05rem);display:inline-flex;align-items:center;justify-content:center;width:1.3em;height:1.3em;line-height:1'}, [item.icon || '•']),
                 badge,
               ]),
               el('span', {style: 'font-size:var(--fs-2xs, 0.72rem);opacity:0.85;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]),
