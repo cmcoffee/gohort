@@ -689,8 +689,12 @@ func appNotesNote(prev *AppSpec, saved AppSpec, rel string) string {
 	if appNotesIsStarter(notes, saved.Name) {
 		return fmt.Sprintf("NOTES: %s/NOTES.md is still the starter. Write what this app is, the choices you made and why, and what you left out, then publish again: it is what the next person to change it (or anyone the app is packed for) starts from.", rel)
 	}
-	if prev != nil && strings.TrimSpace(prev.Notes) == notes && appCodeFingerprint(*prev) != appCodeFingerprint(saved) {
-		return fmt.Sprintf("NOTES: the app changed and %s/NOTES.md did not. Add what you changed and why (for a fix, what was wrong), then publish again.", rel)
+	// What changed is the revision's note, not the notes. Asking for it in
+	// NOTES.md on every code change ("add what you changed, then publish
+	// again") grew the notes into a changelog until the cap refused a publish,
+	// and Builder spent rounds trimming a log the revisions already keep.
+	if prev != nil && strings.TrimSpace(prev.Notes) == notes && appCodeFingerprint(*prev) != appCodeFingerprint(saved) && strings.TrimSpace(saved.ChangeNote) == "" {
+		return fmt.Sprintf("NOTE: this publish had no note= saying what changed. Nothing to redo now: pass note=\"what changed and why\" on the next publish, which the revision history keeps. %s/NOTES.md is the standing summary, so change it only when a decision or an open item changes.", rel)
 	}
 	return ""
 }

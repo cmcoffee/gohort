@@ -60,7 +60,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if _, ok := args["notes"]; ok {
 		spec.Notes = strings.TrimSpace(stringArg(args, "notes"))
 		if over := spec.NotesOver(); over > 0 {
-			return "", fmt.Errorf("notes is %d characters over the %d-character cap: it is a standing SUMMARY (purpose, decisions and why, open items), not a log; trim it and resend", over, spec.NotesCap())
+			return "", fmt.Errorf("notes is %d characters over the %d-character cap: it is a standing SUMMARY (purpose, decisions and why, open items), not a log; %s", over, spec.NotesCap(), notesTrimHint(spec.Notes))
 		}
 	}
 	if rk := strings.TrimSpace(stringArg(args, "record_key")); rk != "" {
