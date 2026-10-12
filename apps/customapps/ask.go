@@ -39,12 +39,12 @@ type askSpend struct {
 var askMu sync.Mutex
 
 // appAgentAsk asks the app's agent; a test replaces it.
-var appAgentAsk = func(ctx context.Context, owner, agentID, prompt string, jsonMode bool) (string, float64, error) {
+var appAgentAsk = func(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error) {
 	orch := findOrchestrate()
 	if orch == nil {
 		return "", 0, fmt.Errorf("agents are not available on this deployment")
 	}
-	return orch.AppAgentAsk(ctx, owner, agentID, prompt, jsonMode)
+	return orch.AppAgentAsk(ctx, owner, user, agentID, prompt, jsonMode)
 }
 
 func askKeys(slug, user string, now time.Time) (app, mine string) {
@@ -108,7 +108,7 @@ func askAppAgent(ctx context.Context, ownerDB Database, owner, user string, spec
 		return "", http.StatusRequestEntityTooLarge, fmt.Errorf("the prompt is over %d characters", askMaxPrompt)
 	}
 	return appModelCall(ownerDB, spec, user, "ask", func() (string, float64, error) {
-		return appAgentAsk(ctx, owner, spec.AgentID, prompt, jsonMode)
+		return appAgentAsk(ctx, owner, user, spec.AgentID, prompt, jsonMode)
 	})
 }
 

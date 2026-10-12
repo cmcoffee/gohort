@@ -21,7 +21,7 @@ func TestAppAsksAreCappedPerAppAndPerUser(t *testing.T) {
 	prev := appAgentAsk
 	t.Cleanup(func() { appAgentAsk = prev })
 	asked := 0
-	appAgentAsk = func(ctx context.Context, owner, agentID, prompt string, jsonMode bool) (string, float64, error) {
+	appAgentAsk = func(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error) {
 		asked++
 		return "line " + prompt, 0.25, nil
 	}
@@ -52,7 +52,7 @@ func TestAppAsksAreCappedPerAppAndPerUser(t *testing.T) {
 	// The count cap, for a model that costs nothing.
 	freeDB := &DBase{Store: kvlite.MemStore()}
 	free := AppSpec{Slug: "free", Owner: "alice", AgentID: "npc"}
-	appAgentAsk = func(context.Context, string, string, string, bool) (string, float64, error) { return "ok", 0, nil }
+	appAgentAsk = func(context.Context, string, string, string, string, bool) (string, float64, error) { return "ok", 0, nil }
 	var last *httptest.ResponseRecorder
 	for i := 0; i <= askUserDailyCalls; i++ {
 		last = httptest.NewRecorder()
@@ -87,7 +87,7 @@ func TestAScriptsAskSharesThePagesCaps(t *testing.T) {
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved; appAgentAsk = savedAsk })
 	calls := 0
-	appAgentAsk = func(ctx context.Context, owner, agentID, prompt string, jsonMode bool) (string, float64, error) {
+	appAgentAsk = func(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error) {
 		calls++
 		return "fine", 0.30, nil
 	}

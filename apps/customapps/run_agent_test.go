@@ -28,7 +28,7 @@ func TestRunAgentAndPipelineShareAsksAllowance(t *testing.T) {
 		got = append(got, "pipeline "+caller+" "+input)
 		return "verdict", 0.30, nil
 	}
-	appAgentAsk = func(ctx context.Context, owner, agentID, prompt string, jsonMode bool) (string, float64, error) {
+	appAgentAsk = func(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error) {
 		got = append(got, "ask")
 		return "ok", 0.30, nil
 	}

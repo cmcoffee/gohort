@@ -24,16 +24,26 @@ import (
 // appAskMaxTokens bounds one reply.
 const appAskMaxTokens = 2000
 
-// AppAgentAsk answers prompt with owner's agent agentID, and says what the
-// call cost at this deployment's rates.
-func (T *OrchestrateApp) AppAgentAsk(ctx context.Context, owner, agentID, prompt string, jsonMode bool) (string, float64, error) {
+// AppAgentAsk answers prompt with owner's agent agentID, for user (who asked;
+// "" is the owner), and says what the call cost at this deployment's rates.
+func (T *OrchestrateApp) AppAgentAsk(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error) {
 	if T == nil || T.DB == nil || owner == "" {
 		return "", 0, fmt.Errorf("the app's agent is not available")
+	}
+	if user == "" {
+		user = owner
 	}
 	agent, ok := findAgentByNameOrID(UserDB(T.DB, owner), owner, agentID)
 	if !ok {
 		return "", 0, fmt.Errorf("the app's agent %q is gone", agentID)
 	}
+	// In the runs ledger like run_agent's dispatch, so the live pill shows the
+	// app's agent working. It answered every click while the pill stayed dark,
+	// which read as the button never reaching the agent. Under the person who
+	// asked: the label is their prompt, masked for everyone else.
+	ctx, liveRun := T.runsRegistry().CreateCancellable(ctx, user, agent.ID, "")
+	liveRun.Describe("ask", agent.Name, truncateObs(prompt, 100))
+	defer liveRun.Complete(RunStatusFailed)
 	sys := strings.TrimSpace(agent.OrchestratorPrompt)
 	if r := strings.TrimSpace(agent.Rules); r != "" {
 		sys += "\n\nRules:\n" + r
@@ -56,6 +66,7 @@ func (T *OrchestrateApp) AppAgentAsk(ctx context.Context, owner, agentID, prompt
 	if err != nil {
 		return "", 0, err
 	}
+	liveRun.Complete(RunStatusCompleted)
 	return resp.Content, GetCostRates().Estimate(appAskUsage(resp)), nil
 }
 

@@ -1321,10 +1321,17 @@
           opts.headers = {'Content-Type': d.ctype || d.body.type || 'application/octet-stream'};
         }
       }
+      // A request that is not a read may have started work, and the live pill
+      // polls every ten seconds: a five-second model call behind a button
+      // came and went between two polls, so the pill never lit. Look now,
+      // and again when it ends so the pill does not hold a finished row.
+      var writes = opts.method !== 'GET' && opts.method !== 'HEAD';
+      if (writes && window.uiRefreshLive) window.uiRefreshLive();
       fetch(d.url, opts).then(function(r) {
         var type = r.headers.get('Content-Type') || '';
         return r.arrayBuffer().then(function(buf) { reply({status: r.status, type: type, body: buf}); });
-      }).catch(function(err) { reply({error: String(err && err.message || err)}); });
+      }).catch(function(err) { reply({error: String(err && err.message || err)}); })
+        .then(function() { if (writes && window.uiRefreshLive) window.uiRefreshLive(); });
     });
     // The storage polyfill first: localStorage throws in an opaque origin,
     // and an app that saves a setting or a high score there died on its
