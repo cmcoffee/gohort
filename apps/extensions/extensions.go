@@ -2300,6 +2300,22 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 								// rides in the PostURL so the handler load-then-mutates
 								// (preserving any Builder-authored tools/grants).
 								ui.Expand("Edit", ui.Stack{Children: []ui.Component{
+									// Say what should change and the worker rewrites the
+									// skill with it (skill_revise.go): the same control a
+									// machine and a pipeline have. Above the form it
+									// changes, and the form below reloads to show it.
+									ui.FormPanel{
+										PostURL:     "api/skills/{id}/revise",
+										SubmitLabel: "Revise it",
+										Invalidate:  []string{"api/skills"},
+										Fields: []ui.FormField{{
+											Field: "description", Type: "textarea", Rows: 3,
+											Label:       "Describe a change",
+											Placeholder: "Also cover refunds over $500, and ask for the order number before anything else.",
+											Help:        "Say what should be different and the name, description, triggers and instructions are rewritten with that change made.",
+											Detail:      "Every word the change does not touch is kept, and tools, collections, shares and playbook rules are left alone. It runs a model, so it takes a moment. The version before is in Version history below, where it can be put back.",
+										}},
+									},
 									ui.FormPanel{
 										Source:      "api/skills?id={id}&view=form",
 										PostURL:     "api/skills?id={id}",

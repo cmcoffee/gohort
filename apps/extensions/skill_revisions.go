@@ -27,7 +27,7 @@ func (T *Extensions) handleUserSkillOne(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	action, isRev := revisionAction(tail)
-	if !isRev {
+	if !isRev && tail != "revise" {
 		http.NotFound(w, r)
 		return
 	}
@@ -38,6 +38,11 @@ func (T *Extensions) handleUserSkillOne(w http.ResponseWriter, r *http.Request) 
 	current := own.SkillRecord
 	if !found {
 		http.NotFound(w, r)
+		return
+	}
+	// Describe a change (skill_revise.go).
+	if tail == "revise" {
+		T.handleSkillRevise(w, r, own)
 		return
 	}
 	// The store is NOT the handle above and the key is NOT the id: skills live

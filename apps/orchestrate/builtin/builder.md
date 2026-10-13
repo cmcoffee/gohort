@@ -42,6 +42,9 @@
         "App",
         "Pipeline",
         "Machine",
+        "Skill",
+        "API",
+        "Connection",
         "Other"
       ],
       "show_when": "action",
@@ -52,7 +55,7 @@
       "label": "Which one?",
       "type": "select",
       "options_from": "api/intake/options?source=authoring&kind={kind}",
-      "show_when": "action:Change|Fix;kind:Agent|Tool|App|Pipeline|Machine",
+      "show_when": "action:Change|Fix;kind:Agent|Tool|App|Pipeline|Machine|Skill|API|Connection",
       "required": true
     },
     {
@@ -84,7 +87,7 @@
     "budgets": "Authoring sessions are bounded: one agent plus a few tools plus verification fits the round budget without looping. Bigger than Chat because research and plan_set workers add to the orchestrator round count even though each worker has its own budget.",
     "explorer_hard_cap": "Authoring against an unfamiliar API is exploration-heavy, so Builder gets a higher ceiling than the default 50. On top of this, present_build_plan grants a plan-scaled execution budget (buildPlanRoundsPerStep times steps) so mapping the API does not starve the build and verify rounds.",
     "hidden": "Builder is permanently hidden from the agent fleet and never dispatchable via agents(action=\"run\"): its authoring flows require the user directly. saveAgent forces hidden on this id so a user shadow edit cannot flip it.",
-    "intake_form": "A short wizard, not a gate: what to do (Create, Change, Fix), what kind of thing, then the question that kind needs. Change and Fix list the user's own agents, tools, apps, pipelines or machines of that kind, fetched live (options_from), so a fix arrives with its target named instead of Builder opening with \"which one?\" or sweeping everything to guess. Create asks what the thing should do. Other covers what the five kinds do not (a monitor, a schedule), and asks in the conversation. The chat composer stays live beside the form, so a one-line request still works. Steps come from show_when on each field, the same grammar the settings forms use, and a hidden step is neither required nor sent. The options double as the dispatch brief hint (dispatchBriefHint), telling a caller composing a brief for Builder to say which action, kind and target it means.",
+    "intake_form": "A short wizard, not a gate: what to do (Create, Change, Fix), what kind of thing, then the question that kind needs. Change and Fix list the user's own agents, tools, apps, pipelines, machines, skills, APIs or connections of that kind (an API is a credential drafted with draft_api_credential / draft_oauth_credential, whose key the user enters; a connection is a bridge, an API polled on a schedule that wakes an agent when it changes, made with the bridge tool), fetched live (options_from), so a fix arrives with its target named instead of Builder opening with \"which one?\" or sweeping everything to guess. Create asks what the thing should do. Other covers what the eight kinds do not (a monitor, a schedule), and asks in the conversation. The chat composer stays live beside the form, so a one-line request still works. Steps come from show_when on each field, the same grammar the settings forms use, and a hidden step is neither required nor sent. The options double as the dispatch brief hint (dispatchBriefHint), telling a caller composing a brief for Builder to say which action, kind and target it means.",
     "sandbox_python_note": "The {{sandbox_python_note}} placeholder at the end of the prompt expands to the runtime-probed Python compatibility block, and to nothing when the sandbox interpreter is 3.7 or newer. It short-circuits a retry loop Builder used to run before finding the pre-3.7 subprocess.run shape."
   }
 }

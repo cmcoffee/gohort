@@ -59,3 +59,36 @@ func TestTheIntakePickerListsTheUsersOwnThings(t *testing.T) {
 		t.Errorf("another user's tools are not offered: %+v", got)
 	}
 }
+
+// Skill is a kind the intake offers: Change and Fix list the user's skills.
+func TestTheIntakePickerListsSkills(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+	if _, err := SaveSkill(nil, "alice", SkillRecord{Name: "refunds", Instructions: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	got := authoringTargets(db, "alice", "Skill")
+	if len(got) != 1 || got[0].Value != "refunds" {
+		t.Fatalf("skills offered: %+v", got)
+	}
+	if len(authoringTargets(db, "bob", "skill")) != 0 {
+		t.Error("another user's skill was offered")
+	}
+}
+
+// Connection is a kind the intake offers: Change and Fix list the user's
+// bridges, the watch monitors that call an API, and nothing else.
+func TestTheIntakePickerListsConnections(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+	SaveEventMonitor(db, EventMonitor{Owner: "alice", Name: "github-prs", Kind: EventKindWatch, ToolName: "call_github", IntervalSeconds: 300})
+	SaveEventMonitor(db, EventMonitor{Owner: "alice", Name: "chat-watch", Kind: EventKindWatch, ToolName: "read_chat", IntervalSeconds: 60})
+	got := authoringTargets(db, "alice", "Connection")
+	if len(got) != 1 || got[0].Value != "github-prs" || got[0].Label != "github-prs (github)" {
+		t.Fatalf("connections offered: %+v", got)
+	}
+}

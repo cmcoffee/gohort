@@ -94,6 +94,25 @@ func authoringTargets(udb Database, user, kind string) []intakeOption {
 		for _, m := range ListMachineDefs(udb, user) {
 			add(m.Name, m.Name)
 		}
+	case "skill":
+		// Their own, and the ones they published, which are still theirs.
+		for _, s := range append(LoadSkills(nil, user), PublishedSkillsBy(nil, user)...) {
+			add(s.Name, s.Name)
+		}
+	case "api":
+		// The APIs they set up, as Extensions lists them. The key is theirs
+		// to enter; Builder drafts and checks the rest.
+		for _, c := range Secure().ListUser(user) {
+			add(c.Name, c.Name)
+		}
+	case "connection":
+		// A connection is a bridge: a watch monitor that calls an API on a
+		// schedule and wakes an agent when the response changes (bridge_tools.go).
+		for _, m := range ListEventMonitors(RootDB, user) {
+			if m.Kind == EventKindWatch && strings.HasPrefix(m.ToolName, bridgeCredToolPrefix) {
+				add(m.Name, m.Name+" ("+strings.TrimPrefix(m.ToolName, bridgeCredToolPrefix)+")")
+			}
+		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
 	return out

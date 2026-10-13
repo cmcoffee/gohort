@@ -136,8 +136,10 @@ func TestSeedSettingsUnchanged(t *testing.T) {
 		t.Errorf("builder actions = %v", builder.IntakeForm[0].Options)
 	}
 	// Machine sits beside Pipeline on purpose: offering one without the other
-	// told everybody Builder does not do machines.
-	if !reflect.DeepEqual(builder.IntakeForm[1].Options, []string{"Agent", "Tool", "App", "Pipeline", "Machine", "Other"}) {
+	// told everybody Builder does not do machines. Skill is a kind Builder
+	// authors (skill_def), so it is offered rather than left under Other, and
+	// so are APIs (draft_api_credential) and connections (bridges).
+	if !reflect.DeepEqual(builder.IntakeForm[1].Options, []string{"Agent", "Tool", "App", "Pipeline", "Machine", "Skill", "API", "Connection", "Other"}) {
 		t.Errorf("builder kinds = %v", builder.IntakeForm[1].Options)
 	}
 
