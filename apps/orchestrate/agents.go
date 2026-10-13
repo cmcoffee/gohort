@@ -146,6 +146,9 @@ func applyLegacyMode(a AgentRecord) AgentRecord {
 //     valve; sub-agent dispatches are focused single-task runs
 //   - IntakeForm    cleared:  sub-agents receive structured input from
 //     the parent, not from a user filling in a form
+//   - Cortex     → false: a sub-agent reads no Cortex and its page shows
+//     none; what would reach its Cortex goes to its top-level parent's
+//     (agent_family.go)
 //   - DisableExplicit / DisableInferred → true ONLY for stateless specialists.
 //     A plain dispatched sub-agent is one-shot, so accumulated facts / Reference
 //     Memory can't be meaningfully scoped and would contaminate fresh lookups.
@@ -181,6 +184,7 @@ func enforceSubAgentPosture(a AgentRecord) AgentRecord {
 	a.PublicName = ""
 	a.AllowExplorer = false
 	a.IntakeForm = nil
+	a.Cortex = false
 	if a.InheritParentTools {
 		// Stateful inheriting sub-agent: memory ON so it can persist state
 		// (a checkpoint) between scheduled runs.

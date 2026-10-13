@@ -1166,6 +1166,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// session UI show WHAT the agent did to produce the reply, not just the text.
 	// Background (Surface): the fire ran (tools executed, recorded to the run
 	// ledger below) but posts no reply card to any thread — no agent visibility.
+	toParent := false // a sub-agent's report went to its parent's Cortex
 	if recordFire {
 		// A task wake's note is the only record of WHAT came back — the handle
 		// for a finished picture, the id of a produced file. It reached this
@@ -1217,13 +1218,14 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// thread, where somebody reads it (agent_family.go). A task wake is
 		// the agent's own work coming back to it, not a report.
 		if !isTaskWake(p.Prompt) {
-			reportToParent(udb, p.AgentID, cards[len(cards)-1])
+			toParent = reportToParent(udb, p.AgentID, cards[len(cards)-1])
 		}
 	}
 	// The agent's cortex records every scheduled fire that reported somewhere
 	// else. Not a background task's own result coming back to it: that is the
-	// agent's work returning, not something reaching it.
-	if (loadSession != cortexSessionID(p.AgentID) || !recordFire) && !isTaskWake(p.Prompt) {
+	// agent's work returning, not something reaching it. Nor a sub-agent's
+	// fire whose report its parent's Cortex (where its notes go) already has.
+	if (loadSession != cortexSessionID(p.AgentID) || !recordFire) && !isTaskWake(p.Prompt) && !toParent {
 		where := "full reply in its session"
 		if !recordFire {
 			where = "ran in the background"

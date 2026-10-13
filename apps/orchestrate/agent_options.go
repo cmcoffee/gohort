@@ -144,10 +144,10 @@ func (T *OrchestrateApp) handleAgentPickerOptions(w http.ResponseWriter, r *http
 }
 
 // subAgentParentsFor maps every sub-agent whose parent is still there to that
-// parent: the agents with no Scheduler or Channels of their own on the chat
-// page (agent_family.go), which core/ui reads as hide_flag and
+// parent: the agents with no Scheduler, Channels or Cortex row of their own on
+// the chat page (agent_family.go), which core/ui reads as hide_flag and
 // channels_hide_flag. A sub-agent whose parent was deleted is its own top
-// agent again, so it keeps both.
+// agent again, so it keeps all three.
 func subAgentParentsFor(agents []AgentRecord) map[string]string {
 	ids := make(map[string]bool, len(agents))
 	for _, a := range agents {
@@ -163,10 +163,16 @@ func subAgentParentsFor(agents []AgentRecord) map[string]string {
 }
 
 // recordAgentsFor maps every agent that does NOT read its Cortex to its
-// Cortex thread, which the panel pins read-only as that agent's record.
+// Cortex thread, which the panel pins read-only as that agent's record. A
+// sub-agent has no Cortex row: its notes are filed in its parent's
+// (agent_family.go).
 func recordAgentsFor(agents []AgentRecord, cortex map[string]string) map[string]string {
+	subs := subAgentParentsFor(agents)
 	out := map[string]string{}
 	for _, a := range agents {
+		if _, sub := subs[a.ID]; sub {
+			continue
+		}
 		if _, reads := cortex[a.ID]; !reads {
 			out[a.ID] = cortexSessionID(a.ID)
 		}

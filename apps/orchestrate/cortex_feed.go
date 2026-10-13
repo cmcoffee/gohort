@@ -54,6 +54,8 @@ func appendCortexObs(db Database, agentID, from, kind, text string, trace ...Per
 	if _, ok := loadAgent(db, agentID); !ok {
 		return
 	}
+	// A sub-agent's notes are filed in its parent's Cortex (agent_family.go).
+	agentID, from = cortexHolder(db, agentID, from, kind)
 	sid := cortexSessionID(agentID)
 	now := time.Now()
 	// The whole read-modify-write under the per-session append lock, re-reading

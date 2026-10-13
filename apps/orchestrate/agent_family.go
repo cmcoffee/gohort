@@ -1,9 +1,12 @@
 package orchestrate
 
 // A sub-agent belongs to its parent: it has no front door of its own (a
-// channel bound to it is its top-level parent's, see channelAgentFor) and no
+// channel bound to it is its top-level parent's, see channelAgentFor), no
 // schedule surface of its own (the Scheduler lists a whole family on any
-// member's page, and a schedule it runs reports to that parent).
+// member's page, and a schedule it runs reports to that parent), and no
+// Cortex of its own (what would reach it is filed in the parent's, see
+// cortexHolder; its working thread, the one its recurring tasks and monitor
+// wakes carry their history in, is kept but listed nowhere).
 
 import (
 	"fmt"
@@ -122,13 +125,13 @@ func udbFor(T *OrchestrateApp, user string) Database {
 // working context, and not a thread anybody reads. The card says which
 // sub-agent ran it. A no-op for an agent that is not a sub-agent, or for an
 // empty report.
-func reportToParent(udb Database, agentID string, card ChatMessage) {
+func reportToParent(udb Database, agentID string, card ChatMessage) bool {
 	if udb == nil || strings.TrimSpace(card.Content) == "" {
-		return
+		return false
 	}
 	top := topAgentOf(udb, agentID)
 	if top == agentID {
-		return
+		return false
 	}
 	if a, ok := loadAgent(udb, agentID); ok && strings.TrimSpace(a.Name) != "" {
 		card.ReportFrom = strings.TrimSpace(card.ReportFrom + " (by " + a.Name + ")")
@@ -139,5 +142,41 @@ func reportToParent(udb Database, agentID string, card ChatMessage) {
 	sid := cortexSessionID(top)
 	if err := appendToStoredSession(udb, top, sid, ChatSession{ID: sid, AgentID: top}, card); err != nil {
 		Log("[orchestrate] report from sub-agent %s to parent %s failed: %v", agentID, top, err)
+		return false
 	}
+	return true
+}
+
+// cortexHolder is the agent whose Cortex a note about agentID is filed in,
+// and the name the note is filed under. A sub-agent has none of its own
+// (enforceSubAgentPosture), so its notes go to its top-level parent's,
+// saying which sub-agent they are about: "(to Critic)" for a request made
+// of it, "(by Critic)" for anything else.
+func cortexHolder(db Database, agentID, from, kind string) (holder, label string) {
+	top := topAgentOf(db, agentID)
+	if top == agentID {
+		return agentID, from
+	}
+	name := agentID
+	if a, ok := loadAgent(db, agentID); ok && strings.TrimSpace(a.Name) != "" {
+		name = strings.TrimSpace(a.Name)
+	}
+	how := "by"
+	if kind == cortexKindRequest {
+		how = "to"
+	}
+	return top, strings.TrimSpace(from + " (" + how + " " + name + ")")
+}
+
+// familyRequest reports whether a request from callerID to targetID stays
+// inside one family, made of a sub-agent: its Cortex note would land in the
+// parent's Cortex, where the parent's own conversation already shows it.
+func familyRequest(db Database, callerID, targetID string) bool {
+	top := topAgentOf(db, targetID)
+	return top != targetID && top == topAgentOf(db, callerID)
+}
+
+// isSubAgent reports whether id has a top-level parent other than itself.
+func isSubAgent(db Database, id string) bool {
+	return db != nil && topAgentOf(db, id) != id
 }

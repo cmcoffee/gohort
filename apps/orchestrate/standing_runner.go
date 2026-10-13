@@ -345,10 +345,15 @@ func registerStandingRunner(app *OrchestrateApp) {
 			reportAgent = sa.AgentID // legacy records: fall back to the target agent's channel
 		}
 		surface, home := sa.Surface, sa.ReportSessionID
+		reportFrom := sa.Name
 		// A sub-agent has no thread anybody reads: a schedule it runs reports
-		// to its top-level parent's home thread (agent_family.go). Background
-		// stays background.
+		// to its top-level parent's home thread (agent_family.go), saying
+		// which sub-agent ran it, as its recurring tasks and monitors do.
+		// Background stays background.
 		if top := topAgentOf(udb, reportAgent); top != reportAgent {
+			if a, ok := loadAgent(udb, reportAgent); ok && strings.TrimSpace(a.Name) != "" {
+				reportFrom += " (by " + strings.TrimSpace(a.Name) + ")"
+			}
 			reportAgent, home = top, ""
 			if strings.TrimSpace(surface) != "background" {
 				surface = "cortex"
@@ -359,8 +364,10 @@ func registerStandingRunner(app *OrchestrateApp) {
 		reportSession, record := resolveSurface(surface, home, reportAgent)
 		// Every run leaves a line in the cortex of the agent that RAN it, the
 		// record of what reached it, unless the full report is landing there
-		// anyway.
-		if !record || reportAgent != sa.AgentID || reportSession != cortexSessionID(sa.AgentID) {
+		// anyway. A sub-agent's line goes to its parent's Cortex, so that is
+		// where the report has to be landing (agent_family.go).
+		holder := topAgentOf(udb, sa.AgentID)
+		if !record || reportAgent != holder || reportSession != cortexSessionID(holder) {
 			where := "full report in the session it was scheduled from"
 			if !record {
 				where = "ran in the background"
@@ -385,7 +392,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 				Role:       "assistant",
 				Content:    body,
 				Created:    time.Now(),
-				ReportFrom: sa.Name,
+				ReportFrom: reportFrom,
 				ReportKind: cortexKindScheduled,
 				// What it actually DID, not just what it concluded. The card is
 				// the only account of a run nobody watched, and the recurring

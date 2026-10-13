@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -173,4 +174,114 @@ func navItemsOf(t *testing.T, page string) []ui.OrchestratorNavItem {
 		t.Fatalf("orchestrator_nav: %v", err)
 	}
 	return items
+}
+
+// A sub-agent has no Cortex of its own: whatever its stored record says, it
+// reads none, and every note that would land in one is filed in its
+// top-level parent's, saying which sub-agent it is about.
+func TestASubAgentsCortexNotesGoToTheParent(t *testing.T) {
+	_, udb := familyFixture(t)
+	stored, _ := loadAgent(udb, "a-critic")
+	stored.Cortex = true
+	if _, err := saveAgent(udb, stored); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := loadAgent(udb, "a-critic"); a.Cortex {
+		t.Error("a sub-agent still reads a Cortex of its own")
+	}
+
+	appendCortexObs(udb, "a-nit", "Guardrail", cortexKindOverflow, "Reply held back.")
+	appendCortexObs(udb, "a-nit", "A machine", cortexKindRequest, "Asked in step 2.")
+	appendCortexObs(udb, "a-writer", "Session", cortexKindSession, "Own note.")
+	parent, _ := loadChatSession(udb, "a-writer", cortexSessionID("a-writer"))
+	var froms []string
+	for _, m := range parent.Messages {
+		froms = append(froms, m.ReportFrom)
+	}
+	want := []string{"Guardrail (by Nitpicker)", "A machine (to Nitpicker)", "Session"}
+	if strings.Join(froms, "|") != strings.Join(want, "|") {
+		t.Errorf("parent's Cortex notes = %q, want %q", froms, want)
+	}
+	if own, _ := loadChatSession(udb, "a-nit", cortexSessionID("a-nit")); len(own.Messages) != 0 {
+		t.Errorf("the sub-agent kept notes of its own: %+v", own.Messages)
+	}
+
+	// A request inside the family is the parent's own conversation; one
+	// from outside is a note.
+	if !familyRequest(udb, "a-writer", "a-critic") || !familyRequest(udb, "a-critic", "a-nit") {
+		t.Error("a request inside the family would be noted on the parent")
+	}
+	if familyRequest(udb, "a-outsider", "a-critic") || familyRequest(udb, "a-critic", "a-writer") {
+		t.Error("a request from outside, or one made of the parent, is not noted")
+	}
+}
+
+// The sub-agent's page has no Cortex row, and its working thread (its
+// Cortex id, kept for its recurring tasks and monitor wakes) is not in its
+// session list either. A top-level agent, and a sub-agent whose parent was
+// deleted, keep their row and their thread.
+func TestASubAgentsPageHasNoCortexRow(t *testing.T) {
+	_, udb := familyFixture(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a-orphan", Name: "Orphan", Owner: "alice", OrchestratorPrompt: "p", OwnedBy: "a-deleted"}); err != nil {
+		t.Fatal(err)
+	}
+	agents := listAgents(udb, "alice")
+	_, cortex, _ := agentPickerOptions(agents)
+	rec := recordAgentsFor(agents, cortex)
+	for _, id := range []string{"a-critic", "a-nit"} {
+		if _, ok := rec[id]; ok {
+			t.Errorf("%s has a Cortex row", id)
+		}
+		if _, ok := cortex[id]; ok {
+			t.Errorf("%s has a Cortex home", id)
+		}
+	}
+	for _, id := range []string{"a-writer", "a-orphan"} {
+		if rec[id] != cortexSessionID(id) {
+			t.Errorf("%s lost its Cortex row: %v", id, rec)
+		}
+	}
+
+	for _, id := range []string{"a-nit", "a-writer"} {
+		for _, sid := range []string{cortexSessionID(id), "s-" + id} {
+			if err := appendToStoredSession(udb, id, sid, ChatSession{ID: sid, AgentID: id}, ChatMessage{Role: "assistant", Content: "x"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	listed := func(id string) map[string]bool {
+		out := map[string]bool{}
+		for _, s := range listChatSessions(udb, id) {
+			out[s.ID] = true
+		}
+		return out
+	}
+	if l := listed("a-nit"); l[cortexSessionID("a-nit")] || !l["s-a-nit"] {
+		t.Errorf("sub-agent's list = %v, want its sessions without its working thread", l)
+	}
+	if l := listed("a-writer"); !l[cortexSessionID("a-writer")] || !l["s-a-writer"] {
+		t.Errorf("parent's list = %v, want its Cortex and its sessions", l)
+	}
+}
+
+// A scheduled agent a sub-agent runs reports once to the parent's Cortex:
+// the report, not the report and a line pointing at it.
+func TestASubAgentsScheduledRunLandsOnceOnTheParent(t *testing.T) {
+	app, udb := familyFixture(t)
+	registerStandingRunner(app)
+	RegisterStandingRunner(func(ctx context.Context, sa StandingAgent) StandingRunResult {
+		return StandingRunResult{Status: RunOK, Summary: "s", Raw: "Two typos fixed."}
+	})
+	t.Cleanup(func() { RegisterStandingRunner(nil); RegisterStandingReporter(nil) })
+	SaveStandingAgent(RootDB, StandingAgent{Owner: "alice", Name: "Nightly pass", AgentID: "a-nit", Mission: "m", IntervalSeconds: 3600})
+	if _, err := RunStandingAgentNow(context.Background(), RootDB, "alice", "Nightly pass"); err != nil {
+		t.Fatal(err)
+	}
+	parent, _ := loadChatSession(udb, "a-writer", cortexSessionID("a-writer"))
+	if len(parent.Messages) != 1 || !strings.Contains(parent.Messages[0].Content, "Two typos fixed.") || parent.Messages[0].ReportFrom != "Nightly pass (by Nitpicker)" {
+		t.Errorf("parent's Cortex = %+v, want the one report", parent.Messages)
+	}
+	if own, _ := loadChatSession(udb, "a-nit", cortexSessionID("a-nit")); len(own.Messages) != 0 {
+		t.Errorf("the sub-agent's thread got %+v", own.Messages)
+	}
 }

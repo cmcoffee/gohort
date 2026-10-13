@@ -229,6 +229,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// Background → recordCard=false + no surface session (external delivery only).
 		surfSession, recordCard := resolveSurface(m.Surface, wakeSession, wakeAgent)
 		cardSession := surfSession
+		toParent := false // a sub-agent's fire went to its parent's Cortex
 
 		// direct: post the change verbatim, no LLM, WHERE the watcher was created
 		// — a phantom-origin watcher (DeliverChatID set) into that conversation
@@ -270,8 +271,10 @@ func registerOperatorWake(app *OrchestrateApp) {
 				}
 				// A sub-agent's monitor reports to its parent too
 				// (agent_family.go).
-				reportToParent(udb, wakeAgent, ChatMessage{Role: "assistant", Content: content,
-					ReportFrom: monitorName, ReportKind: cortexKindMonitor})
+				if reportToParent(udb, wakeAgent, ChatMessage{Role: "assistant", Content: content,
+					ReportFrom: monitorName, ReportKind: cortexKindMonitor}) {
+					toParent = true
+				}
 				return true
 			}
 			if chatTarget != "" {
@@ -361,8 +364,10 @@ func registerOperatorWake(app *OrchestrateApp) {
 			// Woke a sub-agent: what it made of the event goes to its parent's
 			// home thread too (agent_family.go).
 			if recordCard { // background posts to no thread, the parent's included
-				reportToParent(UserDB(app.DB, owner), wakeAgent, ChatMessage{Role: "assistant", Content: res.Text,
-					ReportFrom: monitorName, ReportKind: cortexKindMonitor})
+				if reportToParent(UserDB(app.DB, owner), wakeAgent, ChatMessage{Role: "assistant", Content: res.Text,
+					ReportFrom: monitorName, ReportKind: cortexKindMonitor}) {
+					toParent = true
+				}
 			}
 		}
 		// A monitor with a stopping condition is judged on what it just saw,
@@ -372,8 +377,10 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// The wake agent's cortex records the fire when it landed somewhere
 		// else (a session, a channel, a text). Only fires: a poll that found
 		// nothing never reaches here, so a monitor checking every thirty
-		// seconds leaves a line only when something changed.
-		if delivered && surfSession != cortexSessionID(wakeAgent) {
+		// seconds leaves a line only when something changed. Not for a
+		// sub-agent whose fire its parent's Cortex (where its notes go)
+		// already has.
+		if delivered && surfSession != cortexSessionID(wakeAgent) && !toParent {
 			where := "delivered to its session"
 			switch {
 			case channelTargetDelivered:

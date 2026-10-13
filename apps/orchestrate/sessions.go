@@ -151,8 +151,18 @@ func listChatSessions(db Database, agentID string) []ChatSession {
 		return nil
 	}
 	tbl := sessionTable(agentID)
+	// A sub-agent's Cortex id is its working thread, kept for its recurring
+	// tasks and monitor wakes and read by nobody: its reports and notes are
+	// on its parent's Cortex (agent_family.go).
+	workingThread := ""
+	if isSubAgent(db, agentID) {
+		workingThread = cortexSessionID(agentID)
+	}
 	var out []ChatSession
 	for _, k := range db.Keys(tbl) {
+		if k == workingThread {
+			continue
+		}
 		// Ephemeral agents(run) dispatch continuity is stored as a session
 		// keyed "dispatch:<parentSessID>:<target.ID>" so follow-ups re-thread,
 		// and a machine step's delegate keeps one per (conversation, step) as

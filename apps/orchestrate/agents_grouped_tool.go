@@ -1485,8 +1485,12 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	// dispatch:<…> session, disconnected from the agent's standing thread, so
 	// without this a channel agent (WiWee) posts to its group on request and
 	// then can't field follow-ups about what it just "said". from = the
-	// dispatching parent; the request text itself is the observation.
-	appendCortexObs(t.udb, target.ID, t.agent.Name, cortexKindRequest, msg)
+	// dispatching parent; the request text itself is the observation. Not a
+	// request inside one family: a sub-agent's note lands in its parent's
+	// Cortex, and the parent's conversation already shows what it asked.
+	if !familyRequest(t.udb, t.agent.ID, target.ID) {
+		appendCortexObs(t.udb, target.ID, t.agent.Name, cortexKindRequest, msg)
+	}
 	// Persist the exchange for the next follow-up. Store the RAW brief (not
 	// the delegated wrapper) so re-threaded history reads cleanly, and cap to
 	// the most recent turns to keep continuity cheap and ephemeral.
