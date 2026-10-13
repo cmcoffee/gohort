@@ -427,6 +427,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// in-chat approval card; everything else auto-approves (no
 		// stdin fallback — gohort runs as a service).
 		Confirm:             t.confirmFuncFor(sess),
+		ConfirmRefusal:      t.confirmRefusal,
 		AskFirst:            t.asksFirst, // the owner's ask marks reach every tool (ask_first.go)
 		GuardrailCheck:      t.guardrailEnforcer().Check,
 		GuardrailActionGate: t.guardrailEnforcer().ActionGate,

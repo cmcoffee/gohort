@@ -448,7 +448,9 @@ func toolCallsInclude(calls []PersistedToolCall, name string) bool {
 // than a scheduled task's brief. The two share the fire path and want opposite
 // treatment at three points: the framing, the no-tool-calls guard, and the
 // staged attachments.
-func isTaskWake(prompt string) bool { return strings.Contains(prompt, taskWakeMarker) }
+func isTaskWake(prompt string) bool {
+	return strings.Contains(prompt, taskWakeMarker) || strings.Contains(prompt, approvalWakeMarker)
+}
 
 // taskWakeGrace is how long a completed task waits for a live turn to pick its
 // result up before starting one. A result landing mid-answer reads better than

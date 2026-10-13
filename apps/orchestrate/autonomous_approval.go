@@ -295,6 +295,11 @@ func autonomousNoUnattendedSet(udb Database, agentID string) map[string]bool {
 // what the owner explicitly marked as gated. The rule itself is
 // autonomousToolAllowed; this is the half that has a queue to write to.
 func (g *autonomousGate) confirm(name, args string) bool {
+	// Approved on a kept card and made by the turn the answer woke, which is
+	// a background run (approval_resume.go).
+	if takeResumePass(g.owner, g.agentID, name, args) {
+		return true
+	}
 	if g.allows(name) && !g.writeWaitsForOwner(name, args) && !g.ownerAsksFirst(name) {
 		return true
 	}

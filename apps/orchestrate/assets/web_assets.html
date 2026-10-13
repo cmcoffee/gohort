@@ -1105,6 +1105,53 @@ select.ui-orch-intake-input {
       return {wrap: wrap, body: null};
     });
 
+    // A kept approval: a call's approval card that was not answered in time.
+    // The turn ended waiting, and answering it here wakes the agent in this
+    // conversation to carry on (approval_resume.go). The call's arguments are
+    // under the question, as on the live card.
+    window.uiRegisterBlockRenderer('kept_approval', function(d) {
+      var id = String(d.id || '');
+      var wrap = el('div', {class: 'ui-orch-connect'});
+      wrap.appendChild(el('div', {class: 'ui-orch-connect-icon'}, ['\u270B']));
+      var msg = el('div', {class: 'ui-orch-connect-body'});
+      msg.appendChild(el('div', {class: 'ui-orch-connect-title'}, [String(d.prompt || 'Allow this call?')]));
+      if (d.detail) {
+        msg.appendChild(el('div', {class: 'ui-orch-connect-sub', style: 'white-space:pre-wrap'}, [String(d.detail)]));
+      }
+      var status = el('div', {class: 'ui-orch-connect-sub'}, ['Not answered in time, so the agent is waiting. Answer whenever you like and it picks up where it left off.']);
+      msg.appendChild(status);
+      wrap.appendChild(msg);
+      var actions = el('div', {style: 'display:flex;gap:0.5rem;margin-top:0.55rem'});
+      var approve = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Approve']);
+      var deny = el('button', {class: 'ui-orch-connect-btn', type: 'button',
+        style: 'background:transparent;border:1px solid var(--border);color:var(--text-mute)'}, ['Deny']);
+      actions.appendChild(approve);
+      actions.appendChild(deny);
+      wrap.appendChild(actions);
+      function settle(answer) {
+        wrap.classList.add('connected');
+        if (actions.parentNode) actions.remove();
+        status.textContent = answer === 'allow'
+          ? 'Approved. The agent was woken to make the call and carry on.'
+          : 'Denied. The agent was told and will not make it.';
+      }
+      if (d.answer) { settle(d.answer); return {wrap: wrap, body: null}; }
+      if (!id) { approve.disabled = true; deny.disabled = true; }
+      function answer(value) {
+        approve.disabled = true; deny.disabled = true;
+        fetch('api/approvals/answer', {method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: id, answer: value})})
+          .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); settle(value); })
+          .catch(function(err) {
+            approve.disabled = false; deny.disabled = false;
+            window.uiAlert('Could not answer it: ' + String(err && err.message || err));
+          });
+      }
+      approve.addEventListener('click', function() { answer('allow'); });
+      deny.addEventListener('click', function() { answer('deny'); });
+      return {wrap: wrap, body: null};
+    });
+
     // Pending-approval card — a request that queued while nobody was watching
     // (an unattended fire wanting a tool it isn't pre-authorized for, a
     // scheduled run trying to message a real person). The server computes these

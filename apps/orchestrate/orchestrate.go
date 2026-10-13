@@ -704,6 +704,7 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/send", T.handleSendRouter)
 	T.HandleFunc("/api/cancel", T.handleCancelRouter)
 	T.HandleFunc("/api/confirm", T.handleConfirmRouter)
+	T.HandleFunc("/api/approvals/answer", T.handleApprovalAnswer)
 	T.HandleFunc("/api/inject", T.handleInject)
 	// Delivered attachments, so a reloaded thread still shows its pictures —
 	// and so a message posted with nobody watching can show one at all.

@@ -311,6 +311,13 @@ type AgentLoopConfig struct {
 	// If nil, a default terminal prompt is used (y/n).
 	Confirm ConfirmFunc
 
+	// ConfirmRefusal, when set, is asked after Confirm says no, for what the
+	// model is told in place of the plain denial: "" keeps the denial. A no
+	// that means "not answered yet" is not a person refusing, and telling the
+	// model it was denied makes it give up on, or route around, something
+	// still waiting on an answer.
+	ConfirmRefusal func(toolName string) string
+
 	// AskFirst, when set, WIDENS which calls reach Confirm: a tool it names
 	// is confirmed whether or not the tool declares NeedsConfirm. It is how
 	// an owner's "ask me before every call" reaches a tool that asks nothing

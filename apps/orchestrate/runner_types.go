@@ -125,6 +125,10 @@ type chatTurn struct {
 	// askBlock is the ask card this turn ended on (ui_ask with options, or
 	// ui_ask_form), saved on the question's message so a reload redraws it.
 	askBlock map[string]any
+	// waitingRefusal is what the model is told after an approval card timed
+	// out and was kept for later (keepForLater), read once by confirmRefusal.
+	// Guarded by bubblesMu.
+	waitingRefusal string
 	// changeAsk, when set, answers the owner's approval of a change in place
 	// of the chat card (change_approval.go). Tests set it; nil uses the card.
 	changeAsk func(prompt, detail string, yes []string) string

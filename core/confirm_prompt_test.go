@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -134,5 +135,41 @@ func TestAskFirstGatesAToolThatDeclaresNothing(t *testing.T) {
 	}
 	if ran["search"] || !ran["peek"] {
 		t.Errorf("ran = %v: the asked tool was denied and the other one runs", ran)
+	}
+}
+
+// A no that means "not answered yet" is told to the model in the caller's
+// words (ConfirmRefusal), not as a person denying the call.
+func TestConfirmRefusalReplacesTheDenial(t *testing.T) {
+	app, _ := withTierStubs(t, "test.confirmrefusal", func(n int) []ToolCall {
+		if n == 1 {
+			return []ToolCall{{ID: "1", Name: "search", Args: map[string]any{"q": "x"}}}
+		}
+		return nil
+	})
+	search := AgentToolDef{
+		Tool:    Tool{Name: "search", Description: "search", Parameters: map[string]ToolParam{"q": {Type: "string"}}},
+		Handler: func(context.Context, map[string]any) (string, error) { return "ok", nil },
+	}
+	_, hist, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		RouteKey:       "test.confirmrefusal",
+		MaxRounds:      3,
+		AskFirst:       func(string) bool { return true },
+		Confirm:        func(string, string) bool { return false },
+		ConfirmRefusal: func(name string) string { return "NOT RUN YET: waiting on the owner for " + name },
+		Tools:          []AgentToolDef{search},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	var seen string
+	for _, m := range hist {
+		for _, r := range m.ToolResults {
+			seen += r.Content
+		}
+		seen += m.Content
+	}
+	if !strings.Contains(seen, "NOT RUN YET: waiting on the owner for search") || strings.Contains(seen, "denied by user") {
+		t.Errorf("the model was not told it is waiting: %q", seen)
 	}
 }

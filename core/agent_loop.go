@@ -2319,9 +2319,15 @@ func (lr *loopRun) recordResponse() loopAction {
 		if lr.needsConfirm[tc.Name] || lr.asksFirst(tc.Name) {
 			if !lr.confirmFn(tc.Name, formatArgs(tc.Args)) {
 				Debug("[agent_loop] prompt-tool denied: %s", tc.Name)
+				denied := fmt.Sprintf("Tool call to %s was denied.", tc.Name)
+				if f := lr.cfg.ConfirmRefusal; f != nil {
+					if why := f(tc.Name); why != "" {
+						denied = why
+					}
+				}
 				lr.history = append(lr.history, Message{
 					Role:    "user",
-					Content: fmt.Sprintf("Tool call to %s was denied.", tc.Name),
+					Content: denied,
 				})
 				if lr.cfg.OnStep != nil {
 					lr.cfg.OnStep(StepInfo{Round: lr.round, ToolCalls: []ToolCall{*tc}, ToolErrors: 1})
@@ -3593,7 +3599,13 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 				// against a guessed API — a habit that outlived the
 				// gate). A denial denies the OPERATION, not one route
 				// to it — say so.
-				lr.rs.results[i] = ToolResult{ID: tc.ID, Content: "Error: tool call denied by user, this operation was not authorized to run. Do NOT work around the denial by attempting the same operation through a different tool (raw fetch_url, shell, or a dispatch); proceed without it, or report that it needs the owner's authorization.", IsError: true}
+				denied := "Error: tool call denied by user, this operation was not authorized to run. Do NOT work around the denial by attempting the same operation through a different tool (raw fetch_url, shell, or a dispatch); proceed without it, or report that it needs the owner's authorization."
+				if f := lr.cfg.ConfirmRefusal; f != nil {
+					if why := f(tc.Name); why != "" {
+						denied = why
+					}
+				}
+				lr.rs.results[i] = ToolResult{ID: tc.ID, Content: denied, IsError: true}
 				lr.rs.toolErrors++
 				continue
 			}

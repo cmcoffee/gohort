@@ -49,11 +49,12 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// toolConfirmTimeout is how long an escalated call waits for the
-// owner's Allow/Deny before denying. Long enough to read the card and
-// think; short enough that an abandoned session doesn't pin a
-// goroutine forever.
-const toolConfirmTimeout = 5 * time.Minute
+// toolConfirmTimeout is how long an escalated call waits for the owner's
+// Allow/Deny before the turn stops waiting. Long enough to read the card
+// and think; short enough that an abandoned session doesn't pin a goroutine
+// forever. A call with a conversation is kept for later rather than denied
+// (approval_resume.go). A var so a test can wait less.
+var toolConfirmTimeout = 5 * time.Minute
 
 // pendingToolConfirm is one in-flight escalation: an agent-loop
 // goroutine parked on ch until the session owner clicks Allow once /
@@ -232,6 +233,11 @@ func (t *chatTurn) confirmFuncForAsks(sess *ToolSession, asks ...func(string) bo
 		asksFirst = asks[0]
 	}
 	return func(name, args string) bool {
+		// The call its owner approved on a kept card, made by the turn that
+		// answer woke: already asked (approval_resume.go).
+		if takeResumePass(t.user, t.agent.ID, name, args) {
+			return true
+		}
 		// A host-app tool that asked to be confirmed is asked about first:
 		// it declared its own sentence, which is more specific than
 		// anything the credential path would generate for the same call.
@@ -601,6 +607,12 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 		t.recordApproval(req, label)
 		return picked, true
 	case <-time.After(toolConfirmTimeout):
+		// A call with a conversation to keep a card in waits for its answer
+		// instead of being denied (approval_resume.go).
+		if t.keepForLater(req, id) {
+			Log("[orchestrate.confirm] approval for %s (%s) not answered in %s: kept for later", req.tool, req.because, toolConfirmTimeout)
+			return "", false
+		}
 		Log("[orchestrate.confirm] approval for %s (%s) timed out after %s: denied", req.tool, req.because, toolConfirmTimeout)
 		// Breadcrumb + a persistent in-conversation note. The silent version
 		// of this deny is exactly the "said 'go for it', got one sentence,

@@ -232,7 +232,7 @@ func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply s
 			// it. The corrected reply often says much the same thing, and
 			// dropping the struck one as a "duplicate" would erase exactly
 			// the record of what was taken back.
-			if b.Retracted == "" && repeatsWithoutAdding(b.Content, final) {
+			if b.Retracted == "" && b.Block == nil && repeatsWithoutAdding(b.Content, final) {
 				if len(b.ToolCalls) > 0 {
 					orphanedCalls = append(orphanedCalls, b.ToolCalls...)
 				}

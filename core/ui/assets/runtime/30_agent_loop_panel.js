@@ -3031,7 +3031,9 @@
       var built;
       try { built = fn(d, {sessionId: activeSessionId, replayed: true}); } catch (_) { return false; }
       if (!built || !built.wrap) return false;
-      if (answered) {
+      // keep_open: a card whose own record says whether it was answered (it
+      // stays live however much was written after it).
+      if (answered && !d.keep_open) {
         built.wrap.classList.add('submitted');
         built.wrap.querySelectorAll('input, textarea, select, button').forEach(function(x) { x.disabled = true; });
       }
