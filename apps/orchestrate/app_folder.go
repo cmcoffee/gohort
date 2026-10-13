@@ -484,6 +484,10 @@ func (t *chatTurn) appDefPublish(args map[string]any) (string, error) {
 	if msg := t.approveChange("app", m.Slug, "Publish the folder "+rel+" over the live app.", exists); msg != "" {
 		return msg, nil
 	}
+	prevAgent := ""
+	if exists {
+		prevAgent = strings.TrimSpace(live.AgentID)
+	}
 	if n := strings.TrimSpace(stringArg(args, "note")); n != "" {
 		in["note"] = n
 	}
@@ -529,6 +533,11 @@ func (t *chatTurn) appDefPublish(args map[string]any) (string, error) {
 	head := fmt.Sprintf("Published %s/ to app %q.", rel, m.Name)
 	if notesNote != "" {
 		head += "\n\n" + notesNote
+	}
+	if prevAgent != "" {
+		// An agent the app stopped using that nothing else uses
+		// (agent_used_by.go).
+		head += t.appAgentLeftoverNote(m.Slug, prevAgent)
 	}
 	if len(saved) > 0 {
 		head += " Assets saved: " + strings.Join(saved, ", ") + "."

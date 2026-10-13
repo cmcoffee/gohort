@@ -244,6 +244,11 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		page := isolateAppHTML(spec.Page, T.WebPath()+"/"+slug+"/")
 		if user == ownerUser {
 			page = withBuilderLink(page, slug)
+			// The agent it asks was deleted: say so where the owner looks,
+			// with the way to fix it, rather than let its chat and asks fail.
+			if !T.appAgentExists(spec) {
+				page = withNavLink(page, "⚠ Its agent was deleted: pick another", T.WebPath()+"/"+slug+"/_settings")
+			}
 		}
 		_ = ui.RenderPageJSON(w, page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case rest == "_settings":
@@ -253,6 +258,8 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		T.handleSettingsValues(w, r, spec, user, user == ownerUser)
 	case rest == "_settings/reset":
 		T.handleSettingsReset(w, r, spec, user, user == ownerUser)
+	case rest == "_settings/agent":
+		T.handleSettingsAgent(w, r, spec, user == ownerUser)
 	case strings.HasPrefix(rest, "data/"):
 		T.handleData(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "data/"))
 	case rest == "actions":
@@ -508,12 +515,17 @@ func withBuilderLink(page json.RawMessage, slug string) json.RawMessage {
 	if link == "" {
 		return page
 	}
+	return withNavLink(page, "Change with Builder", link)
+}
+
+// withNavLink adds one link to an app page's header nav.
+func withNavLink(page json.RawMessage, label, link string) json.RawMessage {
 	var m map[string]any
 	if json.Unmarshal(page, &m) != nil || m == nil {
 		return page
 	}
 	nav, _ := m["nav"].([]any)
-	m["nav"] = append(nav, map[string]any{"label": "Change with Builder", "url": link})
+	m["nav"] = append(nav, map[string]any{"label": label, "url": link})
 	out, err := json.Marshal(m)
 	if err != nil {
 		return page

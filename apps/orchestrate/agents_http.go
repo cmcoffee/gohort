@@ -621,6 +621,11 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		T.handleAgentSchedules(w, udb, user, id)
 		return
 	}
+	// What runs through this agent (agent_used_by.go).
+	if action == "used-by" {
+		T.handleAgentUsedBy(w, udb, user, id)
+		return
+	}
 	if action == "decline-suggest" {
 		T.handleAgentDeclineSuggest(w, r, user, id)
 		return

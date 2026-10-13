@@ -111,7 +111,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				"full_width":         {Type: "boolean", Description: "(create/update) Render the page EDGE-TO-EDGE instead of the default centered ~900px column. Set true for DATA-HEAVY surfaces (a dashboard, a wide table with many columns, a live monitor), where the extra horizontal space helps. Leave false (default) for forms and simple lists, which read better in a narrow column. A workbench app is always full-width regardless of this flag."},
 				"shared_collections": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(create/update) Names of record collections EVERY user of the app shares: a leaderboard, a lobby, a team list. An app's ordinary records are each user's own, even when the app is shared; these live once. The page reads one with fetch(\"shared/<name>\"); every script gets them all as the env var shared (a JSON object {\"<name>\": [records]}). Only an ACTION script writes them, by printing {\"shared\": {\"<name>\": [records]}} (upsert by each record's id) or {\"shared_delete\": {\"<name>\": [ids]}}: the action runs as the owner, so validate what the player sent there (refuse an impossible score) before returning it. The env var caller is the id of the person who clicked, set by the framework (a page cannot change it), so \"one vote per person\" is a check of caller against the by of the records already in shared. Each shared record is stamped with by (the same id, for who triggered the write) and updated, server-side. That id is an alias like p_3f9a0c12d4e5b678: the same person always has the same one in this app, but it is not their username or email and says nothing about who they are, so key an entry on it freely and NEVER show it as a name. For a name on a leaderboard, ask the player: a scope:\"user\" setting, or a name field the page sends with the action. A name not declared here is refused. At most 5000 records per collection, 32 KiB each. To see another player's write without polling on a timer, loop a long poll: fetch(\"changes?shared=\"+v.shared+\"&records=\"+v.records) answers as soon as the shared collections or this user's records change (or after about 25 s) with {shared, records} versions to pass back next time; start with both empty. Passed wholesale on update ([] clears)."},
 				"private_db":         {Type: "boolean", Description: "(create/update) Give this app its OWN dedicated database file instead of sharing the common custom-apps store. Set true for a data-heavy app (many records, or data you want isolated / independently disposable): its records live in a separate hardware-encrypted file, and deleting the app removes that data cleanly. Leave false (default) for ordinary small apps; the shared store is fine. Opt-in only: flipping this on an EXISTING app starts a fresh empty store and does NOT migrate records already saved in the shared store, so choose it at create time."},
-				"agent_id":           {Type: "string", Description: "(create/update) Optional name or id of an agent that powers this app: a chat section talks to it, and the page's own code can ask it one question with fetch(\"ask\", {method: \"POST\", body: JSON.stringify({prompt: \"...\", json: false})}) -> {text}. An ask runs the agent's instructions with NO tools (the page may use its voice, never its tools or credentials), the owner pays, and it is capped per day (see ask_daily_usd). Use it for generated dialogue, a summary of the user's data, a suggestion: not for anything the owner's tools must do. It is the PAGE's call: a data source or action script cannot reach it (a script's fetch is for other sites)."},
+				"agent_id":           {Type: "string", Description: "(create/update) Optional name or id of an agent that powers this app. USE AN EXISTING AGENT when one fits: check agents(action=\"list\") first and offer the user the one that does the job (\"Use your research agent, or make a new one?\"); create one (with owning_app) only when none fits or they ask for a new one. The agent's page lists the apps that use it, and deleting it warns about them. A chat section talks to it, and the page's own code can ask it one question with fetch(\"ask\", {method: \"POST\", body: JSON.stringify({prompt: \"...\", json: false})}) -> {text}. An ask runs the agent's instructions with NO tools (the page may use its voice, never its tools or credentials), the owner pays, and it is capped per day (see ask_daily_usd). Use it for generated dialogue, a summary of the user's data, a suggestion: not for anything the owner's tools must do. It is the PAGE's call: a data source or action script cannot reach it (a script's fetch is for other sites)."},
 				"ask_daily_usd":      {Type: "number", Description: "(create/update) What the page may spend per day asking the app's agent, the whole app together, in dollars. Default 2.00. The owner pays."},
 				"ask_user_daily_usd": {Type: "number", Description: "(create/update) The same per user, so one user of a shared app cannot spend everyone's. Default 0.50. Each user may also ask at most 200 times a day."},
 				"pipeline_id":        {Type: "string", Description: "(create/update) Optional name or id of a stored pipeline this app RUNS: required by a \"pipeline\" section, which gives the app a submit form, a live stage-by-stage transcript, and a history of past runs. Author the pipeline first with the `pipeline` tool. This is how a multi-stage recipe (research, review, debate) becomes an app the user can open, rather than a tool only an agent can call."},
@@ -143,7 +143,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			Required: []string{"action"},
 		},
 		Touches: appDefTouches,
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (out string, err error) {
 			action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
 			switch action {
 			case "update", "update_section", "add_section", "remove_section", "patch_html", "patch", "replace_function", "patch_function":
@@ -158,9 +158,19 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			case "update", "update_section", "add_section", "remove_section", "patch_html", "patch",
 				"replace_function", "patch_function", "revert", "undo", "restore", "delete", "add_asset", "remove_asset":
 				if slug := appDefBatchLane(args); slug != "" {
-					if _, ok := LoadAppSpec(t.user, slug); ok {
+					if prev, ok := LoadAppSpec(t.user, slug); ok {
 						if msg := t.approveChange("app", slug, appChangeDetail(action, args), true); msg != "" {
 							return msg, nil
+						}
+						// An agent this app stops using, by this change or by
+						// its delete, is offered for deletion when nothing else
+						// uses it (agent_used_by.go).
+						if prevAgent := strings.TrimSpace(prev.AgentID); prevAgent != "" {
+							defer func() {
+								if err == nil {
+									out += t.appAgentLeftoverNote(slug, prevAgent)
+								}
+							}()
 						}
 					}
 				}
@@ -385,4 +395,30 @@ func appChangeDetail(action string, args map[string]any) string {
 		return verb + "."
 	}
 	return verb + " (" + strings.Join(parts, "; ") + ")."
+}
+
+// appAgentLeftoverNote is what an app_def result adds when the app stopped
+// using an agent (rebound, or the app deleted) that nothing else uses now:
+// a prompt to ask the owner whether to delete it. Never deletes anything.
+// "" when the app still uses it, the agent is gone, or something else uses it.
+func (t *chatTurn) appAgentLeftoverNote(slug, prevAgent string) string {
+	spec, appLives := LoadAppSpec(t.user, slug)
+	if appLives && strings.TrimSpace(spec.AgentID) == prevAgent {
+		return ""
+	}
+	a, ok := findAgentByNameOrID(t.udb, t.user, prevAgent)
+	if !ok || isSeedID(a.ID) {
+		return ""
+	}
+	if !appLives && strings.EqualFold(strings.TrimSpace(a.OwningApp), slug) {
+		return "" // the delete's own leftovers list names it (appOwnedLeftovers)
+	}
+	if len(agentUsedBy(t.udb, t.user, a)) > 0 {
+		return ""
+	}
+	name := chFirst(a.Name, a.ID)
+	if strings.EqualFold(strings.TrimSpace(a.OwningApp), slug) {
+		return fmt.Sprintf("\n\nNOTE: the agent %q was made for this app, and no app, pipeline or machine uses it now. Ask the user whether to delete it (delete_agent, id %s). Do not delete it without asking.", name, a.ID)
+	}
+	return fmt.Sprintf("\n\nNOTE: the agent %q was this app's agent, and no app, pipeline or machine uses it now. Ask the user whether they still want it (they may use it on its own); delete it (delete_agent, id %s) only if they say so.", name, a.ID)
 }

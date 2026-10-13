@@ -334,7 +334,15 @@ func (T *OrchestrateApp) handleAgentSchedules(w http.ResponseWriter, udb Databas
 	if names == nil {
 		names = []string{}
 	}
-	writeJSON(w, map[string]any{"names": names, "keep_days": int(parkedExpiry.Hours() / 24)})
+	// And what stops working without it: the apps, pipelines and machines
+	// that run through it (agent_used_by.go).
+	usedBy := []string{}
+	if a, ok := loadAgent(udb, id); ok {
+		for _, u := range agentUsedBy(udb, user, a) {
+			usedBy = append(usedBy, u.Name+" ("+u.Kind+")")
+		}
+	}
+	writeJSON(w, map[string]any{"names": names, "keep_days": int(parkedExpiry.Hours() / 24), "used_by": usedBy})
 }
 
 // agentDeleteData is the editor Delete button's data for the client action.
@@ -373,6 +381,10 @@ const agentDeleteAskJS = `<script>
                 d.style.cssText = 'margin:0 0 0.5rem;line-height:1.45' + (mute ? ';color:var(--text-mute);font-size:var(--fs-sm)' : '');
                 d.textContent = text;
                 body.appendChild(d);
+              }
+              var usedBy = info.used_by || [];
+              if (usedBy.length) {
+                line('These run through it and will stop working: ' + usedBy.join(', ') + '. Point them at another agent first (an app\'s agent is in its Settings), or delete anyway.');
               }
               line('Its conversations, memory, knowledge and any sub-agents it owns are deleted. This cannot be undone.');
               body.dataset.schedules = 'keep';

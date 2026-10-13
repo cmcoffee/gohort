@@ -585,6 +585,25 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			if sec, ok := agentMoveSection(udb, user, rec); ok {
 				sections = append(sections, sec)
 			}
+			// Used by: what runs through this agent, so it is plain before
+			// anyone changes or deletes it (agent_used_by.go). Only when
+			// something does.
+			if uses := agentUsedBy(udb, user, rec); len(uses) > 0 {
+				var pairs []ui.DisplayPair
+				for _, k := range []struct{ field, label string }{{"apps", "Apps"}, {"pipelines", "Pipelines"}, {"machines", "Machines"}} {
+					if usedByKind(uses, strings.TrimSuffix(k.field, "s")) != "" {
+						pairs = append(pairs, ui.DisplayPair{Label: k.label, Field: k.field})
+					}
+				}
+				sections = append(sections, ui.Section{
+					Title:    "Used by",
+					Subtitle: "These run through this agent. Changing it changes them; deleting it stops them working until they are pointed at another agent.",
+					Body: ui.DisplayPanel{
+						Source: "../api/agents/" + id + "/used-by",
+						Pairs:  pairs,
+					},
+				})
+			}
 		}
 	}
 

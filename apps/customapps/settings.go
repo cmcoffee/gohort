@@ -205,12 +205,28 @@ func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, 
 	if !owner {
 		subtitle = "Your own settings for this shared app. " + subtitle
 	}
+	sections := []ui.Section{}
+	// The agent the app asks: its chat, and every ask() and run_agent in its
+	// scripts. The owner's to change, and the place to put it right when the
+	// agent it named was deleted.
+	if owner && strings.TrimSpace(spec.AgentID) != "" {
+		agentSub := "The agent this app asks: its chat, and every question its page and scripts put to a model. Pick another to switch it."
+		if !T.appAgentExists(spec) {
+			agentSub = "This app's agent was deleted, so its chat and the questions it asks a model stop working. Pick another agent to get it working again."
+		}
+		sections = append(sections, ui.Section{Title: "Agent", Subtitle: agentSub, Body: ui.FormPanel{
+			Source: base + "/_settings/agent",
+			Fields: []ui.FormField{{Field: "agent", Label: "Agent", Type: "select",
+				OptionsSource: "/orchestrate/api/console/agent-options"}},
+		}})
+	}
+	sections = append(sections, ui.Section{Title: "Settings", Subtitle: subtitle, Body: body})
 	ui.Page{
 		Title:     spec.Name + " settings",
 		ShowTitle: true,
 		BackURL:   base + "/",
 		MaxWidth:  "720px",
-		Sections:  []ui.Section{{Title: "Settings", Subtitle: subtitle, Body: body}},
+		Sections:  sections,
 	}.ServeHTTP(w, r)
 }
 
@@ -331,4 +347,64 @@ func (T *CustomApps) applySettings(args map[string]any, spec AppSpec, uid string
 		args[k] = v
 	}
 	args["caller"] = appscript.CallerAlias(spec, uid)
+}
+
+// appAgentExists reports whether the agent an app names still resolves for
+// its owner. True when orchestrate is not running here, so nothing claims an
+// agent is gone without having looked.
+func (T *CustomApps) appAgentExists(spec AppSpec) bool {
+	orch := findOrchestrate()
+	if orch == nil || strings.TrimSpace(spec.AgentID) == "" {
+		return true
+	}
+	_, ok := orch.LookupAppAgent(spec.Owner, spec.AgentID)
+	return ok
+}
+
+// handleSettingsAgent is the Agent form's record: GET {agent} (empty when the
+// agent it names is gone), POST {agent} rebinds the app to another of the
+// owner's agents. The owner's only.
+func (T *CustomApps) handleSettingsAgent(w http.ResponseWriter, r *http.Request, spec AppSpec, owner bool) {
+	if !owner {
+		http.Error(w, "only the app's owner can change its agent", http.StatusForbidden)
+		return
+	}
+	orch := findOrchestrate()
+	if orch == nil {
+		http.Error(w, "agents are not available here", http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		id := ""
+		if a, ok := orch.LookupAppAgent(spec.Owner, spec.AgentID); ok {
+			id = a.ID
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, map[string]any{"agent": id})
+	case http.MethodPost:
+		var body struct {
+			Agent string `json:"agent"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		a, ok := orch.LookupAppAgent(spec.Owner, strings.TrimSpace(body.Agent))
+		if !ok {
+			http.Error(w, "pick one of your agents", http.StatusBadRequest)
+			return
+		}
+		if a.ID != spec.AgentID {
+			spec.AgentID = a.ID
+			SaveAppSpecAs(spec, "agent changed in Settings")
+		}
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			name = a.ID
+		}
+		writeJSON(w, map[string]any{"ok": true, "message": "This app now asks " + name + "."})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
