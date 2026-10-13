@@ -363,18 +363,18 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	// picker you cannot use is a page that has to explain itself twice.
 	if mine {
 		page.Sections = append(page.Sections, ui.Section{
-			Title:    "Share with users",
-			Subtitle: "Let specific other users read and run this pipeline.",
+			Title:    "Share with people or a team",
+			Subtitle: "Let specific people, or a team you are on, read and run this pipeline.",
 			Detail: "They run YOUR recipe against THEIR agents, tools and credentials: nothing of yours travels with the share, and nothing of theirs comes back." +
 				"Editing stays yours: a recipient can run it and take a copy, not change it. Empty = private to you. An admin can audit or revoke shares.",
 			Body: ui.ACLPicker(ui.ACLPickerConfig{
-				OptionsSource: "api/user-candidates",
+				OptionsSource: "api/user-candidates?groups=1",
 				RecordSource:  "api/pipelines/" + url_(def.ID),
 				Field:         "allowed_users",
 				PostTo:        "api/pipelines/" + url_(def.ID) + "/share",
 				Method:        "POST",
 				Noun:          "user",
-				Intro:         "Users who may run this pipeline.",
+				Intro:         "People, or a team you are on, who may run this pipeline.",
 				EmptyText:     "No other users to share with yet.",
 			}),
 		})

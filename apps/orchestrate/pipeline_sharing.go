@@ -105,12 +105,8 @@ func userCanRunSharedPipeline(def PipelineDef, reqUser string) bool {
 	if def.Published {
 		return true
 	}
-	for _, u := range def.AllowedUsers {
-		if u == reqUser {
-			return true
-		}
-	}
-	return false
+	// By name, or through a team the owner and reqUser are both on.
+	return SharedWithUser(def.AllowedUsers, def.Owner, reqUser)
 }
 
 // normalizeShareList cleans a submitted recipient list: trimmed, de-duplicated,
@@ -232,16 +228,18 @@ func pipelineMissingReason(user, id string) string {
 // package could not see. Paused-and-kept, like every other broken dependency, so
 // the owner of the schedule decides whether to repoint or delete it.
 func breakSchedulesForLostRecipients(def PipelineDef, before []string) {
+	// People, not entries: a team dropped is each of its members, and a
+	// member who still has it by name or through another team keeps it.
 	still := map[string]bool{}
-	for _, u := range def.AllowedUsers {
+	for _, u := range ShareMembers(def.AllowedUsers, def.Owner) {
 		still[u] = true
 	}
 	label := strings.TrimSpace(def.Name)
 	if label == "" {
 		label = def.ID
 	}
-	for _, u := range before {
-		if u == "" || still[u] {
+	for _, u := range ShareMembers(before, def.Owner) {
+		if still[u] {
 			continue
 		}
 		for _, sa := range ListStandingAgents(RootDB, u) {
@@ -278,7 +276,7 @@ func listUserOwnedPipelinesForAdmin(db Database) []UserOwnedPipelineRow {
 				ID:         d.ID,
 				Owner:      d.Owner,
 				Name:       d.Name,
-				SharedWith: strings.Join(d.AllowedUsers, ", "),
+				SharedWith: ShareRecipientsText(d.AllowedUsers),
 				Shared:     len(d.AllowedUsers) > 0,
 				Stages:     len(d.Stages),
 				Published:  d.Published,

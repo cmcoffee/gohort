@@ -220,3 +220,29 @@ func TestAdminAuditSeesEveryOwnedMachine(t *testing.T) {
 		t.Errorf("audit must show both shared and unshared: %+v", rows)
 	}
 }
+
+// A machine shared with a team reaches its members and nobody outside it, and
+// taking the team off breaks a member's schedule.
+func TestAMachineSharedWithATeamReachesItsMembers(t *testing.T) {
+	root, ownerDB, peerDB := machineShareWorld(t)
+	teamWorld(t, root)
+	def := sharedMachine(t, ownerDB, "Outage Review", "group:g-ops")
+
+	if _, owner, mine, found := resolveMachineFor("peer", peerDB, def.ID); !found || mine || owner != "owner" {
+		t.Fatalf("peer, on Ops, cannot run it: found=%v mine=%v owner=%q", found, mine, owner)
+	}
+	if _, ok := machineForUser("peer", "Outage Review"); !ok {
+		t.Error("peer's schedule cannot resolve it by name")
+	}
+	if got := sharedMachinesFor("dana"); len(got) != 0 {
+		t.Errorf("dana, outside Ops, has it: %+v", got)
+	}
+
+	SaveStandingAgent(root, StandingAgent{Owner: "peer", Name: "nightly review", MachineID: def.ID, Mission: "go"})
+	before := def.AllowedUsers
+	def.AllowedUsers = nil
+	breakMachineSchedulesForLostRecipients(SaveMachineDef(ownerDB, def), before)
+	if sa, _ := GetStandingAgent(root, "peer", "nightly review"); !sa.Broken {
+		t.Error("the team was taken off, but peer's schedule still reads as healthy")
+	}
+}

@@ -15,7 +15,6 @@ package orchestrate
 
 import (
 	"strconv"
-	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/shareledger"
@@ -114,7 +113,7 @@ func registerShareProviders() {
 			def.AllowedUsers = mergeRecipients(def.AllowedUsers, recipients)
 			SavePipelineDefAs(udb, def, "shared")
 			return []string{
-				"Pipeline " + def.Name + " → " + strings.Join(recipients, ", "),
+				"Pipeline " + def.Name + " → " + ShareRecipientsText(recipients),
 				"Pipeline " + def.Name + ": they run YOUR definition against their own agents, tools and credentials.",
 			}
 		},
@@ -167,7 +166,7 @@ func registerShareProviders() {
 			def.AllowedUsers = mergeRecipients(def.AllowedUsers, recipients)
 			SaveMachineDefAs(udb, def, "shared")
 			return []string{
-				"Machine " + def.Name + " → " + strings.Join(recipients, ", "),
+				"Machine " + def.Name + " → " + ShareRecipientsText(recipients),
 				"Machine " + def.Name + ": they run YOUR definition against their own agents, tools and credentials.",
 			}
 		},
@@ -214,7 +213,7 @@ func recipeGrant(id, name, recOwner, owner string, published bool, users []strin
 			Detail: "Take it back from its own page, without asking anybody."}, true
 	case len(users) > 0:
 		return shareledger.Grant{ID: id, Name: name, Recipients: users,
-			Reach:     "Shared with " + strings.Join(users, ", "),
+			Reach:     "Shared with " + ShareRecipientsText(users),
 			Revocable: true}, true
 	}
 	return shareledger.Grant{}, false

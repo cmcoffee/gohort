@@ -129,7 +129,7 @@ func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request)
 				Status:     pipelineStatusText(d),
 				EditURL:    "/orchestrate/pipeline?id=" + d.ID,
 				Mine:       true,
-				SharedWith: strings.Join(d.AllowedUsers, ", "),
+				SharedWith: ShareRecipientsText(d.AllowedUsers),
 			})
 		}
 		// Pipelines other people shared, after the user's own and labelled with

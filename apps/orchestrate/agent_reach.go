@@ -257,7 +257,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 			case def.Published:
 				level, reach = reachDeployment, "Deployment-wide"
 			case len(def.AllowedUsers) > 0:
-				level, reach = reachNamed, "Shared with "+strings.Join(def.AllowedUsers, ", ")
+				level, reach = reachNamed, "Shared with "+ShareRecipientsText(def.AllowedUsers)
 			}
 			add(reachItem{Kind: "Pipeline", Name: def.Name, Reach: reach,
 				How:   "Dispatched by id. It runs in the namespace of whoever started it.",
@@ -271,7 +271,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 			case def.Published:
 				level, reach = reachDeployment, "Deployment-wide"
 			case len(def.AllowedUsers) > 0:
-				level, reach = reachNamed, "Shared with "+strings.Join(def.AllowedUsers, ", ")
+				level, reach = reachNamed, "Shared with "+ShareRecipientsText(def.AllowedUsers)
 			}
 			add(reachItem{Kind: "Machine", Name: def.Name, Reach: reach,
 				How:   "Run by id. It runs in the namespace of whoever started it.",

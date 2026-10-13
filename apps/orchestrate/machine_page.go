@@ -486,18 +486,18 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 	// Share with users — the owner's decision, so the section exists only on
 	// the owner's page. A recipient gets the note on theirs instead.
 	page.Sections = append(page.Sections, ui.Section{
-		Title:    "Share with users",
-		Subtitle: "Let specific other users read and run this machine.",
+		Title:    "Share with people or a team",
+		Subtitle: "Let specific people, or a team you are on, read and run this machine.",
 		Detail: "They run YOUR procedure against THEIR agents, tools and credentials: nothing of yours travels with the share, and nothing of theirs comes back." +
 			"Editing stays yours: a recipient can run it, put it on a timetable, hand it to their agents, and take a copy, not change it. Empty = private to you. An admin can audit or revoke shares.",
 		Body: ui.ACLPicker(ui.ACLPickerConfig{
-			OptionsSource: "api/user-candidates",
+			OptionsSource: "api/user-candidates?groups=1",
 			RecordSource:  "api/machines/" + url_(def.ID),
 			Field:         "allowed_users",
 			PostTo:        "api/machines/" + url_(def.ID) + "/share",
 			Method:        "POST",
 			Noun:          "user",
-			Intro:         "Users who may run this machine.",
+			Intro:         "People, or a team you are on, who may run this machine.",
 			EmptyText:     "No other users to share with yet.",
 		}),
 	})

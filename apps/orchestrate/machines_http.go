@@ -168,7 +168,7 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 				Status:     machineStatusText(d),
 				EditURL:    "/orchestrate/machine?id=" + d.ID,
 				Mine:       true,
-				SharedWith: strings.Join(d.AllowedUsers, ", "),
+				SharedWith: ShareRecipientsText(d.AllowedUsers),
 			})
 		}
 		// Machines other people shared, after the user's own and labelled with

@@ -391,3 +391,66 @@ func TestAdminAuditSeesEveryOwnedPipeline(t *testing.T) {
 		t.Errorf("audit must show both shared and unshared: %+v", rows)
 	}
 }
+
+// teamWorld puts "owner" and "peer" on a team that carries shares, with
+// "dana" outside it, in the auth store the sharing helpers read.
+func teamWorld(t *testing.T, root Database) {
+	t.Helper()
+	prev := AuthDB
+	AuthDB = func() Database { return root }
+	t.Cleanup(func() { AuthDB = prev })
+	SaveAppGroup(root, AppGroup{ID: "g-ops", Name: "Ops", Shareable: true})
+	root.Set(AuthTable, "user:owner", AuthUser{Username: "owner", Groups: []string{"g-ops"}})
+	root.Set(AuthTable, "user:peer", AuthUser{Username: "peer", Groups: []string{"g-ops"}})
+	root.Set(AuthTable, "user:dana", AuthUser{Username: "dana"})
+}
+
+// A pipeline shared with a team reaches its members, schedules included, and
+// nobody outside it. Taking the team off breaks a member's schedule, unless
+// they still have the pipeline by name.
+func TestAPipelineSharedWithATeamReachesItsMembers(t *testing.T) {
+	root := scheduleWorld(t)
+	teamWorld(t, root)
+	def := schedulePipeline(t, root, "group:g-ops")
+
+	if got := sharedPipelinesFor("peer"); len(got) != 1 || got[0].Def.ID != def.ID {
+		t.Fatalf("peer, on Ops, does not have it: %+v", got)
+	}
+	if _, ok := pipelineForUser("peer", def.ID); !ok {
+		t.Error("peer's schedule cannot resolve it")
+	}
+	if got := sharedPipelinesFor("dana"); len(got) != 0 {
+		t.Errorf("dana, outside Ops, has it: %+v", got)
+	}
+	if g, ok := recipeGrant(def.ID, def.Name, def.Owner, "owner", false, def.AllowedUsers); !ok || g.Reach != "Shared with the Ops team" {
+		t.Errorf("reach = %q", g.Reach)
+	}
+
+	SaveStandingAgent(root, StandingAgent{Owner: "peer", Name: "nightly-run", PipelineID: def.ID, Mission: "go"})
+	before := def.AllowedUsers
+	def.AllowedUsers = []string{"peer"}
+	breakSchedulesForLostRecipients(SavePipelineDef(UserDB(root, "owner"), def), before)
+	if sa, _ := GetStandingAgent(root, "peer", "nightly-run"); sa.Broken {
+		t.Error("peer still has it by name, but their schedule was broken")
+	}
+	def.AllowedUsers = []string{"group:g-ops"}
+	SavePipelineDef(UserDB(root, "owner"), def)
+	before = def.AllowedUsers
+	def.AllowedUsers = nil
+	breakSchedulesForLostRecipients(SavePipelineDef(UserDB(root, "owner"), def), before)
+	if sa, _ := GetStandingAgent(root, "peer", "nightly-run"); !sa.Broken {
+		t.Error("the team was taken off, but peer's schedule still reads as healthy")
+	}
+}
+
+// The owner leaving the team ends the share: it was theirs to share with only
+// while they were on it.
+func TestATeamShareEndsWhenTheOwnerLeaves(t *testing.T) {
+	root := scheduleWorld(t)
+	teamWorld(t, root)
+	def := schedulePipeline(t, root, "group:g-ops")
+	root.Set(AuthTable, "user:owner", AuthUser{Username: "owner"})
+	if _, ok := pipelineForUser("peer", def.ID); ok {
+		t.Error("the owner left Ops, but peer still reaches the pipeline")
+	}
+}

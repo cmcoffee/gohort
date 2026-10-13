@@ -103,12 +103,8 @@ func userCanRunSharedMachine(def MachineDef, reqUser string) bool {
 	if def.Published {
 		return true
 	}
-	for _, u := range def.AllowedUsers {
-		if u == reqUser {
-			return true
-		}
-	}
-	return false
+	// By name, or through a team the owner and reqUser are both on.
+	return SharedWithUser(def.AllowedUsers, def.Owner, reqUser)
 }
 
 // SharedMachine is one machine reachable by somebody who does not own it,
@@ -213,16 +209,18 @@ func machineMissingReason(user, ref string) string {
 // dependency, so the owner of the schedule decides whether to repoint or delete
 // it.
 func breakMachineSchedulesForLostRecipients(def MachineDef, before []string) {
+	// People, not entries: a team dropped is each of its members, and a
+	// member who still has it by name or through another team keeps it.
 	still := map[string]bool{}
-	for _, u := range def.AllowedUsers {
+	for _, u := range ShareMembers(def.AllowedUsers, def.Owner) {
 		still[u] = true
 	}
 	label := strings.TrimSpace(def.Name)
 	if label == "" {
 		label = def.ID
 	}
-	for _, u := range before {
-		if u == "" || still[u] {
+	for _, u := range ShareMembers(before, def.Owner) {
+		if still[u] {
 			continue
 		}
 		for _, sa := range ListStandingAgents(RootDB, u) {
@@ -269,7 +267,7 @@ func listUserOwnedMachinesForAdmin(db Database) []UserOwnedMachineRow {
 				ID:         d.ID,
 				Owner:      d.Owner,
 				Name:       d.Name,
-				SharedWith: strings.Join(d.AllowedUsers, ", "),
+				SharedWith: ShareRecipientsText(d.AllowedUsers),
 				Shared:     len(d.AllowedUsers) > 0,
 				Steps:      len(d.Phases),
 				Unattended: d.Unattended,
