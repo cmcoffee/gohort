@@ -624,6 +624,13 @@ func (pr *planRun) askUserFormToolDef() AgentToolDef {
 					var one map[string]any
 					if uerr := json.Unmarshal([]byte(strings.TrimSpace(s)), &one); uerr == nil {
 						raw = []any{one}
+					} else {
+						// Refused, not relayed. This used to fall through to an
+						// empty form: the tool said "relayed", the turn ended,
+						// and the person was left with a form that asked nothing
+						// while the agent waited for their answer.
+						t.turnDiag("form-steps-unusable", fmt.Sprintf("The agent's form arrived as text that is not valid JSON (%v); it was asked to send it again.", err))
+						return "", fmt.Errorf("nothing was shown: steps arrived as a string that is not valid JSON (%v). Send steps as an ARRAY of objects, not a string: [{\"question\": \"...\", \"options\": [\"...\"]}]", err)
 					}
 				}
 			}
@@ -659,6 +666,11 @@ func (pr *planRun) askUserFormToolDef() AgentToolDef {
 			default:
 				Debug("[orchestrate.ask_form] steps arg in unusable shape %T: %.300v", raw, raw)
 				t.turnDiag("form-steps-unusable", fmt.Sprintf("The agent's form arrived in an unusable shape (%T) and rendered without questions.", raw))
+			}
+			// A form with no questions is not a form: refuse it, and the turn
+			// carries on so the agent can send one that asks something.
+			if len(steps) == 0 {
+				return "", fmt.Errorf("nothing was shown: the form had no usable steps. Send steps as an array of objects, each with a question: [{\"question\": \"...\", \"options\": [\"...\"]}]")
 			}
 			pr.capturedFormSteps = steps
 			pr.cancelOrch()
