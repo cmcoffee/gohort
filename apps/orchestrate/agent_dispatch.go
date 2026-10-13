@@ -697,6 +697,11 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 			subSess.DispatchParentAgentID = p
 		}
 	}
+	// And it works within that agent's limits (builder_delegation.go).
+	applyBuilderDelegation(subSess, ownerDB)
+	// Nobody to ask here: a change to what already exists queues
+	// (change_approval.go).
+	subSess.ApproveChange = changeApprover(subSess, runtimeUser, target.ID, target.Name, nil)
 	defer clearAuthoringInProgress(runtimeDB, subSessID)
 	defer DeleteSessionTempTools(runtimeDB, subSessID)
 	// Register this dispatch in the runs ledger so a delegated sub-agent shows
@@ -1570,6 +1575,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		ChannelHandle:      run.ChannelHandle,
 		DeniedCredentials:  credentialDenySet(target, runtimeUser),
 	}
+	// Builder sent work by another agent stamps what it builds as that
+	// agent's, and works within that agent's limits (builder_delegation.go).
+	if id := strings.TrimSpace(run.DelegatorAgentID); id != "" && isBuilderAgent(target.ID) {
+		subSess.DispatchParentAgentID = id
+		applyBuilderDelegation(subSess, ownerDB)
+	}
+	// Nobody to ask here: a change to what already exists queues
+	// (change_approval.go).
+	subSess.ApproveChange = changeApprover(subSess, runtimeUser, target.ID, target.Name, nil)
 	subSess.DirectCredentialRefusal = directCredentialRefusal(target, subSess)
 	subSess.ToolFailureAdvice = toolFailureAdvice(target, false, func() bool { return nonOwnerRequester(ctx) })
 	// Inherit the delegator's workspace when there is one — the sub-agent is

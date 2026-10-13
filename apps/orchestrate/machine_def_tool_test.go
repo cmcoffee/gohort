@@ -23,7 +23,7 @@ func machineToolFixture(t *testing.T) *chatTurn {
 	udb := UserDB(root, "u")
 	app := &OrchestrateApp{}
 	app.DB = root
-	return &chatTurn{app: app, user: "u", udb: udb, agent: AgentRecord{ID: "builder", Owner: "u"}}
+	return &chatTurn{app: app, user: "u", udb: udb, agent: AgentRecord{ID: "builder", Owner: "u"}, changeAsk: approveEveryChange}
 }
 
 // toolPhases is the canonical two-phase shape as the LLM would send it:

@@ -333,6 +333,11 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	// Commit to the user's unified tool store, scoped to the focused agent.
 	// Idempotent replace by name (bundleAgentToolByID upserts the ONE row and
 	// ensures this agent is in its scope; a shared row keeps pool visibility).
+	// A run another agent sent may not attach what that agent may not use
+	// (builder_delegation.go).
+	if msg := agentToolsRefusal(sess, []TempTool{tt}, nil); msg != "" {
+		return msg, nil
+	}
 	_, replaced := UserToolByName(sess.DB, sess.Username, tt.Name)
 	if err := bundleAgentToolByID(sess.DB, sess.Username, target.ID, tt); err != nil {
 		return "", fmt.Errorf("save tool for focused agent: %v", err)

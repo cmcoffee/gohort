@@ -70,6 +70,13 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 		if a.Brief != "" {
 			detail = "bind 1:1 thread (" + a.Brief + ")"
 		}
+	case changeApprovalAction:
+		if rec, found := loadAgent(udb, a.Agent); found {
+			who = rec.Name
+		} else if isBuilderAgent(a.Agent) {
+			who = "Builder"
+		}
+		detail = a.Brief + " (approving lets it make this change in its next run, for a day)"
 	case "autonomous_tool":
 		if rec, found := loadAgent(udb, a.Agent); found {
 			who = rec.Name

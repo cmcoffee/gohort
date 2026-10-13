@@ -115,6 +115,9 @@ type chatTurn struct {
 	// test — and every method on it tolerates that.
 	prep *prepClock
 	sse  *sseWriter
+	// changeAsk, when set, answers the owner's approval of a change in place
+	// of the chat card (change_approval.go). Tests set it; nil uses the card.
+	changeAsk func(prompt, detail string, yes []string) string
 	// askVia is the question card of the turn that DISPATCHED this one, for a
 	// sub-turn that has no viewer of its own. A run an agent starts for the
 	// user is the user's run: a locked agent the sub-run wants to change asks

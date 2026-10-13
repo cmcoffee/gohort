@@ -78,6 +78,33 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
+			// A change to a pipeline that already exists asks the owner first,
+			// once per pipeline per session (change_approval.go).
+			switch action {
+			case "update", "delete":
+				if def, ok := t.findPipeline(args); ok {
+					verb := "Change its stages or settings."
+					if action == "delete" {
+						verb = "Delete it."
+					}
+					if msg := t.approveChange("pipeline", def.Name, verb, true); msg != "" {
+						return msg, nil
+					}
+				}
+			case "create":
+				if old := strings.TrimSpace(stringArg(args, "replaces")); old != "" {
+					if def, ok := t.findPipeline(map[string]any{"id": old, "name": old}); ok {
+						if msg := t.approveChange("pipeline", def.Name, "Replace it with the new pipeline "+stringArg(args, "name")+", which deletes it.", true); msg != "" {
+							return msg, nil
+						}
+					}
+				}
+				if n := strings.TrimSpace(stringArg(args, "name")); n != "" {
+					if _, taken := t.findPipeline(map[string]any{"name": n}); !taken {
+						t.approveChange("pipeline", n, "", false) // new: this session's own
+					}
+				}
+			}
 			switch action {
 			case "create", "update":
 				return t.pipelineCreateOrUpdate(args, action == "update")

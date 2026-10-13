@@ -18,7 +18,7 @@ func folderTestTurn(t *testing.T) (*chatTurn, string) {
 	SetAppAssetsDir(t.TempDir())
 	SetWorkspacesDir(t.TempDir())
 	t.Cleanup(func() { RootDB = prevRoot; SetAppAssetsDir(prevAssets); SetWorkspacesDir(prevWS) })
-	turn := &chatTurn{user: "u", agent: AgentRecord{ID: "builder"}}
+	turn := &chatTurn{user: "u", agent: AgentRecord{ID: "builder"}, changeAsk: approveEveryChange}
 	ws, _, _ := turn.turnWorkspace()
 	if err := os.MkdirAll(ws, 0o755); err != nil {
 		t.Fatal(err)

@@ -172,7 +172,9 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 	if UserIsAdmin(authoringUser) {
 		tools = append(tools, saveTemplateToolDef(authoringUser))
 	}
-	return tools
+	// A run another agent sent may not reach an API that agent may not use
+	// (builder_delegation.go).
+	return limitCredentialToolsToDelegator(sess, tools)
 }
 
 // emitCredentialSetupCard drops a credential_setup block into the chat

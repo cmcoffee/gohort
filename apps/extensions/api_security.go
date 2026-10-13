@@ -134,9 +134,9 @@ func apiSecurityFields() []ui.FormField {
 		},
 			Help: "All my agents: each gets a fetch_url_<name> tool for it. Only tools: no such tool, it is reached only through tools you build that name it. Only these agents: the ones you pick below, and no other.",
 			Detail: "Only these agents is enforced wherever an agent runs: an agent not on the list loses this API's tools and cannot reach its host directly either. " +
-				"Include Builder if you want it to build and test tools for this API. The secret is never handed to an agent or a tool either way; calls are signed server-side."},
+				"Builder you open yourself can always work on it. Builder sent a job by one of your agents can only if that agent is on the list. The secret is never handed to an agent or a tool either way; calls are signed server-side."},
 		{Field: "only_agents", Label: "Agents that may use it", Type: "checklist",
-			OptionsSource: "/orchestrate/api/console/agent-options?include_builder=1", ShowWhen: "reach:agents"},
+			OptionsSource: "/orchestrate/api/console/agent-options", ShowWhen: "reach:agents"},
 		{Field: "ask", Label: "Ask me first", Type: "select", Options: []ui.SelectOption{
 			{Value: "never", Label: "Never"},
 			{Value: "writes", Label: "Before a write (POST, PUT, PATCH, DELETE)"},

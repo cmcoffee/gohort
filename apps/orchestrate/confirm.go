@@ -519,6 +519,13 @@ func (t *chatTurn) askInChat(prompt, detail string, yes []string) string {
 // when nil). False with no viewer attached, on timeout, or on a no; each of
 // those leaves a breadcrumb and settles the card in the event stream.
 func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any, allows map[string]bool) (string, bool) {
+	// A sub-run with no viewer of its own, started from a chat somebody is
+	// watching (agents(run) inline): the question goes to that chat, as it
+	// would if the person had asked for this directly, instead of being
+	// refused because nobody watches the sub-run.
+	if t != nil && t.sse == nil && t.askVia != nil {
+		return t.parkConfirmVia(req, actions, allows)
+	}
 	if t == nil || t.sse == nil {
 		Log("[orchestrate.confirm] %s stopped: %s, and this run has no interactive viewer, denied (fail closed)", req.tool, req.because)
 		if t != nil {
@@ -686,4 +693,35 @@ func firstNonBlank(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// parkConfirmVia asks a confirmation through the dispatching chat's question
+// card (chatTurn.askVia): one button per action but Deny, mapped back to the
+// action's value. Same answers as parkConfirm: the value picked, and whether
+// it is a yes.
+func (t *chatTurn) parkConfirmVia(req toolConfirmRequest, actions []map[string]any, allows map[string]bool) (string, bool) {
+	var labels []string
+	values := map[string]string{}
+	for _, a := range actions {
+		v, _ := a["value"].(string)
+		l, _ := a["label"].(string)
+		if v == "" || v == "deny" || l == "" {
+			continue
+		}
+		labels = append(labels, l)
+		values[l] = v
+	}
+	prompt := req.prompt
+	if prompt == "" {
+		prompt = "Allow " + req.tool + "?"
+	}
+	picked := values[t.askVia(prompt, req.detail, labels)]
+	if picked == "" {
+		t.turnDiag("tool-denied", fmt.Sprintf("%s was not run: %s, and the person watching said no (or did not answer).", req.tool, req.because))
+		return "", false
+	}
+	if allows != nil {
+		return picked, allows[picked]
+	}
+	return picked, picked == "allow" || picked == "always"
 }

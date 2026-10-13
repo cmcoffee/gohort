@@ -1095,6 +1095,12 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		// the child's network access mid-flight as well.
 		Network: t.network,
 	}
+	// Builder sent work by this agent works within this agent's limits
+	// (builder_delegation.go).
+	applyBuilderDelegation(subSess, t.udb)
+	// A change it makes to what already exists asks the owner in THIS chat,
+	// when somebody is watching it (change_approval.go).
+	subSess.ApproveChange = changeApprover(subSess, t.user, target.ID, target.Name, t.chatAsker())
 	subSess.DirectCredentialRefusal = directCredentialRefusal(target, subSess)
 	subSess.ToolFailureAdvice = toolFailureAdvice(target, false, func() bool { return nonOwnerRequester(t.ctx) })
 

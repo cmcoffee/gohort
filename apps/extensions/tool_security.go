@@ -6,8 +6,9 @@
 // permissions screens. The Security button opens one panel with three parts,
 // the same shape an API's has:
 //
-//   - How it runs: never run unattended, ask me before every call, and Lock
-//     (agents and Builder may not change it);
+//   - How it runs: never run unattended, and ask me before every call. There
+//     is no Lock: a change to an existing tool asks the owner every time
+//     (apps/orchestrate/change_approval.go);
 //   - Who can use it: All my agents, Only these agents (with the list), or
 //     Apps only. Builder-only is not a choice of its own:
 //     it is Only these agents with none ticked, since Builder reaches every
@@ -41,12 +42,8 @@ func toolRunSection(w http.ResponseWriter, r *http.Request, db Database, user, n
 			{Key: "ask_first", Label: "Ask me before every call", On: UserToolAsksInChat(db, user, "", name)},
 		}
 		note := "Never run unattended: it is held for you in a schedule or a channel message, where nobody is there to ask. " +
-			"Ask me before every call: every agent asks you first, in the chat or your approval queue."
-		if inPool {
-			items = append(items, pill{Key: "locked", Label: "Locked (agents and Builder may not change it)", On: row.Tool.Locked})
-		} else {
-			note += " Lock applies once the tool is kept for your agents."
-		}
+			"Ask me before every call: every agent asks you first, in the chat or your approval queue. " +
+			"Changes to it by Builder or an agent always ask you first."
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, map[string]any{"items": items, "note": note})
 	case http.MethodPost:
@@ -78,22 +75,15 @@ func toolRunApply(db Database, user, name, target string, on bool) (int, error) 
 		if !SetUserToolAsksInChat(db, user, "", name, on) {
 			return http.StatusBadRequest, Error("could not mark the tool")
 		}
-	case "never_unattended", "locked":
+	case "never_unattended":
 		row, inPool := UserToolByName(db, user, name)
 		if !inPool {
 			return http.StatusBadRequest, Error("keep the tool for your agents first (Who can use it), then set this")
 		}
-		if target == "locked" {
-			if row.Tool.Locked == on {
-				return http.StatusOK, nil
-			}
-			row.Tool.Locked = on
-		} else {
-			if row.Tool.NoUnattended == on {
-				return http.StatusOK, nil
-			}
-			row.Tool.NoUnattended = on
+		if row.Tool.NoUnattended == on {
+			return http.StatusOK, nil
 		}
+		row.Tool.NoUnattended = on
 		if !UpdatePersistentTempTool(db, user, row.Tool) {
 			return http.StatusBadRequest, Error("update failed")
 		}

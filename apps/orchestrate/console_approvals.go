@@ -60,6 +60,14 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	// its usual activate_sub_agent approval, so the built agent still lands
 	// held-for-activation — this approval authorizes the BUILD, the next the
 	// switch-on. Async, like the delegate approval below.
+	// approve_change: a change to something that already existed, tried with
+	// nobody watching (change_approval.go). Approving lets that agent make it
+	// in its next run.
+	if a.Action == changeApprovalAction {
+		grantChange(udb, a.Agent, a.Handle)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if a.Action == buildAgentAction {
 		go T.runApprovedDelegation(a, "builder")
 		Log("[operator.approval] build_agent approved: dispatching Builder for owner=%s requester=%s", a.Owner, a.FromAgent)

@@ -475,6 +475,8 @@ func (s *ToolSession) ForDetachedTask(ctx context.Context) *ToolSession {
 		DeniedCredentials:     s.DeniedCredentials,
 		CanScopeGlobal:        s.CanScopeGlobal,
 		DispatchParentAgentID: s.DispatchParentAgentID,
+		ToolEditRefusal:       s.ToolEditRefusal,
+		ApproveChange:         s.ApproveChange,
 		AuthoringAgentFn:      s.AuthoringAgentFn,
 
 		// What the work needs to run.

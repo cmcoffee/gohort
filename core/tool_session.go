@@ -191,6 +191,24 @@ type ToolSession struct {
 	// API; the fix belongs to Builder. Nil = no restriction.
 	DirectCredentialRefusal func(credName string) string
 
+	// ToolEditRefusal, when set, is asked before tool_def creates, updates or
+	// deletes a tool: "" lets it go ahead, and a non-empty string is the
+	// refusal to return instead. toolName is the tool being written, credName
+	// the credential the new definition names ("" when none). Set on a Builder
+	// run another agent sent, which may change only what that agent could use
+	// itself. Nil = no restriction.
+	ToolEditRefusal func(toolName, credName string) string
+
+	// ApproveChange, when set, is asked before an authoring tool creates,
+	// changes or deletes one of the owner's things: kind ("tool", "app",
+	// "skill", ...), its name, what the change is, and whether it existed
+	// before this call. "" lets it go ahead; anything else is the refusal to
+	// return. Something new, or already approved in this session, goes
+	// ahead; a change to something that existed asks the owner once per
+	// session, or waits in their approval queue when nobody is watching.
+	// Nil = no check.
+	ApproveChange func(kind, name, detail string, existed bool) string
+
 	// ToolFailureAdvice, when set, is asked when one of the user's own custom
 	// tools fails, and whatever it returns is added to the failed result. The
 	// host decides what the agent should do about a broken tool: offer the

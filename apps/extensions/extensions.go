@@ -465,7 +465,6 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			SharedWith string `json:"shared_with,omitempty"`
 			LastUsed   string `json:"last_used,omitempty"`
 			// User-managed governance flags (Extensions › Tools toggles).
-			Locked      bool `json:"locked"`       // frozen — AI can't modify/delete
 			Disabled    bool `json:"disabled"`     // off for every agent
 			BuilderOnly bool `json:"builder_only"` // exposed to Builder only
 			BoundOnly   bool `json:"bound_only"`   // hidden from agents; usable only where bound
@@ -554,7 +553,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				Credential: p.Tool.Credential, Category: toolCategoryOf(user, p.Tool), CategoryAuto: toolCategoryIsAuto(user, p.Tool),
 				Missing: missing, Shared: p.Shared, LastUsed: last,
 				SharedWith: sharedWithSummary(p.SharedWith),
-				Locked:     p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly, NoUnattended: p.Tool.NoUnattended,
+				Disabled:   p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly, NoUnattended: p.Tool.NoUnattended,
 				Requested: !p.Shared && pending, CanRequest: !p.Shared && !pending,
 				Pool: true, Deletable: true, DisableOK: true,
 				Group: "All Agents (Global tools)",
@@ -961,10 +960,6 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			tt.Category = strings.TrimSpace(body.Category)
-		case "lock":
-			tt.Locked = true
-		case "unlock":
-			tt.Locked = false
 		case "disable":
 			tt.Disabled = true
 		case "enable":
@@ -1983,17 +1978,14 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "⚠ missing", Color: "danger"},
 							}},
-							{Field: "locked", Type: "badge", Badges: []ui.BadgeMapping{
-								{Value: true, Label: "🔒 Locked", Color: "info"},
-							}},
 							{Field: "disabled", Type: "badge", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "Disabled", Color: "danger"},
 							}},
 							{Field: "bound_only", Type: "badge", Badges: []ui.BadgeMapping{
-								{Value: true, Label: "Bound only", Color: "info"},
+								{Value: true, Label: "Apps only", Color: "info"},
 							}},
 							{Field: "builder_only", Type: "badge", Badges: []ui.BadgeMapping{
-								{Value: true, Label: "Builder-only", Color: "warning"},
+								{Value: true, Label: "No agents", Color: "warning"},
 							}},
 							{Field: "no_unattended", Type: "badge", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "Never unattended", Color: "info"},
@@ -2127,11 +2119,9 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							// surfaces for one flag is how toggles fight each other. The
 							// row badge stays as the at-a-glance state; the API actions
 							// stay for compatibility.
-							// Delete is hidden while locked — unlock first.
 							{Type: "button", Label: "Delete", Method: "DELETE",
 								PostTo:     "api/tools?name={name}",
 								Variant:    "danger",
-								HideIf:     "locked",
 								OnlyIf:     "deletable",
 								Confirm:    "Delete this tool? Agents using it lose it.",
 								Optimistic: true},

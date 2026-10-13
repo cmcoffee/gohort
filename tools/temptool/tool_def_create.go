@@ -90,26 +90,79 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) string {
 	return "Saved to this agent's own tools (persists across sessions)."
 }
 
-// createGrouped dispatches between create_temp_tool (shell) and
-// create_api_tool (api) based on the mode arg.
-// persistentToolLocked reports whether a tool of this name is Locked in the
-// user's persistent pool. Lock is a user-only control set from Extensions ›
-// Extensions › Tools; the AI's create/update/delete honor it so a stable tool can't be
-// silently rewritten or removed. Session-only drafts (never locked) don't count.
-func persistentToolLocked(sess *ToolSession, name string) bool {
+// persistentToolExists reports whether a tool of this name is in the user's
+// persistent pool: something that existed before this session, which a
+// change asks the owner about (ToolSession.ApproveChange). Session-only
+// drafts do not count: they are this session's own work.
+func persistentToolExists(sess *ToolSession, name string) bool {
 	if sess == nil || sess.DB == nil || sess.Username == "" || name == "" {
 		return false
 	}
 	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
 		if p.Tool.Name == name {
-			return p.Tool.Locked
+			return true
 		}
 	}
 	return false
 }
 
-const lockedToolMsg = "Tool %q is LOCKED: it can't be modified or deleted. If it genuinely must change, the user unlocks it first in Extensions › Tools, then it's editable. Do NOT recreate it under a different name."
+// toolChangeRefused asks the session whether this change to a tool may go
+// ahead (ToolSession.ApproveChange). "" lets it.
+func toolChangeRefused(sess *ToolSession, name, detail string) string {
+	if sess == nil || sess.ApproveChange == nil || name == "" {
+		return ""
+	}
+	return sess.ApproveChange("tool", name, detail, persistentToolExists(sess, name))
+}
 
+// toolEditRefused asks the session whether this call may write the tool at
+// all, once for the tool and once for each credential the new definition
+// names (credential=, or a script's fetch_via:/secret: capability). "" lets it
+// go ahead. See ToolSession.ToolEditRefusal.
+func toolEditRefused(sess *ToolSession, name string, args map[string]any) string {
+	if sess == nil || sess.ToolEditRefusal == nil || name == "" {
+		return ""
+	}
+	creds := []string{""}
+	if c := strings.TrimSpace(StringArg(args, "credential")); c != "" {
+		creds = append(creds, c)
+	}
+	for _, c := range stringSliceArg(args["hook_capabilities"]) {
+		if i := strings.IndexByte(c, ':'); i >= 0 {
+			switch strings.ToLower(strings.TrimSpace(c[:i])) {
+			case "fetch_via", "secret":
+				creds = append(creds, strings.TrimSpace(c[i+1:]))
+			}
+		}
+	}
+	for _, c := range creds {
+		if msg := sess.ToolEditRefusal(name, c); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+// toolChangeDetail says what a create or update call would change, for the
+// owner's approval card: the fields it sets.
+func toolChangeDetail(verb string, args map[string]any) string {
+	var fields []string
+	for k := range args {
+		switch k {
+		case "name", "action", "test_args", "cases":
+			continue
+		}
+		fields = append(fields, k)
+	}
+	sort.Strings(fields)
+	if len(fields) == 0 {
+		return verb + "."
+	}
+	return verb + ": " + strings.Join(fields, ", ") + "."
+}
+
+// createGrouped dispatches between create_temp_tool (shell) and
+// create_api_tool (api) based on the mode arg.
 func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	files, err := workspaceFilesArg(args["workspace_files"])
 	if err != nil {
@@ -126,8 +179,13 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 
 // createGroupedMode is the create itself, mode by mode.
 func createGroupedMode(args map[string]any, sess *ToolSession) (string, error) {
-	if name := strings.TrimSpace(StringArg(args, "name")); persistentToolLocked(sess, name) {
-		return fmt.Sprintf(lockedToolMsg, name), nil
+	if name := strings.TrimSpace(StringArg(args, "name")); name != "" {
+		if msg := toolChangeRefused(sess, name, toolChangeDetail("Replace it with a new definition", args)); msg != "" {
+			return msg, nil
+		}
+	}
+	if msg := toolEditRefused(sess, strings.TrimSpace(StringArg(args, "name")), args); msg != "" {
+		return msg, nil
 	}
 	mode := strings.TrimSpace(StringArg(args, "mode"))
 	// Only a toolbox reads actions. The other modes dropped them without a

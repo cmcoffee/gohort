@@ -8,31 +8,51 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// TestLockedToolGuard: a LOCKED tool in the user's pool can't be modified,
-// deleted, or overwritten by the AI's tool_def — the guard steers it to unlock
-// in the UI instead. (User-only control, like Secured on credentials.)
-func TestLockedToolGuard(t *testing.T) {
+// TestToolChangesAskTheOwner: a change to a tool that already exists in the
+// user's pool (update, delete, create over it) asks ToolSession.ApproveChange
+// first, and a no is returned instead of the change; a brand-new tool is
+// reported as new. (Replaced Lock: every existing tool is protected this way.)
+func TestToolChangesAskTheOwner(t *testing.T) {
+	type call struct {
+		name, detail string
+		existed      bool
+	}
+	var calls []call
 	sess := &ToolSession{
 		Username: "alice", ChatSessionID: "s1",
 		WorkspaceDir: t.TempDir(), DB: &DBase{Store: kvlite.MemStore()},
+		ApproveChange: func(kind, name, detail string, existed bool) string {
+			calls = append(calls, call{name, detail, existed})
+			if existed {
+				return "NOT DONE: declined"
+			}
+			return ""
+		},
 	}
 	if err := AdminPersistTempTool(sess.DB, "alice", TempTool{
-		Name: "cal", Mode: TempToolModeShell, CommandTemplate: "echo hi", Locked: true,
+		Name: "cal", Mode: TempToolModeShell, CommandTemplate: "echo hi",
 	}); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
-
-	if out, _ := updateGrouped(map[string]any{"name": "cal", "description": "x"}, sess); !strings.Contains(out, "LOCKED") {
-		t.Fatalf("update of a locked tool should be refused; got: %s", out)
+	if out, _ := updateGrouped(map[string]any{"name": "cal", "description": "x"}, sess); !strings.Contains(out, "declined") {
+		t.Fatalf("an update went ahead unapproved; got: %s", out)
 	}
-	if out, _ := deleteGrouped(map[string]any{"name": "cal"}, sess); !strings.Contains(out, "LOCKED") {
-		t.Fatalf("delete of a locked tool should be refused; got: %s", out)
+	if out, _ := deleteGrouped(map[string]any{"name": "cal"}, sess); !strings.Contains(out, "declined") {
+		t.Fatalf("a delete went ahead unapproved; got: %s", out)
 	}
 	if out, _ := createGrouped(map[string]any{
 		"action": "create", "name": "cal", "mode": "shell",
 		"command_template": "echo x", "description": "y",
-	}, sess); !strings.Contains(out, "LOCKED") {
-		t.Fatalf("create-over a locked tool should be refused; got: %s", out)
+	}, sess); !strings.Contains(out, "declined") {
+		t.Fatalf("a create over an existing tool went ahead unapproved; got: %s", out)
+	}
+	if len(calls) != 3 || !strings.Contains(calls[0].detail, "description") || calls[1].detail != "Delete it." {
+		t.Errorf("approval asked with %+v", calls)
+	}
+	calls = nil
+	createGrouped(map[string]any{"action": "create", "name": "brand_new", "mode": "shell", "command_template": "echo x", "description": "y"}, sess)
+	if len(calls) != 1 || calls[0].existed {
+		t.Errorf("a new tool was not reported as new: %+v", calls)
 	}
 }
 

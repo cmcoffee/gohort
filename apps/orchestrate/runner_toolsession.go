@@ -127,28 +127,14 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	if sess == nil || poolDB == nil || poolUser == "" {
 		return
 	}
-	noTools := isNoToolsSentinel(t.agent.AllowedTools)
-	// Treat any agent backed by an in-code seed as a seed regardless of
-	// whether its per-user shadow carries Owner==seedOwner. The seed-chat
-	// shadow may have Owner==username when the user saved customizations
-	// through the admin UI, but the AllowedTools gate must still be nil so
-	// all approved persistent tools (including toolbox-mode tools like vapi
-	// that bypass the OnTempToolApproved path) auto-load.
-	_, isSeedBacked := seedAgentByID(t.agent.ID)
-	isSeed := t.agent.Owner == seedOwner || isSeedBacked
-	disabledPersistent := make(map[string]bool, len(t.agent.DisabledPersistentTools))
-	for _, n := range t.agent.DisabledPersistentTools {
-		disabledPersistent[n] = true
-	}
-	// User-crafted agents only: an explicit AllowedTools list still gates
-	// persistent temp tools. Empty list = default pool = include all. Nil for
-	// seed agents (admin approval is enough).
-	var allowPersistent map[string]bool
-	if !isSeed && !noTools && len(t.agent.AllowedTools) > 0 {
-		allowPersistent = make(map[string]bool, len(t.agent.AllowedTools))
-		for _, n := range t.agent.AllowedTools {
-			allowPersistent[canonicalToolName(n)] = true
-		}
+	// Which pool tools this agent loads (builder_delegation.go). A Builder
+	// run another agent sent loads only what that agent would load itself:
+	// what it may not use, Builder may not run or fix on its behalf.
+	gate := newPoolToolGate(t.agent)
+	var sender *poolToolGate
+	if from, ok := builderDelegator(sess, poolDB); ok {
+		g := newPoolToolGate(from)
+		sender = &g
 	}
 	// The Builder loads the full tool pool like every other agent. It used to
 	// "author fresh" — skipping the user's existing tools from its EXECUTABLE
@@ -181,7 +167,7 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		// here left this agent with neither tool: the adopted one hidden by a
 		// row it could never see. Builder loads every scoped row, so for it
 		// every row shadows (two tools under one name cannot both load).
-		if len(p.ScopeAgents) > 0 && !p.ScopedToAgent(t.agent.ID) && !isBuilderAgent(t.agent.ID) {
+		if !gate.reaches(p) || (sender != nil && !sender.reaches(p)) {
 			continue
 		}
 		own[p.Tool.Name] = true
@@ -202,21 +188,9 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		t.agentOwnTools = map[string]bool{}
 	}
 	for _, p := range loaded {
-		if noTools {
-			continue
-		}
-		// Governance visibility: a Disabled tool (turned off in Extensions › Tools) and a
-		// Builder-only tool are both hidden from every agent EXCEPT Builder.
-		// Builder always loads the full pool so it can load, RUN, test, fix, and
-		// re-enable them — building AND verifying is its whole job; a disabled
-		// tool it couldn't run would be unfixable.
-		// Bound-only joins the same carve-out for the same reason the comment
-		// above gives: Builder has to be able to load, RUN and fix these, and a
-		// tool it cannot run is a tool it cannot repair. A set of read tools
-		// authored for one system is exactly the kind of thing somebody asks
-		// Builder to fix, so reserving it away from the one agent that could
-		// would be trading a real capability for a tidier catalog.
-		if (p.Tool.Disabled || p.Tool.BuilderOnly || p.Tool.BoundOnly) && !isBuilderAgent(t.agent.ID) {
+		// The rule itself, including why Builder sees disabled, Builder-only,
+		// bound-only and other agents' scoped tools, is poolToolGate.admits.
+		if !gate.admits(p) || (sender != nil && !sender.admits(p)) {
 			continue
 		}
 		// Private mode hides API-mode temp tools (network side effects);
@@ -224,39 +198,16 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		if t.privateMode && p.Tool.Mode == TempToolModeAPI {
 			continue
 		}
+		tool := p.Tool
 		// Agent-scoped record (flattened namespace — the old AgentRecord.Tools
-		// kit): part of THIS agent's own kit when scoped to it, with NO
-		// allow/deny gates (it's attached by intent). Other agents' scoped
-		// tools stay out of the catalog — except for Builder, which loads
-		// everything so it can run, test, and fix any tool it can edit.
+		// kit): part of THIS agent's own kit, first-classed in setupCustomTools.
 		if len(p.ScopeAgents) > 0 {
-			if !p.ScopedToAgent(t.agent.ID) && !isBuilderAgent(t.agent.ID) {
-				continue
-			}
-			// An explicit per-agent opt-out beats "attached by intent". Scoping
-			// says WHICH agents may have the tool; the deny list is the owner
-			// saying this agent should not USE it right now. Without this check
-			// a scoped tool had no off switch at all — which is why the Tools
-			// modal could only list it read-only while every other tool got a
-			// checkbox. Builder still loads it: turning a tool off must not make
-			// it unfixable by the surface that fixes tools.
-			if disabledPersistent[p.Tool.Name] && !isBuilderAgent(t.agent.ID) {
-				continue
-			}
-			tool := p.Tool
-			t.agentOwnTools[tool.Name] = true // the agent's deliberate kit (first-classed in setupCustomTools)
+			t.agentOwnTools[tool.Name] = true
 			if err := sess.AppendTempTool(&tool); err != nil {
 				Log("[orchestrate.tools] agent-scoped tool %q failed to load: %v", tool.Name, err)
 			}
 			continue
 		}
-		if disabledPersistent[p.Tool.Name] { // per-agent opt-out
-			continue
-		}
-		if allowPersistent != nil && !allowPersistent[p.Tool.Name] { // user-crafted allow-list
-			continue
-		}
-		tool := p.Tool
 		if err := sess.AppendTempTool(&tool); err != nil {
 			Log("[orchestrate.tools] persistent temp tool %q failed to load: %v", tool.Name, err)
 		}
@@ -406,6 +357,8 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 	// A blocking question card, for a tool that hits something the person can
 	// waive on the spot (agentChangeGate: an agent they locked).
 	sess.AskInChat = t.askInChat
+	// Changes to what already exists ask the owner first (change_approval.go).
+	sess.ApproveChange = changeApprover(sess, sess.Username, t.agent.ID, t.agent.Name, t.askInChat)
 	// Inline privileges card — what an agent an authoring tool just saved may
 	// now do, editable in place. Persisted as a UIBlock (like the credential
 	// card) so it replays with the session, and upserted per agent so a build

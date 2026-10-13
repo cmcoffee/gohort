@@ -443,9 +443,10 @@ func bundleAgentToolByID(udb Database, owner, agentID string, t TempTool) error 
 // definition under a name that already exists rewrites that tool for everyone
 // who has it. The authoring paths that land here (create_agent / update_agent
 // inline tools, add_tool, tool_template, a pipeline's tools) did that silently:
-// they replaced locked tools and other agents' tools, and create_agent's own
-// description promised per-agent copies. Now a changed definition goes ahead
-// only when the tool is this agent's alone and unlocked. An identical one only
+// they replaced other agents' tools, and create_agent's own description
+// promised per-agent copies. Now a changed definition goes ahead only when the
+// tool is this agent's alone, and (asked before this, by the authoring tool)
+// the owner approved the change (change_approval.go). An identical one only
 // extends the scope, as before.
 //
 // A NEW name is held to what the other creation paths already check: a
@@ -462,9 +463,6 @@ func bundleRefusal(udb Database, rec AgentRecord, existing PersistentTempTool, h
 	}
 	if existing.Tool.SameDefinition(t) {
 		return nil
-	}
-	if existing.Tool.Locked {
-		return fmt.Errorf("a locked tool called %q already exists, and this is a different definition; unlock it in Extensions to change it, or give this one a different name", t.Name)
 	}
 	var others []string
 	for _, id := range existing.ScopeAgents {

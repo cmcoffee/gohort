@@ -1076,7 +1076,7 @@ func (t *chatTurn) withOwnTools(sess *ToolSession, pool []AgentToolDef) []AgentT
 	for _, td := range pool {
 		have[td.Tool.Name] = true
 	}
-	deny := credentialDenySet(t.agent, sess.Username)
+	deny := credentialDenyFor(t.agent, sess)
 	for _, td := range temptool.BuildAgentToolDefs(sess) {
 		if have[td.Tool.Name] {
 			continue // a registered tool owns the name, as it does on the turn

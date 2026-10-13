@@ -2,8 +2,8 @@ package orchestrate
 
 // One name is one tool, so bundling a DIFFERENT definition under a name that
 // exists rewrites it for everyone who has it. create_agent / update_agent
-// inline tools, add_tool and tool_template did that silently, locked tools and
-// other agents' tools included.
+// inline tools, add_tool and tool_template did that silently, other agents'
+// tools included.
 
 import (
 	"strings"
@@ -48,14 +48,22 @@ func TestBundlingDoesNotSilentlyRewriteAnotherAgentsTool(t *testing.T) {
 		t.Errorf("the refused write still landed: %q", got.Tool.Description)
 	}
 
-	// A locked tool is refused a different definition even when it is one
-	// agent's alone.
-	locked := TempTool{Name: "locked_one", Description: "keep", CommandTemplate: "echo keep", Locked: true}
-	if err := bundleAgentToolByID(udb, "alice", "a1", locked); err != nil {
-		t.Fatal(err)
+	// Replacing an existing tool's definition from an authoring call asks the
+	// owner first (change_approval.go): a no is refused before anything is
+	// bundled, and the same definition asks nothing.
+	asked := 0
+	sess := &ToolSession{Username: "alice", DB: udb, ApproveChange: func(kind, name, detail string, existed bool) string {
+		asked++
+		if kind != "tool" || name != "wiki_read" || !existed {
+			t.Errorf("asked about %s %s existed=%v", kind, name, existed)
+		}
+		return "NOT DONE: declined"
+	}}
+	if msg := agentToolsRefusal(sess, []TempTool{v1}, nil); !strings.Contains(msg, "declined") {
+		t.Errorf("a new definition of an existing tool went ahead unasked: %q", msg)
 	}
-	if err := bundleAgentToolByID(udb, "alice", "a1", TempTool{Name: "locked_one", Description: "replaced", CommandTemplate: "echo x"}); err == nil {
-		t.Error("a locked tool was rewritten")
+	if msg := agentToolsRefusal(sess, []TempTool{v2}, nil); msg != "" || asked != 1 {
+		t.Errorf("the definition it already has asked or was refused: %q (asked %d)", msg, asked)
 	}
 
 	// A new name is held to the creation rules.

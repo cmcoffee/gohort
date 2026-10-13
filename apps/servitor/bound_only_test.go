@@ -45,13 +45,14 @@ func TestABoundOnlyToolStaysBindable(t *testing.T) {
 // reserving it away from the only agent that could would trade a real capability
 // for a tidier catalog.
 func TestAgentsDoNotSeeBoundOnlyToolsExceptBuilder(t *testing.T) {
-	// The runner is a family of files now (runner.go and runner_*.go); the
-	// rule lives wherever the tool catalog is assembled.
-	body, err := sourceUnit("../orchestrate/runner.go")
+	// The rule is the pool-tool gate the runner's catalog assembly asks
+	// (poolToolGate.admits); g.builder is the Builder carve-out.
+	src, err := os.ReadFile("../orchestrate/builder_delegation.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	const rule = "if (p.Tool.Disabled || p.Tool.BuilderOnly || p.Tool.BoundOnly) && !isBuilderAgent(t.agent.ID) {"
+	body := string(src)
+	const rule = "if (p.Tool.Disabled || p.Tool.BuilderOnly || p.Tool.BoundOnly) && !g.builder {"
 	if !strings.Contains(body, rule) {
 		t.Error("bound-only tools are no longer filtered alongside Disabled and Builder-only, " +
 			"or the Builder carve-out was dropped — either way one of the two rules is now wrong")

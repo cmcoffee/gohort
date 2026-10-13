@@ -31,6 +31,10 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("name is required: the api/toolbox tool to verify")
 	}
+	// A test runs the tool, so whatever may not change it may not run it.
+	if msg := toolEditRefused(sess, name, nil); msg != "" {
+		return msg, nil
+	}
 	tt, ok := loadExistingToolRecord(sess, name)
 	if !ok {
 		return "", fmt.Errorf("no tool named %q: use action=\"list\" to see what exists", name)

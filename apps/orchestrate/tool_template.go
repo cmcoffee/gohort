@@ -107,6 +107,11 @@ func toolTemplateCreate(args map[string]any, sess *ToolSession) (string, error) 
 	// Attach to the focused agent + persist — mirrors add_tool's tail: one row
 	// in the unified store, scoped to the target agent (idempotent replace by
 	// name; a shared row keeps its pool visibility).
+	// A run another agent sent may not attach what that agent may not use
+	// (builder_delegation.go).
+	if msg := agentToolsRefusal(sess, []TempTool{tt}, nil); msg != "" {
+		return msg, nil
+	}
 	_, replaced := UserToolByName(sess.DB, sess.Username, tt.Name)
 	if err := bundleAgentToolByID(sess.DB, sess.Username, target.ID, tt); err != nil {
 		return "", fmt.Errorf("save tool for agent: %w", err)

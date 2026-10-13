@@ -46,8 +46,11 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if owner, how := foreignToolOwner(sess, name); owner != "" {
 		return fmt.Sprintf(foreignToolMsg, name, owner, how, owner), nil
 	}
-	if persistentToolLocked(sess, name) {
-		return fmt.Sprintf(lockedToolMsg, name), nil
+	if msg := toolEditRefused(sess, name, args); msg != "" {
+		return msg, nil
+	}
+	if msg := toolChangeRefused(sess, name, toolChangeDetail("Change", args)); msg != "" {
+		return msg, nil
 	}
 	existing, ok := loadExistingToolRecord(sess, name)
 	if !ok {
@@ -323,8 +326,11 @@ func securedBindingCreds(tt TempTool) map[string]bool {
 
 func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(StringArg(args, "name"))
-	if persistentToolLocked(sess, name) {
-		return fmt.Sprintf(lockedToolMsg, name), nil
+	if msg := toolEditRefused(sess, name, nil); msg != "" {
+		return msg, nil
+	}
+	if msg := toolChangeRefused(sess, name, "Delete it."); msg != "" {
+		return msg, nil
 	}
 	// Forget this tool's secured-credential bindings (approved/pending) on delete —
 	// tidy-up under auto-resolve. A revoke tombstone is deliberately KEPT so an

@@ -151,6 +151,27 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 					return "", err
 				}
 			}
+			// A change to an app that already exists asks the owner first,
+			// once per app per session (change_approval.go). Running,
+			// testing and reading never ask.
+			switch action {
+			case "update", "update_section", "add_section", "remove_section", "patch_html", "patch",
+				"replace_function", "patch_function", "revert", "undo", "restore", "delete", "add_asset", "remove_asset":
+				if slug := appDefBatchLane(args); slug != "" {
+					if _, ok := LoadAppSpec(t.user, slug); ok {
+						if msg := t.approveChange("app", slug, appChangeDetail(action, args), true); msg != "" {
+							return msg, nil
+						}
+					}
+				}
+			case "create":
+				// A new app is this session's own work from here on.
+				if slug := slugify(firstNonEmptyStr(stringArg(args, "slug"), stringArg(args, "name"))); slug != "" {
+					if _, ok := LoadAppSpec(t.user, slug); !ok {
+						t.approveChange("app", slug, "", false)
+					}
+				}
+			}
 			switch action {
 			case "create", "update":
 				return t.appDefCreateOrUpdate(args, action == "update")
@@ -336,4 +357,32 @@ func appDefTouches(args map[string]any) (string, bool) {
 		return "", false
 	}
 	return "app|" + slug, true
+}
+
+// appChangeDetail says what an app_def call would change, for the owner's
+// approval card.
+func appChangeDetail(action string, args map[string]any) string {
+	var parts []string
+	for _, k := range []string{"function", "section_id", "script", "find", "to", "note"} {
+		if v := strings.TrimSpace(stringArg(args, k)); v != "" {
+			if len(v) > 80 {
+				v = v[:80] + "…"
+			}
+			parts = append(parts, k+": "+v)
+		}
+	}
+	verb := map[string]string{
+		"update": "Revise the app", "update_section": "Replace a section", "add_section": "Add a section",
+		"remove_section": "Remove a section", "patch_html": "Edit part of it", "patch": "Edit part of it",
+		"replace_function": "Replace a function", "patch_function": "Replace a function",
+		"revert": "Restore an earlier version", "undo": "Restore an earlier version", "restore": "Restore an earlier version",
+		"delete": "Delete the app", "add_asset": "Add or replace a file", "remove_asset": "Remove a file",
+	}[action]
+	if verb == "" {
+		verb = action
+	}
+	if len(parts) == 0 {
+		return verb + "."
+	}
+	return verb + " (" + strings.Join(parts, "; ") + ")."
 }

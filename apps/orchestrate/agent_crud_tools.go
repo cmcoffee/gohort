@@ -96,6 +96,11 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// record is saved (scoping a store row needs the assigned agent ID) — the
 	// record no longer carries embedded tool copies.
 	inlineTools := agentScopedToolsFromArgs(args)
+	// A run another agent sent may not give the new agent what that agent may
+	// not use (builder_delegation.go).
+	if msg := agentToolsRefusal(sess, inlineTools, rec.AllowedTools); msg != "" {
+		return msg, nil
+	}
 	rec.ID = "" // force fresh assignment
 	rec.Owner = sess.Username
 	// Dispatched-Builder authoring: a Fleet parent (e.g. Chat) dispatched Builder
@@ -114,6 +119,10 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	saved, err := saveAgent(sess.DB, rec)
 	if err != nil {
 		return "", err
+	}
+	// New: this session's own work from here on (change_approval.go).
+	if sess.ApproveChange != nil {
+		sess.ApproveChange("agent", saved.Name, "", false)
 	}
 	// Commit the inline tools as store rows scoped to the new agent.
 	committedTools := make([]TempTool, 0, len(inlineTools))
@@ -636,6 +645,14 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if msg := agentMutationLock(&existing, sess, "update its settings ("+strings.Join(sortedArgKeys(args, "id"), ", ")+")"); msg != "" {
 		return "", errors.New(msg)
 	}
+	// A change to an agent that already exists asks the owner first, once per
+	// agent per session (change_approval.go). A locked agent was just asked
+	// about by its lock, so it is not asked twice.
+	if sess.ApproveChange != nil && !agentLocked(sess.DB, existing) {
+		if msg := sess.ApproveChange("agent", existing.Name, "Update its settings ("+strings.Join(sortedArgKeys(args, "id"), ", ")+").", true); msg != "" {
+			return msg, nil
+		}
+	}
 	// What the agent could do before this update, so the privileges card can
 	// tell a grant from a save that merely carried existing powers along.
 	before := snapshotPrivileges(sess, existing)
@@ -658,6 +675,16 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	var inlineTools []TempTool
 	if v, ok := args["tools"]; ok && v != nil {
 		inlineTools = agentScopedToolsFromArgs(args)
+	}
+	// A run another agent sent may not give the agent what that agent may not
+	// use (builder_delegation.go). Before anything is written: the auto-copy
+	// below commits.
+	var granted []string
+	if v, ok := args["allowed_tools"]; ok && v != nil {
+		granted = existing.AllowedTools
+	}
+	if msg := agentToolsRefusal(sess, inlineTools, granted); msg != "" {
+		return msg, nil
 	}
 	// Auto-copy session tools into the agent when allowed_tools picks up
 	// a name that exists in this session's draft pool — same rule as
@@ -816,6 +843,11 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if ok {
 		if msg := agentMutationLock(&target, sess, "delete it"); msg != "" {
 			return "", errors.New(msg)
+		}
+		if sess.ApproveChange != nil && !agentLocked(sess.DB, target) {
+			if msg := sess.ApproveChange("agent", target.Name, "Delete it.", true); msg != "" {
+				return msg, nil
+			}
 		}
 		id = target.ID
 	}

@@ -122,7 +122,7 @@ func TestCredentialOnlyAgents(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := Secure().SetOnlyAgentsOwned("alice", "weather", []string{"a-forecaster", "seed-builder"}); err != nil {
+	if err := Secure().SetOnlyAgentsOwned("alice", "weather", []string{"a-forecaster"}); err != nil {
 		t.Fatal(err)
 	}
 	if deny := credentialDenySet(AgentRecord{ID: "a-forecaster", Owner: "alice"}, "alice"); deny["weather"] || deny["news"] {
@@ -131,8 +131,11 @@ func TestCredentialOnlyAgents(t *testing.T) {
 	if deny := credentialDenySet(AgentRecord{ID: "a-other", Owner: "alice"}, "alice"); !deny["weather"] || deny["news"] {
 		t.Fatalf("an agent off the list must lose weather only: %v", deny)
 	}
+	// Builder is not held to the list: the owner driving it reaches every API
+	// of theirs, and a run another agent sent is held to THAT agent's list
+	// (builder_delegation_test.go).
 	if deny := credentialDenySet(AgentRecord{ID: "seed-builder"}, "alice"); deny["weather"] {
-		t.Fatal("Builder, listed, was denied")
+		t.Fatal("Builder, driven by the owner, was denied")
 	}
 	// An ordinary save keeps the list; clearing it opens the API again.
 	c, _ := Secure().LoadUser("alice", "weather")
@@ -140,7 +143,7 @@ func TestCredentialOnlyAgents(t *testing.T) {
 	if err := Secure().Save(c, ""); err != nil {
 		t.Fatal(err)
 	}
-	if c, _ := Secure().LoadUser("alice", "weather"); len(c.OnlyAgents) != 2 {
+	if c, _ := Secure().LoadUser("alice", "weather"); len(c.OnlyAgents) != 1 {
 		t.Fatalf("a save dropped the agent list: %+v", c.OnlyAgents)
 	}
 	if err := Secure().SetOnlyAgentsOwned("alice", "weather", nil); err != nil {

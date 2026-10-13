@@ -308,6 +308,10 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		return "", fmt.Errorf("you already have a skill called %q (%s, id %s) - use action=update to change it, or pick another name", prior.Name, where, prior.ID)
 	}
+	// New: this session's own work from here on (change_approval.go).
+	if sess.ApproveChange != nil {
+		sess.ApproveChange("skill", name, "", false)
+	}
 
 	// create_collection: mint a fresh empty collection for this skill and
 	// auto-link it, so authoring a skill + giving it a corpus is one step.
@@ -516,6 +520,17 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("skill %q not found: use action=create to make a new one", name)
 	}
+	// A change to a skill that already exists asks the owner first, once per
+	// skill per session (change_approval.go).
+	if sess.ApproveChange != nil {
+		what := "Change it (" + strings.Join(sortedArgKeys(args, "name", "action"), ", ") + ")."
+		if published {
+			what += " It is published, so the change reaches everybody who uses it."
+		}
+		if msg := sess.ApproveChange("skill", existing.Name, what, true); msg != "" {
+			return msg, nil
+		}
+	}
 	rec := existing
 	var changed []string
 	if _, has := args["description"]; has {
@@ -577,6 +592,11 @@ func skillDefDelete(args map[string]any, sess *ToolSession) (string, error) {
 	s, published, ok, err := authoredSkill(sess, name)
 	if err != nil {
 		return "", err
+	}
+	if ok && sess.ApproveChange != nil {
+		if msg := sess.ApproveChange("skill", s.Name, "Delete it.", true); msg != "" {
+			return msg, nil
+		}
 	}
 	if !ok {
 		return "", fmt.Errorf("skill %q not found", name)

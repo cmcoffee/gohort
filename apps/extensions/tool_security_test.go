@@ -1,7 +1,7 @@
 package extensions
 
 // The "How it runs" section of a tool's Security panel: never unattended,
-// ask before every call, and Lock, each a pill that reads back what it set.
+// and ask before every call, each a pill that reads back what it set.
 
 import (
 	"encoding/json"
@@ -48,18 +48,18 @@ func TestToolRunSectionTogglesReadBack(t *testing.T) {
 	}
 
 	before := pills()
-	for _, k := range []string{"never_unattended", "ask_first", "locked"} {
+	for _, k := range []string{"never_unattended", "ask_first"} {
 		if on, ok := before[k]; !ok || on {
 			t.Fatalf("%s: offered=%v on=%v, want offered and off", k, ok, on)
 		}
 	}
-	for _, k := range []string{"never_unattended", "ask_first", "locked"} {
+	for _, k := range []string{"never_unattended", "ask_first"} {
 		if code := set(k, true); code != 204 {
 			t.Fatalf("turning on %s: %d", k, code)
 		}
 	}
 	after := pills()
-	for _, k := range []string{"never_unattended", "ask_first", "locked"} {
+	for _, k := range []string{"never_unattended", "ask_first"} {
 		if !after[k] {
 			t.Errorf("%s did not read back on", k)
 		}
@@ -72,15 +72,23 @@ func TestToolRunSectionTogglesReadBack(t *testing.T) {
 	}
 }
 
-// A tool that is not kept for the user's agents has no record to lock.
-func TestToolRunSectionRefusesLockOutsideThePool(t *testing.T) {
+// A tool that is not kept for the user's agents has no record to mark.
+func TestToolRunSectionRefusesAFlagOutsideThePool(t *testing.T) {
 	app, req := authedExtensions(t)
 	r := req("POST", "/api/tool-access?section=run&name=nothing_here")
-	r.Body = io.NopCloser(strings.NewReader(`{"target":"locked","on":true}`))
+	r.Body = io.NopCloser(strings.NewReader(`{"target":"never_unattended","on":true}`))
 	w := httptest.NewRecorder()
 	app.handleUserToolAccess(w, r)
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "keep the tool") {
-		t.Errorf("lock on a tool outside the pool: %d %s", w.Code, w.Body.String())
+		t.Errorf("a flag on a tool outside the pool: %d %s", w.Code, w.Body.String())
+	}
+	// Lock is gone: changes to a tool always ask the owner instead.
+	r = req("POST", "/api/tool-access?section=run&name=nothing_here")
+	r.Body = io.NopCloser(strings.NewReader(`{"target":"locked","on":true}`))
+	w = httptest.NewRecorder()
+	app.handleUserToolAccess(w, r)
+	if w.Code != 400 {
+		t.Errorf("locked is still a setting: %d", w.Code)
 	}
 }
 

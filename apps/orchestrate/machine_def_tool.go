@@ -101,6 +101,24 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
+			// A change to a machine that already exists asks the owner first,
+			// once per machine per session (change_approval.go).
+			switch action {
+			case "update", "update_phase", "repair", "delete":
+				if def, ok := t.findMachine(args); ok {
+					verb := map[string]string{"update": "Change its phases or settings.", "update_phase": "Change the phase " + stringArg(args, "phase") + ".",
+						"repair": "Repair it.", "delete": "Delete it, and take it off every agent that has it."}[action]
+					if msg := t.approveChange("machine", def.Name, verb, true); msg != "" {
+						return msg, nil
+					}
+				}
+			case "create":
+				if n := strings.TrimSpace(stringArg(args, "name")); n != "" {
+					if _, taken := t.findMachine(map[string]any{"name": n}); !taken {
+						t.approveChange("machine", n, "", false) // new: this session's own
+					}
+				}
+			}
 			switch action {
 			case "create", "update":
 				return t.machineCreateOrUpdate(args, action == "update")

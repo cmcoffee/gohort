@@ -68,7 +68,10 @@ func credentialDenySet(a AgentRecord, user string) map[string]bool {
 	// agent. Fails closed: an agent not on the list is denied, whatever else
 	// would have allowed it. Only the session user's own credentials: a key
 	// somebody lent them is governed by the lend, not by the lender's agents.
-	if user != "" {
+	// Not Builder: the owner driving it reaches every API of theirs, and a
+	// run another agent sent is held to that agent's list instead
+	// (builder_delegation.go).
+	if user != "" && !isBuilderAgent(a.ID) {
 		for _, c := range Secure().ListUser(user) {
 			if len(c.OnlyAgents) > 0 && !containsString(c.OnlyAgents, a.ID) {
 				add(c.Name)

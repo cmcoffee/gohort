@@ -350,7 +350,7 @@ func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, l
 	// (a credential's AllowedUsers vs the session user) ∪ tier 2 (the agent's own
 	// DisabledCredentials opt-outs). The backing TempTool carries .Credential;
 	// api/toolbox tools have one, shell tools don't (empty → never denied).
-	if deny := credentialDenySet(t.agent, sess.Username); len(deny) > 0 {
+	if deny := credentialDenyFor(t.agent, sess); len(deny) > 0 {
 		kept := allCustomTools[:0]
 		var dropped []string
 		for _, td := range allCustomTools {
