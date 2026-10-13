@@ -20,7 +20,7 @@ func bulletinsToolDef(t *chatTurn) AgentToolDef {
 		Tool: Tool{
 			Name: "bulletins",
 			Description: "Set up bulletin boards: short notices every following agent sees on each of its turns (today's headlines, a status, a message of the day). " +
-				"A board is filled by an agent allowed to post to it (it gets a post_bulletin tool, so give it a schedule or a job that calls it), or by a watch monitor created with bulletin=<board>, which posts with no model at all. " +
+				"A board is filled by an agent allowed to post to it (it gets a bulletin_board tool that posts and clears, so give it a schedule or a job that calls it), or by a watch monitor created with bulletin=<board>, which posts with no model at all. " +
 				"Actions: list; create {name, desc, ttl_hours (how long a post stays current, 0 = always)}; allow_poster {board, agent, on}; follow {board, agent or \"all\", on}.",
 			Parameters: map[string]ToolParam{
 				"action":    {Type: "string", Enum: []string{"list", "create", "allow_poster", "follow"}, Description: "What to do."},
@@ -97,7 +97,7 @@ func bulletinsToolDef(t *chatTurn) AgentToolDef {
 					ag = parent
 				}
 				// Both actions change the agent: follow rewrites what arrives on
-				// its turns, allow_poster hands it a post_bulletin tool.
+				// its turns, allow_poster hands it a bulletin_board tool.
 				change := fmt.Sprintf("%s bulletin board %q", chIf(on, "follow", "stop following"), board.Name)
 				if strings.EqualFold(stringArg(args, "action"), "allow_poster") {
 					change = fmt.Sprintf("%s post to bulletin board %q", chIf(on, "let it", "stop it being able to"), board.Name)
@@ -112,7 +112,7 @@ func bulletinsToolDef(t *chatTurn) AgentToolDef {
 					}
 					_ = saveBulletin(t.udb, board)
 					return fmt.Sprintf("%s %s post to %q%s.%s", chFirst(ag.Name, ag.ID), chIf(on, "may now", "may no longer"), board.Name,
-						chIf(on, " (it has a post_bulletin tool naming this board)", ""), under), nil
+						chIf(on, " (it has a bulletin_board tool naming this board, to post and clear)", ""), under), nil
 				}
 				ag.Bulletins = removeString(ag.Bulletins, board.Name)
 				if on {

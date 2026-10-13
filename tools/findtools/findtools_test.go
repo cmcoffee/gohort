@@ -53,6 +53,34 @@ func TestFindToolsSaysToLoadFirst(t *testing.T) {
 	}
 }
 
+// The app's note for a search rides on the reply whether or not the index
+// found anything: a per-turn tool, or who holds the right to one, is what no
+// index has.
+func TestFindToolsCarriesTheAppsNote(t *testing.T) {
+	note := func(q string) string {
+		if strings.Contains(q, "board") {
+			return "Bulletin boards: ask the poster."
+		}
+		return ""
+	}
+	for _, sess := range []*ToolSession{
+		{FindToolsNote: note},
+		{FindToolsNote: note, LoadableTools: loadableForTest},
+	} {
+		out, err := (&FindToolsTool{}).RunWithSession(map[string]any{"query": "clear the board"}, sess)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(out, "\n\nNOTE: Bulletin boards: ask the poster.") {
+			t.Errorf("the note should close the reply: %q", out)
+		}
+	}
+	out, _ := (&FindToolsTool{}).RunWithSession(map[string]any{"query": "resize an image"}, &ToolSession{FindToolsNote: note})
+	if strings.Contains(out, "NOTE:") {
+		t.Errorf("an empty note adds nothing: %q", out)
+	}
+}
+
 func TestStemWord(t *testing.T) {
 	for _, pair := range [][2]string{{"scheduled", "schedul"}, {"scheduling", "schedul"}, {"schedule", "schedul"}, {"bulletins", "bulletin"}, {"posted", "post"}, {"runs", "run"}, {"run", "run"}} {
 		if got := stemWord(pair[0]); got != pair[1] {

@@ -266,7 +266,8 @@ func unresolvedToolNote(db Database, a AgentRecord) string {
 
 // promptToolGapNote names the tools an agent's instructions tell it to use
 // that it cannot call: a real tool left out of its allowed_tools, or
-// post_bulletin with no board letting it post. Observed: Builder saved an
+// bulletin_board (or its old name, post_bulletin) with no board letting it
+// post. Observed: Builder saved an
 // agent whose whole job was "post it to the news board using the
 // post_news_to_bulletin tool", having just dropped that tool from its list,
 // and told the user the agent was configured. The agent could only fetch.
@@ -294,15 +295,9 @@ func promptToolGapNote(db Database, a AgentRecord) string {
 		}
 		seen[name] = true
 		switch {
-		case name == "post_bulletin":
-			poster := false
-			for _, b := range listBulletins(db) {
-				if b.allowsAgent(a) {
-					poster = true
-				}
-			}
-			if !poster {
-				gaps = append(gaps, "post_bulletin (no board lets this agent post: grant it with bulletins allow_poster {board, agent}; a sub-agent posts under its parent's right)")
+		case name == bulletinToolName || name == legacyBulletinToolName:
+			if len(postableBoards(db, a)) == 0 {
+				gaps = append(gaps, name+" (no board lets this agent post: grant it with bulletins allow_poster {board, agent}; a sub-agent posts under its parent's right)")
 			}
 		case !open && !allowed[name] && isResolvableToolName(db, a.Owner, name):
 			gaps = append(gaps, name+" (not in its allowed_tools)")
@@ -509,8 +504,10 @@ var frameworkAlwaysOnTools = map[string]bool{
 	"list_facts":          true,
 	// Handed to an agent by the board that lets it post (bulletins
 	// allow_poster), never by this list. Listed here, it was reported as a
-	// typo and the author told to create the tool first.
-	"post_bulletin": true,
+	// typo and the author told to create the tool first. post_bulletin is
+	// its old name, still in lists written before it could clear.
+	bulletinToolName:       true,
+	legacyBulletinToolName: true,
 }
 
 // frameworkAlwaysOnToolNames is the same set as a slice, for callers building a
@@ -555,7 +552,7 @@ func unresolvedToolsWarning(sess *ToolSession, rec *AgentRecord) string {
 	var out string
 	if len(framework) > 0 {
 		out += fmt.Sprintf(
-			" NOTE: %s %s provided by the framework, not by this list, the agent gets them when the condition behind them holds (a corpus attached, for knowledge_search / fetch_knowledge_doc; a board that lets it post, granted with bulletins allow_poster, for post_bulletin), and listing them here neither grants nor removes them. Harmless to leave; if the agent CANNOT reach one, the cause is elsewhere: most often a machine phase or pipeline stage whose own tool list narrows the catalog, which drops framework tools it does not name.",
+			" NOTE: %s %s provided by the framework, not by this list, the agent gets them when the condition behind them holds (a corpus attached, for knowledge_search / fetch_knowledge_doc; a board that lets it post, granted with bulletins allow_poster, for bulletin_board), and listing them here neither grants nor removes them. Harmless to leave; if the agent CANNOT reach one, the cause is elsewhere: most often a machine phase or pipeline stage whose own tool list narrows the catalog, which drops framework tools it does not name.",
 			strings.Join(framework, ", "), isAre(len(framework)))
 	}
 	if len(missing) > 0 {

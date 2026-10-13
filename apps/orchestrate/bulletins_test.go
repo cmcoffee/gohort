@@ -64,17 +64,17 @@ func TestOnlyAPosterGetsPostBulletin(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	saveBulletin(db, bulletinBoard{Name: "news", Posters: []string{"bot"}})
 	saveBulletin(db, bulletinBoard{Name: "motd"})
-	if _, ok := (&chatTurn{udb: db, agent: AgentRecord{ID: "other"}}).postBulletinToolDef(); ok {
+	if _, ok := (&chatTurn{udb: db, agent: AgentRecord{ID: "other"}}).bulletinBoardToolDef(); ok {
 		t.Error("an agent allowed to post nowhere gets no tool")
 	}
-	def, ok := (&chatTurn{udb: db, agent: AgentRecord{ID: "bot", Name: "Headline Bot"}}).postBulletinToolDef()
+	def, ok := (&chatTurn{udb: db, agent: AgentRecord{ID: "bot", Name: "Headline Bot"}}).bulletinBoardToolDef()
 	if !ok || !strings.Contains(def.Tool.Description, "news") || strings.Contains(def.Tool.Description, "motd") {
 		t.Fatalf("the poster's tool should name only its board: %+v", def.Tool.Description)
 	}
-	if _, err := def.Handler(context.Background(), map[string]any{"board": "motd", "text": "x"}); err == nil {
+	if _, err := def.Handler(context.Background(), map[string]any{"board": "motd", "action": "post", "text": "x"}); err == nil {
 		t.Error("posting to a board it may not post to is refused")
 	}
-	if _, err := def.Handler(context.Background(), map[string]any{"board": "news", "text": "Fed holds rates"}); err != nil {
+	if _, err := def.Handler(context.Background(), map[string]any{"board": "news", "action": "post", "text": "Fed holds rates"}); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := loadBulletin(db, "news"); b.Text != "Fed holds rates" || b.PostedBy != "Headline Bot" {
@@ -156,7 +156,7 @@ func TestBuilderSetsUpABoard(t *testing.T) {
 		return out
 	}
 	call(map[string]any{"action": "create", "name": "news", "desc": "Today's headlines", "ttl_hours": float64(24)})
-	if out := call(map[string]any{"action": "allow_poster", "board": "news", "agent": "Briefing Bot"}); !strings.Contains(out, "post_bulletin") {
+	if out := call(map[string]any{"action": "allow_poster", "board": "news", "agent": "Briefing Bot"}); !strings.Contains(out, "bulletin_board") {
 		t.Errorf("granting names the tool it gets: %s", out)
 	}
 	call(map[string]any{"action": "follow", "board": "news", "agent": "Wren"})
@@ -178,12 +178,13 @@ func TestBuilderSetsUpABoard(t *testing.T) {
 
 // An agent whose instructions name a tool it cannot call is saved with a
 // warning naming it: a real tool left out of its allowed_tools, or
-// post_bulletin with no board letting it post.
+// bulletin_board (or its old name, post_bulletin) with no board letting it
+// post.
 func TestAnAgentsInstructionsMustMatchItsTools(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	var real string
 	for _, ct := range RegisteredChatTools() {
-		if n := ct.Name(); promptToolNameRe.FindString(n) == n && n != "post_bulletin" {
+		if n := ct.Name(); promptToolNameRe.FindString(n) == n && n != bulletinToolName && n != legacyBulletinToolName {
 			real = n
 			break
 		}
@@ -192,12 +193,19 @@ func TestAnAgentsInstructionsMustMatchItsTools(t *testing.T) {
 		t.Skip("no registered chat tool with a snake_case name in this binary")
 	}
 	bot, _ := saveAgent(db, AgentRecord{Name: "Briefing Bot", Owner: "u", AllowedTools: []string{"get_top_stories"},
-		OrchestratorPrompt: "Fetch the headlines, then post them with `" + real + "` and post_bulletin."})
+		OrchestratorPrompt: "Fetch the headlines, then post them with `" + real + "` and bulletin_board."})
 	note := promptToolGapNote(db, bot)
-	for _, want := range []string{real + " (not in its allowed_tools)", "post_bulletin (no board", "allow_poster", "Do not call it configured"} {
+	for _, want := range []string{real + " (not in its allowed_tools)", "bulletin_board (no board", "allow_poster", "Do not call it configured"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("the warning should carry %q:\n%s", want, note)
 		}
+	}
+	// Instructions written before the rename name the old tool, and are
+	// read as naming this one.
+	old := bot
+	old.OrchestratorPrompt = "Post the headlines with post_bulletin."
+	if note := promptToolGapNote(db, old); !strings.Contains(note, "post_bulletin (no board") {
+		t.Errorf("the old name should be checked like the new one:\n%s", note)
 	}
 	saveBulletin(db, bulletinBoard{Name: "news", Posters: []string{bot.ID}})
 	bot.AllowedTools = append(bot.AllowedTools, real)
@@ -212,7 +220,7 @@ func TestAnAgentsInstructionsMustMatchItsTools(t *testing.T) {
 }
 
 // A sub-agent is listed nowhere a board is set up, so posting rights live on
-// its parent and cover the agents it owns: the sub-agent gets post_bulletin
+// its parent and cover the agents it owns: the sub-agent gets bulletin_board
 // under the parent's right, a grant aimed at the sub-agent lands on the
 // parent, and the post names the parent with the agent that wrote it.
 func TestASubAgentPostsUnderItsParentsRight(t *testing.T) {
@@ -241,11 +249,11 @@ func TestASubAgentPostsUnderItsParentsRight(t *testing.T) {
 		t.Fatal("an agent owned by a non-poster may not post")
 	}
 
-	post, ok := (&chatTurn{udb: db, user: "u", agent: radar}).postBulletinToolDef()
+	post, ok := (&chatTurn{udb: db, user: "u", agent: radar}).bulletinBoardToolDef()
 	if !ok {
-		t.Fatal("the sub-agent should have post_bulletin under its parent's right")
+		t.Fatal("the sub-agent should have bulletin_board under its parent's right")
 	}
-	if _, err := post.Handler(context.Background(), map[string]any{"board": "local-radar", "text": "Fog out by 11"}); err != nil {
+	if _, err := post.Handler(context.Background(), map[string]any{"board": "local-radar", "action": "post", "text": "Fog out by 11"}); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := loadBulletin(db, "local-radar"); b.PostedBy != "Wren (Local Radar)" {
@@ -253,7 +261,7 @@ func TestASubAgentPostsUnderItsParentsRight(t *testing.T) {
 	}
 }
 
-// A board can be emptied: by a poster through post_bulletin(clear=true), and
+// A board can be emptied: by a poster through bulletin_board(action=clear), and
 // by the owner from the Knowledge page. Followers then see nothing from it,
 // the row says who cleared it and when, and the next post fills it again. A
 // post with no text points at clear rather than leaving the agent to look
@@ -262,20 +270,23 @@ func TestABulletinCanBeCleared(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	saveBulletin(db, bulletinBoard{Name: "radar", Posters: []string{"bot"}})
 	follower := AgentRecord{ID: "a1", Bulletins: []string{"radar"}}
-	def, ok := (&chatTurn{udb: db, agent: AgentRecord{ID: "bot", Name: "Radar Bot"}}).postBulletinToolDef()
-	if !ok || !strings.Contains(def.Tool.Description, "clear=true") {
-		t.Fatalf("the tool should say how to empty a board: %s", def.Tool.Description)
+	def, ok := (&chatTurn{udb: db, agent: AgentRecord{ID: "bot", Name: "Radar Bot"}}).bulletinBoardToolDef()
+	if !ok || def.Tool.Name != "bulletin_board" || !strings.HasPrefix(def.Tool.Description, "Post to or clear a bulletin board") {
+		t.Fatalf("the tool should say up front that it posts and clears: %s %s", def.Tool.Name, def.Tool.Description)
 	}
-	if len(def.Tool.Required) != 1 || def.Tool.Required[0] != "board" {
-		t.Errorf("text cannot be required when clearing takes none: %v", def.Tool.Required)
+	if strings.Join(def.Tool.Required, ",") != "board,action" || strings.Join(def.Tool.Parameters["action"].Enum, ",") != "post,clear" {
+		t.Errorf("board and action are required, action is post or clear: %v %v", def.Tool.Required, def.Tool.Parameters["action"].Enum)
 	}
-	if _, err := def.Handler(context.Background(), map[string]any{"board": "radar", "text": "Fog until noon"}); err != nil {
+	if _, err := def.Handler(context.Background(), map[string]any{"board": "radar", "action": "post", "text": "Fog until noon"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := def.Handler(context.Background(), map[string]any{"board": "radar"}); err == nil || !strings.Contains(err.Error(), "clear=true") {
+	if _, err := def.Handler(context.Background(), map[string]any{"board": "radar", "action": "post"}); err == nil || !strings.Contains(err.Error(), "action=\"clear\"") {
 		t.Errorf("a post with no text should point at clear: %v", err)
 	}
-	if out, err := def.Handler(context.Background(), map[string]any{"board": "radar", "clear": true}); err != nil || !strings.Contains(out, "Cleared") {
+	if _, err := def.Handler(context.Background(), map[string]any{"board": "radar", "action": "wipe"}); err == nil {
+		t.Error("an unknown action is refused")
+	}
+	if out, err := def.Handler(context.Background(), map[string]any{"board": "radar", "action": "clear"}); err != nil || !strings.Contains(out, "Cleared") {
 		t.Fatalf("clear: %q %v", out, err)
 	}
 	b, _ := loadBulletin(db, "radar")
@@ -295,7 +306,7 @@ func TestABulletinCanBeCleared(t *testing.T) {
 	if b, _ := loadBulletin(db, "radar"); b.Cleared || b.Text != "Sun by two" {
 		t.Errorf("the next post fills the board again: %+v", b)
 	}
-	if _, err := def.Handler(context.Background(), map[string]any{"board": "other", "clear": true}); err == nil {
+	if _, err := def.Handler(context.Background(), map[string]any{"board": "other", "action": "clear"}); err == nil {
 		t.Error("clearing a board it may not post to is refused")
 	}
 }
@@ -317,5 +328,42 @@ func TestTheOwnerClearsABoard(t *testing.T) {
 	app.handleBulletinOne(w, req("GET", "/api/bulletins/radar/clear", nil))
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("clear is a POST, got %d", w.Code)
+	}
+}
+
+// A follower that cannot post is told who can, on the board's line and when
+// it searches for a way to post or clear; a poster's search is pointed at the
+// tool it already has, which no index holds. Observed: a follower asked to
+// clear a board searched five times and then went looking for its file.
+func TestAFollowerLearnsWhoPostsToABoard(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	radar, _ := saveAgent(db, AgentRecord{Name: "Local Radar", Owner: "u", OrchestratorPrompt: "p"})
+	wren, _ := saveAgent(db, AgentRecord{Name: "Wren", Owner: "u", OrchestratorPrompt: "p", Bulletins: []string{"local-radar", "motd"}})
+	saveBulletin(db, bulletinBoard{Name: "local-radar", Posters: []string{radar.ID}})
+	saveBulletin(db, bulletinBoard{Name: "motd"})
+	postBulletin(db, "local-radar", "Fog until noon", "Local Radar")
+	postBulletin(db, "motd", "The NAS reboots Sunday", "you")
+
+	lines := strings.Join(bulletinLines(db, wren, time.UTC), "\n")
+	if !strings.Contains(lines, "posted and cleared by Local Radar] Fog until noon") || !strings.Contains(lines, "posted and cleared by only the owner] The NAS") {
+		t.Errorf("a follower's lines should say who posts:\n%s", lines)
+	}
+	radar.Bulletins = []string{"local-radar"}
+	if strings.Contains(strings.Join(bulletinLines(db, radar, time.UTC), ""), "posted and cleared by") {
+		t.Error("a poster's own line needs no note: the board is in its tool")
+	}
+
+	follower := &chatTurn{udb: db, user: "u", agent: wren}
+	note := follower.bulletinFindNote("clear bulletin board")
+	for _, want := range []string{"bulletin_board tool", "you are on none", "local-radar: Local Radar", "Knowledge > Bulletins", "not a file"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("a follower's search should carry %q:\n%s", want, note)
+		}
+	}
+	if note := (&chatTurn{udb: db, user: "u", agent: radar}).bulletinFindNote("post bulletin"); !strings.Contains(note, "already in your tools") || !strings.Contains(note, "local-radar") {
+		t.Errorf("a poster's search should point at its tool: %s", note)
+	}
+	if follower.bulletinFindNote("resize an image") != "" {
+		t.Error("a search about something else gets no note")
 	}
 }

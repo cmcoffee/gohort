@@ -239,6 +239,12 @@ type ToolSession struct {
 	// load first. The app wires it at session setup. Nil = none.
 	LoadableTools func() []ToolMatch
 
+	// FindToolsNote, when set, is asked for a note on a find_tools search:
+	// what the app knows about the capability searched for that no index
+	// holds (a tool handed out per turn, or who has the right to it). ""
+	// adds nothing. The app wires it at session setup. Nil = none.
+	FindToolsNote func(query string) string
+
 	// UnbundleTool, when set, removes a tool from the running agent's
 	// record (AgentRecord.Tools) and persists — the ONLY way to actually
 	// kill an agent-bundled tool, since it's reconstituted from the record

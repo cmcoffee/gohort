@@ -255,6 +255,8 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 		return out
 	}
+	// A search about bulletin boards learns of the board tool, or who has it.
+	sess.FindToolsNote = t.bulletinFindNote
 	sess.BundleTool = func(tt TempTool) error {
 		return bundleAgentTool(poolDBRef, owner, base, tt)
 	}

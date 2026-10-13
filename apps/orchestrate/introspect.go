@@ -265,7 +265,7 @@ func effectiveExtraToolsets(a AgentRecord) []string {
 	if agentCanAuthor(a) {
 		out = append(out, "Authoring toolset (always on for Builder): tool_def, create_agent, update_agent, clone_agent, "+
 			"delete_agent, add_tool, skill_def, app_def, survey, bulletins (create a board; allow_poster gives an agent "+
-			"post_bulletin), plus credential drafting. schedule sits in the load-before-use index: load_tool it. "+
+			"bulletin_board, to post and clear), plus credential drafting. schedule sits in the load-before-use index: load_tool it. "+
 			"These are appended to the catalog AFTER allowlist filtering, so they never appear in the allowlist "+
 			"above: its absence there says nothing about whether you can call them. "+
 			"Check the tool list you were actually given this turn: if tool_def is there, use it. "+

@@ -240,7 +240,7 @@ func (T *OrchestrateApp) bulletinPills(w http.ResponseWriter, r *http.Request, u
 			out["primary"] = map[string]any{"label": "All agents", "on": b.AllAgents}
 			out["note"] = "An agent that follows this board sees its latest post on every turn it takes. All agents covers every agent, including ones you make later."
 		} else {
-			out["note"] = "Agents allowed to post here get a post_bulletin tool naming this board. Anyone may read a board they follow; only these may write to it."
+			out["note"] = "Agents allowed to post here get a bulletin_board tool naming this board, which posts and clears. Anyone may read a board they follow; only these may write to it."
 		}
 		writeJSON(w, out)
 	case http.MethodPost:

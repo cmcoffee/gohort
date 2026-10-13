@@ -99,8 +99,15 @@ func (t *FindToolsTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			hits = hits[:k]
 		}
 	}
+	// What the app knows about this capability that no index holds.
+	note := ""
+	if sess != nil && sess.FindToolsNote != nil {
+		if n := strings.TrimSpace(sess.FindToolsNote(query)); n != "" {
+			note = "\n\nNOTE: " + n
+		}
+	}
 	if len(hits) == 0 {
-		return fmt.Sprintf("No matching tools for %q. The deployment's tool index may be empty, OR the embedder is offline, OR no registered tool's description matches that intent. Try a different phrasing; if still nothing, the capability may genuinely not be installed.", query), nil
+		return fmt.Sprintf("No matching tools for %q. The deployment's tool index may be empty, OR the embedder is offline, OR no registered tool's description matches that intent. Try a different phrasing; if still nothing, the capability may genuinely not be installed.", query) + note, nil
 	}
 	type out struct {
 		Name        string  `json:"name"`
@@ -116,7 +123,7 @@ func (t *FindToolsTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		}
 	}
 	b, _ := json.Marshal(rows)
-	return string(b), nil
+	return string(b) + note, nil
 }
 
 // stringArg coerces an arbitrary tool-arg value to string. Local

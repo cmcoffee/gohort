@@ -203,7 +203,14 @@ func bulletinLines(db Database, agent AgentRecord, loc *time.Location) []string 
 		if !agentFollows(agent, b) || !b.current(now) {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("[%s, posted %s] %s", b.Name, bulletinAge(b.PostedAt, now, loc), b.Text))
+		// A follower that cannot post is told who can, so a request to
+		// change or clear the board goes to them rather than looking for a
+		// way around it. A poster has the boards in its own tool.
+		who := ""
+		if !b.allowsAgent(agent) {
+			who = "; posted and cleared by " + bulletinPosterNames(db, b)
+		}
+		lines = append(lines, fmt.Sprintf("[%s, posted %s%s] %s", b.Name, bulletinAge(b.PostedAt, now, loc), who, b.Text))
 	}
 	return lines
 }
@@ -245,16 +252,33 @@ func (t *chatTurn) withBulletins(notes string) string {
 	return note + "\n\n" + notes
 }
 
-// postBulletinToolDef is the tool an agent posts with, offered only to an
-// agent allowed to post to at least one board, and naming those boards.
-func (t *chatTurn) postBulletinToolDef() (AgentToolDef, bool) {
-	db, _ := t.ownerView()
+// bulletinToolName is the tool a poster posts to and clears its boards with.
+// legacyBulletinToolName is what it was called while it could only post:
+// instructions written then still name it, and are read as naming this.
+const (
+	bulletinToolName       = "bulletin_board"
+	legacyBulletinToolName = "post_bulletin"
+)
+
+// postableBoards are the boards an agent may post to and clear: named on the
+// board, or owned by an agent that is.
+func postableBoards(db Database, a AgentRecord) []string {
 	var boards []string
 	for _, b := range listBulletins(db) {
-		if b.allowsAgent(t.agent) {
+		if b.allowsAgent(a) {
 			boards = append(boards, b.Name)
 		}
 	}
+	return boards
+}
+
+// bulletinBoardToolDef is the tool an agent posts to and clears boards with,
+// offered only to an agent allowed to post to at least one board, and naming
+// those boards. One tool with an action, like schedule: the name says it is
+// THE way to work a board, so neither half is found only by reading past it.
+func (t *chatTurn) bulletinBoardToolDef() (AgentToolDef, bool) {
+	db, _ := t.ownerView()
+	boards := postableBoards(db, t.agent)
 	if len(boards) == 0 {
 		return AgentToolDef{}, false
 	}
@@ -268,41 +292,92 @@ func (t *chatTurn) postBulletinToolDef() (AgentToolDef, bool) {
 	}
 	return AgentToolDef{
 		Tool: Tool{
-			Name: "post_bulletin",
-			Description: "Post a short notice to a bulletin board other agents follow: every agent that follows the board sees your latest post on each of its turns, and it replaces the board's previous post. " +
-				fmt.Sprintf("Keep it to the few lines that matter (at most %d characters): today's headlines, a status, a reminder. ", maxBulletinChars) +
-				"To empty a board, call this with clear=true and no text: followers then see nothing from it until the next post. This tool is the only way to post or clear; a board is not a file. " +
-				"Boards you may post to: " + strings.Join(boards, ", ") + ".",
+			Name: bulletinToolName,
+			Description: "Post to or clear a bulletin board other agents follow. Every agent that follows a board sees its latest post on each of its turns. " +
+				fmt.Sprintf("action=\"post\" replaces the board's post with text: keep it to the few lines that matter (at most %d characters), such as today's headlines, a status, a reminder. ", maxBulletinChars) +
+				"action=\"clear\" empties the board: its followers see nothing from it until the next post. " +
+				"This tool is the only way to post to or clear a board; a board is not a file. " +
+				"Boards you may post to and clear: " + strings.Join(boards, ", ") + ".",
 			Parameters: map[string]ToolParam{
-				"board": {Type: "string", Enum: boards, Description: "The board to post to or clear."},
-				"text":  {Type: "string", Description: "The post itself, replacing the board's last one. Leave out when clearing."},
-				"clear": {Type: "boolean", Description: "true empties the board instead of posting."},
+				"board":  {Type: "string", Enum: boards, Description: "The board."},
+				"action": {Type: "string", Enum: []string{"post", "clear"}, Description: "post replaces the board's post with text; clear empties the board."},
+				"text":   {Type: "string", Description: "The post, for action=post: it replaces the board's last one."},
 			},
-			Required: []string{"board"},
+			Required: []string{"board", "action"},
 			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := bulletinName(stringArg(args, "board"))
 			b, ok := loadBulletin(db, name)
 			if !ok || !b.allowsAgent(t.agent) {
-				return "", fmt.Errorf("you may not post to %q; boards you may post to: %s", name, strings.Join(boards, ", "))
+				return "", fmt.Errorf("you may not post to or clear %q; boards you may: %s", name, strings.Join(boards, ", "))
 			}
-			if clear, _ := args["clear"].(bool); clear {
+			switch strings.ToLower(strings.TrimSpace(stringArg(args, "action"))) {
+			case "clear":
 				if _, err := clearBulletin(db, name, by); err != nil {
 					return "", err
 				}
 				return fmt.Sprintf("Cleared %q. Its followers see nothing from it until the next post.", name), nil
+			case "post":
+				if strings.TrimSpace(stringArg(args, "text")) == "" {
+					return "", fmt.Errorf("a post needs text; to empty the board, use action=\"clear\"")
+				}
+				b, err := postBulletin(db, name, stringArg(args, "text"), by)
+				if err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("Posted to %q. Every agent following it sees this on its next turn.", b.Name), nil
 			}
-			if strings.TrimSpace(stringArg(args, "text")) == "" {
-				return "", fmt.Errorf("a post needs text; to empty the board, call again with clear=true")
-			}
-			b, err := postBulletin(db, name, stringArg(args, "text"), by)
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Posted to %q. Every agent following it sees this on its next turn.", b.Name), nil
+			return "", fmt.Errorf("action must be \"post\" or \"clear\"")
 		},
 	}, true
+}
+
+// bulletinFindNote is what find_tools adds when a search is about boards
+// (ToolSession.FindToolsNote): the tool, when the agent has it, which a
+// search of the deployment's index never finds because it is handed out
+// per turn; otherwise who can post to and clear each board it follows, and
+// how it can be given the right. Empty for any other search. Observed: an
+// agent asked to clear a board it only followed searched five times, then
+// asked an SSH system to look for the board's file on disk.
+func (t *chatTurn) bulletinFindNote(query string) string {
+	q := strings.ToLower(query)
+	if !strings.Contains(q, "bulletin") && !strings.Contains(q, "board") {
+		return ""
+	}
+	db, _ := t.ownerView()
+	all := listBulletins(db)
+	if len(all) == 0 {
+		return ""
+	}
+	if boards := postableBoards(db, t.agent); len(boards) > 0 {
+		return "Bulletin boards: " + bulletinToolName + " is already in your tools. It posts to and clears " + strings.Join(boards, ", ") + "."
+	}
+	var who []string
+	for _, b := range all {
+		if agentFollows(t.agent, b) {
+			who = append(who, b.Name+": "+bulletinPosterNames(db, b))
+		}
+	}
+	note := "Bulletin boards: posting to or clearing one is the " + bulletinToolName + " tool, which only an agent on that board's Posters list has, and you are on none. "
+	if len(who) > 0 {
+		note += "Who can post to and clear the boards you follow: " + strings.Join(who, "; ") + ". Hand the job to that agent. "
+	}
+	return note + "The owner can also clear a board, or add you as a poster, under Knowledge > Bulletins. A board is not a file: do not look for one."
+}
+
+// bulletinPosterNames says who may post to and clear a board, by name.
+func bulletinPosterNames(db Database, b bulletinBoard) string {
+	var names []string
+	for _, id := range b.Posters {
+		if a, ok := loadAgent(db, id); ok {
+			names = append(names, chFirst(a.Name, a.ID))
+		}
+	}
+	if len(names) == 0 {
+		return "only the owner"
+	}
+	return strings.Join(names, ", ")
 }
 
 // bulletinsField is the agent editor's list of boards this agent follows, the

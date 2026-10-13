@@ -425,7 +425,7 @@ func callsOwnTools(src string) string {
 	if m[1] != "" {
 		what = fmt.Sprintf("your %s tool", m[1])
 	}
-	return fmt.Sprintf("this calls %s through `default_api`, which does not exist inside a tool: default_api is only how your tools are named to you, and a tool's command or script cannot call any of them. Nothing to build here: if an agent needs what one of your tools gives, grant it to that agent with the tool that manages it (an agent posts to a bulletin board once bulletins allow_poster lets it, which gives it post_bulletin; an agent uses a catalog tool once it is in its allowed tools). A script itself has only the gohort module (fetch_url, fetch_via, ...) for reaching outside", what)
+	return fmt.Sprintf("this calls %s through `default_api`, which does not exist inside a tool: default_api is only how your tools are named to you, and a tool's command or script cannot call any of them. Nothing to build here: if an agent needs what one of your tools gives, grant it to that agent with the tool that manages it (an agent posts to a bulletin board once bulletins allow_poster lets it, which gives it bulletin_board; an agent uses a catalog tool once it is in its allowed tools). A script itself has only the gohort module (fetch_url, fetch_via, ...) for reaching outside", what)
 }
 
 // NormalizeScriptBody undoes a script that arrived escaped a second time: the

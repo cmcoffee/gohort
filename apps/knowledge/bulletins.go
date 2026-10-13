@@ -14,7 +14,7 @@ func bulletinsSection() ui.Section {
 		Title:    "Bulletins",
 		Subtitle: "Short notices every following agent sees on each turn.",
 		Detail: "A collection is found by search when a question matches. A bulletin is pushed: a board holds one short latest post, and every agent that follows the board sees it on every turn, so a daily briefing or a message of the day is known without anyone fetching it. " +
-			"Post yourself with Write post, empty it with Clear, let an agent post with Posters (it gets a post_bulletin tool for this board, which can clear it too), and choose who reads it with Followers.",
+			"Post yourself with Write post, empty it with Clear, let an agent post with Posters (it gets a bulletin_board tool that posts to and clears this board), and choose who reads it with Followers.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.ModalButton{
 				Label:    "New board",
