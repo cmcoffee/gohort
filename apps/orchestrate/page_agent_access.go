@@ -920,8 +920,9 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 // decisions taken off, each replaced by a line naming where it is made.
 //   - Share: a sub-agent is never shared, published or on a dashboard
 //     (enforceSubAgentPosture), so nothing set there could take effect.
-//   - Who may call it: only its parent, and Builder checking what it built
-//     (agents run refuses everything else), whatever the controls said.
+//   - Delegation: it calls nothing (agentsToolWanted), and only its parent,
+//     and Builder checking what it built, can call it (agents run refuses
+//     everything else), whatever the controls said.
 //   - Who it may message: it sends through its parent's channels, so the
 //     people its parent may message are its people (familyContactBlocked).
 func subAgentSecuritySections(secs []ui.Section, udb Database, top string) []ui.Section {
@@ -930,13 +931,14 @@ func subAgentSecuritySections(secs []ui.Section, udb Database, top string) []ui.
 		parent = chFirst(p.Name, p.ID)
 	}
 	drop := map[string]bool{
-		"Who may call THIS agent":         true,
-		"Agents that may call it":         true,
 		"Let this agent message somebody": true,
 	}
 	out := make([]ui.Section, 0, len(secs)+2)
 	for _, s := range secs {
-		if s.Group == "Share" || drop[s.Title] {
+		// Delegation is the parent's: a sub-agent calls nothing and is
+		// called only by its parent, so of that tab only the list of the
+		// sub-agents it owns is left.
+		if s.Group == "Share" || drop[s.Title] || (s.Group == "Delegation" && s.Title != "Sub-agents") {
 			continue
 		}
 		// Its parents' limits hold it as well (familyBudgets): what it does
@@ -948,9 +950,10 @@ func subAgentSecuritySections(secs []ui.Section, udb Database, top string) []ui.
 	}
 	return append(out,
 		ui.Section{
-			Group:    "Delegation",
-			Title:    "Who may call it",
-			Subtitle: "Only " + parent + ", the agent it belongs to, and Builder checking what it built. A sub-agent is reached through its parent, so there is nothing to set here.",
+			Group: "Delegation",
+			Title: "A sub-agent does not delegate",
+			Subtitle: "It calls no other agent, pipeline or machine: it does its work with its own tools, and " + parent + " does the delegating. " +
+				"Only " + parent + ", the agent it belongs to, and Builder checking what it built, can call it. So there is nothing to set here.",
 		},
 		ui.Section{
 			Group:    "Access",

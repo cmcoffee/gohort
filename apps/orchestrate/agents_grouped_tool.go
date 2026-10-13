@@ -331,6 +331,15 @@ func (t *chatTurn) agentsToolWanted() bool {
 	if t == nil {
 		return false
 	}
+	// A sub-agent is a leaf on every path: it does its own work with its own
+	// tools and its parent does the delegating (agent_family.go). Its fleet
+	// was already empty, but pipelines and machines still reached it from a
+	// chat or a scheduled turn, while the same agent called by its parent had
+	// no agents tool at all.
+	if strings.TrimSpace(t.agent.OwnedBy) != "" && !agentCanAuthor(t.agent) {
+		Debug("[orchestrate] agents: tool withheld for agent=%q, a sub-agent delegates nothing", t.agent.ID)
+		return false
+	}
 	if t.canDispatchAnything() || agentCanAuthor(t.agent) {
 		return true
 	}

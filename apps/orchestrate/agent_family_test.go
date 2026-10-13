@@ -431,7 +431,8 @@ func TestAParentDecidesForItsSubAgents(t *testing.T) {
 		return w.Body.String()
 	}
 	sub, top := page("a-critic"), page("a-writer")
-	for _, gone := range []string{`"group":"Share"`, "Who may call THIS agent", "Agents that may call it", "Let this agent message somebody"} {
+	for _, gone := range []string{`"group":"Share"`, "Who may call THIS agent", "Agents that may call it", "Let this agent message somebody",
+		"Which agents it can call at all", "Dispatch target list", "What it can call"} {
 		if strings.Contains(sub, gone) {
 			t.Errorf("a sub-agent's Security page still offers %s", gone)
 		}
@@ -439,7 +440,7 @@ func TestAParentDecidesForItsSubAgents(t *testing.T) {
 			t.Errorf("a top-level agent's Security page lost %s", gone)
 		}
 	}
-	for _, want := range []string{"Only Writer, the agent it belongs to", "Decided on Writer's Security page", "Writer is forced Private, so this agent is too"} {
+	for _, want := range []string{"A sub-agent does not delegate", "Only Writer, the agent it belongs to", "Decided on Writer's Security page", "Writer is forced Private, so this agent is too"} {
 		if !strings.Contains(sub, want) {
 			t.Errorf("a sub-agent's Security page should say %q", want)
 		}
@@ -477,5 +478,21 @@ func TestASubAgentCountsAgainstItsParentsCaps(t *testing.T) {
 	app.renderAgentAccess(w, asUser(httptest.NewRequest(http.MethodGet, "/agent/a-nit/access?format=json", nil), "alice"), "alice", udb, "a-nit")
 	if !strings.Contains(w.Body.String(), "Writer's limits cover this agent too") {
 		t.Error("a sub-agent's Limits tab should say its parent's limits cover it")
+	}
+}
+
+// A sub-agent delegates nothing on any path: no agents tool on its chat or
+// scheduled turn, as it already had none when its parent called it. An
+// authoring sub-agent keeps the read-only fleet view authoring needs.
+func TestASubAgentIsALeafOnEveryPath(t *testing.T) {
+	app, udb := familyFixture(t)
+	critic, _ := loadAgent(udb, "a-critic")
+	writer, _ := loadAgent(udb, "a-writer")
+	sub := &chatTurn{app: app, udb: udb, user: "alice", agent: critic}
+	if sub.agentsToolWanted() {
+		t.Error("a sub-agent's own turn carries the agents tool")
+	}
+	if top := (&chatTurn{udb: udb, user: "alice", agent: writer}); !top.agentsToolWanted() {
+		t.Error("a top-level agent lost the agents tool (its turn has no app, which reads as full reach)")
 	}
 }
