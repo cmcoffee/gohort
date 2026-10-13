@@ -755,7 +755,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					PostTo:        patchURL,
 					Method:        "PATCH",
 					Noun:          "user",
-					Intro:         "People, or a group you are in, who may run this agent.",
+					Intro:         "People, or a team you are on, who may run this agent.",
 					EmptyText:     "No other users to share with yet.",
 				}),
 			},

@@ -291,7 +291,7 @@ func TestAnAgentSharedWithAGroupReachesItsMembers(t *testing.T) {
 		t.Errorf("dana, outside Ops, has it: %+v", got)
 	}
 	a, _ := loadAgent(udb, "a1")
-	if r := agentReachOf(udb, "alice", a); r.Audience != "Shared with the Ops group" || len(r.recipients) != 1 || r.recipients[0] != "bob" {
+	if r := agentReachOf(udb, "alice", a); r.Audience != "Shared with the Ops team" || len(r.recipients) != 1 || r.recipients[0] != "bob" {
 		t.Errorf("reach = %q, recipients %v", r.Audience, r.recipients)
 	}
 }

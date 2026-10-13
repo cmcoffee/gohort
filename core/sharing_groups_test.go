@@ -60,7 +60,7 @@ func TestAGroupEntryReachesItsMembers(t *testing.T) {
 	if got := ShareMembers(append(list, "carol"), "alice"); strings.Join(got, ",") != "bob,carol" {
 		t.Errorf("members = %v, want bob and carol (the owner left out)", got)
 	}
-	if got := ShareRecipientsText([]string{"carol", "group:" + ops, "group:gone"}); got != "carol, the Ops group, a removed group" {
+	if got := ShareRecipientsText([]string{"carol", "group:" + ops, "group:gone"}); got != "carol, the Ops team, a removed team" {
 		t.Errorf("text = %q", got)
 	}
 
@@ -82,7 +82,7 @@ func TestAGroupEntryReachesItsMembers(t *testing.T) {
 func TestThePickerOffersTheOwnersShareableGroups(t *testing.T) {
 	groupShareFixture(t)
 	with := string(ShareCandidatesJSON("alice", true))
-	if !strings.Contains(with, `"value":"group:g-ops"`) || !strings.Contains(with, "Group: Ops") || !strings.Contains(with, `"desc":"1 other member"`) {
+	if !strings.Contains(with, `"value":"group:g-ops"`) || !strings.Contains(with, "Team: Ops") || !strings.Contains(with, `"desc":"1 other member"`) {
 		t.Errorf("alice's shareable group is missing: %s", with)
 	}
 	if strings.Contains(with, "g-bundle") || strings.Contains(with, `"value":"alice"`) {

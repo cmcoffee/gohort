@@ -25,7 +25,7 @@ import (
 var sectionGroup = map[string]string{
 	"System Status": "System", "Site Settings": "System",
 	"Users": "System", "Add account": "System", "Default Apps": "System",
-	"App Groups": "System",
+	"Teams": "System",
 
 	"Cost History (Last 30 Days)": "Costs", "Cost by source": "Costs", "Prices": "Costs",
 
@@ -363,7 +363,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Source Hooks": true,
 		"Persistent Tools (Pending)": true, "Global Tools": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
-		"Tool Groups": true, "Skills": true, "Pipelines": true, "App Groups": true,
+		"Tool Groups": true, "Skills": true, "Pipelines": true, "Teams": true,
 		"Templates":  true,
 		"Migrations": true, "Database Browser": true,
 		"Agent Capabilities: Outward & Spending": true,

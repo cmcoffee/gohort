@@ -104,7 +104,7 @@ func toolSharePickerJSON() string {
 		PostTo:        "api/tools?action=share&name=__NAME__",
 		Method:        "POST",
 		Noun:          "user",
-		Intro: "People, or a group you are in. They can take this tool into their own catalog, and it runs in THEIR session against their own credentials. " +
+		Intro: "People, or a team you are on. They can take this tool into their own catalog, and it runs in THEIR session against their own credentials. " +
 			"Nothing loads for their agents until they take it: a share is an offer, not a push.",
 		EmptyText:  "No other users to share with yet.",
 		Invalidate: []string{"api/tools"},

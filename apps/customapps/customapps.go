@@ -711,13 +711,13 @@ const shareModalScript = `<script>
       gwrap.style.cssText = 'margin-top:1.1rem';
       var gh = document.createElement('div');
       gh.style.cssText = 'font-weight:600;margin-bottom:0.25rem';
-      gh.textContent = 'Share with a group';
+      gh.textContent = 'Share with a team';
       gwrap.appendChild(gh);
       var gnote = document.createElement('div');
       gnote.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin:0 0 0.5rem;line-height:1.4';
       gnote.textContent = groups.length
-        ? 'Everyone in the group can open it, now and as people join, each with their own copy. No administrator needed; your scripts run with your credentials for them.'
-        : 'You are not in a group whose administrator lets members share.';
+        ? 'Everyone on the team can open it, now and as people join, each with their own copy. No administrator needed; your scripts run with your credentials for them.'
+        : 'You are not on a team whose administrator lets members share.';
       gwrap.appendChild(gnote);
       groups.forEach(function(g){
         var who = g.members + (g.members === 1 ? ' person' : ' people');

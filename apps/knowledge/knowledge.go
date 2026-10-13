@@ -241,7 +241,7 @@ func (T *KnowledgeApp) sharingSection(user, collectionID string) (ui.Section, bo
 	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID)
 	return ui.Section{
 		Title:    "Shared with",
-		Subtitle: "Other people, or a group you are in, who may attach and search this collection. Empty means private to you.",
+		Subtitle: "Other people, or a team you are on, who may attach and search this collection. Empty means private to you.",
 		Detail: "They get READ: it appears in their collections, they can attach it to their agents and search it. " +
 			"They cannot rename it, delete it or change who it reaches, and there is only ever one copy — so a document you add later is shared too, and one you remove is gone for everyone.\n\n" +
 			"Everybody added starts as a READER. Contributor is an extra you set on their own chip, and it is worth stopping on: a contributor may add documents, and an agent takes this corpus as fact, so they decide what every agent reading it believes.\n\n" +
@@ -256,7 +256,7 @@ func (T *KnowledgeApp) sharingSection(user, collectionID string) (ui.Section, bo
 			// carry whatever else it happened to have read.
 			Method:    "PATCH",
 			Noun:      "user",
-			Intro:     "People, or a group you are in, who may use this collection. Everybody starts a reader.",
+			Intro:     "People, or a team you are on, who may use this collection. Everybody starts a reader.",
 			EmptyText: "No other users to share with yet.",
 			// One list with a setting per person. Two pickers over overlapping
 			// sets read as two decisions and leave you working out which names

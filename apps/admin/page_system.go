@@ -167,17 +167,14 @@ func (a *AdminApp) systemSections() []ui.Section {
 						a.Compact = true
 						return a
 					}(),
-					// App groups — assign whole bundles of apps at once.
-					// Value stored is the group ID; access resolves the group
-					// to its apps at check time. Sits alongside App access: a
-					// user's access is the union of both.
-					//
-					// "App groups" for the same reason its neighbour is "App
-					// access": a bare "Groups" in a user's row reads as user
-					// groups, which are not a thing here, and the section
-					// that manages these is already called App Groups.
+					// Teams: which teams this person is on. Value stored is
+					// the team's group ID; access resolves it to its apps at
+					// check time. Sits alongside App access: a user's access
+					// is the union of both. Called Teams on screen, the
+					// section below too, because a team is also who its
+					// members share with; storage keeps the group names.
 					func() ui.RowAction {
-						a := ui.Expand("App groups", ui.ChipPicker{
+						a := ui.Expand("Teams", ui.ChipPicker{
 							OptionsSource: "api/app-groups",
 							RecordSource:  "api/users/{username}",
 							Field:         "groups",
@@ -204,6 +201,71 @@ func (a *AdminApp) systemSections() []ui.Section {
 						Variant: "danger"},
 				},
 				EmptyText: "No users yet.",
+			},
+		},
+		{
+			Title:    "Teams",
+			Subtitle: "Name a team, give it apps, and put people on it with the Teams button on their row above.",
+			Detail:   "For example \"Writers\" or \"Ops\". A team's apps are resolved when a member opens one, so editing a team re-provisions everyone on it at once. With sharing turned on, members can also share what they own with the whole team.",
+			Body: ui.Stack{
+				Children: []ui.Component{
+					// Create a new team (name + optional description). The
+					// per-row editor below fills in its apps.
+					ui.FormPanel{
+						PostURL:     "api/app-groups",
+						Method:      "POST",
+						SubmitLabel: "Create team",
+						Fields: []ui.FormField{
+							{Field: "name", Type: "text", Label: "Name", Placeholder: "e.g. Writers"},
+							{Field: "description", Type: "text", Label: "Description", Placeholder: "Optional note"},
+						},
+						Invalidate: []string{"api/app-groups"},
+					},
+					// Existing teams: per-row editor (name/description + the
+					// apps chip picker) and delete.
+					ui.Table{
+						Source: "api/app-groups",
+						RowKey: "id",
+						Columns: []ui.Col{
+							{Field: "name", Flex: 1},
+							{Field: "description", Flex: 2, Mute: true},
+						},
+						RowActions: []ui.RowAction{
+							ui.Expand("Edit", ui.Stack{
+								Children: []ui.Component{
+									ui.FormPanel{
+										Source:  "api/app-groups/{id}",
+										PostURL: "api/app-groups",
+										Method:  "POST",
+										Fields: []ui.FormField{
+											{Field: "name", Type: "text", Label: "Name"},
+											{Field: "description", Type: "text", Label: "Description"},
+											{Field: "shareable", Type: "toggle", Label: "Members can share with this team",
+												Help:   "Lets members share what they own (apps, agents, skills, collections, tools) with the whole team, with no request to you.",
+												Detail: "For people who work together. While it is off, the team is not offered in anyone's share pickers. Leave it off for a broad bundle such as everyone: sharing with a team most people are on is close to sharing with everyone, which stays your call. A member shares only with teams they are on. Members need My Apps among the team's apps to open an app shared with them. Turning it off stops every share to the team at once."},
+										},
+									},
+									// Which apps this team grants.
+									ui.ChipPicker{
+										OptionsSource: "api/apps",
+										RecordSource:  "api/app-groups/{id}",
+										Field:         "apps",
+										PostTo:        "api/app-groups",
+										Method:        "POST",
+										NameField:     "path",
+										LabelField:    "name",
+									},
+								},
+							}),
+							{Type: "button", Label: "Delete",
+								PostTo:  "api/app-groups?id={id}",
+								Method:  "DELETE",
+								Confirm: "Delete this team? Its members lose the apps it granted (unless they have them another way), and what was shared with the team stops reaching them.",
+								Variant: "danger"},
+						},
+						EmptyText: "No teams yet. Create one above, add its apps, then put people on it from their row under Users.",
+					},
+				},
 			},
 		},
 		{
@@ -248,71 +310,6 @@ func (a *AdminApp) systemSections() []ui.Section {
 				Method:        "PUT",
 				NameField:     "path",
 				LabelField:    "name",
-			},
-		},
-		{
-			Title:    "App Groups",
-			Subtitle: "Bundle apps under one name, then assign a whole group to a user.",
-			Detail:   "For example \"Writers\" or \"Ops\", assigned from the Groups picker above. Access resolves the group to its apps, so editing a group instantly re-provisions everyone assigned to it.",
-			Body: ui.Stack{
-				Children: []ui.Component{
-					// Create a new group (name + optional description). The
-					// per-row editor below fills in its apps.
-					ui.FormPanel{
-						PostURL:     "api/app-groups",
-						Method:      "POST",
-						SubmitLabel: "Create group",
-						Fields: []ui.FormField{
-							{Field: "name", Type: "text", Label: "Name", Placeholder: "e.g. Writers"},
-							{Field: "description", Type: "text", Label: "Description", Placeholder: "Optional note"},
-						},
-						Invalidate: []string{"api/app-groups"},
-					},
-					// Existing groups: per-row editor (name/description + the
-					// apps chip picker) and delete.
-					ui.Table{
-						Source: "api/app-groups",
-						RowKey: "id",
-						Columns: []ui.Col{
-							{Field: "name", Flex: 1},
-							{Field: "description", Flex: 2, Mute: true},
-						},
-						RowActions: []ui.RowAction{
-							ui.Expand("Edit", ui.Stack{
-								Children: []ui.Component{
-									ui.FormPanel{
-										Source:  "api/app-groups/{id}",
-										PostURL: "api/app-groups",
-										Method:  "POST",
-										Fields: []ui.FormField{
-											{Field: "name", Type: "text", Label: "Name"},
-											{Field: "description", Type: "text", Label: "Description"},
-											{Field: "shareable", Type: "toggle", Label: "Members can share with this group",
-												Help:   "Lets members share what they own (apps, agents, skills, collections, tools) with everyone in the group, with no request to you.",
-												Detail: "For a group that is a team. While it is off, the group is not offered in anyone's share pickers. Leave it off for a broad bundle: sharing with a group most people are in is close to sharing with everyone, which stays your call. A member shares only with groups they are in themselves. Members need My Apps among the group's apps to open an app shared with them. Turning it off stops every share to the group at once."},
-										},
-									},
-									// Which apps this group grants.
-									ui.ChipPicker{
-										OptionsSource: "api/apps",
-										RecordSource:  "api/app-groups/{id}",
-										Field:         "apps",
-										PostTo:        "api/app-groups",
-										Method:        "POST",
-										NameField:     "path",
-										LabelField:    "name",
-									},
-								},
-							}),
-							{Type: "button", Label: "Delete",
-								PostTo:  "api/app-groups?id={id}",
-								Method:  "DELETE",
-								Confirm: "Delete this app group? Users assigned to it lose the apps it granted (unless they also have them via another grant).",
-								Variant: "danger"},
-						},
-						EmptyText: "No app groups yet. Create one above, then add its apps and assign it to users.",
-					},
-				},
 			},
 		},
 	}

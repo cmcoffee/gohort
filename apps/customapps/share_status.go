@@ -75,10 +75,10 @@ func shareStatusLines(spec AppSpec) []string {
 	}
 	if live, lapsed := sharedGroupNames(spec); len(live)+len(lapsed) > 0 {
 		if len(live) > 0 {
-			lines = append(lines, "Shared with "+strings.Join(live, ", ")+": everyone in it can open the app, now and as people join.")
+			lines = append(lines, "Shared with "+strings.Join(live, ", ")+": everyone on the team can open the app, now and as people join.")
 		}
 		if len(lapsed) > 0 {
-			lines = append(lines, "No longer reaching "+strings.Join(lapsed, ", ")+": the group was removed, stopped letting members share, or you left it.")
+			lines = append(lines, "No longer reaching "+strings.Join(lapsed, ", ")+": the team was removed, stopped letting members share, or you left it.")
 		}
 	}
 	// Anonymous links were removed, so there is no live state to report. A

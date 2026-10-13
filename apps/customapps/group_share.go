@@ -164,7 +164,7 @@ func (T *CustomApps) setGroupShare(owner, slug, groupID string, on bool) error {
 	}
 	if on {
 		if _, ok := shareableGroup(owner, groupID); !ok {
-			return Error("that group is not one you can share with: you need to be in it, and its administrator has to let members share")
+			return Error("that team is not one you can share with: you need to be on it, and its administrator has to let members share")
 		}
 		if other, shared := LookupSharedOwner(T.DB, sharedAppsIndex, slug); shared && other != owner {
 			return Error("another user already shares an app at this slug: rename yours to share it")

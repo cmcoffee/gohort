@@ -1113,7 +1113,7 @@ func currentAutoThinkLabel() string {
 // be describing a control that no longer does that on its own.
 func shareSubtitleFor(a AgentRecord) string {
 	if !a.Everyone && !a.MCPExposed {
-		return "Let specific people, or a group you are in, run this agent. Empty means private to you."
+		return "Let specific people, or a team you are on, run this agent. Empty means private to you."
 	}
 	if len(a.AllowedUsers) == 0 {
 		return "Published: everybody the admin has granted this app can run it. Name people here to narrow it to them."

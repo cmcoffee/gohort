@@ -387,11 +387,11 @@ func ShareRecipientsText(list []string) string {
 		}
 		if AuthDB != nil {
 			if g, ok := LoadAppGroup(AuthDB(), id); ok {
-				parts = append(parts, "the "+g.Name+" group")
+				parts = append(parts, "the "+g.Name+" team")
 				continue
 			}
 		}
-		parts = append(parts, "a removed group")
+		parts = append(parts, "a removed team")
 	}
 	return strings.Join(parts, ", ")
 }
@@ -426,7 +426,7 @@ func ShareCandidatesJSON(owner string, groups bool) []byte {
 			}
 			groups = append(groups, candidate{
 				Value: shareGroupPrefix + id,
-				Label: "Group: " + g.Name,
+				Label: "Team: " + g.Name,
 				Desc:  strconv.Itoa(n) + " other " + map[bool]string{true: "member", false: "members"}[n == 1],
 			})
 		}
