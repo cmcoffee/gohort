@@ -32,6 +32,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -133,4 +134,51 @@ func refPickerDesc(user, kind string, it ReferenceItem) string {
 		return line
 	}
 	return desc + " - " + line
+}
+
+// agentSourcesFor is core.AgentSourcesFor: the Sources an agent has chosen,
+// read from its owner's store.
+func agentSourcesFor(owner, agentID string) []ReferenceSelection {
+	db := agentStore(owner)
+	if db == nil {
+		return nil
+	}
+	a, ok := loadAgent(db, agentID)
+	if !ok || (a.Owner != "" && a.Owner != owner) {
+		return nil
+	}
+	return a.AttachedSources
+}
+
+// setAgentSource is core.SetAgentSource: adds or removes one Source on an
+// agent the owner owns, saved like any other edit to it.
+func setAgentSource(owner, agentID string, sel ReferenceSelection, on bool) error {
+	db := agentStore(owner)
+	if db == nil {
+		return fmt.Errorf("no agent store")
+	}
+	a, ok := loadAgent(db, agentID)
+	if !ok || (a.Owner != "" && a.Owner != owner) {
+		return fmt.Errorf("no agent %q of yours", agentID)
+	}
+	has := false
+	kept := a.AttachedSources[:0:0]
+	for _, s := range a.AttachedSources {
+		if s.Kind == sel.Kind && s.ItemID == sel.ItemID {
+			has = true
+			if !on {
+				continue
+			}
+		}
+		kept = append(kept, s)
+	}
+	if on == has {
+		return nil
+	}
+	if on {
+		kept = append(kept, sel)
+	}
+	a.AttachedSources = kept
+	_, err := saveAgentAs(db, a, map[bool]string{true: "added source " + sel.Ref(), false: "removed source " + sel.Ref()}[on])
+	return err
 }

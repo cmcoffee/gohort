@@ -53,7 +53,7 @@ import (
 // question is "may this be asked about". Approved command tools still key on
 // the narrow one: inheriting a shell across a group is not something anyone
 // chose by putting two boxes in a workspace together.
-func applianceAskableForAgent(udb Database, agentID, applianceID string) bool {
+func applianceAskableForAgent(udb Database, owner, agentID, applianceID string) bool {
 	// ToolsOnly withholds the asking route entirely, and it is checked
 	// HERE rather than only where the tool list is built.
 	//
@@ -64,7 +64,7 @@ func applianceAskableForAgent(udb Database, agentID, applianceID string) bool {
 	if a, ok := findAppliance(udb, applianceID); ok && a.ToolsOnly {
 		return false
 	}
-	if applianceEnabledForAgent(udb, agentID, applianceID) {
+	if applianceEnabledForAgent(udb, owner, agentID, applianceID) {
 		return true
 	}
 	if udb == nil || strings.TrimSpace(agentID) == "" {
@@ -76,7 +76,7 @@ func applianceAskableForAgent(udb Database, agentID, applianceID string) bool {
 		if !udb.Get(applianceTable, k, &a) || a.Type != "workspace" {
 			continue
 		}
-		if !applianceEnabledForAgent(udb, agentID, a.ID) {
+		if !applianceEnabledForAgent(udb, owner, agentID, a.ID) {
 			continue
 		}
 		for _, m := range a.Members {
@@ -88,9 +88,18 @@ func applianceAskableForAgent(udb Database, agentID, applianceID string) bool {
 	return false
 }
 
-func applianceEnabledForAgent(udb Database, agentID, applianceID string) bool {
+// applianceEnabledForAgent reports whether an agent may use one of owner's
+// systems: it has the system among its Sources, chosen on its own page. That is
+// the one door, so what an agent can reach is decided and seen in one place;
+// a command grant only says what runs there without asking. Without the agent
+// store's hook (a unit test, a tool run outside the agent runtime) it falls
+// back to the grant that used to be the door.
+func applianceEnabledForAgent(udb Database, owner, agentID, applianceID string) bool {
 	if strings.TrimSpace(agentID) == "" {
 		return true
+	}
+	if AgentSourcesFor != nil && strings.TrimSpace(owner) != "" {
+		return AgentHasSource(owner, normalizeAgentID(agentID), "system", applianceID)
 	}
 	_, ok := loadCommandGrant(udb, agentID, applianceID)
 	return ok
@@ -138,11 +147,11 @@ func RequestCapability(ctx context.Context, udb Database, chat FactChatFunc, own
 	if !ok {
 		return "", fmt.Errorf("no system called %q: list the systems first and use one of those names exactly", in.System)
 	}
-	if !applianceEnabledForAgent(udb, agentID, appliance.ID) {
+	if !applianceEnabledForAgent(udb, owner, agentID, appliance.ID) {
 		// Same wording whether the machine exists or not would be better for
 		// secrecy, but worse for the person: this is the owner's own fleet and
 		// the agent needs to be able to tell them what to switch on.
-		return "", fmt.Errorf("you are not enabled for %s. Nothing was requested: tell the person that the owner has to connect you to that system in Servitor before you can ask for capabilities on it",
+		return "", fmt.Errorf("you are not enabled for %s. Nothing was requested: tell the person that the owner has to add that system to your Sources (on your agent page) before you can ask for capabilities on it",
 			applianceLabel(appliance.Name, appliance.ID))
 	}
 	tool, err := MintApplianceTool(ctx, chat, appliance, factsForAppliance(udb, appliance.ID), in.Intent, agentID, owner)

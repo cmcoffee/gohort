@@ -16,7 +16,7 @@ func TestGrantEndpointConnectsWithoutPermitting(t *testing.T) {
 		t.Errorf("connecting must not permit anything, got %v", g.Categories)
 	}
 	// Enough for the agent to ASK about the machine...
-	if !applianceEnabledForAgent(udb, "wren", "lab-box") {
+	if !applianceEnabledForAgent(udb, "", "wren", "lab-box") {
 		t.Error("a connected agent should be able to request capabilities")
 	}
 	// ...and not enough to run anything without approval.
@@ -29,7 +29,7 @@ func TestDisconnectRemovesAccess(t *testing.T) {
 	udb := grantStore(t)
 	SaveCommandGrant(udb, "wren", "lab-box", nil)
 	DeleteCommandGrant(udb, "wren", "lab-box")
-	if applianceEnabledForAgent(udb, "wren", "lab-box") {
+	if applianceEnabledForAgent(udb, "", "wren", "lab-box") {
 		t.Error("a disconnected agent must lose access to the machine")
 	}
 }
@@ -44,7 +44,7 @@ func TestPickerWrappedAgentIDConnectsTheBareAgent(t *testing.T) {
 	if g.AgentID != "wren" {
 		t.Errorf("stored agent id should be bare, got %q", g.AgentID)
 	}
-	if !applianceEnabledForAgent(udb, "wren", "lab-box") {
+	if !applianceEnabledForAgent(udb, "", "wren", "lab-box") {
 		t.Error("a connection saved from the picker must reach the dispatching agent")
 	}
 	// The exec gate resolves with the bare id too; the wrapped save must not
@@ -54,7 +54,7 @@ func TestPickerWrappedAgentIDConnectsTheBareAgent(t *testing.T) {
 	}
 	// And removing through the modal (which may still hold either form) works.
 	DeleteCommandGrant(udb, "agent:wren", "lab-box")
-	if applianceEnabledForAgent(udb, "wren", "lab-box") {
+	if applianceEnabledForAgent(udb, "", "wren", "lab-box") {
 		t.Error("disconnecting with the wrapped id must remove the connection")
 	}
 }
@@ -65,7 +65,7 @@ func TestLegacyWrappedGrantMigratesOnLookup(t *testing.T) {
 	udb := grantStore(t)
 	legacy := CommandGrant{AgentID: "agent:wren", ApplianceID: "lab-box"}
 	udb.Set(commandGrantsTable, legacyCommandGrantKey("wren", "lab-box"), legacy)
-	if !applianceEnabledForAgent(udb, "wren", "lab-box") {
+	if !applianceEnabledForAgent(udb, "", "wren", "lab-box") {
 		t.Fatal("a legacy grant must still connect the agent")
 	}
 	// First touch re-keyed it: the modern key now answers directly.
@@ -77,7 +77,7 @@ func TestLegacyWrappedGrantMigratesOnLookup(t *testing.T) {
 		t.Error("the legacy key should be removed after migration")
 	}
 	DeleteCommandGrant(udb, "wren", "lab-box")
-	if applianceEnabledForAgent(udb, "wren", "lab-box") {
+	if applianceEnabledForAgent(udb, "", "wren", "lab-box") {
 		t.Error("a migrated grant must be deletable")
 	}
 }

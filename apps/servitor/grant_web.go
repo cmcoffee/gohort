@@ -74,6 +74,13 @@ func (T *Servitor) handleCommandGrants(w http.ResponseWriter, r *http.Request) {
 		// without asking". Categories are the console's own permission and are
 		// not settable per agent, because nothing consults them per agent.
 		g := SaveCommandGrant(udb, agentID, appliance, nil)
+		// The connection itself is the agent's Source: this screen adds it
+		// there, where the agent's page shows and removes it.
+		if SetAgentSource != nil {
+			if err := SetAgentSource(user, normalizeAgentID(agentID), ReferenceSelection{Kind: "system", ItemID: appliance}, true); err != nil {
+				Log("[servitor] connecting %q to %s: could not add it to the agent's Sources: %v", agentID, appliance, err)
+			}
+		}
 		// Logged because this is the moment a machine becomes reachable by
 		// something that is not a person, and because the categories decide how
 		// much of it runs without anyone being asked.
@@ -87,6 +94,11 @@ func (T *Servitor) handleCommandGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		DeleteCommandGrant(udb, agent, appliance)
+		if SetAgentSource != nil {
+			if err := SetAgentSource(user, normalizeAgentID(agent), ReferenceSelection{Kind: "system", ItemID: appliance}, false); err != nil {
+				Log("[servitor] disconnecting %q from %s: could not remove it from the agent's Sources: %v", agent, appliance, err)
+			}
+		}
 		Log("[servitor] agent %q disconnected from %s", agent, appliance)
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -111,6 +123,27 @@ func (T *Servitor) grantRows(user string, udb Database) []grantRow {
 		}
 	}
 	all := ListCommandGrants(udb)
+	// With Sources as the door, a grant is access only while the agent still
+	// has the system among its Sources, and an agent that has it but has not
+	// used it yet holds no grant: list what the Sources say.
+	if AgentSourcesFor != nil {
+		kept := all[:0:0]
+		has := map[string]bool{}
+		for _, g := range all {
+			if AgentHasSource(user, g.AgentID, "system", g.ApplianceID) {
+				kept = append(kept, g)
+				has[strings.ToLower(g.AgentID)+"/"+strings.ToLower(g.ApplianceID)] = true
+			}
+		}
+		for id := range agents {
+			for _, s := range AgentSourcesFor(user, id) {
+				if s.Kind == "system" && !has[id+"/"+strings.ToLower(s.ItemID)] {
+					kept = append(kept, CommandGrant{AgentID: id, ApplianceID: s.ItemID})
+				}
+			}
+		}
+		all = kept
+	}
 	rows := make([]grantRow, 0, len(all))
 	for _, g := range all {
 		agent := agents[strings.ToLower(g.AgentID)]

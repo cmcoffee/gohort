@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"time"
 )
 
 // commandGrantsTable holds the per-(agent, appliance) records. Separate from
@@ -222,4 +223,48 @@ func categorySet(names []string) map[RiskCategory]bool {
 		}
 	}
 	return out
+}
+
+// servitorMigrationsTable records one-time moves already made for a user.
+const servitorMigrationsTable = "servitor_migrations"
+
+// grantsMovedKey marks a user whose connections were copied into their agents'
+// Sources, so it happens once: a Source the owner later removes is a decision,
+// and copying it back on every start would undo it.
+const grantsMovedKey = "grants_moved_to_sources"
+
+// moveGrantsToSources copies every connection made before Sources were the
+// door onto the agent's Sources, once per user, so nothing that worked stops
+// working and each one shows on the agent's own page. The grant stays: it
+// says what runs there without asking. Waits for the agent runtime's hook,
+// which is installed when that app starts.
+func (T *Servitor) moveGrantsToSources() {
+	for i := 0; SetAgentSource == nil && i < 120; i++ {
+		time.Sleep(time.Second)
+	}
+	if SetAgentSource == nil || AuthDB == nil || T.DB == nil {
+		return
+	}
+	moved := 0
+	for _, u := range AuthListUsers(AuthDB()) {
+		udb := UserDB(T.DB, u.Username)
+		if udb == nil {
+			continue
+		}
+		var done bool
+		if udb.Get(servitorMigrationsTable, grantsMovedKey, &done) && done {
+			continue
+		}
+		for _, g := range ListCommandGrants(udb) {
+			if err := SetAgentSource(u.Username, normalizeAgentID(g.AgentID), ReferenceSelection{Kind: "system", ItemID: g.ApplianceID}, true); err != nil {
+				Log("[servitor] %s: could not add %s to agent %s's Sources: %v", u.Username, g.ApplianceID, g.AgentID, err)
+				continue
+			}
+			moved++
+		}
+		udb.Set(servitorMigrationsTable, grantsMovedKey, true)
+	}
+	if moved > 0 {
+		Log("[servitor] %d connection(s) now show as Sources on their agents", moved)
+	}
 }

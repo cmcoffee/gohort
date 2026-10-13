@@ -393,16 +393,16 @@ func TestAWorkspaceGrantReachesItsMembers(t *testing.T) {
 	SaveCommandGrant(udb, "agent-1", "ws-1", nil)
 
 	for _, id := range []string{"ws-1", "box-1", "box-2"} {
-		if !applianceAskableForAgent(udb, "agent-1", id) {
+		if !applianceAskableForAgent(udb, "", "agent-1", id) {
 			t.Errorf("connected to the workspace but cannot ask about %q", id)
 		}
 	}
 	// Membership is not a wildcard: a machine outside the workspace stays out.
-	if applianceAskableForAgent(udb, "agent-1", "other") {
+	if applianceAskableForAgent(udb, "", "agent-1", "other") {
 		t.Error("a workspace grant reached a machine that is not in it")
 	}
 	// And an agent with no grant at all reaches nothing.
-	if applianceAskableForAgent(udb, "agent-2", "box-1") {
+	if applianceAskableForAgent(udb, "", "agent-2", "box-1") {
 		t.Error("an unconnected agent may ask about a machine")
 	}
 }
@@ -414,16 +414,16 @@ func TestMembershipGrantsQuestionsNotShells(t *testing.T) {
 	udb := estate(t)
 	SaveCommandGrant(udb, "agent-1", "ws-1", nil)
 
-	if !applianceAskableForAgent(udb, "agent-1", "box-1") {
+	if !applianceAskableForAgent(udb, "", "agent-1", "box-1") {
 		t.Fatal("the member is not askable")
 	}
-	if applianceEnabledForAgent(udb, "agent-1", "box-1") {
+	if applianceEnabledForAgent(udb, "", "agent-1", "box-1") {
 		t.Error("a workspace grant made a member CONNECTED — approved command tools " +
 			"on that machine would be inherited by an agent nobody connected to it")
 	}
 	// A direct grant on the member does both, as it always did.
 	SaveCommandGrant(udb, "agent-1", "box-1", nil)
-	if !applianceEnabledForAgent(udb, "agent-1", "box-1") {
+	if !applianceEnabledForAgent(udb, "", "agent-1", "box-1") {
 		t.Error("a direct grant on the member did not connect it")
 	}
 }
@@ -439,7 +439,7 @@ func TestTheQuestionToolListsWhatItAccepts(t *testing.T) {
 	var listed []Appliance
 	for _, id := range []string{"ws-1", "box-1", "box-2", "other"} {
 		var a Appliance
-		if udb.Get(applianceTable, id, &a) && applianceAskableForAgent(udb, "agent-1", a.ID) {
+		if udb.Get(applianceTable, id, &a) && applianceAskableForAgent(udb, "", "agent-1", a.ID) {
 			listed = append(listed, a)
 		}
 	}
@@ -447,7 +447,7 @@ func TestTheQuestionToolListsWhatItAccepts(t *testing.T) {
 		t.Fatalf("listed %d systems, want the workspace and its two members", len(listed))
 	}
 	for _, a := range listed {
-		if !applianceAskableForAgent(udb, "agent-1", a.ID) {
+		if !applianceAskableForAgent(udb, "", "agent-1", a.ID) {
 			t.Errorf("%q is listed but would be refused by the handler", a.ID)
 		}
 	}
@@ -463,13 +463,13 @@ func TestAMissingMemberIsSkipped(t *testing.T) {
 	udb.Set(applianceTable, ws.ID, ws)
 	SaveCommandGrant(udb, "agent-1", "ws-1", nil)
 
-	if applianceAskableForAgent(udb, "agent-1", "") {
+	if applianceAskableForAgent(udb, "", "agent-1", "") {
 		t.Error("an empty appliance id resolved as askable")
 	}
 	// The dangling id is "askable" by membership but resolves to no appliance,
 	// so findAppliance refuses it first — the important thing is that nothing
 	// panics and the real members still work.
-	if !applianceAskableForAgent(udb, "agent-1", "box-1") {
+	if !applianceAskableForAgent(udb, "", "agent-1", "box-1") {
 		t.Error("a dangling member id broke resolution for the real ones")
 	}
 }

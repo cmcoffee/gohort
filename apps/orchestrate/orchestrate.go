@@ -329,6 +329,7 @@ func (T *OrchestrateApp) Routes() {
 	// (agent_family.go).
 	messaging.ChannelAgentFor = channelAgentFor
 	ScheduleAgentFor = scheduleAgentFor
+	AgentSourcesFor, SetAgentSource = agentSourcesFor, setAgentSource
 	// Events age out of saved notes and idle open items close, once a day.
 	startMemoryLifecycleLoop()
 	// Credential → declaring-tools resolver for the admin credential UI (it

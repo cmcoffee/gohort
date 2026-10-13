@@ -77,7 +77,7 @@ func AskSystemToolDef(sess *ToolSession, udb Database, owner, agentID string, co
 			// Askable, not merely connected: a member of a granted workspace
 			// is reachable here. The narrow check would list a machine in this
 			// tool's own description and then refuse it by name.
-			if !applianceAskableForAgent(udb, agentID, appliance.ID) {
+			if !applianceAskableForAgent(udb, owner, agentID, appliance.ID) {
 				return "", fmt.Errorf("you are not enabled for %s. Tell the person the owner has to connect you to that system in Servitor before you can ask about it",
 					applianceLabel(appliance.Name, appliance.ID))
 			}

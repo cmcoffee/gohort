@@ -1474,6 +1474,42 @@
       var sharedHint = el('div', {class: 'ui-form-hint'},
         ['Everyone can open and use it (with the stored credentials); chat sessions stay per-user. Only you or an admin can change or delete it.']);
 
+      // Or just some people, or a team you are on. The same reach, chosen
+      // by name; each of them then picks which of their agents use it, by
+      // adding it to that agent's Sources.
+      var shareWith = (rec.allowed_users || []).slice();
+      var shareLabels = {};
+      var shareChips = el('div', {style: 'display:flex; flex-wrap:wrap; gap:0.35rem; margin:0.3rem 0;'});
+      var sharePick = el('select', {class: 'ui-input', style: 'max-width:16rem;'});
+      var shareAdd = el('button', {type: 'button', class: 'ui-row-btn'}, ['Add']);
+      function shareName(v) { return shareLabels[v] || (v.indexOf('group:') === 0 ? 'a team' : v); }
+      function drawShare() {
+        shareChips.innerHTML = '';
+        shareWith.forEach(function(v) {
+          var x = el('button', {type: 'button', class: 'ui-row-btn', title: 'Stop sharing with ' + shareName(v)}, ['\u00d7']);
+          x.addEventListener('click', function() { shareWith = shareWith.filter(function(u) { return u !== v; }); drawShare(); });
+          shareChips.appendChild(el('span', {class: 'ui-chip', style: 'display:inline-flex; align-items:center; gap:0.25rem;'}, [shareName(v), x]));
+        });
+        if (!shareWith.length) shareChips.appendChild(el('span', {class: 'ui-form-hint'}, ['Nobody by name.']));
+        sharePick.innerHTML = '';
+        var opts = Object.keys(shareLabels).filter(function(v) { return shareWith.indexOf(v) < 0; });
+        opts.forEach(function(v) { sharePick.appendChild(el('option', {value: v}, [shareLabels[v]])); });
+        sharePick.disabled = shareAdd.disabled = !opts.length;
+      }
+      shareAdd.addEventListener('click', function() {
+        if (sharePick.value && shareWith.indexOf(sharePick.value) < 0) { shareWith.push(sharePick.value); drawShare(); }
+      });
+      fetch('api/user-candidates?groups=1', {credentials: 'same-origin'}).then(function(r) { return r.ok ? r.json() : []; })
+        .then(function(list) { (list || []).forEach(function(c) { shareLabels[c.value] = c.label; }); drawShare(); })
+        .catch(function() { drawShare(); });
+      drawShare();
+      var shareSection = el('div', {style: 'margin-top:0.6rem;'}, [
+        el('label', {}, ['Share with people or a team']),
+        el('div', {class: 'ui-form-hint'}, ['They can open and use it like their own; to give one of their agents its tools, they add it to that agent\'s Sources.']),
+        shareChips,
+        el('div', {style: 'display:flex; gap:0.4rem; align-items:center;'}, [sharePick, shareAdd]),
+      ]);
+
       var body = el('div', {class: 'ui-pl-modal-body'}, [
         el('label', {}, ['Name *']), nameIn,
         typeRow, sshSection, cmdSection, repoSection, bundleSection, toolsetSection, remoteSection, workspaceSection,
@@ -1485,7 +1521,7 @@
         runAsSection,
         tierSection,
         peerShareSection,
-        sharedRow, sharedHint,
+        sharedRow, sharedHint, shareSection,
       ]);
 
       var m = openModal(isEdit ? 'Edit System' : 'New System', body);
@@ -1512,6 +1548,7 @@
             persona_name:   personaNameIn.value.trim(),
             persona_prompt: personaPromptIn.value,
             shared:         sharedIn.checked,
+            allowed_users:  shareWith.slice(),
             members:        wsSelected.slice(),
             member_roles:   wsRoles,
             member_links:   wsLinks,
@@ -1580,7 +1617,7 @@
 
       body.appendChild(el('div', {class: 'ui-form-label'}, ['Agents that may use ' + applianceName]));
       body.appendChild(el('div', {class: 'ui-form-help'},
-        ['Adding an agent lets it ASK for commands on this system. It grants no commands by itself: each one it proposes appears below for your approval.']));
+        ['Adding an agent here puts this system in that agent\'s Sources, the same switch as on the agent\'s own page. It lets the agent ask about the system and propose commands; it grants no commands by itself: each one it proposes appears below for your approval.']));
       body.appendChild(agentsBox);
       body.appendChild(el('div', {class: 'ui-form-label', style: 'margin-top:16px'}, ['Requested commands']));
       body.appendChild(el('div', {class: 'ui-form-help'},

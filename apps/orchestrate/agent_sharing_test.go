@@ -295,3 +295,30 @@ func TestAnAgentSharedWithAGroupReachesItsMembers(t *testing.T) {
 		t.Errorf("reach = %q, recipients %v", r.Audience, r.recipients)
 	}
 }
+
+// Another app adds and removes one of an agent's Sources through the hook,
+// and reads them back; somebody else's agent is refused.
+func TestAnotherAppEditsAnAgentsSources(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a1", Owner: "alice", Name: "Wren", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	sel := ReferenceSelection{Kind: "system", ItemID: "lab-box"}
+	for i := 0; i < 2; i++ { // twice: idempotent
+		if err := setAgentSource("alice", "a1", sel, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := agentSourcesFor("alice", "a1"); len(got) != 1 || got[0] != sel {
+		t.Fatalf("sources = %+v", got)
+	}
+	if err := setAgentSource("mallory", "a1", sel, false); err == nil {
+		t.Error("somebody else changed the agent's Sources")
+	}
+	if err := setAgentSource("alice", "a1", sel, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentSourcesFor("alice", "a1"); len(got) != 0 {
+		t.Errorf("the Source was not removed: %+v", got)
+	}
+}

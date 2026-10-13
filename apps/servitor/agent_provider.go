@@ -6,9 +6,13 @@
 //
 // THREE THINGS ARE OFFERED, and the split matters:
 //
-//	request_capability   — to an agent connected to ANY machine
+//	request_capability   — to an agent with ANY of the owner's systems in its Sources
 //	ask_system           — same gate: questions routed to the investigator
-//	the minted tools     — per machine, and only the approved ones
+//	the minted tools     — per system, and only the approved ones
+//
+// "In its Sources" is the door (applianceEnabledForAgent): chosen on the
+// agent's own page, so what an agent can reach is decided and seen there. A
+// command grant only says what runs without asking.
 //
 // An agent with a connection but no approved tools still gets the asking
 // tools, because otherwise it has no way to answer a question about the box or
@@ -33,7 +37,7 @@ func init() {
 	// button beside the appliance there. It pointed at "/servitor/manage",
 	// a page removed when access moved onto the appliance, so the link 404'd.
 	RegisterAgentGrantor(AgentGrantor{
-		Name: "servitor", Label: "Machines", ManageURL: servitorManageURL,
+		Name: "servitor", Label: "Servitor systems", ManageURL: servitorManageURL,
 		Granted: applianceGrantsFor,
 	})
 }
@@ -104,7 +108,16 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 	// askableOwn decides what it may ask open questions about.
 	var askableOwn []Appliance
 	for _, a := range all {
-		if applianceEnabledForAgent(udb, agentID, a.ID) {
+		if applianceEnabledForAgent(udb, owner, agentID, a.ID) {
+			// Chosen as a Source with no grant yet: it gets one that lets
+			// nothing run without asking, the state connecting has always
+			// written. Without it the exec gate would fall back to the
+			// owner's own console settings, and adding a Source would hand
+			// an agent more than connecting it ever did.
+			if _, has := loadCommandGrant(udb, agentID, a.ID); !has {
+				SaveCommandGrant(udb, agentID, a.ID, nil)
+				Log("[servitor] agent %q has %s as a Source: recorded with nothing running without asking", normalizeAgentID(agentID), a.ID)
+			}
 			enabled = append(enabled, a)
 			granted[strings.ToLower(a.ID)] = true
 			if !a.ToolsOnly {
@@ -180,7 +193,7 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 		// Only a machine the agent is connected to IN ITS OWN RIGHT contributes
 		// approved command tools. Reached-via-workspace members are askable and
 		// nothing more — see the membership expansion above.
-		if !applianceEnabledForAgent(udb, agentID, a.ID) {
+		if !applianceEnabledForAgent(udb, owner, agentID, a.ID) {
 			continue
 		}
 		out = append(out, ApplianceToolDefs(sess, udb, owner, agentID, a)...)

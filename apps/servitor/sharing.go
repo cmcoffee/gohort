@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/peershare"
 )
 
 // servitorIsAdmin reports whether the request is from an admin. Thin wrapper over
@@ -33,6 +34,39 @@ func (T *Servitor) setApplianceShared(applianceID, owner string, shared bool) {
 // the ID is currently shared.
 func (T *Servitor) sharedOwner(applianceID string) (string, bool) {
 	return LookupSharedOwner(T.DB, sharedIndexTable, applianceID)
+}
+
+// namedSharedTable indexes systems shared with named people or teams:
+// recipient -> (owner, system id). Derived from Appliance.AllowedUsers, and
+// re-checked against it on every read.
+const namedSharedTable = "named_shared_systems"
+
+// indexNamedShares makes the index follow the record's AllowedUsers.
+func (T *Servitor) indexNamedShares(owner, id string, users []string) {
+	peershare.SetRecipients(T.DB, namedSharedTable, owner, id, users)
+}
+
+// systemsSharedWith is every system somebody else shares with user, id to
+// owner: with everyone, or with them by name or through a team.
+func (T *Servitor) systemsSharedWith(user string) map[string]string {
+	out := map[string]string{}
+	for id, owner := range T.listSharedAppliances() {
+		if owner != user {
+			out[id] = owner
+		}
+	}
+	for _, ref := range SharedRefsFor(T.DB, namedSharedTable, user) {
+		if ref.Owner == user {
+			continue
+		}
+		if udb := UserDB(T.DB, ref.Owner); udb != nil {
+			var a Appliance
+			if udb.Get(applianceTable, ref.ID, &a) && SharedWithUser(a.AllowedUsers, ref.Owner, user) {
+				out[ref.ID] = ref.Owner
+			}
+		}
+	}
+	return out
 }
 
 // listSharedAppliances returns every shared appliance ID -> owner username.
@@ -56,7 +90,7 @@ func (T *Servitor) resolveAppliance(reqUser string, reqUDB Database, applianceID
 		}
 		return a, owner, reqUDB, true
 	}
-	if owner, ok := T.sharedOwner(applianceID); ok {
+	if owner, ok := T.systemsSharedWith(reqUser)[applianceID]; ok {
 		if ownerUDB := UserDB(T.DB, owner); ownerUDB != nil && ownerUDB.Get(applianceTable, applianceID, &a) {
 			return a, owner, ownerUDB, true
 		}
@@ -161,4 +195,27 @@ func envHiddenFrom(a Appliance, owner, user string) bool {
 // but not manage it. Thin wrapper over the generic core.CanManageShared.
 func canManageAppliance(reqUser string, a Appliance, isAdmin bool) bool {
 	return CanManageShared(reqUser, a.Owner, isAdmin)
+}
+
+// cleanSystemRecipients trims a recipient list and drops the owner and repeats.
+func cleanSystemRecipients(users []string, owner string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, u := range users {
+		if u = strings.TrimSpace(u); u != "" && u != owner && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// handleUserCandidates serves the share picker's people and teams.
+func (T *Servitor) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1"))
 }

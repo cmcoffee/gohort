@@ -128,7 +128,7 @@ func TestSystemResolvesByNameOrID(t *testing.T) {
 // be protecting.
 func TestConsoleIsAlwaysEnabled(t *testing.T) {
 	udb := withAppliance(t)
-	if !applianceEnabledForAgent(udb, "", "lab-box") {
+	if !applianceEnabledForAgent(udb, "", "", "lab-box") {
 		t.Error("the console must not need a grant to reach the owner's own machine")
 	}
 }
@@ -137,13 +137,13 @@ func TestConsoleIsAlwaysEnabled(t *testing.T) {
 func TestEnableIsPerMachine(t *testing.T) {
 	udb := withAppliance(t)
 	SaveCommandGrant(udb, "wren", "lab-box", nil)
-	if !applianceEnabledForAgent(udb, "wren", "lab-box") {
+	if !applianceEnabledForAgent(udb, "", "wren", "lab-box") {
 		t.Error("the named machine should be enabled")
 	}
-	if applianceEnabledForAgent(udb, "wren", "prod-box") {
+	if applianceEnabledForAgent(udb, "", "wren", "prod-box") {
 		t.Error("a grant must not enable a machine it does not name")
 	}
-	if applianceEnabledForAgent(udb, "other", "lab-box") {
+	if applianceEnabledForAgent(udb, "", "other", "lab-box") {
 		t.Error("a different agent must not inherit the enable")
 	}
 }

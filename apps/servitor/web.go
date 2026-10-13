@@ -156,6 +156,8 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Expose servitor's appliances as a generic reference source so writer
 	// apps can ground drafts in gathered system knowledge. T.DB is final here.
 	RegisterReferenceSource(servitorSource{app: T})
+	// Connections made before Sources were the door become Sources, once.
+	go T.moveGrantsToSources()
 
 	sub := NewWebUI(T, prefix, AppUIAssets{})
 	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -173,6 +175,7 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/appliances", T.handleAppliances)
 	sub.HandleFunc("/api/appliances/", T.handleApplianceMemory) // /api/appliances/<id>/{facts,graph,inferred,...} — shared agent-memory surface
 	sub.HandleFunc("/api/appliance/", T.handleAppliance)
+	sub.HandleFunc("/api/user-candidates", T.handleUserCandidates)
 	// Capability proposals: the list the owner reviews, and the decision on one.
 	sub.HandleFunc("/api/appliance-tools", T.handleApplianceTools)
 	sub.HandleFunc("/api/appliance-tool", T.handleApplianceTool)

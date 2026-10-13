@@ -42,14 +42,14 @@ func TestToolsOnlyWithholdsTheAskingRoute(t *testing.T) {
 	SaveCommandGrant(udb, "agent-1", "box-1", nil)
 
 	// Connected either way — the flag is about ASKING, not reach.
-	if !applianceEnabledForAgent(udb, "agent-1", "logs") {
+	if !applianceEnabledForAgent(udb, "", "agent-1", "logs") {
 		t.Fatal("the grant should still connect the agent")
 	}
-	if applianceAskableForAgent(udb, "agent-1", "logs") {
+	if applianceAskableForAgent(udb, "", "agent-1", "logs") {
 		t.Error("a ToolsOnly target must not be askable")
 	}
 	// The ordinary machine is unaffected.
-	if !applianceAskableForAgent(udb, "agent-1", "box-1") {
+	if !applianceAskableForAgent(udb, "", "agent-1", "box-1") {
 		t.Error("ToolsOnly on one target must not affect another")
 	}
 }
@@ -64,7 +64,7 @@ func TestToolsOnlyIsAGateNotADescription(t *testing.T) {
 
 	// The same check ask_system's handler performs on the name it was
 	// given, rather than on the list it advertised.
-	if applianceAskableForAgent(udb, "agent-1", "logs") {
+	if applianceAskableForAgent(udb, "", "agent-1", "logs") {
 		t.Fatal("naming the target directly walked past the flag")
 	}
 }
@@ -79,12 +79,12 @@ func TestToolsOnlyIsNotBypassedByAWorkspace(t *testing.T) {
 	})
 	SaveCommandGrant(udb, "agent-1", "ws-1", nil)
 
-	if applianceAskableForAgent(udb, "agent-1", "logs") {
+	if applianceAskableForAgent(udb, "", "agent-1", "logs") {
 		t.Error("a workspace grant reached a ToolsOnly member")
 	}
 	// The workspace's other member is still reachable, so the flag
 	// narrows rather than breaking the grant.
-	if !applianceAskableForAgent(udb, "agent-1", "box-1") {
+	if !applianceAskableForAgent(udb, "", "agent-1", "box-1") {
 		t.Error("the workspace grant should still reach its ordinary members")
 	}
 }

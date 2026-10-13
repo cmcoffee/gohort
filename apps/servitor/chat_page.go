@@ -94,7 +94,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Shared appliances owned by others — usable by everyone.
-	for id, owner := range T.listSharedAppliances() {
+	for id, owner := range T.systemsSharedWith(userID) {
 		if owner == userID || seen[id] {
 			continue
 		}

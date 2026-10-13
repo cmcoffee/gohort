@@ -65,7 +65,7 @@ func (s servitorSource) List(user string) []ReferenceItem {
 		}
 	}
 	// Appliances shared with everyone by OTHER owners — usable, not owned.
-	for id, owner := range s.app.listSharedAppliances() {
+	for id, owner := range s.app.systemsSharedWith(user) {
 		if seen[id] || owner == user {
 			continue
 		}

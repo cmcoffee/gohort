@@ -202,6 +202,9 @@ type Appliance struct {
 	// T.DB (see sharing.go) lets non-owners resolve it.
 	Owner  string `json:"owner,omitempty"`  // username that created + owns this record
 	Shared bool   `json:"shared,omitempty"` // visible to + usable by all authenticated users
+	// AllowedUsers shares it with named people, or a team ("group:<id>"),
+	// rather than everyone: the owner's own call, like every other kind.
+	AllowedUsers []string `json:"allowed_users,omitempty"`
 	// Shared config below (persona/instructions/profile/etc.)
 	Instructions  string     `json:"instructions"`   // freeform notes injected into every session
 	PersonaName   string     `json:"persona_name"`   // short label shown in the UI (e.g. "Support", "QA")

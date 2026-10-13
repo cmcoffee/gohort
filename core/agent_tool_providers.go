@@ -136,3 +136,28 @@ func safeProviderTools(name string, fn AgentToolProvider, sess *ToolSession, own
 	}()
 	return fn(sess, owner, agentID)
 }
+
+// AgentSourcesFor, when set, lists the reference sources an agent has chosen
+// (its Sources), so a provider can tie what it offers for one of them to an
+// agent having chosen it: the agent's own page is then where its reach is
+// decided and seen. Set by the app that owns agents; nil reads as none.
+var AgentSourcesFor func(owner, agentID string) []ReferenceSelection
+
+// SetAgentSource, when set, adds (on) or removes one reference source on an
+// agent's Sources, for an app whose own screen connects an agent to something
+// of its: the change lands where the agent's page shows it, not in a second
+// record of the app's. Idempotent either way.
+var SetAgentSource func(owner, agentID string, sel ReferenceSelection, on bool) error
+
+// AgentHasSource reports whether the agent has chosen this source.
+func AgentHasSource(owner, agentID, kind, itemID string) bool {
+	if AgentSourcesFor == nil {
+		return false
+	}
+	for _, s := range AgentSourcesFor(owner, agentID) {
+		if s.Kind == kind && s.ItemID == itemID {
+			return true
+		}
+	}
+	return false
+}

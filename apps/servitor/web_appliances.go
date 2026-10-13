@@ -42,7 +42,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		}
 		// Shared appliances owned by OTHERS — discoverable + usable by everyone,
 		// but managed only by their owner (see canManageAppliance).
-		for id, owner := range T.listSharedAppliances() {
+		for id, owner := range T.systemsSharedWith(userID) {
 			if seen[id] || owner == userID {
 				continue
 			}
@@ -323,9 +323,20 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		if req.ID == "" {
 			req.ID = UUIDv4()
 		}
+		// Absent from the body (nil, where a cleared list arrives as []):
+		// a save that did not send it keeps who it is shared with.
+		if req.AllowedUsers == nil {
+			var prev Appliance
+			if targetUDB.Get(applianceTable, req.ID, &prev) {
+				req.AllowedUsers = prev.AllowedUsers
+			}
+		}
+		req.AllowedUsers = cleanSystemRecipients(req.AllowedUsers, owner)
 		targetUDB.Set(applianceTable, req.ID, req)
-		// Keep the global shared index in sync with the record's Shared flag.
+		// Keep the global shared index in sync with the record's Shared flag,
+		// and the named one with who it is shared with by name or team.
 		T.setApplianceShared(req.ID, owner, req.Shared)
+		T.indexNamedShares(owner, req.ID, req.AllowedUsers)
 		dropConn(owner, req.ID) // force reconnect with new credentials
 		// Saving a system is the owner saying "this is the machine": the next
 		// connection trusts whatever key it presents now (a rebuilt host).
@@ -390,6 +401,7 @@ func (T *Servitor) handleAppliance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		T.setApplianceShared(id, owner, false) // drop from the shared index first
+		T.indexNamedShares(owner, id, nil)
 		purgeAppliance(owner, ownerUDB, id)
 		w.WriteHeader(http.StatusOK)
 	default:
