@@ -1260,6 +1260,7 @@ func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.Ra
 	// bundle: the importer re-shares on their own terms.
 	spec.Shared = false
 	spec.SharedGroups = nil
+	spec.SharedWith = nil
 	spec.DataOwner = ""
 	spec.PublicToken = ""
 	return marshalAppWithAssets(spec, owner)
@@ -1437,6 +1438,7 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	// meaningless in this deployment's index anyway).
 	spec.Shared = false
 	spec.SharedGroups = nil
+	spec.SharedWith = nil
 	spec.DataOwner = ""
 	spec.PublicToken = ""
 	SaveAppSpec(spec)

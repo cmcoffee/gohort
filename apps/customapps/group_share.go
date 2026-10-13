@@ -87,13 +87,14 @@ func groupShareReaches(spec AppSpec, user string) bool {
 
 // appReaches is whether user may open another owner's app: shared with
 // everyone signed in (an administrator approved it, and may have narrowed
-// it), or shared with a group user is in. The one rule the page, My Apps and
-// the dashboard all ask, so they cannot disagree about who sees what.
+// it), shared with a group user is in, or shared with user by name. The one
+// rule the page, My Apps and the dashboard all ask, so they cannot disagree
+// about who sees what.
 func appReaches(spec AppSpec, user string) bool {
 	if spec.Shared && appadmin.UserMayReach(RootDB, spec.Owner, spec.Slug, user) {
 		return true
 	}
-	return groupShareReaches(spec, user)
+	return groupShareReaches(spec, user) || personShareReaches(spec, user)
 }
 
 // sharedGroupNames names the groups spec reaches now, and the ones it was
@@ -180,9 +181,9 @@ func (T *CustomApps) setGroupShare(owner, slug, groupID string, on bool) error {
 	}
 	spec.SharedGroups = kept
 	SaveAppSpec(spec)
-	if len(kept) > 0 {
+	if appSharedAnyWay(spec) {
 		SetSharedOwner(T.DB, sharedAppsIndex, slug, owner, true)
-	} else if !spec.Shared {
+	} else {
 		T.unshareOwned(owner, slug)
 	}
 	return nil

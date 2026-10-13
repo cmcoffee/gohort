@@ -141,6 +141,10 @@ type AppSpec struct {
 	// app is opened. Per-user copies, like Shared. Deployment-local, cleared on
 	// export.
 	SharedGroups []string `json:"shared_groups,omitempty"`
+	// SharedWith are the people (usernames) the owner shared the app with by
+	// name: the owner's call, like a group, with no administrator in it.
+	// Deployment-local, cleared on export.
+	SharedWith []string `json:"shared_with,omitempty"`
 	// DataOwner is whose name a PrivateDB app's database file was made under,
 	// set when the app moves to someone else, so its data stays where it is
 	// rather than the new owner's name pointing at an empty file. Read through

@@ -164,6 +164,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// POST ?slug=&group=&on=… shares with one of the owner's groups.
 		T.handleShareGroup(w, r, user)
 		return
+	case "_app/share_person":
+		// POST ?slug=&user=&on=… shares with one person by name.
+		T.handleSharePerson(w, r, user)
+		return
 	case "_admin/revoke-link", "_admin/reach", "_admin/tiers", "_admin/review", "_admin/scripts":
 		// Operator controls on somebody else's app. Admin-gated inside the
 		// handler rather than by where the control was rendered: a URL is a
@@ -725,6 +729,65 @@ const shareModalScript = `<script>
         gwrap.appendChild(t);
       });
       body.appendChild(gwrap);
+      // People: shared by name, the owner's own call like a group.
+      var people = {with: [], others: []};
+      try { people = JSON.parse(rec.share_people || '{}') || people; } catch (e) {}
+      people.with = people.with || []; people.others = people.others || [];
+      var pwrap = document.createElement('div');
+      pwrap.style.cssText = 'margin-top:1.1rem';
+      var ph = document.createElement('div');
+      ph.style.cssText = 'font-weight:600;margin-bottom:0.25rem';
+      ph.textContent = 'Share with people';
+      pwrap.appendChild(ph);
+      var pnote = document.createElement('div');
+      pnote.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin:0 0 0.5rem;line-height:1.4';
+      pnote.textContent = 'Each person can open it, with their own copy. No administrator needed; your scripts run with your credentials for them.';
+      pwrap.appendChild(pnote);
+      var plist = document.createElement('div');
+      pwrap.appendChild(plist);
+      var addRow = document.createElement('div');
+      addRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-top:0.35rem';
+      var pick = document.createElement('select');
+      pick.className = 'ui-input';
+      pick.style.cssText = 'max-width:16rem';
+      var addBtn = document.createElement('button');
+      addBtn.type = 'button'; addBtn.className = 'ui-row-btn'; addBtn.textContent = 'Add';
+      addRow.appendChild(pick); addRow.appendChild(addBtn);
+      pwrap.appendChild(addRow);
+      function drawPeople() {
+        plist.innerHTML = '';
+        people.with.forEach(function(u){
+          var row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0';
+          var name = document.createElement('span'); name.textContent = u; name.style.flex = '1';
+          var rm = document.createElement('button');
+          rm.type = 'button'; rm.className = 'ui-row-btn compact'; rm.textContent = 'Remove';
+          rm.addEventListener('click', function(){
+            post('_app/share_person?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=false', null, function(){
+              people.with = people.with.filter(function(x){ return x !== u; });
+              people.others.push(u); people.others.sort();
+              drawPeople();
+            });
+          });
+          row.appendChild(name); row.appendChild(rm);
+          plist.appendChild(row);
+        });
+        pick.innerHTML = '';
+        people.others.forEach(function(u){ var o = document.createElement('option'); o.value = u; o.textContent = u; pick.appendChild(o); });
+        addRow.style.display = people.others.length ? 'flex' : 'none';
+        if (!people.with.length && !people.others.length) pnote.textContent = 'Nobody else has an account here yet.';
+      }
+      addBtn.addEventListener('click', function(){
+        var u = pick.value;
+        if (!u) return;
+        post('_app/share_person?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=true', null, function(){
+          people.others = people.others.filter(function(x){ return x !== u; });
+          people.with.push(u); people.with.sort();
+          drawPeople();
+        });
+      });
+      drawPeople();
+      body.appendChild(pwrap);
     },
     actions: [{label: 'Done', primary: true, onClick: function(api){ api.close(); if (ctx.reload) ctx.reload(); }}]
   });
@@ -870,6 +933,14 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 				row["state"] = "shared"
 			}
 			parts = append(parts, "shared with "+strings.Join(live, ", "))
+		}
+		// And the people it is shared with by name.
+		row["share_people"] = sharePeopleJSON(s)
+		if n := len(s.SharedWith); n > 0 {
+			if row["state"] == "private" {
+				row["state"] = "shared"
+			}
+			parts = append(parts, "shared with "+strings.Join(s.SharedWith, ", "))
 		}
 		status := "private"
 		if len(parts) > 0 {
@@ -1598,8 +1669,8 @@ func (T *CustomApps) setShared(owner, slug string, on bool) error {
 	SaveAppSpec(spec)
 	if on {
 		SetSharedOwner(T.DB, sharedAppsIndex, slug, owner, true)
-	} else if len(spec.SharedGroups) == 0 {
-		// A group share still needs the index to find the owner.
+	} else if !appSharedAnyWay(spec) {
+		// A group or person share still needs the index to find the owner.
 		T.unshareOwned(owner, slug)
 	}
 	return nil

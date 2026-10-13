@@ -32,7 +32,7 @@ func (h *appsUserData) Describe(uid string) UserDataSummary {
 	}
 	sum.Counts["apps"] = len(specs)
 	for _, s := range specs {
-		if s.Shared || len(s.SharedGroups) > 0 {
+		if appSharedAnyWay(s) {
 			sum.Counts["shared"]++
 		}
 	}
@@ -71,6 +71,24 @@ func (h *appsUserData) Purge(uid string) error {
 func forgetAppReader(uid string) {
 	if RootDB == nil || uid == "" {
 		return
+	}
+	// The apps shared with them by name, whoever owns them.
+	if AuthDB != nil {
+		for _, u := range AuthListUsers(AuthDB()) {
+			for _, spec := range listSpecs(u.Username) {
+				if !personShareReaches(spec, uid) {
+					continue
+				}
+				kept := spec.SharedWith[:0:0]
+				for _, p := range spec.SharedWith {
+					if !strings.EqualFold(p, uid) {
+						kept = append(kept, p)
+					}
+				}
+				spec.SharedWith = kept
+				SaveAppSpec(spec)
+			}
+		}
 	}
 	for _, k := range RootDB.Keys(appadmin.Table) {
 		var st appadmin.State
@@ -157,7 +175,7 @@ func (T *CustomApps) moveApp(spec AppSpec, to string) error {
 		appadmin.Save(RootDB, to, newSlug, st)
 	}
 	SaveAppSpec(moved) // arms its schedules for the new owner
-	wasShared := spec.Shared || len(spec.SharedGroups) > 0
+	wasShared := appSharedAnyWay(spec)
 	T.deleteApp(from, slug)
 	if wasShared {
 		SetSharedOwner(T.DB, sharedAppsIndex, newSlug, to, true)
