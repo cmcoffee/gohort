@@ -542,8 +542,9 @@ func (T *OrchestrateApp) Routes() {
 	T.startToolFiling()
 
 	// Channels bound to a sub-agent before that was refused move to its
-	// parent (agent_family.go).
+	// parent, and so do board posting rights granted to one (agent_family.go).
 	moveSubAgentChannels()
+	moveSubAgentPosters()
 
 	// One-shot deploy-time grandfather for the global-tool OPT-IN model. Shared
 	// tools used to auto-load for everyone; now they load only after a user

@@ -125,13 +125,25 @@ func (b bulletinBoard) canPost(agentID string) bool {
 	return false
 }
 
-// allowsAgent reports whether an agent may post: named on the board, or owned
-// by an agent that is. A sub-agent is listed nowhere a board is set up (the
-// picker offers the owner's visible agents, and the sub-agents stay out of
-// every list), so the right lives on the parent and covers every agent it
-// owns. The parent is what the board shows as its poster.
-func (b bulletinBoard) allowsAgent(a AgentRecord) bool {
-	return b.canPost(a.ID) || (a.OwnedBy != "" && b.canPost(a.OwnedBy))
+// allowsAgent reports whether an agent may post: named on the board, or a
+// sub-agent (at any depth) of an agent that is. A sub-agent is listed nowhere
+// a board is set up (the picker offers the owner's visible agents, and the
+// sub-agents stay out of every list), so the right lives on the parent and
+// covers every agent under it. The parent is what the board shows as its
+// poster.
+func (b bulletinBoard) allowsAgent(db Database, a AgentRecord) bool {
+	if b.canPost(a.ID) {
+		return true
+	}
+	if strings.TrimSpace(a.OwnedBy) == "" {
+		return false
+	}
+	for _, id := range agentAncestors(db, a.ID) {
+		if b.canPost(id) {
+			return true
+		}
+	}
+	return false
 }
 
 // agentFollows reports whether an agent sees this board's posts.
@@ -207,7 +219,7 @@ func bulletinLines(db Database, agent AgentRecord, loc *time.Location) []string 
 		// change or clear the board goes to them rather than looking for a
 		// way around it. A poster has the boards in its own tool.
 		who := ""
-		if !b.allowsAgent(agent) {
+		if !b.allowsAgent(db, agent) {
 			who = "; posted and cleared by " + bulletinPosterNames(db, b)
 		}
 		lines = append(lines, fmt.Sprintf("[%s, posted %s%s] %s", b.Name, bulletinAge(b.PostedAt, now, loc), who, b.Text))
@@ -265,7 +277,7 @@ const (
 func postableBoards(db Database, a AgentRecord) []string {
 	var boards []string
 	for _, b := range listBulletins(db) {
-		if b.allowsAgent(a) {
+		if b.allowsAgent(db, a) {
 			boards = append(boards, b.Name)
 		}
 	}
@@ -309,7 +321,7 @@ func (t *chatTurn) bulletinBoardToolDef() (AgentToolDef, bool) {
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := bulletinName(stringArg(args, "board"))
 			b, ok := loadBulletin(db, name)
-			if !ok || !b.allowsAgent(t.agent) {
+			if !ok || !b.allowsAgent(db, t.agent) {
 				return "", fmt.Errorf("you may not post to or clear %q; boards you may: %s", name, strings.Join(boards, ", "))
 			}
 			switch strings.ToLower(strings.TrimSpace(stringArg(args, "action"))) {

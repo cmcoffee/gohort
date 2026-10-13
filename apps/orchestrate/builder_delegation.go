@@ -98,7 +98,7 @@ func applyBuilderDelegation(sess *ToolSession, db Database) {
 		}
 		sess.DeniedCredentials[name] = true
 	}
-	gate := newPoolToolGate(from)
+	gate := newPoolToolGate(db, from)
 	who := delegatorName(from)
 	owner := sess.Username
 	sess.ToolEditRefusal = func(toolName, credName string) string {
@@ -174,10 +174,18 @@ type poolToolGate struct {
 	noTools  bool
 	disabled map[string]bool // the agent's per-tool opt-outs
 	allow    map[string]bool // a user-made agent's allow list; nil = all
+	parents  []string        // a sub-agent's parents, nearest first
+	inherit  bool            // a sub-agent that carries its parents' tools
 }
 
-func newPoolToolGate(a AgentRecord) poolToolGate {
-	g := poolToolGate{id: a.ID, builder: isBuilderAgent(a.ID), noTools: isNoToolsSentinel(a.AllowedTools)}
+// newPoolToolGate is the gate for agent a. db is the agent store, read for a
+// sub-agent's parents; nil reads none.
+func newPoolToolGate(db Database, a AgentRecord) poolToolGate {
+	g := poolToolGate{id: a.ID, builder: isBuilderAgent(a.ID), noTools: isNoToolsSentinel(a.AllowedTools),
+		inherit: a.InheritParentTools}
+	if strings.TrimSpace(a.OwnedBy) != "" {
+		g.parents = agentAncestors(db, a.ID)
+	}
 	g.disabled = make(map[string]bool, len(a.DisabledPersistentTools))
 	for _, n := range a.DisabledPersistentTools {
 		g.disabled[n] = true
@@ -205,7 +213,24 @@ func newPoolToolGate(a AgentRecord) poolToolGate {
 // reaches reports whether a tool's agent scope includes this agent. Builder
 // is reached by every scope.
 func (g poolToolGate) reaches(p PersistentTempTool) bool {
-	return len(p.ScopeAgents) == 0 || g.builder || p.ScopedToAgent(g.id)
+	return len(p.ScopeAgents) == 0 || g.builder || p.ScopedToAgent(g.id) || g.takesFromParent(p)
+}
+
+// takesFromParent reports whether a sub-agent carries a tool scoped to one of
+// its parents. The right is the parent's (a sub-agent is listed in no picker
+// a tool is scoped in), but sub-agents are narrow specialists, so it carries
+// the tool only when it asks for it: its own tool list names it, or it
+// inherits its parents' tools.
+func (g poolToolGate) takesFromParent(p PersistentTempTool) bool {
+	if len(g.parents) == 0 || !(g.inherit || g.allow[p.Tool.Name]) {
+		return false
+	}
+	for _, id := range g.parents {
+		if p.ScopedToAgent(id) {
+			return true
+		}
+	}
+	return false
 }
 
 // admits reports whether the agent loads p.
@@ -228,7 +253,7 @@ func (g poolToolGate) admits(p PersistentTempTool) bool {
 		if g.builder {
 			return true
 		}
-		return p.ScopedToAgent(g.id) && !g.disabled[p.Tool.Name]
+		return (p.ScopedToAgent(g.id) || g.takesFromParent(p)) && !g.disabled[p.Tool.Name]
 	}
 	if g.disabled[p.Tool.Name] {
 		return false
@@ -272,7 +297,7 @@ func agentToolsRefusal(sess *ToolSession, inline []TempTool, allowed []string) s
 		if n == "*" {
 			// Every tool: only as wide as the sender's own reach.
 			if from, ok := builderDelegator(sess, sess.DB); ok {
-				if g := newPoolToolGate(from); g.noTools || g.allow != nil {
+				if g := newPoolToolGate(sess.DB, from); g.noTools || g.allow != nil {
 					who := delegatorName(from)
 					return fmt.Sprintf("NOT DONE: %s sent this job, and %s has a list of the tools it may use, so this run cannot give an agent every tool. Name the tools instead, from those %s may use.", who, who, who)
 				}

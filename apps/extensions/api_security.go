@@ -132,8 +132,8 @@ func apiSecurityFields() []ui.FormField {
 			{Value: apiReachTools, Label: "Only tools that declare it"},
 			{Value: apiReachAgents, Label: "Only these agents"},
 		},
-			Help: "All my agents: each gets a fetch_url_<name> tool for it. Only tools: no such tool, it is reached only through tools you build that name it. Only these agents: the ones you pick below, and no other.",
-			Detail: "Only these agents is enforced wherever an agent runs: an agent not on the list loses this API's tools and cannot reach its host directly either. " +
+			Help: "All my agents: each gets a fetch_url_<name> tool for it. Only tools: no such tool, it is reached only through tools you build that name it. Only these agents: the ones you pick below and their sub-agents, and no other.",
+			Detail: "Only these agents is enforced wherever an agent runs: an agent not on the list loses this API's tools and cannot reach its host directly either. A sub-agent is covered by its parent's place on the list, and an API its parent has switched off is off for it too. " +
 				"Builder you open yourself can always work on it. Builder sent a job by one of your agents can only if that agent is on the list. The secret is never handed to an agent or a tool either way; calls are signed server-side."},
 		{Field: "only_agents", Label: "Agents that may use it", Type: "checklist",
 			OptionsSource: "/orchestrate/api/console/agent-options", ShowWhen: "reach:agents"},

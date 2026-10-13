@@ -49,6 +49,19 @@ func credentialDenySet(a AgentRecord, user string) map[string]bool {
 			}
 		}
 	}
+	// A sub-agent's parents, nearest first (agent_family.go): it shares
+	// their "Only these agents" grants, since it is listed in no picker a
+	// grant is made in, and their opt-outs, since it may be narrower than
+	// they are but never wider.
+	var parents []AgentRecord
+	if strings.TrimSpace(a.OwnedBy) != "" {
+		db := agentStore(chFirst(a.Owner, user))
+		for _, id := range agentAncestors(db, a.ID) {
+			if p, ok := loadAgent(db, id); ok {
+				parents = append(parents, p)
+			}
+		}
+	}
 	// Tier 2: this agent's per-agent opt-outs — minus SECURED credentials. The
 	// editor's picker (userScopableCredentials) filters secured creds out and says
 	// so on the page: their access follows their TOOL BINDINGS, not per-agent
@@ -57,7 +70,11 @@ func credentialDenySet(a AgentRecord, user string) map[string]bool {
 	// while this set went on enforcing it, silently dropping every tool bound to
 	// that cred from the kit and blocking its fetch_url auto-route. Honor the
 	// contract the UI states rather than a leftover the owner can no longer see.
-	for _, c := range a.DisabledCredentials {
+	optOuts := append([]string(nil), a.DisabledCredentials...)
+	for _, p := range parents {
+		optOuts = append(optOuts, p.DisabledCredentials...)
+	}
+	for _, c := range optOuts {
 		if credentialSecured(c, user) {
 			continue
 		}
@@ -70,10 +87,21 @@ func credentialDenySet(a AgentRecord, user string) map[string]bool {
 	// somebody lent them is governed by the lend, not by the lender's agents.
 	// Not Builder: the owner driving it reaches every API of theirs, and a
 	// run another agent sent is held to that agent's list instead
-	// (builder_delegation.go).
+	// (builder_delegation.go). A sub-agent is on the list when any of its
+	// parents is.
 	if user != "" && !isBuilderAgent(a.ID) {
 		for _, c := range Secure().ListUser(user) {
-			if len(c.OnlyAgents) > 0 && !containsString(c.OnlyAgents, a.ID) {
+			if len(c.OnlyAgents) == 0 || containsString(c.OnlyAgents, a.ID) {
+				continue
+			}
+			listed := false
+			for _, p := range parents {
+				if containsString(c.OnlyAgents, p.ID) {
+					listed = true
+					break
+				}
+			}
+			if !listed {
 				add(c.Name)
 			}
 		}

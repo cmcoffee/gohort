@@ -84,13 +84,15 @@ func bulletinsToolDef(t *chatTurn) AgentToolDef {
 				if ag.ID == "" {
 					return "", fmt.Errorf("%s", chFirst(why, "no agent named "+key))
 				}
-				// Posting rights live on a top-level agent and cover the agents
-				// it owns, so a grant aimed at a sub-agent lands on its parent:
-				// the sub-agent is listed nowhere a board is set up.
+				// Posting rights live on a top-level agent and cover every agent
+				// under it, so a grant aimed at a sub-agent lands on its
+				// top-level parent: the sub-agent is listed nowhere a board is
+				// set up.
 				var under string
 				if strings.EqualFold(stringArg(args, "action"), "allow_poster") && ag.OwnedBy != "" {
-					parent, ok := loadAgent(t.udb, ag.OwnedBy)
-					if !ok {
+					top := topAgentOf(t.udb, ag.ID)
+					parent, ok := loadAgent(t.udb, top)
+					if !ok || top == ag.ID {
 						return "", fmt.Errorf("%s is a sub-agent of %s, which no longer exists; posting rights live on a top-level agent", chFirst(ag.Name, ag.ID), ag.OwnedBy)
 					}
 					under = fmt.Sprintf(" %s is a sub-agent of %s, so the right is %s's and covers every agent it owns.", chFirst(ag.Name, ag.ID), chFirst(parent.Name, parent.ID), chFirst(parent.Name, parent.ID))

@@ -242,10 +242,10 @@ func TestASubAgentPostsUnderItsParentsRight(t *testing.T) {
 	if !b.canPost(wren.ID) || b.canPost(radar.ID) {
 		t.Fatalf("the board should name the parent, not the sub-agent: %v", b.Posters)
 	}
-	if !b.allowsAgent(radar) || !b.allowsAgent(wren) {
+	if !b.allowsAgent(db, radar) || !b.allowsAgent(db, wren) {
 		t.Fatal("both the parent and its sub-agent may post")
 	}
-	if b.allowsAgent(AgentRecord{ID: "stranger", OwnedBy: "someone-else"}) {
+	if b.allowsAgent(db, AgentRecord{ID: "stranger", OwnedBy: "someone-else"}) {
 		t.Fatal("an agent owned by a non-poster may not post")
 	}
 

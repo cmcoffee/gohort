@@ -130,10 +130,10 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	// Which pool tools this agent loads (builder_delegation.go). A Builder
 	// run another agent sent loads only what that agent would load itself:
 	// what it may not use, Builder may not run or fix on its behalf.
-	gate := newPoolToolGate(t.agent)
+	gate := newPoolToolGate(poolDB, t.agent)
 	var sender *poolToolGate
 	if from, ok := builderDelegator(sess, poolDB); ok {
-		g := newPoolToolGate(from)
+		g := newPoolToolGate(poolDB, from)
 		sender = &g
 	}
 	// The Builder loads the full tool pool like every other agent. It used to

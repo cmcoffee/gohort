@@ -35,6 +35,44 @@ func topAgentOf(udb Database, id string) string {
 	return id
 }
 
+// agentAncestors is id's parents, nearest first, up to its top-level agent:
+// empty for a top-level agent. Stops where topAgentOf does, on a cycle or a
+// parent that no longer exists. A right granted to any of them is the
+// sub-agent's too (a sub-agent is listed in no picker a grant is made in);
+// a restriction on any of them binds it as well.
+func agentAncestors(db Database, id string) []string {
+	if db == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{id: true}
+	for {
+		a, ok := loadAgent(db, id)
+		if !ok {
+			return out
+		}
+		p := strings.TrimSpace(a.OwnedBy)
+		if p == "" || seen[p] {
+			return out
+		}
+		if _, ok := loadAgent(db, p); !ok {
+			return out
+		}
+		seen[p] = true
+		out = append(out, p)
+		id = p
+	}
+}
+
+// agentStore is an owner's agent store, for the checks that are handed an
+// agent but no store.
+func agentStore(owner string) Database {
+	if orchestrateBaseDB == nil || strings.TrimSpace(owner) == "" {
+		return nil
+	}
+	return UserDB(orchestrateBaseDB, owner)
+}
+
 // schedulerFamily is the agents whose schedules an agent's Scheduler shows:
 // its top-level parent and every agent under it. [""] (everything) when no
 // agent is named.
@@ -94,6 +132,39 @@ func moveSubAgentChannels() {
 	}
 	if moved > 0 {
 		Log("[orchestrate.channels] moved %d channel(s) from sub-agents to their parents", moved)
+	}
+}
+
+// moveSubAgentPosters moves every sub-agent named as a bulletin board's
+// poster onto its top-level parent, once at start-up. Grants made before
+// rights lived on the parent named the sub-agent itself, which the Posters
+// picker (visible agents only) can neither show nor untick, and which left
+// the parent unable to post.
+func moveSubAgentPosters() {
+	moved := 0
+	for _, u := range deploymentUsers() {
+		udb := agentStore(u)
+		for _, b := range listBulletins(udb) {
+			var posters []string
+			changed := false
+			for _, id := range b.Posters {
+				if top := topAgentOf(udb, id); top != id {
+					Log("[orchestrate.bulletins] %s: board %q poster moved from sub-agent %s to its parent %s", u, b.Name, id, top)
+					id, changed = top, true
+					moved++
+				}
+				if !containsString(posters, id) {
+					posters = append(posters, id)
+				}
+			}
+			if changed {
+				b.Posters = posters
+				_ = saveBulletin(udb, b)
+			}
+		}
+	}
+	if moved > 0 {
+		Log("[orchestrate.bulletins] moved %d board poster(s) from sub-agents to their parents", moved)
 	}
 }
 

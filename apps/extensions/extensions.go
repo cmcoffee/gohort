@@ -2622,6 +2622,12 @@ func toolSecurityJS() string {
           row.appendChild(document.createTextNode(a.label || a.id));
           list.appendChild(row);
         });
+        if (agents.some(function(a){ return a.under; })) {
+          var sub = document.createElement('div');
+          sub.style.cssText = 'color:var(--text-mute);font-size:var(--fs-xs, 0.78rem);margin-top:0.3rem';
+          sub.textContent = 'A sub-agent also gets a tool ticked for its parent when its own tool list names it, or when it inherits its parent\'s tools.';
+          list.appendChild(sub);
+        }
         host.appendChild(list);
       }
       if (d && d.note) {

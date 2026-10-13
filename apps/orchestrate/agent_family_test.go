@@ -285,3 +285,93 @@ func TestASubAgentsScheduledRunLandsOnceOnTheParent(t *testing.T) {
 		t.Errorf("the sub-agent's thread got %+v", own.Messages)
 	}
 }
+
+// A right granted to a parent is its sub-agents' too, at any depth, since a
+// sub-agent is listed in no picker a grant is made in; a restriction on a
+// parent binds them as well. Tools are the exception that asks: a sub-agent
+// carries a tool scoped to its parent only when its own list names it or it
+// inherits its parents' tools.
+func TestAParentsGrantsCoverItsSubAgents(t *testing.T) {
+	_, udb := familyFixture(t)
+	load := func(id string) AgentRecord {
+		t.Helper()
+		a, ok := loadAgent(udb, id)
+		if !ok {
+			t.Fatalf("no agent %s", id)
+		}
+		return a
+	}
+	outsider := AgentRecord{ID: "a-outsider", Owner: "alice"}
+
+	// Bulletin boards: the parent's right reaches two levels down.
+	saveBulletin(udb, bulletinBoard{Name: "radar", Posters: []string{"a-writer"}})
+	board, _ := loadBulletin(udb, "radar")
+	for _, id := range []string{"a-writer", "a-critic", "a-nit"} {
+		if !board.allowsAgent(udb, load(id)) {
+			t.Errorf("%s may not post under its top-level parent's right", id)
+		}
+	}
+	if board.allowsAgent(udb, outsider) {
+		t.Error("an agent outside the family may post")
+	}
+	// A grant made before rights lived on the parent named the sub-agent;
+	// it moves to the top-level parent at start-up, once.
+	saveBulletin(udb, bulletinBoard{Name: "old", Posters: []string{"a-nit", "a-writer"}})
+	moveSubAgentPosters()
+	if b, _ := loadBulletin(udb, "old"); strings.Join(b.Posters, ",") != "a-writer" {
+		t.Errorf("posters after the move = %v, want the top-level parent once", b.Posters)
+	}
+
+	// APIs: "Only these agents" naming the parent admits its sub-agents, and
+	// the parent's opt-out binds them.
+	if err := Secure().Save(SecureCredential{Name: "weather", Type: SecureCredBearer, BaseURL: "https://weather.test", Owner: "alice"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().SetOnlyAgentsOwned("alice", "weather", []string{"a-writer"}); err != nil {
+		t.Fatal(err)
+	}
+	if credentialDenySet(load("a-nit"), "alice")["weather"] {
+		t.Error("a sub-agent of a listed parent is denied the API")
+	}
+	if !credentialDenySet(outsider, "alice")["weather"] {
+		t.Error("an agent off the list, outside the family, may use the API")
+	}
+	writer := load("a-writer")
+	writer.DisabledCredentials = []string{"news"}
+	if _, err := saveAgent(udb, writer); err != nil {
+		t.Fatal(err)
+	}
+	if !credentialDenySet(load("a-nit"), "alice")["news"] {
+		t.Error("a parent's opt-out does not bind its sub-agent: it would be wider than its parent")
+	}
+
+	// Tools: scoped to the parent, carried by a sub-agent only on request.
+	if err := AdminPersistTempTool(udb, "alice", TempTool{Name: "writer_kit", Description: "d", CommandTemplate: "echo w"}); err != nil {
+		t.Fatal(err)
+	}
+	if !SetUserToolScopeAgents(udb, "alice", "writer_kit", []string{"a-writer"}) {
+		t.Fatal("scope")
+	}
+	kit, _ := UserToolByName(udb, "alice", "writer_kit")
+	critic := load("a-critic")
+	if newPoolToolGate(udb, critic).admits(kit) {
+		t.Error("a sub-agent that did not ask carries its parent's tool")
+	}
+	critic.AllowedTools = []string{"writer_kit"}
+	if !newPoolToolGate(udb, critic).admits(kit) || !newPoolToolGate(udb, critic).reaches(kit) {
+		t.Error("a sub-agent whose list names its parent's tool does not carry it")
+	}
+	critic.DisabledPersistentTools = []string{"writer_kit"}
+	if newPoolToolGate(udb, critic).admits(kit) {
+		t.Error("a sub-agent's own opt-out is overridden by its parent's grant")
+	}
+	nit := load("a-nit")
+	nit.InheritParentTools = true
+	if !newPoolToolGate(udb, nit).admits(kit) {
+		t.Error("a sub-agent that inherits its parents' tools does not carry one scoped two levels up")
+	}
+	outsider.AllowedTools = []string{"writer_kit"}
+	if newPoolToolGate(udb, outsider).admits(kit) {
+		t.Error("naming a tool scoped to another family's agent reaches it")
+	}
+}
