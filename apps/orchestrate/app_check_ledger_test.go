@@ -16,7 +16,7 @@ func TestAReplyIsHeldWhileAnAppsLastCheckFailed(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	recordToolVerify(db, "s1", appLedgerPrefix+"weather", false, "its last verify failed (FAIL: 1 problem(s))")
 	var shown string
-	notice, strike := buildGapsFinishCheck(nil, db, "s1", &shown, nil)("You can access the app at /apps/weather/.")
+	notice, strike := buildGapsFinishCheck(nil, db, "s1", &shown)("You can access the app at /apps/weather/.")
 	if !strings.Contains(notice, "app weather is NOT ready") || !strings.Contains(notice, "do NOT tell the user where to open it") {
 		t.Fatalf("notice:\n%s", notice)
 	}
@@ -24,13 +24,13 @@ func TestAReplyIsHeldWhileAnAppsLastCheckFailed(t *testing.T) {
 		t.Fatalf("strike = %q", strike)
 	}
 	// Shown once: the next reply, having been told, goes out.
-	if n, _ := buildGapsFinishCheck(nil, db, "s1", &shown, nil)("It does not work yet: the chart fails."); n != "" {
+	if n, _ := buildGapsFinishCheck(nil, db, "s1", &shown)("It does not work yet: the chart fails."); n != "" {
 		t.Fatalf("held twice: %s", n)
 	}
 	// A passing verify clears it.
 	recordToolVerify(db, "s1", appLedgerPrefix+"weather", true, "")
 	shown = ""
-	if n, _ := buildGapsFinishCheck(nil, db, "s1", &shown, nil)("Ready."); n != "" {
+	if n, _ := buildGapsFinishCheck(nil, db, "s1", &shown)("Ready."); n != "" {
 		t.Fatalf("held after a pass: %s", n)
 	}
 }

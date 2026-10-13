@@ -339,7 +339,6 @@ var patchAgentFields = map[string]bool{
 	"action_quotas": true, "daily_spend_usd": true,
 	"lead_model": true, "memory_mode": true, "disable_explicit": true,
 	"disable_inferred": true, "disable_compaction": true, "recall_hints": true,
-	"enable_notes":   true,
 	"capture_prompt": true,
 	"allow_explorer": true, "explorer_hard_cap": true,
 	"channel": true, "fleet": true, "tag_name": true,
@@ -349,8 +348,8 @@ var patchAgentFields = map[string]bool{
 	"share_cortex": true, "share_reference": true, "share_notes": true, "share_uploads": true, "disabled_tool_actions": true,
 	"allow_builder_dispatch": true, "dispatch_mode": true,
 	"inbound_mode": true, "allowed_callers": true, "consult_lead": true,
-	"intake_form": true,
-	"work_plan": true,
+	"intake_form": true, "work_plan": true,
+	"run_priority": true, // validated below: only the two named levels
 }
 
 // patchAgent merges a partial update into an existing agent.
@@ -475,6 +474,15 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 			if T.agentPublishNeedsApproval(r, user, existing.ID, k, on, already) {
 				requested = append(requested, k)
 				continue
+			}
+		}
+		if k == "run_priority" {
+			switch p := strings.TrimSpace(fmt.Sprint(v)); p {
+			case "", "lowest", "urgent":
+				v = p
+			default:
+				http.Error(w, "run_priority must be empty, \"lowest\" or \"urgent\"", http.StatusBadRequest)
+				return
 			}
 		}
 		merged[k] = v
@@ -606,6 +614,11 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 	}
 	if action == "guardrails" {
 		T.handleAgentGuardrails(w, r, user, id)
+		return
+	}
+	// What deleting this agent would park, for its delete confirmation.
+	if action == "schedules" {
+		T.handleAgentSchedules(w, udb, user, id)
 		return
 	}
 	if action == "decline-suggest" {
@@ -817,9 +830,19 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		// all.
 		T.patchAgent(w, r, udb, user, id)
 	case http.MethodDelete:
+		// The family is read before the delete, which removes the sub-agents
+		// whose schedules go with it.
+		family := agentFamilyIDs(udb, user, id)
 		if err := deleteAgent(udb, id, user); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		// Asked to take its schedules with it, rather than leave them
+		// parked for a replacement (parked_schedules.go).
+		if r.URL.Query().Get("schedules") == "delete" {
+			if n := deleteAgentSchedules(user, family); n > 0 {
+				Log("[orchestrate.agents] deleted %d schedule(s) with agent %s", n, id)
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:

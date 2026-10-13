@@ -25,16 +25,10 @@ type consoleRecurringRow struct {
 	// which meant a task that had both a goal and a park could only say one of
 	// them — and State is the cell that answers "is it running".
 	Objective string `json:"objective,omitempty"`
-	// PartOf names the schedule this one exists to serve, when it has one.
-	// A link and nothing more: see task_parent.go for why it carries no
-	// authority over this row.
-	PartOf string `json:"part_of,omitempty"`
-	// RollUp says this one finishes when everything under it does, and what it
-	// is still waiting for. Empty unless the owner turned it on.
-	RollUp  string `json:"roll_up,omitempty"`
-	Failing string `json:"failing,omitempty"`
-	ID      string `json:"_id"`               // hidden; row-action target (the scheduler task id)
-	Broken  bool   `json:"_broken,omitempty"` // hidden gate (Delete-only on a broken row)
+	Failing   string `json:"failing,omitempty"`
+	ID        string `json:"_id"`               // hidden; row-action target (the scheduler task id)
+	UID       string `json:"_uid,omitempty"`    // hidden; the task's own id, stable across fires (link groups key on it)
+	Broken    bool   `json:"_broken,omitempty"` // hidden gate (Delete-only on a broken row)
 	// Relinkable gates the Relink row action: only a schedule whose target is
 	// GONE has anything to relink. A stalled objective gets Resume instead.
 	Relinkable bool `json:"_relinkable,omitempty"`
@@ -77,11 +71,10 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 			Fires:   fires,
 			NextRun: rt.RunAt,
 			ID:      rt.TaskID,
+			UID:     recurringTaskUID(rt.Payload),
 		}
 		// Where an objective stands, for the rows that have a goal.
 		row.Objective = objectiveStateLabel(rt.Payload.objective())
-		row.PartOf = taskParentLabel(user, rt.Payload.Parent)
-		row.RollUp = rollUpStateLabel(user, schedKindRecurring, recurringTaskUID(rt.Payload))
 		// A next run that is not on the cadence needs a reason, or it is a time
 		// nobody chose and nothing explains. Two things move one: a failing
 		// streak, which Failing reports with its count, and an attempt that
@@ -96,6 +89,9 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 		if rt.Payload.Broken {
 			row.Broken = true
 			row.State = parkedStateLabel(recurringParkCause(rt.Payload), rt.Payload.BrokenReason)
+			if RelinkFixesIt(recurringParkCause(rt.Payload)) {
+				row.State += parkedDeadlineNote(schedKindRecurring, user, recurringTaskUID(rt.Payload))
+			}
 			row.Relinkable = RelinkFixesIt(recurringParkCause(rt.Payload))
 			row.NextRun = "" // parked: the dormant re-check isn't a real next run
 		}
@@ -232,29 +228,11 @@ func (T *OrchestrateApp) handleConsoleRecurringRelink(w http.ResponseWriter, r *
 		http.Error(w, "no such agent", http.StatusBadRequest)
 		return
 	}
-	for _, rt := range listAgentRecurringTasks(user, "") {
-		if rt.TaskID != id {
-			continue
-		}
-		UnscheduleTask(id)
-		p := rt.Payload
-		p.AgentID = newAgent
-		p.Broken = false
-		p.BrokenReason = ""
-		p.LastActive = time.Now().Format(time.RFC3339)
-		next, err := computeNextFire(&p, time.Now().In(UserLocation(user)))
-		if err != nil {
-			http.Error(w, "relinked but couldn't schedule: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
+	if err := relinkRecurringToAgent(user, id, newAgent); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	http.Error(w, "recurring task not found", http.StatusNotFound)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleConsoleRecurringRun fires a recurring task's prompt once immediately from
@@ -339,6 +317,7 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 			"max_fires":        p.MaxFires,
 			"fire_count":       p.FireCount,
 			"cadence":          recurringDetail(p),
+			"linked":           p.LinkGroup != "",
 		})
 		return
 	}
@@ -420,7 +399,7 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		FireCount: found.FireCount,          // preserve run history across an edit (don't reset the budget)
 		CreatedAt: found.CreatedAt,          // keep the original creation time, not "now"
 		UID:       recurringTaskUID(*found), // the task's identity, so its notes survive the edit
-		Parent:    found.Parent,             // and the work it is part of
+		LinkGroup: found.LinkGroup,          // and the group whose time it runs on
 		// The objective travels too. An edit rebuilds the payload from this
 		// spec, so a goal left out of it is a goal DELETED by a retime: the
 		// task silently becomes an unbounded cadence that will never stop at

@@ -734,8 +734,10 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "unknown memory setting", http.StatusBadRequest)
 		return
 	}
-	// Assistant personalization ("About you" step) lands as the agent's
-	// initial Working notes, so it knows the user from message one.
+	// Assistant personalization ("About you" step) lands as facts on the
+	// agent, so it knows the user from message one. Facts rather than notes:
+	// it is durable information about the person, never rewritten as work
+	// moves, which is what facts are for (notes were retired for agents).
 	// The first-run assistant is the front door: the agent a person talks to,
 	// which hands work to the specialists they make later. So it is created a
 	// CONDUCTOR — delegation, schedules and monitors — where a later assistant
@@ -748,11 +750,9 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 	if req.Kind == "assistant" && strings.TrimSpace(req.FirstRun) != "" {
 		rec.Fleet = true
 	}
+	var aboutYou []string
 	if req.Kind == "assistant" {
-		if notes := wizardSeedNotes(req); notes != "" {
-			rec.EnableNotes = true
-			rec.SeedNotes = notes
-		}
+		aboutYou = wizardAboutYouFacts(req)
 	}
 
 	// Draft the persona from the brief. Two sequential worker calls at
@@ -777,6 +777,9 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	for _, f := range aboutYou {
+		StoreMemoryFact(udb, factsNamespace(saved.ID), f)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(saved)
@@ -901,17 +904,17 @@ func wizardBrief(kindLabel string, req wizardRequest) string {
 	return b.String()
 }
 
-// wizardSeedNotes composes the assistant's initial Working-notes block
-// from the About-you answers. Empty when the user skipped both fields.
-func wizardSeedNotes(req wizardRequest) string {
-	var lines []string
+// wizardAboutYouFacts turns the About-you answers into the assistant's first
+// facts, one per answer. Empty when the user skipped both fields.
+func wizardAboutYouFacts(req wizardRequest) []string {
+	var facts []string
 	if c := strings.TrimSpace(req.CallYou); c != "" {
-		lines = append(lines, "The user prefers to be called: "+c)
+		facts = append(facts, "The user prefers to be called: "+c)
 	}
 	if a := strings.TrimSpace(req.AboutYou); a != "" {
-		lines = append(lines, "About the user: "+a)
+		facts = append(facts, "About the user: "+a)
 	}
-	return strings.Join(lines, "\n")
+	return facts
 }
 
 // wizardDraftField runs one suggest-style worker call for a field and

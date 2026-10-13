@@ -86,13 +86,13 @@ func TestNeedsFirstRunSetup(t *testing.T) {
 	}
 }
 
-func TestWizardSeedNotes(t *testing.T) {
-	if got := wizardSeedNotes(wizardRequest{}); got != "" {
-		t.Errorf("empty about-you should yield no notes; got %q", got)
+func TestWizardAboutYouFacts(t *testing.T) {
+	if got := wizardAboutYouFacts(wizardRequest{}); len(got) != 0 {
+		t.Errorf("empty about-you should yield no facts; got %q", got)
 	}
-	got := wizardSeedNotes(wizardRequest{CallYou: " Craig ", AboutYou: "Runs a homelab."})
-	if !strings.Contains(got, "called: Craig") || !strings.Contains(got, "About the user: Runs a homelab.") {
-		t.Errorf("notes missing fields: %q", got)
+	got := strings.Join(wizardAboutYouFacts(wizardRequest{CallYou: " Sam ", AboutYou: "Runs a homelab."}), "\n")
+	if !strings.Contains(got, "called: Sam") || !strings.Contains(got, "About the user: Runs a homelab.") {
+		t.Errorf("facts missing fields: %q", got)
 	}
 }
 

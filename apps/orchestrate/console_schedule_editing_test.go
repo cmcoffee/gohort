@@ -619,3 +619,67 @@ func TestBothSchedulerEntriesFilter(t *testing.T) {
 		t.Errorf("the search box is wired to %d of the two Scheduler entries", n)
 	}
 }
+
+// A scheduled agent moves between a fixed interval, random gaps and a clock
+// time in the editor, and each move leaves only the shape it was moved to.
+func TestStandingUpdateSwitchesToRandomAndBack(t *testing.T) {
+	sa := StandingAgent{Name: "poster", Mission: "post", IntervalSeconds: 45 * 60}
+	if err := applyStandingUpdate(&sa, standingUpdateBody{IntervalMinutes: 30, MaxIntervalMinutes: 60}); err != nil {
+		t.Fatal(err)
+	}
+	if sa.IntervalSeconds != 1800 || sa.MaxIntervalSeconds != 3600 {
+		t.Fatalf("random not applied: %+v", sa)
+	}
+	if !standingNeedsRearm(StandingAgent{IntervalSeconds: 1800}, sa) {
+		t.Error("a change to the random bound did not re-arm the schedule")
+	}
+	if err := applyStandingUpdate(&sa, standingUpdateBody{IntervalMinutes: 30, MaxIntervalMinutes: 30}); err == nil {
+		t.Error("a longest gap equal to the shortest was accepted")
+	}
+	if err := applyStandingUpdate(&sa, standingUpdateBody{IntervalMinutes: 45}); err != nil || sa.MaxIntervalSeconds != 0 {
+		t.Fatalf("back to fixed kept the random bound: %+v %v", sa, err)
+	}
+	sa.MaxIntervalSeconds = 3600
+	if err := applyStandingUpdate(&sa, standingUpdateBody{Cron: "daily 09:00"}); err != nil || sa.MaxIntervalSeconds != 0 || sa.IntervalSeconds != 0 {
+		t.Fatalf("a clock time kept the interval: %+v %v", sa, err)
+	}
+}
+
+// The schedule tool's random cadence for a scheduled agent: gaps from
+// min_gap_minutes to max_gap_minutes, and no times-a-day shape.
+func TestStandingRandomGapsFromScheduleArgs(t *testing.T) {
+	lo, hi, err := standingRandomGaps(map[string]any{"min_gap_minutes": float64(30), "max_gap_minutes": float64(60)}, 0)
+	if err != nil || lo != 1800 || hi != 3600 {
+		t.Fatalf("got %d-%d, %v", lo, hi, err)
+	}
+	if lo, _, err := standingRandomGaps(map[string]any{"max_gap_minutes": float64(60)}, 1200); err != nil || lo != 1200 {
+		t.Fatalf("time's interval not used as the shortest gap: %d %v", lo, err)
+	}
+	if _, _, err := standingRandomGaps(map[string]any{"min_gap_minutes": float64(30)}, 0); err == nil {
+		t.Error("random with no longest gap was accepted")
+	}
+	if _, _, err := standingRandomGaps(map[string]any{"times_per_day": float64(4), "min_gap_minutes": float64(30), "max_gap_minutes": float64(60)}, 0); err == nil {
+		t.Error("times_per_day was accepted for a scheduled agent")
+	}
+}
+
+// The editor's "only between" pair: both or neither, an end after the start,
+// and a clock-time schedule drops it.
+func TestStandingUpdateWindow(t *testing.T) {
+	sa := StandingAgent{Name: "poster", Mission: "post", IntervalSeconds: 3600}
+	if err := applyStandingUpdate(&sa, standingUpdateBody{IntervalMinutes: 30, MaxIntervalMinutes: 60, ActiveFrom: "09:00", ActiveTo: "17:00"}); err != nil {
+		t.Fatal(err)
+	}
+	if !sa.HasWindow || sa.WindowFromMin != 540 || sa.WindowToMin != 1020 {
+		t.Fatalf("window not applied: %+v", sa)
+	}
+	if err := applyStandingUpdate(&sa, standingUpdateBody{IntervalMinutes: 30, ActiveFrom: "09:00"}); err == nil {
+		t.Error("half a window was accepted")
+	}
+	if err := applyStandingUpdate(&sa, standingUpdateBody{IntervalMinutes: 30, ActiveFrom: "17:00", ActiveTo: "09:00"}); err == nil {
+		t.Error("a window ending before it starts was accepted")
+	}
+	if err := applyStandingUpdate(&sa, standingUpdateBody{Cron: "daily 09:00"}); err != nil || sa.HasWindow {
+		t.Fatalf("a clock time kept the window: %+v %v", sa, err)
+	}
+}

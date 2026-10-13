@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"time"
@@ -58,39 +59,12 @@ type StandingAgent struct {
 	// by side, for the same reason.
 	PipelineID string `json:"pipeline_id,omitempty"`
 
-	// Parent names another schedule this one exists to serve, as
-	// "<surface>:<id>" (see taskParentRef). Empty is a schedule that stands on
-	// its own, which is almost all of them.
-	//
-	// A LINK, not a container. An objective is a schedule with a completion
-	// check and never its own table (docs/loop-objectives.md), and that holds:
-	// nothing here creates a record that does not fire. What it adds is the one
-	// thing missing when somebody breaks a piece of work into pieces, which is
-	// any way to say that the pieces belong together.
-	//
-	// It carries no authority. A child is not paused, judged, or retired by its
-	// parent, and a parent is not met because its children are. Those would each
-	// be a policy, and a policy invented alongside the link it needs is how a
-	// link becomes a container. See docs/task-containment.md.
-	Parent string `json:"parent,omitempty"`
-
-	// RollUp makes this schedule finish when everything under it has finished,
-	// instead of only on its own completion check.
-	//
-	// Opt-in because a parent is one of two very different things and the link
-	// cannot tell them apart. Some parents are a REAL CHECK ("the newsletter
-	// went out"), and for those the children being done is not the same claim
-	// at all. Others are a HEADING ("Q4 launch"), and for those the children
-	// being done is the entire meaning. Rolling up by default would quietly
-	// declare the first kind finished on somebody else's evidence.
-	//
-	// A parent with no completion check of its own and RollUp set is the
-	// cleanest shape this supports: a goal that IS the sum of its pieces. It is
-	// still a schedule with a completion check, as the objectives build
-	// requires; the check is just its children rather than a judge.
-	//
-	// See docs/task-containment.md.
-	RollUp bool `json:"roll_up,omitempty"`
+	// LinkGroup names the link group this schedule runs in, when it has been
+	// linked with others: the group's one time fires every member in order,
+	// and this schedule's own Cron / interval is set aside, kept for when it
+	// is unlinked. Empty is a schedule on its own time. See
+	// apps/orchestrate/schedule_links.go.
+	LinkGroup string `json:"link_group,omitempty"`
 	// MachineID targets a stored MachineDef, for the third shape: a RUN
 	// that carries state between its steps. A pipeline is dataflow and a
 	// machine holds a working set, so "gather every night, keep what is
@@ -105,6 +79,15 @@ type StandingAgent struct {
 	MachineID string `json:"machine_id,omitempty"`
 	Mission   string `json:"mission"` // the standing brief handed to the agent each run, or the pipeline's input
 	Cron      string `json:"cron"`    // schedule spec (NextCronOccurrence), e.g. "FRI 21:30"
+
+	// MissionSummary is a short version of a long Mission, for lists: a
+	// mission of a few paragraphs read as a wall of text on every row.
+	// MissionSummaryOf fingerprints the mission it was written from, so a
+	// changed mission shows its own words until a new summary replaces the
+	// stale one. Display only: the run is always handed the whole Mission.
+	MissionSummary   string `json:"mission_summary,omitempty"`
+	MissionSummaryOf string `json:"mission_summary_of,omitempty"`
+
 	// Interval scheduling — an alternative to Cron for schedules cron can't
 	// express (specific start + arbitrary interval): first run at StartAt (or
 	// now+interval when StartAt is empty/past), then every IntervalSeconds.
@@ -113,6 +96,20 @@ type StandingAgent struct {
 	StartAt         time.Time `json:"start_at,omitempty"`
 	IntervalSeconds int       `json:"interval_seconds,omitempty"`
 	Paused          bool      `json:"paused"`
+
+	// MaxIntervalSeconds makes an interval schedule RANDOM: each gap is drawn
+	// between IntervalSeconds and this, so "every 30-60 minutes at random"
+	// stays random instead of being flattened to a fixed 45. Zero, or not
+	// above IntervalSeconds, is the plain fixed interval.
+	MaxIntervalSeconds int `json:"max_interval_seconds,omitempty"`
+
+	// HasWindow keeps an interval schedule (fixed or random) inside a daily
+	// window, WindowFromMin to WindowToMin minutes after local midnight: a run
+	// that would land outside it waits for the next opening. "Every 30-60
+	// minutes, between 9 and 5". Cron has its own times and ignores it.
+	HasWindow     bool `json:"has_window,omitempty"`
+	WindowFromMin int  `json:"window_from_min,omitempty"`
+	WindowToMin   int  `json:"window_to_min,omitempty"`
 	// StopCause / StopNote say why a PAUSED-but-not-broken schedule is at rest,
 	// which the bool alone cannot. A schedule that REACHED its objective was
 	// stopped by setting Paused and nothing else, so the one outcome an
@@ -557,7 +554,7 @@ func RearmStrandedStandingAgents(db Database) int {
 		if !db.Get(standingAgentsTable, k, &sa) {
 			continue
 		}
-		if sa.Paused || live[standingKey(sa.Owner, sa.Name)] {
+		if sa.Paused || sa.LinkGroup != "" || live[standingKey(sa.Owner, sa.Name)] {
 			continue
 		}
 		// Leave future or only-just-passed fires to the normal path — re-arming
@@ -596,19 +593,75 @@ func nextStandingRun(sa StandingAgent, from time.Time) (time.Time, error) {
 		if sa.StartAt.After(from) {
 			return sa.StartAt, nil
 		}
-		return from.Add(time.Duration(sa.IntervalSeconds) * time.Second), nil
+		gap := sa.IntervalSeconds
+		if sa.MaxIntervalSeconds > gap {
+			gap += rand.IntN(sa.MaxIntervalSeconds - gap + 1)
+		}
+		next := from.Add(time.Duration(gap) * time.Second)
+		if sa.HasWindow && sa.WindowToMin > sa.WindowFromMin {
+			next = standingWindowOpen(from, next, sa.WindowFromMin, sa.WindowToMin)
+		}
+		return next, nil
 	}
 	return time.Time{}, fmt.Errorf("standing agent %q has no schedule (set cron or interval)", sa.Name)
+}
+
+// standingWindowOpen moves t into the daily window: unchanged inside it, the
+// window's start when t is earlier that day, and otherwise the first opening
+// after now. Rolling from now rather than from t is what keeps a run that
+// fired late from skipping the next day's window. The same rule as a
+// recurring task's window (apps/orchestrate nextWindowOpen).
+func standingWindowOpen(now, t time.Time, fromMin, toMin int) time.Time {
+	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	start := day.Add(time.Duration(fromMin) * time.Minute)
+	end := day.Add(time.Duration(toMin) * time.Minute)
+	if t.Before(start) {
+		return start
+	}
+	if t.Before(end) {
+		return t
+	}
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	for i := 0; i < 3; i++ {
+		open := today.AddDate(0, 0, i).Add(time.Duration(fromMin) * time.Minute)
+		if open.After(now) && !open.Before(start) {
+			return open
+		}
+	}
+	return day.AddDate(0, 0, 1).Add(time.Duration(fromMin) * time.Minute)
+}
+
+// standingWindowLabel is " between HH:MM and HH:MM", or "".
+func standingWindowLabel(sa StandingAgent) string {
+	if !sa.HasWindow || sa.WindowToMin <= sa.WindowFromMin {
+		return ""
+	}
+	hm := func(m int) string { return fmt.Sprintf("%02d:%02d", m/60, m%60) }
+	return " between " + hm(sa.WindowFromMin) + " and " + hm(sa.WindowToMin)
 }
 
 // StandingScheduleLabel is a human-readable schedule description for display
 // (cron spec, or "every <interval>").
 func StandingScheduleLabel(sa StandingAgent) string {
+	if sa.LinkGroup != "" {
+		return "on its link group's time"
+	}
 	if strings.TrimSpace(sa.Cron) != "" {
 		return sa.Cron
 	}
+	if sa.IntervalSeconds > 0 && sa.MaxIntervalSeconds > sa.IntervalSeconds {
+		lo, hi := sa.IntervalSeconds, sa.MaxIntervalSeconds
+		win := standingWindowLabel(sa)
+		switch {
+		case lo%3600 == 0 && hi%3600 == 0:
+			return fmt.Sprintf("at random, every %d-%d hours", lo/3600, hi/3600) + win
+		case lo%60 == 0 && hi%60 == 0:
+			return fmt.Sprintf("at random, every %d-%d minutes", lo/60, hi/60) + win
+		}
+		return fmt.Sprintf("at random, every %d-%d seconds", lo, hi) + win
+	}
 	if sa.IntervalSeconds > 0 {
-		return "every " + formatStandingInterval(sa.IntervalSeconds)
+		return "every " + formatStandingInterval(sa.IntervalSeconds) + standingWindowLabel(sa)
 	}
 	return "(no schedule)"
 }
@@ -641,6 +694,13 @@ func formatStandingInterval(secs int) string {
 func ScheduleStandingAgent(db Database, sa StandingAgent) error {
 	if sa.SchedulerID != "" {
 		UnscheduleTask(sa.SchedulerID) // cancel-and-replace
+	}
+	// A linked schedule runs on its group's time, not its own: nothing is
+	// armed, and its own Cron / interval stays as it was for when it leaves.
+	if sa.LinkGroup != "" {
+		sa.SchedulerID, sa.NextRun = "", time.Time{}
+		SaveStandingAgent(db, sa)
+		return nil
 	}
 	// Compute the next fire in the owner's zone so a cron like "daily 08:00"
 	// means 08:00 for them, not the server. Interval schedules are unaffected
@@ -752,6 +812,12 @@ func StartStandingScheduler() {
 			Log("[standing] %s/%s is paused: skipping fire", p.Owner, p.Name)
 			return
 		}
+		// Its own timer, left over from before it was linked: the group's
+		// time runs it now.
+		if sa.LinkGroup != "" && p.Trigger == "schedule" {
+			Log("[standing] %s/%s is linked: its own timer no longer runs it", p.Owner, p.Name)
+			return
+		}
 		// Dependency guard: if the target agent was deleted since the last fire,
 		// mark broken (pauses + unschedules) instead of fail-looping. The deferred
 		// re-arm re-reads and honors the fresh Paused, so it won't reschedule.
@@ -771,13 +837,25 @@ func StartStandingScheduler() {
 // (unlike "schedule") does NOT re-arm the cadence — the recurring schedule keeps
 // firing on its own timer, undisturbed. A paused agent still runs (a manual test
 // is explicit intent). Returns an error if no such agent exists; otherwise the
-// stored ledger record for the run.
-func RunStandingAgentNow(ctx context.Context, db Database, owner, name string) (RunRecord, error) {
+// stored ledger record for the run. trigger, when given, names what ran it in
+// the ledger in place of "manual" (a link group's time says "link").
+func RunStandingAgentNow(ctx context.Context, db Database, owner, name string, trigger ...string) (RunRecord, error) {
 	sa, ok := GetStandingAgent(db, owner, name)
 	if !ok {
 		return RunRecord{}, fmt.Errorf("no such standing agent")
 	}
-	return executeStandingRun(ctx, db, sa, "manual"), nil
+	how := "manual"
+	if len(trigger) > 0 && trigger[0] != "" {
+		how = trigger[0]
+	}
+	return executeStandingRun(ctx, db, sa, how), nil
+}
+
+// NextRunFrom is when this schedule's timing next fires after from. Exposed as
+// a method so a group of linked schedules, which keeps the same timing fields,
+// computes its time by the same rule.
+func (sa StandingAgent) NextRunFrom(from time.Time) (time.Time, error) {
+	return nextStandingRun(sa, from)
 }
 
 // executeStandingRun runs a standing agent via the registered runner and

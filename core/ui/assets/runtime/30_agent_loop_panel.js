@@ -16,6 +16,10 @@
     // got the message.
     var listPosModal = hasList && cfg.list_position === 'modal';
 
+    // isOrchItem: a list row that is an item, as opposed to a "_group_head",
+    // which heads the rows sharing its _group and is not counted as one.
+    function isOrchItem(row) { return !!row && !row._group_head; }
+
     // renderDetailValue draws one JSON value for a show_result modal, generically:
     // an object as labelled fields, an array of objects as one sub-card each,
     // a long or multi-line string as preformatted text, anything else inline.
@@ -426,6 +430,10 @@
             // the wrong KIND of thing is worse than no picker: every choice in
             // it is refused.
             if (row && row._id) src += '&row=' + encodeURIComponent(row._id);
+            // And the id the choice will be POSTed with, when the action names
+            // its own (id_field): _id alone can be ambiguous across the kinds a
+            // row may be, and that field is how the row says which one it is.
+            if (a.id_field && rowActionID(a, row)) src += '&ref=' + encodeURIComponent(rowActionID(a, row));
             window.uiOpenSimpleModal({title: a.picker_title || a.label, width: '420px', mount: function(body, dlg) {
               var status = el('div', {style: 'color:var(--text-mute,#999);font-size:var(--fs-sm, 0.85rem);padding:0.3rem 0'}, [uiLoading()]);
               var list = el('div', {style: 'display:flex;flex-direction:column;gap:0.35rem;margin-top:0.4rem'});
@@ -528,14 +536,32 @@
           if (item && item.layout === 'cards') {
             var cactions = (item && item.row_actions) || [];
             var lastSection = null;
+            var lastGroup = null, groupBox = null;
             rows.forEach(function(row) {
               // A "_section" heading, drawn once each time the value changes. It
               // is what lets ONE source render as several titled lists (a summary
               // view) instead of one list per menu entry.
               if (row._section && row._section !== lastSection) {
                 lastSection = row._section;
+                lastGroup = null; groupBox = null;
                 host.appendChild(el('div', {style: 'margin:0.9rem 0 0.35rem;font-size:var(--fs-2xs, 0.68rem);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute, #999)'}, [row._section]));
               }
+              // "_group" draws consecutive rows that share a value inside one
+              // bordered box: rows that belong together and act together, read
+              // as one thing. A row with "_group_head" is the box's header (its
+              // actions act on the group); the server emits the head first and
+              // the members after it, in order. Like "_depth", the layout does
+              // not learn what the grouping means.
+              if (row._group) {
+                if (row._group !== lastGroup) {
+                  lastGroup = row._group;
+                  groupBox = el('div', {class: 'ui-row-group', style: 'border:1.5px solid var(--accent, #4a9eff);border-radius:9px;padding:0.35rem 0.4rem 0;margin-bottom:0.6rem'});
+                  host.appendChild(groupBox);
+                }
+              } else {
+                lastGroup = null; groupBox = null;
+              }
+              var target = groupBox || host;
               // Each row's OWN visible keys, not the first row's: a view that
               // groups several kinds of thing has a different shape per section,
               // and reading the shape off row one renders the rest blank.
@@ -551,7 +577,9 @@
               // second model of the same data held in the renderer, and it is
               // wrong the first time a row is filtered out of the middle.
               var depth = Math.max(0, Math.min(6, parseInt(row._depth, 10) || 0));
-              var card = el('div', {style: 'display:flex;align-items:center;gap:0.6rem;border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:7px;padding:0.45rem 0.7rem;margin-bottom:0.4rem;background:var(--bg-1, rgba(127,127,127,0.03));flex-wrap:wrap'
+              var card = el('div', {style: (row._group_head
+                  ? 'display:flex;align-items:center;gap:0.6rem;padding:0.2rem 0.3rem 0.45rem;flex-wrap:wrap'
+                  : 'display:flex;align-items:center;gap:0.6rem;border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:7px;padding:0.45rem 0.7rem;margin-bottom:0.4rem;background:var(--bg-1, rgba(127,127,127,0.03));flex-wrap:wrap')
                 + (depth ? ';margin-left:' + (depth * 1.25) + 'rem' : '')});
               // Left: title + status pill + inline muted details, all on one line.
               var info = el('div', {style: 'flex:1 1 11rem;min-width:0;display:flex;align-items:baseline;gap:0.45rem;flex-wrap:wrap'});
@@ -610,7 +638,7 @@
                 controls.appendChild(btn);
               });
               if (controls.childNodes.length) card.appendChild(controls);
-              host.appendChild(card);
+              target.appendChild(card);
             });
             return;
           }
@@ -744,9 +772,17 @@
           }
           return rowMatchesQuery(row, q);
         }
+        // A "_group_head" row heads the rows that share its _group: it is not
+        // an item of its own, so it is not counted, and it shows only while
+        // one of its rows does (as a section heading leaves with its rows).
         function visibleRows() {
           var q = query.trim().toLowerCase();
-          return (rows || []).filter(function(row) { return passesOthers(row, -1, q); });
+          var kept = (rows || []).filter(function(row) { return isOrchItem(row) && passesOthers(row, -1, q); });
+          var live = {};
+          kept.forEach(function(row) { if (row._group) live[row._group] = true; });
+          return (rows || []).filter(function(row) {
+            return isOrchItem(row) ? kept.indexOf(row) >= 0 : !!live[row._group];
+          });
         }
 
         var rowsHost = el('div');
@@ -756,7 +792,7 @@
           chipRefs.forEach(function(ref) {
             var n = 0;
             (rows || []).forEach(function(row) {
-              if (passesOthers(row, ref.fi, q) && optionMatches(ref.opt, row)) n++;
+              if (isOrchItem(row) && passesOthers(row, ref.fi, q) && optionMatches(ref.opt, row)) n++;
             });
             ref.btn.className = 'ui-tab' + (chosen[ref.fi] === ref.oi ? ' active' : '');
             ref.count.textContent = ' ' + n;
@@ -782,7 +818,7 @@
                 repaint();
               }}, ['Show all']);
             rowsHost.appendChild(el('div', {style: 'display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;color:var(--text-mute, #999);padding:0.5rem'}, [
-              el('span', {}, ['None of the ' + rows.length + ' here match what you have picked.']), back]));
+              el('span', {}, ['None of the ' + rows.filter(isOrchItem).length + ' here match what you have picked.']), back]));
             return;
           }
           paintOrchRows(rowsHost, vis);
@@ -1133,8 +1169,8 @@
               // BadgeField counts only matching rows (e.g. _pending on a page
               // that also lists granted permissions); empty counts every row.
               var n = item.badge_field
-                ? (rows || []).filter(function(rw) { return rw && rw[item.badge_field]; }).length
-                : ((rows && rows.length) || 0);
+                ? (rows || []).filter(function(rw) { return isOrchItem(rw) && rw[item.badge_field]; }).length
+                : (rows || []).filter(isOrchItem).length;
               badge.textContent = n ? String(n) : '';
               badge.style.display = n ? '' : 'none';
               // A pinned action-queue row keeps a faint always-on tint (marks it
@@ -4390,24 +4426,32 @@
         return true;
       });
       entries.forEach(function(e) {
-        var at = Date.parse(e.at || '');
-        var card = buildNotice({level: e.level, type: e.kind, text: e.detail, at: e.at});
-        var target = null;
-        if (!isNaN(at)) {
-          for (var i = 0; i < anchors.length; i++) {
-            if (isNaN(anchors[i].at) || anchors[i].at > at) break;
-            target = anchors[i];
-          }
-        }
-        if (target) {
-          convoLog.insertBefore(card, target.node.nextSibling);
-          target.node = card; // the next notice for this turn follows this one
-        } else if (anchors.length) {
-          convoLog.insertBefore(card, anchors[0].node);
-        } else {
-          convoLog.appendChild(card);
-        }
+        placeByTime(buildNotice({level: e.level, type: e.kind, text: e.detail, at: e.at}), e.at, anchors);
       });
+    }
+
+    // placeByTime puts a replayed node after the last message that predates
+    // `at` (at the very top when it predates them all), then advances that
+    // anchor to the node, so several things from one turn keep their order.
+    // Shared by breadcrumbs and by persisted blocks that say when they were
+    // drawn: both belong where they happened, not after the whole thread.
+    function placeByTime(node, atStr, anchors) {
+      var at = Date.parse(atStr || '');
+      var target = null;
+      if (!isNaN(at)) {
+        for (var i = 0; i < anchors.length; i++) {
+          if (isNaN(anchors[i].at) || anchors[i].at > at) break;
+          target = anchors[i];
+        }
+      }
+      if (target) {
+        convoLog.insertBefore(node, target.node.nextSibling);
+        target.node = node;
+      } else if (anchors.length) {
+        convoLog.insertBefore(node, anchors[0].node);
+      } else {
+        convoLog.appendChild(node);
+      }
     }
 
     function addConfirm(d) {
@@ -6955,7 +6999,17 @@
             if (!(key in byKey)) keyOrder.push(key);
             byKey[key] = b;
           });
-          keyOrder.forEach(function(k) { addBlock(byKey[k]); });
+          // A block that says when it was drawn goes back to that point in
+          // the thread. Without it, a card drawn mid-conversation reloaded
+          // below every message, and read as having moved.
+          keyOrder.forEach(function(k) {
+            var b = byKey[k];
+            addBlock(b);
+            var built = b.id && blockEls[b.id];
+            if (b.at && built && built.wrap && built.wrap.parentNode === convoLog) {
+              placeByTime(built.wrap, b.at, noticeAnchors);
+            }
+          });
         }
         // The guards that stopped something in this thread, put back where
         // they happened. Fetched rather than carried on the session record:

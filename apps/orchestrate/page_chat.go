@@ -149,7 +149,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
 		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(cortexAgentsJSON) +
 		";\nwindow.ORCH_RECORD_AGENTS = " + string(recordAgentsJSON) +
-		";</script>\n<script>" + ArtifactClientJS + "</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
+		";</script>\n<script>" + ArtifactClientJS + "</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets + agentDeleteAskJS
 
 	// Builder handoff: a ?builder_brief=<id> deep-link (from the send_to_builder
 	// tool or the toolbar "Send to Builder" button) carries a one-shot brief.
@@ -347,20 +347,6 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// deletable one entry up; a second surface with its own
 						// copies of those buttons would be a second set of rules
 						// for the same record.
-						// Breakdown: the shape of the work, drawn under what it
-						// is part of. Beside Goals because they are read from
-						// the same records, and separate because they sort by
-						// different things: Goals by what needs you first, this
-						// alphabetically, so a row stays where you last saw it.
-						//
-						// Read-only, like Goals. Every row here is editable one
-						// page over, and the arrangement is the only thing this
-						// page adds.
-						{Label: "Breakdown", Menu: "Manage", Icon: "⑂", AllAgents: true, Source: "api/console/breakdown", Layout: "cards",
-							SearchPlaceholder: "Search the work",
-							RowActions: []ui.OrchestratorRowAction{
-								{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
-							}},
 						{Label: "Goals", Menu: "Manage", Icon: "◎", AllAgents: true, Source: "api/console/goals", Layout: "cards",
 							SearchPlaceholder: goalsSearchHint,
 							Filters:           goalsFilters(),
@@ -388,23 +374,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// listing its goal, its attempts and its next fire is where
 								// somebody reading them already is.
 								{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
-								// What larger piece of work this one belongs to.
-								// On every row because the decomposition people
-								// actually do crosses the three kinds: a goal
-								// checked by a standing agent, gathered by a
-								// recurring task, watched by a monitor is one
-								// piece of work in three shapes.
-								// Whether this one finishes when everything under
-								// it does. A toggle, and opt-in, because a parent
-								// is either a real check or a heading and the link
-								// cannot tell them apart: rolling up by default
-								// would declare the first kind finished on
-								// somebody else's evidence.
-								{Label: "Finish on children", Method: "POST", URL: "api/console/scheduler/rollup", OnlyIf: "_notes", IDField: "_ref",
-									Confirm: "Toggle whether this finishes when everything under it has finished? With it on, it stops on its own and does not wait for its own check."},
-								{Label: "Part of…", Method: "POST", URL: "api/console/scheduler/parent", IDField: "_ref",
-									PickerSource: "api/console/scheduler/parent-options",
-									PickerTitle:  "Part of which larger piece of work?", OnlyIf: "_notes"},
+								// Link groups (schedule_links.go): the group's own
+								// controls on its header row, the order and the way
+								// out on each member, and Link… on every row that
+								// can join one.
+								linkActEditTime, linkActRun, linkActPause, linkActResume,
+								linkActUp, linkActDown, linkActUnlink, linkActLink,
 								// Scheduled agents. "Edit schedule" is a CLIENT action: the
 								// modal that changes a cron or an interval lives in this app's
 								// own JS, which is where anything knowing what a cron is
@@ -629,6 +604,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							SearchPlaceholder: schedulerSearchHint,
 							Filters:           schedulerFilters(),
 							RowActions: []ui.OrchestratorRowAction{
+								linkActEditTime, linkActRun, linkActPause, linkActResume,
+								linkActUp, linkActDown, linkActUnlink, linkActLink,
 								// Scheduled agents. "Edit schedule" is a CLIENT action: the
 								// modal that changes a cron or an interval lives in this app's
 								// own JS, which is where anything knowing what a cron is
@@ -949,3 +926,21 @@ func (p *phaseTimer) report(what string) {
 	}
 	Log("[orchestrate.page] %s took %s: %s", what, total.Round(time.Millisecond), strings.Join(p.phases, ", "))
 }
+
+// The Scheduler's link-group buttons (schedule_links.go), named so both
+// Scheduler views list the same ones. The header row of a group carries the
+// group's own controls; each member carries its place in the order and the
+// way out; Link… is on every row that can join a group.
+var (
+	linkActEditTime = ui.OrchestratorRowAction{Label: "Edit time", Method: "client", URL: "orchestrate_edit_link", OnlyIf: "_link_head"}
+	linkActRun      = ui.OrchestratorRowAction{Label: "Run now", Method: "POST", URL: "api/console/links/run", OnlyIf: "_link_head",
+		Confirm: "Run every schedule in this group now, one after another? Its time is not changed."}
+	linkActPause  = ui.OrchestratorRowAction{Label: "Pause", Method: "POST", URL: "api/console/links/pause", OnlyIf: "_link_pause"}
+	linkActResume = ui.OrchestratorRowAction{Label: "Resume", Method: "POST", URL: "api/console/links/resume", OnlyIf: "_link_go"}
+	linkActUp     = ui.OrchestratorRowAction{Label: "↑", Method: "POST", URL: "api/console/links/up", OnlyIf: "_link_up", IDField: "_ref"}
+	linkActDown   = ui.OrchestratorRowAction{Label: "↓", Method: "POST", URL: "api/console/links/down", OnlyIf: "_link_down", IDField: "_ref"}
+	linkActUnlink = ui.OrchestratorRowAction{Label: "Unlink", Method: "POST", URL: "api/console/links/unlink", OnlyIf: "_linked", IDField: "_ref",
+		Confirm: "Take this out of the group? It goes back to its own time, as it was before it was linked."}
+	linkActLink = ui.OrchestratorRowAction{Label: "Link", Method: "POST", URL: "api/console/links/link", OnlyIf: "_link", IDField: "_ref",
+		PickerSource: "api/console/links/options", PickerTitle: "Link with: they then run at one time, one after another"}
+)

@@ -102,40 +102,6 @@ type EventMonitor struct {
 	Notify      string `json:"notify,omitempty"`       // delivery: EventNotifyChannel (default) wakes the agent in-thread; EventNotifyText texts the owner (no LLM)
 	Token       string `json:"token,omitempty"`        // webhook secret (URL path segment)
 
-	// Parent names another schedule this one exists to serve, as
-	// "<surface>:<id>" (see taskParentRef). Empty is a schedule that stands on
-	// its own, which is almost all of them.
-	//
-	// A LINK, not a container. An objective is a schedule with a completion
-	// check and never its own table (docs/loop-objectives.md), and that holds:
-	// nothing here creates a record that does not fire. What it adds is the one
-	// thing missing when somebody breaks a piece of work into pieces, which is
-	// any way to say that the pieces belong together.
-	//
-	// It carries no authority. A child is not paused, judged, or retired by its
-	// parent, and a parent is not met because its children are. Those would each
-	// be a policy, and a policy invented alongside the link it needs is how a
-	// link becomes a container. See docs/task-containment.md.
-	Parent string `json:"parent,omitempty"`
-
-	// RollUp makes this schedule finish when everything under it has finished,
-	// instead of only on its own completion check.
-	//
-	// Opt-in because a parent is one of two very different things and the link
-	// cannot tell them apart. Some parents are a REAL CHECK ("the newsletter
-	// went out"), and for those the children being done is not the same claim
-	// at all. Others are a HEADING ("Q4 launch"), and for those the children
-	// being done is the entire meaning. Rolling up by default would quietly
-	// declare the first kind finished on somebody else's evidence.
-	//
-	// A parent with no completion check of its own and RollUp set is the
-	// cleanest shape this supports: a goal that IS the sum of its pieces. It is
-	// still a schedule with a completion check, as the objectives build
-	// requires; the check is just its children rather than a judge.
-	//
-	// See docs/task-containment.md.
-	RollUp bool `json:"roll_up,omitempty"`
-
 	// DeliverChatID is the phantom conversation a notify=direct alert posts into
 	// (the chat the watcher was created in — e.g. a group). Empty for a monitor
 	// created in the Agency console, where direct posts to the channel thread.

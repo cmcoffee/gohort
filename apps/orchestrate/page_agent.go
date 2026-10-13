@@ -293,17 +293,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "disable_inferred", Type: "toggle", Label: "Disable Reference Memory",
 				Help:   "Strips the searchable half of remember, recall and forget, and drops derived chunks from recall.",
 				Detail: "For agents that should answer from authoritative sources only. The per-turn Clean toggle does the same thing, scoped to one turn."},
-			// The Memory PANE has always had a Working-notes editor and has always
-			// told a disabled one to "enable them in the agent editor" — which
-			// had no such control, so the instruction pointed at a door that did
-			// not exist. The only writers were Builder's authoring tools.
-			//
-			// Reads as an ENABLE among two DISABLEs, which is worth a wince and
-			// not worth flipping a stored field's polarity over: the label says
-			// what the switch is, and the help says what ON does.
-			ui.FormField{Field: "enable_notes", Type: "toggle", Label: "Working notes (running-state scratchpad)",
-				Help:   "Gives the agent one rewritable block of current state, always in prompt.",
-				Detail: "It also gets the update_notes tool to rewrite that block. Different from the memory above: facts accumulate, notes get replaced wholesale as the work moves.\n\nFor long-running project or conversational agents. Most task agents have no running state worth carrying. Edit the text itself under Configure, then Memory."},
+			// (Working notes toggle removed: agent-wide notes were retired in
+			// favour of task and link-group notes on the Scheduler, and an
+			// agent's existing notes were kept as facts. See notes_retire.go.)
 			ui.FormField{Field: "recall_hints", Type: "toggle", Label: "Recall hints",
 				Help:   "Each turn, surface a scored list of knowledge that looks relevant to the message.",
 				Detail: "Pointers only, a title plus a relevance, not the content. The agent pulls one with recall if it fits, so it stops missing material it should look up. Best for agents with a real corpus: attached collections, uploaded docs. The thresholds are deployment tunables."},
@@ -610,20 +602,22 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		sections = append(sections, ui.Section{
 			Title:    "Delete agent",
 			Subtitle: "Permanently remove this agent. This cannot be undone.",
-			Detail:   "Its sessions, memory, knowledge and any sub-agents it owns go with it. Channels, monitors and standing agents bound to it are cleaned up too.",
+			Detail:   "Its sessions, memory, knowledge and any sub-agents it owns go with it, and its channels are removed. The schedules it runs can be kept parked for 30 days, to be relinked to a replacement agent, or deleted with it: the delete asks.",
 			Body: ui.DisplayPanel{
 				Source: "../api/agents/" + id,
 				Pairs:  []ui.DisplayPair{},
 				Actions: []ui.ToolbarAction{
 					{
-						Label:   "Delete this agent",
-						Method:  "DELETE",
-						URL:     "../api/agents/" + id,
-						Confirm: "Delete this agent permanently? Its sessions, memory, knowledge, and any sub-agents it owns are removed, and its channels / monitors / standing agents are cleaned up. This can't be undone.",
+						Label: "Delete this agent",
+						// A client action: it asks what happens to the
+						// schedules the agent runs before it deletes
+						// (parked_schedules.go). Its page has nothing left to
+						// show afterwards: a sub-agent goes back to its
+						// parent, anything else to the agent list.
+						Method:  "client",
+						URL:     "orchestrate_delete_agent_ask",
+						Data:    agentDeleteData(id, editRec.Name, deleteRedirect),
 						Variant: "danger",
-						// Its page has nothing left to show. A sub-agent goes
-						// back to its parent, anything else to the agent list.
-						RedirectURL: deleteRedirect,
 					},
 				},
 			},
@@ -650,6 +644,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// it rides in through a client action rather than into core/ui.
 		lockHead += imageLibraryHeadHTML(id)
 		lockHead += agentAssistHTML(id)
+		lockHead += agentDeleteAskJS
 	}
 	page := ui.Page{
 		Title:     title,

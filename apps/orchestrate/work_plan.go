@@ -36,9 +36,9 @@ func (t *chatTurn) workPlanTools() []AgentToolDef {
 	}
 	set := WorkPlanTools(WorkPlanToolSpec{
 		Plan: plan,
-		// Keyed on the SESSION, not minted per turn: one conversation has one
-		// checklist, and the card the second turn updates has to be the card the
-		// first turn drew.
+		// Not minted per turn: the card the second turn updates has to be the
+		// card the first turn drew. workPlanChanged paints the session's card,
+		// which this names only for a session that has not had one yet.
 		PlanID:   "workplan:" + t.session.ID,
 		OnChange: t.workPlanChanged,
 	})
@@ -51,62 +51,43 @@ func (t *chatTurn) workPlanTools() []AgentToolDef {
 // Both, on every movement, and the order matters: the card is what the person
 // is watching, and the save is what makes the plan survive a turn boundary, a
 // reload, or the browser going away mid-run.
+//
+// The card is the session's, not the spec's fixed id: a plan committed after
+// the last one finished is drawn on a card of its own, so the finished one
+// stays where it was instead of being rewritten with the new steps.
 func (t *chatTurn) workPlanChanged(c WorkPlanChange) {
-	t.emitWorkPlanBlock(c)
+	card := t.session.WorkPlanCard
+	if card == "" {
+		card = c.PlanID
+	}
+	if c.Kind == "set" {
+		t.toolMu.Lock()
+		prev := t.session.keptPlanCard(card)
+		open := prev != nil && planStepsOpen(prev.Plan)
+		t.toolMu.Unlock()
+		card = t.nextPlanCard(card, open, "workplan:")
+	}
+	t.session.WorkPlanCard = card
+	t.paintPlanCard(card, workPlanSteps(c.Steps), c.Reason)
 	t.saveSession()
 }
 
-// emitWorkPlanBlock sends the plan as the orchestrate_plan block the browser
-// already renders. Same id every time, so the card updates rather than stacking.
-func (t *chatTurn) emitWorkPlanBlock(c WorkPlanChange) {
-	if t.sse == nil {
-		return
-	}
-	items := make([]map[string]any, 0, len(c.Steps))
-	for _, s := range c.Steps {
-		item := map[string]any{
-			"id":     s.ID,
-			"title":  s.Title,
-			"status": string(s.Status),
-		}
-		if s.WhatToFind != "" {
-			item["what_to_find"] = s.WhatToFind
-		}
-		if s.Findings != "" {
-			item["findings"] = s.Findings
-		}
-		if s.BlockedReason != "" {
-			item["blocked_reason"] = s.BlockedReason
-		}
-		items = append(items, item)
-	}
-	payload := map[string]any{
-		"kind": "block",
-		"type": "orchestrate_plan",
-		"id":   c.PlanID,
-		"plan": items,
-	}
-	// A revision says WHY the plan changed. It rides the event rather than the
-	// steps because it is about the change, not about any one step.
-	if c.Reason != "" {
-		payload["reason"] = c.Reason
-	}
-	t.sse.Send(payload)
-}
-
 // restoreWorkPlanCard re-paints the checklist at the head of a turn that
-// inherits one, so a conversation resumed in a new browser tab shows the plan it
-// is actually working rather than a blank pane until the next movement.
+// inherits one with steps still open, so a conversation resumed in a new
+// browser tab shows the plan it is actually working rather than a blank pane
+// until the next movement. A finished plan is left where it is: re-painting
+// it drew it again at the end of the thread.
 func (t *chatTurn) restoreWorkPlanCard() {
 	if !t.agent.WorkPlan || t.session == nil || t.session.WorkPlan == nil {
 		return
 	}
-	if !t.session.WorkPlan.IsSet() {
+	if t.session.WorkPlan.Pending() == 0 {
 		return
 	}
-	t.emitWorkPlanBlock(WorkPlanChange{
-		PlanID: "workplan:" + t.session.ID,
-		Kind:   "set",
-		Steps:  t.session.WorkPlan.Snapshot(),
-	})
+	card := t.session.WorkPlanCard
+	if card == "" {
+		card = "workplan:" + t.session.ID
+		t.session.WorkPlanCard = card
+	}
+	t.paintPlanCard(card, workPlanSteps(t.session.WorkPlan.Snapshot()), "")
 }

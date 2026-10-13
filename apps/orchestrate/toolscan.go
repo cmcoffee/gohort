@@ -114,10 +114,17 @@ func resolveScanScope(agent AgentRecord, tl Tool) bool {
 	if nameListed(agent.ScanToolsSkip, name) {
 		return false
 	}
-	if (toolCarriesNetworkCap(tl) || tl.FetchesExternal) && !tl.TrustedOutput {
+	if toolBringsOutsideContent(tl) {
 		return true
 	}
 	return nameListed(agent.ScanToolsAdd, name)
+}
+
+// toolBringsOutsideContent is what decides a tool is scanned by default: it
+// reaches the network, or fetches something external, and does not declare
+// its output trusted. A property of the tool, the same for every agent.
+func toolBringsOutsideContent(tl Tool) bool {
+	return (toolCarriesNetworkCap(tl) || tl.FetchesExternal) && !tl.TrustedOutput
 }
 
 // nameListed reports whether name appears in list, forgiving case and spacing.
@@ -348,6 +355,27 @@ func (t *chatTurn) recordScanDetection(agentID, tool string, v ToolScanVerdict) 
 	// and for a scheduled agent the server log is the surface an owner is
 	// likeliest to already be watching.
 	Log("[orchestrate.toolscan] agent=%s tool=%s INJECTION DETECTED: %s", agentID, tool, reason)
+}
+
+// scanNetworkToolNames is every registered tool this agent can call that is
+// scanned by default, whether or not it has been made an exception: the left
+// side of the guardrails modal, where an exception that is taken back has to
+// reappear. Partial in the same way as scanCoveredToolNames below.
+func scanNetworkToolNames(agent AgentRecord) []string {
+	allowAll := len(agent.AllowedTools) == 0 || nameListed(agent.AllowedTools, "*")
+	var out []string
+	seen := map[string]bool{}
+	for _, ct := range RegisteredChatTools() {
+		td := ChatToolToAgentToolDef(ct)
+		name := td.Tool.Name
+		if seen[name] || (!allowAll && !nameListed(agent.AllowedTools, name)) || !toolBringsOutsideContent(td.Tool) {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // scanCoveredToolNames resolves what this agent's scan scope actually covers,

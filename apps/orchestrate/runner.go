@@ -557,10 +557,10 @@ func (pr *planRun) askUserToolDef() AgentToolDef {
 			if raw, ok := args["plan"]; ok && raw != nil {
 				if planSteps := buildPlanStepsFromArg(raw); len(planSteps) > 0 && t.session != nil {
 					t.session.BuildPlan = &BuildPlanState{
-						ID:    "build-plan-" + t.session.ID,
+						ID:    t.buildPlanCard(),
 						Steps: planSteps,
 					}
-					emitBuildPlanBlock(t.sse, t.session.BuildPlan)
+					t.paintBuildPlan(t.session.BuildPlan)
 					// Same execution-budget grant present_build_plan gives:
 					// this path is the canonical one-call Phase-2 shape, and
 					// without the grant the build competes with whatever

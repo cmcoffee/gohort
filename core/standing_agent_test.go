@@ -273,3 +273,64 @@ func TestStandingParkCauseIsTheSharedReader(t *testing.T) {
 		t.Error("a running agent reads as unparked")
 	}
 }
+
+// A random cadence draws each gap between the two bounds, and says so.
+// Observed: "every 30-60 minutes at random" was flattened to a fixed 45,
+// because a scheduled agent could only hold one interval.
+func TestStandingRandomGaps(t *testing.T) {
+	sa := StandingAgent{Name: "poster", IntervalSeconds: 1800, MaxIntervalSeconds: 3600}
+	from := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	seen := map[time.Duration]bool{}
+	for i := 0; i < 200; i++ {
+		next, err := nextStandingRun(sa, from)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gap := next.Sub(from)
+		if gap < 30*time.Minute || gap > 60*time.Minute {
+			t.Fatalf("gap %s outside 30-60 minutes", gap)
+		}
+		seen[gap] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("every gap was the same: not random")
+	}
+	if got := StandingScheduleLabel(sa); got != "at random, every 30-60 minutes" {
+		t.Errorf("label %q", got)
+	}
+	// A bound not above the interval is the plain fixed interval.
+	sa.MaxIntervalSeconds = 1800
+	if next, _ := nextStandingRun(sa, from); next.Sub(from) != 30*time.Minute {
+		t.Errorf("fixed interval drifted: %s", next.Sub(from))
+	}
+	if got := StandingScheduleLabel(sa); got != "every 30 minutes" {
+		t.Errorf("label %q", got)
+	}
+}
+
+// A random cadence kept to a daily window: a run that would land after it
+// closes waits for the next day's opening, one inside it stands, and the
+// label says so.
+func TestStandingWindow(t *testing.T) {
+	loc := time.UTC
+	sa := StandingAgent{Name: "poster", IntervalSeconds: 1800, MaxIntervalSeconds: 3600, HasWindow: true, WindowFromMin: 9 * 60, WindowToMin: 17 * 60}
+	late := time.Date(2026, 10, 12, 16, 50, 0, 0, loc)
+	next, err := nextStandingRun(sa, late)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 10, 13, 9, 0, 0, 0, loc); !next.Equal(want) {
+		t.Fatalf("a run past the window went to %s, want %s", next, want)
+	}
+	mid := time.Date(2026, 10, 12, 11, 0, 0, 0, loc)
+	if next, _ := nextStandingRun(sa, mid); next.Before(mid.Add(30*time.Minute)) || next.After(mid.Add(60*time.Minute)) {
+		t.Fatalf("a run inside the window moved: %s", next)
+	}
+	early := time.Date(2026, 10, 12, 6, 0, 0, 0, loc)
+	if next, _ := nextStandingRun(sa, early); !next.Equal(time.Date(2026, 10, 12, 9, 0, 0, 0, loc)) {
+		t.Fatalf("a run before the window did not wait for it: %s", next)
+	}
+	if got := StandingScheduleLabel(sa); got != "at random, every 30-60 minutes between 09:00 and 17:00" {
+		t.Errorf("label %q", got)
+	}
+}

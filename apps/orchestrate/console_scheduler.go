@@ -58,6 +58,19 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 		out = appendSchedulerRow(out, row, schedSectionMonitors, schedKindMonitor)
 	}
 	sortSchedulerRows(out)
+	// Link groups lead, each drawn as one box, and their members are not
+	// listed a second time in their own sections. Added after the sort, which
+	// orders rows by their own next fire and would split a group apart.
+	groups, placed := appendLinkGroupRows(nil, user, udb, agentID)
+	if len(groups) > 0 {
+		rest := out[:0:0]
+		for _, m := range out {
+			if !placed[linkRowRef(m)] {
+				rest = append(rest, m)
+			}
+		}
+		out = append(groups, rest...)
+	}
 	writeJSON(w, out)
 }
 
@@ -202,6 +215,8 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 	broken := schedFlag(m, "_broken")
 	relinkable := schedFlag(m, "_relinkable")
 	schedulable := schedFlag(m, "_schedulable")
+	// Linking is offered on every clock-driven row that can run.
+	m["_link"] = (kind == schedKindStanding || kind == schedKindRecurring) && !broken
 	switch kind {
 	case schedKindStanding:
 		m["_edit_standing"] = true

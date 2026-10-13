@@ -4369,6 +4369,16 @@
             var btn = el('button', {class: classes, title: act.title || '',
               onclick: async function() {
                 if (act.confirm && !(await window.uiConfirm(act.confirm))) return;
+                // Method "client" hands off to an app-registered handler, the
+                // same as a toolbar action: URL is the handler's NAME. For an
+                // action that has to ask something first, which a fixed confirm
+                // sentence cannot.
+                if ((act.method || '').toLowerCase() === 'client') {
+                  var cfn = window.UIClientActions && window.UIClientActions[act.url];
+                  if (typeof cfn === 'function') cfn({button: btn, action: act, record: data, reload: reload});
+                  else console.error('display_panel: no handler for client action ' + act.url);
+                  return;
+                }
                 // GET NAVIGATES, matching a toolbar action. A GET that fetches
                 // and throws the response away is never what anybody meant: it
                 // fires, nothing on screen changes, and the control reads as

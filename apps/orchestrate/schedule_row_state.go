@@ -92,7 +92,7 @@ func monitorNeedsRearm(before, after EventMonitor) bool {
 // its interval moved, or it is not currently armed. A cron schedule re-arms to
 // the same instant either way, so this only really spares the interval ones.
 func standingNeedsRearm(before, after StandingAgent) bool {
-	if before.Cron != after.Cron || before.IntervalSeconds != after.IntervalSeconds {
+	if before.Cron != after.Cron || before.IntervalSeconds != after.IntervalSeconds || before.MaxIntervalSeconds != after.MaxIntervalSeconds {
 		return true
 	}
 	return after.SchedulerID == "" || after.NextRun.IsZero() || after.NextRun.Before(time.Now())

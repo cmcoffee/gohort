@@ -112,7 +112,7 @@ func TestTheBuildCheckRunsBeforeTheReplyGoesOut(t *testing.T) {
 	sess := gateSession("s1", "done")
 	plan := func() *BuildPlanState { return sess.BuildPlan }
 	var shown string
-	check := buildGapsFinishCheck(plan, db, "s1", &shown, nil)
+	check := buildGapsFinishCheck(plan, db, "s1", &shown)
 
 	if notice, _ := check("All done."); notice != "" {
 		t.Fatalf("nothing unverified, nothing blocked: the reply stands, got %q", notice)
@@ -147,7 +147,7 @@ func TestTheBuildCheckLeavesAnUnfinishedPlanAndAnAnsweredReportAlone(t *testing.
 	recordToolVerify(db, "s2", "draft_tool", false, "never tested")
 	pending := gateSession("s2", "done", "pending")
 	var shown string
-	check := buildGapsFinishCheck(func() *BuildPlanState { return pending.BuildPlan }, db, "s2", &shown, nil)
+	check := buildGapsFinishCheck(func() *BuildPlanState { return pending.BuildPlan }, db, "s2", &shown)
 	if notice, _ := check("Here is the plan. Shall I go ahead?"); notice != "" {
 		t.Errorf("a plan still pending is not a finish: %q", notice)
 	}

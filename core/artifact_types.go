@@ -1810,6 +1810,14 @@ type scheduleRecipe struct {
 	Surface         string    `json:"surface,omitempty"`
 	Until           string    `json:"until,omitempty"`
 	MaxAttempts     int       `json:"max_attempts,omitempty"`
+
+	// The longest gap of a random cadence; without it an export flattens
+	// random gaps to the shortest.
+	MaxIntervalSeconds int `json:"max_interval_seconds,omitempty"`
+	// The daily window an interval schedule keeps to.
+	HasWindow     bool `json:"has_window,omitempty"`
+	WindowFromMin int  `json:"window_from_min,omitempty"`
+	WindowToMin   int  `json:"window_to_min,omitempty"`
 }
 
 func (scheduleArtifact) ArtifactType() string { return "schedule" }
@@ -1853,7 +1861,8 @@ func scheduleRecipeOf(sa StandingAgent, owner string) scheduleRecipe {
 	return scheduleRecipe{
 		Schedule: "standing", Name: sa.Name, Agent: agent,
 		Pipeline: sa.PipelineID, Machine: sa.MachineID,
-		Mission: sa.Mission, Cron: sa.Cron, StartAt: sa.StartAt, IntervalSeconds: sa.IntervalSeconds,
+		Mission: sa.Mission, Cron: sa.Cron, StartAt: sa.StartAt, IntervalSeconds: sa.IntervalSeconds, MaxIntervalSeconds: sa.MaxIntervalSeconds,
+		HasWindow: sa.HasWindow, WindowFromMin: sa.WindowFromMin, WindowToMin: sa.WindowToMin,
 		Surface: sa.Surface, Until: sa.Until, MaxAttempts: sa.MaxAttempts,
 	}
 }
@@ -1895,7 +1904,8 @@ func (scheduleArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner
 		// By name: the runner resolves an agent by name or id when it fires,
 		// and the agent is reborn under a fresh id when it is imported.
 		AgentID: strings.TrimSpace(r.Agent), PipelineID: strings.TrimSpace(r.Pipeline), MachineID: strings.TrimSpace(r.Machine),
-		Mission: r.Mission, Cron: r.Cron, StartAt: r.StartAt, IntervalSeconds: r.IntervalSeconds,
+		Mission: r.Mission, Cron: r.Cron, StartAt: r.StartAt, IntervalSeconds: r.IntervalSeconds, MaxIntervalSeconds: r.MaxIntervalSeconds,
+		HasWindow: r.HasWindow, WindowFromMin: r.WindowFromMin, WindowToMin: r.WindowToMin,
 		Surface: r.Surface, Until: r.Until, MaxAttempts: r.MaxAttempts,
 		Paused: true, StopCause: StoppedByOwner,
 		StopNote: "Imported. Nothing runs until you resume it.",

@@ -86,39 +86,10 @@ type orchUpdatePayload struct {
 	// the pair that has always been carried forward untouched.
 	UID string `json:"uid,omitempty"`
 
-	// Parent names another schedule this one exists to serve, as
-	// "<surface>:<id>" (see taskParentRef). Empty is a schedule that stands on
-	// its own, which is almost all of them.
-	//
-	// A LINK, not a container. An objective is a schedule with a completion
-	// check and never its own table (docs/loop-objectives.md), and that holds:
-	// nothing here creates a record that does not fire. What it adds is the one
-	// thing missing when somebody breaks a piece of work into pieces, which is
-	// any way to say that the pieces belong together.
-	//
-	// It carries no authority. A child is not paused, judged, or retired by its
-	// parent, and a parent is not met because its children are. Those would each
-	// be a policy, and a policy invented alongside the link it needs is how a
-	// link becomes a container. See docs/task-containment.md.
-	Parent string `json:"parent,omitempty"`
-
-	// RollUp makes this schedule finish when everything under it has finished,
-	// instead of only on its own completion check.
-	//
-	// Opt-in because a parent is one of two very different things and the link
-	// cannot tell them apart. Some parents are a REAL CHECK ("the newsletter
-	// went out"), and for those the children being done is not the same claim
-	// at all. Others are a HEADING ("Q4 launch"), and for those the children
-	// being done is the entire meaning. Rolling up by default would quietly
-	// declare the first kind finished on somebody else's evidence.
-	//
-	// A parent with no completion check of its own and RollUp set is the
-	// cleanest shape this supports: a goal that IS the sum of its pieces. It is
-	// still a schedule with a completion check, as the objectives build
-	// requires; the check is just its children rather than a judge.
-	//
-	// See docs/task-containment.md.
-	RollUp bool `json:"roll_up,omitempty"`
+	// LinkGroup names the link group this task runs in (schedule_links.go).
+	// While set, the task's own pattern is set aside: computeNextFire parks it
+	// on a dormant tick, and the group's time fires it.
+	LinkGroup string `json:"link_group,omitempty"`
 
 	SessionID string `json:"session_id"`
 	AgentID   string `json:"agent_id"`
@@ -442,6 +413,14 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if p.Broken {
 		if reArm {
 			parkRecurringBroken(p, "")
+		}
+		return nil
+	}
+	// A linked task's own tick only keeps it listed: its group's time runs it
+	// (schedule_links.go). A Run now on its row still runs it once.
+	if p.LinkGroup != "" && reArm && !isLinkFire(ctx) {
+		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, time.Now().Add(brokenDormantReArm)); err != nil {
+			Log("[orchestrate/scheduled] linked task %s: dormant re-arm failed: %v", recurringName(p), err)
 		}
 		return nil
 	}
@@ -1097,12 +1076,6 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		}
 		appendSessionDiag(udb, p.AgentID, p.SessionID, kind,
 			fmt.Sprintf("Recurring task %q, attempt %d: %s (goal: %s)", recurringName(p), attempt, objLine, truncateObs(objective, 200)))
-		// A met goal may have been the last thing something larger was waiting
-		// for. Only on met, never on stalled: a parent does not get to finish
-		// because a piece of it gave up. See task_rollup.go.
-		if objStopped && !objStalled {
-			rollUpFrom(p.Username, schedKindRecurring, recurringTaskUID(p))
-		}
 		// Pacing, last: it moves the successor the stand-down above may just
 		// have cancelled. A met objective has nothing left to move, and a
 		// stalled one is parked and must stay parked — an attempt does not get
@@ -1562,7 +1535,7 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		// it would orphan the notes the task had built up, which is the one
 		// thing this id exists to prevent.
 		UID:             firstNonEmptyStr(strings.TrimSpace(spec.UID), UUIDv4()),
-		Parent:          strings.TrimSpace(spec.Parent),
+		LinkGroup:       strings.TrimSpace(spec.LinkGroup),
 		SessionID:       spec.SessionID,
 		AgentID:         spec.AgentID,
 		Username:        spec.Username,

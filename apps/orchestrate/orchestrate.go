@@ -142,6 +142,14 @@ func init() {
 		Group:   "Agents",
 		Private: true,
 	})
+	RegisterRouteStage(RouteStage{
+		Key:     "app.orchestrate.mission_summary",
+		App:     "/orchestrate",
+		Label:   "Agents: Scheduled mission summarizer (background)",
+		Default: "worker",
+		Group:   "Agents",
+		Private: true,
+	})
 }
 
 // OrchestrateApp is the entry point. Dashboard-only (no CLI Main).
@@ -271,6 +279,8 @@ func (T *OrchestrateApp) Routes() {
 	// the scheduler fires async so orchRef must be set by the time
 	// the loop ticks.
 	registerOrchestrateScheduledUpdates(T)
+	registerLinkGroups()
+	registerParkedSweep()
 
 	// Wire the standing-agent runner: core owns the schedule + run-ledger;
 	// this supplies the agent-execution closure (loads the agent and runs it
@@ -510,6 +520,18 @@ func (T *OrchestrateApp) Routes() {
 	// re-checks in loadAgentTempTools + import cover records written by old
 	// binaries after this sweep. See tool_flatten_migration.go.
 	migrateAllAgentToolsToStore(T.DB)
+
+	// Agent-wide working notes were retired for task and link-group notes;
+	// each agent's text is kept as a fact (notes_retire.go). Off the boot
+	// path: storing a fact can reach the embedder.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				Log("[orchestrate/notes] retire pass panicked: %v", r)
+			}
+		}()
+		T.retireAgentNotes()
+	}()
 
 	// One-shot deploy-time grandfather for the global-tool OPT-IN model. Shared
 	// tools used to auto-load for everyone; now they load only after a user

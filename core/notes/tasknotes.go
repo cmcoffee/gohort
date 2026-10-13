@@ -42,6 +42,21 @@ func TaskNamespace(surface, owner, id string) string {
 	return "task:" + surface + ":" + owner + ":" + id
 }
 
+// RenderLinkNotesBlock is RenderTaskNotesBlock for a task in a link group: the
+// group's one shared note, which every schedule in the group reads and writes,
+// in run order, so a step can leave something for the step after it.
+func RenderLinkNotesBlock(n OperatingNotes) string {
+	text := strings.TrimSpace(n.Text)
+	if text == "" {
+		return "[Notes shared by this link group: nothing recorded yet. The schedules in this group run one after another and share this note; if this run works something out that the next step, or the next round, should have, write it down with update_notes. It is the only thing that passes between them.]"
+	}
+	var b strings.Builder
+	b.WriteString("[Notes shared by this link group, left by the schedules in it: they run one after another and read and write this one note. Keep it current by rewriting rather than appending: update_notes replaces the whole block, or one section of it (a section per step keeps steps from overwriting each other).\n\n")
+	b.WriteString(text)
+	b.WriteString("]")
+	return b.String()
+}
+
 // RenderTaskNotesBlock is what a fire carries: the task's notes, or, when
 // nothing has been written yet, one line saying the register exists.
 //

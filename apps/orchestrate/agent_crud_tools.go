@@ -1028,8 +1028,6 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"disable_explicit":         {Type: "boolean", Description: rewriteMemoryToolNames("Turns off Explicit Memory (store_fact / list_facts / forget_fact + the always-in-prompt facts block). For agents that should hold no standing state. Orthogonal to disable_inferred. Default false.")},
 		"disable_inferred":         {Type: "boolean", Description: rewriteMemoryToolNames("Turns off Reference Memory: memory_save / memory_search / memory_forget stripped from the catalog, derived chunks excluded from recall. For agents that must answer from authoritative sources only. The per-turn Clean toggle is this switch scoped to one turn. Default false.")},
 		"memory_mode":              {Type: "string", Description: rewriteMemoryToolNames("Explicit Memory framing: \"agent\" (default) or \"chatbot\". agent = store_fact holds generalized lessons only; specifics go to Reference Memory via memory_save. chatbot = those PLUS user personalization and conversation-coherence notes. chatbot for conversational agents, agent for task-focused ones. No-op when disable_explicit is true.")},
-		"enable_notes":             {Type: "boolean", Description: "Turns on the Working-notes layer: one bounded, agent-REWRITABLE block of running state, always in prompt, plus the update_notes tool. Unlike store_fact (append-only durable rules), notes are rewritten wholesale as task state changes. For long-running conversational/project agents. Default false."},
-		"seed_notes":               {Type: "string", Description: "Initial Working-notes text (requires enable_notes). Rewritable from the first turn; stays the durable fallback until the first update_notes. Under 1500 characters."},
 		"allow_private_mode":       {Type: "boolean", Description: "Exposes a per-turn Private toggle that drops internet-capability tools. Default false."},
 		"force_private":            {Type: "boolean", Description: "Locks the agent into Private mode: every turn drops network-capability tools (web_search, fetch_url, dispatch, …) regardless of the user toggle, and the toggle is hidden. Overrides allow_private_mode. Default false."},
 		"disable_skills":           {Type: "boolean", Description: "Fully suppresses skills: no activation, no prompt addendum, no skill_knowledge chunks, no skill-attached tools. For agents that must faithfully report one source. The per-turn Clean toggle also suppresses skills. Default false."},
@@ -1160,12 +1158,6 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v := strings.TrimSpace(stringArg(args, "memory_mode")); v != "" {
 		rec.MemoryMode = v
-	}
-	if v, ok := args["enable_notes"].(bool); ok {
-		rec.EnableNotes = v
-	}
-	if _, ok := args["seed_notes"]; ok {
-		rec.SeedNotes = strings.TrimSpace(stringArg(args, "seed_notes"))
 	}
 	if v, ok := args["allow_private_mode"].(bool); ok {
 		rec.AllowPrivateMode = v
@@ -1350,12 +1342,6 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v := strings.TrimSpace(stringArg(args, "memory_mode")); v != "" {
 		rec.MemoryMode = v
-	}
-	if v, ok := args["enable_notes"].(bool); ok {
-		rec.EnableNotes = v
-	}
-	if _, ok := args["seed_notes"]; ok {
-		rec.SeedNotes = strings.TrimSpace(stringArg(args, "seed_notes"))
 	}
 	if v, ok := args["allow_private_mode"].(bool); ok {
 		rec.AllowPrivateMode = v

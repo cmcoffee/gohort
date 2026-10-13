@@ -484,13 +484,17 @@ type AgentRecord struct {
 
 	// EnableNotes opts this agent into the Working-notes layer — a single
 	// bounded, agent-rewritable block of RUNNING STATE injected always-in-
-	// prompt (distinct from the append-list Explicit Memory facts). Off by
-	// default; most task agents don't need running state. Surfaces the
-	// update_notes tool and the "## Working notes" prompt block. See
+	// prompt (distinct from the append-list Explicit Memory facts). Surfaces
+	// the update_notes tool and the "## Working notes" prompt block. See
 	// core/notesstore.go.
+	//
+	// Retired for ordinary agents (notes_retire.go): nothing a person or
+	// Builder edits sets it, and a stored one is converted to facts at
+	// startup. It stays for a hosting app that scopes an agent per thing and
+	// sets it at runtime (Anvil, per project).
 	EnableNotes bool `json:"enable_notes,omitempty"`
 
-	// SeedNotes is Builder's initial text for the Working-notes block. It
+	// SeedNotes is an initial text for the Working-notes block. It
 	// renders (and the agent can rewrite it) until the (user, agent) store
 	// gets its first update_notes; the record's seed stays the durable
 	// fallback. No-op when EnableNotes is false.
@@ -1244,6 +1248,9 @@ type ChatSession struct {
 	// the agent sets one. Distinct from Plans above, which is the per-turn
 	// plan_set fan-out's history.
 	WorkPlan *WorkPlan `json:"work_plan,omitempty"`
+	// WorkPlanCard is the card the tracked plan is drawn on. A new plan
+	// committed after the last one finished gets a new card (plan_card.go).
+	WorkPlanCard string `json:"work_plan_card,omitempty"`
 
 	Created time.Time `json:"Created"`
 	LastAt  time.Time `json:"LastAt"`
@@ -1449,6 +1456,11 @@ type UIBlock struct {
 	// for cards whose subject can also be settled out of band (see
 	// settleResolvedBlocks).
 	Resolved string `json:"resolved,omitempty"`
+	// Plan is a plan card's steps, as last painted (plan_card.go).
+	Plan []BuildPlanStep `json:"plan,omitempty"`
+	// At is when the card was first drawn. A replayed block that has one is
+	// put back among the messages at that time instead of after them all.
+	At time.Time `json:"at,omitzero"`
 }
 
 // BuildPlanState is the persisted plan-card state for Builder's

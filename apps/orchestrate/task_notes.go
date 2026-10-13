@@ -35,7 +35,12 @@ import (
 // It carries the namespace only. The store is RootDB, beside the task records
 // themselves: a schedule is not a per-user document, and keying the row by
 // owner keeps the tenancy the records already have.
-type taskNotes struct{ ns string }
+type taskNotes struct {
+	ns string
+	// group: the row is a link group's shared note (schedule_links.go), which
+	// every member reads and writes while it is linked.
+	group bool
+}
 
 func newTaskNotes(surface, owner, id string) taskNotes {
 	return taskNotes{ns: notes.TaskNamespace(surface, owner, id)}
@@ -60,6 +65,9 @@ func (t taskNotes) block() string {
 	if !t.live() {
 		return ""
 	}
+	if t.group {
+		return notes.RenderLinkNotesBlock(t.load())
+	}
 	return notes.RenderTaskNotesBlock(t.load())
 }
 
@@ -74,7 +82,7 @@ func (t taskNotes) tool() []AgentToolDef {
 	return []AgentToolDef{{
 		Tool: Tool{
 			Name:        "update_notes",
-			Description: fmt.Sprintf("REWRITE the notes for THIS SCHEDULED TASK: a compact scratchpad carried from one run of it to the next. This run's conversation ends when it does; this block is what the next run reads, so anything worked out here that is not written down is worked out again from scratch.\n\nRight for it: what is half-done and what the next step was, a command or path that turned out to work (or to look right and not work), a decision already made so it is not reopened, an id or name that took digging to find. Wrong for it: durable facts about the user (store_fact), anything the task's own prompt already says, and NEVER a tool call parked to make later, because a remembered call you have no way to make becomes an improvised workaround.\n\nThis REPLACES the whole block; it does NOT append. Pass `section` to update ONE named part and leave the rest: your own register, named by you, created the first time you write it. Keep the WHOLE block under %d characters; sections share that budget rather than adding to it, so if it will not fit, COMPRESS. Pass empty text to clear the block, or empty text WITH a section to remove just that section.", OperatingNotesCap),
+			Description: fmt.Sprintf(t.scope()+" This run's conversation ends when it does; this block is what the next run reads, so anything worked out here that is not written down is worked out again from scratch.\n\nRight for it: what is half-done and what the next step was, a command or path that turned out to work (or to look right and not work), a decision already made so it is not reopened, an id or name that took digging to find. Wrong for it: durable facts about the user (store_fact), anything the task's own prompt already says, and NEVER a tool call parked to make later, because a remembered call you have no way to make becomes an improvised workaround.\n\nThis REPLACES the whole block; it does NOT append. Pass `section` to update ONE named part and leave the rest: your own register, named by you, created the first time you write it. Keep the WHOLE block under %d characters; sections share that budget rather than adding to it, so if it will not fit, COMPRESS. Pass empty text to clear the block, or empty text WITH a section to remove just that section.", OperatingNotesCap),
 			Parameters:  notesToolParams(),
 			Required:    []string{"text"},
 			Caps:        []Capability{CapWrite},
@@ -135,9 +143,29 @@ func agentNotesSuppressed(ctx context.Context) bool {
 
 // --- per-surface identity ---------------------------------------------------
 
+// scope is the first sentence of update_notes: what the block is.
+func (t taskNotes) scope() string {
+	if t.group {
+		return "REWRITE the note SHARED BY THIS LINK GROUP: the schedules in it run one after another and all read and write this one scratchpad, so it is how a step leaves something for the next step and for the next round."
+	}
+	return "REWRITE the notes for THIS SCHEDULED TASK: a compact scratchpad carried from one run of it to the next."
+}
+
+// linkGroupNotes is a link group's shared note. A member's runs use it, not
+// their own, while the member is linked; their own come back on unlink.
+func linkGroupNotes(owner, groupID string) taskNotes {
+	t := newTaskNotes(schedKindLink, owner, groupID)
+	t.group = true
+	return t
+}
+
 // standingTaskNotes / monitorTaskNotes key on (owner, name), which is the
-// record's own primary key in RootDB and is not editable after creation.
+// record's own primary key in RootDB and is not editable after creation. A
+// linked scheduled agent uses its group's shared note instead.
 func standingTaskNotes(sa StandingAgent) taskNotes {
+	if sa.LinkGroup != "" {
+		return linkGroupNotes(sa.Owner, sa.LinkGroup)
+	}
 	return newTaskNotes(notes.TaskSurfaceStanding, sa.Owner, sa.Name)
 }
 
@@ -160,6 +188,15 @@ func monitorTaskNotes(m EventMonitor) taskNotes {
 // created in and its creation time. Stable for the same reason, and unique
 // unless two tasks were created in one session within the same second.
 func recurringTaskNotes(p orchUpdatePayload) taskNotes {
+	if p.LinkGroup != "" {
+		return linkGroupNotes(p.Username, p.LinkGroup)
+	}
+	return ownRecurringTaskNotes(p)
+}
+
+// ownRecurringTaskNotes is the task's own row, linked or not: what is dropped
+// when the task ends (a group's shared note ends with the group).
+func ownRecurringTaskNotes(p orchUpdatePayload) taskNotes {
 	return newTaskNotes(notes.TaskSurfaceRecurring, p.Username, recurringTaskUID(p))
 }
 
@@ -182,7 +219,7 @@ func recurringTaskUID(p orchUpdatePayload) string {
 // distinction is the whole lifetime rule, and it is easy to get wrong here
 // because both paths call UnscheduleTask: the difference is whether a dormant
 // tick is re-armed afterwards.
-func dropRecurringTaskNotes(p orchUpdatePayload) { recurringTaskNotes(p).drop() }
+func dropRecurringTaskNotes(p orchUpdatePayload) { ownRecurringTaskNotes(p).drop() }
 
 // --- the owner's side -------------------------------------------------------
 
@@ -200,6 +237,10 @@ func taskNotesFor(user, kind, id string) (taskNotes, bool) {
 		return taskNotes{}, false
 	}
 	switch kind {
+	case schedKindLink:
+		if g, ok := getLinkGroup(user, id); ok {
+			return linkGroupNotes(user, g.ID), true
+		}
 	case schedKindStanding:
 		if sa, ok := GetStandingAgent(RootDB, user, id); ok {
 			return standingTaskNotes(sa), true

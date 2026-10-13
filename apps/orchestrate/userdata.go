@@ -139,6 +139,7 @@ func stopUserSchedules(uid string) int {
 		return 0
 	}
 	n := 0
+	dissolveLinkGroups(uid)
 	for _, sa := range ListStandingAgents(RootDB, uid) {
 		DeleteStandingAgent(RootDB, uid, sa.Name)
 		n++

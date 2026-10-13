@@ -217,9 +217,10 @@ func TestAScheduleSaysWhatItRuns(t *testing.T) {
 	}
 }
 
-// The parent and roll-up actions POST a kind-qualified id; the runtime sends
-// the field they name. Sending the bare _id answered "bad id" to every click.
-func TestTheParentActionsSendAKindQualifiedID(t *testing.T) {
+// The link actions that act on one member POST a kind-qualified id; the runtime
+// sends the field they name. A bare _id is ambiguous across the kinds (a
+// monitor and a scheduled agent can share a name).
+func TestTheLinkActionsSendAKindQualifiedID(t *testing.T) {
 	row := flagsOf(consoleMonitorRow{Name: "disk-full", ID: "disk-full"}, schedSectionMonitors, schedKindMonitor)
 	if row["_ref"] != schedKindMonitor+":disk-full" {
 		t.Fatalf("the row should carry its kind-qualified id: %v", row["_ref"])
@@ -228,7 +229,7 @@ func TestTheParentActionsSendAKindQualifiedID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, url := range []string{`URL: "api/console/scheduler/rollup"`, `URL: "api/console/scheduler/parent"`} {
+	for _, url := range []string{`URL: "api/console/links/link"`, `URL: "api/console/links/unlink"`, `URL: "api/console/links/up"`, `URL: "api/console/links/down"`} {
 		i := strings.Index(string(src), url)
 		if i < 0 {
 			t.Fatalf("%s is gone", url)

@@ -4303,7 +4303,8 @@ select.ui-orch-intake-input {
           if (!d) { notesSection.style.display = 'none'; return; }
           if (!d.enabled) {
             // Off: nothing here reaches the agent's prompt, so the section
-            // is not shown. Turned on in the agent editor.
+            // is not shown. Agent-wide notes are retired; only an app that
+            // scopes an agent per thing (Anvil) still turns them on.
             notesSection.style.display = 'none';
             return;
           }
@@ -6255,55 +6256,114 @@ select.ui-orch-intake-input {
           var scanDetail = document.createElement('div');
           scanDetail.style.cssText = 'margin-top:0.35rem;display:' + (scanCb.checked ? 'block' : 'none');
           scanWrap.appendChild(scanDetail);
-          var coversLine = document.createElement('div');
-          coversLine.style.cssText = 'font-size:0.78rem;color:var(--text-mute);line-height:1.45';
-          scanDetail.appendChild(coversLine);
+          // Two boxes, one rule. A tool either reaches the network or it does
+          // not, and with scanning on every network tool is scanned: the left
+          // box lists them. The only thing to decide is the exceptions, on the
+          // right. Moving a tool across is the whole edit, so what is NOT
+          // scanned is always in plain view beside what is.
           var scanAdd = (agent.scan_tools_add || []).slice();
           var scanSkip = (agent.scan_tools_skip || []).slice();
           var scanTrusted = (agent.scan_trusted_sources || []).slice();
-          var scanCovers = [];
-          function renderCovers() {
-            coversLine.innerHTML = '';
-            var lead = document.createElement('span');
-            // Worded as a RULE plus examples, never as a complete list. The
-            // resolver walks the registered catalog; an agent's connector, MCP
-            // and source-hook tools are minted per session and cannot be
-            // enumerated from here. They ARE scanned — they all declare network
-            // access, which is the whole default set — and a list presented as
-            // exhaustive would understate coverage for exactly the agents that
-            // need it most.
-            lead.textContent = 'Covers every tool that reaches outside the system, including your connector, MCP and source-hook tools';
-            coversLine.appendChild(lead);
-            if (scanCovers.length) {
-              var eg = document.createElement('span');
-              eg.textContent = ' - e.g. ' + scanCovers.slice(0, 6).join(', ') +
-                (scanCovers.length > 6 ? ', +' + (scanCovers.length - 6) + ' more' : '');
-              coversLine.appendChild(eg);
-            }
-            coversLine.appendChild(document.createTextNode('. '));
-            // Both bypasses are shown in full and in the warning colour. What
-            // is NOT covered is the thing an owner most needs to be able to see
-            // without opening an editor.
-            if (scanSkip.length || scanTrusted.length) {
-              var sk = document.createElement('span');
-              sk.style.color = 'var(--warning)';
-              sk.textContent = 'Not scanned: ' +
-                scanSkip.concat(scanTrusted).join(', ') + '. ';
-              coversLine.appendChild(sk);
-            }
-            var edit = document.createElement('a');
-            edit.href = '#'; edit.textContent = 'edit';
-            edit.style.cssText = 'color:var(--accent,#6366f1);text-decoration:none';
-            edit.onclick = function(e) {
-              e.preventDefault();
-              scanEditor.style.display = (scanEditor.style.display === 'none') ? 'block' : 'none';
-            };
-            coversLine.appendChild(edit);
+          // The network tools this agent can call, exceptions included, from
+          // the guardrails response (scanNetworkToolNames); scanLoaded says
+          // whether it has arrived.
+          var scanNetwork = [];
+          var scanLoaded = false;
+          function scanNameIn(list, n) {
+            var k = String(n || '').trim().toLowerCase();
+            return list.some(function(x) { return String(x || '').trim().toLowerCase() === k; });
           }
-          var scanEditor = document.createElement('div');
-          scanEditor.style.cssText = 'display:none;margin-top:0.4rem';
-          scanDetail.appendChild(scanEditor);
-          function scanListEditor(title, arr, help) {
+          var scanBoxes = document.createElement('div');
+          scanBoxes.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.6rem;align-items:flex-start';
+          scanDetail.appendChild(scanBoxes);
+          function scanBox(title, help) {
+            var box = document.createElement('div');
+            box.style.cssText = 'flex:1 1 15rem;min-width:0;border:1px solid var(--border);border-radius:6px;padding:0.45rem 0.55rem';
+            var h = document.createElement('div');
+            h.style.cssText = 'font-size:0.82rem;font-weight:600;margin-bottom:0.1rem';
+            h.textContent = title;
+            box.appendChild(h);
+            var hp = document.createElement('div');
+            hp.className = 'ui-orch-modal-help';
+            hp.style.cssText = 'margin:0 0 0.35rem';
+            hp.textContent = help;
+            box.appendChild(hp);
+            scanBoxes.appendChild(box);
+            return box;
+          }
+          var leftBox = scanBox('Scanned', 'Every tool that reaches the network. Make one an exception to stop scanning it.');
+          var leftList = document.createElement('div');
+          leftList.className = 'ui-orch-list';
+          leftBox.appendChild(leftList);
+          var leftNote = document.createElement('div');
+          leftNote.className = 'ui-orch-modal-help';
+          leftNote.style.cssText = 'margin-top:0.3rem';
+          leftNote.textContent = 'Also scanned: connector, MCP and source-hook tools. They are made per conversation, so they cannot be listed here.';
+          leftBox.appendChild(leftNote);
+          var rightBox = scanBox('Exceptions: never scanned', 'Removing coverage is the one edit here that can only make things worse, so every exception is listed in full.');
+
+          // renderCovers redraws the scanned side from the network tools less
+          // the exceptions. Tools added to the scan by hand before this layout
+          // (scan_tools_add) are still scanned, and are shown here marked so,
+          // with a way to take them off: hiding them would leave coverage
+          // nobody can see.
+          function renderCovers() {
+            leftList.innerHTML = '';
+            var rows = [];
+            scanNetwork.forEach(function(n) {
+              if (!scanNameIn(scanSkip, n)) rows.push({name: n});
+            });
+            scanAdd.forEach(function(n) {
+              n = String(n || '').trim();
+              if (n && !scanNameIn(scanSkip, n) && !scanNameIn(scanNetwork, n)) rows.push({name: n, added: true});
+            });
+            if (!rows.length) {
+              var none = document.createElement('div');
+              none.className = 'ui-orch-modal-help';
+              none.textContent = scanLoaded ? 'No listed network tools on this agent.' : 'Loading…';
+              leftList.appendChild(none);
+              return;
+            }
+            rows.forEach(function(r) {
+              var row = document.createElement('div');
+              row.className = 'ui-orch-list-row';
+              row.style.cssText = 'display:flex;align-items:center;gap:0.4rem';
+              var name = document.createElement('span');
+              name.style.cssText = 'flex:1;min-width:0;overflow-wrap:anywhere;font-size:0.82rem';
+              name.textContent = r.name + (r.added ? ' (added by hand)' : '');
+              row.appendChild(name);
+              var btn = document.createElement('button');
+              btn.type = 'button';
+              if (r.added) {
+                btn.className = 'ui-orch-list-del'; btn.textContent = '×';
+                btn.title = 'Stop scanning this tool: it does not reach the network';
+                btn.onclick = function() {
+                  scanAdd = scanAdd.filter(function(x) { return !scanNameIn([x], r.name); });
+                  renderCovers();
+                };
+              } else {
+                btn.className = 'ui-orch-list-add'; btn.textContent = 'Exception →';
+                btn.title = 'Never scan what this tool returns';
+                btn.onclick = function() {
+                  scanSkip.push(r.name);
+                  renderCovers();
+                  scanRenders.forEach(function(fn) { fn(); });
+                };
+              }
+              row.appendChild(btn);
+              leftList.appendChild(row);
+            });
+          }
+          // The tool lists re-render when the agent's tool list arrives, so
+          // their rows can turn into pickers.
+          var scanRenders = [];
+          // pickTools makes each row a picker over the tools this agent can
+          // call (gToolChoices, the list the rule rows bind to), so a name
+          // cannot be mistyped into one that matches nothing. A name that is
+          // stored but no longer callable stays, flagged, rather than being
+          // dropped behind the owner's back. Typed only until the list arrives
+          // or when it is empty.
+          function scanListEditor(title, arr, help, pickTools) {
             var box = document.createElement('div');
             box.style.cssText = 'margin-bottom:0.4rem';
             var lbl = document.createElement('div');
@@ -6318,11 +6378,32 @@ select.ui-orch-intake-input {
               arr.forEach(function(n, i) {
                 var row = document.createElement('div');
                 row.className = 'ui-orch-list-row';
-                var inp = document.createElement('input');
-                inp.type = 'text'; inp.value = n; inp.placeholder = 'tool name…';
-                inp.className = 'ui-orch-list-input';
-                inp.oninput = function() { arr[i] = inp.value; };
-                inp.onblur = function() { renderCovers(); };
+                var inp;
+                if (pickTools && gToolChoices.length) {
+                  inp = document.createElement('select');
+                  inp.className = 'ui-orch-list-input';
+                  var choices = gToolChoices.filter(function(c) { return c === n || arr.indexOf(c) < 0; });
+                  if (n && gToolChoices.indexOf(n) < 0) choices.unshift(n);
+                  if (!n) {
+                    var ph = document.createElement('option');
+                    ph.value = ''; ph.textContent = 'pick a tool…';
+                    inp.appendChild(ph);
+                  }
+                  choices.forEach(function(c) {
+                    var o = document.createElement('option');
+                    o.value = c;
+                    o.textContent = gToolChoices.indexOf(c) < 0 ? c + ' (not available)' : c;
+                    inp.appendChild(o);
+                  });
+                  inp.value = n;
+                  inp.onchange = function() { arr[i] = inp.value; render(); renderCovers(); };
+                } else {
+                  inp = document.createElement('input');
+                  inp.type = 'text'; inp.value = n; inp.placeholder = pickTools ? 'tool name…' : 'host or URL prefix…';
+                  inp.className = 'ui-orch-list-input';
+                  inp.oninput = function() { arr[i] = inp.value; };
+                  inp.onblur = function() { renderCovers(); };
+                }
                 var del = document.createElement('button');
                 del.type = 'button'; del.className = 'ui-orch-list-del'; del.textContent = '×';
                 del.onclick = function() { arr.splice(i, 1); render(); renderCovers(); };
@@ -6330,22 +6411,21 @@ select.ui-orch-intake-input {
                 list.appendChild(row);
               });
               var add = document.createElement('button');
-              add.type = 'button'; add.className = 'ui-orch-list-add'; add.textContent = '+ Add tool';
+              add.type = 'button'; add.className = 'ui-orch-list-add'; add.textContent = pickTools ? '+ Add tool' : '+ Add source';
               add.onclick = function() { arr.push(''); render(); };
               list.appendChild(add);
             }
             render();
+            scanRenders.push(render);
             var h = document.createElement('div');
             h.className = 'ui-orch-modal-help';
             h.textContent = help;
             box.appendChild(h);
             return box;
           }
-          scanEditor.appendChild(scanListEditor('Also scan these tools:', scanAdd,
-            'For tools that carry outside content without reaching the network themselves: a file store holding uploads, a database of messages other people wrote.'));
-          scanEditor.appendChild(scanListEditor('Never scan these tools:', scanSkip,
-            'For endpoints you trust: an internal API behind your own auth. A name in both lists is skipped. Removing coverage is the one edit here that can only make things worse, so it is worth being able to see at a glance: skipped tools are listed above in full.'));
-          scanEditor.appendChild(scanListEditor('Trusted sources, never scanned:', scanTrusted,
+          rightBox.appendChild(scanListEditor('Tools', scanSkip,
+            'A tool you trust, such as an internal API behind your own auth. Remove one to scan it again.', true));
+          rightBox.appendChild(scanListEditor('Trusted sources', scanTrusted,
             'A host (wiki.internal) or a full URL prefix (https://api.example.com/v2/). Matched against the address the tool was called with, by this framework rather than by a model, so there is nothing for a page to talk its way past. A host also covers its subdomains and nothing else: example.com never matches notexample.com. A call with no address in it is scanned.'));
           renderCovers();
 
@@ -6522,13 +6602,15 @@ select.ui-orch-intake-input {
               // Same round trip as the log — the covers list is resolved
               // server-side against the live catalog, so it rides the response
               // that was already being fetched rather than costing a second one.
-              scanCovers = (d && d.scan_covers) || [];
+              scanNetwork = (d && d.scan_network) || [];
+              scanLoaded = !!d;
               renderCovers();
               // Before the block log's early return below, or an agent with no
               // blocks yet would never see this section at all.
               renderToolScopes((d && d.tool_scopes) || []);
               gToolChoices = (d && d.tool_choices) || [];
               renderG(); // the rule rows can now offer the real tool list
+              scanRenders.forEach(function(fn) { fn(); }); // and the scan lists
               var recent = (d && d.recent) || [];
               recBody.innerHTML = '';
               if (!recent.length) {
@@ -7184,6 +7266,12 @@ select.ui-orch-intake-input {
       // When a recurring task runs: pattern, cadence, active window, fire cap.
       function recurringWhenFields(host, task) {
         task = task || {};
+        if (task.linked) {
+          var ln = document.createElement('div');
+          ln.className = 'ui-orch-modal-help';
+          ln.textContent = 'Linked: it runs on its group\u2019s time. This is its own time, used again if it is unlinked.';
+          host.appendChild(ln);
+        }
         function labeled(labelText, inputEl) {
           var wrap = schedLabeled(labelText, inputEl);
           host.appendChild(wrap);
@@ -7303,10 +7391,13 @@ select.ui-orch-intake-input {
 
         // The Scheduler names a row by its schedule; the Goals page names it by
         // the GOAL and puts the schedule in 'where'. Same modal, either page.
-        var m = openOrchModal('Notes: ' + (row.name || row.where || 'this task'));
+        var isGroup = kind === 'link';
+        var m = openOrchModal('Notes: ' + (row.name || row.where || (isGroup ? 'link group' : 'this task')));
         var help = document.createElement('div');
         help.className = 'ui-orch-modal-help';
-        help.textContent = 'What this task\'s runs have left for each other. Each run reads this and can rewrite it; it is deleted when the task is.';
+        help.textContent = isGroup
+          ? 'Shared by every schedule in this group: each run reads it and can rewrite it, so a step can leave something for the next. It is deleted when the group is.'
+          : 'What this task\'s runs have left for each other. Each run reads this and can rewrite it; it is deleted when the task is.';
         m.body.appendChild(help);
 
         var area = document.createElement('textarea');
@@ -7783,6 +7874,26 @@ select.ui-orch-intake-input {
         });
       });
 
+      // Edit a LINK GROUP's time (schedule_links.go): the schedules in it run
+      // one after another, in order, at this one time. The timing half is the
+      // scheduled agent's own, so a group can be random the same way; the
+      // other half only lists the order, which is changed on the rows.
+      window.uiRegisterClientAction('orchestrate_edit_link', function(ctx) {
+        schedEditor(ctx, {
+          title: 'Link group',
+          getUrl: function(id) { return 'api/console/links/get?id=' + encodeURIComponent(id); },
+          saveUrl: function(id) { return 'api/console/links/update?id=' + encodeURIComponent(id); },
+          help: function(g) {
+            return 'These run one after another, in this order, ' + (g.schedule_label || 'at the group\u2019s time') + '. Change the order with \u2191 / \u2193 on the rows.';
+          },
+          what: function(host, g) {
+            (g.members || []).forEach(function(line) { host.appendChild(schedReadOnly('Runs', line)); });
+            return null;
+          },
+          when: standingWhenFields
+        });
+      });
+
       // What a scheduled agent does: its mission. When the schedule drives a
       // pipeline or a machine rather than an agent, the same field is that
       // run's INPUT, and the label says so — the alternative is a box labelled
@@ -7810,10 +7921,19 @@ select.ui-orch-intake-input {
       // When a scheduled agent runs. A frequency picker drives which time
       // controls show, so no cron string is ever typed.
       function standingWhenFields(host, sa) {
+        // A linked schedule runs on its group's time; what is edited here is
+        // its own, kept for when it is unlinked.
+        if (sa.linked) {
+          var ln = document.createElement('div');
+          ln.className = 'ui-orch-modal-help';
+          ln.textContent = 'Linked: it runs on its group\u2019s time. This is its own time, used again if it is unlinked.';
+          host.appendChild(ln);
+        }
         var DAYS = [['MON', 'Mon'], ['TUE', 'Tue'], ['WED', 'Wed'], ['THU', 'Thu'], ['FRI', 'Fri'], ['SAT', 'Sat'], ['SUN', 'Sun']];
 
         var freq = schedSelect([
           ['interval', 'Every N minutes'],
+          ['random', 'At random, between N and M minutes'],
           ['daily', 'Every day'],
           ['weekdays', 'Weekdays (Mon–Fri)'],
           ['weekends', 'Weekends (Sat–Sun)'],
@@ -7825,6 +7945,22 @@ select.ui-orch-intake-input {
         var interval = schedNum(sa.interval_minutes || 60, 1);
         var intervalRow = schedLabeled('Every N minutes', interval);
         host.appendChild(intervalRow);
+        // The longest gap of a random cadence: each run is drawn between the
+        // two, so the label above reads as the shortest gap while it shows.
+        var maxGap = schedNum(sa.max_interval_minutes || '', 2);
+        var maxGapRow = schedLabeled('Longest gap (minutes)', maxGap);
+        host.appendChild(maxGapRow);
+        // An optional daily window for either: runs that would land outside it
+        // wait for the next opening. "Every 30-60 minutes, between 9 and 5".
+        var winFrom = schedTime(sa.active_from || '');
+        var winTo = schedTime(sa.active_to || '');
+        var winWrap = document.createElement('div');
+        winWrap.style.cssText = 'display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap';
+        winWrap.appendChild(winFrom);
+        winWrap.appendChild(document.createTextNode('and'));
+        winWrap.appendChild(winTo);
+        var winRow = schedLabeled('Only between (local time, optional)', winWrap);
+        host.appendChild(winRow);
 
         var timeInput = schedTime('');
         var timeRow = schedLabeled('At time (local)', timeInput);
@@ -7849,9 +7985,12 @@ select.ui-orch-intake-input {
 
         function show(el, on) { el.style.display = on ? '' : 'none'; }
         function sync() {
-          var f = freq.value;
-          show(intervalRow, f === 'interval');
-          show(timeRow, f !== 'interval');
+          var f = freq.value, everyN = f === 'interval' || f === 'random';
+          show(intervalRow, everyN);
+          show(maxGapRow, f === 'random');
+          show(winRow, everyN);
+          intervalRow.firstChild.textContent = f === 'random' ? 'Shortest gap (minutes)' : 'Every N minutes';
+          show(timeRow, !everyN);
           show(weeklyRow, f === 'weekly');
           show(customRow, f === 'custom');
         }
@@ -7861,7 +8000,10 @@ select.ui-orch-intake-input {
         // starts from what's set, not a blank default.
         (function prefill() {
           var cron = (sa.cron || '').trim();
-          if (!cron && (sa.interval_minutes || 0) > 0) { freq.value = 'interval'; return; }
+          if (!cron && (sa.interval_minutes || 0) > 0) {
+            freq.value = (sa.max_interval_minutes || 0) > sa.interval_minutes ? 'random' : 'interval';
+            return;
+          }
           var parts = cron.split(/\s+/);
           if (parts.length === 2) {
             var days = parts[0].toLowerCase(), hhmm = parts[1];
@@ -7880,10 +8022,17 @@ select.ui-orch-intake-input {
         sync();
 
         return function() {
-          var f = freq.value, cronVal = '', iv = 0;
-          if (f === 'interval') {
+          var f = freq.value, cronVal = '', iv = 0, maxIv = 0, aFrom = '', aTo = '';
+          if (f === 'interval' || f === 'random') {
             iv = parseInt(interval.value, 10);
             if (isNaN(iv) || iv < 1) { window.uiAlert('Enter a minute interval of 1 or more.'); return null; }
+            if (f === 'random') {
+              maxIv = parseInt(maxGap.value, 10);
+              if (isNaN(maxIv) || maxIv <= iv) { window.uiAlert('The longest gap has to be longer than the shortest.'); return null; }
+            }
+            aFrom = (winFrom.value || '').trim(); aTo = (winTo.value || '').trim();
+            if (!!aFrom !== !!aTo) { window.uiAlert('Give both ends of the time window, or neither.'); return null; }
+            if (aFrom && aTo <= aFrom) { window.uiAlert('The window has to end after it starts, on the same day.'); return null; }
           } else {
             var hhmm = timeInput.value;
             if (!/^\d{1,2}:\d{2}$/.test(hhmm)) { window.uiAlert('Pick a time of day.'); return null; }
@@ -7899,7 +8048,7 @@ select.ui-orch-intake-input {
             }
             cronVal = daysTok + ' ' + hhmm;
           }
-          return {cron: cronVal, interval_minutes: iv};
+          return {cron: cronVal, interval_minutes: iv, max_interval_minutes: maxIv, active_from: aFrom, active_to: aTo};
         };
       }
 
@@ -9137,6 +9286,21 @@ select.ui-orch-intake-input {
         if (!id) { window.uiAlert('Pick an agent first.'); return; }
         var label = getAgentLabel() || id;
         var seed = isSeedAgentID(id);
+        // A real delete asks about the schedules the agent runs first: keep
+        // them parked for a replacement, or take them with it
+        // (parked_schedules.go).
+        if (!seed && window.orchDeleteAgentAsk) {
+          window.orchDeleteAgentAsk('', id, label, function() {
+            try {
+              var u = new URL(window.location.href);
+              u.searchParams.delete('session');
+              window.location.href = u.pathname;
+            } catch (_) {
+              window.location.reload();
+            }
+          });
+          return;
+        }
         var msg = seed
           ? ('Revert "' + label + '" to framework defaults? Your customizations will be discarded; conversations are kept.')
           : ('Delete agent "' + label + '"? This also removes all of its conversations.');

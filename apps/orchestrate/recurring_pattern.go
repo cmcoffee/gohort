@@ -82,10 +82,10 @@ type RecurringSpec struct {
 	// belongs to the task rather than to the schedule, so re-minting it on a
 	// retime would orphan what the task had accumulated. Empty = mint one.
 	UID string
-	// Parent travels for the same reason UID does: it belongs to the TASK, not
-	// to the schedule, so a retime that dropped it would quietly detach the
-	// task from the work it is part of.
-	Parent string
+	// LinkGroup travels for the same reason UID does: it belongs to the TASK,
+	// not to its timing, so an edit that dropped it would quietly put a linked
+	// task back on its own time.
+	LinkGroup string
 	// The objective's history travels under the same carry-over rule.
 	// Until and MaxAttempts alone would re-arm the goal with a CLEAN
 	// record: every verdict the judge had reached would be gone, and the
@@ -275,6 +275,11 @@ func formatTimes(ts []time.Time) []string {
 // planned time and stores the rest, re-planning a fresh day when the queue is
 // empty. Returns an error only when a random plan can't be built (bad window).
 func computeNextFire(p *orchUpdatePayload, now time.Time) (time.Time, error) {
+	// Linked: the group's time runs it, and its own pattern waits, kept, for
+	// when it is unlinked. The tick only keeps the task listed.
+	if p.LinkGroup != "" {
+		return now.Add(brokenDormantReArm), nil
+	}
 	if p.Pattern == RecurringDaily {
 		if len(p.AtMinutes) == 0 {
 			return time.Time{}, errors.New("a daily task needs at least one time of day")

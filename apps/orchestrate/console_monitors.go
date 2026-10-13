@@ -35,20 +35,14 @@ func (T *OrchestrateApp) handleConsoleMonitorRelink(w http.ResponseWriter, r *ht
 			return
 		}
 	}
-	m, found := GetEventMonitor(RootDB, user, name)
-	if !found {
-		http.Error(w, "no such monitor", http.StatusNotFound)
+	if useDefault {
+		newAgent = "" // deployment default channel agent
+	}
+	// Paused stays true on purpose — the user resumes explicitly.
+	if err := relinkMonitorToAgent(user, name, newAgent, false); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	if useDefault {
-		m.WakeAgent = "" // deployment default channel agent
-	} else {
-		m.WakeAgent = newAgent
-	}
-	m.Broken = false
-	m.BrokenReason = ""
-	// Paused stays true on purpose — the user resumes explicitly.
-	SaveEventMonitor(RootDB, m)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -413,16 +407,9 @@ type consoleMonitorRow struct {
 	// the one part of that string that changes on its own, at the end of the
 	// part that never does.
 	Objective string `json:"objective,omitempty"`
-	// PartOf names the schedule this one exists to serve, when it has one.
-	// A link and nothing more: see task_parent.go for why it carries no
-	// authority over this row.
-	PartOf string `json:"part_of,omitempty"`
-	// RollUp says this one finishes when everything under it does, and what it
-	// is still waiting for. Empty unless the owner turned it on.
-	RollUp  string `json:"roll_up,omitempty"`
-	Failing string `json:"failing,omitempty"`
-	Detail  string `json:"detail"`
-	Script  string `json:"format_script"` // the watch format_script, if any (so you can SEE it)
+	Failing   string `json:"failing,omitempty"`
+	Detail    string `json:"detail"`
+	Script    string `json:"format_script"` // the watch format_script, if any (so you can SEE it)
 	// NextRun is when the next check is due, under the same key the other two
 	// scheduled kinds use: a monitor's check IS its scheduled run, and the
 	// merged Scheduler page orders every section by this one field. Empty for
@@ -491,6 +478,9 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 			// keep failing are a target to fix, not a link to re-point — the
 			// label says so, and Relink is withheld below.
 			state = "⚠ " + m.StopLabel()
+			if m.StopCause() == MonitorStopBroken {
+				state += parkedDeadlineNote(schedKindMonitor, user, m.Name)
+			}
 		}
 		detail := ""
 		switch m.Kind {
@@ -578,8 +568,6 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
 			// Where its stopping condition stands, in the checker's own words.
 			Objective: objectiveStateLabel(monitorObjective(m)),
-			PartOf:    taskParentLabel(user, m.Parent),
-			RollUp:    rollUpStateLabel(user, schedKindMonitor, m.Name),
 			// A monitor does not back off, it PARKS: the streak counts towards
 			// a bound, so the label says what it is counting towards rather
 			// than leaving a rising number to mean whatever the reader guesses.

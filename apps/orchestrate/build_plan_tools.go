@@ -27,7 +27,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -80,10 +79,10 @@ func (t *chatTurn) presentBuildPlanToolDef() AgentToolDef {
 			if len(input) == 0 {
 				return "", errors.New("steps must include at least one entry")
 			}
-			// Build / overwrite the plan state. Stable id derived from
-			// the session — same id across emissions so the renderer's
-			// onUpdate replaces the card in place.
-			id := "build-plan-" + t.session.ID
+			// Build / overwrite the plan state. The id is the card's: a plan
+			// replacing one still under way keeps its card, a plan after a
+			// finished one gets a card of its own (plan_card.go).
+			id := t.buildPlanCard()
 			steps := make([]BuildPlanStep, 0, len(input))
 			for i, s := range input {
 				title := strings.TrimSpace(s.Title)
@@ -101,7 +100,7 @@ func (t *chatTurn) presentBuildPlanToolDef() AgentToolDef {
 				return "", errors.New("steps had no usable titles")
 			}
 			t.session.BuildPlan = &BuildPlanState{ID: id, Steps: steps}
-			emitBuildPlanBlock(t.sse, t.session.BuildPlan)
+			t.paintBuildPlan(t.session.BuildPlan)
 			// Grant the execution budget: lift the round cap to where we
 			// are now + buildPlanRoundsPerStep per step, so building +
 			// verifying the plan doesn't compete with whatever exploration
@@ -155,7 +154,7 @@ func (t *chatTurn) markStepDoneToolDef() AgentToolDef {
 			}
 			plan.Steps[idx].Status = "done"
 			plan.Steps[idx].Findings = summary
-			emitBuildPlanBlock(t.sse, plan)
+			t.paintBuildPlan(plan)
 			remaining := 0
 			for _, s := range plan.Steps {
 				if s.Status != "done" {
@@ -226,7 +225,7 @@ func (t *chatTurn) autoAdvanceBuildPlan(summary string) int {
 		if summary != "" {
 			plan.Steps[i].Findings = summary
 		}
-		emitBuildPlanBlock(t.sse, plan)
+		t.paintBuildPlan(plan)
 		return plan.Steps[i].Number
 	}
 	return 0
@@ -273,7 +272,7 @@ func (t *chatTurn) markStepInProgressToolDef() AgentToolDef {
 				}
 			}
 			plan.Steps[idx].Status = "in_progress"
-			emitBuildPlanBlock(t.sse, plan)
+			t.paintBuildPlan(plan)
 			if advanced {
 				return fmt.Sprintf("Step %d (%q) marked in_progress (auto-completed the previously open step). Continue.", step, plan.Steps[idx].Title), nil
 			}
@@ -315,7 +314,7 @@ func (t *chatTurn) markStepBlockedToolDef() AgentToolDef {
 			}
 			plan.Steps[idx].Status = "blocked"
 			plan.Steps[idx].BlockedReason = reason
-			emitBuildPlanBlock(t.sse, plan)
+			t.paintBuildPlan(plan)
 			return fmt.Sprintf("Step %d (%q) marked blocked. Reason recorded for the gap report.", step, plan.Steps[idx].Title), nil
 		},
 	}
@@ -450,7 +449,7 @@ func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 				return "", fmt.Errorf("revise_build_plan: action must be \"add\" | \"remove\" | \"reorder\" (got %q)", action)
 			}
 			plan.RevisionCount++
-			emitBuildPlanBlock(t.sse, plan)
+			t.paintBuildPlan(plan)
 			return fmt.Sprintf("Plan revised (%s). %d of %d revisions used (%d remaining).",
 				action, plan.RevisionCount, BuildPlanRevisionLimit, BuildPlanRevisionLimit-plan.RevisionCount), nil
 		},
@@ -500,7 +499,7 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 			rep := currentBuildGaps(plan, t.udb, t.session.ID)
 			t.gapsShown = rep.key()
 			if plan != nil {
-				emitBuildPlanBlock(t.sse, plan)
+				t.paintBuildPlan(plan)
 			}
 			if rep.empty() {
 				if plan == nil {
@@ -593,7 +592,7 @@ func (g buildGaps) key() string {
 //
 // plan reads the live plan (nil when there is none, as on a delegated run);
 // sessionID is the key the verification ledger records this run's tools under.
-func buildGapsFinishCheck(plan func() *BuildPlanState, udb Database, sessionID string, shown *string, sse *sseWriter) func(string) (string, string) {
+func buildGapsFinishCheck(plan func() *BuildPlanState, udb Database, sessionID string, shown *string) func(string) (string, string) {
 	return func(string) (string, string) {
 		var p *BuildPlanState
 		if plan != nil {
@@ -620,7 +619,6 @@ func buildGapsFinishCheck(plan func() *BuildPlanState, udb Database, sessionID s
 		}
 		if p != nil {
 			p.GapsReported = true
-			emitBuildPlanBlock(sse, p)
 		}
 		return rep.finishNotice(), rep.strikeReason()
 	}
@@ -656,7 +654,7 @@ func (t *chatTurn) buildGapsFinishCheck() func(string) (string, string) {
 	if !agentCanAuthor(t.agent) || t.session == nil {
 		return nil
 	}
-	return buildGapsFinishCheck(func() *BuildPlanState { return t.session.BuildPlan }, t.udb, t.session.ID, &t.gapsShown, t.sse)
+	return buildGapsFinishCheck(func() *BuildPlanState { return t.session.BuildPlan }, t.udb, t.session.ID, &t.gapsShown)
 }
 
 // buildGapsNote is what an authoring turn adds when it ends with the check's
@@ -718,7 +716,7 @@ func (d *dispatchBuildCheck) finishCheck() func(string) (string, string) {
 	if d == nil {
 		return nil
 	}
-	return buildGapsFinishCheck(nil, d.ts.DB, d.ts.ChatSessionID, &d.shown, nil)
+	return buildGapsFinishCheck(nil, d.ts.DB, d.ts.ChatSessionID, &d.shown)
 }
 
 func (d *dispatchBuildCheck) finishUnmet() func() {
@@ -783,40 +781,20 @@ func toInt(v any) (int, bool) {
 	return 0, false
 }
 
-// emitBuildPlanBlock sends the orchestrate_plan SSE block. Reused for
-// the initial paint AND for every update — the renderer's onUpdate
-// hook handles re-rendering when the block id matches a card that's
-// already visible. Shape mirrors emitPlanBlock's payload so the same
-// renderer in web_assets.go handles both.
-func emitBuildPlanBlock(sse *sseWriter, plan *BuildPlanState) {
-	if sse == nil || plan == nil {
+// paintBuildPlan sends the build plan's card and keeps it with the thread.
+// Reused for the initial paint AND for every update: the renderer's onUpdate
+// hook re-renders the card already showing under the same id.
+func (t *chatTurn) paintBuildPlan(plan *BuildPlanState) {
+	if plan == nil {
 		return
 	}
-	items := make([]map[string]any, 0, len(plan.Steps))
-	for _, s := range plan.Steps {
-		item := map[string]any{
-			"id":     s.Number,
-			"title":  s.Title,
-			"status": s.Status,
-		}
-		if s.WhatToFind != "" {
-			item["what_to_find"] = s.WhatToFind
-		}
-		if s.Findings != "" {
-			item["findings"] = s.Findings
-		}
-		if s.BlockedReason != "" {
-			item["blocked_reason"] = s.BlockedReason
-		}
-		items = append(items, item)
+	t.paintPlanCard(plan.ID, plan.Steps, "")
+}
+
+// buildPlanCard is the card a newly presented build plan is drawn on.
+func (t *chatTurn) buildPlanCard() string {
+	if p := t.session.BuildPlan; p != nil {
+		return t.nextPlanCard(p.ID, planStepsOpen(p.Steps), "build-plan-")
 	}
-	sse.Send(map[string]any{
-		"kind": "block",
-		"type": "orchestrate_plan",
-		"id":   plan.ID,
-		"plan": items,
-		// Stamp to help the activity log show update ordering when
-		// the same block id receives multiple events.
-		"emitted_at": time.Now().UTC().Format(time.RFC3339),
-	})
+	return t.nextPlanCard("", false, "build-plan-")
 }

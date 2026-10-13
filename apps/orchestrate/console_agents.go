@@ -176,6 +176,7 @@ func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http
 		sa.Broken = false
 		sa.BrokenReason = ""
 		SaveStandingAgent(RootDB, sa)
+		clearParked(schedKindStanding, user, sa.Name)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -198,6 +199,7 @@ func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http
 		sa.Broken = false
 		sa.BrokenReason = ""
 		SaveStandingAgent(RootDB, sa)
+		clearParked(schedKindStanding, user, sa.Name)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -205,10 +207,11 @@ func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http
 		http.Error(w, "no such agent", http.StatusBadRequest)
 		return
 	}
-	sa.AgentID = value
-	sa.Broken = false
-	sa.BrokenReason = ""
-	SaveStandingAgent(RootDB, sa)
+	// Left paused: an explicit Resume finishes the recovery here.
+	if err := relinkStandingToAgent(user, name, value, false); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -236,9 +239,15 @@ func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Re
 		"cron":             sa.Cron,
 		"interval_seconds": sa.IntervalSeconds,
 		"interval_minutes": sa.IntervalSeconds / 60,
-		"start_at":         startAt,
-		"schedule_label":   StandingScheduleLabel(sa),
-		"paused":           sa.Paused,
+		// Above interval_minutes when the gaps are random (core StandingAgent).
+		"max_interval_minutes": sa.MaxIntervalSeconds / 60,
+		// The daily window an interval schedule keeps to, "" when it has none.
+		"active_from":    standingWindowEdge(sa, sa.WindowFromMin),
+		"active_to":      standingWindowEdge(sa, sa.WindowToMin),
+		"start_at":       startAt,
+		"schedule_label": StandingScheduleLabel(sa),
+		"linked":         sa.LinkGroup != "",
+		"paused":         sa.Paused,
 		// What this schedule actually runs. Empty for the ordinary case (the
 		// agent's own mission); "pipeline - <name>" or "machine - <name>" when
 		// it drives one of those, where the mission is the run's INPUT rather
@@ -307,6 +316,7 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	summarizeMissionLater(sa)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -314,6 +324,13 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 type standingUpdateBody struct {
 	Cron            string `json:"cron"`
 	IntervalMinutes int    `json:"interval_minutes"`
+	// MaxIntervalMinutes above IntervalMinutes makes the gaps random, drawn
+	// between the two each run. Zero is the fixed interval.
+	MaxIntervalMinutes int `json:"max_interval_minutes"`
+	// ActiveFrom / ActiveTo ("HH:MM") keep an interval schedule inside a daily
+	// window. Both or neither; ignored for a cron schedule.
+	ActiveFrom string `json:"active_from"`
+	ActiveTo   string `json:"active_to"`
 	// Mission is a POINTER: absent preserves what is stored, which is what the
 	// timing-only callers (and anything written before the field existed)
 	// send. Sent EMPTY is refused rather than read as "clear it" — a standing
@@ -330,8 +347,16 @@ type standingUpdateBody struct {
 func applyStandingUpdate(sa *StandingAgent, body standingUpdateBody) error {
 	cron := strings.TrimSpace(body.Cron)
 	secs := body.IntervalMinutes * 60
+	maxSecs := body.MaxIntervalMinutes * 60
 	if cron == "" && secs <= 0 {
 		return Error("set a cron schedule or an interval (minutes)")
+	}
+	if cron == "" && maxSecs > 0 && maxSecs <= secs {
+		return Error("for a random schedule the longest gap has to be longer than the shortest")
+	}
+	hasWin, winFrom, winTo, err := standingWindowFrom(body.ActiveFrom, body.ActiveTo)
+	if err != nil && cron == "" {
+		return err
 	}
 	mission := sa.Mission
 	if body.Mission != nil {
@@ -348,9 +373,11 @@ func applyStandingUpdate(sa *StandingAgent, body standingUpdateBody) error {
 	}
 	sa.Mission = mission
 	if cron != "" {
-		sa.Cron, sa.IntervalSeconds = cron, 0
+		sa.Cron, sa.IntervalSeconds, sa.MaxIntervalSeconds = cron, 0, 0
+		sa.HasWindow, sa.WindowFromMin, sa.WindowToMin = false, 0, 0
 	} else {
-		sa.Cron, sa.IntervalSeconds = "", secs
+		sa.Cron, sa.IntervalSeconds, sa.MaxIntervalSeconds = "", secs, maxSecs
+		sa.HasWindow, sa.WindowFromMin, sa.WindowToMin = hasWin, winFrom, winTo
 	}
 	return nil
 }
@@ -377,20 +404,13 @@ type consoleAgentRow struct {
 	// one kind whose whole point is to run unattended was the one that said
 	// least about how that was going. See schedule_row_state.go.
 	Objective string `json:"objective,omitempty"`
-	// PartOf names the schedule this one exists to serve, when it has one.
-	// A link and nothing more: see task_parent.go for why it carries no
-	// authority over this row.
-	PartOf string `json:"part_of,omitempty"`
-	// RollUp says this one finishes when everything under it does, and what it
-	// is still waiting for. Empty unless the owner turned it on.
-	RollUp   string `json:"roll_up,omitempty"`
-	Failing  string `json:"failing,omitempty"`
-	Schedule string `json:"schedule"`
-	Status   string `json:"status"`
-	NextRun  string `json:"next_run"`
-	ID       string `json:"_id"`               // hidden; row-action target (the agent name)
-	Paused   bool   `json:"_paused"`           // hidden; gates Pause vs Resume per row
-	Broken   bool   `json:"_broken,omitempty"` // hidden; parked and kept — see State for which kind
+	Failing   string `json:"failing,omitempty"`
+	Schedule  string `json:"schedule"`
+	Status    string `json:"status"`
+	NextRun   string `json:"next_run"`
+	ID        string `json:"_id"`               // hidden; row-action target (the agent name)
+	Paused    bool   `json:"_paused"`           // hidden; gates Pause vs Resume per row
+	Broken    bool   `json:"_broken,omitempty"` // hidden; parked and kept — see State for which kind
 	// Relinkable gates the Relink row action: true only when something the
 	// schedule needs is GONE. An objective that stalled needs attempts, not a
 	// new target, and offering it a picker of live agents describes a problem
@@ -425,7 +445,13 @@ func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentR
 		if lbl := scheduleStopLabel(StandingStopCause(sa), StandingStopNote(sa)); lbl != "" {
 			state = lbl
 		}
-		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused, PartOf: taskParentLabel(user, sa.Parent), RollUp: rollUpStateLabel(user, schedKindStanding, sa.Name)}
+		if RelinkFixesIt(StandingParkCause(sa)) {
+			state += parkedDeadlineNote(schedKindStanding, user, sa.Name)
+		}
+		// A long mission without a summary of its current text gets one
+		// written now, for schedules set up on a path that did not ask.
+		summarizeMissionLater(sa)
+		row := consoleAgentRow{Name: sa.Name, Mission: missionForList(sa), State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused}
 		if sa.Broken {
 			row.Broken = true
 			row.State = parkedStateLabel(StandingParkCause(sa), sa.BrokenReason)
@@ -635,4 +661,34 @@ func sharedBySuffix(user, owner string) string {
 		return ""
 	}
 	return " (shared by " + owner + ")"
+}
+
+// standingWindowFrom reads an editor's "only between" pair: both empty is no
+// window; one without the other, or an end not after its start, is refused.
+func standingWindowFrom(from, to string) (has bool, fromMin, toMin int, err error) {
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if from == "" && to == "" {
+		return false, 0, 0, nil
+	}
+	if from == "" || to == "" {
+		return false, 0, 0, Error("give both ends of the time window, or neither")
+	}
+	if fromMin, err = parseHHMM(from); err != nil {
+		return false, 0, 0, err
+	}
+	if toMin, err = parseHHMM(to); err != nil {
+		return false, 0, 0, err
+	}
+	if toMin <= fromMin {
+		return false, 0, 0, Error("the window has to end after it starts, on the same day")
+	}
+	return true, fromMin, toMin, nil
+}
+
+// standingWindowEdge is one end of a schedule's window as "HH:MM", or "".
+func standingWindowEdge(sa StandingAgent, min int) string {
+	if !sa.HasWindow {
+		return ""
+	}
+	return fmtHHMM(min)
 }

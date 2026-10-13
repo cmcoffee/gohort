@@ -992,16 +992,19 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 				Name:        "create_standing_agent",
 				Description: "Create a standing (scheduled) agent and start its schedule: the tool for work that RUNS on a clock and reports what it finds, whatever it finds. \"Every 5 minutes, fetch X and tell me the value\"; \"every morning, summarize the overnight alerts\". There is nothing to wait for: the schedule IS the trigger. (An event monitor is the opposite, it stays SILENT until something changes.) A job with a finish line is still this tool: `until` says what must be true for it to be DONE and `max_attempts` bounds the tries, which together are how \"done when you have read and reported it, stop after 2\" is expressed. NOT for running something once to try it: a standing agent keeps firing on its schedule until it is deleted, so one made to get a single run goes on running. To try a machine you built, use machine(action=\"run\", name, input); to run an agent or pipeline once, agents(action=\"run\"). agent_id must name an agent that already exists. Schedule it EITHER with cron (recurring at a wall-clock time, preferred for \"every day at HH:MM\") OR with interval_seconds + optional start_at (a specific first run, then a fixed interval).",
 				Parameters: map[string]ToolParam{
-					"name":             {Type: "string", Description: "Short unique name for this standing job, e.g. \"daily-weather\"."},
-					"agent_id":         {Type: "string", Description: "Name or id of an existing agent to run. Give this OR pipeline_id, not both."},
-					"pipeline_id":      {Type: "string", Description: "Name or id of a stored pipeline to run instead of an agent. Use this when the task IS the workflow (a nightly research run, a scheduled report), rather than something an agent should think about first. It runs the pipeline directly, so no model call is spent deciding to start it, and `mission` becomes the pipeline's input."},
-					"machine_id":       {Type: "string", Description: "Name or id of a stored MACHINE to run. The third target, for work that carries state between its steps: a pipeline is dataflow with nothing kept between stages, a machine has a blackboard and running lists. Reach for it when the task is \"gather, keep what is new, report on what changed\" rather than a straight-through workflow. The machine must be marked \"this RUNS instead of converses\", because a schedule fires with nobody there to answer a step that waits. `mission` becomes the run's input."},
-					"mission":          {Type: "string", Description: "What the agent should do each run."},
-					"until":            {Type: "string", Description: "(optional) Makes this an OBJECTIVE rather than a plain schedule: what must be TRUE for it to be FINISHED, in plain language (\"the file is uploaded and its link posted to the thread\"). Every run is judged against this from what it actually DID, not from what it said; the run that reaches the goal is the last, and each later attempt is told what the earlier ones tried. Use it when the user wants something DONE; omit it when they want something RUN on a schedule."},
-					"max_attempts":     {Type: "number", Description: "(optional, with until) How many runs may end with the goal still UNMET before the schedule stops trying. Reaching it marks the schedule broken with the last reason, so the owner sees it stopped and why; resuming gives it a fresh allowance. Omit for no attempt bound."},
-					"cron":             {Type: "string", Description: "Recurring wall-clock schedule in the human form DAY(S) HH:MM, NOT 5-field crontab (\"*/1 * * * *\" is INVALID). LOCAL time, the SAME zone time_in_zone reports; use the time the user stated VERBATIM, do NOT convert to UTC. e.g. \"every day at 12pm\" → \"daily 12:00\"; also \"FRI 21:30\", \"weekdays 17:00\". For sub-hourly / every-N-minutes schedules cron can't express, use interval_seconds instead (e.g. 60 = every minute). Leave empty if using interval_seconds."},
-					"start_at":         {Type: "string", Description: "ISO8601 first-run time, e.g. 2026-06-10T08:00:00-07:00. Use with interval_seconds for an arbitrary start + interval. Omit when using cron."},
-					"interval_seconds": {Type: "number", Description: "Recurrence interval in seconds (60 = every minute, 3600 = hourly, 21600 = every 6h, 86400 = daily). This is the way to schedule sub-hourly / every-N-minutes runs (cron can't). Use with optional start_at. Omit when using cron."},
+					"name":                 {Type: "string", Description: "Short unique name for this standing job, e.g. \"daily-weather\"."},
+					"agent_id":             {Type: "string", Description: "Name or id of an existing agent to run. Give this OR pipeline_id, not both."},
+					"pipeline_id":          {Type: "string", Description: "Name or id of a stored pipeline to run instead of an agent. Use this when the task IS the workflow (a nightly research run, a scheduled report), rather than something an agent should think about first. It runs the pipeline directly, so no model call is spent deciding to start it, and `mission` becomes the pipeline's input."},
+					"machine_id":           {Type: "string", Description: "Name or id of a stored MACHINE to run. The third target, for work that carries state between its steps: a pipeline is dataflow with nothing kept between stages, a machine has a blackboard and running lists. Reach for it when the task is \"gather, keep what is new, report on what changed\" rather than a straight-through workflow. The machine must be marked \"this RUNS instead of converses\", because a schedule fires with nobody there to answer a step that waits. `mission` becomes the run's input."},
+					"mission":              {Type: "string", Description: "What the agent should do each run."},
+					"until":                {Type: "string", Description: "(optional) Makes this an OBJECTIVE rather than a plain schedule: what must be TRUE for it to be FINISHED, in plain language (\"the file is uploaded and its link posted to the thread\"). Every run is judged against this from what it actually DID, not from what it said; the run that reaches the goal is the last, and each later attempt is told what the earlier ones tried. Use it when the user wants something DONE; omit it when they want something RUN on a schedule."},
+					"max_attempts":         {Type: "number", Description: "(optional, with until) How many runs may end with the goal still UNMET before the schedule stops trying. Reaching it marks the schedule broken with the last reason, so the owner sees it stopped and why; resuming gives it a fresh allowance. Omit for no attempt bound."},
+					"cron":                 {Type: "string", Description: "Recurring wall-clock schedule in the human form DAY(S) HH:MM, NOT 5-field crontab (\"*/1 * * * *\" is INVALID). LOCAL time, the SAME zone time_in_zone reports; use the time the user stated VERBATIM, do NOT convert to UTC. e.g. \"every day at 12pm\" → \"daily 12:00\"; also \"FRI 21:30\", \"weekdays 17:00\". For sub-hourly / every-N-minutes schedules cron can't express, use interval_seconds instead (e.g. 60 = every minute). Leave empty if using interval_seconds."},
+					"start_at":             {Type: "string", Description: "ISO8601 first-run time, e.g. 2026-06-10T08:00:00-07:00. Use with interval_seconds for an arbitrary start + interval. Omit when using cron."},
+					"interval_seconds":     {Type: "number", Description: "Recurrence interval in seconds (60 = every minute, 3600 = hourly, 21600 = every 6h, 86400 = daily). This is the way to schedule sub-hourly / every-N-minutes runs (cron can't). Use with optional start_at. Omit when using cron."},
+					"max_interval_seconds": {Type: "number", Description: "(optional, with interval_seconds) Makes the cadence RANDOM: each gap between runs is drawn between interval_seconds and this, e.g. 1800 and 3600 for every 30-60 minutes at random."},
+					"active_from":          {Type: "string", Description: "(optional, with interval_seconds) Only between this local time (HH:MM) and active_to: a run that would land outside the window waits for the next one."},
+					"active_to":            {Type: "string", Description: "(optional, with active_from) The window's end, HH:MM local."},
 				},
 				Required: []string{"name", "agent_id"},
 			},
@@ -1143,6 +1146,17 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					sa.Cron = cron
 				case interval > 0:
 					sa.IntervalSeconds = interval
+					if hi := oArgInt(args, "max_interval_seconds"); hi > 0 {
+						if hi <= interval {
+							return "", fmt.Errorf("max_interval_seconds (%d) has to be above interval_seconds (%d): the gap is drawn between the two", hi, interval)
+						}
+						sa.MaxIntervalSeconds = hi
+					}
+					has, from, to, err := standingWindowFrom(oArgStr(args, "active_from"), oArgStr(args, "active_to"))
+					if err != nil {
+						return "", err
+					}
+					sa.HasWindow, sa.WindowFromMin, sa.WindowToMin = has, from, to
 					if startStr := strings.TrimSpace(oArgStr(args, "start_at")); startStr != "" {
 						t, err := time.Parse(time.RFC3339, startStr)
 						if err != nil {
@@ -1157,6 +1171,7 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 				if err := ScheduleStandingAgent(RootDB, sa); err != nil {
 					return "", fmt.Errorf("saved but scheduling failed: %w", err)
 				}
+				summarizeMissionLater(sa)
 				got, _ := GetStandingAgent(RootDB, owner, name)
 				return fmt.Sprintf("Created standing agent %q running %q on %s. Next run: %s.%s",
 					name, agentID, StandingScheduleLabel(got), got.NextRun.Local().Format("Mon Jan 2 3:04 PM"), toolWarn), nil
@@ -1182,6 +1197,12 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					state := "active"
 					if sa.Paused {
 						state = "paused"
+					}
+					// A parked one says so and what fixes it, so a deleted
+					// agent's schedules read as something to relink to its
+					// replacement rather than as paused ones.
+					if RelinkFixesIt(StandingParkCause(sa)) {
+						state = "PARKED, needs relink (" + sa.BrokenReason + "): schedule(action=\"relink\", name, run_by)"
 					}
 					next := "-"
 					if !sa.NextRun.IsZero() {

@@ -96,7 +96,8 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
         if (!posted) fail('nothing was sent');
         if (posted.mission !== 'review yesterday') fail('the mission half did not travel: ' + posted.mission);
         if (posted.cron !== 'daily 09:00') fail('the timing half did not travel: ' + JSON.stringify(posted));
-        if (posted.interval_minutes !== 0) fail('a cron schedule sent an interval too, so the record disagrees with itself');`,
+        if (posted.interval_minutes !== 0) fail('a cron schedule sent an interval too, so the record disagrees with itself');
+        if (posted.max_interval_minutes !== 0) fail('a cron schedule sent a random gap');`,
 		},
 		{
 			name:   "a poll monitor sends its brief, its condition and its interval",
@@ -157,6 +158,56 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
         if (posted.wake_brief !== '') fail('brief: ' + JSON.stringify(posted.wake_brief));
         if (posted.interval_seconds !== 3600) fail('interval: ' + posted.interval_seconds);`,
 		},
+		{
+			// Observed: a scheduled agent set to "Every N minutes" could not be
+			// moved to a random cadence, because the editor had no such choice.
+			name:   "an every-N schedule can be switched to random gaps",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'poster', mission: 'post something', cron: '', interval_minutes: 45}`,
+			edit: `global.made.select[0].value = 'random';
+        global.made.input[0].value = '30';
+        global.made.input[1].value = '60';`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        if (posted.cron !== '') fail('a random schedule sent a cron: ' + posted.cron);
+        if (posted.interval_minutes !== 30 || posted.max_interval_minutes !== 60) fail('gaps: ' + JSON.stringify(posted));`,
+		},
+		{
+			name:   "a random schedule can be kept to a window of the day",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'poster', mission: 'post something', cron: '', interval_minutes: 30, max_interval_minutes: 60}`,
+			edit: `global.made.input[2].value = '09:00';
+        global.made.input[3].value = '17:00';`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        if (posted.active_from !== '09:00' || posted.active_to !== '17:00') fail('window: ' + JSON.stringify(posted));`,
+		},
+		{
+			name:   "half a window is refused before it is sent",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'poster', mission: 'post something', cron: '', interval_minutes: 30, max_interval_minutes: 60}`,
+			edit:   `global.made.input[2].value = '09:00';`,
+			checks: `
+        if (posted) fail('half a window was posted: ' + JSON.stringify(posted));
+        if (!alerted || alerted.indexOf('both ends') < 0) fail('nothing said why: ' + alerted);`,
+		},
+		{
+			name:   "a random schedule opens as random and keeps its gaps",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'poster', mission: 'post something', cron: '', interval_minutes: 30, max_interval_minutes: 60}`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        if (posted.interval_minutes !== 30 || posted.max_interval_minutes !== 60) fail('a re-save flattened the random gaps: ' + JSON.stringify(posted));`,
+		},
+		{
+			name:   "a random schedule whose longest gap is not longer is refused",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'poster', mission: 'post something', cron: '', interval_minutes: 30, max_interval_minutes: 60}`,
+			edit:   `global.made.input[1].value = '20';`,
+			checks: `
+        if (posted) fail('an inverted range was posted: ' + JSON.stringify(posted));
+        if (!alerted || alerted.indexOf('longest gap') < 0) fail('nothing said why: ' + alerted);`,
+		},
 	}
 
 	for _, c := range cases {
@@ -178,6 +229,7 @@ function node(tag) {
     },
     setAttribute: function() {}, addEventListener: function() {},
     map: undefined,
+    get firstChild() { return this.children[0] || null; },
   };
   (global.made = global.made || {});
   (global.made[tag] = global.made[tag] || []).push(n);

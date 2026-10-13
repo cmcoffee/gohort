@@ -309,3 +309,35 @@ func TestFilterOptionsRenderAsHouseTabs(t *testing.T) {
 		t.Error("the chip styling is gone from the picker, where chips are genuinely chips")
 	}
 }
+
+// A "_group_head" row heads the rows that share its _group. It is not an item:
+// a page of one group of two and one other row holds three things, not four,
+// and a filter that hides every row of a group takes its head with it.
+func TestAGroupHeadIsNotAnItem(t *testing.T) {
+	src := readRuntimeFile(t, "30_agent_loop_panel.js")
+	item := src[strings.Index(src, "    function isOrchItem(row)"):]
+	item = item[:strings.Index(item, "\n")]
+	i := strings.Index(src, "        function visibleRows() {")
+	if i < 0 {
+		t.Fatal("visibleRows is gone")
+	}
+	vis := src[i:]
+	vis = vis[:strings.Index(vis, "\n        }\n")+len("\n        }\n")]
+	runFilterJS(t, filterHarness(t, item+`
+`+strings.Replace(vis, "function visibleRows()", "function visibleRowsReal()", 1)+`
+var rows = [
+  {group: 'Linked', _group: 'g1', _group_head: true},
+  {name: 'gather', _group: 'g1', failing: ''},
+  {name: 'post', _group: 'g1', failing: 'x'},
+  {name: 'nightly', failing: ''},
+];
+if (rows.filter(isOrchItem).length !== 3) fail('a group head was counted as an item');
+var filters = [{options: [{label: 'All'}, {label: 'Failing', field: 'failing'}]}];
+var chosen = [1], query = '';
+var shown = visibleRowsReal().map(function(r) { return r.name || r.group; }).join(',');
+if (shown !== 'Linked,post') fail('a group with a visible row lost its head, or kept others: ' + shown);
+query = 'nightly'; chosen = [0];
+shown = visibleRowsReal().map(function(r) { return r.name || r.group; }).join(',');
+if (shown !== 'nightly') fail('a group with no visible rows kept its head: ' + shown);
+`))
+}

@@ -69,7 +69,10 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			// somebody adds a tool. Necessarily partial — see
 			// scanCoveredToolNames — which is why the modal words it as
 			// "including" rather than as the whole set.
-			"scan_covers":      scanCoveredToolNames(agent),
+			"scan_covers": scanCoveredToolNames(agent),
+			// The network tools, exceptions included, so the modal can put a
+			// tool back on the scanned side when its exception is removed.
+			"scan_network":     scanNetworkToolNames(agent),
 			"scan_action":      scanActionOf(agent),
 			"scan_block_tools": agent.ScanBlockTools,
 			"scan_appealable":  agent.ScanAppealable,

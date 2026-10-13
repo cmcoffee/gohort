@@ -274,18 +274,18 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// (kind, id) from the row, and only for tasks this user owns. See
 	// task_notes.go and docs/task-notes.md.
 	T.HandleFunc("/api/console/scheduler/notes", T.handleTaskNotes)
-	// Containment: one schedule saying it exists to serve another. A link and
-	// nothing more; see task_parent.go for why it carries no authority.
-	T.HandleFunc("/api/console/scheduler/parent", w(T.handleConsoleSchedulerParent))
-	T.HandleFunc("/api/console/scheduler/parent-options", T.handleConsoleSchedulerParentOptions)
-	// Whether a parent finishes when everything under it has. Opt-in: see
-	// task_rollup.go for why it cannot be inferred from the link alone.
-	T.HandleFunc("/api/console/scheduler/rollup", w(T.handleConsoleSchedulerRollup))
 	T.HandleFunc("/api/console/goals", T.handleConsoleGoals)
-	// The shape of the work: what is part of what, drawn as a tree. A third
-	// question that neither of the other two pages can answer without giving up
-	// its own ordering. See console_breakdown.go.
-	T.HandleFunc("/api/console/breakdown", T.handleConsoleBreakdown)
+	// Link groups: schedules that run together at one time, one after another.
+	// See schedule_links.go.
+	T.HandleFunc("/api/console/links/options", T.handleConsoleLinkOptions)
+	T.HandleFunc("/api/console/links/get", func(rw http.ResponseWriter, r *http.Request) {
+		if user, _, ok := RequireUser(rw, r, T.DB); ok {
+			T.handleConsoleLinkGet(rw, user, strings.TrimSpace(r.URL.Query().Get("id")))
+		}
+	})
+	for _, verb := range []string{"link", "unlink", "up", "down", "pause", "resume", "run", "update"} {
+		T.HandleFunc("/api/console/links/"+verb, w(T.handleConsoleLink))
+	}
 	T.HandleFunc("/api/console/recurring/run", w(T.handleConsoleRecurringRun))
 	T.HandleFunc("/api/console/recurring/delete", w(T.handleConsoleRecurringDelete))
 	T.HandleFunc("/api/console/recurring/relink", w(T.handleConsoleRecurringRelink))
