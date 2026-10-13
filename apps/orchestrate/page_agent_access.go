@@ -925,13 +925,16 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 //     everything else), whatever the controls said.
 //   - Who it may message: it sends through its parent's channels, so the
 //     people its parent may message are its people (familyContactBlocked).
+//   - Limits: what it spends and runs counts against its parent's
+//     (familyBudgets), and it has none of its own (enforceSubAgentPosture).
 func subAgentSecuritySections(secs []ui.Section, udb Database, top string) []ui.Section {
 	parent := top
 	if p, ok := loadAgent(udb, top); ok {
 		parent = chFirst(p.Name, p.ID)
 	}
 	drop := map[string]bool{
-		"Let this agent message somebody": true,
+		"Let this agent message somebody":     true,
+		"How much it may spend and how often": true,
 	}
 	out := make([]ui.Section, 0, len(secs)+2)
 	for _, s := range secs {
@@ -941,11 +944,6 @@ func subAgentSecuritySections(secs []ui.Section, udb Database, top string) []ui.
 		if s.Group == "Share" || drop[s.Title] || (s.Group == "Delegation" && s.Title != "Sub-agents") {
 			continue
 		}
-		// Its parents' limits hold it as well (familyBudgets): what it does
-		// counts against them, and these can only make it stricter.
-		if s.Title == "How much it may spend and how often" {
-			s.Subtitle += " " + parent + "'s limits cover this agent too: what it spends and runs counts against them. These can only make it stricter."
-		}
 		out = append(out, s)
 	}
 	return append(out,
@@ -954,6 +952,11 @@ func subAgentSecuritySections(secs []ui.Section, udb Database, top string) []ui.
 			Title: "A sub-agent does not delegate",
 			Subtitle: "It calls no other agent, pipeline or machine: it does its work with its own tools, and " + parent + " does the delegating. " +
 				"Only " + parent + ", the agent it belongs to, and Builder checking what it built, can call it. So there is nothing to set here.",
+		},
+		ui.Section{
+			Group:    "Limits",
+			Title:    "How much it may spend and how often",
+			Subtitle: "Decided on " + parent + "'s Security page. What this agent spends and runs counts against " + parent + "'s limits, so they hold for the whole family and there is nothing to set here.",
 		},
 		ui.Section{
 			Group:    "Access",

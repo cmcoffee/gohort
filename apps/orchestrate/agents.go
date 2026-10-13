@@ -185,6 +185,10 @@ func enforceSubAgentPosture(a AgentRecord) AgentRecord {
 	a.AllowExplorer = false
 	a.IntakeForm = nil
 	a.Cortex = false
+	// Its limits are its parent's (familyBudgets): what it spends and runs
+	// counts against them, and a second set of knobs on the sub-agent was one
+	// more place a cap could hide.
+	a.ActionQuotas, a.DailySpendUSD = nil, 0
 	if a.InheritParentTools {
 		// Stateful inheriting sub-agent: memory ON so it can persist state
 		// (a checkpoint) between scheduled runs.

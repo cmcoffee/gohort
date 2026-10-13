@@ -113,6 +113,9 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		rec.InheritParentTools = true
 		rec.PendingApproval = true
 	}
+	if msg := subAgentLimitsRefusal(sess.DB, rec.OwnedBy, args); msg != "" {
+		return "", errors.New(msg)
+	}
 	if _, explicit := args["cortex"].(bool); !explicit {
 		rec.Cortex = newAgentReadsCortex(rec)
 	}
@@ -638,6 +641,13 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if existing.Owner != sess.Username {
 		return "", fmt.Errorf("agent %q is not yours: clone it first to customize", id)
 	}
+	parentID := existing.OwnedBy
+	if v, ok := args["owned_by"]; ok && v != nil {
+		parentID = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if msg := subAgentLimitsRefusal(sess.DB, parentID, args); msg != "" {
+		return "", errors.New(msg)
+	}
 	// LOCK — no editing another agent's sub-agent (see agentMutationLock).
 	if msg := agentMutationLock(&existing, sess, "update its settings ("+strings.Join(sortedArgKeys(args, "id"), ", ")+")"); msg != "" {
 		return "", errors.New(msg)
@@ -896,6 +906,32 @@ func agentMutationLock(target *AgentRecord, sess *ToolSession, change string) st
 	return lockCheck{Ask: sess.AskInChat, DB: sess.DB, Session: sess.ChatSessionID}.gate(target, change)
 }
 
+// subAgentLimitsRefusal is what setting limits on a sub-agent says: they are
+// its parent's, named. "" when the agent is not a sub-agent or the call sets
+// no limits.
+func subAgentLimitsRefusal(db Database, parentID string, args map[string]any) string {
+	if strings.TrimSpace(parentID) == "" {
+		return ""
+	}
+	// Clearing them is not setting them: a call carrying an empty list or a
+	// zero asks for what a sub-agent already has.
+	var set []string
+	if len(actionQuotasFromArgs(args)) > 0 {
+		set = append(set, "action_quotas")
+	}
+	if floatFromArgs(args, "daily_spend_usd") > 0 {
+		set = append(set, "daily_spend_usd")
+	}
+	if len(set) == 0 {
+		return ""
+	}
+	parent := parentID
+	if p, ok := loadAgent(db, parentID); ok {
+		parent = chFirst(p.Name, p.ID)
+	}
+	return fmt.Sprintf("%s: a sub-agent has no limits of its own. What it spends and runs counts against its parent's, so set them on %q instead (update_agent on the parent), or leave them out.", strings.Join(set, " and "), parent)
+}
+
 // Answers on the locked-agent card. Named once: lockCheck.gate offers them and
 // matches on them. Turning the lock off for good is not on the card: it is a
 // real decision, made in the editor (the lock icon), not in passing mid-chat.
@@ -1069,8 +1105,8 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"max_plan_steps":           {Type: "integer", Description: fmt.Sprintf("Optional 1-12. Default %d.", defaultMaxPlanSteps)},
 		"max_worker_rounds":        {Type: "integer", Description: fmt.Sprintf("Optional 1-%d. Default %d. Anything under %d is raised to %d.", maxWorkerRoundsCeiling, defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds)},
 		"think_budget":             {Type: "integer", Description: "Max thinking tokens per LLM call; applies only when thinking is on. 0 (default) = deployment default (4096). The admin global budget is a hard ceiling, so this can only LOWER it."},
-		"action_quotas":            {Type: "array", Description: "How often one action may run in a rolling 24 hours, as \"action = number\" entries (\"moltbook/create_post = 6\"). Names a grouped tool's action or a whole tool. Enforced by the framework (the call is refused when the allowance is spent), so do NOT also write the limit into the prompt and ask the agent to count for itself. Only successful calls count. Omit for no limit.", Items: &ToolParam{Type: "string"}},
-		"daily_spend_usd":          {Type: "number", Description: "What this agent may cost in a rolling 24 hours, in US dollars. 0 (default) = no limit. Crossing it drops the rest of the running turn to the local worker model and declines the next turn until the window frees up. Does nothing where no cost rates are configured."},
+		"action_quotas":            {Type: "array", Description: "How often one action may run in a rolling 24 hours, as \"action = number\" entries (\"moltbook/create_post = 6\"). Names a grouped tool's action or a whole tool. Enforced by the framework (the call is refused when the allowance is spent), so do NOT also write the limit into the prompt and ask the agent to count for itself. Only successful calls count. Omit for no limit. A sub-agent has none of its own: it counts against its parent's.", Items: &ToolParam{Type: "string"}},
+		"daily_spend_usd":          {Type: "number", Description: "What this agent may cost in a rolling 24 hours, in US dollars. 0 (default) = no limit. Crossing it drops the rest of the running turn to the local worker model and declines the next turn until the window frees up. Does nothing where no cost rates are configured. A sub-agent has none of its own: it counts against its parent's."},
 		"lead_model":               {Type: "boolean", Description: "When true, MAIN reasoning (plan + synthesis) escalates to the lead/precision LLM; per-step workers stay on the worker model. Ignored when no distinct lead is configured, or when force_private or the Private toggle is on. Default false."},
 		"gap_check":                {Type: "boolean", Description: "When true, the runner runs a structural-gap review pass after the plan finishes (research-style quality bar). Default false."},
 		"work_plan":                {Type: "boolean", Description: "When true, the agent gets a TRACKED plan: it commits to a visible checklist, marks each step in progress, closes it with findings or blocks it with a reason, and states anything unfinished in its answer. The checklist survives the turn. Replaces plan_set for that agent. Default false: set it for work with several results that build on each other, leave it off for question-answering."},

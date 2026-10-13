@@ -454,8 +454,9 @@ func TestAParentDecidesForItsSubAgents(t *testing.T) {
 	}
 }
 
-// A sub-agent's runs are held to and charged against every parent's caps,
-// under the parent's own key, so a parent's limit counts its whole family.
+// A sub-agent's runs are held to and charged against its parents' caps, under
+// the parent's own key, so a parent's limit counts its whole family. It has no
+// caps of its own: they are the parent's to set.
 func TestASubAgentCountsAgainstItsParentsCaps(t *testing.T) {
 	app, udb := familyFixture(t)
 	writer, _ := loadAgent(udb, "a-writer")
@@ -463,28 +464,43 @@ func TestASubAgentCountsAgainstItsParentsCaps(t *testing.T) {
 	saveAgent(udb, writer)
 	critic, _ := loadAgent(udb, "a-critic")
 	critic.DailySpendUSD = 2
+	critic.ActionQuotas = ActionQuotaMap{"post": 1}
 	saveAgent(udb, critic)
+	if critic, _ = loadAgent(udb, "a-critic"); critic.DailySpendUSD != 0 || len(critic.ActionQuotas) != 0 {
+		t.Errorf("a sub-agent kept caps of its own: %v %v", critic.DailySpendUSD, critic.ActionQuotas)
+	}
 
 	nit, _ := loadAgent(udb, "a-nit")
 	got := familyBudgets(nit)
-	if len(got) != 2 || got[0].Key != "a-critic" || got[0].DailySpendUSD != 2 || got[1].Key != "a-writer" || got[1].ActionQuotas["post"] != 6 {
-		t.Fatalf("a sub-agent two levels down should carry both parents' caps, nearest first: %+v", got)
+	if len(got) != 1 || got[0].Key != "a-writer" || got[0].ActionQuotas["post"] != 6 {
+		t.Fatalf("a sub-agent two levels down should carry the top parent's caps: %+v", got)
 	}
-	if got[1].Label != "Writer and the agents under it" {
-		t.Errorf("label = %q", got[1].Label)
+	if got[0].Label != "Writer and the agents under it" {
+		t.Errorf("label = %q", got[0].Label)
 	}
 	if b := familyBudgets(writer); b != nil {
 		t.Errorf("a top-level agent shares no budget: %+v", b)
 	}
-	if b := familyBudgets(critic); len(b) != 1 || b[0].Key != "a-writer" {
-		t.Errorf("a parent with no caps adds nothing, one with caps does: %+v", b)
-	}
 
-	// The page says so.
+	// The page says where they are set, and offers no form of its own.
 	w := httptest.NewRecorder()
 	app.renderAgentAccess(w, asUser(httptest.NewRequest(http.MethodGet, "/agent/a-nit/access?format=json", nil), "alice"), "alice", udb, "a-nit")
-	if !strings.Contains(w.Body.String(), "Writer's limits cover this agent too") {
+	if !strings.Contains(w.Body.String(), "counts against Writer's limits") {
 		t.Error("a sub-agent's Limits tab should say its parent's limits cover it")
+	}
+	if strings.Contains(w.Body.String(), "Spend limit (US$ per 24 hours)") {
+		t.Error("a sub-agent's Limits tab still offers its own spend limit")
+	}
+
+	// Builder is told where to set them, and clearing them is not refused.
+	if msg := subAgentLimitsRefusal(udb, "a-writer", map[string]any{"daily_spend_usd": 3.0}); !strings.Contains(msg, "\"Writer\"") {
+		t.Errorf("setting a sub-agent's spend should name its parent: %q", msg)
+	}
+	if msg := subAgentLimitsRefusal(udb, "a-writer", map[string]any{"daily_spend_usd": 0.0, "action_quotas": []any{}}); msg != "" {
+		t.Errorf("clearing is not setting: %q", msg)
+	}
+	if msg := subAgentLimitsRefusal(udb, "", map[string]any{"daily_spend_usd": 3.0}); msg != "" {
+		t.Errorf("a top-level agent sets its own: %q", msg)
 	}
 }
 
