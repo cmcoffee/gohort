@@ -143,3 +143,45 @@ func TestASystemCanBeSharedWithPeopleAndTeams(t *testing.T) {
 		t.Error("an unshared system still reaches bob")
 	}
 }
+
+// One way to ask each system: one in the agent's Sources is asked through its
+// own investigate_<system>, so ask_system is offered only for a member reached
+// through a workspace. And a system marked tools-only gives no open-question
+// route as a Source either.
+func TestEachSystemHasOneWayToAsk(t *testing.T) {
+	store := fakeSources(t)
+	app, udb := sourcesApp(t)
+	udb.Set(applianceTable, "estate", Appliance{ID: "estate", Name: "Estate", Type: "workspace", Owner: "alice", Members: []string{"db-box"}})
+	udb.Set(applianceTable, "db-box", Appliance{ID: "db-box", Name: "DB Box", Type: "ssh", Owner: "alice"})
+	udb.Set(applianceTable, "logs", Appliance{ID: "logs", Name: "Logs", Type: "command", Owner: "alice", ToolsOnly: true})
+
+	names := func() map[string]bool {
+		out := map[string]bool{}
+		for _, d := range applianceToolProvider(nil, "alice", "wren") {
+			out[d.Tool.Name] = true
+		}
+		return out
+	}
+	store["alice/wren"] = []ReferenceSelection{{Kind: "system", ItemID: "lab-box"}}
+	if got := names(); got["ask_system"] || !got["request_capability"] {
+		t.Errorf("a system in Sources should be asked through its own tool, not ask_system: %v", got)
+	}
+	store["alice/wren"] = append(store["alice/wren"], ReferenceSelection{Kind: "system", ItemID: "estate"})
+	if got := names(); !got["ask_system"] {
+		t.Errorf("a workspace member has no other way to be asked, so ask_system should be offered: %v", got)
+	}
+
+	tools := func(id string) map[string]bool {
+		out := map[string]bool{}
+		for _, d := range (servitorSource{app: app}).ItemToolsWithSession(nil, "alice", id) {
+			out[d.Tool.Name] = true
+		}
+		return out
+	}
+	if got := tools("lab-box"); !got["investigate_lab_box"] {
+		t.Errorf("a system Source should carry its investigate tool: %v", got)
+	}
+	if got := tools("logs"); got["investigate_logs"] || !got["get_logs_facts"] {
+		t.Errorf("a tools-only Source should keep its recorded knowledge and no investigate tool: %v", got)
+	}
+}

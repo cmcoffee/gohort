@@ -7,7 +7,9 @@
 // THREE THINGS ARE OFFERED, and the split matters:
 //
 //	request_capability   — to an agent with ANY of the owner's systems in its Sources
-//	ask_system           — same gate: questions routed to the investigator
+//	ask_system           — questions for a member reached through a workspace in
+//	                       its Sources; a system IN its Sources is asked through
+//	                       that Source's own investigate_<system>, the same run
 //	the minted tools     — per system, and only the approved ones
 //
 // "In its Sources" is the door (applianceEnabledForAgent): chosen on the
@@ -102,11 +104,6 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 	granted := map[string]bool{}
 	// member id -> the workspace label that reaches it, for the description.
 	viaWorkspace := map[string]string{}
-	// askableOwn is the connected set MINUS the targets marked ToolsOnly.
-	// Kept apart from `enabled` because the two answer different
-	// questions: enabled decides which approved tools an agent gets,
-	// askableOwn decides what it may ask open questions about.
-	var askableOwn []Appliance
 	for _, a := range all {
 		if applianceEnabledForAgent(udb, owner, agentID, a.ID) {
 			// Chosen as a Source with no grant yet: it gets one that lets
@@ -120,9 +117,6 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 			}
 			enabled = append(enabled, a)
 			granted[strings.ToLower(a.ID)] = true
-			if !a.ToolsOnly {
-				askableOwn = append(askableOwn, a)
-			}
 		}
 	}
 	if len(enabled) == 0 {
@@ -143,7 +137,12 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 	// and keys on a direct connection, while ask_system reads and keys on this.
 	// Handing both the same list would put a machine in one tool's description
 	// that the same tool then refuses by name.
-	askable := append([]Appliance{}, askableOwn...)
+	// A system in the agent's Sources is asked through its own
+	// investigate_<system> (servitorSource), the same investigation this
+	// tool runs. Listing it here too gave the agent two tools for one
+	// question; ask_system now covers only what nothing else does: a member
+	// reached through a workspace in its Sources.
+	var askable []Appliance
 	for _, a := range enabled {
 		if a.Type != "workspace" {
 			continue

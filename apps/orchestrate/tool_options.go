@@ -352,34 +352,43 @@ func (t *chatTurn) buildAttachedSourceToolDefs(sess *ToolSession) []AgentToolDef
 	if t == nil || len(t.agent.AttachedSources) == 0 {
 		return nil
 	}
+	return attachedSourceToolDefs(sess, t.user, t.agent, func(kind, item string) {
+		// A BREADCRUMB, not just a server log. The attachment is a
+		// frozen {kind, item_id}; when that id stops resolving — the
+		// item was removed, unshared, or re-created on the far side of
+		// a peer — ItemTools returns nil by contract and the agent
+		// simply has no investigate_/search_ tool for it. Nothing said
+		// so anywhere the person could see, so the tool "vanished" and
+		// the only cure anybody found was detach-and-reattach, which
+		// rewrites the id.
+		t.turnDiag("attached_source_empty", "the attached source "+kind+"/"+item+
+			" gave this turn no tools: it was removed, is no longer shared, or was re-created with a "+
+			"different id on the far side. Detach and re-attach it (Configure → Sources) to point at "+
+			"what is there now.")
+	})
+}
+
+// attachedSourceToolDefs is the tools an agent's Sources contribute, for any
+// run of it: a chat turn, and the runs that build their catalog themselves (a
+// scheduled fire, a delegation, a monitor wake, an inline dispatch), which
+// had none of them, so an agent whose Sources answered in chat had nothing to
+// ask them with on a schedule. empty, when set, hears of a Source that
+// resolved to nothing.
+func attachedSourceToolDefs(sess *ToolSession, user string, a AgentRecord, empty func(kind, item string)) []AgentToolDef {
 	var out []AgentToolDef
 	seen := map[string]bool{}
-	for _, ref := range t.agent.AttachedSources {
+	for _, ref := range a.AttachedSources {
 		kind, item := strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.ItemID)
 		if kind == "" || item == "" {
 			continue
 		}
-		defs := ReferenceItemToolsWithSession(sess, t.user, kind, item)
+		defs := ReferenceItemToolsWithSession(sess, user, kind, item)
 		if len(defs) == 0 {
-			// A BREADCRUMB, not just a server log. The attachment is a
-			// frozen {kind, item_id}; when that id stops resolving — the
-			// item was removed, unshared, or re-created on the far side of
-			// a peer — ItemTools returns nil by contract and the agent
-			// simply has no investigate_/search_ tool for it. Nothing said
-			// so anywhere the person could see, so the tool "vanished" and
-			// the only cure anybody found was detach-and-reattach, which
-			// rewrites the id.
-			//
-			// Reported live once, hit for real: a change to a remote
-			// peered system left the attachment pointing at an item that
-			// no longer resolved, and the log line below was the only
-			// record of it.
 			Log("[orchestrate.tools] agent=%s: attached source %s/%s resolved to no tools (removed or no longer shared?)",
-				t.agent.ID, kind, item)
-			t.turnDiag("attached_source_empty", "the attached source "+kind+"/"+item+
-				" gave this turn no tools: it was removed, is no longer shared, or was re-created with a "+
-				"different id on the far side. Detach and re-attach it (Configure → Sources) to point at "+
-				"what is there now.")
+				a.ID, kind, item)
+			if empty != nil {
+				empty(kind, item)
+			}
 			continue
 		}
 		for _, d := range defs {
@@ -395,6 +404,22 @@ func (t *chatTurn) buildAttachedSourceToolDefs(sess *ToolSession) []AgentToolDef
 		}
 	}
 	return out
+}
+
+// withSourceTools appends an agent's Sources' tools to a catalog a run built
+// itself, skipping any name already in it.
+func withSourceTools(tools []AgentToolDef, sess *ToolSession, user string, a AgentRecord) []AgentToolDef {
+	have := map[string]bool{}
+	for _, d := range tools {
+		have[d.Tool.Name] = true
+	}
+	for _, d := range attachedSourceToolDefs(sess, user, a, nil) {
+		if !have[d.Tool.Name] {
+			have[d.Tool.Name] = true
+			tools = append(tools, d)
+		}
+	}
+	return tools
 }
 
 // referenceSelectionsFromArgs parses the "<kind>:<item_id>" strings the agent

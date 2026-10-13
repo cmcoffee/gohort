@@ -78,7 +78,7 @@ func AskSystemToolDef(sess *ToolSession, udb Database, owner, agentID string, co
 			// is reachable here. The narrow check would list a machine in this
 			// tool's own description and then refuse it by name.
 			if !applianceAskableForAgent(udb, owner, agentID, appliance.ID) {
-				return "", fmt.Errorf("you are not enabled for %s. Tell the person the owner has to connect you to that system in Servitor before you can ask about it",
+				return "", fmt.Errorf("you are not enabled for %s. Tell the person the owner has to add that system to your Sources (on your agent page) before you can ask about it",
 					applianceLabel(appliance.Name, appliance.ID))
 			}
 			if servitorRef == nil {

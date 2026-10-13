@@ -1844,3 +1844,23 @@ func TestTheFrameworkDropCheckNamesTheDefault(t *testing.T) {
 		t.Errorf("a resident step inherits the catalog: %v", got)
 	}
 }
+
+// A run that builds its own catalog (a scheduled fire, a delegation, a monitor
+// wake, an inline dispatch) gets the agent's Sources' tools as a chat turn
+// does, without duplicating a name already in the catalog.
+func TestARunThatBuildsItsOwnCatalogGetsTheAgentsSources(t *testing.T) {
+	withBundleSource(t)
+	a := AgentRecord{ID: "a1", Owner: "alice", AttachedSources: ReferenceSelections{{Kind: "testfiles", ItemID: "support_bundles"}}}
+	existing := []AgentToolDef{{Tool: Tool{Name: "read_support_bundles", Description: "already here"}}}
+	got := withSourceTools(existing, nil, "alice", a)
+	names := map[string]int{}
+	for _, d := range got {
+		names[d.Tool.Name]++
+	}
+	if names["search_support_bundles"] != 1 || names["investigate_support_bundles"] != 1 {
+		t.Errorf("the Source's tools are missing: %v", names)
+	}
+	if names["read_support_bundles"] != 1 || got[0].Tool.Description != "already here" {
+		t.Errorf("a name already in the catalog was duplicated or replaced: %v", names)
+	}
+}

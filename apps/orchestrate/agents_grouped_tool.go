@@ -1269,6 +1269,8 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	// to be relayed, and the parent's own channel is invisible to it. Same slice
 	// the sub-turn carries for cycle detection; it can only narrow down a chain.
 	tools = append(tools, AgentProvidedTools(subSess, t.user, target.ID)...)
+	// Its Sources, which a chat turn gets in runPlan and this path never did.
+	tools = withSourceTools(tools, subSess, t.user, target)
 	if chTools := channelChatTools(subSess, t.user, target.ID, inheritedChannelChain(target, subTurn.dispatchChain)...); len(chTools) > 0 {
 		tools = append(tools, chTools...)
 	}

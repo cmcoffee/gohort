@@ -309,6 +309,12 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 		},
 	}
 
+	// Tools only withholds the asking route: what is recorded can be read,
+	// but open questions are not sent to the system. Without this, adding it
+	// as a Source gave back the investigation the flag exists to withhold.
+	if a.ToolsOnly {
+		return []AgentToolDef{searchTool, factsTool}
+	}
 	return []AgentToolDef{searchTool, factsTool, investigateTool}
 }
 
