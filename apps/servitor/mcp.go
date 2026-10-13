@@ -23,7 +23,7 @@ func registerServitorMCPTools() {
 	RegisterMCPTool(MCPToolSpec{
 		App:         "/servitor",
 		Name:        "servitor_list_systems",
-		Description: "List the user's Servitor systems (id, name, host, type): the appliances Servitor has knowledge about. Read-only; never returns credentials.",
+		Description: "List the user's Servitor systems (id, name, host, type): the systems Servitor has knowledge about. Read-only; never returns credentials.",
 		InputSchema: map[string]any{"type": "object"},
 		Handler:     servitorMCPListSystems,
 	})

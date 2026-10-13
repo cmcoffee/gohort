@@ -42,7 +42,7 @@ func init() {
 		ID:          servitorInvestigatorAgentID,
 		OwningApp:   "Servitor",
 		Name:        "Servitor Investigator",
-		Description: "Per-appliance investigator template. Memory (facts, graph, reference) is layered per appliance scope.",
+		Description: "Per-system investigator template. Memory (facts, graph, reference) is layered per system.",
 		Prompt:      investigatorTemplatePrompt(),
 		Hidden:      true,
 		// Explicit Memory is the always-in-prompt SHORTCUTS layer: working

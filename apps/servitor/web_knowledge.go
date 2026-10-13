@@ -42,7 +42,7 @@ func (T *Servitor) handleFacts(w http.ResponseWriter, r *http.Request) {
 		}
 		var appliance Appliance
 		if udb == nil || !udb.Get(applianceTable, req.ApplianceID, &appliance) {
-			http.Error(w, "appliance not found", http.StatusNotFound)
+			http.Error(w, "system not found", http.StatusNotFound)
 			return
 		}
 		storeFact(udb, req.ApplianceID, appliance.Name, req.Key, req.Value, "long", req.Tags)
@@ -86,11 +86,11 @@ func (T *Servitor) handleMemoryClear(w http.ResponseWriter, r *http.Request) {
 	// an owner/admin-only management action, operating on the owner's store.
 	rec, ownerUser, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
-		http.Error(w, "appliance not found", http.StatusNotFound)
+		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
 	if !canManageAppliance(userID, rec, servitorIsAdmin(r)) {
-		http.Error(w, "not allowed to clear this appliance's memory", http.StatusForbidden)
+		http.Error(w, "not allowed to clear this system's memory", http.StatusForbidden)
 		return
 	}
 	clearApplianceMemory(ownerUDB, req.ApplianceID)
@@ -147,11 +147,11 @@ func (T *Servitor) handleRepoRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, ownerUser, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
-		http.Error(w, "appliance not found", http.StatusNotFound)
+		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
 	if rec.Type != "repo" {
-		http.Error(w, "not a repository appliance", http.StatusBadRequest)
+		http.Error(w, "not a repository system", http.StatusBadRequest)
 		return
 	}
 	// Re-cloning replaces the shared code for everyone, so gate it to owner+admin.

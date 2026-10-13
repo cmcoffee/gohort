@@ -33,7 +33,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 	// OptionPairs lets us show the human-readable name while keeping
 	// the opaque UUID as the form value.
 	applianceOpts := []ui.SelectOption{
-		{Value: "", Label: "(select appliance)"},
+		{Value: "", Label: "(select system)"},
 	}
 	// Client-side id→type map so the page can adapt per-type UI (e.g. hide
 	// the terminal pane for repo appliances, which have nothing to attach to).
@@ -160,7 +160,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 					ConfirmURL:    "api/chat/v2/confirm",
 					InjectURL:     "api/inject",
 					DeepLinkParam: "session",
-					EmptyText:     "Pick an appliance below, then ask anything.",
+					EmptyText:     "Pick a system below, then ask anything.",
 					Placeholder:   "Ask about this system…",
 					Markdown:      true,
 					Attachments:   true,
@@ -180,25 +180,25 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 					ExtraFields: []ui.ChatField{
 						{
 							Name:        "appliance_id",
-							Label:       "Appliance",
+							Label:       "System",
 							Type:        "select",
 							OptionPairs: applianceOpts,
 						},
 					},
 					Actions: []ui.ToolbarAction{
-						{Label: "New", Title: "Create a new appliance",
+						{Label: "New", Title: "Create a new system",
 							Method: "client", URL: "servitor_new_appliance"},
-						{Label: "Edit", Title: "Edit the active appliance",
+						{Label: "Edit", Title: "Edit the active system",
 							Method: "client", URL: "servitor_edit_appliance"},
-						{Label: "Access", Title: "Which agents may use this appliance, and the commands they have asked to run on it",
+						{Label: "Access", Title: "Which agents may use this system, and the commands they have asked to run on it",
 							Method: "client", URL: "servitor_appliance_access"},
 						{Label: "Profile", Title: "View the system profile",
 							Method: "client", URL: "servitor_open_profile"},
-						{Label: "Rules", Title: "Edit the assistant's rules for this appliance",
+						{Label: "Rules", Title: "Edit the assistant's rules for this system",
 							Method: "client", URL: "servitor_open_rules"},
-						{Label: "Memory", Title: "Manage this appliance's agent memory: Saved facts, Reference Memory, and Graph Memory",
+						{Label: "Memory", Title: "Manage this system's agent memory: Saved facts, Reference Memory, and Graph Memory",
 							Method: "client", URL: "servitor_appliance_memory"},
-						{Label: "Refresh", Title: "Re-map the selected appliance. Repositories also pull the latest code first.",
+						{Label: "Refresh", Title: "Re-map the selected system. Repositories also pull the latest code first.",
 							Method: "client", URL: "servitor_run_map", Variant: "primary"},
 						// Rarely-used actions collapse into a single "More ▾"
 						// overflow menu so the toolbar stays lean.
@@ -210,7 +210,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 							Method: "client", URL: "copy_session", Group: "More"},
 						{Label: "Export knowledge", Title: "Download this system's accumulated knowledge (profile, facts, techniques, logs) as a markdown file (credentials excluded) for handing to Claude to help build or improve a support tool.",
 							Method: "client", URL: "servitor_export_knowledge", Group: "More"},
-						{Label: "Clear Memory", Title: "Wipe stored profile, facts, knowledge, and notes for this appliance",
+						{Label: "Clear Memory", Title: "Wipe stored profile, facts, knowledge, and notes for this system",
 							Method: "client", URL: "servitor_clear_memory", Variant: "danger", Group: "More"},
 					},
 				},
@@ -387,7 +387,7 @@ func (T *Servitor) handleProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	a, _, _, found := T.resolveAppliance(userID, udb, id)
 	if !found {
-		http.Error(w, "appliance not found", http.StatusNotFound)
+		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

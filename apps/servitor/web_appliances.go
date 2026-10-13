@@ -131,7 +131,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if req.PeerName == "" || req.RemoteID == "" {
-				http.Error(w, "a remote system needs a peer and the appliance id on that peer", http.StatusBadRequest)
+				http.Error(w, "a remote system needs a peer and the system id on that peer", http.StatusBadRequest)
 				return
 			}
 			peer, ok := GetRemotePeer(req.PeerName)
@@ -169,7 +169,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if len(req.Members) == 0 {
-				http.Error(w, "select at least one member appliance", http.StatusBadRequest)
+				http.Error(w, "select at least one member system", http.StatusBadRequest)
 				return
 			}
 			req.MemberRoles = pruneMemberRoles(req.MemberRoles, req.Members)
@@ -200,7 +200,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		// changed.
 		req.LeadTierAvailable = false
 		if !AllLLMsPrivate() && (req.OrchestratorTier == "lead" || req.WorkerTier == "lead") {
-			http.Error(w, "pinning this appliance to the lead model needs Admin → LLMs → Model Privacy turned on: "+
+			http.Error(w, "pinning this system to the lead model needs Admin → LLMs → Model Privacy turned on: "+
 				"Servitor handles credentials and log contents, so it stays on the worker until every configured model is private",
 				http.StatusBadRequest)
 			return
@@ -216,13 +216,13 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		if !isNew {
 			existing, exOwner, exUDB, found := T.resolveAppliance(userID, udb, req.ID)
 			if !found {
-				http.Error(w, "appliance not found", http.StatusNotFound)
+				http.Error(w, "system not found", http.StatusNotFound)
 				return
 			}
 			// Only the owner or an admin may edit / re-share a record. A non-owner
 			// can USE a shared appliance but not change it.
 			if !canManageAppliance(userID, existing, servitorIsAdmin(r)) {
-				http.Error(w, "not allowed to edit this appliance", http.StatusForbidden)
+				http.Error(w, "not allowed to edit this system", http.StatusForbidden)
 				return
 			}
 			targetUDB = exUDB
@@ -386,7 +386,7 @@ func (T *Servitor) handleAppliance(w http.ResponseWriter, r *http.Request) {
 		}
 		// Only the owner or an admin may delete.
 		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
-			http.Error(w, "not allowed to delete this appliance", http.StatusForbidden)
+			http.Error(w, "not allowed to delete this system", http.StatusForbidden)
 			return
 		}
 		T.setApplianceShared(id, owner, false) // drop from the shared index first

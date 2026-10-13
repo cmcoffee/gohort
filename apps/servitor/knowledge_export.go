@@ -34,7 +34,7 @@ func (T *Servitor) handleKnowledgeExport(w http.ResponseWriter, r *http.Request)
 	}
 	var a Appliance
 	if !udb.Get(applianceTable, id, &a) {
-		http.Error(w, "appliance not found", http.StatusNotFound)
+		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
 	fname := safeFilename(a.Name)

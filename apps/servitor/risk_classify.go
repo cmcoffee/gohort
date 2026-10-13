@@ -563,7 +563,7 @@ func init() {
 	risk_rules = map[string]risk_rule{}
 	for n := range net_egress_cmds {
 		risk_rules[n] = func(rc *risk_ctx, inv *invocation) {
-			rc.flag(RiskNetEgress, "outbound call from the appliance: "+inv.name)
+			rc.flag(RiskNetEgress, "outbound call from the system: "+inv.name)
 		}
 	}
 	for n := range sys_control_cmds {

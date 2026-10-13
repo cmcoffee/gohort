@@ -36,7 +36,7 @@ func init() {
 		App:      "/servitor",
 		Category: "Limits",
 		Label:    "Workspace members drilled per question",
-		Help:     "Maximum member appliances a single workspace question may investigate.",
+		Help:     "Maximum member systems a single workspace question may investigate.",
 		Detail:   "Members beyond the cap are reported as skipped, rather than silently dropped.",
 		Kind:     KindInt,
 		Default:  6,

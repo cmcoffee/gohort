@@ -128,7 +128,7 @@ func (T *Servitor) handleApplianceTool(w http.ResponseWriter, r *http.Request) {
 	appliance := strings.TrimSpace(r.URL.Query().Get("appliance"))
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	if appliance == "" || name == "" {
-		http.Error(w, "appliance and name are required", http.StatusBadRequest)
+		http.Error(w, "system and name are required", http.StatusBadRequest)
 		return
 	}
 	switch r.Method {

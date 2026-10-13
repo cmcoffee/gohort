@@ -62,11 +62,11 @@ func (T *Servitor) handleBundleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, owner, ownerUDB, found := T.resolveAppliance(userID, udb, applianceID)
 	if !found {
-		http.Error(w, "appliance not found", http.StatusNotFound)
+		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
 	if rec.Type != "bundle" {
-		http.Error(w, "not an evidence-bundle appliance", http.StatusBadRequest)
+		http.Error(w, "not an evidence-bundle system", http.StatusBadRequest)
 		return
 	}
 	if !canManageAppliance(userID, rec, servitorIsAdmin(r)) {
@@ -206,11 +206,11 @@ func (T *Servitor) handleBundleIngest(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, owner, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
-		http.Error(w, "appliance not found", http.StatusNotFound)
+		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
 	if rec.Type != "bundle" {
-		http.Error(w, "not an evidence-bundle appliance", http.StatusBadRequest)
+		http.Error(w, "not an evidence-bundle system", http.StatusBadRequest)
 		return
 	}
 	if !canManageAppliance(userID, rec, servitorIsAdmin(r)) {

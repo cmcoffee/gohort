@@ -277,7 +277,7 @@ func resolveToolset(ctx context.Context, owner, caller string, a Appliance) reso
 		}
 		if b.BodyHash != "" && toolBodyHash(t) != b.BodyHash {
 			out.Withheld = append(out.Withheld,
-				fmt.Sprintf("%s (changed since it was approved for this system: re-approve it in the appliance's Tools list)", name))
+				fmt.Sprintf("%s (changed since it was approved for this system: re-approve it in the system's Tools list)", name))
 			continue
 		}
 		if b.BodyHash == "" {

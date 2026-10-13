@@ -177,7 +177,7 @@ func (T *Servitor) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	appliance, _, _, found := T.resolveAppliance(userID, udb, id)
 	if !found {
-		http.Error(w, "appliance not found", http.StatusNotFound)
+		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
 

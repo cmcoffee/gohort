@@ -33,13 +33,13 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 	}
 	appliance, ownerUser, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
-		http.Error(w, "appliance not found", http.StatusNotFound)
+		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
 	if appliance.Type == "workspace" {
 		// A workspace owns no system to map — its knowledge IS its members'.
 		// Refreshing it means refreshing them, individually.
-		http.Error(w, "a workspace has nothing of its own to map: refresh its member appliances instead", http.StatusBadRequest)
+		http.Error(w, "a workspace has nothing of its own to map: refresh its member systems instead", http.StatusBadRequest)
 		return
 	}
 
@@ -117,7 +117,7 @@ func (T *Servitor) handleMapApp(w http.ResponseWriter, r *http.Request) {
 	}
 	appliance, _, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
-		http.Error(w, "appliance not found", http.StatusNotFound)
+		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
 

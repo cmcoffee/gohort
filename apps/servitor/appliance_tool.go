@@ -83,7 +83,7 @@ func SaveApplianceTool(udb Database, t ApplianceTool) (ApplianceTool, error) {
 		return t, fmt.Errorf("tool name %q is not usable: lowercase letters, digits and underscore, 3-49 chars", t.Name)
 	}
 	if t.ApplianceID == "" {
-		return t, fmt.Errorf("an appliance tool must be bound to a system")
+		return t, fmt.Errorf("a Servitor tool must be bound to a system")
 	}
 	if strings.TrimSpace(t.Template) == "" {
 		return t, fmt.Errorf("a tool needs a command template")

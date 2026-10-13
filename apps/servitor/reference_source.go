@@ -347,7 +347,7 @@ func (s servitorSource) factsBlock(user, itemID string) (string, error) {
 // it as slow (tens of seconds).
 func (T *Servitor) InvestigateSync(ctx context.Context, user, applianceID, question string) (string, error) {
 	if T == nil || T.DB == nil || user == "" || applianceID == "" {
-		return "", fmt.Errorf("investigate: missing user or appliance")
+		return "", fmt.Errorf("investigate: missing user or system")
 	}
 	q := strings.TrimSpace(question)
 	if q == "" {
@@ -356,7 +356,7 @@ func (T *Servitor) InvestigateSync(ctx context.Context, user, applianceID, quest
 	udb := UserDB(T.DB, user)
 	appliance, ownerUser, _, found := T.resolveAppliance(user, udb, applianceID)
 	if !found {
-		return "", fmt.Errorf("investigate: appliance %q not found", applianceID)
+		return "", fmt.Errorf("investigate: system %q not found", applianceID)
 	}
 	label := appliance.Name + ": " + q
 	if len(label) > 80 {

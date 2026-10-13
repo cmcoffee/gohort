@@ -890,7 +890,7 @@ func (T *Servitor) Main() error {
 		return err
 	}
 	defer T.conn.Close()
-	Log("Connected. Starting appliance reconnaissance (max %d rounds).", T.input.max_rounds)
+	Log("Connected. Starting system reconnaissance (max %d rounds).", T.input.max_rounds)
 
 	mainCtx := AppContext()
 

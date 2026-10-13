@@ -54,7 +54,7 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 	// repo's clone/store is read under ownerUser inside runSession.
 	appliance, ownerUser, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
-		http.Error(w, "appliance not found", http.StatusNotFound)
+		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
 

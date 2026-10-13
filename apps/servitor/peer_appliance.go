@@ -228,7 +228,7 @@ func (T *Servitor) handleAppliancePeers(w http.ResponseWriter, r *http.Request) 
 		id := strings.TrimSpace(r.URL.Query().Get("appliance_id"))
 		a, owner, _, found := T.resolveAppliance(userID, udb, id)
 		if !found {
-			http.Error(w, "appliance not found", http.StatusNotFound)
+			http.Error(w, "system not found", http.StatusNotFound)
 			return
 		}
 		type row struct {
@@ -280,7 +280,7 @@ func (T *Servitor) handleAppliancePeers(w http.ResponseWriter, r *http.Request) 
 		}
 		a, owner, _, found := T.resolveAppliance(userID, udb, strings.TrimSpace(body.ApplianceID))
 		if !found {
-			http.Error(w, "appliance not found", http.StatusNotFound)
+			http.Error(w, "system not found", http.StatusNotFound)
 			return
 		}
 		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
@@ -346,7 +346,7 @@ func (T *Servitor) registerPeerKnowledge() {
 		}
 		a, _, ownerUDB, ok := T.resolveAppliance(user, udb, applianceID)
 		if !ok || ownerUDB == nil {
-			return PeerKnowledge{}, fmt.Errorf("appliance %q not found", applianceID)
+			return PeerKnowledge{}, fmt.Errorf("system %q not found", applianceID)
 		}
 		out := PeerKnowledge{
 			ApplianceID: a.ID,
@@ -540,7 +540,7 @@ func (T *Servitor) registerPeerExec() {
 		}
 		a, _, _, ok := T.resolveAppliance(user, udb, applianceID)
 		if !ok || a.ID == "" {
-			return "", fmt.Errorf("appliance %q not found", applianceID)
+			return "", fmt.Errorf("system %q not found", applianceID)
 		}
 		// A stub must not forward onward. Two instances relaying to each other
 		// is a loop neither end can see, and the far one would be executing on

@@ -118,13 +118,13 @@ func (T *Servitor) handleRules(w http.ResponseWriter, r *http.Request) {
 		}
 		a, _, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 		if !found {
-			http.Error(w, "appliance not found", http.StatusNotFound)
+			http.Error(w, "system not found", http.StatusNotFound)
 			return
 		}
 		// Only the owner or an admin sets rules — a shared appliance's rules are
 		// the owner's, applied to everyone; a non-owner can't change them.
 		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
-			http.Error(w, "only the owner or an admin can set rules on a shared appliance", http.StatusForbidden)
+			http.Error(w, "only the owner or an admin can set rules on a shared system", http.StatusForbidden)
 			return
 		}
 		id := storeRule(ownerUDB, req.ApplianceID, req.Rule)
@@ -163,7 +163,7 @@ func (T *Servitor) handleRuleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
-		http.Error(w, "only the owner or an admin can delete rules on a shared appliance", http.StatusForbidden)
+		http.Error(w, "only the owner or an admin can delete rules on a shared system", http.StatusForbidden)
 		return
 	}
 	deleteRule(ownerUDB, id)

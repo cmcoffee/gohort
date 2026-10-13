@@ -499,7 +499,7 @@
     // global scope. (Defined here so it still closes over getApplianceID.)
     window.servitorMemBase = function() {
       var aid = getApplianceID();
-      if (!aid) { (window.uiAlert || window.alert)('Pick an appliance first'); return null; }
+      if (!aid) { (window.uiAlert || window.alert)('Pick a system first'); return null; }
       return 'api/appliances/' + encodeURIComponent(aid) + '/';
     };
 
@@ -569,7 +569,7 @@
 
     window.uiRegisterClientAction('servitor_open_rules', function() {
       var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick a system first'); return; }
       // Rules are stored as a LIST of records (one rule each), not
       // a single blob. Render a list + an "add new" row.
       var listBox = el('div', {class: 'ui-servitor-rules-list'},
@@ -650,7 +650,7 @@
         {key: 'file_delete', label: 'File changes',
          desc: 'rm, cp/mv onto existing files, chmod, sed -i, redirects onto real files, git clean/reset: removing, overwriting or changing files outside the session scratch directory.'},
         {key: 'net_egress', label: 'Outbound calls',
-         desc: 'curl, wget, ssh, scp, git push: the appliance reaching out to the network.'},
+         desc: 'curl, wget, ssh, scp, git push: the system reaching out to the network.'},
         {key: 'sys_control', label: 'System control',
          desc: 'systemctl stop/restart, reboot, kill, docker rm, kubectl apply, firewall changes.'},
         {key: 'pkg_install', label: 'Software installs',
@@ -696,7 +696,7 @@
         alwaysBox.innerHTML = '';
         alwaysBox.appendChild(el('div', {style: 'font-weight:600;margin:18px 0 4px'}, ['Always allowed']));
         alwaysBox.appendChild(el('div', {class: 'ui-pl-empty', style: 'text-align:left;margin-bottom:6px'},
-          ['Commands you answered Always for. Each runs without asking, as written, on that appliance only. Remove one and it asks again.']));
+          ['Commands you answered Always for. Each runs without asking, as written, on that system only. Remove one and it asks again.']));
         if (!list.length) {
           alwaysBox.appendChild(el('div', {class: 'ui-pl-empty', style: 'text-align:left'},
             ['None yet. Answer Always on an approval card to add one.']));
@@ -748,7 +748,7 @@
 
     window.uiRegisterClientAction('servitor_open_profile', function() {
       var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick a system first'); return; }
       var body = el('div', {class: 'ui-pl-modal-body'},
         [el('div', {text: 'Loading…'})]);
       var m = openModal('System Profile', body);
@@ -761,7 +761,7 @@
           body.innerHTML = '';
           if (!d.profile) {
             body.appendChild(el('div', {class: 'ui-pl-empty'},
-              ['No profile yet. Run "Refresh" to scan this appliance.']));
+              ['No profile yet. Run "Refresh" to scan this system.']));
             return;
           }
           var hdr = el('div', {class: 'ui-servitor-profile-h'},
@@ -881,7 +881,7 @@
       var wsRoles = Object.assign({}, rec.member_roles || {});
       var wsLinks = (rec.member_links || []).slice();
       var wsNames = {};
-      var wsMembersBox = el('div', {}, ['Loading appliances…']);
+      var wsMembersBox = el('div', {}, ['Loading systems…']);
       var wsLoaded = false;
       function loadWorkspaceMembers() {
         if (wsLoaded) return;
@@ -897,7 +897,7 @@
             wsMembersBox.innerHTML = '';
             if (!list.length) {
               wsMembersBox.appendChild(el('div', {class: 'ui-form-hint'},
-                ['No repos or SSH appliances yet: create some first, then add them here.']));
+                ['No repos or SSH systems yet: create some first, then add them here.']));
               return;
             }
             list.forEach(function(a) {
@@ -944,7 +944,7 @@
           })
           .catch(function() {
             wsMembersBox.innerHTML = '';
-            wsMembersBox.appendChild(el('div', {class: 'ui-form-hint'}, ['Failed to load appliances.']));
+            wsMembersBox.appendChild(el('div', {class: 'ui-form-hint'}, ['Failed to load systems.']));
           });
       }
 
@@ -999,7 +999,7 @@
         wsLinksBox.appendChild(add);
       }
       var workspaceSection = el('div', {class: 'ui-servitor-app-section'}, [
-        el('label', {}, ['Member Appliances *']), wsMembersBox,
+        el('label', {}, ['Member Systems *']), wsMembersBox,
         el('div', {class: 'ui-form-hint'},
           ['Pick the repos and SSH boxes this workspace investigates together. A question fans out to the relevant members and the answers are combined: e.g. trace a log line seen on a box back to the repo that emits it.']),
         el('div', {class: 'ui-form-hint'},
@@ -1027,7 +1027,7 @@
             lrBox.innerHTML = '';
             if (!list.length) {
               lrBox.appendChild(el('div', {class: 'ui-form-hint'},
-                ['No repositories yet: add one (New Appliance → Repo), then link it here.']));
+                ['No repositories yet: add one (New System → Repo), then link it here.']));
               return;
             }
             list.forEach(function(a) {
@@ -1199,7 +1199,7 @@
           ['The tools\' own descriptions carry most of the detail. This adds what the target is as a whole, and what counts as a good answer about it.']),
         el('label', {}, ['Tools it may use']), tsBox,
         el('div', {class: 'ui-form-hint'},
-          ['Only the tools you tick are reachable: there is no shell here. "ask first" prompts you per call. "orientation" marks the one cheap tool run at the start of a mapping session to orient the investigator. Each binding records a fingerprint of the tool as approved; if the tool is edited later it is withheld until you re-save this appliance.']),
+          ['Only the tools you tick are reachable: there is no shell here. "ask first" prompts you per call. "orientation" marks the one cheap tool run at the start of a mapping session to orient the investigator. Each binding records a fingerprint of the tool as approved; if the tool is edited later it is withheld until you re-save this system.']),
       ]);
 
       // Remote section — a stub pointing at an appliance on another instance.
@@ -1381,7 +1381,7 @@
         placeholder: 'Persona name (e.g. Support, QA, DevOps)',
         value: rec.persona_name || ''});
       var personaPromptIn = el('textarea', {class: 'ui-form-input', rows: 3,
-        placeholder: 'Describe how the AI should approach this appliance…'});
+        placeholder: 'Describe how the AI should approach this system…'});
       personaPromptIn.value = rec.persona_prompt || '';
 
       // Linked Knowledge — collections the investigator can search (via
@@ -1488,7 +1488,7 @@
         sharedRow, sharedHint,
       ]);
 
-      var m = openModal(isEdit ? 'Edit Appliance' : 'New Appliance', body);
+      var m = openModal(isEdit ? 'Edit System' : 'New System', body);
 
       var saveBtn = el('button', {class: 'ui-row-btn primary',
         onclick: function() {
@@ -1534,7 +1534,7 @@
           if (payload.type === 'bundle' && !payload.name) { window.uiAlert('Name is required'); return; }
           if (payload.type === 'toolset' && !payload.toolset.length) { window.uiAlert('Pick at least one tool this system may use'); return; }
           if (payload.type === 'remote' && (!payload.peer_name || !payload.remote_id)) { window.uiAlert('Pick the system on the peer'); return; }
-          if (payload.type === 'workspace' && !payload.members.length) { window.uiAlert('Select at least one member appliance'); return; }
+          if (payload.type === 'workspace' && !payload.members.length) { window.uiAlert('Select at least one member system'); return; }
           saveBtn.disabled = true;
           fetch('api/appliances', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1558,7 +1558,7 @@
         var delBtn = el('button', {class: 'ui-row-btn danger',
           style: 'margin-right: auto',
           onclick: async function() {
-            if (!(await window.uiConfirm('Delete this appliance? All saved facts, rules, and sessions will remain but become orphaned.'))) return;
+            if (!(await window.uiConfirm('Delete this system? All saved facts, rules, and sessions will remain but become orphaned.'))) return;
             fetch('api/appliance/' + encodeURIComponent(rec.id),
               {method: 'DELETE'}).then(function() {
               m.close();
@@ -1700,7 +1700,7 @@
 
     window.uiRegisterClientAction('servitor_appliance_access', function() {
       var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick a system first'); return; }
       var sel = document.querySelector('[name="appliance_id"]');
       var name = (sel && sel.options && sel.selectedIndex >= 0) ? sel.options[sel.selectedIndex].text : aid;
       openAccessModal(aid, name);
@@ -1711,7 +1711,7 @@
     });
     window.uiRegisterClientAction('servitor_edit_appliance', function() {
       var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick a system first'); return; }
       fetch('api/appliance/' + encodeURIComponent(aid))
         .then(function(r) {
           if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -1719,7 +1719,7 @@
         })
         .then(function(rec) { openApplianceModal(rec); })
         .catch(function(err) {
-          window.uiAlert('Failed to load appliance: ' + (err && err.message || err));
+          window.uiAlert('Failed to load system: ' + (err && err.message || err));
         });
     });
 
@@ -1764,7 +1764,7 @@
         if (saveDestinations.guide) {
           var gBtn = makeBtn('↗ Guide', function() {
             var aid = getApplianceID();
-            if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+            if (!aid) { window.uiAlert('Pick a system first'); return; }
             function pushTo(gid) {
               gBtn.disabled = true; gBtn.textContent = 'Incorporating…';
               fetch('api/push-to-guide?appliance_id=' + encodeURIComponent(aid), {
@@ -1815,9 +1815,9 @@
 
     window.uiRegisterClientAction('servitor_clear_memory', async function(ctx) {
       var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick a system first'); return; }
       var isRepo = isRepoAppliance(aid);
-      var msg = 'Clear all memory for this appliance?\n\n' +
+      var msg = 'Clear all memory for this system?\n\n' +
         'This removes:\n' +
         '• System profile (map data)\n' +
         '• Knowledge docs\n' +
@@ -1825,7 +1825,7 @@
         '• Notes and techniques\n' +
         (isRepo ? '• Ingested code files (the repository will need re-cloning)\n' : '') +
         '\n' +
-        'The appliance connection settings are kept. Run "Refresh" to rebuild' +
+        'The system connection settings are kept. Run "Refresh" to rebuild' +
         (isRepo ? ' (it re-clones, then re-maps).' : '.') + '\n\n' +
         'This cannot be undone.';
       if (!(await window.uiConfirm(msg))) return;
@@ -1850,7 +1850,7 @@
     // the regular Map System uses.
     window.uiRegisterClientAction('servitor_run_mapapp', function(ctx) {
       var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick a system first'); return; }
       var cmdIn = el('input', {type: 'text', class: 'ui-form-input',
         placeholder: 'e.g. kubectl, redis-cli, systemctl',
         style: 'width: 100%'});
@@ -1895,8 +1895,8 @@
 
     window.uiRegisterClientAction('servitor_run_map', async function(ctx) {
       var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
-      if (!(await window.uiConfirm('Run a full system map on this appliance? This may take a few minutes.'))) return;
+      if (!aid) { window.uiAlert('Pick a system first'); return; }
+      if (!(await window.uiConfirm('Map this whole system? This may take a few minutes.'))) return;
       fetch('api/map', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({appliance_id: aid}),
@@ -1924,7 +1924,7 @@
     // another LLM to help build/improve a support tool for this system.
     window.uiRegisterClientAction('servitor_export_knowledge', function() {
       var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick a system first'); return; }
       fetch('api/knowledge/export?appliance_id=' + encodeURIComponent(aid))
         .then(function(r) {
           if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
@@ -2043,7 +2043,7 @@
         cont.innerHTML = '';
         var ph = document.createElement('div');
         ph.className = 'ui-agent-terminal-placeholder';
-        ph.textContent = '(pick an appliance to connect)';
+        ph.textContent = '(pick a system to connect)';
         cont.appendChild(ph);
         termLastID = '';
         return;
