@@ -2019,3 +2019,34 @@ func TestAFetchToASecuredHostSaysWhatToDo(t *testing.T) {
 		t.Errorf("an open credential's host was refused as secured: %v", err)
 	}
 }
+
+// Taking back a lend made for one agent takes that agent off the person's
+// scope and nothing more, and is never refused: a lock an administrator put on
+// lending stops new lends, not the end of old ones.
+func TestTakingBackALendForOneAgent(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().LendForAgent("alice", "wiki", "agent-1", []string{"bob", "carol"}, false)
+	Secure().LendForAgent("alice", "wiki", "agent-2", []string{"carol"}, false)
+	Secure().mutateOwned("alice", "wiki", func(c *SecureCredential) { c.AdminLendLocked = true })
+	if c, _ := Secure().LoadUser("alice", "wiki"); !c.AdminLendLocked {
+		t.Fatal("the lock did not take")
+	}
+
+	gone, err := Secure().TakeBackForAgent("alice", "wiki", "agent-1", []string{"bob", "carol"})
+	if err != nil {
+		t.Fatalf("take back under an admin lock: %v", err)
+	}
+	if len(gone) != 1 || gone[0] != "bob" {
+		t.Errorf("took the key from %v, want only bob", gone)
+	}
+	if _, ok := Secure().ResolveIn("wiki", "bob", "agent-1"); ok {
+		t.Error("bob still holds it for agent-1")
+	}
+	if _, ok := Secure().ResolveIn("wiki", "carol", "agent-1"); ok {
+		t.Error("carol still holds it for agent-1")
+	}
+	if _, ok := Secure().ResolveIn("wiki", "carol", "agent-2"); !ok {
+		t.Error("carol's lend for agent-2 went with agent-1's")
+	}
+}

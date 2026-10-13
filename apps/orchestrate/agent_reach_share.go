@@ -21,6 +21,8 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+func init() { OnTeamsChanged(reconcileShareLends) }
+
 // shareLendTable records credential lends made through an agent share: key is
 // the owner, the agent and the credential; value is the people THAT share lent
 // it to.
@@ -76,19 +78,19 @@ func withdrawAgentShare(owner, agentID string, dropped []string) []string {
 		if len(take) == 0 {
 			continue
 		}
-		c, ok := Secure().LoadUser(owner, cred)
-		if !ok {
+		if _, ok := Secure().LoadUser(owner, cred); !ok {
 			orchestrateBaseDB.Unset(shareLendTable, k)
 			continue
 		}
-		read, write := c.SharedReadOnly, c.SharedReadWrite
-		for _, u := range take {
-			read, write = withoutOne(read, u), withoutOne(write, u)
-		}
-		if err := Secure().SetCredentialShares(owner, cred, read, write); err != nil {
+		// This agent comes off their lend; a lend they hold for another
+		// agent, or one made by hand, stays.
+		gone, err := Secure().TakeBackForAgent(owner, cred, agentID, take)
+		if err != nil {
 			continue
 		}
-		out = append(out, "credential "+cred+" → no longer "+strings.Join(take, ", "))
+		if len(gone) > 0 {
+			out = append(out, "credential "+cred+" → no longer "+strings.Join(gone, ", "))
+		}
 		if rest := remaining(lent, take); len(rest) > 0 {
 			orchestrateBaseDB.Set(shareLendTable, k, rest)
 		} else {
@@ -136,20 +138,63 @@ func withdrawOneCredentialLend(owner, agentID, cred string) string {
 	if !orchestrateBaseDB.Get(shareLendTable, key, &lent) || len(lent) == 0 {
 		return ""
 	}
-	c, ok := Secure().LoadUser(owner, cred)
-	if !ok {
+	if _, ok := Secure().LoadUser(owner, cred); !ok {
 		orchestrateBaseDB.Unset(shareLendTable, key)
 		return ""
 	}
-	read, write := c.SharedReadOnly, c.SharedReadWrite
-	for _, u := range lent {
-		read, write = withoutOne(read, u), withoutOne(write, u)
-	}
-	if err := Secure().SetCredentialShares(owner, cred, read, write); err != nil {
+	gone, err := Secure().TakeBackForAgent(owner, cred, agentID, lent)
+	if err != nil {
 		return ""
 	}
 	orchestrateBaseDB.Unset(shareLendTable, key)
-	return "credential " + cred + " → no longer " + strings.Join(lent, ", ")
+	if len(gone) == 0 {
+		return ""
+	}
+	return "credential " + cred + " → no longer " + strings.Join(gone, ", ")
+}
+
+// reconcileShareLends takes back the lends agent shares made to people those
+// shares no longer reach. Run whenever teams change: someone leaving a team,
+// the owner leaving it, the team losing "can share" or being deleted all end
+// a team share without anybody editing the agent, so the save path that
+// usually takes lends back never runs.
+//
+// Only takes back. Someone joining the team gets the agent but not the key;
+// the agent's share panel shows them as missing it, and the owner lends it to
+// them from there.
+func reconcileShareLends() {
+	if orchestrateBaseDB == nil {
+		return
+	}
+	lost := map[string][]string{} // owner + "\x00" + agent id -> people
+	for _, k := range orchestrateBaseDB.Keys(shareLendTable) {
+		parts := strings.SplitN(k, "\x00", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		owner, agentID := parts[0], parts[1]
+		var lent []string
+		if !orchestrateBaseDB.Get(shareLendTable, k, &lent) {
+			continue
+		}
+		a, ok := loadAgent(UserDB(orchestrateBaseDB, owner), agentID)
+		for _, u := range lent {
+			if ok && a.Owner == owner && SharedWithUser(a.AllowedUsers, owner, u) {
+				continue
+			}
+			ak := owner + "\x00" + agentID
+			if !namedIn(lost[ak], u) {
+				lost[ak] = append(lost[ak], u)
+			}
+		}
+	}
+	for ak, people := range lost {
+		owner, agentID, _ := strings.Cut(ak, "\x00")
+		if lines := withdrawAgentShare(owner, agentID, people); len(lines) > 0 {
+			Log("[orchestrate.share] teams changed, so %s no longer reach agent %s of %s: %s",
+				strings.Join(people, ", "), agentID, owner, strings.Join(lines, "; "))
+		}
+	}
 }
 
 // lendModeFor reads back what this agent's share currently does with one key,

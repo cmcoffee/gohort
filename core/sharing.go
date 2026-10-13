@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
@@ -237,6 +238,34 @@ func init() {
 // joins later has the thing and somebody who leaves loses it.
 
 const shareGroupPrefix = "group:"
+
+// Membership read at the check covers every share that is a list. What it
+// cannot cover is a grant made to each member at the time of sharing, such
+// as a credential lent for an agent shared with a team: that sits on the
+// credential under each person's name. Whoever makes such a grant registers
+// here and is told whenever teams change (a person's teams set, a team saved
+// or deleted), to take back what no longer applies.
+var (
+	teamHooksMu sync.Mutex
+	teamHooks   []func()
+)
+
+// OnTeamsChanged registers fn to run after any change to who is on which team
+// or which teams can carry shares.
+func OnTeamsChanged(fn func()) {
+	teamHooksMu.Lock()
+	defer teamHooksMu.Unlock()
+	teamHooks = append(teamHooks, fn)
+}
+
+func teamsChanged() {
+	teamHooksMu.Lock()
+	hooks := append([]func(){}, teamHooks...)
+	teamHooksMu.Unlock()
+	for _, fn := range hooks {
+		fn()
+	}
+}
 
 // shareGroupOf is the group id an entry names, if it names one.
 func shareGroupOf(entry string) (string, bool) {

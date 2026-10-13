@@ -909,6 +909,7 @@ func AuthSetUserGroups(db Database, username string, groups []string) {
 	}
 	user.Groups = groups
 	db.Set(AuthTable, "user:"+username, user)
+	teamsChanged()
 }
 
 // AuthResolveUserApps returns the effective set of app paths a user may access:

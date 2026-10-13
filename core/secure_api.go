@@ -3823,6 +3823,15 @@ func readOnlyForUser(c SecureCredential, user string) bool {
 // A name in both lists resolves to read-write here rather than at lookup time,
 // so what is stored is what was granted.
 func (s *SecureAPI) SetCredentialShares(owner, name string, readOnly, readWrite []string) error {
+	return s.setCredentialShares(owner, name, readOnly, readWrite, false)
+}
+
+// setCredentialShares is SetCredentialShares; takeOnly says the write only
+// removes people. Taking a lend back is always allowed, so the checks on
+// lending (an admin's lock, the key's own policy, a deployment key of the
+// same name) do not apply to it: refusing would leave someone holding a key
+// because somebody else still does.
+func (s *SecureAPI) setCredentialShares(owner, name string, readOnly, readWrite []string, takeOnly bool) error {
 	if !s.ready() || strings.TrimSpace(owner) == "" || name == "" {
 		return fmt.Errorf("owner and name required")
 	}
@@ -3835,11 +3844,11 @@ func (s *SecureAPI) SetCredentialShares(owner, name string, readOnly, readWrite 
 	}
 	write := cleanShareList(readWrite, owner, nil)
 	read := cleanShareList(readOnly, owner, write)
-	if len(read)+len(write) > 0 && c.AdminLendLocked {
+	if !takeOnly && len(read)+len(write) > 0 && c.AdminLendLocked {
 		s.mu.Unlock()
 		return fmt.Errorf("an administrator stopped the lending of credential %q: ask them to allow it again", name)
 	}
-	if len(read)+len(write) > 0 && s.db.Get(secureAPITable, name, &SecureCredential{}) {
+	if !takeOnly && len(read)+len(write) > 0 && s.db.Get(secureAPITable, name, &SecureCredential{}) {
 		s.mu.Unlock()
 		return fmt.Errorf("the deployment has a credential named %q, so a lend of yours under that name would not reach anyone: rename yours to lend it", name)
 	}
@@ -3847,7 +3856,7 @@ func (s *SecureAPI) SetCredentialShares(owner, name string, readOnly, readWrite 
 	// every door: the guided flow, both pickers, the fan-out and the ledger.
 	// A flow that merely declined to OFFER a lend would be one refusal that
 	// any other caller walks straight past.
-	if len(read)+len(write) > 0 {
+	if !takeOnly && len(read)+len(write) > 0 {
 		if why := lendingRefusal(c, len(write) > 0); why != "" {
 			s.mu.Unlock()
 			return errString(why)
@@ -4553,6 +4562,61 @@ func (s *SecureAPI) LendForAgent(owner, name, agentID string, users []string, wr
 		return err
 	}
 	return s.setLendScope(owner, name, scope)
+}
+
+// TakeBackForAgent undoes LendForAgent for these people and this agent only,
+// and returns who it took the key from.
+//
+// The agent comes off each person's scope; the lend itself goes only when no
+// agent is left in it. A lend with no scope is left alone: it was made by hand
+// on the credential, not by sharing an agent, and is not this call's to undo.
+func (s *SecureAPI) TakeBackForAgent(owner, name, agentID string, users []string) ([]string, error) {
+	agentID = strings.TrimSpace(agentID)
+	c, ok := s.LoadUser(owner, name)
+	if !ok || agentID == "" {
+		return nil, errString("no credential " + name + " owned by " + owner)
+	}
+	scope := map[string][]string{}
+	for u, ids := range c.SharedForAgents {
+		scope[u] = append([]string{}, ids...)
+	}
+	read, wr := c.SharedReadOnly, c.SharedReadWrite
+	var gone []string
+	for _, u := range users {
+		u = strings.TrimSpace(u)
+		if !credSliceHas(scope[u], agentID) {
+			continue
+		}
+		var rest []string
+		for _, id := range scope[u] {
+			if id != agentID {
+				rest = append(rest, id)
+			}
+		}
+		if len(rest) > 0 {
+			scope[u] = rest
+			continue
+		}
+		delete(scope, u)
+		read, wr = credWithout(read, u), credWithout(wr, u)
+		gone = append(gone, u)
+	}
+	if len(gone) > 0 {
+		if err := s.setCredentialShares(owner, name, read, wr, true); err != nil {
+			return nil, err
+		}
+	}
+	return gone, s.setLendScope(owner, name, scope)
+}
+
+func credWithout(list []string, drop string) []string {
+	out := []string{}
+	for _, u := range list {
+		if u != drop {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // setLendScope writes the scope map beside the lists SetCredentialShares just

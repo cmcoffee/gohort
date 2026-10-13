@@ -123,7 +123,7 @@ func shareAgentGuided(owner, id string, recipients []string, answers map[string]
 	if _, err := saveAgent(udb, a); err != nil {
 		return []string{"Could not share the agent: " + err.Error()}
 	}
-	out := []string{"Agent " + a.Name + " → " + strings.Join(recipients, ", ")}
+	out := []string{"Agent " + a.Name + " → " + ShareRecipientsText(recipients)}
 
 	// Everything else the agent uses travels with it, so there is nothing to
 	// grant and nothing to report beyond saying so once.
@@ -148,13 +148,20 @@ func applyCredentialAnswer(owner, agentID string, it reachItem, recipients []str
 		// Scoped to THIS agent. They needed the key to run this, so this is
 		// where it works: not from an agent of their own, not from a tool they
 		// write next week. The grant is as narrow as the reason for it.
-		if err := Secure().LendForAgent(owner, it.id, agentID, recipients, answer == credWrite); err != nil {
+		// To people. A key is lent to a person, so a team on the list is
+		// its members today; someone who joins later is shown as missing
+		// it, and someone who leaves has it taken back (reconcileShareLends).
+		people := ShareMembers(recipients, owner)
+		if len(people) == 0 {
+			return "Credential " + it.Name + ": nobody on the list to lend it to"
+		}
+		if err := Secure().LendForAgent(owner, it.id, agentID, people, answer == credWrite); err != nil {
 			return "Credential " + it.Name + ": " + err.Error()
 		}
 		// Recorded, so taking somebody off this agent takes the lend back
 		// with them — and takes back nothing the owner lent by hand.
-		recordShareLend(owner, agentID, it.id, recipients)
-		who := strings.Join(recipients, ", ")
+		recordShareLend(owner, agentID, it.id, people)
+		who := ShareRecipientsText(recipients)
 		if answer == credWrite {
 			return "Credential " + it.Name + " → " + who + ", reads and writes, inside this agent only. Their writes arrive as you."
 		}

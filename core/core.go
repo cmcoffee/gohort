@@ -852,10 +852,29 @@ func MigrateAppPathGrants(db Database, from, to string) int {
 var (
 	LoadAppGroups   = appgroups.LoadAppGroups
 	LoadAppGroup    = appgroups.LoadAppGroup
-	SaveAppGroup    = appgroups.SaveAppGroup
-	DeleteAppGroup  = appgroups.DeleteAppGroup
 	ExpandAppGroups = appgroups.ExpandAppGroups
 )
+
+// SaveAppGroup saves a team. Its "can share" switch is one of the things that
+// decide who a team share reaches, so whatever holds grants made through one
+// is told (see OnTeamsChanged).
+func SaveAppGroup(db appgroups.Store, g AppGroup) (AppGroup, error) {
+	saved, err := appgroups.SaveAppGroup(db, g)
+	if err == nil {
+		teamsChanged()
+	}
+	return saved, err
+}
+
+// DeleteAppGroup removes a team, and tells whatever holds grants made through
+// it (see OnTeamsChanged).
+func DeleteAppGroup(db appgroups.Store, id string) error {
+	err := appgroups.DeleteAppGroup(db, id)
+	if err == nil {
+		teamsChanged()
+	}
+	return err
+}
 
 // --- looptune (agent-loop round/spend limits) -------------------------------
 
