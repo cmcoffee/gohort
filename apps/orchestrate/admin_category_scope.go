@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/toolcat"
 )
 
 func init() {
@@ -42,7 +43,10 @@ func categoryMembers(db Database, owner, category string) []string {
 	}
 	var names []string
 	for _, p := range LoadPersistentTempTools(db, owner) {
-		if strings.EqualFold(strings.TrimSpace(p.Tool.Category), category) {
+		// Its category as the owner sees it: their label, else the one it was
+		// filed under (core/toolcat), so access by category reaches every tool
+		// shown under that heading.
+		if c, _ := toolcat.Of(owner, p.Tool); strings.EqualFold(c, category) {
 			names = append(names, p.Tool.Name)
 		}
 	}

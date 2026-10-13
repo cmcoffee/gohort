@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 func lazyDefs(names ...string) []AgentToolDef {
@@ -117,13 +118,16 @@ func TestLoadToolLoadsAWholeGroup(t *testing.T) {
 	}
 }
 
-// An API-less tool with no category of its own is filed by the worker once,
+// A tool with no category of its own is filed by the worker once,
 // in the background, among the categories already in use, and groups from the
 // next turn. The owner's own category is never asked about, and a changed
 // description is filed again.
 func TestAnAPILessToolIsFiledOnceAndGroupsNextTurn(t *testing.T) {
 	turn, sess := newAuthoringTestTurn(t)
 	turn.ctx = context.Background()
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()} // where filed categories are kept (core/toolcat)
+	t.Cleanup(func() { RootDB = prevRoot })
 	var mu sync.Mutex
 	asked := map[string]int{}
 	prev := toolCategoryAsk
@@ -150,8 +154,8 @@ func TestAnAPILessToolIsFiledOnceAndGroupsNextTurn(t *testing.T) {
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		_, a := autoToolCategory(turn.udb, sess.TempTools[1])
-		_, b := autoToolCategory(turn.udb, sess.TempTools[2])
+		_, a := autoToolCategory(turn.toolOwner(), sess.TempTools[1])
+		_, b := autoToolCategory(turn.toolOwner(), sess.TempTools[2])
 		if a && b {
 			break
 		}
@@ -160,7 +164,7 @@ func TestAnAPILessToolIsFiledOnceAndGroupsNextTurn(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if c, _ := autoToolCategory(turn.udb, sess.TempTools[1]); c != "Music" {
+	if c, _ := autoToolCategory(turn.toolOwner(), sess.TempTools[1]); c != "Music" {
 		t.Errorf("filed as %q, want the spelling in use", c)
 	}
 	g := turn.toolGroupsFor(sess, lazy)
@@ -173,7 +177,7 @@ func TestAnAPILessToolIsFiledOnceAndGroupsNextTurn(t *testing.T) {
 		t.Errorf("asked %v: the owner's label is never asked about, and a filed tool is not asked again", asked)
 	}
 	sess.TempTools[1].Description = "make a podcast"
-	if _, ok := autoToolCategory(turn.udb, sess.TempTools[1]); ok {
+	if _, ok := autoToolCategory(turn.toolOwner(), sess.TempTools[1]); ok {
 		t.Error("a changed description kept its old filing")
 	}
 }
@@ -184,7 +188,7 @@ func TestAFilingThatNamesTheToolIsRefused(t *testing.T) {
 	t.Cleanup(func() { toolCategoryAsk = prev })
 	for _, answer := range []string{`{"category": "gen_a"}`, `{"category": ""}`, `not json`} {
 		toolCategoryAsk = func(context.Context, *OrchestrateApp, []Message) (string, error) { return answer, nil }
-		if c, err := fileToolCategory(context.Background(), nil, &TempTool{Name: "gen_a"}, nil); err == nil {
+		if c, err := fileToolCategory(context.Background(), nil, &TempTool{Name: "gen_a"}, nil, nil); err == nil {
 			t.Errorf("%s filed as %q", answer, c)
 		}
 	}

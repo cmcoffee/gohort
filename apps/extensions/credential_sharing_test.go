@@ -155,16 +155,24 @@ func TestTheShareActionsFollowTheLendingPolicy(t *testing.T) {
 		t.Fatalf("reading the source: %v", err)
 	}
 	src := string(raw)
+	// Both lists live in the API's Security panel beside the lending
+	// setting, and the policy is enforced where a share is WRITTEN
+	// (SetCredentialShares), so a list the policy forbids is refused rather
+	// than merely hidden.
 	for _, want := range []string{
-		`LendNone  bool ` + "`" + `json:"_lend_none"` + "`",
-		`LendWrite bool ` + "`" + `json:"_lend_write"` + "`",
-		`LendNone:        !lend,`,
-		`LendWrite:       write,`,
-		`ui.ExpandIf("Share for reads", "", "_lend_none",`,
-		`ui.ExpandIf("Share for writes", "_lend_write", "",`,
+		`ui.Expand("Security", ui.Stack{Children: []ui.Component{`,
+		`Field:         "shared_read_only",`,
+		`Field:         "shared_read_write",`,
 	} {
 		if !strings.Contains(src, want) {
-			t.Errorf("the credential list no longer carries %s", want)
+			t.Errorf("the API's Security panel no longer carries %s", want)
 		}
+	}
+	core, err := os.ReadFile("../../core/secure_api.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(core), "if why := lendingRefusal(c, len(write) > 0); why != \"\" {") {
+		t.Error("a share is no longer checked against the lending policy where it is written")
 	}
 }

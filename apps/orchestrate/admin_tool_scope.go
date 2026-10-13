@@ -281,6 +281,15 @@ func setToolScope(db Database, owner, toolName, target string, on bool) error {
 	// unbundleAgentToolByID orphans the record when this was the LAST
 	// carrier — same survival guarantee agent-delete gives — so no
 	// snapshot/re-check dance is needed here anymore.
+	//
+	// An agent that does not carry it is already off: a pill that was stale,
+	// or a selection the page sent twice, is not an error to show the owner
+	// ("not bundled on agent Critic" for a click that asked for exactly the
+	// state it is in).
+	if p, ok := UserToolByName(db, owner, toolName); ok && !p.ScopedToAgent(target) {
+		Debug("[temptool.scope] %s: %q off for agent %s, which does not carry it (scope %v): nothing to do", owner, toolName, target, p.ScopeAgents)
+		return nil
+	}
 	return unbundleAgentToolByID(udb, owner, target, toolName)
 }
 

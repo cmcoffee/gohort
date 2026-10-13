@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/toolcat"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -145,7 +146,7 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 			// header; default the user's OWN Builder-authored tools to a clear
 			// "My Tools" group instead of the generic "Other" bucket, where they
 			// were easy to miss when enabling them on an agent.
-			cat := p.Tool.Category
+			cat, _ := toolcat.Of(user, p.Tool) // theirs, else the one it was filed under
 			if cat == "" {
 				cat = "My Tools"
 			}

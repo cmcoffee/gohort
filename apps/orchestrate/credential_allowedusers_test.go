@@ -107,3 +107,46 @@ func TestSecuredCredentialIgnoresPerAgentOptOut(t *testing.T) {
 		t.Error("another user still resolves the open global; the opt-out must deny there")
 	}
 }
+
+// Tier 3: an API of the user's own narrowed to some of their agents ("Only
+// these agents") is denied to every other agent, and only that API. A key
+// somebody else owns is not narrowed by it.
+func TestCredentialOnlyAgents(t *testing.T) {
+	secStore := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return secStore }
+	defer func() { AuthDB = prev }()
+
+	for _, name := range []string{"weather", "news"} {
+		if err := Secure().Save(SecureCredential{Name: name, Type: SecureCredBearer, BaseURL: "https://" + name + ".test", Owner: "alice"}, "k"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Secure().SetOnlyAgentsOwned("alice", "weather", []string{"a-forecaster", "seed-builder"}); err != nil {
+		t.Fatal(err)
+	}
+	if deny := credentialDenySet(AgentRecord{ID: "a-forecaster", Owner: "alice"}, "alice"); deny["weather"] || deny["news"] {
+		t.Fatalf("a listed agent was denied: %v", deny)
+	}
+	if deny := credentialDenySet(AgentRecord{ID: "a-other", Owner: "alice"}, "alice"); !deny["weather"] || deny["news"] {
+		t.Fatalf("an agent off the list must lose weather only: %v", deny)
+	}
+	if deny := credentialDenySet(AgentRecord{ID: "seed-builder"}, "alice"); deny["weather"] {
+		t.Fatal("Builder, listed, was denied")
+	}
+	// An ordinary save keeps the list; clearing it opens the API again.
+	c, _ := Secure().LoadUser("alice", "weather")
+	c.Description = "edited"
+	if err := Secure().Save(c, ""); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := Secure().LoadUser("alice", "weather"); len(c.OnlyAgents) != 2 {
+		t.Fatalf("a save dropped the agent list: %+v", c.OnlyAgents)
+	}
+	if err := Secure().SetOnlyAgentsOwned("alice", "weather", nil); err != nil {
+		t.Fatal(err)
+	}
+	if deny := credentialDenySet(AgentRecord{ID: "a-other", Owner: "alice"}, "alice"); deny["weather"] {
+		t.Fatal("clearing the list did not open the API again")
+	}
+}

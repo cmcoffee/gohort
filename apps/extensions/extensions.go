@@ -20,6 +20,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/toolcat"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -76,6 +77,7 @@ func (T *Extensions) Routes() {
 	T.HandleFunc("/api/credentials", T.handleCredentials)
 	T.HandleFunc("/api/tools", T.handleUserTools)
 	T.HandleFunc("/api/tool-access", T.handleUserToolAccess)
+	T.HandleFunc("/api/category-security", T.handleCategorySecurity)
 	T.HandleFunc("/api/tool-categories", T.handleUserToolCategories)
 	T.HandleFunc("/api/promotions", T.handlePromotions)
 	// The ACL picker's candidate list, served HERE rather than borrowed from
@@ -132,12 +134,6 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			// to today. A decision about the key, not about an occasion.
 			Lending      string `json:"lending"`
 			LendingLabel string `json:"lending_label"`
-			// The policy as the two share actions gate on it. Row actions test
-			// a field for truthiness only, so the value test is done here, by
-			// the same MayLend the share write refuses with: an action that
-			// shows is one that can succeed.
-			LendNone  bool `json:"_lend_none"`
-			LendWrite bool `json:"_lend_write"`
 			// The two share lists the pickers edit, plus the one-line summary
 			// the table column reads. Who a key reaches is the fact this page
 			// exists to let someone control, so it belongs in the list and not
@@ -152,7 +148,6 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			CanHandOver     bool `json:"can_hand_over"`
 		}
 		toRow := func(c SecureCredential) row {
-			lend, write := c.MayLend()
 			_, _, stored := Secure().CredentialStatusOwned(user, c.Name)
 			return row{
 				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
@@ -165,8 +160,6 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 				SharedSummary:   shareSummary(c),
 				Lending:         c.Lending,
 				LendingLabel:    lendingListLabel(c),
-				LendNone:        !lend,
-				LendWrite:       write,
 				HandoverPending: handoverPending(user, c.Name),
 				CanHandOver:     !handoverPending(user, c.Name),
 			}
@@ -194,6 +187,11 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			c, found := Secure().LoadUser(user, name)
 			if !found {
 				http.Error(w, "no such credential", http.StatusNotFound)
+				return
+			}
+			// view=security is the Security panel's record (api_security.go).
+			if r.URL.Query().Get("view") == "security" {
+				writeJSON(w, apiSecurityOf(c))
 				return
 			}
 			writeJSON(w, toRow(c))
@@ -236,6 +234,10 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		if strings.TrimSpace(r.URL.Query().Get("action")) == "security" {
+			T.saveAPISecurity(w, r, user)
+			return
+		}
 		if action := strings.TrimSpace(r.URL.Query().Get("action")); action == "enable" || action == "disable" {
 			name := strings.TrimSpace(r.URL.Query().Get("name"))
 			if name == "" {
@@ -255,11 +257,14 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			BaseURL         string `json:"base_url"`
 			ParamName       string `json:"param_name"`
 			Description     string `json:"description"`
-			Secret          string `json:"secret"`
-			RequiresConfirm bool   `json:"requires_confirm"`
-			ConfirmWrites   bool   `json:"confirm_writes"`
-			Secured         bool   `json:"secured"`
-			Lending         string `json:"lending"`
+			Secret      string `json:"secret"`
+			// The security fields are the Security panel's (api_security.go).
+			// Pointers, so a form that does not carry them (Edit, Add) leaves
+			// the stored values alone instead of resetting them to off.
+			RequiresConfirm *bool   `json:"requires_confirm"`
+			ConfirmWrites   *bool   `json:"confirm_writes"`
+			Secured         *bool   `json:"secured"`
+			Lending         *string `json:"lending"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -276,15 +281,24 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 		// Owner = the calling user: Save keys this into the user's namespace, so
 		// it can never touch a global (admin) credential of the same name.
 		c := SecureCredential{
-			Name:            strings.TrimSpace(body.Name),
-			Type:            body.Type,
-			BaseURL:         strings.TrimSpace(body.BaseURL),
-			ParamName:       strings.TrimSpace(body.ParamName),
-			Description:     strings.TrimSpace(body.Description),
-			RequiresConfirm: body.RequiresConfirm,
-			ConfirmWrites:   body.ConfirmWrites,
-			Lending:         body.Lending,
-			Owner:           user,
+			Name:        strings.TrimSpace(body.Name),
+			Type:        body.Type,
+			BaseURL:     strings.TrimSpace(body.BaseURL),
+			ParamName:   strings.TrimSpace(body.ParamName),
+			Description: strings.TrimSpace(body.Description),
+			Owner:       user,
+		}
+		if prev, found := Secure().LoadUser(user, c.Name); found {
+			c.RequiresConfirm, c.ConfirmWrites, c.Lending = prev.RequiresConfirm, prev.ConfirmWrites, prev.Lending
+		}
+		if body.RequiresConfirm != nil {
+			c.RequiresConfirm = *body.RequiresConfirm
+		}
+		if body.ConfirmWrites != nil {
+			c.ConfirmWrites = *body.ConfirmWrites
+		}
+		if body.Lending != nil {
+			c.Lending = *body.Lending
 		}
 		// Auto-enable on finishing a draft. A draft_api_credential lands
 		// DISABLED with a placeholder secret, and Save deliberately preserves
@@ -308,9 +322,11 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 		// flag from the stored record — the field is owned by this toggle, not
 		// by the form body, so an edit that never mentions it cannot clear it.
 		// Same shape as Disabled above.
-		if err := Secure().SetSecuredOwned(user, c.Name, body.Secured); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+		if body.Secured != nil {
+			if err := Secure().SetSecuredOwned(user, c.Name, *body.Secured); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodDelete:
@@ -438,8 +454,11 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Mode        string `json:"mode,omitempty"`
 			Credential  string `json:"credential,omitempty"`
 			Category    string `json:"category,omitempty"`
-			Missing     bool   `json:"missing"`
-			Shared      bool   `json:"shared"`
+			// CategoryAuto: the category is one gohort filed it under, not one
+			// the owner set (core/toolcat). Theirs always wins.
+			CategoryAuto bool `json:"category_auto,omitempty"`
+			Missing      bool `json:"missing"`
+			Shared       bool `json:"shared"`
 			// Who the OWNER handed it to, as against Shared, which is the
 			// deployment catalog an admin publishes into. Two different rungs
 			// and two different columns.
@@ -498,6 +517,9 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			// Group is the heading this row renders under (ui.Table group_by).
 			Group string `json:"group"`
 		}
+		// Tools with no category yet are filed in the background, and show
+		// under theirs from the next load (core/toolcat).
+		toolcat.Kick(user)
 		rows := []row{}
 		// The user's own published tools, by name: their releases.
 		released := map[string]ToolRelease{}
@@ -529,7 +551,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			r := row{
 				Key:  "pool:" + p.Tool.Name,
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
-				Credential: p.Tool.Credential, Category: p.Tool.Category,
+				Credential: p.Tool.Credential, Category: toolCategoryOf(user, p.Tool), CategoryAuto: toolCategoryIsAuto(user, p.Tool),
 				Missing: missing, Shared: p.Shared, LastUsed: last,
 				SharedWith: sharedWithSummary(p.SharedWith),
 				Locked:     p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly, NoUnattended: p.Tool.NoUnattended,
@@ -600,7 +622,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, row{
 				Key:  "scoped:" + st.AgentID + ":" + st.Tool.Name,
 				Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
-				Credential: st.Tool.Credential, Category: st.Tool.Category, Missing: missing,
+				Credential: st.Tool.Credential, Category: toolCategoryOf(user, st.Tool), CategoryAuto: toolCategoryIsAuto(user, st.Tool), Missing: missing,
 				AgentTool: true, Trial: st.Trial, Disabled: st.Tool.Disabled, DisableOK: true,
 				AgentID: st.AgentID, Agents: []string{agent}, AgentList: agent,
 				Group: "Scoped Tools",
@@ -621,7 +643,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, row{
 				Key:  "session:" + st.SessionID + ":" + st.Tool.Name,
 				Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
-				Credential: st.Tool.Credential, Category: st.Tool.Category,
+				Credential: st.Tool.Credential, Category: toolCategoryOf(user, st.Tool), CategoryAuto: toolCategoryIsAuto(user, st.Tool),
 				Session: true, SessionID: st.SessionID, AgentID: st.AgentID, Group: group,
 			})
 		}
@@ -651,7 +673,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, row{
 				Key:  "orphan:" + o.Tool.Name,
 				Name: o.Tool.Name, Description: o.Tool.Description, Mode: o.Tool.Mode,
-				Credential: o.Tool.Credential, Category: o.Tool.Category, Missing: missing,
+				Credential: o.Tool.Credential, Category: toolCategoryOf(user, o.Tool), CategoryAuto: toolCategoryIsAuto(user, o.Tool), Missing: missing,
 				Orphan: true, Deletable: true,
 				Group: "Orphaned Tools: agent " + former + " was deleted",
 			})
@@ -1609,25 +1631,6 @@ func credentialFormFields() []ui.FormField {
 		{Field: "param_name", Label: "Header / Param name", Placeholder: "X-Api-Key or api_key", ShowWhen: "type:header|query"},
 		{Field: "base_url", Label: "Base URL", Placeholder: "https://api.example.com", Help: "The server this credential talks to. Requests are allowed only under this host."},
 		{Field: "secret", Label: "Secret / token / password", Type: "password", ShowWhen: "type:bearer|header|query|basic_auth", Help: "Stored encrypted, never shown to the assistant. For HTTP Basic, enter it as user:pass. Leave blank when editing to keep the stored value."},
-		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "When on, every agent call through this credential asks you to allow it first.",
-			Detail: "Use it for anything that reaches real people or spends money."},
-		{Field: "confirm_writes", Label: "Confirm writes", Type: "toggle", ShowWhen: "!requires_confirm", Help: "Ask before a call that changes something (POST, PUT, PATCH, DELETE); reads go straight through.",
-			Detail: "For a key your agents mostly read with. A write asks you first in the chat; in a run nobody is watching (a schedule, a channel message) it waits in your approval queue, whoever sent the message."},
-		{Field: "secured", Label: "Only tools that declare it", Type: "toggle",
-			Help: "OFF: every one of your agents gets a fetch_url_<name> tool for this credential and can call the API directly. " +
-				"ON: no such tool is generated, the credential is reachable only through tools you build that name it, so access follows those tools' scope rather than being open to everything you run. " +
-				"The secret is never handed to tool code either way; calls are signed server-side."},
-		{Field: "lending", Label: "May this be lent to other people?", Type: "select",
-			Options: []ui.SelectOption{
-				{Value: "", Label: "Not decided"},
-				{Value: LendNone, Label: "Nobody — never lend this key"},
-				{Value: LendRead, Label: "Readers only"},
-				{Value: LendAny, Label: "Readers and writers"},
-			},
-			Help: "Your standing answer, as against who has it today.",
-			Detail: "Sharing an agent asks about each credential it touches, and without this the answer is a decision you make afresh every time — so a key you would never lend is one careless pass through that flow away from being lent.\n\n" +
-				"Nobody removes the lend options wherever they are offered, and refuses them wherever they are written. Readers only allows GET and HEAD through your key and refuses a write lend, which is the one that matters: what somebody writes through your credential arrives at the far end as YOU.\n\n" +
-				"Tightening this takes back what it now forbids. Setting Nobody over a key two people hold takes it from both; narrowing to Readers only leaves them the key and takes the writing."},
 		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to your agents as the tool description."},
 	}
 }
@@ -1736,9 +1739,9 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Subsection{
 					Title:    "Your APIs",
-					Subtitle: "The APIs you set up yourself: what each one is and which of your agents may use it. Its key lives under Connected accounts.",
+					Subtitle: "The APIs you set up yourself. Edit says what each one is; Security says who may use it. Its key lives under Connected accounts.",
 					Detail: "They live in your namespace: no other user can reach them, and they never appear on the admin page. " +
-						"By default every one of your agents gets a fetch_url_<name> tool for each; turn on \"Only tools that declare it\" to narrow a credential to the tools you build for it. " +
+						"By default every one of your agents gets a fetch_url_<name> tool for each. Each API's Security panel narrows that (only tools that declare it, or only the agents you pick), says whether to ask you first, and holds who you have lent it to. " +
 						"You can paste a key when you add one; after that, change or remove it under Connected accounts. A credential marked \"Needs its key\" is waiting for one there. " +
 						"Keys are stored encrypted and never shown to the assistant.",
 					Body: ui.Stack{Children: []ui.Component{
@@ -1799,46 +1802,58 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 								// it, and who sent it. An owner answerable for calls made
 								// under their name needs the one record that tells the
 								// two apart.
-								ui.Expand("Recent calls", ui.Table{
-									Source: "api/credentials?audit={name}",
-									RowKey: "when",
-									Columns: []ui.Col{
-										{Field: "when", Label: "When", Flex: 1},
-										{Field: "who", Label: "Who", Flex: 1},
-										{Field: "method", Label: "Method", Mute: true},
-										{Field: "url", Label: "URL", Flex: 3, Mute: true},
-										{Field: "outcome", Label: "Outcome", Flex: 1},
+								// Who may use it and how, in one place (api_security.go):
+								// which agents, whether to ask first, whether it may be
+								// lent, who has it, and what has gone through it.
+								ui.Expand("Security", ui.Stack{Children: []ui.Component{
+									ui.FormPanel{
+										Source:      "api/credentials?name={name}&view=security",
+										PostURL:     "api/credentials?action=security&name={name}",
+										SubmitLabel: "Save security",
+										Fields:      apiSecurityFields(),
+										Invalidate:  []string{"api/credentials"},
 									},
-									EmptyText: "Nothing has been sent through this credential yet.",
-								}),
-								// Each share action shows only where the lending policy
-								// allows it: reads unless it is Nobody, writes only for
-								// Readers and writers (or not decided).
-								ui.ExpandIf("Share for reads", "", "_lend_none", ui.ACLPicker(ui.ACLPickerConfig{
-									OptionsSource: "api/user-candidates",
-									RecordSource:  "api/credentials?name={name}",
-									Field:         "shared_read_only",
-									PostTo:        "api/credentials?action=share&name={name}",
-									Method:        "POST",
-									Noun:          "user",
-									Intro: "They can read through your key: GET and HEAD, nothing else. " +
-										"Your own use of it is unchanged. Every call is logged with their name against it.",
-									EmptyText:  "No other users to share with yet.",
-									Invalidate: []string{"api/credentials"},
-								})),
-								ui.ExpandIf("Share for writes", "_lend_write", "", ui.ACLPicker(ui.ACLPickerConfig{
-									OptionsSource: "api/user-candidates",
-									RecordSource:  "api/credentials?name={name}",
-									Field:         "shared_read_write",
-									PostTo:        "api/credentials?action=share&name={name}",
-									Method:        "POST",
-									Noun:          "user",
-									Intro: "They can write through your key, and what they write arrives as YOU: " +
-										"the page says you edited it, the ticket says you commented. " +
-										"The ledger records who actually made each call, which is the only place the two can be told apart. Share this with people you would let post under your name.",
-									EmptyText:  "No other users to share with yet.",
-									Invalidate: []string{"api/credentials"},
-								})),
+									ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Lent for reads</div>`},
+									ui.ACLPicker(ui.ACLPickerConfig{
+										OptionsSource: "api/user-candidates",
+										RecordSource:  "api/credentials?name={name}",
+										Field:         "shared_read_only",
+										PostTo:        "api/credentials?action=share&name={name}",
+										Method:        "POST",
+										Noun:          "user",
+										Intro: "They can read through your key: GET and HEAD, nothing else. " +
+											"Your own use of it is unchanged. Every call is logged with their name against it. Refused while lending is set to Nobody.",
+										EmptyText:  "No other users to share with yet.",
+										Invalidate: []string{"api/credentials"},
+									}),
+									ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Lent for writes</div>`},
+									ui.ACLPicker(ui.ACLPickerConfig{
+										OptionsSource: "api/user-candidates",
+										RecordSource:  "api/credentials?name={name}",
+										Field:         "shared_read_write",
+										PostTo:        "api/credentials?action=share&name={name}",
+										Method:        "POST",
+										Noun:          "user",
+										Intro: "They can write through your key, and what they write arrives as YOU: " +
+											"the page says you edited it, the ticket says you commented. " +
+											"The ledger records who actually made each call, which is the only place the two can be told apart. Share this with people you would let post under your name. Allowed only while lending is Readers and writers (or not decided).",
+										EmptyText:  "No other users to share with yet.",
+										Invalidate: []string{"api/credentials"},
+									}),
+									ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Recent calls</div>`},
+									ui.Table{
+										Source: "api/credentials?audit={name}",
+										RowKey: "when",
+										Columns: []ui.Col{
+											{Field: "when", Label: "When", Flex: 1},
+											{Field: "who", Label: "Who", Flex: 1},
+											{Field: "method", Label: "Method", Mute: true},
+											{Field: "url", Label: "URL", Flex: 3, Mute: true},
+											{Field: "outcome", Label: "Outcome", Flex: 1},
+										},
+										EmptyText: "Nothing has been sent through this credential yet.",
+									},
+								}}),
 								// Handing it over is a different ask from lending it, and
 								// the form says so before the ask rather than after. Sharing
 								// widens who may use something that stays yours; this ends
@@ -1917,7 +1932,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 				ui.Subsection{
 					Title:    "Your tools",
 					Subtitle: "Everything built for you, grouped by category.",
-					Detail:   "The category is the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table: open one and tick its tools. Tools that have not claimed one sit under \"Uncategorized\".\n\nThe Agents column says who can use each tool, where blank means your global pool and every agent, and Access is where you change that.\n\nA tool of yours in the deployment catalog runs for everyone else as the version an administrator approved. Your edits change your own copy; Request update asks for them to become the next version.\n\nTools the assistant authored but nobody has vouched for are badged Unconfirmed, and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
+					Detail:   "The category is the same heading a tool appears under in the tool picker and each app's tool list. Every tool is filed into one automatically (marked auto) among the categories already in use. You can set one yourself from the Categories list directly below this table: open one and tick its tools. Yours always wins, and a tool you untick from a category is not filed back into it. A tool sits under \"Uncategorized\" only until it has been filed.\n\nThe Agents column says who can use each tool, where blank means your global pool and every agent, and Security is where you change that.\n\nA tool of yours in the deployment catalog runs for everyone else as the version an administrator approved. Your edits change your own copy; Request update asks for them to become the next version.\n\nTools the assistant authored but nobody has vouched for are badged Unconfirmed, and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
 					// Tools first, then the categories that head them. Categories used to
 					// be their own rail section, which put the fix one navigation away
 					// from the problem: you read "Uncategorized" in this table and had to
@@ -1943,6 +1958,10 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							// name left a wide gap after it while the description was cut.
 							{Field: "name", Flex: 2},
 							{Field: "category", Label: "Category", Mute: true},
+							// Filed by gohort rather than set by the owner (core/toolcat).
+							{Field: "category_auto", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "auto", Color: "info"},
+							}},
 							{Field: "mode", Mute: true},
 							{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "In the catalog", Color: "info"},
@@ -1996,7 +2015,10 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							// Which agents a scoped tool is on. Blank for pool tools (every
 							// agent) and orphans (none) — the group heading already says so.
 							{Field: "agent_list", Label: "Agents", Mute: true, Flex: 1},
-							{Field: "description", Mute: true, Flex: 3},
+							// Its own line beneath the rest: on the first line it shared
+							// the width with the name, the category, a dozen badges and
+							// the agents, and was cut to a few words.
+							{Field: "description", Mute: true, Flex: 3, Line: 2},
 						},
 						RowActions: []ui.RowAction{
 							{Type: "button", Label: "Export", Method: "client",
@@ -2040,18 +2062,6 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							// The owner's own rung, beside the request for the wider one.
 							// Handing somebody a tool is yours to do; putting it in the
 							// deployment catalog is an admin's.
-							ui.ExpandIf("Share with users", "pool", "", ui.ACLPicker(ui.ACLPickerConfig{
-								OptionsSource: "api/user-candidates",
-								RecordSource:  "api/tools?share={name}",
-								Field:         "shared_with",
-								PostTo:        "api/tools?action=share&name={name}",
-								Method:        "POST",
-								Noun:          "user",
-								Intro: "They can take this tool into their own catalog, and it runs in THEIR session against their own credentials. " +
-									"Nothing loads for their agents until they take it: a share is an offer, not a push.",
-								EmptyText:  "No other users to share with yet.",
-								Invalidate: []string{"api/tools"},
-							})),
 							ui.ModalActionIf("Request to publish", "can_request", "", ui.FormPanel{
 								SubmitLabel: "Send request",
 								PostURL:     "api/promotions?kind=tool&name={name}",
@@ -2089,17 +2099,11 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							// only appear on draft rows, and every pool-only action below is
 							// hidden from them — a draft has no pool record to lock, disable,
 							// publish or delete, so those would just fail confusingly.
-							// Access — which of the user's OWN agents can use this tool,
-							// with "All my agents" as one more chip (the user-wide pool).
-							// The same control serves a session draft: picking anything is
-							// what KEEPS it, so a draft doesn't need its own verb.
-							// Access — the pill list: "All my agents" (the shared pool every
-							// agent draws from) plus one pill per agent the user owns.
-							// Same control the admin page used to carry, now where it
-							// belongs: an admin has no business choosing which of your
-							// agents load your own tool.
-							{Type: "button", Label: "Access", Method: "client",
-								PostTo: "tool_access_pills"},
+							// Security: who can use it, how it runs (never unattended,
+							// ask first, lock) and who it is shared with, in one panel
+							// (tool_security.go). It replaced Access and Share with users.
+							{Type: "button", Label: "Security", Method: "client",
+								PostTo: "tool_security"},
 							// Confirm — vouch for a tool the assistant authored. Only on
 							// unconfirmed rows; it clears the mark without moving the tool.
 							{Type: "button", Label: "Confirm", Method: "POST",
@@ -2112,12 +2116,6 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 								Confirm:    "Discard this draft? It disappears from the chat session that built it.",
 								Variant:    "danger",
 								Optimistic: true},
-							// Lock freezes the definition — the assistant can't modify or
-							// delete a locked tool (unlock first). Running is unaffected.
-							{Type: "button", Label: "Lock", Method: "POST",
-								PostTo: "api/tools?action=lock&name={name}", HideIf: "locked", OnlyIf: "pool"},
-							{Type: "button", Label: "Unlock", Method: "POST",
-								PostTo: "api/tools?action=unlock&name={name}", OnlyIf: "locked"},
 							// Disable hides the tool from every agent's catalog (Builder still
 							// loads it to test/fix). Enable restores it.
 							{Type: "button", Label: "Disable", Method: "POST",
@@ -2145,8 +2143,8 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 				ui.Subsection{
 					Title:    "Categories",
 					Subtitle: "The headings used above, and the same ones the tool picker and each app's tool list use.",
-					Detail: "Open one to tick the tools that belong in it, or start a new one and fill it in the same step. " +
-						"A tool holds one category, so filing it here moves it out of wherever it was.",
+					Detail: "Tools are filed into these automatically; ticking one here sets it yourself, and yours always wins. Open one to tick the tools that belong in it, or start a new one and fill it in the same step. " +
+						"A tool holds one category, so filing it here moves it out of wherever it was, and a tool you untick is not filed back into it.",
 					Body: ui.Stack{Children: []ui.Component{
 						ui.Table{
 							Source: "api/tool-categories",
@@ -2161,6 +2159,9 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 								{Field: "tools", Label: "Members", Flex: 3, Type: "pills"},
 							},
 							RowActions: []ui.RowAction{
+								// Security for every tool in the category at once, with the
+								// tools that differ named first (category_security.go).
+								{Type: "button", Label: "Security", Method: "client", PostTo: "category_security"},
 								// Category-first assignment: the whole point. Picking from
 								// one list beats opening each tool and setting a label.
 								ui.Expand("Choose tools", ui.ACLPicker(ui.ACLPickerConfig{
@@ -2454,7 +2455,8 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	// user's own reusable things live, and the things they build are not
 	// all this app's to know about — a machine belongs to orchestrate and
 	// renders here without this file learning what one is.
-	head := ui.NewHead().ClientAction("tool_access_pills", toolAccessPillsJS).
+	head := ui.NewHead().ClientAction("tool_security", toolSecurityJS()).
+		ClientAction("category_security", categorySecurityJS).
 		// Export and Import go through the shared bundle client (core
 		// ArtifactClientJS) against the person's own account endpoints.
 		JS(ArtifactClientJS).
@@ -2502,29 +2504,12 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	}.ServeHTTP(w, r)
 }
 
-// handleUserToolAccess is the user's own tool-scope control: which of THEIR
-// agents can use a tool, plus an "all agents" option for the user-wide pool.
+// handleUserToolAccess serves a tool's Security panel (tool_security.go):
+// ?section=run for How it runs, ?section=who for Who can use it. Which of the
+// user's OWN agents load a tool is theirs to decide; tier 1 (which USERS may
+// reach a shared tool) stays with the share picker and the admin page.
 //
-// This is tier 2 of tool access, and it belongs to the user. Tier 1 — which
-// USERS may reach a shared tool — stays on the admin page, where the per-agent
-// pill editor used to live confusingly alongside it. An admin has no business
-// deciding which of someone's own agents load their own tool.
-//
-// GET  ?name=  → {agents: [{id,name}], attached: [ids]} for the chip picker.
-//
-//	"global" is offered as a pseudo-agent meaning the user-wide
-//	pool (every agent), because that is how it reads to a user:
-//	one more place the tool can be turned on.
-//
-// POST ?name=  → {agents: [ids]} — the full desired selection. The handler
-//
-//	diffs against current state and applies one toggle per change
-//	through the shared ScopeProvider, so this behaves exactly like
-//	the admin control it replaces.
-//
-// scopeAllAgents is the ScopeProvider's target for the user-wide pool. It rides
-// in the chip list as a pseudo-agent because that is how it reads to a user:
-// one more place a tool can be switched on, not a separate concept.
+// scopeAllAgents is the ScopeProvider's target for the user-wide pool.
 const scopeAllAgents = "global"
 
 func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request) {
@@ -2537,307 +2522,152 @@ func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request
 		http.Error(w, "missing name", http.StatusBadRequest)
 		return
 	}
-	prov, ok := ScopeProviderFor("tool")
-	if !ok {
-		http.Error(w, "tool scope unavailable", http.StatusServiceUnavailable)
+	db := AuthDB()
+	switch r.URL.Query().Get("section") {
+	case "run":
+		toolRunSection(w, r, db, user, name)
+		return
+	case "who":
+		w.Header().Set("Cache-Control", "no-store")
+		toolWhoSection(w, r, db, user, name)
 		return
 	}
-	db := AuthDB()
-
-	switch r.Method {
-	case http.MethodGet:
-		// Shape for uiRenderScopePills: a PRIMARY pill (the user-wide pool —
-		// "All my agents", which is also what puts a tool in the shared list
-		// every agent draws from) plus one pill per agent the user owns.
-		// Under nests a SUB-AGENT's pill beneath its parent's. Each pill is
-		// still its own toggle: a sub-agent runs its own turns off its own
-		// tools, and picking up the parent's kit is opt-in per sub-agent, so
-		// switching the parent on grants the child nothing by itself.
-		type pill struct {
-			Key   string `json:"key"`
-			Label string `json:"label"`
-			On    bool   `json:"on"`
-			Under string `json:"under,omitempty"`
-		}
-		out := map[string]any{}
-		st, found := prov.State(db, user, name)
-		items := []pill{}
-		// The pill list comes from the provider whether or not the tool is
-		// currently in any scope: an orphan or an unkept draft needs the SAME
-		// set of targets to be re-homed onto, and it is the only place that
-		// knows the parent/child shape. Falling back to the agents that already
-		// hold something keeps the picker usable if the provider yields none.
-		subs := false
-		for _, a := range st.Agents {
-			if a.ParentID != "" {
-				subs = true
-			}
-			items = append(items, pill{Key: a.ID, Label: a.Name, On: a.On, Under: a.ParentID})
-		}
-		if len(items) == 0 {
-			seen := map[string]bool{}
-			for _, d := range ListScopedTools(user) {
-				if d.AgentID == "" || seen[d.AgentID] {
-					continue
-				}
-				seen[d.AgentID] = true
-				items = append(items, pill{Key: d.AgentID, Label: d.AgentName})
-			}
-		}
-		// Builder-only rides the Access menu as the first pill — it IS an access
-		// statement ("only the authoring surface sees this"), so it belongs with
-		// the other access controls rather than as a standalone row button two
-		// clicks away from them. Builder itself is never a pill (it reads the
-		// whole pool by identity); this is the one Builder-shaped control that
-		// is real. Prepended AFTER the fallback above so the "no items → offer
-		// re-home targets" trigger keeps meaning what it says.
-		builderOnly, boundOnly, noUnattended := false, false, false
-		if row, ok := UserToolByName(db, user, name); ok {
-			builderOnly, boundOnly, noUnattended = row.Tool.BuilderOnly, row.Tool.BoundOnly, row.Tool.NoUnattended
-		}
-		if builderOnly {
-			// While Builder-only is ON, the selector below it is dead weight:
-			// every agent pill is overridden, and a wall of toggles that do
-			// nothing invites clicking them to find out. Return ONLY the
-			// Builder-only pill — turning it off re-loads the full selector
-			// (the renderer re-GETs after every toggle).
-			out["items"] = []pill{{Key: "builder_only", Label: "Builder-only (authoring)", On: true}}
-			out["note"] = "Builder-only: hidden from every agent except Builder. Turn this off to choose which agents get the tool."
-			w.Header().Set("Cache-Control", "no-store")
-			writeJSON(w, out)
-			return
-		}
-		if boundOnly {
-			// Same reasoning as Builder-only above: while this is on, every
-			// agent pill below is overridden, and a wall of toggles that do
-			// nothing invites clicking them to find out.
-			out["items"] = []pill{{Key: "bound_only", Label: "Bound targets only", On: true}}
-			out["note"] = "Bound targets only: hidden from your agents. The tool stays available wherever it is " +
-				"explicitly attached (a Servitor system's Tools list, for instance), and Builder still loads it, " +
-				"so it can be tested and fixed. Turn this off to offer it to agents."
-			w.Header().Set("Cache-Control", "no-store")
-			writeJSON(w, out)
-			return
-		}
-		items = append([]pill{
-			{Key: "builder_only", Label: "Builder-only (authoring)", On: builderOnly},
-			{Key: "bound_only", Label: "Bound targets only", On: boundOnly},
-			// Not an access statement like the two above (the tool stays on every
-			// agent it is on); it says WHEN it may run, and it is the only place
-			// that can be said for a machine run with no agent behind it.
-			{Key: "never_unattended", Label: "Never run unattended", On: noUnattended},
-		}, items...)
-		out["primary"] = map[string]any{"label": "All my agents", "on": found && st.Global}
-		switch {
-		case !found:
-			// Nothing exists to toggle OFF — the first pill switched ON is what
-			// keeps (or re-homes) the tool.
-			out["note"] = "Not kept yet: switch on an agent (or All my agents) to keep it."
-			for _, o := range LoadOrphanedTempTools(db, user) {
-				if o.Tool.Name == name {
-					out["note"] = "Orphaned: the agent that held this tool was deleted. Switch on an agent (or All my agents) to re-home it, or Delete to discard."
-					break
-				}
-			}
-		case st.Global:
-			out["note"] = "Shared with every one of your agents. Turn an agent off to deny it there, or turn All my agents off to keep it only on the agents left on."
-		default:
-			out["note"] = "Available only on the agents switched on. Turn on All my agents to share it with every agent you own."
-		}
-		if subs {
-			out["note"] = out["note"].(string) +
-				" Indented pills are sub-agents: each is its own switch, so turning a parent on does not give its sub-agents the tool."
-		}
-		if len(st.Missing) > 0 {
-			out["note"] = "⚠ Missing dependency: " + strings.Join(st.Missing, ", ") + ". " + out["note"].(string)
-		}
-		out["items"] = items
-		// No-store: the pills re-GET immediately after each toggle to re-render,
-		// and a cached body makes a just-toggled pill snap back.
-		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, out)
-
-	case http.MethodPost:
-		// One toggle: {target, on}. target "global" = the user-wide pool,
-		// otherwise an agent id. Same contract as the admin scope endpoint, so
-		// the shared pill renderer drives both unchanged.
-		var body struct {
-			Target string `json:"target"`
-			On     bool   `json:"on"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		target := strings.TrimSpace(body.Target)
-		if target == "" {
-			http.Error(w, "missing target", http.StatusBadRequest)
-			return
-		}
-		// Builder-only is a FLAG on the tool record, not a scope transition, so
-		// it is handled before the provider. Written via the direct updater:
-		// AdminPersistTempTool deliberately preserves this flag from the stored
-		// copy (so a Builder re-persist can't clear it), which means writing it
-		// through a re-persist path would be silently stomped — the exact trap
-		// the enable toggle fell into elsewhere.
-		// Both flags are handled here, before the provider, for the same reason:
-		// they live ON the tool record rather than being scope transitions, so
-		// falling through would look up an AGENT by that name and report
-		// `agent "bound_only" not found` — a pill that renders, posts, and fails
-		// on a lookup it was never meant to reach.
-		if target == "builder_only" || target == "bound_only" || target == "never_unattended" {
-			row, ok := UserToolByName(db, user, name)
-			if !ok {
-				// An ORPHAN — a committed tool that lost its agent — is not in
-				// the persistent pool, so the lookup missed and the click
-				// reported "tool not found" on a tool sitting right there in the
-				// list. Homing it to the user-wide pool first is what the
-				// operator was otherwise made to do by hand: pick "All my
-				// agents", then come back and set the flag.
-				//
-				// Especially wrong for bound-only, whose whole point is that the
-				// tool belongs to a BINDING rather than to any agent. Requiring
-				// it to be given to every agent first, so it can then be taken
-				// away from all of them, is the opposite of the intent.
-				if AdminRehomeOrphanTool != nil {
-					for _, o := range LoadOrphanedTempTools(db, user) {
-						if o.Tool.Name != name {
-							continue
-						}
-						if err := AdminRehomeOrphanTool(db, user, name, "global"); err != nil {
-							http.Error(w, "could not adopt this tool: "+err.Error(), http.StatusBadRequest)
-							return
-						}
-						row, ok = UserToolByName(db, user, name)
-						break
-					}
-				}
-			}
-			if !ok {
-				http.Error(w, "tool not found", http.StatusNotFound)
-				return
-			}
-			switch target {
-			case "builder_only":
-				row.Tool.BuilderOnly = body.On
-			case "bound_only":
-				row.Tool.BoundOnly = body.On
-			default:
-				row.Tool.NoUnattended = body.On
-			}
-			// Mutually exclusive: one reserves a tool for authoring, the other
-			// says it belongs to whatever binds it. Holding both would leave the
-			// selector describing a state no filter produces. Never-unattended
-			// is about when, not who, and sits beside either.
-			if body.On && target != "never_unattended" {
-				if target == "builder_only" {
-					row.Tool.BoundOnly = false
-				} else {
-					row.Tool.BuilderOnly = false
-				}
-			}
-			if !UpdatePersistentTempTool(db, user, row.Tool) {
-				http.Error(w, "update failed", http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		if _, found := prov.State(db, user, name); !found {
-			// Nothing exists to toggle, so switching a pill ON is what keeps or
-			// re-homes it. Switching one OFF is a no-op.
-			if !body.On {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			// Orphan first: it is already a committed tool that simply lost its
-			// agent, so it re-homes rather than promotes.
-			for _, o := range LoadOrphanedTempTools(db, user) {
-				if o.Tool.Name != name {
-					continue
-				}
-				if AdminRehomeOrphanTool == nil {
-					http.Error(w, "re-homing unavailable", http.StatusServiceUnavailable)
-					return
-				}
-				if err := AdminRehomeOrphanTool(db, user, name, target); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			sid, agentID := "", ""
-			for _, d := range ListScopedTools(user) {
-				if d.Scope == ScopeSessionTool && d.Tool.Name == name {
-					sid, agentID = d.SessionID, d.AgentID
-					break
-				}
-			}
-			if sid == "" {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			promoteTarget := ScopeTargetGlobal
-			if target != scopeAllAgents {
-				promoteTarget = ScopeTargetAgent
-				agentID = target // keep it on the agent whose pill was switched on
-			}
-			if _, err := PromoteScopedTool(user, agentID, sid, name, promoteTarget); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		if err := prov.Set(db, user, name, target, body.On); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	http.Error(w, "unknown section: use section=run or section=who", http.StatusNotFound)
 }
 
-// toolAccessPillsJS drives the Access pill list on Extensions › Tools. The generic
-// renderer lives in core/ui (uiRenderScopePills); this only knows which
-// endpoint to talk to — the app-specific half, per the extension-registry rule.
-const toolAccessPillsJS = `function(ctx){
+// toolSecurityJS drives a tool's Security panel on Extensions › Tools
+// (tool_security.go): how it runs, who can use it, and who it is shared with.
+// How it runs is core/ui's generic pill renderer (uiRenderScopePills), who can
+// use it is three radio choices with the agent list under "Only these agents",
+// and the share picker is core/ui's own component, mounted from its Go
+// definition; this only knows which endpoints to talk to.
+func toolSecurityJS() string {
+	return `function(ctx){
   var r = (ctx && ctx.record) || {};
   var name = r.name;
   if(!name){ window.uiAlert && window.uiAlert('No tool selected.'); return; }
   var reload = ctx && ctx.reload;
   var qs = 'name=' + encodeURIComponent(name);
-  window.uiOpenSimpleModal({
-    title: 'Access: ' + name,
-    width: '560px',
-    mount: function(body){
-      var host = document.createElement('div');
-      body.appendChild(host);
-      window.uiRenderScopePills(host, {
-        load: function(){
-          return fetch('api/tool-access?' + qs, {cache:'no-store'}).then(function(res){
-            if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
-            return res.json();
-          });
-        },
-        toggle: function(key, on){
-          var target = (key === '__primary__') ? 'global' : key;
-          return fetch('api/tool-access?' + qs, {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ target: target, on: on })
-          }).then(function(res){
-            if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
-            if(reload) reload();
-          });
-        }
+  function heading(body, text){
+    var h = document.createElement('div');
+    h.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin:0.9rem 0 0.35rem';
+    h.textContent = text;
+    body.appendChild(h);
+  }
+  function pills(body, extra){
+    var host = document.createElement('div');
+    body.appendChild(host);
+    window.uiRenderScopePills(host, {
+      load: function(){
+        return fetch('api/tool-access?' + qs + extra, {cache:'no-store'}).then(function(res){
+          if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+          return res.json();
+        });
+      },
+      toggle: function(key, on){
+        var target = (key === '__primary__') ? 'global' : key;
+        return fetch('api/tool-access?' + qs + extra, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ target: target, on: on })
+        }).then(function(res){
+          if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+          if(reload) reload();
+        });
+      }
+    });
+  }
+  // Who can use it: one choice of three, and the agents only under "Only
+  // these agents" (tool_security.go, toolWhoSection).
+  function who(body){
+    var host = document.createElement('div');
+    body.appendChild(host);
+    var group = 'tool-who-' + Math.random().toString(36).slice(2);
+    var chosen = '';
+    function post(payload){
+      return fetch('api/tool-access?' + qs + '&section=who', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      }).then(function(res){
+        if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+        if(reload) reload();
       });
+    }
+    function fail(e){ window.uiAlert && window.uiAlert('Could not change it: ' + (e && e.message || e)); load(); }
+    function render(d){
+      host.innerHTML = '';
+      var mode = (d && d.mode) || chosen;
+      [['all', 'All my agents'], ['agents', 'Only these agents'], ['bound', 'Apps only']].forEach(function(o){
+        var row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.25rem 0;cursor:pointer';
+        var r = document.createElement('input');
+        r.type = 'radio'; r.name = group; r.value = o[0]; r.checked = (mode === o[0]);
+        r.addEventListener('change', function(){
+          if(!r.checked) return;
+          chosen = o[0];
+          post({mode: o[0]}).then(load, fail);
+        });
+        row.appendChild(r);
+        row.appendChild(document.createTextNode(o[1]));
+        host.appendChild(row);
+        if (o[0] === 'agents' && mode === 'agents') agentList();
+      });
+      function agentList() {
+        var list = document.createElement('div');
+        list.style.cssText = 'margin:0.2rem 0 0.4rem 1.6rem';
+        var agents = (d && d.agents) || [];
+        if (!agents.length) {
+          var none = document.createElement('div');
+          none.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem)';
+          none.textContent = 'You have no agents yet.';
+          list.appendChild(none);
+        }
+        agents.forEach(function(a){
+          var row = document.createElement('label');
+          row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.15rem 0;cursor:pointer' + (a.under ? ';margin-left:1.4rem' : '');
+          var c = document.createElement('input');
+          c.type = 'checkbox'; c.checked = !!a.on;
+          c.addEventListener('change', function(){ post({agent: a.id, on: c.checked}).then(load, fail); });
+          row.appendChild(c);
+          row.appendChild(document.createTextNode(a.label || a.id));
+          list.appendChild(row);
+        });
+        host.appendChild(list);
+      }
+      if (d && d.note) {
+        var note = document.createElement('div');
+        note.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin-top:0.35rem';
+        note.textContent = d.note;
+        host.appendChild(note);
+      }
+    }
+    function load(){
+      fetch('api/tool-access?' + qs + '&section=who', {cache:'no-store'}).then(function(res){
+        if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+        return res.json();
+      }).then(render, function(e){ host.textContent = 'Could not load: ' + (e && e.message || e); });
+    }
+    load();
+  }
+  window.uiOpenSimpleModal({
+    title: 'Security: ' + name,
+    width: '600px',
+    mount: function(body){
+      heading(body, 'How it runs');
+      pills(body, '&section=run');
+      heading(body, 'Who can use it');
+      who(body);
+      if (r.pool && window.uiMountComponent) {
+        heading(body, 'Other people');
+        var cfg = JSON.parse(JSON.stringify(` + toolSharePickerJSON() + `).split('__NAME__').join(encodeURIComponent(name)));
+        var host = document.createElement('div');
+        body.appendChild(host);
+        window.uiMountComponent(cfg, host);
+      }
     }
   });
 }`
+}
 
 // knownToolCategories lists the category names worth offering when someone
 // files a tool: the admin-defined ones (a ToolGroup record carries the
@@ -2870,7 +2700,7 @@ func userPickableTools(user, exceptCategory string) []toolPick {
 			return
 		}
 		seen[n] = true
-		if c := strings.TrimSpace(cat); c != "" && !strings.EqualFold(c, exceptCategory) {
+		if c := strings.TrimSpace(cat); c != "" && !strings.EqualFold(strings.TrimSuffix(c, " (filed automatically)"), exceptCategory) {
 			desc = strings.TrimSpace("currently in " + c + " - " + desc)
 		}
 		out = append(out, toolPick{Name: n, Desc: desc})
@@ -2879,13 +2709,13 @@ func userPickableTools(user, exceptCategory string) []toolPick {
 	// map would dedup either way, but keep the sourcing symmetric with the
 	// category listers).
 	for _, p := range SharedUserTools(AuthDB(), user) {
-		add(p.Tool.Name, p.Tool.Description, p.Tool.Category)
+		add(p.Tool.Name, p.Tool.Description, toolCategoryLabel(user, p.Tool))
 	}
 	for _, st := range ListScopedTools(user) {
 		if st.Shadowed || st.Scope != ScopeAgentTool {
 			continue
 		}
-		add(st.Tool.Name, st.Tool.Description, st.Tool.Category)
+		add(st.Tool.Name, st.Tool.Description, toolCategoryLabel(user, st.Tool))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
@@ -2938,11 +2768,11 @@ func knownToolCategories(db Database, user string) []string {
 		// Shared rows here; agent-scoped rows contribute via ListScopedTools
 		// below (same unified store, split to avoid double-adding).
 		for _, p := range SharedUserTools(db, user) {
-			add(p.Tool.Category)
+			add(toolCategoryOf(user, p.Tool))
 		}
 		for _, st := range ListScopedTools(user) {
 			if st.Scope == ScopeAgentTool {
-				add(st.Tool.Category)
+				add(toolCategoryOf(user, st.Tool))
 			}
 		}
 	}
@@ -3010,7 +2840,7 @@ func userToolCategories(user string) map[string][]string {
 	// Shared rows here; agent-scoped rows contribute via ListScopedTools below
 	// (same unified store, split so a scoped tool isn't counted twice).
 	for _, p := range SharedUserTools(AuthDB(), user) {
-		add(p.Tool.Category, p.Tool.Name)
+		add(toolCategoryOf(user, p.Tool), p.Tool.Name)
 	}
 	seen := map[string]bool{}
 	for _, st := range ListScopedTools(user) {
@@ -3018,7 +2848,7 @@ func userToolCategories(user string) map[string][]string {
 			continue
 		}
 		seen[st.Tool.Name] = true
-		add(st.Tool.Category, st.Tool.Name)
+		add(toolCategoryOf(user, st.Tool), st.Tool.Name)
 	}
 	for k := range out {
 		sort.Strings(out[k])
@@ -3120,10 +2950,17 @@ func (T *Extensions) handleUserToolCategories(w http.ResponseWriter, r *http.Req
 			if want[t] {
 				continue
 			}
+			// Unticked: out of this category for good. Its own label is
+			// cleared, and gohort will not file it back here on its own
+			// (core/toolcat Reject); it is filed somewhere else instead.
+			if tt, ok := userToolNamed(user, t); ok {
+				toolcat.Reject(user, tt, name)
+			}
 			if err := setToolCategoryFor(user, t, ""); err != nil {
 				failed = append(failed, t+" ("+err.Error()+")")
 			}
 		}
+		toolcat.Kick(user)
 		if len(failed) > 0 {
 			// Partial success is the honest report: the rest DID move.
 			http.Error(w, "some tools could not be filed: "+strings.Join(failed, "; "), http.StatusBadRequest)
@@ -3361,4 +3198,42 @@ func importToolbar(title string) ui.Component {
 	return ui.Toolbar{Actions: []ui.ToolbarAction{{
 		Label: "Import…", Title: title, Method: "client", URL: "extensions_import",
 	}}}
+}
+
+// toolCategoryOf is a tool's category as the owner sees it: their own label,
+// else the one gohort filed it under (core/toolcat), else "".
+func toolCategoryOf(user string, t TempTool) string {
+	c, _ := toolcat.Of(user, t)
+	return c
+}
+
+// toolCategoryIsAuto reports whether that category was filed by gohort.
+func toolCategoryIsAuto(user string, t TempTool) bool {
+	c, auto := toolcat.Of(user, t)
+	return c != "" && auto
+}
+
+// toolCategoryLabel is the category for a picker line, marked when gohort
+// filed it.
+func toolCategoryLabel(user string, t TempTool) string {
+	c, auto := toolcat.Of(user, t)
+	if c != "" && auto {
+		return c + " (filed automatically)"
+	}
+	return c
+}
+
+// userToolNamed is one of the user's own tools by name, pool or agent-scoped.
+func userToolNamed(user, name string) (TempTool, bool) {
+	for _, p := range SharedUserTools(AuthDB(), user) {
+		if p.Tool.Name == name {
+			return p.Tool, true
+		}
+	}
+	for _, st := range ListScopedTools(user) {
+		if !st.Shadowed && st.Scope == ScopeAgentTool && st.Tool.Name == name {
+			return st.Tool, true
+		}
+	}
+	return TempTool{}, false
 }

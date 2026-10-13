@@ -23,6 +23,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/toolcat"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -187,7 +188,7 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 		if tt, ok := pool[name]; ok {
 			own = true
 			cred = strings.TrimSpace(tt.Credential)
-			row.Category = strings.TrimSpace(tt.Category)
+			row.Category, _ = toolcat.Of(user, *tt) // theirs, else the one it was filed under
 			row.Origin = "your tools"
 			if cred != "" && !strings.EqualFold(cred, "no_auth") {
 				row.Origin = "credential: " + cred
@@ -227,7 +228,7 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 			Name: name, Origin: "your tools", Detail: firstLine(tt.Description),
 			Enabled: false, Governable: false, Asks: asks[name],
 			Loaded: "Off", Unattended: PolicyAllow,
-			Band: bandOff, Category: strings.TrimSpace(tt.Category),
+			Band: bandOff, Category: toolCategoryOf(user, *tt),
 		})
 	}
 	// By BAND, because the table groups in record order and this is therefore

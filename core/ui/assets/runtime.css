@@ -1146,6 +1146,13 @@ select:-webkit-autofill {
 .ui-table-band-body > .ui-table-row:last-child { border-bottom: none; }
 .ui-table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-lg); }
 .ui-table-cell.mute { color: var(--text-mute); font-size: var(--fs-xs); }
+/* The second line exists for the text that says what a row IS (a
+ * description, a summary), so it wraps to two lines before it is cut, rather
+ * than ellipsizing at one. The full text stays in the cell's title. */
+.ui-row-cells-2 > .ui-table-cell {
+  white-space: normal; display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
+}
 .ui-table-cell a.ui-table-link { color: var(--accent); text-decoration: none; }
 .ui-table-cell a.ui-table-link:hover { text-decoration: underline; }
 .ui-table-empty { color: var(--text-mute); font-size: var(--fs-md); padding: 0.5rem 0; }

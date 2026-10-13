@@ -533,6 +533,10 @@ func (T *OrchestrateApp) Routes() {
 		T.retireAgentNotes()
 	}()
 
+	// Every tool gets a category on its own; the owner's label always wins
+	// (tool_autofile.go). Off the boot path: filing asks the worker.
+	T.startToolFiling()
+
 	// One-shot deploy-time grandfather for the global-tool OPT-IN model. Shared
 	// tools used to auto-load for everyone; now they load only after a user
 	// adopts them. This seeds every EXISTING user's adoption list with the

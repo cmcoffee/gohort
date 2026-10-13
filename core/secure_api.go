@@ -200,6 +200,14 @@ type SecureCredential struct {
 	// (AgentRecord.DisabledCredentials). Secured creds ignore this (their access
 	// follows the tool-binding model). See docs/tool-credential-namespacing.md.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
+	// OnlyAgents narrows a USER-OWNED credential to some of its owner's own
+	// agents: non-empty = only these agent ids may dispatch through it (the
+	// API's Security panel, "Only these agents"). Enforced with the rest of
+	// an agent's credential deny-list, so an agent left off it loses the
+	// credential's tools and its host routing alike. It says nothing about
+	// people it is lent to; that is the share lists below. Owned by its own
+	// setter, like Secured.
+	OnlyAgents []string `json:"only_agents,omitempty"`
 	// SharedReadOnly and SharedReadWrite are the OWNER's peer share of a
 	// USER-OWNED credential: which colleagues may dispatch through their key,
 	// and what those colleagues may do with it.
@@ -663,6 +671,7 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		// credential's config can't silently re-enable or unsecure it.
 		c.Disabled = existing.Disabled
 		c.Secured = existing.Secured
+		c.OnlyAgents = existing.OnlyAgents
 		c.AdminDisabled = existing.AdminDisabled
 		c.AdminLendLocked = existing.AdminLendLocked
 		// The share lists belong to SetCredentialShares for the same reason
@@ -1294,6 +1303,30 @@ func (s *SecureAPI) SetSecuredOwned(owner, name string, secured bool) error {
 		return fmt.Errorf("credential %q not found", name)
 	}
 	c.Secured = secured
+	s.db.Set(secureAPITable, key, c)
+	return nil
+}
+
+// SetOnlyAgentsOwned sets which of its owner's agents may use a user-owned
+// credential (OnlyAgents). Empty clears it: every agent the other rules allow.
+func (s *SecureAPI) SetOnlyAgentsOwned(owner, name string, agents []string) error {
+	if !s.ready() || strings.TrimSpace(owner) == "" || name == "" {
+		return fmt.Errorf("owner and name required")
+	}
+	var clean []string
+	for _, a := range agents {
+		if a = strings.TrimSpace(a); a != "" && !credSliceHas(clean, a) {
+			clean = append(clean, a)
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := credStoreKey(owner, name)
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, key, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	c.OnlyAgents = clean
 	s.db.Set(secureAPITable, key, c)
 	return nil
 }

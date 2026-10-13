@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/toolcat"
 )
 
 // BuildAgentToolDefs converts a session's temp tools into AgentToolDefs
@@ -228,7 +229,7 @@ func perActionToolDef(sess *ToolSession, tt *TempTool, act TempToolAction) Agent
 			Parameters:  act.Params,
 			Required:    undefaulted(act.Required, act.Params),
 			Caps:        []Capability{CapNetwork, CapExecute},
-			Category:    tt.Category, // expanded actions inherit the toolbox's claimed category
+			Category:    toolCategory(sess, tt), // expanded actions inherit the toolbox's category
 		},
 		// Same tier resolution as the collapsed group: the credential's
 		// Require-confirm toggle decides, not a blanket true — an expanded
@@ -492,7 +493,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			out, err := newToolboxGroupedTool(live).RunWithSession(args, sess)
 			return adviseOnFailure(sess, live, out, err)
 		}
-		def.Tool.Category = tt.Category // claimed grouping label rides onto the toolbox def too
+		def.Tool.Category = toolCategory(sess, tt) // the grouping label rides onto the toolbox def too
 		return def
 	}
 
@@ -522,7 +523,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			Parameters:  tt.Params,
 			Required:    undefaulted(tt.Required, tt.Params),
 			Caps:        caps,
-			Category:    tt.Category, // the claimed grouping label rides onto the runtime def
+			Category:    toolCategory(sess, tt), // the grouping label rides onto the runtime def
 			// A script fetching through the hooks returns outside content,
 			// which is fenced like a network tool's (see FetchesExternal).
 			FetchesExternal: hooksFetch(tt.HookCapabilities),
@@ -773,4 +774,18 @@ func methodOrGET(m string) string {
 		return "GET"
 	}
 	return m
+}
+
+// toolCategory is tt's category for its runtime def: the owner's own label,
+// else the one gohort filed it under (core/toolcat).
+func toolCategory(sess *ToolSession, tt *TempTool) string {
+	if tt == nil {
+		return ""
+	}
+	user := ""
+	if sess != nil {
+		user = sess.Username
+	}
+	c, _ := toolcat.Of(user, *tt)
+	return c
 }

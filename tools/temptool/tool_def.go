@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/toolcat"
 )
 
 // jobDesc documents the job spec for an api tool whose API answers with a job
@@ -353,6 +354,9 @@ func toolDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 		RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "authored but never tested: run tool_def(action=\"test\")")
 		forgetToolTest(sess, strings.TrimSpace(StringArg(args, "name")))
 		out = verifyWithTestArgs(args, sess, out)
+		// Filed into a category in the background unless it set one
+		// (core/toolcat).
+		toolcat.Kick(sess.Username)
 	}
 	return out, err
 }

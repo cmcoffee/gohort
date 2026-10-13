@@ -23,8 +23,6 @@ package orchestrate
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -34,6 +32,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/toolcat"
 )
 
 // toolGroupMin is how many tools a group needs before it collapses: two
@@ -192,8 +191,10 @@ func (t *chatTurn) toolGroupsFor(sess *ToolSession, lazy []AgentToolDef) map[str
 			continue
 		}
 		tools[td.Tool.Name] = lt
-		if apiless(lt) && strings.TrimSpace(lt.Category) == "" {
-			if _, ok := autoToolCategory(t.udb, lt); !ok {
+		// Every tool has a category: the owner's, or one the worker files it
+		// under (core/toolcat). API tools too, though they group by their API.
+		if strings.TrimSpace(lt.Category) == "" {
+			if _, ok := autoToolCategory(t.toolOwner(), lt); !ok {
 				unfiled = append(unfiled, lt)
 			}
 		}
@@ -212,35 +213,27 @@ func (t *chatTurn) toolGroupsFor(sess *ToolSession, lazy []AgentToolDef) map[str
 		if lt == nil {
 			return "", "", ""
 		}
-		cat := strings.TrimSpace(lt.Category)
-		if cat == "" {
-			cat, _ = autoToolCategory(t.udb, lt)
-		}
+		cat, _ := toolcat.Of(t.toolOwner(), *lt)
 		return toolGroupKey(lt, cat)
 	})
 }
 
-// autoCategoryTable holds the categories the worker filed API-less tools
-// under, keyed by tool name and a hash of what it does: a tool whose
-// description changes is filed again. Kept apart from the tool record, which
-// a write would re-version (and, for a published tool, unpublish).
-const autoCategoryTable = "tool_auto_category"
-
-func autoCategoryKey(lt *TempTool) string {
-	sum := sha256.Sum256([]byte(lt.Mode + "\x00" + lt.Description))
-	return lt.Name + "\x00" + hex.EncodeToString(sum[:8])
+// toolOwner is whose tools these are: the pool the turn's agent draws from.
+func (t *chatTurn) toolOwner() string {
+	if t == nil {
+		return ""
+	}
+	_, owner := t.ownerView()
+	return chFirst(owner, t.user)
 }
 
-// autoToolCategory is the category the worker filed lt under, if it has.
-func autoToolCategory(udb Database, lt *TempTool) (string, bool) {
-	if udb == nil || lt == nil {
+// autoToolCategory is the category the worker filed lt under for owner, if it
+// has (core/toolcat).
+func autoToolCategory(owner string, lt *TempTool) (string, bool) {
+	if lt == nil {
 		return "", false
 	}
-	var c string
-	if udb.Get(autoCategoryTable, autoCategoryKey(lt), &c) && strings.TrimSpace(c) != "" {
-		return c, true
-	}
-	return "", false
+	return toolcat.Auto(owner, *lt)
 }
 
 // filing is the tools being filed now, so two turns do not ask twice.
@@ -264,7 +257,7 @@ func (t *chatTurn) fileToolsLater(known, unfiled []*TempTool) {
 	var mine []*TempTool
 	filing.Lock()
 	for _, lt := range unfiled {
-		k := t.user + "\x00" + autoCategoryKey(lt)
+		k := filingKey(t.toolOwner(), lt)
 		if !filing.m[k] {
 			filing.m[k] = true
 			// A copy of what filing reads: the session's record can change
@@ -277,24 +270,24 @@ func (t *chatTurn) fileToolsLater(known, unfiled []*TempTool) {
 		return
 	}
 	existing := t.categoriesInUse(known)
-	app, udb, user := t.app, t.udb, t.user
+	app, user := t.app, t.toolOwner()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.ctx), 2*time.Minute)
 	go func() {
 		defer cancel()
 		defer func() {
 			filing.Lock()
 			for _, lt := range mine {
-				delete(filing.m, user+"\x00"+autoCategoryKey(lt))
+				delete(filing.m, filingKey(user, lt))
 			}
 			filing.Unlock()
 		}()
 		for _, lt := range mine {
-			cat, err := fileToolCategory(ctx, app, lt, existing)
+			cat, err := fileToolCategory(ctx, app, lt, existing, toolcat.Rejected(user, *lt))
 			if err != nil {
 				Debug("[orchestrate.tools] could not file %q in a category: %v", lt.Name, err)
 				continue
 			}
-			udb.Set(autoCategoryTable, autoCategoryKey(lt), cat)
+			toolcat.SetAuto(user, *lt, cat)
 			Log("[orchestrate.tools] filed %q under %q (auto category; the owner's own label always wins)", lt.Name, cat)
 			if !containsFold(existing, cat) {
 				existing = append(existing, cat)
@@ -303,31 +296,26 @@ func (t *chatTurn) fileToolsLater(known, unfiled []*TempTool) {
 	}()
 }
 
-// categoriesInUse is every category known carries and every auto one filed,
-// sorted: what a new tool is filed among first.
+// categoriesInUse is every category the owner's tools are in, by hand or
+// filed, plus those known carries, sorted: what a new tool is filed among
+// first.
 func (t *chatTurn) categoriesInUse(known []*TempTool) []string {
-	seen := map[string]bool{}
-	var out []string
-	add := func(c string) {
-		c = strings.TrimSpace(c)
-		if c != "" && !seen[strings.ToLower(c)] {
-			seen[strings.ToLower(c)] = true
-			out = append(out, c)
-		}
-	}
+	owner := t.toolOwner()
+	var all []TempTool
 	for _, lt := range known {
-		add(lt.Category)
+		all = append(all, *lt)
 	}
-	if t.udb != nil {
-		for _, k := range t.udb.Keys(autoCategoryTable) {
-			var c string
-			if t.udb.Get(autoCategoryTable, k, &c) {
-				add(c)
-			}
+	if owner != "" {
+		for _, p := range LoadPersistentTempTools(t.udb, owner) {
+			all = append(all, p.Tool)
 		}
 	}
-	sort.Strings(out)
-	return out
+	return toolcat.InUse(owner, all)
+}
+
+// filingKey names one tool being filed for one owner.
+func filingKey(owner string, lt *TempTool) string {
+	return owner + "\x00" + lt.Name + "\x00" + lt.Mode + "\x00" + lt.Description
 }
 
 // toolCategorySystem is the worker's instruction for filing one tool.
@@ -335,15 +323,26 @@ const toolCategorySystem = "You file one tool into a category for an AI agent's 
 	"Use one of the categories already in use when it fits the tool's job. Coin a new one only when none does: one to three words in Title Case, naming the job or the service (such as \"Calendar\" or \"Music\"), never the tool's own name. " +
 	"Answer with JSON only: {\"category\": \"<the category>\"}."
 
-// fileToolCategory asks the worker for lt's category among existing.
-func fileToolCategory(ctx context.Context, app *OrchestrateApp, lt *TempTool, existing []string) (string, error) {
+// fileToolCategory asks the worker for lt's category among existing, never
+// one in avoid (the categories the owner took this tool out of).
+func fileToolCategory(ctx context.Context, app *OrchestrateApp, lt *TempTool, existing, avoid []string) (string, error) {
+	var offer []string
+	for _, e := range existing {
+		if !containsFold(avoid, e) {
+			offer = append(offer, e)
+		}
+	}
 	inUse := "none yet"
-	if len(existing) > 0 {
-		inUse = strings.Join(existing, ", ")
+	if len(offer) > 0 {
+		inUse = strings.Join(offer, ", ")
+	}
+	ask := "Categories already in use: " + inUse + "\n\nTool: " + lt.Name + "\n" + strings.TrimSpace(lt.Description)
+	if len(avoid) > 0 {
+		ask += "\n\nThe owner took this tool out of: " + strings.Join(avoid, ", ") + ". Do not choose any of those."
 	}
 	out, err := toolCategoryAsk(ctx, app, []Message{
 		{Role: "system", Content: toolCategorySystem},
-		{Role: "user", Content: "Categories already in use: " + inUse + "\n\nTool: " + lt.Name + "\n" + strings.TrimSpace(lt.Description)},
+		{Role: "user", Content: ask},
 	})
 	if err != nil {
 		return "", err
@@ -357,6 +356,9 @@ func fileToolCategory(ctx context.Context, app *OrchestrateApp, lt *TempTool, ex
 	cat := strings.Join(strings.Fields(v.Category), " ")
 	if cat == "" || len([]rune(cat)) > 32 || strings.EqualFold(cat, lt.Name) {
 		return "", fmt.Errorf("no usable category in %q", clip(out, 80))
+	}
+	if containsFold(avoid, cat) {
+		return "", fmt.Errorf("chose %q, which the owner took it out of", cat)
 	}
 	for _, e := range existing {
 		if strings.EqualFold(e, cat) {

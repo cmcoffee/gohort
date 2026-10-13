@@ -1,5 +1,7 @@
 // Credential scoping ENFORCEMENT — the per-agent DENY-LIST that removes a
 // credential (and every tool that dispatches through it) from an agent's kit.
+// Tier 3, on a user-owned credential: OnlyAgents, the owner's "Only these
+// agents" from the API's Security panel.
 // A credential is GLOBAL (every agent can dispatch through it) by default; the
 // deny-list has two tiers: TIER 1 (on the credential) a GLOBAL credential with a
 // non-empty AllowedUsers is denied to users not listed; TIER 2 (per agent) the
@@ -60,6 +62,18 @@ func credentialDenySet(a AgentRecord, user string) map[string]bool {
 			continue
 		}
 		add(c)
+	}
+	// Tier 3 (on the credential, the owner's own): an API of theirs narrowed
+	// to some of their agents ("Only these agents") is denied to every other
+	// agent. Fails closed: an agent not on the list is denied, whatever else
+	// would have allowed it. Only the session user's own credentials: a key
+	// somebody lent them is governed by the lend, not by the lender's agents.
+	if user != "" {
+		for _, c := range Secure().ListUser(user) {
+			if len(c.OnlyAgents) > 0 && !containsString(c.OnlyAgents, a.ID) {
+				add(c.Name)
+			}
+		}
 	}
 	return deny
 }

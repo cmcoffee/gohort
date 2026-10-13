@@ -106,6 +106,18 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 		}
 		opts = append(opts, opt{Value: a.ID, Label: label, Group: agentGroupFor(a, "Your agents")})
 	}
+	// include_builder=1 (an API's "Only these agents"): Builder is not a relink
+	// target, but it is an agent an API can be narrowed to, and leaving it off
+	// would stop it testing the tools it builds for that API.
+	if r.URL.Query().Get("include_builder") == "1" {
+		has := false
+		for _, o := range opts {
+			has = has || o.Value == "seed-builder"
+		}
+		if !has {
+			opts = append(opts, opt{Value: "seed-builder", Label: "Builder (builds and tests tools for it)", Group: "Your agents"})
+		}
+	}
 	// Your own agents first, then each app's: the picker draws a heading
 	// where the group changes.
 	sort.SliceStable(opts, func(i, j int) bool { return appGroupsLast(opts[i].Group, opts[j].Group) })
