@@ -63,6 +63,15 @@ func (t *FindToolsTool) Run(args map[string]any) (string, error) {
 }
 
 func (t *FindToolsTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	return t.RunWithSessionContext(context.Background(), args, sess)
+}
+
+// RunWithSessionContext is the search with the round it runs in: the tools
+// the agent was given this turn (TurnToolsFromContext) are matched as well
+// as the index, since a tool handed to one turn (posting to a board,
+// publishing, asking the owner) is in no index, and a search that missed it
+// told the agent it was not installed.
+func (t *FindToolsTool) RunWithSessionContext(ctx context.Context, args map[string]any, sess *ToolSession) (string, error) {
 	query := strings.TrimSpace(stringArg(args, "query"))
 	if query == "" {
 		return "", fmt.Errorf("query is required")
@@ -86,6 +95,21 @@ func (t *FindToolsTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// Background ctx is fine — Embed() has its own timeout. The
 	// search itself is in-memory cosine; no per-call ctx needed.
 	hits := LookupToolsByQuery(context.Background(), query, k)
+	// The tools this round already has: the ones the query names, flagged
+	// so the agent calls them instead of concluding they do not exist.
+	inHand := map[string]bool{}
+	if turn := turnToolMatches(TurnToolsFromContext(ctx)); len(turn) > 0 {
+		seen := map[string]bool{}
+		for _, h := range hits {
+			seen[h.Name] = true
+		}
+		for _, m := range loadableMatches(query, turn) {
+			inHand[m.Name] = true
+			if !seen[m.Name] {
+				hits = append(hits, m)
+			}
+		}
+	}
 	// The turn's load-before-use tools are not in the index: add the ones
 	// the query names, flagged so the caller loads them first.
 	loadable := map[string]bool{}
@@ -94,10 +118,10 @@ func (t *FindToolsTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			loadable[m.Name] = true
 			hits = append(hits, m)
 		}
-		sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
-		if len(hits) > k {
-			hits = hits[:k]
-		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+	if len(hits) > k {
+		hits = hits[:k]
 	}
 	// What the app knows about this capability that no index holds.
 	note := ""
@@ -118,12 +142,29 @@ func (t *FindToolsTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	rows := make([]out, len(hits))
 	for i, h := range hits {
 		rows[i] = out{Name: h.Name, Description: h.Description, Score: h.Score}
-		if loadable[h.Name] {
+		switch {
+		case loadable[h.Name]:
 			rows[i].Note = "not loaded yet: call load_tool(names=[\"" + h.Name + "\"]) first, then use it"
+		case inHand[h.Name]:
+			rows[i].Note = "already in your tools this turn: call it directly"
 		}
 	}
 	b, _ := json.Marshal(rows)
 	return string(b) + note, nil
+}
+
+// turnToolMatches is the round's tools as search candidates, less the
+// meta-tools no search is ever for.
+func turnToolMatches(tools []Tool) []ToolMatch {
+	var out []ToolMatch
+	for _, t := range tools {
+		switch t.Name {
+		case "", "find_tools", "load_tool":
+			continue
+		}
+		out = append(out, ToolMatch{Name: t.Name, Description: t.Description})
+	}
+	return out
 }
 
 // stringArg coerces an arbitrary tool-arg value to string. Local

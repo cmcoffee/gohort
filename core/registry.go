@@ -292,7 +292,11 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 	}
 	var handler ToolHandlerFunc
 	if sess != nil {
-		if sct, ok := ct.(SessionChatTool); ok {
+		if cct, ok := ct.(ContextSessionChatTool); ok {
+			handler = func(ctx context.Context, args map[string]any) (string, error) {
+				return cct.RunWithSessionContext(ctx, args, sess)
+			}
+		} else if sct, ok := ct.(SessionChatTool); ok {
 			handler = func(ctx context.Context, args map[string]any) (string, error) {
 				return sct.RunWithSession(args, sess)
 			}

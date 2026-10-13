@@ -296,6 +296,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		return nil, messages, fmt.Errorf("LLM is not configured")
 	}
 	lr := &loopRun{T: T, ctx: ctx, messages: messages, cfg: cfg}
+	// What each call can learn of the round it is in: the tools it was
+	// given, read when asked, since a round can be handed new ones.
+	lr.ctx = withTurnTools(lr.ctx, func() []Tool { return append([]Tool(nil), lr.toolDefs...) })
 	lr.setupTools()
 	// Turn-time split. Everything the loop spends that is NOT waiting on a
 	// provider is gohort's own overhead — prompt assembly, knowledge

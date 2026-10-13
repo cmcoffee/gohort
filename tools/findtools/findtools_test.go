@@ -1,6 +1,7 @@
 package findtools
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -86,5 +87,44 @@ func TestStemWord(t *testing.T) {
 		if got := stemWord(pair[0]); got != pair[1] {
 			t.Fatalf("stem(%q) = %q, want %q", pair[0], got, pair[1])
 		}
+	}
+}
+
+// Run inside an agent loop, the search sees the tools the round was given:
+// a tool handed to this turn alone is in no index, and a search that missed
+// it told the agent it was not installed (an agent with a board tool, asked
+// to clear the board, searched five times and then went looking for the
+// board's file on disk).
+func TestFindToolsSeesTheToolsThisTurnHas(t *testing.T) {
+	llm := &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "c1", Name: "find_tools", Args: map[string]any{"query": "clear bulletin board"}}}},
+		{Content: "Done.", Repeat: true},
+	}}
+	app := &AppCore{LLM: llm}
+	board := AgentToolDef{
+		Tool:    Tool{Name: "bulletin_board", Description: "Post to or clear a bulletin board other agents follow."},
+		Handler: func(context.Context, map[string]any) (string, error) { return "ok", nil },
+	}
+	find := ChatToolToAgentToolDefWithSession(&FindToolsTool{}, &ToolSession{})
+	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "clear the board"}},
+		AgentLoopConfig{Tools: []AgentToolDef{find, board}, MaxRounds: 3}); err != nil {
+		t.Fatal(err)
+	}
+	var result string
+	for _, m := range llm.Sent(1) {
+		for _, r := range m.ToolResults {
+			result += r.Content
+		}
+	}
+	if !strings.Contains(result, `"name":"bulletin_board"`) || !strings.Contains(result, "already in your tools this turn") {
+		t.Errorf("the search should name the board tool the round already has:\n%s", result)
+	}
+	if strings.Contains(result, `"name":"find_tools"`) {
+		t.Error("the search should not offer itself")
+	}
+
+	// Outside a loop there is no round, and the search is the index alone.
+	if TurnToolsFromContext(context.Background()) != nil {
+		t.Error("no round outside a loop")
 	}
 }

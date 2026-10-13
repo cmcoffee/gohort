@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"strings"
 
@@ -258,6 +259,37 @@ type TrustedOutputTool interface {
 type SessionChatTool interface {
 	ChatTool
 	RunWithSession(args map[string]any, sess *ToolSession) (string, error)
+}
+
+// ContextSessionChatTool is a SessionChatTool that also wants the call's
+// context, for what rides on it (TurnToolsFromContext). Preferred over
+// RunWithSession when a tool has both.
+type ContextSessionChatTool interface {
+	ChatTool
+	RunWithSessionContext(ctx context.Context, args map[string]any, sess *ToolSession) (string, error)
+}
+
+// turnToolsKey carries the tools the running round was given.
+type turnToolsKey struct{}
+
+// TurnToolsFromContext is the tools the agent loop gave the round this call
+// is part of, read at call time. A search for a capability (find_tools) needs
+// it: a tool handed to this turn alone is in no index, so without it the
+// search reports a tool the agent already has as not installed. Nil outside
+// an agent loop.
+func TurnToolsFromContext(ctx context.Context) []Tool {
+	if ctx == nil {
+		return nil
+	}
+	if f, ok := ctx.Value(turnToolsKey{}).(func() []Tool); ok && f != nil {
+		return f()
+	}
+	return nil
+}
+
+// withTurnTools puts the round's tool list on ctx for TurnToolsFromContext.
+func withTurnTools(ctx context.Context, f func() []Tool) context.Context {
+	return context.WithValue(ctx, turnToolsKey{}, f)
 }
 
 // DynamicChatTool is an optional interface for tools whose SCHEMA — the

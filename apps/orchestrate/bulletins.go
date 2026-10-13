@@ -345,13 +345,13 @@ func (t *chatTurn) bulletinBoardToolDef() (AgentToolDef, bool) {
 	}, true
 }
 
-// bulletinFindNote is what find_tools adds when a search is about boards
-// (ToolSession.FindToolsNote): the tool, when the agent has it, which a
-// search of the deployment's index never finds because it is handed out
-// per turn; otherwise who can post to and clear each board it follows, and
-// how it can be given the right. Empty for any other search. Observed: an
-// agent asked to clear a board it only followed searched five times, then
-// asked an SSH system to look for the board's file on disk.
+// bulletinFindNote is what find_tools adds when a search is about boards and
+// the agent may post to none (ToolSession.FindToolsNote): who can post to and
+// clear each board it follows, and how it can be given the right. A poster
+// needs no note: find_tools matches the tools its turn already has. Empty
+// for any other search. Observed: an agent asked to clear a board it only
+// followed searched five times, then asked an SSH system to look for the
+// board's file on disk.
 func (t *chatTurn) bulletinFindNote(query string) string {
 	q := strings.ToLower(query)
 	if !strings.Contains(q, "bulletin") && !strings.Contains(q, "board") {
@@ -362,8 +362,8 @@ func (t *chatTurn) bulletinFindNote(query string) string {
 	if len(all) == 0 {
 		return ""
 	}
-	if boards := postableBoards(db, t.agent); len(boards) > 0 {
-		return "Bulletin boards: " + bulletinToolName + " is already in your tools. It posts to and clears " + strings.Join(boards, ", ") + "."
+	if len(postableBoards(db, t.agent)) > 0 {
+		return ""
 	}
 	var who []string
 	for _, b := range all {

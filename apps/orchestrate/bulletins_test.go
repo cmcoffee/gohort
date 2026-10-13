@@ -360,8 +360,8 @@ func TestAFollowerLearnsWhoPostsToABoard(t *testing.T) {
 			t.Errorf("a follower's search should carry %q:\n%s", want, note)
 		}
 	}
-	if note := (&chatTurn{udb: db, user: "u", agent: radar}).bulletinFindNote("post bulletin"); !strings.Contains(note, "already in your tools") || !strings.Contains(note, "local-radar") {
-		t.Errorf("a poster's search should point at its tool: %s", note)
+	if note := (&chatTurn{udb: db, user: "u", agent: radar}).bulletinFindNote("post bulletin"); note != "" {
+		t.Errorf("a poster needs no note: find_tools matches the tools its turn has: %s", note)
 	}
 	if follower.bulletinFindNote("resize an image") != "" {
 		t.Error("a search about something else gets no note")
