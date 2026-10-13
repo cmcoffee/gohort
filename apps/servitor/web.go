@@ -128,7 +128,7 @@ type injectionNote = InjectionNote
 func (T *Servitor) WebPath() string { return "/servitor" }
 func (T *Servitor) WebName() string { return "Servitor" }
 func (T *Servitor) WebDesc() string {
-	return "Dispatch AI agents to remote appliances (SSH) or local commands to investigate, map, and operate systems."
+	return "Dispatch AI agents to remote systems (SSH) or local commands to investigate, map, and operate them."
 }
 
 func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {

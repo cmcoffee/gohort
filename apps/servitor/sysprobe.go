@@ -121,7 +121,7 @@ func (T *Servitor) cmd_allowed(cat RiskCategory) bool {
 
 func (T Servitor) Name() string { return "servitor" }
 func (T Servitor) Desc() string {
-	return "Ops: Map and profile a remote Linux appliance via SSH."
+	return "Ops: Map and profile a remote Linux system via SSH."
 }
 
 func (T Servitor) SystemPrompt() string {
