@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,6 +154,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		";\nwindow.ORCH_SUB_AGENT_OF = " + string(subAgentOfJSON) +
 		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(cortexAgentsJSON) +
 		";\nwindow.ORCH_RECORD_AGENTS = " + string(recordAgentsJSON) +
+		";\nwindow.ORCH_PICTURE_DAYS = " + strconv.Itoa(int(TuneDuration(TunableImageReapDeliveredDays)/(24*time.Hour))) +
 		";</script>\n<script>" + ArtifactClientJS + "</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets + agentDeleteAskJS
 
 	// Builder handoff: a ?builder_brief=<id> deep-link (from the send_to_builder

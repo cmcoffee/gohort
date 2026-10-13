@@ -2488,11 +2488,21 @@
     // bytes, an http one for something the app serves), so a replay hook
     // rebuilding a stored message doesn't have to reimplement the look and
     // then drift from it.
-    window.uiRenderMessageImage = function(bubble, src, alt, name) {
+    // opts.gone, when set, is the text shown in the picture's place if it
+    // fails to load (a picture the app no longer keeps): a muted note
+    // instead of the browser's broken-image icon, which reads as a fault.
+    window.uiRenderMessageImage = function(bubble, src, alt, name, opts) {
       if (!bubble || !src) return null;
       var img = el('img', {src: src, class: 'ui-agent-msg-image', alt: alt || 'image'});
       img.addEventListener('click', function() { openImageLightbox(src); });
-      agentMsgAttachmentBox(bubble).appendChild(withDownload(img, src, name || mediaName('image', src)));
+      var wrap = withDownload(img, src, name || mediaName('image', src));
+      if (opts && opts.gone) {
+        img.addEventListener('error', function() {
+          var note = el('div', {class: 'ui-agent-msg-image-gone'}, ['\uD83D\uDDBC ' + String(opts.gone)]);
+          if (wrap.parentNode) wrap.parentNode.replaceChild(note, wrap);
+        });
+      }
+      agentMsgAttachmentBox(bubble).appendChild(wrap);
       return img;
     };
 

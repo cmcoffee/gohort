@@ -6249,3 +6249,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-card-fields dt { color: var(--text-mute); }
 .ui-pl-card-fields dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .ui-pl-card-fields ul { margin: 0; padding-left: 1.1rem; }
+
+/* A picture a message delivered that is no longer kept (uiRenderMessageImage
+   opts.gone): a muted note in its place rather than a broken image. */
+.ui-agent-msg-image-gone {
+  display: inline-block; padding: 0.45rem 0.7rem; margin: 0.2rem 0;
+  border: 1px dashed var(--border); border-radius: 6px;
+  color: var(--text-mute); font-size: var(--fs-sm, 0.85rem); background: var(--bg-2);
+}

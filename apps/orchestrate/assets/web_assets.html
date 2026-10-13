@@ -9323,10 +9323,14 @@ select.ui-orch-intake-input {
           bubble.setAttribute('data-orch-attached', '1');
           pics.forEach(function(id) {
             if (!id) return;
-            // A thread old enough to fall past the retention cap has lost its
-            // pictures; the handler 404s and the alt text is what shows. The
-            // conversation itself is unaffected, so there is nothing to report.
-            window.uiRenderMessageImage(bubble, 'api/attachment?id=' + encodeURIComponent(id), 'delivered image');
+            // A thread older than the retention window, or past the per-person
+            // cap, has lost its pictures: the handler 404s and a note says so
+            // in the picture's place, rather than a broken image that reads
+            // as a fault. The text of the conversation is unaffected.
+            var days = window.ORCH_PICTURE_DAYS || 0;
+            window.uiRenderMessageImage(bubble, 'api/attachment?id=' + encodeURIComponent(id), 'delivered image', '',
+              {gone: 'This picture is no longer kept. Pictures in conversations are kept ' +
+                (days > 0 ? 'for ' + days + ' days, and ' : '') + 'up to the newest 500 per person.'});
           });
           // Songs, videos and documents the message delivered, kept the same
           // way: they used to exist only in the live stream.
