@@ -261,3 +261,37 @@ func TestAKeyGrantCoversOnlyOwnAgents(t *testing.T) {
 		t.Error("another owner's shared agent is covered by alice's key grant")
 	}
 }
+
+// An agent shared with a group reaches its members, dispatch included, and
+// nobody outside it; the owner's page names the group rather than its id.
+func TestAnAgentSharedWithAGroupReachesItsMembers(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	base := orchestrateBaseDB
+	adb := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return adb }
+	SaveAppGroup(adb, AppGroup{ID: "g-ops", Name: "Ops", Shareable: true})
+	t.Cleanup(func() { DeleteAppGroup(adb, "g-ops"); AuthDB = prev })
+	adb.Set(AuthTable, "user:alice", AuthUser{Username: "alice", Groups: []string{"g-ops"}})
+	adb.Set(AuthTable, "user:bob", AuthUser{Username: "bob", Groups: []string{"g-ops"}})
+	adb.Set(AuthTable, "user:dana", AuthUser{Username: "dana"})
+
+	if _, err := saveAgent(udb, AgentRecord{ID: "a1", Owner: "alice", Name: "Researcher", OrchestratorPrompt: "research",
+		AllowedUsers: []string{"group:g-ops"}}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if got := SharedAgentsFor(base, "bob"); len(got) != 1 || got[0].ID != "a1" {
+		t.Fatalf("bob, in Ops, does not have it: %+v", got)
+	}
+	if a, ok := findAgentByNameOrID(UserDB(base, "bob"), "bob", "Researcher"); !ok || a.Owner != "alice" {
+		t.Error("bob cannot dispatch to it by name")
+	}
+	if got := SharedAgentsFor(base, "dana"); len(got) != 0 {
+		t.Errorf("dana, outside Ops, has it: %+v", got)
+	}
+	a, _ := loadAgent(udb, "a1")
+	if r := agentReachOf(udb, "alice", a); r.Audience != "Shared with the Ops group" || len(r.recipients) != 1 || r.recipients[0] != "bob" {
+		t.Errorf("reach = %q, recipients %v", r.Audience, r.recipients)
+	}
+}

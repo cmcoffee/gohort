@@ -265,7 +265,7 @@ func OwnerLabel(agent AgentRecord, user string) string {
 		return "its owner"
 	}
 	user = strings.TrimSpace(user)
-	if user == "" || user == owner || containsString(agent.AllowedUsers, user) {
+	if user == "" || user == owner || SharedWithUser(agent.AllowedUsers, owner, user) {
 		return owner
 	}
 	return "its owner"

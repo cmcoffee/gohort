@@ -774,13 +774,13 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				// after, it is a narrowing inside the administrator's.
 				Subtitle: shareSubtitleFor(agent),
 				Body: ui.ACLPicker(ui.ACLPickerConfig{
-					OptionsSource: T.WebPrefix() + "/api/user-candidates",
+					OptionsSource: T.WebPrefix() + "/api/user-candidates?groups=1",
 					RecordSource:  patchURL,
 					Field:         "allowed_users",
 					PostTo:        patchURL,
 					Method:        "PATCH",
 					Noun:          "user",
-					Intro:         "Users who may run this agent.",
+					Intro:         "People, or a group you are in, who may run this agent.",
 					EmptyText:     "No other users to share with yet.",
 				}),
 			},

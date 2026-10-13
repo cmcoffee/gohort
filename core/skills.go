@@ -503,7 +503,7 @@ func sharedSkillsFor(db Database, username string) []SkillRecord {
 		return nil
 	}
 	var out []SkillRecord
-	for _, ref := range peershare.List(store, sharedSkillsTable, username) {
+	for _, ref := range SharedRefsFor(store, sharedSkillsTable, username) {
 		for _, s := range LoadSkills(db, ref.Owner) {
 			if s.ID != ref.ID || s.Disabled {
 				continue
@@ -512,7 +512,7 @@ func sharedSkillsFor(db Database, username string) []SkillRecord {
 			// list on the skill is what the owner edits and an admin audits;
 			// the index is a derived lookup, and a derived thing that can
 			// outvote its source is how a revoked share keeps working.
-			if !skillSharedWith(s, username) {
+			if !skillSharedWith(s, ref.Owner, username) {
 				continue
 			}
 			s.SharedFrom = ref.Owner
@@ -557,13 +557,10 @@ func omittedFromShare(s SkillRecord) []string {
 	return nil
 }
 
-func skillSharedWith(s SkillRecord, user string) bool {
-	for _, u := range s.AllowedUsers {
-		if u == user {
-			return true
-		}
-	}
-	return false
+// skillSharedWith says whether owner's skill reaches user: by name, or through
+// a group they are both in.
+func skillSharedWith(s SkillRecord, owner, user string) bool {
+	return SharedWithUser(s.AllowedUsers, owner, user)
 }
 
 // AvailableSkills is every skill this user may use: their own, plus the ones
@@ -702,7 +699,7 @@ func SaveSkillAs(db Database, username string, s SkillRecord, reason string) (Sk
 	// arrive here. Their agents keep the id; without this they find out by
 	// watching one answer without the skill.
 	if hadPrior {
-		shareledger.Withdrawn("skill", username, s.ID, s.Name, recipientsLost(prior.AllowedUsers, s.AllowedUsers))
+		shareledger.Withdrawn("skill", username, s.ID, s.Name, sharesLost(prior.AllowedUsers, s.AllowedUsers, username))
 	}
 	return s, nil
 }
@@ -775,7 +772,7 @@ func DeleteSkill(db Database, username, id string) bool {
 	}
 	// Here rather than in dropSkillRecord, which publishing also uses: a skill
 	// moving to the deployment still reaches everybody it reached before.
-	shareledger.Withdrawn("skill", username, id, gone.Name, gone.AllowedUsers)
+	shareledger.Withdrawn("skill", username, id, gone.Name, ShareMembers(gone.AllowedUsers, username))
 	// The history goes with the skill, the way a deleted pipeline's does.
 	revisions.Delete(store, revisions.KindSkill, skillRingKey(username, id))
 	// Drop the skill's corpus chunks from its dedicated store.
@@ -1777,7 +1774,7 @@ func init() {
 				}
 				out = append(out, shareledger.Grant{
 					ID: s.ID, Name: s.Name, Recipients: s.AllowedUsers,
-					Reach:     "Shared with " + strings.Join(s.AllowedUsers, ", "),
+					Reach:     "Shared with " + ShareRecipientsText(s.AllowedUsers),
 					Detail:    skillShareDetail(s),
 					Revocable: true,
 				})

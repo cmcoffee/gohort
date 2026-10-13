@@ -514,7 +514,7 @@ func (T *OrchestrateApp) hasSharedReachableAgents(r *http.Request, user string) 
 		if e.Owner == user {
 			continue
 		}
-		if containsString(e.AllowedUsers, user) ||
+		if SharedWithUser(e.AllowedUsers, e.Owner, user) ||
 			e.Everyone {
 			return true
 		}

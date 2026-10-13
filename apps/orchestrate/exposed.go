@@ -280,7 +280,7 @@ func (T *OrchestrateApp) AgentReachableBy(r *http.Request, slug, owner string, a
 		// Not published: the owner's list is the whole answer, and nobody
 		// else's opinion is involved. Handing an agent to two colleagues is
 		// the owner's business, as it is for every other kind.
-		return containsString(allowedUsers, u)
+		return SharedWithUser(allowedUsers, owner, u)
 	}
 	// Published: two gates, and it takes BOTH.
 	//
@@ -308,7 +308,7 @@ func (T *OrchestrateApp) AgentReachableBy(r *http.Request, slug, owner string, a
 	// The same reading AllowedUsers has on a credential and on a shared tool,
 	// and the alternative — empty means nobody — would have made every agent
 	// published before this unreachable overnight.
-	return len(allowedUsers) == 0 || containsString(allowedUsers, u)
+	return len(allowedUsers) == 0 || SharedWithUser(allowedUsers, owner, u)
 }
 
 // CortexSessionID exposes a channel agent's pinned home-thread session id so

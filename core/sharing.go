@@ -13,10 +13,14 @@
 package core
 
 import (
+	"encoding/json"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/shareledger"
 )
 
@@ -214,4 +218,224 @@ func init() {
 			Body:  strings.TrimSpace(intro + " " + strings.Join(needs, " ")),
 		})
 	}
+}
+
+// ----------------------------------------------------------------------
+// Sharing with a group
+// ----------------------------------------------------------------------
+
+// A group goes into a record's recipient list as one more entry, "group:<id>",
+// beside the names already there. The list stays the one thing the owner
+// edits, the index stays derived from it, and nothing about a share changes
+// shape for the kinds that never offer a group.
+//
+// Two rules, the same ones an app shared with a group obeys. The group's
+// administrator has to have let members share with it (a group that began as
+// an app bundle can be close to the whole deployment, which is not a member's
+// call), and the owner has to still be in it: "my team" stops being theirs to
+// share with when they leave. Membership is read at the check, so somebody who
+// joins later has the thing and somebody who leaves loses it.
+
+const shareGroupPrefix = "group:"
+
+// shareGroupOf is the group id an entry names, if it names one.
+func shareGroupOf(entry string) (string, bool) {
+	id, ok := strings.CutPrefix(strings.TrimSpace(entry), shareGroupPrefix)
+	return id, ok && id != ""
+}
+
+func userInShareGroup(user, groupID string) bool {
+	if AuthDB == nil || user == "" {
+		return false
+	}
+	u, ok := AuthGetUser(AuthDB(), user)
+	if !ok {
+		return false
+	}
+	for _, g := range u.Groups {
+		if g == groupID {
+			return true
+		}
+	}
+	return false
+}
+
+// shareGroup is a group that can carry a share right now.
+func shareGroup(groupID string) (AppGroup, bool) {
+	if AuthDB == nil || groupID == "" {
+		return AppGroup{}, false
+	}
+	g, ok := LoadAppGroup(AuthDB(), groupID)
+	if !ok || !g.Shareable {
+		return AppGroup{}, false
+	}
+	return g, true
+}
+
+// ShareRecipientKeys is every recipient entry that can reach user: their own
+// name, then one per shareable group they are in. A recipient-side lookup
+// lists the share index under each.
+func ShareRecipientKeys(user string) []string {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return nil
+	}
+	keys := []string{user}
+	if AuthDB == nil {
+		return keys
+	}
+	u, ok := AuthGetUser(AuthDB(), user)
+	if !ok {
+		return keys
+	}
+	for _, id := range u.Groups {
+		if _, ok := shareGroup(id); ok {
+			keys = append(keys, shareGroupPrefix+id)
+		}
+	}
+	return keys
+}
+
+// SharedRefsFor is everything shared with user through the index in store, by
+// name or through a group, once each.
+func SharedRefsFor(store peershare.Store, indexTable, user string) []peershare.Ref {
+	if store == nil {
+		return nil
+	}
+	seen := map[peershare.Ref]bool{}
+	var out []peershare.Ref
+	for _, k := range ShareRecipientKeys(user) {
+		for _, ref := range peershare.List(store, indexTable, k) {
+			if !seen[ref] {
+				seen[ref] = true
+				out = append(out, ref)
+			}
+		}
+	}
+	return out
+}
+
+// SharedWithUser says whether a recipient list an owner keeps reaches user:
+// by name, or through a group that still carries shares and both are in.
+func SharedWithUser(list []string, owner, user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return false
+	}
+	for _, e := range list {
+		id, group := shareGroupOf(e)
+		if !group {
+			if strings.TrimSpace(e) == user {
+				return true
+			}
+			continue
+		}
+		if _, ok := shareGroup(id); ok && userInShareGroup(owner, id) && userInShareGroup(user, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// ShareMembers is the people a recipient list reaches today, groups opened up
+// to their members: who to tell when a share goes away, and whose use of it
+// to look for. The owner is left out.
+func ShareMembers(list []string, owner string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(u string) {
+		if u = strings.TrimSpace(u); u != "" && u != owner && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	for _, e := range list {
+		id, group := shareGroupOf(e)
+		if !group {
+			add(e)
+			continue
+		}
+		if _, ok := shareGroup(id); !ok || !userInShareGroup(owner, id) {
+			continue
+		}
+		for _, u := range AuthListUsers(AuthDB()) {
+			if userInShareGroup(u.Username, id) {
+				add(u.Username)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sharesLost is who an edit of a recipient list took the thing away from:
+// reached before, not reached after, groups opened up on both sides so that
+// dropping a group does not tell a member who still has it by name.
+func sharesLost(before, after []string, owner string) []string {
+	return recipientsLost(ShareMembers(before, owner), ShareMembers(after, owner))
+}
+
+// ShareRecipientsText is a recipient list as words: names as they are, a
+// group by its name.
+func ShareRecipientsText(list []string) string {
+	parts := make([]string, 0, len(list))
+	for _, e := range list {
+		id, group := shareGroupOf(e)
+		if !group {
+			parts = append(parts, e)
+			continue
+		}
+		if AuthDB != nil {
+			if g, ok := LoadAppGroup(AuthDB(), id); ok {
+				parts = append(parts, "the "+g.Name+" group")
+				continue
+			}
+		}
+		parts = append(parts, "a removed group")
+	}
+	return strings.Join(parts, ", ")
+}
+
+// ShareCandidatesJSON is a share picker's candidates: everyone but owner and,
+// with groups (a kind that can be shared with one), then each group owner may
+// share with, named for what it is and how many it reaches today.
+func ShareCandidatesJSON(owner string, groups bool) []byte {
+	type candidate struct {
+		Value string `json:"value"`
+		Label string `json:"label"`
+		Desc  string `json:"desc,omitempty"`
+	}
+	var out []candidate
+	if AuthDB == nil {
+		return []byte("[]")
+	}
+	json.Unmarshal(UserCandidatesJSON(AuthDB(), owner), &out)
+	if u, ok := AuthGetUser(AuthDB(), owner); ok && groups {
+		users := AuthListUsers(AuthDB())
+		var groups []candidate
+		for _, id := range u.Groups {
+			g, ok := shareGroup(id)
+			if !ok {
+				continue
+			}
+			n := 0
+			for _, m := range users {
+				if !m.Pending && m.Username != owner && userInShareGroup(m.Username, id) {
+					n++
+				}
+			}
+			groups = append(groups, candidate{
+				Value: shareGroupPrefix + id,
+				Label: "Group: " + g.Name,
+				Desc:  "Everyone in " + g.Name + " (" + strconv.Itoa(n) + " besides you today). Who joins later has it; who leaves loses it.",
+			})
+		}
+		sort.Slice(groups, func(i, j int) bool { return strings.ToLower(groups[i].Label) < strings.ToLower(groups[j].Label) })
+		out = append(out, groups...)
+	}
+	if out == nil {
+		out = []candidate{}
+	}
+	b, _ := json.Marshal(out)
+	return b
 }

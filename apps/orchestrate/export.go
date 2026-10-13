@@ -117,7 +117,7 @@ func (T *OrchestrateApp) agentForSessionExport(udb Database, user, agentID strin
 	// match over it would hand any signed-in user the record behind an agent
 	// shared with two named colleagues.
 	for _, e := range T.ListExposedAgents() {
-		if e.AgentID != agentID || !(e.Everyone || containsString(e.AllowedUsers, user)) {
+		if e.AgentID != agentID || !(e.Everyone || SharedWithUser(e.AllowedUsers, e.Owner, user)) {
 			continue
 		}
 		if a, ok := loadAgent(UserDB(T.DB, e.Owner), agentID); ok {

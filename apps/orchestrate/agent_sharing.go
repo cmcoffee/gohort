@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/peershare"
 )
 
 func init() {
@@ -44,12 +43,7 @@ func userCanRunSharedAgent(a AgentRecord, reqUser string) bool {
 	if reqUser == "" {
 		return false
 	}
-	for _, u := range a.AllowedUsers {
-		if u == reqUser {
-			return true
-		}
-	}
-	return false
+	return SharedWithUser(a.AllowedUsers, a.Owner, reqUser)
 }
 
 // listUserOwnedAgentsForAdmin walks every user's agent store and returns the
@@ -71,7 +65,7 @@ func listUserOwnedAgentsForAdmin(db Database) []UserOwnedAgentRow {
 				ID:         a.ID,
 				Owner:      a.Owner,
 				Name:       a.Name,
-				SharedWith: strings.Join(a.AllowedUsers, ", "),
+				SharedWith: ShareRecipientsText(a.AllowedUsers),
 				Shared:     len(a.AllowedUsers) > 0,
 				Exposed:    a.Everyone,
 			})
@@ -132,7 +126,8 @@ func (T *OrchestrateApp) handleUserCandidates(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(UserCandidatesJSON(AuthDB(), user))
+	// ?groups=1 from a picker whose kind can go to a group as well.
+	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1"))
 }
 
 // SharedAgentsTable indexes peer shares: recipient -> (owner, agent id).
@@ -155,7 +150,7 @@ func SharedAgentsFor(db Database, user string) []AgentRecord {
 		return nil
 	}
 	var out []AgentRecord
-	for _, ref := range peershare.List(RootDB, SharedAgentsTable, user) {
+	for _, ref := range SharedRefsFor(RootDB, SharedAgentsTable, user) {
 		udb := UserDB(db, ref.Owner)
 		if udb == nil {
 			continue

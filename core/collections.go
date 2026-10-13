@@ -723,7 +723,7 @@ func LoadCollection(udb Database, user, id string) (Collection, bool) {
 	// then re-checked against the owner's record, so a stale index entry cannot
 	// grant access the owner has taken away.
 	if user != "" && RootDB != nil && VectorDB != nil {
-		for _, ref := range peershare.List(RootDB, sharedCollectionsTable, user) {
+		for _, ref := range SharedRefsFor(RootDB, sharedCollectionsTable, user) {
 			if ref.ID != id {
 				continue
 			}
@@ -835,7 +835,7 @@ func sharedCollectionsFor(user string) []Collection {
 		return nil
 	}
 	var out []Collection
-	for _, ref := range peershare.List(RootDB, sharedCollectionsTable, user) {
+	for _, ref := range SharedRefsFor(RootDB, sharedCollectionsTable, user) {
 		udb := UserDB(CollectionsDB(), ref.Owner)
 		if udb == nil {
 			continue
@@ -857,13 +857,10 @@ func sharedCollectionsFor(user string) []Collection {
 	return out
 }
 
+// collectionSharedWith says whether c reaches user: by name, or through a
+// group its owner and they are both in.
 func collectionSharedWith(c Collection, user string) bool {
-	for _, u := range c.AllowedUsers {
-		if u == user {
-			return true
-		}
-	}
-	return false
+	return SharedWithUser(c.AllowedUsers, c.Owner, user)
 }
 
 // SaveCollection writes the record to the right pool based on
@@ -891,7 +888,7 @@ func SaveCollection(udb Database, c Collection) {
 	// Whoever this save took off the share is told, whichever door narrowed
 	// it: every one of them saves through here.
 	if c.Owner != "" && prior.Owner == c.Owner {
-		shareledger.Withdrawn("collection", c.Owner, c.ID, c.Name, recipientsLost(prior.AllowedUsers, c.AllowedUsers))
+		shareledger.Withdrawn("collection", c.Owner, c.ID, c.Name, sharesLost(prior.AllowedUsers, c.AllowedUsers, c.Owner))
 	}
 }
 
@@ -933,7 +930,7 @@ func DeleteCollection(udb, appDB Database, user, id string) (chunksRemoved int) 
 	if IsDeploymentScope(c) {
 		shareledger.WithdrawnFromEverybody("collection", c.Owner, c.ID, c.Name)
 	} else if c.Owner != "" {
-		shareledger.Withdrawn("collection", c.Owner, c.ID, c.Name, c.AllowedUsers)
+		shareledger.Withdrawn("collection", c.Owner, c.ID, c.Name, ShareMembers(c.AllowedUsers, c.Owner))
 	}
 	return chunksRemoved
 }
@@ -1077,7 +1074,7 @@ func init() {
 				case len(c.AllowedUsers) > 0:
 					out = append(out, shareledger.Grant{
 						ID: c.ID, Name: c.Name, Recipients: c.AllowedUsers,
-						Reach:     "Shared with " + strings.Join(c.AllowedUsers, ", "),
+						Reach:     "Shared with " + ShareRecipientsText(c.AllowedUsers),
 						Revocable: true,
 					})
 				}
@@ -1128,12 +1125,9 @@ func CollectionContributor(c Collection, user string) bool {
 	if c.Owner == "" || c.Owner == user {
 		return true
 	}
-	for _, u := range contributorsStillShared(c) {
-		if u == user {
-			return true
-		}
-	}
-	return false
+	// A group can be a contributor too: everyone in it, while they and the
+	// owner are.
+	return SharedWithUser(contributorsStillShared(c), c.Owner, user)
 }
 
 // contributorsStillShared is Contributors held to the rule its comment states:

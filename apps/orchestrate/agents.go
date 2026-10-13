@@ -385,7 +385,7 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 	if RootDB != nil && isShareableAgent(a, a.Owner) {
 		var prior AgentRecord
 		if db.Get(agentsTable, a.ID, &prior) {
-			dropped = leftBehind(prior.AllowedUsers, a.AllowedUsers)
+			dropped = leftBehind(ShareMembers(prior.AllowedUsers, a.Owner), ShareMembers(a.AllowedUsers, a.Owner))
 		}
 	}
 	db.Set(agentsTable, a.ID, a)

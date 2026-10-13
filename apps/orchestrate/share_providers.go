@@ -57,7 +57,7 @@ func registerShareProviders() {
 				case len(a.AllowedUsers) > 0:
 					out = append(out, shareledger.Grant{
 						ID: a.ID, Name: a.Name, Recipients: a.AllowedUsers,
-						Reach:     "Shared with " + strings.Join(a.AllowedUsers, ", "),
+						Reach:     "Shared with " + ShareRecipientsText(a.AllowedUsers),
 						Detail:    agentShareDetail(udb, owner, a),
 						Revocable: true,
 					})

@@ -100,8 +100,8 @@ func newAgentMove(db Database, owner, id, parentID string) (*agentMove, error) {
 	// would take the agent away from people who were given it, without
 	// telling them, so the owner stops sharing first and knows they did.
 	var reach []string
-	if n := len(a.AllowedUsers); n > 0 {
-		reach = append(reach, fmt.Sprintf("shared with %d %s", n, map[bool]string{true: "person", false: "people"}[n == 1]))
+	if len(a.AllowedUsers) > 0 {
+		reach = append(reach, "shared with "+ShareRecipientsText(a.AllowedUsers))
 	}
 	if a.Everyone {
 		reach = append(reach, "published to everyone")

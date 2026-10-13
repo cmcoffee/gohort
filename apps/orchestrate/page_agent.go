@@ -1186,12 +1186,12 @@ func currentAutoThinkLabel() string {
 // be describing a control that no longer does that on its own.
 func shareSubtitleFor(a AgentRecord) string {
 	if !a.Everyone && !a.MCPExposed {
-		return "Let specific other users run this agent. Empty means private to you."
+		return "Let specific people, or a group you are in, run this agent. Empty means private to you."
 	}
 	if len(a.AllowedUsers) == 0 {
 		return "Published: everybody the admin has granted this app can run it. Name people here to narrow it to them."
 	}
-	return "Published, and narrowed by you to " + strings.Join(a.AllowedUsers, ", ") +
+	return "Published, and narrowed by you to " + ShareRecipientsText(a.AllowedUsers) +
 		". They also need the admin's grant of the app; this list can only narrow it, never widen it."
 }
 

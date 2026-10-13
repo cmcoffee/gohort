@@ -99,13 +99,13 @@ type agentReachMap struct {
 
 // agentReachOf walks one agent's dependencies in the owner's namespace.
 func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
-	out := agentReachMap{audience: reachPrivate, recipients: a.AllowedUsers}
+	out := agentReachMap{audience: reachPrivate, recipients: ShareMembers(a.AllowedUsers, owner)}
 	switch {
 	case a.Everyone:
 		out.audience, out.Audience = reachDeployment, "Published to everybody"
 	case len(a.AllowedUsers) > 0:
 		out.audience = reachNamed
-		out.Audience = "Shared with " + strings.Join(a.AllowedUsers, ", ")
+		out.Audience = "Shared with " + ShareRecipientsText(a.AllowedUsers)
 	default:
 		out.Audience = "Private to you"
 	}
@@ -218,7 +218,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		case s.SharedFrom != "":
 			level, reach = reachNamed, "Shared with you by "+s.SharedFrom
 		case len(s.AllowedUsers) > 0:
-			level, reach = reachNamed, "Shared with "+strings.Join(s.AllowedUsers, ", ")
+			level, reach = reachNamed, "Shared with "+ShareRecipientsText(s.AllowedUsers)
 		}
 		add(reachItem{Kind: "Skill", Name: s.Name, Reach: reach,
 			How:   "Attached by id. A skill of their own with the same name is a different id and will not stand in.",
@@ -242,7 +242,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		case IsDeploymentScope(c):
 			level, reach = reachDeployment, "Deployment-wide"
 		case len(c.AllowedUsers) > 0:
-			level, reach = reachNamed, "Shared with "+strings.Join(c.AllowedUsers, ", ")
+			level, reach = reachNamed, "Shared with "+ShareRecipientsText(c.AllowedUsers)
 		}
 		add(reachItem{Kind: "Knowledge", Name: c.Name, Reach: reach,
 			How:   "Travels with the agent: read as you, its owner, whoever runs it, and through this agent only.",

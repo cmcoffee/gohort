@@ -2350,15 +2350,15 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 									// anything to the whole deployment is an
 									// administrator's decision; who you hand a skill to
 									// is yours.
-									ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Shared with</div><div style="font-size:var(--fs-xs, 0.75rem);color:var(--text-mute)">Other users who may use this skill. Empty means private to you. They get the behaviour, not the authorship: it activates on their turns and they cannot edit or delete it. Bundled tools do not travel, because that would run your code in their session. Attached collections do travel as references, and each resolves only for someone who can already read it.</div>`},
+									ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Shared with</div><div style="font-size:var(--fs-xs, 0.75rem);color:var(--text-mute)">Other people, or a group you are in, who may use this skill. Empty means private to you. They get the behaviour, not the authorship: it activates on their turns and they cannot edit or delete it. Bundled tools do not travel, because that would run your code in their session. Attached collections do travel as references, and each resolves only for someone who can already read it.</div>`},
 									ui.ACLPicker(ui.ACLPickerConfig{
-										OptionsSource: "api/user-candidates",
+										OptionsSource: "api/user-candidates?groups=1",
 										RecordSource:  "api/skills?id={id}",
 										Field:         "allowed_users",
 										PostTo:        "api/skills?id={id}",
 										Method:        "PATCH",
 										Noun:          "user",
-										Intro:         "Users who may use this skill.",
+										Intro:         "People, or a group you are in, who may use this skill.",
 										EmptyText:     "No other users to share with yet.",
 									}),
 								}}),
@@ -3041,7 +3041,8 @@ func (T *Extensions) handleUserCandidates(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(UserCandidatesJSON(AuthDB(), user))
+	// ?groups=1 from a picker whose kind can go to a group as well.
+	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1"))
 }
 
 // nonNilList keeps an empty array an array in JSON: an ACLPicker handed null
