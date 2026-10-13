@@ -87,6 +87,11 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 		lockLabel = "Locked with its parent, " + pn
 		lockHelp = "A sub-agent has no lock of its own: this is " + pn + "'s lock, and switching it here switches it for " + pn + " and all of its sub-agents."
 	}
+	// A parent forced Private makes its sub-agents Private (privateParentOf).
+	forcePrivateHelp := "Permanently drops network and sub-agent dispatch tools, and holds the agent on the local model."
+	if pp := privateParentOf(agent); pp != "" {
+		forcePrivateHelp = pp + " is forced Private, so this agent is too, whatever this says. " + forcePrivateHelp
+	}
 	src := T.WebPrefix() + "/api/agent-access?id=" + url.QueryEscape(agent.ID)
 	// {name} is the row's own name FIELD, substituted per row. Not {row_key}:
 	// the substituter resolves a placeholder by looking that key up ON THE
@@ -658,7 +663,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					Method:  "PATCH",
 					Fields: []ui.FormField{
 						{Field: "force_private", Type: "toggle", Label: "Force Private mode: never reaches out",
-							Help: "Permanently drops network and sub-agent dispatch tools, and holds the agent on the local model."},
+							Help: forcePrivateHelp},
 						// Moot while Private mode is forced: there is nothing left to toggle.
 						{Field: "allow_private_mode", Type: "toggle", Label: "Offer a Private toggle on its chat", ShowWhen: "!force_private",
 							Help: "Lets whoever is using the agent drop network tools for one turn."},
@@ -856,6 +861,11 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			},
 		},
 	}
+	// A sub-agent belongs to its parent (agent_family.go): what only the
+	// parent decides is not offered here, and a line says where it is.
+	if top := topAgentOf(udb, agent.ID); top != agent.ID {
+		page.Sections = subAgentSecuritySections(page.Sections, udb, top)
+	}
 	// Per-agent credential scoping, on the tab about what the agent may call.
 	// Appended rather than declared inline because it is conditional: a
 	// sub-agent runs on its parent's credentials, so scoping it separately
@@ -904,4 +914,43 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	page.ServeHTTP(w, r)
+}
+
+// subAgentSecuritySections is a sub-agent's Security page: the parent's own
+// decisions taken off, each replaced by a line naming where it is made.
+//   - Share: a sub-agent is never shared, published or on a dashboard
+//     (enforceSubAgentPosture), so nothing set there could take effect.
+//   - Who may call it: only its parent, and Builder checking what it built
+//     (agents run refuses everything else), whatever the controls said.
+//   - Who it may message: it sends through its parent's channels, so the
+//     people its parent may message are its people (familyContactBlocked).
+func subAgentSecuritySections(secs []ui.Section, udb Database, top string) []ui.Section {
+	parent := top
+	if p, ok := loadAgent(udb, top); ok {
+		parent = chFirst(p.Name, p.ID)
+	}
+	drop := map[string]bool{
+		"Who may call THIS agent":         true,
+		"Agents that may call it":         true,
+		"Let this agent message somebody": true,
+	}
+	out := make([]ui.Section, 0, len(secs)+2)
+	for _, s := range secs {
+		if s.Group == "Share" || drop[s.Title] {
+			continue
+		}
+		out = append(out, s)
+	}
+	return append(out,
+		ui.Section{
+			Group:    "Delegation",
+			Title:    "Who may call it",
+			Subtitle: "Only " + parent + ", the agent it belongs to, and Builder checking what it built. A sub-agent is reached through its parent, so there is nothing to set here.",
+		},
+		ui.Section{
+			Group:    "Access",
+			Title:    "Who it may message",
+			Subtitle: "Decided on " + parent + "'s Security page. This agent sends through " + parent + "'s channels, so the people " + parent + " may message, or must ask about, are its people too. A block already recorded for this agent still holds.",
+		},
+	)
 }

@@ -150,7 +150,24 @@ func appAgentDispatchMode(id string) (string, bool) {
 // One function so the answer cannot differ by call site, which is how it came
 // to differ in the first place.
 func agentForcesPrivate(a AgentRecord) bool {
-	return a.ForcePrivate || appAgentForcesPrivate(a.ID)
+	return a.ForcePrivate || appAgentForcesPrivate(a.ID) || privateParentOf(a) != ""
+}
+
+// privateParentOf names the nearest parent of a sub-agent that is forced
+// Private, which makes the sub-agent Private too: a sub-agent may be stricter
+// than its parent, never wider, and it runs on its own schedules as well as
+// when its parent calls it. "" for a top-level agent or none.
+func privateParentOf(a AgentRecord) string {
+	if strings.TrimSpace(a.OwnedBy) == "" {
+		return ""
+	}
+	db := agentStore(a.Owner)
+	for _, id := range agentAncestors(db, a.ID) {
+		if p, ok := loadAgent(db, id); ok && p.ForcePrivate {
+			return chFirst(p.Name, p.ID)
+		}
+	}
+	return ""
 }
 
 // appAgentVisibilityWarnOnce fires the visible-app-agent lint a single time,

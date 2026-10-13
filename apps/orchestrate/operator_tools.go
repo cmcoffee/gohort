@@ -1792,7 +1792,7 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					}
 					return sent + " " + queueReplyBinding(owner, controllerAgentID, rec.ChatID, rec.Handle, label)
 				}
-				if IsContactBlocked(RootDB, owner, agentID, recip) {
+				if familyContactBlocked(owner, agentID, recip) {
 					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings: not sent.", label), nil
 				}
 				// Replying to the conversation that just messaged us is in-thread,
@@ -1806,7 +1806,7 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 				// Pre-authorized recipient: send immediately, skip the queue,
 				// unless someone else's request is reaching past where they wrote.
 				standing := standingGrantApplies(ctx, recip)
-				if standing && IsContactPreAuthorized(RootDB, owner, agentID, recip) {
+				if standing && familyContactAllowed(owner, agentID, recip) {
 					if _, err := operatorDeliverMedia(owner, agentID, rec.ChatID, rec.Handle, text, images, videos); err != nil {
 						return "", err
 					}

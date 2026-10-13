@@ -375,3 +375,73 @@ func TestAParentsGrantsCoverItsSubAgents(t *testing.T) {
 		t.Error("naming a tool scoped to another family's agent reaches it")
 	}
 }
+
+// What only a parent decides is decided on the parent: a parent forced
+// Private makes its sub-agents Private (on their own schedules too), who a
+// sub-agent may message is its top-level parent's decision (a block of its
+// own still holds), and its Security page offers neither sharing nor who may
+// call it, saying where each is decided instead.
+func TestAParentDecidesForItsSubAgents(t *testing.T) {
+	app, udb := familyFixture(t)
+	load := func(id string) AgentRecord {
+		t.Helper()
+		a, _ := loadAgent(udb, id)
+		return a
+	}
+
+	// Private mode.
+	if agentForcesPrivate(load("a-nit")) {
+		t.Fatal("a sub-agent of a parent that is not Private is Private")
+	}
+	writer := load("a-writer")
+	writer.ForcePrivate = true
+	if _, err := saveAgent(udb, writer); err != nil {
+		t.Fatal(err)
+	}
+	if !agentForcesPrivate(load("a-nit")) || privateParentOf(load("a-nit")) != "Writer" {
+		t.Error("a parent forced Private does not make its sub-agent Private")
+	}
+	if agentForcesPrivate(AgentRecord{ID: "a-outsider", Owner: "alice"}) {
+		t.Error("an agent outside the family became Private")
+	}
+
+	// Messaging.
+	const handle = "+15550100"
+	if contactHolder("alice", "a-nit") != "a-writer" || contactHolder("alice", "a-writer") != "a-writer" {
+		t.Error("a sub-agent's messaging is not its top-level parent's")
+	}
+	SetContactPolicy(RootDB, "alice", "a-writer", handle, PolicyAllow)
+	if !familyContactAllowed("alice", "a-nit", handle) || familyContactBlocked("alice", "a-nit", handle) {
+		t.Error("a contact the parent may message is not the sub-agent's")
+	}
+	SetContactPolicy(RootDB, "alice", "a-nit", handle, PolicyBlock)
+	if !familyContactBlocked("alice", "a-nit", handle) {
+		t.Error("a block recorded on the sub-agent no longer holds")
+	}
+	RemoveContactPolicy(RootDB, "alice", "a-nit", handle)
+	SetContactPolicy(RootDB, "alice", "a-writer", handle, PolicyBlock)
+	if !familyContactBlocked("alice", "a-nit", handle) {
+		t.Error("a contact the parent may not message is open to its sub-agent")
+	}
+
+	// The Security page.
+	page := func(id string) string {
+		w := httptest.NewRecorder()
+		app.renderAgentAccess(w, asUser(httptest.NewRequest(http.MethodGet, "/agent/"+id+"/access?format=json", nil), "alice"), "alice", udb, id)
+		return w.Body.String()
+	}
+	sub, top := page("a-critic"), page("a-writer")
+	for _, gone := range []string{`"group":"Share"`, "Who may call THIS agent", "Agents that may call it", "Let this agent message somebody"} {
+		if strings.Contains(sub, gone) {
+			t.Errorf("a sub-agent's Security page still offers %s", gone)
+		}
+		if !strings.Contains(top, gone) {
+			t.Errorf("a top-level agent's Security page lost %s", gone)
+		}
+	}
+	for _, want := range []string{"Only Writer, the agent it belongs to", "Decided on Writer's Security page", "Writer is forced Private, so this agent is too"} {
+		if !strings.Contains(sub, want) {
+			t.Errorf("a sub-agent's Security page should say %q", want)
+		}
+	}
+}

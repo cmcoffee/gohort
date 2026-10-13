@@ -166,8 +166,9 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 			// may say to this person; a grant the whole fleet shares is one any
 			// other agent can spend, which would make those rules decorative.
 			// Promote it to all agents from the Permissions page when that is
-			// genuinely what is meant.
-			SetContactPreAuthorized(RootDB, a.Owner, approvalRequester(a), recip, true)
+			// genuinely what is meant. A sub-agent's grant is its top-level
+			// parent's, where its messaging is decided (agent_family.go).
+			SetContactPreAuthorized(RootDB, a.Owner, contactHolder(a.Owner, approvalRequester(a)), recip, true)
 		}
 		if _, err := operatorDeliverMedia(a.Owner, a.Agent, a.ChatID, a.Handle, a.Text, a.Images, a.Videos); err != nil {
 			Log("[operator.approval] send_message to %s failed: %v", recip, err)

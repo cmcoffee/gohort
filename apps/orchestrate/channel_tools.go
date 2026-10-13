@@ -418,7 +418,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				recip := operatorRecipientKey(chatID, handle)
 				label := chFirst(handle, chatID)
 				images, videos := messageMedia(sess, args, text)
-				if IsContactBlocked(RootDB, owner, agentID, recip) {
+				if familyContactBlocked(owner, agentID, recip) {
 					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings: not sent.", label), nil
 				}
 				// Replying to the conversation that just messaged us is in-thread,
@@ -432,7 +432,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				// A standing approval is the owner's say-so for the owner's own
 				// asks, not for someone else's (standingGrantApplies).
 				standing := standingGrantApplies(ctx, recip)
-				if standing && IsContactPreAuthorized(RootDB, owner, agentID, recip) {
+				if standing && familyContactAllowed(owner, agentID, recip) {
 					if _, err := operatorDeliverMedia(owner, agentID, chatID, handle, text, images, videos); err != nil {
 						return "", err
 					}

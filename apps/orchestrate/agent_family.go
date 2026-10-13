@@ -168,6 +168,39 @@ func moveSubAgentPosters() {
 	}
 }
 
+// contactHolder is the agent whose decisions about who may be messaged
+// apply to agentID: its top-level parent for a sub-agent, which sends
+// through that parent's channels and has no messaging settings of its own.
+func contactHolder(owner, agentID string) string {
+	if db := agentStore(owner); db != nil {
+		return topAgentOf(db, agentID)
+	}
+	return agentID
+}
+
+// familyContactBlocked reports whether agentID may not message handle: its
+// top-level parent may not, or it is blocked itself (a block recorded on a
+// sub-agent before its settings moved to the parent still holds, since a
+// sub-agent may be stricter than its parent).
+func familyContactBlocked(owner, agentID, handle string) bool {
+	if IsContactBlocked(RootDB, owner, agentID, handle) {
+		return true
+	}
+	top := contactHolder(owner, agentID)
+	return top != agentID && IsContactBlocked(RootDB, owner, top, handle)
+}
+
+// familyContactAllowed reports whether agentID may message handle without
+// asking: its top-level parent may, or it was allowed itself before its
+// settings moved to the parent. A block is checked first, by the caller.
+func familyContactAllowed(owner, agentID, handle string) bool {
+	if IsContactPreAuthorized(RootDB, owner, agentID, handle) {
+		return true
+	}
+	top := contactHolder(owner, agentID)
+	return top != agentID && IsContactPreAuthorized(RootDB, owner, top, handle)
+}
+
 // subAgentChannelRefusal is what binding a channel to a sub-agent says: the
 // channel belongs on its parent, named, which can hand the work to it. ""
 // for an agent that is not a sub-agent.

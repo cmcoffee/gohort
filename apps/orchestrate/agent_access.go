@@ -274,6 +274,9 @@ func (T *OrchestrateApp) accessWorkspaceRows(rec AgentRecord) []accessSideRow {
 	case rec.ForcePrivate:
 		net.Policy, net.Detail = "no", "forced private, which cuts all network, not only the workspace's"
 		net.Where = "Agent → Force Private mode"
+	case privateParentOf(rec) != "":
+		net.Policy, net.Detail = "no", privateParentOf(rec)+" is forced private, and so is every agent under it"
+		net.Where = privateParentOf(rec) + " → Force Private mode"
 	case rec.WorkspaceNoNetwork:
 		net.Policy, net.Detail = "no", "its tools and its model are unaffected"
 	case sandbox.ShellNetworkClosedByDefault():
