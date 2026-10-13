@@ -23,6 +23,10 @@ const documentsListBody = `
 
 const documentsListAssets = `<style>
 .docs-page { padding: 0.5rem; }
+/* The section after the collections (Bulletins) lines up with their cards:
+   they sit inside the card's 0.2rem and this page's 0.5rem, so the section
+   is inset by the same 0.7rem instead of running past them on both sides. */
+.ui-card:has(.docs-page) ~ .ui-section { margin-left: 0.7rem; margin-right: 0.7rem; }
 .docs-hdr { display: flex; align-items: flex-start; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .docs-intro { flex: 1; min-width: 260px; margin: 0; color: var(--text-mute); font-size: var(--fs-md, 0.88rem); line-height: 1.45; }
 .docs-status { font-size: var(--fs-sm, 0.8rem); color: var(--text-mute); margin-bottom: 0.6rem; min-height: 1.2em; }
