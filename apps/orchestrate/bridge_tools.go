@@ -97,7 +97,12 @@ Typical flow when wiring a new service:
 		},
 		Required: []string{"name", "interval_minutes"},
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
-			return bridgeCreate(args, sess, defaultWakeAgent)
+			out, err := bridgeCreate(args, sess, defaultWakeAgent)
+			if err == nil {
+				// Made here: changing it later this session asks nothing.
+				sessionApprove(sess, "bridge", strings.TrimSpace(stringArg(args, "name")), "", false)
+			}
+			return out, err
 		},
 	})
 	gt.AddAction("list", &GroupedToolAction{
@@ -125,7 +130,17 @@ Typical flow when wiring a new service:
 			if _, present := args["channel"]; !present {
 				return "", fmt.Errorf("nothing to update: pass channel=<name/id> to hook a channel, or channel=\"\" to detach")
 			}
-			return setBridgeChannel(owner, strings.TrimSpace(stringArg(args, "name")), strings.TrimSpace(stringArg(args, "channel")))
+			name, channel := strings.TrimSpace(stringArg(args, "name")), strings.TrimSpace(stringArg(args, "channel"))
+			if m, ok := GetEventMonitor(RootDB, owner, name); ok && isBridgeMonitor(m) {
+				detail := "Detach it from its channel, so its changes wake " + chFirst(m.WakeAgent, "its agent") + "'s own thread."
+				if channel != "" {
+					detail = "Send its changes into the channel " + channel + " instead."
+				}
+				if msg := sessionApprove(sess, "bridge", name, detail, true); msg != "" {
+					return msg, nil
+				}
+			}
+			return setBridgeChannel(owner, name, channel)
 		},
 	})
 	gt.AddAction("delete", &GroupedToolAction{
@@ -528,6 +543,9 @@ func bridgeDelete(args map[string]any, sess *ToolSession) (string, error) {
 	m, ok := GetEventMonitor(RootDB, owner, name)
 	if !ok || !isBridgeMonitor(m) {
 		return "", fmt.Errorf("no bridge named %q", name)
+	}
+	if msg := sessionApprove(sess, "bridge", name, "Delete it, which stops its polling.", true); msg != "" {
+		return msg, nil
 	}
 	DeleteEventMonitor(RootDB, owner, name)
 	return fmt.Sprintf("Deleted bridge %q.", name), nil

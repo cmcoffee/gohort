@@ -16,6 +16,7 @@ package orchestrate
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -198,7 +199,7 @@ Typical flow for a calendar:
 			"description":          {Type: "string", Description: "(optional) What this connector is for. For desktop_command it is also the tool's description shown to callers."},
 		},
 		Required: []string{"kind", "name"},
-		Handler:  connectorCreate,
+		Handler:  connectorMadeHere(connectorCreate),
 	})
 	gt.AddAction("update", &GroupedToolAction{
 		Description: "Change an EXISTING connector's fields WITHOUT recreating it: use when a preset value or mapping needs fixing later. Only the fields you pass change; the rest are kept. The kind can't change. If the connector is already approved (live), it re-materializes immediately (a rest_messaging poller restarts with the new spec, resuming from its cursor); an unapproved one just updates its draft. To CLEAR a field or switch preset/kind, delete and recreate instead.",
@@ -284,7 +285,7 @@ Typical flow for a calendar:
 			"description": {Type: "string", Description: "(optional) What this backend is for."},
 		},
 		Required: []string{"name", "base_url"},
-		Handler:  connectorImportComfyUI,
+		Handler:  connectorMadeHere(connectorImportComfyUI),
 	})
 	return gt
 }
@@ -601,6 +602,10 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	if !mayManageConnector(sess, prev) {
 		return "", fmt.Errorf("connector %q belongs to another user: only its drafter or an admin can change it", name)
 	}
+	// Changes to what already exists ask the owner (change_approval.go).
+	if msg := sessionApprove(sess, "connector", name, "Change its "+strings.Join(connectorChangedFields(args), ", ")+".", true); msg != "" {
+		return msg, nil
+	}
 	owner := bridgeOwner(sess)
 	c := prev
 	if argSet(args, "description") {
@@ -893,6 +898,9 @@ func connectorDelete(args map[string]any, sess *ToolSession) (string, error) {
 	if !mayManageConnector(sess, c) {
 		return "", fmt.Errorf("connector %q belongs to another user: only its drafter or an admin can delete it", name)
 	}
+	if msg := sessionApprove(sess, "connector", name, "Delete it, which tears down what it provides.", true); msg != "" {
+		return msg, nil
+	}
 	if err := DeleteConnector(RootDB, name); err != nil {
 		return "", err
 	}
@@ -974,4 +982,32 @@ func messagingSpecExtras(args map[string]any, s *RestMessagingSpec) error {
 		s.Skip = skip
 	}
 	return nil
+}
+
+// connectorMadeHere marks a connector an action just created as this
+// session's own, so changing it again in the same session asks nothing.
+func connectorMadeHere(h func(map[string]any, *ToolSession) (string, error)) func(map[string]any, *ToolSession) (string, error) {
+	return func(args map[string]any, sess *ToolSession) (string, error) {
+		out, err := h(args, sess)
+		if err == nil {
+			sessionApprove(sess, "connector", strings.TrimSpace(stringArg(args, "name")), "", false)
+		}
+		return out, err
+	}
+}
+
+// connectorChangedFields names the fields an update passes, for the
+// question it asks: everything but the connector's name and the action.
+func connectorChangedFields(args map[string]any) []string {
+	var out []string
+	for k := range args {
+		if k != "name" && k != "action" {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return []string{"settings"}
+	}
+	return out
 }

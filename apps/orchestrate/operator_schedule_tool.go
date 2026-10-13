@@ -232,17 +232,27 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 			name := strings.TrimSpace(oArgStr(args, "name"))
 			switch action {
 			case "create", "", "set", "add", "new", "schedule":
-				return scheduleCreate(ctx, owner, controllerAgentID, impl, rec, args)
+				out, err := scheduleCreate(ctx, owner, controllerAgentID, impl, rec, args)
+				if err == nil && name != "" {
+					sessionApprove(sess, "schedule", name, "", false) // made here: this session's own
+				}
+				return out, err
 			case "list":
 				return scheduleList(ctx, impl, rec, args)
 			case "relink":
 				if name == "" {
 					return "", fmt.Errorf("relink needs name: the parked schedule (schedule(action=\"list\", agent=\"all\") marks them \"needs relink\")")
 				}
+				if msg := scheduleChangeApproval(sess, owner, controllerAgentID, action, name, args); msg != "" {
+					return msg, nil
+				}
 				return scheduleRelink(owner, name, oArgStr(args, "run_by"))
 			case "pause", "resume", "run_now", "run", "delete", "cancel", "remove", "move":
 				if name == "" {
 					return "", fmt.Errorf("%s needs the name of what to %s: schedule(action=\"list\") shows them", action, action)
+				}
+				if msg := scheduleChangeApproval(sess, owner, controllerAgentID, action, name, args); msg != "" {
+					return msg, nil
 				}
 				return scheduleControl(ctx, owner, controllerAgentID, impl, rec, action, name, args)
 			}
@@ -997,4 +1007,49 @@ func everyTiming(owner string, args map[string]any, cron string, interval int, t
 		return timing.Spec{}, false, err
 	}
 	return s, true, nil
+}
+
+// scheduleChangeApproval is the change question for a schedule another
+// family's agent runs (change_approval.go): "" when the change may go ahead.
+// An agent pausing, moving or deleting what it, its parent or its sub-agents
+// run is managing its own work and asks nothing; Builder, or another agent,
+// changing someone else's schedule asks the owner first. Running one now is
+// not a change.
+func scheduleChangeApproval(sess *ToolSession, owner, actingAgent, action, name string, args map[string]any) string {
+	if sess == nil || sess.ApproveChange == nil {
+		return ""
+	}
+	verb := map[string]string{
+		"pause": "Pause it.", "resume": "Resume it.",
+		"delete": "Delete it and cancel its schedule.", "cancel": "Delete it and cancel its schedule.", "remove": "Delete it and cancel its schedule.",
+		"move":   "Change where it reports.",
+		"relink": "Hand it to " + chFirst(strings.TrimSpace(oArgStr(args, "run_by")), "another agent") + " to run.",
+	}[action]
+	if verb == "" {
+		return "" // run_now: nothing changes
+	}
+	db := agentStore(owner)
+	runner := ""
+	switch {
+	case strings.TrimSpace(oArgStr(args, "agent")) != "":
+		key := strings.TrimSpace(oArgStr(args, "agent"))
+		runner = key
+		if db != nil {
+			if a, ok := findAgentByNameOrID(db, owner, key); ok {
+				runner = a.ID
+			}
+		}
+	default:
+		if sa, ok := GetStandingAgent(RootDB, owner, name); ok {
+			runner = sa.AgentID
+		} else if m, ok := GetEventMonitor(RootDB, owner, name); ok {
+			runner = m.WakeAgent
+		} else {
+			runner = actingAgent // its own recurring task
+		}
+	}
+	if db != nil && runner != "" && topAgentOf(db, runner) == topAgentOf(db, actingAgent) {
+		return ""
+	}
+	return sessionApprove(sess, "schedule", name, verb, true)
 }

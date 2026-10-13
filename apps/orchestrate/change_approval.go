@@ -179,6 +179,17 @@ func (c changeAsker) approve(kind, name, detail string, existed bool) string {
 	return fmt.Sprintf("NOT DONE: changing the %s needs the owner's approval, and nobody is here to give it. It is waiting in their approval queue; once they approve it, the change can be made in the next run. Do not make it another way, and do not recreate it under a different name.", what)
 }
 
+// sessionApprove is the change question for a tool that holds only the
+// session: "" when the change may go ahead, the refusal otherwise. A session
+// with no approver (a test, an assembly with no turn) asks nothing. existed
+// false marks something just made as this session's own.
+func sessionApprove(sess *ToolSession, kind, name, detail string, existed bool) string {
+	if sess == nil || sess.ApproveChange == nil {
+		return ""
+	}
+	return sess.ApproveChange(kind, name, detail, existed)
+}
+
 // queueChangeApproval puts a change made with nobody watching in the owner's
 // approval queue, once: a run that tries again before they answer does not
 // add a second entry.
