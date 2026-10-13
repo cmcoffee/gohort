@@ -78,6 +78,12 @@
     // at the top of the ordinary session list, opened read-only, and it swaps
     // nothing else. An alt-nav agent's pinned thread wins over its record.
     var recordNavFlag = cfg.record_nav_flag || '';
+    // flaggedFor reports whether agentId is keyed in the app-named global map
+    // flag: hide_flag on a nav item, channels_hide_flag on the Channels section.
+    function flaggedFor(flag, agentId) {
+      var m = flag && window[flag];
+      return !!(m && agentId && m[agentId]);
+    }
     function recordPinnedSession(agentId) {
       if (altPinnedSession(agentId)) { return ''; }
       var m = recordNavFlag && window[recordNavFlag];
@@ -1252,11 +1258,11 @@
       // Pinned rows flagged all_agents render for every agent, not just the
       // alt-nav ones — their queue belongs to the USER, so gating it on which
       // agent is selected would hide pending work (and strand it completely
-      // when the user has no alt-nav agent at all).
-      var hasAllAgentPinned = (cfg.orchestrator_nav || []).some(function(it){ return (it.pinned || it.topbar) && it.all_agents; });
-      // The same question without the placement filter: is ANYTHING on screen
-      // for a non-alt-nav agent? Menu entries count now that they honor the
-      // flag, and badge refresh keys off this rather than the pinned-only form.
+      // when the user has no alt-nav agent at all). applyOrchMode shows the
+      // pinned strip while any row in it is on.
+      //
+      // Is ANYTHING on screen for a non-alt-nav agent? Menu entries count now
+      // that they honor the flag, and badge refresh keys off this.
       var hasAllAgentNav = (cfg.orchestrator_nav || []).some(function(it){ return it.all_agents; });
       // Topbar-placed items: a queue whose data spans agents doesn't belong in
       // the agent's own rail. Compact button + count pill, right-aligned in the
@@ -1357,16 +1363,16 @@
       var lastOrchAgent; // last agent applyOrchMode saw — tells a real switch from the double-fire on initial load
       function applyOrchMode(agentId) {
         var isOrch = isAltNavAgent(agentId);
-        if (pinnedEl) pinnedEl.style.display = (isOrch || hasAllAgentPinned) ? '' : 'none';
         // Off the alt nav, only the all_agents entries survive — in the pinned
         // strip, in the topbar, and inside a menu alike. One rule, applied
         // wherever an item renders: the flag says the item's DATA does not
         // belong to the selected agent, and where it was PLACED cannot change
         // whether that is true.
-        var anyTopbar = false;
+        var anyTopbar = false, anyPinned = false;
         var isRecord = !!recordPinnedSession(agentId);
         var navOn = function(i) {
           var item = (cfg.orchestrator_nav || [])[i] || {};
+          if (flaggedFor(item.hide_flag, agentId)) return false;
           return isOrch || !!item.all_agents || (!!item.record_too && isRecord);
         };
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
@@ -1378,7 +1384,11 @@
             return;
           }
           orchBtns[i].style.display = on ? 'flex' : 'none';
+          if (on && item.pinned) anyPinned = true;
         });
+        // The strip goes when every row in it is gated away (a hide_flag can
+        // take the last one), rather than staying as an empty bordered band.
+        if (pinnedEl) pinnedEl.style.display = anyPinned ? '' : 'none';
         // A menu follows its contents. Shown when it still holds something,
         // hidden when everything in it is gated away — so a dropdown never
         // opens onto an empty panel, and the Cortex actions take the whole
@@ -5955,7 +5965,15 @@
     // didn't provide a channels_url.
     function loadChannels() {
       if (!cfg.channels_url || !channelsEl) return;
+      if (flaggedFor(cfg.channels_hide_flag, window.GOHORT_AGENT_ID)) {
+        channelsEl.innerHTML = '';
+        channelsEl.style.display = 'none';
+        return;
+      }
       fetchJSON(substituteExtras(cfg.channels_url)).then(function(list) {
+        // The agent on screen may have changed to one without channels while
+        // this was in flight.
+        if (flaggedFor(cfg.channels_hide_flag, window.GOHORT_AGENT_ID)) return;
         if (!Array.isArray(list)) list = [];
         channelsEl.innerHTML = '';
         // Channels stay LABELED — a distinct tier under the cortex, set off by its

@@ -139,6 +139,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// (no sub-agents in the fleet) is fine — the JS hides the picker
 	// when the selected parent has no children.
 	subAgentsJSON, _ := json.Marshal(subAgentsByParent)
+	// Sub-agents have no Scheduler or Channels of their own: their parent's
+	// show them (agent_family.go).
+	subAgentOfJSON, _ := json.Marshal(subAgentParentsFor(pickerAgents(agents)))
 	cortexAgentsJSON, _ := json.Marshal(cortexAgents)
 	// Every other agent's cortex is a RECORD: kept for the owner, not read by
 	// the agent, pinned at the top of its sessions and opened read-only.
@@ -147,6 +150,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
 		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
+		";\nwindow.ORCH_SUB_AGENT_OF = " + string(subAgentOfJSON) +
 		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(cortexAgentsJSON) +
 		";\nwindow.ORCH_RECORD_AGENTS = " + string(recordAgentsJSON) +
 		";</script>\n<script>" + ArtifactClientJS + "</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets + agentDeleteAskJS
@@ -231,6 +235,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					StatusURL:        "api/session-status?agent={agent_id}&session={session}",
 					ChannelSaveURL:   "api/channels?agent_id={agent_id}",
 					ChannelDeleteURL: "api/channels?id={id}",
+					// A sub-agent's channels are its parent's.
+					ChannelsHideFlag: "ORCH_SUB_AGENT_OF",
 					ChannelAgentsURL: "api/agents",
 					// Canonical default wake rule, so the channel editor can offer
 					// "Reset to default" on the gatekeeper rules (source of truth is Go).
@@ -360,7 +366,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							RowActions: []ui.OrchestratorRowAction{
 								{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
 							}},
-						{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, Source: "api/console/scheduler", Layout: "cards",
+						// Not on a sub-agent's page: its schedules are on its
+						// parent's Scheduler, with the rest of the family.
+						{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, HideFlag: "ORCH_SUB_AGENT_OF", Source: "api/console/scheduler", Layout: "cards",
 							SearchPlaceholder: schedulerSearchHint,
 							Filters:           schedulerFilters(),
 							ViewActions: []ui.OrchestratorRowAction{

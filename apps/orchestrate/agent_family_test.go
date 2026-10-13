@@ -1,6 +1,8 @@
 package orchestrate
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +10,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/messaging"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 func familyFixture(t *testing.T) (*OrchestrateApp, Database) {
@@ -106,4 +109,68 @@ func TestASubAgentsScheduledReportReachesTheParent(t *testing.T) {
 	if sess, _ := loadChatSession(udb, "a-writer", cortexSessionID("a-writer")); len(sess.Messages) != 1 {
 		t.Error("a top-level agent's own report was copied to itself")
 	}
+}
+
+// A sub-agent's page has no Scheduler or Channels of its own: the page maps
+// each sub-agent to its parent (hide_flag on the Scheduler, the Channels
+// section's channels_hide_flag), refreshed with the agent list. A sub-agent
+// whose parent is gone is top-level again and keeps both.
+func TestASubAgentsPageHidesSchedulerAndChannels(t *testing.T) {
+	app, udb := familyFixture(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a-orphan", Name: "Orphan", Owner: "alice", OrchestratorPrompt: "p", OwnedBy: "a-deleted"}); err != nil {
+		t.Fatal(err)
+	}
+	got := subAgentParentsFor(listAgents(udb, "alice"))
+	if got["a-critic"] != "a-writer" || got["a-nit"] != "a-critic" {
+		t.Errorf("sub-agents not mapped to their parents: %v", got)
+	}
+	for _, id := range []string{"a-writer", "a-orphan"} {
+		if _, hidden := got[id]; hidden {
+			t.Errorf("%s is top-level but would lose its Scheduler and Channels", id)
+		}
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/api/agent-options", nil)
+	w := httptest.NewRecorder()
+	app.handleAgentPickerOptions(w, asUser(r, "alice"))
+	if !strings.Contains(w.Body.String(), `"sub_agent_of":{`) || !strings.Contains(w.Body.String(), `"a-critic":"a-writer"`) {
+		t.Errorf("the agent list refresh does not carry the map: %s", w.Body.String())
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/", nil)
+	w = httptest.NewRecorder()
+	app.handleChatPage(w, asUser(r, "alice"))
+	page := w.Body.String()
+	for _, want := range []string{`window.ORCH_SUB_AGENT_OF = {`, `"channels_hide_flag":"ORCH_SUB_AGENT_OF"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the chat page is missing %s", want)
+		}
+	}
+	// Only the agent's own Scheduler goes: the fleet-wide one in the Fleet
+	// menu lists everybody's and stays.
+	var hidden []string
+	for _, item := range navItemsOf(t, page) {
+		if item.HideFlag == "ORCH_SUB_AGENT_OF" {
+			hidden = append(hidden, fmt.Sprintf("%s pinned=%v menu=%q", item.Label, item.Pinned, item.Menu))
+		}
+	}
+	if len(hidden) != 1 || hidden[0] != `Scheduler pinned=true menu=""` {
+		t.Errorf("hidden for sub-agents: %v, want only the pinned Scheduler", hidden)
+	}
+}
+
+// navItemsOf reads the orchestrator nav out of the rendered chat page's
+// panel config.
+func navItemsOf(t *testing.T, page string) []ui.OrchestratorNavItem {
+	t.Helper()
+	i := strings.Index(page, `"orchestrator_nav":[`)
+	if i < 0 {
+		t.Fatal("no orchestrator_nav on the chat page")
+	}
+	var items []ui.OrchestratorNavItem
+	dec := json.NewDecoder(strings.NewReader(page[i+len(`"orchestrator_nav":`):]))
+	if err := dec.Decode(&items); err != nil {
+		t.Fatalf("orchestrator_nav: %v", err)
+	}
+	return items
 }

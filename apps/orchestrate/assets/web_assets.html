@@ -9420,6 +9420,7 @@ select.ui-orch-intake-input {
           // newly-authored sub-agent shows in the specialist picker.
           var subMap = data.sub_agents || {};
           window.ORCH_SUB_AGENTS = subMap;
+          if (data.sub_agent_of) window.ORCH_SUB_AGENT_OF = data.sub_agent_of;
           // Which agents read their Cortex and which keep it as a record:
           // refreshed with the list, so an agent created since the page loaded
           // gets its Cortex row without a reload.

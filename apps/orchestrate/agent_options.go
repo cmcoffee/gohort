@@ -139,8 +139,27 @@ func (T *OrchestrateApp) handleAgentPickerOptions(w http.ResponseWriter, r *http
 	// The two Cortex maps ride along, so an agent Builder just created gets
 	// its Cortex row without a reload. They were only ever written into the
 	// page when it loaded, which left a new agent without one.
-	writeJSON(w, map[string]any{"options": opts, "sub_agents": subs,
+	writeJSON(w, map[string]any{"options": opts, "sub_agents": subs, "sub_agent_of": subAgentParentsFor(agents),
 		"cortex_agents": cortex, "record_agents": recordAgentsFor(agents, cortex)})
+}
+
+// subAgentParentsFor maps every sub-agent whose parent is still there to that
+// parent: the agents with no Scheduler or Channels of their own on the chat
+// page (agent_family.go), which core/ui reads as hide_flag and
+// channels_hide_flag. A sub-agent whose parent was deleted is its own top
+// agent again, so it keeps both.
+func subAgentParentsFor(agents []AgentRecord) map[string]string {
+	ids := make(map[string]bool, len(agents))
+	for _, a := range agents {
+		ids[a.ID] = true
+	}
+	out := map[string]string{}
+	for _, a := range agents {
+		if p := strings.TrimSpace(a.OwnedBy); p != "" && p != a.ID && ids[p] {
+			out[a.ID] = p
+		}
+	}
+	return out
 }
 
 // recordAgentsFor maps every agent that does NOT read its Cortex to its

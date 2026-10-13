@@ -111,6 +111,10 @@ type AgentLoopPanel struct {
 	ChannelsURL      string `json:"channels_url,omitempty"`
 	ChannelSaveURL   string `json:"channel_save_url,omitempty"`
 	ChannelDeleteURL string `json:"channel_delete_url,omitempty"`
+	// ChannelsHideFlag names a window-global map the host page sets, keyed by
+	// agent id: the Channels section is not shown for an agent keyed in it
+	// (one that cannot hold a binding of its own).
+	ChannelsHideFlag string `json:"channels_hide_flag,omitempty"`
 	// DiagnosticsURL — optional per-session diagnostics trail. When set, the
 	// toolbar shows a small ⚠ affordance; clicking it fetches this URL (the
 	// literal "{session}" placeholder substituted with the ACTIVE session id
@@ -494,6 +498,11 @@ type OrchestratorNavItem struct {
 	// thread, such as clearing it, applies to both kinds. Actions post for the
 	// selected agent either way.
 	RecordToo bool `json:"record_too,omitempty"`
+	// HideFlag names a window-global map the host page sets, keyed by agent
+	// id: the item is not shown for an agent keyed in it, whatever else would
+	// show it. For an item whose data an agent has none of its own of, kept
+	// by another agent the app says it belongs to.
+	HideFlag string `json:"hide_flag,omitempty"`
 	// BadgeField names a hidden row field; the count badge then reflects only
 	// rows where that field is truthy (e.g. "_pending" counts just the pending
 	// approvals on a page that also lists granted ones). Empty = count all rows.
