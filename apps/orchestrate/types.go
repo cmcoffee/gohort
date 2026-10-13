@@ -1644,6 +1644,11 @@ type PersistedToolCall struct {
 	// Label is what the tool-runs list shows in place of Name, for a record
 	// whose name alone says little ("machine_step" versus the step it was).
 	Label string `json:"label,omitempty"`
+	// ID is the call's card id, and Parent the id of the call it ran beneath
+	// (a dispatched agent's call under the dispatch). The page nests a call
+	// under its parent on reload, as it did live; empty for a top-level call.
+	ID     string `json:"id,omitempty"`
+	Parent string `json:"parent,omitempty"`
 }
 
 // ChatMessageUsage is the per-assistant-message token / throughput

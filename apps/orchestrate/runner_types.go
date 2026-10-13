@@ -738,6 +738,10 @@ type toolCallRecord struct {
 	// ("↳ [Builder] tool_def"); empty for the agent's own calls. Kept so the
 	// saved transcript and its export say who made the call.
 	Label string
+	// ID is the call's card id, and Parent the card it was drawn under (a
+	// dispatched agent's call under the dispatch). Kept so a reload draws it
+	// there again instead of flat beside its parent.
+	ID, Parent string
 }
 
 // isNetworkTool reports whether a registered ChatTool contacts the

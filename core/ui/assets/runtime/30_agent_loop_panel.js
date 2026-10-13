@@ -6190,23 +6190,45 @@
       var rmHost = rmEntry && toolHostFor(rmEntry);
       if (!rmHost) return;
       if (!rmHost.tools) rmHost.tools = [];
+      persistedToolEntries(mid, toolCalls).forEach(function(e) { rmHost.tools.push(e); });
+      attachAgentToolToggle(rmHost);
+    }
+    // persistedToolEntries turns saved tool calls into the entries the live
+    // tool_call events build, nesting each call that names a parent (a
+    // dispatched agent's call, saved with the id of the dispatch it ran under)
+    // inside that call's children, as it was drawn live. A call is saved after
+    // the calls it made, so ids are mapped first and nested second; a parent
+    // that is not among these calls leaves its child at the top.
+    function persistedToolEntries(mid, toolCalls) {
+      var entries = [], byID = {};
       toolCalls.forEach(function(tc, idx) {
         var argsFull = tc.args || tc.Args || null;
-        var argsStr = toolArgsSummary(argsFull);
         var resultText = tc.result || tc.Result || '';
         var errText = tc.err || tc.Err || '';
         var output = errText ? ('ERROR: ' + errText) : resultText;
         var cached = tc.cached || tc.Cached;
-        rmHost.tools.push({
+        var e = {
           call_id: 'replay-' + mid + '-' + idx,
           name: (tc.label || tc.Label || tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
-          args: argsStr,
+          args: toolArgsSummary(argsFull),
           argsFull: argsFull,
           output: String(output == null ? '' : output),
           kind: '',
-        });
+        };
+        entries.push({e: e, id: tc.id || tc.ID || '', parent: tc.parent || tc.Parent || ''});
+        if (tc.id || tc.ID) byID[tc.id || tc.ID] = e;
       });
-      attachAgentToolToggle(rmHost);
+      var top = [];
+      entries.forEach(function(x) {
+        var p = x.parent && byID[x.parent];
+        if (p && p !== x.e) {
+          if (!p.children) p.children = [];
+          p.children.push(x.e);
+        } else {
+          top.push(x.e);
+        }
+      });
+      return top;
     }
     function renderObservation(m) {
       var mid = (m && m.id) || ('obs-' + Math.random().toString(36).slice(2));
@@ -6882,22 +6904,7 @@
                   var ctxHost = ctxEntry && toolHostFor(ctxEntry);
                   if (ctxHost) {
                     if (!ctxHost.tools) ctxHost.tools = [];
-                    ctxToolCalls.forEach(function(tc, idx) {
-                      var argsFull = tc.args || tc.Args || null;
-                      var argsStr = toolArgsSummary(argsFull);
-                      var resultText = tc.result || tc.Result || '';
-                      var errText = tc.err || tc.Err || '';
-                      var output = errText ? ('ERROR: ' + errText) : resultText;
-                      var cached = tc.cached || tc.Cached;
-                      ctxHost.tools.push({
-                        call_id: 'replay-' + mid + '-' + idx,
-                        name: (tc.label || tc.Label || tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
-                        args: argsStr,
-                        argsFull: argsFull,
-                        output: String(output == null ? '' : output),
-                        kind: '',
-                      });
-                    });
+                    persistedToolEntries(mid, ctxToolCalls).forEach(function(e) { ctxHost.tools.push(e); });
                     attachAgentToolToggle(ctxHost);
                   }
                 }

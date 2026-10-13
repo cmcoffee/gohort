@@ -902,7 +902,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				t.recordToolCall(toolCallRecord{Name: name, Args: shownArgs, Err: triageRefusal})
 				return "", errors.New(triageRefusal)
 			}
-			var msgID, callID string
+			var msgID, callID, parentCallID string
 			if !hidden {
 				t.sse.Send(map[string]any{
 					"kind": "activity",
@@ -913,6 +913,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				// A call made beneath another one (a dispatched agent's)
 				// is drawn under that call's card, in its bubble.
 				parent := toolCardFrom(ctx)
+				parentCallID = parent.callID
 				msgID = parent.msgID
 				if msgID == "" {
 					msgID = t.ensureBubbleForTool()
@@ -970,7 +971,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 					out = spilled
 				}
 			}
-			rec := toolCallRecord{Name: name, Args: shownArgs, Result: out}
+			rec := toolCallRecord{Name: name, Args: shownArgs, Result: out, ID: callID, Parent: parentCallID}
 			if prefix != "" {
 				rec.Label = prefix + name
 			}

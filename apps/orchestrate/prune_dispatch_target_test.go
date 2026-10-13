@@ -20,3 +20,17 @@ func TestADeletedTargetLeavesEveryDispatchList(t *testing.T) {
 		t.Errorf("dispatch list after the prune = %v, want only a-writer", a.AllowedDispatchTargets)
 	}
 }
+
+// A saved call keeps its card id and the id of the call it ran beneath, so a
+// reload can draw it there again.
+func TestASavedCallKeepsItsParent(t *testing.T) {
+	turn := &chatTurn{}
+	turn.recordToolCall(toolCallRecord{Name: "web_search", Label: "↳ [Researcher] web_search", ID: "c2", Parent: "c1"})
+	turn.recordToolCall(toolCallRecord{Name: "agents", ID: "c1"})
+	turn.toolMu.Lock()
+	got := turn.persistedToolCallsFromUnlocked(0)
+	turn.toolMu.Unlock()
+	if len(got) != 2 || got[0].ID != "c2" || got[0].Parent != "c1" || got[1].ID != "c1" || got[1].Parent != "" {
+		t.Errorf("saved calls = %+v", got)
+	}
+}
