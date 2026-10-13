@@ -130,11 +130,21 @@ const deleteUserScript = `<script>
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({app: s.app, action: action, target: action === 'reassign' ? target : ''})
                   }).then(function(r) {
-                    if (!r.ok) return r.text().then(function(t) { throw new Error(s.app + ': ' + (t || ('HTTP ' + r.status))); });
+                    if (!r.ok) return r.text().then(function(t) {
+                      t = (t || '').trim();
+                      // Every app is checked before the first one moves; the
+                      // refusal names its own app, whichever call met it.
+                      if (/^nothing was moved:/.test(t)) { var e = new Error(t); e.untouched = true; throw e; }
+                      throw new Error(s.app + ': ' + (t || ('HTTP ' + r.status)));
+                    });
                   });
                 });
               });
               steps.then(finish).then(function() { api.close(); }).catch(function(e) {
+                if (e.untouched) {
+                  window.uiAlert('Not deleted, and ' + e.message.replace(/^nothing was moved: /, 'nothing was moved. ') + '. Fix that, or pick someone else, and try again.');
+                  return;
+                }
                 window.uiAlert('Not deleted: ' + e.message + '. Nothing after that step ran; the account is still there.');
               });
             }}

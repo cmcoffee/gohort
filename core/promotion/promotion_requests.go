@@ -124,6 +124,25 @@ func SetPromotionRequestState(db Store, id, state, decidedBy string) error {
 
 // PendingPromotion reports whether (kind, owner, name) currently has a pending
 // request — the "Requested" indicator on the owner's resource list.
+// DropOwnerRequests deletes every pending request a deleted account made and
+// returns how many. Left queued, an administrator could approve one, publishing
+// something whose owner is gone (or, moved, now belongs to somebody else who
+// never asked). Decided requests stay, as the record of what was decided.
+func DropOwnerRequests(db Store, owner string) int {
+	owner = strings.TrimSpace(owner)
+	if db == nil || owner == "" {
+		return 0
+	}
+	n := 0
+	for _, req := range ListPromotionRequests(db, true) {
+		if req.Owner == owner {
+			db.Unset(promotionRequestsTable, req.ID)
+			n++
+		}
+	}
+	return n
+}
+
 func PendingPromotion(db Store, owner, kind, name string) bool {
 	req, ok := GetPromotionRequest(db, RequestKey(kind, owner, name))
 	return ok && req.State == PromotionPendingState

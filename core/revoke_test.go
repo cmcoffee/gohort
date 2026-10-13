@@ -9,10 +9,14 @@
 package core
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/peershare"
+	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -368,5 +372,71 @@ func TestADeletedAccountIsTakenOffWhatWasSharedWithIt(t *testing.T) {
 	RootDB.Get(featureAccessTable, "openai_api", &p)
 	if len(p.AllowedUsers) != 1 || p.AllowedUsers[0] == "bob" {
 		t.Errorf("feature access: %v", p.AllowedUsers)
+	}
+}
+
+// A move a handler would refuse is caught before anything moves: the core
+// handler names the tool that clashes, and nothing is checked when nothing
+// clashes.
+func TestAMoveThatWouldClashIsCaughtFirst(t *testing.T) {
+	revokeFixture(t, "bob")
+	for _, owner := range []string{"bob", "carol"} {
+		if err := AdminPersistTempTool(RootDB, owner, TempTool{Name: "weather", Description: "d", CommandTemplate: "echo w"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	problems := CheckUserDataReassign("bob", "carol")
+	found := false
+	for _, p := range problems {
+		if strings.Contains(p, "tools, skills and collections: carol already has a tool named weather") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the clash was not caught: %v", problems)
+	}
+	if got := LoadPersistentTempTools(RootDB, "bob"); len(got) != 1 {
+		t.Error("checking moved something")
+	}
+	if p := CheckUserDataReassign("bob", "dave"); len(p) != 0 {
+		t.Errorf("a move with no clash was refused: %v", p)
+	}
+}
+
+// A deleted account's pictures leave the disk (kept, recent, delivered), and
+// its pending promotion requests leave the queue; another person's stay.
+func TestDeleteUserRemovesPicturesAndPendingRequests(t *testing.T) {
+	db := revokeFixture(t, "bob")
+	prevImg := ImageDir()
+	SetImageDir(t.TempDir())
+	t.Cleanup(func() { SetImageDir(prevImg) })
+	for _, owner := range []string{"bob", "carol"} {
+		for _, sub := range []string{"kept", "recent", "delivered"} {
+			dir := filepath.Join(ImageDir(), sub, safeRecentUser(owner), "x")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			os.WriteFile(filepath.Join(dir, "a.png"), []byte("png"), 0o644)
+		}
+		if err := promotion.CreatePromotionRequest(db, owner, "app", "game", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	AuthDeleteUser(db, "bob")
+	for _, sub := range []string{"kept", "recent", "delivered"} {
+		if _, err := os.Stat(filepath.Join(ImageDir(), sub, safeRecentUser("bob"))); err == nil {
+			t.Errorf("bob's %s pictures are still on disk", sub)
+		}
+		if _, err := os.Stat(filepath.Join(ImageDir(), sub, safeRecentUser("carol"), "x", "a.png")); err != nil {
+			t.Errorf("carol's %s pictures went too", sub)
+		}
+	}
+	for _, req := range promotion.ListPromotionRequests(db, true) {
+		if req.Owner == "bob" {
+			t.Error("bob's pending request is still queued")
+		}
+	}
+	if !promotion.PendingPromotion(db, "carol", "app", "game") {
+		t.Error("carol's request went too")
 	}
 }

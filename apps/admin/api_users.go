@@ -887,6 +887,13 @@ func (a *AdminApp) handleUserDataAction(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, "target user not found", http.StatusNotFound)
 			return
 		}
+		// Every app's refusal first, whichever app this call moves: moves
+		// run one app at a time, and a refusal met only on a later app's
+		// turn left the earlier ones moved and the rest not.
+		if problems := CheckUserDataReassign(username, req.Target); len(problems) > 0 {
+			http.Error(w, "nothing was moved: "+strings.Join(problems, "; "), http.StatusConflict)
+			return
+		}
 		err = handler.Reassign(username, req.Target)
 	case "anonymize":
 		err = handler.Anonymize(username)

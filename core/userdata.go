@@ -3,10 +3,14 @@ package core
 import (
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/cmcoffee/gohort/core/peershare"
+	"github.com/cmcoffee/gohort/core/promotion"
 )
 
 // ErrUserDataActionNotSupported should be returned by a UserDataHandler when
@@ -31,6 +35,31 @@ type UserDataHandler interface {
 	Reassign(from, to string) error
 	Anonymize(uid string) error
 	Purge(uid string) error
+}
+
+// UserDataReassignChecker is a UserDataHandler that can say, before anything
+// moves, why moving a user's data to another would be refused. Moves run one
+// app at a time, so a refusal found only when its app's turn came left the
+// apps before it moved and the rest not: a half-moved account.
+type UserDataReassignChecker interface {
+	CheckReassign(from, to string) error
+}
+
+// CheckUserDataReassign asks every handler that can check whether moving
+// from's data to to would be refused, and returns each refusal as
+// "<app>: <why>". Empty means the move can go ahead.
+func CheckUserDataReassign(from, to string) []string {
+	var out []string
+	for _, h := range RegisteredUserDataHandlers() {
+		c, ok := h.(UserDataReassignChecker)
+		if !ok {
+			continue
+		}
+		if err := c.CheckReassign(from, to); err != nil {
+			out = append(out, h.AppName()+": "+err.Error())
+		}
+	}
+	return out
 }
 
 var (
@@ -237,6 +266,10 @@ func (coreUserData) Describe(uid string) UserDataSummary {
 	return sum
 }
 
+// CheckReassign is the one refusal a move of these can hit: a tool name the
+// new owner already uses.
+func (coreUserData) CheckReassign(from, to string) error { return checkToolsMove(from, to) }
+
 // Reassign moves tools first: they are the one kind a name clash can refuse,
 // and refusing before anything else has moved leaves the account whole.
 func (coreUserData) Reassign(from, to string) error {
@@ -255,7 +288,40 @@ func (coreUserData) Purge(uid string) error {
 	purgeSkills(uid)
 	purgeCollections(uid)
 	forgetRecipient(uid)
+	removeUserImageFolders(uid)
+	if AuthDB != nil {
+		if n := promotion.DropOwnerRequests(AuthDB(), uid); n > 0 {
+			Log("[userdata] dropped %d pending promotion request(s) from %s", n, uid)
+		}
+	}
 	return nil
+}
+
+// removeUserImageFolders deletes a user's pictures from disk: the kept
+// library, the recent rings and the delivered attachments, each a folder
+// named for them under the image folder. They are the person's own, like
+// their conversations, and went nowhere when the account did: a new account
+// later given the same name would have found them waiting.
+func removeUserImageFolders(uid string) {
+	base := strings.TrimSpace(ImageDir())
+	if base == "" || strings.TrimSpace(uid) == "" {
+		return
+	}
+	name := safeRecentUser(uid)
+	if name == "" || name == "." || name == ".." {
+		return
+	}
+	for _, sub := range []string{"kept", "recent", "delivered"} {
+		dir := filepath.Join(base, sub, name)
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			Log("[userdata] could not remove %s's %s pictures: %v", uid, sub, err)
+			continue
+		}
+		Log("[userdata] removed %s's %s pictures", uid, sub)
+	}
 }
 
 // removedUserMarker stands in a list that would be left empty by a deleted

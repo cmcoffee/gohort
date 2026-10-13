@@ -277,7 +277,10 @@ func pipelineDeleted(owner, id, name string) {
 // and a pruner that knew which kind it was pruning would be a pruner that has
 // to be extended for the next kind.
 func pruneDispatchTarget(owner, id string) {
-	db := UserDB(RootDB, owner)
+	// The owner's AGENT store. This read UserDB(RootDB, owner), the root
+	// store's user scope, where no agent lives: it found nothing and pruned
+	// nothing, so a deleted pipeline or machine stayed on every dispatch list.
+	db := agentStore(owner)
 	if db == nil {
 		return
 	}

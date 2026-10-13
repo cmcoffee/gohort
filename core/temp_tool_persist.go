@@ -2716,6 +2716,35 @@ func sameStringSet(a, b []string) bool {
 	return true
 }
 
+// toolClashError is the refusal for a move whose tools clash by name.
+func toolClashError(to string, clash []string) error {
+	sort.Strings(clash)
+	return errString(to + " already has a tool named " + strings.Join(clash, ", ") + ": tools are found by name, so rename one first, or move to someone else")
+}
+
+// checkToolsMove is moveToolsTo's refusal, without moving anything: the
+// clash a move would hit, or nil.
+func checkToolsMove(from, to string) error {
+	store := tempToolStore(nil)
+	if store == nil || from == "" || to == "" || from == to {
+		return nil
+	}
+	taken := map[string]bool{}
+	for _, t := range LoadPersistentTempTools(store, to) {
+		taken[t.Tool.Name] = true
+	}
+	var clash []string
+	for _, t := range LoadPersistentTempTools(store, from) {
+		if taken[t.Tool.Name] {
+			clash = append(clash, t.Tool.Name)
+		}
+	}
+	if len(clash) > 0 {
+		return toolClashError(to, clash)
+	}
+	return nil
+}
+
 // moveToolsTo gives to every tool from owns. Tools are found by name, so a
 // name to already uses refuses the whole move, before anything changes,
 // rather than leaving two owners' tools answering to one name. What points at
@@ -2747,8 +2776,7 @@ func moveToolsTo(from, to string) error {
 		moving[t.Tool.Name] = true
 	}
 	if len(clash) > 0 {
-		sort.Strings(clash)
-		return errString(to + " already has a tool named " + strings.Join(clash, ", ") + ": tools are found by name, so rename one first, or move to someone else")
+		return toolClashError(to, clash)
 	}
 	store.Set(persistentTempToolsTable, to, append(theirs, mine...))
 	store.Unset(persistentTempToolsTable, from)
