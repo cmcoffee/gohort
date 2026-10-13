@@ -44,6 +44,7 @@ type bulletinBoard struct {
 	Text      string    `json:"text,omitempty"`      // the latest post
 	PostedBy  string    `json:"posted_by,omitempty"`
 	PostedAt  time.Time `json:"posted_at,omitempty"`
+	Cleared   bool      `json:"cleared,omitempty"` // emptied on purpose: PostedBy/PostedAt say by whom and when
 	Created   time.Time `json:"created"`
 }
 
@@ -160,7 +161,18 @@ func postBulletin(db Database, name, text, by string) (bulletinBoard, error) {
 	if n := len([]rune(text)); n > maxBulletinChars {
 		return b, fmt.Errorf("the post is %d characters and a bulletin holds at most %d: it rides on every turn of every agent that follows the board, so shorten it to the few lines that matter", n, maxBulletinChars)
 	}
-	b.Text, b.PostedBy, b.PostedAt = text, strings.TrimSpace(by), time.Now()
+	b.Text, b.PostedBy, b.PostedAt, b.Cleared = text, strings.TrimSpace(by), time.Now(), false
+	return b, saveBulletin(db, b)
+}
+
+// clearBulletin empties a board: followers see nothing from it until the
+// next post. Who cleared it and when are kept, so the board can say so.
+func clearBulletin(db Database, name, by string) (bulletinBoard, error) {
+	b, ok := loadBulletin(db, name)
+	if !ok {
+		return b, fmt.Errorf("no bulletin board named %q", name)
+	}
+	b.Text, b.PostedBy, b.PostedAt, b.Cleared = "", strings.TrimSpace(by), time.Now(), true
 	return b, saveBulletin(db, b)
 }
 
@@ -259,12 +271,14 @@ func (t *chatTurn) postBulletinToolDef() (AgentToolDef, bool) {
 			Name: "post_bulletin",
 			Description: "Post a short notice to a bulletin board other agents follow: every agent that follows the board sees your latest post on each of its turns, and it replaces the board's previous post. " +
 				fmt.Sprintf("Keep it to the few lines that matter (at most %d characters): today's headlines, a status, a reminder. ", maxBulletinChars) +
+				"To empty a board, call this with clear=true and no text: followers then see nothing from it until the next post. This tool is the only way to post or clear; a board is not a file. " +
 				"Boards you may post to: " + strings.Join(boards, ", ") + ".",
 			Parameters: map[string]ToolParam{
-				"board": {Type: "string", Enum: boards, Description: "The board to post to."},
-				"text":  {Type: "string", Description: "The post itself, replacing the board's last one."},
+				"board": {Type: "string", Enum: boards, Description: "The board to post to or clear."},
+				"text":  {Type: "string", Description: "The post itself, replacing the board's last one. Leave out when clearing."},
+				"clear": {Type: "boolean", Description: "true empties the board instead of posting."},
 			},
-			Required: []string{"board", "text"},
+			Required: []string{"board"},
 			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -272,6 +286,15 @@ func (t *chatTurn) postBulletinToolDef() (AgentToolDef, bool) {
 			b, ok := loadBulletin(db, name)
 			if !ok || !b.allowsAgent(t.agent) {
 				return "", fmt.Errorf("you may not post to %q; boards you may post to: %s", name, strings.Join(boards, ", "))
+			}
+			if clear, _ := args["clear"].(bool); clear {
+				if _, err := clearBulletin(db, name, by); err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("Cleared %q. Its followers see nothing from it until the next post.", name), nil
+			}
+			if strings.TrimSpace(stringArg(args, "text")) == "" {
+				return "", fmt.Errorf("a post needs text; to empty the board, call again with clear=true")
 			}
 			b, err := postBulletin(db, name, stringArg(args, "text"), by)
 			if err != nil {

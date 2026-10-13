@@ -252,3 +252,70 @@ func TestASubAgentPostsUnderItsParentsRight(t *testing.T) {
 		t.Fatalf("the post should name the parent with the writer, got %q", b.PostedBy)
 	}
 }
+
+// A board can be emptied: by a poster through post_bulletin(clear=true), and
+// by the owner from the Knowledge page. Followers then see nothing from it,
+// the row says who cleared it and when, and the next post fills it again. A
+// post with no text points at clear rather than leaving the agent to look
+// for another way.
+func TestABulletinCanBeCleared(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saveBulletin(db, bulletinBoard{Name: "radar", Posters: []string{"bot"}})
+	follower := AgentRecord{ID: "a1", Bulletins: []string{"radar"}}
+	def, ok := (&chatTurn{udb: db, agent: AgentRecord{ID: "bot", Name: "Radar Bot"}}).postBulletinToolDef()
+	if !ok || !strings.Contains(def.Tool.Description, "clear=true") {
+		t.Fatalf("the tool should say how to empty a board: %s", def.Tool.Description)
+	}
+	if len(def.Tool.Required) != 1 || def.Tool.Required[0] != "board" {
+		t.Errorf("text cannot be required when clearing takes none: %v", def.Tool.Required)
+	}
+	if _, err := def.Handler(context.Background(), map[string]any{"board": "radar", "text": "Fog until noon"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := def.Handler(context.Background(), map[string]any{"board": "radar"}); err == nil || !strings.Contains(err.Error(), "clear=true") {
+		t.Errorf("a post with no text should point at clear: %v", err)
+	}
+	if out, err := def.Handler(context.Background(), map[string]any{"board": "radar", "clear": true}); err != nil || !strings.Contains(out, "Cleared") {
+		t.Fatalf("clear: %q %v", out, err)
+	}
+	b, _ := loadBulletin(db, "radar")
+	if b.Text != "" || !b.Cleared || b.PostedBy != "Radar Bot" {
+		t.Errorf("the board should be empty and say who cleared it: %+v", b)
+	}
+	if bulletinTurnNote(db, follower, time.UTC) != "" {
+		t.Error("a cleared board still rides on its followers' turns")
+	}
+	row := bulletinRow(b, nil, time.UTC)
+	if !strings.HasPrefix(row["posted"].(string), "Cleared") || row["_has_post"] != false {
+		t.Errorf("the row should say it was cleared and offer no Clear: %+v", row)
+	}
+	if _, err := postBulletin(db, "radar", "Sun by two", "Radar Bot"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := loadBulletin(db, "radar"); b.Cleared || b.Text != "Sun by two" {
+		t.Errorf("the next post fills the board again: %+v", b)
+	}
+	if _, err := def.Handler(context.Background(), map[string]any{"board": "other", "clear": true}); err == nil {
+		t.Error("clearing a board it may not post to is refused")
+	}
+}
+
+func TestTheOwnerClearsABoard(t *testing.T) {
+	app, req, _ := authedApp(t)
+	udb := UserDB(app.DB, "alice")
+	saveBulletin(udb, bulletinBoard{Name: "radar"})
+	postBulletin(udb, "radar", "Fog until noon", "you")
+	w := httptest.NewRecorder()
+	app.handleBulletinOne(w, req("POST", "/api/bulletins/radar/clear", nil))
+	if w.Code != 200 {
+		t.Fatalf("clear: %d %s", w.Code, w.Body)
+	}
+	if b, _ := loadBulletin(udb, "radar"); b.Text != "" || !b.Cleared {
+		t.Errorf("the owner's Clear should empty the board: %+v", b)
+	}
+	w = httptest.NewRecorder()
+	app.handleBulletinOne(w, req("GET", "/api/bulletins/radar/clear", nil))
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("clear is a POST, got %d", w.Code)
+	}
+}

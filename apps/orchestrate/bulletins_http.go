@@ -6,6 +6,7 @@
 //	POST /api/bulletins/{name}              edit {desc, ttl_hours}
 //	DELETE /api/bulletins/{name}            delete, and unfollow it everywhere
 //	POST /api/bulletins/{name}/post         write a post {text}, as the owner
+//	POST /api/bulletins/{name}/clear        empty the board, as the owner
 //	GET  /api/bulletins/{name}/followers?pills=1, POST {target, on}
 //	GET  /api/bulletins/{name}/posters?pills=1,   POST {target, on}
 package orchestrate
@@ -41,6 +42,12 @@ func bulletinRow(b bulletinBoard, agents []AgentRecord, loc *time.Location) map[
 		followText = strings.Join(followers, ", ")
 	}
 	postText := "No post yet"
+	if b.Cleared && strings.TrimSpace(b.Text) == "" {
+		postText = "Cleared " + bulletinAge(b.PostedAt, now, loc)
+		if b.PostedBy != "" {
+			postText += " by " + b.PostedBy
+		}
+	}
 	if strings.TrimSpace(b.Text) != "" {
 		postText = "Posted " + bulletinAge(b.PostedAt, now, loc)
 		if b.PostedBy != "" {
@@ -61,7 +68,7 @@ func bulletinRow(b bulletinBoard, agents []AgentRecord, loc *time.Location) map[
 	return map[string]any{
 		"name": b.Name, "desc": b.Desc, "latest": latest, "posted": postText,
 		"followers": followText, "posters": chFirst(strings.Join(posters, ", "), "only you"),
-		"ttl": ttl,
+		"ttl": ttl, "_has_post": strings.TrimSpace(b.Text) != "",
 	}
 }
 
@@ -153,6 +160,17 @@ func (T *OrchestrateApp) handleBulletinOne(w http.ResponseWriter, r *http.Reques
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		writeJSON(w, map[string]any{"name": b.Name})
+	case "clear":
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if _, err := clearBulletin(udb, b.Name, "you"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		Log("[orchestrate.bulletins] user=%q cleared board %q", user, b.Name)
 		writeJSON(w, map[string]any{"name": b.Name})
 	case "followers", "posters":
 		T.bulletinPills(w, r, udb, user, b, action == "followers")
