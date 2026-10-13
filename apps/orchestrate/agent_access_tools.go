@@ -58,6 +58,10 @@ type accessToolRow struct {
 	// tool the agent must never call is not loaded at all, which is the Tools
 	// modal's question, not this one's.
 	Chat string `json:"chat"`
+	// ChatLocked: the tool asks first EVERYWHERE (set on the tool itself in
+	// Extensions › Tools › Security), so this agent shows Ask and cannot turn
+	// it off here; that is the tool's page's to change.
+	ChatLocked bool `json:"chat_locked,omitempty"`
 	// Loaded is whether the agent HAS the tool, which the controls cannot say:
 	// they set what happens when it is called, not whether it is there to
 	// call.
@@ -140,6 +144,11 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 	for _, n := range AskInChatTools(markDB, user, rec.ID) {
 		asks[n] = true
 	}
+	// The marks that bind every agent, which this page shows and cannot lift.
+	everywhere := map[string]bool{}
+	for _, n := range AskInChatTools(markDB, user, "") {
+		everywhere[n] = true
+	}
 	withheld := map[string][]string{}
 	for _, pair := range rec.DisabledToolActions {
 		if tool, action, ok := strings.Cut(strings.TrimSpace(pair), "/"); ok {
@@ -212,6 +221,9 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 		row.Chat = "allow"
 		if row.Asks {
 			row.Chat = "ask"
+		}
+		if everywhere[name] {
+			row.Chat, row.ChatLocked = "ask", true
 		}
 		row.Loaded = "On"
 		out = append(out, row)
@@ -296,6 +308,16 @@ func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Re
 		// By name, so this works for a framework tool as well as an authored
 		// one. There is no "no such tool" to report: the mark is about a NAME,
 		// and the tools most worth stopping on have no record to look up.
+		// A tool that asks everywhere is set on the tool, not here: turning
+		// it off for this agent would read as done and change nothing.
+		if v == PolicyAllow {
+			for _, n := range AskInChatTools(AuthDB(), user, "") {
+				if n == name {
+					http.Error(w, "this tool asks first for every agent (set in Extensions › Tools, its Security); change it there", http.StatusConflict)
+					return
+				}
+			}
+		}
 		if !SetUserToolAsksInChat(AuthDB(), user, rec.ID, name, v == PolicyAsk) {
 			http.Error(w, "could not record that", http.StatusInternalServerError)
 			return

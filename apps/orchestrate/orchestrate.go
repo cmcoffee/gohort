@@ -37,6 +37,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/messaging"
 )
 
 func init() {
@@ -324,6 +325,9 @@ func (T *OrchestrateApp) Routes() {
 	// SAME store the editor writes to (UserDB(T.DB, owner)) — NOT RootDB, which
 	// is a different bucket. Used by the outbound name-tag resolver.
 	orchestrateBaseDB = T.DB
+	// A channel is its top-level agent's, never a sub-agent's
+	// (agent_family.go).
+	messaging.ChannelAgentFor = channelAgentFor
 	// Events age out of saved notes and idle open items close, once a day.
 	startMemoryLifecycleLoop()
 	// Credential → declaring-tools resolver for the admin credential UI (it
@@ -536,6 +540,10 @@ func (T *OrchestrateApp) Routes() {
 	// Every tool gets a category on its own; the owner's label always wins
 	// (tool_autofile.go). Off the boot path: filing asks the worker.
 	T.startToolFiling()
+
+	// Channels bound to a sub-agent before that was refused move to its
+	// parent (agent_family.go).
+	moveSubAgentChannels()
 
 	// One-shot deploy-time grandfather for the global-tool OPT-IN model. Shared
 	// tools used to auto-load for everyone; now they load only after a user

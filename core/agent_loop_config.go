@@ -311,6 +311,14 @@ type AgentLoopConfig struct {
 	// If nil, a default terminal prompt is used (y/n).
 	Confirm ConfirmFunc
 
+	// AskFirst, when set, WIDENS which calls reach Confirm: a tool it names
+	// is confirmed whether or not the tool declares NeedsConfirm. It is how
+	// an owner's "ask me before every call" reaches a tool that asks nothing
+	// on its own (web_search, a fetch): without it the mark was stored and
+	// never consulted, because Confirm only ever saw the NeedsConfirm set.
+	// nil = only the NeedsConfirm set.
+	AskFirst func(toolName string) bool
+
 	// GuardrailCheck, when set, lets the app enforce owner-authored guardrails
 	// at fixed interception points. hookPoint is one of GuardHook* below;
 	// candidate is what's being judged (a tool call + args for pre_action, the

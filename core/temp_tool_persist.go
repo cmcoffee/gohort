@@ -2610,10 +2610,14 @@ func AskInChatTools(db Database, username, agentID string) []string {
 		return nil
 	}
 	var names []string
-	for _, key := range []string{askKey(username, agentID), askKey(username, ""), username} {
-		if agentID == "" && key == askKey(username, "") {
-			continue // already asked for, as the first key
-		}
+	keys := []string{askKey(username, agentID), askKey(username, ""), username}
+	if agentID == "" {
+		// The agent's key IS the fleet-wide one here; read it once. (It used
+		// to be skipped on both passes, so the fleet-wide marks were never
+		// listed for an agentless ask.)
+		keys = keys[1:]
+	}
+	for _, key := range keys {
 		var got []string
 		if db.Get(askInChatToolsTable, key, &got) {
 			for _, n := range got {

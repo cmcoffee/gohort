@@ -2410,6 +2410,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// approval card; every other NeedsConfirm tool (delete_agent
 		// etc.) auto-approves as before so nothing hangs on stdin.
 		Confirm:             t.confirmFuncFor(pr.sess),
+		AskFirst:            t.asksFirst, // the owner's ask marks reach every tool (ask_first.go)
 		GuardrailCheck:      t.guardrailEnforcer().Check,
 		GuardrailActionGate: t.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     t.guardrailEnforcer().Halted,

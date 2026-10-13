@@ -268,6 +268,10 @@ func registerOperatorWake(app *OrchestrateApp) {
 					Log("[operator.wake] %s/%s record monitor card failed: %v", owner, monitorName, err)
 					return false
 				}
+				// A sub-agent's monitor reports to its parent too
+				// (agent_family.go).
+				reportToParent(udb, wakeAgent, ChatMessage{Role: "assistant", Content: content,
+					ReportFrom: monitorName, ReportKind: cortexKindMonitor})
 				return true
 			}
 			if chatTarget != "" {
@@ -342,17 +346,24 @@ func registerOperatorWake(app *OrchestrateApp) {
 			// wake landing in the thread the owner is typing in would stop
 			// their turn mid-reply, so it waits for the thread instead.
 			app.waitForIdleSession(ctx, owner, wakeTarget, monitorWakeWait)
-			if _, err := app.RunAgentSyncContinuingRich(withTaskNotes(ctx, tnotes), AgentSyncRun{
+			res, err := app.RunAgentSyncContinuingRich(withTaskNotes(ctx, tnotes), AgentSyncRun{
 				AgentOwner: owner, RuntimeUser: owner, AgentKey: wakeAgent,
 				SubSessionID: wakeTarget, Message: msg,
 				InputReportFrom: monitorName, InputReportKind: cortexKindMonitor,
 				InputCardText: EventCardFromContext(ctx),
 				AppTools:      append(monitorPacingTool(m, pacingAsk), tnotes.tool()...),
-			}); err != nil {
+			})
+			if err != nil {
 				Log("[operator.wake] %s/%s: %v", owner, monitorName, err)
 				return delivered, "the wake turn failed: " + err.Error()
 			}
 			delivered = true
+			// Woke a sub-agent: what it made of the event goes to its parent's
+			// home thread too (agent_family.go).
+			if recordCard { // background posts to no thread, the parent's included
+				reportToParent(UserDB(app.DB, owner), wakeAgent, ChatMessage{Role: "assistant", Content: res.Text,
+					ReportFrom: monitorName, ReportKind: cortexKindMonitor})
+			}
 		}
 		// A monitor with a stopping condition is judged on what it just saw,
 		// and stops itself when the condition is met. Only a monitor that was

@@ -317,9 +317,12 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						// decision in a second shape, and gave it no words.
 						{
 							Type: "segmented", Field: "chat", OnlyIf: "governable",
-							Label:   "In chat",
-							Options: permissionLadderNoNever(),
-							PostTo:  toolWrite, Method: "PATCH",
+							// Shown as Ask and fixed when the tool asks for every
+							// agent: that is the tool's own setting.
+							DisableIf: "chat_locked",
+							Label:     "In chat",
+							Options:   permissionLadderNoNever(),
+							PostTo:    toolWrite, Method: "PATCH",
 						},
 						{
 							Type: "segmented", Field: "unattended", OnlyIf: "governable",

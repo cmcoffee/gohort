@@ -343,10 +343,21 @@ func NewChannelID() string {
 	return hex.EncodeToString(b)
 }
 
+// ChannelAgentFor, when set, is the agent a channel may be bound to for the
+// one asked for: the app that owns agents registers it, and answers a
+// sub-agent with its top-level parent (a sub-agent has no front door of its
+// own). Applied by SaveChannel, the one path every binding is written by.
+var ChannelAgentFor func(owner, agentID string) string
+
 // SaveChannel upserts a channel binding (requires Owner + ID).
 func SaveChannel(db Store, ch Channel) {
 	if db == nil || ch.Owner == "" || ch.ID == "" {
 		return
+	}
+	if f := ChannelAgentFor; f != nil && ch.AgentID != "" {
+		if to := f(ch.Owner, ch.AgentID); to != "" {
+			ch.AgentID = to
+		}
 	}
 	db.Set(channelsTable, channelKey(ch.Owner, ch.ID), ch)
 }

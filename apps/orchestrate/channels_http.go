@@ -110,6 +110,10 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			ch.TagDisabled = req.TagDisabled
 			applyChannelSenders(&ch, req.Senders, req.AllowedHandles)
 			if a := strings.TrimSpace(req.AgentID); a != "" {
+				if msg := subAgentChannelRefusal(udbFor(T, user), a); msg != "" {
+					http.Error(w, msg, http.StatusBadRequest)
+					return
+				}
 				ch.AgentID = a
 				T.ensureAgentCortex(user, a) // re-pointed: the new agent gets a cortex too
 			}
@@ -124,6 +128,10 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 		}
 		if agentID == "" {
 			http.Error(w, "agent_id is required", http.StatusBadRequest)
+			return
+		}
+		if msg := subAgentChannelRefusal(udbFor(T, user), agentID); msg != "" {
+			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
 		// Service may be blank: an inert channel — the interface is configured

@@ -47,21 +47,37 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 		return
 	}
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	// An agent's schedules are its whole family's: a parent's card lists what
+	// its sub-agents run, and a sub-agent's shows the family it belongs to
+	// (agent_family.go). One pass per member, each row once.
+	family := schedulerFamily(udb, user, agentID)
 	out := []map[string]any{}
-	for _, row := range consoleAgentRows(user, udb, agentID) {
-		out = appendSchedulerRow(out, row, schedSectionStanding, schedKindStanding)
+	for _, id := range family {
+		for _, row := range consoleAgentRows(user, udb, id) {
+			out = appendSchedulerRow(out, row, schedSectionStanding, schedKindStanding)
+		}
+		for _, row := range consoleRecurringRows(user, id) {
+			out = appendSchedulerRow(out, row, schedSectionRecurring, schedKindRecurring)
+		}
+		for _, row := range consoleMonitorRows(user, id) {
+			out = appendSchedulerRow(out, row, schedSectionMonitors, schedKindMonitor)
+		}
 	}
-	for _, row := range consoleRecurringRows(user, agentID) {
-		out = appendSchedulerRow(out, row, schedSectionRecurring, schedKindRecurring)
-	}
-	for _, row := range consoleMonitorRows(user, agentID) {
-		out = appendSchedulerRow(out, row, schedSectionMonitors, schedKindMonitor)
-	}
+	out = uniqueSchedulerRows(out)
 	sortSchedulerRows(out)
 	// Link groups lead, each drawn as one box, and their members are not
 	// listed a second time in their own sections. Added after the sort, which
 	// orders rows by their own next fire and would split a group apart.
-	groups, placed := appendLinkGroupRows(nil, user, udb, agentID)
+	var groups []map[string]any
+	placed := map[string]bool{}
+	for _, id := range family {
+		g, p := appendLinkGroupRows(nil, user, udb, id)
+		groups = append(groups, g...)
+		for k, v := range p {
+			placed[k] = placed[k] || v
+		}
+	}
+	groups = uniqueSchedulerRows(groups)
 	if len(groups) > 0 {
 		rest := out[:0:0]
 		for _, m := range out {

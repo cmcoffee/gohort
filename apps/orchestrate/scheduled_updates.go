@@ -1213,6 +1213,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		if err := appendToStoredSession(udb, p.AgentID, loadSession, sess, cards...); err != nil {
 			Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
 		}
+		// Run by a sub-agent: the report also goes to its parent's home
+		// thread, where somebody reads it (agent_family.go). A task wake is
+		// the agent's own work coming back to it, not a report.
+		if !isTaskWake(p.Prompt) {
+			reportToParent(udb, p.AgentID, cards[len(cards)-1])
+		}
 	}
 	// The agent's cortex records every scheduled fire that reported somewhere
 	// else. Not a background task's own result coming back to it: that is the

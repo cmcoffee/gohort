@@ -851,6 +851,9 @@ func argBool(args map[string]any, key string, def bool) bool {
 // and release_thread_binding can only ever touch bindings the agent created.
 func findAgentBoundChannel(owner, agentID, to string) (Channel, bool) {
 	to = strings.TrimSpace(to)
+	// A sub-agent's thread bindings are its top-level parent's
+	// (agent_family.go), so that is where they are found.
+	agentID = channelAgentFor(owner, agentID)
 	for _, ch := range ListChannelsForAgent(RootDB, owner, agentID) {
 		if ch.AgentBound && ch.Address == to {
 			return ch, true

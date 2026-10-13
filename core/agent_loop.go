@@ -787,6 +787,12 @@ func (lr *loopRun) rebuildToolMaps(active []AgentToolDef) {
 	}
 }
 
+// asksFirst reports whether the app wants this call confirmed although the
+// tool does not declare NeedsConfirm (AgentLoopConfig.AskFirst).
+func (lr *loopRun) asksFirst(name string) bool {
+	return lr.cfg.AskFirst != nil && lr.cfg.AskFirst(name)
+}
+
 func (lr *loopRun) setupTools() {
 	// Turn-time split. Everything the loop spends that is NOT waiting on a
 	// provider is gohort's own overhead — prompt assembly, knowledge
@@ -2307,7 +2313,7 @@ func (lr *loopRun) recordResponse() loopAction {
 		}
 
 		// Confirmation check.
-		if lr.needsConfirm[tc.Name] {
+		if lr.needsConfirm[tc.Name] || lr.asksFirst(tc.Name) {
 			if !lr.confirmFn(tc.Name, formatArgs(tc.Args)) {
 				Debug("[agent_loop] prompt-tool denied: %s", tc.Name)
 				lr.history = append(lr.history, Message{
@@ -3574,7 +3580,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			}
 		}
 
-		if lr.needsConfirm[tc.Name] {
+		if lr.needsConfirm[tc.Name] || lr.asksFirst(tc.Name) {
 			if !lr.confirmFn(tc.Name, formatArgs(tc.Args)) {
 				Debug("[agent_loop] tool call denied by user: %s", tc.Name)
 				// The bare "denied by user" line TAUGHT a workaround:

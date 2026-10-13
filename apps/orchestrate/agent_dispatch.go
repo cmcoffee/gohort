@@ -854,6 +854,9 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// dispatched runs even though they were reachable from the
 	// Agency chat UI.
 	extraTools, availableBlock, customToolPrompt, subTurn := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
+	// The agents that handed this run over: their ask marks bind it too
+	// (ask_first.go).
+	subTurn.askChain = append([]string{}, via...)
 	// Same reason as the continuing-dispatch path below: no *session on a
 	// dispatched turn means no trail, and a guard that leaves no breadcrumb is
 	// a guard nobody can account for after the fact.
@@ -965,6 +968,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		Backgrounded:        func() bool { return subSess.Detach.Any() },
 		BackgroundEstimate:  func() string { return subSess.Detach.EstimateText() },
 		Confirm:             confirm,
+		AskFirst:            subTurn.asksFirst, // its marks and its delegators' (ask_first.go)
 		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,

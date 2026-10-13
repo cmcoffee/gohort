@@ -84,3 +84,55 @@ func TestToolWithoutConfirmFieldsIsNotGated(t *testing.T) {
 		t.Fatal("the tool did not run")
 	}
 }
+
+// AskFirst widens the gate to a tool that asks nothing on its own: the owner's
+// "ask me before every call" on a search reaches Confirm, and a no stops it.
+// A tool AskFirst does not name runs as before.
+func TestAskFirstGatesAToolThatDeclaresNothing(t *testing.T) {
+	app, _ := withTierStubs(t, "test.askfirst", func(n int) []ToolCall {
+		if n == 1 {
+			return []ToolCall{
+				{ID: "1", Name: "search", Args: map[string]any{"q": "x"}},
+				{ID: "2", Name: "peek", Args: map[string]any{}},
+			}
+		}
+		return nil
+	})
+	var mu sync.Mutex
+	var asked []string
+	ran := map[string]bool{}
+	tool := func(name string) AgentToolDef {
+		return AgentToolDef{
+			Tool: Tool{Name: name, Description: name, Parameters: map[string]ToolParam{"q": {Type: "string"}}},
+			Handler: func(context.Context, map[string]any) (string, error) {
+				mu.Lock()
+				ran[name] = true
+				mu.Unlock()
+				return "ok", nil
+			},
+		}
+	}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		RouteKey:  "test.askfirst",
+		MaxRounds: 3,
+		AskFirst:  func(name string) bool { return name == "search" },
+		Confirm: func(name, args string) bool {
+			mu.Lock()
+			asked = append(asked, name)
+			mu.Unlock()
+			return false
+		},
+		Tools: []AgentToolDef{tool("search"), tool("peek")},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(asked) != 1 || asked[0] != "search" {
+		t.Fatalf("Confirm was called for %v, want exactly [search]", asked)
+	}
+	if ran["search"] || !ran["peek"] {
+		t.Errorf("ran = %v: the asked tool was denied and the other one runs", ran)
+	}
+}

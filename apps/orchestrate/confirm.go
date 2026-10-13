@@ -199,9 +199,9 @@ func toolCredentials(tt TempTool) []string {
 // owner's unattended gate, which queues the call for approval. These runs
 // used to approve every call, so a credential that asks first, "confirm
 // writes" and the owner's ask-before marks had no effect on them.
-func (t *chatTurn) runConfirm(agentID string, sess *ToolSession) func(name, args string) bool {
+func (t *chatTurn) runConfirm(agentID string, sess *ToolSession, asks ...func(string) bool) func(name, args string) bool {
 	if t != nil && t.sse != nil {
-		return t.confirmFuncFor(sess)
+		return t.confirmFuncForAsks(sess, asks...)
 	}
 	if t == nil || t.app == nil {
 		// No app to queue with: refuse rather than approve.
@@ -219,6 +219,18 @@ func (t *chatTurn) runConfirm(agentID string, sess *ToolSession) func(name, args
 // ONLY when the tool dispatches through a credential whose admin
 // toggle demands it; everything else auto-approves as before.
 func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) bool {
+	return t.confirmFuncForAsks(sess)
+}
+
+// confirmFuncForAsks is confirmFuncFor with the ask-before-every-call answer
+// supplied: a run this turn started for another agent asks about THAT agent's
+// marks (and its delegators', see asksFirst), not this turn's. None given is
+// this turn's own.
+func (t *chatTurn) confirmFuncForAsks(sess *ToolSession, asks ...func(string) bool) func(name, args string) bool {
+	asksFirst := t.asksFirst
+	if len(asks) > 0 && asks[0] != nil {
+		asksFirst = asks[0]
+	}
 	return func(name, args string) bool {
 		// A host-app tool that asked to be confirmed is asked about first:
 		// it declared its own sentence, which is more specific than
@@ -240,28 +252,22 @@ func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) boo
 		// The OWNER's marks, not the runtime user's. A shared agent runs for
 		// somebody else, and whether a tool stops to ask is the owner's
 		// decision about their own tool, not a setting the visitor holds.
-		_, markOwner := t.ownerView()
-		// AuthDB is a hook the binary installs at start-up, so it is nil
-		// wherever this app runs without one - every test that builds a turn
-		// by hand, for a start. Calling it unguarded panics, and a confirm
-		// gate that panics denies nothing and stops everything.
-		var markDB Database
-		if AuthDB != nil {
-			markDB = AuthDB()
-		}
-		// Two sources, either of which stops the call. The owner's mark is
-		// keyed by NAME and reaches any tool, the framework's included. The
-		// record's own flag is a tool DECLARING that it asks, which tool_def
-		// can set on a draft that lives only in this session and so never
-		// reaches the owner's store at all.
+		// Two sources, either of which stops the call. The owner's marks
+		// (asksFirst: this agent's, the fleet-wide one, and those of any agent
+		// that handed this run over) are keyed by NAME and reach any tool, the
+		// framework's included. The record's own flag is a tool DECLARING that
+		// it asks, which tool_def can set on a draft that lives only in this
+		// session and so never reaches the owner's store at all.
 		tt := toolRecordFor(sess, name)
-		agentID := ""
-		if t != nil {
-			agentID = t.agent.ID
-		}
-		if (tt != nil && tt.ConfirmInChat) || UserToolAsksInChat(markDB, markOwner, agentID, name) {
+		if (tt != nil && tt.ConfirmInChat) || asksFirst(name) {
+			// Already allowed for the rest of this conversation.
+			key := t.sessionAllowKey(name)
+			if sessionAllowed(key) {
+				return true
+			}
 			return t.escalateToolConfirm(toolConfirmRequest{
-				tool: name,
+				sessionKey: key,
+				tool:       name,
 				// What it would DO, not just its name. The card is asking
 				// somebody to judge one call, and a name does not say whether
 				// the tool reaches outside the deployment while a raw JSON
@@ -462,6 +468,9 @@ type toolConfirmRequest struct {
 	// describe narrowly.
 	grant      *ToolGrant
 	grantLabel string
+	// sessionKey, when set, offers "Allow for this session": a yes that
+	// covers this tool for the rest of the conversation (ask_first.go).
+	sessionKey string
 }
 
 // escalateToolConfirm renders the approval card and parks until the
@@ -469,6 +478,9 @@ type toolConfirmRequest struct {
 // viewer is attached, on timeout, or on an explicit Deny.
 func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 	actions := []map[string]any{{"label": "Allow once", "value": "allow"}}
+	if req.sessionKey != "" {
+		actions = append(actions, map[string]any{"label": "Allow for this session", "value": "session"})
+	}
 	// The standing-grant button sits between allow-once and deny, and says
 	// what it would allow rather than "always" on its own — the user is
 	// agreeing to a specific future, so the button has to name it.
@@ -476,9 +488,13 @@ func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 		actions = append(actions, map[string]any{"label": req.grantLabel, "value": "always"})
 	}
 	actions = append(actions, map[string]any{"label": "Deny", "value": "deny", "variant": "danger"})
-	picked, ok := t.parkConfirm(req, actions, nil)
+	picked, ok := t.parkConfirm(req, actions, map[string]bool{"allow": true, "always": true, "session": true})
 	if !ok {
 		return false
+	}
+	if picked == "session" && req.sessionKey != "" {
+		allowForSession(req.sessionKey)
+		t.turnDiag("tool-grant", fmt.Sprintf("You allowed %s for the rest of this session.", req.tool))
 	}
 	// Persist the standing grant only when the user picked THAT button.
 	if picked == "always" && req.grant != nil {

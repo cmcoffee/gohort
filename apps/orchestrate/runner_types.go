@@ -115,6 +115,13 @@ type chatTurn struct {
 	// test — and every method on it tolerates that.
 	prep *prepClock
 	sse  *sseWriter
+	// askChain is the agents that handed this run over, nearest last: their
+	// ask-before-every-call marks bind this run too (ask_first.go).
+	askChain []string
+	// askConversation is the conversation a handed-over run answers to, for
+	// a run with no session of its own: an "Allow for this session" given
+	// there covers it too (ask_first.go).
+	askConversation string
 	// askBlock is the ask card this turn ended on (ui_ask with options, or
 	// ui_ask_form), saved on the question's message so a reload redraws it.
 	askBlock map[string]any

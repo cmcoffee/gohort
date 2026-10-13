@@ -1183,14 +1183,17 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	// queue) stay nil — the bound tools that need them aren't
 	// added to the sub-agent's catalog anyway.
 	subTurn := &chatTurn{
-		app:     t.app,
-		agent:   target,
-		user:    t.user,
-		udb:     t.udb,
-		askVia:  t.chatAsker(), // the calling turn's question card, see chatTurn.askVia
-		ctx:     t.ctx,         // inherit caller's ctx so NetworkConnector propagates
-		topic:   t.resolveTopic(),
-		network: t.network,
+		app:    t.app,
+		agent:  target,
+		user:   t.user,
+		udb:    t.udb,
+		askVia: t.chatAsker(), // the calling turn's question card, see chatTurn.askVia
+		// The caller's ask marks bind the run it hands over (ask_first.go).
+		askChain:        t.delegatedAskChain(),
+		askConversation: t.conversation(),
+		ctx:             t.ctx, // inherit caller's ctx so NetworkConnector propagates
+		topic:           t.resolveTopic(),
+		network:         t.network,
 		// Carry the caller's chain + the caller's own agent ID forward.
 		// The cycle guard above runs against this slice on every
 		// further agents(run) the sub-turn makes.
@@ -1415,7 +1418,8 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		Effort:         target.Effort,      // per-agent level; a budget above wins
 		// Asked of whoever is watching the calling turn; with nobody
 		// watching, queued for the owner (see runConfirm).
-		Confirm:             t.runConfirm(target.ID, subSess),
+		Confirm:             t.runConfirm(target.ID, subSess, subTurn.asksFirst),
+		AskFirst:            subTurn.asksFirst, // its marks and the caller's (ask_first.go)
 		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,

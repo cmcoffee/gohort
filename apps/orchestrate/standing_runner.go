@@ -344,9 +344,19 @@ func registerStandingRunner(app *OrchestrateApp) {
 		if reportAgent == "" {
 			reportAgent = sa.AgentID // legacy records: fall back to the target agent's channel
 		}
+		surface, home := sa.Surface, sa.ReportSessionID
+		// A sub-agent has no thread anybody reads: a schedule it runs reports
+		// to its top-level parent's home thread (agent_family.go). Background
+		// stays background.
+		if top := topAgentOf(udb, reportAgent); top != reportAgent {
+			reportAgent, home = top, ""
+			if strings.TrimSpace(surface) != "background" {
+				surface = "cortex"
+			}
+		}
 		// Surface routes the report: session (home) / cortex / background. The run
 		// still happened; background just doesn't post the result to any thread.
-		reportSession, record := resolveSurface(sa.Surface, sa.ReportSessionID, reportAgent)
+		reportSession, record := resolveSurface(surface, home, reportAgent)
 		// Every run leaves a line in the cortex of the agent that RAN it, the
 		// record of what reached it, unless the full report is landing there
 		// anyway.
