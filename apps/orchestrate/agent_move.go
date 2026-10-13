@@ -144,7 +144,26 @@ func (m *agentMove) under() (AgentRecord, string, error) {
 		return saved, "", err
 	}
 	Log("[orchestrate.agents] moved %q under %q", saved.Name, m.parent.Name)
-	return saved, fmt.Sprintf("%s is now a sub-agent of %s. Only %s can call it.", saved.Name, m.parent.Name, m.parent.Name), nil
+	notes := []string{fmt.Sprintf("%s is now a sub-agent of %s. Only %s can call it.", saved.Name, m.parent.Name, m.parent.Name)}
+	// Its schedules stay its own: they run this agent, whatever its place.
+	// What changes is where they are listed and where their reports land.
+	if n := len(agentScheduleNames(m.owner, map[string]bool{saved.ID: true})); n > 0 {
+		notes = append(notes, fmt.Sprintf("Its %d schedule%s still run %s; they are now listed on %s's Scheduler, and their reports go to %s's thread.",
+			n, plural(n), saved.Name, m.parent.Name, m.parent.Name))
+	}
+	// A sub-agent holds no channel: its parent answers and can hand the work
+	// on (channelAgentFor). Rebound now rather than at the next start-up, so
+	// the parent answers from the moment the page says it does.
+	var moved []string
+	for _, ch := range ListChannelsForAgent(RootDB, m.owner, saved.ID) {
+		SaveChannel(RootDB, ch)
+		moved = append(moved, chFirst(ch.Name, ch.ID))
+	}
+	if len(moved) > 0 {
+		notes = append(notes, fmt.Sprintf("Its channel%s (%s) %s now answered by %s, which can hand the work to it.",
+			plural(len(moved)), strings.Join(moved, ", "), chIf(len(moved) == 1, "is", "are"), m.parent.Name))
+	}
+	return saved, strings.Join(notes, " "), nil
 }
 
 // out makes a sub-agent top-level. Its parent called it by ownership, which
@@ -181,6 +200,9 @@ func (m *agentMove) out() (AgentRecord, string, error) {
 		case dispatchNone:
 			notes = append(notes, parent.Name+" is set to Allow none, so it can no longer call it.")
 		}
+	}
+	if n := len(agentScheduleNames(m.owner, map[string]bool{saved.ID: true})); n > 0 {
+		notes = append(notes, fmt.Sprintf("Its %d schedule%s still run it; they are listed on its own Scheduler again, and their reports go to its own thread.", n, plural(n)))
 	}
 	if borrowed {
 		notes = append(notes, "It no longer borrows its old parent's tools; add any it needs under Tools.")

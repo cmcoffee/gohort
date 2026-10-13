@@ -89,6 +89,46 @@ func TestTheSchedulerListsTheWholeFamily(t *testing.T) {
 		if strings.Count(body, `"name":"Morning digest"`) != 1 {
 			t.Errorf("%s's Scheduler lists a schedule twice", agent)
 		}
+		// A row a sub-agent runs says which one; the parent's own does not.
+		if !strings.Contains(body, `"runs":"sub-agent - Nitpicker"`) {
+			t.Errorf("%s's Scheduler does not say the sub-agent runs Morning digest: %s", agent, body)
+		}
+		if strings.Count(body, `"runs":`) != 1 {
+			t.Errorf("%s's Scheduler marks a row the parent runs itself: %s", agent, body)
+		}
+	}
+}
+
+// Moving an agent under a parent keeps its schedules running IT (only where
+// they are listed and where reports land change), and hands its channels to
+// the parent at once; moving it back out says its schedules come with it.
+func TestMovingAnAgentSaysWhereItsSchedulesAndChannelsGo(t *testing.T) {
+	app, udb := familyFixture(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a-scout", Name: "Scout", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	SaveStandingAgent(RootDB, StandingAgent{Owner: "alice", Name: "Hourly sweep", AgentID: "a-scout", Mission: "m", IntervalSeconds: 3600})
+	SaveChannel(RootDB, Channel{ID: "c-scout", Owner: "alice", Name: "Pager", AgentID: "a-scout"})
+
+	w := moveAgentReq(t, app, udb, "a-scout", `{"owned_by":"a-writer"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("move under: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "listed on Writer's Scheduler") || !strings.Contains(w.Body.String(), "answered by Writer") {
+		t.Errorf("the move did not say where its schedule and channel went: %s", w.Body.String())
+	}
+	for _, sa := range ListStandingAgents(RootDB, "alice") {
+		if sa.Name == "Hourly sweep" && sa.AgentID != "a-scout" {
+			t.Errorf("the schedule moved to %q; it should still run the agent", sa.AgentID)
+		}
+	}
+	if ch, _ := GetChannel(RootDB, "alice", "c-scout"); ch.AgentID != "a-writer" {
+		t.Errorf("the channel is bound to %q, want the new parent at once", ch.AgentID)
+	}
+
+	w = moveAgentReq(t, app, udb, "a-scout", `{"owned_by":""}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "listed on its own Scheduler again") {
+		t.Errorf("moving out did not say its schedule comes with it: %d %s", w.Code, w.Body.String())
 	}
 }
 

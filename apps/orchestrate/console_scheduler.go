@@ -53,6 +53,7 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 	family := schedulerFamily(udb, user, agentID)
 	out := []map[string]any{}
 	for _, id := range family {
+		start := len(out)
 		for _, row := range consoleAgentRows(user, udb, id) {
 			out = appendSchedulerRow(out, row, schedSectionStanding, schedKindStanding)
 		}
@@ -62,6 +63,7 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 		for _, row := range consoleMonitorRows(user, id) {
 			out = appendSchedulerRow(out, row, schedSectionMonitors, schedKindMonitor)
 		}
+		markSubAgentRows(udb, id, out[start:])
 	}
 	out = uniqueSchedulerRows(out)
 	sortSchedulerRows(out)
@@ -88,6 +90,28 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 		out = append(groups, rest...)
 	}
 	writeJSON(w, out)
+}
+
+// markSubAgentRows says, on each row a sub-agent runs, which sub-agent: the
+// parent's Scheduler lists the whole family, and a row that read the same
+// whoever ran it hid that the work goes to a sub-agent. It rides on the
+// existing "runs" line, which already says what fires.
+func markSubAgentRows(udb Database, agentID string, rows []map[string]any) {
+	if udb == nil || agentID == "" || len(rows) == 0 {
+		return
+	}
+	a, ok := loadAgent(udb, agentID)
+	if !ok || strings.TrimSpace(a.OwnedBy) == "" {
+		return
+	}
+	name := chFirst(a.Name, a.ID)
+	for _, m := range rows {
+		if runs, _ := m["runs"].(string); strings.TrimSpace(runs) != "" {
+			m["runs"] = runs + ", as sub-agent " + name
+		} else {
+			m["runs"] = "sub-agent - " + name
+		}
+	}
 }
 
 // sortSchedulerRows puts each section in the order it will happen.
