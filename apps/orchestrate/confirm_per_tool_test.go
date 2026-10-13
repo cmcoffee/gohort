@@ -245,10 +245,23 @@ func TestTheToolsModalCanSeeWhichToolsAsk(t *testing.T) {
 	if asks {
 		t.Error("a quiet tool reads as asking")
 	}
-	// Only the user's own records. A framework tool listed here would put a
-	// switch on a row with nothing behind it to hold the setting.
 	if len(got.Tools) != 2 {
-		t.Errorf("the map carries more than the user's own tools: %v", got.Tools)
+		t.Errorf("the map carries more than the user's tools and marks: %v", got.Tools)
+	}
+
+	// A framework tool marked to ask reads as asking too: the mark is keyed
+	// by name, and web_search is the one somebody most wants to watch.
+	if !SetUserToolAsksInChat(AuthDB(), "alice", "", "web_search", true) {
+		t.Fatal("could not mark web_search")
+	}
+	w = httptest.NewRecorder()
+	app.handleToolConfirm(w, asUser(httptest.NewRequest(http.MethodGet, "/api/tool-confirm", nil), "alice"))
+	got.Tools = nil
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Tools["web_search"] {
+		t.Errorf("a marked framework tool does not read as asking: %v", got.Tools)
 	}
 }
 

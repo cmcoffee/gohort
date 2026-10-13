@@ -82,6 +82,9 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 			who = rec.Name
 		}
 		detail = "run \"" + a.Brief + "\" unattended (refused on a scheduled fire; approving pre-authorizes it)"
+		if t := strings.TrimSpace(a.Text); t != "" {
+			detail += ". It was about to send: " + t
+		}
 	case "scope_tool":
 		if rec, found := loadAgent(udb, a.Agent); found {
 			who = rec.Name

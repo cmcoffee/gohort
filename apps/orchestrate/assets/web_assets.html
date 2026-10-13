@@ -2986,9 +2986,8 @@ select.ui-orch-intake-input {
           });
           actionsContainer.appendChild(btn);
         }
-        // The ask-before-every-call flag (api/tool-confirm). A map of every
-        // tool the user owns a RECORD for, name to flag, so a row can tell
-        // whether it has anything to carry the flag at all.
+        // The ask-before-every-call mark (api/tool-confirm), name to flag, for
+        // this agent. A name missing from it simply does not ask.
         //
         // A failed read degrades to an empty map, which renders no control
         // anywhere: better to offer nothing than a switch whose position was
@@ -3005,15 +3004,12 @@ select.ui-orch-intake-input {
         // One Ask control for a tool row, in the Tools modal's row-actions
         // strip beside Scope.
         //
-        // Rendered only for tools the user owns a record for. A framework tool
-        // has no record to carry the flag, so a control on its row would be a
-        // switch wired to nothing.
-        //
-        // The flag lives on the TOOL, so it reaches every agent holding it.
-        // The button says that out loud rather than letting a per-agent modal
-        // imply a per-agent scope, which is the same thing Scope has to do.
+        // On every tool, the framework's included: the mark is keyed by name
+        // and kept per agent, so web_search can ask on a private project's
+        // agent and run freely on another. The card it raises shows what the
+        // call would send (confirmCallSummary), which is the point of asking.
         function addAskControl(actions, toolName, confirmMap, agentIDForAsk) {
-          if (!toolName || !(toolName in confirmMap)) return;
+          if (!toolName) return;
           var on = !!confirmMap[toolName];
           var btn = document.createElement('button');
           btn.type = 'button';
@@ -3025,8 +3021,8 @@ select.ui-orch-intake-input {
             btn.className = 'ui-row-btn compact' + (on ? ' warning' : '');
             btn.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.5rem;min-width:0';
             btn.title = on
-              ? 'Stops and asks you before every call, in chat, on every agent that holds this tool. Click to stop asking.'
-              : 'Stop and ask before every call, in chat. The flag is on the tool, so it applies on every agent that holds it.';
+              ? 'This agent stops and asks you before every call, showing what it is about to send. Click to stop asking.'
+              : 'Stop and ask before every call this agent makes, showing what it is about to send. Other agents are not affected.';
           }
           paint();
           btn.addEventListener('click', function(ev) {
@@ -3038,7 +3034,7 @@ select.ui-orch-intake-input {
             // Turning it OFF removes a stop, so only that direction confirms:
             // a guard should be cheap to add and deliberate to remove.
             var ask = want ? Promise.resolve(true) : window.uiConfirm(
-              'Stop asking before ' + toolName + ' runs? It will run unprompted from then on, on every agent that holds it.');
+              'Stop asking before ' + toolName + ' runs? This agent will run it unprompted from then on.');
             Promise.resolve(ask).then(function(go) {
               if (!go) return;
               btn.disabled = true;

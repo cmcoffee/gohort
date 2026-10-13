@@ -406,12 +406,19 @@ func (g *autonomousGate) queue(name, args string) {
 			return // already pending — don't stack duplicates
 		}
 	}
+	// What it was about to send, the decisive arguments first, as the live
+	// card shows them (confirm_summary.go): raw JSON clipped at 200
+	// characters could cut off the one value the owner is judging.
+	shown := args
+	if lines := namedArgs(args); len(lines) > 0 {
+		shown = strings.Join(lines, "; ")
+	}
 	SaveAuthorization(RootDB, Authorization{
 		Owner:  g.owner,
 		Action: "autonomous_tool",
 		Agent:  g.agentID,
 		Brief:  name,
-		Text:   truncateObs(args, 200),
+		Text:   truncateObs(shown, 600),
 	})
 	// And a notice, so the fact can leave the building. The pane owns the
 	// decision and the badge; this is how a 5am fire is news before 9am.

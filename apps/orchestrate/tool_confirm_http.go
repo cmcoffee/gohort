@@ -1,9 +1,8 @@
-// The ask-before-every-call flag, read and written from the Tools modal.
+// The ask-before-every-call mark, read and written from the Tools modal.
 //
-// Sits beside admin_tool_scope.go's /api/tool-scope on purpose: both edit a
-// property of the TOOL RECORD from a per-agent modal, so both have to say out
-// loud that the change lands everywhere the tool is held. Scope answers "where
-// is this available"; this answers "does it stop and ask first".
+// Sits beside admin_tool_scope.go's /api/tool-scope: Scope answers "where is
+// this available", this answers "does this agent stop and ask first". The
+// mark is per agent and keyed by name, so it reaches framework tools too.
 //
 // The console Permissions page writes the same flag through
 // handleConsolePermissionPolicy's "confirmtool:" kind. Two routes, one setter:
@@ -21,10 +20,10 @@ import (
 
 // handleToolConfirm serves the Ask control in the Tools modal.
 //
-// GET returns every persistent tool the user owns as name to flag. The modal
-// needs the whole map, not just the tools that ask: a name being absent is how
-// it knows a catalog row is a framework tool rather than one of the user's,
-// and a framework tool has no record to carry the flag.
+// GET returns name to flag for this agent: every tool the user owns, and every
+// tool marked to ask, the framework's included (a mark is keyed by name and
+// needs no record). The modal offers the control on every row; a name it does
+// not find here does not ask.
 //
 // POST {"name":…,"on":…} flips one.
 func (T *OrchestrateApp) handleToolConfirm(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +41,9 @@ func (T *OrchestrateApp) handleToolConfirm(w http.ResponseWriter, r *http.Reques
 		}
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 			tools[p.Tool.Name] = asks[p.Tool.Name]
+		}
+		for n := range asks {
+			tools[n] = true
 		}
 		w.Header().Set("Content-Type", "application/json")
 		// No caching, for the reason /api/tool-scope gives: the modal re-reads
