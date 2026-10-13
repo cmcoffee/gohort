@@ -269,3 +269,39 @@ func TestAOneOffNamesTheAgentItWakes(t *testing.T) {
 		t.Fatalf("the one-off should wake QA Radar (%s), wakes %q", radar.ID, m.WakeAgent)
 	}
 }
+
+// Once a year, the way people say it, becomes a yearly timing; the forms that
+// were already understood still read as before.
+func TestTheScheduleToolReadsAYearlyDate(t *testing.T) {
+	for in, want := range map[string]string{
+		"DEC-25 09:00":                 "DEC-25 09:00",
+		"every year on Dec 25 at 9am":  "DEC-25 09:00",
+		"yearly on December 25th 9:00": "DEC-25 09:00",
+		"annually on sept 1 at 8:30pm": "SEP-1 20:30",
+		"Mar 3 at 7am":                 "MAR-3 07:00",
+	} {
+		cron, interval, err := parseEverySpec(in)
+		if err != nil || interval != 0 || !strings.EqualFold(cron, want) {
+			t.Errorf("%q: %q %d %v, want %q", in, cron, interval, err, want)
+			continue
+		}
+		spec, ok, err := everyTiming("u", map[string]any{}, cron, 0, nil)
+		if !ok || err != nil || spec.How != "yearly" {
+			t.Errorf("%q: timing %+v %v %v, want yearly", in, spec, ok, err)
+		}
+	}
+	if _, _, err := parseEverySpec("every year on Feb 30 at 9am"); err == nil {
+		t.Error("a date no year has was accepted")
+	}
+	for in, want := range map[string][2]any{
+		"every 15 minutes": {"", 900},
+		"weekdays 17:00":   {"weekdays 17:00", 0},
+		"FRI 21:30":        {"FRI 21:30", 0},
+		"daily 08:00":      {"daily 08:00", 0},
+	} {
+		cron, interval, err := parseEverySpec(in)
+		if err != nil || cron != want[0] || interval != want[1] {
+			t.Errorf("%q now reads as %q %d %v", in, cron, interval, err)
+		}
+	}
+}

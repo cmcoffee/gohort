@@ -157,7 +157,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		"run_by":       {Type: "string", Description: "(relink) The agent that runs the parked schedule from now on, by name or id: usually the one made to replace the deleted agent."},
 		"when":         {Type: "string", Enum: []string{"at", "every", "value_crosses", "output_changes", "posted", "agent_says"}, Description: "(create) The trigger: at (once, at a time) | every (on a clock, report each time) | value_crosses (a URL's value crosses a line) | output_changes (a tool's output changes) | posted (an external POST) | agent_says (an agent judges a condition)."},
 		"then":         {Type: "string", Description: "(create) What to do when it fires, in plain words. every: the mission run each time (\"fetch the forecast and post it to the family chat\"). at / monitors: handed to you on wake (\"tell the user it's 1:10pm, as they asked\")."},
-		"time":         {Type: "string", Description: "(create) When, as the user said it, in their own zone (the one time_in_zone reports; never convert to UTC). at: \"13:10\", \"1:10pm\", \"in 20 minutes\", or ISO8601. every: \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", or set times \"09:00,13:00\". Monitors: optional set times of day to check, \"08:00\" or \"08:00,18:00\", instead of check_every."},
+		"time":         {Type: "string", Description: "(create) When, as the user said it, in their own zone (the one time_in_zone reports; never convert to UTC). at: \"13:10\", \"1:10pm\", \"in 20 minutes\", or ISO8601. every: \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", set times \"09:00,13:00\", or once a year \"DEC-25 09:00\" / \"every year on Dec 25 at 9am\". Monitors: optional set times of day to check, \"08:00\" or \"08:00,18:00\", instead of check_every."},
 		"name":         {Type: "string", Description: "(create: optional, one is made up; pause/resume/run_now/delete: required) Short name, e.g. \"daily-weather\", \"nvda-below\"."},
 		"agent":        {Type: "string", Description: "(at: who is woken to do it, default you; every: who runs it, default you; agent_says: who checks, default you; list / delete / move: WHOSE schedules to act on, another of your own agents by name or id, or \"all\" for every agent you own, list only) Name or id of an existing agent."},
 		"pipeline":     {Type: "string", Description: "(every, instead of agent) A stored pipeline to run; `then` becomes its input."},
@@ -739,6 +739,9 @@ func scheduleOwnRecurring(rec recurringImpl, cron string, interval int, then, na
 }
 
 var (
+	// "every year on Dec 25 at 9am", "yearly on December 25th 09:00",
+	// "Dec 25 at 9am": a date in words, read into the MON-DD form.
+	everyYearlyRe   = regexp.MustCompile(`(?i)^(?:(?:every|each)\s+year\s+on\s+|(?:yearly|annually)\s+on\s+|(?:yearly|annually)\s+|on\s+)?([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(?:at\s+)?(.+)$`)
 	everyIntervalRe = regexp.MustCompile(`(?i)^(?:every\s+)?(\d+(?:\.\d+)?)?\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)$`)
 	everyDailyRe    = regexp.MustCompile(`(?i)^(?:every\s+)?(weekdays?|weekends?|everyday|daily|day|morning|afternoon|evening|night|[a-z]{3}-\d{1,2}|[a-z]{3}(?:,[a-z]{3})*)s?\s+(?:at\s+)?(.+)$`)
 )
@@ -775,6 +778,20 @@ func parseEverySpec(s string) (cron string, interval int, err error) {
 			return "", 0, fmt.Errorf("could not read %q as an interval", s)
 		}
 		return "", secs, nil
+	}
+	if mm := everyYearlyRe.FindStringSubmatch(s); mm != nil {
+		if mon := yearMonth(mm[1]); mon != "" {
+			clock, cerr := clockHHMM(strings.TrimSpace(mm[3]))
+			if cerr != nil {
+				return "", 0, cerr
+			}
+			day, _ := strconv.Atoi(mm[2])
+			spec := fmt.Sprintf("%s-%d %s", mon, day, clock)
+			if _, ok := timing.FromCron(spec); !ok {
+				return "", 0, fmt.Errorf("%s %d is not a date", mm[1], day)
+			}
+			return spec, 0, nil
+		}
 	}
 	if mm := everyDailyRe.FindStringSubmatch(s); mm != nil {
 		days := strings.ToLower(mm[1])
@@ -820,7 +837,21 @@ func parseEverySpec(s string) (cron string, interval int, err error) {
 	if clock, cerr := clockHHMM(s); cerr == nil {
 		return "daily " + clock, 0, nil
 	}
-	return "", 0, fmt.Errorf("could not read %q as a schedule: use \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", or \"hourly\"", s)
+	return "", 0, fmt.Errorf("could not read %q as a schedule: use \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", or once a year \"DEC-25 09:00\"", s)
+}
+
+// yearMonth is a month name or its three-letter form as the MON the yearly
+// form takes ("december", "Dec" -> "DEC"), "" for anything else, a weekday
+// included.
+func yearMonth(word string) string {
+	w := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(word), "."))
+	for m := time.January; m <= time.December; m++ {
+		full := strings.ToLower(m.String())
+		if w == full || w == full[:3] || (w == "sept" && m == time.September) {
+			return strings.ToUpper(full[:3])
+		}
+	}
+	return ""
 }
 
 // clockHHMM reads "08:00", "8am", "5:30 PM" as 24-hour HH:MM.
