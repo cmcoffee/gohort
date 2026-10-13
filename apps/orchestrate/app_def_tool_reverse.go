@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -89,8 +90,23 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	// the author either gave up or re-wrote the app blind.
 	switch {
 	case len(spec.Sections) > 0:
-		out["sections"] = json.RawMessage(ensureSectionIDsJSON(spec.Sections))
+		full := ensureSectionIDsJSON(spec.Sections)
+		// One section in full, on request, as script= does for a script.
+		if want := strings.TrimSpace(stringArg(args, "section_id")); want != "" {
+			one, ok := appSectionByID(full, want)
+			if !ok {
+				return "", Error("no section " + want + " in " + spec.Slug + ": get lists their ids")
+			}
+			return string(one), nil
+		}
+		short, omitted := abbreviateAppSections(full)
+		out["sections"] = json.RawMessage(short)
 		out["sections_note"] = "Each section carries a stable `id`. To change one, use update_section / add_section / remove_section with that id; update replaces the WHOLE array."
+		if len(omitted) > 0 {
+			out["sections_note"] = out["sections_note"].(string) + " Shortened in this view: " + strings.Join(omitted, ", ") +
+				" (a field over " + fmt.Sprint(appSectionFieldMax) + " characters shows as a placeholder). get with section_id=<id> returns one in full; patch and replace_function edit one without it. " +
+				"Never send a shortened section back: an edit carrying a placeholder is refused."
+		}
 	default:
 		// Authored before sections were stored. Reconstruct from the rendered
 		// page: exact where the authoring fields ARE the body's fields (an html
@@ -288,4 +304,113 @@ func appSpecSectionsRaw(spec AppSpec) any {
 		return nil
 	}
 	return raw
+}
+
+// appSectionFieldMax is the longest a section's text field may be in get's
+// full view. An html canvas carries its whole document, and one app's get
+// came back at 72 KB, about 20k tokens that then rode on every later round of
+// Builder's turn. A field past it shows as a placeholder naming how to fetch
+// it (section_id=<id>); the edits that work on a long body (patch,
+// replace_function) do not need it in view.
+const appSectionFieldMax = 4000
+
+// appOmittedMarker opens every placeholder, and is what the write actions
+// look for to refuse one sent back.
+const appOmittedMarker = "[omitted from this view: "
+
+// abbreviateAppSections shortens every text field over appSectionFieldMax in
+// the sections array and returns it with the ids of the sections touched.
+// The array is returned unchanged when nothing is long or it cannot be read.
+func abbreviateAppSections(sections json.RawMessage) (json.RawMessage, []string) {
+	var secs []any
+	if json.Unmarshal(sections, &secs) != nil {
+		return sections, nil
+	}
+	var omitted []string
+	for i, sec := range secs {
+		m, ok := sec.(map[string]any)
+		if !ok {
+			continue
+		}
+		id := strings.TrimSpace(mapStr(m, "id"))
+		if id == "" {
+			id = fmt.Sprintf("#%d", i+1)
+		}
+		if shortenLongStrings(m, id) {
+			omitted = append(omitted, id)
+		}
+	}
+	if len(omitted) == 0 {
+		return sections, nil
+	}
+	b, err := json.Marshal(secs)
+	if err != nil {
+		return sections, nil
+	}
+	return b, omitted
+}
+
+// shortenLongStrings replaces, in place, every string under v longer than
+// appSectionFieldMax with a placeholder, and reports whether it replaced any.
+func shortenLongStrings(v any, id string) bool {
+	changed := false
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			if s, ok := val.(string); ok && len([]rune(s)) > appSectionFieldMax {
+				x[k] = fmt.Sprintf("%s%d characters of %s; get with section_id=%q returns it in full]", appOmittedMarker, len([]rune(s)), k, id)
+				changed = true
+				continue
+			}
+			if shortenLongStrings(val, id) {
+				changed = true
+			}
+		}
+	case []any:
+		for i, val := range x {
+			if s, ok := val.(string); ok && len([]rune(s)) > appSectionFieldMax {
+				x[i] = fmt.Sprintf("%s%d characters; get with section_id=%q returns it in full]", appOmittedMarker, len([]rune(s)), id)
+				changed = true
+				continue
+			}
+			if shortenLongStrings(val, id) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+// appSectionByID is one section of the array, in full, by its id.
+func appSectionByID(sections json.RawMessage, id string) (json.RawMessage, bool) {
+	var secs []json.RawMessage
+	if json.Unmarshal(sections, &secs) != nil {
+		return nil, false
+	}
+	for _, raw := range secs {
+		var head struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(raw, &head) == nil && strings.EqualFold(strings.TrimSpace(head.ID), strings.TrimSpace(id)) {
+			return raw, true
+		}
+	}
+	return nil, false
+}
+
+// appOmittedRefusal is the refusal for a write action whose arguments still
+// carry a placeholder from get's shortened view: sent as it is, the
+// placeholder would replace the content it stands for. "" otherwise.
+func appOmittedRefusal(action string, args map[string]any) string {
+	switch action {
+	case "", "get", "list", "help", "revisions", "history", "test", "verify", "run", "pack":
+		return ""
+	}
+	b, err := json.Marshal(args)
+	if err != nil || !strings.Contains(string(b), appOmittedMarker) {
+		return ""
+	}
+	return "NOT DONE: this " + action + " still carries a placeholder from get's shortened view (\"" + appOmittedMarker + "...\"), " +
+		"which would replace the content it stands for. Fetch that section in full with get section_id=<id> and send its real content, " +
+		"or edit it with patch / replace_function, which need only the part you change."
 }
