@@ -767,6 +767,8 @@ func (pr *planRun) catalogWorkerTools() error {
 	pr.cat.workerTools, pr.cat.workerNames = filterToolAuthoringWithoutFocus(pr.cat.workerTools, pr.cat.workerNames, t.session)
 	t.gateAgentCRUDTools(pr.cat.workerTools)
 	t.wrapToolsForActivity(pr.sess, pr.cat.workerTools, t.agent)
+	// After wrapping, so a tool load_tool brings back keeps its wrappers.
+	pr.cat.workerTools, pr.cat.workerNames = t.deferBuilderOnDemandTools(pr.cat.workerTools, pr.cat.workerNames)
 	return nil
 }
 
@@ -955,6 +957,7 @@ func (pr *planRun) catalogKnowTools() error {
 	// After wrapping, so a deferred tool keeps its activity wrapper when
 	// load_tool brings it back.
 	pr.cat.knowTools = t.deferKnownAuthoringTools(pr.cat.knowTools)
+	pr.cat.knowTools, _ = t.deferBuilderOnDemandTools(pr.cat.knowTools, nil)
 	pr.cat.knowTools = t.deferOnDemandTools(pr.cat.knowTools)
 	return nil
 }
@@ -991,6 +994,7 @@ func (pr *planRun) catalogAssemble() error {
 	// The authoring index, when the catalog was deferred. Set during
 	// resolveWorkerTools, which ran before this point.
 	pr.sys += t.authoringLazyPrompt
+	pr.sys += t.builderOnDemandIndexText()
 	pr.allTools = append(pr.cat.controlTools, pr.cat.knowTools...)
 	pr.allTools = append(pr.allTools, pr.cat.workerTools...)
 	pr.allTools = append(pr.allTools, pr.cat.directCustomTools...)

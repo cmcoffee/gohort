@@ -575,6 +575,10 @@ type chatTurn struct {
 	// replaces the deferred catalog in the system prompt. Empty for Builder
 	// (inline catalog) and for agents that cannot author.
 	authoringLazyPrompt string
+	// builderOnDemandIndex is the index lines of Builder's less-used building
+	// tools, gathered from both catalogs they join and rendered once under
+	// builderOnDemandIndexHeader (deferBuilderOnDemandTools).
+	builderOnDemandIndex []string
 
 	requesterName    string
 	requesterChannel string

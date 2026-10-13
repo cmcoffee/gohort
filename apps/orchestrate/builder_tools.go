@@ -1301,6 +1301,81 @@ func (t *chatTurn) deferOnDemandTools(tools []AgentToolDef) []AgentToolDef {
 	return kept
 }
 
+// builderOnDemandTools are the authoring tools Builder reaches for rarely
+// enough to sit behind load_tool. Builder keeps its catalog inline because it
+// authors constantly, but not all of it: over four days of logs (2026-10-08
+// to 12) app_def, tool_def and the agent tools did nearly all its work, while
+// connector, skill_def, the credential tools, clone_agent, tool_template,
+// add_tool, archetype, collections and bulletins were never called, and
+// machine and bridge once each. Together they were ~13k tokens of every
+// Builder call. Its intake names the kind of job up front, which is when it
+// loads what that job needs; a direct call resolves without a load anyway
+// (lazyToolFallback).
+var builderOnDemandTools = map[string]bool{
+	"connector": true, "machine": true, "bridge": true, "skill_def": true,
+	"draft_api_credential": true, "draft_oauth_credential": true, "update_api_credential": true,
+	"store_credential_secret": true, "check_credential": true,
+	"clone_agent": true, "tool_template": true, "add_tool": true,
+	"archetype": true, "collections": true, "bulletins": true,
+}
+
+const builderOnDemandIndexHeader = "\n\n## Building tools you use less often (load before use)\n" +
+	"These exist but their parameters aren't loaded yet. When the job calls for one (a connector, a machine, a bridge, a skill, an API credential), first call `load_tool(names=[\"<name>\", ...])` with EVERY one you expect to need, then use them normally.\n\n"
+
+// deferBuilderOnDemandTools moves Builder's rarely used authoring tools, and
+// the framework's on-demand ones (schedule), out of its inline catalog and
+// into the load-before-use index. Builder's authoring tools join the worker
+// catalog rather than the one deferOnDemandTools reads, so schedule (~2.6k
+// tokens) rode inline on every Builder call; machine joins the other one.
+// Called on both; the index renders once (builderOnDemandIndexText). A no-op
+// for any other agent.
+func (t *chatTurn) deferBuilderOnDemandTools(tools []AgentToolDef, names []string) ([]AgentToolDef, []string) {
+	if t == nil || !isBuilderAgent(t.agent.ID) {
+		return tools, names
+	}
+	kept := tools[:0:0]
+	moved := map[string]bool{}
+	for _, td := range tools {
+		n := td.Tool.Name
+		if !builderOnDemandTools[n] && !onDemandTools[n] {
+			kept = append(kept, td)
+			continue
+		}
+		if t.deferredAuthoringDefs == nil {
+			t.deferredAuthoringDefs = map[string]AgentToolDef{}
+			t.deferredAuthoringLoaded = map[string]bool{}
+		}
+		t.deferredAuthoringDefs[n] = td
+		t.builderOnDemandIndex = append(t.builderOnDemandIndex, deferredIndexLine(td))
+		moved[n] = true
+	}
+	if len(moved) == 0 {
+		return tools, names
+	}
+	keptNames := names[:0:0]
+	for _, n := range names {
+		if !moved[n] {
+			keptNames = append(keptNames, n)
+		}
+	}
+	list := make([]string, 0, len(moved))
+	for n := range moved {
+		list = append(list, n)
+	}
+	sort.Strings(list)
+	Log("[orchestrate.tools] agent=%s: %d less-used building tool(s) deferred behind load_tool: %v", t.agent.ID, len(list), list)
+	return kept, keptNames
+}
+
+// builderOnDemandIndexText is Builder's less-used building tools as one
+// index section for the system prompt, "" when none were deferred.
+func (t *chatTurn) builderOnDemandIndexText() string {
+	if t == nil || len(t.builderOnDemandIndex) == 0 {
+		return ""
+	}
+	return builderOnDemandIndexHeader + strings.Join(t.builderOnDemandIndex, "")
+}
+
 // loadedDeferredAuthoringTools returns the deferred tools the model has loaded
 // this turn, render-late so their schemas sit at the BOTTOM of the prompt and
 // leave the cached prefix alone. Sorted: the tool list is part of the serialized
