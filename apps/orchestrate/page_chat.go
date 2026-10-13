@@ -368,7 +368,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							}},
 						// Not on a sub-agent's page: its schedules are on its
 						// parent's Scheduler, with the rest of the family.
-						{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, HideFlag: "ORCH_SUB_AGENT_OF", Source: "api/console/scheduler", Layout: "cards",
+						{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, HideFlag: "ORCH_SUB_AGENT_OF", Source: "api/console/scheduler", Layout: "cards", TitleField: "name",
 							SearchPlaceholder: schedulerSearchHint,
 							Filters:           schedulerFilters(),
 							ViewActions: []ui.OrchestratorRowAction{
@@ -608,7 +608,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							RowActions: []ui.OrchestratorRowAction{
 								{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
 							}},
-						{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards",
+						{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards", TitleField: "name",
 							SearchPlaceholder: schedulerSearchHint,
 							Filters:           schedulerFilters(),
 							RowActions: []ui.OrchestratorRowAction{

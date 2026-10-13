@@ -158,6 +158,13 @@ func TestASubAgentsPageHidesSchedulerAndChannels(t *testing.T) {
 	if len(hidden) != 1 || hidden[0] != `Scheduler pinned=true menu=""` {
 		t.Errorf("hidden for sub-agents: %v, want only the pinned Scheduler", hidden)
 	}
+	// Both Scheduler views title a card with the schedule's name, not
+	// whichever field sorts first.
+	for _, item := range navItemsOf(t, page) {
+		if item.Label == "Scheduler" && item.TitleField != "name" {
+			t.Errorf("Scheduler (menu=%q) titles its cards with %q", item.Menu, item.TitleField)
+		}
+	}
 }
 
 // navItemsOf reads the orchestrator nav out of the rendered chat page's

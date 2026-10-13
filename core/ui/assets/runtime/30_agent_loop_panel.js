@@ -572,6 +572,12 @@
               // groups several kinds of thing has a different shape per section,
               // and reading the shape off row one renders the rest blank.
               var ckeys = Object.keys(row).filter(function(k) { return k.charAt(0) !== '_'; });
+              // title_field leads when the row has it: the first field is the
+              // title, and keys in alphabetical order put a description first.
+              var tf = item && item.title_field;
+              if (tf && row[tf] != null && String(row[tf]) !== '') {
+                ckeys = [tf].concat(ckeys.filter(function(k) { return k !== tf; }));
+              }
               // "_depth" nests a row under the one above it. A list whose items
               // contain other items is an ordinary shape, so this is a property
               // of a ROW rather than a second kind of list: the server emits the

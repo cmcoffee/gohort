@@ -36,3 +36,16 @@ func TestTheRuntimeHonorsTheHideFlags(t *testing.T) {
 		}
 	}
 }
+
+// A cards layout can be told which field titles a card; without it the title
+// is the first field, which for a row keyed in alphabetical order can be a
+// description or a failure note.
+func TestACardsTitleFieldReachesTheRuntime(t *testing.T) {
+	raw, _ := json.Marshal(OrchestratorNavItem{Label: "Clock", Layout: "cards", TitleField: "name"})
+	if !strings.Contains(string(raw), `"title_field":"name"`) {
+		t.Errorf("missing title_field: %s", raw)
+	}
+	if !strings.Contains(string(runtimeJS), "var tf = item && item.title_field;") {
+		t.Error("the cards layout does not read title_field")
+	}
+}

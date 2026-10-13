@@ -498,6 +498,12 @@ type OrchestratorNavItem struct {
 	// thread, such as clearing it, applies to both kinds. Actions post for the
 	// selected agent either way.
 	RecordToo bool `json:"record_too,omitempty"`
+	// TitleField names the row field a "cards" layout titles each card with.
+	// Without it the title is the row's first field, and a row that arrives as
+	// a JSON object keyed in alphabetical order puts whatever sorts first
+	// there: a long description, or a failure note, ahead of the name. A row
+	// without the field keeps the first-field title.
+	TitleField string `json:"title_field,omitempty"`
 	// HideFlag names a window-global map the host page sets, keyed by agent
 	// id: the item is not shown for an agent keyed in it, whatever else would
 	// show it. For an item whose data an agent has none of its own of, kept
