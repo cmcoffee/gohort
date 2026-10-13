@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // NextImageAttempt tracks two counters: the retry CHAIN (resets on a new subject,
@@ -77,5 +79,20 @@ func TestARenderQueuesOnTheAskingTurnsLane(t *testing.T) {
 	}
 	if RunLaneOf(detached) != LaneBackground {
 		t.Error("the detached job's model lane changed: it stays background")
+	}
+}
+
+// Background renders wait for people's by default; an operator can turn that
+// off, and then every render is first come, first served.
+func TestTheRenderYieldSetting(t *testing.T) {
+	prev := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prev })
+	if !rendersYield() {
+		t.Error("unset should mean background renders wait for people's")
+	}
+	RootDB.Set(LLMTable, imageRenderYieldKey, "never")
+	if rendersYield() {
+		t.Error("never should make every render first come, first served")
 	}
 }

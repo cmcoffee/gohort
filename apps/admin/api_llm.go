@@ -263,6 +263,7 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 				OllamaMaxParallel   int    `json:"ollama_max_parallel"`
 				LlamacppMaxParallel int    `json:"llamacpp_max_parallel"`
 				BackgroundYield     string `json:"background_yield"`
+				ImageRenderYield    string `json:"image_render_yield"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
@@ -283,6 +284,10 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 					req.BackgroundYield = BackgroundYieldAuto
 				}
 				a.db.Set(LLMTable, "background_yield", req.BackgroundYield)
+				if req.ImageRenderYield != "never" {
+					req.ImageRenderYield = ""
+				}
+				a.db.Set(LLMTable, "image_render_yield", req.ImageRenderYield)
 			}
 			// Parallel caps are read when the LLM client is built, so a reload
 			// re-applies them live (no restart).
@@ -293,11 +298,12 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 			return
 		}
 		var ollamaMP, llamacppMP int
-		var yield string
+		var yield, renderYield string
 		if a.db != nil {
 			a.db.Get(LLMTable, "ollama_max_parallel", &ollamaMP)
 			a.db.Get(LLMTable, "llamacpp_max_parallel", &llamacppMP)
 			a.db.Get(LLMTable, "background_yield", &yield)
+			a.db.Get(LLMTable, "image_render_yield", &renderYield)
 		}
 		if ollamaMP < 1 {
 			ollamaMP = 1
@@ -316,6 +322,7 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 			"ollama_max_parallel":   ollamaMP,
 			"llamacpp_max_parallel": llamacppMP,
 			"background_yield":      yield,
+			"image_render_yield":    renderYield,
 		})
 	})
 

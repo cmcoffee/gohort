@@ -442,6 +442,23 @@ func WithRenderCaller(ctx context.Context, caller string) context.Context {
 	return context.WithValue(ctx, renderCallerKey{}, caller)
 }
 
+// imageRenderYieldKey is the LLMTable setting for whether background renders
+// wait for people's: "" (the default) yes, "never" first come, first served.
+const imageRenderYieldKey = "image_render_yield"
+
+// rendersYield says whether a background render (a schedule's, a monitor's)
+// goes behind a render a person is waiting on. On by default; an operator
+// whose renders are all equally urgent, or who runs them on hardware with
+// room to spare, turns it off.
+func rendersYield() bool {
+	if RootDB == nil {
+		return true
+	}
+	var v string
+	RootDB.Get(LLMTable, imageRenderYieldKey, &v)
+	return v != "never"
+}
+
 // renderLaneKey carries the lane of the turn a render was asked for in.
 type renderLaneKey struct{}
 
@@ -489,7 +506,7 @@ func queueRender(ctx context.Context) func() {
 	imageQueueOnce.Do(func() { StartImageScheduler(defaultImageParallel) })
 	// A render a person is waiting on goes ahead of a schedule's: the same
 	// lanes the model queue keeps, applied to the render queue.
-	release, err := ollama.AcquireImageSlotLane(ctx, renderCaller(ctx), renderLaneOf(ctx) != LaneInteractive)
+	release, err := ollama.AcquireImageSlotLane(ctx, renderCaller(ctx), renderLaneOf(ctx) != LaneInteractive && rendersYield())
 	if err != nil {
 		// The caller went away or its deadline passed while queued. Not a
 		// reason to refuse the render — the request below will fail on the same

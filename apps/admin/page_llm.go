@@ -252,6 +252,12 @@ func (a *AdminApp) llmSections() []ui.Section {
 							{Value: "never", Label: "Never"}},
 						Help:   "Whether schedules, monitors and other unattended runs wait while someone is using the model.",
 						Detail: "Parallel slots on one GPU share its compute and its cache, so a background run beside a person's turn slows the turn; Auto waits on local and peer models. A hosted API has no shared hardware, so Auto does not wait there. Choose Always for an OpenAI-compatible server on your own machine or a tight API rate limit, Never for a server with GPUs to spare. A peer borrowing this model is held to this setting here. Agents marked Lowest wait either way."},
+					{Field: "image_render_yield", Label: "Scheduled image renders wait for people's", Type: "select",
+						Options: []ui.SelectOption{
+							{Value: "", Label: "Yes: a render somebody is waiting on goes first"},
+							{Value: "never", Label: "No: first come, first served"}},
+						Help:   "Whether a render a schedule or monitor asked for waits behind one a person asked for.",
+						Detail: "Renders run one at a time and take turns between callers. With this on, a person's render goes ahead of a scheduled one queued before it, and a scheduled render that has waited 5 minutes is served anyway, so a busy day cannot stall a schedule. Turn it off when every render is equally urgent. It orders renders among themselves only: a render does not wait for anyone's chat."},
 				},
 			},
 		},
