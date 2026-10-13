@@ -3182,10 +3182,10 @@ func sharedWithSummary(users []string) string {
 	switch len(users) {
 	case 0:
 		return ""
-	case 1:
-		return "Shared with " + users[0]
+	case 1, 2:
+		return "Shared with " + ShareRecipientsText(users)
 	default:
-		return fmt.Sprintf("Shared with %d people", len(users))
+		return fmt.Sprintf("Shared with %d people or groups", len(users))
 	}
 }
 

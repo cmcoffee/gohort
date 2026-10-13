@@ -82,7 +82,7 @@ func TestAGroupEntryReachesItsMembers(t *testing.T) {
 func TestThePickerOffersTheOwnersShareableGroups(t *testing.T) {
 	groupShareFixture(t)
 	with := string(ShareCandidatesJSON("alice", true))
-	if !strings.Contains(with, `"value":"group:g-ops"`) || !strings.Contains(with, "Group: Ops") || !strings.Contains(with, "1 besides you") {
+	if !strings.Contains(with, `"value":"group:g-ops"`) || !strings.Contains(with, "Group: Ops") || !strings.Contains(with, `"desc":"1 other member"`) {
 		t.Errorf("alice's shareable group is missing: %s", with)
 	}
 	if strings.Contains(with, "g-bundle") || strings.Contains(with, `"value":"alice"`) {
@@ -127,5 +127,24 @@ func TestACollectionSharedWithAGroupReachesItsMembers(t *testing.T) {
 	c, _ := LoadCollection(owner, "alice", "col-1")
 	if !CollectionContributor(c, "bob") || CollectionContributor(c, "carol") {
 		t.Error("a contributing group should let its members add, and nobody else")
+	}
+}
+
+func TestAToolSharedWithAGroupReachesItsMembers(t *testing.T) {
+	_, ops := groupShareFixture(t)
+	if err := AdminPersistTempTool(RootDB, "alice", TempTool{Name: "ssh_run"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := SetPersistentTempToolSharedWith(RootDB, "alice", "ssh_run", []string{"group:" + ops}); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	if got := PeerSharedToolsFor(RootDB, "bob"); len(got) != 1 || got[0].Owner != "alice" {
+		t.Fatalf("bob, in Ops, is not offered it: %+v", got)
+	}
+	if got := PeerSharedToolsFor(RootDB, "carol"); len(got) != 0 {
+		t.Errorf("carol, outside Ops, is offered it: %+v", got)
+	}
+	if !toolStillOffered("alice", "ssh_run", "bob") || toolStillOffered("alice", "ssh_run", "carol") {
+		t.Error("a tool bob took through the group should stay his, and carol never had it")
 	}
 }

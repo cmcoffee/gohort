@@ -4248,7 +4248,7 @@ func init() {
 				case len(p.SharedWith) > 0:
 					out = append(out, shareledger.Grant{
 						ID: p.Tool.Name, Name: p.Tool.Name, Recipients: p.SharedWith,
-						Reach:     "Offered to " + strings.Join(p.SharedWith, ", "),
+						Reach:     "Offered to " + ShareRecipientsText(p.SharedWith),
 						Detail:    "It loads for their agents once they take it, and runs in their session against their own credentials.",
 						Revocable: true,
 					})
@@ -4332,7 +4332,12 @@ func init() {
 	// Tools page, the Sharing page and anything later; the index write under
 	// it is the one place all of them pass. See peershare.OnDropped.
 	peershare.OnDropped(sharedToolsTable, func(owner, name string, dropped []string) {
-		noteToolWithdrawn(owner, name, dropped)
+		// A group dropped is its members, each told unless the tool still
+		// reaches them another way (noteToolWithdrawn checks). Nobody left to
+		// tell is a return: nil there means "everybody who took it".
+		if lost := ShareMembers(dropped, owner); len(lost) > 0 {
+			noteToolWithdrawn(owner, name, lost)
+		}
 	})
 }
 
@@ -4409,7 +4414,7 @@ func toolStillOffered(owner, name, user string) bool {
 		if p.Tool.Name != name || p.Tool.Disabled {
 			continue
 		}
-		if sliceHas(p.SharedWith, user) {
+		if SharedWithUser(p.SharedWith, owner, user) {
 			return true
 		}
 		if p.Shared && (len(p.AllowedUsers) == 0 || sliceHas(p.AllowedUsers, user)) {

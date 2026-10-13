@@ -177,7 +177,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		case p.Shared:
 			level, reach = reachNamed, "In the catalog, for "+strings.Join(p.AllowedUsers, ", ")
 		case len(p.SharedWith) > 0:
-			level, reach = reachNamed, "Shared with "+strings.Join(p.SharedWith, ", ")
+			level, reach = reachNamed, "Shared with "+ShareRecipientsText(p.SharedWith)
 		}
 		add(reachItem{Kind: "Tool", Name: name, Reach: reach,
 			How:   "Resolved by name from the runner's own catalog. Sharing it offers it to them; it loads for their agents once they take it.",

@@ -2450,9 +2450,9 @@ func PeerSharedToolsFor(db Database, user string) []LentTool {
 		return nil
 	}
 	var out []LentTool
-	for _, ref := range peershare.List(store, sharedToolsTable, user) {
+	for _, ref := range SharedRefsFor(store, sharedToolsTable, user) {
 		for _, p := range LoadPersistentTempTools(store, ref.Owner) {
-			if p.Tool.Name != ref.ID || p.Tool.Disabled || !sliceHas(p.SharedWith, user) {
+			if p.Tool.Name != ref.ID || p.Tool.Disabled || !SharedWithUser(p.SharedWith, ref.Owner, user) {
 				continue
 			}
 			out = append(out, LentTool{PersistentTempTool: p, Owner: ref.Owner})

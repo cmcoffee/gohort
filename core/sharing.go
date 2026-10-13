@@ -427,7 +427,7 @@ func ShareCandidatesJSON(owner string, groups bool) []byte {
 			groups = append(groups, candidate{
 				Value: shareGroupPrefix + id,
 				Label: "Group: " + g.Name,
-				Desc:  "Everyone in " + g.Name + " (" + strconv.Itoa(n) + " besides you today). Who joins later has it; who leaves loses it.",
+				Desc:  strconv.Itoa(n) + " other " + map[bool]string{true: "member", false: "members"}[n == 1],
 			})
 		}
 		sort.Slice(groups, func(i, j int) bool { return strings.ToLower(groups[i].Label) < strings.ToLower(groups[j].Label) })
