@@ -136,6 +136,10 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 	// classification, allowances and confirmation prompt that a probe command
 	// gets — it previously had none at all.
 	gateCommand := func(cmd string) error {
+		// Ahead of everything a grant can allow (gohort_data_guard.go).
+		if err := gohortDataRefusal(appliance, cmd); err != nil {
+			return err
+		}
 		hits := assess_command(cmd, scratch)
 		if len(hits) == 0 {
 			return nil

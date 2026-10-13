@@ -413,6 +413,11 @@ func (pr *probeRun) gateCommand(cmd string) error {
 // found in it. A category grant must cover ALL of the hits; one that covers
 // only some would let "rm x; python3 y" through on a file_delete grant alone.
 func (pr *probeRun) gateHits(cmd string, hits []risk_hit) error {
+	// Ahead of everything a grant can allow (gohort_data_guard.go).
+	if err := gohortDataRefusal(pr.appliance, cmd); err != nil {
+		emit(pr.id, probeEvent{Kind: "status", Text: "Refused: names gohort's own data on this machine"})
+		return err
+	}
 	if len(hits) == 0 {
 		return nil
 	}
