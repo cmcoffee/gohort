@@ -145,6 +145,10 @@ type probeRun struct {
 	read_log_tool    AgentToolDef
 	search_logs_tool AgentToolDef
 	ptyCount         map[string]int
+	// pickedNotes are the notes written mid-run that the run picked up, in
+	// order, saved with the turn so the thread keeps them like any message.
+	pickedNotes      []string
+	pickedNotesMu    sync.Mutex
 	note_lesson_tool AgentToolDef
 	// techniqueMu serializes the techniques string between an append in the
 	// tool handler and a prune in a background audit: both are read-modify-
@@ -2540,13 +2544,18 @@ func (pr *probeRun) drainInjections() []Message {
 	}
 	out := make([]Message, 0, len(notes))
 	ids := make([]string, 0, len(notes))
+	texts := make([]string, 0, len(notes))
 	for _, n := range notes {
 		out = append(out, Message{Role: "user", Content: "[USER NOTE: submitted mid-investigation] " + n.Text})
 		ids = append(ids, n.ID)
+		texts = append(texts, n.Text)
 	}
+	pr.pickedNotesMu.Lock()
+	pr.pickedNotes = append(pr.pickedNotes, texts...)
+	pr.pickedNotesMu.Unlock()
 	emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Orchestrator picked up %d user note(s).", len(notes))})
 	// Tell the UI which notes are now locked from edit/delete.
-	emit(pr.id, probeEvent{Kind: "notes_consumed", IDs: ids})
+	emit(pr.id, probeEvent{Kind: "notes_consumed", IDs: ids, Notes: texts})
 	return out
 }
 
@@ -2823,7 +2832,10 @@ func (pr *probeRun) finishTurn() probeAction {
 				break
 			}
 		}
-		appendTurn(pr.udb, pr.appliance.ID, pr.id, lastUser, pr.reply)
+		pr.pickedNotesMu.Lock()
+		notes := append([]string(nil), pr.pickedNotes...)
+		pr.pickedNotesMu.Unlock()
+		appendTurn(pr.udb, pr.appliance.ID, pr.id, lastUser, notes, pr.reply)
 	}
 
 	if pr.consolidateFn != nil {

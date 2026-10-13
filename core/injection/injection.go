@@ -172,6 +172,14 @@ func (q *InjectionQueue) Drain() []InjectionNote {
 	return taken
 }
 
+// Pending returns a copy of the notes still waiting, in order, so a page
+// that joins a running session can show them.
+func (q *InjectionQueue) Pending() []InjectionNote {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return append([]InjectionNote(nil), q.notes...)
+}
+
 // Len reports the current queue depth. Used for UI badges.
 func (q *InjectionQueue) Len() int {
 	q.mu.Lock()

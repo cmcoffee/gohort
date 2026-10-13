@@ -58,12 +58,17 @@ func lookupInjectionQueue(sessionID string) *injectionQueue {
 //	POST   {id, note_id, action:"unlock"} → cancel an in-progress edit.
 //	PATCH  {id, note_id, text}            → commit edited text (auto-unlocks).
 //	DELETE {id, note_id}                  → remove an unread note.
+//	GET    ?id=<session>                  → the notes still waiting.
 //
 // Notes the runner has already drained can no longer be edited or
 // deleted — those return 410 Gone.
 func (T *OrchestrateApp) handleInject(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
+		return
+	}
+	if r.Method == http.MethodGet {
+		ServeWaitingNotes(w, r, user)
 		return
 	}
 	var req struct {
@@ -182,4 +187,25 @@ func (T *OrchestrateApp) handleInject(w http.ResponseWriter, r *http.Request) {
 // turn in progress" when there is no turn in progress.
 func (T *OrchestrateApp) PublicHandleInject(w http.ResponseWriter, r *http.Request) {
 	T.handleInject(w, r)
+}
+
+// ServeWaitingNotes answers GET ?id=<session> on an inject endpoint: the notes
+// still waiting in that session's running turn, {notes: [{id, text}]}, for a
+// page that joins the turn after they were written. Only the caller's own run;
+// anything else (no run, finished, somebody else's) is an empty list, the
+// same answer as nothing waiting. Shared by every app on the inject contract.
+func ServeWaitingNotes(w http.ResponseWriter, r *http.Request, user string) {
+	type note struct {
+		ID   string `json:"id"`
+		Text string `json:"text"`
+	}
+	out := []note{}
+	if q := LookupInjectionQueue(strings.TrimSpace(r.URL.Query().Get("id"))); q != nil && q.Owner != "" && q.Owner == user {
+		for _, n := range q.Pending() {
+			out = append(out, note{ID: n.ID, Text: n.Text})
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"notes": out})
 }

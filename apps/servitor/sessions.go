@@ -120,15 +120,21 @@ func ensureSession(udb Database, applianceID, id, firstMsg string) string {
 	return s.ID
 }
 
-// appendTurn adds one user/assistant pair to a session and re-saves.
+// appendTurn adds one turn to a session and re-saves: the user's message,
+// any notes they wrote mid-run that the run picked up, and the reply.
 // No-op if the session has vanished (deleted mid-run).
-func appendTurn(udb Database, applianceID, id, userMsg, assistantMsg string) {
+func appendTurn(udb Database, applianceID, id, userMsg string, notes []string, assistantMsg string) {
 	s, ok := loadSession(udb, applianceID, id)
 	if !ok {
 		return
 	}
 	if strings.TrimSpace(userMsg) != "" {
 		s.Messages = append(s.Messages, sessionMsg{Role: "user", Content: userMsg})
+	}
+	for _, n := range notes {
+		if strings.TrimSpace(n) != "" {
+			s.Messages = append(s.Messages, sessionMsg{Role: "user", Content: n})
+		}
 	}
 	if strings.TrimSpace(assistantMsg) != "" {
 		s.Messages = append(s.Messages, sessionMsg{Role: "assistant", Content: assistantMsg})

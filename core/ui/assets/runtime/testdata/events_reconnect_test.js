@@ -40,6 +40,8 @@ function enableInput() { log.push('idle'); }
 function openSession(sid) { log.push('reload ' + sid); }
 function addActivity(k, id, t) { log.push('note'); }
 var replayWindow = {arm: function() {}, seen: function() {}, active: function() { return false; }};
+var waitingAsked = [];
+function showWaitingNotes(sid) { waitingAsked.push(sid); }
 eval(lift(panel, 'function subscribeEvents(sid, skip)', 'subscribeEvents'));
 function send(es, n, extra) { es.onmessage({data: JSON.stringify(Object.assign({n: n}, extra || {}))}); }
 

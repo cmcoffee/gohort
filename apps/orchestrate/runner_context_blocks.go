@@ -678,7 +678,7 @@ func (t *chatTurn) drainNotes() []injectionNote {
 		now := time.Now()
 		for _, n := range taken {
 			t.session.Messages = append(t.session.Messages, ChatMessage{
-				Role: "user", Content: n.Text, Created: now,
+				Role: "user", Content: n.Text, Created: now, NoteID: n.ID,
 			})
 		}
 		if saved, err := saveChatSession(t.udb, *t.session); err == nil {
@@ -686,8 +686,10 @@ func (t *chatTurn) drainNotes() []injectionNote {
 		}
 	}
 	ids := make([]string, len(taken))
+	notes := make([]map[string]string, len(taken))
 	for i, n := range taken {
 		ids[i] = n.ID
+		notes[i] = map[string]string{"id": n.ID, "text": n.Text}
 	}
 	// Tell the client to mark these interjection bubbles as consumed. The
 	// framework runtime tags each bubble with data-note-id on submit and
@@ -703,6 +705,10 @@ func (t *chatTurn) drainNotes() []injectionNote {
 		"kind": "block",
 		"type": "ui_notes_consumed",
 		"ids":  ids,
+		// The text too: a page that arrived after the note was written
+		// (another session, then back) has no bubble for it to mark, and
+		// draws the note from this instead of only saying one was read.
+		"notes": notes,
 	})
 	return taken
 }

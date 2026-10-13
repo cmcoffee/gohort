@@ -199,14 +199,21 @@
   // Same registration shape as the ask cards above: at IIFE time, guarded, so an
   // app that wants a richer version still wins.
   if (!window.UIBlockRenderers.ui_notes_consumed) {
-    window.uiRegisterBlockRenderer('ui_notes_consumed', function(d) {
+    window.uiRegisterBlockRenderer('ui_notes_consumed', function(d, ctx) {
       var ids = d.ids || [];
+      // The notes' text, when the server sent it: what to draw for a note this
+      // page has no bubble for (written before the page arrived).
+      var texts = {};
+      (d.notes || []).forEach(function(n) { if (n && n.id) texts[n.id] = n.text || ''; });
       ids.forEach(function(noteID) {
         // CSS.escape because a note id is server-issued and need not be a bare
         // identifier; an unescaped one would either match nothing or throw.
-        var sel = '.ui-agent-interjection[data-note-id="' +
-          (window.CSS && CSS.escape ? CSS.escape(noteID) : noteID) + '"]';
-        var bubble = document.querySelector(sel);
+        var esc = (window.CSS && CSS.escape ? CSS.escape(noteID) : noteID);
+        if (!document.querySelector('[data-note-id="' + esc + '"]')) {
+          if (ctx && ctx.addNote && texts[noteID]) ctx.addNote(noteID, texts[noteID]);
+          return;
+        }
+        var bubble = document.querySelector('.ui-agent-interjection[data-note-id="' + esc + '"]');
         if (!bubble) return;
         bubble.classList.add('consumed');
         // A note cannot be both read and unread. Clearing the undelivered mark

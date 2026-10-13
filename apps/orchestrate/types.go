@@ -1529,6 +1529,16 @@ type ChatMessage struct {
 	// shows the picked options). The replay path skips rendering a
 	// bubble for it while the LLM still sees the content in history.
 	Hidden bool `json:"hidden,omitempty"`
+	// NoteID marks a user message that was a note written mid-turn and
+	// picked up by the agent between rounds: the note queue's id, so a page
+	// that redraws the thread can tell the stored note from the "picked up"
+	// event that names it and does not draw it twice.
+	NoteID string `json:"note_id,omitempty"`
+	// Block is the card this message was shown as, when it was one (an
+	// ask_user card with options, an ask_user_form): the same payload the
+	// live stream sent, so a page that redraws the thread draws the card
+	// again instead of its placeholder text. Nil for an ordinary message.
+	Block map[string]any `json:"block,omitempty"`
 	// IntakeValues, when non-empty, marks this user message as the
 	// result of submitting the agent's intake form. Map is keyed by
 	// field NAME (matches IntakeFormSpec.Name) — labels are derived at

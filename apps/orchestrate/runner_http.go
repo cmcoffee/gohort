@@ -708,6 +708,9 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			Role: "assistant", Content: question,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
 			Label: turn.finalReplyLabel(question),
+			// The card it was asked as, so a reload draws the form or the
+			// choices again rather than the placeholder text.
+			Block: turn.askBlock,
 			// ToolCalls: ask_user / ask_user_form are themselves tool
 			// calls; record everything that fired this turn (including
 			// the ask itself) so the export shows what led to the

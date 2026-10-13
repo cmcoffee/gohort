@@ -3005,6 +3005,92 @@
       for (var i = 0; i < pending.length; i++) convoLog.appendChild(pending[i]);
     }
 
+    // replayBlock draws a stored message's card (ChatMessage.Block) into the
+    // conversation as the live stream drew it, through the same registered
+    // renderer. answered switches its controls off. False when nothing is
+    // registered for the type, so the caller falls back to the text.
+    function replayBlock(d, answered) {
+      var fn = window.UIBlockRenderers && window.UIBlockRenderers[d.type];
+      if (typeof fn !== 'function' || !convoLog) return false;
+      var built;
+      try { built = fn(d, {sessionId: activeSessionId, replayed: true}); } catch (_) { return false; }
+      if (!built || !built.wrap) return false;
+      if (answered) {
+        built.wrap.classList.add('submitted');
+        built.wrap.querySelectorAll('input, textarea, select, button').forEach(function(x) { x.disabled = true; });
+      }
+      convoLog.appendChild(built.wrap);
+      return true;
+    }
+
+    // addPickedUpNote draws a note the agent has picked up that this page has
+    // no bubble for: one written before the page arrived (another session,
+    // then back), so the "picked up" line does not point at nothing. It lands
+    // where the pickup happened, already read. Renderers reach it through
+    // their ctx (ui_notes_consumed in 35_ask_cards.js).
+    function addPickedUpNote(noteId, text) {
+      if (!noteId || !text) return;
+      var mid = 'note-' + noteId;
+      if (msgEls[mid]) return;
+      var own = claimOwnNoteBubble(noteId, text);
+      if (own) {
+        own.classList.add('consumed');
+        own.classList.remove('ui-agent-interjection-undelivered');
+        return;
+      }
+      addMessage('user', mid, text);
+      var b = msgEls[mid] && msgEls[mid].bubble;
+      if (!b) return;
+      b.classList.add('ui-agent-interjection', 'consumed');
+      b.dataset.noteId = noteId;
+    }
+
+    // claimOwnNoteBubble finds the note this page sent itself whose POST has
+    // not come back with its id yet, gives it the id and returns its bubble,
+    // so a note the server names first is not drawn twice. null when there is
+    // none.
+    function claimOwnNoteBubble(noteId, text) {
+      for (var k in msgEls) {
+        var e = msgEls[k];
+        if (e && e.bubble && e.role === 'user' && !e.bubble.dataset.noteId &&
+            e.bubble.classList.contains('ui-agent-interjection') && e.rawText === text) {
+          e.bubble.dataset.noteId = noteId;
+          return e.bubble;
+        }
+      }
+      return null;
+    }
+
+    // showWaitingNotes draws the notes still waiting in a running turn's
+    // queue, for a page that joins the turn after they were written (another
+    // session, then back; a reload). They show exactly as a note this page
+    // sent does: at the bottom, waiting, until the agent picks them up. Asks
+    // the inject endpoint (GET ?id=), which answers only for the caller's own
+    // run.
+    function showWaitingNotes(sid) {
+      if (!cfg.inject_url || !sid) return;
+      var url = cfg.inject_url + (cfg.inject_url.indexOf('?') >= 0 ? '&' : '?') + 'id=' + encodeURIComponent(sid);
+      fetchJSON(url).then(function(d) {
+        if (sid !== activeSessionId || !convoLog || !d || !Array.isArray(d.notes)) return;
+        d.notes.forEach(function(n) {
+          if (!n || !n.id || !n.text) return;
+          var esc = window.CSS && CSS.escape ? CSS.escape(n.id) : n.id;
+          if (convoLog.querySelector('[data-note-id="' + esc + '"]')) return;
+          if (claimOwnNoteBubble(n.id, n.text)) return;
+          var mid = 'note-' + n.id;
+          if (msgEls[mid]) return;
+          addMessage('user', mid, n.text);
+          var b = msgEls[mid] && msgEls[mid].bubble;
+          if (!b) return;
+          b.classList.add('ui-agent-interjection');
+          b.dataset.noteId = n.id;
+          b.dataset.sessionId = sid;
+          b.dataset.injectUrl = cfg.inject_url;
+        });
+        keepPendingInterjectionsLast();
+      }).catch(function() { /* no run, or not this caller's: nothing waiting */ });
+    }
+
     function addMessage(role, id, text, senderOverride) {
       clearEmpty();
       var classes = 'ui-agent-msg ui-agent-msg-' + (role || 'system');
@@ -4582,7 +4668,7 @@
         refreshPins();
         return;
       }
-      var built = fn(d, {sessionId: activeSessionId});
+      var built = fn(d, {sessionId: activeSessionId, addNote: addPickedUpNote});
       if (!built || !built.wrap) return;
       blockEls[id] = built;
       // App blocks default to the conversation pane (the more
@@ -5585,6 +5671,9 @@
       var es = new EventSource(url), n = 0;
       replayWindow.arm(); // what it replays shows at once
       activeEventSource = es;
+      // A page joining a running session: its waiting notes were written
+      // elsewhere and have no bubble here yet (showWaitingNotes).
+      showWaitingNotes(sid);
       es.onmessage = function(ev) {
         n++;
         if (n <= skip) return; // replayed again: this view has it
@@ -6939,12 +7028,26 @@
             // storage index (not the rendered position) — exactly what the
             // per-turn scrub needs to delete the right message server-side.
             if (m && m.hidden) return;
+            // A message that was shown as a card (an ask with choices, a
+            // form) is drawn as that card again, not as its placeholder
+            // text. Answered already (somebody wrote after it): its controls
+            // are switched off, so it reads as asked-and-answered.
+            if (m && m.block && m.block.type) {
+              var answered = false;
+              for (var k = idx + 1; k < msgs.length; k++) {
+                if (msgs[k] && msgs[k].role === 'user') { answered = true; break; }
+              }
+              if (replayBlock(m.block, answered)) return;
+            }
             var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
             addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
             // Remember the raw storage index so the ✕ scrub affordance can
             // PATCH {delete_at: i}. Only replayed bubbles carry it; live ones
             // get one on the next load (reload re-syncs after a scrub/delete).
             if (msgEls[mid]) msgEls[mid].storageIndex = i;
+            // A stored note keeps its note id, so a replayed "picked up"
+            // event finds it here instead of drawing it a second time.
+            if (m.note_id && msgEls[mid] && msgEls[mid].bubble) msgEls[mid].bubble.dataset.noteId = m.note_id;
             // Re-attach the action bar now that storageIndex is set — addMessage
             // attached it during creation (before we knew the index), so the
             // scrub button wouldn't have rendered. attach* is idempotent.
@@ -7151,6 +7254,9 @@
       if (activeEventSource) { activeEventSource.close(); activeEventSource = null; }
       var url = cfg.runs_url_base + encodeURIComponent(runId) + '/stream?since=' + (since || 0);
       sawTurnEnd = false;
+      // Joining a turn already running: its waiting notes were written
+      // elsewhere and have no bubble here yet.
+      showWaitingNotes(activeSessionId);
       var es = new EventSource(url);
       replayWindow.arm(); // what it replays shows at once
       activeEventSource = es;

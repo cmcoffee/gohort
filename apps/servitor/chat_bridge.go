@@ -156,10 +156,20 @@ func translateProbeEvent(ev probeEvent) map[string]any {
 		// servitor's copy of that renderer is what the framework now does for
 		// every app. Servitor's own interjection styling still keys off the
 		// .consumed class the framework adds.
-		return map[string]any{
+		out := map[string]any{
 			"kind": "block", "type": "ui_notes_consumed",
 			"ids": ev.IDs,
 		}
+		// The text, so a page that arrived after the note was written can
+		// draw it (35_ask_cards.js).
+		if len(ev.Notes) == len(ev.IDs) {
+			notes := make([]map[string]string, len(ev.IDs))
+			for i, id := range ev.IDs {
+				notes[i] = map[string]string{"id": id, "text": ev.Notes[i]}
+			}
+			out["notes"] = notes
+		}
+		return out
 	case "draft":
 		return map[string]any{
 			"kind": "block", "type": "servitor_draft",

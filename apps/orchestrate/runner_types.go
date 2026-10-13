@@ -115,6 +115,9 @@ type chatTurn struct {
 	// test — and every method on it tolerates that.
 	prep *prepClock
 	sse  *sseWriter
+	// askBlock is the ask card this turn ended on (ui_ask with options, or
+	// ui_ask_form), saved on the question's message so a reload redraws it.
+	askBlock map[string]any
 	// changeAsk, when set, answers the owner's approval of a change in place
 	// of the chat card (change_approval.go). Tests set it; nil uses the card.
 	changeAsk func(prompt, detail string, yes []string) string

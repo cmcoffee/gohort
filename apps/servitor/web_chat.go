@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
 )
 
@@ -139,6 +140,11 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 func (T *Servitor) handleInject(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
+		return
+	}
+	// GET ?id=: the notes still waiting, for a page joining the run.
+	if r.Method == http.MethodGet {
+		orchestrate.ServeWaitingNotes(w, r, user)
 		return
 	}
 	var req struct {

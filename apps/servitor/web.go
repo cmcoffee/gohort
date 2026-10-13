@@ -32,11 +32,14 @@ func init() {
 
 // probeEvent is one event emitted by a running session goroutine.
 type probeEvent struct {
-	Kind   string         `json:"kind"` // status | cmd | output | message | confirm | reply | error | done | watch | notes_consumed | intent | plan_set | plan_step
-	Text   string         `json:"text,omitempty"`
-	Reason string         `json:"reason,omitempty"` // destructive reason for confirm events
-	IDs    []string       `json:"ids,omitempty"`    // notes_consumed: which queued notes the orchestrator just drained
-	Plan   []WorkPlanStep `json:"plan,omitempty"`   // plan_set / plan_step: snapshot of the current plan for the UI to render
+	Kind   string   `json:"kind"` // status | cmd | output | message | confirm | reply | error | done | watch | notes_consumed | intent | plan_set | plan_step
+	Text   string   `json:"text,omitempty"`
+	Reason string   `json:"reason,omitempty"` // destructive reason for confirm events
+	IDs    []string `json:"ids,omitempty"`    // notes_consumed: which queued notes the orchestrator just drained
+	// Notes is the text of each drained note, by position in IDs, so a page
+	// that arrived after a note was written can still draw it.
+	Notes []string       `json:"notes,omitempty"`
+	Plan  []WorkPlanStep `json:"plan,omitempty"` // plan_set / plan_step: snapshot of the current plan for the UI to render
 	// PlanID identifies WHICH investigation's plan this snapshot belongs to.
 	// The UI keys blocks by id, and the plan block used to use a constant one —
 	// so a second investigation in the same session updated the first

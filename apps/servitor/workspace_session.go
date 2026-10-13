@@ -117,6 +117,6 @@ func (T *Servitor) runWorkspaceSession(ctx context.Context, id, userID string, w
 				break
 			}
 		}
-		appendTurn(udb, ws.ID, id, lastUser, reply)
+		appendTurn(udb, ws.ID, id, lastUser, nil, reply)
 	}
 }

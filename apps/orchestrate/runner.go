@@ -2049,12 +2049,14 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 		// and submits a compiled answer at the end. Return a brief
 		// placeholder as the captured question so the caller's
 		// session-persistence logic has something to record.
-		t.sse.Send(map[string]any{
+		block := map[string]any{
 			"kind":  "block",
 			"type":  "ui_ask_form",
 			"id":    fmt.Sprintf("askform-%d", time.Now().UnixNano()),
 			"steps": pr.capturedFormSteps,
-		})
+		}
+		t.sse.Send(block)
+		t.askBlock = block // saved with the question, so a reload draws the form
 		if t.session != nil {
 			t.session.AwaitingUserConfirm = true
 		}
@@ -2102,14 +2104,16 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 			return nil, pr.capturedQuest, "", nil
 		}
 		// With options, the card is the whole point: click-to-choose.
-		t.sse.Send(map[string]any{
+		block := map[string]any{
 			"kind":     "block",
 			"type":     "ui_ask",
 			"id":       fmt.Sprintf("ask-%d", time.Now().UnixNano()),
 			"question": pr.capturedQuest,
 			"options":  pr.capturedOptions,
 			"multi":    pr.capturedMulti,
-		})
+		}
+		t.sse.Send(block)
+		t.askBlock = block // saved with the question, so a reload draws the card
 		// Mark this session as awaiting user confirmation. Gated tools
 		// (agent CRUD) will fire on the NEXT user turn after this
 		// pause — without this flag, those tools refuse to run.
