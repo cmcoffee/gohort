@@ -27,6 +27,7 @@ const (
 	HowEvery       = "every"        // every EverySeconds, inside the window
 	HowRandomCount = "random_count" // PerDay times a day at random, inside the window
 	HowRandomGap   = "random_gap"   // at random gaps of MinGap to MaxGap, inside the window
+	HowYearly      = "yearly"       // once a year, on Month/Day at Times[0]
 )
 
 // Day masks: bit d is time.Weekday d (Sunday is bit 0).
@@ -42,8 +43,12 @@ type Spec struct {
 	Days uint8 `json:"days,omitempty"`
 	// How it fires on those days: one of the How constants.
 	How string `json:"how"`
-	// Times of day, minutes after local midnight, for HowDaily / HowTimes.
+	// Times of day, minutes after local midnight, for HowDaily / HowTimes,
+	// and HowYearly's one time.
 	Times []int `json:"times,omitempty"`
+	// Month (1-12) and Day (1-31) for HowYearly. Feb 29 fires in leap years.
+	Month int `json:"month,omitempty"`
+	Day   int `json:"day,omitempty"`
 	// EverySeconds is the interval for HowEvery. Seconds, so a monitor's
 	// "every 30 seconds" is the same rule as a schedule's "every 2 hours".
 	EverySeconds int `json:"every_seconds,omitempty"`
@@ -116,12 +121,34 @@ func (s Spec) Validate() error {
 		if s.MinGapSeconds < 1 || s.MaxGapSeconds <= s.MinGapSeconds {
 			return errors.New("the longest gap has to be longer than the shortest")
 		}
+	case HowYearly:
+		if s.Month < 1 || s.Month > 12 {
+			return errors.New("pick a month")
+		}
+		if s.Day < 1 || s.Day > daysInMonth(s.Month) {
+			return fmt.Errorf("%s has no day %d", time.Month(s.Month), s.Day)
+		}
+		if len(s.Times) != 1 || s.Times[0] < 0 || s.Times[0] >= 24*60 {
+			return errors.New("once a year takes one time of day")
+		}
 	case "":
 		return errors.New("say how often it runs")
 	default:
 		return fmt.Errorf("unknown how %q", s.How)
 	}
 	return nil
+}
+
+// daysInMonth is the most days month (1-12) can have: Feb counts 29, so
+// Feb 29 is a date that fires in leap years.
+func daysInMonth(month int) int {
+	switch time.Month(month) {
+	case time.February:
+		return 29
+	case time.April, time.June, time.September, time.November:
+		return 30
+	}
+	return 31
 }
 
 // windowMinutes is the length of the day it may fire in.
@@ -183,6 +210,17 @@ func (s Spec) Next(from time.Time, rnd func() float64) (time.Time, error) {
 		rnd = func() float64 { return 0.5 }
 	}
 	switch s.How {
+	case HowYearly:
+		// This year's date, else the next year it exists in (Feb 29).
+		for y := from.Year(); y <= from.Year()+8; y++ {
+			c := time.Date(y, time.Month(s.Month), s.Day, 0, 0, 0, 0, from.Location()).Add(time.Duration(s.Times[0]) * time.Minute)
+			if c.Month() != time.Month(s.Month) || c.Day() != s.Day {
+				continue // no such day this year
+			}
+			if c.After(from) {
+				return c, nil
+			}
+		}
 	case HowDaily, HowTimes:
 		times := append([]int(nil), s.Times...)
 		sort.Ints(times)
@@ -329,10 +367,12 @@ func (s Spec) Label() string {
 		}
 	case HowRandomGap:
 		b.WriteString("at random, every " + gapWords(s.MinGapSeconds, s.MaxGapSeconds))
+	case HowYearly:
+		b.WriteString(fmt.Sprintf("every year on %s %d at %s", time.Month(s.Month).String()[:3], s.Day, HHMM(s.Times[0])))
 	default:
 		return "(no schedule)"
 	}
-	if s.How != HowDaily && s.How != HowTimes {
+	if s.How != HowDaily && s.How != HowTimes && s.How != HowYearly {
 		if s.HasWindow {
 			b.WriteString(" between " + HHMM(s.WindowFrom) + " and " + HHMM(s.WindowTo))
 		}
@@ -364,8 +404,8 @@ var weekdayNames = map[string]time.Weekday{
 }
 
 // FromCron reads the "{days} HH:MM" form scheduled agents have always stored
-// ("daily 09:00", "weekdays 17:00", "MON,WED 08:30"). False for what a Spec
-// cannot say, an annual date ("DEC-25 09:00"), which keeps its old form.
+// ("daily 09:00", "weekdays 17:00", "MON,WED 08:30"), and an annual date
+// ("DEC-25 09:00") as HowYearly.
 func FromCron(spec string) (Spec, bool) {
 	parts := strings.Fields(strings.TrimSpace(spec))
 	if len(parts) != 2 {
@@ -375,7 +415,12 @@ func FromCron(spec string) (Spec, bool) {
 	if err != nil {
 		return Spec{}, false
 	}
-	s := Spec{How: HowDaily, Times: []int{t.Hour()*60 + t.Minute()}}
+	at := t.Hour()*60 + t.Minute()
+	if mon, day, ok := monthDay(parts[0]); ok {
+		y := Spec{How: HowYearly, Month: mon, Day: day, Times: []int{at}}
+		return y, y.Validate() == nil
+	}
+	s := Spec{How: HowDaily, Times: []int{at}}
 	switch strings.ToLower(parts[0]) {
 	case "daily", "everyday":
 	case "weekdays":
@@ -392,4 +437,27 @@ func FromCron(spec string) (Spec, bool) {
 		}
 	}
 	return s, true
+}
+
+// monthDay reads an annual date's day part, "DEC-25" or "dec-25", as month
+// (1-12) and day.
+func monthDay(tok string) (month, day int, ok bool) {
+	i := strings.Index(tok, "-")
+	if i <= 0 {
+		return 0, 0, false
+	}
+	name := strings.ToLower(tok[:i])
+	for m := time.January; m <= time.December; m++ {
+		full := strings.ToLower(m.String())
+		if name == full || name == full[:3] {
+			month = int(m)
+		}
+	}
+	if month == 0 {
+		return 0, 0, false
+	}
+	if _, err := fmt.Sscanf(tok[i+1:], "%d", &day); err != nil {
+		return 0, 0, false
+	}
+	return month, day, true
 }

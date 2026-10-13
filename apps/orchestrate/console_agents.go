@@ -731,8 +731,8 @@ func standingWindowEdge(sa StandingAgent, min int) string {
 }
 
 // standingTimingOut is a schedule's timing for the dialog: Timing, or the old
-// fields read into one. Nil for a form a Spec cannot say (an annual date),
-// where the dialog starts from a default and saving replaces it.
+// fields read into one (an annual date as once a year). Nil only for a
+// schedule with no timing at all, where the dialog starts from a default.
 func standingTimingOut(sa StandingAgent) *timing.Spec {
 	if spec, ok := sa.EffectiveTiming(); ok {
 		return &spec

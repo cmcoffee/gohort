@@ -136,7 +136,45 @@ func TestFromCron(t *testing.T) {
 			t.Errorf("%s: %+v %v", spec, got, ok)
 		}
 	}
-	if _, ok := FromCron("DEC-25 09:00"); ok {
-		t.Error("an annual date was converted; a Spec cannot say it")
+	// An annual date reads as yearly, and fires on its date as before.
+	got, ok := FromCron("DEC-25 09:00")
+	if !ok || got.How != HowYearly || got.Month != 12 || got.Day != 25 || got.Times[0] != 540 {
+		t.Errorf("DEC-25 09:00: %+v %v", got, ok)
+	}
+	if _, ok := FromCron("FEB-30 09:00"); ok {
+		t.Error("a date no year has was accepted")
+	}
+}
+
+// Once a year: on its date at its time, next year once this year's has
+// passed, Feb 29 only in a leap year; labelled as such, and refused when the
+// date cannot exist.
+func TestYearly(t *testing.T) {
+	loc := time.UTC
+	xmas := Spec{How: HowYearly, Month: 12, Day: 25, Times: []int{540}}
+	for _, c := range []struct{ from, want time.Time }{
+		{time.Date(2026, 10, 12, 20, 0, 0, 0, loc), time.Date(2026, 12, 25, 9, 0, 0, 0, loc)},
+		{time.Date(2026, 12, 25, 9, 0, 0, 0, loc), time.Date(2027, 12, 25, 9, 0, 0, 0, loc)},
+		{time.Date(2026, 12, 25, 8, 59, 0, 0, loc), time.Date(2026, 12, 25, 9, 0, 0, 0, loc)},
+	} {
+		if got, err := xmas.Next(c.from, nil); err != nil || !got.Equal(c.want) {
+			t.Errorf("from %v: %v %v, want %v", c.from, got, err, c.want)
+		}
+	}
+	leap := Spec{How: HowYearly, Month: 2, Day: 29, Times: []int{0}}
+	if got, err := leap.Next(time.Date(2026, 3, 1, 0, 0, 0, 0, loc), nil); err != nil || !got.Equal(time.Date(2028, 2, 29, 0, 0, 0, 0, loc)) {
+		t.Errorf("Feb 29: %v %v", got, err)
+	}
+	if got := xmas.Label(); got != "every year on Dec 25 at 09:00" {
+		t.Errorf("label = %q", got)
+	}
+	for name, bad := range map[string]Spec{
+		"no month":  {How: HowYearly, Day: 1, Times: []int{0}},
+		"Apr 31":    {How: HowYearly, Month: 4, Day: 31, Times: []int{0}},
+		"two times": {How: HowYearly, Month: 1, Day: 1, Times: []int{0, 60}},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("%s was accepted", name)
+		}
 	}
 }

@@ -7734,9 +7734,11 @@ select.ui-orch-intake-input {
           ['times', 'At set times'],
           ['every', 'Every…'],
           ['random_count', 'At random, a number of times a day'],
-          ['random_gap', 'At random gaps']
+          ['random_gap', 'At random gaps'],
+          ['yearly', 'Once a year']
         ], spec.how || 'daily');
         host.appendChild(schedLabeled('How often', how));
+
 
         var times = (spec.times || []).slice();
         var dailyAt = schedTime(times.length ? schedHHMM(times[0]) : '09:00');
@@ -7791,9 +7793,25 @@ select.ui-orch-intake-input {
         var win = schedWindowRow(spec);
         host.appendChild(win.el);
 
+        // Once a year: a month, a day and a time. The day boxes do not apply.
+        // Built last so the inputs above keep their order.
+        var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+        var yMonth = schedSelect(monthNames.map(function(n, i) { return [String(i + 1), n]; }), String(spec.month || 1));
+        var yDay = schedNum(spec.day || 1, 1);
+        yDay.max = 31; yDay.style.maxWidth = '5rem';
+        var yAt = schedTime(spec.how === 'yearly' && (spec.times || []).length ? schedHHMM(spec.times[0]) : '09:00');
+        var yearWrap = document.createElement('div');
+        yearWrap.style.cssText = 'display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap';
+        yearWrap.appendChild(yMonth); yearWrap.appendChild(yDay);
+        yearWrap.appendChild(document.createTextNode('at')); yearWrap.appendChild(yAt);
+        var yearRow = schedLabeled('On (local time)', yearWrap);
+        host.appendChild(yearRow);
+
         function show(el, on) { el.style.display = on ? '' : 'none'; }
         function sync() {
           var h = how.value;
+          show(days.el, h !== 'yearly');
+          show(yearRow, h === 'yearly');
           show(dailyRow, h === 'daily');
           show(timesRow, h === 'times');
           show(everyRow, h === 'every');
@@ -7805,9 +7823,16 @@ select.ui-orch-intake-input {
         sync();
 
         return function collect() {
+          var h = how.value;
+          if (h === 'yearly') {
+            var mon = parseInt(yMonth.value, 10), dd = parseInt(yDay.value, 10), ym = schedMinutes(yAt.value);
+            var most = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mon - 1];
+            if (isNaN(dd) || dd < 1 || dd > most) { window.uiAlert(monthNames[mon - 1] + ' has no day ' + (isNaN(dd) ? '' : dd) + '.'); return null; }
+            if (ym < 0) { window.uiAlert('Pick a time of day.'); return null; }
+            return {timing: {how: 'yearly', month: mon, day: dd, times: [ym]}};
+          }
           if (days.empty()) { window.uiAlert('Pick at least one day.'); return null; }
           var out = {how: how.value, days: days.mask()};
-          var h = how.value;
           if (h === 'daily') {
             var m = schedMinutes(dailyAt.value);
             if (m < 0) { window.uiAlert('Pick a time of day.'); return null; }

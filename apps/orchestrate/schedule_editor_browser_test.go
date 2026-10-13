@@ -227,6 +227,26 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
         if (!alerted || alerted.indexOf('both ends') < 0) fail('nothing said why: ' + alerted);`,
 		},
 		{
+			// An annual date ("DEC-25 09:00") reaches the dialog as once a
+			// year; it used to open as a default daily time, and saving it
+			// turned the yearly schedule into a daily one.
+			name:   "a yearly schedule opens as yearly and keeps its date",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'greeting', mission: 'send greetings', timing: {how: 'yearly', month: 12, day: 25, times: [540]}}`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        var tm = posted.timing || {};
+        if (tm.how !== 'yearly' || tm.month !== 12 || tm.day !== 25 || !tm.times || tm.times[0] !== 540) fail('a re-save lost the date: ' + JSON.stringify(tm));`,
+		},
+		{
+			name:   "a yearly date no year has is refused",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'greeting', mission: 'send greetings', timing: {how: 'yearly', month: 2, day: 30, times: [540]}}`,
+			checks: `
+        if (posted) fail('Feb 30 was posted: ' + JSON.stringify(posted));
+        if (!alerted || alerted.indexOf('February has no day 30') < 0) fail('nothing said why: ' + alerted);`,
+		},
+		{
 			name:   "a random schedule opens as random and keeps its gaps",
 			action: "orchestrate_edit_standing",
 			record: `{name: 'poster', mission: 'post something', timing: {how: 'random_gap', min_gap_seconds: 1800, max_gap_seconds: 3600}}`,

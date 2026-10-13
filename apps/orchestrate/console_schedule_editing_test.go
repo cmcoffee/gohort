@@ -756,3 +756,15 @@ func TestMonitorPeriods(t *testing.T) {
 		t.Fatalf("continuous did not clear the periods: %+v %v", m, err)
 	}
 }
+
+// An annual date stored the old way reaches the edit dialog as once a year,
+// so saving it keeps the date instead of turning it into a daily time.
+func TestAnAnnualDateReachesTheDialogAsYearly(t *testing.T) {
+	spec := standingTimingOut(StandingAgent{Name: "greeting", Cron: "DEC-25 09:00"})
+	if spec == nil || spec.How != "yearly" || spec.Month != 12 || spec.Day != 25 || spec.Times[0] != 540 {
+		t.Fatalf("dialog timing = %+v", spec)
+	}
+	if got := StandingScheduleLabel(StandingAgent{Name: "greeting", Cron: "DEC-25 09:00"}); got != "every year on Dec 25 at 09:00" {
+		t.Errorf("label = %q", got)
+	}
+}
