@@ -445,3 +445,37 @@ func TestAParentDecidesForItsSubAgents(t *testing.T) {
 		}
 	}
 }
+
+// A sub-agent's runs are held to and charged against every parent's caps,
+// under the parent's own key, so a parent's limit counts its whole family.
+func TestASubAgentCountsAgainstItsParentsCaps(t *testing.T) {
+	app, udb := familyFixture(t)
+	writer, _ := loadAgent(udb, "a-writer")
+	writer.ActionQuotas = ActionQuotaMap{"post": 6}
+	saveAgent(udb, writer)
+	critic, _ := loadAgent(udb, "a-critic")
+	critic.DailySpendUSD = 2
+	saveAgent(udb, critic)
+
+	nit, _ := loadAgent(udb, "a-nit")
+	got := familyBudgets(nit)
+	if len(got) != 2 || got[0].Key != "a-critic" || got[0].DailySpendUSD != 2 || got[1].Key != "a-writer" || got[1].ActionQuotas["post"] != 6 {
+		t.Fatalf("a sub-agent two levels down should carry both parents' caps, nearest first: %+v", got)
+	}
+	if got[1].Label != "Writer and the agents under it" {
+		t.Errorf("label = %q", got[1].Label)
+	}
+	if b := familyBudgets(writer); b != nil {
+		t.Errorf("a top-level agent shares no budget: %+v", b)
+	}
+	if b := familyBudgets(critic); len(b) != 1 || b[0].Key != "a-writer" {
+		t.Errorf("a parent with no caps adds nothing, one with caps does: %+v", b)
+	}
+
+	// The page says so.
+	w := httptest.NewRecorder()
+	app.renderAgentAccess(w, asUser(httptest.NewRequest(http.MethodGet, "/agent/a-nit/access?format=json", nil), "alice"), "alice", udb, "a-nit")
+	if !strings.Contains(w.Body.String(), "Writer's limits cover this agent too") {
+		t.Error("a sub-agent's Limits tab should say its parent's limits cover it")
+	}
+}

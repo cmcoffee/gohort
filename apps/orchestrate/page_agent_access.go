@@ -939,6 +939,11 @@ func subAgentSecuritySections(secs []ui.Section, udb Database, top string) []ui.
 		if s.Group == "Share" || drop[s.Title] {
 			continue
 		}
+		// Its parents' limits hold it as well (familyBudgets): what it does
+		// counts against them, and these can only make it stricter.
+		if s.Title == "How much it may spend and how often" {
+			s.Subtitle += " " + parent + "'s limits cover this agent too: what it spends and runs counts against them. These can only make it stricter."
+		}
 		out = append(out, s)
 	}
 	return append(out,

@@ -331,12 +331,12 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// Over budget before the first call: refuse the turn rather than start
 	// work that will de-escalate on its first round anyway. Checked before
 	// the failure-memory save is armed, so a refused turn writes nothing.
-	if over, spent := overDailySpend(cfg); over {
-		Log("[agent_loop] daily spend cap reached for %q ($%.2f of $%.2f): turn refused", cfg.BudgetKey, spent, cfg.DailySpendUSD)
-		lr.emitDiag("spend-cap", fmt.Sprintf("This agent has spent $%.2f of its $%.2f daily allowance; the turn was not run.", spent, cfg.DailySpendUSD))
+	if over, spent, limit, whose := overDailySpend(cfg); over {
+		Log("[agent_loop] daily spend cap reached for %q ($%.2f of $%.2f%s): turn refused", cfg.BudgetKey, spent, limit, spendWhose(whose))
+		lr.emitDiag("spend-cap", fmt.Sprintf("$%.2f of the $%.2f daily allowance%s is spent; the turn was not run.", spent, limit, spendWhose(whose)))
 		return &Response{Content: fmt.Sprintf(
-			"I've reached my spending limit for now ($%.2f of the $%.2f allowed in a 24-hour window), so I didn't run this. It frees up as earlier work ages out, or the owner can raise the limit.",
-			spent, cfg.DailySpendUSD)}, messages, nil
+			"I've reached my spending limit for now ($%.2f of the $%.2f allowed in a 24-hour window%s), so I didn't run this. It frees up as earlier work ages out, or the owner can raise the limit.",
+			spent, limit, spendWhose(whose))}, messages, nil
 	}
 	defer func() { saveFailureMemory(cfg.FailureMemoryKey, lr.repeatFail) }()
 
@@ -2209,10 +2209,10 @@ func (lr *loopRun) callModel() loopAction {
 	// Charge this round, then check the line. A turn under way finishes —
 	// on the worker tier once it crosses — because stranding half-done
 	// work costs the owner more than the round would have.
-	if spent, crossed := chargeDailySpend(lr.cfg, lr.rs.resp); crossed && lr.deescalated == "" && !lr.T.LeadDenied() {
+	if spent, limit, whose, crossed := chargeDailySpend(lr.cfg, lr.rs.resp); crossed && lr.deescalated == "" && !lr.T.LeadDenied() {
 		lr.deescalated = "spend-cap"
-		Log("[agent_loop] daily spend cap reached mid-turn for %q ($%.2f of $%.2f): remaining rounds run on the worker tier", lr.cfg.BudgetKey, spent, lr.cfg.DailySpendUSD)
-		lr.emitDiag("spend-cap", fmt.Sprintf("This agent crossed its $%.2f daily allowance mid-turn; the rest of the turn ran on the local worker model.", lr.cfg.DailySpendUSD))
+		Log("[agent_loop] daily spend cap reached mid-turn for %q ($%.2f of $%.2f%s): remaining rounds run on the worker tier", lr.cfg.BudgetKey, spent, limit, spendWhose(whose))
+		lr.emitDiag("spend-cap", fmt.Sprintf("The $%.2f daily allowance%s was crossed mid-turn; the rest of the turn ran on the local worker model.", limit, spendWhose(whose)))
 	}
 
 	Debug("[agent_loop] round %d: content=%d chars, reasoning=%d chars, tool_calls=%d", lr.round, len(lr.rs.resp.Content), len(lr.rs.resp.Reasoning), len(lr.rs.resp.ToolCalls))
@@ -3619,10 +3619,10 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 		// when it SUCCEEDS — a failed call consumed nothing anyone cares
 		// about, and charging for it would end a day's budget on an
 		// outage.
-		if refusal, action := actionQuotaRefusal(lr.cfg, tc.Name, tc.Args); refusal != "" {
+		if refusal, action, limit := actionQuotaRefusal(lr.cfg, tc.Name, tc.Args); refusal != "" {
 			Debug("[agent_loop] quota: %s blocked (%s is at its 24h allowance)", tc.Name, action)
 			lr.rs.guardBlockedThisRound = true
-			lr.emitDiag("action-quota", fmt.Sprintf("'%s' has used its allowance of %d per 24 hours; further calls were refused this turn.", action, lr.cfg.ActionQuotas[action]))
+			lr.emitDiag("action-quota", fmt.Sprintf("'%s' has used its allowance of %d per 24 hours; further calls were refused this turn.", action, limit))
 			lr.rs.results[i] = ToolResult{ID: tc.ID, Content: refusal, IsError: true}
 			lr.rs.toolErrors++
 			continue

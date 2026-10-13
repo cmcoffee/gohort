@@ -168,6 +168,30 @@ func moveSubAgentPosters() {
 	}
 }
 
+// familyBudgets is the spend ceilings and action limits of a sub-agent's
+// parents, which its runs are held to and charged against as well as its
+// own (AgentLoopConfig.SharedBudgets). Without it a parent capped at six
+// posts a day could have its sub-agent post six more: each agent's count
+// was its own. A parent's allowance is kept under its own id, the key its
+// own runs are charged to, so it counts the whole family. Nil for a
+// top-level agent, or parents with no caps.
+func familyBudgets(a AgentRecord) []SharedBudget {
+	if strings.TrimSpace(a.OwnedBy) == "" {
+		return nil
+	}
+	db := agentStore(a.Owner)
+	var out []SharedBudget
+	for _, id := range agentAncestors(db, a.ID) {
+		p, ok := loadAgent(db, id)
+		if !ok || (len(p.ActionQuotas) == 0 && p.DailySpendUSD <= 0) {
+			continue
+		}
+		out = append(out, SharedBudget{Key: p.ID, Label: chFirst(p.Name, p.ID) + " and the agents under it",
+			ActionQuotas: p.ActionQuotas, DailySpendUSD: p.DailySpendUSD})
+	}
+	return out
+}
+
 // contactHolder is the agent whose decisions about who may be messaged
 // apply to agentID: its top-level parent for a sub-agent, which sends
 // through that parent's channels and has no messaging settings of its own.

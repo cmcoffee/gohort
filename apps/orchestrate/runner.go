@@ -2389,6 +2389,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		ActionQuotas:  t.agent.ActionQuotas, // per-agent 24h caps; empty = uncapped
 		BudgetKey:     t.agent.ID,
 		DailySpendUSD: t.agent.DailySpendUSD,
+		SharedBudgets: familyBudgets(t.agent),
 		// StopRound is the dynamic governor (MaxRounds is just the safety
 		// ceiling). Effective cap = soft cap, raised to the explorer cap
 		// once explorer mode is on, raised again to the plan-scaled cap

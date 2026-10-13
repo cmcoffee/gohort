@@ -938,6 +938,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		ActionQuotas:    target.ActionQuotas,       // per-agent 24h caps; empty = uncapped
 		BudgetKey:       target.ID,
 		DailySpendUSD:   target.DailySpendUSD,
+		SharedBudgets:   familyBudgets(target), // a sub-agent counts against its parents' caps
 		// Standing fires and Fleet dispatches both land here, and neither
 		// carries tool results into the next run's history — so without this
 		// each one re-learns yesterday's dead endpoint from scratch. One
@@ -2002,6 +2003,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		ActionQuotas:  target.ActionQuotas,
 		BudgetKey:     target.ID,
 		DailySpendUSD: target.DailySpendUSD,
+		SharedBudgets: familyBudgets(target),
 		// A channel turn and a monitor wake run here, unattended and
 		// repeatedly, against the same thread. Keyed to the thread so what
 		// keeps failing in one conversation is not held against another.

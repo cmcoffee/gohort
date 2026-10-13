@@ -363,6 +363,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		ActionQuotas:         t.agent.ActionQuotas,
 		BudgetKey:            t.agent.ID,
 		DailySpendUSD:        t.agent.DailySpendUSD,
+		SharedBudgets:        familyBudgets(t.agent),
 		Stream:               stream,
 		OnResponse:           t.thinkResponse, // the footer totals every call of the turn
 		// Same turn-scoped notes the orchestrator round gets. A worker step is

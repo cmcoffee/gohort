@@ -513,6 +513,12 @@ type AgentLoopConfig struct {
 	// and nothing between it and doing that every hour.
 	DailySpendUSD float64
 
+	// SharedBudgets are further allowances this run counts against and is
+	// held to, besides its own (BudgetKey): how an app makes several agents
+	// share one cap. Each is charged under its own Key, so the allowance
+	// counts every run that names it. Nil = only its own.
+	SharedBudgets []SharedBudget
+
 	// Tier selects which LLM tier runs the loop. Defaults to WORKER.
 	// Set to LEAD to route all rounds through the lead LLM.
 	// Ignored when RouteKey is set.

@@ -835,6 +835,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		ActionQuotas:        agent.ActionQuotas,
 		BudgetKey:           agent.ID,
 		DailySpendUSD:       agent.DailySpendUSD,
+		SharedBudgets:       familyBudgets(agent),
 		Confirm:             gate.confirm,
 		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,

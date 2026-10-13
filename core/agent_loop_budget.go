@@ -35,57 +35,97 @@ func actionQuotaName(tool string, args map[string]any) string {
 	return tool
 }
 
-// actionQuotaLimit finds the limit that applies, accepting either the exact
-// action ("moltbook/create_post") or the bare tool ("moltbook") so a quota can
-// cover a whole tool or one of its actions.
-func actionQuotaLimit(cfg AgentLoopConfig, tool string, args map[string]any) (name string, limit int) {
-	if len(cfg.ActionQuotas) == 0 || strings.TrimSpace(cfg.BudgetKey) == "" {
+// SharedBudget is an allowance several runs count against: action quotas and
+// a daily spend ceiling kept under one Key, in the same rolling window as an
+// agent's own. Label names whose allowance it is, for the refusal ("Writer
+// and the agents under it").
+type SharedBudget struct {
+	Key           string
+	Label         string
+	ActionQuotas  map[string]int
+	DailySpendUSD float64
+}
+
+// runBudgets is every allowance a run is held to: its own first, then the
+// shared ones. One without a key is skipped: a budget nobody owns is
+// somebody else's.
+func runBudgets(cfg AgentLoopConfig) []SharedBudget {
+	var out []SharedBudget
+	if strings.TrimSpace(cfg.BudgetKey) != "" {
+		out = append(out, SharedBudget{Key: cfg.BudgetKey, ActionQuotas: cfg.ActionQuotas, DailySpendUSD: cfg.DailySpendUSD})
+	}
+	for _, b := range cfg.SharedBudgets {
+		if strings.TrimSpace(b.Key) != "" {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// actionQuotaLimit finds the limit in one set of quotas, accepting either the
+// exact action ("moltbook/create_post") or the bare tool ("moltbook") so a
+// quota can cover a whole tool or one of its actions.
+func actionQuotaLimit(quotas map[string]int, tool string, args map[string]any) (name string, limit int) {
+	if len(quotas) == 0 {
 		return "", 0
 	}
 	action := actionQuotaName(tool, args)
-	if n, ok := cfg.ActionQuotas[action]; ok && n > 0 {
+	if n, ok := quotas[action]; ok && n > 0 {
 		return action, n
 	}
-	if n, ok := cfg.ActionQuotas[tool]; ok && n > 0 {
+	if n, ok := quotas[tool]; ok && n > 0 {
 		return tool, n
 	}
 	return "", 0
 }
 
 // actionQuotaRefusal returns the text to hand back instead of running a call
-// that is out of allowance, and the action it was judged against.
-func actionQuotaRefusal(cfg AgentLoopConfig, tool string, args map[string]any) (string, string) {
-	action, limit := actionQuotaLimit(cfg, tool, args)
-	if limit <= 0 {
-		return "", ""
-	}
-	used, oldest := actionQuotaUsage(cfg.BudgetKey, action)
-	if used < limit {
-		return "", action
-	}
-	when := "later today"
-	if !oldest.IsZero() {
-		if free := time.Until(oldest.Add(actionQuotaWindow)); free > 0 {
-			when = "in about " + shortDurationWords(free)
+// that is out of allowance, with the action and the limit it was judged
+// against. Every budget the run is held to is checked, its own first.
+func actionQuotaRefusal(cfg AgentLoopConfig, tool string, args map[string]any) (string, string, int) {
+	for _, b := range runBudgets(cfg) {
+		action, limit := actionQuotaLimit(b.ActionQuotas, tool, args)
+		if limit <= 0 {
+			continue
 		}
+		used, oldest := actionQuotaUsage(b.Key, action)
+		if used < limit {
+			continue
+		}
+		when := "later today"
+		if !oldest.IsZero() {
+			if free := time.Until(oldest.Add(actionQuotaWindow)); free > 0 {
+				when = "in about " + shortDurationWords(free)
+			}
+		}
+		whose := ""
+		if b.Label != "" {
+			whose = " The allowance is shared by " + b.Label + ", and their runs count toward it."
+		}
+		return fmt.Sprintf(
+			"STOP: '%s' was NOT called. It has already run %d time(s) in the last 24 hours, which is its allowance of %d.%s This is enforced by the framework, not a rule you are asked to keep: further calls will be refused until the window frees up, %s. "+
+				"Do NOT try to reach the same action another way. Finish with what you have and say plainly that the allowance is spent.",
+			action, used, limit, whose, when), action, limit
 	}
-	return fmt.Sprintf(
-		"STOP: '%s' was NOT called. It has already run %d time(s) in the last 24 hours, which is its allowance of %d. This is enforced by the framework, not a rule you are asked to keep: further calls will be refused until the window frees up, %s. "+
-			"Do NOT try to reach the same action another way. Finish with what you have and say plainly that the allowance is spent.",
-		action, used, limit, when), action
+	return "", "", 0
 }
 
-// chargeActionQuota records one SUCCESSFUL run of a capped action.
+// chargeActionQuota records one SUCCESSFUL run of a capped action, against
+// every budget that caps it.
 func chargeActionQuota(cfg AgentLoopConfig, tool string, args map[string]any) {
-	action, limit := actionQuotaLimit(cfg, tool, args)
-	if limit <= 0 || RootDB == nil {
+	if RootDB == nil {
 		return
 	}
-	key := cfg.BudgetKey
-	var stamps []time.Time
-	RootDB.Get(actionQuotaTable, key+"|"+action, &stamps)
-	stamps = append(pruneQuotaStamps(stamps), time.Now())
-	RootDB.Set(actionQuotaTable, key+"|"+action, &stamps)
+	for _, b := range runBudgets(cfg) {
+		action, limit := actionQuotaLimit(b.ActionQuotas, tool, args)
+		if limit <= 0 {
+			continue
+		}
+		var stamps []time.Time
+		RootDB.Get(actionQuotaTable, b.Key+"|"+action, &stamps)
+		stamps = append(pruneQuotaStamps(stamps), time.Now())
+		RootDB.Set(actionQuotaTable, b.Key+"|"+action, &stamps)
+	}
 }
 
 // actionQuotaUsage reports how many runs are inside the window and when the
@@ -135,6 +175,15 @@ func shortDurationWords(d time.Duration) string {
 	return fmt.Sprintf("%d minutes", m)
 }
 
+// spendWhose names a shared allowance in a sentence about spend: "" for the
+// run's own.
+func spendWhose(label string) string {
+	if label == "" {
+		return ""
+	}
+	return ", shared by " + label
+}
+
 // --- daily spend ceiling ------------------------------------------------------
 //
 // Nothing stood between a scheduled agent on a frontier model and doing that
@@ -170,30 +219,53 @@ func dailySpend(key string) (float64, []spendEntry) {
 	return total, kept
 }
 
-// overDailySpend reports whether this budget is already spent.
-func overDailySpend(cfg AgentLoopConfig) (bool, float64) {
-	if cfg.DailySpendUSD <= 0 || strings.TrimSpace(cfg.BudgetKey) == "" {
-		return false, 0
+// overDailySpend reports whether any budget the run is held to is already
+// spent, and which: what it has spent, its ceiling, and whose it is ("" for
+// the run's own).
+func overDailySpend(cfg AgentLoopConfig) (over bool, spent, limit float64, label string) {
+	for _, b := range runBudgets(cfg) {
+		if b.DailySpendUSD <= 0 {
+			continue
+		}
+		if s, _ := dailySpend(b.Key); s >= b.DailySpendUSD {
+			return true, s, b.DailySpendUSD, b.Label
+		}
 	}
-	spent, _ := dailySpend(cfg.BudgetKey)
-	return spent >= cfg.DailySpendUSD, spent
+	return false, 0, 0, ""
 }
 
-// chargeDailySpend bills one round and reports the running total, plus
-// whether this round is the one that crossed the line.
-func chargeDailySpend(cfg AgentLoopConfig, resp *Response) (float64, bool) {
-	if cfg.DailySpendUSD <= 0 || strings.TrimSpace(cfg.BudgetKey) == "" || resp == nil || RootDB == nil {
-		return 0, false
+// chargeDailySpend bills one round to every budget with a ceiling. It
+// reports the first budget this round pushed over its line (what it has
+// spent, its ceiling, whose it is, crossed=true), or else the first capped
+// budget's running total, the run's own when it has a ceiling.
+func chargeDailySpend(cfg AgentLoopConfig, resp *Response) (spent, limit float64, label string, crossed bool) {
+	if resp == nil || RootDB == nil {
+		return 0, 0, "", false
 	}
-	cost := roundCostUSD(resp)
-	if cost <= 0 {
-		return 0, false
+	var cost float64
+	priced, reported := false, false
+	for _, b := range runBudgets(cfg) {
+		if b.DailySpendUSD <= 0 {
+			continue
+		}
+		if !priced {
+			cost, priced = roundCostUSD(resp), true
+		}
+		if cost <= 0 {
+			return 0, 0, "", false
+		}
+		before, entries := dailySpend(b.Key)
+		entries = append(entries, spendEntry{At: time.Now(), USD: cost})
+		RootDB.Set(spendLedgerTable, b.Key, &entries)
+		after := before + cost
+		switch {
+		case !crossed && before < b.DailySpendUSD && after >= b.DailySpendUSD:
+			spent, limit, label, crossed, reported = after, b.DailySpendUSD, b.Label, true, true
+		case !reported:
+			spent, limit, label, reported = after, b.DailySpendUSD, b.Label, true
+		}
 	}
-	before, entries := dailySpend(cfg.BudgetKey)
-	entries = append(entries, spendEntry{At: time.Now(), USD: cost})
-	RootDB.Set(spendLedgerTable, cfg.BudgetKey, &entries)
-	after := before + cost
-	return after, before < cfg.DailySpendUSD && after >= cfg.DailySpendUSD
+	return spent, limit, label, crossed
 }
 
 // roundCostUSD prices one response with the deployment's configured rates,

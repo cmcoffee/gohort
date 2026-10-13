@@ -322,15 +322,15 @@ func TestAnActionQuotaIsEnforcedNotRequested(t *testing.T) {
 func TestAFailedCallDoesNotSpendTheAllowance(t *testing.T) {
 	withRootDB(t)
 	cfg := AgentLoopConfig{ActionQuotas: map[string]int{"post": 1}, BudgetKey: "a"}
-	if r, _ := actionQuotaRefusal(cfg, "post", nil); r != "" {
+	if r, _, _ := actionQuotaRefusal(cfg, "post", nil); r != "" {
 		t.Fatalf("nothing has run yet: %s", r)
 	}
 	// A failure never calls chargeActionQuota, so the allowance is untouched.
-	if r, _ := actionQuotaRefusal(cfg, "post", nil); r != "" {
+	if r, _, _ := actionQuotaRefusal(cfg, "post", nil); r != "" {
 		t.Errorf("a failed call must not be charged: %s", r)
 	}
 	chargeActionQuota(cfg, "post", nil)
-	r, action := actionQuotaRefusal(cfg, "post", nil)
+	r, action, _ := actionQuotaRefusal(cfg, "post", nil)
 	if r == "" || action != "post" {
 		t.Errorf("one success spends the only slot: %q / %q", r, action)
 	}
@@ -343,27 +343,28 @@ func TestActionQuotaScoping(t *testing.T) {
 	withRootDB(t)
 	keyed := AgentLoopConfig{ActionQuotas: map[string]int{"moltbook": 1, "moltbook/get_feed": 5}, BudgetKey: "a"}
 
-	if name, limit := actionQuotaLimit(keyed, "moltbook", map[string]any{"action": "get_feed"}); name != "moltbook/get_feed" || limit != 5 {
+	if name, limit := actionQuotaLimit(keyed.ActionQuotas, "moltbook", map[string]any{"action": "get_feed"}); name != "moltbook/get_feed" || limit != 5 {
 		t.Errorf("the exact action wins over the tool: %q/%d", name, limit)
 	}
-	if name, limit := actionQuotaLimit(keyed, "moltbook", map[string]any{"action": "create_post"}); name != "moltbook" || limit != 1 {
+	if name, limit := actionQuotaLimit(keyed.ActionQuotas, "moltbook", map[string]any{"action": "create_post"}); name != "moltbook" || limit != 1 {
 		t.Errorf("an action with no entry falls back to the tool: %q/%d", name, limit)
 	}
-	if _, limit := actionQuotaLimit(keyed, "other_tool", nil); limit != 0 {
+	if _, limit := actionQuotaLimit(keyed.ActionQuotas, "other_tool", nil); limit != 0 {
 		t.Error("an unlisted tool is uncapped")
 	}
 	unkeyed := AgentLoopConfig{ActionQuotas: map[string]int{"moltbook": 1}}
-	if _, limit := actionQuotaLimit(unkeyed, "moltbook", nil); limit != 0 {
+	chargeActionQuota(unkeyed, "moltbook", nil)
+	if r, _, _ := actionQuotaRefusal(unkeyed, "moltbook", nil); r != "" {
 		t.Error("a quota with no key must be ignored, never shared")
 	}
 	// Two agents do not share one budget.
 	a := AgentLoopConfig{ActionQuotas: map[string]int{"post": 1}, BudgetKey: "agent-a"}
 	b := AgentLoopConfig{ActionQuotas: map[string]int{"post": 1}, BudgetKey: "agent-b"}
 	chargeActionQuota(a, "post", nil)
-	if r, _ := actionQuotaRefusal(a, "post", nil); r == "" {
+	if r, _, _ := actionQuotaRefusal(a, "post", nil); r == "" {
 		t.Error("agent a spent its slot")
 	}
-	if r, _ := actionQuotaRefusal(b, "post", nil); r != "" {
+	if r, _, _ := actionQuotaRefusal(b, "post", nil); r != "" {
 		t.Errorf("agent b has its own: %s", r)
 	}
 }
@@ -374,12 +375,12 @@ func TestActionQuotaWindowRolls(t *testing.T) {
 	cfg := AgentLoopConfig{ActionQuotas: map[string]int{"post": 1}, BudgetKey: "a"}
 	old := []time.Time{time.Now().Add(-actionQuotaWindow - time.Minute)}
 	RootDB.Set(actionQuotaTable, "a|post", &old)
-	if r, _ := actionQuotaRefusal(cfg, "post", nil); r != "" {
+	if r, _, _ := actionQuotaRefusal(cfg, "post", nil); r != "" {
 		t.Errorf("a run from more than 24h ago must not count: %s", r)
 	}
 	recent := []time.Time{time.Now().Add(-2 * time.Hour)}
 	RootDB.Set(actionQuotaTable, "a|post", &recent)
-	r, _ := actionQuotaRefusal(cfg, "post", nil)
+	r, _, _ := actionQuotaRefusal(cfg, "post", nil)
 	if !strings.Contains(r, "in about 22 hours") {
 		t.Errorf("the refusal must say when the allowance frees up:\n%s", r)
 	}
@@ -438,24 +439,24 @@ func TestSpendIsChargedAndTheCapLetsWorkThrough(t *testing.T) {
 	withRates(t)
 	cfg := AgentLoopConfig{BudgetKey: "a", DailySpendUSD: 1.00}
 
-	if over, _ := overDailySpend(cfg); over {
+	if over, _, _, _ := overDailySpend(cfg); over {
 		t.Fatal("a fresh budget is not spent")
 	}
 	// A lead round at a dollar per 1k tokens: 400 in + 100 out = $0.50.
-	total, crossed := chargeDailySpend(cfg, &Response{Tier: LEAD, InputTokens: 400, OutputTokens: 100})
+	total, _, _, crossed := chargeDailySpend(cfg, &Response{Tier: LEAD, InputTokens: 400, OutputTokens: 100})
 	if total < 0.49 || total > 0.51 || crossed {
 		t.Errorf("half the budget spent, not crossed: %.2f crossed=%v", total, crossed)
 	}
 	// The next identical round crosses it exactly.
-	total, crossed = chargeDailySpend(cfg, &Response{Tier: LEAD, InputTokens: 400, OutputTokens: 100})
+	total, _, _, crossed = chargeDailySpend(cfg, &Response{Tier: LEAD, InputTokens: 400, OutputTokens: 100})
 	if !crossed || total < 0.99 {
 		t.Errorf("the second round must cross: %.2f crossed=%v", total, crossed)
 	}
 	// Crossing is reported ONCE — the round that did it — not on every later round.
-	if _, again := chargeDailySpend(cfg, &Response{Tier: LEAD, InputTokens: 400, OutputTokens: 100}); again {
+	if _, _, _, again := chargeDailySpend(cfg, &Response{Tier: LEAD, InputTokens: 400, OutputTokens: 100}); again {
 		t.Error("crossing must be reported once, not repeatedly")
 	}
-	if over, _ := overDailySpend(cfg); !over {
+	if over, _, _, _ := overDailySpend(cfg); !over {
 		t.Error("the budget is now spent")
 	}
 }
@@ -468,14 +469,14 @@ func TestTheSpendCeilingStaysOutOfTheWay(t *testing.T) {
 
 	withRates(t)
 	uncapped := AgentLoopConfig{BudgetKey: "a"}
-	if total, crossed := chargeDailySpend(uncapped, &Response{Tier: LEAD, InputTokens: 9_000_000}); total != 0 || crossed {
+	if total, _, _, crossed := chargeDailySpend(uncapped, &Response{Tier: LEAD, InputTokens: 9_000_000}); total != 0 || crossed {
 		t.Error("an agent with no cap is never charged")
 	}
 	keyless := AgentLoopConfig{DailySpendUSD: 0.01}
-	if total, _ := chargeDailySpend(keyless, &Response{Tier: LEAD, InputTokens: 9_000_000}); total != 0 {
+	if total, _, _, _ := chargeDailySpend(keyless, &Response{Tier: LEAD, InputTokens: 9_000_000}); total != 0 {
 		t.Error("work with no budget key is uncapped, never pooled")
 	}
-	if over, _ := overDailySpend(keyless); over {
+	if over, _, _, _ := overDailySpend(keyless); over {
 		t.Error("a keyless budget can never be over")
 	}
 
@@ -484,7 +485,7 @@ func TestTheSpendCeilingStaysOutOfTheWay(t *testing.T) {
 	SetCostRates(CostRates{})
 	defer SetCostRates(prev)
 	local := AgentLoopConfig{BudgetKey: "b", DailySpendUSD: 0.01}
-	if total, crossed := chargeDailySpend(local, &Response{Tier: LEAD, InputTokens: 9_000_000}); total != 0 || crossed {
+	if total, _, _, crossed := chargeDailySpend(local, &Response{Tier: LEAD, InputTokens: 9_000_000}); total != 0 || crossed {
 		t.Errorf("with no rates a dollar ceiling must do nothing: %.4f %v", total, crossed)
 	}
 }
@@ -496,7 +497,7 @@ func TestSpendAgesOutOfTheWindow(t *testing.T) {
 	cfg := AgentLoopConfig{BudgetKey: "a", DailySpendUSD: 1.00}
 	old := []spendEntry{{At: time.Now().Add(-actionQuotaWindow - time.Minute), USD: 99}}
 	RootDB.Set(spendLedgerTable, "a", &old)
-	if over, spent := overDailySpend(cfg); over || spent != 0 {
+	if over, spent, _, _ := overDailySpend(cfg); over || spent != 0 {
 		t.Errorf("spend older than the window must not count: over=%v spent=%.2f", over, spent)
 	}
 }
@@ -617,5 +618,45 @@ func TestARefusedCallReachesTheJudgeAsAnAttempt(t *testing.T) {
 	}
 	if turnRanProducer([]string{"image [REFUSED before it ran: x]"}) {
 		t.Error("a refused call made nothing")
+	}
+}
+
+// A shared budget is one allowance several runs count against: each run is
+// held to it as well as its own, and every run that names it is charged to
+// it. The refusal says whose allowance it is.
+func TestASharedBudgetCountsEveryRunThatNamesIt(t *testing.T) {
+	withRootDB(t)
+	withRates(t)
+	shared := SharedBudget{Key: "parent", Label: "Writer and the agents under it", ActionQuotas: map[string]int{"post": 2}, DailySpendUSD: 1.00}
+	parent := AgentLoopConfig{BudgetKey: "parent", ActionQuotas: shared.ActionQuotas, DailySpendUSD: shared.DailySpendUSD}
+	sub := AgentLoopConfig{BudgetKey: "sub", SharedBudgets: []SharedBudget{shared}}
+
+	chargeActionQuota(sub, "post", nil)
+	chargeActionQuota(parent, "post", nil)
+	for name, cfg := range map[string]AgentLoopConfig{"parent": parent, "sub": sub} {
+		r, action, limit := actionQuotaRefusal(cfg, "post", nil)
+		if r == "" || action != "post" || limit != 2 {
+			t.Errorf("%s: two runs between them spend the shared two: %q %q %d", name, r, action, limit)
+		}
+	}
+	if r, _, _ := actionQuotaRefusal(sub, "post", nil); !strings.Contains(r, "shared by Writer and the agents under it") {
+		t.Errorf("the refusal should say whose allowance it is:\n%s", r)
+	}
+	if r, _, _ := actionQuotaRefusal(AgentLoopConfig{BudgetKey: "other", ActionQuotas: map[string]int{"post": 2}}, "post", nil); r != "" {
+		t.Error("a run outside the shared budget was charged to it")
+	}
+
+	// Spend: the sub-agent's rounds cross the shared ceiling, and the parent
+	// is held to it too. $0.50 a round.
+	round := &Response{Tier: LEAD, InputTokens: 400, OutputTokens: 100}
+	chargeDailySpend(sub, round)
+	if _, _, label, crossed := chargeDailySpend(sub, round); !crossed || label != shared.Label {
+		t.Errorf("the second round crosses the shared ceiling and says whose: crossed=%v label=%q", crossed, label)
+	}
+	if over, _, limit, label := overDailySpend(parent); !over || limit != 1.00 || label != "" {
+		t.Errorf("the parent is held to the ceiling its sub-agent spent: over=%v limit=%.2f label=%q", over, limit, label)
+	}
+	if over, _, _, label := overDailySpend(sub); !over || label != shared.Label {
+		t.Errorf("the sub-agent is over the shared ceiling: over=%v label=%q", over, label)
 	}
 }
