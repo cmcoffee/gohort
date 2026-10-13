@@ -37,7 +37,9 @@ func answerNextCard(user, value string) chan struct{} {
 
 func TestAnApprovalIsKeptWithTheTurnsCalls(t *testing.T) {
 	turn := &chatTurn{user: "approver", sse: &sseWriter{live: &syncBuf{}}}
-	args := `{"query":"acme merger terms"}`
+	// The loop hands Confirm its own "key: value" lines (core formatArgs),
+	// keys sorted, not JSON.
+	args := "max_results: 5\nquery: acme merger terms"
 	done := answerNextCard("approver", "allow")
 	if !turn.escalateToolConfirm(toolConfirmRequest{tool: "web_search", prompt: "Allow web_search to run?",
 		detail: confirmCallSummary(nil, "web_search", args), because: "asks", args: args}) {
@@ -67,8 +69,14 @@ func TestAnApprovalIsKeptWithTheTurnsCalls(t *testing.T) {
 // The card shows what the call would send right under its question, ahead of
 // the tool's description.
 func TestTheCardLeadsWithTheCallsArguments(t *testing.T) {
-	got := confirmCallSummary(nil, "some_tool", `{"query":"acme merger terms"}`)
-	if !strings.HasPrefix(got, "query: acme merger terms") {
-		t.Errorf("the query is not first on the card: %q", got)
+	for _, args := range []string{`{"max_results":5,"query":"acme merger terms"}`, "max_results: 5\nquery: acme merger terms"} {
+		got := confirmCallSummary(nil, "some_tool", args)
+		if !strings.HasPrefix(got, "query: acme merger terms\nmax_results: 5") {
+			t.Errorf("from %q the query is not first on the card: %q", args, got)
+		}
+	}
+	// A multi-line value stays one argument.
+	if got := parseCallArgs("body: line one\nline two\nto: ops"); got["body"] != "line one\nline two" || got["to"] != "ops" {
+		t.Errorf("parsed %v", got)
 	}
 }

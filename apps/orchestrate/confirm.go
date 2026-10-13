@@ -625,10 +625,7 @@ func (t *chatTurn) recordApproval(req toolConfirmRequest, outcome string) {
 	if t == nil {
 		return
 	}
-	args := map[string]any{}
-	if a := strings.TrimSpace(req.args); a != "" {
-		_ = json.Unmarshal([]byte(a), &args)
-	}
+	args := parseCallArgs(req.args)
 	if len(args) == 0 && strings.TrimSpace(req.detail) != "" {
 		args = map[string]any{"detail": truncateObs(req.detail, 600)}
 	}

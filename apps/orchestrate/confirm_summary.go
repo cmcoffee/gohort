@@ -114,8 +114,8 @@ func toolFacts(sess *ToolSession, name string) (string, []Capability) {
 // Values are truncated but never summarised: the point is to show what would
 // be sent, and a paraphrase of an argument is not the argument.
 func namedArgs(args string) []string {
-	var raw map[string]any
-	if json.Unmarshal([]byte(args), &raw) != nil || len(raw) == 0 {
+	raw := parseCallArgs(args)
+	if len(raw) == 0 {
 		return nil
 	}
 	rank := map[string]int{}
@@ -140,6 +140,39 @@ func namedArgs(args string) []string {
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {
 		out = append(out, k+": "+clipArgValue(raw[k]))
+	}
+	return out
+}
+
+// parseCallArgs reads a call's arguments in either form they reach a confirm:
+// a JSON object, or the agent loop's own "key: value" lines (formatArgs, one
+// argument a line, keys sorted), which is what the loop hands its Confirm
+// hook. A line without a key continues the value above it. Nil when neither
+// form yields anything.
+func parseCallArgs(args string) map[string]any {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return nil
+	}
+	var raw map[string]any
+	if json.Unmarshal([]byte(args), &raw) == nil {
+		return raw
+	}
+	out := map[string]any{}
+	last := ""
+	for _, line := range strings.Split(args, "\n") {
+		k, v, ok := strings.Cut(line, ": ")
+		if ok && k != "" && !strings.ContainsAny(k, " \t{}\"") {
+			out[k], last = v, k
+			continue
+		}
+		if last == "" {
+			return nil // not this form either
+		}
+		out[last] = fmt.Sprint(out[last]) + "\n" + line
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
