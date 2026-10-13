@@ -62,7 +62,7 @@ var knownDependencies = []struct {
 	// reader cannot install — a doctor that prints an impossible command is
 	// worse than one that says nothing.
 	legacyDocDependency(),
-	{name: "git", enables: "Cloning repository appliances (servitor repo mode)", apt: "git", brew: "git", versionArgs: []string{"--version"}},
+	{name: "git", enables: "Cloning repository systems (servitor repo mode)", apt: "git", brew: "git", versionArgs: []string{"--version"}},
 	// Named per platform for the same reason the legacy-.doc row is: bubblewrap
 	// is Linux-only and can never be installed on macOS, so a bwrap row there
 	// reported a permanent failure against a package the operator could not

@@ -280,7 +280,7 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 		case name == PeerCapInvestigate && len(k.Appliances) == 0:
 			// Granted the capability and no appliances reaches nothing. Said
 			// plainly, because the capability list otherwise reads as working.
-			e.Note = "granted, but this key names no appliances: it can reach none"
+			e.Note = "granted, but this key names no systems: it can reach none"
 		case name == PeerCapInvestigate && strings.TrimSpace(k.Owner) == "":
 			e.Note = "granted, but this key has no owner: an investigation runs as a user and there is none"
 		}

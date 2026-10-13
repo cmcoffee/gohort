@@ -517,7 +517,7 @@ func SetPeerKeyScope(id, owner string, appliances []string) (PeerKey, error) {
 		clean = append(clean, a)
 	}
 	if len(clean) > 0 && owner == "" {
-		return PeerKey{}, fmt.Errorf("naming appliances needs an owner: an investigation runs as a user")
+		return PeerKey{}, fmt.Errorf("naming systems needs an owner: an investigation runs as a user")
 	}
 	// Every id must actually resolve for that owner. Without this a grant can
 	// name an appliance the owner cannot see — wrong user, never shared, since

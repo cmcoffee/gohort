@@ -448,7 +448,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	listReferences := AgentToolDef{
 		Tool: Tool{
 			Name:        "list_reference_sources",
-			Description: "List the internal knowledge sources you can pull into the guide from OTHER gohort services: e.g. Systems (facts gathered about the user's own servers/appliances) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
+			Description: "List the internal knowledge sources you can pull into the guide from OTHER gohort services: e.g. Systems (facts gathered about the user's own servers and devices) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Reader of a shared guide: only the sources the OWNER linked to this
@@ -463,7 +463,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			}
 			groups := ReferenceGroups(user)
 			if len(groups) == 0 {
-				return "No internal reference sources are available right now. (Systems appear once the user has appliances in the servitor app; document sources like Confluence appear once they're connected as a reference source.) Use the `research` tool for public/web topics instead.", nil
+				return "No internal reference sources are available right now. (Systems appear once the user has systems in the servitor app; document sources like Confluence appear once they're connected as a reference source.) Use the `research` tool for public/web topics instead.", nil
 			}
 			// Which items did the user attach to THIS guide via the Sources picker?
 			attached := map[string]bool{}

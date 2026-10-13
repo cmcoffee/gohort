@@ -125,7 +125,7 @@ func (T Servitor) Desc() string {
 }
 
 func (T Servitor) SystemPrompt() string {
-	return `You are a senior Linux systems engineer conducting a deep investigation of a remote appliance via SSH.
+	return `You are a senior Linux systems engineer conducting a deep investigation of a remote system via SSH.
 Your objective is tier-3 knowledge: not just what is running, but how everything connects, how requests
 flow through the stack, what every service depends on, where every log lives, and what the full
 application topology looks like. The resulting profile must be complete enough to answer any operational
@@ -390,7 +390,7 @@ Record: recently modified configs, recently installed packages, environment vari
 OUTPUT FORMAT
 ────────────────────────────────────────────────────────────
 
-# Linux Appliance Profile: <exact hostname>
+# Linux System Profile: <exact hostname>
 
 ## System Identity
 <OS, kernel, architecture, uptime, timezone>
@@ -937,7 +937,7 @@ func (T *Servitor) Main() error {
 
 	messages := []Message{
 		{Role: "user", Content: fmt.Sprintf(
-			"Perform a complete reconnaissance and profile of the Linux appliance at %s (connected as %s). Be systematic and thorough.",
+			"Perform a complete reconnaissance and profile of the Linux system at %s (connected as %s). Be systematic and thorough.",
 			T.input.host, T.input.user,
 		)},
 	}

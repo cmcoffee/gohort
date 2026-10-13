@@ -50,7 +50,7 @@ func planSetDescription(required bool) string {
 		return "REQUIRED FIRST CALL: emit a structured investigation plan before any other tool. " +
 			"Each step has a short title (5–10 words) and a what_to_find description (1–3 sentences) explaining what success looks like for that step. " +
 			"Order steps by dependency: foundation/discovery first, then deeper investigation that builds on it. " +
-			"Typically 5–12 steps for a generic system; scale up to 15+ for complex appliances (Kubernetes hosts, multi-tenant DB servers, hosts running many distinct services). " +
+			"Typically 5–12 steps for a generic system; scale up to 15+ for complex systems (Kubernetes hosts, multi-tenant DB servers, hosts running many distinct services). " +
 			"Err toward more steps with narrower scopes rather than fewer steps with sprawling scopes: narrow steps produce sharper findings and clearer gap reports. " +
 			"You can revise step status as you go, but the initial plan is your contract: use revise_plan only if findings reveal a step you couldn't have known to include."
 	}

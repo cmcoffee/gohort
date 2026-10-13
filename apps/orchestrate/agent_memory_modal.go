@@ -42,7 +42,7 @@ const agentMemoryModalTemplate = `<script>
     if (!window.uiRegisterClientAction) { setTimeout(register, 50); return; }
     window.uiRegisterClientAction('__UI_ACTION__', function() {
       // Resolve the endpoint base ONCE at open. A surface whose target
-      // varies (servitor's appliance picker) passes a resolver call; if it
+      // varies (servitor's system picker) passes a resolver call; if it
       // returns falsy (nothing selected, after alerting), abort opening.
       var MEMBASE = (__BASE_EXPR__);
       if (MEMBASE == null) { return; }

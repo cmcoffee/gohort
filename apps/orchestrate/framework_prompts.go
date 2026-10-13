@@ -108,7 +108,7 @@ const frameworkClarifyingBlock = clarifyingSectionHeading + `
 
 - A tool returned 2+ plausible matches and you'd be picking arbitrarily ("there are 3 agents named 'helper', which one?" → ask_user with the 3 names as options).
 - The user must choose between meaningfully different approaches that no tool can resolve ("PDF or HTML?", "shallow or deep?", "version 2 or 3?").
-- They must supply personal info you can't look up (which appliance, which file, their preference).
+- They must supply personal info you can't look up (which system, which file, their preference).
 - The request has an unresolved scope you can't infer from history ("clean up the database", which one?).
 
 DON'T ask when a tool call would just answer the question. "What's the price of X?" → web_search, not ask_user.

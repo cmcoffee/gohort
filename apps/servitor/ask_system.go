@@ -49,7 +49,7 @@ func AskSystemToolDef(sess *ToolSession, udb Database, owner, agentID string, co
 	// Servitor tools" when asked to consult Servitor — true of the vocabulary
 	// it had been given, and wrong about what it could do.
 	desc := "Ask Servitor a question about the live state or configuration of one of the owner's systems: \"what's the current load?\", \"is nginx running?\", \"how full is the data disk?\". " +
-		"This is THE way to answer anything about the owner's machines, servers, appliances, lab systems or infrastructure: a Servitor investigator that already knows the system answers it, consulting what it has recorded and probing over SSH where records aren't enough. " +
+		"This is THE way to answer anything about the owner's machines, servers, devices, lab systems or infrastructure: a Servitor investigator that already knows the system answers it, consulting what it has recorded and probing over SSH where records aren't enough. " +
 		"Strictly read-only: it can inspect, never change. " +
 		"Slow (tens of seconds): ask one well-formed question rather than many small ones. " +
 		"For ACTIONS (restart, deploy, clean up), use request_capability or an approved tool instead."

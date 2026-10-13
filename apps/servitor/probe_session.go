@@ -932,7 +932,7 @@ func (pr *probeRun) memoryTools() {
 	pr.note_lesson_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "note_lesson",
-			Description: "Append a lesson or correction to the persistent notes for this appliance. Call this after discovering a mistake, a wrong assumption, or a non-obvious quirk about this system (e.g. 'sudo is not installed', 'mysql uses socket /tmp/mysql.sock not /var/run', 'journalctl requires sudo'). Notes are re-injected into every future session so the same mistake is not repeated.",
+			Description: "Append a lesson or correction to the persistent notes for this system. Call this after discovering a mistake, a wrong assumption, or a non-obvious quirk about this system (e.g. 'sudo is not installed', 'mysql uses socket /tmp/mysql.sock not /var/run', 'journalctl requires sudo'). Notes are re-injected into every future session so the same mistake is not repeated.",
 			Parameters: map[string]ToolParam{
 				"note": {Type: "string", Description: "The lesson to record. Be concise and specific: one sentence per call."},
 			},
@@ -1046,14 +1046,14 @@ func (pr *probeRun) memoryTools() {
 	pr.store_fact_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "store_fact",
-			Description: "Save an APPLIANCE-WIDE property (os, hostname, kernel, arch, timezone, primary role) under a short key; same key overwrites. Component-specific details (a service's version, port, or config path), go on that component's own entity via link_entities subject_attrs, NOT here. ttl='short' for volatile state, default 'long'. (The 'What to Record' section has the full routing guide.)",
+			Description: "Save a SYSTEM-WIDE property (os, hostname, kernel, arch, timezone, primary role) under a short key; same key overwrites. Component-specific details (a service's version, port, or config path), go on that component's own entity via link_entities subject_attrs, NOT here. ttl='short' for volatile state, default 'long'. (The 'What to Record' section has the full routing guide.)",
 			Parameters: map[string]ToolParam{
-				"key":   {Type: "string", Description: "Short appliance-wide key, e.g. 'os', 'hostname', 'kernel', 'arch'. NOT a component-specific key like 'nginx_version', that goes in link_entities subject_attrs."},
+				"key":   {Type: "string", Description: "Short system-wide key, e.g. 'os', 'hostname', 'kernel', 'arch'. NOT a component-specific key like 'nginx_version', that goes in link_entities subject_attrs."},
 				"value": {Type: "string", Description: "The fact value."},
 				"ttl":   {Type: "string", Description: "Freshness window: 'short' (re-verify after 30 min, for volatile state) or 'long' (trust for 24h, for stable config/versions). Default: 'long'."},
 				"tags": {
 					Type:        "array",
-					Description: "Optional labels for cross-appliance search, e.g. 'database', 'security', 'network'.",
+					Description: "Optional labels for cross-system search, e.g. 'database', 'security', 'network'.",
 					Items:       &ToolParam{Type: "string"},
 				},
 			},
@@ -1083,7 +1083,7 @@ func (pr *probeRun) memoryTools() {
 	pr.link_entities_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "link_entities",
-			Description: "Record a RELATIONSHIP between two named parts of this system: the structured graph map. Subject-relation-object, e.g. subject='nginx' relation='proxies to' object='app on :8080'. Entities auto-merge by name; put non-relational details (version, path, port) in subject_attrs. Call it whenever you learn how parts connect. (store_fact is only for appliance-wide properties; the 'What to Record' section has the full routing guide.)",
+			Description: "Record a RELATIONSHIP between two named parts of this system: the structured graph map. Subject-relation-object, e.g. subject='nginx' relation='proxies to' object='app on :8080'. Entities auto-merge by name; put non-relational details (version, path, port) in subject_attrs. Call it whenever you learn how parts connect. (store_fact is only for system-wide properties; the 'What to Record' section has the full routing guide.)",
 			Parameters: map[string]ToolParam{
 				"subject":       {Type: "string", Description: "The subject entity's name, e.g. 'nginx', 'app', 'postgres'."},
 				"subject_kind":  {Type: "string", Description: "Subject type: service, app, database, host, file, process, port, or thing. Defaults to thing."},
@@ -1230,10 +1230,10 @@ func (pr *probeRun) readTools() {
 	pr.search_facts_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "search_facts",
-			Description: "Search stored facts across all appliances by keyword. Checks fact keys, values, and tags. Call this before running SSH commands: the answer may already be in persistent memory.",
+			Description: "Search stored facts across all systems by keyword. Checks fact keys, values, and tags. Call this before running SSH commands: the answer may already be in persistent memory.",
 			Parameters: map[string]ToolParam{
 				"query":     {Type: "string", Description: "Substring to search in fact keys, values, and tags."},
-				"appliance": {Type: "string", Description: "Optional appliance name or ID filter."},
+				"appliance": {Type: "string", Description: "Optional system name or ID filter."},
 			},
 			Required: []string{"query"},
 		},
@@ -1277,7 +1277,7 @@ func (pr *probeRun) readTools() {
 	pr.search_knowledge_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "search_knowledge",
-			Description: "Search the curated KNOWLEDGE linked to this appliance (runbooks, vendor docs, guides the owner attached) for material relevant to the task. Returns the top matching passages with their source. Use it to ground your answer in authoritative reference material: it does NOT touch the live system, so pair it with the system-probing tools rather than replacing them.",
+			Description: "Search the curated KNOWLEDGE linked to this system (runbooks, vendor docs, guides the owner attached) for material relevant to the task. Returns the top matching passages with their source. Use it to ground your answer in authoritative reference material: it does NOT touch the live system, so pair it with the system-probing tools rather than replacing them.",
 			Parameters: map[string]ToolParam{
 				"query": {Type: "string", Description: "What to look up, in natural language."},
 				"k":     {Type: "number", Description: "Max passages to return (default 5, max 12)."},
@@ -1464,7 +1464,7 @@ func (pr *probeRun) reportTools() {
 	pr.list_watches_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "list_watches",
-			Description: "List active watches registered for this appliance.",
+			Description: "List active watches registered for this system.",
 			Parameters:  map[string]ToolParam{},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -1485,7 +1485,7 @@ func (pr *probeRun) reportTools() {
 	pr.save_to_codewriter_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "save_to_codewriter",
-			Description: "Save a SQL query, shell script, or code snippet to the user's CodeWriter library in gohort. This is a local save action: do NOT run anything on the appliance. Use this when the user asks to save the script/query for later reuse rather than (or in addition to) running it immediately.",
+			Description: "Save a SQL query, shell script, or code snippet to the user's CodeWriter library in gohort. This is a local save action: do NOT run anything on the system. Use this when the user asks to save the script/query for later reuse rather than (or in addition to) running it immediately.",
 			Parameters: map[string]ToolParam{
 				"name": {Type: "string", Description: "Short descriptive name for the snippet (e.g. 'Active connections by database')."},
 				"lang": {Type: "string", Description: "Language or type: 'sql', 'bash', 'python', 'go', 'javascript', 'text', etc."},
@@ -1515,7 +1515,7 @@ func (pr *probeRun) reportTools() {
 	pr.save_to_scribe_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "save_to_scribe",
-			Description: "Save a report, runbook, findings summary, or any prose document as a new guide in the user's Scribe library in gohort. This is a local save action: do NOT run anything on the appliance or search for Scribe on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
+			Description: "Save a report, runbook, findings summary, or any prose document as a new guide in the user's Scribe library in gohort. This is a local save action: do NOT run anything on the system or search for Scribe on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
 			Parameters: map[string]ToolParam{
 				"subject": {Type: "string", Description: "Title or subject of the document (e.g. 'Disk usage report – web01', 'MySQL slow query runbook')."},
 				"body":    {Type: "string", Description: "Full document body in markdown. Use ## headings for its main parts: each becomes a section of the guide."},
@@ -1576,7 +1576,7 @@ func (pr *probeRun) reportTools() {
 	pr.record_finding_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "record_finding",
-			Description: "Report something you learned that is worth DOCUMENTING, without choosing a destination. Use this for anything durable a future reader would want: a config value, a path, a working procedure, a failure mode and its cause. A curator later decides which guide it belongs in, merges it with related findings, and drops what isn't worth keeping, so you do NOT name a guide or a section. Do NOT report that a probe ran, or that a service was up at one moment; that is not documentation. Local save action: never run anything on the appliance for this.",
+			Description: "Report something you learned that is worth DOCUMENTING, without choosing a destination. Use this for anything durable a future reader would want: a config value, a path, a working procedure, a failure mode and its cause. A curator later decides which guide it belongs in, merges it with related findings, and drops what isn't worth keeping, so you do NOT name a guide or a section. Do NOT report that a probe ran, or that a service was up at one moment; that is not documentation. Local save action: never run anything on the system for this.",
 			Parameters: map[string]ToolParam{
 				"topic":      {Type: "string", Description: "One line naming what this is ABOUT: e.g. \"nginx TLS cert renewal\", \"scheduler queue timeout\". Not a section title; the curator decides those."},
 				"content":    {Type: "string", Description: "The finding itself, in markdown, written so it is useful months from now: the concrete values, paths, and commands, not a narration of how you found them."},
@@ -1616,7 +1616,7 @@ func (pr *probeRun) reportTools() {
 	pr.push_to_guide_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "push_to_guide",
-			Description: "Add a finding from this investigation to one of the user's GUIDES (living documents in the gohort Guides app) as a new section. Local save action: do NOT run anything on the appliance or look for Guides on the remote system. Use when the user asks to add/document something you looked up into a guide (\"add the cron jobs to my Ops guide\"). If a guide with the given name exists it's appended to; otherwise a new guide by that name is created. Call list_guides first if unsure of the exact name.",
+			Description: "Add a finding from this investigation to one of the user's GUIDES (living documents in the gohort Guides app) as a new section. Local save action: do NOT run anything on the system or look for Guides on the remote system. Use when the user asks to add/document something you looked up into a guide (\"add the cron jobs to my Ops guide\"). If a guide with the given name exists it's appended to; otherwise a new guide by that name is created. Call list_guides first if unsure of the exact name.",
 			Parameters: map[string]ToolParam{
 				"guide":         {Type: "string", Description: "The target guide's name (e.g. 'Ops', 'DB Runbook'). If none matches an existing guide, a new guide with this name is created."},
 				"section_title": {Type: "string", Description: "Title for the new section (e.g. 'Cron jobs', 'Disk layout')."},
@@ -2074,7 +2074,7 @@ func (pr *probeRun) mapBrief() probeAction {
 		}
 	}
 	pr.m.invMsg.WriteString("Begin your investigation.\n\n")
-	pr.m.invMsg.WriteString("REQUIRED FIRST CALL: `set_plan` with ordered steps, typically 5–12, scale higher (15+) for complex appliances. Err toward more steps with narrower scopes rather than fewer with sprawling scopes; narrow steps produce sharper findings. Each step needs a short title and a what_to_find description. Foundation/discovery steps come first; deeper investigation later builds on what they find.\n\n")
+	pr.m.invMsg.WriteString("REQUIRED FIRST CALL: `set_plan` with ordered steps, typically 5–12, scale higher (15+) for complex systems. Err toward more steps with narrower scopes rather than fewer with sprawling scopes; narrow steps produce sharper findings. Each step needs a short title and a what_to_find description. Foundation/discovery steps come first; deeper investigation later builds on what they find.\n\n")
 	pr.m.invMsg.WriteString("After the plan is set, work the steps one at a time:\n")
 	pr.m.invMsg.WriteString("  1. mark_step_in_progress (step_id)\n")
 	pr.m.invMsg.WriteString("  2. probe (delegate worker investigation for that step: may call multiple times)\n")

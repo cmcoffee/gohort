@@ -445,7 +445,7 @@ func listReferenceSourcesToolDef(user string) AgentToolDef {
 func renderReferenceSources(user string) string {
 	groups := ReferenceGroups(user)
 	if len(groups) == 0 {
-		return "No reference sources are available to this user. Servitor systems appear once appliances exist; file stores once an admin registers a folder (and the user is allowed to reach it); document spaces once connected."
+		return "No reference sources are available to this user. Servitor systems appear once one is added; file stores once an admin registers a folder (and the user is allowed to reach it); document spaces once connected."
 	}
 	var b strings.Builder
 	b.WriteString("Attachable reference sources. Pass these as attached_sources entries in the form \"<kind>:<item_id>\":\n\n")

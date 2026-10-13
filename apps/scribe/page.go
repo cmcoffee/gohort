@@ -675,7 +675,7 @@ const guideSourcesAction = `function(ctx){
           group_by_field:'group',
           noun:'source',
           intro:'Attach knowledge other gohort services have gathered: your Systems (servitor) and connected document sources (e.g. Confluence). The Guide Author builds the guide from the sources you pick here.',
-          empty_text:'No reference sources available yet. Systems appear once you have appliances in the servitor app; document sources appear once connected.'
+          empty_text:'No reference sources available yet. Systems appear once you have systems in the servitor app; document sources appear once connected.'
         }, body);
       }});
 }`

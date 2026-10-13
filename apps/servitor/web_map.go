@@ -63,7 +63,7 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 		// the appliance facts table) survive the re-map; only the
 		// profile blob is overwritten.
 		mapMsg := fmt.Sprintf(
-			"Perform a complete reconnaissance and profile of the Linux appliance at %s (connected as %s). Be systematic and thorough. Discover all services, configurations, and log file locations.",
+			"Perform a complete reconnaissance and profile of the Linux system at %s (connected as %s). Be systematic and thorough. Discover all services, configurations, and log file locations.",
 			appliance.Host, appliance.User,
 		)
 		if appliance.Type == "repo" {
