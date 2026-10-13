@@ -155,8 +155,6 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				http.Error(w, "not your agent", http.StatusForbidden)
 				return
 			} else {
-				// (Locked needs no restore here: saveAgent preserves the
-				// stored flag for every caller. See setAgentLocked.)
 				// Where the agent lives changes only through the move
 				// endpoint, which checks the destination. A whole-record
 				// save echoes it at best and re-parents unchecked at worst.
@@ -320,7 +318,6 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 //     layer out: a partial save that could turn the injection scanner off, or
 //     add a tool to its skip list, is a partial save that can arrange to be
 //     unwatched
-//   - locked — owned by the lock icon
 //   - owned_by — moving an agent is /api/agents/<id>/move, which checks where
 //   - id / owner / created — identity, not settings
 var patchAgentFields = map[string]bool{
@@ -394,10 +391,6 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 	}
 	if existing.Owner != "" && existing.Owner != user && existing.Owner != seedOwner {
 		http.Error(w, "not your agent", http.StatusForbidden)
-		return
-	}
-	if agentLocked(udb, existing) {
-		http.Error(w, "this agent is locked: unlock it (the 🔒 icon) before editing", http.StatusConflict)
 		return
 	}
 	// Merge: start from the stored record's own JSON so untouched fields keep
@@ -681,10 +674,6 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		T.handleAgentPhantomSessionOne(w, r, user, id, sid)
 		return
 	}
-	if action == "lock" {
-		T.handleAgentLock(w, r, user, id)
-		return
-	}
 	if action == "knowledge/auto-inferred" {
 		T.handleAgentKnowledgeAutoInferredWipe(w, r, user, id)
 		return
@@ -796,8 +785,7 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		// allowed_dispatch_targets picker silently never saved (the dispatch
 		// allowlist "didn't work"). Decoding the posted body INTO the loaded
 		// record merges: present fields overwrite, absent fields keep their
-		// stored value — and Locked (owned by the lock icon) is preserved since
-		// the partial body never carries it.
+		// stored value.
 		existing, ok := loadAgent(udb, id)
 		if !ok || (existing.Owner != "" && existing.Owner != user && existing.Owner != seedOwner) {
 			http.NotFound(w, r)
@@ -868,50 +856,6 @@ func tempToolDefEqual(a, b TempTool) bool {
 		return t
 	}
 	return reflect.DeepEqual(neutralize(a), neutralize(b))
-}
-
-// handleAgentLock toggles the per-agent edit/delete lock — POST /api/agents/{id}/lock
-// {locked}. This is the HUMAN control (the editor's lock icon), so it's owner-
-// gated only; the agent-CRUD tools enforce the lock, they don't set it. Locked
-// is changed ONLY here — the main agent save preserves the stored value — so the
-// icon is the single source of truth and a form save can't clobber it.
-func (T *OrchestrateApp) handleAgentLock(w http.ResponseWriter, r *http.Request, user, id string) {
-	if r.Method != http.MethodPost && r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	udb := UserDB(T.DB, user)
-	a, ok := loadAgent(udb, id)
-	// Seeds load with an empty Owner until first shadowed; treat that as the
-	// caller's own. A non-seed must already belong to the caller.
-	if !ok || (a.Owner != "" && a.Owner != user) {
-		http.NotFound(w, r)
-		return
-	}
-	// One lock per family: a sub-agent's lock IS its parent's, so reading or
-	// switching it here reads or switches the parent's.
-	holder := lockHolder(udb, a)
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method == http.MethodGet {
-		_ = json.NewEncoder(w).Encode(map[string]any{"locked": holder.Locked})
-		return
-	}
-	var req struct {
-		Locked bool `json:"locked"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	holder.Owner = user
-	// The RETURNED record, not the local one: setAgentLocked takes a by value,
-	// so the caller's copy still carries the old flag and would report it.
-	saved, err := setAgentLocked(udb, holder, req.Locked)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Switching the lock either way is the user saying what they want now, so
-	// any session pass a chat was holding on this family ends here.
-	endLockPasses(saved.ID)
-	_ = json.NewEncoder(w).Encode(map[string]any{"locked": saved.Locked})
 }
 
 // newlyHidden reports whether this save is the one turning Hidden ON — a new

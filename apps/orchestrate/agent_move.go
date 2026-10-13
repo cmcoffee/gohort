@@ -70,9 +70,6 @@ func newAgentMove(db Database, owner, id, parentID string) (*agentMove, error) {
 	if a.Owner != owner {
 		return nil, fmt.Errorf("not your agent")
 	}
-	if agentLocked(db, a) {
-		return nil, fmt.Errorf("this agent is locked: unlock it (the 🔒 icon) before moving it")
-	}
 	m := &agentMove{db: db, owner: owner, agent: a}
 	parentID = strings.TrimSpace(parentID)
 	if parentID == strings.TrimSpace(a.OwnedBy) {

@@ -822,12 +822,6 @@ type AgentRecord struct {
 	// agents, which ARE a boundary, are the appagents registry.)
 	OwningApp string `json:"owning_app,omitempty"`
 
-	// Locked protects this agent from being edited or deleted BY ANOTHER AGENT
-	// (the agent-CRUD tools). Only the human — via the dashboard/editor — can
-	// change a locked agent. Off by default; the user opts in to protect agents
-	// they don't want an authoring agent (Builder, a misfiring fleet) to touch.
-	Locked bool `json:"locked,omitempty"`
-
 	// InheritParentTools makes an owned sub-agent (OwnedBy set) resolve the
 	// PARENT's inheritable tool catalog at runtime in ADDITION to its own
 	// AllowedTools. "Inheritable" is the parent's non-consequential set — its

@@ -205,17 +205,6 @@ func enforceSubAgentPosture(a AgentRecord) AgentRecord {
 // records. Owner must be set by the caller. Seed-IDs are written
 // under the same ID as user-owned shadow records (no forking) — this
 // is what makes "Edit a seed, then Revert" work.
-// saveAgent writes an agent record, PRESERVING the stored Locked flag.
-//
-// Locked is the human's lock icon and belongs to handleAgentLock alone. That
-// rule used to be enforced by each HTTP save path reading the stored value back
-// before calling here — three places, correct in all three, and structurally
-// unable to cover a fourth. A path that built a record and called saveAgent
-// directly cleared an admin's lock with no error and no log, which is the worst
-// shape a permission bug takes.
-//
-// Enforced here now, so the rule holds for every caller that exists and every
-// caller that does not yet. setAgentLocked is the one door through it.
 func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 	return saveAgentAs(db, a, "update")
 }
@@ -229,7 +218,7 @@ func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 // call sites and every one of them would otherwise have to have an opinion.
 // Same split as core's SaveAppSpec / SaveAppSpecAs, for the same reason.
 func saveAgentAs(db Database, a AgentRecord, reason string) (AgentRecord, error) {
-	return writeAgent(db, a, false, reason)
+	return writeAgent(db, a, reason)
 }
 
 // rollbackAgent restores a kept version of an agent. ref is a revision id
@@ -267,36 +256,15 @@ func rollbackAgent(db Database, id, ref string) (AgentRecord, error) {
 	return saveAgentAs(db, restored, fmt.Sprintf("rolled back to #%d", rev.Seq))
 }
 
-// setAgentLocked is the ONLY way to change an agent's lock. Separate function
-// rather than a flag on saveAgent, so the exception is something a caller has
-// to reach for by name — grep for it and the answer is the lock handler.
-func setAgentLocked(db Database, a AgentRecord, locked bool) (AgentRecord, error) {
-	a.Locked = locked
-	// No snapshot: a lock is a one-bit toggle with its own explicit setter, so
-	// filing it would spend a slot in a ring six deep on something that is
-	// already trivially reversible, and evict an actual edit to do it.
-	return writeAgent(db, a, true, revisions.NoHistory)
-}
-
-// writeAgent is the single store write. maySetLocked is false for everything
-// except setAgentLocked.
-func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (AgentRecord, error) {
+// writeAgent is the single store write.
+func writeAgent(db Database, a AgentRecord, reason string) (AgentRecord, error) {
 	if db == nil {
 		return a, fmt.Errorf("db not initialized")
-	}
-	if !maySetLocked && a.ID != "" {
-		// A record with no stored counterpart is a creation; there is no lock
-		// to preserve and the caller's value (normally false) stands.
-		if existing, ok := loadAgent(db, a.ID); ok {
-			a.Locked = existing.Locked
-		}
 	}
 	// What the CALLER decided, recorded before the invariants below get a
 	// vote. A rule that fires on save is the framework's decision, not the
 	// user's, and recording it as an override would freeze that field against
-	// every future framework change. The Locked preservation above runs first
-	// on purpose: an unchanged lock is not a user decision either, but losing
-	// it would be.
+	// every future framework change.
 	a = recordSeedOverrides(a)
 	// After the override record, so a pinned list is not mistaken for a
 	// decision the caller made: it is the same decision, written by id.

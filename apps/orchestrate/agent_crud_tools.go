@@ -20,8 +20,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -648,14 +646,13 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if msg := subAgentLimitsRefusal(sess.DB, parentID, args); msg != "" {
 		return "", errors.New(msg)
 	}
-	// LOCK — no editing another agent's sub-agent (see agentMutationLock).
-	if msg := agentMutationLock(&existing, sess, "update its settings ("+strings.Join(sortedArgKeys(args, "id"), ", ")+")"); msg != "" {
+	// No editing another agent's sub-agent (see agentFamilyRefusal).
+	if msg := agentFamilyRefusal(&existing, sess); msg != "" {
 		return "", errors.New(msg)
 	}
 	// A change to an agent that already exists asks the owner first, once per
-	// agent per session (change_approval.go). A locked agent was just asked
-	// about by its lock, so it is not asked twice.
-	if sess.ApproveChange != nil && !agentLocked(sess.DB, existing) {
+	// agent per session (change_approval.go).
+	if sess.ApproveChange != nil {
 		if msg := sess.ApproveChange("agent", existing.Name, "Update its settings ("+strings.Join(sortedArgKeys(args, "id"), ", ")+").", true); msg != "" {
 			return msg, nil
 		}
@@ -848,10 +845,10 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		return "", err
 	}
 	if ok {
-		if msg := agentMutationLock(&target, sess, "delete it"); msg != "" {
+		if msg := agentFamilyRefusal(&target, sess); msg != "" {
 			return "", errors.New(msg)
 		}
-		if sess.ApproveChange != nil && !agentLocked(sess.DB, target) {
+		if sess.ApproveChange != nil {
 			what := "Delete it."
 			if uses := agentUsedBy(sess.DB, sess.Username, target); len(uses) > 0 {
 				what += " These run through it and will stop working: " + agentUsesText(uses) + "."
@@ -883,27 +880,25 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	return fmt.Sprintf(`{"deleted":%q}`, id), nil
 }
 
-// agentMutationLock gates tool-initiated delete/update of an agent.
+// agentFamilyRefusal gates tool-initiated delete/update of an agent.
 //
 // An agent may change only its own sub-agents, never another agent's: an agent
 // that dispatched Builder (sess.DispatchParentAgentID) gets its own family and
 // no other. Builder in a conversation with the user, not dispatched by any
 // agent, is the user's hands, so it may change any of their agents, sub-agents
 // included; the empty caller used to compare unequal to every owner, which
-// left Builder unable to touch a sub-agent the user asked it to change, before
-// any card could ask them. The lock still applies to everyone (lockCheck).
+// left Builder unable to touch a sub-agent the user asked it to change.
 //
-// change says what the call would do, for the card a locked target raises.
-// The sub-agent rule is checked first: it holds whatever the person answers,
-// so asking them about the lock on a target that rule refuses anyway would be
-// a question whose yes changes nothing.
-func agentMutationLock(target *AgentRecord, sess *ToolSession, change string) string {
+// Checked before the change question (change_approval.go): it holds whatever
+// the person answers, so asking first would be a question whose yes changes
+// nothing.
+func agentFamilyRefusal(target *AgentRecord, sess *ToolSession) string {
 	caller := strings.TrimSpace(sess.DispatchParentAgentID)
 	forTheUser := caller == "" && isBuilderAgent(sess.AgentID)
 	if target.OwnedBy != "" && target.OwnedBy != caller && !forTheUser {
 		return fmt.Sprintf("can't modify %q: it belongs to another agent; only its owner or the user (from the dashboard, or by asking Builder directly) can change it", target.ID)
 	}
-	return lockCheck{Ask: sess.AskInChat, DB: sess.DB, Session: sess.ChatSessionID}.gate(target, change)
+	return ""
 }
 
 // subAgentLimitsRefusal is what setting limits on a sub-agent says: they are
@@ -930,143 +925,6 @@ func subAgentLimitsRefusal(db Database, parentID string, args map[string]any) st
 		parent = chFirst(p.Name, p.ID)
 	}
 	return fmt.Sprintf("%s: a sub-agent has no limits of its own. What it spends and runs counts against its parent's, so set them on %q instead (update_agent on the parent), or leave them out.", strings.Join(set, " and "), parent)
-}
-
-// Answers on the locked-agent card. Named once: lockCheck.gate offers them and
-// matches on them. Turning the lock off for good is not on the card: it is a
-// real decision, made in the editor (the lock icon), not in passing mid-chat.
-const (
-	lockAllowOnce     = "Allow this change"
-	lockUnlockSession = "Unlock for this session"
-)
-
-// lockHolder is the record whose lock governs a: its parent, for a sub-agent.
-// One lock per family: a sub-agent exists to serve its parent, and a lock the
-// parent has but its sub-agents do not leaves the family's working parts
-// unguarded behind a locked front. A sub-agent whose parent is gone answers to
-// its own flag.
-func lockHolder(db Database, a AgentRecord) AgentRecord {
-	if p := strings.TrimSpace(a.OwnedBy); p != "" && db != nil {
-		if parent, ok := loadAgent(db, p); ok {
-			return parent
-		}
-	}
-	return a
-}
-
-// agentLocked reports whether a is locked, by its family's lock.
-func agentLocked(db Database, a AgentRecord) bool { return lockHolder(db, a).Locked }
-
-// lockCheck is everything the lock needs to decide a tool write: who to ask
-// (nil with nobody watching), the store, and the chat session asking, which an
-// "Unlock for this session" answer is granted to.
-type lockCheck struct {
-	Ask     func(prompt, detail string, yes []string) string
-	DB      Database
-	Session string
-}
-
-// gate decides a tool write to a locked agent. "" means go ahead.
-//
-// The user locked the agent so that no agent changes it without them, which
-// is a decision about THEIR say-so, not a rule that holds whatever they say.
-// So a write to one asks them, in the conversation: allow this one change
-// (the next asks again), unlock it for the rest of this session, or deny.
-// With nobody watching (a scheduled or unattended run, Ask == nil) there is
-// nobody to waive it, and the write is refused as it always was.
-//
-// "Unlock for this session" never touches the lock: the agent stays locked and
-// this one chat session holds a pass (lockPasses) for a while. So nothing has
-// to remember to lock it again, and a cancelled turn, a restart or a user who
-// walks away cannot leave it open. Every other chat and agent still meets the
-// lock. The pass is on the lock's holder, so it covers the whole family.
-//
-// Every tool path that writes an agent record goes through this: update and
-// delete via agentMutationLock, everything that attaches something TO an agent
-// via agentChangeGate.
-func (lc lockCheck) gate(target *AgentRecord, change string) string {
-	if target == nil {
-		return ""
-	}
-	holder := lockHolder(lc.DB, *target)
-	if !holder.Locked || lockPassValid(holder.ID, lc.Session) {
-		return ""
-	}
-	name := chFirst(target.Name, target.ID)
-	family := ""
-	if holder.ID != target.ID {
-		family = " with its parent, " + chFirst(holder.Name, holder.ID) + ","
-	}
-	if lc.Ask == nil {
-		return fmt.Sprintf("can't modify %q: it's locked%s and only the user can approve changing it; nobody is watching this run to ask. Tell the user, who can approve it from a chat or unlock it in the agent editor.", name, family)
-	}
-	prompt := fmt.Sprintf("🔒 %s is locked%s. An agent wants to change it.", name, family)
-	answers := []string{lockAllowOnce}
-	detail := "Change: " + change + "\n\n" + lockAllowOnce + " lets only this change through; the next one asks again."
-	if lc.Session != "" {
-		answers = append(answers, lockUnlockSession)
-		detail += " " + lockUnlockSession + " lets this chat change it, and the rest of its family, for the next " + lockPassTTLWords + "; it stays locked for every other chat and agent."
-	}
-	detail += " To turn the lock off for good, use the lock icon in its editor."
-	switch lc.Ask(prompt, detail, answers) {
-	case lockAllowOnce:
-		return ""
-	case lockUnlockSession:
-		grantLockPass(holder.ID, lc.Session)
-		return ""
-	}
-	return fmt.Sprintf("can't modify %q: it's locked, and the user declined this change (%s). Do not retry it or work around it; it stays as it is.", name, change)
-}
-
-// A session pass: "Unlock for this session" on the lock card. In memory on
-// purpose: a restart ends every pass, which errs toward asking again.
-const (
-	lockPassTTL      = 2 * time.Hour
-	lockPassTTLWords = "two hours"
-)
-
-var lockPasses = struct {
-	sync.Mutex
-	until map[string]time.Time // lock holder id + session id -> expiry
-}{until: map[string]time.Time{}}
-
-func lockPassKey(holderID, session string) string { return holderID + "\x00" + session }
-
-func grantLockPass(holderID, session string) {
-	if holderID == "" || session == "" {
-		return
-	}
-	lockPasses.Lock()
-	defer lockPasses.Unlock()
-	lockPasses.until[lockPassKey(holderID, session)] = time.Now().Add(lockPassTTL)
-}
-
-func lockPassValid(holderID, session string) bool {
-	if holderID == "" || session == "" {
-		return false
-	}
-	lockPasses.Lock()
-	defer lockPasses.Unlock()
-	key := lockPassKey(holderID, session)
-	exp, ok := lockPasses.until[key]
-	if ok && time.Now().Before(exp) {
-		return true
-	}
-	delete(lockPasses.until, key)
-	return false
-}
-
-// endLockPasses ends every session pass on a family, for when its lock is
-// switched either way: the user has just said what they want.
-func endLockPasses(holderID string) {
-	lockPasses.Lock()
-	defer lockPasses.Unlock()
-	prefix := holderID + "\x00"
-	for k := range lockPasses.until {
-		if strings.HasPrefix(k, prefix) {
-			delete(lockPasses.until, k)
-		}
-	}
 }
 
 // --- shared param + merge helpers -----------------------------------------

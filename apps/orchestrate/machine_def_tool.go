@@ -765,7 +765,7 @@ func (t *chatTurn) attachMachineToAgents(raw any, machineID string) (attached, u
 		}
 		// After the no-op check: an agent already on this machine has nothing
 		// to approve.
-		if msg := agentChangeGate(t.lockCheck(), &ag, t.user, fmt.Sprintf("run it as machine %q", machineID)); msg != "" {
+		if msg := agentChangeGate(t.approveChange, &ag, t.user, fmt.Sprintf("run it as machine %q", machineID)); msg != "" {
 			unknown = append(unknown, key+" ("+msg+")")
 			continue
 		}

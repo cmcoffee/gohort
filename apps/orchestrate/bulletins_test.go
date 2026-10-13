@@ -147,7 +147,7 @@ func TestBuilderSetsUpABoard(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	bot, _ := saveAgent(db, AgentRecord{Name: "Briefing Bot", Owner: "u", OrchestratorPrompt: "p"})
 	wren, _ := saveAgent(db, AgentRecord{Name: "Wren", Owner: "u", OrchestratorPrompt: "p"})
-	tool := bulletinsToolDef(&chatTurn{udb: db, user: "u"})
+	tool := bulletinsToolDef(&chatTurn{udb: db, user: "u", changeAsk: approveEveryChange})
 	call := func(args map[string]any) string {
 		out, err := tool.Handler(context.Background(), args)
 		if err != nil {
@@ -227,7 +227,7 @@ func TestASubAgentPostsUnderItsParentsRight(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	wren, _ := saveAgent(db, AgentRecord{Name: "Wren", Owner: "u", OrchestratorPrompt: "p"})
 	radar, _ := saveAgent(db, AgentRecord{Name: "Local Radar", Owner: "u", OrchestratorPrompt: "p", OwnedBy: wren.ID, Hidden: true})
-	tool := bulletinsToolDef(&chatTurn{udb: db, user: "u"})
+	tool := bulletinsToolDef(&chatTurn{udb: db, user: "u", changeAsk: approveEveryChange})
 	if _, err := tool.Handler(context.Background(), map[string]any{"action": "create", "name": "local-radar"}); err != nil {
 		t.Fatal(err)
 	}

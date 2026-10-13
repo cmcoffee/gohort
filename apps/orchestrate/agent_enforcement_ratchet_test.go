@@ -107,25 +107,3 @@ func TestTheAgentIsToldWhatDidNotMove(t *testing.T) {
 		t.Error("create_agent was ratcheted, so Builder cannot configure a new agent")
 	}
 }
-
-// The lock is the control that makes every other control on the page stick, so
-// it is ON the page. It lived only as an icon on the editor, which is the one
-// place somebody securing an agent was told not to look.
-func TestTheLockIsOfferedWhereTheOtherControlsAre(t *testing.T) {
-	page := mustReadFile(t, "page_agent_access.go")
-	if !strings.Contains(page, `{Field: "locked", Type: "toggle"`) {
-		t.Error("Security does not offer the lock, so the control that protects the others is elsewhere")
-	}
-	// Its OWN endpoint. Locked is deliberately not patchable - setAgentLocked
-	// is the single door - so a form posting it to the agent PATCH would be
-	// dropped and the toggle would revert on the next reload.
-	if !strings.Contains(page, "lockURL := patchURL + \"/lock\"") {
-		t.Error("the lock toggle does not post to the lock endpoint")
-	}
-	if !strings.Contains(page, "PostURL: lockURL") {
-		t.Error("the lock panel posts somewhere other than the lock endpoint")
-	}
-	if patchAgentFields["locked"] {
-		t.Error("locked became patchable, so an ordinary form save can now clobber a lock")
-	}
-}

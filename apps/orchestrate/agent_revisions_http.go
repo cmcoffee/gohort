@@ -18,8 +18,7 @@ import (
 
 // handleAgentRevisions serves /api/agents/{id}/revisions[/preview|/restore].
 //
-// Owner-gated the way handleAgentLock is, and for the same reason: this is a
-// human acting on their own agent. Seeds load with an empty Owner until first
+// Owner-gated: this is a human acting on their own agent. Seeds load with an empty Owner until first
 // shadowed, which counts as the caller's own.
 func (T *OrchestrateApp) handleAgentRevisions(w http.ResponseWriter, r *http.Request, user, id, action string) {
 	udb := UserDB(T.DB, user)
@@ -28,20 +27,12 @@ func (T *OrchestrateApp) handleAgentRevisions(w http.ResponseWriter, r *http.Req
 		http.NotFound(w, r)
 		return
 	}
-	locked := ""
-	if agentLocked(udb, a) {
-		// A restore is the largest edit there is, so the lock that stops an
-		// edit stops this too. Reading history stays open: a lock is about
-		// changing the agent, not about knowing what it used to say.
-		locked = "this agent is locked: unlock it first (Security -> Limits, or the 🔒 icon at the top-right of the editor)"
-	}
 	revisions.Surface{
-		Store:        udb,
-		Kind:         revisions.KindAgent,
-		Key:          id,
-		Noun:         "agent",
-		Current:      a,
-		LockedReason: locked,
+		Store:   udb,
+		Kind:    revisions.KindAgent,
+		Key:     id,
+		Noun:    "agent",
+		Current: a,
 		Restore: func(ref string) error {
 			_, err := rollbackAgent(udb, id, ref)
 			return err

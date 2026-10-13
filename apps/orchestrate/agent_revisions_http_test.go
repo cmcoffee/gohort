@@ -168,24 +168,6 @@ func TestAgentRevisionRestoreGoesBackAndStaysReversible(t *testing.T) {
 	}
 }
 
-// A lock exists so nothing changes this agent until the owner takes it off,
-// and a restore is the largest edit there is.
-func TestAgentRevisionRestoreRefusesALockedAgent(t *testing.T) {
-	app, req, udb := authedApp(t)
-	a := seedEditedAgent(t, udb)
-	if _, err := setAgentLocked(udb, a, true); err != nil {
-		t.Fatalf("lock: %v", err)
-	}
-	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req("POST", "/api/agents/"+a.ID+"/revisions/restore?rev=1", nil))
-	if w.Code != 403 {
-		t.Fatalf("status %d, want 403: %s", w.Code, w.Body.String())
-	}
-	if cur, _ := loadAgent(udb, a.ID); cur.OrchestratorPrompt != "v3" {
-		t.Errorf("a locked agent was restored anyway: %q", cur.OrchestratorPrompt)
-	}
-}
-
 func TestAgentRevisionRestoreRefusesAnUnknownVersion(t *testing.T) {
 	app, req, udb := authedApp(t)
 	a := seedEditedAgent(t, udb)

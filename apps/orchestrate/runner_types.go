@@ -130,7 +130,7 @@ type chatTurn struct {
 	changeAsk func(prompt, detail string, yes []string) string
 	// askVia is the question card of the turn that DISPATCHED this one, for a
 	// sub-turn that has no viewer of its own. A run an agent starts for the
-	// user is the user's run: a locked agent the sub-run wants to change asks
+	// user is the user's run: a change the sub-run wants the owner to approve asks
 	// the person watching the calling turn, as a direct run asks them, rather
 	// than refusing because nobody watches the sub-run. Set by the inline
 	// agents(run) path; nil everywhere else.

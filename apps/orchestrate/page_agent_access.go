@@ -79,14 +79,6 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	name := chFirst(agent.Name, agent.ID)
-	// One lock per family: a sub-agent's toggle is its parent's lock, so it
-	// says so, and the parent's says it covers its sub-agents.
-	lockLabel, lockHelp := "Locked: no agent may edit this one", "You can still edit it. This stops agents, including the one being configured. Its sub-agents are locked with it."
-	if holder := lockHolder(udb, agent); holder.ID != agent.ID {
-		pn := chFirst(holder.Name, holder.ID)
-		lockLabel = "Locked with its parent, " + pn
-		lockHelp = "A sub-agent has no lock of its own: this is " + pn + "'s lock, and switching it here switches it for " + pn + " and all of its sub-agents."
-	}
 	// A parent forced Private makes its sub-agents Private (privateParentOf).
 	forcePrivateHelp := "Permanently drops network and sub-agent dispatch tools, and holds the agent on the local model."
 	if pp := privateParentOf(agent); pp != "" {
@@ -107,9 +99,6 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	// everything it holds, and everything it does not hold would be blanked.
 	patchURL := T.WebPrefix() + "/api/agents/" + url.PathEscape(agent.ID)
 	depthURL := patchURL + "/guardrail-depth"
-	// The lock has its own door: Locked is not a patchable field, so that one
-	// place stays the single source of truth for it.
-	lockURL := patchURL + "/lock"
 	policyURL := T.WebPrefix() + "/api/console/permissions/policy?id={_id}"
 	approveURL := T.WebPrefix() + "/api/console/approvals/approve?id={_id}"
 	alwaysURL := T.WebPrefix() + "/api/console/approvals/always?id={_id}"
@@ -536,23 +525,9 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			{
 				Group:    "Limits",
 				Title:    "Who may change any of this",
-				Subtitle: "Every other control on this page is set by you and enforced by the framework. This one decides whether an AGENT can come back and edit them.",
-				Detail: "An agent holding the authoring toolset (Builder, or one you gave it to) can call update_agent on any agent you own. It cannot LOOSEN a ceiling - the spend cap, the action limits and the privacy lock only ratchet tighter, and an attempt to raise one is reverted and reported - but it can change everything else about the agent, including its prompt, its rules and its tool allowlist.\n\n" +
-					"Locked means no agent may edit or delete this one, or any of its sub-agents, without you. With you watching, the agent asks: allow one change, or unlock it for that chat for two hours while it stays locked for everyone else. With nobody watching, the change is refused. Restoring an earlier revision is blocked too, since a restore is the largest edit there is. You keep editing it from here and from the editor either way.\n\n" +
-					"Worth setting on anything that runs unattended, holds a credential, or reaches a system you connected.",
-				Body: ui.FormPanel{
-					// Source and PostURL are both the lock's OWN endpoint: it
-					// answers with the family's lock (the parent's, for a
-					// sub-agent), and Locked is deliberately not patchable.
-					// setAgentLocked is the single door through it, so an
-					// ordinary form save cannot clobber a lock somebody set.
-					Source:  lockURL,
-					PostURL: lockURL,
-					Method:  "POST",
-					Fields: []ui.FormField{
-						{Field: "locked", Type: "toggle", Label: lockLabel, Help: lockHelp},
-					},
-				},
+				Subtitle: "You, from here and from the editor. An agent that authors asks you first.",
+				Detail: "An agent holding the authoring toolset (Builder, or one you gave it to) can change any agent you own: its prompt, its rules, its tool allowlist, and what is attached to it. Before it changes or deletes one that already exists, or attaches a tool, skill, pipeline, machine or bulletin board to it, it asks you, once per agent per chat. With nobody watching, the change waits in your approval queue instead.\n\n" +
+					"It cannot LOOSEN a ceiling either way: the spend cap, the action limits and the privacy lock only ratchet tighter, and an attempt to raise one is reverted and reported.",
 			},
 			{
 				Group:    "Limits",
@@ -560,7 +535,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Subtitle: "Ceilings the framework keeps, not rules the agent is asked to follow.",
 				Detail: "Written into a prompt instead - \"post at most six times a day\" - these are rules the model has to count for itself, and one did: it counted its own posts out of a listing, read UTC timestamps as local, and posted anyway.\n\n" +
 					"Counted here, a call is refused when the allowance is spent and the agent is told when it frees up. Only SUCCESSFUL calls count, so an outage never spends the day.\n\n" +
-					"These ratchet. An agent with authoring tools may lower its own limits and cannot raise or clear them - an update that tries is reverted and the agent is told to ask you. Lock the agent above to stop it editing anything at all.",
+					"These ratchet. An agent with authoring tools may lower its own limits and cannot raise or clear them - an update that tries is reverted and the agent is told to ask you.",
 				Body: ui.FormPanel{
 					Source:  patchURL,
 					PostURL: patchURL,

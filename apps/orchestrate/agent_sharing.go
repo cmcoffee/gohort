@@ -197,8 +197,8 @@ func SharedAgentsFor(db Database, user string) []AgentRecord {
 // shadow-cloned per user, and an unowned record predates ownership, so both
 // keep behaving exactly as they did.
 //
-// Ownership only. The lock is agentChangeGate's, because the person can waive
-// it on the spot and a share is not theirs to waive.
+// Ownership only. Asking the owner is agentChangeGate's, because the person
+// can approve a change on the spot and a share is not theirs to waive.
 func agentEditRefusal(a AgentRecord, user string) string {
 	owner := strings.TrimSpace(a.Owner)
 	if owner == "" || owner == seedOwner || owner == strings.TrimSpace(user) {
@@ -210,24 +210,23 @@ func agentEditRefusal(a AgentRecord, user string) string {
 
 // agentChangeGate is the check every tool runs before it attaches something TO
 // an agent (a tool, skill, machine, pipeline, a bulletin board). Another user's
-// agent is refused outright: a share is not this person's to waive. A locked
-// one asks them (lockCheck.gate). "" means go ahead; target is updated if they
-// chose to unlock it.
-func agentChangeGate(lc lockCheck, target *AgentRecord, user, change string) string {
+// agent is refused outright: a share is not this person's to waive. Their own
+// asks them, the same question update_agent asks (change_approval.go), so one
+// Approve covers both for the session. approve is the session's or the turn's
+// ApproveChange; nil asks nothing. "" means go ahead.
+func agentChangeGate(approve func(kind, name, detail string, existed bool) string, target *AgentRecord, user, change string) string {
 	if msg := agentEditRefusal(*target, user); msg != "" {
 		return msg
 	}
-	return lc.gate(target, change)
+	if approve == nil {
+		return ""
+	}
+	return approve("agent", chFirst(target.Name, target.ID), strings.ToUpper(change[:1])+change[1:]+".", true)
 }
 
-// chatAsker is this turn's question card, or nil with nobody watching, which
-// lockCheck.gate reads as a no. Mirrors ToolSession.AskInChat, which is only
-// wired on a turn with a live viewer.
-// lockCheck is this turn's side of the agent lock: its question card, its
-// store, and its chat session, which a session pass is granted to.
-func (t *chatTurn) lockCheck() lockCheck {
-	return lockCheck{Ask: t.chatAsker(), DB: t.udb, Session: t.chatSessionID()}
-}
+// chatAsker is this turn's question card, or nil with nobody watching.
+// Mirrors ToolSession.AskInChat, which is only wired on a turn with a live
+// viewer.
 
 func (t *chatTurn) chatAsker() func(prompt, detail string, yes []string) string {
 	if t == nil {

@@ -65,22 +65,6 @@ func TestResavingAnUnchangedAgentFilesNothing(t *testing.T) {
 	}
 }
 
-// A lock is a one-bit toggle with its own setter. Filing it would spend a slot
-// on something already trivially reversible and evict an actual edit.
-func TestLockingAnAgentFilesNothing(t *testing.T) {
-	db := &DBase{Store: kvlite.MemStore()}
-	created, err := saveAgent(db, AgentRecord{Name: "Scout", OrchestratorPrompt: "answer briefly"})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if _, err := setAgentLocked(db, created, true); err != nil {
-		t.Fatalf("lock: %v", err)
-	}
-	if revs := revisions.List(db, revisions.KindAgent, created.ID); len(revs) != 0 {
-		t.Errorf("locking filed %d revision(s)", len(revs))
-	}
-}
-
 func TestDeletingAnAgentDropsItsHistory(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	created, err := saveAgent(db, AgentRecord{Name: "Scout", OrchestratorPrompt: "v1", Owner: "u"})

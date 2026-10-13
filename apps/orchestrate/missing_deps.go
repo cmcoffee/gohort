@@ -511,10 +511,6 @@ func (T *OrchestrateApp) handleAgentMissing(w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": refs, "labels": labels})
 	case http.MethodPost:
-		if agentLocked(udb, a) {
-			http.Error(w, "this agent is locked: unlock it (the 🔒 icon) before editing", http.StatusConflict)
-			return
-		}
 		var body struct {
 			Kind   string `json:"kind"`
 			ID     string `json:"id"`

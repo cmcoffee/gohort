@@ -393,7 +393,7 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 	// regardless).
 	replaced := ""
 	replacedSwaps := []string{}
-	keptLocked := []string{}
+	keptOld := []string{}
 	if !isUpdate {
 		oldKey := strings.TrimSpace(stringArg(args, "replaces"))
 		if oldKey != "" && oldKey != saved.Name && oldKey != saved.ID {
@@ -428,13 +428,13 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 					if !hadOld {
 						continue
 					}
-					// A locked agent is moved only if the user says so. One
-					// they keep on the old pipeline keeps the old pipeline
-					// too (below), or the swap would leave it attached to a
-					// deleted one.
-					if msg := t.lockCheck().gate(&ag,
+					// An agent is moved only if the owner approves the change
+					// (change_approval.go). One they keep on the old pipeline
+					// keeps the old pipeline too (below), or the swap would
+					// leave it attached to a deleted one.
+					if msg := agentChangeGate(t.approveChange, &ag, t.user,
 						fmt.Sprintf("swap pipeline %q for %q, which retires %q", oldDef.Name, saved.Name, oldDef.Name)); msg != "" {
-						keptLocked = append(keptLocked, chFirst(ag.Name, ag.ID))
+						keptOld = append(keptOld, chFirst(ag.Name, ag.ID))
 						continue
 					}
 					// Add new pipeline (idempotent — caller may have
@@ -454,7 +454,7 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 						replacedSwaps = append(replacedSwaps, ag.Name)
 					}
 				}
-				if len(keptLocked) == 0 {
+				if len(keptOld) == 0 {
 					DeletePipelineDef(t.udb, oldDef.ID)
 				}
 				replaced = oldDef.Name
@@ -494,7 +494,7 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 			attached = append(attached, agent.Name+" (already attached)")
 			continue
 		}
-		if msg := agentChangeGate(t.lockCheck(), &agent, t.user, fmt.Sprintf("attach pipeline %q", saved.Name)); msg != "" {
+		if msg := agentChangeGate(t.approveChange, &agent, t.user, fmt.Sprintf("attach pipeline %q", saved.Name)); msg != "" {
 			missing = append(missing, key+" ("+msg+")")
 			continue
 		}
@@ -510,12 +510,11 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 		verb, saved.Name, len(saved.Stages), plural(len(saved.Stages)), saved.ID, saved.Name)
 	if replaced != "" {
 		switch {
-		case len(keptLocked) > 0:
+		case len(keptOld) > 0:
 			// Not retired: say which agents hold it and why, so the model tells
 			// the user rather than reporting a clean swap.
-			msg += fmt.Sprintf(" Did NOT retire %q: %s %s locked, the user did not approve moving %s, and %s still use it. Tell the user; %q stays until those agents are moved.",
-				replaced, strings.Join(keptLocked, ", "), chIf(len(keptLocked) == 1, "is", "are"),
-				chIf(len(keptLocked) == 1, "it", "them"), chIf(len(keptLocked) == 1, "it would", "they"), replaced)
+			msg += fmt.Sprintf(" Did NOT retire %q: the user did not approve moving %s to the new one. Tell the user; %q stays until those agents are moved.",
+				replaced, strings.Join(keptOld, ", "), replaced)
 			if len(replacedSwaps) > 0 {
 				msg += fmt.Sprintf(" Swapped attachments on: %s.", strings.Join(replacedSwaps, ", "))
 			}

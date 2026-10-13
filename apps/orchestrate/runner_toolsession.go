@@ -356,8 +356,8 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 			"data":  data,
 		})
 	}
-	// A blocking question card, for a tool that hits something the person can
-	// waive on the spot (agentChangeGate: an agent they locked).
+	// A blocking question card, for a tool that needs the person's answer on
+	// the spot.
 	sess.AskInChat = t.askInChat
 	// Changes to what already exists ask the owner first (change_approval.go).
 	sess.ApproveChange = changeApprover(sess, sess.Username, t.agent.ID, t.agent.Name, t.askInChat)

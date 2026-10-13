@@ -251,7 +251,6 @@ func resolveShapeInstance(rec AgentRecord) AgentRecord {
 	out.OverlayRev = rec.OverlayRev
 	// An instance is never the framework's record, whatever the shape says.
 	out.OwnedBy = rec.OwnedBy
-	out.Locked = rec.Locked
 	return out
 }
 

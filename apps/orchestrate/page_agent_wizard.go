@@ -536,9 +536,8 @@ func needsFirstRunSetup(agents []AgentRecord, user string) bool {
 }
 
 // wizardAdvancedLinkHTML injects an "Advanced editor" escape hatch next
-// to the page title — same rAF-poll mount pattern as the lock icon
-// (agentLockIconHTML): the header renders asynchronously, so wait for
-// the title before inserting. Relative href resolves /agent/wizard →
+// to the page title, with a rAF-poll mount: the header renders
+// asynchronously, so wait for the title before inserting. Relative href resolves /agent/wizard →
 // /agent/new. No backticks (lives in a Go raw string); plain quotes only.
 func wizardAdvancedLinkHTML() string {
 	return `<style>

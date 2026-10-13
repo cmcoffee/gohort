@@ -151,7 +151,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
-	agentLocked := false
 	// ForcePrivate agents can't escalate to the remote lead model (gate 2),
 	// so the "Use Lead model" toggle is hidden for them — unless the operator
 	// has declared every model private, in which case the lead is not remote
@@ -169,7 +168,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// sub-agent).
 		if rec, ok := loadAgent(udb, id); ok {
 			editRec = rec
-			agentLocked = lockHolder(udb, rec).Locked
 			leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
 			if rec.OwnedBy != "" {
 				subAgent = true
@@ -347,8 +345,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// places for a while, which is worse than being in the wrong one,
 			// because two controls over one fact drift and the one you did not
 			// use is the one you go on believing.
-			// (Lock moved to the 🔒/🔓 icon in the top-right of the editor —
-			// toggled live via handleAgentLock, preserved across form saves.)
 
 			// Delegation is NOT here. Who may call this agent and who it may
 			// call are the blast radius, which is a security question asked
@@ -608,8 +604,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Delete — the human's authoritative remove for any existing agent the editor
-	// is open on, INCLUDING a sub-agent reached via the picker (which agents
-	// can't delete once the cross-agent lock is in place). Non-seed only: seeds
+	// is open on, INCLUDING a sub-agent reached via the picker (which other
+	// agents can't delete). Non-seed only: seeds
 	// revert via their own path, they aren't "deleted". The DELETE handler
 	// cascades sub-agents and cleans channels / monitors / standing agents /
 	// dispatch-allowlist references.
@@ -650,20 +646,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" {
 		backURL = "..?agent=" + url.QueryEscape(id)
 	}
-	// Lock icon — a 🔒/🔓 toggle pinned to the top-right of the editor for any
-	// existing agent (seeds included — locking protects a seed shadow from being
-	// rewritten by another agent too). Toggling it persists immediately via
-	// /api/agents/{id}/lock (handleAgentLock); the form save preserves Locked, so
-	// the icon is the single control. App-specific behavior, so it rides in via
-	// ExtraHeadHTML per the core/ui domain-agnostic rule.
-	lockHead := ""
+	// App-specific behavior rides in via ExtraHeadHTML per the core/ui
+	// domain-agnostic rule: the picture library's relabel prompt, Assist, and
+	// the delete question.
+	headHTML := ""
 	if id != "" {
-		lockHead = agentLockIconHTML(id, agentLocked)
-		// The relabel prompt for the picture library. App-specific behavior, so
-		// it rides in through a client action rather than into core/ui.
-		lockHead += imageLibraryHeadHTML(id)
-		lockHead += agentAssistHTML(id)
-		lockHead += agentDeleteAskJS
+		headHTML = imageLibraryHeadHTML(id)
+		headHTML += agentAssistHTML(id)
+		headHTML += agentDeleteAskJS
 	}
 	page := ui.Page{
 		Title:     title,
@@ -675,80 +665,17 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		MaxWidth:      "1100px",
 		SectionNav:    true,
 		Sections:      sections,
-		ExtraHeadHTML: lockHead,
+		ExtraHeadHTML: headHTML,
 	}
 	page.ServeHTTP(w, r)
 }
 
-// agentLockIconHTML builds the lock toggle injected via ExtraHeadHTML. It sits
-// inline in the page header, right after the title (next to the agent name),
-// rather than floating at the viewport edge. 🔒 = locked (other agents can't
-// edit/delete it), 🔓 = unlocked. Click POSTs to /api/agents/<id>/lock and
-// re-draws. The header is built asynchronously by the runtime, so a short
-// requestAnimationFrame poll waits for the title before inserting. No backticks
-// (it lives in a Go raw string downstream); JS uses plain quotes + concatenation.
-func agentLockIconHTML(id string, locked bool) string {
-	return fmt.Sprintf(`<style>
-#agent-lock{cursor:pointer;border:none;background:none;font-size:1.2rem;line-height:1;opacity:.85;padding:0 .2rem}
-#agent-lock:hover{opacity:1;transform:scale(1.1)}
-#agent-lock[disabled]{opacity:.4;cursor:wait}
-/* Greyed controls when the record is locked: non-interactive + visibly dimmed,
-   but readable. The lock button itself is excluded so it stays clickable. */
-.agent-locked-ctl{opacity:.5;pointer-events:none}
-</style>
-<script>
-(function(){
-  var locked=%t, id=%q;
-  var b=document.createElement('button');
-  b.id='agent-lock'; b.type='button';
-  function draw(){
-    b.textContent=locked?'🔒':'🔓';
-    b.title=locked?'Locked, only you can edit or delete (click to unlock)':'Unlocked, click to lock so other agents cannot edit or delete';
-  }
-  // Grey out (or restore) every change control on the page when locked. Covers
-  // inputs/selects/textareas/buttons across ALL editor sections (the section
-  // nav swaps which one is visible, so hidden sections must be disabled too),
-  // skipping the lock button and the section-nav rail so you can still read the
-  // record, flip the lock, and move between sections.
-  function applyLock(){
-    var ctls=document.querySelectorAll('input,select,textarea,button,[contenteditable]');
-    for(var i=0;i<ctls.length;i++){
-      var c=ctls[i];
-      if(c.id==='agent-lock') continue;
-      if(c.closest && (c.closest('.ui-section-nav')||c.closest('nav'))) continue;
-      if(locked){ c.setAttribute('disabled','disabled'); c.classList.add('agent-locked-ctl'); }
-      else { c.removeAttribute('disabled'); c.classList.remove('agent-locked-ctl'); }
-    }
-  }
-  draw();
-  b.onclick=function(){
-    var next=!locked; b.disabled=true;
-    fetch('../api/agents/'+id+'/lock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({locked:next})})
-      .then(function(r){ if(!r.ok) throw new Error('request failed'); locked=next; draw(); applyLock(); })
-      .catch(function(e){ window.uiAlert('Could not change lock: '+(e&&e.message||e)); })
-      .then(function(){ b.disabled=false; });
-  };
-  var tries=0;
-  function mount(){
-    if(document.getElementById('agent-lock')){ applyLock(); return; }
-    // FIRST section card's header-right slot: the lock belongs on the record,
-    // not on the page banner. Falls back to the page title only if the section
-    // hasn't rendered (it always does, but keep the loop honest).
-    var slot=document.querySelector('.ui-section .ui-section-h-r');
-    if(slot){ slot.appendChild(b); applyLock(); return; }
-    if(tries++ < 180) requestAnimationFrame(mount);
-  }
-  mount();
-})();
-</script>`, locked, id)
-}
-
-// agentAssistHTML mounts the "Assist" button beside the lock, and the dialog
+// agentAssistHTML mounts the "Assist" button in the first section's header, and the dialog
 // behind it: a conversation about the WHOLE agent that answers with changes
 // you accept.
 //
 // App-specific behavior, so it rides in through ExtraHeadHTML rather than into
-// core/ui, same as the lock icon. It reuses uiOpenModal (THE modal) and the
+// core/ui. It reuses uiOpenModal (THE modal) and the
 // existing PATCH endpoint to apply, which is what keeps it small: no new
 // persistence path, no form-field plumbing, and a reload afterwards so the
 // editor is showing what was actually stored rather than what we hoped.

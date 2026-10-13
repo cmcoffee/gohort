@@ -435,7 +435,7 @@ func attachSkillToAgents(sess *ToolSession, raw any, skillID string) (attached, 
 			attached = append(attached, label)
 			continue
 		}
-		if msg := agentChangeGate(lockCheck{Ask: sess.AskInChat, DB: sess.DB, Session: sess.ChatSessionID}, &ag, sess.Username, fmt.Sprintf("attach skill %q", skillID)); msg != "" {
+		if msg := agentChangeGate(sess.ApproveChange, &ag, sess.Username, fmt.Sprintf("attach skill %q", skillID)); msg != "" {
 			unknown = append(unknown, key+" ("+msg+")")
 			continue
 		}

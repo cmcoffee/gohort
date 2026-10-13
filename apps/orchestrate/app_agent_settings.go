@@ -263,9 +263,6 @@ func resetAppAgent(udb Database, id string) error {
 	if udb == nil || !udb.Get(agentsTable, id, &stored) {
 		return fmt.Errorf("it is already at its defaults")
 	}
-	if stored.Locked {
-		return fmt.Errorf("it is locked")
-	}
 	udb.Unset(agentsTable, id)
 	return nil
 }
