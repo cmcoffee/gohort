@@ -742,6 +742,10 @@ type toolCallRecord struct {
 	// dispatched agent's call under the dispatch). Kept so a reload draws it
 	// there again instead of flat beside its parent.
 	ID, Parent string
+	// Framework marks a record the framework wrote rather than a call the
+	// model made (an approval card's answer, recordApproval). Saved with the
+	// turn's calls and never shown to the model as one of its own.
+	Framework bool
 }
 
 // isNetworkTool reports whether a registered ChatTool contacts the

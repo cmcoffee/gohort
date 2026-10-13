@@ -275,6 +275,7 @@ func (t *chatTurn) confirmFuncForAsks(sess *ToolSession, asks ...func(string) bo
 				prompt:  fmt.Sprintf("Allow %s to run?", name),
 				detail:  confirmCallSummary(sess, name, args),
 				because: "you set this tool to ask before every call",
+				args:    args,
 			})
 		}
 		tt, action := toolForCall(sess, name)
@@ -295,6 +296,7 @@ func (t *chatTurn) confirmFuncForAsks(sess *ToolSession, asks ...func(string) bo
 				tool:    name,
 				prompt:  fmt.Sprintf("Allow %s to make a change through %q?", name, cred),
 				detail:  args,
+				args:    args,
 				because: fmt.Sprintf("credential %q asks before any call that changes something", cred),
 			})
 		}
@@ -311,6 +313,7 @@ func (t *chatTurn) confirmFuncForAsks(sess *ToolSession, asks ...func(string) bo
 			tool:    name,
 			prompt:  fmt.Sprintf("Allow %s? Service %q requires approval for each call.", name, cred),
 			detail:  args,
+			args:    args,
 			because: fmt.Sprintf("credential %q requires approval for each call", cred),
 		})
 	}
@@ -471,6 +474,10 @@ type toolConfirmRequest struct {
 	// sessionKey, when set, offers "Allow for this session": a yes that
 	// covers this tool for the rest of the conversation (ask_first.go).
 	sessionKey string
+	// args is the call's own arguments (JSON), kept with the answer in the
+	// saved conversation (recordApproval). Empty for a question that is not
+	// about one call.
+	args string
 }
 
 // escalateToolConfirm renders the approval card and parks until the
@@ -546,6 +553,7 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 		Log("[orchestrate.confirm] %s stopped: %s, and this run has no interactive viewer, denied (fail closed)", req.tool, req.because)
 		if t != nil {
 			t.turnDiag("tool-denied", fmt.Sprintf("%s was not run: %s, and this run had no interactive viewer to ask, denied fail-closed.", req.tool, req.because))
+			t.recordApproval(req, "Denied: nobody was watching to ask")
 		}
 		return "", false
 	}
@@ -570,6 +578,7 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 		if !v {
 			t.turnDiag("tool-denied", fmt.Sprintf("You denied the %s call (%s).", req.tool, req.because))
 			t.sendConfirmResolved(id, false)
+			t.recordApproval(req, "Denied")
 			return "", false
 		}
 		// Reading the answer non-blockingly: the resolver always writes it
@@ -582,17 +591,14 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 		}
 		// The stamp is the button's own label, except a plain allow, which
 		// has always stamped "Allowed".
-		if picked == "" || picked == "allow" {
-			t.sendConfirmResolved(id, true)
-		} else {
-			label := picked
-			for _, a := range actions {
-				if a["value"] == picked {
-					label = fmt.Sprint(a["label"])
-				}
+		label := "Allowed"
+		for _, a := range actions {
+			if a["value"] == picked && picked != "allow" {
+				label = fmt.Sprint(a["label"])
 			}
-			t.sendConfirmResolvedLabel(id, "allow", label)
 		}
+		t.sendConfirmResolvedLabel(id, "allow", label)
+		t.recordApproval(req, label)
 		return picked, true
 	case <-time.After(toolConfirmTimeout):
 		Log("[orchestrate.confirm] approval for %s (%s) timed out after %s: denied", req.tool, req.because, toolConfirmTimeout)
@@ -605,8 +611,32 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 		t.sse.Send(map[string]any{"kind": "status_note",
 			"text": fmt.Sprintf("⏱ Approval for %s timed out after %s, so the call was denied.", req.tool, toolConfirmTimeout)})
 		t.sendConfirmResolvedLabel(id, "deny", "Timed out")
+		t.recordApproval(req, "Timed out: denied")
 		return "", false
 	}
+}
+
+// recordApproval files an approval card's answer with the turn's tool runs, so
+// the saved conversation still says what was asked, with what, and how it was
+// answered once the card is gone: the card lives in the run's event stream,
+// which ends with the run or a restart. A framework record, never shown to the
+// model as a call it made.
+func (t *chatTurn) recordApproval(req toolConfirmRequest, outcome string) {
+	if t == nil {
+		return
+	}
+	args := map[string]any{}
+	if a := strings.TrimSpace(req.args); a != "" {
+		_ = json.Unmarshal([]byte(a), &args)
+	}
+	if len(args) == 0 && strings.TrimSpace(req.detail) != "" {
+		args = map[string]any{"detail": truncateObs(req.detail, 600)}
+	}
+	prompt := strings.TrimSpace(req.prompt)
+	if prompt == "" {
+		prompt = "Allow " + req.tool + "?"
+	}
+	t.recordToolCall(toolCallRecord{Name: "approval", Label: "Approval: " + prompt, Args: args, Result: outcome, Framework: true})
 }
 
 // sendConfirmResolved records the answer IN THE EVENT STREAM, which is the

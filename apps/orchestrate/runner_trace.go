@@ -172,14 +172,15 @@ func (t *chatTurn) persistedToolCallsFromUnlocked(from int) []PersistedToolCall 
 	out := make([]PersistedToolCall, 0, len(t.toolCalls)-from)
 	for _, rec := range t.toolCalls[from:] {
 		out = append(out, PersistedToolCall{
-			Name:   rec.Name,
-			Args:   rec.Args,
-			Result: rec.Result,
-			Err:    rec.Err,
-			Cached: rec.Cached,
-			Label:  rec.Label,
-			ID:     rec.ID,
-			Parent: rec.Parent,
+			Name:      rec.Name,
+			Args:      rec.Args,
+			Result:    rec.Result,
+			Err:       rec.Err,
+			Cached:    rec.Cached,
+			Label:     rec.Label,
+			ID:        rec.ID,
+			Parent:    rec.Parent,
+			Framework: rec.Framework,
 		})
 	}
 	return out
@@ -444,6 +445,9 @@ func (t *chatTurn) toolLogPromptSection() string {
 	b.WriteString("## Tool calls already made this turn\n")
 	b.WriteString("These calls ran in earlier steps. DO NOT repeat them: the cache short-circuits anyway, but a re-call wastes a round. Use what was already found:\n\n")
 	for _, rec := range t.toolCalls {
+		if rec.Framework {
+			continue // the framework's record, not a call the model made
+		}
 		b.WriteString("- ")
 		b.WriteString(formatToolCall(rec.Name, rec.Args))
 		b.WriteString("\n  ")

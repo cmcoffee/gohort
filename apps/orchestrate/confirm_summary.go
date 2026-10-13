@@ -57,32 +57,35 @@ var decisiveArgs = []string{
 	"amount", "body", "message",
 }
 
-// confirmCallSummary composes the card's detail: what the tool does, what it
-// can reach, and its arguments with the decisive ones first.
+// confirmCallSummary composes the card's detail: the call's arguments with
+// the decisive ones first, then what the tool does and what it can reach.
 //
 // Falls back to the raw arguments rather than showing nothing. A summary that
 // silently drops something it could not parse would be worse than the blob it
 // replaced: the reader would approve a call believing they had seen it.
 func confirmCallSummary(sess *ToolSession, name, args string) string {
+	// The call's own arguments first, right under the question: what it would
+	// search for, fetch or send is what somebody is approving, and the card is
+	// clipped, so a long description ahead of them could push them out of it.
 	var b strings.Builder
-	desc, caps := toolFacts(sess, name)
-	if desc != "" {
-		b.WriteString(desc)
-		b.WriteString("\n")
-	}
-	if words := reachWords(caps); len(words) > 0 {
-		b.WriteString("This tool " + joinWords(words) + ".\n")
-	}
 	if lines := namedArgs(args); len(lines) > 0 {
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
 		b.WriteString(strings.Join(lines, "\n"))
 	} else if strings.TrimSpace(args) != "" && strings.TrimSpace(args) != "{}" {
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
 		b.WriteString(strings.TrimSpace(args))
+	}
+	desc, caps := toolFacts(sess, name)
+	var about []string
+	if desc != "" {
+		about = append(about, desc)
+	}
+	if words := reachWords(caps); len(words) > 0 {
+		about = append(about, "This tool "+joinWords(words)+".")
+	}
+	if len(about) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(strings.Join(about, "\n"))
 	}
 	return strings.TrimSpace(b.String())
 }
