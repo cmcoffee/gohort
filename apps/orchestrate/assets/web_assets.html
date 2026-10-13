@@ -3055,6 +3055,28 @@ select.ui-orch-intake-input {
         // and kept per agent, so web_search can ask on a private project's
         // agent and run freely on another. The card it raises shows what the
         // call would send (confirmCallSummary), which is the point of asking.
+        // A "\u270B n" mark on a category header for the tools in it that ask
+        // before every call, so a category collapsed shut still says it holds
+        // one. Repainted whenever an Ask control flips.
+        var askBadges = [];
+        function addAskBadge(header, names, confirmMap) {
+          var b = document.createElement('span');
+          b.className = 'ui-orch-ask-badge';
+          b.style.cssText = 'margin-left:0.45rem;font-size:0.72rem;padding:0.05rem 0.4rem;border-radius:999px;' +
+            'background:var(--warning-bg, rgba(234,179,8,0.15));color:var(--warning, #b45309);white-space:nowrap';
+          askBadges.push({el: b, names: names, map: confirmMap});
+          header.appendChild(b);
+          paintAskBadges();
+        }
+        function paintAskBadges() {
+          askBadges.forEach(function(x) {
+            var n = 0;
+            x.names.forEach(function(nm) { if (x.map[nm]) n++; });
+            x.el.textContent = n ? '\u270B ' + n : '';
+            x.el.title = n === 1 ? '1 tool here asks before every call' : n + ' tools here ask before every call';
+            x.el.style.display = n ? '' : 'none';
+          });
+        }
         function addAskControl(actions, toolName, confirmMap, agentIDForAsk) {
           if (!toolName) return;
           var on = !!confirmMap[toolName];
@@ -3093,6 +3115,7 @@ select.ui-orch-intake-input {
                 if (!res.ok) return res.text().then(function(x) { throw new Error(x || ('HTTP ' + res.status)); });
                 on = want;
                 confirmMap[toolName] = want;
+                paintAskBadges();
                 paint();
               }).catch(function(err) {
                 window.uiAlert('Could not change it: ' + (err && err.message || err));
@@ -3306,6 +3329,7 @@ select.ui-orch-intake-input {
             // has of its own without opening anything.
             scopedLabel.textContent = 'Scoped to this agent (' + customTools.length + ')';
             scopedHeader.appendChild(scopedLabel);
+            addAskBadge(scopedHeader, customTools.map(function(t) { return t.name; }), confirmMap);
             customSection.appendChild(scopedHeader);
 
             var scopedBody = document.createElement('div');
@@ -3549,6 +3573,7 @@ select.ui-orch-intake-input {
                 subLabel.className = 'ui-checklist-group-name';
                 subLabel.textContent = b.name + ' (' + b.items.length + ')';
                 subHeader.appendChild(subLabel);
+                addAskBadge(subHeader, b.items.map(function(t) { return t.name; }), confirmMap);
                 sub.appendChild(subHeader);
 
                 var subBody = document.createElement('div');
@@ -3658,6 +3683,7 @@ select.ui-orch-intake-input {
             label.className = 'ui-checklist-group-name';
             label.textContent = g.name || '(ungrouped)';
             header.appendChild(label);
+            addAskBadge(header, g.items.map(function(o) { return o.value; }), confirmMap);
             section.appendChild(header);
 
             var body = document.createElement('div');
