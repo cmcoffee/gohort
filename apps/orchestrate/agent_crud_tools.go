@@ -1038,6 +1038,22 @@ func endLockPasses(holderID string) {
 
 // --- shared param + merge helpers -----------------------------------------
 
+// orchestratorPromptParam describes orchestrator_prompt to Builder in the
+// outline the agent editor offers (orchestratorPromptSections, the same
+// words ✨ Suggest drafts from), so a prompt Builder writes opens in the
+// editor's sections rather than as one block above them with every section
+// empty. update adds how to change one part without losing the rest.
+func orchestratorPromptParam(update bool) string {
+	d := "System prompt for the thinking LLM (talks to user, decomposes work, briefs the worker per step, synthesizes), " +
+		"written to the agent in the second person (\"You are...\"). Do not list its tools or describe the orchestration machinery: the framework supplies that. " +
+		fieldOutline("orchestrator_prompt") +
+		"A rule the worker must also keep (it makes the tool calls) belongs in the rules field instead, which both of them read: put each rule in one place, not both. "
+	if update {
+		d += "To change one part, send the whole prompt back under the same headings, every other section as it was."
+	}
+	return strings.TrimSpace(d)
+}
+
 // agentMutationParams returns the ToolParam schema shared by
 // create_agent and update_agent. The includeID flag adds the id
 // parameter (required for update, omitted for create).
@@ -1045,7 +1061,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 	params := map[string]ToolParam{
 		"name":                {Type: "string", Description: "Human-readable agent name."},
 		"description":         {Type: "string", Description: "One-sentence summary."},
-		"orchestrator_prompt": {Type: "string", Description: "System prompt for the thinking LLM (talks to user, decomposes work, briefs the worker per step, synthesizes)."},
+		"orchestrator_prompt": {Type: "string", Description: orchestratorPromptParam(includeID)},
 		"plan_guidance":       {Type: "string", Description: "Optional decomposition-style nudge appended to orchestrator prompt."},
 		"rules":               {Type: "string", Description: "Optional standing rules, one per line, applied to every turn."},
 		"allowed_tools": {
