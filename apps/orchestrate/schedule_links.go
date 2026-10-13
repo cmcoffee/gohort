@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 const (
@@ -67,10 +68,17 @@ type linkGroup struct {
 	HasWindow          bool      `json:"has_window,omitempty"`
 	WindowFromMin      int       `json:"window_from_min,omitempty"`
 	WindowToMin        int       `json:"window_to_min,omitempty"`
+	// Timing is the shared form (core/timing); when set it is the whole answer
+	// and the fields above are the older one.
+	Timing timing.Spec `json:"timing,omitzero"`
 
-	Paused      bool      `json:"paused,omitempty"`
-	NextRun     time.Time `json:"next_run,omitzero"`
-	SchedulerID string    `json:"scheduler_id,omitempty"`
+	Paused  bool      `json:"paused,omitempty"`
+	NextRun time.Time `json:"next_run,omitzero"`
+	// Rounds counts the group's runs (every member once), for a Timing that
+	// stops after a number of them; EndNote says why it ended when it did.
+	Rounds      int    `json:"rounds,omitempty"`
+	EndNote     string `json:"end_note,omitempty"`
+	SchedulerID string `json:"scheduler_id,omitempty"`
 
 	LastRunAt time.Time       `json:"last_run_at,omitzero"`
 	LastRun   []linkMemberRun `json:"last_run,omitempty"`
@@ -82,12 +90,13 @@ type linkGroup struct {
 func (g linkGroup) timing() StandingAgent {
 	return StandingAgent{Name: "link " + g.ID, Owner: g.Owner, Cron: g.Cron, StartAt: g.StartAt,
 		IntervalSeconds: g.IntervalSeconds, MaxIntervalSeconds: g.MaxIntervalSeconds,
-		HasWindow: g.HasWindow, WindowFromMin: g.WindowFromMin, WindowToMin: g.WindowToMin}
+		HasWindow: g.HasWindow, WindowFromMin: g.WindowFromMin, WindowToMin: g.WindowToMin, Timing: g.Timing}
 }
 
 func (g *linkGroup) setTiming(sa StandingAgent) {
 	g.Cron, g.StartAt, g.IntervalSeconds, g.MaxIntervalSeconds = sa.Cron, sa.StartAt, sa.IntervalSeconds, sa.MaxIntervalSeconds
 	g.HasWindow, g.WindowFromMin, g.WindowToMin = sa.HasWindow, sa.WindowFromMin, sa.WindowToMin
+	g.Timing = sa.Timing
 }
 
 func linkKey(owner, id string) string { return owner + "\x00" + id }
@@ -140,9 +149,22 @@ func (g *linkGroup) arm() error {
 		saveLinkGroup(*g)
 		return nil
 	}
+	// Its stops: a number of rounds, or a date the next round would be past.
+	// Ended rather than deleted, like a schedule that met its goal.
+	spec, hasSpec := g.timing().EffectiveTiming()
+	if hasSpec && spec.MaxRuns > 0 && g.Rounds >= spec.MaxRuns {
+		g.Paused, g.EndNote = true, fmt.Sprintf("ran %d rounds, as it was set to", g.Rounds)
+		saveLinkGroup(*g)
+		return nil
+	}
 	next, err := g.timing().NextRunFrom(time.Now().In(UserLocation(g.Owner)))
 	if err != nil {
 		return err
+	}
+	if hasSpec && !spec.StopAt.IsZero() && !next.Before(spec.StopAt) {
+		g.Paused, g.EndNote = true, "reached its end date, "+spec.StopAt.Add(-time.Second).Format("Jan 2")
+		saveLinkGroup(*g)
+		return nil
 	}
 	id, err := ScheduleTask(linkFireKind, linkFirePayload{Owner: g.Owner, ID: g.ID}, next)
 	if err != nil {
@@ -323,8 +345,9 @@ func isLinkFire(ctx context.Context) bool {
 }
 
 // runLinkGroup runs every member in order. Each starts when the one before it
-// has finished; one failing does not stop the rest.
-func runLinkGroup(ctx context.Context, owner, id string) {
+// has finished; one failing does not stop the rest. Only a scheduled round
+// counts toward a "stop after N rounds"; Run now is a one-off.
+func runLinkGroup(ctx context.Context, owner, id string, scheduled bool) {
 	linkMu.Lock()
 	g, ok := getLinkGroup(owner, id)
 	if ok {
@@ -343,6 +366,9 @@ func runLinkGroup(ctx context.Context, owner, id string) {
 	defer linkMu.Unlock()
 	if cur, ok := getLinkGroup(owner, id); ok {
 		cur.LastRunAt, cur.LastRun = time.Now(), results
+		if scheduled {
+			cur.Rounds++
+		}
 		saveLinkGroup(cur)
 	}
 }
@@ -418,7 +444,7 @@ func registerLinkGroups() {
 				}
 			}
 		}()
-		runLinkGroup(ctx, p.Owner, p.ID)
+		runLinkGroup(ctx, p.Owner, p.ID, true)
 	})
 	RegisterReconciler("link_rearm", func(ctx context.Context) error {
 		rearmStrandedLinkGroups()
@@ -744,6 +770,9 @@ func appendLinkGroupRows(out []map[string]any, user string, udb Database, agentI
 		state := "active"
 		if g.Paused {
 			state = "paused"
+			if g.EndNote != "" {
+				state = "✓ done: " + g.EndNote
+			}
 		}
 		next := ""
 		if !g.NextRun.IsZero() {
@@ -889,7 +918,7 @@ func (T *OrchestrateApp) handleConsoleLink(w http.ResponseWriter, r *http.Reques
 					Log("[orchestrate/link] run-now panicked for group %s: %v", id, rec)
 				}
 			}()
-			runLinkGroup(context.Background(), user, id)
+			runLinkGroup(context.Background(), user, id, false)
 		}()
 	case "update":
 		err = T.updateLinkGroupTime(user, id, r)
@@ -910,6 +939,9 @@ func setLinkGroupPaused(owner, id string, paused bool) error {
 	g, ok := getLinkGroup(owner, id)
 	if !ok {
 		return Error("that link group no longer exists")
+	}
+	if !paused && g.EndNote != "" {
+		g.Rounds, g.EndNote = 0, "" // resuming an ended group gives it a fresh count
 	}
 	g.Paused = paused
 	return g.arm()
@@ -936,7 +968,11 @@ func (T *OrchestrateApp) handleConsoleLinkGet(w http.ResponseWriter, user, id st
 		"active_from":          standingWindowEdge(g.timing(), g.WindowFromMin),
 		"active_to":            standingWindowEdge(g.timing(), g.WindowToMin),
 		"schedule_label":       StandingScheduleLabel(g.timing()),
-		"members":              members,
+		"timing":               standingTimingOut(g.timing()),
+		// A group stops on a date or after a number of rounds; its members
+		// carry any goal.
+		"until":   func() untilOut { u := standingUntilOut(g.timing(), false); u.Runs = g.Rounds; return u }(),
+		"members": members,
 	})
 }
 
@@ -949,6 +985,9 @@ func (T *OrchestrateApp) updateLinkGroupTime(owner, id string, r *http.Request) 
 		return Error("bad body: " + err.Error())
 	}
 	body.Mission = nil
+	if body.Until != nil {
+		body.Until.Goal = nil // a group has no goal of its own
+	}
 	linkMu.Lock()
 	defer linkMu.Unlock()
 	g, ok := getLinkGroup(owner, id)

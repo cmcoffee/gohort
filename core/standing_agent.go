@@ -29,6 +29,7 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 
 	"github.com/cmcoffee/gohort/core/notes"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 const (
@@ -110,6 +111,17 @@ type StandingAgent struct {
 	HasWindow     bool `json:"has_window,omitempty"`
 	WindowFromMin int  `json:"window_from_min,omitempty"`
 	WindowToMin   int  `json:"window_to_min,omitempty"`
+
+	// Runs counts its scheduled runs, for a Timing that stops after a number
+	// of them. A run started by hand or by its link group is not counted.
+	// Resuming one that ended at its count starts the count again.
+	Runs int `json:"runs,omitempty"`
+
+	// Timing is when it fires, in the form every kind on the Scheduler shares
+	// (core/timing). When set it is the whole answer and Cron / the interval
+	// fields above are the old form, read only for records written before it
+	// (EffectiveTiming converts them).
+	Timing timing.Spec `json:"timing,omitzero"`
 	// StopCause / StopNote say why a PAUSED-but-not-broken schedule is at rest,
 	// which the bool alone cannot. A schedule that REACHED its objective was
 	// stopped by setting Paused and nothing else, so the one outcome an
@@ -383,6 +395,7 @@ const (
 const (
 	StoppedByOwner = "owner" // somebody paused it
 	StoppedByMet   = "met"   // it reached the goal it was given, which is the point of having one
+	StoppedByEnd   = "ended" // it reached the end it was given: its date, or its number of runs
 )
 
 // MarkStandingAgentBroken flags a standing agent as no longer usable (its target
@@ -586,58 +599,39 @@ func RearmStrandedStandingAgents(db Database) int {
 // set, otherwise interval (StartAt if it's still in the future, else
 // from+interval). Errors when neither schedule is configured.
 func nextStandingRun(sa StandingAgent, from time.Time) (time.Time, error) {
-	if strings.TrimSpace(sa.Cron) != "" {
-		return NextCronOccurrence(sa.Cron, from)
+	if sa.StartAt.After(from) && (sa.IntervalSeconds > 0 || sa.Timing.Set()) {
+		return sa.StartAt, nil
 	}
-	if sa.IntervalSeconds > 0 {
-		if sa.StartAt.After(from) {
-			return sa.StartAt, nil
-		}
-		gap := sa.IntervalSeconds
-		if sa.MaxIntervalSeconds > gap {
-			gap += rand.IntN(sa.MaxIntervalSeconds - gap + 1)
-		}
-		next := from.Add(time.Duration(gap) * time.Second)
-		if sa.HasWindow && sa.WindowToMin > sa.WindowFromMin {
-			next = standingWindowOpen(from, next, sa.WindowFromMin, sa.WindowToMin)
-		}
-		return next, nil
+	if spec, ok := sa.EffectiveTiming(); ok {
+		return spec.Next(from, rand.Float64)
+	}
+	if strings.TrimSpace(sa.Cron) != "" {
+		return NextCronOccurrence(sa.Cron, from) // a form Timing cannot say: an annual date
 	}
 	return time.Time{}, fmt.Errorf("standing agent %q has no schedule (set cron or interval)", sa.Name)
 }
 
-// standingWindowOpen moves t into the daily window: unchanged inside it, the
-// window's start when t is earlier that day, and otherwise the first opening
-// after now. Rolling from now rather than from t is what keeps a run that
-// fired late from skipping the next day's window. The same rule as a
-// recurring task's window (apps/orchestrate nextWindowOpen).
-func standingWindowOpen(now, t time.Time, fromMin, toMin int) time.Time {
-	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-	start := day.Add(time.Duration(fromMin) * time.Minute)
-	end := day.Add(time.Duration(toMin) * time.Minute)
-	if t.Before(start) {
-		return start
+// EffectiveTiming is when it fires as a timing.Spec: Timing when set, else the
+// old Cron / interval fields read into one. False only for an old form a Spec
+// cannot say (an annual date), or no schedule at all.
+func (sa StandingAgent) EffectiveTiming() (timing.Spec, bool) {
+	if sa.Timing.Set() {
+		return sa.Timing, true
 	}
-	if t.Before(end) {
-		return t
+	if c := strings.TrimSpace(sa.Cron); c != "" {
+		return timing.FromCron(c)
 	}
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	for i := 0; i < 3; i++ {
-		open := today.AddDate(0, 0, i).Add(time.Duration(fromMin) * time.Minute)
-		if open.After(now) && !open.Before(start) {
-			return open
-		}
+	if sa.IntervalSeconds <= 0 {
+		return timing.Spec{}, false
 	}
-	return day.AddDate(0, 0, 1).Add(time.Duration(fromMin) * time.Minute)
-}
-
-// standingWindowLabel is " between HH:MM and HH:MM", or "".
-func standingWindowLabel(sa StandingAgent) string {
-	if !sa.HasWindow || sa.WindowToMin <= sa.WindowFromMin {
-		return ""
+	s := timing.Spec{How: timing.HowEvery, EverySeconds: sa.IntervalSeconds}
+	if sa.MaxIntervalSeconds > sa.IntervalSeconds {
+		s = timing.Spec{How: timing.HowRandomGap, MinGapSeconds: sa.IntervalSeconds, MaxGapSeconds: sa.MaxIntervalSeconds}
 	}
-	hm := func(m int) string { return fmt.Sprintf("%02d:%02d", m/60, m%60) }
-	return " between " + hm(sa.WindowFromMin) + " and " + hm(sa.WindowToMin)
+	if sa.HasWindow && sa.WindowToMin > sa.WindowFromMin {
+		s.HasWindow, s.WindowFrom, s.WindowTo = true, sa.WindowFromMin, sa.WindowToMin
+	}
+	return s, true
 }
 
 // StandingScheduleLabel is a human-readable schedule description for display
@@ -646,49 +640,13 @@ func StandingScheduleLabel(sa StandingAgent) string {
 	if sa.LinkGroup != "" {
 		return "on its link group's time"
 	}
-	if strings.TrimSpace(sa.Cron) != "" {
-		return sa.Cron
+	if spec, ok := sa.EffectiveTiming(); ok {
+		return spec.Label()
 	}
-	if sa.IntervalSeconds > 0 && sa.MaxIntervalSeconds > sa.IntervalSeconds {
-		lo, hi := sa.IntervalSeconds, sa.MaxIntervalSeconds
-		win := standingWindowLabel(sa)
-		switch {
-		case lo%3600 == 0 && hi%3600 == 0:
-			return fmt.Sprintf("at random, every %d-%d hours", lo/3600, hi/3600) + win
-		case lo%60 == 0 && hi%60 == 0:
-			return fmt.Sprintf("at random, every %d-%d minutes", lo/60, hi/60) + win
-		}
-		return fmt.Sprintf("at random, every %d-%d seconds", lo, hi) + win
-	}
-	if sa.IntervalSeconds > 0 {
-		return "every " + formatStandingInterval(sa.IntervalSeconds) + standingWindowLabel(sa)
+	if c := strings.TrimSpace(sa.Cron); c != "" {
+		return c
 	}
 	return "(no schedule)"
-}
-
-func formatStandingInterval(secs int) string {
-	switch {
-	case secs%86400 == 0:
-		if d := secs / 86400; d == 1 {
-			return "day"
-		} else {
-			return fmt.Sprintf("%d days", d)
-		}
-	case secs%3600 == 0:
-		if h := secs / 3600; h == 1 {
-			return "hour"
-		} else {
-			return fmt.Sprintf("%d hours", h)
-		}
-	case secs%60 == 0:
-		if m := secs / 60; m == 1 {
-			return "minute"
-		} else {
-			return fmt.Sprintf("%d minutes", m)
-		}
-	default:
-		return fmt.Sprintf("%d seconds", secs)
-	}
 }
 
 func ScheduleStandingAgent(db Database, sa StandingAgent) error {
@@ -700,6 +658,14 @@ func ScheduleStandingAgent(db Database, sa StandingAgent) error {
 	if sa.LinkGroup != "" {
 		sa.SchedulerID, sa.NextRun = "", time.Time{}
 		SaveStandingAgent(db, sa)
+		return nil
+	}
+	// Its stops: a run count reached, or a date the next run would be past.
+	// Checked here, where every next run is armed, so it ends the moment it
+	// is done rather than showing a next run it will never make.
+	spec, hasSpec := sa.EffectiveTiming()
+	if hasSpec && spec.MaxRuns > 0 && sa.Runs >= spec.MaxRuns {
+		endStandingAgent(db, sa, fmt.Sprintf("ran %d times, as it was set to", sa.Runs))
 		return nil
 	}
 	// Compute the next fire in the owner's zone so a cron like "daily 08:00"
@@ -718,6 +684,10 @@ func ScheduleStandingAgent(db Database, sa StandingAgent) error {
 	// it by exactly one occurrence: it explains the run now being armed, and is
 	// cleared by the arming after that. A reason that stayed would read as a
 	// standing preference, which is what pacing is not.
+	if hasSpec && !spec.StopAt.IsZero() && !next.Before(spec.StopAt) {
+		endStandingAgent(db, sa, "reached its end date, "+spec.StopAt.Add(-time.Second).Format("Jan 2"))
+		return nil
+	}
 	if !sa.NextAttemptAt.IsZero() && sa.NextAttemptAt.After(time.Now()) {
 		next = sa.NextAttemptAt
 		sa.NextAttemptAt = time.Time{}
@@ -735,6 +705,15 @@ func ScheduleStandingAgent(db Database, sa StandingAgent) error {
 	sa.NextRun = next
 	SaveStandingAgent(db, sa)
 	return nil
+}
+
+// endStandingAgent stops a schedule that reached the end it was given. Kept,
+// like one that met its goal: it is done, not broken.
+func endStandingAgent(db Database, sa StandingAgent, note string) {
+	sa.Paused, sa.StopCause, sa.StopNote = true, StoppedByEnd, note
+	sa.SchedulerID, sa.NextRun = "", time.Time{}
+	SaveStandingAgent(db, sa)
+	Log("[standing] %s/%s ended: %s", sa.Owner, sa.Name, note)
 }
 
 // RunStandingNow fires a one-off manual run immediately (async, via the
@@ -826,6 +805,10 @@ func StartStandingScheduler() {
 				MarkStandingAgentBroken(RootDB, sa.Owner, sa.Name, reason)
 				return
 			}
+		}
+		if p.Trigger == "schedule" {
+			sa.Runs++ // counted as it starts, so the re-arm after it sees it
+			SaveStandingAgent(RootDB, sa)
 		}
 		executeStandingRun(ctx, RootDB, sa, p.Trigger)
 	})

@@ -36,6 +36,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/pacing"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 const OrchestrateScheduledUpdateKind = "orchestrate.scheduled_update"
@@ -90,6 +91,10 @@ type orchUpdatePayload struct {
 	// While set, the task's own pattern is set aside: computeNextFire parks it
 	// on a dormant tick, and the group's time fires it.
 	LinkGroup string `json:"link_group,omitempty"`
+	// Timing is when it fires in the shared form (core/timing). When set it
+	// is the whole answer: computeNextFire uses it and the pattern fields
+	// below are the older form, read only for tasks armed before it.
+	Timing timing.Spec `json:"timing,omitzero"`
 
 	SessionID string `json:"session_id"`
 	AgentID   string `json:"agent_id"`
@@ -422,6 +427,16 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, time.Now().Add(brokenDormantReArm)); err != nil {
 			Log("[orchestrate/scheduled] linked task %s: dormant re-arm failed: %v", recurringName(p), err)
 		}
+		return nil
+	}
+	// Its end date, from the shared timing: the run that falls on or after it
+	// does not happen, and the task ends like one that reached its cap.
+	if reArm && !p.Timing.StopAt.IsZero() && !time.Now().Before(p.Timing.StopAt) {
+		Log("[orchestrate/scheduled] task %s reached its end date, ending", p.SessionID)
+		recordScheduledDrop(p, RunOK, fmt.Sprintf(
+			"Ended: recurring task %q reached its end date (%s) and will not run again.",
+			recurringName(p), p.Timing.StopAt.Add(-time.Second).Format("Jan 2")))
+		dropRecurringTaskNotes(p)
 		return nil
 	}
 	if reArm && p.FireCount >= p.effectiveMaxFires() {
@@ -1476,54 +1491,65 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		}
 	}
 	minInterval := orchUpdateMinInterval()
-	switch spec.Pattern {
-	case RecurringFixed:
-		if time.Duration(spec.IntervalSeconds)*time.Second < minInterval {
-			return "", fmt.Errorf("interval too small: minimum %s", minInterval)
+	if spec.Timing.Set() {
+		// The shared form (core/timing) is the whole answer; the pattern
+		// fields are the older one. The deployment floor applies the same.
+		if err := spec.Timing.Validate(); err != nil {
+			return "", err
 		}
-	case RecurringDaily:
-		if len(spec.AtMinutes) == 0 {
-			return "", errors.New("a daily task needs daily_at: one or more HH:MM times, e.g. 08:00")
+		if err := recurringTimingFloor(spec.Timing, minInterval); err != nil {
+			return "", err
 		}
-		if spec.HasWindow {
-			return "", errors.New("a daily task runs at its set times: leave out active_from / active_to")
-		}
-	case RecurringRandom:
-		// Default and floor the gap to the deployment minimum interval.
-		if time.Duration(spec.MinGapSeconds)*time.Second < minInterval {
-			spec.MinGapSeconds = int(minInterval / time.Second)
-		}
-		if spec.TimesPerDay > 0 {
-			// N random times inside a daily window.
-			if !spec.HasWindow {
-				return "", errors.New("random pattern with times_per_day needs an active window (active_from / active_to) to place the fires within")
+	} else {
+		switch spec.Pattern {
+		case RecurringFixed:
+			if time.Duration(spec.IntervalSeconds)*time.Second < minInterval {
+				return "", fmt.Errorf("interval too small: minimum %s", minInterval)
 			}
-			if spec.TimesPerDay > 48 {
-				return "", errors.New("times_per_day is capped at 48")
-			}
-			windowSec := (spec.WindowToMin - spec.WindowFromMin) * 60
-			if need := spec.MinGapSeconds * (spec.TimesPerDay - 1); windowSec < need {
-				return "", fmt.Errorf("window %s–%s can't hold %d fires spaced %dm apart: widen the window, lower the count, or shorten the gap",
-					fmtHHMM(spec.WindowFromMin), fmtHHMM(spec.WindowToMin), spec.TimesPerDay, spec.MinGapSeconds/60)
-			}
-		} else {
-			// Continuous spaced-random: unlimited fires at random gaps in
-			// [min, max]; default max to 2× min so the spacing actually varies.
-			// The window is optional here (fires outside it defer to the next
-			// open); the min gap is the throttle.
-			if spec.MaxGapSeconds <= spec.MinGapSeconds {
-				spec.MaxGapSeconds = spec.MinGapSeconds * 2
+		case RecurringDaily:
+			if len(spec.AtMinutes) == 0 {
+				return "", errors.New("a daily task needs daily_at: one or more HH:MM times, e.g. 08:00")
 			}
 			if spec.HasWindow {
+				return "", errors.New("a daily task runs at its set times: leave out active_from / active_to")
+			}
+		case RecurringRandom:
+			// Default and floor the gap to the deployment minimum interval.
+			if time.Duration(spec.MinGapSeconds)*time.Second < minInterval {
+				spec.MinGapSeconds = int(minInterval / time.Second)
+			}
+			if spec.TimesPerDay > 0 {
+				// N random times inside a daily window.
+				if !spec.HasWindow {
+					return "", errors.New("random pattern with times_per_day needs an active window (active_from / active_to) to place the fires within")
+				}
+				if spec.TimesPerDay > 48 {
+					return "", errors.New("times_per_day is capped at 48")
+				}
 				windowSec := (spec.WindowToMin - spec.WindowFromMin) * 60
-				if windowSec < spec.MinGapSeconds {
-					return "", fmt.Errorf("active window %s–%s is shorter than the minimum gap (%dm): widen it or lower the gap",
-						fmtHHMM(spec.WindowFromMin), fmtHHMM(spec.WindowToMin), spec.MinGapSeconds/60)
+				if need := spec.MinGapSeconds * (spec.TimesPerDay - 1); windowSec < need {
+					return "", fmt.Errorf("window %s–%s can't hold %d fires spaced %dm apart: widen the window, lower the count, or shorten the gap",
+						fmtHHMM(spec.WindowFromMin), fmtHHMM(spec.WindowToMin), spec.TimesPerDay, spec.MinGapSeconds/60)
+				}
+			} else {
+				// Continuous spaced-random: unlimited fires at random gaps in
+				// [min, max]; default max to 2× min so the spacing actually varies.
+				// The window is optional here (fires outside it defer to the next
+				// open); the min gap is the throttle.
+				if spec.MaxGapSeconds <= spec.MinGapSeconds {
+					spec.MaxGapSeconds = spec.MinGapSeconds * 2
+				}
+				if spec.HasWindow {
+					windowSec := (spec.WindowToMin - spec.WindowFromMin) * 60
+					if windowSec < spec.MinGapSeconds {
+						return "", fmt.Errorf("active window %s–%s is shorter than the minimum gap (%dm): widen it or lower the gap",
+							fmtHHMM(spec.WindowFromMin), fmtHHMM(spec.WindowToMin), spec.MinGapSeconds/60)
+					}
 				}
 			}
+		default:
+			return "", fmt.Errorf("unknown pattern %q: use fixed, random or daily", spec.Pattern)
 		}
-	default:
-		return "", fmt.Errorf("unknown pattern %q: use fixed, random or daily", spec.Pattern)
 	}
 	active := ListOrchestrateUpdates(spec.SessionID)
 	if len(active) >= orchUpdateMaxPerSession() {
@@ -1536,6 +1562,7 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		// thing this id exists to prevent.
 		UID:             firstNonEmptyStr(strings.TrimSpace(spec.UID), UUIDv4()),
 		LinkGroup:       strings.TrimSpace(spec.LinkGroup),
+		Timing:          spec.Timing,
 		SessionID:       spec.SessionID,
 		AgentID:         spec.AgentID,
 		Username:        spec.Username,

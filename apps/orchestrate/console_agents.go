@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 // handleConsoleAgentOptions lists the owner's agents as picker options
@@ -246,8 +247,12 @@ func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Re
 		"active_to":      standingWindowEdge(sa, sa.WindowToMin),
 		"start_at":       startAt,
 		"schedule_label": StandingScheduleLabel(sa),
-		"linked":         sa.LinkGroup != "",
-		"paused":         sa.Paused,
+		// When it fires in the form every Scheduler dialog edits (core/timing),
+		// converted from the old fields for a record that predates it.
+		"timing": standingTimingOut(sa),
+		"until":  standingUntilOut(sa, true),
+		"linked": sa.LinkGroup != "",
+		"paused": sa.Paused,
 		// What this schedule actually runs. Empty for the ordinary case (the
 		// agent's own mission); "pipeline - <name>" or "machine - <name>" when
 		// it drives one of those, where the mission is the run's INPUT rather
@@ -331,6 +336,12 @@ type standingUpdateBody struct {
 	// window. Both or neither; ignored for a cron schedule.
 	ActiveFrom string `json:"active_from"`
 	ActiveTo   string `json:"active_to"`
+	// Timing, when sent, is the whole answer (core/timing): the dialog's
+	// shared timing section. The fields above are the older form, still
+	// accepted from callers that send them.
+	Timing *timing.Spec `json:"timing"`
+	// Until, when sent, is the dialog's Until section (schedule_until.go).
+	Until *untilBody `json:"until"`
 	// Mission is a POINTER: absent preserves what is stored, which is what the
 	// timing-only callers (and anything written before the field existed)
 	// send. Sent EMPTY is refused rather than read as "clear it" — a standing
@@ -345,10 +356,15 @@ type standingUpdateBody struct {
 // assignment, so a rejected body leaves the caller's record untouched and the
 // handler has an original to restore.
 func applyStandingUpdate(sa *StandingAgent, body standingUpdateBody) error {
+	if body.Timing != nil {
+		if err := body.Timing.Validate(); err != nil {
+			return Error(err.Error())
+		}
+	}
 	cron := strings.TrimSpace(body.Cron)
 	secs := body.IntervalMinutes * 60
 	maxSecs := body.MaxIntervalMinutes * 60
-	if cron == "" && secs <= 0 {
+	if body.Timing == nil && cron == "" && secs <= 0 {
 		return Error("set a cron schedule or an interval (minutes)")
 	}
 	if cron == "" && maxSecs > 0 && maxSecs <= secs {
@@ -372,6 +388,15 @@ func applyStandingUpdate(sa *StandingAgent, body standingUpdateBody) error {
 		}
 	}
 	sa.Mission = mission
+	if body.Timing != nil {
+		// The new form replaces the old fields outright, so the two cannot
+		// disagree about when it fires.
+		sa.Timing = *body.Timing
+		sa.Cron, sa.IntervalSeconds, sa.MaxIntervalSeconds = "", 0, 0
+		sa.HasWindow, sa.WindowFromMin, sa.WindowToMin = false, 0, 0
+		return applyStandingUntilIf(sa, body)
+	}
+	sa.Timing = timing.Spec{} // an old-form edit is the whole answer too
 	if cron != "" {
 		sa.Cron, sa.IntervalSeconds, sa.MaxIntervalSeconds = cron, 0, 0
 		sa.HasWindow, sa.WindowFromMin, sa.WindowToMin = false, 0, 0
@@ -379,7 +404,16 @@ func applyStandingUpdate(sa *StandingAgent, body standingUpdateBody) error {
 		sa.Cron, sa.IntervalSeconds, sa.MaxIntervalSeconds = "", secs, maxSecs
 		sa.HasWindow, sa.WindowFromMin, sa.WindowToMin = hasWin, winFrom, winTo
 	}
-	return nil
+	return applyStandingUntilIf(sa, body)
+}
+
+// applyStandingUntilIf writes the Until section when the dialog sent one. A
+// link group's body has its goal taken off before it gets here.
+func applyStandingUntilIf(sa *StandingAgent, body standingUpdateBody) error {
+	if body.Until == nil {
+		return nil
+	}
+	return applyStandingUntil(sa, *body.Until, true)
 }
 
 type consoleAgentRow struct {
@@ -569,6 +603,9 @@ func (T *OrchestrateApp) setConsoleAgentPaused(w http.ResponseWriter, r *http.Re
 	if paused {
 		sa.StopCause, sa.StopNote = StoppedByOwner, ""
 	} else {
+		if sa.StopCause == StoppedByEnd {
+			sa.Runs = 0 // resuming one that ran its count gives it a fresh one
+		}
 		sa.StopCause, sa.StopNote = "", ""
 	}
 	if paused {
@@ -691,4 +728,14 @@ func standingWindowEdge(sa StandingAgent, min int) string {
 		return ""
 	}
 	return fmtHHMM(min)
+}
+
+// standingTimingOut is a schedule's timing for the dialog: Timing, or the old
+// fields read into one. Nil for a form a Spec cannot say (an annual date),
+// where the dialog starts from a default and saving replaces it.
+func standingTimingOut(sa StandingAgent) *timing.Spec {
+	if spec, ok := sa.EffectiveTiming(); ok {
+		return &spec
+	}
+	return nil
 }

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 const (
@@ -86,6 +87,8 @@ type RecurringSpec struct {
 	// not to its timing, so an edit that dropped it would quietly put a linked
 	// task back on its own time.
 	LinkGroup string
+	// Timing, when set, replaces the pattern fields (core/timing).
+	Timing timing.Spec
 	// The objective's history travels under the same carry-over rule.
 	// Until and MaxAttempts alone would re-arm the goal with a CLEAN
 	// record: every verdict the judge had reached would be gone, and the
@@ -280,6 +283,9 @@ func computeNextFire(p *orchUpdatePayload, now time.Time) (time.Time, error) {
 	if p.LinkGroup != "" {
 		return now.Add(brokenDormantReArm), nil
 	}
+	if p.Timing.Set() {
+		return p.Timing.Next(now, rand.Float64)
+	}
 	if p.Pattern == RecurringDaily {
 		if len(p.AtMinutes) == 0 {
 			return time.Time{}, errors.New("a daily task needs at least one time of day")
@@ -376,6 +382,9 @@ func nextRandomFire(p *orchUpdatePayload, now time.Time, randFloat func() float6
 // recurringDetail renders a one-line human summary of a schedule's cadence for
 // the Schedules rail, introspect, and the admin describer.
 func recurringDetail(p orchUpdatePayload) string {
+	if p.Timing.Set() {
+		return p.Timing.Label()
+	}
 	if p.Pattern == RecurringDaily {
 		return "daily at " + fmtDailyAt(p.AtMinutes)
 	}
@@ -478,4 +487,50 @@ func fmtDailyAt(at []int) string {
 		parts = append(parts, fmtHHMM(m))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// recurringTimingFloor holds a recurring task's shared timing to the
+// deployment's minimum interval, as the old patterns were: the every interval
+// and the shortest random gap.
+func recurringTimingFloor(t timing.Spec, min time.Duration) error {
+	switch t.How {
+	case timing.HowEvery:
+		if time.Duration(t.EverySeconds)*time.Second < min {
+			return fmt.Errorf("interval too small: minimum %s", min)
+		}
+	case timing.HowRandomGap:
+		if time.Duration(t.MinGapSeconds)*time.Second < min {
+			return fmt.Errorf("shortest gap too small: minimum %s", min)
+		}
+	}
+	return nil
+}
+
+// recurringTimingOut is a recurring task's timing for the shared dialog:
+// Timing when set, otherwise its pattern read into a Spec.
+func recurringTimingOut(p orchUpdatePayload) timing.Spec {
+	if p.Timing.Set() {
+		return p.Timing
+	}
+	var s timing.Spec
+	switch p.Pattern {
+	case RecurringDaily:
+		s = timing.Spec{How: timing.HowTimes, Times: append([]int(nil), p.AtMinutes...)}
+		if len(p.AtMinutes) == 1 {
+			s.How = timing.HowDaily
+		}
+		return s
+	case RecurringRandom:
+		if p.TimesPerDay > 0 {
+			s = timing.Spec{How: timing.HowRandomCount, PerDay: p.TimesPerDay}
+		} else {
+			s = timing.Spec{How: timing.HowRandomGap, MinGapSeconds: p.MinGapSeconds, MaxGapSeconds: p.MaxGapSeconds}
+		}
+	default:
+		s = timing.Spec{How: timing.HowEvery, EverySeconds: p.IntervalSeconds}
+	}
+	if p.HasWindow {
+		s.HasWindow, s.WindowFrom, s.WindowTo = true, p.WindowFromMin, p.WindowToMin
+	}
+	return s
 }

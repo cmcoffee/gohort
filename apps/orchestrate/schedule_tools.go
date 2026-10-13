@@ -153,6 +153,14 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 		Until:       strings.TrimSpace(stringArg(args, "until")),
 		MaxAttempts: intFromArgs(args, "max_attempts"),
 	}
+	// The shared timing (core/timing), when the schedule tool built one: the
+	// whole answer, with the pattern fields below kept for older callers.
+	if tspec, ok, err := timingArg(args); err != nil {
+		return "", err
+	} else if ok {
+		tspec.MaxRuns = 0 // a recurring task's run count is its max_fires
+		spec.Timing = tspec
+	}
 	// daily_at alone says what it is: a task at set times of day.
 	if at := strings.TrimSpace(stringArg(args, "daily_at")); at != "" {
 		mins, err := parseDailyAt(at)

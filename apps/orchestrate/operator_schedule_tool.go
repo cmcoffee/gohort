@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 // The one scheduling tool.
@@ -155,13 +157,15 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		"run_by":       {Type: "string", Description: "(relink) The agent that runs the parked schedule from now on, by name or id: usually the one made to replace the deleted agent."},
 		"when":         {Type: "string", Enum: []string{"at", "every", "value_crosses", "output_changes", "posted", "agent_says"}, Description: "(create) The trigger: at (once, at a time) | every (on a clock, report each time) | value_crosses (a URL's value crosses a line) | output_changes (a tool's output changes) | posted (an external POST) | agent_says (an agent judges a condition)."},
 		"then":         {Type: "string", Description: "(create) What to do when it fires, in plain words. every: the mission run each time (\"fetch the forecast and post it to the family chat\"). at / monitors: handed to you on wake (\"tell the user it's 1:10pm, as they asked\")."},
-		"time":         {Type: "string", Description: "(create) When, as the user said it, in their own zone (the one time_in_zone reports; never convert to UTC). at: \"13:10\", \"1:10pm\", \"in 20 minutes\", or ISO8601. every: \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\". Monitors: optional set times of day to check, \"08:00\" or \"08:00,18:00\", instead of check_every."},
+		"time":         {Type: "string", Description: "(create) When, as the user said it, in their own zone (the one time_in_zone reports; never convert to UTC). at: \"13:10\", \"1:10pm\", \"in 20 minutes\", or ISO8601. every: \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", or set times \"09:00,13:00\". Monitors: optional set times of day to check, \"08:00\" or \"08:00,18:00\", instead of check_every."},
 		"name":         {Type: "string", Description: "(create: optional, one is made up; pause/resume/run_now/delete: required) Short name, e.g. \"daily-weather\", \"nvda-below\"."},
 		"agent":        {Type: "string", Description: "(at: who is woken to do it, default you; every: who runs it, default you; agent_says: who checks, default you; list / delete / move: WHOSE schedules to act on, another of your own agents by name or id, or \"all\" for every agent you own, list only) Name or id of an existing agent."},
 		"pipeline":     {Type: "string", Description: "(every, instead of agent) A stored pipeline to run; `then` becomes its input."},
 		"machine":      {Type: "string", Description: "(every, instead of agent) A stored machine to run; `then` becomes its input."},
 		"start_at":     {Type: "string", Description: "(every with an interval, optional) ISO8601 first run, e.g. 2026-06-10T08:00:00-07:00; then the interval from there."},
-		"stop_after":   {Type: "number", Description: "(monitors, optional) Stop after this many alerts: \"just once\" = 1, \"the next two times\" = 2. Omit to keep watching until stopped. On a recurring task of your own it is a count of runs."},
+		"stop_after":   {Type: "number", Description: "(every / monitors, optional) Stop after this many runs (every) or alerts (monitors): \"just once\" = 1, \"do this 5 times\" = 5. Omit to keep going until stopped."},
+		"stop_on":      {Type: "string", Description: "(every, optional) The last day it runs, YYYY-MM-DD in the user's zone: \"until the end of November\" = 2026-11-30."},
+		"days":         {Type: "string", Description: "(every, optional) Which days it runs: \"weekdays\", \"weekends\", or day names like \"mon,wed,fri\". Omit for every day, or when time already names the days."},
 		"until":        {Type: "string", Description: "(every / monitors, optional) Makes it an OBJECTIVE rather than a plain cadence: the goal in plain words that makes it DONE (\"the PR is merged\"). Judged after each run or fire from what it actually did; it stops itself when true."},
 		"max_attempts": {Type: "integer", Description: "(with until, optional) How many runs may end with the goal unmet before it stops trying."},
 	}
@@ -199,8 +203,8 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		for k, v := range map[string]ToolParam{
 			"to":              {Type: "string", Enum: []string{"cortex", "session", "background"}, Description: "(every as you / move) Where a task of your own posts its reports: cortex = your standing mind thread (needs one); session = this conversation, or the one in session_id; background = runs, posts nowhere. Omit for your default (cortex when you have one, else here)."},
 			"session_id":      {Type: "string", Description: "(move, optional, with to=\"session\") A specific session of yours to report into, e.g. one from open_session."},
-			"random":          {Type: "boolean", Description: "(every, optional) Fire at RANDOM moments instead of a fixed cadence: random gaps between min_gap_minutes and max_gap_minutes. For a task of your own, times_per_day instead puts that many moments inside the active_from/active_to window."},
-			"times_per_day":   {Type: "integer", Description: "(every as you, random) Random fires per day inside the window (1-48)."},
+			"random":          {Type: "boolean", Description: "(every, optional) Fire at RANDOM moments instead of a fixed cadence: random gaps between min_gap_minutes and max_gap_minutes, or times_per_day moments a day inside the active_from/active_to window."},
+			"times_per_day":   {Type: "integer", Description: "(every, random) Random fires per day inside the window (1-96)."},
 			"min_gap_minutes": {Type: "integer", Description: "(every, random) Minimum minutes between fires."},
 			"max_gap_minutes": {Type: "integer", Description: "(every, random) Maximum minutes between fires."},
 			"active_from":     {Type: "string", Description: "(every at an interval or random, optional) Daily window start, HH:MM local, with active_to; runs that would land outside it wait for the next window."},
@@ -309,11 +313,32 @@ func scheduleCreate(ctx context.Context, owner, controllerAgentID string, impl m
 		}
 		var cron string
 		var interval int
-		if timeSpec != "" {
+		var times []int
+		if mm := timesListRe.FindStringSubmatch(strings.TrimSpace(timeSpec)); mm != nil {
+			// Set times: "09:00,13:00" (or "daily 09:00,13:00").
+			mins, err := parseDailyAt(mm[1])
+			if err != nil {
+				return "", err
+			}
+			times = mins
+		} else if timeSpec != "" {
 			var err error
 			if cron, interval, err = parseEverySpec(timeSpec); err != nil {
 				return "", err
 			}
+		}
+		// The same timing every Scheduler dialog edits (core/timing): days,
+		// how often, a window, and the stops. Passed down beside the old
+		// fields, which callers that predate it still read.
+		spec, specOK, err := everyTiming(owner, args, cron, interval, times)
+		if err != nil {
+			return "", err
+		}
+		var specArg map[string]any
+		if specOK {
+			b, _ := json.Marshal(spec)
+			_ = json.Unmarshal(b, &specArg)
+			args["timing"] = specArg
 		}
 		if then == "" {
 			return "", fmt.Errorf("when=\"every\" needs then: the mission run each time, e.g. \"fetch the forecast and post it to the family chat\"")
@@ -329,7 +354,18 @@ func scheduleCreate(ctx context.Context, owner, controllerAgentID string, impl m
 			}
 		}
 		m := map[string]any{"name": name, "mission": then}
+		if specArg != nil {
+			// A scheduled agent's stops ride its timing: stop_after is a run
+			// count, stop_on a last day.
+			if v := oArgInt(args, "stop_after"); v > 0 {
+				specArg["max_runs"] = v
+			}
+			m["timing"] = specArg
+		}
 		switch {
+		case specArg != nil && (len(times) > 0 || (random && oArgInt(args, "times_per_day") > 0)):
+			// Set times and N a day at random have no old form for a
+			// scheduled agent; the timing is the whole answer.
 		case random:
 			lo, hi, err := standingRandomGaps(args, interval)
 			if err != nil {
@@ -352,8 +388,8 @@ func scheduleCreate(ctx context.Context, owner, controllerAgentID string, impl m
 				m["agent_id"] = agent
 			}
 		}
-		if v := oArgInt(args, "stop_after"); v > 0 {
-			return "", fmt.Errorf("a clock schedule has no alert count: give it until (what makes it done) with max_attempts, or delete it when it has done its job")
+		if v := oArgInt(args, "stop_after"); v > 0 && specArg == nil {
+			return "", fmt.Errorf("an annual date has no run count: give it until (what makes it done) with max_attempts, or delete it when it has done its job")
 		}
 		return forward("create_standing_agent", m)
 	}
@@ -654,6 +690,12 @@ func standingRandomGaps(args map[string]any, interval int) (lo, hi int, err erro
 // recurring tool's pattern, and stop_after is its run cap.
 func scheduleOwnRecurring(rec recurringImpl, cron string, interval int, then, name string, args map[string]any) (string, error) {
 	m := map[string]any{"prompt": then, "name": name}
+	// The shared timing everyTiming built, when it could: the recurring tool
+	// takes it as the whole answer, and the pattern fields below stay for
+	// callers that read them.
+	if t, ok := args["timing"]; ok && t != nil {
+		m["timing"] = t
+	}
 	switch {
 	case oArgBool(args, "random"):
 		m["pattern"] = RecurringRandom
@@ -879,4 +921,80 @@ func recurringIDs(rows []recurringTaskRow) string {
 		ids[i] = rt.TaskID
 	}
 	return strings.Join(ids, ", ")
+}
+
+// --- the shared timing, from the tool's words ---------------------------------
+
+var timesListRe = regexp.MustCompile(`(?i)^(?:(?:every\s+day|daily|at)\s+)?(\d{1,2}:\d{2}(?:\s*,\s*\d{1,2}:\d{2})+)$`)
+
+// scheduleDaysArg reads days="weekdays" / "weekends" / "every day" /
+// "mon,wed,fri" into a weekday mask. Zero for every day or "".
+func scheduleDaysArg(s string) (uint8, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "", "daily", "every day", "everyday", "all":
+		return 0, nil
+	case "weekdays", "weekday":
+		return timing.Weekdays, nil
+	case "weekends", "weekend":
+		return timing.Weekends, nil
+	}
+	if spec, ok := timing.FromCron(s + " 00:00"); ok {
+		return spec.Days, nil
+	}
+	return 0, fmt.Errorf("days %q: use weekdays, weekends, every day, or day names like mon,wed,fri", s)
+}
+
+// everyTiming is when="every" as a core/timing.Spec, the form every Scheduler
+// dialog edits: the parsed time (a cron-like spec, an interval, or a list of
+// set times), random gaps or a number a day, days, a window, and the stops.
+// ok is false only for an old form a Spec cannot say (an annual date), which
+// is passed on as it was.
+func everyTiming(owner string, args map[string]any, cron string, interval int, times []int) (timing.Spec, bool, error) {
+	var s timing.Spec
+	switch {
+	case oArgBool(args, "random"):
+		if n := oArgInt(args, "times_per_day"); n > 0 {
+			s = timing.Spec{How: timing.HowRandomCount, PerDay: n}
+		} else {
+			lo, hi := oArgInt(args, "min_gap_minutes")*60, oArgInt(args, "max_gap_minutes")*60
+			if lo <= 0 {
+				lo = interval
+			}
+			s = timing.Spec{How: timing.HowRandomGap, MinGapSeconds: lo, MaxGapSeconds: hi}
+		}
+	case len(times) > 0:
+		s = timing.Spec{How: timing.HowTimes, Times: times}
+	case cron != "":
+		spec, ok := timing.FromCron(cron)
+		if !ok {
+			return timing.Spec{}, false, nil
+		}
+		s = spec
+	default:
+		s = timing.Spec{How: timing.HowEvery, EverySeconds: interval}
+	}
+	if d := strings.TrimSpace(oArgStr(args, "days")); d != "" {
+		mask, err := scheduleDaysArg(d)
+		if err != nil {
+			return timing.Spec{}, false, err
+		}
+		s.Days = mask
+	}
+	if from, to := strings.TrimSpace(oArgStr(args, "active_from")), strings.TrimSpace(oArgStr(args, "active_to")); from != "" || to != "" {
+		has, f, tt, err := standingWindowFrom(from, to)
+		if err != nil {
+			return timing.Spec{}, false, err
+		}
+		s.HasWindow, s.WindowFrom, s.WindowTo = has, f, tt
+	}
+	stopAt, err := stopAtFrom(owner, oArgStr(args, "stop_on"))
+	if err != nil {
+		return timing.Spec{}, false, err
+	}
+	s.StopAt = stopAt
+	if err := s.Validate(); err != nil {
+		return timing.Spec{}, false, err
+	}
+	return s, true, nil
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 func strp(s string) *string { return &s }
@@ -681,5 +682,77 @@ func TestStandingUpdateWindow(t *testing.T) {
 	}
 	if err := applyStandingUpdate(&sa, standingUpdateBody{Cron: "daily 09:00"}); err != nil || sa.HasWindow {
 		t.Fatalf("a clock time kept the window: %+v %v", sa, err)
+	}
+}
+
+// The shared timing replaces the old fields outright when the dialog sends it,
+// and is refused when it cannot fire.
+func TestStandingUpdateTakesSharedTiming(t *testing.T) {
+	sa := StandingAgent{Name: "poster", Mission: "post", Cron: "daily 09:00"}
+	spec := timing.Spec{Days: timing.Weekdays, How: timing.HowRandomCount, PerDay: 3, HasWindow: true, WindowFrom: 540, WindowTo: 1020}
+	if err := applyStandingUpdate(&sa, standingUpdateBody{Timing: &spec}); err != nil {
+		t.Fatal(err)
+	}
+	if !sa.Timing.Set() || sa.Cron != "" || sa.IntervalSeconds != 0 {
+		t.Fatalf("the old fields survived beside the new: %+v", sa)
+	}
+	if got := StandingScheduleLabel(sa); got != "3 times a day at random between 09:00 and 17:00, weekdays" {
+		t.Errorf("label %q", got)
+	}
+	bad := timing.Spec{How: timing.HowTimes}
+	if err := applyStandingUpdate(&sa, standingUpdateBody{Timing: &bad}); err == nil {
+		t.Error("a timing that cannot fire was accepted")
+	}
+	// An old-form edit after it is the whole answer again.
+	if err := applyStandingUpdate(&sa, standingUpdateBody{Cron: "weekdays 08:00"}); err != nil || sa.Timing.Set() {
+		t.Fatalf("an old-form edit left the shared timing in place: %+v %v", sa, err)
+	}
+}
+
+// A recurring task's old pattern reads into the shared form for the dialog,
+// and a task saved with the shared form fires by it, held to the floor.
+func TestRecurringTakesSharedTiming(t *testing.T) {
+	daily := recurringTimingOut(orchUpdatePayload{Pattern: RecurringDaily, AtMinutes: []int{480, 1080}})
+	if daily.How != timing.HowTimes || len(daily.Times) != 2 {
+		t.Errorf("daily at two times: %+v", daily)
+	}
+	rnd := recurringTimingOut(orchUpdatePayload{Pattern: RecurringRandom, TimesPerDay: 4, HasWindow: true, WindowFromMin: 480, WindowToMin: 960})
+	if rnd.How != timing.HowRandomCount || rnd.PerDay != 4 || !rnd.HasWindow {
+		t.Errorf("random count with a window: %+v", rnd)
+	}
+	gap := recurringTimingOut(orchUpdatePayload{Pattern: RecurringRandom, MinGapSeconds: 1800, MaxGapSeconds: 3600})
+	if gap.How != timing.HowRandomGap || gap.MaxGapSeconds != 3600 {
+		t.Errorf("random gaps: %+v", gap)
+	}
+
+	p := orchUpdatePayload{Timing: timing.Spec{How: timing.HowDaily, Times: []int{9 * 60}}}
+	now := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	next, err := computeNextFire(&p, now)
+	if err != nil || !next.Equal(time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("a task with shared timing fired at %s (%v)", next, err)
+	}
+	if recurringTimingFloor(timing.Spec{How: timing.HowEvery, EverySeconds: 1}, time.Minute) == nil {
+		t.Error("an interval under the deployment floor was accepted")
+	}
+}
+
+// A monitor's checks stay every N, kept to set periods when asked; sent with
+// nothing set, it is continuous again.
+func TestMonitorPeriods(t *testing.T) {
+	m := EventMonitor{Name: "build", Kind: EventKindPoll, Owner: "u", IntervalSeconds: 30, Check: "is the build red?"}
+	if err := applyMonitorUpdate(&m, monitorUpdateBody{Periods: &monitorPeriods{Days: timing.Weekdays, HasWindow: true, WindowFrom: 540, WindowTo: 1020}}); err != nil {
+		t.Fatal(err)
+	}
+	if m.OnlyDays != timing.Weekdays || !m.OnlyWindow || m.OnlyTo != 1020 {
+		t.Fatalf("periods not applied: %+v", m)
+	}
+	if got := monitorCadence(m); got != "every 30s between 09:00 and 17:00, weekdays" {
+		t.Errorf("cadence label %q", got)
+	}
+	if err := applyMonitorUpdate(&m, monitorUpdateBody{Periods: &monitorPeriods{HasWindow: true, WindowFrom: 600, WindowTo: 500}}); err == nil {
+		t.Error("a backwards window was accepted")
+	}
+	if err := applyMonitorUpdate(&m, monitorUpdateBody{Periods: &monitorPeriods{}}); err != nil || m.OnlyDays != 0 || m.OnlyWindow {
+		t.Fatalf("continuous did not clear the periods: %+v %v", m, err)
 	}
 }

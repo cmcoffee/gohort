@@ -7272,77 +7272,17 @@ select.ui-orch-intake-input {
           ln.textContent = 'Linked: it runs on its group\u2019s time. This is its own time, used again if it is unlinked.';
           host.appendChild(ln);
         }
-        function labeled(labelText, inputEl) {
-          var wrap = schedLabeled(labelText, inputEl);
-          host.appendChild(wrap);
-          return wrap;
-        }
-        var patternSel = schedSelect([['fixed', 'Fixed: every N minutes'], ['daily', 'Daily: at set times'], ['random', 'Random']], task.pattern || 'fixed');
-        labeled('Pattern', patternSel);
-
-        var interval = schedNum(task.interval_minutes);
-        var timesPerDay = schedNum(task.times_per_day);
-        var minGap = schedNum(task.min_gap_minutes);
-        var maxGap = schedNum(task.max_gap_minutes);
-        var fromI = schedTime(task.has_window ? task.active_from : '');
-        var toI = schedTime(task.has_window ? task.active_to : '');
-        var maxFires = schedNum(task.max_fires);
-        // Indefinite is stored as max_fires = 0. That is invisible in a blank
-        // number field, which reads as "unset" rather than as a decision — and
-        // a cap someone else set (an agent authoring the task through the
-        // recurring tool) looks identical to no cap at all until you open this
-        // modal. A checkbox makes the current state legible at a glance and
-        // makes "run forever" an explicit choice rather than an empty input.
-        var indefinite = document.createElement('input');
-        indefinite.type = 'checkbox';
-        indefinite.checked = !(parseInt(task.max_fires, 10) > 0);
-
-        var fixedRow = labeled('Every N minutes', interval);
-        var dailyAt = schedTxt(task.daily_at || '', '08:00 or 08:00,18:00');
-        var dailyRow = labeled('Times of day (HH:MM, your time zone)', dailyAt);
-        var timesRow = labeled('Times per day (blank = unlimited)', timesPerDay);
-        var minGapRow = labeled('Min minutes between fires', minGap);
-        var maxGapRow = labeled('Max minutes between fires (unlimited random)', maxGap);
-        var fromRow = labeled('Active window from (HH:MM, optional)', fromI);
-        var toRow = labeled('Active window to (HH:MM, optional)', toI);
-        labeled('Run indefinitely (no total-fire cap)', indefinite);
-        var maxFiresRow = labeled('Max total fires (stop after this many)', maxFires);
-        function syncIndefinite() {
-          maxFiresRow.style.display = indefinite.checked ? 'none' : '';
-        }
-        indefinite.addEventListener('change', syncIndefinite);
-        syncIndefinite();
-
-        function syncPattern() {
-          var isRandom = patternSel.value === 'random';
-          var isDaily = patternSel.value === 'daily';
-          fixedRow.style.display = (isRandom || isDaily) ? 'none' : '';
-          dailyRow.style.display = isDaily ? '' : 'none';
-          // A daily task runs at its set times; a window has nothing to add.
-          fromRow.style.display = isDaily ? 'none' : '';
-          toRow.style.display = isDaily ? 'none' : '';
-          timesRow.style.display = isRandom ? '' : 'none';
-          minGapRow.style.display = isRandom ? '' : 'none';
-          maxGapRow.style.display = isRandom ? '' : 'none';
-        }
-        patternSel.addEventListener('change', syncPattern);
-        syncPattern();
-
+        // The shared sections, so this reads the same as every other kind.
+        // A task's run cap and its goal are its Until.
+        var collectTiming = schedTimingFields(host, task.timing);
+        var collectUntil = schedUntilFields(host, task.until, {unit: 'runs'});
         return function collect() {
-          function iv(x) { var n = parseInt(x.value, 10); return isNaN(n) ? 0 : n; }
-          return {
-            pattern: patternSel.value,
-            interval_minutes: iv(interval),
-            daily_at: dailyAt.value.trim(),
-            times_per_day: iv(timesPerDay),
-            min_gap_minutes: iv(minGap),
-            max_gap_minutes: iv(maxGap),
-            active_from: patternSel.value === 'daily' ? '' : fromI.value.trim(),
-            active_to: patternSel.value === 'daily' ? '' : toI.value.trim(),
-            // Checked → 0, the stored form of "indefinite". Explicit rather
-            // than relying on a blank field, so the intent round-trips.
-            max_fires: indefinite.checked ? 0 : iv(maxFires)
-          };
+          var t = collectTiming();
+          if (!t) return null;
+          var u = collectUntil();
+          if (!u) return null;
+          t.until = u.until;
+          return t;
         };
       }
 
@@ -7509,7 +7449,7 @@ select.ui-orch-intake-input {
 
         // The same two halves the editor draws, in the same order, so what you
         // fill in to create a task is what you come back to to change it.
-        var task = {pattern: 'fixed', interval_minutes: 30};
+        var task = {timing: {how: 'every', every_seconds: 1800}};
         var whatHost = schedHalf(m, 'What it does');
         var collectWhat = recurringWhatFields(whatHost, task);
         schedAttachHalf(m, whatHost);
@@ -7518,6 +7458,7 @@ select.ui-orch-intake-input {
         schedAttachHalf(m, whenHost);
         function collect() {
           var body = collectWhat(), when = collectWhen();
+          if (!when) return null;
           Object.keys(when).forEach(function(k) { body[k] = when[k]; });
           return body;
         }
@@ -7533,6 +7474,7 @@ select.ui-orch-intake-input {
         createBtn.textContent = 'Create';
         createBtn.onclick = function() {
           var body = collect();
+          if (!body) return;
           if (!body.prompt.trim()) { window.uiAlert('Enter a directive for the task.'); return; }
           body.agent_id = agentId;
           body.session_id = (ctx && ctx.sessionId) || '';
@@ -7575,19 +7517,13 @@ select.ui-orch-intake-input {
         var subjectIn = schedTxt('', 'what each run is about');
         m.body.appendChild(schedLabeled('What the run is about', subjectIn));
 
-        // Cadences rather than a raw cron string. The scheduler understands
-        // both, and a person asked to type "FRI 21:30" from memory gets it
-        // wrong in a way they find out about a week later.
-        var CADENCES = [
-          ['30', 'Every 30 minutes'],
-          ['60', 'Hourly'],
-          ['360', 'Every 6 hours'],
-          ['cron:daily 08:00', 'Daily at 8am'],
-          ['cron:weekdays 08:00', 'Weekdays at 8am'],
-          ['cron:MON 09:00', 'Weekly, Monday 9am'],
-        ];
-        var everySel = schedSelect(CADENCES, '60');
-        m.body.appendChild(schedLabeled('How often', everySel));
+        // When it runs: the shared timing section, the same as every other
+        // kind on the Scheduler.
+        var whenHost = document.createElement('div');
+        m.body.appendChild(whenHost);
+        var collectTiming = schedTimingFields(whenHost, {how: 'daily', times: [480]});
+        // And when it stops, the same Until every other kind has.
+        var collectUntil = schedUntilFields(whenHost, {has_goal: true}, {unit: 'runs'});
 
         var createBtn = document.createElement('button');
         createBtn.className = 'ui-orch-modal-btn primary';
@@ -7636,9 +7572,12 @@ select.ui-orch-intake-input {
             mission: (subjectIn.value || '').trim(),
             agent_id: window.GOHORT_AGENT_ID || '',
           };
-          var every = everySel.value || '60';
-          if (every.indexOf('cron:') === 0) { body.cron = every.slice(5); }
-          else { body.interval_minutes = parseInt(every, 10); }
+          var t = collectTiming();
+          if (!t) return;
+          var u = collectUntil();
+          if (!u) return;
+          body.timing = t.timing;
+          body.until = u.until;
           createBtn.disabled = true;
           fetch('api/console/machine-schedule/create', {
             method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
@@ -7694,6 +7633,368 @@ select.ui-orch-intake-input {
       }
       // schedTime builds a native time picker (HH:MM, local). Emits the exact
       // zero-padded "HH:MM" the cron parser expects.
+      // --- The shared timing section (core/timing.Spec) ----------------------
+      //
+      // One way to say when something runs, for everything on the Scheduler:
+      // which days (always shown as boxes, with a shortcut dropdown that just
+      // ticks them), how often on those days, and an optional window of the day
+      // for the every and random kinds. Each kind's dialog keeps its own "what
+      // it does" half and draws this as its "when" half, so a scheduled agent,
+      // a machine run, a recurring task and a link group are timed alike.
+      var SCHED_DAY_BITS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']];
+      var SCHED_WEEKDAYS = 0x3e, SCHED_WEEKENDS = 0x41, SCHED_ALL_DAYS = 0x7f;
+
+      function schedHHMM(m) {
+        m = parseInt(m, 10) || 0;
+        var h = Math.floor(m / 60), mm = m % 60;
+        return (h < 10 ? '0' : '') + h + ':' + (mm < 10 ? '0' : '') + mm;
+      }
+      function schedMinutes(v) {
+        var p = String(v || '').split(':');
+        if (p.length !== 2) return -1;
+        var h = parseInt(p[0], 10), m = parseInt(p[1], 10);
+        if (isNaN(h) || isNaN(m)) return -1;
+        return h * 60 + m;
+      }
+
+      // schedDaysRow: the day boxes and their shortcut. mask() reads them back
+      // (0 = every day).
+      function schedDaysRow(mask) {
+        mask = parseInt(mask, 10) || 0;
+        var wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:0.55rem';
+        var preset = schedSelect([['all', 'Every day'], ['weekdays', 'Weekdays'], ['weekends', 'Weekends'], ['custom', 'Custom']], 'all');
+        wrap.appendChild(preset);
+        var boxes = SCHED_DAY_BITS.map(function(d) {
+          var lbl = document.createElement('label');
+          lbl.style.cssText = 'display:inline-flex;align-items:center;gap:0.25rem;font-size:0.85rem';
+          var cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.value = String(d[0]);
+          cb.checked = mask === 0 || (mask & (1 << d[0])) !== 0;
+          lbl.appendChild(cb); lbl.appendChild(document.createTextNode(d[1]));
+          wrap.appendChild(lbl);
+          return cb;
+        });
+        function read() {
+          var m = 0;
+          boxes.forEach(function(cb) { if (cb.checked) m |= 1 << parseInt(cb.value, 10); });
+          return m;
+        }
+        function presetFor(m) {
+          if (m === 0 || m === SCHED_ALL_DAYS) return 'all';
+          if (m === SCHED_WEEKDAYS) return 'weekdays';
+          if (m === SCHED_WEEKENDS) return 'weekends';
+          return 'custom';
+        }
+        preset.value = presetFor(mask);
+        preset.addEventListener('change', function() {
+          var m = {all: SCHED_ALL_DAYS, weekdays: SCHED_WEEKDAYS, weekends: SCHED_WEEKENDS}[preset.value];
+          if (m == null) return;
+          boxes.forEach(function(cb) { cb.checked = (m & (1 << parseInt(cb.value, 10))) !== 0; });
+        });
+        boxes.forEach(function(cb) { cb.addEventListener('change', function() { preset.value = presetFor(read()); }); });
+        return {
+          el: schedLabeled('Days', wrap),
+          mask: function() { var m = read(); return m === SCHED_ALL_DAYS ? 0 : m; },
+          empty: function() { return read() === 0; }
+        };
+      }
+
+      // schedWindowRow: the optional "only between" pair. read() is null when
+      // blank, false when half-filled or backwards (it has said why).
+      function schedWindowRow(spec, label) {
+        var from = schedTime(spec && spec.has_window ? schedHHMM(spec.window_from) : '');
+        var to = schedTime(spec && spec.has_window ? schedHHMM(spec.window_to) : '');
+        var wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap';
+        wrap.appendChild(from); wrap.appendChild(document.createTextNode('and')); wrap.appendChild(to);
+        return {
+          el: schedLabeled(label || 'Only between (local time, optional)', wrap),
+          from: from, to: to,
+          read: function() {
+            var f = (from.value || '').trim(), t = (to.value || '').trim();
+            if (!f && !t) return null;
+            if (!f || !t) { window.uiAlert('Give both ends of the time window, or neither.'); return false; }
+            var fm = schedMinutes(f), tm = schedMinutes(t);
+            if (fm < 0 || tm <= fm) { window.uiAlert('The window has to end after it starts, on the same day.'); return false; }
+            return {from: fm, to: tm};
+          }
+        };
+      }
+
+      // schedTimingFields draws the whole section for a schedule and returns
+      // collect() -> {timing: spec} or null (it has said why).
+      function schedTimingFields(host, spec) {
+        spec = spec || {};
+        var days = schedDaysRow(spec.days);
+        host.appendChild(days.el);
+
+        var how = schedSelect([
+          ['daily', 'Once a day'],
+          ['times', 'At set times'],
+          ['every', 'Every…'],
+          ['random_count', 'At random, a number of times a day'],
+          ['random_gap', 'At random gaps']
+        ], spec.how || 'daily');
+        host.appendChild(schedLabeled('How often', how));
+
+        var times = (spec.times || []).slice();
+        var dailyAt = schedTime(times.length ? schedHHMM(times[0]) : '09:00');
+        var dailyRow = schedLabeled('At (local time)', dailyAt);
+        host.appendChild(dailyRow);
+
+        var timesWrap = document.createElement('div');
+        timesWrap.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:0.4rem';
+        var timeInputs = [];
+        function addTime(v) {
+          var t = schedTime(v || '');
+          timeInputs.push(t);
+          timesWrap.insertBefore ? timesWrap.insertBefore(t, addBtn) : timesWrap.appendChild(t);
+        }
+        var addBtn = document.createElement('button');
+        addBtn.type = 'button'; addBtn.className = 'ui-orch-list-add'; addBtn.textContent = '+ Add time';
+        addBtn.onclick = function() { addTime(''); };
+        timesWrap.appendChild(addBtn);
+        (times.length ? times : [540, 780]).forEach(function(m) { addTime(schedHHMM(m)); });
+        var timesRow = schedLabeled('At these times (local)', timesWrap);
+        host.appendChild(timesRow);
+
+        var evSecs = spec.every_seconds || 3600, evUnit = 'minutes', evVal = evSecs / 60;
+        if (evSecs % 86400 === 0) { evUnit = 'days'; evVal = evSecs / 86400; }
+        else if (evSecs % 3600 === 0) { evUnit = 'hours'; evVal = evSecs / 3600; }
+        var everyN = schedNum(evVal, 1);
+        everyN.style.maxWidth = '6rem';
+        var everyUnit = schedSelect([['minutes', 'minutes'], ['hours', 'hours'], ['days', 'days']], evUnit);
+        var everyWrap = document.createElement('div');
+        everyWrap.style.cssText = 'display:flex;gap:0.5rem;align-items:center';
+        everyWrap.appendChild(everyN); everyWrap.appendChild(everyUnit);
+        var everyRow = schedLabeled('Every', everyWrap);
+        host.appendChild(everyRow);
+
+        var perDay = schedNum(spec.per_day || 3, 1);
+        var perDayRow = schedLabeled('Times a day', perDay);
+        host.appendChild(perDayRow);
+
+        var gapUnit0 = (spec.min_gap_seconds || 1800) % 3600 === 0 && (spec.max_gap_seconds || 3600) % 3600 === 0 ? 'hours' : 'minutes';
+        var gapDiv = gapUnit0 === 'hours' ? 3600 : 60;
+        var gapMin = schedNum((spec.min_gap_seconds || 1800) / gapDiv, 1);
+        var gapMax = schedNum((spec.max_gap_seconds || 3600) / gapDiv, 1);
+        gapMin.style.maxWidth = gapMax.style.maxWidth = '6rem';
+        var gapUnit = schedSelect([['minutes', 'minutes'], ['hours', 'hours']], gapUnit0);
+        var gapWrap = document.createElement('div');
+        gapWrap.style.cssText = 'display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap';
+        gapWrap.appendChild(gapMin); gapWrap.appendChild(document.createTextNode('to'));
+        gapWrap.appendChild(gapMax); gapWrap.appendChild(gapUnit);
+        var gapRow = schedLabeled('Each gap between runs', gapWrap);
+        host.appendChild(gapRow);
+
+        var win = schedWindowRow(spec);
+        host.appendChild(win.el);
+
+        function show(el, on) { el.style.display = on ? '' : 'none'; }
+        function sync() {
+          var h = how.value;
+          show(dailyRow, h === 'daily');
+          show(timesRow, h === 'times');
+          show(everyRow, h === 'every');
+          show(perDayRow, h === 'random_count');
+          show(gapRow, h === 'random_gap');
+          show(win.el, h === 'every' || h === 'random_count' || h === 'random_gap');
+        }
+        how.addEventListener('change', sync);
+        sync();
+
+        return function collect() {
+          if (days.empty()) { window.uiAlert('Pick at least one day.'); return null; }
+          var out = {how: how.value, days: days.mask()};
+          var h = how.value;
+          if (h === 'daily') {
+            var m = schedMinutes(dailyAt.value);
+            if (m < 0) { window.uiAlert('Pick a time of day.'); return null; }
+            out.times = [m];
+          } else if (h === 'times') {
+            out.times = [];
+            timeInputs.forEach(function(t) { var m = schedMinutes(t.value); if (m >= 0) out.times.push(m); });
+            if (!out.times.length) { window.uiAlert('Give at least one time of day.'); return null; }
+          } else {
+            if (h === 'every') {
+              var n = parseInt(everyN.value, 10);
+              if (isNaN(n) || n < 1) { window.uiAlert('Enter how often, 1 or more.'); return null; }
+              out.every_seconds = n * ({minutes: 60, hours: 3600, days: 86400}[everyUnit.value] || 60);
+            } else if (h === 'random_count') {
+              var c = parseInt(perDay.value, 10);
+              if (isNaN(c) || c < 1 || c > 96) { window.uiAlert('Times a day has to be between 1 and 96.'); return null; }
+              out.per_day = c;
+            } else {
+              var mul = gapUnit.value === 'hours' ? 3600 : 60;
+              var lo = parseInt(gapMin.value, 10), hi = parseInt(gapMax.value, 10);
+              if (isNaN(lo) || isNaN(hi) || lo < 1 || hi <= lo) { window.uiAlert('The longest gap has to be longer than the shortest.'); return null; }
+              out.min_gap_seconds = lo * mul; out.max_gap_seconds = hi * mul;
+            }
+            var w = win.read();
+            if (w === false) return null;
+            if (w) { out.has_window = true; out.window_from = w.from; out.window_to = w.to; }
+          }
+          return {timing: out};
+        };
+      }
+
+      // schedUntilFields: when it stops, the same for every kind
+      // (schedule_until.go). Indefinitely, or whichever comes first of a date,
+      // a number of runs (rounds for a link group, alerts for a monitor), and
+      // a goal judged after each run (kinds that take one). collect() ->
+      // {until: {...}} or null (it has said why).
+      function schedUntilFields(host, until, opts) {
+        until = until || {};
+        opts = opts || {};
+        var unit = opts.unit || 'runs';
+        var goals = opts.goal !== false && until.has_goal !== false;
+        var hasDate = !!until.stop_on, hasRuns = (parseInt(until.max_runs, 10) || 0) > 0, hasGoal = goals && !!(until.goal || '').trim();
+
+        // One choice first: indefinitely, or until something. The conditions
+        // only show once "Until…" is picked, so a schedule that runs forever
+        // reads as one line.
+        // Two radios rather than a dropdown: both choices in view, one click.
+        var limited = hasDate || hasRuns || hasGoal;
+        var group = 'sched-until-' + Math.random().toString(36).slice(2);
+        var modeWrap = document.createElement('div');
+        modeWrap.style.cssText = 'display:flex;align-items:center;gap:1rem;flex-wrap:wrap';
+        function radio(value, label, on) {
+          var w = document.createElement('label');
+          w.style.cssText = 'display:inline-flex;align-items:center;gap:0.35rem;font-size:0.85rem;cursor:pointer';
+          var r = document.createElement('input');
+          r.type = 'radio'; r.name = group; r.value = value; r.checked = !!on;
+          w.appendChild(r); w.appendChild(document.createTextNode(label));
+          modeWrap.appendChild(w);
+          return r;
+        }
+        var foreverRadio = radio('forever', 'Indefinitely', !limited);
+        var untilRadio = radio('until', 'Until…', limited);
+        host.appendChild(schedLabeled('Runs', modeWrap));
+
+        function check(label, on) {
+          var w = document.createElement('label');
+          w.style.cssText = 'display:inline-flex;align-items:center;gap:0.35rem;font-size:0.85rem;min-width:11rem';
+          var cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.checked = !!on;
+          w.appendChild(cb); w.appendChild(document.createTextNode(label));
+          return {el: w, cb: cb};
+        }
+        function line(c, field) {
+          var row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin:0.2rem 0';
+          row.appendChild(c.el);
+          if (field) row.appendChild(field);
+          return row;
+        }
+        var box = document.createElement('div');
+        box.style.cssText = 'margin:0 0 0.4rem 0.2rem';
+
+        var date = document.createElement('input');
+        date.type = 'date'; date.className = 'ui-orch-sec-filter'; date.value = until.stop_on || '';
+        var onDate = check('A date is reached', hasDate);
+        box.appendChild(line(onDate, date));
+
+        var runs = schedNum(hasRuns ? until.max_runs : '', 1);
+        runs.style.maxWidth = '6rem';
+        var runsWrap = document.createElement('span');
+        runsWrap.style.cssText = 'display:inline-flex;align-items:center;gap:0.4rem';
+        runsWrap.appendChild(runs);
+        runsWrap.appendChild(document.createTextNode(unit === 'rounds' ? 'rounds' : (unit === 'alerts' ? 'alerts' : 'times')));
+        if ((parseInt(until.runs, 10) || 0) > 0) {
+          var so = document.createElement('span');
+          so.className = 'ui-orch-modal-help';
+          so.textContent = '(' + until.runs + ' so far)';
+          runsWrap.appendChild(so);
+        }
+        var runsLabel = unit === 'rounds' ? 'It has run a number of rounds' : (unit === 'alerts' ? 'It has alerted a number of times' : 'It has run a number of times');
+        var afterRuns = check(runsLabel, hasRuns);
+        box.appendChild(line(afterRuns, runsWrap));
+
+        var goal = null, tries = null, untilGoal = null;
+        if (goals) {
+          goal = schedTxt(until.goal || '', 'what must be true, e.g. the PR is merged');
+          goal.style.minWidth = '16rem';
+          var goalWrap = document.createElement('span');
+          goalWrap.style.cssText = 'display:inline-flex;align-items:center;gap:0.4rem;flex-wrap:wrap';
+          goalWrap.appendChild(goal);
+          if (!opts.noAttempts) {
+            tries = schedNum(until.max_attempts || '', 1);
+            tries.style.maxWidth = '5rem';
+            goalWrap.appendChild(document.createTextNode('at most'));
+            goalWrap.appendChild(tries);
+            goalWrap.appendChild(document.createTextNode('tries (optional)'));
+          }
+          untilGoal = check('A goal is achieved', hasGoal);
+          box.appendChild(line(untilGoal, goalWrap));
+        }
+        var note = document.createElement('div');
+        note.className = 'ui-orch-modal-help';
+        note.textContent = 'Tick any you like: it ends as soon as any one of them happens.' + (goals ? ' A goal is judged after each run, which costs one model call per run.' : '');
+        box.appendChild(note);
+        host.appendChild(box);
+
+        function sync() { box.style.display = untilRadio.checked ? '' : 'none'; }
+        foreverRadio.addEventListener('change', sync);
+        untilRadio.addEventListener('change', sync);
+        sync();
+
+        return function collect() {
+          var out = {stop_on: '', max_runs: 0, goal: '', max_attempts: 0};
+          if (untilRadio.checked) {
+            var any = onDate.cb.checked || afterRuns.cb.checked || (untilGoal && untilGoal.cb.checked);
+            if (!any) { window.uiAlert('Pick what it runs until, or choose Indefinitely.'); return null; }
+            if (onDate.cb.checked) {
+              if (!date.value) { window.uiAlert('Pick the last day it runs.'); return null; }
+              out.stop_on = date.value;
+            }
+            if (afterRuns.cb.checked) {
+              var n = parseInt(runs.value, 10);
+              if (isNaN(n) || n < 1) { window.uiAlert('Enter how many ' + unit + ', 1 or more.'); return null; }
+              out.max_runs = n;
+            }
+            if (untilGoal && untilGoal.cb.checked) {
+              var g = (goal.value || '').trim();
+              if (!g) { window.uiAlert('Say what must be true for it to be done.'); return null; }
+              out.goal = g;
+              var t = tries ? parseInt(tries.value, 10) : 0;
+              out.max_attempts = isNaN(t) || t < 1 ? 0 : t;
+            }
+          }
+          if (!goals) delete out.goal;
+          return {until: out};
+        };
+      }
+
+      // schedPeriodsFields is a monitor's: its cadence stays "every N", and
+      // this only says when it applies, continuously (the default) or during
+      // set time periods. collect() -> {periods: {...}} ({} = continuous).
+      function schedPeriodsFields(host, periods) {
+        var on = !!periods;
+        var mode = schedSelect([['always', 'Continuously'], ['periods', 'During specified time periods']], on ? 'periods' : 'always');
+        host.appendChild(schedLabeled('When it checks', mode));
+        var days = schedDaysRow(on ? periods.days : 0);
+        host.appendChild(days.el);
+        var win = schedWindowRow(on ? periods : null, 'Between (local time, optional)');
+        host.appendChild(win.el);
+        function sync() {
+          var p = mode.value === 'periods';
+          days.el.style.display = p ? '' : 'none';
+          win.el.style.display = p ? '' : 'none';
+        }
+        mode.addEventListener('change', sync);
+        sync();
+        return function collect() {
+          if (mode.value !== 'periods') return {periods: {days: 0, has_window: false, window_from: 0, window_to: 0}};
+          if (days.empty()) { window.uiAlert('Pick at least one day.'); return null; }
+          var w = win.read();
+          if (w === false) return null;
+          var out = {days: days.mask(), has_window: !!w, window_from: w ? w.from : 0, window_to: w ? w.to : 0};
+          if (!out.days && !out.has_window) { window.uiAlert('Pick the days or a time window it checks in, or choose Continuously.'); return null; }
+          return {periods: out};
+        };
+      }
+
       function schedTime(val) {
         var i = document.createElement('input');
         i.type = 'time'; i.step = '60'; i.className = 'ui-orch-sec-filter';
@@ -7836,19 +8137,27 @@ select.ui-orch-intake-input {
         }
         whenSel.addEventListener('change', syncWhen);
         syncWhen();
+        // The cadence stays "check every N"; this only says when it applies:
+        // continuously, or during set days and hours (core/timing's terms).
+        var collectPeriods = schedPeriodsFields(host, mon.periods);
+        var collectUntil = schedUntilFields(host, mon.until, {unit: 'alerts', noAttempts: true});
 
         return function() {
+          var periods = collectPeriods();
+          if (!periods) return null;
+          var until = collectUntil();
+          if (!until) return null;
           if (whenSel.value === 'daily') {
             var at = dailyAt.value.trim();
             if (!at) { window.uiAlert('Enter one or more times, like 08:00.'); return null; }
-            return {daily_at: at};
+            return {daily_at: at, periods: periods.periods, until: until.until};
           }
           var secsPer = unitSel.value === 'hours' ? 3600 : (unitSel.value === 'minutes' ? 60 : 1);
           var v = parseInt(everyVal.value, 10);
           var n = (isNaN(v) ? 0 : v) * secsPer;
           if (n < 5) { window.uiAlert('Interval must be at least 5 seconds.'); return null; }
           // Back to an interval clears any set times.
-          return {interval_seconds: n, daily_at: ''};
+          return {interval_seconds: n, daily_at: '', periods: periods.periods, until: until.until};
         };
       }
 
@@ -7890,7 +8199,20 @@ select.ui-orch-intake-input {
             (g.members || []).forEach(function(line) { host.appendChild(schedReadOnly('Runs', line)); });
             return null;
           },
-          when: standingWhenFields
+          when: function(host, g) {
+            var collectTiming = schedTimingFields(host, g.timing);
+            // A group stops on a date or after a number of rounds; any goal
+            // is its members' own.
+            var collectUntil = schedUntilFields(host, g.until, {unit: 'rounds', goal: false});
+            return function() {
+              var t = collectTiming();
+              if (!t) return null;
+              var u = collectUntil();
+              if (!u) return null;
+              t.until = u.until;
+              return t;
+            };
+          }
         });
       });
 
@@ -7929,126 +8251,16 @@ select.ui-orch-intake-input {
           ln.textContent = 'Linked: it runs on its group\u2019s time. This is its own time, used again if it is unlinked.';
           host.appendChild(ln);
         }
-        var DAYS = [['MON', 'Mon'], ['TUE', 'Tue'], ['WED', 'Wed'], ['THU', 'Thu'], ['FRI', 'Fri'], ['SAT', 'Sat'], ['SUN', 'Sun']];
-
-        var freq = schedSelect([
-          ['interval', 'Every N minutes'],
-          ['random', 'At random, between N and M minutes'],
-          ['daily', 'Every day'],
-          ['weekdays', 'Weekdays (Mon–Fri)'],
-          ['weekends', 'Weekends (Sat–Sun)'],
-          ['weekly', 'Weekly on a day'],
-          ['custom', 'Specific days']
-        ], 'daily');
-        host.appendChild(schedLabeled('Frequency', freq));
-
-        var interval = schedNum(sa.interval_minutes || 60, 1);
-        var intervalRow = schedLabeled('Every N minutes', interval);
-        host.appendChild(intervalRow);
-        // The longest gap of a random cadence: each run is drawn between the
-        // two, so the label above reads as the shortest gap while it shows.
-        var maxGap = schedNum(sa.max_interval_minutes || '', 2);
-        var maxGapRow = schedLabeled('Longest gap (minutes)', maxGap);
-        host.appendChild(maxGapRow);
-        // An optional daily window for either: runs that would land outside it
-        // wait for the next opening. "Every 30-60 minutes, between 9 and 5".
-        var winFrom = schedTime(sa.active_from || '');
-        var winTo = schedTime(sa.active_to || '');
-        var winWrap = document.createElement('div');
-        winWrap.style.cssText = 'display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap';
-        winWrap.appendChild(winFrom);
-        winWrap.appendChild(document.createTextNode('and'));
-        winWrap.appendChild(winTo);
-        var winRow = schedLabeled('Only between (local time, optional)', winWrap);
-        host.appendChild(winRow);
-
-        var timeInput = schedTime('');
-        var timeRow = schedLabeled('At time (local)', timeInput);
-        host.appendChild(timeRow);
-
-        var weekdaySel = schedSelect(DAYS, 'MON');
-        var weeklyRow = schedLabeled('On day', weekdaySel);
-        host.appendChild(weeklyRow);
-
-        var customWrap = document.createElement('div');
-        customWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.6rem;margin:0.2rem 0';
-        var dayBoxes = DAYS.map(function(d) {
-          var lbl = document.createElement('label');
-          lbl.style.cssText = 'display:inline-flex;align-items:center;gap:0.3rem;font-size:0.85rem';
-          var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = d[0];
-          lbl.appendChild(cb); lbl.appendChild(document.createTextNode(d[1]));
-          customWrap.appendChild(lbl);
-          return cb;
-        });
-        var customRow = schedLabeled('On days', customWrap);
-        host.appendChild(customRow);
-
-        function show(el, on) { el.style.display = on ? '' : 'none'; }
-        function sync() {
-          var f = freq.value, everyN = f === 'interval' || f === 'random';
-          show(intervalRow, everyN);
-          show(maxGapRow, f === 'random');
-          show(winRow, everyN);
-          intervalRow.firstChild.textContent = f === 'random' ? 'Shortest gap (minutes)' : 'Every N minutes';
-          show(timeRow, !everyN);
-          show(weeklyRow, f === 'weekly');
-          show(customRow, f === 'custom');
-        }
-        freq.addEventListener('change', sync);
-
-        // Prefill the controls from the agent's current schedule so an edit
-        // starts from what's set, not a blank default.
-        (function prefill() {
-          var cron = (sa.cron || '').trim();
-          if (!cron && (sa.interval_minutes || 0) > 0) {
-            freq.value = (sa.max_interval_minutes || 0) > sa.interval_minutes ? 'random' : 'interval';
-            return;
-          }
-          var parts = cron.split(/\s+/);
-          if (parts.length === 2) {
-            var days = parts[0].toLowerCase(), hhmm = parts[1];
-            if (/^\d{1,2}:\d{2}$/.test(hhmm)) { timeInput.value = hhmm.length === 4 ? '0' + hhmm : hhmm; }
-            if (days === 'daily' || days === 'everyday') { freq.value = 'daily'; }
-            else if (days === 'weekdays') { freq.value = 'weekdays'; }
-            else if (days === 'weekends') { freq.value = 'weekends'; }
-            else {
-              var toks = days.split(',').map(function(s) { return s.trim().slice(0, 3).toUpperCase(); }).filter(Boolean);
-              if (toks.length === 1) { freq.value = 'weekly'; weekdaySel.value = toks[0]; }
-              else { freq.value = 'custom'; dayBoxes.forEach(function(cb) { cb.checked = toks.indexOf(cb.value) >= 0; }); }
-            }
-          }
-        })();
-        if (!timeInput.value) timeInput.value = '09:00';
-        sync();
-
+        // The shared sections, so this reads the same as every other kind.
+        var collectTiming = schedTimingFields(host, sa.timing);
+        var collectUntil = schedUntilFields(host, sa.until, {unit: 'runs'});
         return function() {
-          var f = freq.value, cronVal = '', iv = 0, maxIv = 0, aFrom = '', aTo = '';
-          if (f === 'interval' || f === 'random') {
-            iv = parseInt(interval.value, 10);
-            if (isNaN(iv) || iv < 1) { window.uiAlert('Enter a minute interval of 1 or more.'); return null; }
-            if (f === 'random') {
-              maxIv = parseInt(maxGap.value, 10);
-              if (isNaN(maxIv) || maxIv <= iv) { window.uiAlert('The longest gap has to be longer than the shortest.'); return null; }
-            }
-            aFrom = (winFrom.value || '').trim(); aTo = (winTo.value || '').trim();
-            if (!!aFrom !== !!aTo) { window.uiAlert('Give both ends of the time window, or neither.'); return null; }
-            if (aFrom && aTo <= aFrom) { window.uiAlert('The window has to end after it starts, on the same day.'); return null; }
-          } else {
-            var hhmm = timeInput.value;
-            if (!/^\d{1,2}:\d{2}$/.test(hhmm)) { window.uiAlert('Pick a time of day.'); return null; }
-            var daysTok = '';
-            if (f === 'daily') daysTok = 'daily';
-            else if (f === 'weekdays') daysTok = 'weekdays';
-            else if (f === 'weekends') daysTok = 'weekends';
-            else if (f === 'weekly') daysTok = weekdaySel.value;
-            else if (f === 'custom') {
-              var sel = dayBoxes.filter(function(cb) { return cb.checked; }).map(function(cb) { return cb.value; });
-              if (!sel.length) { window.uiAlert('Pick at least one day.'); return null; }
-              daysTok = sel.join(',');
-            }
-            cronVal = daysTok + ' ' + hhmm;
-          }
-          return {cron: cronVal, interval_minutes: iv, max_interval_minutes: maxIv, active_from: aFrom, active_to: aTo};
+          var t = collectTiming();
+          if (!t) return null;
+          var u = collectUntil();
+          if (!u) return null;
+          t.until = u.until;
+          return t;
         };
       }
 

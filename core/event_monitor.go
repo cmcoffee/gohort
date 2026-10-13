@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core/notes"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 // EventPollKind is the scheduler task kind for interval poll monitors. Exported
@@ -141,6 +142,20 @@ type EventMonitor struct {
 	// since midnight in the owner's zone, ascending. A watch feeding a morning
 	// bulletin looks at 08:00, not every N seconds from whenever it was made.
 	DailyAt []int `json:"daily_at,omitempty"`
+
+	// OnlyDays / OnlyWindow restrict checks to set time periods: the days in
+	// the mask (zero = every day) and, with OnlyWindow, OnlyFrom to OnlyTo
+	// minutes after local midnight. A check that would fall outside waits for
+	// the next opening. Neither set is continuous, which is the default: the
+	// cadence itself stays "every N", and this only says when it applies.
+	OnlyDays   uint8 `json:"only_days,omitempty"`
+	OnlyWindow bool  `json:"only_window,omitempty"`
+	OnlyFrom   int   `json:"only_from,omitempty"`
+	OnlyTo     int   `json:"only_to,omitempty"`
+
+	// StopAt ends it on a date: the first check on or after it stops the
+	// monitor instead of running. Zero is no end date.
+	StopAt time.Time `json:"stop_at,omitzero"`
 
 	// timer kind: the one moment it fires. A timer is created OneShot, so
 	// fireWake removes it once it has gone off: a fired timer has nothing to
@@ -860,12 +875,22 @@ func nextPoll(m EventMonitor, from time.Time) time.Time {
 		// fires a past RunAt on its next pass.
 		return m.FireAt
 	}
-	if len(m.DailyAt) > 0 {
-		return nextDailyTime(m.DailyAt, from.In(UserLocation(m.Owner)))
-	}
 	iv := m.IntervalSeconds
 	if iv < minPollInterval {
 		iv = minPollInterval
+	}
+	if m.OnlyDays != 0 || m.OnlyWindow {
+		spec := timing.Spec{How: timing.HowEvery, EverySeconds: iv, Days: m.OnlyDays,
+			HasWindow: m.OnlyWindow, WindowFrom: m.OnlyFrom, WindowTo: m.OnlyTo}
+		if len(m.DailyAt) > 0 {
+			spec = timing.Spec{How: timing.HowTimes, Times: m.DailyAt, Days: m.OnlyDays}
+		}
+		if next, err := spec.Next(from.In(UserLocation(m.Owner)), nil); err == nil {
+			return next
+		}
+	}
+	if len(m.DailyAt) > 0 {
+		return nextDailyTime(m.DailyAt, from.In(UserLocation(m.Owner)))
 	}
 	return from.Add(time.Duration(iv) * time.Second)
 }
@@ -1040,6 +1065,11 @@ func StartEventMonitorScheduler() {
 				}
 			}
 		}()
+		if !m.Paused && !m.StopAt.IsZero() && !time.Now().Before(m.StopAt) {
+			StopEventMonitor(RootDB, m.Owner, m.Name, MonitorStopFinished,
+				"Stopped: reached its end date, "+m.StopAt.Add(-time.Second).Format("Jan 2")+".")
+			return
+		}
 		if !m.Paused {
 			// Dependency guard: if the monitor's wake/check agent, credential, or
 			// tool was removed since the last tick, DON'T fire into the void (and

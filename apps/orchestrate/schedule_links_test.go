@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/timing"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -73,7 +74,7 @@ func TestLinkGroupLifecycle(t *testing.T) {
 	if err := moveInLinkGroup("u", "standing:post", -1); err != nil {
 		t.Fatal(err)
 	}
-	runLinkGroup(context.Background(), "u", g.ID)
+	runLinkGroup(context.Background(), "u", g.ID, true)
 	if strings.Join(order, ",") != "post,gather" {
 		t.Fatalf("members did not run in the set order: %v", order)
 	}
@@ -285,5 +286,64 @@ func TestLinkGroupSharesOneNote(t *testing.T) {
 	}
 	if got := pn.load().Text; got != "" {
 		t.Fatalf("the shared note outlived its group: %q", got)
+	}
+}
+
+// Until on a scheduled agent: it ends at its run count or when its next run
+// would be past its end date, and says why; the Until section converts an old
+// record's timing so it can carry them, and sets the goal.
+func TestScheduleEndsAtItsStops(t *testing.T) {
+	linkTestSetup(t)
+	sa := StandingAgent{Owner: "u", Name: "poster", AgentID: "a", Mission: "x", Cron: "daily 09:00"}
+	if err := applyStandingUntil(&sa, untilBody{MaxRuns: 2, Goal: strp("the PR is merged"), MaxAttempts: 4}, true); err != nil {
+		t.Fatal(err)
+	}
+	if !sa.Timing.Set() || sa.Cron != "" || sa.Timing.MaxRuns != 2 || sa.Until != "the PR is merged" || sa.MaxAttempts != 4 {
+		t.Fatalf("until not applied: %+v", sa)
+	}
+	sa.Runs = 2
+	SaveStandingAgent(RootDB, sa)
+	if err := ScheduleStandingAgent(RootDB, sa); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := GetStandingAgent(RootDB, "u", "poster")
+	if !got.Paused || got.StopCause != StoppedByEnd || got.SchedulerID != "" {
+		t.Fatalf("did not end at its run count: %+v", got)
+	}
+
+	dated := StandingAgent{Owner: "u", Name: "dated", AgentID: "a", Mission: "x",
+		Timing: timing.Spec{How: timing.HowDaily, Times: []int{540}, StopAt: time.Now().Add(-time.Minute)}}
+	SaveStandingAgent(RootDB, dated)
+	if err := ScheduleStandingAgent(RootDB, dated); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = GetStandingAgent(RootDB, "u", "dated")
+	if !got.Paused || got.StopCause != StoppedByEnd || !got.NextRun.IsZero() {
+		t.Fatalf("did not end at its end date: %+v", got)
+	}
+}
+
+// A link group ends after its rounds.
+func TestLinkGroupEndsAfterItsRounds(t *testing.T) {
+	linkTestSetup(t)
+	for _, n := range []string{"one", "two"} {
+		SaveStandingAgent(RootDB, StandingAgent{Owner: "u", Name: n, AgentID: "a", Mission: n, IntervalSeconds: 3600})
+	}
+	if err := linkSchedules("u", "standing:one", "standing:two"); err != nil {
+		t.Fatal(err)
+	}
+	g := listLinkGroups("u")[0]
+	sa := g.timing()
+	if err := applyStandingUntil(&sa, untilBody{MaxRuns: 1}, false); err != nil {
+		t.Fatal(err)
+	}
+	g.setTiming(sa)
+	g.Rounds = 1
+	if err := g.arm(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := getLinkGroup("u", g.ID)
+	if !got.Paused || got.EndNote == "" {
+		t.Fatalf("the group did not end after its rounds: %+v", got)
 	}
 }

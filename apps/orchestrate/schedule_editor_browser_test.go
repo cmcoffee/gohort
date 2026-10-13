@@ -60,10 +60,25 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 		"function monitorWhenFields(host, mon) {",
 		"function standingWhatFields(host, sa) {",
 		"function standingWhenFields(host, sa) {",
+		"function schedHHMM(m) {",
+		"function schedMinutes(v) {",
+		"function schedDaysRow(mask) {",
+		"function schedWindowRow(spec, label) {",
+		"function schedTimingFields(host, spec) {",
+		"function schedPeriodsFields(host, periods) {",
+		"function schedUntilFields(host, until, opts) {",
 	} {
 		parts = append(parts, jsSpan(t, src, "      "+fn))
 	}
-	for _, action := range []string{"orchestrate_edit_standing", "orchestrate_edit_monitor"} {
+	// The shared section's day constants are top-level vars, not functions.
+	for _, v := range []string{"var SCHED_DAY_BITS = ", "var SCHED_WEEKDAYS = "} {
+		i := strings.Index(src, "      "+v)
+		if i < 0 {
+			t.Fatalf("%q is gone from the asset", v)
+		}
+		parts = append(parts, src[i:i+strings.Index(src[i:], "\n")])
+	}
+	for _, action := range []string{"orchestrate_edit_standing", "orchestrate_edit_monitor", "orchestrate_edit_link"} {
 		open := "      window.uiRegisterClientAction('" + action + "', function(ctx) {"
 		i := strings.Index(src, open)
 		if i < 0 {
@@ -91,13 +106,13 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 		{
 			name:   "a scheduled agent sends its mission and its timing together",
 			action: "orchestrate_edit_standing",
-			record: `{name: 'nightly', mission: 'review yesterday', cron: 'daily 09:00', schedule_label: 'every day at 09:00'}`,
+			record: `{name: 'nightly', mission: 'review yesterday', timing: {how: 'daily', times: [540]}, schedule_label: 'every day at 09:00'}`,
 			checks: `
         if (!posted) fail('nothing was sent');
         if (posted.mission !== 'review yesterday') fail('the mission half did not travel: ' + posted.mission);
-        if (posted.cron !== 'daily 09:00') fail('the timing half did not travel: ' + JSON.stringify(posted));
-        if (posted.interval_minutes !== 0) fail('a cron schedule sent an interval too, so the record disagrees with itself');
-        if (posted.max_interval_minutes !== 0) fail('a cron schedule sent a random gap');`,
+        if (!posted.timing || posted.timing.how !== 'daily' || posted.timing.times[0] !== 540) fail('the timing half did not travel: ' + JSON.stringify(posted));
+        if (posted.timing.days !== 0) fail('every day should send days 0: ' + posted.timing.days);
+        if ('cron' in posted || 'interval_minutes' in posted) fail('the old fields were sent beside the new ones');`,
 		},
 		{
 			name:   "a poll monitor sends its brief, its condition and its interval",
@@ -110,7 +125,25 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
         if (posted.check !== 'is the build red?') fail('check: ' + posted.check);
         if (posted.match_contains !== 'YES') fail('match: ' + posted.match_contains);
         if (posted.interval_seconds !== 300) fail('interval: ' + posted.interval_seconds);
+        if (!posted.periods || posted.periods.days !== 0 || posted.periods.has_window) fail('a monitor should stay continuous by default: ' + JSON.stringify(posted.periods));
         if ('url' in posted) fail('a poll monitor sent a url, which the server refuses by name');`,
+		},
+		{
+			// The advanced option: same cadence, only on the days and hours set.
+			name:   "a monitor can be kept to set time periods",
+			action: "orchestrate_edit_monitor",
+			record: `{name: 'build', kind: 'poll', schedulable: true, wake_brief: 'say what broke',
+			          check: 'is the build red?', match_contains: 'YES', interval_seconds: 30}`,
+			edit: `global.made.select.filter(function(x) { return x.children.some(function(o) { return o.value === 'periods'; }); })[0].value = 'periods';
+        var cbs = global.made.input.filter(function(x) { return x.type === 'checkbox'; });
+        cbs[5].checked = false; cbs[6].checked = false;
+        var tms = global.made.input.filter(function(x) { return x.type === 'time'; });
+        tms[tms.length - 2].value = '09:00'; tms[tms.length - 1].value = '17:00';`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        if (posted.interval_seconds !== 30) fail('the cadence moved: ' + posted.interval_seconds);
+        var p = posted.periods || {};
+        if (p.days !== 62 || !p.has_window || p.window_from !== 540 || p.window_to !== 1020) fail('periods: ' + JSON.stringify(p));`,
 		},
 		{
 			// The reason the editor is offered on every kind: a webhook has no
@@ -129,7 +162,7 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 			// in the browser rather than posting a body the server refuses.
 			name:   "emptying a mission it had stops the save before it leaves",
 			action: "orchestrate_edit_standing",
-			record: `{name: 'nightly', mission: 'review yesterday', cron: 'daily 09:00'}`,
+			record: `{name: 'nightly', mission: 'review yesterday', timing: {how: 'daily', times: [540]}}`,
 			edit:   `global.made.textarea[0].value = '   ';`,
 			checks: `
         if (posted) fail('an emptied mission was posted anyway: ' + JSON.stringify(posted));
@@ -141,10 +174,10 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 			// machine may carry no mission at all, and it must stay editable.
 			name:   "a schedule that never had a mission still saves its timing",
 			action: "orchestrate_edit_standing",
-			record: `{name: 'nightly', mission: '', targets_run: true, runs: 'pipeline - nightly', cron: 'daily 09:00'}`,
+			record: `{name: 'nightly', mission: '', targets_run: true, runs: 'pipeline - nightly', timing: {how: 'daily', times: [540]}}`,
 			checks: `
         if (!posted) fail('a missionless pipeline schedule could not be retimed: ' + alerted);
-        if (posted.cron !== 'daily 09:00') fail('timing: ' + JSON.stringify(posted));`,
+        if (!posted.timing || posted.timing.times[0] !== 540) fail('timing: ' + JSON.stringify(posted));`,
 		},
 		{
 			// Same for a monitor created without a brief, which is what
@@ -163,30 +196,32 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 			// moved to a random cadence, because the editor had no such choice.
 			name:   "an every-N schedule can be switched to random gaps",
 			action: "orchestrate_edit_standing",
-			record: `{name: 'poster', mission: 'post something', cron: '', interval_minutes: 45}`,
-			edit: `global.made.select[0].value = 'random';
-        global.made.input[0].value = '30';
-        global.made.input[1].value = '60';`,
+			record: `{name: 'poster', mission: 'post something', timing: {how: 'every', every_seconds: 2700}}`,
+			edit: `global.made.select[1].value = 'random_gap';
+        global.made.select[3].value = 'minutes';
+        global.made.input[12].value = '30';
+        global.made.input[13].value = '60';`,
 			checks: `
         if (!posted) fail('nothing was sent: ' + alerted);
-        if (posted.cron !== '') fail('a random schedule sent a cron: ' + posted.cron);
-        if (posted.interval_minutes !== 30 || posted.max_interval_minutes !== 60) fail('gaps: ' + JSON.stringify(posted));`,
+        var tm = posted.timing || {};
+        if (tm.how !== 'random_gap' || tm.min_gap_seconds !== 1800 || tm.max_gap_seconds !== 3600) fail('gaps: ' + JSON.stringify(tm));`,
 		},
 		{
 			name:   "a random schedule can be kept to a window of the day",
 			action: "orchestrate_edit_standing",
-			record: `{name: 'poster', mission: 'post something', cron: '', interval_minutes: 30, max_interval_minutes: 60}`,
-			edit: `global.made.input[2].value = '09:00';
-        global.made.input[3].value = '17:00';`,
+			record: `{name: 'poster', mission: 'post something', timing: {how: 'random_gap', min_gap_seconds: 1800, max_gap_seconds: 3600}}`,
+			edit: `global.made.input[14].value = '09:00';
+        global.made.input[15].value = '17:00';`,
 			checks: `
         if (!posted) fail('nothing was sent: ' + alerted);
-        if (posted.active_from !== '09:00' || posted.active_to !== '17:00') fail('window: ' + JSON.stringify(posted));`,
+        var tm = posted.timing || {};
+        if (!tm.has_window || tm.window_from !== 540 || tm.window_to !== 1020) fail('window: ' + JSON.stringify(tm));`,
 		},
 		{
 			name:   "half a window is refused before it is sent",
 			action: "orchestrate_edit_standing",
-			record: `{name: 'poster', mission: 'post something', cron: '', interval_minutes: 30, max_interval_minutes: 60}`,
-			edit:   `global.made.input[2].value = '09:00';`,
+			record: `{name: 'poster', mission: 'post something', timing: {how: 'random_gap', min_gap_seconds: 1800, max_gap_seconds: 3600}}`,
+			edit:   `global.made.input[14].value = '09:00';`,
 			checks: `
         if (posted) fail('half a window was posted: ' + JSON.stringify(posted));
         if (!alerted || alerted.indexOf('both ends') < 0) fail('nothing said why: ' + alerted);`,
@@ -194,19 +229,108 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 		{
 			name:   "a random schedule opens as random and keeps its gaps",
 			action: "orchestrate_edit_standing",
-			record: `{name: 'poster', mission: 'post something', cron: '', interval_minutes: 30, max_interval_minutes: 60}`,
+			record: `{name: 'poster', mission: 'post something', timing: {how: 'random_gap', min_gap_seconds: 1800, max_gap_seconds: 3600}}`,
 			checks: `
         if (!posted) fail('nothing was sent: ' + alerted);
-        if (posted.interval_minutes !== 30 || posted.max_interval_minutes !== 60) fail('a re-save flattened the random gaps: ' + JSON.stringify(posted));`,
+        var tm = posted.timing || {};
+        if (tm.how !== 'random_gap' || tm.min_gap_seconds !== 1800 || tm.max_gap_seconds !== 3600) fail('a re-save flattened the random gaps: ' + JSON.stringify(tm));`,
 		},
 		{
 			name:   "a random schedule whose longest gap is not longer is refused",
 			action: "orchestrate_edit_standing",
-			record: `{name: 'poster', mission: 'post something', cron: '', interval_minutes: 30, max_interval_minutes: 60}`,
-			edit:   `global.made.input[1].value = '20';`,
+			record: `{name: 'poster', mission: 'post something', timing: {how: 'random_gap', min_gap_seconds: 1800, max_gap_seconds: 3600}}`,
+			edit:   `global.made.input[13].value = '20';`,
 			checks: `
         if (posted) fail('an inverted range was posted: ' + JSON.stringify(posted));
         if (!alerted || alerted.indexOf('longest gap') < 0) fail('nothing said why: ' + alerted);`,
+		},
+		{
+			// Days are always shown as boxes; unticking the weekend is weekdays.
+			name:   "days are ticked boxes, sent as a mask",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'nightly', mission: 'x', timing: {how: 'daily', times: [540]}}`,
+			edit:   `global.made.input[5].checked = false; global.made.input[6].checked = false;`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        if (posted.timing.days !== 62) fail('weekdays mask: ' + posted.timing.days);`,
+		},
+		{
+			name:   "no days ticked is refused",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'nightly', mission: 'x', timing: {how: 'daily', times: [540]}}`,
+			edit:   `for (var i = 0; i < 7; i++) global.made.input[i].checked = false;`,
+			checks: `
+        if (posted) fail('a schedule with no days was posted');
+        if (!alerted || alerted.indexOf('at least one day') < 0) fail('nothing said why: ' + alerted);`,
+		},
+		{
+			// Until: nothing set is indefinitely, and that is what is sent.
+			name:   "a schedule with no stops runs indefinitely",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'nightly', mission: 'x', timing: {how: 'daily', times: [540]}}`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        var u = posted.until || {};
+        if (u.stop_on !== '' || u.max_runs !== 0 || u.goal !== '') fail('indefinitely: ' + JSON.stringify(u));`,
+		},
+		{
+			name:   "a date and a number of runs are sent together",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'nightly', mission: 'x', timing: {how: 'daily', times: [540]}, until: {stop_on: '2026-11-30', max_runs: 10, has_goal: true}}`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        var u = posted.until || {};
+        if (u.stop_on !== '2026-11-30' || u.max_runs !== 10) fail('stops: ' + JSON.stringify(u));`,
+		},
+		{
+			name:   "a goal is sent with its tries",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'nightly', mission: 'x', timing: {how: 'daily', times: [540]}, until: {goal: 'the PR is merged', max_attempts: 5, has_goal: true}}`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        var u = posted.until || {};
+        if (u.goal !== 'the PR is merged' || u.max_attempts !== 5) fail('goal: ' + JSON.stringify(u));`,
+		},
+		{
+			name:   "a ticked count with no number is refused",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'nightly', mission: 'x', timing: {how: 'daily', times: [540]}}`,
+			edit: `global.made.input.filter(function(x) { return x.type === 'radio' && x.value === 'until'; })[0].checked = true;
+        var cbs = global.made.input.filter(function(x) { return x.type === 'checkbox'; });
+        cbs[8].checked = true;`,
+			checks: `
+        if (posted) fail('a count with no number was posted');
+        if (!alerted || alerted.indexOf('how many') < 0) fail('nothing said why: ' + alerted);`,
+		},
+		{
+			// A link group stops on a date or after rounds; it has no goal.
+			name:   "a link group sends its time and its stops, and no goal",
+			action: "orchestrate_edit_link",
+			record: `{members: ['1. gather', '2. post'], timing: {how: 'random_gap', min_gap_seconds: 1800, max_gap_seconds: 3600}, until: {max_runs: 4, has_goal: false}}`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        if (!posted.timing || posted.timing.how !== 'random_gap') fail('timing: ' + JSON.stringify(posted));
+        var u = posted.until || {};
+        if (u.max_runs !== 4 || 'goal' in u) fail('group stops: ' + JSON.stringify(u));`,
+		},
+		{
+			name:   "a monitor stops after a number of alerts",
+			action: "orchestrate_edit_monitor",
+			record: `{name: 'build', kind: 'poll', schedulable: true, wake_brief: 'b', check: 'c?', match_contains: 'YES', interval_seconds: 30,
+			          until: {max_runs: 3, has_goal: true}}`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        if ((posted.until || {}).max_runs !== 3) fail('alerts: ' + JSON.stringify(posted.until));`,
+		},
+		{
+			// Until is one choice first; picking it with nothing under it says so.
+			name:   "Until with no condition picked is refused",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'nightly', mission: 'x', timing: {how: 'daily', times: [540]}}`,
+			edit:   `global.made.input.filter(function(x) { return x.type === 'radio' && x.value === 'until'; })[0].checked = true;`,
+			checks: `
+        if (posted) fail('an empty Until was posted');
+        if (!alerted || alerted.indexOf('Indefinitely') < 0) fail('nothing said why: ' + alerted);`,
 		},
 	}
 
@@ -290,5 +414,86 @@ setTimeout(function() {
 				t.Fatalf("%s\n%s", fmt.Sprint(err), out)
 			}
 		})
+	}
+}
+
+// The machine-run creator sends the shared timing and Until like every other
+// dialog. Driven: the machine list loads, the form is filled in, Create sends.
+func TestTheMachineRunCreatorSendsTimingAndUntil(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readFile(t, "assets/web_assets.html")
+	var parts []string
+	for _, fn := range []string{
+		"function schedLabeled(labelText, inputEl) {", "function schedNum(val, min) {", "function schedTxt(val, phold) {",
+		"function schedSelect(options, selected) {", "function schedTime(val) {", "function schedHHMM(m) {",
+		"function schedMinutes(v) {", "function schedDaysRow(mask) {", "function schedWindowRow(spec, label) {",
+		"function schedTimingFields(host, spec) {", "function schedUntilFields(host, until, opts) {",
+	} {
+		parts = append(parts, jsSpan(t, src, "      "+fn))
+	}
+	for _, v := range []string{"var SCHED_DAY_BITS = ", "var SCHED_WEEKDAYS = "} {
+		i := strings.Index(src, "      "+v)
+		parts = append(parts, src[i:i+strings.Index(src[i:], "\n")])
+	}
+	open := "      window.uiRegisterClientAction('orchestrate_new_machine_run', function(ctx) {"
+	i := strings.Index(src, open)
+	if i < 0 {
+		t.Fatal("the machine-run creator is gone")
+	}
+	parts = append(parts, src[i:i+strings.Index(src[i:], "\n      });")+len("\n      });")])
+
+	harness := `
+function fail(m) { console.log('FAIL ' + m); process.exit(1); }
+function node(tag) {
+  var n = {tagName: tag, value: '', textContent: '', className: '', disabled: false, type: '', checked: false,
+    style: {cssText: ''}, children: [], options: [],
+    appendChild: function(c) { this.children.push(c); if (c && c.selected && this.value === '') this.value = c.value; return c; },
+    setAttribute: function() {}, addEventListener: function() {}};
+  (global.made = global.made || {});
+  (global.made[tag] = global.made[tag] || []).push(n);
+  return n;
+}
+global.document = {createElement: node, createTextNode: function(t) { return {text: t}; }};
+var alerted = null, posted = null, modal = null;
+global.window = {
+  uiAlert: function(m) { alerted = String(m); },
+  uiRegisterClientAction: function(name, fn) { (global.actions = global.actions || {})[name] = fn; },
+  GOHORT_AGENT_ID: 'agent-1',
+};
+function openOrchModal(title) { modal = {body: node('div'), footer: node('div'), close: function() {}}; return modal; }
+global.fetch = function(url, opts) {
+  if (!opts || !opts.method) return Promise.resolve({ok: true, json: function() { return Promise.resolve([{value: 'm1', label: 'Digest'}]); }});
+  posted = JSON.parse(opts.body);
+  return Promise.resolve({ok: true, text: function() { return Promise.resolve(''); }});
+};
+` + strings.Join(parts, "\n\n") + `
+global.actions['orchestrate_new_machine_run']({reload: function() {}});
+setTimeout(function() {
+  var create = modal.footer.children[modal.footer.children.length - 1];
+  global.made.input[0].value = 'nightly digest';
+  global.made.select.filter(function(x) { return x.children.some(function(o) { return o.value === 'm1'; }); })[0].value = 'm1';
+  var cbs = global.made.input.filter(function(x) { return x.type === 'checkbox'; });
+  global.made.input.filter(function(x) { return x.type === 'radio' && x.value === 'until'; })[0].checked = true;
+  cbs[8].checked = true; // It has run a number of times
+  var nums = global.made.input.filter(function(x) { return x.type === 'number'; });
+  nums[nums.length - 2].value = '5'; // the runs field, before the goal's tries
+  create.onclick();
+  setTimeout(function() {
+    if (!posted) fail('nothing was sent: ' + alerted);
+    if (posted.machine_id !== 'm1' || !posted.timing || posted.timing.how !== 'daily') fail('timing: ' + JSON.stringify(posted));
+    if (!posted.until || posted.until.max_runs !== 5) fail('until: ' + JSON.stringify(posted.until));
+    console.log('OK');
+  }, 5);
+}, 5);
+`
+	tmp := filepath.Join(t.TempDir(), "machine.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("node", tmp).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("%v\n%s", err, out)
 	}
 }

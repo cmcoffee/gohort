@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 // handleConsoleMonitorRelink re-points a broken monitor's wake agent at a live
@@ -97,6 +98,8 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.
 		"interval_seconds": m.IntervalSeconds,
 		"interval_minutes": m.IntervalSeconds / 60,
 		"daily_at":         strings.ReplaceAll(fmtDailyAt(m.DailyAt), " ", ""),
+		"periods":          monitorPeriodsOut(m),
+		"until":            monitorUntilOut(m),
 		"schedulable":      IsScheduledEventKind(m.Kind),
 		"paused":           m.Paused,
 		// What it tells the woken agent — every kind has one, including the
@@ -222,6 +225,11 @@ type monitorUpdateBody struct {
 	// DailyAt: "08:00,18:00" switches the monitor to set times of day, and
 	// "" (sent) switches it back to its interval. Nil leaves it as it is.
 	DailyAt *string `json:"daily_at"`
+	// Periods, when sent, says when checks apply: {} is continuous, days
+	// and/or a window restrict them ("during specified time periods").
+	Periods *monitorPeriods `json:"periods"`
+	// Until, when sent, is the dialog's Until section (schedule_until.go).
+	Until *untilBody `json:"until"`
 
 	WakeBrief *string `json:"wake_brief"`
 
@@ -358,7 +366,45 @@ func applyMonitorUpdate(m *EventMonitor, body monitorUpdateBody) error {
 			m.DailyAt = mins
 		}
 	}
+	if body.Until != nil {
+		if err := applyMonitorUntil(m, *body.Until); err != nil {
+			return err
+		}
+	}
+	if p := body.Periods; p != nil {
+		if p.Days&^timing.AllDays != 0 {
+			return Error("days has an unknown day in it")
+		}
+		if p.HasWindow && (p.WindowFrom < 0 || p.WindowTo > 24*60 || p.WindowTo <= p.WindowFrom) {
+			return Error("the time window has to end after it starts, on the same day")
+		}
+		if p.Days == timing.AllDays {
+			p.Days = 0
+		}
+		m.OnlyDays, m.OnlyWindow, m.OnlyFrom, m.OnlyTo = p.Days, p.HasWindow, p.WindowFrom, p.WindowTo
+		if !p.HasWindow {
+			m.OnlyFrom, m.OnlyTo = 0, 0
+		}
+	}
 	return nil
+}
+
+// monitorPeriods is when a monitor's checks apply, in the shared timing's
+// terms (core/timing): a weekday mask, zero meaning every day, and an
+// optional daily window.
+type monitorPeriods struct {
+	Days       uint8 `json:"days"`
+	HasWindow  bool  `json:"has_window"`
+	WindowFrom int   `json:"window_from"`
+	WindowTo   int   `json:"window_to"`
+}
+
+// monitorPeriodsOut is what the editor shows: nil while continuous.
+func monitorPeriodsOut(m EventMonitor) *monitorPeriods {
+	if m.OnlyDays == 0 && !m.OnlyWindow {
+		return nil
+	}
+	return &monitorPeriods{Days: m.OnlyDays, HasWindow: m.OnlyWindow, WindowFrom: m.OnlyFrom, WindowTo: m.OnlyTo}
 }
 
 // monitorConditionChanged reports whether an edit moved what the monitor
@@ -786,6 +832,11 @@ func scheduleStopLabel(cause, note string) string {
 		return "✓ done: objective met"
 	case StoppedByOwner:
 		return "paused"
+	case StoppedByEnd:
+		if strings.TrimSpace(note) != "" {
+			return "✓ done: " + note
+		}
+		return "✓ done"
 	case ParkedByObjective, ParkedByDependency:
 		return parkedStateLabel(cause, note)
 	}
@@ -822,8 +873,15 @@ func monitorCadence(m EventMonitor) string {
 	if m.Kind == EventKindTimer && !m.FireAt.IsZero() {
 		return "goes off " + m.FireAt.In(UserLocation(m.Owner)).Format("Mon Jan 2 3:04 PM MST")
 	}
-	if len(m.DailyAt) > 0 {
-		return "daily at " + fmtDailyAt(m.DailyAt)
+	periods := ""
+	if m.OnlyWindow {
+		periods += " between " + timing.HHMM(m.OnlyFrom) + " and " + timing.HHMM(m.OnlyTo)
 	}
-	return fmt.Sprintf("every %ds", m.IntervalSeconds)
+	if m.OnlyDays != 0 {
+		periods += ", " + timing.DaysLabel(m.OnlyDays)
+	}
+	if len(m.DailyAt) > 0 {
+		return "daily at " + fmtDailyAt(m.DailyAt) + periods
+	}
+	return fmt.Sprintf("every %ds", m.IntervalSeconds) + periods
 }

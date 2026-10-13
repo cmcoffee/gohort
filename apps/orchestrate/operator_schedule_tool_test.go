@@ -72,7 +72,7 @@ func TestScheduleEveryMakesAStandingAgentRunByTheAsker(t *testing.T) {
 		t.Fatalf("expected 1 standing agent, got %d: %s", len(list), out)
 	}
 	sa := list[0]
-	if sa.AgentID != "agent-1" || sa.IntervalSeconds != 900 || sa.Mission != "fetch the price and tell me" {
+	if sa.AgentID != "agent-1" || StandingScheduleLabel(sa) != "every 15 minutes" || sa.Mission != "fetch the price and tell me" {
 		t.Errorf("standing agent wrong: %+v", sa)
 	}
 	if sa.Name == "" {
@@ -85,14 +85,27 @@ func TestScheduleEveryMakesAStandingAgentRunByTheAsker(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok := GetStandingAgent(db, "craig", "morning-alerts")
-	if !ok || got.Cron != "daily 08:00" || got.AgentID != "agent-2" {
+	if !ok || StandingScheduleLabel(got) != "every day at 08:00" || got.AgentID != "agent-2" {
 		t.Errorf("named clock schedule wrong: %+v (%s)", got, out)
 	}
-	// A count of alerts makes no sense on a clock; the refusal says what does.
+	// A clock schedule stops after a number of runs: stop_after rides its
+	// timing, as the Scheduler's Until section does.
 	if _, err := tool.Handler(context.Background(), map[string]any{
-		"when": "every", "time": "hourly", "then": "x", "stop_after": 2,
-	}); err == nil || !strings.Contains(err.Error(), "until") {
-		t.Errorf("stop_after on a clock schedule was not redirected: %v", err)
+		"when": "every", "time": "hourly", "then": "x", "name": "twice", "stop_after": 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if sa, ok := GetStandingAgent(db, "craig", "twice"); !ok || sa.Timing.MaxRuns != 2 {
+		t.Errorf("stop_after did not set a run count: %+v", sa)
+	}
+	// Days, set times and a last day, in the tool's own words.
+	if _, err := tool.Handler(context.Background(), map[string]any{
+		"when": "every", "time": "09:00,13:00", "days": "mon,wed,fri", "stop_on": "2026-12-31", "then": "x", "name": "sets",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if sa, ok := GetStandingAgent(db, "craig", "sets"); !ok || StandingScheduleLabel(sa) != "Mon, Wed, Fri at 09:00, 13:00, until Dec 31" {
+		t.Errorf("set times on days with an end: %q", StandingScheduleLabel(sa))
 	}
 }
 

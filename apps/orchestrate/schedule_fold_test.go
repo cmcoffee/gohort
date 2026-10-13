@@ -157,7 +157,7 @@ func TestAuthorScheduleFoldsBothPaths(t *testing.T) {
 	if _, err := call(map[string]any{"when": "every", "time": "weekdays 17:00", "then": "wrap up", "name": "wrap"}); err != nil {
 		t.Fatal(err)
 	}
-	if sa, ok := GetStandingAgent(db, "craig", "wrap"); !ok || sa.AgentID != "seed-builder" || sa.Cron != "weekdays 17:00" {
+	if sa, ok := GetStandingAgent(db, "craig", "wrap"); !ok || sa.AgentID != "seed-builder" || StandingScheduleLabel(sa) != "weekdays at 17:00" {
 		t.Errorf("weekday pattern did not fall through to a fleet schedule: %+v %v", sa, ok)
 	}
 }

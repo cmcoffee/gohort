@@ -13,6 +13,7 @@ package orchestrate
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 // operatorAttachMarkerRe matches the phantom [ATTACH: file] delivery marker an
@@ -1135,7 +1137,14 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					// home, so the console's Move-to → Session brings it back.
 					Surface: scheduleSurfaceDefault("", hasCortexThread(owner, scheduleHomeAgent(sess, controllerAgentID, agentID))),
 				}
+				spec, hasSpec, err := timingArg(args)
+				if err != nil {
+					return "", err
+				}
 				switch {
+				case hasSpec:
+					// The shared timing (core/timing): the whole answer when given.
+					sa.Timing = spec
 				case cron != "":
 					if _, err := NextCronOccurrence(cron, time.Now()); err != nil {
 						if strings.EqualFold(strings.TrimSpace(cron), "once") || strings.EqualFold(strings.TrimSpace(cron), "now") {
@@ -1271,6 +1280,9 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					return "", fmt.Errorf("no standing agent named %q", name)
 				}
 				sa.Paused = oArgBool(args, "paused")
+				if !sa.Paused && sa.StopCause == StoppedByEnd {
+					sa.Runs = 0 // resuming one that ran its count gives it a fresh one
+				}
 				sa.StopCause, sa.StopNote = "", ""
 				if sa.Paused {
 					sa.StopCause = StoppedByOwner
@@ -2457,4 +2469,28 @@ func queueReplyBinding(owner, agent, chatID, handle, label string) string {
 		Owner: owner, Action: "bind_thread", Agent: agent, ChatID: chatID, Handle: handle, Brief: label,
 	})
 	return fmt.Sprintf("Reading their reply needs the user's approval: queued (id %s). Once approved, their reply wakes you.", a.ID)
+}
+
+// timingArg reads an optional "timing" argument (a core/timing.Spec as JSON,
+// or the map a tool call carries) and validates it.
+func timingArg(args map[string]any) (timing.Spec, bool, error) {
+	raw, ok := args["timing"]
+	if !ok || raw == nil {
+		return timing.Spec{}, false, nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return timing.Spec{}, false, err
+	}
+	var spec timing.Spec
+	if err := json.Unmarshal(b, &spec); err != nil {
+		return timing.Spec{}, false, fmt.Errorf("timing: %v", err)
+	}
+	if !spec.Set() {
+		return timing.Spec{}, false, nil
+	}
+	if err := spec.Validate(); err != nil {
+		return timing.Spec{}, false, fmt.Errorf("timing: %v", err)
+	}
+	return spec, true, nil
 }

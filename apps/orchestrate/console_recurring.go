@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 type consoleRecurringRow struct {
@@ -317,6 +318,8 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 			"max_fires":        p.MaxFires,
 			"fire_count":       p.FireCount,
 			"cadence":          recurringDetail(p),
+			"timing":           recurringTimingOut(p),
+			"until":            recurringUntilOut(p),
 			"linked":           p.LinkGroup != "",
 		})
 		return
@@ -361,6 +364,11 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		ActiveFrom      string `json:"active_from"`
 		ActiveTo        string `json:"active_to"`
 		MaxFires        int    `json:"max_fires"`
+		// Timing, when sent, is the shared timing section (core/timing) and
+		// replaces the pattern fields above.
+		Timing *timing.Spec `json:"timing"`
+		// Until, when sent, is the dialog's Until section (schedule_until.go).
+		Until *untilBody `json:"until"`
 		// Pointers so "field omitted" (nil = preserve the stored value) is
 		// distinguishable from "sent empty". Prompt is required, so an empty
 		// prompt preserves too; Name may legitimately be cleared (empty falls
@@ -416,6 +424,15 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		MinGapSeconds:   body.MinGapMinutes * 60,
 		MaxGapSeconds:   body.MaxGapMinutes * 60,
 		MaxFires:        body.MaxFires,
+	}
+	if body.Timing != nil {
+		spec.Timing = *body.Timing
+	}
+	if body.Until != nil {
+		if err := applyRecurringUntil(&spec, user, *body.Until); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	if spec.Pattern == RecurringDaily || (spec.Pattern == "" && strings.TrimSpace(body.DailyAt) != "") {
 		mins, derr := parseDailyAt(body.DailyAt)
@@ -493,6 +510,11 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		ActiveFrom      string `json:"active_from"`
 		ActiveTo        string `json:"active_to"`
 		MaxFires        int    `json:"max_fires"`
+		// Timing, when sent, is the shared timing section (core/timing) and
+		// replaces the pattern fields above.
+		Timing *timing.Spec `json:"timing"`
+		// Until, when sent, is the dialog's Until section (schedule_until.go).
+		Until *untilBody `json:"until"`
 		// Where its fires report — "" (let the agent decide), "session",
 		// "cortex", or "background". The modal doesn't offer it today; the
 		// field is here so a client that wants to choose can, and so the
@@ -541,6 +563,15 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		MinGapSeconds:   body.MinGapMinutes * 60,
 		MaxGapSeconds:   body.MaxGapMinutes * 60,
 		MaxFires:        body.MaxFires,
+	}
+	if body.Timing != nil {
+		spec.Timing = *body.Timing
+	}
+	if body.Until != nil {
+		if err := applyRecurringUntil(&spec, user, *body.Until); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	if spec.Pattern == RecurringDaily || (spec.Pattern == "" && strings.TrimSpace(body.DailyAt) != "") {
 		mins, derr := parseDailyAt(body.DailyAt)

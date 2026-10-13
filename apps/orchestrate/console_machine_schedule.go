@@ -23,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 // handleConsoleMachineOptions lists the machines a schedule may fire: this
@@ -88,6 +89,11 @@ func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(w http.ResponseWrite
 		Cron            string `json:"cron"`
 		IntervalMinutes int    `json:"interval_minutes"`
 		AgentID         string `json:"agent_id"` // whose rail this lands on
+		// Timing is the shared timing section (core/timing); when sent it
+		// replaces cron / interval_minutes.
+		Timing *timing.Spec `json:"timing"`
+		// Until is the shared Until section (schedule_until.go).
+		Until *untilBody `json:"until"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
@@ -120,11 +126,28 @@ func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(w http.ResponseWrite
 		return
 	}
 
+	cronIn, intervalIn := strings.TrimSpace(body.Cron), body.IntervalMinutes
+	if body.Timing != nil {
+		if err := body.Timing.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cronIn, intervalIn = "", 1 // satisfies the builder; Timing replaces it below
+	}
 	sa, err := buildMachineSchedule(user, name, def, strings.TrimSpace(body.Mission),
-		strings.TrimSpace(body.Cron), body.IntervalMinutes, strings.TrimSpace(body.AgentID))
+		cronIn, intervalIn, strings.TrimSpace(body.AgentID))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if body.Timing != nil {
+		sa.Timing, sa.IntervalSeconds = *body.Timing, 0
+	}
+	if body.Until != nil {
+		if err := applyStandingUntil(&sa, *body.Until, true); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	SaveStandingAgent(RootDB, sa)
 	if err := ScheduleStandingAgent(RootDB, sa); err != nil {

@@ -308,9 +308,9 @@ func TestStandingRandomGaps(t *testing.T) {
 	}
 }
 
-// A random cadence kept to a daily window: a run that would land after it
-// closes waits for the next day's opening, one inside it stands, and the
-// label says so.
+// A random cadence kept to a daily window (the old fields, read through
+// EffectiveTiming): a run that would land after it closes waits for the next
+// day's opening, one inside it stands, and the label says so.
 func TestStandingWindow(t *testing.T) {
 	loc := time.UTC
 	sa := StandingAgent{Name: "poster", IntervalSeconds: 1800, MaxIntervalSeconds: 3600, HasWindow: true, WindowFromMin: 9 * 60, WindowToMin: 17 * 60}
@@ -319,18 +319,44 @@ func TestStandingWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := time.Date(2026, 10, 13, 9, 0, 0, 0, loc); !next.Equal(want) {
-		t.Fatalf("a run past the window went to %s, want %s", next, want)
+	// Early in the next day's window, spread across the first gap rather than
+	// on its first minute every morning.
+	if open := time.Date(2026, 10, 13, 9, 0, 0, 0, loc); next.Before(open) || next.After(open.Add(30*time.Minute)) {
+		t.Fatalf("a run past the window went to %s, want early on the 13th's window", next)
 	}
 	mid := time.Date(2026, 10, 12, 11, 0, 0, 0, loc)
 	if next, _ := nextStandingRun(sa, mid); next.Before(mid.Add(30*time.Minute)) || next.After(mid.Add(60*time.Minute)) {
 		t.Fatalf("a run inside the window moved: %s", next)
 	}
 	early := time.Date(2026, 10, 12, 6, 0, 0, 0, loc)
-	if next, _ := nextStandingRun(sa, early); !next.Equal(time.Date(2026, 10, 12, 9, 0, 0, 0, loc)) {
+	if next, _ := nextStandingRun(sa, early); next.Before(time.Date(2026, 10, 12, 9, 0, 0, 0, loc)) || next.After(time.Date(2026, 10, 12, 9, 30, 0, 0, loc)) {
 		t.Fatalf("a run before the window did not wait for it: %s", next)
 	}
 	if got := StandingScheduleLabel(sa); got != "at random, every 30-60 minutes between 09:00 and 17:00" {
 		t.Errorf("label %q", got)
+	}
+}
+
+// Every old "{days} HH:MM" form fires at exactly the times it always did now
+// that scheduled agents go through core/timing: same answer as the old parser
+// from every hour of a week.
+func TestCronFiresTheSameThroughTiming(t *testing.T) {
+	for _, spec := range []string{"daily 09:00", "weekdays 17:00", "weekends 10:30", "FRI 21:30", "MON,WED,FRI 08:00", "everyday 00:00"} {
+		sa := StandingAgent{Name: "x", Cron: spec}
+		for h := 0; h < 7*24; h++ {
+			from := time.Date(2026, 10, 12, 0, 13, 0, 0, time.UTC).Add(time.Duration(h) * time.Hour)
+			want, err := NextCronOccurrence(spec, from)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := nextStandingRun(sa, from)
+			if err != nil || !got.Equal(want) {
+				t.Fatalf("%s from %s: got %s, want %s (%v)", spec, from, got, want, err)
+			}
+		}
+	}
+	// An annual date keeps its old form and still fires.
+	if _, err := nextStandingRun(StandingAgent{Name: "x", Cron: "DEC-25 09:00"}, time.Now()); err != nil {
+		t.Fatalf("annual date: %v", err)
 	}
 }
