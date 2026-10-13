@@ -75,6 +75,26 @@ var openItemSignals = []string{
 	"plans to", "planning to", "intends to", "meaning to",
 }
 
+// closedSignals mark a note recording that an item was finished or dropped.
+var closedSignals = []string{
+	"closed (", "closed:", "closed out", "was closed", "is closed", "explicitly closed",
+	"completed", "is done", "was done", "now done", "resolved", "cancelled", "canceled",
+	"no longer pending", "not pursued", "do not bring it up", "don't bring it up",
+	"do not raise it", "don't raise it", "do not resume", "don't resume",
+}
+
+// ReadsAsClosed reports whether a note records that an item was closed,
+// done or dropped, so it is not treated as still waiting on anyone.
+func ReadsAsClosed(note string) bool {
+	n := " " + strings.ToLower(note) + " "
+	for _, sig := range closedSignals {
+		if strings.Contains(n, sig) {
+			return true
+		}
+	}
+	return false
+}
+
 // eventSignals mark a note about something that HAPPENED (or will, on a date).
 // Deliberately phrases, not bare nouns that also name standing facts: a
 // "birthday" is a date that recurs forever, a "birthday party" happened once.
@@ -93,6 +113,12 @@ var eventSignals = []string{
 // event the note does not date itself, and resolves "yesterday" and friends.
 func ClassifyMemKind(note string, now time.Time) (MemKind, time.Time) {
 	n := " " + strings.ToLower(note) + " "
+	// A note that records an item being closed is a fact about it, whatever
+	// else it says: "Closed: the pending edit, do not bring it up again"
+	// carries "pending" and is the opposite of an open item.
+	if ReadsAsClosed(note) {
+		return MemKindFact, time.Time{}
+	}
 	for _, sig := range openItemSignals {
 		if strings.Contains(n, sig) {
 			return MemKindOpenItem, time.Time{}

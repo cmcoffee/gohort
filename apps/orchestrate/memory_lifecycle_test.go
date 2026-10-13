@@ -52,7 +52,7 @@ func TestTheDailyPassMovesPastEventsAndClosesUnansweredItems(t *testing.T) {
 	putFact(udb, "ag", "ev-new", "Went to a concert with a friend", provenance.MemKindEvent, 3*day, nil)
 	putFact(udb, "ag", "open-asked", "Pending edits on the portrait", provenance.MemKindOpenItem, 30*day,
 		func(f *MemoryFact) { f.AskedAt = time.Now().Add(-8 * day) })
-	putFact(udb, "ag", "open-idle", "Wants to look into the backup schedule later", provenance.MemKindOpenItem, 30*day, nil)
+	putFact(udb, "ag", "open-idle", "Wants to look into the backup schedule later", provenance.MemKindOpenItem, 20*day, nil)
 	putFact(udb, "ag", "pref", "Prefers dark mode", provenance.MemKindFact, 90*day, nil)
 
 	runMemoryLifecycle(context.Background())
@@ -267,7 +267,7 @@ func TestTheFirstPassClassifiesNotesSavedBeforeKinds(t *testing.T) {
 	udb := UserDB(root, "u")
 	day := 24 * time.Hour
 	putFact(udb, "ag", "old-trip", "Just got back from a trip to Oregon", provenance.MemKindUnknown, 30*day, nil)
-	pending := putFact(udb, "ag", "old-pending", "Pending edits on the portrait", provenance.MemKindUnknown, 50*day, nil)
+	pending := putFact(udb, "ag", "old-pending", "Pending edits on the portrait", provenance.MemKindUnknown, 20*day, nil)
 	putFact(udb, "ag", "old-pref", "Prefers dark mode", provenance.MemKindUnknown, 50*day, nil)
 
 	runMemoryLifecycle(context.Background())
@@ -285,7 +285,44 @@ func TestTheFirstPassClassifiesNotesSavedBeforeKinds(t *testing.T) {
 	ct := driftTurn(udb)
 	ct.agent.ID = "ag"
 	ct.session = &ChatSession{ID: "s-legacy-" + UUIDv4()}
-	if note := ct.openItemTurnNote("hi"); !strings.Contains(note, "idle 50 days") {
+	if note := ct.openItemTurnNote("hi"); !strings.Contains(note, "idle 20 days") {
 		t.Errorf("the old item should be asked about with its real age:\n%s", note)
+	}
+}
+
+// A pending note nobody touched for longer than the close window closes
+// without being raised (restorable), and a note that records an item being
+// closed is never treated as pending: asking about it would raise the very
+// thing it says was closed.
+func TestLongIdleAndClosedNotesAreNotRaised(t *testing.T) {
+	root := depStores(t, "u")
+	InvalidateChunkCache()
+	t.Cleanup(InvalidateChunkCache)
+	udb := UserDB(root, "u")
+	day := 24 * time.Hour
+	putFact(udb, "ag", "ancient", "Pending edits on the old flyer", provenance.MemKindOpenItem, 45*day, nil)
+	putFact(udb, "ag", "recent", "Pending edits on the new flyer", provenance.MemKindOpenItem, 20*day, nil)
+	putFact(udb, "ag", "closed-note", "Closed (Oct 8): the pending image edit was closed out; do not bring it up again", provenance.MemKindOpenItem, 20*day, nil)
+
+	if k, _ := provenance.ClassifyMemKind("Closed (Oct 8): the pending image edit, do not bring it up again", time.Now()); k != provenance.MemKindFact {
+		t.Errorf("a note recording a closure classifies as %v, want a fact", k)
+	}
+	ct := driftTurn(udb)
+	ct.agent.ID = "ag"
+	ct.session = &ChatSession{ID: "s-close-" + UUIDv4()}
+	if note := ct.openItemTurnNote("hi"); !strings.Contains(note, "new flyer") {
+		t.Errorf("only the recent pending item should be asked about:\n%s", note)
+	}
+
+	runMemoryLifecycle(context.Background())
+	if f, _ := GetMemoryFactByID(udb, factsNamespace("ag"), "ancient"); f.Reason != provenance.RetireNotPursued {
+		t.Errorf("a 45-day-old untouched item should close without asking: %+v", f.MemoryProvenance)
+	}
+	c, _ := GetMemoryFactByID(udb, factsNamespace("ag"), "closed-note")
+	if c.Retired() || c.MemKind != provenance.MemKindFact {
+		t.Errorf("a note recording a closure is a kept fact, not an open item: %+v", c.MemoryProvenance)
+	}
+	if f, _ := GetMemoryFactByID(udb, factsNamespace("ag"), "recent"); f.Retired() {
+		t.Error("a recent item that was just asked about closed early")
 	}
 }

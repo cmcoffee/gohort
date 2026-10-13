@@ -41,6 +41,7 @@ const (
 	tuneEventFreshDays = "tune_memory_event_fresh_days"
 	tuneOpenIdleDays   = "tune_memory_open_idle_days"
 	tuneOpenAnswerDays = "tune_memory_open_answer_days"
+	tuneOpenCloseDays  = "tune_memory_open_close_days"
 
 	memoryLifecycleKey = "memory_lifecycle"
 	memoryMovesTable   = "memory_moves"
@@ -67,6 +68,11 @@ func init() {
 		Help:   "An open item that was asked about and not picked back up closes as not pursued after this many days.",
 		Detail: "Closed items can be restored from the agent's Memory panel.",
 		Kind:   KindInt, Default: 7, Min: 1, Max: 365})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneOpenCloseDays, Category: "Memory",
+		Label:  "Days before an untouched open item closes without asking (0 = always ask)",
+		Help:   "An open item nobody has touched for this long closes as not pursued, without being raised in a conversation.",
+		Detail: "Below this age an idle open item is asked about once; past it, asking is more noise than help (a month-old \"pending\" is rarely still live). Closed items can be restored from the agent's Memory panel.",
+		Kind:   KindInt, Default: 30, Min: 0, Max: 365})
 	RegisterMaintenanceFunc("Housekeeping", memoryLifecycleKey, "Age out past events and stale open items",
 		"Runs daily on its own. Moves saved notes about past events into reference memory, closes open items nobody picked back up after being asked, and dates event findings so recall hints stop offering old ones. Every move can be undone from the agent's Memory panel.",
 		runMemoryLifecycle)
@@ -78,6 +84,10 @@ func eventFreshFor() time.Duration {
 
 func openIdleFor() time.Duration {
 	return time.Duration(TuneInt(tuneOpenIdleDays)) * 24 * time.Hour
+}
+
+func openCloseFor() time.Duration {
+	return time.Duration(TuneInt(tuneOpenCloseDays)) * 24 * time.Hour
 }
 
 func openAnswerFor() time.Duration {
@@ -187,7 +197,22 @@ func lifecycleForUser(ctx context.Context, user string, now time.Time, lt *lifec
 					}
 				}
 			case provenance.MemKindOpenItem:
+				// Filed as open before notes that record a closure were told
+				// apart: it is a fact, and asking about it would raise the
+				// very thing it says was closed.
+				if provenance.ReadsAsClosed(f.Note) {
+					f.MemKind, f.AskedAt = provenance.MemKindFact, time.Time{}
+					udb.Set(MemoryFactsTable, ns+"/"+f.ID, f)
+					continue
+				}
 				if !f.AskedAt.IsZero() && now.Sub(f.AskedAt) > answer {
+					closeOpenItem(udb, agentID, f, now)
+					lt.closed++
+					continue
+				}
+				// Untouched long enough that asking is noise: closed
+				// without the question, and restorable like any other.
+				if long := openCloseFor(); long > 0 && f.AskedAt.IsZero() && now.Sub(lastActive(f)) > long {
 					closeOpenItem(udb, agentID, f, now)
 					lt.closed++
 				}
@@ -457,7 +482,12 @@ func (t *chatTurn) openItemTurnNote(userMsg string) string {
 	ns := factsNamespace(t.agent.ID)
 	var pick *MemoryFact
 	for _, f := range ListMemoryFacts(t.udb, ns) {
-		if f.MemKind != provenance.MemKindOpenItem || !f.AskedAt.IsZero() || now.Sub(lastActive(f)) <= idle {
+		if f.MemKind != provenance.MemKindOpenItem || !f.AskedAt.IsZero() || now.Sub(lastActive(f)) <= idle || provenance.ReadsAsClosed(f.Note) {
+			continue
+		}
+		// Old enough to close without asking: the daily pass will, so the
+		// conversation is not spent on it.
+		if long := openCloseFor(); long > 0 && now.Sub(lastActive(f)) > long {
 			continue
 		}
 		if pick == nil || lastActive(f).Before(lastActive(*pick)) {
