@@ -328,6 +328,7 @@ func (T *OrchestrateApp) Routes() {
 	// A channel is its top-level agent's, never a sub-agent's
 	// (agent_family.go).
 	messaging.ChannelAgentFor = channelAgentFor
+	ScheduleAgentFor = scheduleAgentFor
 	// Events age out of saved notes and idle open items close, once a day.
 	startMemoryLifecycleLoop()
 	// Credential → declaring-tools resolver for the admin credential UI (it
@@ -544,6 +545,7 @@ func (T *OrchestrateApp) Routes() {
 	// Channels bound to a sub-agent before that was refused move to its
 	// parent, and so do board posting rights granted to one (agent_family.go).
 	moveSubAgentChannels()
+	moveSubAgentSchedules()
 	moveSubAgentPosters()
 
 	// One-shot deploy-time grandfather for the global-tool OPT-IN model. Shared

@@ -145,11 +145,11 @@ func (m *agentMove) under() (AgentRecord, string, error) {
 	}
 	Log("[orchestrate.agents] moved %q under %q", saved.Name, m.parent.Name)
 	notes := []string{fmt.Sprintf("%s is now a sub-agent of %s. Only %s can call it.", saved.Name, m.parent.Name, m.parent.Name)}
-	// Its schedules stay its own: they run this agent, whatever its place.
-	// What changes is where they are listed and where their reports land.
-	if n := len(agentScheduleNames(m.owner, map[string]bool{saved.ID: true})); n > 0 {
-		notes = append(notes, fmt.Sprintf("Its %d schedule%s still run %s; they are now listed on %s's Scheduler, and their reports go to %s's thread.",
-			n, plural(n), saved.Name, m.parent.Name, m.parent.Name))
+	// A sub-agent has no way in of its own: its schedules now wake the
+	// parent, which hands their work to it (scheduleAgentFor).
+	if n := foldSubAgentSchedules(m.owner, saved.ID); n > 0 {
+		notes = append(notes, fmt.Sprintf("Its %d schedule%s now wake %s, which hands the work to %s; they are listed on %s's Scheduler and report in %s's thread.",
+			n, plural(n), m.parent.Name, saved.Name, m.parent.Name, m.parent.Name))
 	}
 	// A sub-agent holds no channel: its parent answers and can hand the work
 	// on (channelAgentFor). Rebound now rather than at the next start-up, so
@@ -201,8 +201,8 @@ func (m *agentMove) out() (AgentRecord, string, error) {
 			notes = append(notes, parent.Name+" is set to Allow none, so it can no longer call it.")
 		}
 	}
-	if n := len(agentScheduleNames(m.owner, map[string]bool{saved.ID: true})); n > 0 {
-		notes = append(notes, fmt.Sprintf("Its %d schedule%s still run it; they are listed on its own Scheduler again, and their reports go to its own thread.", n, plural(n)))
+	if n := scheduleHandoffs(m.owner, parentID, saved.Name); n > 0 {
+		notes = append(notes, fmt.Sprintf("%d schedule%s on its old parent still hand work to it and stay there; give it schedules of its own from its Scheduler.", n, plural(n)))
 	}
 	if borrowed {
 		notes = append(notes, "It no longer borrows its old parent's tools; add any it needs under Tools.")

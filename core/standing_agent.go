@@ -322,10 +322,21 @@ func RegisterStandingReporter(fn func(context.Context, StandingAgent, RunRecord)
 
 func standingKey(owner, name string) string { return owner + ":" + name }
 
+// ScheduleAgentFor, when set, is the agent a schedule may wake in place of
+// agentID, with the task text as it should reach that agent. The orchestrate
+// app sends a schedule made for a sub-agent to its top-level parent, which
+// hands the work on: a sub-agent has no way in of its own, as a channel bound
+// to one is its parent's. Applied wherever a standing agent or a monitor is
+// saved, so every path that makes or edits one obeys it. Must be idempotent.
+var ScheduleAgentFor func(owner, agentID, text string) (string, string)
+
 // SaveStandingAgent upserts a standing-agent definition.
 func SaveStandingAgent(db Database, sa StandingAgent) {
 	if db == nil || sa.Owner == "" || sa.Name == "" {
 		return
+	}
+	if f := ScheduleAgentFor; f != nil && sa.AgentID != "" {
+		sa.AgentID, sa.Mission = f(sa.Owner, sa.AgentID, sa.Mission)
 	}
 	db.Set(standingAgentsTable, standingKey(sa.Owner, sa.Name), sa)
 }

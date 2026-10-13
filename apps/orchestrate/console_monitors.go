@@ -447,6 +447,7 @@ type consoleMonitorRow struct {
 	Name  string `json:"name"`
 	Kind  string `json:"kind"`
 	State string `json:"state"`
+	Runs  string `json:"runs,omitempty"` // "for sub-agent X" when the parent hands its work on
 	// Objective and Failing are the same two lines the other scheduled kinds
 	// carry (schedule_row_state.go). The objective used to be appended to
 	// Detail, where it sat behind the url, the operator and the threshold —
@@ -611,7 +612,7 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 		// Full script — the UI table renders long/multi-line cells with a
 		// click-to-expand toggle, so send it whole rather than truncating here.
 		script := strings.TrimSpace(m.FormatScript)
-		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
+		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Runs: subAgentRunsLabel(m.WakeBrief), Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
 			// Where its stopping condition stands, in the checker's own words.
 			Objective: objectiveStateLabel(monitorObjective(m)),
 			// A monitor does not back off, it PARKS: the streak counts towards

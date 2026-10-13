@@ -1,12 +1,10 @@
 package orchestrate
 
-// A sub-agent belongs to its parent: it has no front door of its own (a
-// channel bound to it is its top-level parent's, see channelAgentFor), no
-// schedule surface of its own (the Scheduler lists a whole family on any
-// member's page, and a schedule it runs reports to that parent), and no
-// Cortex of its own (what would reach it is filed in the parent's, see
-// cortexHolder; its working thread, the one its recurring tasks and monitor
-// wakes carry their history in, is kept but listed nowhere).
+// A sub-agent belongs to its parent: it helps that parent with its work and
+// has no way in of its own. A channel bound to it is its top-level parent's
+// (channelAgentFor), a schedule made for it wakes that parent, which hands
+// the work on (scheduleAgentFor), and it has no Cortex of its own (what would
+// reach it is filed in the parent's, see cortexHolder).
 
 import (
 	"fmt"
@@ -113,6 +111,146 @@ func channelAgentFor(owner, agentID string) string {
 		return agentID
 	}
 	return topAgentOf(UserDB(orchestrateBaseDB, owner), agentID)
+}
+
+// subAgentHandoffLead opens the line a schedule made for a sub-agent carries
+// once it wakes the parent instead. Its presence is also how a schedule says,
+// on the Scheduler, which sub-agent its work is for (subAgentHandoffOf).
+const subAgentHandoffLead = "This is work for your sub-agent "
+
+// scheduleAgentFor is core.ScheduleAgentFor: a schedule made for a sub-agent
+// wakes its top-level parent, with a line at the end of its task telling the
+// parent to hand it on. At the end so the task's first line, which names a
+// recurring task on the Scheduler, stays the person's own. Idempotent: a
+// task that already carries the line is left as it is.
+func scheduleAgentFor(owner, agentID, text string) (string, string) {
+	if orchestrateBaseDB == nil || strings.TrimSpace(agentID) == "" {
+		return agentID, text
+	}
+	udb := UserDB(orchestrateBaseDB, owner)
+	a, ok := loadAgent(udb, agentID)
+	if !ok || strings.TrimSpace(a.OwnedBy) == "" {
+		return agentID, text
+	}
+	top := topAgentOf(udb, agentID)
+	if top == agentID {
+		return agentID, text
+	}
+	if subAgentHandoffOf(text) != "" {
+		return top, text
+	}
+	name := chFirst(a.Name, a.ID)
+	line := subAgentHandoffLead + name + ": hand it to " + name + " with agents(action=\"run\") and pass on what it returns."
+	if strings.TrimSpace(text) == "" {
+		return top, line
+	}
+	return top, strings.TrimRight(text, "\n ") + "\n\n" + line
+}
+
+// subAgentHandoffOf is the sub-agent a schedule's task is handed to, or "".
+func subAgentHandoffOf(text string) string {
+	i := strings.LastIndex(text, subAgentHandoffLead)
+	if i < 0 {
+		return ""
+	}
+	name, _, ok := strings.Cut(text[i+len(subAgentHandoffLead):], ":")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(name)
+}
+
+// foldSubAgentSchedules points every schedule that wakes a sub-agent at its
+// top-level parent: at start-up for schedules made before that was the rule,
+// and when an agent is moved under a parent (only, then names that agent).
+// Standing agents and monitors fold as they are saved; a recurring task is
+// re-armed, kept on its own id and name, and reports to the parent's thread.
+func foldSubAgentSchedules(owner, only string) int {
+	n := 0
+	wanted := func(id string) bool { return id != "" && (only == "" || id == only) }
+	for _, sa := range ListStandingAgents(RootDB, owner) {
+		if wanted(sa.AgentID) {
+			if to, _ := scheduleAgentFor(owner, sa.AgentID, sa.Mission); to != sa.AgentID {
+				SaveStandingAgent(RootDB, sa)
+				n++
+			}
+		}
+	}
+	for _, m := range ListEventMonitors(RootDB, owner) {
+		if wanted(m.WakeAgent) {
+			if to, _ := scheduleAgentFor(owner, m.WakeAgent, m.WakeBrief); to != m.WakeAgent {
+				SaveEventMonitor(RootDB, m)
+				n++
+			}
+		}
+	}
+	for _, rt := range listAgentRecurringTasks(owner, "") {
+		p := rt.Payload
+		if !wanted(p.AgentID) || isTaskWake(p.Prompt) {
+			continue
+		}
+		to, text := scheduleAgentFor(owner, p.AgentID, p.Prompt)
+		if to == p.AgentID {
+			continue
+		}
+		// Its id and name are kept before the session changes: both fall
+		// back on the session and the prompt, and its notes and link group
+		// are filed under the id.
+		p.UID = recurringTaskUID(p)
+		if strings.TrimSpace(p.Name) == "" {
+			p.Name = recurringName(p)
+		}
+		p.AgentID, p.Prompt, p.SessionID = to, text, cortexSessionID(to)
+		next, err := computeNextFire(&p, time.Now().In(UserLocation(owner)))
+		if err != nil {
+			Log("[orchestrate.schedules] %s: could not re-arm %q on its parent: %v", owner, recurringName(p), err)
+			continue
+		}
+		UnscheduleTask(rt.TaskID)
+		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
+			Log("[orchestrate.schedules] %s: could not re-arm %q on its parent: %v", owner, recurringName(p), err)
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// scheduleHandoffs counts parentID's schedules that hand their work to the
+// agent called name.
+func scheduleHandoffs(owner, parentID, name string) int {
+	if parentID == "" || name == "" {
+		return 0
+	}
+	n := 0
+	for _, sa := range ListStandingAgents(RootDB, owner) {
+		if sa.AgentID == parentID && subAgentHandoffOf(sa.Mission) == name {
+			n++
+		}
+	}
+	for _, m := range ListEventMonitors(RootDB, owner) {
+		if m.WakeAgent == parentID && subAgentHandoffOf(m.WakeBrief) == name {
+			n++
+		}
+	}
+	for _, rt := range listAgentRecurringTasks(owner, "") {
+		if rt.Payload.AgentID == parentID && subAgentHandoffOf(rt.Payload.Prompt) == name {
+			n++
+		}
+	}
+	return n
+}
+
+// moveSubAgentSchedules is foldSubAgentSchedules for everyone, once at
+// start-up.
+func moveSubAgentSchedules() {
+	moved := 0
+	for _, u := range deploymentUsers() {
+		moved += foldSubAgentSchedules(u, "")
+	}
+	if moved > 0 {
+		Log("[orchestrate.schedules] %d schedule(s) made for sub-agents now wake their parents", moved)
+	}
 }
 
 // moveSubAgentChannels moves every channel bound to a sub-agent onto its

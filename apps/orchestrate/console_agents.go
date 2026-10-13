@@ -688,7 +688,7 @@ func standingRunsLabel(user string, sa StandingAgent) string {
 		}
 		return "machine run"
 	}
-	return ""
+	return subAgentRunsLabel(sa.Mission)
 }
 
 // sharedBySuffix names the owner of something running on somebody else's

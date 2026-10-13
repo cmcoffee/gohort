@@ -423,6 +423,9 @@ func SaveEventMonitor(db Database, m EventMonitor) {
 	if db == nil || m.Owner == "" || m.Name == "" {
 		return
 	}
+	if f := ScheduleAgentFor; f != nil && m.WakeAgent != "" {
+		m.WakeAgent, m.WakeBrief = f(m.Owner, m.WakeAgent, m.WakeBrief)
+	}
 	db.Set(eventMonitorsTable, eventKey(m.Owner, m.Name), m)
 }
 

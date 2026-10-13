@@ -1491,6 +1491,14 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 	if strings.TrimSpace(spec.Prompt) == "" {
 		return "", errors.New("recurring(schedule) requires a prompt")
 	}
+	// Made for a sub-agent: it wakes the top-level parent, which hands the
+	// work on, and reports in the parent's thread (agent_family.go).
+	if to, text := scheduleAgentFor(spec.Username, spec.AgentID, spec.Prompt); to != spec.AgentID && !isTaskWake(spec.Prompt) {
+		if strings.TrimSpace(spec.Name) == "" {
+			spec.Name = firstLineLabel(spec.Prompt)
+		}
+		spec.AgentID, spec.Prompt, spec.SessionID = to, text, cortexSessionID(to)
+	}
 	if spec.Pattern == "" {
 		spec.Pattern = RecurringFixed
 	}

@@ -19,6 +19,7 @@ type consoleRecurringRow struct {
 	Name    string `json:"name"`
 	Cadence string `json:"cadence"`            // human cadence ("recurring - every 30m")
 	Fires   string `json:"fires,omitempty"`    // "<fired> / <cap>" so far
+	Runs    string `json:"runs,omitempty"`     // "for sub-agent X" when the parent hands its work on
 	NextRun string `json:"next_run,omitempty"` // RFC3339 next fire (matches consoleAgentRow)
 	State   string `json:"state,omitempty"`    // visible only when broken ("⚠ needs relink — …")
 	// Objective and Failing are the same two lines the other scheduled kinds
@@ -33,6 +34,15 @@ type consoleRecurringRow struct {
 	// Relinkable gates the Relink row action: only a schedule whose target is
 	// GONE has anything to relink. A stalled objective gets Resume instead.
 	Relinkable bool `json:"_relinkable,omitempty"`
+}
+
+// subAgentRunsLabel is a schedule's "runs" line when its parent hands the
+// work to a sub-agent, and "" otherwise.
+func subAgentRunsLabel(text string) string {
+	if sub := subAgentHandoffOf(text); sub != "" {
+		return "for sub-agent " + sub
+	}
+	return ""
 }
 
 // handleConsoleRecurring lists the owner's recurring tasks (the `recurring` tool
@@ -70,6 +80,7 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 			Name:    label,
 			Cadence: recurringDetail(rt.Payload) + surfaceSuffix(rt.Payload.Surface),
 			Fires:   fires,
+			Runs:    subAgentRunsLabel(rt.Payload.Prompt),
 			NextRun: rt.RunAt,
 			ID:      rt.TaskID,
 			UID:     recurringTaskUID(rt.Payload),
