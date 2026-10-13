@@ -59,6 +59,10 @@ func (T *OrchestrateApp) installTaskRunner() {
 		}
 
 		ctx, cancel := context.WithCancel(withParentRun(context.Background(), parentID))
+		// A render queues on the lane of the turn that asked for it: a
+		// person's goes ahead of a schedule's (WithRenderLane). The job's
+		// own model calls stay background, as a detached job's always have.
+		ctx = WithRenderLane(ctx, RunLaneOf(sess.Context()))
 		run := T.runsRegistry().Create(sess.Username, agentID, "", cancel).
 			// The agent's NAME, not just its id: the live provider falls back to
 			// the id when the name is empty, so a background task would sit in

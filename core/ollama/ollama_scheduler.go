@@ -40,7 +40,17 @@ type ollamaReqToken struct {
 	callerID string
 	ctx      context.Context
 	done     chan error // written exactly once: nil on grant, err on cancel/reject
+	// background marks a request nobody is waiting on (a schedule, a
+	// monitor); the dispatcher serves a waiting person's first, and serves
+	// a background one anyway once it has waited backgroundWaitCap.
+	background bool
+	queued     time.Time
 }
+
+// backgroundWaitCap is how long a background request can be passed over for
+// people's before it is served regardless: a floor, so a busy day cannot
+// starve a schedule forever. A var so a test can shorten it.
+var backgroundWaitCap = 5 * time.Minute
 
 // OllamaSchedStats snapshots current scheduler state for admin views.
 type OllamaSchedStats struct {
@@ -114,13 +124,21 @@ const llmQueueWaitLogFloor = 250 * time.Millisecond
 // arrived at. That is the more useful of the two: it says whether the
 // limiter is still saturated at the moment we were let through.
 func (s *OllamaScheduler) acquire(ctx context.Context, backend, callerID string) error {
+	return s.acquireLane(ctx, backend, callerID, false)
+}
+
+// acquireLane is acquire for a request that says whether anybody is waiting
+// on it (background false) or not (true).
+func (s *OllamaScheduler) acquireLane(ctx context.Context, backend, callerID string, background bool) error {
 	if callerID == "" {
 		callerID = "unknown"
 	}
 	tok := &ollamaReqToken{
-		callerID: callerID,
-		ctx:      ctx,
-		done:     make(chan error, 1),
+		callerID:   callerID,
+		ctx:        ctx,
+		done:       make(chan error, 1),
+		background: background,
+		queued:     time.Now(),
 	}
 	started := time.Now()
 	select {
@@ -374,6 +392,30 @@ func (s *OllamaScheduler) dispatch(initialMax int) {
 	}
 
 	pickNext := func() int {
+		// A waiting person's request first: among callers whose next
+		// request somebody waits on (or a background one past its wait
+		// cap), the usual round-robin. Only when there is none does a
+		// background request get the slot.
+		urgent, urgentFallback := -1, -1
+		for i, cid := range order {
+			q := queues[cid]
+			if len(q) == 0 || (q[0].background && time.Since(q[0].queued) < backgroundWaitCap) {
+				continue
+			}
+			if cid != lastDispatched {
+				urgent = i
+				break
+			}
+			if urgentFallback == -1 {
+				urgentFallback = i
+			}
+		}
+		if urgent != -1 {
+			return urgent
+		}
+		if urgentFallback != -1 {
+			return urgentFallback
+		}
 		// Prefer a caller different from the one we just served, if
 		// any other caller has pending work. Falls back to the head
 		// of order when only one caller is active.
@@ -530,6 +572,24 @@ func AcquireImageSlot(ctx context.Context, callerID string) (func(), error) {
 		callerID = "local"
 	}
 	if err := s.acquire(ctx, "image", callerID); err != nil {
+		return func() {}, err
+	}
+	return func() { ReleaseImageSlot(callerID) }, nil
+}
+
+// AcquireImageSlotLane is AcquireImageSlot for a render that says whether
+// anybody is waiting on it: a background one (a schedule's, a monitor's)
+// waits while a person's render is queued, and is served anyway after
+// backgroundWaitCap.
+func AcquireImageSlotLane(ctx context.Context, callerID string, background bool) (func(), error) {
+	s := imageSched
+	if s == nil {
+		return func() {}, nil
+	}
+	if callerID == "" {
+		callerID = "local"
+	}
+	if err := s.acquireLane(ctx, "image", callerID, background); err != nil {
 		return func() {}, err
 	}
 	return func() { ReleaseImageSlot(callerID) }, nil

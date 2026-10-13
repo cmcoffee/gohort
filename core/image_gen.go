@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/ollama"
 	"github.com/cmcoffee/snugforge/apiclient"
 )
 
@@ -441,6 +442,29 @@ func WithRenderCaller(ctx context.Context, caller string) context.Context {
 	return context.WithValue(ctx, renderCallerKey{}, caller)
 }
 
+// renderLaneKey carries the lane of the turn a render was asked for in.
+type renderLaneKey struct{}
+
+// WithRenderLane records, on a job detached from its turn, the lane that turn
+// ran on, for the render queue alone. A render outlives its turn, so it runs
+// detached, on a context of its own that carries no lane and reads as
+// background; without this a render a person asked for in a chat would queue
+// behind a schedule's. The job's model calls keep the background lane.
+func WithRenderLane(ctx context.Context, lane RunLane) context.Context {
+	return context.WithValue(ctx, renderLaneKey{}, lane)
+}
+
+// renderLaneOf is the lane a render queues on: the asking turn's, when a
+// detached job recorded it, else the context's own.
+func renderLaneOf(ctx context.Context) RunLane {
+	if ctx != nil {
+		if l, ok := ctx.Value(renderLaneKey{}).(RunLane); ok && l != "" {
+			return l
+		}
+	}
+	return RunLaneOf(ctx)
+}
+
 // renderCaller reads the label, defaulting to local.
 func renderCaller(ctx context.Context) string {
 	if ctx == nil {
@@ -463,7 +487,9 @@ var imageQueueOnce sync.Once
 // usable release, so callers can defer without a nil check.
 func queueRender(ctx context.Context) func() {
 	imageQueueOnce.Do(func() { StartImageScheduler(defaultImageParallel) })
-	release, err := AcquireImageSlot(ctx, renderCaller(ctx))
+	// A render a person is waiting on goes ahead of a schedule's: the same
+	// lanes the model queue keeps, applied to the render queue.
+	release, err := ollama.AcquireImageSlotLane(ctx, renderCaller(ctx), renderLaneOf(ctx) != LaneInteractive)
 	if err != nil {
 		// The caller went away or its deadline passed while queued. Not a
 		// reason to refuse the render — the request below will fail on the same

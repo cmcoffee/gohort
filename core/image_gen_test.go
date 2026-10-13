@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -56,5 +57,25 @@ func TestImageVerifyTextBudget(t *testing.T) {
 		if !strings.Contains(s, "EXPLICITLY asked for") {
 			t.Fatalf("missing checkable-criteria gate: %q", s)
 		}
+	}
+}
+
+// A render queues on the lane of the turn that asked for it when a detached
+// job recorded one, else on its own context's: a detached render carries no
+// lane of its own and would otherwise read as background.
+func TestARenderQueuesOnTheAskingTurnsLane(t *testing.T) {
+	bg := context.Background()
+	if got := renderLaneOf(bg); got != LaneBackground {
+		t.Errorf("no lane = %q, want background", got)
+	}
+	if got := renderLaneOf(WithRunLane(bg, LaneInteractive)); got != LaneInteractive {
+		t.Errorf("the context's own lane = %q", got)
+	}
+	detached := WithRenderLane(bg, LaneInteractive)
+	if got := renderLaneOf(detached); got != LaneInteractive {
+		t.Errorf("a detached render a person asked for = %q, want interactive", got)
+	}
+	if RunLaneOf(detached) != LaneBackground {
+		t.Error("the detached job's model lane changed: it stays background")
 	}
 }
