@@ -1937,6 +1937,18 @@ select:-webkit-autofill {
  * than widening whatever holds it: in a chat reply on a phone that dragged
  * the whole conversation sideways. */
 .ui-md table { display: block; max-width: 100%; overflow-x: auto; }
+/* Nothing in a reply runs past its box. An image is held to the width it is
+ * given; a long unbroken run (a URL, a path, an identifier in inline code)
+ * breaks where it must rather than pushing the page sideways, which on a
+ * phone is most of them. Code blocks keep their lines and scroll, above. */
+.ui-md img { max-width: 100%; height: auto; }
+.ui-md a, .ui-md :not(pre) > code { overflow-wrap: anywhere; }
+/* A quote is set off by a rule, not the browser's 40px indent each side,
+ * which on a phone took a fifth of the width away from the words. */
+.ui-md blockquote {
+  margin: 0.5em 0; padding: 0.15em 0 0.15em 0.8em;
+  border-left: 3px solid var(--border); color: var(--text-mute);
+}
 
 .ui-watch-draft-body {
   margin-top: 0.7rem; color: var(--text);
@@ -1957,6 +1969,10 @@ select:-webkit-autofill {
 .ui-watch-article-body h2 { font-size: var(--fs-xl); margin: 1.5rem 0 0.4rem; color: var(--text-hi); }
 .ui-watch-article-body h3 { font-size: var(--fs-lg); margin: 1.2rem 0 0.35rem; color: var(--text-hi); }
 .ui-watch-article-body p  { margin: 0.6rem 0; }
+@media (max-width: 700px) {
+  .ui-watch-article { padding: 1rem 0.85rem; }
+  .ui-watch-article-title { font-size: 1.2rem; }
+}
 .ui-watch-done-actions {
   display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center;
   padding: 1rem;
@@ -6363,7 +6379,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-tw-image { max-width: 360px; max-height: 200px; border-radius: 6px; border: 1px solid var(--border); }
 .ui-tw-revs {
   position: absolute; top: 60px; right: 0.6rem; z-index: 5;
-  width: 320px; max-height: 60vh; overflow-y: auto;
+  width: 320px; max-width: calc(100vw - 1.2rem); max-height: 60vh; overflow-y: auto;
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
   padding: 0.5rem; box-shadow: 0 6px 20px rgba(0,0,0,0.5);
 }
@@ -6404,7 +6420,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-tw-rules-saved { font-size: var(--fs-xs); color: var(--text-mute); }
 /* Merge panel gets a touch wider than the rules panel so the dropdown
  * + paste area + guidance fit without horizontal squeeze. */
-.ui-tw-merge-panel { width: 420px; }
+.ui-tw-merge-panel { width: 420px; max-width: calc(100vw - 2rem); }
 
 @media (max-width: 700px) {
   .ui-tw {
@@ -6487,6 +6503,22 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-navshell-content:not(:has(.ui-chat, .ui-agent)) {
     padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)) !important;
   }
+}
+
+/* A toast: a short note at the foot of the screen, above every modal layer
+ * (dialogs start at 1000 and climb by 10 as they stack). Centred by its
+ * edges rather than by left:50% and a shift back, which caps a box at half
+ * the screen's width and crushed a longer message into a narrow column. On
+ * a phone it sits clear of the composer and the home indicator. */
+.ui-toast {
+  position: fixed; left: 0; right: 0; bottom: 1.5rem; z-index: 9000;
+  width: max-content; max-width: calc(100vw - 2rem); margin: 0 auto; box-sizing: border-box;
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
+  padding: 0.6rem 1rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  font-size: var(--fs-sm); text-align: center; overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .ui-toast { bottom: calc(5rem + env(safe-area-inset-bottom, 0px)); }
 }
 
 /* --- Card escape hatch --- */

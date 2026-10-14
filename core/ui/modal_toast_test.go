@@ -19,7 +19,8 @@ import (
 func TestAToastOutranksEveryModalLayer(t *testing.T) {
 	prelude := readRuntimeFile(t, "00_prelude.js")
 
-	toast := regexp.MustCompile(`z-index:(\d+);[^']*box-shadow`).FindStringSubmatch(prelude)
+	// The toast's look is .ui-toast's, in the stylesheet.
+	toast := regexp.MustCompile(`(?m)^\.ui-toast \{[^}]*z-index:\s*(\d+)`).FindStringSubmatch(runtimeCSS)
 	if toast == nil {
 		t.Fatal("could not find the toast's z-index")
 	}

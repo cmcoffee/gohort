@@ -1911,7 +1911,7 @@
     // the backdrop — so a submit that failed inside a modal reset its
     // button and said nothing anybody could see, which reads as a
     // button that does nothing.
-    t.style.cssText = 'position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--bg-2);border:1px solid var(--border);color:var(--text);padding:0.6rem 1rem;border-radius:8px;z-index:9000;box-shadow:0 4px 12px rgba(0,0,0,0.4);font-size:var(--fs-sm, 0.85rem);';
+    // Its look and placement are .ui-toast's (runtime.css).
     document.body.appendChild(t);
     setTimeout(function(){ t.remove(); }, 2500);
   }
