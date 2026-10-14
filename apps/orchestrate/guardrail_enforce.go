@@ -188,52 +188,41 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		// relax. Blocking wins when either says so.
 		failClosed := t.agent.GuardrailFailClosed ||
 			(judgesGlobal(wardenRules(t.agent, hookPoint, candidate, who)) && !prompts.GlobalRulesFailOpen())
-		verdicts, err := t.app.runWarden(ctx, t.agent, hookPoint, candidate, who)
+		// A check that cannot reach a verdict is retried once, and, for an
+		// agent that fails closed with its owner watching, they are asked
+		// whether to check again (guardrail_recheck.go).
+		outcome := t.judgeWithRecheck(ctx, hookPoint, candidate, who, failClosed)
+		verdicts, err := outcome.verdicts, outcome.err
 		if err != nil {
 			// The warden is itself an LLM call, so an infra hiccup has to have
 			// a policy; either way the gap is recorded, never silent.
 			if failClosed {
-				t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail check could not run (%v): BLOCKED (set to block when a check cannot run).", err))
-				Log("[orchestrate.guardrail] agent=%s fail-closed block at %s: warden error: %v", t.agent.ID, hookPoint, err)
+				t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail check could not run (%v): BLOCKED (set to block when a check cannot run).%s", err, outcome.note()))
+				Log("[orchestrate.guardrail] agent=%s fail-closed block at %s: warden error: %v (%d tries)", t.agent.ID, hookPoint, err, outcome.tries)
 				return GuardrailDecision{Blocked: true, Message: guardrailNoVerdictMessage()}
 			}
-			t.turnDiag("guardrail-error", fmt.Sprintf("Guardrail check could not run (%v): the action proceeded unchecked.", err))
+			t.turnDiag("guardrail-error", fmt.Sprintf("Guardrail check could not run (%v): the action proceeded unchecked.%s", err, outcome.note()))
 			return pass
 		}
 		// UNSURE is not compliance. parseWardenVerdicts deliberately returns
 		// "unsure" for a reply it cannot read, on the stated grounds that "an
-		// unreadable warden must not read as compliance" — and then this
-		// caller treated unsure exactly like comply, silently. So a warden
-		// whose generation collapsed (the worker runs no-think, which this
-		// deployment's model is known to degenerate under) waved the action
-		// through leaving no trace at all.
-		//
-		// Retry once: a collapsed generation is usually transient, and a
-		// second warden call is far cheaper than an unchecked consequential
-		// action. If it is still unreadable, fail open — the deliberate
-		// policy for warden infrastructure trouble — but leave a breadcrumb,
-		// which is the house rule for every guard that drops something.
+		// unreadable warden must not read as compliance". A warden whose
+		// generation collapsed (the worker runs no-think, which this
+		// deployment's model is known to degenerate under) is retried once
+		// above, re-sampled; if it is still unreadable, it fails as the agent
+		// says, with a breadcrumb either way.
 		if worstVerdict(verdicts) == guardNoVerdict {
-			Log("[orchestrate.guardrail] agent=%s warden reached NO VERDICT at %s: retrying once", t.agent.ID, hookPoint)
-			retried, rerr := t.app.runWarden(ctx, t.agent, hookPoint, candidate, who, wardenRetryOptions()...)
-			if rerr == nil && worstVerdict(retried) != guardNoVerdict {
-				verdicts = retried
-			} else {
-				_, reason := firstViolation(verdicts)
-				if strings.TrimSpace(reason) == "" {
-					reason = "warden verdict unreadable"
-				}
-				if failClosed {
-					t.turnDiag("guardrail-blocked", fmt.Sprintf(
-						"Guardrail check at %s could not reach a verdict (%s): BLOCKED (set to block when a check cannot run). Retried once.", hookPoint, reason))
-					Log("[orchestrate.guardrail] agent=%s fail-closed block at %s after retry (%s)", t.agent.ID, hookPoint, reason)
-					return GuardrailDecision{Blocked: true, Message: guardrailNoVerdictMessage()}
-				}
-				t.turnDiag("guardrail-no-verdict", fmt.Sprintf(
-					"Guardrail check at %s could not reach a verdict (%s): the action proceeded UNCHECKED. Retried once.", hookPoint, reason))
-				Log("[orchestrate.guardrail] agent=%s UNCHECKED at %s after retry (%s)", t.agent.ID, hookPoint, reason)
-				return pass
+			reason := outcome.reason()
+			if failClosed {
+				t.turnDiag("guardrail-blocked", fmt.Sprintf(
+					"Guardrail check at %s could not reach a verdict (%s): BLOCKED (set to block when a check cannot run).%s", hookPoint, reason, outcome.note()))
+				Log("[orchestrate.guardrail] agent=%s fail-closed block at %s after %d tries (%s)", t.agent.ID, hookPoint, outcome.tries, reason)
+				return GuardrailDecision{Blocked: true, Message: guardrailNoVerdictMessage()}
 			}
+			t.turnDiag("guardrail-no-verdict", fmt.Sprintf(
+				"Guardrail check at %s could not reach a verdict (%s): the action proceeded UNCHECKED.%s", hookPoint, reason, outcome.note()))
+			Log("[orchestrate.guardrail] agent=%s UNCHECKED at %s after %d tries (%s)", t.agent.ID, hookPoint, outcome.tries, reason)
+			return pass
 		}
 		if worstVerdict(verdicts) != guardViolate {
 			// Logged, because a check that RAN and passed used to be

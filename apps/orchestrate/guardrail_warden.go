@@ -211,7 +211,11 @@ func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRe
 		WithTemperature(0.1),
 	}, wardenDepthOptions(depth)...)
 	call = append(call, opts...)
+	began := time.Now()
 	resp, err := T.WorkerChat(cctx, msgs, call...)
+	// How long the check took, against how long it was given: whether the
+	// limit is too short cannot be answered without it.
+	Debug("[orchestrate.warden] agent=%s %s took %s of %s (depth %s, err=%v)", agent.ID, hookPoint, time.Since(began).Round(100*time.Millisecond), timeout, depth, err)
 	if err != nil {
 		return nil, err
 	}
