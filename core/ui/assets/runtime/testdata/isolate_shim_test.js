@@ -84,6 +84,7 @@ w.fetch('https://example.com/x').catch(function() { refused = true; }).then(func
     /ISOLATE_SHIM \+ \(cfg\.isolate_prelude \|\| ''\) \+ \(html/.test(misc));
   check('audio and video sources are relayed like images',
     /audio\[src\],video\[src\],source\[src\]/.test(misc) && /parentNode\.load\(\)/.test(misc));
+  links();
   return codePaths();
 }).then(function() {
   if (fail) process.exit(1);
@@ -206,4 +207,53 @@ function codePaths() {
     check('a refused XHR fires error with status 0', errored === 1 && bad.status === 0 && bad.readyState === 4);
     check('an absolute XHR is left to the browser', native.nativeOpen === 'https://cdn.example/lib.json' && native.nativeSent === true);
   });
+}
+
+// Links in an app frame: one that leaves the app is handed to the page to
+// open in a new window, rather than loading inside the card or dying as a
+// blocked popup; one that stays in the app is left to the frame.
+function links() {
+  var clicks = [], posted = [], nativeOpened = [];
+  var w = {
+    addEventListener: function(t, fn) { if (t === 'click') clicks.push(fn); },
+    parent: {postMessage: function(m) { posted.push(m); }},
+    open: function(u) { nativeOpened.push(u); return {}; },
+    Blob: Blob, FormData: FormData, ArrayBuffer: ArrayBuffer, Promise: Promise, Response: Response,
+    String: String, Object: Object, Math: Math, Error: Error, URL: URL,
+    document: {documentElement: {}, baseURI: 'https://gohort.example/apps/news/'},
+  };
+  w.window = w;
+  var ctx = vm.createContext(w);
+  scripts(iso).forEach(function(code) { vm.runInContext(code, ctx); });
+  function click(href, target, opts) {
+    opts = opts || {};
+    var a = {getAttribute: function(k) { return k === 'href' ? href : k === 'target' ? (target || null) : null; }};
+    var ev = {button: opts.button || 0, defaultPrevented: !!opts.taken, target: {closest: function() { return a; }},
+      preventDefault: function() { ev.defaultPrevented = true; }};
+    clicks.forEach(function(fn) { fn(ev); });
+    return ev;
+  }
+  function lastOpen() { var m = posted[posted.length - 1]; return m && m.__uiIsoOpen ? m.url : null; }
+
+  var ev = click('https://news.example/story/1');
+  check('a link to another site asks the page to open it', lastOpen() === 'https://news.example/story/1' && ev.defaultPrevented);
+  ev = click('https://news.example/story/2', '_blank');
+  check('a target=_blank link to another site too', lastOpen() === 'https://news.example/story/2' && ev.defaultPrevented);
+  var n = posted.length;
+  ev = click('stories/3');
+  check('a link inside the app is left to the frame', posted.length === n && !ev.defaultPrevented);
+  ev = click('stories/4', '_blank');
+  check('a target=_blank link inside the app opens as a full address', lastOpen() === 'https://gohort.example/apps/news/stories/4' && ev.defaultPrevented);
+  n = posted.length;
+  ev = click('mailto:desk@news.example');
+  check('a mailto link is not handed over', posted.length === n && !ev.defaultPrevented);
+  click('#top');
+  click('https://news.example/x', null, {taken: true});
+  check('an anchor, and a link a handler already took, are left alone', posted.length === n);
+  w.open('https://news.example/popup');
+  check('window.open to another site asks the page', lastOpen() === 'https://news.example/popup' && nativeOpened.length === 0);
+  w.open('javascript:void(0)');
+  check('window.open of anything else is the frame\'s own', nativeOpened.length === 1);
+  check('the page opens only a web address, and only after a click',
+    /if \(d\.__uiIsoOpen\) \{[\s\S]*?\^https\?:[\s\S]*?act && !act\.isActive[\s\S]*?window\.open\(String\(d\.url\), '_blank', 'noopener'\)/.test(misc));
 }

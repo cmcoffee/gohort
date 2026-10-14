@@ -1254,6 +1254,18 @@
     'var n=buf?buf.byteLength:0;x.dispatchEvent(new Event("readystatechange"));' +
     'x.dispatchEvent(new ProgressEvent(st?"load":"error",{lengthComputable:!!buf,loaded:n,total:n}));x.dispatchEvent(new ProgressEvent("loadend",{loaded:n,total:n}));}' +
     'ask(r.u,{method:r.m,body:b,headers:r.h}).then(function(res){x.__t=res.headers.get("Content-Type")||"";return res.arrayBuffer().then(function(buf){fin(res.status,buf);});},function(){fin(0,null);});}};}' +
+    // A link out of the app opens in a new window, asked of the page. Left to
+    // the frame, a plain link loaded the other site INSIDE the card (where
+    // most sites refuse to be framed, so the card went blank), and a
+    // target=_blank one opened a popup still under this sandbox, or nothing
+    // at all in a desktop webview, which blocks popups and only opens a
+    // link the outer page hands it. A link that stays inside the app is the
+    // app's own business and is left alone; so is one a handler has taken.
+    'function out(u){var r;try{r=new URL(u,document.baseURI);}catch(e){return false;}if(!/^https?:$/.test(r.protocol))return false;' +
+      'parent.postMessage({__uiIsoOpen:1,url:r.href},"*");return true;}' +
+    'addEventListener("click",function(e){if(e.defaultPrevented||e.button)return;var a=e.target&&e.target.closest&&e.target.closest("a[href]");if(!a)return;' +
+      'var h=a.getAttribute("href")||"";if(!h||h.charAt(0)==="#")return;if(mine(h)!==null&&a.getAttribute("target")!=="_blank")return;if(out(h))e.preventDefault();});' +
+    'var OW=window.open;window.open=function(u){if(u&&out(String(u)))return null;return OW?OW.apply(window,arguments):null;};' +
     'function height(){parent.postMessage({__uiIsoHeight:Math.ceil(document.documentElement.scrollHeight)},"*");}' +
     'addEventListener("DOMContentLoaded",function(){scan(document);new MutationObserver(function(m){m.forEach(function(x){x.addedNodes.forEach(function(nd){if(/^(IMG|AUDIO|VIDEO|SOURCE)$/.test(nd.tagName||""))img(nd);else scan(nd);});});height();})' +
       '.observe(document.documentElement,{childList:true,subtree:true});' +
@@ -1295,6 +1307,18 @@
         }, function() {
           f.contentWindow.postMessage({__uiIsoReply: 1, id: d.id, dialog: 1, value: null}, '*');
         });
+        return;
+      }
+      // A link the document asks to open (see the frame's out): only a web
+      // address, and only right after the viewer clicked something, so an
+      // app cannot open windows on its own. A click inside the frame counts
+      // as one on this page too. Opened from here, the desktop app's own
+      // window.open hands it to the system browser.
+      if (d.__uiIsoOpen) {
+        var act = navigator.userActivation;
+        if (!/^https?:\/\//i.test(String(d.url || ''))) return;
+        if (act && !act.isActive) { console.warn('isolated content asked to open ' + d.url + ' without a click; not opened'); return; }
+        window.open(String(d.url), '_blank', 'noopener');
         return;
       }
       if (!d.__uiIso) return;
