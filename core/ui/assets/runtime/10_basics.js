@@ -4966,7 +4966,9 @@
       // bars fill the width without the non-uniform scale that would
       // otherwise smear the axis labels sideways.
       var svgNS = 'http://www.w3.org/2000/svg';
-      var W = Math.max(320, Math.min(maxW, wrap.clientWidth || maxW));
+      // A floor of 200, not 320: a phone's card is narrower than 320, and a
+      // viewBox wider than the box squeezed the drawing sideways, labels too.
+      var W = Math.max(200, Math.min(maxW, wrap.clientWidth || maxW));
       var H = height, P = 20; // padding
       drawnW = W;
       var bw = (W - P*2) / data.length;
@@ -5065,6 +5067,9 @@
         hover.addEventListener('mouseenter', showTip);
         hover.addEventListener('mousemove', showTip);
         hover.addEventListener('mouseleave', function(){ tip.style.display = 'none'; });
+        // A touch screen has no hover to follow: a tap on a bar shows its
+        // values, and a tap anywhere else on the chart puts them away.
+        hover.addEventListener('click', function(ev) { ev.stopPropagation(); showTip(ev); });
         svg.appendChild(bar);
         svg.appendChild(hover);
 
@@ -5081,6 +5086,7 @@
         }
       });
       wrap.appendChild(svg);
+      wrap.onclick = function() { tip.style.display = 'none'; };
 
       // Total summary below chart.
       var total = data.reduce(function(s, p){ return s + (Number(p[cfg.y_field]) || 0); }, 0);
