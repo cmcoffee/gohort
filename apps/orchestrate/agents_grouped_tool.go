@@ -726,7 +726,7 @@ func slimAgentJSON(udb Database, user string, a AgentRecord) []byte {
 		if len(s) <= n {
 			return s
 		}
-		return s[:n] + fmt.Sprintf("…[%d chars total: previewed; you have the full text you set, re-send it wholesale to change it]", len(s))
+		return s[:n] + fmt.Sprintf("…[%d chars total: previewed. get with full=true returns all of it; read that before changing it, since update replaces the whole field]", len(s))
 	}
 	type toolSummary struct {
 		Name        string `json:"name"`

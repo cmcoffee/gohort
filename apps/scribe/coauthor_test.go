@@ -1,6 +1,7 @@
 package scribe
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -70,6 +71,46 @@ func TestCoerceIntArg(t *testing.T) {
 	for in, want := range cases {
 		if got := coerceIntArg(in); got != want {
 			t.Errorf("coerceIntArg(%v) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// A section edit changes the whole body, one passage, or adds to the end,
+// one kind at a time; a passage that is missing or ambiguous is refused.
+func TestASectionEditChangesOnlyWhatItSays(t *testing.T) {
+	old := "Install with apt.\n\nRun `kb setup` once.\n\nRun `kb setup` again to reset."
+	for name, c := range map[string]struct {
+		ch   sectionChange
+		want string
+		bad  bool
+	}{
+		"whole body":        {ch: sectionChange{Body: "New body."}, want: "New body."},
+		"append":            {ch: sectionChange{Append: "Then restart."}, want: old + "\n\nThen restart."},
+		"one passage":       {ch: sectionChange{Find: "Install with apt.", Replace: "Install with dnf."}, want: strings.Replace(old, "apt", "dnf", 1)},
+		"missing passage":   {ch: sectionChange{Find: "brew", Replace: "x"}, bad: true},
+		"ambiguous passage": {ch: sectionChange{Find: "Run `kb setup`", Replace: "x"}, bad: true},
+	} {
+		if err := c.ch.valid(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got, err := c.ch.apply(old)
+		if c.bad {
+			if err == nil {
+				t.Errorf("%s was accepted: %q", name, got)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("%s: %q %v, want %q", name, got, err, c.want)
+		}
+	}
+	if (sectionChange{}).valid() == nil || (sectionChange{Body: "a", Append: "b"}).valid() == nil {
+		t.Error("an edit with no change, or two kinds, was accepted")
+	}
+	src, _ := os.ReadFile("coauthor.go")
+	for _, want := range []string{"base := []AgentToolDef{addSection, editSection, readSection,", "read it with read_section, then use edit_section"} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("the author lost %q", want)
 		}
 	}
 }

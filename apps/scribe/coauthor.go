@@ -116,19 +116,23 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 		Tool: Tool{
 			Name:        "edit_section",
 			Caps:        []Capability{CapWrite},
-			Description: "Replace the body of an EXISTING section in the open guide, matched by its title (case-insensitive). Provide the new markdown body. Use for revisions the user asks for (\"expand the install section\", \"fix the example in Setup\"). Errors if no guide is open or no section matches.",
+			Description: "Change an EXISTING section of the open guide, matched by its title (case-insensitive). Read it first with read_section: you are changing text you need to have seen. Then either pass markdown (the whole new body, for a rewrite), or find + replace (one passage changed in place, the rest kept exactly), or append (a paragraph added at the end). Use for revisions the user asks for (\"expand the install section\", \"fix the example in Setup\"). Errors if no guide is open or no section matches.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Title of the section to edit (must match an existing section)."},
-				"markdown":      {Type: "string", Description: "The new section body as markdown (replaces the old body). No top-level heading."},
+				"markdown":      {Type: "string", Description: "The whole new section body as markdown (replaces the old body). No top-level heading. Omit when using find/replace or append."},
+				"find":          {Type: "string", Description: "A passage of the section, copied exactly from read_section, to change in place. Must appear exactly once."},
+				"replace":       {Type: "string", Description: "What the found passage becomes (with find). Empty removes it."},
+				"append":        {Type: "string", Description: "Markdown added to the end of the section, the rest kept as it is."},
 			},
-			Required: []string{"section_title", "markdown"},
+			Required: []string{"section_title"},
 		},
 		SingleFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
-			md := modelText(fmt.Sprint(args["markdown"]))
-			if md == "" {
-				return "", fmt.Errorf("markdown is required: pass the new section body (use delete_section to remove a section)")
+			change := sectionChange{Body: modelText(str(args, "markdown")), Find: str(args, "find"),
+				Replace: str(args, "replace"), Append: modelText(str(args, "append"))}
+			if err := change.valid(); err != nil {
+				return "", err
 			}
 			g, ownerUDB, _, ok := openGuide()
 			if !ok {
@@ -137,6 +141,10 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			idx := findIdx(g, title)
 			if idx < 0 {
 				return "", fmt.Errorf("no section titled %q, existing sections: %s", title, sectionTitles(g))
+			}
+			md, err := change.apply(g.Sections[idx].Markdown)
+			if err != nil {
+				return "", fmt.Errorf("%s: %w", title, err)
 			}
 			g.Sections[idx].Markdown = md
 			saveGuideRev(ownerUDB, g, "Edited section: "+title)
@@ -212,6 +220,36 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: md, Order: g.nextOrder()})
 			saveGuideRev(ownerUDB, g, "Drafted from sources: "+title)
 			return fmt.Sprintf("Added %q to %q (now %d section%s), grounded in the guide's knowledge + attached Sources.", title, g.Title, len(g.Sections), plural(len(g.Sections))), nil
+		},
+	}
+
+	// read_section is the section's current body in full. edit_section changes
+	// text, and without this the author had only titles to go on: asked to
+	// weave a finding into a section, it rewrote a body it had never seen.
+	readSection := AgentToolDef{
+		Tool: Tool{
+			Name:        "read_section",
+			Description: "Read one section of the OPEN guide in full, by its title (case-insensitive). Call it before edit_section, and whenever you need to know what a section already says.",
+			Parameters: map[string]ToolParam{
+				"section_title": {Type: "string", Description: "Title of the section, as list_sections shows it."},
+			},
+			Required: []string{"section_title"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			g, _, _, ok := openGuide()
+			if !ok {
+				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
+			}
+			title := strings.TrimSpace(str(args, "section_title"))
+			idx := findIdx(g, title)
+			if idx < 0 {
+				return "", fmt.Errorf("no section titled %q, existing sections: %s", title, sectionTitles(g))
+			}
+			body := strings.TrimSpace(g.Sections[idx].Markdown)
+			if body == "" {
+				return fmt.Sprintf("The %q section is empty.", g.Sections[idx].Title), nil
+			}
+			return fmt.Sprintf("The %q section, in full:\n\n%s", g.Sections[idx].Title, body), nil
 		},
 	}
 
@@ -607,7 +645,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 		},
 	}
 
-	base := []AgentToolDef{addSection, editSection, draftSection, addImage, listSections, renameSection, deleteSection, moveSection, research, searchKnowledge, listReferences, pullReference}
+	base := []AgentToolDef{addSection, editSection, readSection, draftSection, addImage, listSections, renameSection, deleteSection, moveSection, research, searchKnowledge, listReferences, pullReference}
 
 	// Attached-source tools: every source the user linked via the Sources button
 	// contributes its OWN named tools (e.g. search_<system>_knowledge,
@@ -815,7 +853,7 @@ func (T *Scribe) runIncorporate(ctx context.Context, udb Database, orch *orchest
 	}
 	prompt +=
 		"1. Call list_sections to see the current structure.\n" +
-			"2. If the finding extends, updates, or overlaps an EXISTING section, use edit_section to weave it in so that section still reads as one coherent piece (merge and re-flow: don't tack a fragment on the end). If it's a genuinely new topic, use add_section with a fitting title"
+			"2. If the finding extends, updates, or overlaps an EXISTING section, read it with read_section, then use edit_section to weave it in so that section still reads as one coherent piece (merge and re-flow: don't tack a fragment on the end). If it's a genuinely new topic, use add_section with a fitting title"
 	if strings.TrimSpace(suggestedTitle) != "" {
 		prompt += " (a reasonable title: \"" + strings.TrimSpace(suggestedTitle) + "\")"
 	}
@@ -888,4 +926,45 @@ func describeAttachedReferences(ownerUser string, refs []ReferenceSelection) str
 		return "This guide has linked reference sources, but they can't be resolved right now (the owner's access to them may have changed)."
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// sectionChange is one edit to a section's body: the whole new body (Body),
+// one passage changed in place (Find, Replace), or markdown added at the end
+// (Append). Exactly one kind per edit, so a small change does not mean
+// retyping, and possibly losing, the rest of a long section.
+type sectionChange struct {
+	Body, Find, Replace, Append string
+}
+
+func (c sectionChange) valid() error {
+	n := 0
+	for _, set := range []bool{c.Body != "", c.Find != "", c.Append != ""} {
+		if set {
+			n++
+		}
+	}
+	switch {
+	case n == 0:
+		return fmt.Errorf("pass one of: markdown (the whole new body), find + replace (one passage changed), or append (added at the end); use delete_section to remove a section")
+	case n > 1:
+		return fmt.Errorf("one kind of change at a time: markdown, find + replace, or append")
+	}
+	return nil
+}
+
+func (c sectionChange) apply(old string) (string, error) {
+	switch {
+	case c.Body != "":
+		return c.Body, nil
+	case c.Append != "":
+		return strings.TrimRight(old, " \n") + "\n\n" + c.Append, nil
+	}
+	switch n := strings.Count(old, c.Find); n {
+	case 0:
+		return "", fmt.Errorf("find does not appear in the section; copy the passage exactly from read_section")
+	case 1:
+		return strings.Replace(old, c.Find, c.Replace, 1), nil
+	default:
+		return "", fmt.Errorf("find appears %d times in the section; include more of the surrounding text so it names one place", n)
+	}
 }
