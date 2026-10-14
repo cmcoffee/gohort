@@ -3174,6 +3174,13 @@ select:-webkit-autofill {
 }
 .ui-chat-msg.user { background: var(--bg-2); align-self: flex-end; border: 1px solid var(--border); }
 .ui-chat-msg.assistant { background: var(--bg-0); align-self: flex-start; border: 1px solid var(--border); border-left: 3px solid var(--accent); }
+/* Phone: a reply takes the width, as the agent conversation's does; the
+ * person's own message stays capped on the right so the two still read as
+ * a conversation. */
+@media (max-width: 700px) {
+  .ui-chat-msg.assistant { max-width: 100%; padding: 0.55rem 0.7rem; }
+  .ui-chat-msg.user { max-width: 88%; }
+}
 .ui-chat-actions {
   display: flex; flex-wrap: wrap; gap: 0.4rem;
   margin-top: 0.4rem; padding-top: 0.4rem;
