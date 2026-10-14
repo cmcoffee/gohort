@@ -165,6 +165,9 @@ func (a StoreCommand) asTempTool() TempTool {
 	if desc == "" {
 		desc = a.Label
 	}
+	if strings.TrimSpace(a.Guide) != "" {
+		desc += " The admin wrote a guide to using it: list_" + a.Slug + "_commands shows it; read it before the first call."
+	}
 	return TempTool{
 		Name:        a.ToolName(),
 		Description: desc,

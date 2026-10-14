@@ -340,8 +340,9 @@ func TestDescribeStoreCommandsTellsTheAgentWhatToAskFor(t *testing.T) {
 	if !strings.Contains(got, "Response key") || !strings.Contains(got, "cannot be run unattended") {
 		t.Errorf("a two-phase command must name the input AND say a person is required:\n%s", got)
 	}
-	// It must never read as something the agent can call.
-	if !strings.Contains(got, "never by you") {
+	// A command no admin has mapped and approved must never read as something
+	// the agent can call.
+	if !strings.Contains(got, "Not yours to run: a person runs it.") {
 		t.Errorf("the answer must be explicit that running one is a person's click:\n%s", got)
 	}
 }

@@ -170,7 +170,7 @@ func (s storeSource) specifiedToolDefs(sess *ToolSession, user string, st Store,
 		out = append(out, AgentToolDef{
 			Tool: Tool{
 				Name:        name,
-				Description: fmt.Sprintf("%s Runs exactly: %s %s, with your values in the {placeholders}; nothing else about the command can be changed.", strings.TrimSuffix(desc, ".")+".", cmd.Command, line),
+				Description: fmt.Sprintf("%s Runs exactly: %s %s, with your values in the {placeholders}; nothing else about the command can be changed.%s", strings.TrimSuffix(desc, ".")+".", cmd.Command, line, guidePointer(st, cmd)),
 				Parameters:  act.Params,
 				Required:    act.Required,
 				Caps:        []Capability{CapExecute},
@@ -296,7 +296,7 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 		if cmd.open() {
 			usage = UsageOpen
 		}
-		writeJSON(w, map[string]any{"usage": usage, "allowed_uses": strings.Join(cmd.allowedLines(), "\n")})
+		writeJSON(w, map[string]any{"usage": usage, "allowed_uses": strings.Join(cmd.allowedLines(), "\n"), "guide": cmd.Guide})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -306,11 +306,14 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 	var body struct {
 		Usage       string `json:"usage"`
 		AllowedUses string `json:"allowed_uses"`
+		Guide       string `json:"guide"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	before := cmd.usesLabel()
+	cmd.Guide = strings.TrimSpace(body.Guide)
 	cmd.Usage = UsageSpecified
 	if body.Usage == UsageOpen {
 		cmd.Usage = UsageOpen
@@ -323,10 +326,16 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	cmd.Approved = false
+	// What agents may RUN changed: approval again. Only the guide changed:
+	// that is what they are told, so the approval stands.
+	msg := "Saved."
+	if cmd.usesLabel() != before {
+		cmd.Approved = false
+		msg = "Saved. Agents is off for this command until you approve it again."
+	}
 	T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
-	Log("[filestore] %s set %s/%s uses: %s (Agents switched off until approved again)", user, cmd.Slug, cmd.Name, cmd.usesLabel())
-	writeJSON(w, map[string]any{"ok": true, "message": "Saved. Agents is off for this command until you approve it again."})
+	Log("[filestore] %s set %s/%s uses: %s", user, cmd.Slug, cmd.Name, cmd.usesLabel())
+	writeJSON(w, map[string]any{"ok": true, "message": msg})
 }
 
 // MigrateCommandUses gives commands registered before usage modes existed the
@@ -345,4 +354,13 @@ func MigrateCommandUses(db Database) {
 		db.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
 		Log("[filestore] command %s/%s set to %s (registered before usage modes)", cmd.Slug, cmd.Name, cmd.Usage)
 	}
+}
+
+// guidePointer tells an agent where the admin's guide to a command is, when
+// there is one: in the store's command list, not repeated in every tool.
+func guidePointer(st Store, cmd StoreCommand) string {
+	if strings.TrimSpace(cmd.Guide) == "" {
+		return ""
+	}
+	return " The admin wrote a guide to using it: list_" + st.Slug + "_commands shows it; read it before the first call."
 }

@@ -126,6 +126,12 @@ type StoreCommand struct {
 	// command may be run with, one per entry, with {placeholders} for what
 	// an agent fills in: "download --src={source} --dst={folder}".
 	AllowedUses []string `json:"allowed_uses,omitempty"`
+	// Guide is the admin's own account of how to use the command, in
+	// markdown: what it is for, the order of its steps, what a value means,
+	// where its output goes, what to watch for. Runs show the syntax; this
+	// says what they cannot. Builder reads it to map the command, and agents
+	// read it where they list the store's commands.
+	Guide string `json:"guide,omitempty"`
 	// Examples are runs an admin made to show how the command is used, which
 	// the mapping learns from (command_examples.go). The newest few.
 	Examples []CommandExample `json:"examples,omitempty"`
@@ -472,15 +478,26 @@ func describeStoreCommands(db Database, st Store) string {
 		return fmt.Sprintf("No commands are registered against %q. If a folder here is unreadable, that is not because a step is missing: nothing is set up to transform it.", st.Name)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Commands registered against %q, run by a person from the Files page (never by you):\n", st.Name)
+	fmt.Fprintf(&b, "Commands registered against %q. A person runs one from the store's page; you run one only through its tools, when an admin has mapped and approved it:\n", st.Name)
 	for _, c := range cmds {
 		label := strings.TrimSpace(c.Label)
 		if label == "" {
 			label = c.Name
 		}
 		fmt.Fprintf(&b, "\n- %s (%s)", label, c.Name)
+		if c.Mapped() && c.Approved {
+			fmt.Fprintf(&b, "\n  Yours to run, through its %s_* tools.", c.ToolName())
+		} else {
+			b.WriteString("\n  Not yours to run: a person runs it.")
+		}
 		if note := strings.TrimSpace(c.Help); note != "" {
 			fmt.Fprintf(&b, "\n  %s", note)
+		}
+		if g := strings.TrimSpace(c.Guide); g != "" {
+			b.WriteString("\n  How to use it, from the admin:\n")
+			for _, l := range strings.Split(g, "\n") {
+				b.WriteString("    " + l + "\n")
+			}
 		}
 		if c.TwoPhase {
 			ask := strings.TrimSpace(c.InputLabel)
@@ -490,6 +507,6 @@ func describeStoreCommands(db Database, st Store) string {
 			fmt.Fprintf(&b, "\n  Asks the person for %s partway through, looked up outside gohort, so it cannot be run unattended.", ask)
 		}
 	}
-	b.WriteString("\n\nIf a folder looks empty or unreadable, say which of these to run on it and let the user click it.")
+	b.WriteString("\n\nIf a folder looks empty or unreadable and the command that fixes it is not yours to run, say which one to run on it and let the user click it.")
 	return b.String()
 }

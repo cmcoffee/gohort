@@ -296,3 +296,49 @@ func TestAnAgentPassesAFileFromTheStore(t *testing.T) {
 		t.Errorf("a file outside the store was passed: %q %v", out, err)
 	}
 }
+
+// The admin's guide reaches Builder first in what it reads, and agents in the
+// store's command list, along with whether a command is theirs to run; a
+// guide-only change keeps the approval, a change to the uses does not.
+func TestTheAdminsGuideReachesBuilderAndAgents(t *testing.T) {
+	app := &FileStoreApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	prevAuth := AuthDB
+	authDB := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(authDB, "admin-a", "pw-admin-123", true)
+	AuthDB = func() Database { return authDB }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	token := AuthCreateSession(authDB, "admin-a")
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: t.TempDir()})
+	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "extract", Command: "/opt/bin/extract",
+		Guide: "Step 1 prints a SIGNATURE.\nSupport turns it into a **response**; it works once."})
+	cmd, _ := LoadStoreCommand(app.DB, st.Slug, "extract")
+	if !strings.HasPrefix(cmd.examplesText(), "THE ADMIN'S GUIDE TO THIS COMMAND") || !strings.Contains(cmd.examplesText(), "it works once") {
+		t.Errorf("Builder does not read the guide first:\n%s", cmd.examplesText())
+	}
+	listing := describeStoreCommands(app.DB, st)
+	if !strings.Contains(listing, "Support turns it into a **response**") || !strings.Contains(listing, "Not yours to run") {
+		t.Errorf("agents' listing:\n%s", listing)
+	}
+
+	cmd.Tools = []TempToolAction{{Name: "start", CommandTemplate: "/opt/bin/extract {bundle}"}}
+	cmd.ToolDesc, cmd.Approved = "Extracts.", true
+	app.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
+	if listing := describeStoreCommands(app.DB, st); !strings.Contains(listing, "Yours to run, through its extract_intake_* tools") {
+		t.Errorf("an approved command should read as the agent's to run:\n%s", listing)
+	}
+	post := func(body string) {
+		r := httptest.NewRequest(http.MethodPost, "/filestore/api/commands/uses?id="+st.Slug+"/extract", bytes.NewBufferString(body))
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+		w := httptest.NewRecorder()
+		app.handleCommandUses(w, r)
+	}
+	post(`{"usage":"specified","allowed_uses":"","guide":"A better guide."}`)
+	if c, _ := LoadStoreCommand(app.DB, st.Slug, "extract"); !c.Approved || c.Guide != "A better guide." {
+		t.Errorf("a guide-only change: approved=%v guide=%q", c.Approved, c.Guide)
+	}
+	post(`{"usage":"specified","allowed_uses":"{bundle}","guide":"A better guide."}`)
+	if c, _ := LoadStoreCommand(app.DB, st.Slug, "extract"); c.Approved {
+		t.Error("a change to the uses kept the approval")
+	}
+}

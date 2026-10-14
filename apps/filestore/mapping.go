@@ -201,6 +201,9 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 				". These lines are TEMPLATES: each {placeholder} is filled in later, by an agent, at the moment it calls the tool, so its value does not exist yet. Do not look for it, invent one, or probe with one. You may read only these uses' help, and map only these lines, as written: one action per line, command_template exactly \"" + cmd.Command + " <line>\". Your job is to name each action, describe it, and declare its placeholders, saying what each should receive (a file or folder in this store gets \"path_scope\":\"files\")." + examples
 		}
 	}
+	if strings.TrimSpace(cmd.Guide) != "" {
+		scope += " The admin wrote a guide to how this command is used (admin_examples shows it first): what it says about the steps, the values and the output outranks your reading of the runs."
+	}
 	if n := len(cmd.Examples); n > 0 {
 		scope += fmt.Sprintf(" The admin has run it %s as examples of how it is used: read them with admin_examples before anything else, they are the best evidence you have.", countOf(n, "time", "times"))
 	}

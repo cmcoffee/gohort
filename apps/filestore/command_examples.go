@@ -232,10 +232,15 @@ func truncateLine(s string, n int) string {
 // examplesText is the command's examples as the mapping reads them: each use
 // with its steps in order, and what each step printed.
 func (a StoreCommand) examplesText() string {
+	guide := ""
+	if g := strings.TrimSpace(a.Guide); g != "" {
+		guide = "THE ADMIN'S GUIDE TO THIS COMMAND (what it says outranks a reading of the runs):\n" + g + "\n\n"
+	}
 	if len(a.Examples) == 0 {
-		return "The admin has not run this command as an example yet. They can, from Show it how on the command's row."
+		return guide + "The admin has not run this command as an example yet. They can, from Show it how on the command's row."
 	}
 	var b strings.Builder
+	b.WriteString(guide)
 	fmt.Fprintf(&b, "The admin ran %s to show how it is used, grouped into USES: a use with more than one step was done in that order (for example a run that prints a challenge, then one passing a person's response). Treat the values as one instance of the syntax: what would differ from one use to the next becomes a {placeholder}. Map a use with several steps as one action per step: a step that ends waiting on a person (a challenge, a code) returns what they must answer, and the next step takes their answer; an agent cannot answer a challenge itself and asks the person between them. The admin's note on a step, when there is one, says what it shows. Where a step, a value or an output is unclear, ASK the admin in this conversation rather than guess.\n", a.Command)
 	use, step := -1, 0
 	for _, e := range a.Examples {
