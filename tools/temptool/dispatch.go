@@ -397,7 +397,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	}
 	// The store folders this run reads are in use until it ends, so a
 	// temporary store's sweep cannot remove one mid-run.
-	defer pathhold.HoldAll(append([]string{workDir}, scopedPaths...)...)()
+	defer pathhold.HoldAll(append(append(append([]string{workDir}, scopedPaths...), tt.GrantRead...), tt.GrantWrite...)...)()
 	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
 	cmd, err := substitute(cmdTemplate, tt.Params, args)
 	if err != nil {
@@ -551,6 +551,9 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	var keepOutput int64
 	if activity != nil {
 		activity.WatchDir(workspaceDir)
+		for _, d := range tt.GrantWrite {
+			activity.WatchDir(d)
+		}
 		keepOutput = backgroundOutputKeep
 	}
 	// Wrap with the session's network connector so the sandbox
@@ -657,9 +660,12 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// The value is still scope-checked, the command line is still the
 	// author's, and under bubblewrap the binding still exposes only what was
 	// named. What is gone is a refusal that protected none of that.
+	// Folders granted to whoever runs the tool (an app's stores) are reached
+	// the same way as a scoped path: opened where they are, read-only.
+	scopedPaths = append(scopedPaths, tt.GrantRead...)
 	res := sandbox.RunSandboxedShellIn(ctx, sandbox.ShellRun{
 		Command: cmd, WorkspaceDir: workspaceDir, WorkDir: workDir,
-		Env: envArgs, Reach: scopedPaths,
+		Env: envArgs, Reach: scopedPaths, Writable: tt.GrantWrite,
 		Tee: teeTo(activity), MaxOutput: keepOutput,
 		// The tool's own declaration that it needs raw TCP. Consulted only
 		// once the deployment closes the default; until then every command

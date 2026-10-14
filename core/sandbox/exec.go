@@ -276,6 +276,9 @@ type ShellRun struct {
 	// Both empty means no hook, and the command's gohort.fetch raises HookError.
 	HookCapabilities []string
 	HookSession      any
+	// Writable are folders outside the workspace the command may write, at
+	// their own paths. See sandboxRun.Writable.
+	Writable []string
 	// Tee, when set, also receives the command's output as it is produced,
 	// stdout and stderr together, in the order the command wrote them. The
 	// result still carries the whole output. It is how a caller watching a
@@ -423,7 +426,7 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 	c := buildRun(ctx, sb, sandboxRun{
 		Kind: sandboxShellRun, Command: command, WorkspaceDir: workspaceDir,
 		Env: extraEnv, AllowNetwork: allowNetwork, ReadOnly: readOnly,
-		Reach: spec.Reach, WorkDir: spec.WorkDir,
+		Reach: spec.Reach, WorkDir: spec.WorkDir, Writable: spec.Writable,
 	})
 	env := sandboxEnv(sb.remapsPaths())
 	// Append extras AFTER sandboxEnv so a tool arg "PATH" (rare but
@@ -1018,6 +1021,25 @@ func withReadOnlyBinds(args []string, readOnly []string, workspaceDir string) []
 		}
 		seen[p] = true
 		binds = append(binds, "--ro-bind-try", p, p)
+	}
+	if len(binds) == 0 {
+		return args
+	}
+	return insertBeforeSeparator(args, binds)
+}
+
+// withWritableBinds binds each folder read-write at its own path. A folder
+// inside the workspace is already writable and is skipped.
+func withWritableBinds(args []string, writable []string, workspaceDir string) []string {
+	var binds []string
+	seen := map[string]bool{}
+	for _, p := range writable {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] || withinDir(p, workspaceDir) {
+			continue
+		}
+		seen[p] = true
+		binds = append(binds, "--bind-try", p, p)
 	}
 	if len(binds) == 0 {
 		return args

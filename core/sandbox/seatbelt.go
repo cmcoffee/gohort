@@ -146,6 +146,7 @@ func (s seatbeltSandbox) scopesReads() bool { return false }
 func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	spec := seatbeltSpec{
 		Workspace:    run.WorkspaceDir,
+		Writable:     run.Writable,
 		AllowNetwork: run.AllowNetwork,
 		HookSocket:   run.Env["GOHORT_HOOK_PATH"],
 	}
@@ -154,6 +155,7 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	// --unshare-net unconditionally.
 	if run.Kind != sandboxShellRun {
 		spec.Workspace = ""
+		spec.Writable = nil
 		spec.AllowNetwork = false
 		spec.HookSocket = ""
 	}
@@ -194,8 +196,9 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 
 // seatbeltSpec is what a profile is generated from.
 type seatbeltSpec struct {
-	Workspace  string // the single writable working directory, or "" for none
-	HookSocket string // unix socket the hook listens on, or ""
+	Workspace  string   // the single writable working directory, or "" for none
+	Writable   []string // further folders the command may write (sandboxRun.Writable)
+	HookSocket string   // unix socket the hook listens on, or ""
 	// No read-only path list. Reads are allowed filesystem-wide by
 	// construction (a subpath-scoped file-read* aborts the profile), so a
 	// field naming readable directories could only ever describe paths that
@@ -250,6 +253,11 @@ func seatbeltProfile(spec seatbeltSpec) string {
 	write := append([]string{}, seatbeltWritePaths...)
 	if spec.Workspace != "" {
 		write = append(write, spec.Workspace)
+	}
+	for _, p := range spec.Writable {
+		if strings.TrimSpace(p) != "" {
+			write = append(write, p)
+		}
 	}
 	b.WriteString("(allow file-read* file-write*\n")
 	for _, p := range write {

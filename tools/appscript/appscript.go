@@ -12,6 +12,7 @@ package appscript
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/bgrun"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
@@ -118,6 +120,23 @@ func (j Job) Run() (string, error) {
 	// host via auto-routing; this brings fetch_via to the same parity. Merged +
 	// deduped so an explicit declaration is preserved and never doubled.
 	caps = mergeCaps(caps, ownerFetchViaCaps(user))
+	// The file stores an admin granted this app: their folders are mounted
+	// for the run (read, or read and write), their paths handed over in
+	// GOHORT_STORES for gohort.store_path, and the app may ask for their
+	// commands and pulls (the store checks which). See core/appstores.
+	var grants []appstores.Grant
+	if appstores.Provider != nil {
+		grants = appstores.Provider.GrantsFor(user, slug)
+	}
+	if len(grants) > 0 {
+		caps = mergeCaps(caps, []string{"store_command", "store_pull"})
+		byStore := map[string]appstores.Grant{}
+		for _, g := range grants {
+			byStore[g.Store] = g
+		}
+		b, _ := json.Marshal(byStore)
+		args = withArg(args, "GOHORT_STORES", string(b))
+	}
 	params := map[string]ToolParam{}
 	for k := range args {
 		params[k] = ToolParam{Type: "string"}
@@ -140,6 +159,13 @@ func (j Job) Run() (string, error) {
 		CommandTemplate:  command,
 		HookCapabilities: caps,
 		Params:           params,
+	}
+	for _, g := range grants {
+		if g.Write {
+			tt.GrantWrite = append(tt.GrantWrite, g.Path)
+		} else {
+			tt.GrantRead = append(tt.GrantRead, g.Path)
+		}
 	}
 	for _, c := range caps {
 		// A long run has no fixed limit to raise.
@@ -210,6 +236,7 @@ func (j Job) Run() (string, error) {
 		}
 		return AppRunPipeline(sess.Context(), spec, caller, pipeline, input)
 	}
+	storeFuncs(sess, user, slug)
 	var out string
 	if j.Long {
 		out, err = j.runLong(sess, tt, args)
@@ -226,6 +253,31 @@ func (j Job) Run() (string, error) {
 	return out, err
 }
 
+// storeFuncs gives a run's session the store calls, on its own context, so a
+// long command or pull reports to (and is stopped with) that run.
+func storeFuncs(sess *ToolSession, owner, slug string) {
+	if appstores.Provider == nil {
+		return
+	}
+	sess.StoreCommand = func(store, folder, command, input string) (string, error) {
+		return appstores.Provider.RunCommand(sess.Context(), owner, slug, store, folder, command, input)
+	}
+	sess.StorePull = func(store, caseName string, replace bool) (string, error) {
+		return appstores.Provider.Pull(sess.Context(), owner, slug, store, caseName, replace)
+	}
+}
+
+// withArg is args with one more, in a copy, so the caller's map is left as it
+// was.
+func withArg(args map[string]any, k string, v any) map[string]any {
+	out := make(map[string]any, len(args)+1)
+	for key, val := range args {
+		out[key] = val
+	}
+	out[k] = v
+	return out
+}
+
 // runLong runs the script under the background-run limits. The session has no
 // conversation to deliver into, so the run never detaches: it stays here, as
 // the caller's own job, with the fixed limit replaced by the no-output and disk
@@ -237,6 +289,7 @@ func (j Job) runLong(sess *ToolSession, tt *TempTool, args map[string]any) (stri
 			return temptool.CallToolForScript(work, name, a)
 		}
 		work.Ask, work.RunAgent, work.RunPipeline = sess.Ask, sess.RunAgent, sess.RunPipeline
+		storeFuncs(work, j.Owner, j.Slug)
 		if j.OnProgress != nil {
 			if act := bgrun.RunActivityFrom(work.Context()); act != nil {
 				stop := make(chan struct{})

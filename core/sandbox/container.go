@@ -167,6 +167,13 @@ func (c containerSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 			args = append(args, mount(p, p, "ro")...)
 		}
 	}
+	for _, p := range run.Writable {
+		p = strings.TrimSpace(p)
+		if p == "" || withinDir(p, run.WorkspaceDir) {
+			continue
+		}
+		args = append(args, mount(p, p, "")...)
+	}
 
 	// Environment. A container does NOT inherit the parent's env, so unlike the
 	// other backends the caller's later `c.Env = ...` would set the env of the

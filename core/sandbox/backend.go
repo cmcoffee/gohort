@@ -123,6 +123,12 @@ type sandboxRun struct {
 	// exists to chdir into at all; under Seatbelt reads are filesystem-wide
 	// already and nothing needs binding; the none backend just sets it.
 	WorkDir string
+	// Writable are host folders, outside the workspace, the command may WRITE,
+	// at the same path they have outside. For a grant that names folders
+	// rather than a whole workspace: an app's store, where a download lands
+	// and an extraction writes. Bound read-write under bubblewrap and the
+	// container, added to the writable set under Seatbelt.
+	Writable []string
 }
 
 // cwd is the directory the command starts in: WorkDir when set, else the
@@ -191,6 +197,7 @@ func (b bwrapSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 		// identical because what a mount namespace has to do is identical;
 		// only the refusal upstream differs.
 		args = withReadOnlyBinds(args, run.Reach, run.WorkspaceDir)
+		args = withWritableBinds(args, run.Writable, run.WorkspaceDir)
 		args = withWorkDir(args, run.WorkDir, run.WorkspaceDir)
 	}
 	return exec.CommandContext(ctx, b.path, args...)

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appstores"
 )
 
 func (t *chatTurn) appDefList() (string, error) {
@@ -124,6 +125,14 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 			out["sections_note"] = "Reconstructed from the stored page (this app predates section storage): lossless for these section kinds. Edit and pass back to action=update."
 		} else {
 			out["sections_note"] = "Reconstructed BEST-EFFORT from the stored page (this app predates section storage). Section kinds are right, but per-kind fields may be incomplete: check them against action=help before passing back to action=update, since update REPLACES the page with what you send."
+		}
+	}
+	// The file stores an admin has granted this app, and what each allows: the
+	// author cannot grant them, only use what is there.
+	if appstores.Provider != nil {
+		if grants := appstores.Provider.GrantsFor(spec.Owner, spec.Slug); len(grants) > 0 {
+			out["file_stores"] = grants
+			out["file_stores_note"] = "Granted by an admin on each store's page; you cannot change these. In a script (python): from gohort import store_path, store_command, store_pull. store_path(\"<store>\") is the store's folder, mounted read-only, or read-write where write is true (add, change and delete files there with ordinary file code). store_command(\"<store>\", \"<folder>\", \"<command>\") runs a registered command on a folder where commands is true; a two-phase one returns its challenge, then store_command(..., input=<response>) finishes it, so put the challenge on the page and send back what the person types. store_pull(\"<store>\", \"<case>\") copies a prepared case into that store where pull is true (adding to a copy already there; replace=True clears it first). Long work belongs in an action, which runs as a job with progress."
 		}
 	}
 	// Surface the logic seam so an update can inspect + revise it (scripts omitted

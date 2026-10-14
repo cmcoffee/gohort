@@ -394,6 +394,10 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		h.handleRunAgent(conn, req.Params)
 	case "run_pipeline":
 		h.handleRunPipeline(conn, req.Params)
+	case "store_command":
+		h.handleStoreCommand(conn, req.Params)
+	case "store_pull":
+		h.handleStorePull(conn, req.Params)
 	default:
 		Log("[hook] unknown method: %s", req.Method)
 		writeHookError(conn, "unknown method: "+req.Method)
@@ -448,6 +452,11 @@ func hookMethodDeadline(method string, params map[string]interface{}) time.Durat
 		// A whole agent turn, tools and all, or a pipeline of them. A script
 		// that declares either gets the long run cap to match (appscript).
 		return 300 * time.Second
+	case "store_command", "store_pull":
+		// A store's command unpacks or decrypts a capture, and a pull copies
+		// one; both report progress to the script's run as they go, so the
+		// run's own limits are what end a stuck one, not this.
+		return 6 * time.Hour
 	}
 	return 10 * time.Second
 }
@@ -633,6 +642,39 @@ func (h *SandboxHook) handleRunPipeline(conn net.Conn, params map[string]interfa
 	out, err := h.Sess.RunPipeline(strings.TrimSpace(stringFromParams(params, "pipeline")), input)
 	if err != nil {
 		writeHookError(conn, "run_pipeline: "+err.Error())
+		return
+	}
+	writeHookResult(conn, map[string]any{"text": out})
+}
+
+// handleStoreCommand serves gohort.store_command: a file store's registered
+// command on one of its folders. Granted by "store_command"; whether this app
+// may use that store's commands is the store's own grant, checked inside.
+func (h *SandboxHook) handleStoreCommand(conn net.Conn, params map[string]interface{}) {
+	if h.Sess == nil || h.Sess.StoreCommand == nil {
+		writeHookError(conn, "store_command is only for an app an admin has granted a file store")
+		return
+	}
+	out, err := h.Sess.StoreCommand(stringFromParams(params, "store"), stringFromParams(params, "folder"),
+		stringFromParams(params, "command"), stringFromParams(params, "input"))
+	if err != nil {
+		writeHookError(conn, "store_command: "+err.Error())
+		return
+	}
+	writeHookResult(conn, map[string]any{"text": out})
+}
+
+// handleStorePull serves gohort.store_pull: a case copied into a store from
+// the store it pulls from. Granted by "store_pull"; the store's grant decides.
+func (h *SandboxHook) handleStorePull(conn net.Conn, params map[string]interface{}) {
+	if h.Sess == nil || h.Sess.StorePull == nil {
+		writeHookError(conn, "store_pull is only for an app an admin has granted a file store")
+		return
+	}
+	replace, _ := params["replace"].(bool)
+	out, err := h.Sess.StorePull(stringFromParams(params, "store"), stringFromParams(params, "case"), replace)
+	if err != nil {
+		writeHookError(conn, "store_pull: "+err.Error())
 		return
 	}
 	writeHookResult(conn, map[string]any{"text": out})
@@ -1923,6 +1965,32 @@ class _Gohort:
         result = self._call("run_pipeline", {"input": str(input), "pipeline": str(pipeline or "")})
         return Output(result.get("text", "") if isinstance(result, dict) else result)
 
+    def store_path(self, store):
+        """The folder of a file store this app was granted, as a path the
+        script can read (and write, when granted writing). Raises when the
+        app has no grant on that store."""
+        import json as _json
+        stores = _json.loads(os.environ.get("GOHORT_STORES") or "{}")
+        if store not in stores:
+            raise HookError("this app has no grant on the file store %r; an admin grants one on the store's page (granted: %s)" % (store, ", ".join(sorted(stores)) or "none"))
+        return stores[store]["path"]
+
+    def store_command(self, store, folder, command, input=None):
+        """Run a store's registered command on one of its folders and return
+        what it printed. For a two-phase command, the first call (no input)
+        returns its challenge; call again with input=<the response>. Needs a
+        grant on that store's commands."""
+        result = self._call("store_command", {"store": str(store), "folder": str(folder), "command": str(command), "input": "" if input is None else str(input)})
+        return result.get("text", "") if isinstance(result, dict) else result
+
+    def store_pull(self, store, case, replace=False):
+        """Copy a case into store from the store it pulls from (the prepared
+        part, as the store is set up), adding to a copy already there unless
+        replace=True. Returns what was copied. Needs a grant to pull into
+        that store."""
+        result = self._call("store_pull", {"store": str(store), "case": str(case), "replace": bool(replace)})
+        return result.get("text", "") if isinstance(result, dict) else result
+
     def log(self, msg, level="info"):
         """Route a message into gohort's log stream.
         level: debug, info, warn, error."""
@@ -2041,6 +2109,18 @@ def run_pipeline(input, pipeline=None):
 
 def secret(name):
     return gohort.secret(name)
+
+
+def store_path(store):
+    return gohort.store_path(store)
+
+
+def store_command(store, folder, command, input=None):
+    return gohort.store_command(store, folder, command, input=input)
+
+
+def store_pull(store, case, replace=False):
+    return gohort.store_pull(store, case, replace=replace)
 
 
 def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None, save_to=None):

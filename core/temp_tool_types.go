@@ -182,6 +182,13 @@ type TempTool struct {
 	// WorkDir names a PARAMETER whose resolved path the command runs in.
 	// Shell mode only; see TempToolAction.WorkDir for the whole argument.
 	WorkDir string `json:"work_dir,omitempty"`
+	// GrantRead and GrantWrite are folders outside the workspace this run may
+	// read, and read and write, at their own paths: what an admin granted the
+	// thing running the tool (an app's store grants). Set by the caller for
+	// one run and never stored or exported: a grant lives with whoever made
+	// it, not on the tool record, or a copied tool would carry it away.
+	GrantRead  []string `json:"-"`
+	GrantWrite []string `json:"-"`
 	// Mode picks the execution backend. Empty defaults to shell for
 	// backward-compatibility with TempTool records written before this
 	// field existed.

@@ -95,6 +95,10 @@ type Store struct {
 	PullFrom    string `json:"pull_from,omitempty"`
 	PullSubpath string `json:"pull_subpath,omitempty"`
 
+	// AppGrants are the apps an admin has let use this store, and how. See
+	// app_grants.go: the grant is the app's, and covers whoever uses it.
+	AppGrants []AppGrant `json:"app_grants,omitempty"`
+
 	// Toolboxes is dead weight kept for one reason: an existing deployment's
 	// attachments have to be readable ONCE so they can be carried onto the
 	// commands they belonged to. See MigrateToolboxesOntoCommands, which

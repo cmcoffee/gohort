@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -194,6 +195,45 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							Invalidate:     []string{"/filestore/api/stores"},
 						},
 
+						ui.Card{HTML: folderPanelHeading("Apps that may use it",
+							"An app granted here can read this folder from its scripts, and, as ticked, write into it (add, change and delete files), run its commands, and pull cases into it. The grant is the app's: it covers everyone who uses the app, whatever the list below says.")},
+						ui.Table{
+							Source: "/filestore/api/app-grants?slug={slug}",
+							RowKey: "app",
+							Columns: []ui.Col{
+								{Field: "label", Label: "App", Flex: 1},
+								{Field: "rights", Label: "May", Mute: true, Flex: 2},
+							},
+							RowActions: []ui.RowAction{
+								{Type: "button", Label: "Remove", Method: "DELETE",
+									PostTo:     "/filestore/api/app-grants?slug={slug}&app={app}",
+									Variant:    "danger",
+									Confirm:    "Remove this app's access to the store? Its scripts lose the folder and its commands at once.",
+									Optimistic: true},
+							},
+							EmptyText: "No app may use this store.",
+						},
+						ui.ModalButton{
+							Label:    "+ Grant an app",
+							Title:    "Let an app use this store",
+							Subtitle: "Reading is always included. Tick what else it may do.",
+							Width:    "520px",
+							Body: ui.FormPanel{
+								PostURL:     "/filestore/api/app-grants?slug={slug}",
+								SubmitLabel: "Grant",
+								Fields: []ui.FormField{
+									{Field: "app", Type: "select", Label: "App", OptionsSource: "/filestore/api/app-options"},
+									{Field: "write", Type: "toggle", Label: "Write into it",
+										Help: "Add, change and delete files in its folders, for a download landing here or an extraction writing beside its input."},
+									{Field: "commands", Type: "toggle", Label: "Run its commands",
+										Help: "The commands registered on this store, two-phase ones included (the app shows the challenge and sends the response)."},
+									{Field: "pull", Type: "toggle", Label: "Pull cases in",
+										Help: "Copy cases into this store from the store it pulls from (Settings, Pull cases from)."},
+								},
+								Invalidate: []string{"/filestore/api/app-grants"},
+							},
+						},
+
 						ui.Card{HTML: folderPanelHeading("Who may reach it", "")},
 						ui.ACLPicker(ui.ACLPickerConfig{
 							OptionsSource: "/admin/api/user-candidates",
@@ -328,6 +368,10 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/folders", T.handleFolders)
 	T.HandleFunc("/api/pull", T.handlePull)
 	T.HandleFunc("/api/store-options", T.handleStoreOptions)
+	T.HandleFunc("/api/app-grants", T.handleAppGrants)
+	T.HandleFunc("/api/app-options", T.handleAppOptions)
+	// App scripts reach the stores they were granted through this.
+	appstores.Provider = storeHost{T}
 	T.HandleFunc("/api/pull/", T.handlePull)
 }
 
@@ -378,6 +422,7 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 				raw, _ := json.Marshal(st)
 				_ = json.Unmarshal(raw, &out)
 				delete(out, "allowed_users")
+				delete(out, "app_grants") // the grants section owns these
 				writeJSON(w, out)
 				return
 			}
