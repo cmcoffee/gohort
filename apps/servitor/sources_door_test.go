@@ -5,6 +5,8 @@ package servitor
 // connections made before this move there once.
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -62,8 +64,8 @@ func TestASystemReachesAnAgentThroughItsSources(t *testing.T) {
 	}
 	DeleteCommandGrant(udb, "wren", "lab-box")
 
-	// The Source does, and the first time it gets a grant that lets nothing
-	// run without asking, rather than the owner's own console settings.
+	// The Source does, under the owner's own auto-run settings: no grant is
+	// written for it.
 	store["alice/wren"] = []ReferenceSelection{{Kind: "system", ItemID: "lab-box"}}
 	if !applianceEnabledForAgent(udb, "alice", "wren", "lab-box") {
 		t.Fatal("a Source did not reach the agent")
@@ -71,9 +73,43 @@ func TestASystemReachesAnAgentThroughItsSources(t *testing.T) {
 	if tools := applianceToolProvider(nil, "alice", "wren"); len(tools) == 0 {
 		t.Error("no tools offered for a system in the agent's Sources")
 	}
-	g, ok := loadCommandGrant(udb, "wren", "lab-box")
-	if !ok || len(g.Categories) != 0 {
-		t.Errorf("a Source should come with an empty grant: %+v ok=%v", g, ok)
+	if g, ok := loadCommandGrant(udb, "wren", "lab-box"); ok {
+		t.Errorf("a Source wrote a grant: %+v", g)
+	}
+	if _, scope := ResolveCommandGrant(udb, "wren", "lab-box"); scope != ScopeUserDefault {
+		t.Errorf("a Source should run under the owner's own settings, resolved via %q", scope)
+	}
+}
+
+// The empty grants connecting used to write are removed once, after the move
+// to Sources has read them; a grant with categories is an override and stays.
+func TestEmptyGrantsAreRemovedOnceAfterTheMove(t *testing.T) {
+	store := fakeSources(t)
+	app, udb := sourcesApp(t)
+	SaveCommandGrant(udb, "wren", "lab-box", nil)
+	SaveCommandGrant(udb, "kite", "lab-box", []string{string(AllRiskCategories[0])})
+	prevAuth := AuthDB
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(auth, "alice", "pw", false)
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { AuthDB = prevAuth })
+
+	app.moveGrantsToSources()
+	if got := store["alice/wren"]; len(got) != 1 {
+		t.Fatalf("the connection was not moved to Sources first: %+v", got)
+	}
+	if _, ok := loadCommandGrant(udb, "wren", "lab-box"); ok {
+		t.Error("the empty grant is still there")
+	}
+	if g, ok := loadCommandGrant(udb, "kite", "lab-box"); !ok || len(g.Categories) != 1 {
+		t.Errorf("a grant with categories was removed: %+v ok=%v", g, ok)
+	}
+	// Once: an empty grant written later on purpose (without the Sources
+	// hook) is not swept on the next start.
+	SaveCommandGrant(udb, "wren", "lab-box", nil)
+	app.moveGrantsToSources()
+	if _, ok := loadCommandGrant(udb, "wren", "lab-box"); !ok {
+		t.Error("the cleanup ran again")
 	}
 }
 
@@ -183,5 +219,31 @@ func TestEachSystemHasOneWayToAsk(t *testing.T) {
 	}
 	if got := tools("logs"); got["investigate_logs"] || !got["get_logs_facts"] {
 		t.Errorf("a tools-only Source should keep its recorded knowledge and no investigate tool: %v", got)
+	}
+}
+
+// Adding an agent from a system's Access dialog adds the Source and nothing
+// else: no grant, so the agent runs under the owner's own settings.
+func TestAddingAnAgentFromServitorWritesNoGrant(t *testing.T) {
+	store := fakeSources(t)
+	twoUserAuth(t)
+	app := &Servitor{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(app.DB, "craig")
+
+	w := httptest.NewRecorder()
+	app.handleCommandGrants(w, reqAs(t, http.MethodPost, "/servitor/api/command-grants", "craig",
+		`{"agent_id":"agent:wren","appliance_id":"lab-box"}`))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("add: %d %s", w.Code, w.Body.String())
+	}
+	if got := store["craig/wren"]; len(got) != 1 || got[0].ItemID != "lab-box" {
+		t.Fatalf("not added to the agent's Sources: %+v", got)
+	}
+	if g, ok := loadCommandGrant(udb, "wren", "lab-box"); ok {
+		t.Errorf("adding wrote a grant: %+v", g)
+	}
+	if got := grantAllowsText(CommandGrant{AgentID: "wren", ApplianceID: "lab-box", ownSettings: true}); got != "same as your own auto-run settings" {
+		t.Errorf("row reads %q", got)
 	}
 }

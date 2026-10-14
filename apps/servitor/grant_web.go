@@ -1,21 +1,16 @@
-// Connecting an agent to a machine.
+// Connecting an agent to a machine, from the machine's side.
 //
-// This is the first link in the chain and it was the last one built, because
-// until something read the grant records a UI for writing them would have been
-// a form that did nothing. Now everything downstream reads them: the provider
-// decides which agents get appliance tools from this, request_capability
-// refuses machines the agent is not connected to, and the exec gate resolves
-// auto-run permission against it.
+// An agent reaches a system by having it among its Sources, and this screen
+// edits the same switch the agent's own page does. Connecting writes nothing
+// else: the agent runs under its owner's own auto-run settings, as the owner
+// does at the console. Its questions are read-only with anything destructive
+// refused, and a command it needs becomes a capability the owner approves
+// while reading it.
 //
-// CONNECTING AND PERMITTING ARE SEPARATE ACTS, and the form keeps them that
-// way. Adding a grant with no categories says "this agent may ask about this
-// machine, and may run nothing on it without approval" — which is the safe
-// state, so it is the one that takes the fewest clicks. Categories are edited
-// afterwards, deliberately, by someone who has thought about which ones.
-//
-// The alternative — a single control that connects and permits at once — makes
-// the dangerous configuration as easy as the safe one, and the whole design has
-// spent the day arguing that the safe answer should be the default answer.
+// A command grant (one agent, one system, its own risk categories) is an
+// override of the owner's settings. None is written by default; the one
+// connecting used to write always said "nothing without asking", which is not
+// what governed the agent, so those were removed (dropEmptyGrants).
 package servitor
 
 import (
@@ -69,22 +64,18 @@ func (T *Servitor) handleCommandGrants(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "a machine is required: a grant names one agent and one machine", http.StatusBadRequest)
 			return
 		}
-		// Connecting is not permitting: a grant written here carries no
-		// categories, and the exec gate reads an empty list as "nothing runs
-		// without asking". Categories are the console's own permission and are
-		// not settable per agent, because nothing consults them per agent.
-		g := SaveCommandGrant(udb, agentID, appliance, nil)
-		// The connection itself is the agent's Source: this screen adds it
-		// there, where the agent's page shows and removes it.
-		if SetAgentSource != nil {
-			if err := SetAgentSource(user, normalizeAgentID(agentID), ReferenceSelection{Kind: "system", ItemID: appliance}, true); err != nil {
-				Log("[servitor] connecting %q to %s: could not add it to the agent's Sources: %v", agentID, appliance, err)
-			}
+		// The connection is the agent's Source, the switch its own page
+		// shows and removes. Without the agent runtime (no Sources hook) the
+		// grant record is the connection, as it was before Sources.
+		if SetAgentSource == nil {
+			SaveCommandGrant(udb, agentID, appliance, nil)
+		} else if err := SetAgentSource(user, normalizeAgentID(agentID), ReferenceSelection{Kind: "system", ItemID: appliance}, true); err != nil {
+			http.Error(w, "could not add it to the agent's Sources: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
 		// Logged because this is the moment a machine becomes reachable by
-		// something that is not a person, and because the categories decide how
-		// much of it runs without anyone being asked.
-		Log("[servitor] agent %q connected to %s with auto-run: %s", g.AgentID, g.ApplianceID, allowsText(g.Categories))
+		// something that is not a person.
+		Log("[servitor] agent %q connected to %s, under %s's own auto-run settings", normalizeAgentID(agentID), appliance, user)
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodDelete:
 		agent := strings.TrimSpace(r.URL.Query().Get("agent_id"))
@@ -138,7 +129,7 @@ func (T *Servitor) grantRows(user string, udb Database) []grantRow {
 		for id := range agents {
 			for _, s := range AgentSourcesFor(user, id) {
 				if s.Kind == "system" && !has[id+"/"+strings.ToLower(s.ItemID)] {
-					kept = append(kept, CommandGrant{AgentID: id, ApplianceID: s.ItemID})
+					kept = append(kept, CommandGrant{AgentID: id, ApplianceID: s.ItemID, ownSettings: true})
 				}
 			}
 		}
@@ -160,7 +151,7 @@ func (T *Servitor) grantRows(user string, udb Database) []grantRow {
 		rows = append(rows, grantRow{
 			ID: g.AgentID + "/" + g.ApplianceID, AgentID: g.AgentID, Agent: agent,
 			ApplianceID: g.ApplianceID, Appliance: appliance,
-			Allows: allowsText(g.Categories), Categories: g.Categories,
+			Allows: grantAllowsText(g), Categories: g.Categories,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -170,6 +161,15 @@ func (T *Servitor) grantRows(user string, udb Database) []grantRow {
 		return rows[i].Appliance < rows[j].Appliance
 	})
 	return rows
+}
+
+// grantAllowsText is allowsText for a row that may have no grant behind it,
+// which is the ordinary case: the owner's own settings apply.
+func grantAllowsText(g CommandGrant) string {
+	if g.ownSettings {
+		return "same as your own auto-run settings"
+	}
+	return allowsText(g.Categories)
 }
 
 // allowsText says what runs without asking. The empty case gets a sentence

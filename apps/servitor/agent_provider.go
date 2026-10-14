@@ -13,8 +13,10 @@
 //	the minted tools     — per system, and only the approved ones
 //
 // "In its Sources" is the door (applianceEnabledForAgent): chosen on the
-// agent's own page, so what an agent can reach is decided and seen there. A
-// command grant only says what runs without asking.
+// agent's own page, so what an agent can reach is decided and seen there. It
+// runs under the owner's own auto-run settings, the way the owner does at the
+// console; a command grant for one agent on one system is an override, and
+// none is written by default.
 //
 // An agent with a connection but no approved tools still gets the asking
 // tools, because otherwise it has no way to answer a question about the box or
@@ -106,15 +108,6 @@ func applianceToolProvider(sess *ToolSession, owner, agentID string) []AgentTool
 	viaWorkspace := map[string]string{}
 	for _, a := range all {
 		if applianceEnabledForAgent(udb, owner, agentID, a.ID) {
-			// Chosen as a Source with no grant yet: it gets one that lets
-			// nothing run without asking, the state connecting has always
-			// written. Without it the exec gate would fall back to the
-			// owner's own console settings, and adding a Source would hand
-			// an agent more than connecting it ever did.
-			if _, has := loadCommandGrant(udb, agentID, a.ID); !has {
-				SaveCommandGrant(udb, agentID, a.ID, nil)
-				Log("[servitor] agent %q has %s as a Source: recorded with nothing running without asking", normalizeAgentID(agentID), a.ID)
-			}
 			enabled = append(enabled, a)
 			granted[strings.ToLower(a.ID)] = true
 		}

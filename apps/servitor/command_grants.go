@@ -55,6 +55,10 @@ type CommandGrant struct {
 	AgentID     string   `json:"agent_id"`
 	ApplianceID string   `json:"appliance_id"` // "*" = every appliance
 	Categories  []string `json:"categories"`   // empty = nothing auto-runs here
+
+	// ownSettings marks a row listed for a Source with no grant behind it:
+	// the owner's own settings apply. Never stored.
+	ownSettings bool
 }
 
 // normalizeAgentID strips the "agent:" namespace the grantable-targets picker
@@ -233,11 +237,14 @@ const servitorMigrationsTable = "servitor_migrations"
 // and copying it back on every start would undo it.
 const grantsMovedKey = "grants_moved_to_sources"
 
+// emptyGrantsDroppedKey marks a user whose empty grants were removed.
+const emptyGrantsDroppedKey = "empty_grants_dropped"
+
 // moveGrantsToSources copies every connection made before Sources were the
 // door onto the agent's Sources, once per user, so nothing that worked stops
-// working and each one shows on the agent's own page. The grant stays: it
-// says what runs there without asking. Waits for the agent runtime's hook,
-// which is installed when that app starts.
+// working and each one shows on the agent's own page. Then, also once, it
+// drops the grants with no categories (dropEmptyGrants). Waits for the agent
+// runtime's hook, which is installed when that app starts.
 func (T *Servitor) moveGrantsToSources() {
 	for i := 0; SetAgentSource == nil && i < 120; i++ {
 		time.Sleep(time.Second)
@@ -245,26 +252,51 @@ func (T *Servitor) moveGrantsToSources() {
 	if SetAgentSource == nil || AuthDB == nil || T.DB == nil {
 		return
 	}
-	moved := 0
+	moved, dropped := 0, 0
 	for _, u := range AuthListUsers(AuthDB()) {
 		udb := UserDB(T.DB, u.Username)
 		if udb == nil {
 			continue
 		}
 		var done bool
-		if udb.Get(servitorMigrationsTable, grantsMovedKey, &done) && done {
-			continue
-		}
-		for _, g := range ListCommandGrants(udb) {
-			if err := SetAgentSource(u.Username, normalizeAgentID(g.AgentID), ReferenceSelection{Kind: "system", ItemID: g.ApplianceID}, true); err != nil {
-				Log("[servitor] %s: could not add %s to agent %s's Sources: %v", u.Username, g.ApplianceID, g.AgentID, err)
-				continue
+		if !udb.Get(servitorMigrationsTable, grantsMovedKey, &done) || !done {
+			for _, g := range ListCommandGrants(udb) {
+				if err := SetAgentSource(u.Username, normalizeAgentID(g.AgentID), ReferenceSelection{Kind: "system", ItemID: g.ApplianceID}, true); err != nil {
+					Log("[servitor] %s: could not add %s to agent %s's Sources: %v", u.Username, g.ApplianceID, g.AgentID, err)
+					continue
+				}
+				moved++
 			}
-			moved++
+			udb.Set(servitorMigrationsTable, grantsMovedKey, true)
 		}
-		udb.Set(servitorMigrationsTable, grantsMovedKey, true)
+		// After the move, which reads the grants to find the connections.
+		done = false
+		if !udb.Get(servitorMigrationsTable, emptyGrantsDroppedKey, &done) || !done {
+			dropped += dropEmptyGrants(udb)
+			udb.Set(servitorMigrationsTable, emptyGrantsDroppedKey, true)
+		}
 	}
 	if moved > 0 {
 		Log("[servitor] %d connection(s) now show as Sources on their agents", moved)
 	}
+	if dropped > 0 {
+		Log("[servitor] %d grant(s) with no categories removed: those agents run under their owner's own auto-run settings", dropped)
+	}
+}
+
+// dropEmptyGrants removes the grants that carry no categories and returns how
+// many. Connecting an agent always wrote one, and nothing could set categories
+// per agent, so an empty grant means "connected", never a choice. It read as
+// "nothing without asking", but no exec path an agent takes consulted it:
+// approved tools are gated by their approval, and questions run under the
+// owner's own settings. A grant with categories is an override and stays.
+func dropEmptyGrants(udb Database) int {
+	n := 0
+	for _, g := range ListCommandGrants(udb) {
+		if len(g.Categories) == 0 {
+			DeleteCommandGrant(udb, g.AgentID, g.ApplianceID)
+			n++
+		}
+	}
+	return n
 }
