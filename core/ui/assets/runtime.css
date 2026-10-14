@@ -72,19 +72,21 @@ select:-webkit-autofill {
  *
  *   .my-toolbar { --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm); }
  *
- * On a touch screen the sizes are three: a button 36px, a dense one 30px,
- * and a big one 44px (--btn-h-lg). Dense is for places that fill up with
- * buttons (a toolbar, a row's actions, a message's actions), where every
- * button at full size would bury what they act on. Big is kept for the
- * buttons that answer a question: a modal's OK and Cancel, a confirm
- * dialog, an approval card, a form's Save and a wizard's Back and Next. */
+ * On a touch screen a button is 36px and a dense one 30px. Dense is for
+ * places that fill up with buttons (a toolbar, a row's actions, a
+ * message's actions), where every button at full size would bury what they
+ * act on. --btn-h-lg is the size of the buttons that answer a question (a
+ * modal's OK and Cancel, a confirm dialog, an approval card, a form's Save,
+ * a wizard's Back and Next): today the same 36px, since anything bigger read
+ * as massive on a phone, kept as its own token so they can be set apart
+ * again in one place. */
 :root {
   --btn-h: 2.125rem;    --btn-px: 0.8rem;     --btn-fs: var(--fs-sm);
   --btn-h-sm: 1.625rem; --btn-px-sm: 0.55rem; --btn-fs-sm: var(--fs-xs);
   --btn-radius: 6px;
 }
 @media (pointer: coarse) {
-  :root { --btn-h: 2.25rem; --btn-h-sm: 1.875rem; --btn-h-lg: var(--tap, 44px); }
+  :root { --btn-h: 2.25rem; --btn-h-sm: 1.875rem; --btn-h-lg: 2.25rem; }
   /* The answers: the big size, as the containers (and the one button) that
    * hold them set the token their buttons read. */
   :is(.ui-modal-footer, .ui-modal-actions, .ui-form-modal-actions, .ui-cw-modal-btns,
@@ -6025,10 +6027,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-pl-modal-overlay { padding: calc(0.75rem + env(safe-area-inset-top, 0px)) 0.5rem 0.5rem; }
   .ui-pl-modal { padding: 1rem 0.9rem; }
   .ui-pl-modal-close { top: 0.55rem; right: 0.55rem; }
-  /* The button row: each button grows to share it, so two read as a pair of
-   * halves and a lone one spans the row, wrapping when they do not fit. */
+  /* The button row keeps its buttons at their own width, on the right as on
+   * a desktop: stretched to share the row, OK and Cancel became two slabs
+   * the width of the screen. A floor width keeps a short pair even. */
   :is(.ui-modal-footer, .ui-modal-actions, .ui-form-modal-actions, .ui-cw-modal-btns) > button {
-    flex: 1 1 auto; justify-content: center;
+    flex: 0 0 auto; min-width: 5rem; justify-content: center;
   }
   .ui-modal-footer { margin-top: 0.6rem; padding-top: 0.55rem; }
 }
