@@ -5637,7 +5637,7 @@
       var btn = el('button', {
         type: 'button',
         class: 'ui-navshell-item',
-        style: 'text-align:left;padding:0.5rem 0.7rem;border:none;border-radius:4px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
+        style: 'text-align:left;padding:0.5rem 0.7rem;border:none;border-radius:var(--btn-radius, 6px);cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
         onclick: function() { activate(i); },
       }, [item.label || ('Item ' + (i + 1))]);
       rail.appendChild(btn);

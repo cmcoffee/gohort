@@ -632,7 +632,7 @@
               // Right: segmented state control (rows that carry it) + actions.
               var controls = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;flex:0 0 auto;flex-wrap:wrap'});
               if (item.state_field && (item.state_options || []).length && row[item.state_field] != null) {
-                var seg = el('div', {style: 'display:inline-flex;border:1px solid var(--border, rgba(127,127,127,0.35));border-radius:6px;overflow:hidden'});
+                var seg = el('div', {style: 'display:inline-flex;border:1px solid var(--border, rgba(127,127,127,0.35));border-radius:var(--btn-radius, 6px);overflow:hidden'});
                 // Gated segments are dropped BEFORE the loop, so the one that
                 // survives first still renders without a left border and the
                 // control does not come out with a seam down its leading edge.
@@ -1338,7 +1338,7 @@
           // selectOrchNav swaps in the accent border when this view is selected,
           // matching the Cortex row's "selected" treatment.
           b = el('button', {type: 'button', class: 'ui-channel-row ui-channel-pinned-row',
-            style: 'display:flex;align-items:flex-start;gap:0.5rem;text-align:left;padding:0.5rem 0.6rem;border:1px solid transparent;border-radius:7px;cursor:pointer;font:inherit;color:var(--text, inherit);background:color-mix(in srgb, var(--accent) 6%, transparent);width:100%',
+            style: 'display:flex;align-items:flex-start;gap:0.5rem;text-align:left;padding:0.5rem 0.6rem;border:1px solid transparent;border-radius:var(--btn-radius, 6px);cursor:pointer;font:inherit;color:var(--text, inherit);background:color-mix(in srgb, var(--accent) 6%, transparent);width:100%',
             onclick: function() { selectOrchNav(i); }}, pkids);
           pinnedEl.appendChild(b);
         } else {
@@ -1377,7 +1377,7 @@
             kids.push(badge);
           }
           b = el('button', {type: 'button', class: 'ui-channel-row',
-            style: 'display:flex;align-items:center;gap:0.4rem;text-align:left;padding:0.45rem 0.6rem;border:none;border-radius:4px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
+            style: 'display:flex;align-items:center;gap:0.4rem;text-align:left;padding:0.45rem 0.6rem;border:none;border-radius:var(--btn-radius, 6px);cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
             onclick: function() { menu.close(); selectOrchNav(i); }}, kids);
           menu.panel.appendChild(b);
           menu.items.push(i);
@@ -6465,7 +6465,7 @@
               ? (chActive ? 'color-mix(in srgb, var(--text-mute) 16%, transparent)' : 'color-mix(in srgb, var(--text-mute) 7%, transparent)')
               : (chActive ? 'color-mix(in srgb, var(--warning) 16%, transparent)' : 'color-mix(in srgb, var(--warning) 7%, transparent)');
             var chRow = el('button', {type: 'button', class: 'ui-channel-hero' + (chActive ? ' active' : ''),
-              style: 'display:flex;align-items:flex-start;gap:0.5rem;width:100%;text-align:left;padding:0.5rem 0.6rem;border:1px solid ' + heroBorder + ';border-radius:7px;cursor:pointer;font:inherit;color:var(--text, inherit);background:' + heroBg,
+              style: 'display:flex;align-items:flex-start;gap:0.5rem;width:100%;text-align:left;padding:0.5rem 0.6rem;border:1px solid ' + heroBorder + ';border-radius:var(--btn-radius, 6px);cursor:pointer;font:inherit;color:var(--text, inherit);background:' + heroBg,
               onclick: function() { openSession(chId); closeDrawer(); }}, chKids);
             primaryEl.appendChild(chRow);
             primaryEl.style.display = '';

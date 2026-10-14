@@ -313,7 +313,7 @@ select:-webkit-autofill {
    * that survive being one small glyph. */
   font-size: var(--fs-xl); font-weight: 600; line-height: 1;
   color: var(--text-mute); text-decoration: none;
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   background: var(--bg-1);
   -webkit-tap-highlight-color: transparent;
   transition: color 0.1s ease, border-color 0.1s ease, transform 0.05s ease;
@@ -339,7 +339,7 @@ select:-webkit-autofill {
   display: inline-flex; align-items: center;
   padding: 0.3rem 0.7rem;
   font-size: var(--fs-sm); color: var(--text-mute); text-decoration: none;
-  border-radius: 6px; white-space: nowrap;
+  border-radius: var(--btn-radius); white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
   transition: color 0.1s ease, background 0.1s ease;
 }
@@ -372,7 +372,7 @@ select:-webkit-autofill {
   display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0.2rem; height: 100%; min-width: 5.25rem; padding: 0.3rem 0.75rem;
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
-  border-radius: 8px;
+  border-radius: var(--btn-radius);
   background: color-mix(in srgb, var(--accent) 4%, transparent);
   color: var(--text); font-family: inherit; cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
@@ -557,7 +557,7 @@ select:-webkit-autofill {
   flex-shrink: 0; margin-left: 0.5rem;
   font-size: 0.65rem; line-height: 1;
   padding: 0.2rem 0.45rem;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   background: transparent; color: var(--text-mute);
   cursor: pointer;
 }
@@ -632,7 +632,7 @@ select:-webkit-autofill {
   border-bottom: 1px solid var(--border);
 }
 .ui-tab {
-  padding: 0.4rem 0.9rem; border-radius: 8px; cursor: pointer;
+  padding: 0.4rem 0.9rem; border-radius: var(--btn-radius); cursor: pointer;
   font: inherit; font-size: var(--fs-sm);
   border: 1px solid var(--border); background: var(--bg-1); color: var(--text-mute);
   transition: color 0.12s, border-color 0.12s, background 0.12s;
@@ -651,7 +651,7 @@ select:-webkit-autofill {
 }
 .ui-secnav-content { flex: 1 1 auto; min-width: 0; }
 .ui-secnav-item {
-  text-align: left; padding: 0.45rem 0.7rem; border-radius: 8px; cursor: pointer;
+  text-align: left; padding: 0.45rem 0.7rem; border-radius: var(--btn-radius); cursor: pointer;
   font: inherit; font-size: var(--fs-sm);
   border: 1px solid transparent; background: transparent; color: var(--text-mute);
   transition: color 0.12s, border-color 0.12s, background 0.12s;
@@ -746,7 +746,7 @@ select:-webkit-autofill {
 .ui-panic-btn {
   display: block; width: 100%; min-height: var(--tap);
   background: linear-gradient(180deg, #8b2222, #6e1c1c); color: #fff;
-  border: 1px solid var(--danger); border-radius: 10px;
+  border: 1px solid var(--danger); border-radius: var(--btn-radius);
   padding: 0.85rem; font-size: var(--fs-lg); font-weight: 600; letter-spacing: 0.02em;
   cursor: pointer; -webkit-tap-highlight-color: transparent;
   transition: transform 0.05s ease, background 0.1s ease;
@@ -907,7 +907,7 @@ select:-webkit-autofill {
   .ui-wb-close {
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; color: var(--text-mute);
-    border: 1px solid var(--border); border-radius: 8px;
+    border: 1px solid var(--border); border-radius: var(--btn-radius);
     min-width: 36px; min-height: 36px; padding: 0;
     font-size: var(--fs-lg); cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -976,7 +976,7 @@ select:-webkit-autofill {
 }
 .ui-wb-menu-item {
   background: transparent; border: none; color: var(--text);
-  text-align: left; padding: 0.45rem 0.7rem; border-radius: 6px;
+  text-align: left; padding: 0.45rem 0.7rem; border-radius: var(--btn-radius);
   font-family: inherit; font-size: var(--fs-sm); cursor: pointer; white-space: nowrap;
 }
 .ui-wb-menu-item:hover { background: var(--bg-2); color: var(--text-hi); }
@@ -1250,7 +1250,7 @@ select:-webkit-autofill {
  * The active segment reads as filled state; the rest are quiet options. */
 .ui-row-segmented {
   display: inline-flex; flex-shrink: 0; align-items: stretch;
-  border: 1px solid var(--border); border-radius: 7px; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--btn-radius); overflow: hidden;
 }
 .ui-row-segmented .ui-seg {
   padding: 0.35rem 0.6rem; background: transparent; color: var(--text-mute);
@@ -1353,7 +1353,7 @@ select:-webkit-autofill {
 .ui-keys-row-meta { font-size: var(--fs-xs); color: var(--text-mute); white-space: nowrap; }
 .ui-keys-row-del {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   width: 1.8rem; height: 1.8rem; padding: 0; cursor: pointer;
   font-size: var(--fs-lg); line-height: 1;
 }
@@ -1388,7 +1388,7 @@ select:-webkit-autofill {
 .ui-mem-row input::placeholder { color: var(--text-mute); }
 .ui-mem-del {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   width: 1.8rem; height: 1.8rem; padding: 0; cursor: pointer;
   font-size: var(--fs-lg); line-height: 1;
 }
@@ -1412,7 +1412,7 @@ select:-webkit-autofill {
 /* --- ChipPicker --- */
 .ui-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .ui-chip {
-  font-size: var(--fs-sm); padding: 0.45rem 0.7rem; border-radius: 18px;
+  font-size: var(--fs-sm); padding: 0.45rem 0.7rem; border-radius: 999px;
   background: var(--bg-1); color: var(--text-mute); border: 1px solid var(--border);
   cursor: pointer; user-select: none; min-height: 32px;
   -webkit-tap-highlight-color: transparent; transition: transform 0.05s ease;
@@ -1474,7 +1474,7 @@ select:-webkit-autofill {
 }
 .ui-cp-add-btn {
   flex-shrink: 0; align-self: center; background: transparent;
-  color: var(--accent); border: 1px solid var(--accent); border-radius: 6px;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: var(--btn-radius);
   padding: 0.15rem 0.55rem; font-size: var(--fs-lg); font-weight: 700; cursor: pointer;
 }
 
@@ -1737,7 +1737,7 @@ select:-webkit-autofill {
 }
 .ui-watch-pill {
   padding: 0.2rem 0.6rem;
-  border-radius: 12px;
+  border-radius: 999px;
   background: var(--bg-1);
   border: 1px solid var(--border);
   color: var(--text-mute);
@@ -2164,7 +2164,7 @@ select:-webkit-autofill {
   background: var(--bg-0); color: var(--text); font-size: var(--fs-sm);
 }
 .ui-rules-edit-suggest, .ui-rules-edit-done, .ui-rules-edit-cancel {
-  padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer;
+  padding: 0.4rem 0.9rem; border-radius: var(--btn-radius); cursor: pointer;
   border: 1px solid var(--border); background: var(--bg-2); color: var(--text);
   font-size: var(--fs-sm);
 }
@@ -2174,7 +2174,7 @@ select:-webkit-autofill {
  * action first. */
 .ui-rules-edit-btn {
   flex-shrink: 0; width: 26px; height: 26px; padding: 0; line-height: 1;
-  border: 1px solid var(--border); border-radius: 5px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   background: transparent; color: var(--text-mute);
   cursor: pointer; font-size: var(--fs-md);
 }
@@ -2182,7 +2182,7 @@ select:-webkit-autofill {
 .ui-rules-del {
   flex: 0 0 auto;
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   width: 1.7rem; height: 1.7rem; padding: 0; cursor: pointer;
   font-size: var(--fs-lg); line-height: 1;
 }
@@ -2190,7 +2190,7 @@ select:-webkit-autofill {
 .ui-rules-add {
   align-self: flex-start;
   background: transparent; color: var(--accent); border: 1px dashed var(--accent);
-  border-radius: 6px; padding: 0.35rem 0.7rem; font-size: var(--fs-xs); cursor: pointer;
+  border-radius: var(--btn-radius); padding: 0.35rem 0.7rem; font-size: var(--fs-xs); cursor: pointer;
   margin-top: 0.2rem;
 }
 .ui-rules-add:hover { background: var(--bg-2); }
@@ -2206,7 +2206,7 @@ select:-webkit-autofill {
 .ui-assist-navrow { display: flex; align-items: center; gap: 0.4rem; }
 .ui-assist-nav {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   width: 1.8rem; height: 1.8rem; padding: 0; cursor: pointer; font-size: var(--fs-2xs); line-height: 1;
 }
 .ui-assist-nav:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
@@ -2266,7 +2266,7 @@ select:-webkit-autofill {
 .ui-assist-input:focus { border-color: var(--accent); }
 .ui-assist-send {
   flex: 0 0 auto; background: var(--accent); color: var(--text-on-accent, #fff); border: none;
-  border-radius: 8px; padding: 0.55rem 0.9rem; font-size: var(--fs-sm); cursor: pointer;
+  border-radius: var(--btn-radius); padding: 0.55rem 0.9rem; font-size: var(--fs-sm); cursor: pointer;
 }
 .ui-assist-send:disabled { opacity: 0.5; cursor: default; }
 /* Narrow: the helper takes the whole screen, and the conversation and the
@@ -2348,7 +2348,7 @@ select:-webkit-autofill {
 .ui-sections-viewrow { display: flex; gap: 0.25rem; align-self: flex-end; }
 .ui-sections-view {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   padding: 0.2rem 0.6rem; font-size: var(--fs-2xs); cursor: pointer;
 }
 .ui-sections-view.on { color: var(--accent); border-color: var(--accent); background: var(--bg-2); }
@@ -2380,14 +2380,14 @@ select:-webkit-autofill {
 .ui-sec-modes { display: flex; gap: 0.15rem; flex: 0 0 auto; }
 .ui-sec-mode {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 5px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   min-width: 1.6rem; height: 1.6rem; padding: 0 0.25rem; cursor: pointer;
   font-size: var(--fs-2xs); line-height: 1;
 }
 .ui-sec-mode.on { color: var(--accent); border-color: var(--accent); background: var(--bg-2); }
 .ui-sec-suggest, .ui-sec-move, .ui-sec-del {
   flex: 0 0 auto; background: transparent; color: var(--text-mute);
-  border: 1px solid transparent; border-radius: 5px;
+  border: 1px solid transparent; border-radius: var(--btn-radius);
   width: 1.6rem; height: 1.6rem; padding: 0; cursor: pointer;
   font-size: var(--fs-sm); line-height: 1;
 }
@@ -2425,7 +2425,7 @@ select:-webkit-autofill {
 .ui-sec-cell.head { font-weight: 600; background: var(--bg-1); }
 .ui-sec-colx, .ui-sec-rowx, .ui-sec-addcol, .ui-sec-align {
   flex: 0 0 auto; background: transparent; color: var(--text-mute);
-  border: 1px solid transparent; border-radius: 5px;
+  border: 1px solid transparent; border-radius: var(--btn-radius);
   width: 1.5rem; height: 1.5rem; padding: 0; cursor: pointer;
   font-size: var(--fs-xs); line-height: 1;
 }
@@ -2443,7 +2443,7 @@ select:-webkit-autofill {
 .ui-sec-add {
   align-self: flex-start;
   background: transparent; color: var(--accent); border: 1px dashed var(--accent);
-  border-radius: 6px; padding: 0.35rem 0.7rem; font-size: var(--fs-xs); cursor: pointer;
+  border-radius: var(--btn-radius); padding: 0.35rem 0.7rem; font-size: var(--fs-xs); cursor: pointer;
 }
 .ui-sec-add:hover { background: var(--bg-2); }
 /* Chips row above a form input — applied to FormField with
@@ -2468,7 +2468,7 @@ select:-webkit-autofill {
   display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.35rem;
 }
 .ui-form-preset-chip {
-  font-size: var(--fs-2xs); padding: 0.15rem 0.5rem; border-radius: 4px;
+  font-size: var(--fs-2xs); padding: 0.15rem 0.5rem; border-radius: var(--btn-radius);
   border: 1px solid var(--border); background: var(--bg-0); color: var(--text-mute);
   cursor: pointer; white-space: nowrap; font-family: inherit;
   -webkit-tap-highlight-color: transparent;
@@ -2698,7 +2698,7 @@ select:-webkit-autofill {
   }
   .ui-chat-hamburger {
     background: transparent; color: var(--text);
-    border: 1px solid var(--border); border-radius: 8px;
+    border: 1px solid var(--border); border-radius: var(--btn-radius);
     min-width: 40px; min-height: 40px; padding: 0;
     font-size: var(--fs-lg); cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -2758,7 +2758,7 @@ select:-webkit-autofill {
   display: block; width: 100%; text-align: left; background: transparent;
   border: none; color: var(--text); font: inherit; font-size: var(--fs-sm);
   text-transform: none; letter-spacing: normal;
-  padding: 0.35rem 0.5rem; border-radius: 4px; cursor: pointer; white-space: nowrap;
+  padding: 0.35rem 0.5rem; border-radius: var(--btn-radius); cursor: pointer; white-space: nowrap;
 }
 .ui-side-menu-item:hover { background: var(--bg-2, rgba(127,127,127,0.18)); }
 .ui-chat-new {
@@ -2916,7 +2916,7 @@ select:-webkit-autofill {
 .ui-channels-h-title { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-mute); font-weight: 600; }
 .ui-channels-add {
   border: none; background: transparent; color: var(--text-mute); cursor: pointer;
-  font-size: var(--fs-lg); line-height: 1; padding: 0 0.25rem; border-radius: 4px;
+  font-size: var(--fs-lg); line-height: 1; padding: 0 0.25rem; border-radius: var(--btn-radius);
 }
 .ui-channels-add:hover { background: var(--bg-2); color: var(--text); }
 .ui-channels-dir {
@@ -2993,7 +2993,7 @@ select:-webkit-autofill {
 .ui-chat-side-del {
   position: absolute; right: 0.4rem; top: 50%; transform: translateY(-50%);
   background: transparent; color: var(--text-mute);
-  border: none; border-radius: 4px;
+  border: none; border-radius: var(--btn-radius);
   width: 1.4rem; height: 1.4rem; cursor: pointer;
   font-size: var(--fs-lg); line-height: 1;
 }
@@ -3001,7 +3001,7 @@ select:-webkit-autofill {
 .ui-chat-side-ren {
   position: absolute; right: 2rem; top: 50%; transform: translateY(-50%);
   background: transparent; color: var(--text-mute);
-  border: none; border-radius: 4px;
+  border: none; border-radius: var(--btn-radius);
   width: 1.4rem; height: 1.4rem; cursor: pointer;
   font-size: var(--fs-md); line-height: 1;
 }
@@ -3023,7 +3023,7 @@ select:-webkit-autofill {
   .ui-chat-side-close {
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; color: var(--text-mute);
-    border: 1px solid var(--border); border-radius: 6px;
+    border: 1px solid var(--border); border-radius: var(--btn-radius);
     width: 1.7rem; height: 1.7rem; padding: 0;
     font-size: var(--fs-lg); line-height: 1; cursor: pointer;
     -webkit-tap-highlight-color: transparent;
@@ -3080,7 +3080,7 @@ select:-webkit-autofill {
 }
 .ui-chat-act {
   background: transparent; color: var(--text-mute); border: 1px solid var(--border);
-  border-radius: 5px; padding: 0.2rem 0.55rem; font-size: var(--fs-2xs); cursor: pointer;
+  border-radius: var(--btn-radius); padding: 0.2rem 0.55rem; font-size: var(--fs-2xs); cursor: pointer;
 }
 .ui-chat-act:hover { color: var(--text); border-color: var(--text-mute); }
 
@@ -3475,7 +3475,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   position: absolute; top: 1rem; right: 1rem;
   background: transparent; border: 1px solid var(--border);
   color: var(--text-mute); font-size: 1.2rem; cursor: pointer;
-  width: 2rem; height: 2rem; border-radius: 6px; line-height: 1;
+  width: 2rem; height: 2rem; border-radius: var(--btn-radius); line-height: 1;
   display: flex; align-items: center; justify-content: center;
   padding: 0;
 }
@@ -4313,7 +4313,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 
 .ui-agent-collapse, .ui-agent-expand {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 3px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   width: 26px; height: 24px; font-size: var(--fs-lg); line-height: 1;
   cursor: pointer; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -4347,7 +4347,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-activity-toggle:hover { color: var(--accent); }
 .ui-agent-activity-expand {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 3px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   width: 26px; height: 24px; font-size: var(--fs-lg); line-height: 1;
   cursor: pointer; padding: 0;
   display: none; align-items: center; justify-content: center;
@@ -4389,14 +4389,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-toolbar-menu {
   position: fixed; z-index: 1000; min-width: 170px;
   display: none; flex-direction: column; gap: 0.1rem; padding: 0.3rem;
-  border: 1px solid var(--border, rgba(127,127,127,0.3)); border-radius: 6px;
+  border: 1px solid var(--border, rgba(127,127,127,0.3)); border-radius: var(--btn-radius);
   background: var(--bg-1, #1b1b2b); box-shadow: 0 6px 24px rgba(0,0,0,0.35);
 }
 .ui-toolbar-menu.open { display: flex; }
 .ui-toolbar-menu button {
   display: block; width: 100%; text-align: left; padding: 0.4rem 0.6rem;
   border: none; background: transparent; cursor: pointer; font: inherit;
-  font-size: var(--fs-sm); color: var(--text, inherit); border-radius: 4px;
+  font-size: var(--fs-sm); color: var(--text, inherit); border-radius: var(--btn-radius);
 }
 .ui-toolbar-menu button:hover { background: var(--bg-2, rgba(127,127,127,0.15)); }
 .ui-toolbar-menu button.danger { color: var(--danger, #d9534f); }
@@ -4439,7 +4439,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   }
   .ui-topbar-sheet > button {
     min-height: 44px; padding: 0.6rem 0.5rem !important;
-    font-size: var(--fs-md, 1rem) !important; border-radius: 8px !important;
+    font-size: var(--fs-md, 1rem) !important; border-radius: var(--btn-radius) !important;
   }
   .ui-topbar-sheet > button + button { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent) !important; border-radius: 0 !important; }
 }
@@ -5140,7 +5140,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-agent .ui-agent-top-bundle .ui-agent-modes-in-bundle > * { flex: 0 0 auto; white-space: nowrap; }
   .ui-agent .ui-agent-top-bundle .ui-topbar-tile {
     flex-direction: row; height: auto; min-width: 0; gap: 0.3rem;
-    padding: 0.25rem 0.55rem; border-radius: 6px;
+    padding: 0.25rem 0.55rem; border-radius: var(--btn-radius);
   }
   .ui-strip-more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent); }
   .ui-strip-more-left { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 1.75rem), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 1.75rem), transparent); }
@@ -5297,7 +5297,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-msg-spacer { flex: 1 1 auto; }
 .ui-agent-msg-act {
   background: transparent; border: 1px solid var(--border);
-  color: var(--text-mute); padding: 0.18rem 0.55rem; border-radius: 4px;
+  color: var(--text-mute); padding: 0.18rem 0.55rem; border-radius: var(--btn-radius);
   cursor: pointer; font: inherit; font-size: var(--fs-xs);
 }
 .ui-agent-msg-act:hover { color: var(--text); border-color: var(--text-mute); }
@@ -5789,7 +5789,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-form-nav-item {
   text-align: left; background: transparent; color: var(--text-mute);
-  border: 1px solid transparent; border-radius: 6px;
+  border: 1px solid transparent; border-radius: var(--btn-radius);
   padding: 0.4rem 0.55rem; font-size: var(--fs-sm); cursor: pointer;
   font-family: inherit; line-height: 1.3;
 }
@@ -5849,7 +5849,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-cw-doc-view {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   padding: 0.25rem 0.55rem; font-size: var(--fs-xs); cursor: pointer;
   font-family: inherit;
 }
@@ -6034,7 +6034,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-tw-side-h > button, .ui-tw-side-h > .ui-side-menu-wrap { flex: 0 0 auto; }
 .ui-tw-collapse {
   background: transparent; color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
   width: 26px; height: 26px; padding: 0; cursor: pointer;
   font-size: var(--fs-lg); line-height: 1;
 }
@@ -6050,7 +6050,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   position: absolute; top: 0.5rem; left: 0; z-index: 5;
   background: var(--bg-2); color: var(--text-mute);
   border: 1px solid var(--border); border-left: none;
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 var(--btn-radius) var(--btn-radius) 0;
   width: 26px; height: 36px; padding: 0; cursor: pointer;
   font-size: var(--fs-lg); line-height: 1;
 }
@@ -6093,7 +6093,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-tw-extras-item {
   background: transparent; border: none;
   color: var(--text); text-align: left;
-  padding: 0.45rem 0.7rem; border-radius: 6px;
+  padding: 0.45rem 0.7rem; border-radius: var(--btn-radius);
   font-family: inherit; font-size: var(--fs-sm); cursor: pointer;
   white-space: nowrap;
 }

@@ -134,3 +134,43 @@ func TestNoButtonWearsAnUndefinedClass(t *testing.T) {
 		return nil
 	})
 }
+
+// A rectangular button's corners are --btn-radius, and a pill is round
+// (999px). The controls in the floor used 3, 4, 5, 6, 7, 8 and 10px between
+// them, plus two pills at 12 and 18px.
+func TestButtonsShareOneRadius(t *testing.T) {
+	floor := map[string]bool{}
+	for _, c := range touchFloorClasses(t) {
+		floor[c] = true
+	}
+	css := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(runtimeCSS, "")
+	radius := regexp.MustCompile(`border-radius\s*:\s*([^;]+)`)
+	for _, rule := range regexp.MustCompile(`([^{}]+)\{([^{}]*)\}`).FindAllStringSubmatch(css, -1) {
+		sel := strings.TrimSpace(rule[1])
+		if strings.Contains(sel, "::") {
+			continue
+		}
+		subject := false
+		for _, part := range strings.Split(sel, ",") {
+			f := strings.Fields(part)
+			if len(f) == 0 {
+				continue
+			}
+			for _, c := range regexp.MustCompile(`\.(ui-[\w-]+)`).FindAllStringSubmatch(f[len(f)-1], -1) {
+				if floor[c[1]] {
+					subject = true
+				}
+			}
+		}
+		if !subject {
+			continue
+		}
+		for _, m := range radius.FindAllStringSubmatch(rule[2], -1) {
+			v := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(m[1]), "!important"))
+			if strings.Contains(v, "var(--btn-radius") || strings.Contains(v, "999px") || v == "50%" || v == "0" {
+				continue
+			}
+			t.Errorf("%q rounds its corners at %s; a button uses var(--btn-radius), a pill 999px", sel, v)
+		}
+	}
+}
