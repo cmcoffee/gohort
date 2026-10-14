@@ -5143,11 +5143,17 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-confirm {
   background: var(--warn-mute, #5a4a1a);
   border: 1px solid var(--warn, #d4a017);
-  border-radius: 4px; padding: 0.5rem 0.6rem;
+  border-radius: var(--btn-radius); padding: 0.5rem 0.6rem;
   margin: 0.3rem 0;
 }
 .ui-agent-confirm-prompt { font-weight: 600; color: var(--text-hi); margin-bottom: 0.3rem; }
-.ui-agent-confirm-detail { color: var(--text-mute); font-size: var(--fs-xs); margin-bottom: 0.4rem; }
+/* The detail is what is about to happen (a command, a message, the rules it
+ * was checked against), written in lines: its lines kept, and a long run (a
+ * command, a path) broken where it must rather than pushed past the card. */
+.ui-agent-confirm-detail {
+  color: var(--text-mute); font-size: var(--fs-xs); margin-bottom: 0.4rem;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
 .ui-agent-confirm-btns  { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 /* Resolved confirm card — the operator answered. Drop the warning
  * tint to a neutral/settled look and stamp the chosen disposition so
@@ -5434,6 +5440,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-ask-opts { display: flex; flex-direction: column; gap: 0.35rem; margin: 0 0 0.6rem; }
 .ui-ask-opt { display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer; color: var(--text); font-size: var(--fs-md); }
 .ui-ask-opt input { margin-top: 0.2rem; }
+/* A choice on a touch screen is a row you can hit, not the radio's 13px. */
+@media (pointer: coarse) {
+  .ui-ask-opt { min-height: var(--btn-h); align-items: center; padding: 0.15rem 0; }
+  .ui-ask-opt input { margin-top: 0; }
+}
 .ui-ask-extra, .ui-ask-input {
   width: 100%; box-sizing: border-box; background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--btn-radius); padding: 0.4rem 0.55rem; font: inherit;
