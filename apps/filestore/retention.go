@@ -20,6 +20,11 @@
 // same function, so what it lists is exactly what the delete removes.
 // Evidence is not the kind of thing to reclaim unattended at 3am — and a
 // bundle is often the only artifact of an incident that still exists.
+//
+// The one exception is a store an admin marked TEMPORARY (Store.Ephemeral):
+// a landing zone whose contents are copied onward, which has said it is not
+// evidence. Its folders go on a timer once they outlive its lifetime
+// (sweepTemporaryStores), and even then never while something is using them.
 
 package filestore
 
@@ -34,6 +39,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/pathhold"
 )
 
 // ExpiredBundle is one folder eligible for removal.
@@ -102,15 +108,33 @@ func folderBytes(dir string) int64 {
 // default, and the state every store starts in. A stopped ctx ends the walk
 // at the next folder, with what it found so far.
 func FindExpiredBundles(ctx context.Context, db Database) []ExpiredBundle {
+	return findExpired(ctx, db, false)
+}
+
+// findExpired is FindExpiredBundles, limited to temporary stores when
+// temporaryOnly is set: what the automatic sweep may take without an admin.
+//
+// A temporary store's window is its lifetime in hours; any other store's is
+// its retention in days. A folder something is using (pathhold) is never
+// listed, however old: an extraction reading or writing deep inside one does
+// not refresh the age read here.
+func findExpired(ctx context.Context, db Database, temporaryOnly bool) []ExpiredBundle {
 	if db == nil {
 		return nil
 	}
 	var out []ExpiredBundle
 	for _, st := range ListStores(db) {
-		if st.RetentionDays <= 0 {
+		var cutoff time.Time
+		switch {
+		case st.Ephemeral:
+			cutoff = time.Now().Add(-st.lifetime())
+		case temporaryOnly:
+			continue
+		case st.RetentionDays > 0:
+			cutoff = time.Now().AddDate(0, 0, -st.RetentionDays)
+		default:
 			continue // no window set: nothing in this store is ever eligible
 		}
-		cutoff := time.Now().AddDate(0, 0, -st.RetentionDays)
 		entries, err := os.ReadDir(st.Path)
 		if err != nil {
 			Log("[filestore.retention] %s: cannot read %s (%v), skipped", st.Name, st.Path, err)
@@ -137,6 +161,10 @@ func FindExpiredBundles(ctx context.Context, db Database) []ExpiredBundle {
 				continue // unreadable: not eligible
 			}
 			if !newest.Before(cutoff) {
+				continue
+			}
+			if pathhold.InUse(dir) {
+				Debug("[filestore.retention] %s/%s is past its window but in use: kept", st.Name, e.Name())
 				continue
 			}
 			out = append(out, ExpiredBundle{
@@ -172,7 +200,12 @@ func FormatExpiredBundles(list []ExpiredBundle) string {
 // ctx removes nothing when it stops the walk, and otherwise ends the removing
 // at the next folder: each folder goes on its own.
 func ReapExpiredBundles(ctx context.Context, db Database) (int, int64) {
-	list := FindExpiredBundles(ctx, db)
+	return reapExpired(ctx, db, false)
+}
+
+// reapExpired removes what findExpired reports.
+func reapExpired(ctx context.Context, db Database, temporaryOnly bool) (int, int64) {
+	list := findExpired(ctx, db, temporaryOnly)
 	if ctx.Err() != nil {
 		return 0, 0
 	}
@@ -181,6 +214,11 @@ func ReapExpiredBundles(ctx context.Context, db Database) (int, int64) {
 	for _, c := range list {
 		if ctx.Err() != nil {
 			break
+		}
+		// Checked again at the moment of removal: work may have taken the
+		// folder up since the list was made.
+		if pathhold.InUse(c.Path) {
+			continue
 		}
 		if err := os.RemoveAll(c.Path); err != nil {
 			Log("[filestore.retention] could not remove %s: %v", c.Path, err)
@@ -195,6 +233,23 @@ func ReapExpiredBundles(ctx context.Context, db Database) (int, int64) {
 			c.Store, c.Folder, HumanSize(c.Bytes), c.Age().Round(time.Hour))
 	}
 	return gone, freed
+}
+
+// temporarySweepEvery is how often temporary stores are swept. Their lifetimes
+// are in hours, so a folder outlives its lifetime by at most this much.
+const temporarySweepEvery = 15 * time.Minute
+
+// sweepTemporaryStores removes, on a timer, the folders of temporary stores
+// that have outlived their lifetime. Only temporary stores: everything else
+// waits for an admin, as the note at the top of this file says.
+func (T *FileStoreApp) sweepTemporaryStores() {
+	tick := time.NewTicker(temporarySweepEvery)
+	defer tick.Stop()
+	for range tick.C {
+		if n, freed := reapExpired(context.Background(), T.DB, true); n > 0 {
+			Log("[filestore.retention] temporary stores: removed %d expired folder(s), %s", n, HumanSize(freed))
+		}
+	}
 }
 
 // registerRetentionMaintenance wires the dry run and the delete as a

@@ -13,6 +13,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bgrun"
+	"github.com/cmcoffee/gohort/core/pathhold"
 	// Imported directly rather than through a core alias: a shell run needs a
 	// working directory, and core is at its export ceiling.
 	"github.com/cmcoffee/gohort/core/sandbox"
@@ -394,6 +395,9 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		Log("[temptool] %q refused: %v", tt.Name, werr)
 		return "", fmt.Errorf("%s: %w", tt.Name, werr)
 	}
+	// The store folders this run reads are in use until it ends, so a
+	// temporary store's sweep cannot remove one mid-run.
+	defer pathhold.HoldAll(append([]string{workDir}, scopedPaths...)...)()
 	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
 	cmd, err := substitute(cmdTemplate, tt.Params, args)
 	if err != nil {

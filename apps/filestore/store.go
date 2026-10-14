@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -68,6 +69,23 @@ type Store struct {
 	// lists exactly what the delete would remove. Evidence is not the
 	// kind of thing to reclaim automatically at 3am.
 	RetentionDays int `json:"retention_days,omitempty"`
+
+	// Ephemeral makes the store a working area rather than a record: each
+	// subfolder is deleted automatically once nothing in it has changed for
+	// LifetimeHours, with no admin sweep. For a landing zone whose contents
+	// are copied onward (raw downloads that are extracted and pulled into
+	// another store), where keeping the originals is not the point.
+	//
+	// RetentionDays's "nothing deletes on a timer" is about EVIDENCE, and a
+	// store an admin has marked temporary has said it is not that. A folder
+	// in use (pathhold) is never removed, whatever its age.
+	Ephemeral     bool `json:"ephemeral,omitempty"`
+	LifetimeHours int  `json:"lifetime_hours,omitempty"`
+
+	// MaxGB caps the store's total size. Work that would take it past the cap
+	// is refused with how full it is, and nothing is deleted to make room:
+	// eviction would remove what nobody chose to remove. 0 is no cap.
+	MaxGB int `json:"max_gb,omitempty"`
 
 	// Toolboxes is dead weight kept for one reason: an existing deployment's
 	// attachments have to be readable ONCE so they can be carried onto the
@@ -141,6 +159,19 @@ func (s Store) Valid() error {
 	return nil
 }
 
+// defaultLifetimeHours is how long a temporary store keeps a folder when the
+// admin turned it temporary without saying.
+const defaultLifetimeHours = 24
+
+// lifetime is how long a temporary store keeps an unchanged folder.
+func (s Store) lifetime() time.Duration {
+	h := s.LifetimeHours
+	if h <= 0 {
+		h = defaultLifetimeHours
+	}
+	return time.Duration(h) * time.Hour
+}
+
 // SaveStore writes a store, minting a slug from the name on first save.
 func SaveStore(db Database, s Store) (Store, error) {
 	if db == nil {
@@ -150,6 +181,12 @@ func SaveStore(db Database, s Store) (Store, error) {
 		return s, err
 	}
 	s.Path = filepath.Clean(strings.TrimSpace(s.Path))
+	if s.Ephemeral && s.LifetimeHours <= 0 {
+		s.LifetimeHours = defaultLifetimeHours
+	}
+	if s.MaxGB < 0 {
+		s.MaxGB = 0
+	}
 	if strings.TrimSpace(s.Slug) == "" {
 		s.Slug = RefToolSlug(s.Name)
 		if s.Slug == "" {

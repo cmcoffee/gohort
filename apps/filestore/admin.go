@@ -264,9 +264,17 @@ func storeFormFields() []ui.FormField {
 		{Field: "allow_uploads", Type: "toggle", Label: "Let assigned users upload",
 			Help:   "Whether an agent may write into this store, as well as read it. Off by default.",
 			Detail: "Reaching a store and WRITING into it are different grants. The common case is a log directory something else fills, and pointing at it should not let every account with an agent add files to it. Turn this on for a drop store people are meant to feed. An admin can upload either way."},
-		{Field: "retention_days", Type: "number", Label: "Delete folders older than (days)", Min: 0,
+		{Field: "ephemeral", Type: "toggle", Label: "Temporary store",
+			Help:   "Delete each folder automatically once nothing in it has changed for a set time.",
+			Detail: "For a working area whose contents are copied onward, such as raw downloads that are extracted and pulled into another store. Folders go on a timer, checked every 15 minutes, with no admin sweep. A folder that a command, a copy or an upload is using is never removed, whatever its age.\n\nLeave it off for a store that holds the only copy of something: those wait for an admin."},
+		{Field: "lifetime_hours", Type: "number", Label: "Keep each folder for (hours)", Min: 1, Placeholder: "24", ShowWhen: "ephemeral",
+			Help: "After its last change. 24 when left empty."},
+		{Field: "retention_days", Type: "number", Label: "Delete folders older than (days)", Min: 0, ShowWhen: "!ephemeral",
 			Help:   "0 keeps everything forever, which is the default.",
 			Detail: "A number makes a subfolder ELIGIBLE for deletion once nothing in it has changed for that long. Nothing is deleted on a timer: an admin runs the sweep from Maintenance, where a dry run lists exactly what the delete would remove.\n\nAge is read from the folder and its immediate contents, so a write buried deep inside may not refresh it. Leave headroom rather than setting this to the exact age you care about."},
+		{Field: "max_gb", Type: "number", Label: "Size cap (GB)", Min: 0,
+			Help:   "0 is no cap. Work that would take the store past it is refused.",
+			Detail: "Uploads, commands and copies into the store are refused once it is full, saying how full it is. Nothing is deleted to make room. Separate from the free-space floor every write on the disk keeps (Admin, Limits)."},
 		{Field: "description", Type: "textarea", Label: "What lands here", Rows: 2,
 			Help:   "Optional, and worth writing: it tells the agent when to reach for THIS store.",
 			Detail: "It is pasted into the agent's tool descriptions. For example: \"Customer support bundles, one folder per ticket, uploaded by the support team.\""},
@@ -288,6 +296,8 @@ func (T *FileStoreApp) Routes() {
 	// finished. See MigrateStoreCommands.
 	MigrateStoreCommands(T.DB)
 	MigrateToolboxesOntoCommands(T.DB)
+	// Temporary stores clean up after themselves; see sweepTemporaryStores.
+	go T.sweepTemporaryStores()
 	T.HandleFunc("/api/stores", T.handleStores)
 	T.HandleFunc("/api/upload", T.handleUpload)
 	T.HandleFunc("/api/commands/run", T.handleCommand)
@@ -451,6 +461,12 @@ func retentionLabel(st Store) string {
 	window := "keep forever"
 	if st.RetentionDays > 0 {
 		window = "delete after " + strconv.Itoa(st.RetentionDays) + "d"
+	}
+	if st.Ephemeral {
+		window = "temporary: each folder kept " + strconv.Itoa(int(st.lifetime().Hours())) + "h after its last change"
+	}
+	if limit := st.capBytes(); limit > 0 {
+		window += ", " + HumanSize(st.usage()) + " of " + HumanSize(limit) + " cap"
 	}
 	if st.AllowUploads {
 		return window + ", uploads on"

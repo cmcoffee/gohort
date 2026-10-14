@@ -33,6 +33,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/archive"
 	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/pathhold"
 )
 
 // maxExpandBytes bounds what one upload may unpack to. Generous, so a
@@ -109,6 +110,16 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 		refuseOversizeUpload(w)
 		return
 	}
+	// Room on the disk and under the store's cap, for what the request says
+	// it carries. Refused before a byte lands, with how full things are.
+	if err := st.roomFor(r.ContentLength); err != nil {
+		http.Error(w, err.Error(), http.StatusInsufficientStorage)
+		return
+	}
+	// The folder is in use while the upload lands and unpacks, so a temporary
+	// store's sweep cannot take it halfway.
+	defer pathhold.Hold(dest)()
+	defer st.wrote()
 	mr, err := r.MultipartReader()
 	if err != nil {
 		http.Error(w, "expected a multipart upload: "+err.Error(), http.StatusBadRequest)
@@ -154,7 +165,21 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// Unpack whatever arrived as an archive. The budget is generous but
 	// finite: an upload is untrusted input, and a zip bomb should cost a
 	// refusal rather than the disk.
-	exp, err := archive.Expand(r.Context(), dest, archive.Limits{MaxBytes: maxExpandBytes})
+	// Also held to what the disk floor and the store's cap leave: an archive
+	// that unpacks past them stops there rather than filling the disk.
+	budget := int64(maxExpandBytes)
+	if left := st.spaceLeft(); left >= 0 && left < budget {
+		budget = left
+	}
+	// No room left at all: leave archives packed. A zero budget would read as
+	// "the default" to the expander, which is the opposite.
+	var exp archive.Result
+	err = nil
+	if budget > 0 {
+		exp, err = archive.Expand(r.Context(), dest, archive.Limits{MaxBytes: budget})
+	} else {
+		err = fmt.Errorf("no room left to unpack into (disk floor or store cap)")
+	}
 	if err != nil {
 		// The files are already on disk and searchable as they are, so a
 		// failed unpack is reported, not fatal.

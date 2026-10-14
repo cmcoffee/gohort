@@ -48,6 +48,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/pathhold"
 )
 
 // commandsTable holds registered commands, keyed "<store-slug>/<name>".
@@ -333,7 +334,17 @@ func (T *FileStoreApp) handleCommand(w http.ResponseWriter, r *http.Request) {
 	if input != "" {
 		args = append(args, input)
 	}
+	// The command writes into the folder (it decrypts, unpacks, extracts in
+	// place), so it needs room under the disk floor and the store's cap, and
+	// the folder is in use while it runs.
+	if err := st.roomFor(0); err != nil {
+		http.Error(w, err.Error(), http.StatusInsufficientStorage)
+		return
+	}
+	release := pathhold.Hold(dir)
 	out, err := runRegisteredCommand(r.Context(), dir, act.Command, args...)
+	release()
+	st.wrote()
 	if err != nil {
 		Log("[filestore.command] %s: %s on %s/%s failed: %v", user, act.Name, st.Name, dir, err)
 		// The tool's own words first: "exit status 1" tells a person

@@ -147,10 +147,42 @@ func (s storeSource) folderMenu(st Store) string {
 			fmt.Fprintf(&b, "…and %d more.\n", len(folders)-i)
 			break
 		}
-		fmt.Fprintf(&b, "- %s: %d file%s, %s, last written %s\n",
-			f.Name, f.Files, plural(f.Files), HumanSize(f.Bytes), f.Modified.Format("2006-01-02 15:04"))
+		fmt.Fprintf(&b, "- %s: %d file%s, %s, last written %s%s\n",
+			f.Name, f.Files, plural(f.Files), HumanSize(f.Bytes), f.Modified.Format("2006-01-02 15:04"), st.expiryNote(f.Name))
+	}
+	if st.Ephemeral {
+		fmt.Fprintf(&b, "This is a temporary store: each folder is deleted %s after its last change, unless something is using it then.\n", fmtLifetime(st.lifetime()))
 	}
 	return b.String()
+}
+
+// expiryNote is ", deleted in about 5h" for a folder of a temporary store, so
+// an agent (and the person reading its answer) knows how long a case stays.
+func (st Store) expiryNote(folder string) string {
+	if !st.Ephemeral {
+		return ""
+	}
+	dir, err := SubRoot(st.Path, folder)
+	if err != nil {
+		return ""
+	}
+	newest, err := bundleNewest(dir)
+	if err != nil {
+		return ""
+	}
+	left := time.Until(newest.Add(st.lifetime()))
+	if left <= 0 {
+		return ", due for deletion at the next sweep"
+	}
+	return ", deleted in about " + fmtLifetime(left)
+}
+
+// fmtLifetime is a duration in whole hours, or minutes under an hour.
+func fmtLifetime(d time.Duration) string {
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes())+1)
+	}
+	return fmt.Sprintf("%dh", int(d.Round(time.Hour).Hours()))
 }
 
 // ItemTools mints the per-store tools. Names fold in the store's slug so
