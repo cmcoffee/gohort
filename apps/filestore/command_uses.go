@@ -123,16 +123,21 @@ func (a StoreCommand) templateAllowed(tmpl string) error {
 		return nil
 	}
 	lines := a.allowedLines()
-	if len(lines) == 0 {
-		return Error("this command is limited to uses an admin specifies, and none are written yet: an admin adds them on the command's row (Uses) before it can be mapped")
-	}
 	args := strings.Join(strings.Fields(argsAfterBinary(tmpl)), " ")
 	for _, l := range lines {
 		if args == l {
 			return nil
 		}
 	}
-	return fmt.Errorf("the line must be the command followed by exactly one of the allowed uses (%s), got %q", strings.Join(lines, " | "), args)
+	// The admin specifies a use by writing it, or by running it in Show it
+	// how: a line with the shape of one of their runs is theirs too.
+	if lineFitsARun(args, a.Examples) {
+		return nil
+	}
+	if len(lines) == 0 && len(a.Examples) == 0 {
+		return Error("this command is limited to uses an admin specifies, and none are given yet: an admin writes them on the command's row (Uses), or runs the command in Show it how")
+	}
+	return fmt.Errorf("the line %q is neither one of the written uses (%s) nor the shape of a run the admin made: keep a run's words in order, with only the values that would differ as {placeholders}, never an option", args, strings.Join(lines, " | "))
 }
 
 // argsAfterBinary is a command line without its first word (the binary,

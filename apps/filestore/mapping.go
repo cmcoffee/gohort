@@ -89,11 +89,14 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 	scope := " This command is OPEN: explore it as you need and map what it does." + examples
 	if !cmd.open() {
 		lines := cmd.allowedLines()
-		if len(lines) == 0 {
-			scope = " This command is limited to uses an admin specifies, and none are written yet: say so, and that an admin adds them on the command's row (Uses). Do not explore it."
-		} else {
+		switch {
+		case len(lines) == 0 && len(cmd.Examples) > 0:
+			scope = " This command is LIMITED to the uses the admin specified, which here are the runs they made (admin_examples). You may read only its help. Each action's command_template must keep the shape of one of those runs: the same arguments in the same order, with only the values that would differ from one use to the next as {placeholders}, never an option (an argument starting with '-'). Those lines become the command's allowed uses." + examples
+		case len(lines) == 0:
+			scope = " This command is limited to uses an admin specifies, and none are given yet: say so, and that an admin writes them on the command's row (Uses) or runs the command in Show it how. Do not explore it."
+		default:
 			scope = " This command is LIMITED to the uses an admin specified: " + strings.Join(lines, " | ") +
-				". These lines are TEMPLATES: each {placeholder} is filled in later, by an agent, at the moment it calls the tool, so its value does not exist yet. Do not look for it, invent one, or probe with one. You may read only these uses' help, and map only these lines, as written: one action per line, command_template exactly \"" + cmd.Command + " <line>\". Your job is to name each action, describe it, and declare its placeholders, saying what each should receive (a folder in this store gets \"path_scope\":\"files\")." + examples
+				". These lines are TEMPLATES: each {placeholder} is filled in later, by an agent, at the moment it calls the tool, so its value does not exist yet. Do not look for it, invent one, or probe with one. You may read only these uses' help, and map only these lines, as written: one action per line, command_template exactly \"" + cmd.Command + " <line>\". Your job is to name each action, describe it, and declare its placeholders, saying what each should receive (a file or folder in this store gets \"path_scope\":\"files\")." + examples
 		}
 	}
 	if n := len(cmd.Examples); n > 0 {
@@ -138,7 +141,7 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 					"description": {Type: "string", Description: "What this binary is for, in a sentence. It is what an agent reads before using it."},
 					"actions": {Type: "string", Description: "JSON array of actions: [{\"name\":\"unpack\",\"description\":\"...\",\"command_template\":\"/opt/bin/cap unpack {folder}\",\"params\":{\"folder\":{\"type\":\"string\",\"description\":\"...\"}},\"required\":[\"folder\"]}]. " +
 						"Every {placeholder} in a command_template must be declared in that action's params. " +
-						"A parameter that takes a FOLDER from this store must declare \"path_scope\":\"files\", that is what turns the folder name into a real path when the tool runs; without it the command receives the bare name and finds nothing. " +
+						"A parameter that takes a FILE or FOLDER from this store must declare \"path_scope\":\"files\", that is what turns its name into a real path inside this store when the tool runs; without it the command receives the bare name and finds nothing. " +
 						"If the binary must RUN INSIDE the folder rather than take it as an argument (it resolves its inputs relative to the working directory), also add \"work_dir\":\"folder\" naming that parameter, and leave the folder out of the command line."},
 				},
 				Required: []string{"description", "actions"},

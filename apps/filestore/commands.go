@@ -147,6 +147,9 @@ type StoreCommand struct {
 	// before opening the bundle. Distinct from Help, which is written for the
 	// person clicking the button.
 	ToolDesc string `json:"tool_desc,omitempty"`
+	// MappedAt is when the mapping was last saved, so the row can say when
+	// runs have been recorded since and the mapping is behind them.
+	MappedAt time.Time `json:"mapped_at,omitzero"`
 	// Approved is the gate, and the only one: off, the mapping is inert; on,
 	// every agent that reaches this folder can call these actions with
 	// arguments of its own choosing.

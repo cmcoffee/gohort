@@ -35,6 +35,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 
@@ -118,6 +119,21 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 	// A new mapping is not what was approved: agents lose it until an admin
 	// approves again, so a rewrite never goes live on its own.
 	cmd.Approved = false
+	cmd.MappedAt = time.Now()
+	// A line accepted because it has the shape of the admin's run becomes a
+	// written use, so the Uses panel shows what agents could run.
+	if !cmd.open() {
+		have := map[string]bool{}
+		for _, l := range cmd.allowedLines() {
+			have[l] = true
+		}
+		for _, a := range acts {
+			if l := strings.Join(strings.Fields(argsAfterBinary(a.CommandTemplate)), " "); l != "" && !have[l] {
+				cmd.AllowedUses = append(cmd.AllowedUses, l)
+				have[l] = true
+			}
+		}
+	}
 	db.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
 	return cmd, nil
 }

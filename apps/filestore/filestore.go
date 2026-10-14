@@ -45,6 +45,7 @@
 package filestore
 
 import (
+	"os"
 	"strconv"
 	"strings"
 
@@ -135,10 +136,19 @@ func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, erro
 	}
 	dir, err := SubRoot(st.Path, value)
 	if err != nil {
+		// A FILE in the store is a value too: a command that takes the
+		// archive it works on is handed the file, not a folder. Proved
+		// inside the store the same way (resolveUnder), and only a regular
+		// file: not a device, not a socket.
+		if p, ferr := resolveUnder(st.Path, value); ferr == nil {
+			if info, serr := os.Stat(p); serr == nil && info.Mode().IsRegular() {
+				return p, nil
+			}
+		}
 		// Worded for the model that supplied the value: what was refused
 		// and what would change the answer.
-		return "", Error(err.Error() + ", use one of the folders in " + st.Name +
-			", exactly as it was listed")
+		return "", Error("there is no file or folder " + strconv.Quote(value) + " in " + st.Name +
+			", use one exactly as it was listed")
 	}
 	return dir, nil
 }

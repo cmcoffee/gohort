@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -164,5 +165,134 @@ func TestTheAdminReviewsTheRuns(t *testing.T) {
 	if !strings.Contains(text, "Use 1:\n  step 1: /opt/bin/unpack RUN-1\n") || !strings.Contains(text, "  step 2: /opt/bin/unpack RUN-1 s3cret") ||
 		!strings.Contains(text, "admin's note: step 2: the response from the support portal") || strings.Contains(text, "wrongkey") {
 		t.Errorf("what the mapping reads:\n%s", text)
+	}
+}
+
+// The row says where a command stands, so recording runs does not read as if
+// it were enough: what is recorded, that Builder maps it next, that runs since
+// a mapping mean mapping again, and that Agents is the last switch.
+func TestTheRowSaysWhatComesNext(t *testing.T) {
+	cmd := StoreCommand{Slug: "intake", Name: "unpack", Command: "/opt/bin/unpack"}
+	if got := mappingState(cmd); !strings.Contains(got, "show it how, or map it with Builder") {
+		t.Errorf("nothing yet: %q", got)
+	}
+	cmd.Examples = []CommandExample{{Args: "RUN-1", Use: 1, At: time.Now()}, {Args: "RUN-1 k", Use: 1, At: time.Now()}}
+	if got := mappingState(cmd); got != "Not mapped: 2 runs recorded, map it with Builder next" {
+		t.Errorf("runs, no mapping: %q", got)
+	}
+	cmd.Tools = []TempToolAction{{Name: "start", CommandTemplate: "/opt/bin/unpack {folder}"}}
+	cmd.ToolDesc = "Unpacks."
+	cmd.MappedAt = time.Now().Add(time.Minute)
+	if got := mappingState(cmd); !strings.Contains(got, "Agents off: review it under Mapping, then turn Agents on") {
+		t.Errorf("mapped, off: %q", got)
+	}
+	cmd.Approved = true
+	if got := mappingState(cmd); !strings.HasSuffix(got, "agents can use it") {
+		t.Errorf("mapped, on: %q", got)
+	}
+	cmd.Examples = append(cmd.Examples, CommandExample{Args: "--list", Use: 2, At: time.Now().Add(time.Hour)})
+	if got := mappingState(cmd); !strings.Contains(got, "1 run recorded since, map again with Builder") {
+		t.Errorf("runs since the mapping: %q", got)
+	}
+}
+
+// A mapped line fits a run when it keeps the run's arguments in order and only
+// turns values into placeholders, never an option.
+func TestALineFitsTheShapeOfARun(t *testing.T) {
+	runs := []CommandExample{
+		{Argv: []string{"system-log-h1-20260923.tar.gz(user@example.test).enc"}},
+		{Argv: []string{"system-log-h1-20260923.tar.gz(user@example.test).enc", "34x33c40wubT"}},
+		{Argv: []string{"download", "--src=/Diag/a b.zip", "-v"}},
+	}
+	for line, want := range map[string]bool{
+		"{bundle}":                       true,
+		"{bundle} {response}":            true,
+		"download --src={source} -v":     true,
+		"{bundle} --force":               false, // an option the admin never ran
+		"{bundle} {response} {extra}":    false, // more than was run
+		"download --src={source} {flag}": false, // a placeholder in place of an option
+		"upload --src={source} -v":       false, // a different word
+		"download --dst={source} -v":     false, // a different option
+	} {
+		if got := lineFitsARun(line, runs); got != want {
+			t.Errorf("%q fits=%v, want %v", line, got, want)
+		}
+	}
+	// A run kept before Argv splits its joined line.
+	if !lineFitsARun("{a} {b}", []CommandExample{{Args: "one two"}}) {
+		t.Error("an older run without Argv did not match")
+	}
+}
+
+// A command limited to what the admin specifies, with no uses written but
+// runs recorded, can be mapped from those runs; the lines become its uses, and
+// a line that is not a run's shape is still refused.
+func TestACommandIsMappedFromTheAdminsRuns(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	SaveStore(db, Store{Name: "Intake", Path: t.TempDir()})
+	SaveStoreCommand(db, StoreCommand{Slug: "intake", Name: "extract", Command: "/opt/bin/extract"})
+	cmd, _ := LoadStoreCommand(db, "intake", "extract")
+	cmd.Examples = []CommandExample{
+		{ID: "a", Argv: []string{"dump.enc"}, Use: 1},
+		{ID: "b", Argv: []string{"dump.enc", "RESP123"}, Use: 1},
+	}
+	db.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
+	file := ToolParam{Type: "string", PathScope: "files"}
+	acts := []TempToolAction{
+		{Name: "get_signature", CommandTemplate: "/opt/bin/extract {bundle}", Params: map[string]ToolParam{"bundle": file}, Required: []string{"bundle"}},
+		{Name: "extract_with_response", CommandTemplate: "/opt/bin/extract {bundle} {response}",
+			Params: map[string]ToolParam{"bundle": file, "response": {Type: "string"}}, Required: []string{"bundle", "response"}},
+	}
+	saved, err := SaveCommandTools(db, "intake", "extract", "Decrypts and extracts an archive in two steps.", acts)
+	if err != nil {
+		t.Fatalf("mapping from the runs was refused: %v", err)
+	}
+	if strings.Join(saved.AllowedUses, " | ") != "{bundle} | {bundle} {response}" || saved.Approved {
+		t.Errorf("uses recorded: %v, approved %v", saved.AllowedUses, saved.Approved)
+	}
+	if _, err := SaveCommandTools(db, "intake", "extract", "x", []TempToolAction{{Name: "wipe", CommandTemplate: "/opt/bin/extract {bundle} --wipe-all", Params: map[string]ToolParam{"bundle": file}}}); err == nil {
+		t.Error("a line with an option the admin never ran was mapped")
+	}
+}
+
+// An agent's call to a command mapped from runs: a FILE in the store is passed
+// as its full path, one argument, and a name outside the store is refused.
+func TestAnAgentPassesAFileFromTheStore(t *testing.T) {
+	app := &FileStoreApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	prev := registeredFileStoreApp
+	registeredFileStoreApp = app
+	t.Cleanup(func() { registeredFileStoreApp = prev })
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "dump(user@example.test).enc"), []byte("x"), 0o644)
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: root})
+	bin := filepath.Join(t.TempDir(), "extract.sh")
+	os.WriteFile(bin, []byte("#!/bin/sh\nfor a in \"$@\"; do echo \"ARG<$a>\"; done\n"), 0o755)
+	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "extract", Command: bin})
+	cmd, _ := LoadStoreCommand(app.DB, st.Slug, "extract")
+	cmd.Examples = []CommandExample{{ID: "a", Argv: []string{"dump(user@example.test).enc", "RESP"}, Use: 1}}
+	app.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
+	if _, err := SaveCommandTools(app.DB, st.Slug, "extract", "Extracts.", []TempToolAction{{Name: "finish", Description: "Finish.",
+		CommandTemplate: bin + " {bundle} {response}",
+		Params:          map[string]ToolParam{"bundle": {Type: "string", PathScope: "files"}, "response": {Type: "string"}},
+		Required:        []string{"bundle", "response"}}}); err != nil {
+		t.Fatal(err)
+	}
+	SetCommandApproved(app.DB, st.Slug, "extract", true)
+	var finish AgentToolDef
+	for _, td := range (storeSource{app: app}).ItemToolsWithSession(&ToolSession{Ctx: context.Background(), Username: "alice"}, "alice", st.Slug) {
+		if strings.HasSuffix(td.Tool.Name, "_finish") {
+			finish = td
+		}
+	}
+	if finish.Handler == nil {
+		t.Fatal("no finish tool")
+	}
+	out, err := finish.Handler(context.Background(), map[string]any{"bundle": "dump(user@example.test).enc", "response": "s3cret"})
+	if err != nil || !strings.Contains(out, "ARG<"+filepath.Join(root, "dump(user@example.test).enc")+">") || !strings.Contains(out, "ARG<s3cret>") {
+		t.Errorf("ran as: %q %v", out, err)
+	}
+	if out, err := finish.Handler(context.Background(), map[string]any{"bundle": "../../etc/passwd", "response": "x"}); err == nil || strings.Contains(out, "ARG<") {
+		t.Errorf("a file outside the store was passed: %q %v", out, err)
 	}
 }

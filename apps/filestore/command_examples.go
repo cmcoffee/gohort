@@ -32,11 +32,15 @@ import (
 
 // CommandExample is one run an admin made to show how the command is used.
 type CommandExample struct {
-	ID     string `json:"id"` // stable handle, for editing or removing it
-	Args   string `json:"args"`
-	Output string `json:"output"`         // the end of what it printed
-	Exit   string `json:"exit"`           // "0", or how it failed
-	Note   string `json:"note,omitempty"` // what the admin said this run shows
+	ID   string `json:"id"` // stable handle, for editing or removing it
+	Args string `json:"args"`
+	// Argv is the arguments exactly as they were passed, one per entry: Args
+	// joins them with spaces, which loses where a value with a space in it
+	// began and ended. A mapping's line is matched against this.
+	Argv   []string `json:"argv,omitempty"`
+	Output string   `json:"output"`         // the end of what it printed
+	Exit   string   `json:"exit"`           // "0", or how it failed
+	Note   string   `json:"note,omitempty"` // what the admin said this run shows
 	// Use groups runs that are the steps of one use of the command, in order
 	// (a run that prints a challenge, then one that passes the response).
 	// Runs of the same Use are its steps; a new use starts a new number.
@@ -193,7 +197,7 @@ func (T *FileStoreApp) handleTryCommand(w http.ResponseWriter, r *http.Request) 
 			use = cmd.Examples[n-1].Use
 		}
 	}
-	cmd.Examples = append(cmd.Examples, CommandExample{ID: newExampleID(), Args: strings.Join(argv, " "), Output: out, Exit: exit,
+	cmd.Examples = append(cmd.Examples, CommandExample{ID: newExampleID(), Args: strings.Join(argv, " "), Argv: argv, Output: out, Exit: exit,
 		Note: strings.TrimSpace(body.Note), Use: use, By: user, At: time.Now()})
 	if len(cmd.Examples) > examplesKept {
 		cmd.Examples = cmd.Examples[len(cmd.Examples)-examplesKept:]
@@ -210,7 +214,7 @@ func (T *FileStoreApp) handleTryCommand(w http.ResponseWriter, r *http.Request) 
 			steps++
 		}
 	}
-	msg := fmt.Sprintf("Exit %s. Kept for the mapping as use %d, step %d.\n%s", exit, use, steps, shown)
+	msg := fmt.Sprintf("Exit %s. Kept for the mapping as use %d, step %d. Nothing is built yet: when you have shown it enough, open Map with Builder and press Learn from my examples.\n%s", exit, use, steps, shown)
 	if runErr != nil {
 		send(map[string]any{"ok": false, "error": msg})
 		return
@@ -390,4 +394,83 @@ func lastLines(s string, n int) string {
 		lines = append([]string{"…"}, lines[len(lines)-n:]...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// mappingState says where a command stands on its way to being a tool, for its
+// row: recording runs builds nothing by itself, and the row has to say what
+// comes next or it reads as if the runs were enough.
+func mappingState(a StoreCommand) string {
+	runs := len(a.Examples)
+	newer := 0
+	for _, e := range a.Examples {
+		if a.MappedAt.IsZero() || e.At.After(a.MappedAt) {
+			newer++
+		}
+	}
+	switch {
+	case !a.Mapped() && runs == 0:
+		return "Not mapped: show it how, or map it with Builder"
+	case !a.Mapped():
+		return fmt.Sprintf("Not mapped: %s recorded, map it with Builder next", countOf(runs, "run", "runs"))
+	case newer > 0:
+		return fmt.Sprintf("%s - %s; %s recorded since, map again with Builder", a.ToolName(), countOf(len(a.Tools), "action", "actions"), countOf(newer, "run", "runs"))
+	case !a.Approved:
+		return fmt.Sprintf("%s - %s - Agents off: review it under Mapping, then turn Agents on", a.ToolName(), countOf(len(a.Tools), "action", "actions"))
+	}
+	return fmt.Sprintf("%s - %s - agents can use it", a.ToolName(), countOf(len(a.Tools), "action", "actions"))
+}
+
+// argv is the run's arguments, from Argv, or split from Args for a run kept
+// before Argv was.
+func (e CommandExample) argv() []string {
+	if len(e.Argv) > 0 {
+		return e.Argv
+	}
+	return strings.Fields(e.Args)
+}
+
+// lineFitsARun says whether a mapped argument line has the shape of a run the
+// admin made: the same number of arguments, each either the run's own word,
+// or a {placeholder} standing for a value the run passed (a whole argument, or
+// the value after an option's "=" as in "--src={source}"). A placeholder never
+// stands for an option (an argument starting with '-'): options stay exactly
+// as the admin ran them, so the line cannot do anything the admin did not do.
+func lineFitsARun(line string, examples []CommandExample) bool {
+	words := strings.Fields(line)
+	for _, e := range examples {
+		args := e.argv()
+		if len(args) != len(words) {
+			continue
+		}
+		fits := true
+		for i, w := range words {
+			if !wordFits(w, args[i]) {
+				fits = false
+				break
+			}
+		}
+		if fits {
+			return true
+		}
+	}
+	return false
+}
+
+func wordFits(word, ran string) bool {
+	if word == ran {
+		return true
+	}
+	open := strings.IndexByte(word, '{')
+	if open < 0 {
+		return false
+	}
+	end := strings.LastIndexByte(word, '}')
+	if end < open {
+		return false
+	}
+	pre, suf := word[:open], word[end+1:]
+	if pre == "" && strings.HasPrefix(ran, "-") {
+		return false // a placeholder in place of an option
+	}
+	return strings.HasPrefix(ran, pre) && strings.HasSuffix(ran, suf) && len(ran) > len(pre)+len(suf)
 }

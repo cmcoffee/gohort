@@ -9,7 +9,6 @@ package filestore
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -809,13 +808,7 @@ func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 			// it is switched on. Mapped-but-off is the state worth naming:
 			// the work is done and nothing can use it, which looks identical
 			// to unmapped from any distance.
-			mapped := "Not mapped"
-			if a.Mapped() {
-				mapped = fmt.Sprintf("%s - %s", a.ToolName(), countOf(len(a.Tools), "action", "actions"))
-				if !a.Approved {
-					mapped += " - off"
-				}
-			}
+			mapped := mappingState(a)
 			rows = append(rows, map[string]any{
 				"id": commandKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
 				"name": a.Name, "label": a.Label, "command": a.Command,
