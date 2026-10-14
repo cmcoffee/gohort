@@ -99,6 +99,9 @@ func (T *CustomApps) Routes() {
 	T.registerRecordsArtifact()
 	T.registerPipelineRestore()
 	T.HandleFunc("/", T.route)
+	// An app's running work (its actions, its asks) in the live pill, with
+	// Stop: the one place work in progress is seen and stopped.
+	liveAppWorkOnce.Do(func() { RegisterLiveProvider(T.liveAppWork) })
 	// Wire self-updating apps: register the scheduled-action trigger dispatcher and
 	// the spec-lifecycle hooks that keep each app's standing triggers in sync.
 	T.registerScheduling()
@@ -178,6 +181,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	case "_app/schedule":
 		// POST ?slug=&on=… pauses / resumes an app's self-updating schedule.
 		T.handleScheduleToggle(w, r, user)
+		return
+	case "_app/job-cancel":
+		// POST ?id=… the live pill's Stop on one of this person's app jobs.
+		handleJobCancel(w, r, user)
 		return
 	}
 
@@ -504,6 +511,8 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, udb Data
 }
 
 // --- index (a normal Go-built page) ------------------------------------------
+
+var liveAppWorkOnce sync.Once
 
 // builderChangeURL opens a fresh Builder session with its starting form
 // pointed at one of the person's apps (kind App, that app picked), leaving
@@ -1399,7 +1408,11 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	// A job, not a call: it runs on its own context so a slow one outlasts this
 	// request, and answers here if it finishes soon enough (action_jobs.go).
 	ownerDB, action := T.recordBase(spec, owner), *act
-	job := startActionJob(actionJobKey(owner, spec.Slug, uid, name), func(ctx context.Context, progress func(string)) (actionOutcome, error) {
+	what := strings.TrimSpace(act.Label)
+	if what == "" {
+		what = act.Name
+	}
+	job := startActionJob(actionJobKey(owner, spec.Slug, uid, name), appWork{UID: uid, Slug: spec.Slug, AppName: spec.Name, What: what, Kind: "action"}, func(ctx context.Context, progress func(string)) (actionOutcome, error) {
 		return runActionAndPersist(owner, ownerDB, udb, spec, action, args, uid, scriptRun{Interactive: true, Long: true, Ctx: ctx, OnProgress: progress})
 	})
 	select {

@@ -35,10 +35,18 @@ var actionInlineWait = 15 * time.Second
 // page reopened after the end says how it went rather than nothing.
 const actionOutcomeKept = 30 * time.Minute
 
-// actionJob is one run of one action for one person.
+// appWork says whose a job is and what it is doing, for the live pill: the
+// person it runs for, the app, and the work in words ("extract", "asking its
+// agent").
+type appWork struct {
+	UID, Slug, AppName, What, Kind string
+}
+
+// actionJob is one run of one action (or one ask) for one person.
 type actionJob struct {
 	id      string
 	key     string // app owner / slug / person / action: whose, and which button
+	work    appWork
 	cancel  context.CancelFunc
 	done    chan struct{}
 	started time.Time
@@ -100,9 +108,9 @@ func actionJobKey(owner, slug, uid, action string) string {
 
 // startActionJob runs work as a job and returns it. work receives the job's
 // own context and a progress reporter.
-func startActionJob(key string, work func(ctx context.Context, progress func(string)) (actionOutcome, error)) *actionJob {
+func startActionJob(key string, info appWork, work func(ctx context.Context, progress func(string)) (actionOutcome, error)) *actionJob {
 	ctx, cancel := context.WithCancel(context.Background())
-	j := &actionJob{id: UUIDv4(), key: key, cancel: cancel, done: make(chan struct{}), started: time.Now()}
+	j := &actionJob{id: UUIDv4(), key: key, work: info, cancel: cancel, done: make(chan struct{}), started: time.Now()}
 	actionJobs.Lock()
 	pruneActionJobs()
 	actionJobs.byID[j.id] = j
@@ -120,6 +128,83 @@ func startActionJob(key string, work func(ctx context.Context, progress func(str
 		j.mu.Unlock()
 	}()
 	return j
+}
+
+// trackWork records work that runs in the request rather than as a job of its
+// own (a page's ask), so it shows in the live pill and Stop reaches it.
+// cancel stops it; the returned finish records how it ended.
+func trackWork(key string, info appWork, cancel context.CancelFunc) (finish func(error)) {
+	j := &actionJob{id: UUIDv4(), key: key, work: info, cancel: cancel, done: make(chan struct{}), started: time.Now()}
+	actionJobs.Lock()
+	pruneActionJobs()
+	actionJobs.byID[j.id] = j
+	actionJobs.byKey[key] = j
+	actionJobs.Unlock()
+	return func(err error) {
+		j.mu.Lock()
+		j.err, j.ended = err, time.Now()
+		j.mu.Unlock()
+		close(j.done)
+	}
+}
+
+// liveAppWork is every running app job as the live pill shows it: the app and
+// the work, with its latest line, in the label (masked for anyone but the
+// person it runs for, since a line a script printed can name what it is
+// working on), the kind and elapsed time as the status, the app's page to go
+// to, and Stop.
+func (T *CustomApps) liveAppWork() []LiveEntry {
+	actionJobs.Lock()
+	jobs := make([]*actionJob, 0, len(actionJobs.byID))
+	for _, j := range actionJobs.byID {
+		jobs = append(jobs, j)
+	}
+	actionJobs.Unlock()
+	var out []LiveEntry
+	for _, j := range jobs {
+		j.mu.Lock()
+		ended, line := !j.ended.IsZero(), strings.TrimSpace(j.progress)
+		j.mu.Unlock()
+		if ended {
+			continue
+		}
+		name := strings.TrimSpace(j.work.AppName)
+		if name == "" {
+			name = j.work.Slug
+		}
+		label := name + ": " + j.work.What
+		if line != "" {
+			label += " - " + line
+		}
+		out = append(out, LiveEntry{
+			ID:        "app-" + j.id,
+			Label:     label,
+			App:       name,
+			Status:    j.work.Kind + " - " + sinceShort(j.started),
+			Owner:     j.work.UID,
+			URL:       T.WebPath() + "/" + j.work.Slug + "/",
+			CancelURL: T.WebPath() + "/_app/job-cancel?id=" + j.id,
+		})
+	}
+	return out
+}
+
+// handleJobCancel is the live pill's Stop on an app job: POST
+// _app/job-cancel?id=<job>. Only the person the job runs for may stop it.
+func handleJobCancel(w http.ResponseWriter, r *http.Request, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	actionJobs.Lock()
+	j := actionJobs.byID[strings.TrimSpace(r.URL.Query().Get("id"))]
+	actionJobs.Unlock()
+	if j == nil || j.work.UID != user {
+		http.NotFound(w, r)
+		return
+	}
+	j.cancel()
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // pruneActionJobs drops outcomes past their keeping time. Called with the lock

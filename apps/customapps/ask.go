@@ -87,7 +87,13 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 	}
 	// A page's ask is a person waiting: their lane, so background work gives
 	// way to it.
-	text, status, err := askAppAgent(WithRunLane(r.Context(), LaneInteractive), ownerDB, owner, user, spec, body.Prompt, body.JSON)
+	// In the live pill while it runs, so a long answer can be stopped from
+	// anywhere, not only by leaving the page.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	finish := trackWork(actionJobKey(owner, spec.Slug, user, "_ask"), appWork{UID: user, Slug: spec.Slug, AppName: spec.Name, What: "asking its agent", Kind: "ask"}, cancel)
+	text, status, err := askAppAgent(WithRunLane(ctx, LaneInteractive), ownerDB, owner, user, spec, body.Prompt, body.JSON)
+	finish(err)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

@@ -164,3 +164,67 @@ func TestAnActionsReplyIsTheLastJSONItPrinted(t *testing.T) {
 		t.Errorf("progress lines before the reply broke it: %+v %v", res, err)
 	}
 }
+
+// A running action is in the live pill, labelled with the app, the work and
+// its latest line, owned by the person it runs for, with a Stop only they can
+// use; it leaves the pill when it ends.
+func TestARunningActionIsInTheLivePill(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "prep", Name: "Case prep", Owner: "alice", RecordKey: "id",
+		Actions: []AppAction{{Name: "extract", Label: "Extract", Script: "x"}}}
+	prevWait := actionInlineWait
+	actionInlineWait = 50 * time.Millisecond
+	t.Cleanup(func() { actionInlineWait = prevWait })
+	prev := runAppScript
+	t.Cleanup(func() { runAppScript = prev })
+	runAppScript = func(j appscript.Job) (string, error) {
+		j.OnProgress("unpacking part 3 of 8")
+		<-j.Ctx.Done()
+		return "", j.Ctx.Err()
+	}
+	w := httptest.NewRecorder()
+	T.handleAction(w, httptest.NewRequest(http.MethodPost, "/apps/prep/action/extract", nil), "alice", "bob", T.recordBase(spec, "bob"), spec, "extract")
+
+	var entry *LiveEntry
+	for _, e := range T.liveAppWork() {
+		if e.Owner == "bob" && strings.HasPrefix(e.Label, "Case prep: Extract") {
+			e := e
+			entry = &e
+		}
+	}
+	if entry == nil {
+		t.Fatalf("the running action is not in the pill: %+v", T.liveAppWork())
+	}
+	if !strings.Contains(entry.Label, "unpacking part 3 of 8") || !strings.HasPrefix(entry.Status, "action - ") ||
+		!strings.HasSuffix(entry.URL, "/prep/") || !strings.Contains(entry.CancelURL, "/_app/job-cancel?id=") {
+		t.Errorf("entry: %+v", entry)
+	}
+	if strings.Contains(entry.Status, "unpacking") {
+		t.Error("the script's line is in the status, which is shown to everyone unmasked")
+	}
+	id := entry.CancelURL[strings.Index(entry.CancelURL, "id=")+3:]
+	w = httptest.NewRecorder()
+	handleJobCancel(w, httptest.NewRequest(http.MethodPost, "/apps/_app/job-cancel?id="+id, nil), "mallory")
+	if w.Code != http.StatusNotFound {
+		t.Errorf("another person stopped the job: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	handleJobCancel(w, httptest.NewRequest(http.MethodPost, "/apps/_app/job-cancel?id="+id, nil), "bob")
+	if w.Code != http.StatusOK {
+		t.Fatalf("the owner's Stop: %d %s", w.Code, w.Body.String())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		gone := true
+		for _, e := range T.liveAppWork() {
+			if e.ID == entry.ID {
+				gone = false
+			}
+		}
+		if gone {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Error("a stopped job stayed in the pill")
+}
