@@ -5515,7 +5515,9 @@
     }
     var label = match ? match.label : (value == null ? '' : String(value));
     var color = match ? (match.color || 'mute') : 'mute';
-    var cell = el('div', {class: 'ui-table-cell'});
+    // ui-table-cell-badge: on a phone, where cells stack, a badge sits on
+    // the row's name line rather than taking a line of its own.
+    var cell = el('div', {class: 'ui-table-cell ui-table-cell-badge'});
     if (col.flex) cell.style.flex = col.flex;
     // No matching badge and no meaningful value → render an empty cell, not
     // an empty pill. Lets a column carry an "only when true" badge (e.g. a

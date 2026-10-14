@@ -1236,6 +1236,12 @@ select:-webkit-autofill {
     text-overflow: clip;
   }
   .ui-row-cells > .ui-table-cell:last-child { margin-bottom: 0; }
+  /* A short status badge (Private, Shared, Disabled) took a line of its own
+   * under the name; it sits on the name's line, after it. */
+  .ui-row-cells > .ui-table-cell-key { display: inline; }
+  .ui-row-cells > .ui-table-cell-badge {
+    display: inline-block; width: auto; margin: 0 0 0.25rem 0.45rem; vertical-align: 0.1em;
+  }
   .ui-table-cell.mute { font-size: var(--fs-sm); }
   .ui-row-actions {
     flex-direction: row;
