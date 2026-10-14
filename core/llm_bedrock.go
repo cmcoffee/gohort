@@ -811,8 +811,20 @@ func bedrockHint(model, msg string) string {
 				hint += ": AWS expands a cross-region profile and authorizes against the underlying model in every region it can route to, and " +
 					r + " is one of those members rather than where this call went"
 			}
-			return endSentence(hint + ". The policy grants the profile but not all of its member regions -" +
-				" the action is needed on the foundation-model ARN in each of them, which is an AWS policy change and not a gohort setting")
+			// Say only what the refusal PROVES. This used to read "the policy
+			// grants the profile but not all of its member regions", which is
+			// one of the shapes that produces this message - and the sentence
+			// was written from an account that had exactly that shape. A role
+			// granted NOTHING fails identically, and so does an account whose
+			// roles are scoped to their own APPLICATION inference profiles,
+			// which refuses every system profile this same way. Asserting a
+			// partial grant sends somebody auditing member regions for an
+			// action that was never granted at all. Every shape lands on the
+			// same fix, so name the fix and not the cause.
+			return endSentence(hint + ". The action has to be granted on the foundation-model ARN in every member region" +
+				" the profile can route to, and on the inference-profile ARN itself - an AWS policy change, not a gohort setting." +
+				" Do not assume the profile itself is allowed: a role granted none of these fails identically, and" +
+				" `aws bedrock-runtime invoke-model --model-id " + model + "` fails the same way outside gohort if the grant is the problem")
 		}
 		// Otherwise the model id really is bare, and that is the config error.
 		hint := "The resource in that ARN is a bare foundation-model id"

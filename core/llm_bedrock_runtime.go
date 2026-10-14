@@ -525,7 +525,18 @@ func bedrockModelList(ctx context.Context, cfg LLMProviderConfig) ([]string, err
 	var profileErr error
 	next := ""
 	for i := 0; i < 10; i++ {
-		q := url.Values{"maxResults": {"1000"}, "typeEquals": {"SYSTEM_DEFINED"}}
+		// The wire parameter is "type". NOT "typeEquals" - that is the name in
+		// the API model and in the AWS SDKs' own field, which is where the
+		// wrong one comes from, and an unrecognised query parameter here is
+		// IGNORED rather than rejected. The listing then falls back to its
+		// default, which happens to be SYSTEM_DEFINED, so asking for
+		// SYSTEM_DEFINED with the wrong parameter name returns exactly the
+		// right answer and the mistake is invisible. It stops being invisible
+		// the moment somebody asks for APPLICATION profiles and gets a 200,
+		// a plausible list, and not one profile their account can invoke.
+		// Confirmed against `aws bedrock list-inference-profiles --debug`,
+		// which builds "?maxResults=100&type=APPLICATION".
+		q := url.Values{"maxResults": {"1000"}, "type": {"SYSTEM_DEFINED"}}
 		if next != "" {
 			q.Set("nextToken", next)
 		}

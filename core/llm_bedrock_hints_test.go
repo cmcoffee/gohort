@@ -193,6 +193,19 @@ func TestAProfileRefusalIsNotAConfigError(t *testing.T) {
 			t.Errorf("the profile hint is missing %q: %s", want, hint)
 		}
 	}
+	// And it must not assert what the policy DOES grant. "The policy grants
+	// the profile but not all of its member regions" was written from an
+	// account that had that shape, but a role granted nothing fails
+	// identically - as does an account whose roles are scoped to their own
+	// APPLICATION inference profiles, which refuses every system profile this
+	// same way (observed on a kiteworks AI permission set, where neither
+	// bedrock:InvokeModel nor bedrock-mantle:CreateInference was granted on
+	// anything except the account's own application profiles). Claiming a
+	// partial grant sends the reader auditing member regions for an action
+	// that was never there.
+	if strings.Contains(hint, "policy grants the profile") {
+		t.Errorf("the hint asserts a partial grant it cannot know about: %s", hint)
+	}
 
 	// Configured with a bare id: that IS the config error, and the old advice
 	// is right.
