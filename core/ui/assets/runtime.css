@@ -1237,12 +1237,21 @@ select:-webkit-autofill {
   }
   .ui-row-cells > .ui-table-cell:last-child { margin-bottom: 0; }
   .ui-table-cell.mute { font-size: var(--fs-sm); }
+  /* One line, never a wrap: wrapped, the last button or two (Delete, most
+   * often) dropped to a line of their own and read as a separate control.
+   * A destructive action goes to the far end, apart from the everyday ones,
+   * and in the rare row whose buttons do not fit, the line scrolls sideways
+   * rather than wrapping. */
   .ui-row-actions {
-    display: flex; flex-wrap: wrap;
+    display: flex; flex-wrap: nowrap;
     flex-direction: row;
     margin-left: 0; justify-content: flex-start;
-    gap: 0.4rem;
+    gap: 0.35rem;
+    overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
   }
+  .ui-row-actions::-webkit-scrollbar { display: none; }
+  .ui-row-actions > * { flex: 0 0 auto; }
+  .ui-row-actions > .danger { margin-left: auto; }
 }
 
 .ui-row-toggle-pair { display: inline-flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
