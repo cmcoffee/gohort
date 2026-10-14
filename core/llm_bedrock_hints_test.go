@@ -198,7 +198,7 @@ func TestAProfileRefusalIsNotAConfigError(t *testing.T) {
 	// account that had that shape, but a role granted nothing fails
 	// identically - as does an account whose roles are scoped to their own
 	// APPLICATION inference profiles, which refuses every system profile this
-	// same way (observed on a kiteworks AI permission set, where neither
+	// same way (observed on a company AI permission set, where neither
 	// bedrock:InvokeModel nor bedrock-mantle:CreateInference was granted on
 	// anything except the account's own application profiles). Claiming a
 	// partial grant sends the reader auditing member regions for an action
