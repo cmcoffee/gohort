@@ -132,7 +132,7 @@ func TestMapConversationIsScopedToOneCommand(t *testing.T) {
 	if !strings.Contains(src, `"/filestore/api/map/chat/send?id={id}"`) {
 		t.Error("the mapping conversation must name the command it was opened on, by the composite id its row carries")
 	}
-	if !strings.Contains(src, `ui.Expand("Map"`) {
+	if !strings.Contains(src, `ui.Expand("Map with Builder"`) {
 		t.Error("Map belongs on the command's own row — that is what makes the result land where it came from")
 	}
 }

@@ -88,7 +88,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						},
 
 						ui.Card{HTML: folderPanelHeading("Commands",
-							"Binaries registered against this folder. A person runs one from Files. Map a command and it becomes a tool as well: turn Agents on and every agent that reaches this folder can call it; turn it off and the mapping is kept but nothing can use it.")},
+							"Binaries registered against this folder. A person runs one from Files. Map a command with Builder and it becomes a tool as well: turn Agents on and every agent that reaches this folder can call it; turn it off and the mapping is kept but nothing can use it.")},
 						ui.Table{
 							Source: "/filestore/api/commands?slug={slug}",
 							RowKey: "id",
@@ -169,8 +169,8 @@ func (T *FileStoreApp) adminSection() ui.Section {
 										TestLabel: "Run",
 										Fields: []ui.FormField{
 											{Field: "args", Type: "text", Label: "Arguments", Placeholder: "download --src=/Diag/dump.zip --dst=RUN-1",
-												Help:   "What you would type after the command. Run executes it in this store's folder, with no shell, and shows what it prints.",
-												Detail: "Each run is kept as an example for Map: Builder reads what you ran and what it printed, and works out the syntax from it, turning the parts that change into placeholders. Quote a value with spaces in it. Nothing is expanded: no wildcards, variables or pipes. You can run anything with this command; Builder's own limits are unchanged."},
+												Help:   "What you would type after the command. Run executes it in this store's folder, with no shell, and shows what it prints. Builder learns from each run.",
+												Detail: "Each run is kept as an example for Map with Builder: it reads what you ran and what it printed, and works out the syntax from it, turning the parts that change into placeholders. Quote a value with spaces in it. Nothing is expanded: no wildcards, variables or pipes. You can run anything with this command; Builder's own limits are unchanged."},
 											{Field: "step", Type: "select", Label: "This run is", Options: []ui.SelectOption{
 												{Value: "new", Label: "A new use of the command"},
 												{Value: "next", Label: "The next step of the last use"},
@@ -216,7 +216,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 										EmptyText: "No runs yet. Run the command above to show how it is used.",
 									},
 								}}),
-								ui.Expand("Map", ui.AgentLoopPanel{
+								ui.Expand("Map with Builder", ui.AgentLoopPanel{
 									SendURL:      "/filestore/api/map/chat/send?id={id}",
 									Markdown:     true,
 									LockActivity: true,
@@ -245,10 +245,10 @@ func (T *FileStoreApp) adminSection() ui.Section {
 											Title:  "Check what you wrote against what the command really does, and correct it",
 											Prompt: "Check what you wrote against what the command actually does (run it again where you were guessing), and propose a corrected version."},
 									},
-									EmptyText: "Map it, and what it finds lands on this row as the actions an agent can call. " +
-										"It can run the binary to read its help and try things. " +
+									EmptyText: "Builder maps this command: what it works out lands on this row as the actions an agent can call. " +
+										"It reads the runs you made in Show it how, and can run the command's help (anything more, for an Open command). " +
 										"Nothing it writes can be called until you turn Agents on for this command; that switch is the approval.",
-									Placeholder: "Or ask it something…",
+									Placeholder: "Or ask Builder something…",
 								}),
 								{Type: "button", Label: "Delete", Method: "DELETE",
 									PostTo:     "/filestore/api/commands?id={id}",
