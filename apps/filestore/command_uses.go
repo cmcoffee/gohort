@@ -1,22 +1,23 @@
-// How a registered command may be used by Builder, and so by agents.
+// How agents may use a registered command, once Builder has mapped it with an
+// admin and the admin has approved the mapping.
 //
-// Two modes, chosen by the admin who registers the command:
+// Builder explores a command freely while it maps it: the conversation is the
+// admin's own, opened from the command's row, and what it writes is inert
+// until the admin turns Agents on. The limit is on AGENTS, in two modes the
+// admin chooses:
 //
-//   - specified (the default): the admin writes the exact argument lines the
-//     command may run with ("download --src={source} --dst={folder}"). Builder
-//     may read help for those uses and nothing else, and every action it maps
-//     must be one of those lines. An agent calls exactly that line, filling
-//     only the placeholders, so a command that could be destructive with the
-//     wrong flags is reachable only the way the admin said.
-//   - open: Builder may explore the binary freely and map whatever it finds,
-//     for a command the admin is content to have used in any way.
+//   - specified (the default): an agent runs only the command's allowed uses,
+//     each line exactly as written ("download --src={source} --dst={folder}"),
+//     filling only the placeholders. The admin may write uses up front to say
+//     what Builder should map; every line Builder maps is added to them, and
+//     what the admin approves is that list. Changing the uses turns Agents off.
+//   - open: the mapped lines run in the sandbox.
 //
 // A specified command runs as written, directly as the server's account, the
-// way a person's click on a store command runs: the binary, then the admin's
-// line with each placeholder filled by ONE value, no shell. That is what lets
-// a binary with its own saved login (a file-sharing client) work, and it is safe
-// because nothing about the command line is the model's choice. An open
-// command's actions run in the sandbox, since their flags are.
+// way a person's click on a store command runs: the binary, then the line with
+// each placeholder filled by ONE value, no shell. That is what lets a binary
+// with its own saved login (a file-sharing client) work, and it is safe because
+// the line is one an admin approved and the model supplies only values.
 package filestore
 
 import (
@@ -39,7 +40,8 @@ const (
 	UsageOpen      = "open"
 )
 
-// open reports whether Builder may explore this command freely.
+// open reports whether this command's mapped lines run in the sandbox rather
+// than as written.
 func (a StoreCommand) open() bool { return a.Usage == UsageOpen }
 
 // allowedLines is the admin's allowed uses, each with its spacing normalized.
@@ -56,68 +58,20 @@ func (a StoreCommand) allowedLines() []string {
 // usesLabel says how the command may be used, for the admin table.
 func (a StoreCommand) usesLabel() string {
 	if a.open() {
-		return "open: Builder may explore and map it"
+		return "sandboxed: agents run the mapped lines in the sandbox"
 	}
 	lines := a.allowedLines()
 	if len(lines) == 0 {
-		return "only as specified: none written yet, so nothing can be mapped"
+		return "only as specified: none yet (Builder adds the lines it maps)"
 	}
 	return "only: " + strings.Join(lines, " | ")
 }
 
-// fixedWords is the part of an allowed line nothing fills in: its leading
-// words up to the first placeholder or option ("download" in "download
-// --src={source}"), the subcommand whose help Builder may read.
-func fixedWords(line string) []string {
-	var out []string
-	for _, w := range strings.Fields(line) {
-		if strings.Contains(w, "{") || strings.HasPrefix(w, "-") {
-			break
-		}
-		out = append(out, w)
-	}
-	return out
-}
-
-var helpFlags = map[string]bool{"--help": true, "-h": true, "help": true, "-help": true}
-
-// probeAllowed says whether Builder may run the command with argv while
-// mapping it. Open: anything. Specified: only help, for the binary or for one
-// of the allowed uses' fixed words, and the version.
-func (a StoreCommand) probeAllowed(argv []string) error {
-	if a.open() {
-		return nil
-	}
-	if len(argv) == 1 && (helpFlags[argv[0]] || argv[0] == "--version") {
-		return nil
-	}
-	if len(argv) >= 2 && helpFlags[argv[len(argv)-1]] {
-		head := strings.Join(argv[:len(argv)-1], " ")
-		for _, l := range a.allowedLines() {
-			if head == strings.Join(fixedWords(l), " ") {
-				return nil
-			}
-		}
-	}
-	var forms []string
-	for _, l := range a.allowedLines() {
-		if fw := fixedWords(l); len(fw) > 0 {
-			forms = append(forms, strings.Join(fw, " ")+" --help")
-		}
-	}
-	return fmt.Errorf("this command is limited to the uses an admin specified, so only its help can be read: --help, --version%s. Map the allowed uses as written; do not look for others", prefixed(", ", strings.Join(forms, ", ")))
-}
-
-func prefixed(p, s string) string {
-	if s == "" {
-		return ""
-	}
-	return p + s
-}
-
-// templateAllowed says whether a mapped action's command line is one this
-// command may run: for an open command any (actionRunsTheCommand still
-// applies), for a specified one exactly the binary and one allowed line.
+// templateAllowed says whether a mapped action's command line is one an agent
+// may run: for an open command any (actionRunsTheCommand still applies), for a
+// specified one exactly the binary and one of its allowed uses. Checked when
+// an agent's tools are built and again at the call, so a use the admin has
+// taken off the list stops running.
 func (a StoreCommand) templateAllowed(tmpl string) error {
 	if a.open() {
 		return nil
@@ -129,15 +83,7 @@ func (a StoreCommand) templateAllowed(tmpl string) error {
 			return nil
 		}
 	}
-	// The admin specifies a use by writing it, or by running it in Show it
-	// how: a line with the shape of one of their runs is theirs too.
-	if lineFitsARun(args, a.Examples) {
-		return nil
-	}
-	if len(lines) == 0 && len(a.Examples) == 0 {
-		return Error("this command is limited to uses an admin specifies, and none are given yet: an admin writes them on the command's row (Uses), or runs the command in Show it how")
-	}
-	return fmt.Errorf("the line %q is neither one of the written uses (%s) nor the shape of a run the admin made: keep a run's words in order, with only the values that would differ as {placeholders}, never an option", args, strings.Join(lines, " | "))
+	return fmt.Errorf("the line %q is not one of this command's allowed uses (%s): an admin adds it under Uses on the command's row, or maps it again with Builder", args, strings.Join(lines, " | "))
 }
 
 // argsAfterBinary is a command line without its first word (the binary,

@@ -76,9 +76,6 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 		if err := actionRunsTheCommand(cmd.Command, a.CommandTemplate); err != nil {
 			return cmd, Error("action " + a.Name + ": " + err.Error())
 		}
-		if err := cmd.templateAllowed(a.CommandTemplate); err != nil {
-			return cmd, Error("action " + a.Name + ": " + err.Error())
-		}
 		acts[i].Name = strings.TrimSpace(a.Name)
 
 		// work_dir names a parameter, so a name with nothing behind it is an
@@ -120,8 +117,8 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 	// approves again, so a rewrite never goes live on its own.
 	cmd.Approved = false
 	cmd.MappedAt = time.Now()
-	// A line accepted because it has the shape of the admin's run becomes a
-	// written use, so the Uses panel shows what agents could run.
+	// Every line mapped becomes a written use, so the Uses panel shows what
+	// agents could run, and approving the mapping approves exactly that list.
 	if !cmd.open() {
 		have := map[string]bool{}
 		for _, l := range cmd.allowedLines() {

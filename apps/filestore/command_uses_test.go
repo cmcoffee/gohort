@@ -11,25 +11,12 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// A command limited to the uses an admin wrote: Builder may read only their
-// help and map only those lines; an open command may be explored and mapped
-// freely. A new mapping is never live until approved again.
-func TestACommandIsUsedOnlyAsTheAdminSpecified(t *testing.T) {
+// Builder maps a command freely, and every line it maps becomes one of the
+// command's allowed uses; an agent runs only those lines, and a use the admin
+// takes off the list stops running. A new mapping is never live until
+// approved again.
+func TestAgentsRunOnlyTheAllowedUses(t *testing.T) {
 	kb := StoreCommand{Command: "/opt/bin/kb", AllowedUses: []string{"download   --src={source} --dst={folder}"}}
-	for argv, ok := range map[string]bool{
-		"--help":                  true,
-		"--version":               true,
-		"download --help":         true,
-		"download -h":             true,
-		"upload --help":           false,
-		"download --src=x":        false,
-		"delete --all":            false,
-		"download --src=x --help": false,
-	} {
-		if err := kb.probeAllowed(strings.Fields(argv)); (err == nil) != ok {
-			t.Errorf("probe %q: allowed=%v, want %v", argv, err == nil, ok)
-		}
-	}
 	for tmpl, ok := range map[string]bool{
 		"/opt/bin/kb download --src={source} --dst={folder}":        true,
 		"/opt/bin/kb download  --src={source}  --dst={folder}":      true,
@@ -41,11 +28,11 @@ func TestACommandIsUsedOnlyAsTheAdminSpecified(t *testing.T) {
 		}
 	}
 	if (StoreCommand{Command: "/opt/bin/kb"}).templateAllowed("/opt/bin/kb download") == nil {
-		t.Error("a specified command with no uses written could be mapped")
+		t.Error("a specified command with no uses ran a line")
 	}
 	open := StoreCommand{Command: "/opt/bin/kb", Usage: UsageOpen}
-	if open.probeAllowed([]string{"delete", "--all"}) != nil || open.templateAllowed("/opt/bin/kb anything {x}") != nil {
-		t.Error("an open command was restricted")
+	if open.templateAllowed("/opt/bin/kb anything {x}") != nil {
+		t.Error("an open command's mapped line was refused")
 	}
 
 	db := &DBase{Store: kvlite.MemStore()}
@@ -54,8 +41,10 @@ func TestACommandIsUsedOnlyAsTheAdminSpecified(t *testing.T) {
 	if err != nil || saved.Usage != UsageSpecified || len(saved.AllowedUses) != 2 {
 		t.Fatalf("a new command: %+v %v", saved, err)
 	}
-	if _, err := SaveCommandTools(db, "intake", "kb", "File-sharing client.", []TempToolAction{{Name: "wipe", CommandTemplate: "/opt/bin/kb delete --all"}}); err == nil {
-		t.Error("a mapping outside the allowed uses was saved")
+	// Builder is not held to the written uses: what it maps joins them, for
+	// the admin to approve.
+	if c, err := SaveCommandTools(db, "intake", "kb", "File-sharing client.", []TempToolAction{{Name: "list_all", CommandTemplate: "/opt/bin/kb list --all"}}); err != nil || !strings.Contains(strings.Join(c.AllowedUses, "|"), "list --all") || c.Approved {
+		t.Errorf("a line beyond the written uses: %v %v, approved %v", c.AllowedUses, err, c.Approved)
 	}
 	act := TempToolAction{Name: "download", CommandTemplate: "/opt/bin/kb download --src={source} --dst={folder}",
 		Params: map[string]ToolParam{"source": {Type: "string"}, "folder": {Type: "string", PathScope: "files"}}, Required: []string{"source", "folder"}}
@@ -146,12 +135,35 @@ func TestTheMappingIsToldExamplesAreSyntax(t *testing.T) {
 			}
 		}
 	}
-	for _, td := range app.mappingTools(context.Background(), Store{Name: "Intake"}, StoreCommand{Command: "/opt/bin/kb", AllowedUses: []string{"download --src={source}"}}) {
-		if td.Tool.Name == "admin_examples" {
-			continue // reads the admin's runs; the mapping rules are on the other two
+	for _, cmd := range []StoreCommand{
+		{Command: "/opt/bin/kb", Usage: UsageOpen},
+		{Command: "/opt/bin/kb", AllowedUses: []string{"download --src={source}"}},
+	} {
+		for _, td := range app.mappingTools(context.Background(), Store{Name: "Intake"}, cmd) {
+			if td.Tool.Name == "admin_examples" {
+				continue // reads the admin's runs; the mapping rules are on the other two
+			}
+			if !strings.Contains(td.Tool.Description, "their values do not exist yet") {
+				t.Errorf("%s (%s) does not say placeholders are filled later", td.Tool.Name, cmd.Usage)
+			}
 		}
-		if !strings.Contains(td.Tool.Description, "its value does not exist yet") {
-			t.Errorf("%s does not say placeholders are filled later", td.Tool.Name)
+	}
+	// Builder explores freely, but is told a probe is real.
+	for _, td := range app.mappingTools(context.Background(), Store{Name: "Intake"}, StoreCommand{Command: "/opt/bin/kb"}) {
+		if td.Tool.Name == "probe_command" && !strings.Contains(td.Tool.Description, "ask the admin before one that would change") {
+			t.Error("probe_command does not say a probe runs for real")
 		}
+	}
+}
+
+// Builder probes the command it maps with any arguments: the limit is on what
+// agents run, not on what the admin's mapping conversation may try.
+func TestBuilderProbesACommandFreely(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "kb.sh")
+	os.WriteFile(bin, []byte("#!/bin/sh\necho \"ARGS<$*>\"\n"), 0o755)
+	cmd := StoreCommand{Command: bin, AllowedUses: []string{"download --src={source}"}}
+	out, err := (&FileStoreApp{}).probeCommand(context.Background(), t.TempDir(), cmd, "list --all")
+	if err != nil || !strings.Contains(out, "ARGS<list --all>") {
+		t.Errorf("probe beyond the uses: %q %v", out, err)
 	}
 }

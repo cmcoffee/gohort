@@ -181,25 +181,24 @@ func stampMapContext(r *http.Request, ctx string) {
 // could only propose would be guessing from a name, and one that could only
 // probe would leave nothing behind.
 func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreCommand) []AgentToolDef {
-	// What the admin allowed, said up front in both tools: an open command
-	// may be explored and mapped freely, a specified one only as written.
+	// How the mapped lines will run, said up front in both tools. Builder
+	// explores freely either way: this conversation is the admin's, and what
+	// it writes is inert until the admin approves it.
 	// Examples are SYNTAX, not things to find. An admin explaining a command
 	// writes a real-looking line ("download --src=/Diag/dump.zip
 	// --dst=CASE-1"), and the mapping read those values as things it should
 	// already have: it went looking for the file, or probed with it.
 	examples := " When the admin shows an example command line with real-looking values (a path, a file name, an id), it illustrates the SYNTAX: the parts that would differ from one call to the next become {placeholders}, and those example values do not exist here and are not yours to check, find or probe with."
-	scope := " This command is OPEN: explore it as you need and map what it does." + examples
+	later := " The {placeholders} in a command_template are filled in later, by an agent at the moment it calls the tool: their values do not exist yet, so do not look for them, invent them or probe with them."
+	scope := " Agents will run the actions you map in the sandbox." + later + examples
 	if !cmd.open() {
-		lines := cmd.allowedLines()
-		switch {
-		case len(lines) == 0 && len(cmd.Examples) > 0:
-			scope = " This command is LIMITED to the uses the admin specified, which here are the runs they made (admin_examples). You may read only its help. Each action's command_template must keep the shape of one of those runs: the same arguments in the same order, with only the values that would differ from one use to the next as {placeholders}, never an option (an argument starting with '-'). Those lines become the command's allowed uses." + examples
-		case len(lines) == 0:
-			scope = " This command is limited to uses an admin specifies, and none are given yet: say so, and that an admin writes them on the command's row (Uses) or runs the command in Show it how. Do not explore it."
-		default:
-			scope = " This command is LIMITED to the uses an admin specified: " + strings.Join(lines, " | ") +
-				". These lines are TEMPLATES: each {placeholder} is filled in later, by an agent, at the moment it calls the tool, so its value does not exist yet. Do not look for it, invent one, or probe with one. You may read only these uses' help, and map only these lines, as written: one action per line, command_template exactly \"" + cmd.Command + " <line>\". Your job is to name each action, describe it, and declare its placeholders, saying what each should receive (a file or folder in this store gets \"path_scope\":\"files\")." + examples
+		scope = " An agent will run each action you map exactly as its command_template is written, filling only the {placeholders}." + later + " Each line you map becomes one of the command's allowed uses, and the admin approves that list. Keep options fixed in the line rather than making a placeholder of one."
+		if lines := cmd.allowedLines(); len(lines) > 0 {
+			scope += " The admin has written the uses they want: " + strings.Join(lines, " | ") + ". Map those, as written; map anything beyond them only when the admin asks."
+		} else if len(cmd.Examples) > 0 {
+			scope += " The admin's runs (admin_examples) are the uses they want: map those, keeping each run's arguments in order, with only the values that would differ as {placeholders}."
 		}
+		scope += examples
 	}
 	if strings.TrimSpace(cmd.Guide) != "" {
 		scope += " The admin wrote a guide to how this command is used (admin_examples shows it first): what it says about the steps, the values and the output outranks your reading of the runs."
@@ -225,7 +224,7 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 			Tool: Tool{
 				Name: "probe_command",
 				Description: fmt.Sprintf(
-					"Run %s (%s), the command you are mapping, with arguments of your choosing: start with its help flag. Returns whatever it printed, INCLUDING when it exits non-zero, because a usage message is usually printed on a failing exit and that is the most useful thing a probe gets back. This is how you learn the interface you are about to describe; do not guess it.",
+					"Run %s (%s), the command you are mapping, with arguments of your choosing: start with its help flag. Returns whatever it printed, INCLUDING when it exits non-zero, because a usage message is usually printed on a failing exit and that is the most useful thing a probe gets back. This is how you learn the interface you are about to describe; do not guess it. A probe runs for real, as the server's account, in the store's top folder: read help and make calls that only look, and ask the admin before one that would change, move, send or delete anything.",
 					cmd.Label, cmd.Command) + scope,
 				Parameters: map[string]ToolParam{
 					"args": {Type: "string", Description: "Arguments to pass, space separated: e.g. \"--help\". Passed as separate argv entries with NO shell, so quoting and metacharacters do nothing."},
@@ -268,9 +267,6 @@ func (T *FileStoreApp) probeCommand(ctx context.Context, root string, cmd StoreC
 	// The store root, so the probe sees what the real run will see. An agent
 	// choosing flags against a binary that resolves anything relatively would
 	// otherwise be reading one directory here and writing about another.
-	if err := cmd.probeAllowed(strings.Fields(argLine)); err != nil {
-		return "", err
-	}
 	out, err := runRegisteredCommand(ctx, root, cmd.Command, strings.Fields(argLine)...)
 	out = strings.TrimSpace(out)
 	if err != nil {

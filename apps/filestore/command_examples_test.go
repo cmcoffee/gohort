@@ -196,37 +196,8 @@ func TestTheRowSaysWhatComesNext(t *testing.T) {
 	}
 }
 
-// A mapped line fits a run when it keeps the run's arguments in order and only
-// turns values into placeholders, never an option.
-func TestALineFitsTheShapeOfARun(t *testing.T) {
-	runs := []CommandExample{
-		{Argv: []string{"system-log-h1-20260923.tar.gz(user@example.test).enc"}},
-		{Argv: []string{"system-log-h1-20260923.tar.gz(user@example.test).enc", "34x33c40wubT"}},
-		{Argv: []string{"download", "--src=/Diag/a b.zip", "-v"}},
-	}
-	for line, want := range map[string]bool{
-		"{bundle}":                       true,
-		"{bundle} {response}":            true,
-		"download --src={source} -v":     true,
-		"{bundle} --force":               false, // an option the admin never ran
-		"{bundle} {response} {extra}":    false, // more than was run
-		"download --src={source} {flag}": false, // a placeholder in place of an option
-		"upload --src={source} -v":       false, // a different word
-		"download --dst={source} -v":     false, // a different option
-	} {
-		if got := lineFitsARun(line, runs); got != want {
-			t.Errorf("%q fits=%v, want %v", line, got, want)
-		}
-	}
-	// A run kept before Argv splits its joined line.
-	if !lineFitsARun("{a} {b}", []CommandExample{{Args: "one two"}}) {
-		t.Error("an older run without Argv did not match")
-	}
-}
-
-// A command limited to what the admin specifies, with no uses written but
-// runs recorded, can be mapped from those runs; the lines become its uses, and
-// a line that is not a run's shape is still refused.
+// A command with no uses written but runs recorded is mapped from those runs,
+// and the lines become its uses.
 func TestACommandIsMappedFromTheAdminsRuns(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	SaveStore(db, Store{Name: "Intake", Path: t.TempDir()})
@@ -249,9 +220,6 @@ func TestACommandIsMappedFromTheAdminsRuns(t *testing.T) {
 	}
 	if strings.Join(saved.AllowedUses, " | ") != "{bundle} | {bundle} {response}" || saved.Approved {
 		t.Errorf("uses recorded: %v, approved %v", saved.AllowedUses, saved.Approved)
-	}
-	if _, err := SaveCommandTools(db, "intake", "extract", "x", []TempToolAction{{Name: "wipe", CommandTemplate: "/opt/bin/extract {bundle} --wipe-all", Params: map[string]ToolParam{"bundle": file}}}); err == nil {
-		t.Error("a line with an option the admin never ran was mapped")
 	}
 }
 

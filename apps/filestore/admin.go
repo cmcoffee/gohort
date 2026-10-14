@@ -169,7 +169,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 										Fields: []ui.FormField{
 											{Field: "args", Type: "text", Label: "Arguments", Placeholder: "download --src=/Diag/dump.zip --dst=RUN-1",
 												Help:   "What you would type after the command. Run executes it in this store's folder, with no shell, and shows what it prints. Builder learns from each run.",
-												Detail: "Each run is kept as an example for Map with Builder: it reads what you ran and what it printed, and works out the syntax from it, turning the parts that change into placeholders. Quote a value with spaces in it. Nothing is expanded: no wildcards, variables or pipes. You can run anything with this command; Builder's own limits are unchanged."},
+												Detail: "Each run is kept as an example for Map with Builder: it reads what you ran and what it printed, and works out the syntax from it, turning the parts that change into placeholders. Quote a value with spaces in it. Nothing is expanded: no wildcards, variables or pipes. Builder can try the command itself too; these runs show it how you use it."},
 											{Field: "step", Type: "select", Label: "This run is", Options: []ui.SelectOption{
 												{Value: "new", Label: "A new use of the command"},
 												{Value: "next", Label: "The next step of the last use"},
@@ -255,7 +255,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 											Prompt: "Check what you wrote against what the command actually does (run it again where you were guessing), and propose a corrected version."},
 									},
 									EmptyText: "Builder maps this command: what it works out lands on this row as the actions an agent can call. " +
-										"It reads the runs you made in Show it how, and can run the command's help (anything more, for an Open command). " +
+										"It reads the runs you made in Show it how, and can run the command with any arguments to learn it, asking you before a run that would change anything. " +
 										"Nothing it writes can be called until you turn Agents on for this command; that switch is the approval.",
 									Placeholder: "Or ask Builder something…",
 								}),
@@ -411,20 +411,20 @@ func actionFormFields() []ui.FormField {
 // commandUsesFields are how Builder, and so agents, may use the command.
 func commandUsesFields() []ui.FormField {
 	return []ui.FormField{
-		{Field: "usage", Type: "select", Label: "How Builder may use it", Options: []ui.SelectOption{
-			{Value: UsageSpecified, Label: "Only as I specify"},
-			{Value: UsageOpen, Label: "Open: explore and map it freely"},
+		{Field: "usage", Type: "select", Label: "How agents run it", Options: []ui.SelectOption{
+			{Value: UsageSpecified, Label: "Only the allowed uses, as written"},
+			{Value: UsageOpen, Label: "Sandboxed"},
 		},
-			Help:   "Only as I specify: you write the exact uses below, and an agent can run nothing else. Open: Builder may try any flags while mapping it.",
-			Detail: "Use Only as I specify for anything that could be destructive with the wrong flags. Builder can then read only the help for your uses and map only your lines, and an agent calls exactly that line with its values in the {placeholders}. Such a command runs directly as the server's account with no shell, the way a person's click runs, so a binary with its own saved login works. An Open command's actions run in the sandbox. Either way nothing reaches an agent until you turn Agents on, and a re-map turns it off again."},
+			Help:   "Builder explores the command with you either way. This decides how an agent's call runs once you approve the mapping.",
+			Detail: "Only the allowed uses: an agent runs exactly one of the lines below, filling only its {placeholders}. It runs directly as the server's account with no shell, the way a person's click runs, so a binary with its own saved login works. Use it for anything that could be destructive with the wrong flags.\n\nSandboxed: the mapped lines run in the sandbox, which a binary needing a saved login or files outside the store cannot work in.\n\nEither way nothing reaches an agent until you turn Agents on, and a re-map turns it off again."},
 		{Field: "guide", Type: "textarea", Label: "How to use it", Rows: 6,
 			Placeholder: "What it is for, the order of its steps, what each value means, where its output goes, what to watch for.",
 			Help:        "Optional, in markdown. Builder reads it to map the command, and agents read it where they list this store's commands.",
 			Detail:      "Runs in Show it how teach Builder the syntax; this says what runs cannot: that a signature is answered by someone in support, that a response is single-use, that output lands in a folder named after the archive. Changing it does not switch Agents off: it changes what agents are told, not what they can run."},
 		{Field: "allowed_uses", Type: "textarea", Label: "Allowed uses", Rows: 3, ShowWhen: "usage:!open",
 			Placeholder: "download --src={source} --dst={folder}",
-			Help:        "One per line: the arguments after the command, with {placeholders} for what the agent fills in.",
-			Detail:      "Each line becomes one tool an agent can call, running exactly that line. Each placeholder is filled with one value; a placeholder that names a folder in this store is proved to be inside it. A line with no placeholders is a fixed call."},
+			Help:        "One per line: the arguments after the command, with {placeholders} for what the agent fills in. Builder adds the lines it maps.",
+			Detail:      "Write lines here to tell Builder what to map, or leave it empty and let Builder work them out with you. Each line becomes one tool an agent can call, running exactly that line, and an agent can run nothing else. Each placeholder is filled with one value; a placeholder that names a file or folder in this store is proved to be inside it. A line with no placeholders is a fixed call. Removing a line stops agents running it."},
 	}
 }
 
