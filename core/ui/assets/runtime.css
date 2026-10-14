@@ -6761,7 +6761,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * Here a row is a list row (the tap size, the title at reading size and two
  * lines of it, its meta legible), sessions are told apart by a hairline, the
  * search is a field you can hit, and the list clears the home indicator. A
- * row's delete stays clear of its title. */
+ * row's delete stays clear of its title. The editors' document lists
+ * (.ui-tw-side, the code and article editors) are the same drawer below
+ * 700px and get the same rows there, below. */
 @media (max-width: 900px) {
   .ui-chat-side .ui-chat-side-h { padding: 0.6rem 0.7rem; }
   .ui-chat-side .ui-chat-side-search { margin: 0.5rem 0.6rem; padding: 0.55rem 0.7rem; }
@@ -6779,4 +6781,20 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 @media (max-width: 900px) and (pointer: coarse) {
   .ui-chat-side .ui-chat-side-item:not(.ui-chat-side-item-renable) { padding-right: 2.9rem; }
+}
+@media (max-width: 700px) {
+  .ui-tw-side .ui-tw-side-h { padding: 0.6rem 0.7rem; }
+  .ui-tw-side .ui-tw-side-list { padding: 0.25rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
+  .ui-tw-side .ui-chat-side-item {
+    min-height: var(--tap, 44px); align-items: center;
+    padding-top: 0.55rem; padding-bottom: 0.55rem;
+    margin-bottom: 0; border-radius: var(--btn-radius);
+  }
+  .ui-tw-side .ui-chat-side-item + .ui-chat-side-item {
+    box-shadow: 0 -1px 0 color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .ui-tw-side .ui-chat-side-title { font-size: var(--fs-md); line-height: 1.3; -webkit-line-clamp: 2; }
+}
+@media (max-width: 700px) and (pointer: coarse) {
+  .ui-tw-side .ui-chat-side-item { padding-right: 2.9rem; }
 }
