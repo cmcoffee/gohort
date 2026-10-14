@@ -5044,21 +5044,30 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 /* Phone: each row of the top bar is ONE line you swipe sideways, instead of
  * wrapping into a stack of three or four lines of buttons above the
- * conversation. The picker keeps its own line; the record actions and the
- * session toggles each get one, the whole width; page tiles (Build,
- * Security) shrink to one-line buttons on a line of their own under the
- * actions, rather than taking width from them. A fade on an edge says there is
+ * conversation. The picker keeps its own line and the record actions take
+ * the next, the whole width. Below them the session toggles (Private,
+ * Clean) sit on the left and the page tiles (Build, Security), shrunk to
+ * one-line buttons, on the right of the same line. The table's rows give
+ * way to a grid for this (rows display:contents), so the tiles' cell can
+ * sit on the second line. A fade on an edge says there is
  * more that way (set by the panel as the row scrolls). Menus opened from the
  * row live on <body>, so the scrolling row cannot clip them. */
 @media (max-width: 700px) {
   .ui-agent .ui-agent-top-bundle { gap: 0.15rem; padding: 0.35rem 0.5rem; }
-  .ui-agent .ui-agent-top-bundle-table,
-  .ui-agent .ui-agent-top-bundle-table tbody { display: block; width: 100%; }
-  .ui-agent .ui-agent-top-bundle-table tr { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; width: 100%; }
-  .ui-agent .ui-agent-top-bundle-table td { display: block; padding: 0.15rem 0; }
-  .ui-agent .ui-agent-top-bundle-table tr > td:first-child { flex: 1 1 auto; min-width: 0; }
-  .ui-agent .ui-agent-top-bundle-table td[rowspan] { flex: 1 0 100%; width: auto !important; padding: 0.15rem 0 0 !important; text-align: left !important; }
-  .ui-agent .ui-agent-top-bundle-table td[rowspan] > div { height: auto !important; justify-content: flex-start; flex-wrap: wrap; }
+  .ui-agent .ui-agent-top-bundle-table { display: block; width: 100%; }
+  .ui-agent .ui-agent-top-bundle-table tbody {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 0.5rem; row-gap: 0.3rem; align-items: center; width: 100%;
+  }
+  .ui-agent .ui-agent-top-bundle-table tr { display: contents; }
+  .ui-agent .ui-agent-top-bundle-table td { display: block; padding: 0 !important; min-width: 0; }
+  .ui-agent .ui-agent-top-bundle-table tr:first-child > td:first-child { grid-column: 1 / -1; grid-row: 1; }
+  .ui-agent .ui-agent-top-bundle-table td.ui-agent-top-bundle-row-2 { grid-column: 1; grid-row: 2; }
+  .ui-agent .ui-agent-top-bundle-table td[rowspan] {
+    grid-column: 2; grid-row: 2; justify-self: end;
+    width: auto !important; text-align: right !important;
+  }
+  .ui-agent .ui-agent-top-bundle-table td[rowspan] > div { height: auto !important; justify-content: flex-end; flex-wrap: nowrap; }
   .ui-agent .ui-agent-top-bundle .ui-agent-actions,
   .ui-agent .ui-agent-top-bundle .ui-agent-modes-in-bundle {
     flex-wrap: nowrap !important; overflow-x: auto; overflow-y: hidden;
