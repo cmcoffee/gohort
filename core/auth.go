@@ -2066,6 +2066,18 @@ func authPageHTML(title, body string) string {
     font-size: var(--fs-sm, 0.85rem); color: var(--accent); text-decoration: none;
   }
   .alt-link:hover { text-decoration: underline; }
+  /* These pages do not load the framework's stylesheet, so its touch rule
+     never reached them: the fields fell back to 0.95rem, under the 16px
+     below which an iPhone zooms into a focused field and stays zoomed. A
+     phone also gets the card's width back from its padding. */
+  @media (pointer: coarse) {
+    input[type="text"], input[type="email"], input[type="password"] { font-size: 16px; }
+  }
+  @media (max-width: 480px) {
+    body { padding: 12px; }
+    .auth-box { padding: 1.4rem 1.1rem; }
+    .ascii-logo { font-size: 2rem; }
+  }
 </style>
 </head>
 <body>

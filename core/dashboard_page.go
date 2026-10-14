@@ -445,6 +445,13 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     .grid { grid-template-columns: 1fr; gap: 0.75rem; }
     .cluster-grid { grid-template-columns: 1fr; gap: 0.75rem; }
     .card { padding: 1rem; }
+    /* The featured card and the group block kept their desktop size: 2.25rem
+       of padding and a 1.9rem title spent a phone's first screen on one card. */
+    .card-name { font-size: 1.1rem; }
+    .card.featured { padding: 1.25rem 1.1rem; }
+    .card.featured .card-name { font-size: 1.45rem; }
+    .cluster { padding: 0.8rem 0.7rem 0.9rem; }
+    .cluster-head { margin-bottom: 0.6rem; }
   }
   /* Theme overrides: re-point chrome surfaces to the active theme's tokens
      (injected above via %THEMECSS%). Additive + same selector specificity as
