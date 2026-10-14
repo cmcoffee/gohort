@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bgrun"
 	"github.com/cmcoffee/gohort/core/prompts"
 )
 
@@ -77,6 +78,8 @@ func (T *OrchestrateApp) installTaskRunner() {
 		// session id — so without this nothing could answer the only question
 		// the agent actually has: what did I start in HERE, and can I stop it.
 		RegisterBackgroundJob(sessionID, TaskRun{ID: run.ID, Label: label}, func() { run.Cancel() })
+		// Its progress, when it reports any, beside it in the live pill.
+		ctx = bgrun.WithTaskProgress(ctx, run.SetDetail)
 
 		// The task outlives the turn that spawned it, so its spend is its
 		// own — it cannot ride the turn's line, which has usually already

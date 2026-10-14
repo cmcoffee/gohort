@@ -250,7 +250,9 @@ func perActionToolDef(sess *ToolSession, tt *TempTool, act TempToolAction) Agent
 			if live == nil {
 				live = tt
 			}
-			return dispatchTempTool(sess, live, a2)
+			return dispatchAsAgent(sess, live, a2, tt.Name+"_"+act.Name, func(s *ToolSession) (string, error) {
+				return dispatchTempTool(s, live, a2)
+			})
 		},
 	}
 }
@@ -311,7 +313,9 @@ func newToolboxGroupedTool(tt *TempTool) *GroupedTool {
 					a2[k] = v
 				}
 				a2["action"] = act.Name
-				return dispatchTempTool(s, tt, a2)
+				return dispatchAsAgent(s, tt, a2, tt.Name, func(run *ToolSession) (string, error) {
+					return dispatchTempTool(run, tt, a2)
+				})
 			},
 		})
 	}
@@ -555,7 +559,13 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			if live := currentTempTool(sess, tt.Name); live != nil && capsSubset(tempToolCaps(live), caps) {
 				run = live
 			}
-			out, err := dispatchTempTool(sess, run, args)
+			out, err := dispatchAsAgent(sess, run, args, run.Name, func(s *ToolSession) (string, error) {
+				return dispatchTempTool(s, run, args)
+			})
+			if err == nil && isBackgroundNotice(out) {
+				// Moved to the background: there is no result yet to judge.
+				return out, nil
+			}
 			recordCleanRun(sess, run, out, err)
 			return adviseOnFailure(sess, run, out, err)
 		}),

@@ -94,6 +94,8 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 			Recipe:         tt.Recipe,
 			WorkspaceFiles: tt.WorkspaceFiles,
 			StatePath:      tt.StatePath,
+			// The toolbox's declared timeout covers its commands too.
+			TimeoutSec: tt.TimeoutSec,
 		}
 		// liveRequired leaves a shell action's list untouched, so this is the
 		// author's list either way — routed through the one function so a

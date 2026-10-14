@@ -140,6 +140,7 @@ type Run struct {
 	label     string
 	round     int
 	lastTool  string
+	detail    string // a background run's latest progress line
 	parentID  string // the run that spawned this one (a delegating turn); "" for a top-level turn
 	bgLabel   string // what an open page says this run is doing for its session (WorkFor)
 }
@@ -199,6 +200,14 @@ func (r *Run) SetProgress(round int, tools []ToolCall) {
 	}
 }
 
+// SetDetail records a background run's latest progress line, as
+// bgrun.ReportTaskProgress hands it over. Only the latest is kept.
+func (r *Run) SetDetail(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.detail = line
+}
+
 // RunSnapshot is a lock-free copy of a run's activity view.
 type RunSnapshot struct {
 	ID        string
@@ -211,6 +220,7 @@ type RunSnapshot struct {
 	Status    string
 	Round     int
 	LastTool  string
+	Detail    string // what a background run last said about its progress
 	StartedAt time.Time
 	EndedAt   time.Time
 	ParentID  string // "" for a top-level turn
@@ -229,7 +239,7 @@ func (r *Run) Snapshot() RunSnapshot {
 	return RunSnapshot{
 		ID: r.ID, UserID: r.UserID, AgentID: r.AgentID, SessionID: r.SessionID,
 		Kind: r.kind, AgentName: r.agentName, Label: r.label,
-		Status: r.status, Round: r.round, LastTool: r.lastTool,
+		Status: r.status, Round: r.round, LastTool: r.lastTool, Detail: r.detail,
 		StartedAt: r.startedAt, EndedAt: r.endedAt, ParentID: r.parentID,
 		Cancellable: r.cancel != nil,
 	}

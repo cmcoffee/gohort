@@ -21,6 +21,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -275,6 +276,11 @@ type ShellRun struct {
 	// Both empty means no hook, and the command's gohort.fetch raises HookError.
 	HookCapabilities []string
 	HookSession      any
+	// Tee, when set, also receives the command's output as it is produced,
+	// stdout and stderr together, in the order the command wrote them. The
+	// result still carries the whole output. It is how a caller watching a
+	// long run sees it is alive (and how much it has said) before it ends.
+	Tee io.Writer
 }
 
 // withHookPath returns a copy whose Env carries the hook path, which always
@@ -459,8 +465,14 @@ func runSandboxedShellWithBinds(ctx context.Context, spec ShellRun) SandboxedShe
 	c := built.Cmd
 
 	var buf bytes.Buffer
-	c.Stdout = &buf
-	c.Stderr = &buf
+	// One writer for both streams, so exec copies them through a single pipe
+	// and the tee sees the same interleaving the buffer keeps.
+	var out io.Writer = &buf
+	if spec.Tee != nil {
+		out = io.MultiWriter(&buf, spec.Tee)
+	}
+	c.Stdout = out
+	c.Stderr = out
 	c.WaitDelay = sandboxWaitDelay
 	t0 := time.Now()
 	runErr := c.Run()

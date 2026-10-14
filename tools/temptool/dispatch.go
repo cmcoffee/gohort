@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bgrun"
 	// Imported directly rather than through a core alias: a shell run needs a
 	// working directory, and core is at its export ceiling.
 	"github.com/cmcoffee/gohort/core/sandbox"
@@ -526,8 +528,18 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// parent is what makes a Stop reach a command already running. The loop
 	// tests its own context only between rounds, so a handler that ignores
 	// cancellation is a handler the user cannot stop.
+	//
+	// Under a background-capable run (core/bgrun) the fixed limit
+	// gives way: the run is stopped when it goes quiet, not at a set time, and
+	// its output is copied to the run's activity as it is produced so that
+	// silence can be seen. A tool's own declared timeout still holds.
+	activity := bgrun.RunActivityFrom(sess.Context())
 	runTimeout := shellRunTimeout(tt)
 	ctx, cancel := context.WithTimeout(sess.Context(), runTimeout)
+	if activity != nil && tt.TimeoutSec <= 0 {
+		cancel()
+		ctx, cancel = context.WithCancel(sess.Context())
+	}
 	defer cancel()
 	// Wrap with the session's network connector so the sandbox
 	// applies --unshare-net when the calling turn is in private
@@ -636,6 +648,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	res := sandbox.RunSandboxedShellIn(ctx, sandbox.ShellRun{
 		Command: cmd, WorkspaceDir: workspaceDir, WorkDir: workDir,
 		Env: envArgs, Reach: scopedPaths,
+		Tee: teeTo(activity),
 		// The tool's own declaration that it needs raw TCP. Consulted only
 		// once the deployment closes the default; until then every command
 		// keeps the host's namespace, which is what has always happened.
@@ -830,6 +843,16 @@ func toolIsForeign(sess *ToolSession, tt *TempTool) bool {
 		}
 	}
 	return false
+}
+
+// teeTo is the run activity as a ShellRun.Tee, or nil when there is none: a
+// typed nil in an interface would not compare equal to nil and the sandbox
+// would write into it.
+func teeTo(a *bgrun.RunActivity) io.Writer {
+	if a == nil {
+		return nil
+	}
+	return a
 }
 
 // shellRunTimeout is how long a shell tool's command may run: the general cap,

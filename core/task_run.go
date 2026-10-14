@@ -299,6 +299,12 @@ func TakeFrameworkResultMark(s string) (string, bool) {
 // image taught the model to say "here it is"; this one must teach it to say "I
 // have started it" — and a model that gets that backwards either promises an
 // image that isn't there or silently redoes a fifteen-minute render.
+// StartedNotice is the notice a call that moved to the background hands the
+// model in place of its result, for a run with no measured duration to quote.
+// The one wording, so a subpackage that detaches work says exactly what
+// task_detach.go does.
+func (run TaskRun) StartedNotice() string { return MarkFrameworkResult(detachedNotice(run, 0)) }
+
 func detachedNotice(run TaskRun, typical time.Duration) string {
 	var b strings.Builder
 	b.WriteString("STARTED, NOT FINISHED. It is running in the background as task " + run.ID)

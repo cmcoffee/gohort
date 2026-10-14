@@ -103,6 +103,11 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 				if s.Round == 0 && s.LastTool == "" {
 					status += " - " + shortElapsed(time.Since(s.StartedAt))
 				}
+				// And how far it has got, when it says: a command in the
+				// background reports how much it has printed and its latest line.
+				if s.Detail != "" {
+					status += " - " + s.Detail
+				}
 				label := s.Label
 				if label == "" {
 					label = name
