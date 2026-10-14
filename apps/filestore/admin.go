@@ -179,6 +179,21 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							},
 						},
 
+						ui.Card{HTML: folderPanelHeading("Pull cases in",
+							"Copies a prepared case in from the store set under Settings, Pull cases from. The copy lands whole or not at all, and the other store keeps its own. An agent with this store attached can pull the same way.")},
+						ui.ActionList{
+							Source:         "/filestore/api/pull/cases?slug={slug}",
+							LabelField:     "case",
+							DescField:      "desc",
+							HistoryField:   "history",
+							PostTo:         "/filestore/api/pull?slug={slug}&case={case}",
+							ButtonText:     "Pull",
+							ProgressSource: "/filestore/api/pull/progress?slug={slug}&case={case}",
+							CancelTo:       "/filestore/api/pull/cancel?slug={slug}&case={case}",
+							EmptyText:      "Nothing to pull: either no store is set under Settings, Pull cases from, or that store has no cases yet.",
+							Invalidate:     []string{"/filestore/api/stores"},
+						},
+
 						ui.Card{HTML: folderPanelHeading("Who may reach it", "")},
 						ui.ACLPicker(ui.ACLPickerConfig{
 							OptionsSource: "/admin/api/user-candidates",
@@ -275,6 +290,11 @@ func storeFormFields() []ui.FormField {
 		{Field: "max_gb", Type: "number", Label: "Size cap (GB)", Min: 0,
 			Help:   "0 is no cap. Work that would take the store past it is refused.",
 			Detail: "Uploads, commands and copies into the store are refused once it is full, saying how full it is. Nothing is deleted to make room. Separate from the free-space floor every write on the disk keeps (Admin, Limits)."},
+		{Field: "pull_from", Type: "select", Label: "Pull cases from", OptionsSource: "/filestore/api/store-options",
+			Help:   "Optional: another store this one copies prepared cases in from.",
+			Detail: "For a store agents read that takes its cases from a private working store. The link is the permission: an agent with THIS store attached can pull a case from that one by name, and sees that store's case names but never its contents. Copies, never moves: the other store keeps its own until its lifetime or retention removes it."},
+		{Field: "pull_subpath", Type: "text", Label: "Part of each case to copy", Placeholder: "prepared", ShowWhen: "pull_from",
+			Help: "The folder inside each case that holds the extractor's output. prepared when empty; a single dot copies the whole case."},
 		{Field: "description", Type: "textarea", Label: "What lands here", Rows: 2,
 			Help:   "Optional, and worth writing: it tells the agent when to reach for THIS store.",
 			Detail: "It is pasted into the agent's tool descriptions. For example: \"Customer support bundles, one folder per ticket, uploaded by the support team.\""},
@@ -306,6 +326,26 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/commands/approve", T.handleCommandApprove)
 	T.HandleFunc("/api/commands/mapping", T.handleCommandMapping)
 	T.HandleFunc("/api/folders", T.handleFolders)
+	T.HandleFunc("/api/pull", T.handlePull)
+	T.HandleFunc("/api/store-options", T.handleStoreOptions)
+	T.HandleFunc("/api/pull/", T.handlePull)
+}
+
+// handleStoreOptions lists the stores for the Pull cases from picker, with a
+// first choice of none.
+func (T *FileStoreApp) handleStoreOptions(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok || !adminOnly(w, r) {
+		return
+	}
+	out := []map[string]any{{"value": "", "label": "(none)"}}
+	for _, st := range ListStores(T.DB) {
+		label := st.Name
+		if st.Ephemeral {
+			label += " (temporary)"
+		}
+		out = append(out, map[string]any{"value": st.Slug, "label": label})
+	}
+	writeJSON(w, out)
 }
 
 // handleStores serves the table (GET), the editor (GET with slug),

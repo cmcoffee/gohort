@@ -87,6 +87,14 @@ type Store struct {
 	// eviction would remove what nobody chose to remove. 0 is no cap.
 	MaxGB int `json:"max_gb,omitempty"`
 
+	// PullFrom names another store (by slug) this one copies prepared cases
+	// in from, and PullSubpath the part of each case it takes ("prepared"
+	// unless set; "." for the whole case). The link is the grant: an agent
+	// with THIS store attached may pull from that one without it being
+	// attached, seeing its case names but not their contents. See pull.go.
+	PullFrom    string `json:"pull_from,omitempty"`
+	PullSubpath string `json:"pull_subpath,omitempty"`
+
 	// Toolboxes is dead weight kept for one reason: an existing deployment's
 	// attachments have to be readable ONCE so they can be carried onto the
 	// commands they belonged to. See MigrateToolboxesOntoCommands, which
@@ -186,6 +194,9 @@ func SaveStore(db Database, s Store) (Store, error) {
 	}
 	if s.MaxGB < 0 {
 		s.MaxGB = 0
+	}
+	if err := validatePull(db, s); err != nil {
+		return s, err
 	}
 	if strings.TrimSpace(s.Slug) == "" {
 		s.Slug = RefToolSlug(s.Name)

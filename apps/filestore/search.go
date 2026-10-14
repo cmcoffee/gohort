@@ -707,7 +707,9 @@ func ListFolders(root string) ([]Folder, error) {
 	}
 	var out []Folder
 	for _, e := range entries {
-		if !e.IsDir() {
+		// A dot-folder is not a case: a pull's staging folder is one, and
+		// listing it would offer a half-copied case as if it were there.
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		b := Folder{Name: e.Name()}

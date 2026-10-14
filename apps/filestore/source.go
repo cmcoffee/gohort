@@ -213,7 +213,11 @@ func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 	if !ok {
 		return tools
 	}
-	return append(tools, s.commandToolDefs(sess, user, st)...)
+	tools = append(tools, s.commandToolDefs(sess, user, st)...)
+	if pull, ok := s.app.pullToolDef(sess, user, st); ok {
+		tools = append(tools, pull)
+	}
+	return tools
 }
 
 // ItemTools is the session-less form, for a caller that only wants to know
