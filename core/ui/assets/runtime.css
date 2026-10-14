@@ -72,18 +72,24 @@ select:-webkit-autofill {
  *
  *   .my-toolbar { --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm); }
  *
- * On a touch screen both sizes grow: the full size to a thumb-sized 44px,
- * the dense one to 30px. Dense is for places that fill up with buttons (a
- * toolbar, a row's actions, a message's actions), where every button at
- * full size would bury what they act on; the full size is for the buttons
- * that stand alone, like a modal's OK and Cancel. */
+ * On a touch screen the sizes are three: a button 36px, a dense one 30px,
+ * and a big one 44px (--btn-h-lg). Dense is for places that fill up with
+ * buttons (a toolbar, a row's actions, a message's actions), where every
+ * button at full size would bury what they act on. Big is kept for the
+ * buttons that answer a question: a modal's OK and Cancel, a confirm
+ * dialog, an approval card, a form's Save and a wizard's Back and Next. */
 :root {
   --btn-h: 2.125rem;    --btn-px: 0.8rem;     --btn-fs: var(--fs-sm);
   --btn-h-sm: 1.625rem; --btn-px-sm: 0.55rem; --btn-fs-sm: var(--fs-xs);
   --btn-radius: 6px;
 }
 @media (pointer: coarse) {
-  :root { --btn-h: var(--tap, 44px); --btn-h-sm: 1.875rem; }
+  :root { --btn-h: 2.25rem; --btn-h-sm: 1.875rem; --btn-h-lg: var(--tap, 44px); }
+  /* The answers: the big size, as the containers (and the one button) that
+   * hold them set the token their buttons read. */
+  :is(.ui-modal-footer, .ui-modal-actions, .ui-form-modal-actions, .ui-cw-modal-btns,
+      .ui-agent-confirm-btns, .ui-ask-actions, .ui-wizard-nav),
+  .ui-form-submit { --btn-h: var(--btn-h-lg); }
 }
 :where(.ui-row-btn, .ui-pl-btn, .ui-btn-primary, .ui-watch-action, .ui-watch-cancel,
     .ui-keys-new, .ui-keys-form button, .ui-keys-revealed-row button, .ui-mem-add,
