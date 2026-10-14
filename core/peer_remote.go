@@ -59,8 +59,16 @@ type RemotePeer struct {
 	// "duckduckgo"). Shown to the operator because borrowing a free DuckDuckGo
 	// relay and borrowing a metered Serper key look identical otherwise.
 	SearchProvider string `json:"search_provider,omitempty"`
-	LastChecked    string `json:"last_checked,omitempty"`
-	LastError      string `json:"last_error,omitempty"`
+	// Models is what the peer's manifest says it runs for this instance: each
+	// tier's model and the backend serving it. The backend decides how a
+	// borrowed call asks for thinking (resolveModelProvider): vLLM ignores
+	// llama.cpp's token budget and reads an effort level instead, so a
+	// borrower that took every peer for llama.cpp sent a vLLM peer budgets it
+	// never read. Refreshed with the manifest; absent from an older record,
+	// which is treated as llama.cpp, as before.
+	Models      []PeerModelInfo `json:"models,omitempty"`
+	LastChecked string          `json:"last_checked,omitempty"`
+	LastError   string          `json:"last_error,omitempty"`
 	// ImageConnectors names the local rest_image connectors provisioned from
 	// this peer's advertised renderers. Stored rather than recomputed: teardown
 	// reads this list, so a connector the operator made themselves can never be
@@ -360,6 +368,7 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	if m.Search != nil {
 		p.SearchProvider = m.Search.Provider
 	}
+	p.Models = m.Models
 	p.UseTokens = adoptPeerTokenFlow(p, m)
 	// Renderers become local backends immediately. A peer that announces it
 	// offers rendering and then does not appear in the picker is indisputably
@@ -487,6 +496,7 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 		p, _ = GetRemotePeer(p.Name)
 	}
 	m, err := ProbeRemotePeer(ctx, p.BaseURL, PeerCredential(p))
+	backendsBefore := peerBackendsKey(p.Models)
 	p.LastChecked = time.Now().Format(time.RFC3339)
 	if err != nil {
 		p.LastError = err.Error()
@@ -519,6 +529,22 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	// that was never asked.
 	if servesCap(m, PeerCapInvestigate) {
 		p.Investigable = m.Investigable
+	}
+	// The same rule for the models it runs: replaced when the far side said
+	// what it serves, kept when it said nothing about models this time.
+	if servesCap(m, PeerCapModels) {
+		p.Models = m.Models
+	}
+	// The worker or lead borrowing this peer's model was built for the
+	// backend it had: rebuild them when that changed, so a peer first seen
+	// running vLLM (or moved off it) is asked the right way from now on, not
+	// from the next restart or settings save.
+	if peerBackendsKey(p.Models) != backendsBefore && peerServesAnLLMTier(p.Name) {
+		defer func() {
+			if rerr := ReloadLLMs(); rerr != nil {
+				Log("[peer] %q now runs %s; rebuilding the LLMs that borrow it failed: %v", p.Name, peerBackendsKey(p.Models), rerr)
+			}
+		}()
 	}
 	// A grant revoked on the far side stops offering a renderer here at the
 	// next check, rather than leaving a backend in the picker that 403s.
@@ -871,4 +897,26 @@ func resolveEmbeddingPeer(cfg EmbeddingConfig) EmbeddingConfig {
 		cfg.Model = p.EmbedModel
 	}
 	return cfg
+}
+
+// peerBackendsKey is a peer's models and their backends as one comparable
+// string, for noticing that a refresh changed them.
+func peerBackendsKey(models []PeerModelInfo) string {
+	var parts []string
+	for _, m := range models {
+		parts = append(parts, m.Tier+"="+m.Model+"@"+m.Provider)
+	}
+	return strings.Join(parts, ",")
+}
+
+// peerServesAnLLMTier reports whether the worker or the lead names this peer
+// as its provider.
+func peerServesAnLLMTier(name string) bool {
+	for _, table := range []string{LLMTable, LeadLLMTable} {
+		provider, _ := tierProviderEndpoint(table)
+		if strings.EqualFold(strings.TrimSpace(peerNameFromProvider(provider)), strings.TrimSpace(name)) {
+			return true
+		}
+	}
+	return false
 }

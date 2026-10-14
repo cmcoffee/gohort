@@ -654,10 +654,30 @@ func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderCo
 		return cfg, fmt.Errorf("peer %q does not offer inference (it offers: %s)",
 			p.Name, strings.Join(p.Caps, ", "))
 	}
+	// The backend the peer runs the model on, as it said: vLLM asks for
+	// thinking differently from llama.cpp, and both are reached through the
+	// same proxy. Anything else, or a peer that has not said, is llama.cpp,
+	// as it always was.
 	cfg.Provider = "llama.cpp"
+	if p.ModelBackend(cfg.Model) == "vllm" {
+		cfg.Provider = "vllm"
+	}
 	cfg.Endpoint = p.ModelsURL()
 	cfg.APIKey = PeerCredential(p)
 	return cfg, nil
+}
+
+// ModelBackend is the backend the peer said serves model, or "" when it has
+// not said. An empty model is the peer's worker, which is what the peer
+// serves a request that names none (resolvePeerTier).
+func (p RemotePeer) ModelBackend(model string) string {
+	model = strings.TrimSpace(model)
+	for _, m := range p.Models {
+		if (model != "" && m.Model == model) || (model == "" && m.Tier == "worker") {
+			return strings.TrimSpace(m.Provider)
+		}
+	}
+	return ""
 }
 
 // --- the model's wording -----------------------------------------------------

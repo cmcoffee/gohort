@@ -295,7 +295,8 @@ func TestLlamacppEffortTableIsClampedByTheCeiling(t *testing.T) {
 		level   string
 		want    int
 	}{
-		{0, "low", 512}, {0, "medium", 2048}, {0, "high", 4096},
+		{0, "low", 512}, {0, "medium", 4096}, {0, "high", 8192},
+		{4096, "low", 512}, {4096, "medium", 4096}, {4096, "high", 4096},
 		{1024, "low", 512}, {1024, "medium", 1024}, {1024, "high", 1024},
 	} {
 		oc := &openAIClient{llamacpp: true, llamacppBudget: c.ceiling}
@@ -363,7 +364,7 @@ func TestLlamacppEffortReachesTheChatTemplate(t *testing.T) {
 // think briefly sent neither and the template reasoned at xhigh, its default.
 func TestVLLMBudgetBecomesTheEffortItStandsFor(t *testing.T) {
 	oc := &openAIClient{llamacpp: true, vllm: true, noThinkUseKwarg: true}
-	for budget, want := range map[int]string{256: "low", 1024: "low", 2048: "medium", 3072: "medium", 4096: "xhigh", 16000: "xhigh"} {
+	for budget, want := range map[int]string{256: "low", 1536: "low", 2048: "medium", 4096: "medium", 6144: "medium", 8192: "xhigh", 16000: "xhigh"} {
 		cfg := effortCfg(WithEffort("high"), WithThinkBudget(budget))
 		resolveEffort(&cfg, "", "")
 		if kw := oc.llamacppChatTemplateKwargs(cfg); kw["reasoning_effort"] != want {

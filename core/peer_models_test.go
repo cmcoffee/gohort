@@ -761,3 +761,61 @@ func TestABorrowedModelCallCarriesItsLane(t *testing.T) {
 		t.Errorf("a call with no lane is served as %q, want interactive (never held, as before)", got)
 	}
 }
+
+// A peer that runs its model on vLLM says so in its manifest, the borrower
+// records it, and a worker borrowing that model is built as a vLLM client:
+// vLLM ignores llama.cpp's token budget and reads an effort level, so taking
+// every peer for llama.cpp sent a vLLM peer budgets it never read. A record
+// from before the manifest said, or a model on llama.cpp, stays llama.cpp.
+func TestAPeerRunningVLLMIsAskedTheVLLMWay(t *testing.T) {
+	db := peerModelDB(t)
+	setTier(db, LLMTable, "vllm", "qwen-27b", "http://127.0.0.1:8000/v1")
+	pk, err := MintPeerKey("mac", []string{PeerCapModels}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
+	mux.HandleFunc("/api/peer/v1/token", HandlePeerToken)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	p, err := SaveRemotePeer(t.Context(), "den", srv.URL, pk.Key)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if p.ModelBackend("qwen-27b") != "vllm" || p.ModelBackend("") != "vllm" {
+		t.Fatalf("the peer's backend was not recorded: %+v", p.Models)
+	}
+	for _, model := range []string{"qwen-27b", ""} {
+		got, err := ResolveModelProvider(LLMProviderConfig{Provider: PeerProviderValue("den"), Model: model}, PeerProviderValue("den"))
+		if err != nil || got.Provider != "vllm" {
+			t.Errorf("model %q on a vLLM peer resolved to %q (%v)", model, got.Provider, err)
+		}
+	}
+
+	putTestPeer(RemotePeer{Name: "old", BaseURL: "https://old.example", Key: "k", Caps: []string{PeerCapModels}})
+	if got, _ := ResolveModelProvider(LLMProviderConfig{Provider: PeerProviderValue("old")}, PeerProviderValue("old")); got.Provider != "llama.cpp" {
+		t.Errorf("a peer that never said resolved to %q, want llama.cpp as before", got.Provider)
+	}
+	putTestPeer(RemotePeer{Name: "mixed", BaseURL: "https://mixed.example", Key: "k", Caps: []string{PeerCapModels},
+		Models: []PeerModelInfo{{Tier: "worker", Model: "small", Provider: "vllm"}, {Tier: "lead", Model: "big", Provider: "llama.cpp"}}})
+	if got, _ := ResolveModelProvider(LLMProviderConfig{Provider: PeerProviderValue("mixed"), Model: "big"}, PeerProviderValue("mixed")); got.Provider != "llama.cpp" {
+		t.Errorf("the peer's llama.cpp model resolved to %q", got.Provider)
+	}
+}
+
+// A refresh notices when a peer's backends changed, and only for a peer the
+// worker or lead borrows does that rebuild them.
+func TestAChangedBackendIsNoticedForTheTiersThatBorrowIt(t *testing.T) {
+	db := peerModelDB(t)
+	a := []PeerModelInfo{{Tier: "worker", Model: "q", Provider: "llama.cpp"}}
+	b := []PeerModelInfo{{Tier: "worker", Model: "q", Provider: "vllm"}}
+	if peerBackendsKey(a) == peerBackendsKey(b) || peerBackendsKey(a) != peerBackendsKey(append([]PeerModelInfo(nil), a...)) {
+		t.Error("a backend change is not told apart from no change")
+	}
+	setTier(db, LLMTable, PeerProviderValue("Den"), "q", "")
+	if !peerServesAnLLMTier("den") || peerServesAnLLMTier("elsewhere") {
+		t.Error("the worker's peer is not recognised, or another peer is taken for it")
+	}
+}

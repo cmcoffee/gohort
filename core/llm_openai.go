@@ -300,13 +300,17 @@ func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
 }
 
 // llamacppEffortBudgets is what an effort level buys on llama.cpp. Sized for
-// Qwen 3.6, which fills whatever it is given: high is the framework default
-// (4096, the model's practical sweet spot), and low is the same allowance the
-// no-think path already trusts for short classifier-style calls.
+// Qwen, which fills whatever it is given. Medium is 4096, the allowance found
+// to be the model's practical sweet spot, so the everyday default reasons that
+// much; high is 8192, the model card's safe ceiling, for the turns that need
+// it; low stays at the allowance the no-think path already trusts for short
+// classifier-style calls, which are what ask for it. The tier's thinking
+// budget is still the hard ceiling: high reaches 8192 only where that is set
+// at least that high.
 var llamacppEffortBudgets = map[string]int{
 	effortLow:    512,
-	effortMedium: 2048,
-	effortHigh:   4096,
+	effortMedium: 4096,
+	effortHigh:   8192,
 }
 
 // templateEffortLevels names each effort level the way a llama.cpp chat
@@ -337,9 +341,9 @@ func (c *openAIClient) vllmBudgetEffort(cfg ChatConfig) string {
 	}
 	level := effortHigh
 	switch {
-	case b <= 1024:
+	case b <= 1536:
 		level = effortLow
-	case b <= 3072:
+	case b <= 6144:
 		level = effortMedium
 	}
 	if m := normEffort(c.effort.max); m != "" && effortRank(level) > effortRank(m) {
