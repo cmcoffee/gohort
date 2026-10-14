@@ -258,6 +258,9 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     background: rgba(99,102,241,0.10); border: 1px solid rgba(99,102,241,0.35);
     color: var(--text, #c9d1d9); font-size: var(--fs-lg, 0.95rem); line-height: 1.5;
   }
+  /* The notices' holder is full width so each notice can size itself to the
+     grid's column (the body centres its children at their own width). */
+  .notices { width: 100%; }
   .notice span { min-width: 0; }
   .notice-act {
     align-self: flex-start; text-decoration: none; font-weight: 600; font-size: var(--fs-md, 0.9rem);
@@ -421,12 +424,16 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     }
     /* Masthead spans both regions and stays centred over them. */
     .ascii-logo, .subtitle { grid-column: 1 / -1; justify-self: center; }
+    /* The notices get a row of their own across both regions, above the
+       cards. Left to auto-placement they had no free cell before the cards'
+       pinned row and landed after it, at the bottom of the page. */
+    .notices { grid-column: 1 / -1; grid-row: 3; }
     /* The grid drops its cap and fills its region: auto-fill then decides the
        column count from the space it actually has, which is the whole point of
        auto-fill and was never reachable behind a fixed max-width. */
-    .grid { grid-column: 1; grid-row: 3; max-width: none; }
+    .grid { grid-column: 1; grid-row: 4; max-width: none; }
     #live-panel {
-      grid-column: 2; grid-row: 3;
+      grid-column: 2; grid-row: 4;
       max-width: none; margin-top: 0;
       position: sticky; top: 72px;
     }
@@ -516,7 +523,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 <span class="r3"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0">█   █</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">█  █ </span> <span class="lt" style="--i:5">  █  </span></span>
 <span class="r4"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0"> ███ </span> <span class="lt" style="--i:1"> ███ </span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3"> ███ </span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">  █  </span></span></div>
   <p class="subtitle">Your models. Your agents. Your rules.</p>
-  %NOTICES%
+  <div class="notices">%NOTICES%</div>
   <div class="grid">%CARDS%</div>
   <div id="live-panel"><h3><a href="/monitor" style="color:inherit;text-decoration:none">Live Sessions &rarr;</a></h3><div id="live-list"></div></div>
 <script>
