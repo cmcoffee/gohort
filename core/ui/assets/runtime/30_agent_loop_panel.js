@@ -643,7 +643,7 @@
                 });
                 segOpts.forEach(function(opt, oi) {
                   var active = String(row[item.state_field]) === String(opt.value);
-                  var segBtn = el('button', {type: 'button',
+                  var segBtn = el('button', {type: 'button', class: 'ui-agent-seg',
                     style: 'padding:0.22rem 0.6rem;border:none;' + (oi ? 'border-left:1px solid var(--border, rgba(127,127,127,0.35));' : '') + 'cursor:pointer;font:inherit;font-size:var(--fs-2xs, 0.73rem);white-space:nowrap;' +
                       (active ? 'background:var(--accent, #4a9eff);color:var(--text-on-accent, #fff);font-weight:600' : 'background:transparent;color:var(--text-mute, #999)'),
                     onclick: function(ev) {
@@ -840,8 +840,7 @@
             // Distinct from "Nothing here yet": there IS something here, and
             // the reader hid it. Say which and give the way back, or a filtered
             // page is indistinguishable from an empty one.
-            var back = el('button', {type: 'button', class: 'ui-row-btn',
-              style: 'padding:0.15rem 0.55rem;font-size:var(--fs-xs, 0.74rem)',
+            var back = el('button', {type: 'button', class: 'ui-row-btn ui-btn-sm',
               onclick: function() {
                 chosen = filters.map(function() { return 0; });
                 query = '';
@@ -980,8 +979,8 @@
           });
           text = parts.length ? ('Filtered: ' + parts.join(', ')) : 'Filtered';
         }
-        var back = el('button', {type: 'button', class: 'ui-row-btn',
-          style: 'padding:0.15rem 0.55rem;font-size:var(--fs-xs, 0.74rem);flex:0 0 auto',
+        var back = el('button', {type: 'button', class: 'ui-row-btn ui-btn-sm',
+          style: 'flex:0 0 auto',
           onclick: function() { selectOrchNav(idx); }}, ['Show all']);
         var bar = el('div', {style: 'display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;' +
           'margin:0 0 0.5rem;padding:0.35rem 0.6rem;border:1px solid var(--accent, #4a9eff);' +
@@ -2919,22 +2918,10 @@
       bundleTable.appendChild(bundleTbody);
       topBundle.appendChild(bundleTable);
       wrap.insertBefore(topBundle, wrap.firstChild);
-      // Bypass CSS specificity battles by pinning the rail-button
-      // dimensions directly on each action button. Color, border and
-      // BACKGROUND are left UNSET inline so each variant's CSS still
-      // wins: .ui-row-btn.danger keeps its red text/border, .primary
-      // keeps its accent fill, .copied its flash. The flat look for the
-      // rest is the stylesheet's (.ui-agent-top-bundle .ui-agent-actions
-      // .ui-row-btn:not(.primary)). An inline transparent background
-      // stripped the primary's fill and left its on-accent text, which
-      // on a theme with dark on-accent text was dark text on a dark bar.
-      actionsBar.querySelectorAll('button').forEach(function(b) {
-        b.style.borderRadius = '6px';
-        b.style.padding = '0.2rem 0.55rem';
-        b.style.fontSize = '0.75rem';
-        b.style.minWidth = '0';
-        b.style.minHeight = '0';
-      });
+      // The action buttons' compact size is the stylesheet's
+      // (.ui-agent-top-bundle .ui-agent-actions button), not pinned here
+      // inline: inline sizes beat every rule, the touch floor included, so
+      // they stayed 22px tall on a phone.
       // On a phone these rows scroll sideways rather than wrap (runtime.css);
       // the fade marks the side there is more on.
       edgeFade(actionsBar);

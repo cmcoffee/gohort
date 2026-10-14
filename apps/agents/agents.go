@@ -484,6 +484,7 @@ const intakeFormAssets = `<style>
 .ui-orch-intake-button {
   padding: 0.35rem 0.8rem; font-size: var(--fs-sm, 0.85rem);
 }
+@media (pointer: coarse) { .ui-orch-intake-button { min-height: var(--btn-h-sm, 2.25rem); } }
 /* History-view state: buttons disabled inside the user bubble after
  * submit. .selected highlights the choice the user actually made;
  * the rest grey out so the choice is clear and the row reads as
@@ -936,11 +937,16 @@ const dashboardBarCSS = `<style>
 }
 .ui-agent-actions .ui-row-btn,
 .ui-agent-actions button {
-  min-width: 0 !important; min-height: 0 !important;
   padding: 0.2rem 0.55rem !important;
   font-size: var(--fs-xs, 0.75rem) !important;
-  border-radius: 6px !important;
+  border-radius: var(--btn-radius, 6px) !important;
   background: transparent !important;
+}
+/* Compact on a desktop. Not on a touch screen, where they keep the
+   framework's compact tap size: forcing 0 there made them 22px. */
+@media not all and (pointer: coarse) {
+  .ui-agent-actions .ui-row-btn,
+  .ui-agent-actions button { min-width: 0 !important; min-height: 0 !important; }
 }
 </style>`
 
@@ -1086,7 +1092,6 @@ const docsModalScript = `<script>
       upInp.accept = '.pdf,.docx,.doc,.txt,.md,.log,.csv,.json,.yaml,.yml,.html,.htm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/json,text/plain,text/markdown,text/csv,text/html';
       upInp.style.cssText = 'flex:1;min-width:0;font-size:var(--fs-sm, 0.8rem)';
       var upBtn = document.createElement('button'); upBtn.type = 'button'; upBtn.className = 'ui-row-btn primary';
-      upBtn.style.cssText = 'padding:0.3rem 0.7rem;font-size:var(--fs-sm, 0.8rem)';
       upBtn.textContent = 'Upload';
       upBtn.disabled = true;
       upInp.addEventListener('change', function(){ upBtn.disabled = !(upInp.files && upInp.files[0]); });

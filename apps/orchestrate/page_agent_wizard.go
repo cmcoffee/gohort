@@ -543,6 +543,7 @@ func wizardAdvancedLinkHTML() string {
 	return `<style>
 #agent-adv-link{font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-decoration:none;align-self:center;margin-left:.7rem;border:1px solid var(--border);border-radius:999px;padding:.2rem .65rem;white-space:nowrap}
 #agent-adv-link:hover{color:var(--accent);border-color:var(--accent)}
+@media (pointer: coarse){#agent-adv-link{display:inline-flex;align-items:center;min-height:var(--btn-h-sm, 2.25rem)}}
 </style>
 <script>
 (function(){
@@ -578,6 +579,7 @@ func wizardSkipLinkHTML(hasShared bool) string {
 	return fmt.Sprintf(`<style>
 #agent-skip-link{font-size:var(--fs-xs, 0.78rem);color:var(--accent);text-decoration:none;align-self:center;margin-left:.55rem;border:1px solid var(--accent);border-radius:999px;padding:.2rem .65rem;white-space:nowrap;opacity:.9}
 #agent-skip-link:hover{opacity:1}
+@media (pointer: coarse){#agent-skip-link{display:inline-flex;align-items:center;min-height:var(--btn-h-sm, 2.25rem)}}
 </style>
 <script>
 (function(){
@@ -1058,7 +1060,7 @@ const wizardDraftTimeout = 150 * time.Second
 func wizardDescribeHTML() string {
 	return `<style>
 #wiz-describe{margin:0 0 1rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
-#wiz-describe .ui-btn{white-space:nowrap}
+#wiz-describe .ui-row-btn{white-space:nowrap}
 .wd-hint{font-size:var(--fs-sm, .85rem);opacity:.75}
 .wd-card{border:1px solid var(--border);border-radius:6px;padding:.7rem .8rem;margin:.6rem 0;background:var(--bg-2)}
 .wd-card h4{margin:0 0 .2rem;font-size:var(--fs-lg, 1rem)}
@@ -1085,8 +1087,8 @@ func wizardDescribeHTML() string {
       mount:function(body,api){
         var out=el('div');
         var input=el('textarea',{placeholder:'For example: something that answers questions from our handbook, or watches our status page and tells me when it goes down.'});
-        var go=el('button',{type:'button',class:'ui-btn primary',text:'Show me'});
-        var close=el('button',{type:'button',class:'ui-btn',text:'Cancel'});
+        var go=el('button',{type:'button',class:'ui-row-btn primary',text:'Show me'});
+        var close=el('button',{type:'button',class:'ui-row-btn',text:'Cancel'});
         close.onclick=function(){api.close();};
         var proposal=null;
 
@@ -1129,7 +1131,7 @@ func wizardDescribeHTML() string {
           (d.asks||[]).forEach(function(q,i){ out.appendChild(askRow(q,i)); });
           out.appendChild(el('p',{class:'wd-hint',text:'Leave the questions blank to take it exactly as described. Answering them tailors what it says.'}));
 
-          var create=el('button',{type:'button',class:'ui-btn primary',text:'Create it'});
+          var create=el('button',{type:'button',class:'ui-row-btn primary',text:'Create it'});
           create.onclick=function(){
             var answers=[];
             var inps=out.querySelectorAll('input[data-ask]');
@@ -1183,7 +1185,7 @@ func wizardDescribeHTML() string {
     var host=document.querySelector('.ui-section .ui-section-body') || document.querySelector('.ui-section');
     if(host){
       var bar=el('div',{id:'wiz-describe'});
-      var b=el('button',{type:'button',class:'ui-btn',text:'Describe it instead'});
+      var b=el('button',{type:'button',class:'ui-row-btn',text:'Describe it instead'});
       b.onclick=open;
       bar.appendChild(b);
       bar.appendChild(el('span',{class:'wd-hint',text:'Say what you want in a sentence and see the agent before answering anything.'}));

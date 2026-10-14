@@ -717,10 +717,10 @@ func agentAssistHTML(id string) string {
         var log=el('div',{class:'aa-log'});
         var changes=el('div');
         var input=el('textarea',{placeholder:'What should be different? For example: it keeps answering from memory, make it stick to sources.'});
-        var send=el('button',{type:'button',class:'ui-btn primary',text:'Ask'});
-        var apply=el('button',{type:'button',class:'ui-btn',text:'Apply selected'});
+        var send=el('button',{type:'button',class:'ui-row-btn primary',text:'Ask'});
+        var apply=el('button',{type:'button',class:'ui-row-btn',text:'Apply selected'});
         apply.style.display='none';
-        var close=el('button',{type:'button',class:'ui-btn',text:'Close'});
+        var close=el('button',{type:'button',class:'ui-row-btn',text:'Close'});
         close.onclick=function(){api.close();};
 
         function say(role,text){

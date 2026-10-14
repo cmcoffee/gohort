@@ -781,7 +781,8 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 .acct-tok-name { font-weight:600; color:var(--text); }
 .acct-tok-sub { font-size:var(--fs-xs, 0.75rem); color:var(--text-mute); margin-top:0.1rem; }
 .acct-tok-code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-.acct-tok-btn { cursor:pointer; background:var(--bg-2); color:var(--text-mute); border:1px solid var(--border); border-radius:6px; padding:0.3rem 0.7rem; font:inherit; font-size:var(--fs-sm, 0.8rem); }
+.acct-tok-btn { cursor:pointer; background:var(--bg-2); color:var(--text-mute); border:1px solid var(--border); border-radius:var(--btn-radius, 6px); padding:0.3rem 0.7rem; font:inherit; font-size:var(--fs-sm, 0.8rem); }
+@media (pointer: coarse) { .acct-tok-btn { min-height:var(--btn-h-sm, 2.25rem); } }
 .acct-tok-btn:hover { color:var(--danger); border-color:var(--danger); }
 .acct-tok-newrow { display:flex; gap:0.4rem; margin-top:0.3rem; }
 .acct-tok-input { flex:1; background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-sm, 0.85rem); }

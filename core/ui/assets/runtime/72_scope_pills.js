@@ -25,6 +25,7 @@
   function makePill(label, on, primary, onToggle, partial) {
     var b = document.createElement('button');
     b.type = 'button';
+    b.className = 'ui-scope-pill';
     var border = on ? 'var(--accent,#6366f1)' : (partial ? 'var(--accent,#6366f1)' : 'var(--border,#3a3a4a)');
     var color = on ? '#fff' : (partial ? 'var(--accent,#6366f1)' : 'var(--text,#cfd0d8)');
     b.style.cssText =
@@ -91,6 +92,7 @@
         if (state.primary && state.primary.on && items.length && !itemsExpanded) {
           var more = document.createElement('button');
           more.type = 'button';
+          more.className = 'ui-scope-more';
           more.style.cssText =
             'border:none;background:none;color:var(--text-mute,#888);cursor:pointer;' +
             'font-size:var(--fs-xs, 0.78rem);padding:0.28rem 0.4rem;text-decoration:underline dotted';

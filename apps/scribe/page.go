@@ -502,15 +502,17 @@ const guideSectionCtrlCSS = `<style>
 .guide-sec-ctrls + h2 { padding-right: 5.5rem; }
 .guide-sec-btn {
   cursor: pointer; background: var(--bg-2); color: var(--text-mute);
-  border: 1px solid var(--border); border-radius: 6px; padding: 0.12rem 0.45rem;
+  border: 1px solid var(--border); border-radius: var(--btn-radius, 6px); padding: 0.12rem 0.45rem;
   font-size: var(--fs-xs, 0.74rem); font-weight: 600; line-height: 1.4;
 }
+/* A touch screen gets the framework's compact tap size. */
+@media (pointer: coarse) { .guide-sec-btn { min-height: var(--btn-h-sm, 2.25rem); padding: 0.3rem 0.65rem; } }
 .guide-sec-btn:hover { color: var(--accent); border-color: var(--accent); }
 .guide-sec-del:hover { color: var(--danger); border-color: var(--danger); }
 .guide-add-row { margin-top: 1.5rem; }
 .guide-add-btn {
   cursor: pointer; background: transparent; color: var(--text-mute);
-  border: 1px dashed var(--border); border-radius: 8px; padding: 0.5rem 1rem;
+  border: 1px dashed var(--border); border-radius: var(--btn-radius, 6px); padding: 0.5rem 1rem;
   font-size: var(--fs-sm, 0.85rem); font-weight: 600; width: 100%;
 }
 .guide-add-btn:hover { color: var(--accent); border-color: var(--accent); }

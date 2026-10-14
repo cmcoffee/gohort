@@ -4245,6 +4245,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   flex-wrap: wrap;
   justify-content: flex-start;
 }
+/* The top bar's action buttons and menus: compact, so two rows of them fit
+ * beside the picker. Their size lives here, not inline, so a touch screen
+ * can raise them to the compact tap size like every other small control. */
+.ui-agent-top-bundle .ui-agent-actions button {
+  padding: 0.2rem 0.55rem; font-size: var(--fs-xs);
+  min-width: 0; min-height: 0; border-radius: var(--btn-radius);
+}
+@media (pointer: coarse) {
+  .ui-agent-top-bundle .ui-agent-actions button { min-height: var(--btn-h-sm); }
+}
 .ui-agent-top-bundle .ui-agent-actions .ui-row-btn:not(.primary):not(.copied) {
   background: transparent;
 }
@@ -6447,20 +6457,66 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-chat-side-ren { visibility: visible; }
 }
 @media (pointer: coarse) {
-  /* Compact, as on desktop, with just enough height to land a thumb: a
-   * message carries five or six of these, and at full tap size the row
-   * outweighed the reply it sits under. */
-  .ui-agent-msg-act { min-height: 30px; padding: 0.15rem 0.5rem; font-size: var(--fs-xs); line-height: 1.2; }
+  /* Compact, as on desktop, at the compact tap size every other small
+   * control uses (--btn-h-sm, below): a message carries five or six of
+   * these, and at the full tap size the row outweighed the reply. */
+  .ui-agent-msg-act { min-height: var(--btn-h-sm); padding: 0.15rem 0.5rem; font-size: var(--fs-xs); line-height: 1.2; }
   .ui-agent-msg-act.glyph { padding-left: 0.4rem; padding-right: 0.4rem; }
   .ui-chat-side-del, .ui-chat-side-ren { width: 2.25rem; height: 2.25rem; }
   .ui-chat-side-ren { right: 2.7rem; }
   .ui-chat-side-item.ui-chat-side-item-renable { padding-right: 5.2rem; }
   .ui-chat-side-close { width: var(--tap, 44px); height: var(--tap, 44px); }
-  .ui-toolbar-menu > button { min-height: 40px; }
-  .ui-tab { min-height: 36px; }
-  /* The info mark stays small to look at; its hit area grows invisibly. */
-  .ui-info { position: relative; }
-  .ui-info::after { content: ""; position: absolute; inset: -0.55rem; }
+  /* THE TOUCH FLOOR. On a touch screen every control is at least one of
+   * two sizes, whatever it looks like on a desktop: --btn-h-sm (36px) for
+   * a compact control, --tap (44px) for a row in a menu or a list of
+   * choices. The token buttons (.ui-row-btn and the :where list near the
+   * top) get there through the tokens; these classes size themselves, so
+   * they are named here. A new small control joins a list below, and
+   * touch_floor_test.go holds the line.
+   *
+   * Compact controls: text buttons, pills, chips, tabs and toggles. A
+   * <button> centres its content at any height; the two that are <span>s
+   * need a box to grow. */
+  :is(.ui-seg, .ui-agent-seg, .ui-live-pill, .ui-live-stop, .ui-assist-mode,
+      .ui-form-chip, .ui-chat-tools-toggle, .ui-agent-earlier-btn,
+      .ui-cw-prof-pill, .ui-cw-prof-save, .ui-cw-coll-add, .ui-tw-variant,
+      .ui-suggest-pick, .ui-chip, .ui-chat-act, .ui-rules-add, .ui-sec-add,
+      .ui-sections-view, .ui-cw-doc-view, .ui-rules-edit-suggest,
+      .ui-rules-edit-done, .ui-rules-edit-cancel, .ui-assist-send,
+      .ui-cp-add-btn, .ui-cp-add, .ui-form-preset-chip, .ui-bell-act,
+      .ui-suggest-secondary, .ui-channels-add, .ui-bell, .ui-page-tab, .ui-tab,
+      .ui-scope-pill, .ui-scope-more) {
+    min-height: var(--btn-h-sm);
+  }
+  :is(.ui-form-chip, .ui-tw-variant) { display: inline-flex; align-items: center; }
+  /* Icon buttons: square, at least the compact size each way. */
+  :is(.ui-keys-row-del, .ui-mem-del, .ui-rules-edit-btn, .ui-rules-del,
+      .ui-assist-nav, .ui-sec-mode, .ui-sec-suggest, .ui-sec-move, .ui-sec-del,
+      .ui-sec-colx, .ui-sec-rowx, .ui-sec-addcol, .ui-sec-align,
+      .ui-pl-modal-close, .ui-agent-collapse, .ui-agent-expand,
+      .ui-agent-activity-toggle, .ui-agent-activity-expand, .ui-tw-collapse,
+      .ui-tw-expand) {
+    min-width: var(--btn-h-sm); min-height: var(--btn-h-sm);
+  }
+  /* Rows in a menu or a list of choices: the full tap size. */
+  :is(.ui-wb-menu-item, .ui-side-menu-item, .ui-tw-extras-item,
+      .ui-form-nav-item, .ui-secnav-item, .ui-toolbar-menu > button,
+      .ui-channel-row) {
+    min-height: var(--tap, 44px);
+  }
+  /* A glyph inside a chip or beside a line of text (a remove x, a mark)
+   * stays small to look at, since growing it would grow the chip; its hit
+   * area grows invisibly instead, as the info mark's does. */
+  :is(.ui-info, .ui-tag-del, .ui-wb-item-del, .ui-cw-prof-del,
+      .ui-agent-attach-x, .ui-cp-pill-flag, .ui-msg-mark) { position: relative; }
+  :is(.ui-info, .ui-tag-del, .ui-wb-item-del, .ui-cw-prof-del,
+      .ui-agent-attach-x, .ui-cp-pill-flag, .ui-msg-mark)::after {
+    content: ""; position: absolute; inset: -0.55rem;
+  }
+  /* The editors' session lists size their delete smaller than the chat's,
+   * more specifically than the rule above reaches. */
+  .ui-cw .ui-chat-side-del, .ui-tw .ui-chat-side-del { width: 2.25rem; height: 2.25rem; }
+  .ui-cw .ui-chat-side-item, .ui-tw .ui-chat-side-item { min-height: 2.25rem; padding-right: 2.75rem; }
   /* iOS zooms into any focused field set under 16px and never zooms back
    * out, so on a touch screen every field is 16px. */
   .ui-chat-input, .ui-agent-input, .ui-input,
