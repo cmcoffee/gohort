@@ -4390,6 +4390,54 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-toolbar-menu button:hover { background: var(--bg-2, rgba(127,127,127,0.15)); }
 .ui-toolbar-menu button.danger { color: var(--danger, #d9534f); }
+/* A top-bar menu's title and its backdrop: both for the phone sheet below,
+ * hidden everywhere else. */
+.ui-topbar-sheet-title, .ui-topbar-sheet-backdrop { display: none; }
+/* Phone: the top-bar menus (Agent / Configure / Session, Manage / Fleet)
+ * drop from the top bar the whole width of the screen, less a small inset,
+ * under their name, with rows sized for a thumb, over a dimmed backdrop
+ * that closes them. A small box hung under a button that may sit anywhere
+ * along a sideways-scrolling row, sized for a mouse, was the desktop's
+ * answer. They drop from where they were opened rather than rising from
+ * the bottom edge: a bottom sheet reads as something to drag down, and
+ * this one could not be. The script still sets their top and height from
+ * the button; only the sides are the phone's, with !important to beat its
+ * inline left. */
+@media (max-width: 700px) {
+  .ui-topbar-sheet-backdrop.show {
+    display: block; position: fixed; inset: 0; z-index: 990;
+    background: var(--modal-scrim, rgba(0, 0, 0, 0.55));
+    /* A drag on it does not scroll the page underneath: a scroll there
+     * would close a menu and leave the backdrop standing alone. */
+    touch-action: none; overscroll-behavior: contain;
+    animation: ui-sheet-fade 0.14s ease-out;
+  }
+  .ui-topbar-sheet {
+    left: 0.5rem !important; right: 0.5rem !important;
+    width: auto !important; min-width: 0 !important; max-width: none !important;
+    overflow-y: auto !important; box-sizing: border-box;
+    padding: 0.25rem 0.5rem 0.4rem !important;
+    border-radius: 10px !important;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4) !important;
+    animation: ui-menu-drop 0.14s ease-out;
+  }
+  .ui-topbar-sheet .ui-topbar-sheet-title {
+    display: block; flex: 0 0 auto;
+    padding: 0.55rem 0.4rem 0.45rem; margin-bottom: 0.2rem;
+    font-size: var(--fs-sm); font-weight: 700; color: var(--text-hi, var(--text));
+    border-bottom: 1px solid var(--border);
+  }
+  .ui-topbar-sheet > button {
+    min-height: 44px; padding: 0.6rem 0.5rem !important;
+    font-size: var(--fs-md, 1rem) !important; border-radius: 8px !important;
+  }
+  .ui-topbar-sheet > button + button { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent) !important; border-radius: 0 !important; }
+}
+@keyframes ui-menu-drop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+@keyframes ui-sheet-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .ui-topbar-sheet, .ui-topbar-sheet-backdrop.show { animation: none; }
+}
 @media (max-width: 700px) {
   .ui-agent-actions { padding: 0.4rem 0.5rem; gap: 0.3rem; }
 }

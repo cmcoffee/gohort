@@ -199,12 +199,31 @@
     // open; opening another closes it first. Each menu registers its own
     // closer on open and clears it on close.
     var openTopbarMenu = null;
+    // On a phone these menus drop from the top bar at the screen's width
+    // (runtime.css, .ui-topbar-sheet) over a dimmed backdrop. The backdrop is
+    // a real element, so a tap on it closes the menu and goes no further: a
+    // tap beside a floating menu would otherwise also press whatever was
+    // under it. Shown only by the phone stylesheet; on a wider screen it
+    // stays display:none and the menus float under their buttons as before.
+    var sheetBackdrop = null;
+    function topbarSheetBackdrop() {
+      if (sheetBackdrop) return sheetBackdrop;
+      sheetBackdrop = el('div', {class: 'ui-topbar-sheet-backdrop'});
+      sheetBackdrop.addEventListener('click', function(ev) {
+        ev.stopPropagation();
+        if (openTopbarMenu) { try { openTopbarMenu(); } catch (_) {} }
+      });
+      document.body.appendChild(sheetBackdrop);
+      return sheetBackdrop;
+    }
     function setOpenTopbarMenu(closeFn) {
       if (openTopbarMenu && openTopbarMenu !== closeFn) { try { openTopbarMenu(); } catch (_) {} }
       openTopbarMenu = closeFn;
+      topbarSheetBackdrop().classList.add('show');
     }
     function clearOpenTopbarMenu(closeFn) {
       if (openTopbarMenu === closeFn) openTopbarMenu = null;
+      if (!openTopbarMenu && sheetBackdrop) sheetBackdrop.classList.remove('show');
     }
     function closeDrawer() {
       if (!side) return;
@@ -1216,7 +1235,10 @@
       function navMenuFor(item) {
         var name = (item && item.menu) || DEFAULT_NAV_MENU;
         if (navMenuByName[name]) return navMenuByName[name];
-        var panel = el('div', {class: 'ui-channel-menu', style: 'display:none;min-width:210px;max-width:calc(100vw - 8px);flex-direction:column;gap:0.1rem;padding:0.35rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;background:var(--bg-1, #1b1b2b);box-shadow:0 6px 24px rgba(0,0,0,0.35)'});
+        var panel = el('div', {class: 'ui-channel-menu ui-topbar-sheet', style: 'display:none;min-width:210px;max-width:calc(100vw - 8px);flex-direction:column;gap:0.1rem;padding:0.35rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;background:var(--bg-1, #1b1b2b);box-shadow:0 6px 24px rgba(0,0,0,0.35)'});
+        // The menu's name heads it as a sheet on a phone; hidden elsewhere,
+        // where the button it hangs from already says it.
+        panel.appendChild(el('div', {class: 'ui-topbar-sheet-title'}, [name]));
         var m = {name: name, panel: panel, items: [], hdrs: [], lastGroup: null, btn: null, dot: null, control: null};
         m.close = function() { panel.style.display = 'none'; clearOpenTopbarMenu(m.close); };
         var dot = el('span', {class: 'ui-unread-dot', title: 'Pending items',
@@ -1332,7 +1354,7 @@
           // respond. The divider is what says "a different kind of thing starts
           // here". A heading that opens the menu needs no rule above it.
           if (item.group && item.group !== menu.lastGroup) {
-            var firstInMenu = menu.panel.childNodes.length === 0;
+            var firstInMenu = menu.items.length === 0 && menu.hdrs.length === 0;
             menu.lastGroup = item.group;
             // Kept so applyOrchMode can hide the heading when every row it
             // labels is hidden — a bare group name over nothing reads as a
@@ -1954,7 +1976,7 @@
         // button's rect) — the toolbar's list-top cascade kept pulling an
         // in-toolbar menu into normal flow, so we get it out of the toolbar's
         // DOM entirely. Only the toggle button lives in the actions bar.
-        var menu = el('div', {class: 'ui-toolbar-menu'});
+        var menu = el('div', {class: 'ui-toolbar-menu ui-topbar-sheet'}, [el('div', {class: 'ui-topbar-sheet-title'}, [gname])]);
         var toggle = el('button', {type: 'button', class: 'ui-row-btn', title: gname + ' actions'}, [gname + ' ▾']);
         function closeMenu() { menu.classList.remove('open'); clearOpenTopbarMenu(closeMenu); }
         function openMenu() {
