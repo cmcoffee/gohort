@@ -771,6 +771,12 @@ select.ui-orch-intake-input {
   border-left: 2px solid var(--border);
   padding-left: 0.7rem;
 }
+/* Phone: inside a message bubble an 8rem label column left the answers a
+   narrow strip; each label sits over its answer instead. */
+@media (max-width: 700px) {
+  .ui-orch-intake-result { grid-template-columns: 1fr; gap: 0.15rem; }
+  .ui-orch-intake-result-value { margin-bottom: 0.4rem; }
+}
 
 /* Tools modal: collapsible group sections + master checkbox. The
  * generic ui-checklist-group is a single line header; we add an
