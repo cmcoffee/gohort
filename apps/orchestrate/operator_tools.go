@@ -1244,6 +1244,11 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					}
 					fmt.Fprintf(&b, "- %s (%s): runs %s on %s; last=%s; next=%s\n",
 						sa.Name, state, target, StandingScheduleLabel(sa), status, next)
+					// What it does, so an edit (schedule action="edit") starts
+					// from the text it replaces rather than a guess at it.
+					if m := strings.TrimSpace(sa.Mission); m != "" {
+						fmt.Fprintf(&b, "  does: %s\n", truncate(m, 600))
+					}
 				}
 				return strings.TrimSpace(b.String()), nil
 			},

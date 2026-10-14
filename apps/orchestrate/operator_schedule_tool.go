@@ -147,16 +147,17 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		b.WriteString(", move (a task of your own: to=\"cortex\" / \"session\" / \"background\")")
 	}
 	b.WriteString(", relink (a schedule parked because the agent it ran as was deleted: name + run_by, the agent replacing it; it keeps its mission, timing, goal and notes, so relink rather than create it again)")
-	b.WriteString(". Re-issuing create with the SAME name edits that schedule in place. To run something once right now, don't schedule it: agents(action=\"run\") or machine(action=\"run\"), or do it yourself.")
+	b.WriteString(", edit (name + then: change only WHAT an existing scheduled run or monitor does; its timing, link group and goal stay as they are. list shows what each one does now)")
+	b.WriteString(". Re-issuing create with the SAME name edits that schedule in place, timing included. To run something once right now, don't schedule it: agents(action=\"run\") or machine(action=\"run\"), or do it yourself.")
 	if hasRec {
 		b.WriteString(" Tell the user which thread a recurring task of yours will report in.")
 	}
 
 	params := map[string]ToolParam{
-		"action":       {Type: "string", Enum: []string{"create", "list", "pause", "resume", "run_now", "delete", "relink"}, Description: "create | list | pause | resume | run_now | delete | relink."},
+		"action":       {Type: "string", Enum: []string{"create", "list", "edit", "pause", "resume", "run_now", "delete", "relink"}, Description: "create | list | edit | pause | resume | run_now | delete | relink."},
 		"run_by":       {Type: "string", Description: "(relink) The agent that runs the parked schedule from now on, by name or id: usually the one made to replace the deleted agent."},
 		"when":         {Type: "string", Enum: []string{"at", "every", "value_crosses", "output_changes", "posted", "agent_says"}, Description: "(create) The trigger: at (once, at a time) | every (on a clock, report each time) | value_crosses (a URL's value crosses a line) | output_changes (a tool's output changes) | posted (an external POST) | agent_says (an agent judges a condition)."},
-		"then":         {Type: "string", Description: "(create) What to do when it fires, in plain words. every: the mission run each time (\"fetch the forecast and post it to the family chat\"). at / monitors: handed to you on wake (\"tell the user it's 1:10pm, as they asked\")."},
+		"then":         {Type: "string", Description: "(create, edit) What to do when it fires, in plain words. edit replaces only this. every: the mission run each time (\"fetch the forecast and post it to the family chat\"). at / monitors: handed to you on wake (\"tell the user it's 1:10pm, as they asked\")."},
 		"time":         {Type: "string", Description: "(create) When, as the user said it, in their own zone (the one time_in_zone reports; never convert to UTC). at: \"13:10\", \"1:10pm\", \"in 20 minutes\", or ISO8601. every: \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", set times \"09:00,13:00\", or once a year \"DEC-25 09:00\" / \"every year on Dec 25 at 9am\". Monitors: optional set times of day to check, \"08:00\" or \"08:00,18:00\", instead of check_every."},
 		"name":         {Type: "string", Description: "(create: optional, one is made up; pause/resume/run_now/delete: required) Short name, e.g. \"daily-weather\", \"nvda-below\"."},
 		"agent":        {Type: "string", Description: "(at: who is woken to do it, default you; every: who runs it, default you; agent_says: who checks, default you; list / delete / move: WHOSE schedules to act on, another of your own agents by name or id, or \"all\" for every agent you own, list only) Name or id of an existing agent."},
@@ -192,7 +193,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		}
 	} else {
 		params["when"] = ToolParam{Type: "string", Enum: []string{"at", "every"}, Description: "(create) The trigger: at (once, at a time or after a delay) | every (on a clock, repeatedly)."}
-		params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "delete", "move", "relink"}, Description: "create | list | delete | move | relink."}
+		params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "edit", "delete", "move", "relink"}, Description: "create | list | edit | delete | move | relink."}
 		params["agent"] = ToolParam{Type: "string", Description: "(list / delete / move, optional) WHOSE schedules to act on: another of your own agents, by name or id, or \"all\" (list only) for every agent you own. Omit for yourself."}
 		delete(params, "pipeline")
 		delete(params, "machine")
@@ -213,7 +214,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 			params[k] = v
 		}
 		if hasOp {
-			params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "pause", "resume", "run_now", "delete", "move", "relink"}, Description: "create | list | pause | resume | run_now | delete | move | relink."}
+			params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "edit", "pause", "resume", "run_now", "delete", "move", "relink"}, Description: "create | list | edit | pause | resume | run_now | delete | move | relink."}
 		}
 	}
 	tool := Tool{Name: "schedule", Description: b.String(), Parameters: params, Required: []string{"action"}}
@@ -238,7 +239,18 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 				}
 				return out, err
 			case "list":
-				return scheduleList(ctx, impl, rec, args)
+				return scheduleList(ctx, owner, controllerAgentID, impl, rec, args)
+			case "edit", "update", "change":
+				if name == "" {
+					return "", fmt.Errorf("edit needs name: the schedule to change (schedule(action=\"list\") shows them and what each does)")
+				}
+				if strings.TrimSpace(oArgStr(args, "then")) == "" {
+					return "", fmt.Errorf("edit needs then: what it should do from now on, in full (it replaces what it does now)")
+				}
+				if msg := scheduleChangeApproval(sess, owner, controllerAgentID, "edit", name, args); msg != "" {
+					return msg, nil
+				}
+				return scheduleEdit(owner, controllerAgentID, hasOp, name, strings.TrimSpace(oArgStr(args, "then")))
 			case "relink":
 				if name == "" {
 					return "", fmt.Errorf("relink needs name: the parked schedule (schedule(action=\"list\", agent=\"all\") marks them \"needs relink\")")
@@ -450,8 +462,18 @@ func scheduleCreate(ctx context.Context, owner, controllerAgentID string, impl m
 // scheduleList is every scheduled thing in one answer: the clock schedules
 // and the monitors, each under its own heading, so the agent never has to
 // know which store holds what it is asked about.
-func scheduleList(ctx context.Context, impl map[string]ToolHandlerFunc, rec recurringImpl, args map[string]any) (string, error) {
+func scheduleList(ctx context.Context, owner, controllerAgentID string, impl map[string]ToolHandlerFunc, rec recurringImpl, args map[string]any) (string, error) {
 	var parts []string
+	// Scheduled runs that run AS this agent (or the agent named), set up by
+	// the owner or another agent. Listed here for every agent, not only one
+	// with the fleet tools: an agent asked to change "its" scheduled task
+	// otherwise saw "Nothing is scheduled" while introspect named it, and had
+	// no way to read what it does or change it.
+	if _, fleet := impl["list_standing_agents"]; !fleet {
+		if out := scheduledRunsListing(owner, controllerAgentID, args); out != "" {
+			parts = append(parts, "SCHEDULED RUNS THAT RUN AS YOU (change what one does with action=\"edit\")\n"+out)
+		}
+	}
 	if rec != nil {
 		out, err := rec.recurringList(args)
 		if err != nil {
@@ -1054,6 +1076,7 @@ func scheduleChangeApproval(sess *ToolSession, owner, actingAgent, action, name 
 		"pause": "Pause it.", "resume": "Resume it.",
 		"delete": "Delete it and cancel its schedule.", "cancel": "Delete it and cancel its schedule.", "remove": "Delete it and cancel its schedule.",
 		"move":   "Change where it reports.",
+		"edit":   "Change what it does: " + truncate(strings.TrimSpace(oArgStr(args, "then")), 300),
 		"relink": "Hand it to " + chFirst(strings.TrimSpace(oArgStr(args, "run_by")), "another agent") + " to run.",
 	}[action]
 	if verb == "" {
@@ -1083,4 +1106,77 @@ func scheduleChangeApproval(sess *ToolSession, owner, actingAgent, action, name 
 		return ""
 	}
 	return sessionApprove(sess, "schedule", name, verb, true)
+}
+
+// scheduledRunsListing lists the scheduled runs (standing agents) that run as
+// the agent: controllerAgentID, the agent `agent` names, or every agent the
+// owner has for "all". Each with its timing (a link group's member says so),
+// its state, and what it does, which is what an edit replaces.
+func scheduledRunsListing(owner, controllerAgentID string, args map[string]any) string {
+	want := controllerAgentID
+	all := false
+	if key := strings.TrimSpace(oArgStr(args, "agent")); key != "" {
+		if strings.EqualFold(key, "all") {
+			all = true
+		} else if db := agentStore(owner); db != nil {
+			if a, ok := findAgentByNameOrID(db, owner, key); ok {
+				want = a.ID
+			}
+		}
+	}
+	var b strings.Builder
+	for _, sa := range ListStandingAgents(RootDB, owner) {
+		if !all && sa.AgentID != want {
+			continue
+		}
+		state := "active"
+		if sa.Paused {
+			state = "paused"
+		}
+		if RelinkFixesIt(StandingParkCause(sa)) {
+			state = "PARKED, needs relink (" + sa.BrokenReason + ")"
+		}
+		timing := StandingScheduleLabel(sa)
+		if sa.LinkGroup != "" {
+			timing += " (link group " + strconv.Quote(sa.LinkGroup) + ")"
+		}
+		fmt.Fprintf(&b, "- %s: %s, %s\n  does: %s\n", sa.Name, timing, state, truncate(strings.TrimSpace(sa.Mission), 600))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// scheduleEdit changes only what a scheduled run or a monitor does: its
+// mission (a run) or its brief (a monitor). Timing, link group, goal and
+// state are left as they are; both are read by name when they fire, so the
+// next fire does the new thing. Re-issuing create with the same name was the
+// only way to change one before, and that needs the timing again, which a
+// member of a link group does not have of its own (it runs on the group's).
+//
+// An agent without the fleet tools changes only what runs as it (or as its
+// own sub-agents), the same reach its list has.
+func scheduleEdit(owner, controllerAgentID string, hasFleet bool, name, then string) (string, error) {
+	db := agentStore(owner)
+	mine := func(runner string) bool {
+		if hasFleet || runner == controllerAgentID {
+			return true
+		}
+		return db != nil && runner != "" && topAgentOf(db, runner) == topAgentOf(db, controllerAgentID)
+	}
+	if sa, ok := GetStandingAgent(RootDB, owner, name); ok {
+		if !mine(sa.AgentID) {
+			return "", fmt.Errorf("%q runs as another agent; only it, or the owner, can change what it does", name)
+		}
+		sa.Mission = then
+		SaveStandingAgent(RootDB, sa)
+		return fmt.Sprintf("Changed what %q does; it runs %s as before. From the next run it does: %s", name, StandingScheduleLabel(sa), truncate(then, 400)), nil
+	}
+	if m, ok := GetEventMonitor(RootDB, owner, name); ok {
+		if !mine(m.WakeAgent) {
+			return "", fmt.Errorf("%q wakes another agent; only it, or the owner, can change what it hands over", name)
+		}
+		m.WakeBrief = then
+		SaveEventMonitor(RootDB, m)
+		return fmt.Sprintf("Changed what %q hands over when it fires; it checks as before. From the next fire: %s", name, truncate(then, 400)), nil
+	}
+	return "", fmt.Errorf("no scheduled run or monitor named %q (a recurring task of your own changes by create with the same name, its when and time): schedule(action=\"list\") shows them", name)
 }
