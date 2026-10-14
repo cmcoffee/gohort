@@ -339,7 +339,7 @@ select:-webkit-autofill {
 }
 /* Mobile: keep a touch-friendly tap target. */
 @media (max-width: 700px) {
-  .ui-back-link { min-height: var(--tap); min-width: var(--tap); padding: 0.45rem 0.7rem; font-size: 1.2rem; }
+  .ui-back-link { min-height: var(--btn-h); min-width: var(--btn-h); padding: 0.35rem 0.6rem; font-size: var(--fs-xl); }
 }
 .ui-back-link:hover { color: var(--text); border-color: var(--text-mute); }
 .ui-back-link:active { transform: scale(0.97); }
@@ -2825,7 +2825,7 @@ select:-webkit-autofill {
   .ui-chat-hamburger {
     background: transparent; color: var(--text);
     border: 1px solid var(--border); border-radius: var(--btn-radius);
-    min-width: 40px; min-height: 40px; padding: 0;
+    min-width: var(--btn-h); min-height: var(--btn-h); padding: 0;
     font-size: var(--fs-lg); cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
@@ -3936,6 +3936,41 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* The composer row: the field and its buttons stand at one height. */
 .ui-chat-input-area { --btn-h: 2.5rem; --btn-px: 1.1rem; }
 @media (pointer: coarse) { .ui-chat-input-area { --btn-h: var(--tap, 44px); } }
+/* Phone: the chat composer is the agent composer's shape, one rounded field
+ * holding the text and its buttons, inset from the edges and the home
+ * indicator, with round attach and send buttons (send an arrow) at the
+ * field's foot. Two chat surfaces on one phone should not compose two ways. */
+@media (max-width: 700px) {
+  .ui-chat-input-area {
+    --btn-h: 2.25rem;
+    margin: 0.35rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+    padding: 0.3rem 0.3rem 0.3rem 0.55rem !important;
+    gap: 0.3rem; align-items: flex-end;
+    border: 1px solid var(--border); border-radius: 1.4rem; background: var(--bg-1);
+  }
+  .ui-chat-input-area:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
+  .ui-chat-input-area .ui-chat-input {
+    border: 0; background: transparent; resize: none;
+    padding: 0.5rem 0.2rem; min-height: 2.25rem; line-height: 1.35;
+  }
+  .ui-chat-input-area .ui-chat-input:focus { outline: none; }
+  .ui-chat-input-area .ui-chat-iconbtn,
+  .ui-chat-input-area .ui-chat-send {
+    width: 2.25rem; height: 2.25rem; min-width: 2.25rem; min-height: 2.25rem;
+    max-width: 2.25rem; max-height: 2.25rem; aspect-ratio: 1;
+    flex: 0 0 2.25rem; border-radius: 50%; padding: 0;
+  }
+  .ui-chat-input-area .ui-chat-iconbtn { border-color: transparent; font-size: var(--fs-lg); }
+  .ui-chat-input-area .ui-chat-cancel { border-radius: 999px; }
+  .ui-chat-input-area .ui-chat-send {
+    font-size: 0; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .ui-chat-input-area .ui-chat-send::before {
+    content: ""; width: 1.1rem; height: 1.1rem; background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+}
 
 /* --- CodeEditorPanel ---
  * Reuses the .ui-tw two-pane grid (sidebar + main) and adds the
@@ -6494,11 +6529,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   }
   .ui-navshell-rail::-webkit-scrollbar { height: 0; }
   /* Buttons were full-width column rows; as strip tabs they size to their
-   * label and keep a 44px tap target. */
+   * label and take a button's height, as the other tab rows do. */
   .ui-navshell-item {
     width: auto !important;
     flex: 0 0 auto !important;
-    min-height: var(--tap);
+    min-height: var(--btn-h);
     white-space: nowrap;
     text-align: center !important;
     -webkit-tap-highlight-color: transparent;
@@ -6702,7 +6737,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-chat-side-del, .ui-chat-side-ren { width: 2.25rem; height: 2.25rem; }
   .ui-chat-side-ren { right: 2.7rem; }
   .ui-chat-side-item.ui-chat-side-item-renable { padding-right: 5.2rem; }
-  .ui-chat-side-close { width: var(--tap, 44px); height: var(--tap, 44px); }
+  .ui-chat-side-close { width: var(--btn-h); height: var(--btn-h); }
   /* THE TOUCH FLOOR. On a touch screen every control is at least one of
    * two sizes, whatever it looks like on a desktop: --btn-h-sm (30px) for
    * a compact control, --tap (44px) for a row in a menu or a list of
