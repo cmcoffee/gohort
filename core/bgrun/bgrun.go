@@ -29,12 +29,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/diskguard"
 )
 
 func init() {
@@ -52,7 +55,26 @@ func init() {
 		Detail: "There is no limit on total time for a run that keeps printing; a tool that sets its own timeout keeps that as a ceiling too. What it printed before it was stopped is returned with the reason.",
 		Kind:   KindSeconds, Default: 300, Min: 30, Max: 7200,
 	})
+	RegisterTunable(TunableSpec{
+		Key: "tune_run_max_write_gb", Category: "Limits",
+		Label:  "Stop a running tool after it writes (GB)",
+		Help:   "A command-running tool that writes more than this in one run is stopped.",
+		Detail: "Catches the archive that unpacks to far more than anyone expected before it fills the disk. Counted as what the run wrote into its working folders, checked every few seconds. Separate from the free-space floor, which stops any write that would leave the disk too full.",
+		Kind:   KindInt, Default: 50, Min: 1, Max: 100000,
+	})
 }
+
+// errDiskFloor is the cause a run is stopped with when its disk fell below
+// the free-space floor.
+var errDiskFloor = errors.New("the disk is too full")
+
+// errTooLarge is the cause a run is stopped with when it wrote more than the
+// per-run limit.
+var errTooLarge = errors.New("wrote too much")
+
+// storageCheckEvery is how often a run's disk use is looked at. A var so a
+// test need not wait.
+var storageCheckEvery = 5 * time.Second
 
 // errRunIdle is the cause a run is stopped with when it has printed nothing
 // for the no-output limit.
@@ -73,6 +95,44 @@ type RunActivity struct {
 	lines   int
 	partial []byte // the line being written, until its newline
 	tail    string // the latest complete, non-blank line
+	dirs    []string
+	stopWhy string // the storage limit's own words, when one stopped it
+}
+
+// WatchDir names a folder the run writes into. Its disk is held to the
+// free-space floor while the run goes, and what the run writes there counts
+// toward the per-run limit. The dispatcher calls it as it learns where the
+// command will write.
+func (a *RunActivity) WatchDir(dir string) {
+	if a == nil || dir == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, d := range a.dirs {
+		if d == dir {
+			return
+		}
+	}
+	a.dirs = append(a.dirs, dir)
+}
+
+func (a *RunActivity) watched() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.dirs...)
+}
+
+func (a *RunActivity) setStop(why string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.stopWhy = why
+}
+
+func (a *RunActivity) stopReason() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.stopWhy
 }
 
 // newRunActivity starts the clock on a run that has said nothing yet.
@@ -280,6 +340,7 @@ func (b BackgroundRun) Start(sess *ToolSession) (string, error) {
 		done <- runResult{out: out, err: err}
 	}()
 	go watchIdle(runCtx, act, TuneDuration("tune_tool_idle_limit"), cancel)
+	go watchStorage(runCtx, act, uint64(TuneInt("tune_run_max_write_gb"))<<30, cancel)
 
 	// inline waits the run out here, still stoppable by the turn, and hands
 	// what it attached to the turn's session.
@@ -287,7 +348,7 @@ func (b BackgroundRun) Start(sess *ToolSession) (string, error) {
 		defer release()
 		r := <-done
 		handOver(work, sess)
-		return stopNote(r.out, runCtx, b), r.err
+		return stopNote(r.out, runCtx, b, act), r.err
 	}
 
 	detachAfter := toolDetachAfter(sess)
@@ -319,7 +380,7 @@ func (b BackgroundRun) Start(sess *ToolSession) (string, error) {
 			select {
 			case r := <-done:
 				return TaskProduct{
-					Text:   stopNote(r.out, runCtx, b),
+					Text:   stopNote(r.out, runCtx, b, act),
 					Images: work.ClaimUnflushedImages(),
 					Videos: work.ClaimUnflushedVideos(),
 					Files:  work.ClaimUnflushedFiles(),
@@ -368,13 +429,81 @@ func watchIdle(ctx context.Context, act *RunActivity, limit time.Duration, cance
 	}
 }
 
+// watchStorage stops the run when a folder it writes into sits on a disk that
+// has fallen below the free-space floor, or when it has written more than
+// maxWrite there. It ends with the run.
+//
+// What a run has written is worked out cheaply first: how far the disk's free
+// space has fallen since the run began. Only when that passes the limit is the
+// folder walked to count what this run actually wrote (files changed since it
+// started), since other work on the same disk moves the free space too.
+func watchStorage(ctx context.Context, act *RunActivity, maxWrite uint64, cancel context.CancelCauseFunc) {
+	startFree := map[string]uint64{}
+	tick := time.NewTicker(storageCheckEvery)
+	defer tick.Stop()
+	check := func() bool {
+		for _, dir := range act.watched() {
+			sp, ok := diskguard.Of(dir)
+			if !ok {
+				continue
+			}
+			if _, seen := startFree[dir]; !seen {
+				startFree[dir] = sp.Free
+			}
+			if floor := sp.Floor(); sp.Free < floor {
+				act.setStop(fmt.Sprintf("the disk it was writing to has %s free, below the %s kept free for the server", HumanSize(int64(sp.Free)), HumanSize(int64(floor))))
+				cancel(errDiskFloor)
+				return true
+			}
+			if maxWrite == 0 || startFree[dir] < sp.Free || startFree[dir]-sp.Free < maxWrite {
+				continue
+			}
+			if wrote := writtenSince(dir, act.started); wrote >= maxWrite {
+				act.setStop(fmt.Sprintf("it wrote %s, past the %s one run may write", HumanSize(int64(wrote)), HumanSize(int64(maxWrite))))
+				cancel(errTooLarge)
+				return true
+			}
+		}
+		return false
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			if check() {
+				return
+			}
+		}
+	}
+}
+
+// writtenSince is the size of the files under dir changed at or after since:
+// what a run that started then has written there. Unreadable entries are
+// skipped; this is a limit, not an audit.
+func writtenSince(dir string, since time.Time) uint64 {
+	var n uint64
+	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, ierr := d.Info(); ierr == nil && !info.ModTime().Before(since) {
+			n += uint64(info.Size())
+		}
+		return nil
+	})
+	return n
+}
+
 // stopNote says why a run that was stopped by a limit ended, after whatever it
 // printed. Nothing is added to a run that ended by itself or was stopped by a
 // person, who already knows.
-func stopNote(out string, ctx context.Context, b BackgroundRun) string {
+func stopNote(out string, ctx context.Context, b BackgroundRun, act *RunActivity) string {
 	switch cause := context.Cause(ctx); {
 	case errors.Is(cause, errRunIdle):
 		out += fmt.Sprintf("\n[STOPPED: it printed nothing for %s, so it was taken to be stuck and killed. What it printed before that is above. If this command is normally silent for that long, the no-output limit is an admin setting (Timeouts).]", words(TuneDuration("tune_tool_idle_limit")))
+	case errors.Is(cause, errDiskFloor), errors.Is(cause, errTooLarge):
+		out += "\n[STOPPED: " + act.stopReason() + ", so the command was killed. What it printed is above; what it wrote so far is still in its folder. The limits are admin settings (Limits).]"
 	case errors.Is(cause, errRunCeiling):
 		out += fmt.Sprintf("\n[STOPPED: it reached the %s timeout %s declares, and was killed.]", words(b.Ceiling), b.Tool)
 	}

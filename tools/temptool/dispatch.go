@@ -541,6 +541,14 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		ctx, cancel = context.WithCancel(sess.Context())
 	}
 	defer cancel()
+	// The workspace is where the command writes, so it is what the run's disk
+	// limits watch. And a run with no end in view keeps the start and end of
+	// its output, not every line of an hour of logging.
+	var keepOutput int64
+	if activity != nil {
+		activity.WatchDir(workspaceDir)
+		keepOutput = backgroundOutputKeep
+	}
 	// Wrap with the session's network connector so the sandbox
 	// applies --unshare-net when the calling turn is in private
 	// mode. No-op when sess has no connector.
@@ -648,7 +656,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	res := sandbox.RunSandboxedShellIn(ctx, sandbox.ShellRun{
 		Command: cmd, WorkspaceDir: workspaceDir, WorkDir: workDir,
 		Env: envArgs, Reach: scopedPaths,
-		Tee: teeTo(activity),
+		Tee: teeTo(activity), MaxOutput: keepOutput,
 		// The tool's own declaration that it needs raw TCP. Consulted only
 		// once the deployment closes the default; until then every command
 		// keeps the host's namespace, which is what has always happened.
@@ -844,6 +852,11 @@ func toolIsForeign(sess *ToolSession, tt *TempTool) bool {
 	}
 	return false
 }
+
+// backgroundOutputKeep is how much of a background-capable run's output is kept
+// in memory: far more than the model is ever shown (maxOutput), so what it
+// sees is unchanged, and far less than an hour of logging.
+const backgroundOutputKeep = 8 << 20
 
 // teeTo is the run activity as a ShellRun.Tee, or nil when there is none: a
 // typed nil in an interface would not compare equal to nil and the sandbox

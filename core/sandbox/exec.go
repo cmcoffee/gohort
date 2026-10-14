@@ -281,6 +281,12 @@ type ShellRun struct {
 	// result still carries the whole output. It is how a caller watching a
 	// long run sees it is alive (and how much it has said) before it ends.
 	Tee io.Writer
+	// MaxOutput, when above zero, bounds how much of the output the result
+	// keeps in memory: its start and its end, with a note of how much in the
+	// middle was dropped. Zero keeps everything, which suits a command that
+	// ends in seconds and not one that logs for an hour. Tee still sees all of
+	// it.
+	MaxOutput int64
 }
 
 // withHookPath returns a copy whose Env carries the hook path, which always
@@ -464,12 +470,12 @@ func runSandboxedShellWithBinds(ctx context.Context, spec ShellRun) SandboxedShe
 	}
 	c := built.Cmd
 
-	var buf bytes.Buffer
+	buf := newOutputBuffer(spec.MaxOutput)
 	// One writer for both streams, so exec copies them through a single pipe
 	// and the tee sees the same interleaving the buffer keeps.
-	var out io.Writer = &buf
+	var out io.Writer = buf
 	if spec.Tee != nil {
-		out = io.MultiWriter(&buf, spec.Tee)
+		out = io.MultiWriter(buf, spec.Tee)
 	}
 	c.Stdout = out
 	c.Stderr = out

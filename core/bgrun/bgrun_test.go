@@ -2,7 +2,10 @@ package bgrun
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -243,5 +246,48 @@ func TestRunActivitySummary(t *testing.T) {
 	fmt.Fprint(a, "\n\n")
 	if got := a.Summary(); got != "3 lines - unpacking 40%" {
 		t.Errorf("summary = %q", got)
+	}
+}
+
+// A run that writes past the per-run limit is stopped with what it wrote and
+// the reason; one whose disk is below the free-space floor is stopped too.
+// Both through the real watcher, on a real folder.
+func TestARunIsStoppedByItsDiskLimits(t *testing.T) {
+	prev := storageCheckEvery
+	storageCheckEvery = 50 * time.Millisecond
+	t.Cleanup(func() { storageCheckEvery = prev })
+
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	act := newRunActivity()
+	act.WatchDir(dir)
+	setTuneForTest(t, map[string]float64{"tune_disk_floor_gb": 1})
+	go func() {
+		// 4 MB, well past a 64 KB limit; written in pieces as a command would.
+		f, _ := os.Create(filepath.Join(dir, "unpacked.bin"))
+		defer f.Close()
+		chunk := make([]byte, 64<<10)
+		for i := 0; i < 64 && ctx.Err() == nil; i++ {
+			f.Write(chunk)
+			f.Sync()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	watchStorage(ctx, act, 64<<10, cancel)
+	if !errors.Is(context.Cause(ctx), errTooLarge) || !strings.Contains(act.stopReason(), "past the") {
+		t.Errorf("a run that wrote too much was not stopped: cause=%v why=%q", context.Cause(ctx), act.stopReason())
+	}
+
+	setTuneForTest(t, map[string]float64{"tune_disk_floor_gb": 100000}) // more than any test disk has
+	ctx2, cancel2 := context.WithCancelCause(context.Background())
+	act2 := newRunActivity()
+	act2.WatchDir(t.TempDir())
+	watchStorage(ctx2, act2, 0, cancel2)
+	if !errors.Is(context.Cause(ctx2), errDiskFloor) || !strings.Contains(act2.stopReason(), "kept free for the server") {
+		t.Errorf("a run on a disk below the floor was not stopped: cause=%v why=%q", context.Cause(ctx2), act2.stopReason())
+	}
+	out := stopNote("partial output", ctx2, BackgroundRun{Tool: "unpack"}, act2)
+	if !strings.Contains(out, "partial output") || !strings.Contains(out, "[STOPPED: the disk it was writing to has") {
+		t.Errorf("the note does not say why: %q", out)
 	}
 }
