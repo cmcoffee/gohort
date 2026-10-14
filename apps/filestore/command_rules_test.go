@@ -41,7 +41,7 @@ func TestAMappedActionRunsOnlyItsCommand(t *testing.T) {
 	if _, err := SaveStore(db, Store{Name: "Intake", Path: t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SaveStoreCommand(db, StoreCommand{Usage: UsageOpen, Slug: "intake", Name: "decrypt", Command: bin}); err != nil {
+	if _, err := SaveStoreCommand(db, StoreCommand{Slug: "intake", Name: "decrypt", Command: bin}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := SaveCommandTools(db, "intake", "decrypt", "Decrypts a dump.", []TempToolAction{
@@ -55,8 +55,8 @@ func TestAMappedActionRunsOnlyItsCommand(t *testing.T) {
 		{Name: "good", CommandTemplate: bin + " {folder}"},
 		{Name: "old_bad", CommandTemplate: bin + " {folder}; rm -rf /"},
 	}
-	tt := cmd.asTempTool()
-	if len(tt.Actions) != 1 || tt.Actions[0].Name != "good" || !tt.AdminMapped {
-		t.Errorf("what an agent gets from a stored mapping: %+v", tt)
+	cmd.AllowedUses = []string{"{folder}", "{folder}; rm -rf /"}
+	if acts := cmd.runnableActions(); len(acts) != 1 || acts[0].Name != "good" {
+		t.Errorf("what an agent gets from a stored mapping: %+v", acts)
 	}
 }

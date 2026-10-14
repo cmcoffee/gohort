@@ -27,7 +27,6 @@
 package filestore
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -38,8 +37,6 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-
-	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 // SaveCommandTools records what a mapping conversation worked out, onto the
@@ -119,16 +116,14 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 	cmd.MappedAt = time.Now()
 	// Every line mapped becomes a written use, so the Uses panel shows what
 	// agents could run, and approving the mapping approves exactly that list.
-	if !cmd.open() {
-		have := map[string]bool{}
-		for _, l := range cmd.allowedLines() {
+	have := map[string]bool{}
+	for _, l := range cmd.allowedLines() {
+		have[l] = true
+	}
+	for _, a := range acts {
+		if l := strings.Join(strings.Fields(argsAfterBinary(a.CommandTemplate)), " "); l != "" && !have[l] {
+			cmd.AllowedUses = append(cmd.AllowedUses, l)
 			have[l] = true
-		}
-		for _, a := range acts {
-			if l := strings.Join(strings.Fields(argsAfterBinary(a.CommandTemplate)), " "); l != "" && !have[l] {
-				cmd.AllowedUses = append(cmd.AllowedUses, l)
-				have[l] = true
-			}
 		}
 	}
 	db.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
@@ -150,31 +145,6 @@ func SetCommandApproved(db Database, slug, name string, on bool) (StoreCommand, 
 	cmd.Approved = on
 	db.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
 	return cmd, nil
-}
-
-// asTempTool renders one approved command as the toolbox an agent sees.
-//
-// BoundOnly, always: a bundle mapped from one deployment's capture binary has
-// no business in every chat, and the reason a folder's tools can be this narrow
-// is that they arrive with the folder and leave with it.
-func (a StoreCommand) asTempTool() TempTool {
-	desc := strings.TrimSpace(a.ToolDesc)
-	if desc == "" {
-		desc = a.Label
-	}
-	if strings.TrimSpace(a.Guide) != "" {
-		desc += " The admin wrote a guide to using it: list_" + a.Slug + "_commands shows it; read it before the first call."
-	}
-	return TempTool{
-		Name:        a.ToolName(),
-		Description: desc,
-		Mode:        TempToolModeToolbox,
-		BoundOnly:   true,
-		Actions:     a.runnableActions(),
-		// Mapped by an admin's Map conversation and approved by an admin: the
-		// one kind of tool trusted to reach the store (PathScope.TrustedOnly).
-		AdminMapped: true,
-	}
 }
 
 // runnableActions is the mapping's actions that run this command and nothing
@@ -241,104 +211,15 @@ func firstOf(s string) string {
 }
 
 // commandToolDefs renders the approved, mapped commands of one folder as agent
-// tools, so they arrive with the folder and nowhere else.
-//
-// Resolution goes through the same path servitor's appliance toolset uses — the
-// tools carried on a session into temptool.BuildAgentToolDefs — so a mapped
-// action behaves at call time exactly as any other toolbox does, rather than
-// through a second implementation that drifts from the first.
+// tools, so they arrive with the folder and nowhere else: one tool per mapped
+// line, each running that line as written (command_uses.go).
 func (s storeSource) commandToolDefs(sess *ToolSession, user string, st Store) []AgentToolDef {
-	var tools []*TempTool
-	var direct []AgentToolDef
+	var out []AgentToolDef
 	for _, cmd := range StoreCommandsFor(s.app.DB, st.Slug) {
 		if !cmd.Approved || !cmd.Mapped() {
 			continue
 		}
-		// A command limited to the uses an admin specified runs each line as
-		// written, directly (command_uses.go); an open one through the
-		// sandboxed toolbox path below.
-		if !cmd.open() {
-			direct = append(direct, s.specifiedToolDefs(sess, user, st, cmd)...)
-			continue
-		}
-		t := cmd.asTempTool()
-		tools = append(tools, &t)
-	}
-	if len(tools) == 0 {
-		return direct
-	}
-	// AuthDB is a function VARIABLE, nil until startup wires it. Calling it
-	// unguarded panics — on a path reached from a tool catalog, which is a
-	// worse way to find out than a tool quietly not resolving.
-	var authDB Database
-	if AuthDB != nil {
-		authDB = AuthDB()
-	}
-	bound := &ToolSession{Username: user, DB: authDB, Ctx: sess.Context(),
-		// The conversation the call came from, so a long command can move
-		// to the background and report back there (core/bgrun) rather than
-		// hold the turn: without it there was nowhere to deliver to.
-		AgentID: sess.AgentID, ChatSessionID: sess.ChatSessionID, DeliverySessionID: sess.DeliverySessionID,
-		ChannelChatID: sess.ChannelChatID, ChannelHandle: sess.ChannelHandle}
-	if ws, err := EnsureWorkspaceDir(user); err == nil {
-		bound.WorkspaceDir = ws
-	}
-	bound.TempTools = tools
-	defs := temptool.BuildAgentToolDefs(bound)
-	for i := range defs {
-		defs[i].Handler = refuseOptionArgs(tools, defs[i].Tool.Name, defs[i].Handler)
-	}
-	return append(defs, direct...)
-}
-
-// refuseOptionArgs wraps a mapped command's handler so a value that fills a
-// whole argument cannot start with '-'. The binary is fixed by an admin and
-// the agent only supplies values, but "{name}" standing alone in the command
-// line lets a value like "--output=/elsewhere" or "-e ..." become an option of
-// that binary, which is choosing its behaviour rather than its input. Same
-// rule gohort-desktop applies to declared commands. A folder resolved by
-// path_scope is an absolute path and never trips it.
-func refuseOptionArgs(tools []*TempTool, defName string, h ToolHandlerFunc) ToolHandlerFunc {
-	if h == nil {
-		return h
-	}
-	return func(ctx context.Context, args map[string]any) (string, error) {
-		if act, ok := mappedActionFor(tools, defName, args); ok {
-			for name := range wholeArgPlaceholders(act.CommandTemplate) {
-				if v, ok := args[name]; ok && strings.HasPrefix(strings.TrimSpace(fmt.Sprint(v)), "-") {
-					return "", fmt.Errorf("the value for %s starts with '-', which the command would read as an option: pass the value itself", name)
-				}
-			}
-		}
-		return h(ctx, args)
-	}
-}
-
-// mappedActionFor finds which action a call reaches: a collapsed toolbox tool
-// names it in args["action"], an expanded one is "<tool>_<action>".
-func mappedActionFor(tools []*TempTool, defName string, args map[string]any) (TempToolAction, bool) {
-	for _, t := range tools {
-		for _, a := range t.Actions {
-			if defName == t.Name+"_"+a.Name {
-				return a, true
-			}
-			if defName == t.Name && strings.EqualFold(strings.TrimSpace(fmt.Sprint(args["action"])), a.Name) {
-				return a, true
-			}
-		}
-	}
-	return TempToolAction{}, false
-}
-
-// wholeArgPlaceholders lists the params that make up an entire argument of a
-// command template, quoted or not ("{file}", '{file}', {file}).
-func wholeArgPlaceholders(tpl string) map[string]bool {
-	out := map[string]bool{}
-	for _, f := range strings.Fields(tpl) {
-		f = strings.Trim(f, `"'`)
-		if len(f) > 2 && f[0] == '{' && f[len(f)-1] == '}' && !strings.ContainsAny(f[1:len(f)-1], "{} ") {
-			out[f[1:len(f)-1]] = true
-		}
+		out = append(out, s.specifiedToolDefs(sess, user, st, cmd)...)
 	}
 	return out
 }

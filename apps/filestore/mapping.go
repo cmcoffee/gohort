@@ -182,24 +182,21 @@ func stampMapContext(r *http.Request, ctx string) {
 // probe would leave nothing behind.
 func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreCommand) []AgentToolDef {
 	// How the mapped lines will run, said up front in both tools. Builder
-	// explores freely either way: this conversation is the admin's, and what
-	// it writes is inert until the admin approves it.
+	// explores freely: this conversation is the admin's, and what it writes
+	// is inert until the admin approves it.
 	// Examples are SYNTAX, not things to find. An admin explaining a command
 	// writes a real-looking line ("download --src=/Diag/dump.zip
 	// --dst=CASE-1"), and the mapping read those values as things it should
 	// already have: it went looking for the file, or probed with it.
 	examples := " When the admin shows an example command line with real-looking values (a path, a file name, an id), it illustrates the SYNTAX: the parts that would differ from one call to the next become {placeholders}, and those example values do not exist here and are not yours to check, find or probe with."
 	later := " The {placeholders} in a command_template are filled in later, by an agent at the moment it calls the tool: their values do not exist yet, so do not look for them, invent them or probe with them."
-	scope := " Agents will run the actions you map in the sandbox." + later + examples
-	if !cmd.open() {
-		scope = " An agent will run each action you map exactly as its command_template is written, filling only the {placeholders}." + later + " Each line you map becomes one of the command's allowed uses, and the admin approves that list. Keep options fixed in the line rather than making a placeholder of one."
-		if lines := cmd.allowedLines(); len(lines) > 0 {
-			scope += " The admin has written the uses they want: " + strings.Join(lines, " | ") + ". Map those, as written; map anything beyond them only when the admin asks."
-		} else if len(cmd.Examples) > 0 {
-			scope += " The admin's runs (admin_examples) are the uses they want: map those, keeping each run's arguments in order, with only the values that would differ as {placeholders}."
-		}
-		scope += examples
+	scope := " An agent will run each action you map exactly as its command_template is written, filling only the {placeholders}." + later + " Each line you map becomes one of the command's allowed uses, and the admin approves that list. Keep options fixed in the line rather than making a placeholder of one."
+	if lines := cmd.allowedLines(); len(lines) > 0 {
+		scope += " The admin has written the uses they want: " + strings.Join(lines, " | ") + ". Map those, as written; map anything beyond them only when the admin asks."
+	} else if len(cmd.Examples) > 0 {
+		scope += " The admin's runs (admin_examples) are the uses they want: map those, keeping each run's arguments in order, with only the values that would differ as {placeholders}."
 	}
+	scope += examples
 	if strings.TrimSpace(cmd.Guide) != "" {
 		scope += " The admin wrote a guide to how this command is used (admin_examples shows it first): what it says about the steps, the values and the output outranks your reading of the runs."
 	}

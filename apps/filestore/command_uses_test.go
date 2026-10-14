@@ -30,15 +30,11 @@ func TestAgentsRunOnlyTheAllowedUses(t *testing.T) {
 	if (StoreCommand{Command: "/opt/bin/kb"}).templateAllowed("/opt/bin/kb download") == nil {
 		t.Error("a specified command with no uses ran a line")
 	}
-	open := StoreCommand{Command: "/opt/bin/kb", Usage: UsageOpen}
-	if open.templateAllowed("/opt/bin/kb anything {x}") != nil {
-		t.Error("an open command's mapped line was refused")
-	}
 
 	db := &DBase{Store: kvlite.MemStore()}
 	SaveStore(db, Store{Name: "Intake", Path: t.TempDir()})
 	saved, err := SaveStoreCommand(db, StoreCommand{Slug: "intake", Name: "kb", Command: "/opt/bin/kb", AllowedUses: []string{"download --src={source} --dst={folder}\nlist {folder}"}})
-	if err != nil || saved.Usage != UsageSpecified || len(saved.AllowedUses) != 2 {
+	if err != nil || saved.Usage != usageCurrent || len(saved.AllowedUses) != 2 {
 		t.Fatalf("a new command: %+v %v", saved, err)
 	}
 	// Builder is not held to the written uses: what it maps joins them, for
@@ -126,7 +122,7 @@ func TestAnAgentRunsASpecifiedCommandExactlyAsWritten(t *testing.T) {
 func TestTheMappingIsToldExamplesAreSyntax(t *testing.T) {
 	app := &FileStoreApp{}
 	for _, cmd := range []StoreCommand{
-		{Command: "/opt/bin/kb", Usage: UsageOpen},
+		{Command: "/opt/bin/kb"},
 		{Command: "/opt/bin/kb", AllowedUses: []string{"download --src={source} --dst={folder}"}},
 	} {
 		for _, td := range app.mappingTools(context.Background(), Store{Name: "Intake"}, cmd) {
@@ -136,7 +132,7 @@ func TestTheMappingIsToldExamplesAreSyntax(t *testing.T) {
 		}
 	}
 	for _, cmd := range []StoreCommand{
-		{Command: "/opt/bin/kb", Usage: UsageOpen},
+		{Command: "/opt/bin/kb"},
 		{Command: "/opt/bin/kb", AllowedUses: []string{"download --src={source}"}},
 	} {
 		for _, td := range app.mappingTools(context.Background(), Store{Name: "Intake"}, cmd) {
@@ -165,5 +161,63 @@ func TestBuilderProbesACommandFreely(t *testing.T) {
 	out, err := (&FileStoreApp{}).probeCommand(context.Background(), t.TempDir(), cmd, "list --all")
 	if err != nil || !strings.Contains(out, "ARGS<list --all>") {
 		t.Errorf("probe beyond the uses: %q %v", out, err)
+	}
+}
+
+// A command from when there were two modes is brought onto the one: an "open"
+// (or never-marked) command's mapped lines become its uses, so agents keep the
+// same lines, and an approved one is switched off, since those lines will now
+// run directly rather than in the sandbox. A second pass changes nothing.
+func TestOpenCommandsAreFoldedIntoTheirUses(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	SaveStore(db, Store{Name: "Intake", Path: t.TempDir()})
+	for name, usage := range map[string]string{"cap": "open", "old": ""} {
+		db.Set(commandsTable, commandKey("intake", name), StoreCommand{Slug: "intake", Name: name, Command: "/opt/bin/cap", Usage: usage, Approved: true,
+			ToolDesc: "Reads a bundle.", Tools: []TempToolAction{{Name: "report", CommandTemplate: "/opt/bin/cap report  '{folder}'"}}})
+	}
+	db.Set(commandsTable, commandKey("intake", "kb"), StoreCommand{Slug: "intake", Name: "kb", Command: "/opt/bin/kb", Usage: usageCurrent, Approved: true,
+		AllowedUses: []string{"list"}, Tools: []TempToolAction{{Name: "list", CommandTemplate: "/opt/bin/kb list"}}})
+	MigrateCommandUses(db)
+	MigrateCommandUses(db)
+	for _, name := range []string{"cap", "old"} {
+		c, _ := LoadStoreCommand(db, "intake", name)
+		if c.Usage != usageCurrent || c.Approved || strings.Join(c.AllowedUses, "|") != "report '{folder}'" || len(c.runnableActions()) != 1 {
+			t.Errorf("%s after the fold: usage %q approved %v uses %v", name, c.Usage, c.Approved, c.AllowedUses)
+		}
+	}
+	if c, _ := LoadStoreCommand(db, "intake", "kb"); !c.Approved || len(c.AllowedUses) != 1 {
+		t.Errorf("a current command was touched: %+v", c)
+	}
+}
+
+// A mapped line is split the way a person typing it means it, so a quoted
+// placeholder is still one argument and its quotes do not reach the binary.
+func TestAQuotedPlaceholderRunsAsOneArgument(t *testing.T) {
+	app := &FileStoreApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	prev := registeredFileStoreApp
+	registeredFileStoreApp = app
+	t.Cleanup(func() { registeredFileStoreApp = prev })
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: t.TempDir()})
+	bin := filepath.Join(t.TempDir(), "cap.sh")
+	os.WriteFile(bin, []byte("#!/bin/sh\nfor a in \"$@\"; do echo \"ARG<$a>\"; done\n"), 0o755)
+	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "cap", Command: bin})
+	if _, err := SaveCommandTools(app.DB, st.Slug, "cap", "Tags.", []TempToolAction{{Name: "tag", Description: "Tag.",
+		CommandTemplate: bin + " tag --note \"a b\" '{label}'", Params: map[string]ToolParam{"label": {Type: "string"}}, Required: []string{"label"}}}); err != nil {
+		t.Fatal(err)
+	}
+	SetCommandApproved(app.DB, st.Slug, "cap", true)
+	var tag AgentToolDef
+	for _, td := range (storeSource{app: app}).ItemToolsWithSession(&ToolSession{Ctx: context.Background(), Username: "alice"}, "alice", st.Slug) {
+		if strings.HasSuffix(td.Tool.Name, "_tag") {
+			tag = td
+		}
+	}
+	if tag.Handler == nil {
+		t.Fatal("no tag tool")
+	}
+	out, err := tag.Handler(context.Background(), map[string]any{"label": "x y"})
+	if err != nil || !strings.Contains(out, "ARG<a b>") || !strings.Contains(out, "ARG<x y>") {
+		t.Errorf("ran as: %q %v", out, err)
 	}
 }

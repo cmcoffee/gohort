@@ -117,10 +117,9 @@ type StoreCommand struct {
 	InputLabel string `json:"input_label,omitempty"`
 	Help       string `json:"help,omitempty"`
 
-	// Usage is how an agent's call to this command runs: "specified" (the
-	// default) runs only AllowedUses, each exactly as written; "open" runs
-	// the mapped lines in the sandbox. Builder explores either freely while
-	// mapping. See command_uses.go.
+	// Usage is MigrateCommandUses' mark: "specified" once every mapped line
+	// is one of AllowedUses. Commands from before were "open" (their mapped
+	// lines ran in the sandbox) or unset. See command_uses.go.
 	Usage string `json:"usage,omitempty"`
 	// AllowedUses are the argument lines, after the binary, a "specified"
 	// command may be run with, one per entry, with {placeholders} for what
@@ -201,11 +200,9 @@ func SaveStoreCommand(db Database, a StoreCommand) (StoreCommand, error) {
 	if strings.TrimSpace(a.Label) == "" {
 		a.Label = strings.ToUpper(a.Name[:1]) + strings.ReplaceAll(a.Name[1:], "_", " ")
 	}
-	// New commands run only their allowed uses unless made open, and the
-	// lines are kept tidy, one use per entry.
-	if a.Usage != UsageOpen {
-		a.Usage = UsageSpecified
-	}
+	// Uses are kept tidy, one per entry, and a new command needs no
+	// migrating (MigrateCommandUses).
+	a.Usage = usageCurrent
 	var uses []string
 	for _, l := range a.AllowedUses {
 		uses = append(uses, strings.Split(l, "\n")...)

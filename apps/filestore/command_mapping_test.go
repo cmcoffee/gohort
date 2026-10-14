@@ -18,7 +18,7 @@ import (
 func mappedCommandFixture(t *testing.T) (*FileStoreApp, Store) {
 	t.Helper()
 	app, st, _ := scopeFixture(t)
-	if _, err := SaveStoreCommand(app.DB, StoreCommand{Usage: UsageOpen,
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{
 		Slug: st.Slug, Name: "cap", Label: "cap", Command: "/opt/bin/cap",
 	}); err != nil {
 		t.Fatalf("register command: %v", err)
@@ -120,7 +120,7 @@ func TestMappingOverviewNamesTheApprovalState(t *testing.T) {
 // opened the panel to find out exactly that.
 func TestMappingOverviewOnAnUnmappedCommand(t *testing.T) {
 	app, st, _ := scopeFixture(t)
-	if _, err := SaveStoreCommand(app.DB, StoreCommand{Usage: UsageOpen,
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{
 		Slug: st.Slug, Name: "raw", Label: "raw", Command: "/opt/bin/raw",
 	}); err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestMappingOverviewOnAnUnmappedCommand(t *testing.T) {
 // belongs at the write rather than in the one handler that happened to do it.
 func TestSavingAMappingPinsFolderParamsToTheStore(t *testing.T) {
 	app, st, _ := scopeFixture(t)
-	if _, err := SaveStoreCommand(app.DB, StoreCommand{Usage: UsageOpen,
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{
 		Slug: st.Slug, Name: "cap", Label: "cap", Command: "/opt/bin/cap",
 	}); err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestSavingAMappingPinsFolderParamsToTheStore(t *testing.T) {
 		t.Errorf("the work_dir parameter must be pinned to this store, got %q", got)
 	}
 	// And it survives to what dispatch actually reads.
-	if got := back.asTempTool().Actions[0].WorkDir; got != "folder" {
+	if got := back.runnableActions()[0].WorkDir; got != "folder" {
 		t.Errorf("work_dir must reach the dispatched tool, got %q", got)
 	}
 }
@@ -174,7 +174,7 @@ func TestSavingAMappingPinsFolderParamsToTheStore(t *testing.T) {
 // A work_dir naming nothing is caught at the write, not at the first call.
 func TestSavingAMappingRefusesAWorkDirWithNoParameter(t *testing.T) {
 	app, st, _ := scopeFixture(t)
-	if _, err := SaveStoreCommand(app.DB, StoreCommand{Usage: UsageOpen,
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{
 		Slug: st.Slug, Name: "cap", Label: "cap", Command: "/opt/bin/cap",
 	}); err != nil {
 		t.Fatal(err)

@@ -3,21 +3,22 @@
 //
 // Builder explores a command freely while it maps it: the conversation is the
 // admin's own, opened from the command's row, and what it writes is inert
-// until the admin turns Agents on. The limit is on AGENTS, in two modes the
-// admin chooses:
+// until the admin turns Agents on. The limit is on AGENTS: an agent runs only
+// the command's allowed uses, each line exactly as written ("download
+// --src={source} --dst={folder}"), filling only the placeholders. The admin may
+// write uses up front to say what Builder should map; every line Builder maps
+// is added to them, and what the admin approves is that list. Changing the
+// uses turns Agents off.
 //
-//   - specified (the default): an agent runs only the command's allowed uses,
-//     each line exactly as written ("download --src={source} --dst={folder}"),
-//     filling only the placeholders. The admin may write uses up front to say
-//     what Builder should map; every line Builder maps is added to them, and
-//     what the admin approves is that list. Changing the uses turns Agents off.
-//   - open: the mapped lines run in the sandbox.
+// A use runs as written, directly as the server's account, the way a person's
+// click on a store command runs: the binary, then the line with each
+// placeholder filled by ONE value, no shell. That is what lets a binary with
+// its own saved login (a file-sharing client) work, and it is safe because the
+// line is one an admin approved and the model supplies only values.
 //
-// A specified command runs as written, directly as the server's account, the
-// way a person's click on a store command runs: the binary, then the line with
-// each placeholder filled by ONE value, no shell. That is what lets a binary
-// with its own saved login (a file-sharing client) work, and it is safe because
-// the line is one an admin approved and the model supplies only values.
+// There used to be a second mode, "open", whose mapped lines ran in the
+// sandbox. Once Builder mapped freely in both, the two differed only in where
+// an approved line ran, so MigrateCommandUses folds it into this one.
 package filestore
 
 import (
@@ -34,15 +35,9 @@ import (
 	"github.com/cmcoffee/gohort/core/pathhold"
 )
 
-// The two usage modes.
-const (
-	UsageSpecified = "specified"
-	UsageOpen      = "open"
-)
-
-// open reports whether this command's mapped lines run in the sandbox rather
-// than as written.
-func (a StoreCommand) open() bool { return a.Usage == UsageOpen }
+// usageCurrent marks a command as one MigrateCommandUses has nothing left to
+// do for: every mapped line is one of its allowed uses.
+const usageCurrent = "specified"
 
 // allowedLines is the admin's allowed uses, each with its spacing normalized.
 func (a StoreCommand) allowedLines() []string {
@@ -57,9 +52,6 @@ func (a StoreCommand) allowedLines() []string {
 
 // usesLabel says how the command may be used, for the admin table.
 func (a StoreCommand) usesLabel() string {
-	if a.open() {
-		return "sandboxed: agents run the mapped lines in the sandbox"
-	}
 	lines := a.allowedLines()
 	if len(lines) == 0 {
 		return "only as specified: none yet (Builder adds the lines it maps)"
@@ -68,14 +60,10 @@ func (a StoreCommand) usesLabel() string {
 }
 
 // templateAllowed says whether a mapped action's command line is one an agent
-// may run: for an open command any (actionRunsTheCommand still applies), for a
-// specified one exactly the binary and one of its allowed uses. Checked when
-// an agent's tools are built and again at the call, so a use the admin has
-// taken off the list stops running.
+// may run: exactly the binary and one of the command's allowed uses. Checked
+// when an agent's tools are built and again at the call, so a use the admin
+// has taken off the list stops running.
 func (a StoreCommand) templateAllowed(tmpl string) error {
-	if a.open() {
-		return nil
-	}
 	lines := a.allowedLines()
 	args := strings.Join(strings.Fields(argsAfterBinary(tmpl)), " ")
 	for _, l := range lines {
@@ -101,11 +89,11 @@ func argsAfterBinary(tmpl string) string {
 	return ""
 }
 
-// --- running a specified action ---------------------------------------------
+// --- running a use ------------------------------------------------------------
 
-// specifiedToolDefs is a specified command's mapped actions as agent tools,
-// each running its line as written (runSpecified), as a background-capable
-// run so a long download moves to the background and reports back.
+// specifiedToolDefs is a command's mapped actions as agent tools, each running
+// its line as written (runSpecified), as a background-capable run so a long
+// download moves to the background and reports back.
 func (s storeSource) specifiedToolDefs(sess *ToolSession, user string, st Store, cmd StoreCommand) []AgentToolDef {
 	var out []AgentToolDef
 	for _, act := range cmd.runnableActions() {
@@ -132,13 +120,14 @@ func (s storeSource) specifiedToolDefs(sess *ToolSession, user string, st Store,
 	return out
 }
 
-// specifiedOutputMax is how much of a specified run's output goes back to the
+// specifiedOutputMax is how much of a run's output goes back to the
 // model: the end, where the result and any error are.
 const specifiedOutputMax = 32 << 10
 
-// runSpecified runs one action of a specified command: the binary, then the
-// admin's line with each {placeholder} replaced by the agent's value as part
-// of ONE argument, in the action's working folder (the store root unless it
+// runSpecified runs one mapped action: the binary, then the approved line,
+// split the way a person typing it means it (quotes hold a value with spaces),
+// with each {placeholder} replaced by the agent's value as part of ONE
+// argument, in the action's working folder (the store root unless it
 // names one). A folder value is proved inside the store first; any other
 // value that would stand alone as an argument may not start with '-', where
 // it would be read as an option rather than a value.
@@ -167,8 +156,12 @@ func runSpecified(ctx context.Context, user, agentID string, st Store, cmd Store
 			return "", fmt.Errorf("missing required %q", r)
 		}
 	}
+	words, err := splitArgs(argsAfterBinary(act.CommandTemplate))
+	if err != nil {
+		return "", fmt.Errorf("the mapped line for %s does not parse (%v): re-map the command", act.Name, err)
+	}
 	var argv []string
-	for _, word := range strings.Fields(argsAfterBinary(act.CommandTemplate)) {
+	for _, word := range words {
 		phs := templatePlaceholders(word)
 		if len(phs) == 0 {
 			argv = append(argv, word)
@@ -223,8 +216,8 @@ func runSpecified(ctx context.Context, user, agentID string, st Store, cmd Store
 	return out, nil
 }
 
-// handleCommandUses reads and sets how a command may be used: GET the mode and
-// lines, POST new ones. Admin-only. A change switches Agents off, since what
+// handleCommandUses reads and sets how a command may be used: GET its uses and
+// guide, POST new ones. Admin-only. A change switches Agents off, since what
 // agents could do is what changed.
 func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
@@ -238,11 +231,7 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if r.Method == http.MethodGet {
-		usage := UsageSpecified
-		if cmd.open() {
-			usage = UsageOpen
-		}
-		writeJSON(w, map[string]any{"usage": usage, "allowed_uses": strings.Join(cmd.allowedLines(), "\n"), "guide": cmd.Guide})
+		writeJSON(w, map[string]any{"allowed_uses": strings.Join(cmd.allowedLines(), "\n"), "guide": cmd.Guide})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -250,7 +239,6 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var body struct {
-		Usage       string `json:"usage"`
 		AllowedUses string `json:"allowed_uses"`
 		Guide       string `json:"guide"`
 	}
@@ -260,10 +248,6 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 	}
 	before := cmd.usesLabel()
 	cmd.Guide = strings.TrimSpace(body.Guide)
-	cmd.Usage = UsageSpecified
-	if body.Usage == UsageOpen {
-		cmd.Usage = UsageOpen
-	}
 	cmd.AllowedUses = strings.Split(body.AllowedUses, "\n")
 	cmd.AllowedUses = cmd.allowedLines()
 	for _, l := range cmd.AllowedUses {
@@ -284,21 +268,34 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]any{"ok": true, "message": msg})
 }
 
-// MigrateCommandUses gives commands registered before usage modes existed the
-// mode that matches how they were made: one already mapped was explored
-// freely, so it stays open (an admin can restrict it); one not mapped yet
-// starts as specified, like every new command. Idempotent.
+// MigrateCommandUses brings commands from before there was one way to run
+// them onto it. A command that was "open", or registered before there were
+// modes at all, ran its mapped lines in the sandbox and kept no list of uses:
+// each mapped line becomes one of its uses, and one that was approved is
+// switched off, since it will now run directly as the server's account rather
+// than in the sandbox, and that is the admin's to approve. Idempotent.
 func MigrateCommandUses(db Database) {
 	for _, cmd := range ListStoreCommands(db) {
-		if cmd.Usage != "" {
+		if cmd.Usage == usageCurrent {
 			continue
 		}
-		cmd.Usage = UsageSpecified
-		if cmd.Mapped() {
-			cmd.Usage = UsageOpen
+		have := map[string]bool{}
+		for _, l := range cmd.allowedLines() {
+			have[l] = true
 		}
+		for _, act := range cmd.Tools {
+			if l := strings.Join(strings.Fields(argsAfterBinary(act.CommandTemplate)), " "); l != "" && !have[l] {
+				cmd.AllowedUses = append(cmd.AllowedUses, l)
+				have[l] = true
+			}
+		}
+		was := cmd.Approved
+		cmd.Approved = false
+		cmd.Usage = usageCurrent
 		db.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
-		Log("[filestore] command %s/%s set to %s (registered before usage modes)", cmd.Slug, cmd.Name, cmd.Usage)
+		if was {
+			Log("[filestore] command %s/%s now runs its mapped lines directly rather than in the sandbox: Agents is off until an admin approves it again", cmd.Slug, cmd.Name)
+		}
 	}
 }
 

@@ -18,7 +18,7 @@ func commandFixture(t *testing.T) (*FileStoreApp, Store, StoreCommand) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd, err := SaveStoreCommand(app.DB, StoreCommand{Usage: UsageOpen,
+	cmd, err := SaveStoreCommand(app.DB, StoreCommand{
 		Slug: st.Slug, Name: "decrypt", Label: "Decrypt bundle", Command: "/opt/bin/cap"})
 	if err != nil {
 		t.Fatal(err)
@@ -185,10 +185,8 @@ func TestAMappedCommandIsNotADeploymentTool(t *testing.T) {
 	if tools := LoadPersistentTempTools(app.DB, "u"); len(tools) != 0 {
 		t.Errorf("mapping wrote %d tool(s) into the user pool", len(tools))
 	}
-	// And it stays bound-only, so it would still be hidden if one were ever
-	// copied there.
-	if !saved.asTempTool().BoundOnly {
-		t.Error("bound-only is the belt to that braces")
+	if len(saved.Tools) != 2 {
+		t.Errorf("the mapping is on the command: %+v", saved.Tools)
 	}
 }
 
@@ -212,7 +210,7 @@ func TestStoresListSaysWhatAFolderCarries(t *testing.T) {
 		t.Errorf("got %q, want the singular", got)
 	}
 
-	second, err := SaveStoreCommand(app.DB, StoreCommand{Usage: UsageOpen,
+	second, err := SaveStoreCommand(app.DB, StoreCommand{
 		Slug: st.Slug, Name: "verify", Label: "Verify bundle", Command: "/opt/bin/cap"})
 	if err != nil {
 		t.Fatal(err)
