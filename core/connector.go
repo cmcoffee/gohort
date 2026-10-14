@@ -20,6 +20,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -105,6 +106,33 @@ func ConnectorHandlerFor(kind string) (ConnectorHandler, bool) {
 	defer connectorKindMu.RUnlock()
 	h, ok := connectorKinds[kind]
 	return h, ok
+}
+
+// connectorProber is a ConnectorHandler that can check, live, that a connector
+// reaches what it points at, without approving or bringing it up: connect to
+// the MCP server, run one poll. Optional: a kind without it is checked for its
+// shape only.
+type connectorProber interface {
+	probe(ctx context.Context, c Connector) (string, error)
+}
+
+// ProbeConnector checks, live, that a connector reaches what it points at, and
+// says what came back. probed is false for a kind with no live check, whose
+// test stops at validating its configuration.
+func ProbeConnector(ctx context.Context, c Connector) (preview string, probed bool, err error) {
+	h, ok := ConnectorHandlerFor(c.Kind)
+	if !ok {
+		return "", false, fmt.Errorf("no handler for connector kind %q", c.Kind)
+	}
+	p, ok := h.(connectorProber)
+	if !ok {
+		return "", false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	out, err := p.probe(ctx, c)
+	return out, true, err
 }
 
 // ConnectorKinds lists the registered kinds, sorted.

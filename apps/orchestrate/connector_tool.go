@@ -14,6 +14,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -252,7 +253,7 @@ Typical flow for a calendar:
 		Handler:     connectorGet,
 	})
 	gt.AddAction("test", &GroupedToolAction{
-		Description: "Validate a connector's config WITHOUT approving it (checks shape + referenced credential).",
+		Description: "Check a connector WITHOUT approving it: validates its config and referenced credential, then, for a kind that can be reached, connects for real (a remote MCP server's handshake and tool list, one poll of a polled API or message source) and says what came back.",
 		Params:      map[string]ToolParam{"name": {Type: "string", Description: "The connector name."}},
 		Required:    []string{"name"},
 		Handler:     connectorTest,
@@ -876,17 +877,26 @@ func connectorTest(args map[string]any, sess *ToolSession) (string, error) {
 	if err := ValidateConnector(c); err != nil {
 		return "", err
 	}
-	// rest_messaging goes a step past shape validation: do one live poll and show
-	// the mapped first message, so the author can confirm the dot-paths before
-	// approval. Needs the credential enabled by an admin.
-	if c.Kind == RestMessagingConnectorKind {
-		preview, err := ProbeMessagingConnector(c)
-		if err != nil {
-			return "", fmt.Errorf("%q validates, but the live poll failed: %w\n(If the credential isn't enabled yet, an admin must add its secret and enable it in Admin > APIs first.)", name, err)
-		}
-		return fmt.Sprintf("Connector %q validates. %s\n%s\nApprove it in Admin > Connectors to go live.", name, ConnectorSummary(c), preview), nil
+	// Past the shape: connect for real where the kind can be reached (an MCP
+	// server's handshake and tools, one poll), so "validates" is not mistaken
+	// for "works". A test that only read the config passed a connector whose
+	// server was down or whose credential it refused.
+	ctx := context.Background()
+	if sess != nil {
+		ctx = sess.Context()
 	}
-	return fmt.Sprintf("Connector %q validates. %s\nIt still needs admin approval in Admin > Connectors before it goes live.", name, ConnectorSummary(c)), nil
+	preview, probed, err := ProbeConnector(ctx, c)
+	if err != nil {
+		return "", fmt.Errorf("%q validates, but the live check failed: %w\n(If its credential isn't enabled yet, an admin must add its secret and enable it in Admin > APIs first.)", name, err)
+	}
+	next := "Approve it in Admin > Connectors to go live."
+	if c.Approved {
+		next = "It is approved and live."
+	}
+	if !probed {
+		return fmt.Sprintf("Connector %q validates. %s\nA %s connector has no live check here, so this tested its configuration only. %s", name, ConnectorSummary(c), c.Kind, next), nil
+	}
+	return fmt.Sprintf("Connector %q validates and was reached. %s\n%s\n%s", name, ConnectorSummary(c), preview, next), nil
 }
 
 func connectorDelete(args map[string]any, sess *ToolSession) (string, error) {

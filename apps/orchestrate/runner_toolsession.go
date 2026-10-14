@@ -43,6 +43,8 @@ func init() {
 		"tool_template", "collections", "draft_oauth_credential",
 		"draft_api_credential", "update_api_credential",
 		"store_credential_secret", "check_credential",
+		// the deployment's MCP servers and their tools (builder_mcp_tool.go)
+		"mcp",
 		// boards: on Builder's catalog on every surface, since it comes from
 		// the session rather than the turn (builderAuthoringTools)
 		"bulletins",

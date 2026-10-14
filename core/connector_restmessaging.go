@@ -24,6 +24,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -327,8 +328,9 @@ var messagingProbe MessagingProbeFn
 // RegisterMessagingProbe installs the bridges-side mapping probe.
 func RegisterMessagingProbe(fn MessagingProbeFn) { messagingProbe = fn }
 
-// ProbeMessagingConnector runs the registered probe, or reports it's unavailable.
-func ProbeMessagingConnector(c Connector) (string, error) {
+// probe runs the registered one-poll mapping probe (ProbeConnector), or reports
+// it unavailable.
+func (restMessagingHandler) probe(_ context.Context, c Connector) (string, error) {
 	if messagingProbe == nil {
 		return "", fmt.Errorf("messaging probe unavailable (bridges app not loaded)")
 	}

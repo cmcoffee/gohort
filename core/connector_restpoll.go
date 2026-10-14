@@ -11,6 +11,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -141,4 +142,22 @@ func (h restPollHandler) Summary(c Connector) string {
 		url = "(no url)"
 	}
 	return fmt.Sprintf("poll %s (via credential %s) every %dm → wake %s on change", url, s.Credential, mins, s.WakeAgent)
+}
+
+// probe runs one poll through the connector's credential, as its first fire
+// would, and shows the start of what came back.
+func (h restPollHandler) probe(_ context.Context, c Connector) (string, error) {
+	s, err := h.parse(c)
+	if err != nil {
+		return "", err
+	}
+	m := h.monitor(c, s)
+	body, err := InvokeWatchTool(c.Owner, m.WakeAgent, m.ToolName, m.ToolArgs)
+	if err != nil {
+		return "", fmt.Errorf("the poll of %s failed: %w", s.URL, err)
+	}
+	if r := []rune(strings.TrimSpace(body)); len(r) > 600 {
+		body = string(r[:600]) + "..."
+	}
+	return fmt.Sprintf("One poll of %s answered:\n%s", s.URL, strings.TrimSpace(body)), nil
 }

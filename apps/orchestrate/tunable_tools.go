@@ -22,7 +22,7 @@ var authoringToolNames = []string{
 	"survey", "create_agent", "update_agent", "list_reference_sources", "archetype", "clone_agent",
 	"delete_agent", "add_tool", "tool_def", "skill_def", "bridge", "connector", "tool_template",
 	"collections", "draft_oauth_credential", "draft_api_credential", "update_api_credential",
-	"store_credential_secret", "check_credential", "bulletins",
+	"store_credential_secret", "check_credential", "bulletins", "mcp",
 }
 
 // Authored with outside builderAuthoringTools: the three things Builder makes

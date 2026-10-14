@@ -147,6 +147,11 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// found) BEFORE wiring a tool to it. Builder lacked this, so it kept
 		// building against not-yet-registered creds and flailing.
 		checkCredentialToolDef(credTurn),
+		// mcp — the deployment's MCP servers and their <server>_<tool> tools:
+		// list, read, test the connection, and run one to learn what it does.
+		// Without it MCP tools were out of Builder's reach altogether
+		// (builder_mcp_tool.go).
+		mcpToolDef(sess),
 	}
 	// Per-credential fetch_url_<name> tools — Builder uses these for
 	// authoring-time discovery (probe an endpoint, confirm shape)
@@ -798,6 +803,18 @@ func surveyWorkspace(owner string) string {
 		}
 	}
 	capNote(len(creds))
+
+	// MCP servers: the tools an administrator connected, which an agent uses
+	// by name like any other. Listed so a request involving one starts from
+	// what is there; mcp(action="get") has the detail.
+	servers := MCP().List()
+	section("MCP SERVERS", len(servers))
+	if len(servers) > 0 {
+		fmt.Fprintf(&b, "  (tools named <server>_<tool>; inspect, test and try them with mcp)\n")
+	}
+	for _, cfg := range servers {
+		fmt.Fprintf(&b, "  - %s: %s, %d tool(s)\n", cfg.Name, mcpServerState(owner, cfg), len(mcpServerTools(cfg.Name)))
+	}
 
 	apps := ListAppSpecs(owner)
 	section("APPS", len(apps))

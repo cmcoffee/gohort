@@ -12,9 +12,13 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/internal/mcpclient"
 )
 
 // RemoteMCPConnectorKind is the Kind value for a remote-MCP-server connector.
@@ -92,7 +96,17 @@ func (h remoteMCPHandler) Materialize(c Connector) error {
 	if err != nil {
 		return err
 	}
-	cfg := MCPServerConfig{
+	if err := MCP().Save(h.serverConfig(c, s), ""); err != nil {
+		return err
+	}
+	MCP().Reload()
+	return nil
+}
+
+// serverConfig is the MCP server this connector materializes into, and the
+// one its probe connects to.
+func (remoteMCPHandler) serverConfig(c Connector, s RemoteMCPSpec) MCPServerConfig {
+	return MCPServerConfig{
 		Name:              c.Name,
 		URL:               s.URL,
 		AuthMode:          MCPAuthMode(s.AuthMode),
@@ -105,11 +119,29 @@ func (h remoteMCPHandler) Materialize(c Connector) error {
 		OAuthAudience:     s.OAuthAudience,
 		Enabled:           true,
 	}
-	if err := MCP().Save(cfg, ""); err != nil {
-		return err
+}
+
+// probe connects to the server the way approval would, without saving it:
+// the MCP handshake and its tool list. A server that signs in per person
+// refuses a check with nobody signed in; reaching it and being asked to sign
+// in is the expected answer, not a failure.
+func (h remoteMCPHandler) probe(ctx context.Context, c Connector) (string, error) {
+	s, err := h.parse(c)
+	if err != nil {
+		return "", err
 	}
-	MCP().Reload()
-	return nil
+	msg, err := MCP().Test(ctx, h.serverConfig(c, s), "")
+	switch {
+	case err == nil:
+		return msg, nil
+	case errors.Is(err, mcpclient.ErrUnauthorized) && MCPAuthMode(s.AuthMode) == MCPAuthOAuth:
+		return fmt.Sprintf("Reached %s, which asks for sign-in, as a server that signs in per person does. Once the connector is approved, each person connects it under their account, and its tools list then.", s.URL), nil
+	case errors.Is(err, mcpclient.ErrUnauthorized) && MCPAuthMode(s.AuthMode) == MCPAuthSecure:
+		return "", fmt.Errorf("reached %s, but it refused credential %q: check the credential is enabled in Admin > APIs and grants access to this server (%v)", s.URL, s.SecureCred, err)
+	case errors.Is(err, mcpclient.ErrUnauthorized):
+		return "", fmt.Errorf("reached %s, but it requires sign-in: set auth_mode to secure_api (with a credential) or oauth (%v)", s.URL, err)
+	}
+	return "", fmt.Errorf("could not connect to %s: %v", s.URL, err)
 }
 
 // Teardown removes the materialized MCP server (already-registered proxy tools
