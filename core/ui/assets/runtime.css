@@ -6755,3 +6755,28 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border: 1px dashed var(--border); border-radius: 6px;
   color: var(--text-mute); font-size: var(--fs-sm, 0.85rem); background: var(--bg-2);
 }
+/* The session list on a phone. Below 900px it is a drawer the width of the
+ * screen, and it kept the desktop rail's look: rows a few pixels apart with
+ * small titles and a small search box, sized for a pointer in a 260px column.
+ * Here a row is a list row (the tap size, the title at reading size and two
+ * lines of it, its meta legible), sessions are told apart by a hairline, the
+ * search is a field you can hit, and the list clears the home indicator. A
+ * row's delete stays clear of its title. */
+@media (max-width: 900px) {
+  .ui-chat-side .ui-chat-side-h { padding: 0.6rem 0.7rem; }
+  .ui-chat-side .ui-chat-side-search { margin: 0.5rem 0.6rem; padding: 0.55rem 0.7rem; }
+  .ui-chat-side .ui-chat-side-list { padding: 0.25rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
+  .ui-chat-side .ui-chat-side-item {
+    min-height: var(--tap, 44px); align-items: center;
+    padding-top: 0.55rem; padding-bottom: 0.55rem;
+    margin-bottom: 0; border-radius: var(--btn-radius);
+  }
+  .ui-chat-side .ui-chat-side-item + .ui-chat-side-item {
+    box-shadow: 0 -1px 0 color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .ui-chat-side .ui-chat-side-title { font-size: var(--fs-md); -webkit-line-clamp: 2; }
+  .ui-chat-side .ui-chat-side-meta { font-size: var(--fs-xs); margin-top: 0.15rem; }
+}
+@media (max-width: 900px) and (pointer: coarse) {
+  .ui-chat-side .ui-chat-side-item:not(.ui-chat-side-item-renable) { padding-right: 2.9rem; }
+}
