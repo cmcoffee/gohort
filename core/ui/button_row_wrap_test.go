@@ -65,3 +65,28 @@ func TestModalFooterWraps(t *testing.T) {
 		t.Error("uiOpenModal's footer should use .ui-modal-footer rather than its own inline flex row")
 	}
 }
+
+// On a phone a crowded row of buttons is one line that scrolls, never a
+// wrap: wrapped, its last button (Delete, most often) dropped to a line of
+// its own. These rows hold four or more buttons on common pages (table and
+// card-list rows, a message's actions, the pipeline and report actions, the
+// editors' toolbars), so each must be in the phone rule that keeps it whole.
+func TestCrowdedRowsStayOneLineOnAPhone(t *testing.T) {
+	i := strings.Index(runtimeCSS, "A ROW OF BUTTONS ON A PHONE")
+	if i < 0 {
+		t.Fatal("runtime.css has no one-line rule for crowded button rows")
+	}
+	block := runtimeCSS[i:]
+	if j := strings.Index(block, "\n}\n"); j >= 0 {
+		block = block[:j]
+	}
+	for _, c := range []string{".ui-row-actions", ".ui-card-controls", ".ui-toolbar-strip",
+		".ui-agent-msg-actions", ".ui-pl-actions", ".ui-pl-modal-h-actions", ".ui-agent-actions"} {
+		if !strings.Contains(block, c) {
+			t.Errorf("%s is a crowded button row, and the phone rule does not keep it to one line", c)
+		}
+	}
+	if !strings.Contains(block, "flex-wrap: nowrap") {
+		t.Error("the phone rule for crowded rows no longer stops them wrapping")
+	}
+}

@@ -630,7 +630,7 @@
               });
               card.appendChild(info);
               // Right: segmented state control (rows that carry it) + actions.
-              var controls = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;flex:0 0 auto;flex-wrap:wrap'});
+              var controls = el('div', {class: 'ui-card-controls'});
               if (item.state_field && (item.state_options || []).length && row[item.state_field] != null) {
                 var seg = el('div', {style: 'display:inline-flex;border:1px solid var(--border, rgba(127,127,127,0.35));border-radius:var(--btn-radius, 6px);overflow:hidden'});
                 // Gated segments are dropped BEFORE the loop, so the one that

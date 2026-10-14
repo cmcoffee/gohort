@@ -293,21 +293,25 @@
 
     titleBar.appendChild(titleInput);
     titleBar.appendChild(savedTag);
+    // The buttons as one group (.ui-toolbar-strip): no box on a wide screen,
+    // one swipeable line under the title on a phone instead of a wrap.
+    var strip = el('div', {class: 'ui-toolbar-strip'});
     // Revision group sits as the leftmost button cluster on the
     // titlebar (immediately after the title input and saved tag) —
     // matches the code-document panel, where rev navigation is the first button
     // group after the name input.
-    if (revGroup) titleBar.appendChild(revGroup);
-    if (rulesBtn) titleBar.appendChild(rulesBtn);
-    if (outlineBtn) titleBar.appendChild(outlineBtn);
-    if (tplBtn) titleBar.appendChild(tplBtn);
-    if (assistBtn) titleBar.appendChild(assistBtn);
-    actionButtons.forEach(function(btn){ titleBar.appendChild(btn); });
+    if (revGroup) strip.appendChild(revGroup);
+    if (rulesBtn) strip.appendChild(rulesBtn);
+    if (outlineBtn) strip.appendChild(outlineBtn);
+    if (tplBtn) strip.appendChild(tplBtn);
+    if (assistBtn) strip.appendChild(assistBtn);
+    actionButtons.forEach(function(btn){ strip.appendChild(btn); });
     if (extrasBtn) {
       var extrasWrap = el('span', {class: 'ui-tw-extras-wrap'}, [extrasBtn]);
-      titleBar.appendChild(extrasWrap);
+      strip.appendChild(extrasWrap);
     }
-    titleBar.appendChild(saveBtn);
+    strip.appendChild(saveBtn);
+    titleBar.appendChild(strip);
     main.appendChild(titleBar);
 
     // Merge slide-in panel — picks a saved merge source (or pastes

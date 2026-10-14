@@ -1237,22 +1237,45 @@ select:-webkit-autofill {
   }
   .ui-row-cells > .ui-table-cell:last-child { margin-bottom: 0; }
   .ui-table-cell.mute { font-size: var(--fs-sm); }
-  /* One line, never a wrap: wrapped, the last button or two (Delete, most
-   * often) dropped to a line of their own and read as a separate control.
-   * A destructive action goes to the far end, apart from the everyday ones,
-   * and in the rare row whose buttons do not fit, the line scrolls sideways
-   * rather than wrapping. */
   .ui-row-actions {
-    display: flex; flex-wrap: nowrap;
     flex-direction: row;
     margin-left: 0; justify-content: flex-start;
     gap: 0.35rem;
+  }
+}
+/* A ROW OF BUTTONS ON A PHONE is one line, never a wrap: wrapped, the last
+ * button or two (Delete, most often) dropped to a line of their own and read
+ * as a separate control. A destructive action goes to the far end, apart
+ * from the everyday ones, and a row whose buttons do not fit scrolls
+ * sideways rather than wrapping. Every crowded button row is named here;
+ * one that wraps on purpose (chips, tags, a list of choices) is not. */
+@media (max-width: 800px) {
+  :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip, .ui-agent-msg-actions,
+      .ui-pl-actions, .ui-pl-modal-h-actions),
+  .ui-agent.ui-agent-list-top .ui-agent-actions {
+    flex-wrap: nowrap !important; min-width: 0;
     overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
   }
-  .ui-row-actions::-webkit-scrollbar { display: none; }
-  .ui-row-actions > * { flex: 0 0 auto; }
-  .ui-row-actions > .danger { margin-left: auto; }
+  :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip, .ui-agent-msg-actions,
+      .ui-pl-actions, .ui-pl-modal-h-actions, .ui-agent-actions)::-webkit-scrollbar { display: none; }
+  :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip, .ui-agent-msg-actions,
+      .ui-pl-actions, .ui-pl-modal-h-actions, .ui-agent-actions) > * { flex: 0 0 auto; }
+  :is(.ui-row-actions, .ui-card-controls, .ui-pl-actions) > .danger { margin-left: auto; }
+  /* A card's controls take the line under the card's text, the full width. */
+  .ui-card-controls { flex: 1 0 100%; }
+  /* A toolbar's buttons take the line under its name or title field. */
+  .ui-toolbar-strip { display: flex; flex: 1 0 100%; align-items: center; gap: 0.4rem; flex-wrap: nowrap; overflow-x: auto; }
+  /* An approval card's answers stack, one to a line: a decision should not
+   * have an answer, Deny least of all, scrolled out of sight. */
+  .ui-agent-confirm-btns { flex-direction: column; align-items: stretch; }
+  .ui-agent-confirm-btns > button { width: 100%; justify-content: center; }
 }
+/* A toolbar's buttons as one group: no box of their own on a wide screen,
+ * where they sit in the toolbar's row as before. */
+.ui-toolbar-strip { display: contents; }
+/* The controls on a card-list row (a segmented state control and the row's
+ * actions), beside the row's text on a wide screen. */
+.ui-card-controls { display: flex; align-items: center; gap: 0.4rem; flex: 0 0 auto; flex-wrap: wrap; }
 
 .ui-row-toggle-pair { display: inline-flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
 .ui-row-toggle-label { font-size: var(--fs-xs); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }

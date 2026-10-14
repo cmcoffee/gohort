@@ -148,14 +148,19 @@
 
     var toolbarKids = [nameInput];
     if (suggestNameBtn) toolbarKids.push(suggestNameBtn);
-    if (revGroup) toolbarKids.push(revGroup);
-    toolbarKids.push(langSelect);
-    toolbarKids.push(varsBtn);
-    if (valuesBtn) toolbarKids.push(valuesBtn);
-    if (rulesBtn) toolbarKids.push(rulesBtn);
-    toolbarKids.push(saveBtn);
-    toolbarKids.push(copyBtn);
-    toolbarKids.push(newBtn);
+    // Everything after the name, as one group: no box on a wide screen
+    // (.ui-toolbar-strip is display:contents there), one swipeable line
+    // under the name on a phone, rather than a wrap that leaves New alone.
+    var stripKids = [];
+    if (revGroup) stripKids.push(revGroup);
+    stripKids.push(langSelect);
+    stripKids.push(varsBtn);
+    if (valuesBtn) stripKids.push(valuesBtn);
+    if (rulesBtn) stripKids.push(rulesBtn);
+    stripKids.push(saveBtn);
+    stripKids.push(copyBtn);
+    stripKids.push(newBtn);
+    toolbarKids.push(el('div', {class: 'ui-toolbar-strip'}, stripKids));
     var toolbar = el('div', {class: 'ui-cw-toolbar'}, toolbarKids);
     main.appendChild(toolbar);
 
@@ -627,16 +632,18 @@
     langSelect.addEventListener('change', rememberSettings);
     // The toolbar was assembled above, before these buttons existed. Park
     // them right after the language select they belong to.
+    // In the select's own row (the toolbar's button strip), not the toolbar.
+    var docHost = langSelect.parentNode || toolbar;
     var docAnchor = langSelect.nextSibling;
-    if (docAnchor) toolbar.insertBefore(docViewBtn, docAnchor);
-    else toolbar.appendChild(docViewBtn);
+    if (docAnchor) docHost.insertBefore(docViewBtn, docAnchor);
+    else docHost.appendChild(docViewBtn);
     if (tplBtn) {
-      if (docAnchor) toolbar.insertBefore(tplBtn, docAnchor);
-      else toolbar.appendChild(tplBtn);
+      if (docAnchor) docHost.insertBefore(tplBtn, docAnchor);
+      else docHost.appendChild(tplBtn);
     }
     if (docAssistBtn) {
-      if (docAnchor) toolbar.insertBefore(docAssistBtn, docAnchor);
-      else toolbar.appendChild(docAssistBtn);
+      if (docAnchor) docHost.insertBefore(docAssistBtn, docAnchor);
+      else docHost.appendChild(docAssistBtn);
     }
     syncDocViewBtn();
 

@@ -303,6 +303,9 @@ const documentsDetailAssets = `<style>
 .docs-detail-hdr { padding-bottom: 0.8rem; border-bottom: 1px solid var(--border); }
 .docs-detail-name { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem; }
 .docs-detail-name span { font-size: 1.3rem; font-weight: 600; color: var(--text); flex: 1; min-width: 200px; }
+/* On a phone the name takes its own line, so Rename, Export and Delete stay
+   together on the next rather than Delete wrapping off alone. */
+@media (max-width: 800px) { .docs-detail-name span { flex-basis: 100%; } }
 .docs-detail-desc { color: var(--text-mute); font-size: var(--fs-md, 0.88rem); line-height: 1.45; margin-bottom: 0.5rem; }
 .docs-desc-wrap { margin-bottom: 0.5rem; }
 .docs-detail-desc-edit { width: 100%; min-height: 4.5rem; resize: vertical; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem 0.6rem; font: inherit; font-size: var(--fs-sm, 0.85rem); line-height: 1.45; }

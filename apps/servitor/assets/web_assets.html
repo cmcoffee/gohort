@@ -146,6 +146,13 @@
 .ui-servitor-app-tabs {
   display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0;
 }
+/* On a phone the four kinds sit on one line that scrolls sideways, as the
+   framework's tab bars do, rather than wrapping one or two below. */
+@media (max-width: 800px) {
+  .ui-servitor-app-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .ui-servitor-app-tabs::-webkit-scrollbar { display: none; }
+  .ui-servitor-app-tabs > * { flex: 0 0 auto; }
+}
 /* Access modal. The command is the widest thing in a row and never muted:
    approving without reading it is the failure this surface exists to stop. */
 .ui-servitor-access-row {
