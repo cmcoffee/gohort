@@ -3765,6 +3765,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   white-space: pre-wrap; word-break: break-word;
 }
 .ui-pl-block-body p { margin: 0.4rem 0; }
+/* Phone: the run reads edge to edge. The desktop's padding at every level
+ * (the transcript, each block, its body, the title and the form above)
+ * added up to a fifth of a 390px screen before the first word. */
+@media (max-width: 700px) {
+  .ui-pl-form { padding: 0.6rem 0.7rem; }
+  .ui-pl-session-title { padding: 0.5rem 0.7rem 0.4rem; font-size: var(--fs-md); }
+  .ui-pl-transcript { padding: 0.5rem 0.5rem; }
+  .ui-pl-block-h { padding: 0.4rem 0.6rem; }
+  .ui-pl-block-body { padding: 0.55rem 0.65rem; }
+}
 /* Pipeline-block prose (headings / pre / code / lists) comes from
  * .ui-md — see the canonical block above. */
 
