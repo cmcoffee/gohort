@@ -180,7 +180,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						},
 
 						ui.Card{HTML: folderPanelHeading("Pull cases in",
-							"Copies a prepared case in from the store set under Settings, Pull cases from. The copy lands whole or not at all, and the other store keeps its own. An agent with this store attached can pull the same way.")},
+							"Copies a prepared case in from the store set under Settings, Pull cases from. The copy lands whole or not at all, and the other store keeps its own. Pulling a case that is already here adds to it: new files arrive, changed ones update, nothing is removed, so several bundles of one case collect together. An agent with this store attached can pull the same way.")},
 						ui.ActionList{
 							Source:         "/filestore/api/pull/cases?slug={slug}",
 							LabelField:     "case",

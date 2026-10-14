@@ -70,17 +70,29 @@ func TestAPullCopiesThePreparedPartWhole(t *testing.T) {
 		t.Error("wrote outside the store")
 	}
 
+	// A second bundle of the same case is prepared in Intake, and the first
+	// has since expired there. Pulling again adds the new one, updates what
+	// changed, and keeps what is already here.
+	src, _ := analysis.pullSource(app.DB)
+	os.RemoveAll(filepath.Join(src.Path, "CASE-1", "prepared", "node2"))
+	os.WriteFile(filepath.Join(src.Path, "CASE-1", "prepared", "bundle2.log"), []byte("second bundle"), 0o644)
+	os.WriteFile(filepath.Join(src.Path, "CASE-1", "prepared", "app.log"), []byte("ERROR disk full (rotated)"), 0o644)
 	again, _ := app.pullJobFor(analysis, "CASE-1", "alice", false)
-	if _, err := again.run(context.Background()); err == nil || !strings.Contains(err.Error(), "already has CASE-1") {
-		t.Errorf("a second pull overwrote without replace: %v", err)
+	out, err = again.run(context.Background())
+	if err != nil || !strings.Contains(out, "1 new, 1 updated, nothing removed") {
+		t.Fatalf("a second pull of the case: %q %v", out, err)
 	}
-	os.WriteFile(filepath.Join(analysis.Path, "CASE-1", "stale.txt"), []byte("old"), 0o644)
+	if got("CASE-1/bundle2.log") != "second bundle" || got("CASE-1/app.log") != "ERROR disk full (rotated)" || got("CASE-1/node2/sys.log") != "kernel: oops" {
+		t.Error("adding to the case lost or failed to update a file")
+	}
+
+	// replace clears the case first.
 	replace, _ := app.pullJobFor(analysis, "CASE-1", "alice", true)
 	if _, err := replace.run(context.Background()); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(analysis.Path, "CASE-1", "stale.txt")); err == nil {
-		t.Error("a replaced copy kept a file the new one does not have")
+	if _, err := os.Stat(filepath.Join(analysis.Path, "CASE-1", "node2")); err == nil {
+		t.Error("replace kept a folder the new copy does not have")
 	}
 	entries, _ := os.ReadDir(analysis.Path)
 	for _, e := range entries {
@@ -228,7 +240,7 @@ func TestThePanelPullsAndReportsTheOutcome(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	list = withCookie(http.MethodGet, "/filestore/api/pull/cases?slug="+analysis.Slug)
-	if !strings.Contains(list.Body.String(), "in Analysis since") {
+	if !strings.Contains(list.Body.String(), "in Analysis, last added to") {
 		t.Errorf("the case does not read as pulled: %s", list.Body.String())
 	}
 }

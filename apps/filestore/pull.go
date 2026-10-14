@@ -155,9 +155,6 @@ func (p *pullJob) run(ctx context.Context) (string, error) {
 	final := filepath.Join(destRoot, p.caseName)
 	staging := filepath.Join(destRoot, stagingPrefix+p.caseName)
 	defer pathhold.HoldAll(from, final, staging)()
-	if _, err := os.Stat(final); err == nil && !p.replace {
-		return "", fmt.Errorf("%s already has %s; pull it again with replace to overwrite it", p.dest.Name, p.caseName)
-	}
 
 	// Measured first: the destination's room is checked against the real
 	// size, and the progress line has a total to count toward.
@@ -219,16 +216,33 @@ func (p *pullJob) run(ctx context.Context) (string, error) {
 		}
 		return "", fmt.Errorf("copying %s into %s stopped, and nothing was kept: %w", p.caseName, p.dest.Name, err)
 	}
-	if _, err := os.Stat(final); err == nil {
+	_, statErr := os.Stat(final)
+	exists := statErr == nil
+	merged := ""
+	switch {
+	case exists && !p.replace:
+		// The case is already here, perhaps from an earlier bundle of the
+		// same case: add to it. New files arrive, a file of the same path is
+		// updated, and nothing already here is removed, so a bundle the
+		// source has since expired stays.
+		added, updated, err := mergeInto(staging, final)
+		if err != nil {
+			return "", fmt.Errorf("adding to %s in %s stopped partway (%d added, %d updated so far): %w", p.caseName, p.dest.Name, added, updated, err)
+		}
+		os.RemoveAll(staging)
+		merged = fmt.Sprintf(" Added to the copy already there: %d new, %d updated, nothing removed.", added, updated)
+	case exists:
 		old := filepath.Join(destRoot, ".replaced-"+p.caseName)
 		os.RemoveAll(old)
 		if err := os.Rename(final, old); err != nil {
 			return "", fmt.Errorf("could not move the old %s aside: %w", p.caseName, err)
 		}
 		defer os.RemoveAll(old)
-	}
-	if err := os.Rename(staging, final); err != nil {
-		return "", fmt.Errorf("could not move the copy into place: %w", err)
+		fallthrough
+	default:
+		if err := os.Rename(staging, final); err != nil {
+			return "", fmt.Errorf("could not move the copy into place: %w", err)
+		}
 	}
 	ok = true
 	what := p.caseName
@@ -240,8 +254,34 @@ func (p *pullJob) run(ctx context.Context) (string, error) {
 		note = fmt.Sprintf(" %d link(s) inside it were not followed.", skipped)
 	}
 	Log("[filestore.pull] %s copied %s from %s into %s: %s files, %s", p.user, what, p.src.Name, p.dest.Name, commaN(files), HumanSize(size))
-	return fmt.Sprintf("Copied %s from %s into %s: %s files, %s. It is at %s/%s.%s",
-		what, p.src.Name, p.dest.Name, commaN(files), HumanSize(size), p.dest.Name, p.caseName, note), nil
+	return fmt.Sprintf("Copied %s from %s into %s: %s files, %s. It is at %s/%s.%s%s",
+		what, p.src.Name, p.dest.Name, commaN(files), HumanSize(size), p.dest.Name, p.caseName, merged, note), nil
+}
+
+// mergeInto moves every file under staging to the same place under final,
+// replacing a file already at that path and leaving everything else in final
+// alone. Each file arrives whole: a rename on the same disk.
+func mergeInto(staging, final string) (added, updated int, err error) {
+	err = filepath.WalkDir(staging, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		rel, _ := filepath.Rel(staging, path)
+		to := filepath.Join(final, rel)
+		if d.IsDir() {
+			return os.MkdirAll(to, 0o755)
+		}
+		if info, serr := os.Lstat(to); serr == nil {
+			if info.IsDir() {
+				return fmt.Errorf("%s is a folder in the copy already there and a file in the new one", rel)
+			}
+			updated++
+		} else {
+			added++
+		}
+		return os.Rename(path, to)
+	})
+	return added, updated, err
 }
 
 // floorCheckEvery is how much a pull copies between looks at the disk's floor.

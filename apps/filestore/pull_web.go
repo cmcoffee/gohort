@@ -50,7 +50,7 @@ func (T *FileStoreApp) pullCases(dest Store) []map[string]any {
 		history := "not in " + dest.Name + " yet"
 		if dir, err := SubRoot(dest.Path, f.Name); err == nil {
 			if newest, err := bundleNewest(dir); err == nil {
-				history = "in " + dest.Name + " since " + newest.Format("Jan 2 15:04") + "; pulling again replaces it"
+				history = "in " + dest.Name + ", last added to " + newest.Format("Jan 2 15:04") + "; pulling again adds new files and updates changed ones"
 			}
 		}
 		out = append(out, map[string]any{"case": f.Name, "desc": desc, "history": history})
@@ -61,7 +61,7 @@ func (T *FileStoreApp) pullCases(dest Store) []map[string]any {
 // handlePull is the panel's half.
 //
 //	GET  /filestore/api/pull/cases?slug=<dest>            the source's cases
-//	POST /filestore/api/pull?slug=<dest>&case=<name>      start (replaces a copy already here)
+//	POST /filestore/api/pull?slug=<dest>&case=<name>      start (adds to a copy already here)
 //	GET  /filestore/api/pull/progress?slug=<dest>&case=   {"progress"} or {"outcome"}
 //	POST /filestore/api/pull/cancel?slug=<dest>&case=     stop it
 //
@@ -96,7 +96,7 @@ func (T *FileStoreApp) handlePull(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		job, err := T.pullJobFor(dest, caseName, user, true)
+		job, err := T.pullJobFor(dest, caseName, user, false)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -137,11 +137,11 @@ func (T *FileStoreApp) pullToolDef(sess *ToolSession, user string, dest Store) (
 	return AgentToolDef{
 		Tool: Tool{
 			Name: name,
-			Description: fmt.Sprintf("Copy a case into the %q file store from %q, where cases arrive and are prepared. It copies %s into %s/<case>, after which search_%s and read_%s can reach it. You see %s's case names, not their contents: pull one to read it. Cases there now, newest first: %s. A case that is not prepared yet is refused with what it is missing. A large case moves to the background and reports back when it is copied.",
+			Description: fmt.Sprintf("Copy a case into the %q file store from %q, where cases arrive and are prepared. It copies %s into %s/<case>, after which search_%s and read_%s can reach it. You see %s's case names, not their contents: pull one to read it. Cases there now, newest first: %s. A case already here is added to, not replaced, so pulling again after a new bundle is prepared brings in just what is new. A case that is not prepared yet is refused with what it is missing. A large case moves to the background and reports back when it is copied.",
 				dest.Name, src.Name, what, dest.Name, dest.Slug, dest.Slug, src.Name, listed),
 			Parameters: map[string]ToolParam{
 				"case":    {Type: "string", Description: "The case's folder name in " + src.Name + ", exactly as listed."},
-				"replace": {Type: "boolean", Description: "Overwrite a copy already in " + dest.Name + ". Only when the user wants it refreshed."},
+				"replace": {Type: "boolean", Description: "Remove the copy already in " + dest.Name + " first. Normally leave it off: a pull of a case that is already there ADDS to it (new files arrive, changed ones update, nothing is removed), which is how several bundles of one case collect. Only when the user wants the case cleared and copied fresh."},
 			},
 			Required: []string{"case"},
 			Caps:     []Capability{CapWrite},
