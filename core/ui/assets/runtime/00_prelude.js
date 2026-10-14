@@ -23,6 +23,38 @@
     'try{Object.defineProperty(window,n,{value:mem(),configurable:true});}catch(_){}}});' +
     '})();<' + '/script>';
 
+  // Link shim for an authored document in the artifact pane. The sandbox has
+  // no allow-popups, so a link there either loaded the other site inside the
+  // pane (most refuse to be framed, so it went blank) or did nothing. Every
+  // web link the document follows, by a click or by window.open, is handed
+  // to the page instead (openFramedLink), which opens it in a new window. An
+  // authored document has no pages of its own to move between, so a
+  // relative link goes out too, as the full address it resolves to. A link
+  // a handler has already taken is left alone, and so is an anchor.
+  // App pages' isolated frames (70_misc.js ISOLATE_SHIM) carry their own
+  // copy, which keeps a link inside the app in the frame.
+  var LINK_SHIM = '<script>(function(){' +
+    'function out(u){var r;try{r=new URL(u,document.baseURI);}catch(e){return false;}if(!/^https?:$/.test(r.protocol))return false;' +
+      'parent.postMessage({__uiIsoOpen:1,url:r.href},"*");return true;}' +
+    'addEventListener("click",function(e){if(e.defaultPrevented||e.button)return;var a=e.target&&e.target.closest&&e.target.closest("a[href]");if(!a)return;' +
+      'var h=a.getAttribute("href")||"";if(!h||h.charAt(0)==="#")return;if(out(h))e.preventDefault();});' +
+    'var OW=window.open;window.open=function(u){if(u&&out(String(u)))return null;return OW?OW.apply(window,arguments):null;};' +
+    '})();<' + '/script>';
+
+  // openFramedLink is the page's half of a framed document's link (the
+  // __uiIsoOpen message from LINK_SHIM or ISOLATE_SHIM): only a web address,
+  // and only right after the viewer clicked something, so a document cannot
+  // open windows on its own. A click inside the frame counts as one on this
+  // page too. Opened from here, the desktop app's own window.open hands it
+  // to the system browser.
+  function openFramedLink(url) {
+    url = String(url || '');
+    if (!/^https?:\/\//i.test(url)) return;
+    var act = navigator.userActivation;
+    if (act && !act.isActive) { console.warn('framed content asked to open ' + url + ' without a click; not opened'); return; }
+    window.open(url, '_blank', 'noopener');
+  }
+
 
   // --- helpers ----------------------------------------------------------
   // renderBulkBar adds a select-mode toggle pill above a side list.
@@ -1436,7 +1468,7 @@
     // storage or calls gohort.fetch in its first inline script must find them
     // already installed.
     function withShims(html, dataUrls) {
-      var shim = STORAGE_SHIM + PRINT_SHIM + ((dataUrls && dataUrls.length) ? BRIDGE_SHIM : '');
+      var shim = STORAGE_SHIM + PRINT_SHIM + LINK_SHIM + ((dataUrls && dataUrls.length) ? BRIDGE_SHIM : '');
       var m = html.match(/<head[^>]*>/i);
       if (m) return html.replace(m[0], m[0] + shim);
       return shim + html;
@@ -1495,6 +1527,9 @@
     function onBridgeMsg(ev) {
       if (ev.source !== frame.contentWindow) return;
       var d = ev.data;
+      // A link the document follows (LINK_SHIM), and only from an authored
+      // document: a preview of our own page is unsandboxed and opens its own.
+      if (d && d.__uiIsoOpen) { if (state.html) openFramedLink(d.url); return; }
       if (!d || typeof d.gohort_fetch !== 'string' || d.gohort_fetch_id == null) return;
       var url = d.gohort_fetch, id = d.gohort_fetch_id;
       function reply(ok, status, body) {

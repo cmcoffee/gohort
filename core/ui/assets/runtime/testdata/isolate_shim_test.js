@@ -27,6 +27,7 @@ var prelude = fs.readFileSync(dir + '/00_prelude.js', 'utf8');
 var misc = fs.readFileSync(dir + '/70_misc.js', 'utf8');
 var storage = constant(prelude, 'STORAGE_SHIM');
 var iso = constant(misc, 'ISOLATE_SHIM');
+var linkShim = constant(prelude, 'LINK_SHIM');
 
 // A window whose storage throws, as an opaque origin's does.
 function frameWindow() {
@@ -212,7 +213,7 @@ function codePaths() {
 // Links in an app frame: one that leaves the app is handed to the page to
 // open in a new window, rather than loading inside the card or dying as a
 // blocked popup; one that stays in the app is left to the frame.
-function links() {
+function linkFrame(shim) {
   var clicks = [], posted = [], nativeOpened = [];
   var w = {
     addEventListener: function(t, fn) { if (t === 'click') clicks.push(fn); },
@@ -224,7 +225,7 @@ function links() {
   };
   w.window = w;
   var ctx = vm.createContext(w);
-  scripts(iso).forEach(function(code) { vm.runInContext(code, ctx); });
+  scripts(shim).forEach(function(code) { vm.runInContext(code, ctx); });
   function click(href, target, opts) {
     opts = opts || {};
     var a = {getAttribute: function(k) { return k === 'href' ? href : k === 'target' ? (target || null) : null; }};
@@ -234,7 +235,11 @@ function links() {
     return ev;
   }
   function lastOpen() { var m = posted[posted.length - 1]; return m && m.__uiIsoOpen ? m.url : null; }
+  return {w: w, posted: posted, nativeOpened: nativeOpened, click: click, lastOpen: lastOpen};
+}
 
+function links() {
+  var f = linkFrame(iso), w = f.w, posted = f.posted, nativeOpened = f.nativeOpened, click = f.click, lastOpen = f.lastOpen;
   var ev = click('https://news.example/story/1');
   check('a link to another site asks the page to open it', lastOpen() === 'https://news.example/story/1' && ev.defaultPrevented);
   ev = click('https://news.example/story/2', '_blank');
@@ -255,5 +260,22 @@ function links() {
   w.open('javascript:void(0)');
   check('window.open of anything else is the frame\'s own', nativeOpened.length === 1);
   check('the page opens only a web address, and only after a click',
-    /if \(d\.__uiIsoOpen\) \{[\s\S]*?\^https\?:[\s\S]*?act && !act\.isActive[\s\S]*?window\.open\(String\(d\.url\), '_blank', 'noopener'\)/.test(misc));
+    /function openFramedLink\(url\) \{[\s\S]*?\^https\?:[\s\S]*?act && !act\.isActive[\s\S]*?window\.open\(url, '_blank', 'noopener'\)/.test(prelude) &&
+    /if \(d\.__uiIsoOpen\) \{ openFramedLink\(d\.url\); return; \}/.test(misc));
+
+  // The artifact pane: an authored document has no pages of its own, so a
+  // relative link goes out too.
+  var a = linkFrame(linkShim);
+  ev = a.click('https://news.example/story/1');
+  check('an artifact\'s link to another site asks the page to open it', a.lastOpen() === 'https://news.example/story/1' && ev.defaultPrevented);
+  ev = a.click('stories/3');
+  check('an artifact\'s relative link goes out as a full address', a.lastOpen() === 'https://gohort.example/apps/news/stories/3' && ev.defaultPrevented);
+  n = a.posted.length;
+  a.click('#top'); a.click('mailto:desk@news.example'); a.click('https://news.example/x', null, {taken: true});
+  check('an artifact\'s anchor, mailto, and taken link are left alone', a.posted.length === n);
+  a.w.open('https://news.example/popup');
+  check('an artifact\'s window.open asks the page', a.lastOpen() === 'https://news.example/popup' && a.nativeOpened.length === 0);
+  check('the pane gives an authored document the link shim, and answers only for one',
+    /var shim = STORAGE_SHIM \+ PRINT_SHIM \+ LINK_SHIM/.test(prelude) &&
+    /if \(d && d\.__uiIsoOpen\) \{ if \(state\.html\) openFramedLink\(d\.url\); return; \}/.test(prelude));
 }

@@ -1309,18 +1309,8 @@
         });
         return;
       }
-      // A link the document asks to open (see the frame's out): only a web
-      // address, and only right after the viewer clicked something, so an
-      // app cannot open windows on its own. A click inside the frame counts
-      // as one on this page too. Opened from here, the desktop app's own
-      // window.open hands it to the system browser.
-      if (d.__uiIsoOpen) {
-        var act = navigator.userActivation;
-        if (!/^https?:\/\//i.test(String(d.url || ''))) return;
-        if (act && !act.isActive) { console.warn('isolated content asked to open ' + d.url + ' without a click; not opened'); return; }
-        window.open(String(d.url), '_blank', 'noopener');
-        return;
-      }
+      // A link the document asks to open (see the frame's out).
+      if (d.__uiIsoOpen) { openFramedLink(d.url); return; }
       if (!d.__uiIso) return;
       function reply(r) { r.__uiIsoReply = 1; r.id = d.id; f.contentWindow.postMessage(r, '*'); }
       // Say what IS allowed: a bare refusal of an absolute path read as a
