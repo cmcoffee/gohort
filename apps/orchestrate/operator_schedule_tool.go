@@ -147,17 +147,20 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		b.WriteString(", move (a task of your own: to=\"cortex\" / \"session\" / \"background\")")
 	}
 	b.WriteString(", relink (a schedule parked because the agent it ran as was deleted: name + run_by, the agent replacing it; it keeps its mission, timing, goal and notes, so relink rather than create it again)")
-	b.WriteString(", edit (name + then: change only WHAT an existing scheduled run or monitor does; its timing, link group and goal stay as they are. list shows what each one does now)")
+	b.WriteString(", get (name: one scheduled run or monitor with what it does IN FULL; list shortens long ones), edit (name + one of: then, the whole new text; find + replace, one passage changed in place; append, a line added at the end. Changes only WHAT an existing scheduled run or monitor does; its timing, link group and goal stay as they are. To add a rule, append it: never retype a long mission you have only seen shortened)")
 	b.WriteString(". Re-issuing create with the SAME name edits that schedule in place, timing included. To run something once right now, don't schedule it: agents(action=\"run\") or machine(action=\"run\"), or do it yourself.")
 	if hasRec {
 		b.WriteString(" Tell the user which thread a recurring task of yours will report in.")
 	}
 
 	params := map[string]ToolParam{
-		"action":       {Type: "string", Enum: []string{"create", "list", "edit", "pause", "resume", "run_now", "delete", "relink"}, Description: "create | list | edit | pause | resume | run_now | delete | relink."},
+		"action":       {Type: "string", Enum: []string{"create", "list", "get", "edit", "pause", "resume", "run_now", "delete", "relink"}, Description: "create | list | get | edit | pause | resume | run_now | delete | relink."},
 		"run_by":       {Type: "string", Description: "(relink) The agent that runs the parked schedule from now on, by name or id: usually the one made to replace the deleted agent."},
 		"when":         {Type: "string", Enum: []string{"at", "every", "value_crosses", "output_changes", "posted", "agent_says"}, Description: "(create) The trigger: at (once, at a time) | every (on a clock, report each time) | value_crosses (a URL's value crosses a line) | output_changes (a tool's output changes) | posted (an external POST) | agent_says (an agent judges a condition)."},
-		"then":         {Type: "string", Description: "(create, edit) What to do when it fires, in plain words. edit replaces only this. every: the mission run each time (\"fetch the forecast and post it to the family chat\"). at / monitors: handed to you on wake (\"tell the user it's 1:10pm, as they asked\")."},
+		"find":         {Type: "string", Description: "(edit) A passage of what it does now, copied exactly, to change in place with replace. It must appear exactly once."},
+		"replace":      {Type: "string", Description: "(edit, with find) What the found passage becomes. Empty removes it."},
+		"append":       {Type: "string", Description: "(edit) A line or paragraph added to the end of what it does, e.g. a new rule. The rest is kept as it is."},
+		"then":         {Type: "string", Description: "(create, edit) What to do when it fires, in plain words. edit with then replaces the WHOLE of what it does: use find/replace or append for a change to part of it. every: the mission run each time (\"fetch the forecast and post it to the family chat\"). at / monitors: handed to you on wake (\"tell the user it's 1:10pm, as they asked\")."},
 		"time":         {Type: "string", Description: "(create) When, as the user said it, in their own zone (the one time_in_zone reports; never convert to UTC). at: \"13:10\", \"1:10pm\", \"in 20 minutes\", or ISO8601. every: \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", set times \"09:00,13:00\", once a month \"monthly on the 28th at 9am\" / \"monthly on the last day at 9am\" / \"monthly on the 2nd to last day at 9am\" (a day a month lacks runs on its last day), or once a year \"DEC-25 09:00\" / \"every year on Dec 25 at 9am\". Monitors: optional set times of day to check, \"08:00\" or \"08:00,18:00\", instead of check_every."},
 		"name":         {Type: "string", Description: "(create: optional, one is made up; pause/resume/run_now/delete: required) Short name, e.g. \"daily-weather\", \"nvda-below\"."},
 		"agent":        {Type: "string", Description: "(at: who is woken to do it, default you; every: who runs it, default you; agent_says: who checks, default you; list / delete / move: WHOSE schedules to act on, another of your own agents by name or id, or \"all\" for every agent you own, list only) Name or id of an existing agent."},
@@ -193,7 +196,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		}
 	} else {
 		params["when"] = ToolParam{Type: "string", Enum: []string{"at", "every"}, Description: "(create) The trigger: at (once, at a time or after a delay) | every (on a clock, repeatedly)."}
-		params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "edit", "delete", "move", "relink"}, Description: "create | list | edit | delete | move | relink."}
+		params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "get", "edit", "delete", "move", "relink"}, Description: "create | list | get | edit | delete | move | relink."}
 		params["agent"] = ToolParam{Type: "string", Description: "(list / delete / move, optional) WHOSE schedules to act on: another of your own agents, by name or id, or \"all\" (list only) for every agent you own. Omit for yourself."}
 		delete(params, "pipeline")
 		delete(params, "machine")
@@ -214,7 +217,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 			params[k] = v
 		}
 		if hasOp {
-			params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "edit", "pause", "resume", "run_now", "delete", "move", "relink"}, Description: "create | list | edit | pause | resume | run_now | delete | move | relink."}
+			params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "get", "edit", "pause", "resume", "run_now", "delete", "move", "relink"}, Description: "create | list | get | edit | pause | resume | run_now | delete | move | relink."}
 		}
 	}
 	tool := Tool{Name: "schedule", Description: b.String(), Parameters: params, Required: []string{"action"}}
@@ -240,17 +243,24 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 				return out, err
 			case "list":
 				return scheduleList(ctx, owner, controllerAgentID, impl, rec, args)
+			case "get", "show", "read":
+				if name == "" {
+					return "", fmt.Errorf("get needs name: the schedule to read in full (schedule(action=\"list\") shows them)")
+				}
+				return scheduleGet(owner, controllerAgentID, hasOp, name)
 			case "edit", "update", "change":
 				if name == "" {
 					return "", fmt.Errorf("edit needs name: the schedule to change (schedule(action=\"list\") shows them and what each does)")
 				}
-				if strings.TrimSpace(oArgStr(args, "then")) == "" {
-					return "", fmt.Errorf("edit needs then: what it should do from now on, in full (it replaces what it does now)")
+				change := missionChange{Then: strings.TrimSpace(oArgStr(args, "then")), Find: oArgStr(args, "find"),
+					Replace: oArgStr(args, "replace"), Append: strings.TrimSpace(oArgStr(args, "append"))}
+				if err := change.valid(); err != nil {
+					return "", err
 				}
 				if msg := scheduleChangeApproval(sess, owner, controllerAgentID, "edit", name, args); msg != "" {
 					return msg, nil
 				}
-				return scheduleEdit(owner, controllerAgentID, hasOp, name, strings.TrimSpace(oArgStr(args, "then")))
+				return scheduleEdit(owner, controllerAgentID, hasOp, name, change)
 			case "relink":
 				if name == "" {
 					return "", fmt.Errorf("relink needs name: the parked schedule (schedule(action=\"list\", agent=\"all\") marks them \"needs relink\")")
@@ -268,7 +278,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 				}
 				return scheduleControl(ctx, owner, controllerAgentID, impl, rec, action, name, args)
 			}
-			return "", fmt.Errorf("unknown action %q: use create | list | pause | resume | run_now | delete | relink", action)
+			return "", fmt.Errorf("unknown action %q: use create | list | get | edit | pause | resume | run_now | delete | relink", action)
 		},
 	}
 }
@@ -1192,7 +1202,11 @@ func scheduledRunsListing(owner, controllerAgentID string, args map[string]any) 
 		if sa.LinkGroup != "" {
 			timing += " (link group " + strconv.Quote(sa.LinkGroup) + ")"
 		}
-		fmt.Fprintf(&b, "- %s: %s, %s\n  does: %s\n", sa.Name, timing, state, truncate(strings.TrimSpace(sa.Mission), 600))
+		does := strings.TrimSpace(sa.Mission)
+		if len(does) > listMissionMax {
+			does = truncate(does, listMissionMax) + fmt.Sprintf("\n  (shortened: schedule(action=\"get\", name=%q) shows all of it, and edit with append or find/replace changes part of it without retyping the rest)", sa.Name)
+		}
+		fmt.Fprintf(&b, "- %s: %s, %s\n  does: %s\n", sa.Name, timing, state, does)
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -1206,29 +1220,126 @@ func scheduledRunsListing(owner, controllerAgentID string, args map[string]any) 
 //
 // An agent without the fleet tools changes only what runs as it (or as its
 // own sub-agents), the same reach its list has.
-func scheduleEdit(owner, controllerAgentID string, hasFleet bool, name, then string) (string, error) {
-	db := agentStore(owner)
-	mine := func(runner string) bool {
-		if hasFleet || runner == controllerAgentID {
-			return true
-		}
-		return db != nil && runner != "" && topAgentOf(db, runner) == topAgentOf(db, controllerAgentID)
-	}
+func scheduleEdit(owner, controllerAgentID string, hasFleet bool, name string, change missionChange) (string, error) {
+	mine := scheduleReach(owner, controllerAgentID, hasFleet)
 	if sa, ok := GetStandingAgent(RootDB, owner, name); ok {
 		if !mine(sa.AgentID) {
 			return "", fmt.Errorf("%q runs as another agent; only it, or the owner, can change what it does", name)
 		}
-		sa.Mission = then
+		next, err := change.apply(sa.Mission)
+		if err != nil {
+			return "", fmt.Errorf("%q: %w", name, err)
+		}
+		sa.Mission = next
 		SaveStandingAgent(RootDB, sa)
-		return fmt.Sprintf("Changed what %q does; it runs %s as before. From the next run it does: %s", name, StandingScheduleLabel(sa), truncate(then, 400)), nil
+		return fmt.Sprintf("Changed what %q does; it runs %s as before. %s", name, StandingScheduleLabel(sa), change.said(next)), nil
 	}
 	if m, ok := GetEventMonitor(RootDB, owner, name); ok {
 		if !mine(m.WakeAgent) {
 			return "", fmt.Errorf("%q wakes another agent; only it, or the owner, can change what it hands over", name)
 		}
-		m.WakeBrief = then
+		next, err := change.apply(m.WakeBrief)
+		if err != nil {
+			return "", fmt.Errorf("%q: %w", name, err)
+		}
+		m.WakeBrief = next
 		SaveEventMonitor(RootDB, m)
-		return fmt.Sprintf("Changed what %q hands over when it fires; it checks as before. From the next fire: %s", name, truncate(then, 400)), nil
+		return fmt.Sprintf("Changed what %q hands over when it fires; it checks as before. %s", name, change.said(next)), nil
 	}
 	return "", fmt.Errorf("no scheduled run or monitor named %q (a recurring task of your own changes by create with the same name, its when and time): schedule(action=\"list\") shows them", name)
+}
+
+// scheduleReach is whether this agent may read or change a schedule that runs
+// as runner: with the fleet tools, any; otherwise its own and its sub-agents'.
+func scheduleReach(owner, controllerAgentID string, hasFleet bool) func(runner string) bool {
+	db := agentStore(owner)
+	return func(runner string) bool {
+		if hasFleet || runner == controllerAgentID {
+			return true
+		}
+		return db != nil && runner != "" && topAgentOf(db, runner) == topAgentOf(db, controllerAgentID)
+	}
+}
+
+// listMissionMax is how much of a mission the list shows before shortening
+// it and pointing at get.
+const listMissionMax = 600
+
+// scheduleGet is one scheduled run or monitor with what it does in full: the
+// list shortens long missions, and an edit to part of one has to be able to
+// see the whole of it.
+func scheduleGet(owner, controllerAgentID string, hasFleet bool, name string) (string, error) {
+	mine := scheduleReach(owner, controllerAgentID, hasFleet)
+	if sa, ok := GetStandingAgent(RootDB, owner, name); ok && mine(sa.AgentID) {
+		state := "active"
+		if sa.Paused {
+			state = "paused"
+		}
+		timing := StandingScheduleLabel(sa)
+		if sa.LinkGroup != "" {
+			timing += " (link group " + strconv.Quote(sa.LinkGroup) + ")"
+		}
+		return fmt.Sprintf("%s: %s, %s. What it does, in full:\n\n%s", sa.Name, timing, state, strings.TrimSpace(sa.Mission)), nil
+	}
+	if m, ok := GetEventMonitor(RootDB, owner, name); ok && mine(m.WakeAgent) {
+		return fmt.Sprintf("%s (a monitor). What it hands over when it fires, in full:\n\n%s", m.Name, strings.TrimSpace(m.WakeBrief)), nil
+	}
+	return "", fmt.Errorf("no scheduled run or monitor named %q that you can read: schedule(action=\"list\") shows them", name)
+}
+
+// missionChange is one edit to what a schedule does: the whole new text
+// (Then), one passage changed in place (Find, Replace), or a passage added at
+// the end (Append). Exactly one kind per edit.
+//
+// The partial kinds exist because the whole-text kind needs the whole text,
+// and an agent shown a shortened list either retyped a long mission from the
+// part it could see, losing the rest, or stopped to ask the person to paste
+// it. A rule added to the end needs none of the rest.
+type missionChange struct {
+	Then, Find, Replace, Append string
+}
+
+func (c missionChange) valid() error {
+	kinds := 0
+	for _, set := range []bool{c.Then != "", c.Find != "", c.Append != ""} {
+		if set {
+			kinds++
+		}
+	}
+	switch {
+	case kinds == 0:
+		return Error("edit needs one of: then (the whole new text), find + replace (one passage changed), or append (a line added at the end)")
+	case kinds > 1:
+		return Error("edit takes one kind of change at a time: then, find + replace, or append")
+	}
+	return nil
+}
+
+// apply makes the change to old.
+func (c missionChange) apply(old string) (string, error) {
+	switch {
+	case c.Then != "":
+		return c.Then, nil
+	case c.Append != "":
+		return strings.TrimRight(old, " \n") + "\n\n" + c.Append, nil
+	}
+	switch n := strings.Count(old, c.Find); n {
+	case 0:
+		return "", Error("find does not appear in what it does now. Copy the passage exactly from schedule(action=\"get\")")
+	case 1:
+		return strings.Replace(old, c.Find, c.Replace, 1), nil
+	default:
+		return "", fmt.Errorf("find appears %d times in what it does now; include more of the surrounding text so it names one place", n)
+	}
+}
+
+// said is the result line: what changed, not the whole text again.
+func (c missionChange) said(next string) string {
+	switch {
+	case c.Append != "":
+		return "Added at the end: " + truncate(c.Append, 300)
+	case c.Find != "":
+		return "Changed one passage; the rest is as it was."
+	}
+	return "From the next run it does: " + truncate(next, 400)
 }
