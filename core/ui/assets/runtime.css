@@ -5917,6 +5917,37 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: flex; flex-wrap: wrap; gap: 0.45rem; justify-content: flex-end;
   margin-top: 0.6rem;
 }
+/* Phone: every modal fits the screen. Desktop spacing on a 390px screen
+ * spent a quarter of the width on the gap around the box and the padding
+ * inside it, and the report reader padded itself 2rem a side. Here the box
+ * takes the width less a small inset and keeps lighter padding, a box that
+ * holds a form sits near the top rather than the middle (so an open keyboard
+ * does not land on its fields), and the buttons along its foot share the
+ * row at full touch height instead of huddling on the right. One block for
+ * the five modal kinds, after all of their own rules, so it wins on order. */
+@media (max-width: 700px) {
+  .ui-modal-overlay, .ui-form-modal-overlay, .ui-cw-modal-overlay {
+    align-items: flex-start;
+    padding: calc(0.75rem + env(safe-area-inset-top, 0px)) 0.5rem
+             calc(0.5rem + env(safe-area-inset-bottom, 0px));
+  }
+  .ui-modal-box, .ui-form-modal, .ui-cw-modal-box {
+    padding: 0.9rem 0.85rem;
+    max-height: calc(var(--ui-vh, 100dvh) - 1.25rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  }
+  .ui-modal-dialog { width: calc(100% - 1rem); max-width: 440px; padding: 0.95rem 0.9rem; }
+  .ui-modal-title, .ui-form-modal-h, .ui-cw-modal-box h3 { font-size: var(--fs-lg); margin-bottom: 0.35rem; }
+  .ui-modal-sub { margin-bottom: 0.6rem; }
+  .ui-pl-modal-overlay { padding: calc(0.75rem + env(safe-area-inset-top, 0px)) 0.5rem 0.5rem; }
+  .ui-pl-modal { padding: 1rem 0.9rem; }
+  .ui-pl-modal-close { top: 0.55rem; right: 0.55rem; }
+  /* The button row: each button grows to share it, so two read as a pair of
+   * halves and a lone one spans the row, wrapping when they do not fit. */
+  :is(.ui-modal-footer, .ui-modal-actions, .ui-form-modal-actions, .ui-cw-modal-btns) > button {
+    flex: 1 1 auto; justify-content: center;
+  }
+  .ui-modal-footer { margin-top: 0.6rem; padding-top: 0.55rem; }
+}
 
 .ui-cw-var-inputs { display: flex; flex-direction: column; gap: 0.5rem; }
 .ui-cw-var-row {
