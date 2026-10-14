@@ -109,7 +109,7 @@ func TestAPullRefusesBeforeItWrites(t *testing.T) {
 	for name, want := range map[string]string{
 		"CASE-2":    "has not been prepared",
 		"../CASE-1": "one name with no path",
-		"CASE-9":    "no case called",
+		"CASE-9":    "no file or folder called",
 		".hidden":   "one name with no path",
 	} {
 		job, _ := app.pullJobFor(analysis, name, "alice", false)
@@ -201,7 +201,7 @@ func TestAnAgentPullsThroughTheAttachedStore(t *testing.T) {
 			t.Error("a store with no pull link offered a pull tool")
 		}
 	}
-	out, err := pull.Handler(context.Background(), map[string]any{"case": "CASE-1"})
+	out, err := pull.Handler(context.Background(), map[string]any{"item": "CASE-1"})
 	if err != nil || !strings.Contains(out, "Copied CASE-1") {
 		t.Fatalf("agent pull: %q %v", out, err)
 	}
@@ -227,17 +227,17 @@ func TestThePanelPullsAndReportsTheOutcome(t *testing.T) {
 		app.handlePull(w, r)
 		return w
 	}
-	list := withCookie(http.MethodGet, "/filestore/api/pull/cases?slug="+analysis.Slug)
+	list := withCookie(http.MethodGet, "/filestore/api/pull/items?slug="+analysis.Slug)
 	if !strings.Contains(list.Body.String(), "prepared/ ready to copy") || !strings.Contains(list.Body.String(), "not prepared yet") {
 		t.Fatalf("cases: %d %s", list.Code, list.Body.String())
 	}
-	start := withCookie(http.MethodPost, "/filestore/api/pull?slug="+analysis.Slug+"&case=CASE-1")
+	start := withCookie(http.MethodPost, "/filestore/api/pull?slug="+analysis.Slug+"&item=CASE-1")
 	if !strings.Contains(start.Body.String(), `"running":true`) {
 		t.Fatalf("start: %d %s", start.Code, start.Body.String())
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		p := withCookie(http.MethodGet, "/filestore/api/pull/progress?slug="+analysis.Slug+"&case=CASE-1").Body.String()
+		p := withCookie(http.MethodGet, "/filestore/api/pull/progress?slug="+analysis.Slug+"&item=CASE-1").Body.String()
 		if strings.Contains(p, "outcome") {
 			if !strings.Contains(p, "Copied CASE-1") {
 				t.Errorf("outcome: %s", p)
@@ -249,7 +249,7 @@ func TestThePanelPullsAndReportsTheOutcome(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	list = withCookie(http.MethodGet, "/filestore/api/pull/cases?slug="+analysis.Slug)
+	list = withCookie(http.MethodGet, "/filestore/api/pull/items?slug="+analysis.Slug)
 	if !strings.Contains(list.Body.String(), "in Analysis, last added to") {
 		t.Errorf("the case does not read as pulled: %s", list.Body.String())
 	}
@@ -270,5 +270,45 @@ func TestTheTableShowsWhichStoresAreConnected(t *testing.T) {
 	}
 	if !strings.HasPrefix(got[intake.Slug], "feeds Analysis; used by ") {
 		t.Errorf("Intake: %q", got[intake.Slug])
+	}
+}
+
+// A file at the top of the source store is pulled whole, replacing its copy;
+// the panel lists it as a file; a file of a folder's name cannot land on it.
+func TestAPullCopiesAFile(t *testing.T) {
+	app, intake, analysis := pullFixture(t)
+	os.WriteFile(filepath.Join(intake.Path, "notes.txt"), []byte("first"), 0o644)
+	job, _ := app.pullJobFor(analysis, "notes.txt", "alice", false)
+	if out, err := job.run(context.Background()); err != nil || !strings.Contains(out, "Copied the file notes.txt") {
+		t.Fatalf("file pull: %q %v", out, err)
+	}
+	os.WriteFile(filepath.Join(intake.Path, "notes.txt"), []byte("second"), 0o644)
+	job, _ = app.pullJobFor(analysis, "notes.txt", "alice", false)
+	if _, err := job.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(analysis.Path, "notes.txt")); string(b) != "second" {
+		t.Errorf("the newer file did not replace the copy: %q", b)
+	}
+	found := false
+	for _, row := range app.pullItems(analysis) {
+		if row["item"] == "notes.txt" && strings.HasPrefix(row["desc"].(string), "file, ") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the panel does not list the file: %v", app.pullItems(analysis))
+	}
+	os.MkdirAll(filepath.Join(analysis.Path, "clash"), 0o755)
+	os.WriteFile(filepath.Join(intake.Path, "clash"), []byte("x"), 0o644)
+	job, _ = app.pullJobFor(analysis, "clash", "alice", false)
+	if _, err := job.run(context.Background()); err == nil {
+		t.Error("a file was copied over a folder of the same name")
+	}
+	entries, _ := os.ReadDir(analysis.Path)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			t.Errorf("left %s behind", e.Name())
+		}
 	}
 }

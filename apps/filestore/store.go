@@ -87,11 +87,11 @@ type Store struct {
 	// eviction would remove what nobody chose to remove. 0 is no cap.
 	MaxGB int `json:"max_gb,omitempty"`
 
-	// PullFrom names another store (by slug) this one copies prepared cases
-	// in from, and PullSubpath the part of each case it takes ("prepared"
-	// unless set; "." for the whole case). The link is the grant: an agent
-	// with THIS store attached may pull from that one without it being
-	// attached, seeing its case names but not their contents. See pull.go.
+	// PullFrom names another store (by slug) this one copies files and
+	// folders in from, and PullSubpath the part of a folder it takes
+	// ("prepared" unless set; "." for the whole folder). The link is the
+	// grant: what pulls here never needs the other store attached, and sees
+	// its names but not their contents. See pull.go.
 	PullFrom    string `json:"pull_from,omitempty"`
 	PullSubpath string `json:"pull_subpath,omitempty"`
 	// AgentsMayPull offers pull_<store> to agents this store is attached to.

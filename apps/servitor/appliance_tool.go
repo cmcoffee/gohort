@@ -310,7 +310,7 @@ Reply with ONLY JSON:
 {"name":"restart_nginx","description":"Restart the nginx service","template":"sudo systemctl restart nginx","params":{},"required":[]}
 
 With a folder parameter it looks like this:
-{"name":"parse_bundle","description":"Run logparse over one bundle","template":"logparse --dir {dir}","params":{"dir":{"type":"string","description":"Which bundle to parse.","path_scope":"files:support_bundles"}},"required":["dir"]}`
+{"name":"parse_run","description":"Run logparse over one run's logs","template":"logparse --dir {dir}","params":{"dir":{"type":"string","description":"Which run folder to parse.","path_scope":"files:build_logs"}},"required":["dir"]}`
 
 // MintApplianceTool maps an intent onto a concrete command for one system.
 //

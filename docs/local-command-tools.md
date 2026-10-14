@@ -77,10 +77,10 @@ Everything about a folder lives on the folder. The store row expands to one
 panel, not five:
 
 ```
-Support bundles   /var/log/bundles   4 subfolders   3 users
+Build logs   /var/log/builds   4 subfolders   3 users
 
   Commands
-    decrypt      Decrypt bundle      /opt/bin/diag_decrypt
+    decrypt      Unpack archive      /opt/bin/unpack
                  Mapped: capture-tools (4 actions)      [ Review ]
     unseal       Unseal archive      /opt/bin/unseal      two phases
                  Not mapped                              [ Map ]
@@ -200,10 +200,10 @@ against one. Mapping writes what a command can do ONTO that command:
 toolboxes table, no attachment list, and no Attach picker.
 
 ```
-Support bundles   /var/log/bundles   4 subfolders   3 users
+Build logs   /var/log/builds   4 subfolders   3 users
 
   Commands
-    Decrypt bundle   /opt/bin/diag_decrypt   asks for input: Response key
+    Unpack archive   /opt/bin/unpack   asks for input: Response key
                      decrypt_bundles - 4 actions          [Agents ●] [Map] [Delete]
     Unseal archive   /opt/bin/unseal
                      Not mapped                                      [Map] [Delete]

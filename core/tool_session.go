@@ -54,11 +54,11 @@ type ToolSession struct {
 	// StoreCommand and StorePull, when set, are what gohort.store_command and
 	// gohort.store_pull reach: a file store's registered command run on one
 	// of its folders (input "" is the first phase of a two-phase command,
-	// which returns its challenge), and a case copied into a store from the
+	// which returns its challenge), and a file or folder copied into a store from the
 	// one it pulls from. Set only by an app script's run, for an app an admin
 	// has granted those stores; the store side checks the grant. Nil: refused.
 	StoreCommand func(store, folder, command, input string) (string, error)
-	StorePull    func(store, caseName string, replace bool) (string, error)
+	StorePull    func(store, item string, replace bool) (string, error)
 
 	// imageBackends memoizes ReachableImageBackends for this turn. Resolving it
 	// reads the connector table, and the grouped `image` tool's schema is

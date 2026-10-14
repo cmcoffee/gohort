@@ -131,3 +131,24 @@ func TestAnAgentRunsASpecifiedCommandExactlyAsWritten(t *testing.T) {
 		t.Error("a value that is an option was passed")
 	}
 }
+
+// The mapping is told that example values are syntax and placeholders are
+// filled later, in both modes, so it does not go looking for an example's file.
+func TestTheMappingIsToldExamplesAreSyntax(t *testing.T) {
+	app := &FileStoreApp{}
+	for _, cmd := range []StoreCommand{
+		{Command: "/opt/bin/kb", Usage: UsageOpen},
+		{Command: "/opt/bin/kb", AllowedUses: []string{"download --src={source} --dst={folder}"}},
+	} {
+		for _, td := range app.mappingTools(context.Background(), Store{Name: "Intake"}, cmd) {
+			if !strings.Contains(td.Tool.Description, "illustrates the SYNTAX") {
+				t.Errorf("%s (%s) does not say examples are syntax", td.Tool.Name, cmd.Usage)
+			}
+		}
+	}
+	for _, td := range app.mappingTools(context.Background(), Store{Name: "Intake"}, StoreCommand{Command: "/opt/bin/kb", AllowedUses: []string{"download --src={source}"}}) {
+		if !strings.Contains(td.Tool.Description, "its value does not exist yet") {
+			t.Errorf("%s does not say placeholders are filled later", td.Tool.Name)
+		}
+	}
+}

@@ -259,7 +259,7 @@ func registerRetentionMaintenance(app *FileStoreApp) {
 	RegisterMaintenanceFunc("Reclaim space",
 		"list_expired_bundles",
 		"List expired file-store folders (dry run)",
-		"Shows which bundle folders are past their store's retention window. Deletes nothing. "+
+		"Shows which folders are past their store's retention window. Deletes nothing. "+
 			"A store with no window set never appears here, that is the default, and it means "+
 			"nothing in it is ever eligible.",
 		func(ctx context.Context) int {

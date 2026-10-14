@@ -664,7 +664,7 @@ func (h *SandboxHook) handleStoreCommand(conn net.Conn, params map[string]interf
 	writeHookResult(conn, map[string]any{"text": out})
 }
 
-// handleStorePull serves gohort.store_pull: a case copied into a store from
+// handleStorePull serves gohort.store_pull: a file or folder copied into a store from
 // the store it pulls from. Granted by "store_pull"; the store's grant decides.
 func (h *SandboxHook) handleStorePull(conn net.Conn, params map[string]interface{}) {
 	if h.Sess == nil || h.Sess.StorePull == nil {
@@ -672,7 +672,7 @@ func (h *SandboxHook) handleStorePull(conn net.Conn, params map[string]interface
 		return
 	}
 	replace, _ := params["replace"].(bool)
-	out, err := h.Sess.StorePull(stringFromParams(params, "store"), stringFromParams(params, "case"), replace)
+	out, err := h.Sess.StorePull(stringFromParams(params, "store"), stringFromParams(params, "item"), replace)
 	if err != nil {
 		writeHookError(conn, "store_pull: "+err.Error())
 		return
@@ -1983,12 +1983,13 @@ class _Gohort:
         result = self._call("store_command", {"store": str(store), "folder": str(folder), "command": str(command), "input": "" if input is None else str(input)})
         return result.get("text", "") if isinstance(result, dict) else result
 
-    def store_pull(self, store, case, replace=False):
-        """Copy a case into store from the store it pulls from (the prepared
-        part, as the store is set up), adding to a copy already there unless
-        replace=True. Returns what was copied. Needs a grant to pull into
-        that store."""
-        result = self._call("store_pull", {"store": str(store), "case": str(case), "replace": bool(replace)})
+    def store_pull(self, store, item, replace=False):
+        """Copy a file or folder (item, by its name at the top of the other
+        store) into store from the store it pulls from. A folder copies its
+        prepared part, as the store is set up, adding to a copy already there
+        unless replace=True; a file replaces its copy. Returns what was
+        copied. Needs a grant to pull into that store."""
+        result = self._call("store_pull", {"store": str(store), "item": str(item), "replace": bool(replace)})
         return result.get("text", "") if isinstance(result, dict) else result
 
     def log(self, msg, level="info"):
@@ -2119,8 +2120,8 @@ def store_command(store, folder, command, input=None):
     return gohort.store_command(store, folder, command, input=input)
 
 
-def store_pull(store, case, replace=False):
-    return gohort.store_pull(store, case, replace=replace)
+def store_pull(store, item, replace=False):
+    return gohort.store_pull(store, item, replace=replace)
 
 
 def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None, save_to=None):

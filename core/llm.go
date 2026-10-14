@@ -344,7 +344,7 @@ type ToolParam struct {
 	Properties  map[string]ToolParam `json:"properties,omitempty"` // Nested params (when Type is "object").
 	Required    []string             `json:"required,omitempty"`   // Required nested params (when Type is "object").
 	// PathScope constrains a string parameter to a path inside a
-	// registered root, as "kind:name" (e.g. "files:support_bundles").
+	// registered root, as "kind:name" (e.g. "files:build_logs").
 	// Checked when the tool RUNS, and the value substituted is the
 	// absolute path it resolved to.
 	//

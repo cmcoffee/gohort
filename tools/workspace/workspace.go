@@ -279,7 +279,7 @@ func init() {
 		Params: map[string]ToolParam{
 			"command":  {Type: "string", Description: "Shell command to execute. Standard sh -c semantics: pipes, redirects, quoting work normally."},
 			"env":      {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command, reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
-			"cwd_root": {Type: "string", Description: "Optional registered root to start the command in, as \"kind:name\" (e.g. \"files:support-bundles\"). Use when a binary must RUN AT the base of a folder it reads: it resolves its own inputs relative to the working directory. The folder stays READ-ONLY: the workspace is still the only writable path, so write output there. Omit to start in the workspace, which is almost always right; a refusal lists what is registered."},
+			"cwd_root": {Type: "string", Description: "Optional registered root to start the command in, as \"kind:name\" (e.g. \"files:build-logs\"). Use when a binary must RUN AT the base of a folder it reads: it resolves its own inputs relative to the working directory. The folder stays READ-ONLY: the workspace is still the only writable path, so write output there. Omit to start in the workspace, which is almost always right; a refusal lists what is registered."},
 			"cwd":      {Type: "string", Description: "Folder inside cwd_root to start in, relative to that root. Omit, or pass \".\", to start at the base of the root itself."},
 		},
 		Required:     []string{"command"},

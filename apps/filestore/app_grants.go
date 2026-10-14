@@ -5,13 +5,13 @@
 // slug): it covers whoever uses the app, the way a tool carries what its
 // author was allowed, and the store's own list of users does not apply inside
 // it. Reading is always part of a grant; writing (add, change and delete
-// files), running the store's commands, and pulling cases into it are each
+// files), running the store's commands, and pulling files and folders into it are each
 // granted on their own.
 //
 // The app's scripts reach a granted store three ways: its folder mounted in
 // their sandbox, read-only or read-write (core/appstores, tools/appscript);
 // gohort.store_command, a registered command on one of its folders; and
-// gohort.store_pull, a case copied in from the store it pulls from. The last
+// gohort.store_pull, a file or folder copied in from the store it pulls from. The last
 // two are answered here, and check the grant again.
 package filestore
 
@@ -36,7 +36,7 @@ type AppGrant struct {
 	App      string `json:"app"`      // "<owner>/<slug>"
 	Write    bool   `json:"write"`    // add, change and delete files
 	Commands bool   `json:"commands"` // run this store's registered commands
-	Pull     bool   `json:"pull"`     // pull cases into this store
+	Pull     bool   `json:"pull"`     // pull files and folders into this store
 }
 
 func appKey(owner, slug string) string { return owner + "/" + slug }
@@ -51,7 +51,7 @@ func (g AppGrant) rights() string {
 		r = append(r, "run commands")
 	}
 	if g.Pull {
-		r = append(r, "pull cases in")
+		r = append(r, "pull files and folders in")
 	}
 	return strings.Join(r, ", ")
 }
@@ -140,15 +140,15 @@ func (h storeHost) RunCommand(ctx context.Context, owner, slug, store, folder, c
 	return out, nil
 }
 
-func (h storeHost) Pull(ctx context.Context, owner, slug, store, caseName string, replace bool) (string, error) {
+func (h storeHost) Pull(ctx context.Context, owner, slug, store, item string, replace bool) (string, error) {
 	dest, g, err := h.grantedStore(owner, slug, store)
 	if err != nil {
 		return "", err
 	}
 	if !g.Pull {
-		return "", fmt.Errorf("this app may not pull cases into %s; an admin can allow it on the store's page", dest.Name)
+		return "", fmt.Errorf("this app may not pull into %s; an admin can allow it on the store's page", dest.Name)
 	}
-	job, err := h.app.pullJobFor(dest, caseName, "app "+appKey(owner, slug), replace)
+	job, err := h.app.pullJobFor(dest, item, "app "+appKey(owner, slug), replace)
 	if err != nil {
 		return "", err
 	}

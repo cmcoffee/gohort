@@ -934,7 +934,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 			// teaching each one to.
 			//
 			// Deliberately not a timeout. Some work legitimately takes
-			// minutes (a regex over a multi-gigabyte support bundle), and
+			// minutes (a regex over a multi-gigabyte log archive), and
 			// cutting it short trades a slow answer for a wrong one.
 			stopBeat := make(chan struct{})
 			if !hidden {

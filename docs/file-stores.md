@@ -19,7 +19,7 @@ different way:
 
 An admin-registered folder, **read-only**, reached by regular-expression search with hard caps.
 Attached to an agent through the existing Sources picker, which is what gets it *named* tools
-(`search_support_bundles`) rather than a generic reader competing with `knowledge_search`.
+(`search_build_logs`) rather than a generic reader competing with `knowledge_search`.
 
 Subfolders are optional and require no declaration. Drop `scan-2026-08-13/` into the store and it is
 immediately there; the tools take an optional `within` to scope to it. **That is the whole setup per
@@ -64,7 +64,7 @@ mean.
 ## Renaming one
 
 The tool names come from a **handle** minted from the name the first time a store is saved
-(`Support bundles` → `list_support_bundles`, `search_support_bundles`, `read_support_bundles`).
+(`Build logs` → `list_build_logs`, `search_build_logs`, `read_build_logs`).
 The handle does not move afterwards. **Renaming a store changes the label, not the tool names.**
 
 It has to work that way: the handle is what agent attachments are keyed on (`attached_sources` stores
@@ -75,7 +75,7 @@ label.
 
 The new name is not wasted: it is what an agent READS. The tool descriptions carry the current label,
 so the model sees `Search the "Customer captures" file store` while the tool is still called
-`search_support_bundles`.
+`search_build_logs`.
 
 The admin table's **Agent tools** column prints the names in force, built from the same definition
 `ItemTools` builds from, so the page cannot claim a name nothing answers to.
@@ -339,7 +339,7 @@ flags and the prompt keep agreeing.
 #    Or the endpoint, if you prefer:
 curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/filestore/api/stores \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Support bundles","path":"/var/log/bundles","description":"Customer support captures, one folder per ticket."}'
+  -d '{"name":"Build logs","path":"/var/log/builds","description":"Build logs, one folder per CI run."}'
 
 # 2. Create the agent.
 curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/orchestrate/api/agents/import \
@@ -349,7 +349,7 @@ curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/orchestrate/api/agents/imp
 
 # 4. Drop a scan in, or upload one.
 curl -sS -b cookies.txt -F 'file=@server.log' \
-  'http://127.0.0.1:8181/filestore/api/upload?slug=support_bundles&within=scan-2026-08-13'
+  'http://127.0.0.1:8181/filestore/api/upload?slug=build_logs&within=scan-2026-08-13'
 ```
 
 Then open a session and name the scan. Next scan is a new subfolder and a new session; there is

@@ -262,8 +262,8 @@ func storeFuncs(sess *ToolSession, owner, slug string) {
 	sess.StoreCommand = func(store, folder, command, input string) (string, error) {
 		return appstores.Provider.RunCommand(sess.Context(), owner, slug, store, folder, command, input)
 	}
-	sess.StorePull = func(store, caseName string, replace bool) (string, error) {
-		return appstores.Provider.Pull(sess.Context(), owner, slug, store, caseName, replace)
+	sess.StorePull = func(store, item string, replace bool) (string, error) {
+		return appstores.Provider.Pull(sess.Context(), owner, slug, store, item, replace)
 	}
 }
 

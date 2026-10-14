@@ -467,7 +467,7 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 // parseNaturalToolCall rescues a narration only when it can read arguments
 // off the prose, so two shapes fall through it in silence: a no-arg tool
 // (there is nothing to extract) and a parameterized one the model merely
-// talked ABOUT ("I don't have access to read_support_bundles") rather than
+// talked ABOUT ("I don't have access to read_build_logs") rather than
 // wrote out as a call. Both end the turn on the model's own account of
 // what it did or couldn't do, while the tool sat in the catalog the whole
 // time — the reported symptom being an agent that insists it cannot reach

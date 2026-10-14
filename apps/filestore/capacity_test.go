@@ -42,8 +42,8 @@ func TestAFullStoreRefusesAndSaysHowFull(t *testing.T) {
 		t.Errorf("an over-cap store took work of unknown size: %v", err)
 	}
 	st.Ephemeral = true
-	if err := st.roomFor(0); err == nil || !strings.Contains(err.Error(), "wait for old cases to expire") {
-		t.Errorf("a temporary store's refusal should say its cases expire: %v", err)
+	if err := st.roomFor(0); err == nil || !strings.Contains(err.Error(), "wait for old folders to expire (it keeps each 24h") {
+		t.Errorf("a temporary store's refusal should say its folders expire: %v", err)
 	}
 	if left := st.spaceLeft(); left != 0 {
 		t.Errorf("space left in an over-cap store = %d", left)

@@ -165,7 +165,7 @@ func TestActionRegistrationRules(t *testing.T) {
 	app.DB = &DBase{Store: kvlite.MemStore()}
 	st, _ := SaveStore(app.DB, Store{Name: "Bundles", Path: t.TempDir()})
 
-	if _, err := SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "x", Command: "diag_decrypt"}); err == nil {
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "x", Command: "unpack"}); err == nil {
 		t.Error("a relative command should be refused — it resolves against whatever directory the server is in")
 	}
 	if _, err := SaveStoreCommand(app.DB, StoreCommand{Slug: "nosuch", Name: "x", Command: "/bin/true"}); err == nil {
@@ -255,7 +255,7 @@ func TestFolderListing(t *testing.T) {
 // hand what was already registered.
 func TestMigrateStoreCommandsMovesTheOldTable(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
-	old := StoreCommand{Slug: "bundles", Name: "decrypt", Label: "Decrypt bundle", Command: "/opt/bin/dec"}
+	old := StoreCommand{Slug: "bundles", Name: "decrypt", Label: "Unpack archive", Command: "/opt/bin/dec"}
 	db.Set(legacyCommandsTable, commandKey(old.Slug, old.Name), old)
 
 	if moved := MigrateStoreCommands(db); moved != 1 {
@@ -303,7 +303,7 @@ func TestMigrateStoreCommandsKeepsTheNewerRecord(t *testing.T) {
 // clicked it. Naming the commands turns that dead end into an instruction.
 func TestDescribeStoreCommandsTellsTheAgentWhatToAskFor(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
-	st := Store{Slug: "bundles", Name: "Support bundles"}
+	st := Store{Slug: "bundles", Name: "Build logs"}
 
 	empty := describeStoreCommands(db, st)
 	if !strings.Contains(empty, "No commands are registered") {
@@ -318,7 +318,7 @@ func TestDescribeStoreCommandsTellsTheAgentWhatToAskFor(t *testing.T) {
 	// Written directly: SaveStoreCommand insists the store exists on disk, and
 	// this test is about the SENTENCE it produces, not about store validation.
 	put := func(c StoreCommand) { db.Set(commandsTable, commandKey(c.Slug, c.Name), c) }
-	put(StoreCommand{Slug: "bundles", Name: "decrypt", Label: "Decrypt bundle",
+	put(StoreCommand{Slug: "bundles", Name: "decrypt", Label: "Unpack archive",
 		Command: "/opt/bin/dec", Help: "Run before reading a freshly uploaded bundle."})
 	put(StoreCommand{Slug: "bundles", Name: "unseal", Label: "Unseal archive",
 		Command: "/opt/bin/unseal", TwoPhase: true, InputLabel: "Response key"})
@@ -326,7 +326,7 @@ func TestDescribeStoreCommandsTellsTheAgentWhatToAskFor(t *testing.T) {
 	put(StoreCommand{Slug: "other", Name: "redact", Command: "/opt/bin/red"})
 
 	got := describeStoreCommands(db, st)
-	for _, want := range []string{"Decrypt bundle", "decrypt", "Run before reading", "Unseal archive"} {
+	for _, want := range []string{"Unpack archive", "decrypt", "Run before reading", "Unseal archive"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q from:\n%s", want, got)
 		}

@@ -34,6 +34,9 @@ func (T *FileStoreApp) adminSection() ui.Section {
 			ui.Table{
 				Source: "/filestore/api/stores",
 				RowKey: "slug",
+				// What tells stores apart on the first line; what describes
+				// one on the second; everything else in Manage, under About.
+				// Eleven facts across one line were unreadable.
 				Columns: []ui.Col{
 					{Field: "name", Flex: 1},
 					{Field: "path", Mute: true, Flex: 2},
@@ -41,17 +44,9 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// right. A store reading "unreadable" here is a typo
 					// caught before an agent is attached to it.
 					{Field: "folders", Label: "Subfolders", Mute: true},
-					// The handle, because the tool names are built from it
-					// and NOT from the name above it. Renaming a store
-					// leaves search_<original> in place, which is correct
-					// (attachments and frozen path_scope refs are keyed on
-					// it) and looks broken unless the page says so.
-					{Field: "tools", Label: "Agent tools", Mute: true, Flex: 2},
-					{Field: "carries", Label: "Agent commands", Mute: true},
-					{Field: "assigned", Label: "Assigned to", Mute: true},
-					{Field: "retention", Label: "Retention", Mute: true},
-					{Field: "connected", Label: "Connected", Mute: true, Flex: 2},
-					{Field: "description", Label: "Notes", Mute: true, Flex: 2},
+					{Field: "keeps", Label: "Keeps", Mute: true},
+					{Field: "description", Label: "Notes", Mute: true, Flex: 3, Line: 2},
+					{Field: "connected", Label: "Connected", Mute: true, Flex: 2, Line: 2},
 				},
 				RowActions: []ui.RowAction{
 					// ONE expander, not four. Everything about a folder lives on
@@ -67,6 +62,31 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// subject is what made that possible: nothing on screen said
 					// these were parts of one thing.
 					ui.Expand("Manage", ui.Stack{Children: []ui.Component{
+						ui.Card{HTML: folderPanelHeading("About", "")},
+						ui.DisplayPanel{
+							Source: "/filestore/api/stores?slug={slug}&view=about",
+							Pairs: []ui.DisplayPair{
+								// The handle, because the tool names are built
+								// from it and NOT from the name. Renaming a store
+								// leaves search_<original> in place, which is
+								// correct (attachments and frozen path_scope refs
+								// are keyed on it) and looks broken unless the
+								// page says so.
+								{Label: "Agent tools", Field: "tools", Mono: true},
+								// What this folder CARRIES, as opposed to what it
+								// mints: a mapped command is a capability of a
+								// folder, not a tool of the installation.
+								{Label: "Agent commands", Field: "carries"},
+								{Label: "Who may reach it", Field: "assigned"},
+								{Label: "Apps that may use it", Field: "apps"},
+								{Label: "Connected", Field: "connected"},
+								// Stated in full because it is the one setting
+								// whose effect is destructive and whose default
+								// (forever) is invisible.
+								{Label: "Keeps", Field: "retention"},
+							},
+						},
+
 						ui.Card{HTML: folderPanelHeading("Commands",
 							"Binaries registered against this folder. A person runs one from Files. Map a command and it becomes a tool as well: turn Agents on and every agent that reaches this folder can call it; turn it off and the mapping is kept but nothing can use it.")},
 						ui.Table{
@@ -80,7 +100,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// from. There is nowhere else it could be: the
 								// actions are fields on this record.
 								{Field: "mapped", Label: "As a tool", Mute: true, Flex: 2},
-								{Field: "uses", Label: "Uses", Mute: true, Flex: 2},
+								{Field: "uses", Label: "Uses", Mute: true, Flex: 2, Line: 2},
 							},
 							RowActions: []ui.RowAction{
 								// The approval, on the row it approves. Shown
@@ -191,23 +211,23 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							},
 						},
 
-						ui.Card{HTML: folderPanelHeading("Pull cases in",
-							"Copies a prepared case in from the store set under Settings, Pull cases from. The copy lands whole or not at all, and the other store keeps its own. Pulling a case that is already here adds to it: new files arrive, changed ones update, nothing is removed, so several bundles of one case collect together. An agent with this store attached can pull the same way.")},
+						ui.Card{HTML: folderPanelHeading("Pull files and folders in",
+							"Copies a file or folder in from the store set under Settings, Pull from another store. The copy lands whole or not at all, and the other store keeps its own. Pulling a folder that is already here adds to it: new files arrive, changed ones update, nothing is removed. A file already here is replaced with the newer copy.")},
 						ui.ActionList{
-							Source:         "/filestore/api/pull/cases?slug={slug}",
-							LabelField:     "case",
+							Source:         "/filestore/api/pull/items?slug={slug}",
+							LabelField:     "item",
 							DescField:      "desc",
 							HistoryField:   "history",
-							PostTo:         "/filestore/api/pull?slug={slug}&case={case}",
+							PostTo:         "/filestore/api/pull?slug={slug}&item={item}",
 							ButtonText:     "Pull",
-							ProgressSource: "/filestore/api/pull/progress?slug={slug}&case={case}",
-							CancelTo:       "/filestore/api/pull/cancel?slug={slug}&case={case}",
-							EmptyText:      "Nothing to pull: either no store is set under Settings, Pull cases from, or that store has no cases yet.",
+							ProgressSource: "/filestore/api/pull/progress?slug={slug}&item={item}",
+							CancelTo:       "/filestore/api/pull/cancel?slug={slug}&item={item}",
+							EmptyText:      "Nothing to pull: either no store is set under Settings, Pull from another store, or that store is empty.",
 							Invalidate:     []string{"/filestore/api/stores"},
 						},
 
 						ui.Card{HTML: folderPanelHeading("Apps that may use it",
-							"An app granted here can read this folder from its scripts, and, as ticked, write into it (add, change and delete files), run its commands, and pull cases into it. The grant is the app's: it covers everyone who uses the app, whatever the list below says.")},
+							"An app granted here can read this folder from its scripts, and, as ticked, write into it (add, change and delete files), run its commands, and pull files and folders into it. The grant is the app's: it covers everyone who uses the app, whatever the list below says.")},
 						ui.Table{
 							Source: "/filestore/api/app-grants?slug={slug}",
 							RowKey: "app",
@@ -238,8 +258,8 @@ func (T *FileStoreApp) adminSection() ui.Section {
 										Help: "Add, change and delete files in its folders, for a download landing here or an extraction writing beside its input."},
 									{Field: "commands", Type: "toggle", Label: "Run its commands",
 										Help: "The commands registered on this store, two-phase ones included (the app shows the challenge and sends the response)."},
-									{Field: "pull", Type: "toggle", Label: "Pull cases in",
-										Help: "Copy cases into this store from the store it pulls from (Settings, Pull cases from)."},
+									{Field: "pull", Type: "toggle", Label: "Pull files and folders in",
+										Help: "Copy files and folders into this store from the store it pulls from (Settings, Pull from another store)."},
 								},
 								Invalidate: []string{"/filestore/api/app-grants"},
 							},
@@ -303,10 +323,10 @@ func actionFormFields() []ui.FormField {
 	return append([]ui.FormField{
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "decrypt",
 			Help: "Short handle for the command, snake_case. It is how the endpoint names it."},
-		{Field: "label", Type: "text", Label: "Button label", Placeholder: "Decrypt bundle",
+		{Field: "label", Type: "text", Label: "Button label", Placeholder: "Unpack archive",
 			Help:   "What the button says.",
 			Detail: "Name it for what it DOES to the folder, since that is what the person clicking it is deciding."},
-		{Field: "command", Type: "text", Label: "Command", Placeholder: "/opt/bin/diag_decrypt",
+		{Field: "command", Type: "text", Label: "Command", Placeholder: "/opt/bin/unpack",
 			Help:   "Absolute path. It is called as `<command> <folder>`.",
 			Detail: "For a two-phase command it is called a second time as `<command> <folder> <input>`. It runs with NO shell, so quoting and metacharacters have nowhere to happen."},
 		{Field: "two_phase", Type: "toggle", Label: "Two phases (asks for input)",
@@ -337,10 +357,10 @@ func commandUsesFields() []ui.FormField {
 
 func storeFormFields() []ui.FormField {
 	return []ui.FormField{
-		{Field: "name", Type: "text", Label: "Name", Placeholder: "Support bundles",
+		{Field: "name", Type: "text", Label: "Name", Placeholder: "Build logs",
 			Help:   "Shown in the agent's Sources picker, and in the tool descriptions an attached agent reads.",
-			Detail: "The tool NAMES come from a handle minted from this name the first time the store is saved (\"Support bundles\" becomes search_support_bundles), and that handle does not change afterwards. RENAMING A STORE CHANGES THE LABEL, NOT THE TOOL NAMES.\n\nIt has to work that way: the handle is what agent attachments are keyed on and what a minted command tool's frozen path_scope names, so moving it would break every approved tool pointed at this store. The Agent tools column shows the names in force."},
-		{Field: "path", Type: "text", Label: "Folder", Placeholder: "/var/log/bundles",
+			Detail: "The tool NAMES come from a handle minted from this name the first time the store is saved (\"Build logs\" becomes search_build_logs), and that handle does not change afterwards. RENAMING A STORE CHANGES THE LABEL, NOT THE TOOL NAMES.\n\nIt has to work that way: the handle is what agent attachments are keyed on and what a minted command tool's frozen path_scope names, so moving it would break every approved tool pointed at this store. The Agent tools column shows the names in force."},
+		{Field: "path", Type: "text", Label: "Folder", Placeholder: "/var/log/builds",
 			Help:   "Absolute path on this server. Read-only: nothing here ever writes to it.",
 			Detail: "The folder itself is what an agent attaches to; its subfolders, if any, are what a search can be scoped to."},
 		{Field: "allow_uploads", Type: "toggle", Label: "Let assigned users upload",
@@ -357,17 +377,17 @@ func storeFormFields() []ui.FormField {
 		{Field: "max_gb", Type: "number", Label: "Size cap (GB)", Min: 0,
 			Help:   "0 is no cap. Work that would take the store past it is refused.",
 			Detail: "Uploads, commands and copies into the store are refused once it is full, saying how full it is. Nothing is deleted to make room. Separate from the free-space floor every write on the disk keeps (Admin, Limits)."},
-		{Field: "pull_from", Type: "select", Label: "Pull cases from", OptionsSource: "/filestore/api/store-options",
-			Help:   "Optional: another store this one copies prepared cases in from.",
-			Detail: "For a store agents read that takes its cases from a private working store. The link is the permission: an agent with THIS store attached can pull a case from that one by name, and sees that store's case names but never its contents. Copies, never moves: the other store keeps its own until its lifetime or retention removes it."},
+		{Field: "pull_from", Type: "select", Label: "Pull from another store", OptionsSource: "/filestore/api/store-options",
+			Help:   "Optional: another store this one copies files and folders in from.",
+			Detail: "For a store agents read that takes what it holds from a private working store. The link is the permission: an app granted pulling here, or an attached agent when you allow it below, can copy a file or folder from that store by name, seeing that store's names but never its contents. Copies, never moves: the other store keeps its own until its lifetime or retention removes it."},
 		{Field: "pull_subpath", Type: "text", Label: "Part of each case to copy", Placeholder: "prepared", ShowWhen: "pull_from",
-			Help: "The folder inside each case that holds the extractor's output. prepared when empty; a single dot copies the whole case."},
+			Help: "When a folder is pulled, the part of it to copy: the subfolder holding what was prepared. prepared when empty; a single dot copies the whole folder. A file is always copied whole."},
 		{Field: "agents_may_pull", Type: "toggle", Label: "Let attached agents pull", ShowWhen: "pull_from",
 			Help:   "Gives agents this store is attached to a pull tool. Off by default.",
-			Detail: "An agent acts on a store only through tools an admin chose to give it. Off, cases arrive by the Pull button here or by an app granted Pull cases in; on, an attached agent can also pull a prepared case by name."},
+			Detail: "An agent acts on a store only through tools an admin chose to give it. Off, files and folders arrive by the Pull button here or by an app granted pulling; on, an attached agent can also pull one by name."},
 		{Field: "description", Type: "textarea", Label: "What lands here", Rows: 2,
 			Help:   "Optional, and worth writing: it tells the agent when to reach for THIS store.",
-			Detail: "It is pasted into the agent's tool descriptions. For example: \"Customer support bundles, one folder per ticket, uploaded by the support team.\""},
+			Detail: "It is pasted into the agent's tool descriptions. For example: \"Build logs, one folder per CI run, copied in by the build server.\""},
 		{Field: "slug", Type: "hidden"},
 	}
 }
@@ -407,7 +427,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/pull/", T.handlePull)
 }
 
-// handleStoreOptions lists the stores for the Pull cases from picker, with a
+// handleStoreOptions lists the stores for the Pull from another store picker, with a
 // first choice of none.
 func (T *FileStoreApp) handleStoreOptions(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok || !adminOnly(w, r) {
@@ -445,6 +465,10 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 			st, found := LoadStore(T.DB, slug)
 			if !found {
 				http.NotFound(w, r)
+				return
+			}
+			if r.URL.Query().Get("view") == "about" {
+				writeJSON(w, T.storeAbout(st))
 				return
 			}
 			if r.URL.Query().Get("view") == "form" {
@@ -568,6 +592,7 @@ func (T *FileStoreApp) storeRows() []map[string]any {
 			// Stated on the row because it is the one setting whose effect
 			// is destructive and whose default (forever) is invisible.
 			"retention": retentionLabel(st),
+			"keeps":     keepsLabel(st),
 			// The stores and apps this one works with, read from both ends: a
 			// pull link is set on the store that pulls, and the store it pulls
 			// from would otherwise look unconnected, as if it could be changed
@@ -592,7 +617,7 @@ func connectedLabel(st Store, all []Store) string {
 		}
 		what := st.pullSubpath() + "/"
 		if what == "/" {
-			what = "whole cases"
+			what = "whole folders and files"
 		}
 		parts = append(parts, "pulls "+what+" from "+from)
 	}
@@ -613,6 +638,50 @@ func connectedLabel(st Store, all []Store) string {
 		parts = append(parts, "used by "+strings.Join(apps, ", "))
 	}
 	return strings.Join(parts, "; ")
+}
+
+// keepsLabel is the retention in a few words, for the table's row:
+// "forever", "90 days", "temporary, 24h". retentionLabel says it in full.
+func keepsLabel(st Store) string {
+	switch {
+	case st.Ephemeral:
+		return "temporary, " + strconv.Itoa(int(st.lifetime().Hours())) + "h"
+	case st.RetentionDays > 0:
+		return strconv.Itoa(st.RetentionDays) + " days"
+	}
+	return "forever"
+}
+
+// storeAbout is the store's details for the About panel in Manage.
+func (T *FileStoreApp) storeAbout(st Store) map[string]any {
+	assigned := "everyone"
+	if len(st.AllowedUsers) > 0 {
+		assigned = strings.Join(st.AllowedUsers, ", ")
+	}
+	var apps []string
+	for _, g := range st.AppGrants {
+		apps = append(apps, appLabel(g.App)+": "+g.rights())
+	}
+	appText := "none"
+	if len(apps) > 0 {
+		appText = strings.Join(apps, "; ")
+	}
+	connected := connectedLabel(st, ListStores(T.DB))
+	if connected == "" {
+		connected = "none"
+	}
+	carries := storeCarriesLabel(T.DB, st.Slug)
+	if strings.TrimSpace(carries) == "" {
+		carries = "none"
+	}
+	return map[string]any{
+		"tools":     strings.Join(storeToolNames(st.Slug), ", "),
+		"carries":   carries,
+		"assigned":  assigned,
+		"apps":      appText,
+		"connected": connected,
+		"retention": retentionLabel(st),
+	}
 }
 
 // retentionLabel says what the store's window means in words, including

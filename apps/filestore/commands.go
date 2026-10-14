@@ -105,7 +105,7 @@ type StoreCommand struct {
 	Slug string `json:"slug"` // which store it belongs to
 	Name string `json:"name"` // stable handle, snake_case: "decrypt"
 	// Label is what the button says. Named for what it DOES to the
-	// folder ("Decrypt bundle"), because that is what the person
+	// folder ("Unpack archive"), because that is what the person
 	// clicking it is deciding.
 	Label   string `json:"label,omitempty"`
 	Command string `json:"command"` // absolute path; no shell

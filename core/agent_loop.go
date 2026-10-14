@@ -2764,7 +2764,7 @@ func (lr *loopRun) finalRoundPromiseGuards() loopAction {
 func (lr *loopRun) finalRoundToolMentionGuard() loopAction {
 	// Tool-mention correction: the model named a KNOWN tool in its
 	// reply (e.g. "let me get_joke", or "I can't reach
-	// read_support_bundles") but emitted no structured call.
+	// read_build_logs") but emitted no structured call.
 	// parseNaturalToolCall rescues a narration only when arguments
 	// are readable off the prose, so a no-arg tool (nothing to
 	// extract) and a tool merely TALKED about both fall through it

@@ -12,22 +12,22 @@ import (
 // nothing else: the mapping is a model's proposal, and an action that chains,
 // pipes or runs something else would be a tool doing whatever it is handed.
 func TestAMappedActionRunsOnlyItsCommand(t *testing.T) {
-	bin := "/opt/bin/diag_decrypt"
+	bin := "/opt/bin/unpack"
 	for tmpl, ok := range map[string]bool{
-		"/opt/bin/diag_decrypt {folder}":                  true,
-		"/opt/bin/diag_decrypt --list {folder}":           true,
-		"'/opt/bin/diag_decrypt' {folder} {response}":     true,
-		"/opt/bin/other {folder}":                         false,
-		"cd {folder} && /opt/bin/diag_decrypt .":          false,
-		"/opt/bin/diag_decrypt {folder}; rm -rf {folder}": false,
-		"/opt/bin/diag_decrypt {folder} | tee out.txt":    false,
-		"/opt/bin/diag_decrypt {folder} > {folder}/out":   false,
-		"/opt/bin/diag_decrypt $(cat {folder}/key)":       false,
-		"/opt/bin/diag_decrypt `id`":                      false,
-		"LANG=C /opt/bin/diag_decrypt {folder}":           false,
-		"sh -c {script}":                                  false,
-		"/opt/bin/diag_decrypt {folder}\n/opt/bin/other":  false,
-		"/opt/bin/diag_decrypt_evil {folder}":             false,
+		"/opt/bin/unpack {folder}":                  true,
+		"/opt/bin/unpack --list {folder}":           true,
+		"'/opt/bin/unpack' {folder} {response}":     true,
+		"/opt/bin/other {folder}":                   false,
+		"cd {folder} && /opt/bin/unpack .":          false,
+		"/opt/bin/unpack {folder}; rm -rf {folder}": false,
+		"/opt/bin/unpack {folder} | tee out.txt":    false,
+		"/opt/bin/unpack {folder} > {folder}/out":   false,
+		"/opt/bin/unpack $(cat {folder}/key)":       false,
+		"/opt/bin/unpack `id`":                      false,
+		"LANG=C /opt/bin/unpack {folder}":           false,
+		"sh -c {script}":                            false,
+		"/opt/bin/unpack {folder}\n/opt/bin/other":  false,
+		"/opt/bin/unpack_evil {folder}":             false,
 	} {
 		err := actionRunsTheCommand(bin, tmpl)
 		if (err == nil) != ok {

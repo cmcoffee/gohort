@@ -75,9 +75,9 @@ func (s Store) roomFor(need int64) error {
 	if used+need <= limit && used < limit {
 		return nil
 	}
-	free := "remove cases from it"
+	free := "remove folders or files from it"
 	if s.Ephemeral {
-		free = "wait for old cases to expire (it keeps a case " + fmt.Sprint(s.lifetime()) + " after its last change), remove cases from it"
+		free = "wait for old folders to expire (it keeps each " + fmtLifetime(s.lifetime()) + " after its last change), remove some from it"
 	}
 	if need == 0 {
 		return Error(fmt.Sprintf("%s is full: it holds %s of its %s cap. Nothing was deleted to make room; %s, or raise its cap (Admin, Files).",

@@ -5,7 +5,7 @@
 // comment on ReferenceToolProvider says why that loses: "a generic
 // pull_reference competes with the framework's own knowledge tools and
 // loses; distinctly-named per-item tools don't." An agent attached to
-// the "Support bundles" store gets search_support_bundles_logs, which it
+// the "Build logs" store gets search_build_logs_logs, which it
 // can see and reason about, rather than a generic reader it has to
 // discover it should prefer over knowledge_search.
 //
@@ -157,7 +157,7 @@ func (s storeSource) folderMenu(st Store) string {
 }
 
 // expiryNote is ", deleted in about 5h" for a folder of a temporary store, so
-// an agent (and the person reading its answer) knows how long a case stays.
+// an agent (and the person reading its answer) knows how long a folder stays.
 func (st Store) expiryNote(folder string) string {
 	if !st.Ephemeral {
 		return ""
@@ -252,7 +252,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 	//
 	// The gap it closes: a store whose folders arrive encrypted or packed reads
 	// as EMPTY to an agent. It searches, finds nothing, and reports nothing
-	// found — when the truth is that a Decrypt bundle command is registered and
+	// found — when the truth is that a Unpack archive command is registered and
 	// nobody has clicked it. The agent could not say that, because the commands
 	// were invisible to it.
 	//
@@ -261,7 +261,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 	// from the slow one that reaches the live thing (investigate_<system>). This
 	// is the first half. Naming a command is safe in a way running one is not,
 	// and it is most of the value: an agent that can say "this folder needs
-	// Decrypt bundle run on it first" has turned a dead end into an instruction.
+	// Unpack archive run on it first" has turned a dead end into an instruction.
 	commandsTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "list_" + slug + "_commands",

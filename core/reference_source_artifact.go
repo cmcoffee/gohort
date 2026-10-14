@@ -18,7 +18,7 @@
 // What it buys is the existence probe. The bundle machinery answers "is this
 // reference satisfied here" by asking the type, so declaring sources makes the
 // import preview and the post-import pass say "this agent expects a file store
-// called Support bundles" — before the first turn, instead of after it.
+// called Build logs" — before the first turn, instead of after it.
 
 package core
 
