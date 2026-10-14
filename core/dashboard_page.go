@@ -261,7 +261,9 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   /* The notices' holder is full width so each notice can size itself to the
      grid's column (the body centres its children at their own width). */
   .notices { width: 100%; }
-  .notice span { min-width: 0; }
+  /* An error quotes ARNs, profile names and paths with no spaces in them;
+     they break anywhere rather than pushing the page wider than a phone. */
+  .notice span { min-width: 0; overflow-wrap: anywhere; }
   .notice-act {
     align-self: flex-start; text-decoration: none; font-weight: 600; font-size: var(--fs-md, 0.9rem);
     padding: 0.45rem 0.9rem; border-radius: 6px;

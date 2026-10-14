@@ -43,3 +43,17 @@ func TestTheDashboardTellsAFreshAdminWhatIsMissing(t *testing.T) {
 		t.Errorf("the notice ignores the dismissal the wizard honours: %+v", got)
 	}
 }
+
+// An error that already ends a sentence is not given a second full stop.
+func TestANoticeSentenceEndsOnce(t *testing.T) {
+	for in, want := range map[string]string{
+		"run `aws sso login --profile x`.": "run `aws sso login --profile x`.",
+		"the lead model failed":            "the lead model failed.",
+		"is it configured?":                "is it configured?",
+		"  ":                               "",
+	} {
+		if got := sentence(in); got != want {
+			t.Errorf("sentence(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

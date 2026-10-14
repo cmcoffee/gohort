@@ -419,6 +419,16 @@ func (a *AdminApp) llmNotices() []DashboardNotice {
 	return out
 }
 
+// sentence ends s with a full stop unless it already ends in one (an error
+// quoting a command often does, and "..". read as a typo on the dashboard).
+func sentence(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasSuffix(s, ".") || strings.HasSuffix(s, "!") || strings.HasSuffix(s, "?") {
+		return s
+	}
+	return s + "."
+}
+
 // leadNotice is ONE card for whatever is wrong with the lead. Its problems
 // were separate cards, and they are rarely separate events: a model that
 // fails its handoff check goes on to fail its calls, so one fault put up two
@@ -426,7 +436,7 @@ func (a *AdminApp) llmNotices() []DashboardNotice {
 func (a *AdminApp) leadNotice() (DashboardNotice, bool) {
 	var says []string
 	if e := strings.TrimSpace(LeadInitError()); e != "" {
-		says = append(says, strings.ToUpper(e[:1])+e[1:]+".")
+		says = append(says, sentence(strings.ToUpper(e[:1])+e[1:]))
 	}
 	if model, first := handoffFailure(LeadLLMTable); first != "" {
 		says = append(says, fmt.Sprintf("The lead model (%s) failed its handoff check after the last save. %s", model, first))
