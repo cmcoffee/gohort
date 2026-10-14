@@ -4117,6 +4117,15 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border-bottom: 1px solid var(--border);
 }
 .ui-agent-top-bundle-divider { display: none; }
+/* The top bar is a card like the two below it (the session list and the
+ * conversation): bordered all round, rounded at every corner as they are,
+ * and set off from them by the same gap that separates them. As a strip
+ * with a rule along its foot it read as page chrome stuck to the cards'
+ * tops rather than a panel of its own. */
+.ui-agent > .ui-agent-top-bundle {
+  border: 1px solid var(--border); border-radius: 10px;
+}
+.ui-agent:has(> .ui-agent-top-bundle) { gap: var(--panel-gap); }
 
 /* Mobile: rail collapses to a drawer, so the grid's first column
  * (rail-width) is no longer visible underneath. Drop the rigid grid
