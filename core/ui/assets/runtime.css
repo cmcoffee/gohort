@@ -5352,8 +5352,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * way to a grid for this (rows display:contents), so the tiles' cell can
  * sit on the second line. A fade on an edge says there is
  * more that way (set by the panel as the row scrolls). Menus opened from the
- * row live on <body>, so the scrolling row cannot clip them. */
-@media (max-width: 700px) {
+ * row live on <body>, so the scrolling row cannot clip them.
+ *
+ * Up to 900px, where the bar's desktop grid gives way: from 701 to 900 (a
+ * tablet, a wide phone held sideways) the bar is already a stacked column,
+ * and the old wrapping came back there, buttons in a pile, between this
+ * layout and the desktop one. */
+@media (max-width: 900px) {
   .ui-agent .ui-agent-top-bundle { gap: 0.15rem; padding: 0.35rem 0.5rem; }
   .ui-agent .ui-agent-top-bundle-table { display: block; width: 100%; }
   .ui-agent .ui-agent-top-bundle-table tbody {
