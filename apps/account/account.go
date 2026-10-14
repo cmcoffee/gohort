@@ -789,7 +789,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 .acct-tok-reveal { border:1px solid var(--accent); border-radius:8px; padding:0.7rem 0.8rem; background:var(--bg-2); }
 .acct-tok-reveal code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:var(--fs-sm, 0.82rem); color:var(--text); word-break:break-all; display:block; margin-top:0.3rem; }
 .acct-tok-empty { color:var(--text-mute); font-style:italic; padding:0.4rem 0; }
-.acct-tok-badge { font-size:0.66rem; font-weight:600; padding:0.08rem 0.45rem; border-radius:999px; margin-left:0.4rem; }
+.acct-tok-badge { font-size:var(--fs-2xs, 0.72rem); font-weight:600; padding:0.08rem 0.45rem; border-radius:999px; margin-left:0.4rem; }
 .acct-tok-badge.warn { background:rgba(220,160,40,0.18); color:#c88a1e; }
 .acct-tok-scope { border:1px solid var(--border); border-radius:8px; padding:0.6rem 0.75rem; margin-top:0.35rem; background:var(--bg-2); display:flex; flex-direction:column; gap:0.5rem; }
 .acct-tok-scope h4 { margin:0; font-size:var(--fs-2xs, 0.72rem); text-transform:uppercase; letter-spacing:0.03em; color:var(--text-mute); }

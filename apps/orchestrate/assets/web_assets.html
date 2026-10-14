@@ -493,7 +493,7 @@
 .ui-orch-sec-pick-name { font-size: 0.83rem; color: var(--text); font-weight: 600; }
 .ui-orch-sec-pick-desc { font-size: 0.74rem; color: var(--text-mute); margin-top: 0.1rem; line-height: 1.35; }
 .ui-orch-sec-badge {
-  font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: var(--fs-2xs, 0.72rem); text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-mute); border: 1px solid var(--border); border-radius: 3px;
   padding: 0 0.25rem; margin-left: 0.4rem; vertical-align: middle;
 }
@@ -4139,7 +4139,7 @@ select.ui-orch-intake-input {
           var colors = { pinned: '#6366f1', finding: '#0ea5e9', knowledge: '#10b981', history: '#a855f7', cortex: '#f59e0b', notes: '#64748b' };
           var c = document.createElement('span');
           c.textContent = layer;
-          c.style.cssText = 'display:inline-block;font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.4rem;border-radius:3px;color:#fff;flex:0 0 auto;background:' + (colors[layer] || '#64748b');
+          c.style.cssText = 'display:inline-block;font-size:var(--fs-2xs, 0.72rem);text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.4rem;border-radius:3px;color:#fff;flex:0 0 auto;background:' + (colors[layer] || '#64748b');
           return c;
         }
         function renderMemSearch(d) {
@@ -5889,7 +5889,7 @@ select.ui-orch-intake-input {
                   if (opts.badge) {
                     var b = document.createElement('span');
                     b.textContent = opts.badge;
-                    b.style.cssText = 'font-size:0.66rem;letter-spacing:0.03em;color:var(--text-mute);border:1px solid var(--border);border-radius:3px;padding:0 0.25rem';
+                    b.style.cssText = 'font-size:var(--fs-2xs, 0.72rem);letter-spacing:0.03em;color:var(--text-mute);border:1px solid var(--border);border-radius:3px;padding:0 0.25rem';
                     head.appendChild(b);
                   }
                   txt.appendChild(head);

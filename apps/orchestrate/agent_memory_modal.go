@@ -110,7 +110,7 @@ const agentMemoryModalTemplate = `<script>
         var colors = { pinned: '#6366f1', finding: '#0ea5e9', knowledge: '#10b981', history: '#a855f7', cortex: '#f59e0b', notes: '#64748b' };
         var c = document.createElement('span');
         c.textContent = layer;
-        c.style.cssText = 'display:inline-block;font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.4rem;border-radius:3px;color:#fff;flex:0 0 auto;background:' + (colors[layer] || '#64748b');
+        c.style.cssText = 'display:inline-block;font-size:var(--fs-2xs, 0.72rem);text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.4rem;border-radius:3px;color:#fff;flex:0 0 auto;background:' + (colors[layer] || '#64748b');
         return c;
       }
       function renderMemSearch(d) {

@@ -6962,3 +6962,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 @media (max-width: 760px) and (pointer: coarse) {
   .ui-form-nav-rail .ui-form-nav-item { min-height: var(--btn-h); }
 }
+/* Phone: no label under the type scale's smallest size. These were set at
+ * 0.6 to 0.66rem (under 11px): legible on a desktop monitor, squinting on a
+ * phone. A count in a small circle (the bell's, a channel's) keeps its size,
+ * since the circle is drawn around it. */
+@media (max-width: 700px) {
+  :is(.ui-live-state, .ui-live-stop, .ui-cp-pill-flag, .ui-cp-pill-note,
+      .ui-channels-h-title, .ui-channels-dir, .ui-channels-inert,
+      .ui-chat-side-source, .ui-pl-side-pill, .ui-agent-msg-sender,
+      .ui-agent-msg-label, .ui-cw-mode-tag) { font-size: var(--fs-2xs); }
+}
