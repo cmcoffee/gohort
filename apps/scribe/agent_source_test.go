@@ -2,8 +2,10 @@ package scribe
 
 import (
 	"context"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -124,5 +126,91 @@ func TestAGoneOrForeignGuideGivesNoTools(t *testing.T) {
 	deleteGuide(udb, "u", g.ID)
 	if tools := src.ItemTools("u", g.ID); len(tools) != 0 {
 		t.Errorf("a deleted guide still gave %d tools", len(tools))
+	}
+}
+
+// The Curator panel lists what is waiting, not only how many: each finding
+// with the guide it is for and how long ago it arrived.
+func TestTheCuratorListsWhatIsWaiting(t *testing.T) {
+	src, udb, g := guideSourceFixture(t)
+	report := toolsByName(src.ItemToolsWithSession(&ToolSession{AgentID: "a-triage"}, "u", g.ID))["report_to_dump_triage_guide"]
+	if _, err := report.Handler(context.Background(), map[string]any{"topic": "Empty dumps", "finding": "Restart the collector."}); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	src.app.handlePendingFindings(w, httptest.NewRequest("GET", "/curator/pending", nil), udb, "u")
+	body := w.Body.String()
+	for _, want := range []string{`"topic":"Empty dumps"`, `"for":"Dump Triage"`, `"age":"just now"`, `"content":"Restart the collector."`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the waiting list lacks %s: %s", want, body)
+		}
+	}
+}
+
+// A finding for a guide that curates as findings arrive starts a Curator run
+// once reports settle; one for a guide without it waits for the threshold or
+// the interval as before.
+func TestAGuideCanCurateAsFindingsArrive(t *testing.T) {
+	prevSettle, prevMax := curateSettle, curateSettleMax
+	curateSettle, curateSettleMax = 20*time.Millisecond, time.Second
+	t.Cleanup(func() { curateSettle, curateSettleMax = prevSettle, prevMax })
+
+	src, udb, g := guideSourceFixture(t)
+	user := "u-" + t.Name()
+	src2 := guideSource{app: src.app}
+	udb = UserDB(src.app.DB, user)
+	g.Owner = user
+	saveGuide(udb, g)
+	report := func() {
+		t.Helper()
+		tool := toolsByName(src2.ItemToolsWithSession(&ToolSession{AgentID: "a-triage"}, user, g.ID))["report_to_dump_triage_guide"]
+		if _, err := tool.Handler(context.Background(), map[string]any{"topic": "x", "finding": "y"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ran := func() bool { _, ok := lastCuratorRun.Load(user); return ok }
+
+	report()
+	time.Sleep(100 * time.Millisecond)
+	if ran() {
+		t.Fatal("a guide without the setting was curated on its first report")
+	}
+
+	g.CurateOnReport = true
+	saveGuide(udb, g)
+	report()
+	deadline := time.Now().Add(3 * time.Second)
+	for !ran() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ran() {
+		t.Error("a guide that curates as findings arrive was not curated after its report")
+	}
+}
+
+// The setting lives in the guide's Edit dialog. A save that does not send it
+// (a dialog opened before it existed) leaves it as it is.
+func TestCurateOnReportIsSetInTheEditDialog(t *testing.T) {
+	src, udb, g := guideSourceFixture(t)
+	post := func(body string) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		src.app.handleSettings(w, httptest.NewRequest("POST", "/settings?id="+g.ID, strings.NewReader(body)), udb, "u")
+		if w.Code != 200 {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	post(`{"title":"Dump Triage","curate_on_report":true}`)
+	if cur, _ := loadGuide(udb, g.ID); !cur.CurateOnReport {
+		t.Fatal("the setting did not turn on")
+	}
+	post(`{"title":"Dump Triage"}`)
+	if cur, _ := loadGuide(udb, g.ID); !cur.CurateOnReport {
+		t.Error("a save that did not send it turned it off")
+	}
+	w := httptest.NewRecorder()
+	src.app.handleSettings(w, httptest.NewRequest("GET", "/settings?id="+g.ID, nil), udb, "u")
+	if !strings.Contains(w.Body.String(), `"curate_on_report":true`) {
+		t.Errorf("the dialog is not told it is on: %s", w.Body.String())
 	}
 }

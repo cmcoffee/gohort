@@ -39,6 +39,8 @@ const guideCuratorCSS = `
 .gc-undone { opacity:0.55; }
 .gc-blocked { color: var(--text-mute); font-size:var(--fs-xs, 0.75rem); white-space:nowrap; }
 .gc-empty { color: var(--text-mute); font-size:var(--fs-md, 0.9rem); }
+.gc-h { font-size:var(--fs-2xs, 0.7rem); text-transform:uppercase; letter-spacing:0.05em; color: var(--text-mute); font-weight:700; margin:0.9rem 0 0.4rem; }
+.gc-content { font-size:var(--fs-sm, 0.83rem); margin-top:0.3rem; white-space:pre-wrap; word-break:break-word; color: var(--text); }
 `
 
 // guideCuratorAction is the 'guides_curator' client action behind the Curator
@@ -154,11 +156,38 @@ const guideCuratorAction = `function(ctx){
               head.appendChild(now);
             }
             host.appendChild(head);
+            // What is waiting, itself, not only how many: a count above a
+            // list of old runs reads as "nothing new here".
+            if (d.pending) {
+              var waiting = el('div', {class:'gc-run'});
+              host.appendChild(waiting);
+              fetch('curator/pending').then(function(r){ return r.ok ? r.json() : []; }).then(function(list){
+                waiting.appendChild(el('div', {class:'gc-run-top'}, [el('strong', {}, ['Waiting'])]));
+                (list || []).forEach(function(f){
+                  var row = el('div', {class:'gc-entry'});
+                  row.appendChild(el('span', {class:'gc-pill'}, ['waiting']));
+                  var b = el('div', {class:'gc-body'});
+                  b.appendChild(el('div', {class:'gc-topic'}, [f.topic || '(no topic given)']));
+                  var meta = [];
+                  if (f['for']) meta.push('for ' + f['for']);
+                  if (f.origin) meta.push('from ' + f.origin);
+                  if (f.confidence) meta.push(f.confidence);
+                  if (f.age) meta.push(f.age);
+                  if (meta.length) b.appendChild(el('div', {class:'gc-meta'}, [meta.join('  -  ')]));
+                  var text = f.content || '';
+                  if (text.length > 400) text = text.slice(0, 400) + '...';
+                  if (text) b.appendChild(el('div', {class:'gc-content'}, [text]));
+                  row.appendChild(b);
+                  waiting.appendChild(row);
+                });
+              }).catch(function(){ waiting.appendChild(el('div', {class:'gc-empty'}, ['Could not list what is waiting.'])); });
+            }
             if (!d.runs || !d.runs.length) {
               host.appendChild(el('div', {class:'gc-empty'},
                 ['The curator has not run yet. It runs automatically once enough findings pile up, or on a timer.']));
               return;
             }
+            host.appendChild(el('div', {class:'gc-h'}, ['Past runs']));
             d.runs.forEach(function(run){ host.appendChild(runCard(run)); });
           });
         }

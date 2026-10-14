@@ -325,3 +325,54 @@ func TestCuratorAgentClaimsNoResearchTools(t *testing.T) {
 		}
 	}
 }
+
+// TestFindingStaysInTheGuideItCameFor: a finding reported by an agent attached
+// to a guide is decided against that guide. Filing it elsewhere, into a new
+// guide, or flagging it against another guide is refused in code, not only in
+// the prompt; discarding or holding it is not a move and stays open. A finding
+// whose guide was deleted has no home and goes anywhere.
+func TestFindingStaysInTheGuideItCameFor(t *testing.T) {
+	udb := testStore(t)
+	home := saveGuideRev(udb, Guide{ID: "home", Title: "Home Guide", Owner: "u"}, "test")
+	other := saveGuideRev(udb, Guide{ID: "other", Title: "Other Guide", Owner: "u"}, "test")
+	byID := map[string]DocFinding{}
+	for _, id := range []string{"a", "b", "c"} {
+		f := mkFinding("t", "c", "verified")
+		f.ID = id
+		f.Document = home.ID
+		byID[id] = f
+		udb.Set(findingsTable, id, f)
+	}
+	orphan := mkFinding("t", "c", "verified")
+	orphan.ID, orphan.Document = "orphan", "deleted-guide"
+	byID[orphan.ID] = orphan
+	cs := &curatorSession{app: &Scribe{}, udb: udb, user: "u", byID: byID, decided: map[string]bool{}}
+
+	if _, err := cs.place("a", other.ID, "Anything"); err == nil || !strings.Contains(err.Error(), "Home Guide") {
+		t.Errorf("placing a finding into another guide was not refused by name: %v", err)
+	}
+	if _, err := cs.supersede("a", other.ID, "Anything"); err == nil || !strings.Contains(err.Error(), "stays there") {
+		t.Errorf("superseding in another guide was not refused: %v", err)
+	}
+	if _, err := cs.flag("a", other.ID, "Anything", "disagrees"); err == nil || !strings.Contains(err.Error(), "stays there") {
+		t.Errorf("flagging against another guide was not refused: %v", err)
+	}
+	if cs.decided["a"] {
+		t.Error("a refused decision was recorded")
+	}
+	if _, err := cs.createGuide("Somewhere New", []string{"a", "b", "c"}); err == nil || !strings.Contains(err.Error(), "stays there") {
+		t.Errorf("moving findings into a new guide was not refused: %v", err)
+	}
+	if len(listGuides(udb)) != 2 {
+		t.Errorf("a refused create_guide still made a guide: %d guides", len(listGuides(udb)))
+	}
+	if msg, err := cs.flag("a", home.ID, "Anything", "disagrees"); err != nil || cs.decided["a"] != true {
+		t.Errorf("flagging against its own guide should go through: %q, %v", msg, err)
+	}
+	if _, err := cs.simple(OutcomeDiscarded, "b", "a restatement", "Discarded"); err != nil {
+		t.Errorf("discarding should stay open: %v", err)
+	}
+	if err := cs.keepHome("orphan", other.ID); err != nil {
+		t.Errorf("a finding whose guide is gone should go anywhere: %v", err)
+	}
+}

@@ -177,15 +177,25 @@ func (T *Scribe) handlePendingFindings(w http.ResponseWriter, r *http.Request, u
 		Origin     string `json:"origin"`
 		Confidence string `json:"confidence"`
 		Submitted  string `json:"submitted"`
+		Age        string `json:"age,omitempty"`
 		Content    string `json:"content"`
+		// For is the guide its producer was attached to, by title, when it
+		// was and the guide is still there.
+		For string `json:"for,omitempty"`
 	}
 	pending := listPendingFindings(udb)
 	out := make([]row, 0, len(pending))
 	for _, f := range pending {
-		out = append(out, row{
+		r := row{
 			ID: f.ID, Topic: f.Topic, Origin: findingOriginLabel(f.Origin),
-			Confidence: f.Confidence, Submitted: f.Submitted, Content: f.Content,
-		})
+			Confidence: f.Confidence, Submitted: f.Submitted, Age: ageSince(f.Submitted), Content: f.Content,
+		}
+		if id := strings.TrimSpace(f.Document); id != "" {
+			if g, ok := loadGuide(udb, id); ok {
+				r.For = firstNonEmpty(g.Title, "Untitled guide")
+			}
+		}
+		out = append(out, r)
 	}
 	writeJSON(w, out)
 }

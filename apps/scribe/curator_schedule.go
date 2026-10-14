@@ -88,23 +88,84 @@ func (T *Scribe) maybeRunCurator(user string) {
 
 // runCuratorGuarded runs the curator for one user under that user's lock, and
 // swallows the "nothing pending" case so callers can fire freely.
+//
+// A call while a run is in flight asks it to go again when it ends. The run
+// read its batch when it started, so a finding filed during it would
+// otherwise sit until the next threshold or interval: for a guide that
+// curates as findings arrive, that is up to an hour.
 func (T *Scribe) runCuratorGuarded(ctx context.Context, user, why string) {
 	mu := curatorLock(user)
-	if !mu.TryLock() {
-		return // a run is already in flight for this user; it will see the queue
+	for {
+		if !mu.TryLock() {
+			curatorAgain.Store(user, true)
+			return
+		}
+		curatorAgain.Delete(user)
+		run, err := T.RunCurator(ctx, user)
+		lastCuratorRun.Store(user, time.Now())
+		switch {
+		case err != nil:
+			Log("[guides.curator] %s run for %q failed: %v", why, user, err)
+		case run.ID == "":
+			// Nothing was pending. Not worth a log line — the interval sweep hits
+			// this for every user with an empty queue.
+		default:
+			T.notifyDigest(user, run)
+		}
+		mu.Unlock()
+		if _, again := curatorAgain.Load(user); !again || ctx.Err() != nil {
+			return
+		}
+		why = "again"
 	}
-	defer mu.Unlock()
-	run, err := T.RunCurator(ctx, user)
-	lastCuratorRun.Store(user, time.Now())
-	switch {
-	case err != nil:
-		Log("[guides.curator] %s run for %q failed: %v", why, user, err)
-	case run.ID == "":
-		// Nothing was pending. Not worth a log line — the interval sweep hits
-		// this for every user with an empty queue.
-	default:
-		T.notifyDigest(user, run)
+}
+
+// curatorAgain marks a user whose findings arrived while a run was in flight.
+var curatorAgain sync.Map // user -> true
+
+// curateSettle is how long curateSoon waits after the latest finding before it
+// runs: a burst from one investigation is curated as one batch, which is what
+// lets the curator see that three reports are one section.
+var curateSettle = 30 * time.Second
+
+// curateSettleMax bounds how long new findings can push the run back, so an
+// agent reporting steadily still has its findings curated.
+var curateSettleMax = 5 * time.Minute
+
+var (
+	curateSoonMu     sync.Mutex
+	curateSoonTimers = map[string]*time.Timer{}
+	curateSoonFirst  = map[string]time.Time{} // when the waiting batch began
+)
+
+// curateSoon runs the curator for user once findings stop arriving for
+// curateSettle: each new finding pushes the run back, but never past
+// curateSettleMax from the first one waiting.
+func (T *Scribe) curateSoon(user string) {
+	curateSoonMu.Lock()
+	defer curateSoonMu.Unlock()
+	first, waiting := curateSoonFirst[user]
+	if !waiting {
+		first = time.Now()
+		curateSoonFirst[user] = first
 	}
+	wait := curateSettle
+	if left := curateSettleMax - time.Since(first); left < wait {
+		wait = left
+	}
+	if wait < 0 {
+		wait = 0
+	}
+	if t, ok := curateSoonTimers[user]; ok {
+		t.Stop()
+	}
+	curateSoonTimers[user] = time.AfterFunc(wait, func() {
+		curateSoonMu.Lock()
+		delete(curateSoonTimers, user)
+		delete(curateSoonFirst, user)
+		curateSoonMu.Unlock()
+		T.runCuratorGuarded(AppContext(), user, "on report")
+	})
 }
 
 // startCuratorLoop begins the interval sweep. Called once from Routes.

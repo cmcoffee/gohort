@@ -409,7 +409,7 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 		writeJSON(w, map[string]any{
 			"title": g.Title, "subtitle": g.Subtitle, "private": g.Private,
 			"shared": g.Shared, "mode": shareModeOf(g), "owner": g.Owner,
-			"can_manage": canManage,
+			"can_manage": canManage, "curate_on_report": g.CurateOnReport, "brief": g.Brief,
 		})
 	case http.MethodPost:
 		if !canManage {
@@ -422,6 +422,11 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 			Private  bool   `json:"private"`
 			Shared   bool   `json:"shared"`
 			Mode     string `json:"mode"` // "view" | "edit"
+			// A pointer: a dialog that does not send it (one opened before
+			// the setting existed) leaves it as it is.
+			CurateOnReport *bool `json:"curate_on_report"`
+			// The writing brief; a pointer for the same reason.
+			Brief *string `json:"brief"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -432,6 +437,17 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 		g.Private = body.Private
 		g.Shared = body.Shared
 		g.ShareMode = normalizeShareMode(body.Mode)
+		if body.CurateOnReport != nil {
+			g.CurateOnReport = *body.CurateOnReport
+		}
+		if body.Brief != nil {
+			brief := strings.TrimSpace(*body.Brief)
+			if n := len([]rune(brief)); n > guideBriefMax {
+				http.Error(w, fmt.Sprintf("the writing brief is %d characters; keep it to %d, it rides on every turn that writes this guide", n, guideBriefMax), http.StatusBadRequest)
+				return
+			}
+			g.Brief = brief
+		}
 		saveGuide(ownerUDB, g) // metadata, not a content change — no revision snapshot
 		// Keep the app-wide shared index in sync (drives other users' discovery).
 		owner := g.Owner
@@ -1040,6 +1056,7 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	var tools []AgentToolDef
 	if g, _, _, canEdit, found := T.resolve(r, udb, user, guideID); found {
 		agent.DispatchMode, agent.AllowedDispatchTargets = guideDispatchPolicy(g)
+		agent.OrchestratorPrompt += guideBriefSection(g)
 		all := T.coauthorTools(coauthorScope{
 			Ctx: turnCtx, UDB: udb, Orch: orch, User: user, CanEdit: canEdit, Guide: guideID,
 		})

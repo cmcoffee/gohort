@@ -122,6 +122,8 @@ type WorkbenchPanel struct {
 //     registered via window.uiRegisterClientAction. The handler receives
 //     ({recordId, button, action, refresh}) so an app can mount its own toolbar
 //     behavior (open a picker, copy, print, …) without core/ui knowing it.
+//   - "edit"     — not a button of its own: marks where the Edit toggle
+//     (EditURL / EditLabel) sits in the bar. Without one the toggle leads.
 type WorkbenchAction struct {
 	Label string `json:"label"`
 	URL   string `json:"url"`

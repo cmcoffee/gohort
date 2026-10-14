@@ -74,6 +74,9 @@
       actionBar = el('div', {class: 'ui-wb-actions'});
       // The Edit toggle leads the bar: it changes what the rest of the bar acts
       // on (the source, not the rendering), so it should be the first thing read.
+      // An app that wants something ahead of it marks the toggle's place with
+      // an action of kind "edit".
+      var editPlaced = (cfg.viewer_actions || []).some(function(a) { return a.kind === 'edit'; });
       if (cfg.edit_url) {
         editBtn = el('button', {class: 'ui-wb-action-btn ui-wb-edit-btn', text: cfg.edit_label || 'Edit'});
         editBtn.disabled = true;
@@ -81,9 +84,13 @@
           if (editing) { closeEditor(); renderRecord(lastRec); return; }
           openEditor();
         });
-        actionBar.appendChild(editBtn);
+        if (!editPlaced) actionBar.appendChild(editBtn);
       }
       (cfg.viewer_actions || []).forEach(function(a) {
+        if (a.kind === 'edit') {
+          if (editBtn) actionBar.appendChild(editBtn);
+          return;
+        }
         if (a.kind === 'menu') {
           actionBar.appendChild(buildActionMenu(a));
           return;

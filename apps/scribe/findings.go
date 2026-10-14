@@ -128,8 +128,16 @@ func (g *guideTarget) SubmitFinding(user string, f DocFinding) (string, error) {
 	f.Topic = strings.TrimSpace(f.Topic)
 	udb.Set(findingsTable, f.ID, f)
 	prunePendingFindings(udb)
-	// Threshold firing. Runs in the background: a producer reporting a finding
-	// is mid-investigation and must not wait on a curator batch.
+	// A finding for a guide that curates as findings arrive is curated shortly
+	// after it lands; any other waits for the threshold or the interval. Both
+	// run in the background: a producer reporting a finding is
+	// mid-investigation and must not wait on a curator batch.
+	if id := strings.TrimSpace(f.Document); id != "" {
+		if gd, ok := loadGuide(udb, id); ok && gd.CurateOnReport {
+			g.app.curateSoon(user)
+			return f.ID, nil
+		}
+	}
 	g.app.maybeRunCurator(user)
 	return f.ID, nil
 }
@@ -329,8 +337,11 @@ const (
 )
 
 // curatorRunAge reports how long ago a run started, for the digest list.
-func curatorRunAge(r CuratorRun) string {
-	t, err := time.Parse(time.RFC3339, r.Started)
+func curatorRunAge(r CuratorRun) string { return ageSince(r.Started) }
+
+// ageSince reports how long ago an RFC3339 time was, "" when it is not one.
+func ageSince(ts string) string {
+	t, err := time.Parse(time.RFC3339, ts)
 	if err != nil {
 		return ""
 	}

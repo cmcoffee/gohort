@@ -90,6 +90,14 @@ type Guide struct {
 	// KeepPublished updates every place in Published each time the Guide
 	// Curator changes the guide (keep_published.go).
 	KeepPublished bool `json:"keep_published,omitempty"`
+	// CurateOnReport curates a finding reported for this guide shortly after
+	// it arrives, rather than when enough have piled up or on the interval:
+	// for a guide agents keep up to date with nobody reviewing first
+	// (curateSoon).
+	CurateOnReport bool `json:"curate_on_report,omitempty"`
+	// Brief is the owner's writing brief for this guide: what it is for and
+	// how it is written, followed by everything that writes it (brief.go).
+	Brief string `json:"brief,omitempty"`
 }
 
 // upgradeLegacyArticle turns a stored article (one body under a title) into a

@@ -50,7 +50,7 @@ func keepFixture(t *testing.T, keep bool) (*Scribe, Database, *countingDest) {
 	docs.RegisterPublishDestination(dest)
 	udb := UserDB(app.DB, "u")
 	saveGuide(udb, Guide{ID: "kg", Owner: "u", Title: "Dump Triage", KeepPublished: keep,
-		Sections: []Section{{ID: "s", Title: "Disk full", Markdown: "Empty dumps.", Order: 1}},
+		Sections:  []Section{{ID: "s", Title: "Disk full", Markdown: "Empty dumps.", Order: 1}},
 		Published: []docs.PublishRecord{{Kind: "keeptest", Target: "SPACE", TargetTitle: "Team wiki", Title: "Dump Triage", ExternalID: "77", Version: 3}}})
 	return app, udb, dest
 }

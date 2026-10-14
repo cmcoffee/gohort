@@ -78,6 +78,11 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 		EmptyHint:  "Pick a document on the left, or create one. Then ask the assistant to draft it, or write it yourself.",
 		// Per-document toolbar: preview/export, revision history, freshness audit.
 		ViewerActions: []ui.WorkbenchAction{
+			// The open document's own name, privacy, sharing, writing brief and
+			// how findings reach it: first, ahead of Edit all, because it is
+			// what the document IS, which the rest of the bar acts on.
+			{Label: "Settings", Kind: "client", URL: "guides_settings"},
+			{Kind: "edit"},
 			{Label: "Export", Kind: "menu", Children: []ui.WorkbenchAction{
 				{Label: "Preview (HTML)", Kind: "download", URL: "export?id={id}&format=html"},
 				{Label: "HTML file", Kind: "download", URL: "export?id={id}&format=html&download=1"},
@@ -92,10 +97,6 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// hunted for at the far end of the toolbar.
 			{Label: "History", Kind: "history", URL: "revisions?id={id}",
 				PreviewURL: "revision?id={id}&rev={rev}", RestoreURL: "restore?id={id}&rev={rev}"},
-			// The open document's own name, privacy and sharing — beside the rest
-			// of what acts on it, rather than in the list header where it read as
-			// a control over the library.
-			{Label: "Settings", Kind: "client", URL: "guides_settings"},
 			{Label: "Publish", Kind: "client", URL: "guides_publish"},
 			{Label: "Image", Kind: "client", URL: "scribe_image"},
 			{Label: "Sources", Kind: "client", URL: "guides_sources"},
@@ -706,6 +707,16 @@ const guideSettingsAction = `function(ctx){
           var tf = fieldText('Title', (d && d.title) || '');
           var sf = fieldText('Subtitle', (d && d.subtitle) || '');
           body.appendChild(tf.wrap); body.appendChild(sf.wrap);
+          // Writing brief: what this guide is for, followed by everything that
+          // writes it (the Author, the Curator and its placements).
+          var bta = el('textarea', {rows:'5', placeholder:'e.g. This guide teaches other models how to read diagnostic dumps. Write every section as a general lesson: the symptom, where to look in the dump, what it means, how to confirm it, what to do. Leave out incident specifics.'});
+          bta.value = (d && d.brief) || '';
+          bta.style.width = '100%'; bta.style.padding = '0.45rem 0.6rem'; bta.style.background = 'var(--bg-0)';
+          bta.style.color = 'var(--text)'; bta.style.border = '1px solid var(--border)'; bta.style.borderRadius = '6px';
+          bta.style.resize = 'vertical'; bta.style.fontFamily = 'inherit';
+          body.appendChild(el('div', {class:'guide-edit-field'}, [el('label', {text:'Writing brief'}), bta,
+            el('div', {class:'guide-pub-mute', style:'font-size:0.8rem;margin-top:0.25rem',
+              text:'What this guide is for and how it is written. The Guide Author follows it when you edit, and the Curator decides by it what to keep, what to fold into an existing section, and what to drop.'})]));
           // Private (no internet).
           var pcb = el('input', {type:'checkbox'}); if (d && d.private) pcb.checked = true;
           body.appendChild(el('label', {class:'guide-share-row'}, [pcb,
@@ -724,13 +735,18 @@ const guideSettingsAction = `function(ctx){
           body.appendChild(modeWrap);
           function syncModes(){ modeWrap.style.display = scb.checked ? 'flex' : 'none'; }
           scb.addEventListener('change', syncModes); syncModes();
+          // Findings: what agents attached to this guide report into it.
+          body.appendChild(el('div', {class:'guide-set-head', text:'Findings'}));
+          var ccb = el('input', {type:'checkbox'}); if (d && d.curate_on_report) ccb.checked = true;
+          body.appendChild(el('label', {class:'guide-share-row'}, [ccb,
+            el('span', {text:'Curate findings as they arrive. When an agent reports something for this guide, the Guide Curator files it within about a minute, with no review first. Every change is in the Curator digest, with Undo.'})]));
           var save = el('button', {class:'ui-row-btn primary', text:'Save'});
           body.appendChild(el('div', {class:'guide-edit-actions'}, [save]));
           save.addEventListener('click', function(){
             save.disabled = true; save.textContent = 'Saving…';
             fetch('settings?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({title: tf.input.value, subtitle: sf.input.value, private: pcb.checked, shared: scb.checked, mode: (rEdit.checked ? 'edit' : 'view')})})
-              .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
+              body: JSON.stringify({title: tf.input.value, subtitle: sf.input.value, private: pcb.checked, shared: scb.checked, mode: (rEdit.checked ? 'edit' : 'view'), curate_on_report: ccb.checked, brief: bta.value})})
+              .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); })
               .then(function(){ try { dlg.close(); dlg.remove(); } catch(e){} if (window.uiInvalidate) window.uiInvalidate('guides'); })
               .catch(function(err){ save.disabled = false; save.textContent = 'Save'; window.uiAlert('Save failed: ' + (err && err.message || err)); });
           });

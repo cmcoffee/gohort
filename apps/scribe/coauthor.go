@@ -809,9 +809,13 @@ func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) 
 // pushed content lands coherently. Honors the guide's Private (no-internet) flag.
 func (T *Scribe) runIncorporate(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, suggestedTitle, content string, private bool) (string, error) {
 	udb.Set(activeTable, "current", guideID)
-	prompt := "A new finding has been pushed to this guide. Incorporate it CORRECTLY into the document: do NOT just paste it in as a raw block.\n\n" +
+	prompt := "A new finding has been pushed to this guide. Incorporate it CORRECTLY into the document: do NOT just paste it in as a raw block.\n\n"
+	if c := T.authorBackgroundContext(udb, user, guideID); c != "" {
+		prompt += c + "\n\nWrite the finding into the guide the way that asks: it decides what the section says, not the finding's own shape.\n\n"
+	}
+	prompt +=
 		"1. Call list_sections to see the current structure.\n" +
-		"2. If the finding extends, updates, or overlaps an EXISTING section, use edit_section to weave it in so that section still reads as one coherent piece (merge and re-flow: don't tack a fragment on the end). If it's a genuinely new topic, use add_section with a fitting title"
+			"2. If the finding extends, updates, or overlaps an EXISTING section, use edit_section to weave it in so that section still reads as one coherent piece (merge and re-flow: don't tack a fragment on the end). If it's a genuinely new topic, use add_section with a fitting title"
 	if strings.TrimSpace(suggestedTitle) != "" {
 		prompt += " (a reasonable title: \"" + strings.TrimSpace(suggestedTitle) + "\")"
 	}
