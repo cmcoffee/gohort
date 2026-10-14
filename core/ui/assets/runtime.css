@@ -194,12 +194,43 @@ select:-webkit-autofill {
   border-radius: var(--btn-radius);
 }
 
-#ui-root {
-  margin: 0 auto;
-  padding: 0.95rem;
-  padding-top: calc(0.95rem + env(safe-area-inset-top, 0px));
-  padding-bottom: calc(1.8rem + env(safe-area-inset-bottom, 0px));
+/* The page's gutters. One side gutter for the page and its header bar, so the
+ * back button lines up with the content's left edge; kept narrow, since on a
+ * phone every pixel of it comes out of the content. The bottom one is what is
+ * left below the last thing on the page. */
+:root {
+  --page-gutter-x: 0.5rem;
+  --page-gutter-bottom: 0.75rem;
+  /* Between a panel's columns: a session or file list and the pane beside
+   * it. Their own borders already separate them; the gap only has to keep
+   * the two cards from touching. */
+  --panel-gap: 0.5rem;
 }
+@media (min-width: 700px) {
+  :root { --page-gutter-x: 0.75rem; }
+}
+#ui-root {
+  /* The top, as a property so a bar stuck to the top (PanicBar) can pull
+   * itself up by exactly this much. */
+  --page-pad-top: calc(0.95rem + env(safe-area-inset-top, 0px));
+  margin: 0 auto;
+  padding: 0 var(--page-gutter-x);
+  padding-top: var(--page-pad-top);
+  padding-bottom: calc(var(--page-gutter-bottom) + env(safe-area-inset-bottom, 0px));
+}
+/* An agent page keeps a deeper bottom gutter on a phone: its scroll-past
+ * layout needs the slack (see the note on the phone rule below). */
+@media (max-width: 700px) {
+  #ui-root:has(.ui-agent) {
+    padding-bottom: calc(1.8rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+/* Under the page header (inserted right before #ui-root) the content starts
+ * close: the header is the page's top edge, and it already clears a notch
+ * (its own safe-area padding), so the root adding the inset again put the
+ * notch's height twice between the bar and the first thing on the page. A
+ * page with no header keeps the gutter and the inset, which it needs. */
+.ui-page-header + #ui-root { --page-pad-top: 0.5rem; }
 /* A full-height panel already fills the screen and pads its own composer for
  * the home indicator, so on a phone the root's page gutters are pure dead
  * screen above and below it — and the bottom one is what pushed the input
@@ -218,8 +249,13 @@ select:-webkit-autofill {
    * (NoChrome section), inside a .ui-section-inner, or inside a tab panel. */
   #ui-root:has(.ui-chat, .ui-tw, .ui-wb,
                .ui-navshell:not(.ui-navshell-embedded)):not(:has(.ui-agent)) {
-    padding-top: calc(0.35rem + env(safe-area-inset-top, 0px));
+    --page-pad-top: calc(0.35rem + env(safe-area-inset-top, 0px));
     padding-bottom: 0;
+  }
+  /* The same, under a header: it clears the notch, so the root does not. */
+  .ui-page-header + #ui-root:has(.ui-chat, .ui-tw, .ui-wb,
+               .ui-navshell:not(.ui-navshell-embedded)):not(:has(.ui-agent)) {
+    --page-pad-top: 0.35rem;
   }
 }
 
@@ -230,14 +266,14 @@ select:-webkit-autofill {
    with the content's left edge; safe-area top so the bar clears a notch. */
 .ui-page-header {
   display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.45rem 0.95rem;
+  padding: 0.45rem var(--page-gutter-x);
   padding-top: calc(0.45rem + env(safe-area-inset-top, 0px));
   /* The side insets matter for the same reason the top one does, and only on
    * the bar: a phone held sideways puts a rounded corner or a camera cutout
    * over the screen edge, and the rightmost control here is the last thing
    * that should sit under it. Zero everywhere else. */
-  padding-right: calc(0.95rem + env(safe-area-inset-right, 0px));
-  padding-left: calc(0.95rem + env(safe-area-inset-left, 0px));
+  padding-right: calc(var(--page-gutter-x) + env(safe-area-inset-right, 0px));
+  padding-left: calc(var(--page-gutter-x) + env(safe-area-inset-left, 0px));
   border-bottom: 1px solid var(--border);
   background: var(--bg-1);
   position: relative; /* anchor for the live-pill popover */
@@ -699,7 +735,8 @@ select:-webkit-autofill {
 /* --- PanicBar (sticky top) --- */
 .ui-panic-bar {
   position: sticky; top: 0; z-index: 10;
-  margin: -0.6rem -0.6rem 0.8rem; padding: 0.6rem;
+  margin: calc(-1 * var(--page-pad-top, 0.6rem)) calc(-1 * var(--page-gutter-x)) 0.8rem;
+  padding: 0.6rem var(--page-gutter-x);
   padding-top: calc(0.6rem + env(safe-area-inset-top, 0px));
   background: var(--bg-0); /* solid fallback if color-mix unsupported */
   background: color-mix(in srgb, var(--bg-0) 85%, transparent); /* themed + translucent */
@@ -770,7 +807,7 @@ select:-webkit-autofill {
 
 /* --- WorkbenchPanel: list | viewer | chat, full-height columns --- */
 .ui-wb {
-  display: flex; gap: 0.8rem; align-items: stretch;
+  display: flex; gap: var(--panel-gap); align-items: stretch;
   /* Fill the viewport below the page header. Columns scroll internally.
    * position:relative anchors the mobile list drawer + backdrop.
    * --ui-vh / --ui-chrome-h are measured by the runtime (see syncViewport);
@@ -1795,6 +1832,10 @@ select:-webkit-autofill {
 .ui-md pre code {
   background: transparent; padding: 0; border-radius: 0; font-size: inherit;
 }
+/* A wide table scrolls inside its own box, as a code block does, rather
+ * than widening whatever holds it: in a chat reply on a phone that dragged
+ * the whole conversation sideways. */
+.ui-md table { display: block; max-width: 100%; overflow-x: auto; }
 
 .ui-watch-draft-body {
   margin-top: 0.7rem; color: var(--text);
@@ -2561,7 +2602,7 @@ select:-webkit-autofill {
  * sessions hidden behind a tap. */
 .ui-chat {
   display: grid; grid-template-columns: 240px 1fr;
-  gap: 1rem;
+  gap: var(--panel-gap);
   /* Reserve exactly the page-header + root padding so the chat fills the rest
    * of the viewport instead of leaving a gap at the bottom — or, worse on a
    * phone, overflowing it and putting the composer below the fold. Both terms
@@ -3835,7 +3876,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-agent-grid {
   display: grid; grid-template-columns: 240px 1fr;
-  gap: 1rem;
+  gap: var(--panel-gap);
   flex: 1 1 auto; min-height: 0;
   position: relative;
 }
@@ -4594,6 +4635,73 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * strips this class as soon as real text arrives. */
 .ui-agent-msg-empty { display: none; }
 
+/* --- Agent conversation on a phone -------------------------------------
+ * The reply is what a phone screen is for, and the desktop sizing spent a
+ * seventh of a 390px screen on margins before the first word: a 0.8rem log
+ * padding, a 92% bubble cap and 0.85rem inside each bubble. Here the reply
+ * takes the full width with lighter padding; the person's own message stays
+ * capped so it still reads as theirs, on the right. Tool calls drop their
+ * desktop indents, and a long argument line is cut with an ellipsis rather
+ * than wrapping under the tool's name (the full arguments are inside). */
+/* Scoped under .ui-agent so these win over the base rules whatever their
+ * order in this file: the tool-card rules sit further down, and at equal
+ * weight the later rule would quietly undo these. */
+@media (max-width: 700px) {
+  .ui-agent .ui-agent-convo-log { padding: 0.5rem 0.45rem; gap: 0.5rem; }
+  .ui-agent .ui-agent-msg-assistant, .ui-agent .ui-agent-msg-failed { max-width: 100%; }
+  .ui-agent .ui-agent-msg-user { max-width: 85%; }
+  .ui-agent .ui-agent-msg-assistant .ui-agent-msg-body,
+  .ui-agent .ui-agent-msg-user .ui-agent-msg-body { padding: 0.5rem 0.65rem; }
+  .ui-agent .ui-agent-tools-panel { padding-left: 0.4rem; }
+  .ui-agent .ui-agent-tool-body { padding-left: 0.35rem; }
+  .ui-agent .ui-agent-tool-children { margin-left: 0.1rem; padding-left: 0.45rem; }
+  .ui-agent .ui-agent-tool-summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ui-agent .ui-agent-tool-args {
+    display: inline-block; max-width: 60%; vertical-align: bottom;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* The composer is one rounded pill holding the text and its buttons, as
+   * phone chat apps draw it, inset from the edges and the home indicator.
+   * The text field drops its own box to be the pill's inside; one line at
+   * rest (rows, set by the panel), growing as the message does, with the
+   * buttons kept at its foot. No resize grabber: a finger cannot use it.
+   * The pill shows focus, since the field inside it no longer can. */
+  .ui-agent .ui-agent-input-row {
+    margin: 0.35rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+    padding: 0.3rem 0.3rem 0.3rem 0.55rem;
+    gap: 0.3rem; align-items: flex-end;
+    border: 1px solid var(--border); border-radius: 1.4rem;
+    background: var(--bg-1);
+  }
+  .ui-agent .ui-agent-input-row:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
+  .ui-agent .ui-agent-input {
+    resize: none; border: 0; background: transparent; box-shadow: none;
+    padding: 0.5rem 0.2rem; min-height: 2.25rem; line-height: 1.35;
+  }
+  .ui-agent .ui-agent-input:focus { outline: none; }
+  .ui-agent .ui-agent-input-row .ui-row-btn { border-radius: 999px; min-height: 2.25rem; }
+  /* The round ones are pinned square, every dimension: the base button's
+   * touch-size minimum (44px) otherwise wins one axis and draws an oval. */
+  .ui-agent .ui-agent-input-row .ui-agent-attach,
+  .ui-agent .ui-agent-input-row .ui-agent-send-plain {
+    width: 2.25rem; height: 2.25rem; min-width: 2.25rem; min-height: 2.25rem;
+    max-width: 2.25rem; max-height: 2.25rem; aspect-ratio: 1;
+    flex: 0 0 2.25rem; border-radius: 50%; padding: 0;
+  }
+  .ui-agent .ui-agent-input-row .ui-agent-attach { background: transparent; border-color: transparent; }
+  /* The arrow is drawn, not typed: a text arrow sits on its font's baseline
+   * rather than the circle's middle, and lands differently in every font.
+   * A masked shape in the button's own colour centres exactly. */
+  .ui-agent .ui-agent-input-row .ui-agent-send-plain {
+    font-size: 0; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .ui-agent .ui-agent-input-row .ui-agent-send-plain::before {
+    content: ""; width: 1.1rem; height: 1.1rem; background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+}
+
 /* Struck message: taken back but kept on screen. The text stays readable
  * (muted, struck through) so what was said is still there to check, and the
  * reason line above it says why it does not stand. */
@@ -4933,6 +5041,46 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * vertical breathing room to read as two logical groups. */
 .ui-agent-top-bundle-table td.ui-agent-top-bundle-row-2 {
   padding-top: 0.225rem;
+}
+/* Phone: each row of the top bar is ONE line you swipe sideways, instead of
+ * wrapping into a stack of three or four lines of buttons above the
+ * conversation. The picker keeps its own line; the record actions and the
+ * session toggles each get one, the whole width; page tiles (Build,
+ * Security) shrink to one-line buttons on a line of their own under the
+ * actions, rather than taking width from them. A fade on an edge says there is
+ * more that way (set by the panel as the row scrolls). Menus opened from the
+ * row live on <body>, so the scrolling row cannot clip them. */
+@media (max-width: 700px) {
+  .ui-agent .ui-agent-top-bundle { gap: 0.15rem; padding: 0.35rem 0.5rem; }
+  .ui-agent .ui-agent-top-bundle-table,
+  .ui-agent .ui-agent-top-bundle-table tbody { display: block; width: 100%; }
+  .ui-agent .ui-agent-top-bundle-table tr { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; width: 100%; }
+  .ui-agent .ui-agent-top-bundle-table td { display: block; padding: 0.15rem 0; }
+  .ui-agent .ui-agent-top-bundle-table tr > td:first-child { flex: 1 1 auto; min-width: 0; }
+  .ui-agent .ui-agent-top-bundle-table td[rowspan] { flex: 1 0 100%; width: auto !important; padding: 0.15rem 0 0 !important; text-align: left !important; }
+  .ui-agent .ui-agent-top-bundle-table td[rowspan] > div { height: auto !important; justify-content: flex-start; flex-wrap: wrap; }
+  .ui-agent .ui-agent-top-bundle .ui-agent-actions,
+  .ui-agent .ui-agent-top-bundle .ui-agent-modes-in-bundle {
+    flex-wrap: nowrap !important; overflow-x: auto; overflow-y: hidden;
+    overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    width: 100%; max-width: 100%; box-sizing: border-box;
+    padding: 0 !important; align-items: center !important;
+  }
+  .ui-agent .ui-agent-top-bundle .ui-agent-actions::-webkit-scrollbar,
+  .ui-agent .ui-agent-top-bundle .ui-agent-modes-in-bundle::-webkit-scrollbar { display: none; }
+  .ui-agent .ui-agent-top-bundle .ui-agent-actions > *,
+  .ui-agent .ui-agent-top-bundle .ui-agent-modes-in-bundle > * { flex: 0 0 auto; white-space: nowrap; }
+  .ui-agent .ui-agent-top-bundle .ui-topbar-tile {
+    flex-direction: row; height: auto; min-width: 0; gap: 0.3rem;
+    padding: 0.25rem 0.55rem; border-radius: 6px;
+  }
+  .ui-strip-more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent); }
+  .ui-strip-more-left { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 1.75rem), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 1.75rem), transparent); }
+  .ui-strip-more-left.ui-strip-more-right {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 1.75rem, #000 calc(100% - 1.75rem), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 1.75rem, #000 calc(100% - 1.75rem), transparent);
+  }
 }
 /* When the modes row hosts both pill toggles and app-relocated
  * rectangular context buttons (.ui-row-btn), keep them on the same
@@ -5757,7 +5905,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* --- ArticleEditor --- */
 .ui-tw {
   display: grid; grid-template-columns: 175px 1fr;
-  gap: 1rem;
+  gap: var(--panel-gap);
   /* Subtract just the page header (back link + title) so the editor
    * uses essentially every available pixel. dvh handles iOS Safari's
    * collapsing URL bar; vh fallback for everything else.
@@ -6090,9 +6238,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-card { padding: 0.4rem 0.2rem; }
 
 @media (min-width: 700px) {
-  #ui-root { padding: 1rem; }
-  .ui-panic-bar { margin: -1rem -1rem 0.8rem; padding: 1rem; }
+  .ui-panic-bar { padding-top: 1rem; padding-bottom: 1rem; }
 }
+/* Under a page header the bar does not clear a notch: the header did. */
+.ui-page-header + #ui-root .ui-panic-bar { padding-top: 0.6rem; }
 
 /* A message handed to a turn that is already running. It is real and it will
  * be delivered between rounds, but it has not been picked up yet — so it reads
