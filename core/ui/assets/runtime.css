@@ -2074,12 +2074,14 @@ select:-webkit-autofill {
    row's first line sit the same distance apart and nothing says where
    one ends. */
 .ui-rows {
-  /* The per-row controls (↑ ↓ ✕) are three tap targets plus their gaps.
-     The header has to reserve exactly the same width or every column
-     under it sits narrower than its label — an error that accumulates
-     left to right, so the headings drift further off the further right
-     you read. */
-  --rows-actions: calc(3 * var(--tap) + 0.3rem);
+  /* The per-row controls (↑ ↓ ✕) are three compact buttons plus their
+     gaps (.ui-rows-actions is a dense container). The header has to
+     reserve exactly the same width or every column under it sits
+     narrower than its label — an error that accumulates left to right,
+     so the headings drift further off the further right you read. It
+     reserved three 44px targets, a third more than the buttons take,
+     which on a phone came out of every column. */
+  --rows-actions: calc(3 * max(var(--btn-h-sm), 1.8rem) + 0.3rem);
 }
 /* A stack of ALTERNATIVES reads as one choice on a line, not as three
    steps down the page. Wraps rather than squeezing, so a narrow screen
@@ -2533,7 +2535,7 @@ select:-webkit-autofill {
 .ui-sec-th { display: flex; align-items: center; gap: 0.15rem; min-width: 0; }
 .ui-sec-cell {
   flex: 1; min-width: 0; width: 100%; box-sizing: border-box;
-  padding: 0.35rem 0.45rem; border-radius: 5px;
+  padding: 0.35rem 0.45rem; border-radius: var(--btn-radius);
   background: var(--bg-2); border: 1px solid var(--border);
   color: var(--text); font-size: var(--fs-sm); font-family: inherit;
   outline: none; transition: border-color 0.1s ease;
@@ -2557,6 +2559,21 @@ select:-webkit-autofill {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ui-sec-help { font-size: var(--fs-2xs); color: var(--text-mute); margin-top: 0.35rem; line-height: 1.4; }
+/* Phone. A section whose head carries mode buttons as well as suggest, the
+ * two moves and delete has seven or eight controls beside its title, which
+ * left the title field a sliver: the title takes the first line and the
+ * controls the next, on the right. A rule with a mode picker (up to 11rem)
+ * gives its text the line the same way, picker and delete below; a rule
+ * without one keeps its delete beside it, where it is not alone. */
+@media (max-width: 700px) {
+  .ui-sec-head:has(.ui-sec-modes) { flex-wrap: wrap; row-gap: 0.3rem; }
+  .ui-sec-head:has(.ui-sec-modes) > :is(.ui-sec-title-input, .ui-sec-title-fixed) { flex: 1 1 calc(100% - 2rem); }
+  .ui-sec-head:has(.ui-sec-modes) > .ui-sec-modes { margin-left: auto; }
+  .ui-rules-row:has(.ui-rules-mode) { flex-wrap: wrap; row-gap: 0.3rem; }
+  .ui-rules-row:has(.ui-rules-mode) > .ui-rules-input { flex: 1 1 calc(100% - 2rem); }
+  .ui-rules-row:has(.ui-rules-mode) > .ui-rules-mode { margin-left: 1.8rem; max-width: none; flex: 0 1 auto; }
+  .ui-rules-row:has(.ui-rules-mode) > .ui-rules-del { margin-left: auto; }
+}
 .ui-sec-add {
   align-self: flex-start;
   background: transparent; color: var(--accent); border: 1px dashed var(--accent);
