@@ -72,14 +72,18 @@ select:-webkit-autofill {
  *
  *   .my-toolbar { --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm); }
  *
- * On a touch screen both sizes grow to a thumb-sized target. */
+ * On a touch screen both sizes grow: the full size to a thumb-sized 44px,
+ * the dense one to 30px. Dense is for places that fill up with buttons (a
+ * toolbar, a row's actions, a message's actions), where every button at
+ * full size would bury what they act on; the full size is for the buttons
+ * that stand alone, like a modal's OK and Cancel. */
 :root {
   --btn-h: 2.125rem;    --btn-px: 0.8rem;     --btn-fs: var(--fs-sm);
   --btn-h-sm: 1.625rem; --btn-px-sm: 0.55rem; --btn-fs-sm: var(--fs-xs);
   --btn-radius: 6px;
 }
 @media (pointer: coarse) {
-  :root { --btn-h: var(--tap, 44px); --btn-h-sm: 2.25rem; }
+  :root { --btn-h: var(--tap, 44px); --btn-h-sm: 1.875rem; }
 }
 :where(.ui-row-btn, .ui-pl-btn, .ui-btn-primary, .ui-watch-action, .ui-watch-cancel,
     .ui-keys-new, .ui-keys-form button, .ui-keys-revealed-row button, .ui-mem-add,
@@ -173,11 +177,18 @@ select:-webkit-autofill {
        .ui-mem-aliasrow input) {
   min-height: var(--btn-h);
 }
-/* The dense size: chrome inside a panel header or a toolbar, and the quiet
- * one-word controls that share a row with them. */
+/* The dense size: anywhere buttons crowd together. Chrome inside a panel
+ * header or a toolbar, a table row's actions, the rows of actions under a
+ * message, an editor's or a workbench's action bars, and the quiet one-word
+ * controls that share a row with them. Not a modal's footer or a decision
+ * card's answers: those stand alone and keep the full size. */
 .ui-table-group-foot, .ui-bulk-bar, .ui-pl-actions, .ui-pl-modal-h-actions,
 .ui-agent-actions, .ui-agent-top-bundle .ui-agent-modes-in-bundle,
-.ui-agent-msg-file-row, .ui-cw-chat-h, .ui-cw-rev-group {
+.ui-agent-msg-file-row, .ui-cw-chat-h, .ui-cw-rev-group,
+.ui-row-actions, .ui-rows-actions, .ui-agent-msg-actions, .ui-agent-msg-edit-actions,
+.ui-chat-actions, .ui-chat-edit-actions, .ui-wb-head-actions, .ui-wb-actions,
+.ui-wb-edit-actions, .ui-wb-working-actions, .ui-tw-image-actions, .ui-tw-rules-actions,
+.ui-cw-prof-actions, .ui-cw-ctx-actions, .ui-display-actions, .ui-form-test-row {
   --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm);
 }
 /* Opt-in dense size for a button, or a container of them, outside the
@@ -1267,7 +1278,7 @@ select:-webkit-autofill {
  * the standard 44px-min target would push the auto-reply switch and
  * row name off the visible width. */
 .ui-row-btn.compact { padding-left: 0.4rem; padding-right: 0.4rem; font-size: var(--fs-lg); }
-@media (pointer: coarse) { .ui-row-btn.compact { min-width: 36px; min-height: 36px; } }
+@media (pointer: coarse) { .ui-row-btn.compact { min-width: var(--btn-h-sm); min-height: var(--btn-h-sm); } }
 /* An icon button: one glyph (x, a pencil, a sparkle) in a quiet square, for
  * the remove-this-row and do-this-to-it controls an app would otherwise
  * hand-roll with its own padding and no touch size. Borderless until
@@ -6539,7 +6550,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-chat-side-item.ui-chat-side-item-renable { padding-right: 5.2rem; }
   .ui-chat-side-close { width: var(--tap, 44px); height: var(--tap, 44px); }
   /* THE TOUCH FLOOR. On a touch screen every control is at least one of
-   * two sizes, whatever it looks like on a desktop: --btn-h-sm (36px) for
+   * two sizes, whatever it looks like on a desktop: --btn-h-sm (30px) for
    * a compact control, --tap (44px) for a row in a menu or a list of
    * choices. The token buttons (.ui-row-btn and the :where list near the
    * top) get there through the tokens; these classes size themselves, so

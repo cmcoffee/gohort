@@ -1,7 +1,7 @@
 package ui
 
 // The touch floor: on a touch screen every control is at least the compact
-// tap size (--btn-h-sm, 36px), and a row in a menu the full one (--tap,
+// tap size (--btn-h-sm, 30px), and a row in a menu the full one (--tap,
 // 44px). The token buttons get there through the tokens; the classes that
 // size themselves are named in the floor's lists in runtime.css. These tests
 // keep that from quietly coming apart: a name in the lists that styles
@@ -72,7 +72,7 @@ func TestTouchFloorNamesRealClasses(t *testing.T) {
 }
 
 // No touch-screen rule sets a control's height below the compact tap size.
-// var() values are the tokens and pass; a literal under 36px / 2.25rem is a
+// var() values are the tokens and pass; a literal under 30px / 1.875rem is a
 // control made small again where it most needs not to be.
 func TestTouchRulesSetNoSmallHeights(t *testing.T) {
 	css := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(runtimeCSS, "")
@@ -101,8 +101,8 @@ func TestTouchRulesSetNoSmallHeights(t *testing.T) {
 				if d[3] == "rem" {
 					px = v * 16
 				}
-				if px > 0 && px < 36 {
-					t.Errorf("a touch-screen rule sets %s: %s%s on %q, under the 36px compact tap size", d[1], d[2], d[3], sel)
+				if px > 0 && px < 30 {
+					t.Errorf("a touch-screen rule sets %s: %s%s on %q, under the 30px compact tap size", d[1], d[2], d[3], sel)
 				}
 			}
 		}
