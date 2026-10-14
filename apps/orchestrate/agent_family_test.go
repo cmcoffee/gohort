@@ -560,3 +560,172 @@ func TestASubAgentIsALeafOnEveryPath(t *testing.T) {
 		t.Error("a top-level agent lost the agents tool (its turn has no app, which reads as full reach)")
 	}
 }
+
+// The New recurring task modal on a parent offers the parent and every
+// sub-agent under it, a deeper one named with the one between; an agent with
+// no sub-agents is offered nothing, so the modal draws no picker.
+func TestTheRecurringTaskPickerOffersTheFamily(t *testing.T) {
+	app, udb := familyFixture(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a-solo", Name: "Solo", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	get := func(agent string) []scheduleForOption {
+		r := httptest.NewRequest(http.MethodGet, "/api/console/recurring/for-options?agent="+agent, nil)
+		w := httptest.NewRecorder()
+		app.handleConsoleRecurringForOptions(w, asUser(r, "alice"))
+		var opts []scheduleForOption
+		if err := json.Unmarshal(w.Body.Bytes(), &opts); err != nil {
+			t.Fatalf("%s: %v %s", agent, err, w.Body.String())
+		}
+		return opts
+	}
+	want := []scheduleForOption{
+		{Value: "", Label: "Writer itself"},
+		{Value: "a-critic", Label: "Sub-agent: Critic"},
+		{Value: "a-nit", Label: "Sub-agent: Critic > Nitpicker"},
+	}
+	if got := get("a-writer"); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("Writer's picker = %+v, want %+v", got, want)
+	}
+	if got := get("a-solo"); len(got) != 0 {
+		t.Errorf("an agent with no sub-agents was offered a picker: %+v", got)
+	}
+}
+
+// A recurring task made and edited on the parent's Scheduler for a sub-agent
+// is the parent's, carrying the line that hands it on, in the thread it was
+// made from. The editor shows the directive without that line and the
+// sub-agent in the picker; saving keeps, changes or drops the line by it.
+func TestARecurringTaskCanBeForASubAgent(t *testing.T) {
+	app, _ := familyFixture(t)
+	PreInitScheduler()
+	post := func(h http.HandlerFunc, url, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, url, strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h(w, asUser(r, "alice"))
+		return w
+	}
+	task := func() orchUpdatePayload {
+		rts := listAgentRecurringTasks("alice", "")
+		if len(rts) != 1 {
+			t.Fatalf("want one recurring task, have %d", len(rts))
+		}
+		return rts[0].Payload
+	}
+	taskID := func() string { return listAgentRecurringTasks("alice", "")[0].TaskID }
+
+	if w := post(app.handleConsoleRecurringCreate, "/api/console/recurring/create",
+		`{"agent_id":"a-writer","session_id":"s-open","prompt":"Check the build","for":"a-unrelated","pattern":"fixed","interval_minutes":60}`); w.Code != http.StatusBadRequest {
+		t.Errorf("a task for an agent outside the family was accepted: %d %s", w.Code, w.Body.String())
+	}
+	if w := post(app.handleConsoleRecurringCreate, "/api/console/recurring/create",
+		`{"agent_id":"a-writer","session_id":"s-open","prompt":"Check the build","for":"a-nit","pattern":"fixed","interval_minutes":60}`); w.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	if p := task(); p.AgentID != "a-writer" || p.SessionID != "s-open" || subAgentHandoffOf(p.Prompt) != "Nitpicker" || !strings.HasPrefix(p.Prompt, "Check the build") {
+		t.Errorf("created: runs %q in %q with %q", p.AgentID, p.SessionID, p.Prompt)
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/api/console/recurring/get?id="+taskID(), nil)
+	w := httptest.NewRecorder()
+	app.handleConsoleRecurringGet(w, asUser(r, "alice"))
+	var rec struct {
+		Prompt string              `json:"prompt"`
+		For    string              `json:"for"`
+		Opts   []scheduleForOption `json:"for_options"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Prompt != "Check the build" || rec.For != "a-nit" || len(rec.Opts) != 3 {
+		t.Errorf("the editor got %+v", rec)
+	}
+
+	// Saved without touching the picker: the line comes back, once.
+	if w := post(app.handleConsoleRecurringUpdate, "/api/console/recurring/update?id="+taskID(),
+		`{"prompt":"Check the build twice","pattern":"fixed","interval_minutes":60}`); w.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", w.Code, w.Body.String())
+	}
+	if p := task(); subAgentHandoffOf(p.Prompt) != "Nitpicker" || strings.Count(p.Prompt, subAgentHandoffLead) != 1 || !strings.HasPrefix(p.Prompt, "Check the build twice") {
+		t.Errorf("an edit that left the picker alone: %q", p.Prompt)
+	}
+
+	if w := post(app.handleConsoleRecurringUpdate, "/api/console/recurring/update?id="+taskID(),
+		`{"for":"a-critic","pattern":"fixed","interval_minutes":60}`); w.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", w.Code, w.Body.String())
+	}
+	if p := task(); subAgentHandoffOf(p.Prompt) != "Critic" || strings.Count(p.Prompt, subAgentHandoffLead) != 1 {
+		t.Errorf("handed to another sub-agent: %q", p.Prompt)
+	}
+
+	if w := post(app.handleConsoleRecurringUpdate, "/api/console/recurring/update?id="+taskID(),
+		`{"for":"","pattern":"fixed","interval_minutes":60}`); w.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", w.Code, w.Body.String())
+	}
+	if p := task(); p.Prompt != "Check the build twice" || p.AgentID != "a-writer" || p.SessionID != "s-open" {
+		t.Errorf("given back to the parent: runs %q in %q with %q", p.AgentID, p.SessionID, p.Prompt)
+	}
+}
+
+// A scheduled agent and an event monitor on the parent are handed to a
+// sub-agent from their editors the same way: the editor shows the mission or
+// brief without the handoff line and the sub-agent in the picker, and a save
+// keeps, changes or drops the line by it.
+func TestScheduledAgentsAndMonitorsCanBeForASubAgent(t *testing.T) {
+	app, _ := familyFixture(t)
+	PreInitScheduler()
+	type view struct {
+		Mission string              `json:"mission"`
+		Brief   string              `json:"wake_brief"`
+		For     string              `json:"for"`
+		Opts    []scheduleForOption `json:"for_options"`
+	}
+	get := func(h http.HandlerFunc, url string) view {
+		r := httptest.NewRequest(http.MethodGet, url, nil)
+		w := httptest.NewRecorder()
+		h(w, asUser(r, "alice"))
+		var v view
+		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+			t.Fatalf("%s: %v %s", url, err, w.Body.String())
+		}
+		return v
+	}
+	post := func(h http.HandlerFunc, url, body string) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, url, strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h(w, asUser(r, "alice"))
+		if w.Code >= 300 {
+			t.Fatalf("%s %s: %d %s", url, body, w.Code, w.Body.String())
+		}
+	}
+
+	SaveStandingAgent(RootDB, StandingAgent{Owner: "alice", Name: "sweep", AgentID: "a-writer", Mission: "Check the feeds.", IntervalSeconds: 3600})
+	if v := get(app.handleConsoleAgentGet, "/api/console/agents/get?id=sweep"); v.For != "" || len(v.Opts) != 3 || v.Mission != "Check the feeds." {
+		t.Errorf("the scheduled agent's editor got %+v", v)
+	}
+	post(app.handleConsoleAgentUpdate, "/api/console/agents/update?id=sweep", `{"for":"a-nit","mission":"Check the feeds.","interval_minutes":60}`)
+	if sa, _ := GetStandingAgent(RootDB, "alice", "sweep"); sa.AgentID != "a-writer" || subAgentHandoffOf(sa.Mission) != "Nitpicker" {
+		t.Errorf("handed to a sub-agent: runs %q with %q", sa.AgentID, sa.Mission)
+	}
+	if v := get(app.handleConsoleAgentGet, "/api/console/agents/get?id=sweep"); v.For != "a-nit" || v.Mission != "Check the feeds." {
+		t.Errorf("the editor of one handed on got %+v", v)
+	}
+	post(app.handleConsoleAgentUpdate, "/api/console/agents/update?id=sweep", `{"mission":"Check the feeds twice.","interval_minutes":60}`)
+	if sa, _ := GetStandingAgent(RootDB, "alice", "sweep"); subAgentHandoffOf(sa.Mission) != "Nitpicker" || strings.Count(sa.Mission, subAgentHandoffLead) != 1 {
+		t.Errorf("an edit that left the picker alone: %q", sa.Mission)
+	}
+	post(app.handleConsoleAgentUpdate, "/api/console/agents/update?id=sweep", `{"for":"","interval_minutes":60}`)
+	if sa, _ := GetStandingAgent(RootDB, "alice", "sweep"); sa.Mission != "Check the feeds twice." {
+		t.Errorf("given back to the parent: %q", sa.Mission)
+	}
+
+	SaveEventMonitor(RootDB, EventMonitor{Owner: "alice", Name: "watch", Kind: "webhook", WakeAgent: "a-writer", WakeBrief: "Say what broke."})
+	post(app.handleConsoleMonitorUpdate, "/api/console/monitors/update?id=watch", `{"for":"a-critic","wake_brief":"Say what broke."}`)
+	if m, _ := GetEventMonitor(RootDB, "alice", "watch"); m.WakeAgent != "a-writer" || subAgentHandoffOf(m.WakeBrief) != "Critic" {
+		t.Errorf("monitor handed to a sub-agent: wakes %q with %q", m.WakeAgent, m.WakeBrief)
+	}
+	if v := get(app.handleConsoleMonitorGet, "/api/console/monitors/get?id=watch"); v.For != "a-critic" || v.Brief != "Say what broke." || len(v.Opts) != 3 {
+		t.Errorf("the monitor's editor got %+v", v)
+	}
+}

@@ -139,12 +139,108 @@ func scheduleAgentFor(owner, agentID, text string) (string, string) {
 	if subAgentHandoffOf(text) != "" {
 		return top, text
 	}
-	name := chFirst(a.Name, a.ID)
+	return top, withSubAgentHandoff(text, chFirst(a.Name, a.ID))
+}
+
+// withSubAgentHandoff is text with the line that hands the work to the
+// sub-agent called name, at its end.
+func withSubAgentHandoff(text, name string) string {
 	line := subAgentHandoffLead + name + ": hand it to " + name + " with agents(action=\"run\") and pass on what it returns."
 	if strings.TrimSpace(text) == "" {
-		return top, line
+		return line
 	}
-	return top, strings.TrimRight(text, "\n ") + "\n\n" + line
+	return strings.TrimRight(text, "\n ") + "\n\n" + line
+}
+
+// withoutSubAgentHandoff is text without its handoff line, for the editor,
+// which shows the line as its "Who does it" picker instead.
+func withoutSubAgentHandoff(text string) string {
+	i := strings.LastIndex(text, subAgentHandoffLead)
+	if i < 0 {
+		return text
+	}
+	return strings.TrimRight(text[:i], "\n ")
+}
+
+// scheduleForOption is one choice in a schedule editor's "Who does it"
+// picker. Value "" is the agent itself.
+type scheduleForOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// scheduleForOptions is who a schedule on agentID's Scheduler can be for: the
+// top-level agent of its family, then each sub-agent under it. Empty when the
+// agent has no sub-agents, so the picker is not drawn.
+func scheduleForOptions(udb Database, user, agentID string) []scheduleForOption {
+	if udb == nil || strings.TrimSpace(agentID) == "" {
+		return nil
+	}
+	top := topAgentOf(udb, agentID)
+	ids := agentFamilyIDs(udb, user, top)
+	if len(ids) < 2 {
+		return nil
+	}
+	var subs []scheduleForOption
+	for id := range ids {
+		if id == top {
+			continue
+		}
+		a, ok := loadAgent(udb, id)
+		if !ok {
+			continue
+		}
+		// A sub-agent under another sub-agent is named with the one between,
+		// so two that share a name under different helpers can be told apart.
+		path := []string{chFirst(a.Name, a.ID)}
+		for _, p := range agentAncestors(udb, id) {
+			if p == top {
+				break
+			}
+			if pa, ok := loadAgent(udb, p); ok {
+				path = append([]string{chFirst(pa.Name, pa.ID)}, path...)
+			}
+		}
+		subs = append(subs, scheduleForOption{Value: id, Label: "Sub-agent: " + strings.Join(path, " > ")})
+	}
+	sort.Slice(subs, func(i, j int) bool { return subs[i].Label < subs[j].Label })
+	label := top
+	if a, ok := loadAgent(udb, top); ok {
+		label = chFirst(a.Name, a.ID)
+	}
+	return append([]scheduleForOption{{Value: "", Label: label + " itself"}}, subs...)
+}
+
+// familySubAgentNamed is the sub-agent in agentID's family that a handoff
+// line names, or "" when none is called that any more.
+func familySubAgentNamed(udb Database, user, agentID, name string) string {
+	if udb == nil || name == "" || strings.TrimSpace(agentID) == "" {
+		return ""
+	}
+	top := topAgentOf(udb, agentID)
+	for id := range agentFamilyIDs(udb, user, top) {
+		if id == top {
+			continue
+		}
+		if a, ok := loadAgent(udb, id); ok && chFirst(a.Name, a.ID) == name {
+			return id
+		}
+	}
+	return ""
+}
+
+// scheduleForName checks that forID is a sub-agent in agentID's family and
+// returns the name its handoff line uses.
+func scheduleForName(udb Database, user, agentID, forID string) (string, error) {
+	if strings.TrimSpace(agentID) == "" {
+		return "", fmt.Errorf("this schedule runs no agent, so it has no sub-agents to hand work to")
+	}
+	top := topAgentOf(udb, agentID)
+	a, ok := loadAgent(udb, forID)
+	if !ok || forID == top || !agentFamilyIDs(udb, user, top)[forID] {
+		return "", fmt.Errorf("%q is not a sub-agent of this schedule's agent", forID)
+	}
+	return chFirst(a.Name, a.ID), nil
 }
 
 // subAgentHandoffOf is the sub-agent a schedule's task is handed to, or "".
@@ -445,4 +541,47 @@ func familyRequest(db Database, callerID, targetID string) bool {
 // isSubAgent reports whether id has a top-level parent other than itself.
 func isSubAgent(db Database, id string) bool {
 	return db != nil && topAgentOf(db, id) != id
+}
+
+// scheduleHandoffView is what a schedule editor shows of a task, mission or
+// brief that agentID runs: the text without its handoff line, the sub-agent
+// that line names ("" for none), and the "Who does it" choices. A line naming
+// a sub-agent that is not called that any more stays in the text, where it
+// can be read and removed.
+func scheduleHandoffView(udb Database, user, agentID, text string) (string, string, []scheduleForOption) {
+	opts := scheduleForOptions(udb, user, agentID)
+	if sub := familySubAgentNamed(udb, user, agentID, subAgentHandoffOf(text)); sub != "" {
+		return withoutSubAgentHandoff(text), sub, opts
+	}
+	return text, "", opts
+}
+
+// scheduleHandoffEdit is the text to store when an editor saves: posted is
+// what it sent (nil = unchanged) and pick its "Who does it" choice (nil =
+// unchanged, "" = the agent itself). The editor was shown the text without
+// its handoff line (scheduleHandoffView), so the line is rebuilt here, for
+// the sub-agent it named unless the picker changed it. Nil when there is no
+// line to keep and none was picked, so the caller stores posted as it is.
+func scheduleHandoffEdit(udb Database, user, agentID, stored string, posted, pick *string) (*string, error) {
+	cur := familySubAgentNamed(udb, user, agentID, subAgentHandoffOf(stored))
+	if cur == "" && pick == nil {
+		return posted, nil
+	}
+	forID := cur
+	if pick != nil {
+		forID = strings.TrimSpace(*pick)
+	}
+	text := stored
+	if posted != nil {
+		text = *posted
+	}
+	text = withoutSubAgentHandoff(text)
+	if forID != "" && forID != topAgentOf(udb, agentID) {
+		name, err := scheduleForName(udb, user, agentID, forID)
+		if err != nil {
+			return nil, err
+		}
+		text = withSubAgentHandoff(text, name)
+	}
+	return &text, nil
 }

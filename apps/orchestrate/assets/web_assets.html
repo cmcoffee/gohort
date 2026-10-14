@@ -7319,16 +7319,42 @@ select.ui-orch-intake-input {
       // fields in the same order and cannot drift, and so the halves land in the
       // frame's two sections like every other kind's.
 
-      // What a recurring task does: its name and the directive run each fire.
+      // schedForField draws a schedule's "Who does it" picker: the agent it
+      // wakes, or one of that agent's sub-agents (rec.for_options, from the
+      // server, only for an agent that has any). A schedule for a sub-agent
+      // still wakes the agent, which hands the work on, so the server writes
+      // that handoff into the text. Returns a function that adds "for" to a
+      // save body when the choice changed: unchanged sends nothing, so a
+      // handoff naming a sub-agent since renamed is left as it is.
+      function schedForField(host, rec) {
+        var opts = (rec && rec.for_options) || [];
+        if (opts.length < 2) return function() {};
+        var was = rec['for'] || '';
+        var sel = schedSelect(opts.map(function(o) { return [o.value, o.label]; }), was);
+        host.appendChild(schedLabeled('Who does it', sel));
+        var note = document.createElement('div');
+        note.className = 'ui-orch-sec-pick-desc';
+        note.textContent = 'A sub-agent\u2019s work still wakes this agent, which hands it on and reports what it returns.';
+        host.appendChild(note);
+        return function(body) {
+          if (sel.value !== was) body['for'] = sel.value;
+        };
+      }
+
+      // What a recurring task does: its name, who does it, and the directive
+      // run each fire.
       function recurringWhatFields(host, task) {
         task = task || {};
         var nameInput = schedTxt(task.name || '', "(defaults to the directive's first line)");
         host.appendChild(schedLabeled('Name', nameInput));
+        var addFor = schedForField(host, task);
         var promptInput = schedArea(task.prompt || '', 6,
           'What the agent should do each time it fires (no timing here). e.g. "check the build, post if it is red"');
         host.appendChild(schedLabeled('Directive (run each fire)', promptInput));
         return function collect() {
-          return {name: nameInput.value.trim(), prompt: promptInput.value};
+          var body = {name: nameInput.value.trim(), prompt: promptInput.value};
+          addFor(body);
+          return body;
         };
       }
 
@@ -7510,6 +7536,16 @@ select.ui-orch-intake-input {
       window.uiRegisterClientAction('orchestrate_new_recurring', function(ctx) {
         var agentId = window.GOHORT_AGENT_ID || '';
         if (!agentId) { window.uiAlert('Pick an agent first.'); return; }
+        // Who the task can be for, before the modal is drawn: the picker sits
+        // in the middle of the first half. A failed read draws no picker and
+        // the task is this agent's, as it was before there was one.
+        fetch('api/console/recurring/for-options?agent=' + encodeURIComponent(agentId))
+          .then(function(r) { return r.ok ? r.json() : []; })
+          .catch(function() { return []; })
+          .then(function(opts) { newRecurringModal(ctx, agentId, opts || []); });
+      });
+
+      function newRecurringModal(ctx, agentId, forOptions) {
         var m = openOrchModal('New recurring task');
         var help = document.createElement('div');
         help.className = 'ui-orch-modal-help';
@@ -7518,7 +7554,7 @@ select.ui-orch-intake-input {
 
         // The same two halves the editor draws, in the same order, so what you
         // fill in to create a task is what you come back to to change it.
-        var task = {timing: {how: 'every', every_seconds: 1800}};
+        var task = {timing: {how: 'every', every_seconds: 1800}, for_options: forOptions, 'for': ''};
         var whatHost = schedHalf(m, 'What it does');
         var collectWhat = recurringWhatFields(whatHost, task);
         schedAttachHalf(m, whatHost);
@@ -7560,7 +7596,7 @@ select.ui-orch-intake-input {
           });
         };
         m.footer.appendChild(createBtn);
-      });
+      }
 
       // Point a schedule at a MACHINE, from the rail. The sibling of the
       // recurring-task creator above, and deliberately a different form: a
@@ -8139,7 +8175,9 @@ select.ui-orch-intake-input {
         // the save leaves the stored brief alone.
         var briefWasSet = !!(mon.wake_brief || '').trim();
         var brief = null;
+        var addFor = function() {};
         if (mon.wakes_agent !== false) {
+          addFor = schedForField(host, mon);
           brief = schedArea(mon.wake_brief || '', 4,
             'What the agent is handed when this fires. e.g. "the build went red: say which test and who last touched it"');
           host.appendChild(schedLabeled('Brief handed to the agent', brief));
@@ -8178,6 +8216,7 @@ select.ui-orch-intake-input {
           if (brief && briefWasSet && !brief.value.trim()) { window.uiAlert('Keep a brief: it is what the agent is told when this fires.'); return null; }
           var body = {};
           if (brief) body.wake_brief = brief.value;
+          addFor(body);
           if (kind === 'poll') {
             if (!check.value.trim()) { window.uiAlert('Enter a check: the question asked each interval.'); return null; }
             body.check = check.value;
@@ -8321,6 +8360,7 @@ select.ui-orch-intake-input {
         // the def's own name), and demanding one would mean its timing could
         // not be changed without inventing an input nothing reads.
         var missionWasSet = !!(sa.mission || '').trim();
+        var addFor = schedForField(host, sa);
         var mission = schedArea(sa.mission || '', 5, isRun
           ? 'What this run is given each time it starts.'
           : 'The standing brief handed to the agent on every run. e.g. "review yesterday\'s failed runs and say what broke"');
@@ -8330,7 +8370,9 @@ select.ui-orch-intake-input {
             window.uiAlert(isRun ? 'Keep the input this run is given.' : 'Keep a mission: it is what the agent is handed on every run.');
             return null;
           }
-          return {mission: mission.value};
+          var body = {mission: mission.value};
+          addFor(body);
+          return body;
         };
       }
 

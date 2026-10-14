@@ -297,6 +297,8 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Create a NEW recurring task from the Scheduler modal's "New recurring task"
 	// button (agent + session supplied in the body; timing same shape as update).
 	T.HandleFunc("/api/console/recurring/create", w(T.handleConsoleRecurringCreate))
+	// Who a new task can be for: the agent itself or one of its sub-agents.
+	T.HandleFunc("/api/console/recurring/for-options", T.handleConsoleRecurringForOptions)
 }
 
 // standingAgentOnRailOf reports whether a standing agent belongs on agentID's

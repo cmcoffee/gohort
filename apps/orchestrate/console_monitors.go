@@ -92,6 +92,14 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.
 		http.Error(w, "no such monitor", http.StatusNotFound)
 		return
 	}
+	// One handed to a sub-agent shows its brief without the handoff line and
+	// the sub-agent in the "Who does it" picker; one that wakes no agent has
+	// neither.
+	brief, forID := m.WakeBrief, ""
+	var forOptions []scheduleForOption
+	if monitorWakesAgent(m) {
+		brief, forID, forOptions = scheduleHandoffView(UserDB(T.DB, user), user, m.WakeAgent, m.WakeBrief)
+	}
 	writeJSON(w, map[string]any{
 		"name":             m.Name,
 		"kind":             m.Kind,
@@ -105,7 +113,9 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.
 		// What it tells the woken agent — every kind has one, including the
 		// push-triggered webhook. A monitor that only texts or posts
 		// directly wakes nobody, so the editor leaves the brief out.
-		"wake_brief":  m.WakeBrief,
+		"wake_brief":  brief,
+		"for":         forID,
+		"for_options": forOptions,
 		"notify":      m.Notify,
 		"wakes_agent": monitorWakesAgent(m),
 		// poll: the question put to the checker agent, and the answer that
@@ -162,6 +172,14 @@ func (T *OrchestrateApp) handleConsoleMonitorUpdate(w http.ResponseWriter, r *ht
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// The editor showed the brief without its handoff line, so the line is
+	// rebuilt from the picker.
+	brief, err := scheduleHandoffEdit(UserDB(T.DB, user), user, m.WakeAgent, m.WakeBrief, body.WakeBrief, body.For)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	body.WakeBrief = brief
 	before := m
 	if err := applyMonitorUpdate(&m, body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -232,6 +250,9 @@ type monitorUpdateBody struct {
 	Until *untilBody `json:"until"`
 
 	WakeBrief *string `json:"wake_brief"`
+	// For is the "Who does it" picker: "" for the agent itself, or a
+	// sub-agent's id. Sent only when it was changed.
+	For *string `json:"for"`
 
 	// poll
 	Check         *string `json:"check"`

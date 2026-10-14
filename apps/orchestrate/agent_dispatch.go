@@ -605,7 +605,7 @@ type syncRunResult struct {
 // runAgentSyncConfirm runs one agent turn with no conversation around it and
 // reports what happened; see syncRunResult for what comes back.
 func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, via ...string) (syncRunResult, error) {
-	return T.runAgentSyncAppTools(ctx, agentOwner, runtimeUser, agentKey, message, confirm, nil, via...)
+	return T.runAgentSyncAppTools(ctx, agentOwner, runtimeUser, agentKey, message, confirm, nil, nil, via...)
 }
 
 // runAgentSyncAppTools is the same run with tools the CALLER supplies for this
@@ -619,7 +619,15 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 // dispatched from a conversation has no next run to move. Passing it in beats
 // the alternatives of a flag on the agent record (wrong owner) or a context
 // value (invisible at the call site).
-func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, appTools []AgentToolDef, via ...string) (syncRunResult, error) {
+//
+// liveRun is the caller's own entry in the runs ledger when the caller already
+// registered this turn (a standing fire does, under its schedule's name), and
+// nil otherwise. Given one, this run reports its progress there instead of
+// registering a second: the fire and the dispatch it makes are one piece of
+// work, and two rows for it put every standing fire on the live pill and the
+// Monitor twice, the dispatch row as a root because nothing tied it to the
+// fire. The caller keeps ownership, so it is the caller that completes it.
+func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, appTools []AgentToolDef, liveRun *Run, via ...string) (syncRunResult, error) {
 	if T == nil || T.LLM == nil {
 		return syncRunResult{}, errors.New("orchestrate runtime not initialized")
 	}
@@ -722,10 +730,13 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// fanning six branches at one agent would have each branch kill the last.
 	// Nothing looks a dispatch up by that id (BySession serves the chat panel's
 	// reconnect), so it is not registered under one.
-	ctx, liveRun := T.runsRegistry().CreateCancellable(ctx, runtimeUser, target.ID, "")
-	liveRun.Describe("dispatch", target.Name, truncateObs(message, 100)).
-		Parent(parentRunFromCtx(ctx))
-	defer liveRun.Complete(RunStatusFailed)
+	ownRun := liveRun == nil
+	if ownRun {
+		ctx, liveRun = T.runsRegistry().CreateCancellable(ctx, runtimeUser, target.ID, "")
+		liveRun.Describe("dispatch", target.Name, truncateObs(message, 100)).
+			Parent(parentRunFromCtx(ctx))
+		defer liveRun.Complete(RunStatusFailed)
+	}
 	ctx = withParentRun(ctx, liveRun.ID)
 	// A delegated run bills to ITSELF. Its spend used to ride the
 	// delegator's context tracker, so a turn that dispatched three
@@ -1023,7 +1034,9 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// Status reflects the real outcome: a superseded/cancelled turn is CANCELED,
 	// not FAILED (the deferred RunStatusFailed only stands if we returned before
 	// reaching here — a genuine setup failure).
-	liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
+	if ownRun {
+		liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
+	}
 	if runErr != nil {
 		return syncRunResult{Trace: toolTrace, Usage: spent()}, runErr
 	}

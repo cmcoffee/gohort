@@ -234,9 +234,15 @@ func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Re
 	if !sa.StartAt.IsZero() {
 		startAt = sa.StartAt.Format(time.RFC3339)
 	}
+	// One handed to a sub-agent shows its mission without the handoff line
+	// and the sub-agent in the "Who does it" picker. A pipeline or machine
+	// schedule runs no agent, so it has neither.
+	mission, forID, forOptions := scheduleHandoffView(UserDB(T.DB, user), user, sa.AgentID, sa.Mission)
 	writeJSON(w, map[string]any{
 		"name":             sa.Name,
-		"mission":          sa.Mission,
+		"mission":          mission,
+		"for":              forID,
+		"for_options":      forOptions,
 		"cron":             sa.Cron,
 		"interval_seconds": sa.IntervalSeconds,
 		"interval_minutes": sa.IntervalSeconds / 60,
@@ -294,6 +300,14 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// The editor showed the mission without its handoff line, so the line is
+	// rebuilt from the picker before the mission is checked and stored.
+	mission, err := scheduleHandoffEdit(UserDB(T.DB, user), user, sa.AgentID, sa.Mission, body.Mission, body.For)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	body.Mission = mission
 	before := sa
 	if err := applyStandingUpdate(&sa, body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -303,7 +317,6 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 	// create: a cortex controller reads its scheduled runs in its cortex. An
 	// explicit choice (stored, including "session") is left alone.
 	sa.Surface = scheduleSurfaceDefault(sa.Surface, hasCortexThread(user, sa.ReportAgentID))
-	var err error
 	if sa.Paused || !standingNeedsRearm(before, sa) {
 		SaveStandingAgent(RootDB, sa)
 	} else {
@@ -349,6 +362,9 @@ type standingUpdateBody struct {
 	// do, so a stray empty textarea would quietly turn a working schedule into
 	// a recurring no-op.
 	Mission *string `json:"mission"`
+	// For is the "Who does it" picker: "" for the agent itself, or a
+	// sub-agent's id. Sent only when it was changed.
+	For *string `json:"for"`
 }
 
 // applyStandingUpdate writes the posted schedule and mission onto sa, refusing

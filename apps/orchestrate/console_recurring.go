@@ -298,6 +298,7 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 		return
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	udb := UserDB(T.DB, user)
 	for _, rt := range listAgentRecurringTasks(user, "") {
 		if rt.TaskID != id {
 			continue
@@ -306,6 +307,13 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 		pattern := p.Pattern
 		if pattern == "" {
 			pattern = RecurringFixed
+		}
+		// A task handed to a sub-agent shows its directive without the
+		// handoff line and the sub-agent in the "Who does it" picker.
+		prompt, forID := p.Prompt, ""
+		var forOptions []scheduleForOption
+		if !isTaskWake(p.Prompt) {
+			prompt, forID, forOptions = scheduleHandoffView(udb, user, p.AgentID, p.Prompt)
 		}
 		writeJSON(w, map[string]any{
 			"id": rt.TaskID,
@@ -316,7 +324,9 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 			// OLD first line forever. Empty here shows the placeholder that
 			// says where the label comes from.
 			"name":             strings.TrimSpace(p.Name),
-			"prompt":           p.Prompt,
+			"prompt":           prompt,
+			"for":              forID,
+			"for_options":      forOptions,
 			"pattern":          pattern,
 			"interval_minutes": p.IntervalSeconds / 60,
 			"daily_at":         strings.ReplaceAll(fmtDailyAt(p.AtMinutes), " ", ""),
@@ -386,6 +396,9 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		// back to the prompt's first line at render).
 		Prompt *string `json:"prompt"`
 		Name   *string `json:"name"`
+		// For is the "Who does it" picker: "" for the agent itself, or a
+		// sub-agent's id. Sent only when it was changed.
+		For *string `json:"for"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
@@ -396,13 +409,30 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 	// Computed into LOCALS, not mutated onto found — the rejected-edit restore path
 	// below re-schedules *found and must keep the original directive/name intact.
 	prompt, name := found.Prompt, found.Name
+	var posted *string
 	if body.Prompt != nil {
 		if p := strings.TrimSpace(*body.Prompt); p != "" {
-			prompt = p
+			prompt, posted = p, &p
 		}
 	}
 	if body.Name != nil {
 		name = strings.TrimSpace(*body.Name)
+	}
+	// The editor showed the directive without its handoff line (see the get
+	// above), so the line is rebuilt from the picker.
+	if !isTaskWake(found.Prompt) {
+		text, err := scheduleHandoffEdit(UserDB(T.DB, user), user, found.AgentID, found.Prompt, posted, body.For)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if text != nil {
+			prompt = *text
+		}
+		if strings.TrimSpace(prompt) == "" {
+			http.Error(w, "directive (prompt) is required", http.StatusBadRequest)
+			return
+		}
 	}
 	spec := RecurringSpec{
 		SessionID: found.SessionID,
@@ -491,6 +521,21 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 	writeJSON(w, map[string]any{"id": newID})
 }
 
+// handleConsoleRecurringForOptions is the "Who does it" picker for the New
+// recurring task modal: GET ?agent=<id>. An empty list when the agent has no
+// sub-agents, and the modal then draws no picker.
+func (T *OrchestrateApp) handleConsoleRecurringForOptions(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	opts := scheduleForOptions(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
+	if opts == nil {
+		opts = []scheduleForOption{}
+	}
+	writeJSON(w, opts)
+}
+
 // handleConsoleRecurringCreate creates a NEW recurring task from the Scheduler
 // modal's "New recurring task" button. Unlike update (which edits an existing
 // task by id), this needs a target: agent_id (the rail's current agent) and
@@ -531,6 +576,9 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		// field is here so a client that wants to choose can, and so the
 		// default below is the only thing an omission relies on.
 		Surface string `json:"surface"`
+		// For is the "Who does it" picker: a sub-agent of agent_id that the
+		// task is handed to, or "" for agent_id itself.
+		For string `json:"for"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
@@ -541,13 +589,25 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		http.Error(w, "agent_id required", http.StatusBadRequest)
 		return
 	}
-	if _, ok := loadAgent(UserDB(T.DB, user), agentID); !ok {
+	udb := UserDB(T.DB, user)
+	if _, ok := loadAgent(udb, agentID); !ok {
 		http.Error(w, "unknown agent", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(body.Prompt) == "" {
 		http.Error(w, "directive (prompt) is required", http.StatusBadRequest)
 		return
+	}
+	// Made for a sub-agent: the task is agent_id's, with the line that hands
+	// it on, so it reports in the thread it was made from rather than being
+	// moved to the parent's Cortex as a schedule naming the sub-agent is.
+	if forID := strings.TrimSpace(body.For); forID != "" && forID != topAgentOf(udb, agentID) {
+		sub, err := scheduleForName(udb, user, agentID, forID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		body.Prompt = withSubAgentHandoff(withoutSubAgentHandoff(strings.TrimSpace(body.Prompt)), sub)
 	}
 	sessionID := strings.TrimSpace(body.SessionID)
 	if sessionID == "" {

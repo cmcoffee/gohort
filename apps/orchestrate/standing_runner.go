@@ -121,8 +121,10 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// task's, and the tool is mounted beside the pacing lever: both are
 		// things only this turn can use.
 		ctx = withTaskNotes(ctx, tnotes)
+		// liveRun goes in so the dispatch reports on THIS row rather than
+		// opening a second one for the same fire.
 		run, err := app.runAgentSyncAppTools(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm,
-			append(standingPacingTool(sa, pacingAsk), tnotes.tool()...), sa.DispatchedBy...)
+			append(standingPacingTool(sa, pacingAsk), tnotes.tool()...), liveRun, sa.DispatchedBy...)
 		out, hitRoundCap, toolTrace := run.Text, run.HitRoundCap, run.Trace
 		if err != nil {
 			liveRun.Complete(RunStatusFailed)
@@ -478,6 +480,9 @@ func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAg
 	ctx, liveRun := app.runsRegistry().CreateCancellable(ctx, sa.Owner, "", "")
 	liveRun.Describe("standing", display, truncateObs(input, 100))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
+	// What the target runs below (each stage's or step's agent) nests under
+	// this row instead of standing beside it as a second top-level entry.
+	ctx = withParentRun(ctx, liveRun.ID)
 
 	// A pipeline makes no tool calls of its own — its agent stages do, and
 	// those are the calls somebody opening this run wants to see. Collect each
@@ -587,6 +592,9 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 	ctx, liveRun := app.runsRegistry().CreateCancellable(ctx, sa.Owner, "", "")
 	liveRun.Describe("standing", display, truncateObs(input, 100))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
+	// What the target runs below (each stage's or step's agent) nests under
+	// this row instead of standing beside it as a second top-level entry.
+	ctx = withParentRun(ctx, liveRun.ID)
 
 	// The owner's pool, narrowed per step by each step's own Tools list.
 	catalog := machineRunCatalog(UserDB(app.DB, sa.Owner), sa.Owner, "", def).Tools

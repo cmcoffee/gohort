@@ -58,6 +58,7 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 		"function schedButtons(m, saveBtn) {",
 		"function monitorWhatFields(host, mon) {",
 		"function monitorWhenFields(host, mon) {",
+		"function schedForField(host, rec) {",
 		"function standingWhatFields(host, sa) {",
 		"function standingWhenFields(host, sa) {",
 		"function schedHHMM(m) {",
