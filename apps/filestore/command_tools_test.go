@@ -18,7 +18,7 @@ func commandFixture(t *testing.T) (*FileStoreApp, Store, StoreCommand) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd, err := SaveStoreCommand(app.DB, StoreCommand{
+	cmd, err := SaveStoreCommand(app.DB, StoreCommand{Usage: UsageOpen,
 		Slug: st.Slug, Name: "decrypt", Label: "Decrypt bundle", Command: "/opt/bin/cap"})
 	if err != nil {
 		t.Fatal(err)
@@ -109,11 +109,11 @@ func TestApprovingSomethingUnmappedIsRefused(t *testing.T) {
 	}
 }
 
-// A correction to an already-approved command replaces what agents are calling
-// right now. Silently disarming it instead would be a surprise in the other
-// direction — an admin fixing a description does not expect the capability to
-// go away.
-func TestReMappingKeepsTheApproval(t *testing.T) {
+// A re-map of an approved command is a new mapping, and approval was given to
+// the old one: it switches Agents off until an admin approves again, so a
+// rewrite (Builder's, of a command that may be destructive) never goes live on
+// its own.
+func TestReMappingNeedsApprovalAgain(t *testing.T) {
 	app, st, cmd := commandFixture(t)
 	mapIt(t, app, st, cmd)
 	if _, err := SetCommandApproved(app.DB, st.Slug, "decrypt", true); err != nil {
@@ -125,8 +125,8 @@ func TestReMappingKeepsTheApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !again.Approved {
-		t.Error("a re-map must keep the approval it already had")
+	if again.Approved {
+		t.Error("a re-map stayed approved")
 	}
 	if len(again.Tools) != 1 {
 		t.Errorf("a re-map replaces rather than appends: %d actions", len(again.Tools))
@@ -212,7 +212,7 @@ func TestStoresListSaysWhatAFolderCarries(t *testing.T) {
 		t.Errorf("got %q, want the singular", got)
 	}
 
-	second, err := SaveStoreCommand(app.DB, StoreCommand{
+	second, err := SaveStoreCommand(app.DB, StoreCommand{Usage: UsageOpen,
 		Slug: st.Slug, Name: "verify", Label: "Verify bundle", Command: "/opt/bin/cap"})
 	if err != nil {
 		t.Fatal(err)

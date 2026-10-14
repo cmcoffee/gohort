@@ -80,6 +80,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// from. There is nowhere else it could be: the
 								// actions are fields on this record.
 								{Field: "mapped", Label: "As a tool", Mute: true, Flex: 2},
+								{Field: "uses", Label: "Uses", Mute: true, Flex: 2},
 							},
 							RowActions: []ui.RowAction{
 								// The approval, on the row it approves. Shown
@@ -108,6 +109,15 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// this panel opens inside a table on whatever
 								// page mounted it, and a relative source would
 								// resolve against THAT page.
+								// How Builder and agents may use it: Open, or
+								// only the lines written here.
+								ui.Expand("Uses", ui.FormPanel{
+									Source:      "/filestore/api/commands/uses?id={id}",
+									PostURL:     "/filestore/api/commands/uses?id={id}",
+									SubmitLabel: "Save uses",
+									Fields:      commandUsesFields(),
+									Invalidate:  []string{"/filestore/api/commands"},
+								}),
 								ui.Expand("Mapping", ui.DisplayPanel{
 									Source: "/filestore/api/commands/mapping?id={id}",
 									Pairs: []ui.DisplayPair{
@@ -290,7 +300,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 
 // actionFormFields is the add form for a store action.
 func actionFormFields() []ui.FormField {
-	return []ui.FormField{
+	return append([]ui.FormField{
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "decrypt",
 			Help: "Short handle for the command, snake_case. It is how the endpoint names it."},
 		{Field: "label", Type: "text", Label: "Button label", Placeholder: "Decrypt bundle",
@@ -306,6 +316,22 @@ func actionFormFields() []ui.FormField {
 			Help: "What the box asks for on the second phase."},
 		{Field: "help", Type: "textarea", Label: "Note", Rows: 2,
 			Help: "Optional. Shown beside the button: say what it does and when to reach for it."},
+	}, commandUsesFields()...)
+}
+
+// commandUsesFields are how Builder, and so agents, may use the command.
+func commandUsesFields() []ui.FormField {
+	return []ui.FormField{
+		{Field: "usage", Type: "select", Label: "How Builder may use it", Options: []ui.SelectOption{
+			{Value: UsageSpecified, Label: "Only as I specify"},
+			{Value: UsageOpen, Label: "Open: explore and map it freely"},
+		},
+			Help:   "Only as I specify: you write the exact uses below, and an agent can run nothing else. Open: Builder may try any flags while mapping it.",
+			Detail: "Use Only as I specify for anything that could be destructive with the wrong flags. Builder can then read only the help for your uses and map only your lines, and an agent calls exactly that line with its values in the {placeholders}. Such a command runs directly as the server's account with no shell, the way a person's click runs, so a binary with its own saved login works. An Open command's actions run in the sandbox. Either way nothing reaches an agent until you turn Agents on, and a re-map turns it off again."},
+		{Field: "allowed_uses", Type: "textarea", Label: "Allowed uses", Rows: 3, ShowWhen: "usage:!open",
+			Placeholder: "download --src={source} --dst={folder}",
+			Help:        "One per line: the arguments after the command, with {placeholders} for what the agent fills in.",
+			Detail:      "Each line becomes one tool an agent can call, running exactly that line. Each placeholder is filled with one value; a placeholder that names a folder in this store is proved to be inside it. A line with no placeholders is a fixed call."},
 	}
 }
 
@@ -360,6 +386,7 @@ func (T *FileStoreApp) Routes() {
 	// finished. See MigrateStoreCommands.
 	MigrateStoreCommands(T.DB)
 	MigrateToolboxesOntoCommands(T.DB)
+	MigrateCommandUses(T.DB)
 	// Temporary stores clean up after themselves; see sweepTemporaryStores.
 	go T.sweepTemporaryStores()
 	T.HandleFunc("/api/stores", T.handleStores)
@@ -368,6 +395,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/commands", T.handleCommands)
 	T.HandleFunc("/api/map/chat/send", T.handleMapChat)
 	T.HandleFunc("/api/commands/approve", T.handleCommandApprove)
+	T.HandleFunc("/api/commands/uses", T.handleCommandUses)
 	T.HandleFunc("/api/commands/mapping", T.handleCommandMapping)
 	T.HandleFunc("/api/folders", T.handleFolders)
 	T.HandleFunc("/api/pull", T.handlePull)
@@ -663,13 +691,23 @@ func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 				// mapped_ok gates the Agents switch: a toggle offering to
 				// enable nothing is a question the reader cannot answer.
 				"mapped_ok": a.Mapped(), "approved": a.Approved,
-				"input_label": a.InputLabel, "help": a.Help,
+				"input_label": a.InputLabel, "help": a.Help, "uses": a.usesLabel(),
 			})
 		}
 		writeJSON(w, rows)
 	case http.MethodPost:
+		// The form sends allowed_uses as one block of lines; the record keeps
+		// a list. Either arrives here.
+		var raw map[string]any
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&raw); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if lines, ok := raw["allowed_uses"].(string); ok {
+			raw["allowed_uses"] = strings.Split(lines, "\n")
+		}
 		var a StoreCommand
-		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+		if b, err := json.Marshal(raw); err != nil || json.Unmarshal(b, &a) != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}

@@ -79,13 +79,25 @@ func (T *FileStoreApp) handleMapChat(w http.ResponseWriter, r *http.Request) {
 // could only propose would be guessing from a name, and one that could only
 // probe would leave nothing behind.
 func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreCommand) []AgentToolDef {
+	// What the admin allowed, said up front in both tools: an open command
+	// may be explored and mapped freely, a specified one only as written.
+	scope := " This command is OPEN: explore it as you need and map what it does."
+	if !cmd.open() {
+		lines := cmd.allowedLines()
+		if len(lines) == 0 {
+			scope = " This command is limited to uses an admin specifies, and none are written yet: say so, and that an admin adds them on the command's row (Uses). Do not explore it."
+		} else {
+			scope = " This command is LIMITED to the uses an admin specified: " + strings.Join(lines, " | ") +
+				". You may read only their help, and map only these lines, as written: one action per line, command_template exactly \"" + cmd.Command + " <line>\". Your job is to name each action, describe it, and declare its placeholders (a folder in this store gets \"path_scope\":\"files\")."
+		}
+	}
 	return []AgentToolDef{
 		{
 			Tool: Tool{
 				Name: "probe_command",
 				Description: fmt.Sprintf(
 					"Run %s (%s), the command you are mapping, with arguments of your choosing: start with its help flag. Returns whatever it printed, INCLUDING when it exits non-zero, because a usage message is usually printed on a failing exit and that is the most useful thing a probe gets back. This is how you learn the interface you are about to describe; do not guess it.",
-					cmd.Label, cmd.Command),
+					cmd.Label, cmd.Command) + scope,
 				Parameters: map[string]ToolParam{
 					"args": {Type: "string", Description: "Arguments to pass, space separated: e.g. \"--help\". Passed as separate argv entries with NO shell, so quoting and metacharacters do nothing."},
 				},
@@ -99,8 +111,8 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 			Tool: Tool{
 				Name: "propose_tools",
 				Description: fmt.Sprintf(
-					"Write down what %s can do, as one action per thing it does. Propose narrow actions rather than one that takes a mode argument: unpack and verify are two actions, not one with a switch. What you write is inert: no agent can call it until an admin turns Agents on for this command, so propose what you actually verified and say in each description what you did not. Calling this again REPLACES what you proposed before, which is how you correct it.",
-					cmd.Label),
+					"Write down what %s can do, as one action per thing it does. Propose narrow actions rather than one that takes a mode argument: unpack and verify are two actions, not one with a switch. What you write is inert: no agent can call it until an admin turns Agents on for this command, so propose what you actually verified and say in each description what you did not. Calling this again REPLACES what you proposed before, and switches Agents off until an admin approves again.",
+					cmd.Label) + scope,
 				Parameters: map[string]ToolParam{
 					"description": {Type: "string", Description: "What this binary is for, in a sentence. It is what an agent reads before opening the bundle."},
 					"actions": {Type: "string", Description: "JSON array of actions: [{\"name\":\"unpack\",\"description\":\"...\",\"command_template\":\"/opt/bin/cap unpack {folder}\",\"params\":{\"folder\":{\"type\":\"string\",\"description\":\"...\"}},\"required\":[\"folder\"]}]. " +
@@ -127,6 +139,9 @@ func (T *FileStoreApp) probeCommand(ctx context.Context, root string, cmd StoreC
 	// The store root, so the probe sees what the real run will see. An agent
 	// choosing flags against a binary that resolves anything relatively would
 	// otherwise be reading one directory here and writing about another.
+	if err := cmd.probeAllowed(strings.Fields(argLine)); err != nil {
+		return "", err
+	}
 	out, err := runRegisteredCommand(ctx, root, cmd.Command, strings.Fields(argLine)...)
 	out = strings.TrimSpace(out)
 	if err != nil {
@@ -167,13 +182,9 @@ func (T *FileStoreApp) proposeTools(st Store, cmd StoreCommand, args map[string]
 	if err != nil {
 		return "", err
 	}
+	// Never live on save: SaveCommandTools switches Agents off, so a re-map
+	// of an approved command is approved again before agents get it.
 	live := "and it cannot be called yet: an admin turns Agents on for this command, on this row, and that switch is the approval"
-	if saved.Approved {
-		// A re-map of an already-approved command IS live on save. Saying
-		// otherwise would leave an admin believing a correction was parked
-		// when it had in fact replaced what agents are calling right now.
-		live = "and it is LIVE: this command is already approved for agents, so this replaces what they were calling"
-	}
 	return fmt.Sprintf("Mapped %s: %s as %s, %s. Call this again to correct it.",
 		cmd.Label, countOf(len(saved.Tools), "action", "actions"), saved.ToolName(), live), nil
 }

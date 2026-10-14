@@ -45,9 +45,9 @@ func TestAMappingLandsOnItsCommandRecord(t *testing.T) {
 	}
 }
 
-// A correction to an approved command is LIVE on save. Telling the agent it is
-// parked would leave an admin believing agents are still calling the old one.
-func TestTheReplySaysWhenACorrectionIsAlreadyLive(t *testing.T) {
+// A correction to an approved command switches it off until approved again,
+// and the reply says so rather than leaving the admin to think it is in force.
+func TestTheReplySaysACorrectionNeedsApprovalAgain(t *testing.T) {
 	app, st, cmd := mappingFixture(t)
 	mapIt(t, app, st, cmd)
 	if _, err := SetCommandApproved(app.DB, st.Slug, cmd.Name, true); err != nil {
@@ -58,8 +58,11 @@ func TestTheReplySaysWhenACorrectionIsAlreadyLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "LIVE") {
-		t.Errorf("a correction to an approved command must say it is already in force: %q", msg)
+	if !strings.Contains(msg, "cannot be called yet") || strings.Contains(msg, "LIVE") {
+		t.Errorf("the reply should say the correction waits for approval: %q", msg)
+	}
+	if c, _ := LoadStoreCommand(app.DB, st.Slug, cmd.Name); c.Approved {
+		t.Error("the correction stayed approved")
 	}
 }
 

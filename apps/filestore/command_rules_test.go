@@ -41,7 +41,7 @@ func TestAMappedActionRunsOnlyItsCommand(t *testing.T) {
 	if _, err := SaveStore(db, Store{Name: "Intake", Path: t.TempDir()}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SaveStoreCommand(db, StoreCommand{Slug: "intake", Name: "decrypt", Command: bin}); err != nil {
+	if _, err := SaveStoreCommand(db, StoreCommand{Usage: UsageOpen, Slug: "intake", Name: "decrypt", Command: bin}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := SaveCommandTools(db, "intake", "decrypt", "Decrypts a dump.", []TempToolAction{

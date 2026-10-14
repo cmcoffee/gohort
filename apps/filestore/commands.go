@@ -37,9 +37,11 @@
 package filestore
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"sort"
@@ -48,6 +50,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bgrun"
 	"github.com/cmcoffee/gohort/core/pathhold"
 )
 
@@ -114,6 +117,16 @@ type StoreCommand struct {
 	InputLabel string `json:"input_label,omitempty"`
 	Help       string `json:"help,omitempty"`
 
+	// Usage is how Builder (and so an agent) may use this command:
+	// "specified" (the default) limits both to AllowedUses, the exact
+	// argument lines an admin wrote; "open" lets Builder explore the binary
+	// and map whatever it finds. See command_uses.go.
+	Usage string `json:"usage,omitempty"`
+	// AllowedUses are the argument lines, after the binary, a "specified"
+	// command may be run with, one per entry, with {placeholders} for what
+	// an agent fills in: "download --src={source} --dst={folder}".
+	AllowedUses []string `json:"allowed_uses,omitempty"`
+
 	// --- what mapping this command produced -----------------------------
 	//
 	// One record, not two. A command IS the tool; these fields are how an
@@ -176,6 +189,17 @@ func SaveStoreCommand(db Database, a StoreCommand) (StoreCommand, error) {
 	if strings.TrimSpace(a.Label) == "" {
 		a.Label = strings.ToUpper(a.Name[:1]) + strings.ReplaceAll(a.Name[1:], "_", " ")
 	}
+	// New commands are limited to uses an admin writes unless made open, and
+	// the lines are kept tidy, one use per entry.
+	if a.Usage != UsageOpen {
+		a.Usage = UsageSpecified
+	}
+	var uses []string
+	for _, l := range a.AllowedUses {
+		uses = append(uses, strings.Split(l, "\n")...)
+	}
+	a.AllowedUses = uses
+	a.AllowedUses = a.allowedLines()
 	db.Set(commandsTable, commandKey(a.Slug, a.Name), a)
 	return a, nil
 }
@@ -244,12 +268,27 @@ func DeleteStoreCommand(db Database, slug, name string) {
 //
 // Empty means the process's own directory, for a caller that genuinely has no
 // folder to name. Nothing passes empty today.
+//
+// Under a background-capable run (core/bgrun) the output is also copied to the
+// run's activity as it comes, and the fixed limit gives way to the run's own:
+// stopped when it goes quiet or would fill the disk, not at thirty minutes.
 func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+	act := bgrun.RunActivityFrom(ctx)
+	cancel := context.CancelFunc(func() {})
+	if act == nil {
+		ctx, cancel = context.WithTimeout(ctx, commandTimeout)
+	}
 	defer cancel()
 	c := exec.CommandContext(ctx, bin, args...)
 	c.Dir = dir
-	out, err := c.CombinedOutput()
+	var buf bytes.Buffer
+	var w io.Writer = &buf
+	if act != nil {
+		w = io.MultiWriter(&buf, act)
+	}
+	c.Stdout, c.Stderr = w, w
+	err := c.Run()
+	out := buf.Bytes()
 	text := strings.TrimSpace(string(out))
 	if ctx.Err() == context.DeadlineExceeded {
 		return text, Error("the command did not finish within " + commandTimeout.String() +

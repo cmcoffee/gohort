@@ -75,6 +75,9 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 		if err := actionRunsTheCommand(cmd.Command, a.CommandTemplate); err != nil {
 			return cmd, Error("action " + a.Name + ": " + err.Error())
 		}
+		if err := cmd.templateAllowed(a.CommandTemplate); err != nil {
+			return cmd, Error("action " + a.Name + ": " + err.Error())
+		}
 		acts[i].Name = strings.TrimSpace(a.Name)
 
 		// work_dir names a parameter, so a name with nothing behind it is an
@@ -112,6 +115,9 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 	}
 	cmd.Tools = acts
 	cmd.ToolDesc = strings.TrimSpace(desc)
+	// A new mapping is not what was approved: agents lose it until an admin
+	// approves again, so a rewrite never goes live on its own.
+	cmd.Approved = false
 	db.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
 	return cmd, nil
 }
@@ -163,6 +169,10 @@ func (a StoreCommand) runnableActions() []TempToolAction {
 	for _, act := range a.Tools {
 		if err := actionRunsTheCommand(a.Command, act.CommandTemplate); err != nil {
 			Log("[filestore] %s/%s action %q not offered to agents: %v (re-map the command)", a.Slug, a.Name, act.Name, err)
+			continue
+		}
+		if err := a.templateAllowed(act.CommandTemplate); err != nil {
+			Log("[filestore] %s/%s action %q not offered to agents: %v", a.Slug, a.Name, act.Name, err)
 			continue
 		}
 		out = append(out, act)
@@ -223,15 +233,23 @@ func firstOf(s string) string {
 // through a second implementation that drifts from the first.
 func (s storeSource) commandToolDefs(sess *ToolSession, user string, st Store) []AgentToolDef {
 	var tools []*TempTool
+	var direct []AgentToolDef
 	for _, cmd := range StoreCommandsFor(s.app.DB, st.Slug) {
 		if !cmd.Approved || !cmd.Mapped() {
+			continue
+		}
+		// A command limited to the uses an admin specified runs each line as
+		// written, directly (command_uses.go); an open one through the
+		// sandboxed toolbox path below.
+		if !cmd.open() {
+			direct = append(direct, s.specifiedToolDefs(sess, user, st, cmd)...)
 			continue
 		}
 		t := cmd.asTempTool()
 		tools = append(tools, &t)
 	}
 	if len(tools) == 0 {
-		return nil
+		return direct
 	}
 	// AuthDB is a function VARIABLE, nil until startup wires it. Calling it
 	// unguarded panics — on a path reached from a tool catalog, which is a
@@ -254,7 +272,7 @@ func (s storeSource) commandToolDefs(sess *ToolSession, user string, st Store) [
 	for i := range defs {
 		defs[i].Handler = refuseOptionArgs(tools, defs[i].Tool.Name, defs[i].Handler)
 	}
-	return defs
+	return append(defs, direct...)
 }
 
 // refuseOptionArgs wraps a mapped command's handler so a value that fills a
