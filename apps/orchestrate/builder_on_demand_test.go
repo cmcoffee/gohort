@@ -76,8 +76,9 @@ func TestBuildersLessUsedToolsLoadOnDemand(t *testing.T) {
 		t.Error("the index should render under one heading")
 	}
 
-	// Any other agent is untouched.
-	other := *turn
+	// Any other agent is untouched. A fresh turn rather than a copy of this
+	// one: a turn holds a mutex, and only the agent matters here.
+	other := &chatTurn{agent: turn.agent}
 	other.agent.ID = "a1"
 	if got, _ := other.deferBuilderOnDemandTools(tools, names); len(got) != len(tools) {
 		t.Error("another agent's catalog was changed")
