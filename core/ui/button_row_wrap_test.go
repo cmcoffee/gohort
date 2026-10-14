@@ -69,8 +69,8 @@ func TestModalFooterWraps(t *testing.T) {
 // On a phone a crowded row of buttons is one line that scrolls, never a
 // wrap: wrapped, its last button (Delete, most often) dropped to a line of
 // its own. These rows hold four or more buttons on common pages (table and
-// card-list rows, a message's actions, the pipeline and report actions, the
-// editors' toolbars), so each must be in the phone rule that keeps it whole.
+// card-list rows, the pipeline and report actions, the editors' toolbars),
+// so each must be in the phone rule that keeps it whole.
 func TestCrowdedRowsStayOneLineOnAPhone(t *testing.T) {
 	i := strings.Index(runtimeCSS, "A ROW OF BUTTONS ON A PHONE")
 	if i < 0 {
@@ -81,12 +81,17 @@ func TestCrowdedRowsStayOneLineOnAPhone(t *testing.T) {
 		block = block[:j]
 	}
 	for _, c := range []string{".ui-row-actions", ".ui-card-controls", ".ui-toolbar-strip",
-		".ui-agent-msg-actions", ".ui-pl-actions", ".ui-pl-modal-h-actions", ".ui-agent-actions"} {
+		".ui-pl-actions", ".ui-pl-modal-h-actions", ".ui-agent-actions"} {
 		if !strings.Contains(block, c) {
 			t.Errorf("%s is a crowded button row, and the phone rule does not keep it to one line", c)
 		}
 	}
 	if !strings.Contains(block, "flex-wrap: nowrap") {
 		t.Error("the phone rule for crowded rows no longer stops them wrapping")
+	}
+	// One line must not widen the page: a row whose one-line width set the
+	// least its containers could be pushed My Apps' buttons off the screen.
+	if !strings.Contains(block, "contain: inline-size") {
+		t.Error("the one-line rows no longer keep their width to what they are given; their buttons will push the page wider than the screen")
 	}
 }

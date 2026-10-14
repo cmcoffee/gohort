@@ -1248,17 +1248,31 @@ select:-webkit-autofill {
  * as a separate control. A destructive action goes to the far end, apart
  * from the everyday ones, and a row whose buttons do not fit scrolls
  * sideways rather than wrapping. Every crowded button row is named here;
- * one that wraps on purpose (chips, tags, a list of choices) is not. */
+ * one that wraps on purpose (chips, tags, a list of choices) is not.
+ *
+ * contain: inline-size is what makes "scrolls" true. Without it the row's
+ * width on one line counted as the least its container could be, and every
+ * container out to the page grew to hold it, so the buttons ran off the
+ * screen (My Apps) instead of scrolling inside the row. Contained, a row
+ * takes the width it is given and scrolls within it; the two that sit
+ * beside something else (a report's title, the agent's top bar) take the
+ * width left over.
+ *
+ * A message's actions are not here: they sit inside a bubble sized to its
+ * text, where one line either widened the bubble off the screen or, held
+ * to it, left a short message's buttons a sliver to scroll. They wrap. */
 @media (max-width: 800px) {
-  :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip, .ui-agent-msg-actions,
+  :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip,
       .ui-pl-actions, .ui-pl-modal-h-actions),
   .ui-agent.ui-agent-list-top .ui-agent-actions {
-    flex-wrap: nowrap !important; min-width: 0;
+    flex-wrap: nowrap !important; min-width: 0; contain: inline-size;
     overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
   }
-  :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip, .ui-agent-msg-actions,
+  .ui-pl-modal-h-actions { flex: 1 1 0; justify-content: flex-end; }
+  .ui-agent.ui-agent-list-top .ui-agent-actions { flex: 1 1 0; }
+  :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip,
       .ui-pl-actions, .ui-pl-modal-h-actions, .ui-agent-actions)::-webkit-scrollbar { display: none; }
-  :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip, .ui-agent-msg-actions,
+  :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip,
       .ui-pl-actions, .ui-pl-modal-h-actions, .ui-agent-actions) > * { flex: 0 0 auto; }
   :is(.ui-row-actions, .ui-card-controls, .ui-pl-actions) > .danger { margin-left: auto; }
   /* A card's controls take the line under the card's text, the full width. */
