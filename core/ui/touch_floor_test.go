@@ -177,3 +177,41 @@ func TestButtonsShareOneRadius(t *testing.T) {
 		}
 	}
 }
+
+// No label is smaller than the type scale's floor on a phone. A size set
+// under 0.7rem (11px) reads on a desktop screen and is a squint on a
+// phone, so every such rule's class must be in the phone rule that lifts it
+// to --fs-2xs. A count drawn in a small circle is sized with its circle and
+// is the exception.
+func TestNoTinyLabelsOnAPhone(t *testing.T) {
+	i := strings.Index(runtimeCSS, "no label under the type scale's smallest size")
+	if i < 0 {
+		t.Fatal("runtime.css has no phone rule for labels under the type scale")
+	}
+	lift := runtimeCSS[i:]
+	if j := strings.Index(lift, "\n}\n"); j >= 0 {
+		lift = lift[:j]
+	}
+	circles := map[string]bool{"ui-channel-badge": true, "ui-bell-count": true}
+	css := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(runtimeCSS, "")
+	tiny := regexp.MustCompile(`font-size:\s*0\.([0-6]\d*)rem`)
+	for _, rule := range regexp.MustCompile(`([^{}]+)\{([^{}]*)\}`).FindAllStringSubmatch(css, -1) {
+		m := tiny.FindStringSubmatch(rule[2])
+		if m == nil {
+			continue
+		}
+		if v, _ := strconv.ParseFloat("0."+m[1], 64); v >= 0.7 {
+			continue
+		}
+		parts := strings.Fields(rule[1])
+		classes := regexp.MustCompile(`\.(ui-[\w-]+)`).FindAllStringSubmatch(parts[len(parts)-1], -1)
+		if len(classes) == 0 {
+			continue
+		}
+		c := classes[len(classes)-1][1]
+		if circles[c] || strings.Contains(lift, "."+c) {
+			continue
+		}
+		t.Errorf(".%s is set at 0.%srem, under the type scale, and is not lifted on a phone", c, m[1])
+	}
+}
