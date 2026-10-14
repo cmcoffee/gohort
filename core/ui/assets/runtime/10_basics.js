@@ -3369,10 +3369,12 @@
         title: (f.label || 'Draft') + (section ? ' - ' + section : ''),
         subtitle: help || undefined,
         initial: initial,
+        switchable: true,
         send: function(req, done) {
           postSuggest(f, {
             section: section || '',
             assist_prompt: assistPrompt,
+            mode: req.mode,
             message: req.message,
             draft: req.draft,
             history: req.history,

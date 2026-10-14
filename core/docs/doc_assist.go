@@ -42,8 +42,9 @@ func DocFence(s string) string {
 // BuildDocAssistPrompt frames a conversation about one markdown
 // document, or one section of it. The draft rides here rather than in
 // the message list because the user edits it directly between turns —
-// a stale copy buried in history would compete with the live one.
-func BuildDocAssistPrompt(name, section, draft, refContext string) string {
+// a stale copy buried in history would compete with the live one. mode is
+// the assist window's (AssistReplyContract): talk it through, or revise.
+func BuildDocAssistPrompt(name, section, draft, refContext, mode string) string {
 	var b strings.Builder
 	b.WriteString("You are helping a user write a markdown document. Talk with them about it and revise it on request.\n\n")
 	b.WriteString("Write documentation prose: plain, specific, and skimmable. Prefer a concrete instruction over a description of one. Keep the heading structure the document already has unless asked to change it.\n\n")
@@ -71,6 +72,6 @@ func BuildDocAssistPrompt(name, section, draft, refContext string) string {
 		fmt.Fprintf(&b, "## Reference material the user attached\n\n%s\n%s\n%s\n\n", f, refContext, f)
 	}
 	b.WriteString("## How to reply\n\n")
-	b.WriteString(textutil.DraftReplyContract)
+	b.WriteString(textutil.AssistReplyContract(mode))
 	return b.String()
 }

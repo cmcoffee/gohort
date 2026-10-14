@@ -44,6 +44,7 @@ func (a *AdminApp) handleRulesAssist(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Section string `json:"section"`
+		Mode    string `json:"mode"`
 		Message string `json:"message"`
 		Draft   string `json:"draft"`
 		History []struct {
@@ -82,7 +83,7 @@ func (a *AdminApp) handleRulesAssist(w http.ResponseWriter, r *http.Request) {
 		msgs = append(msgs, Message{Role: role, Content: t.Content})
 	}
 	msgs = append(msgs, Message{Role: "user", Content: req.Message})
-	system := framing + "\n\n" + BuildDocAssistPrompt(req.Section+" rules", req.Section, draft, "")
+	system := framing + "\n\n" + BuildDocAssistPrompt(req.Section+" rules", req.Section, draft, "", req.Mode)
 	resp, err := llm.Chat(r.Context(), msgs,
 		WithSystemPrompt(system),
 		WithRouteKey("app.admin.rules_assist"),

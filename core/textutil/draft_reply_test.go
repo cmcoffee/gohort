@@ -68,3 +68,14 @@ func indexOf(hay, needle string) int {
 	}
 	return -1
 }
+
+func TestAssistReplyContractByMode(t *testing.T) {
+	if AssistReplyContract(AssistModeDiscuss) != DiscussReplyContract {
+		t.Error("discuss should get the discuss contract")
+	}
+	for _, mode := range []string{"", "write", "anything else"} {
+		if AssistReplyContract(mode) != DraftReplyContract {
+			t.Errorf("mode %q should get the revise contract", mode)
+		}
+	}
+}

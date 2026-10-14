@@ -110,6 +110,8 @@ const (
 	UntrustedToolResultFence = textutil.UntrustedToolResultFence
 	DraftFence               = textutil.DraftFence
 	DraftReplyContract       = textutil.DraftReplyContract
+	DiscussReplyContract     = textutil.DiscussReplyContract
+	AssistModeDiscuss        = textutil.AssistModeDiscuss
 )
 
 var (
@@ -123,6 +125,7 @@ var (
 	UntrustedFence              = textutil.UntrustedFence
 	SplitDraftReply             = textutil.SplitDraftReply
 	StripLeadingHeading         = textutil.StripLeadingHeading
+	AssistReplyContract         = textutil.AssistReplyContract
 )
 
 // Markdown/HTML rendering, URL harvesting, XML field extraction, and the

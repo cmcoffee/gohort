@@ -176,7 +176,7 @@ func TestSplitDraftReply(t *testing.T) {
 // A field-declared AssistPrompt must land inside the framing, ABOVE the
 // response contract — it shapes the advice, it doesn't replace the rules.
 func TestBuildAssistSystemPromptFieldFraming(t *testing.T) {
-	p := buildAssistSystemPrompt("orchestrator_prompt", "", "", "Write in the second person.", nil)
+	p := buildAssistSystemPrompt("orchestrator_prompt", "", "", "Write in the second person.", "", nil)
 	at := strings.Index(p, "Write in the second person.")
 	contract := strings.Index(p, draftFence)
 	if at < 0 {
@@ -194,7 +194,7 @@ func TestBuildAssistSystemPromptFieldFraming(t *testing.T) {
 // general-purpose LLM proxy.
 func TestBuildAssistSystemPromptBoundsDeclaredFraming(t *testing.T) {
 	huge := strings.Repeat("x", assistPromptMax*3)
-	p := buildAssistSystemPrompt("orchestrator_prompt", "", "", huge, nil)
+	p := buildAssistSystemPrompt("orchestrator_prompt", "", "", huge, "", nil)
 	// Assert on the run itself: other framing text contains stray x's
 	// ("context"), so a global count would be measuring the wrong thing.
 	if strings.Contains(p, strings.Repeat("x", assistPromptMax+1)) {
@@ -210,7 +210,7 @@ func TestBuildAssistSystemPromptBoundsDeclaredFraming(t *testing.T) {
 
 func TestBuildAssistSystemPrompt(t *testing.T) {
 	rec := map[string]any{"name": "Research helper"}
-	p := buildAssistSystemPrompt("orchestrator_prompt", "Rules", "- cite a URL", "", rec)
+	p := buildAssistSystemPrompt("orchestrator_prompt", "Rules", "- cite a URL", "", "", rec)
 	for _, want := range []string{
 		`"Rules" section`,
 		"Hard constraints", // declared Help for that section
@@ -228,7 +228,7 @@ func TestBuildAssistSystemPrompt(t *testing.T) {
 // An empty draft must be stated, not silently omitted — otherwise the
 // model has no signal that it is writing from scratch.
 func TestBuildAssistSystemPromptEmptyDraft(t *testing.T) {
-	p := buildAssistSystemPrompt("orchestrator_prompt", "", "", "", nil)
+	p := buildAssistSystemPrompt("orchestrator_prompt", "", "", "", "", nil)
 	if !strings.Contains(p, "nothing written yet") {
 		t.Errorf("empty draft not called out:\n%s", p)
 	}

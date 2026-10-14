@@ -73,6 +73,10 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 		T.handleSection(w, r, udb, user)
 	case path == "section/move":
 		T.handleSectionMove(w, r, udb, user)
+	case path == "section/discuss":
+		T.handleSectionDiscuss(w, r, udb, user)
+	case path == "brief/discuss":
+		T.handleBriefDiscuss(w, r, udb, user)
 	case path == "section/add":
 		T.handleSectionAdd(w, r, udb, user)
 	case path == "collections":

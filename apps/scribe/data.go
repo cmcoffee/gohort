@@ -480,7 +480,7 @@ func renderGuideHTML(g Guide, controls bool) string {
 	if len(secs) == 0 {
 		b.WriteString(`<p class="guide-doc-empty">This guide has no sections yet. Ask the assistant on the right to draft one, for example, "Add an introduction section."`)
 		if controls {
-			b.WriteString(` Or <button type="button" class="guide-add-link" data-guide-act="add">add one yourself</button>.`)
+			b.WriteString(` Or <button type="button" class="guide-add-link" data-guide-act="add">add one yourself</button>, or <button type="button" class="guide-add-link" data-guide-act="discuss-new">talk one through with the assistant</button>.`)
 		}
 		b.WriteString(`</p></article>`)
 		return b.String()
@@ -508,6 +508,9 @@ func renderGuideHTML(g Guide, controls bool) string {
 				`<button type="button" class="guide-sec-btn" data-guide-act="up" title="Move up">&uarr;</button>` +
 				`<button type="button" class="guide-sec-btn" data-guide-act="down" title="Move down">&darr;</button>` +
 				`<button type="button" class="guide-sec-btn guide-sec-del" data-guide-act="delete" title="Delete">&times;</button>` +
+				// Last, so it sits flush right while the others are hidden and
+				// does not move when they appear.
+				`<button type="button" class="guide-sec-btn guide-sec-discuss" data-guide-act="discuss" title="Talk this section through with the assistant before it is rewritten">Discuss</button>` +
 				`</div>`)
 		}
 		num := ""
@@ -519,7 +522,8 @@ func renderGuideHTML(g Guide, controls bool) string {
 		b.WriteString(`</section>`)
 	}
 	if controls {
-		b.WriteString(`<div class="guide-add-row"><button type="button" class="guide-add-btn" data-guide-act="add">+ Add section</button></div>`)
+		b.WriteString(`<div class="guide-add-row"><button type="button" class="guide-add-btn" data-guide-act="add">+ Add section</button> ` +
+			`<button type="button" class="guide-add-btn" data-guide-act="discuss-new" title="Talk a new section through with the assistant before it is written">+ Discuss a new section</button></div>`)
 	}
 	b.WriteString(`</article>`)
 	return b.String()

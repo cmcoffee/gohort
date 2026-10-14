@@ -485,15 +485,21 @@ const guideDocCSS = `<style>
 .guide-rev-tag { display: inline-block; font-size: var(--fs-2xs, 0.68rem); letter-spacing: 0.04em; text-transform: uppercase; color: #6366f1; font-weight: 600; margin-bottom: 0.3rem; }
 </style>`
 
-// guideSectionCtrlCSS styles the inline per-section controls (hover-revealed),
-// the "+ Add section" button, and the empty-state add link.
+// guideSectionCtrlCSS styles the inline per-section controls (hover-revealed,
+// except Discuss, which is always there), the "+ Add section" button, and the
+// empty-state add link.
 const guideSectionCtrlCSS = `<style>
 .guide-section { position: relative; }
 .guide-sec-ctrls {
   position: absolute; top: 0.1rem; right: 0; display: flex; gap: 0.25rem;
-  opacity: 0; transition: opacity 0.12s;
 }
-.guide-section:hover .guide-sec-ctrls, .guide-sec-ctrls:focus-within { opacity: 1; }
+/* The editing controls appear on hover; Discuss is always there, the way
+   into a section for somebody who does not yet know what to change. The
+   heading keeps room for it so a long title does not run underneath. */
+.guide-sec-ctrls .guide-sec-btn { opacity: 0; transition: opacity 0.12s; }
+.guide-sec-ctrls .guide-sec-discuss { opacity: 1; color: var(--accent); border-color: var(--accent); }
+.guide-section:hover .guide-sec-ctrls .guide-sec-btn, .guide-sec-ctrls:focus-within .guide-sec-btn { opacity: 1; }
+.guide-sec-ctrls + h2 { padding-right: 5.5rem; }
 .guide-sec-btn {
   cursor: pointer; background: var(--bg-2); color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 6px; padding: 0.12rem 0.45rem;
@@ -529,10 +535,12 @@ const guideSectionCtrlCSS = `<style>
    unreachable: keep them visible there, and drop them out of the heading overlap
    onto their own right-aligned row on narrow screens. */
 @media (hover: none) {
-  .guide-sec-ctrls { opacity: 1; }
+  .guide-sec-ctrls .guide-sec-btn { opacity: 1; }
 }
 @media (max-width: 700px) {
-  .guide-sec-ctrls { position: static; opacity: 1; justify-content: flex-end; margin-bottom: 0.5rem; }
+  .guide-sec-ctrls { position: static; justify-content: flex-end; margin-bottom: 0.5rem; }
+  .guide-sec-ctrls .guide-sec-btn { opacity: 1; }
+  .guide-sec-ctrls + h2 { padding-right: 0; }
   .guide-add-btn { padding: 0.6rem 1rem; }
 }
 </style>`
@@ -598,6 +606,31 @@ const guideSectionCode = `(function(){
       });
     }});
   }
+  // Discuss: the shared assist window in its discuss mode, talking to the
+  // guide's Author (section/discuss). The text is kept only when the person
+  // uses the draft, through the section's own save.
+  function discuss(gp, sp, title, text, save, opening){
+    if (!window.uiOpenAssist) return;
+    var session = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    window.uiOpenAssist({
+      mode: 'discuss',
+      title: 'Discuss: ' + (title || 'new section'),
+      subtitle: 'The guide\u2019s assistant asks first, then writes. Nothing changes in the guide until you use the draft.',
+      initial: text,
+      ask: opening,
+      send: function(req, done){
+        jpost('section/discuss?' + gp + sp, {title: title, message: req.message, draft: req.draft, history: req.history, session: session})
+          .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return JSON.parse(t); }); })
+          .then(function(res){ done(res); })
+          .catch(function(err){ done(null, (err && err.message) || String(err)); });
+      },
+      onAccept: function(m){
+        if (!String(m || '').trim()) { window.uiAlert('There is no text to save yet.'); return; }
+        save(m).then(function(r){ if (r && !r.ok) return r.text().then(function(t){ throw new Error(t); }); refresh(); })
+          .catch(function(err){ window.uiAlert('Save failed: ' + (err && err.message || err)); });
+      }
+    });
+  }
   document.addEventListener('click', function(e){
     var btn = e.target.closest && e.target.closest('[data-guide-act]');
     if (!btn) return;
@@ -614,6 +647,18 @@ const guideSectionCode = `(function(){
     } else if (act === 'edit'){
       fetch('section?' + gp + sp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(s){
         openEditor('Edit section', s.title || '', s.markdown || '', function(t, m){ return jpost('section?' + gp + sp, {title:t, markdown:m}); }, gid);
+      });
+    } else if (act === 'discuss'){
+      fetch('section?' + gp + sp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(s){
+        discuss(gp, sp, s.title || '', s.markdown || '', function(m){ return jpost('section?' + gp + sp, {title: s.title || '', markdown: m}); },
+          'Let us work on this section. Ask me what you need to know first.');
+      });
+    } else if (act === 'discuss-new'){
+      window.uiPrompt('What is the new section about? A working title is enough.', '').then(function(t){
+        t = (t || '').trim();
+        if (!t) return;
+        discuss(gp, '', t, '', function(m){ return jpost('section/add?' + gp, {title: t, markdown: m}); },
+          'I want to add a section, working title "' + t + '". Ask me what you need to know first.');
       });
     } else if (act === 'delete'){
       window.uiConfirm('Delete this section? You can restore it from History.').then(function(ok){
@@ -714,9 +759,33 @@ const guideSettingsAction = `function(ctx){
           bta.style.width = '100%'; bta.style.padding = '0.45rem 0.6rem'; bta.style.background = 'var(--bg-0)';
           bta.style.color = 'var(--text)'; bta.style.border = '1px solid var(--border)'; bta.style.borderRadius = '6px';
           bta.style.resize = 'vertical'; bta.style.fontFamily = 'inherit';
+          // Discuss: work the brief out with the guide's Author, which asks
+          // before it writes. Its draft fills the box; Save keeps it.
+          var bdisc = el('button', {class:'ui-row-btn', type:'button', text:'Discuss', title:'Work the brief out with the assistant: it asks what the guide is for, then writes it'});
+          bdisc.addEventListener('click', function(){
+            if (!window.uiOpenAssist) return;
+            var session = Math.random().toString(36).slice(2) + Date.now().toString(36);
+            window.uiOpenAssist({
+              mode: 'discuss',
+              title: 'Discuss: writing brief',
+              subtitle: 'The guide\u2019s assistant asks what the guide is for, then writes the brief. Using the draft puts it in the box; Save keeps it.',
+              initial: bta.value,
+              ask: bta.value.trim() ? 'Help me improve this guide\u2019s writing brief. Ask me what you need to know first.' : 'Help me write this guide\u2019s writing brief. Ask me what you need to know first.',
+              send: function(req, done){
+                fetch('brief/discuss?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+                  body: JSON.stringify({message: req.message, draft: req.draft, history: req.history, session: session})})
+                  .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return JSON.parse(t); }); })
+                  .then(function(res){ done(res); })
+                  .catch(function(err){ done(null, (err && err.message) || String(err)); });
+              },
+              onAccept: function(t){ bta.value = t; bta.focus(); }
+            });
+          });
           body.appendChild(el('div', {class:'guide-edit-field'}, [el('label', {text:'Writing brief'}), bta,
-            el('div', {class:'guide-pub-mute', style:'font-size:0.8rem;margin-top:0.25rem',
-              text:'What this guide is for and how it is written. The Guide Author follows it when you edit, and the Curator decides by it what to keep, what to fold into an existing section, and what to drop.'})]));
+            el('div', {style:'display:flex;align-items:flex-start;gap:0.6rem;margin-top:0.3rem'}, [
+              el('div', {class:'guide-pub-mute', style:'font-size:0.8rem;flex:1',
+                text:'What this guide is for and how it is written. The Guide Author follows it when you edit, and the Curator decides by it what to keep, what to fold into an existing section, and what to drop.'}),
+              bdisc])]));
           // Private (no internet).
           var pcb = el('input', {type:'checkbox'}); if (d && d.private) pcb.checked = true;
           body.appendChild(el('label', {class:'guide-share-row'}, [pcb,

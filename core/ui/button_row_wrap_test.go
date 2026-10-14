@@ -55,7 +55,9 @@ func TestButtonRowsWrap(t *testing.T) {
 // The shared modal's footer is the class every hand-built modal reuses, so it
 // is the one that must wrap above all.
 func TestModalFooterWraps(t *testing.T) {
-	m := regexp.MustCompile(`\.ui-modal-footer\s*\{([^}]*)\}`).FindStringSubmatch(runtimeCSS)
+	// The rule itself, at the start of a line: a modal that adjusts its own
+	// footer (".ui-x .ui-modal-footer") is not the shared one.
+	m := regexp.MustCompile(`(?m)^\.ui-modal-footer\s*\{([^}]*)\}`).FindStringSubmatch(runtimeCSS)
 	if m == nil || !strings.Contains(strings.ReplaceAll(m[1], " ", ""), "flex-wrap:wrap") {
 		t.Fatal(".ui-modal-footer must exist and wrap")
 	}

@@ -459,12 +459,14 @@
           ? 'Drafting one section. The rest of the document is untouched.'
           : 'Drafting the whole document.',
         initial: initial,
+        switchable: true,
         send: function(req, done) {
           fetchJSON(cfg.assist_url, {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
               name: titleInput.value || '',
               section: section || '',
+              mode: req.mode,
               message: req.message,
               draft: req.draft,
               history: req.history,

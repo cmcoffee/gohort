@@ -47,6 +47,7 @@ func (T *OrchestrateApp) handleMachineSuggest(w http.ResponseWriter, r *http.Req
 		Hint         string         `json:"hint"`
 		Message      string         `json:"message"`
 		Draft        string         `json:"draft"`
+		Mode         string         `json:"mode"`
 		History      []suggestTurn  `json:"history"`
 		AssistPrompt string         `json:"assist_prompt"`
 		Record       map[string]any `json:"record"`
@@ -89,6 +90,11 @@ func (T *OrchestrateApp) handleMachineSuggest(w http.ResponseWriter, r *http.Req
 		if d := strings.TrimSpace(req.Draft); d != "" {
 			sys += "\n\nThe current draft, which they can see and edit:\n" + d
 		}
+		// In a conversation the reply is a sentence and, when there is new
+		// text, the text fenced on its own, which is how the window tells
+		// the two apart. Without this the instructions came back as chat
+		// and the draft never changed.
+		sys += "\n\n## How to reply in this conversation\n\nThis replaces \"reply with the instructions only\" above.\n\n" + AssistReplyContract(req.Mode)
 		msgs = append(msgs, Message{Role: "user", Content: req.Message})
 		resp, err := T.LLM.Chat(ctx, msgs, WithSystemPrompt(sys),
 			WithRouteKey("app.orchestrate.suggest"), WithThink(false))

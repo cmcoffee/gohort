@@ -939,6 +939,7 @@ func (T *CodeWriterAgent) handleAssist(w http.ResponseWriter, r *http.Request) {
 		Message string `json:"message"`
 		Draft   string `json:"draft"`
 		Context string `json:"context"`
+		Mode    string `json:"mode"`
 		History []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
@@ -973,7 +974,7 @@ func (T *CodeWriterAgent) handleAssist(w http.ResponseWriter, r *http.Request) {
 	agent := &AppCore{LLM: T.AppCore.LLM}
 	session := agent.CreateSession(WORKER)
 	resp, err := session.Chat(r.Context(), msgs,
-		WithSystemPrompt(BuildDocAssistPrompt(req.Name, req.Section, req.Draft, req.Context)+rules),
+		WithSystemPrompt(BuildDocAssistPrompt(req.Name, req.Section, req.Draft, req.Context, req.Mode)+rules),
 		WithThink(false),
 	)
 	if err != nil {

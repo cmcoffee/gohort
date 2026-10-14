@@ -117,6 +117,9 @@ func (T *OrchestrateApp) handleAgentSuggest(w http.ResponseWriter, r *http.Reque
 		Message string        `json:"message"`
 		Draft   string        `json:"draft"`
 		History []suggestTurn `json:"history"`
+		// Mode is the assist window's: "discuss" talks it through before
+		// writing, anything else revises on request.
+		Mode string `json:"mode"`
 		// AssistPrompt is the field's own framing, declared in Go on the
 		// FormField and round-tripped through the browser. Advisory: it
 		// is composed INTO the system prompt below, never substituted
@@ -159,7 +162,7 @@ func (T *OrchestrateApp) handleAgentSuggest(w http.ResponseWriter, r *http.Reque
 		msgs = append(msgs, Message{Role: "user", Content: req.Message})
 
 		resp, err := T.LLM.Chat(ctx, msgs,
-			WithSystemPrompt(buildAssistSystemPrompt(req.Field, req.Section, req.Draft, req.AssistPrompt, req.Record)),
+			WithSystemPrompt(buildAssistSystemPrompt(req.Field, req.Section, req.Draft, req.AssistPrompt, req.Mode, req.Record)),
 			WithRouteKey("app.orchestrate.suggest"),
 			WithThink(false),
 		)
@@ -242,7 +245,7 @@ var (
 // general-purpose LLM proxy by a client that rewrites the payload.
 const assistPromptMax = 2000
 
-func buildAssistSystemPrompt(field, section, draft, assistPrompt string, record map[string]any) string {
+func buildAssistSystemPrompt(field, section, draft, assistPrompt, mode string, record map[string]any) string {
 	var b strings.Builder
 	b.WriteString("You are helping a user write ONE value in an AI agent's definition. Talk with them about it and revise it on request.\n\n")
 
@@ -302,7 +305,7 @@ func buildAssistSystemPrompt(field, section, draft, assistPrompt string, record 
 	}
 
 	b.WriteString("## How to reply\n\n")
-	b.WriteString(DraftReplyContract)
+	b.WriteString(AssistReplyContract(mode))
 	return b.String()
 }
 
