@@ -1696,6 +1696,23 @@ select:-webkit-autofill {
   opacity: 0.7; cursor: progress;
 }
 .ui-form-suggest-btn[disabled] { cursor: not-allowed; }
+/* Phone: a form uses the width it has. A section's padding comes in; Save
+ * spans the form, as the thing the form is for; a wizard's Back and Next
+ * share their row as halves; a row of action or test buttons shares its
+ * row instead of leaving them in a clump at one end. The wizard's step
+ * rail keeps one line: the step you are on is named, the others are their
+ * numbers, which they already are on a desktop beside the name. */
+@media (max-width: 700px) {
+  .ui-section { padding: 0.85rem 0.8rem; }
+  .ui-form-field { padding: 0.6rem 0; }
+  .ui-form-submit:not(.ui-wizard-next) { width: 100%; }
+  .ui-wizard-nav > button { flex: 1 1 0; }
+  :is(.ui-form-test-row, .ui-display-actions, .ui-pl-formactions) > .ui-row-btn { flex: 1 1 auto; }
+  .ui-wizard-rail { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .ui-wizard-rail::-webkit-scrollbar { display: none; }
+  .ui-wizard-rail-item { flex: 0 0 auto; }
+  .ui-wizard-rail-item:not(.active) .ui-wizard-rail-title { display: none; }
+}
 
 /* --- PipelineWatchPanel — live pipeline-follow view --- */
 .ui-watch { display: flex; flex-direction: column; gap: 0; }
@@ -3352,11 +3369,12 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-pl-input:focus { outline: none; border-color: var(--accent); }
 .ui-pl-textarea { resize: vertical; min-height: 3rem; }
 .ui-pl-file { padding: 0.35rem 0.5rem; cursor: pointer; }
-.ui-pl-file::file-selector-button {
+.ui-pl-file::file-selector-button,
+.ui-form-file-input::file-selector-button {
   font-family: inherit; font-size: var(--fs-sm); cursor: pointer;
   margin-right: 0.6rem; padding: 0.3rem 0.6rem;
   background: var(--bg-2, var(--bg-1)); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
 }
 .ui-pl-file-status { font-size: var(--fs-sm); color: var(--text-mute); min-height: 1rem; }
 .ui-pl-file-status.is-error { color: var(--danger, #e5534b); }
@@ -6518,6 +6536,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
    * <button> centres its content at any height; the two that are <span>s
    * need a box to grow. */
   :is(.ui-seg, .ui-agent-seg, .ui-live-pill, .ui-live-stop, .ui-assist-mode,
+      .ui-wizard-rail-item,
       .ui-form-chip, .ui-chat-tools-toggle, .ui-agent-earlier-btn,
       .ui-cw-prof-pill, .ui-cw-prof-save, .ui-cw-coll-add, .ui-tw-variant,
       .ui-suggest-pick, .ui-chip, .ui-chat-act, .ui-rules-add, .ui-sec-add,
@@ -6553,6 +6572,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
       .ui-agent-attach-x, .ui-cp-pill-flag, .ui-msg-mark)::after {
     content: ""; position: absolute; inset: -0.55rem;
   }
+  /* A file field's own button is drawn by the browser, small. */
+  .ui-pl-file::file-selector-button,
+  .ui-form-file-input::file-selector-button { min-height: var(--btn-h-sm); padding: 0.4rem 0.75rem; }
   /* The editors' session lists size their delete smaller than the chat's,
    * more specifically than the rule above reaches. */
   .ui-cw .ui-chat-side-del, .ui-tw .ui-chat-side-del { width: 2.25rem; height: 2.25rem; }
