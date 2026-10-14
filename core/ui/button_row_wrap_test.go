@@ -91,6 +91,12 @@ func TestCrowdedRowsStayOneLineOnAPhone(t *testing.T) {
 	}
 	// One line must not widen the page: a row whose one-line width set the
 	// least its containers could be pushed My Apps' buttons off the screen.
+	// Contained, a row's width must come from its container: a table row with
+	// two-line cells does not stretch its items, and the row actions came out
+	// zero wide with every button gone.
+	if !regexp.MustCompile(`:is\(\.ui-row-actions[^)]*\)\s*\{[^}]*width:\s*100%`).MatchString(block) {
+		t.Error("contained row actions no longer take their container's full width; in a table row with two-line cells they collapse to nothing")
+	}
 	if !strings.Contains(block, "contain: inline-size") {
 		t.Error("the one-line rows no longer keep their width to what they are given; their buttons will push the page wider than the screen")
 	}

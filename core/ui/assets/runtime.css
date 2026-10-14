@@ -1268,6 +1268,11 @@ select:-webkit-autofill {
     flex-wrap: nowrap !important; min-width: 0; contain: inline-size;
     overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
   }
+  /* Contained, a row's width no longer comes from its buttons, so it must
+   * come from its container: the full width, not stretched. A table row with
+   * two-line cells aligns its items to the start rather than stretching, which
+   * left contained row actions zero wide and their buttons gone (My Apps). */
+  :is(.ui-row-actions, .ui-pl-actions) { align-self: stretch; width: 100%; box-sizing: border-box; }
   .ui-pl-modal-h-actions { flex: 1 1 0; justify-content: flex-end; }
   .ui-agent.ui-agent-list-top .ui-agent-actions { flex: 1 1 0; }
   :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip,
