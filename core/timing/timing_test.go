@@ -178,3 +178,64 @@ func TestYearly(t *testing.T) {
 		}
 	}
 }
+
+// Once a month: on its day at its time, next month once this month's has
+// passed; a day a month does not have fires on that month's last day, and a
+// day counted from the end lands on the right day in months of any length.
+// It reads back from its cron-like form and is labelled in words.
+func TestMonthly(t *testing.T) {
+	loc := time.UTC
+	d := func(y, mo, day, h int) time.Time { return time.Date(y, time.Month(mo), day, h, 0, 0, 0, loc) }
+	for _, c := range []struct {
+		name string
+		day  int
+		from time.Time
+		want time.Time
+	}{
+		{"the 28th, later this month", 28, d(2026, 10, 14, 11), d(2026, 10, 28, 9)},
+		{"the 28th, passed: next month", 28, d(2026, 10, 28, 9), d(2026, 11, 28, 9)},
+		{"the 31st in a 30-day month is its last day", 31, d(2026, 11, 1, 0), d(2026, 11, 30, 9)},
+		{"the 31st in February", 31, d(2027, 2, 1, 0), d(2027, 2, 28, 9)},
+		{"the 31st in a leap February", 31, d(2028, 2, 1, 0), d(2028, 2, 29, 9)},
+		{"the last day", -1, d(2026, 11, 1, 0), d(2026, 11, 30, 9)},
+		{"the last day of December rolls the year", -1, d(2026, 12, 31, 10), d(2027, 1, 31, 9)},
+		{"the 3rd to last day of February", -3, d(2027, 2, 1, 0), d(2027, 2, 26, 9)},
+		{"the 3rd to last day of October", -3, d(2026, 10, 14, 0), d(2026, 10, 29, 9)},
+	} {
+		s := Spec{How: HowMonthly, Day: c.day, Times: []int{540}}
+		if got, err := s.Next(c.from, nil); err != nil || !got.Equal(c.want) {
+			t.Errorf("%s: %v %v, want %v", c.name, got, err, c.want)
+		}
+	}
+	for cron, want := range map[string]int{"MONTHLY-28 09:00": 28, "monthly-last 09:00": -1, "MONTHLY-LAST3 09:00": -3} {
+		got, ok := FromCron(cron)
+		if !ok || got.How != HowMonthly || got.Day != want || got.Times[0] != 540 {
+			t.Errorf("%s: %+v %v", cron, got, ok)
+		}
+	}
+	for _, day := range []int{1, 28, 31, -1, -2, -7} {
+		back, ok := FromCron(MonthlyCron(day, 540))
+		if !ok || back.Day != day {
+			t.Errorf("MonthlyCron(%d) = %q does not read back: %+v %v", day, MonthlyCron(day, 540), back, ok)
+		}
+	}
+	for _, bad := range []string{"MONTHLY-0 09:00", "MONTHLY-32 09:00", "MONTHLY-LAST8 09:00", "MONTHLY-x 09:00", "MONTHLY-28th 09:00"} {
+		if _, ok := FromCron(bad); ok {
+			t.Errorf("%s was accepted", bad)
+		}
+	}
+	for day, want := range map[int]string{
+		28: "every month on the 28th at 09:00",
+		1:  "every month on the 1st at 09:00",
+		22: "every month on the 22nd at 09:00",
+		-1: "every month on the last day at 09:00",
+		-2: "every month on the 2nd to last day at 09:00",
+	} {
+		if got := (Spec{How: HowMonthly, Day: day, Times: []int{540}}).Label(); got != want {
+			t.Errorf("label(%d) = %q, want %q", day, got, want)
+		}
+	}
+	if (Spec{How: HowMonthly, Day: 28, Times: []int{540, 600}}).Validate() == nil {
+		t.Error("two times a month was accepted")
+	}
+}

@@ -28,6 +28,7 @@ const (
 	HowRandomCount = "random_count" // PerDay times a day at random, inside the window
 	HowRandomGap   = "random_gap"   // at random gaps of MinGap to MaxGap, inside the window
 	HowYearly      = "yearly"       // once a year, on Month/Day at Times[0]
+	HowMonthly     = "monthly"      // once a month, on Day at Times[0]
 )
 
 // Day masks: bit d is time.Weekday d (Sunday is bit 0).
@@ -44,9 +45,13 @@ type Spec struct {
 	// How it fires on those days: one of the How constants.
 	How string `json:"how"`
 	// Times of day, minutes after local midnight, for HowDaily / HowTimes,
-	// and HowYearly's one time.
+	// and HowYearly's and HowMonthly's one time.
 	Times []int `json:"times,omitempty"`
 	// Month (1-12) and Day (1-31) for HowYearly. Feb 29 fires in leap years.
+	// HowMonthly takes Day alone: 1-31, where a day the month does not have
+	// fires on its last day (the 31st is Apr 30), or counted from the end,
+	// -1 the last day, -2 the one before it, down to -7, for "near the end
+	// of the month" when months differ in length.
 	Month int `json:"month,omitempty"`
 	Day   int `json:"day,omitempty"`
 	// EverySeconds is the interval for HowEvery. Seconds, so a monitor's
@@ -130,6 +135,13 @@ func (s Spec) Validate() error {
 		}
 		if len(s.Times) != 1 || s.Times[0] < 0 || s.Times[0] >= 24*60 {
 			return errors.New("once a year takes one time of day")
+		}
+	case HowMonthly:
+		if s.Day == 0 || s.Day > 31 || s.Day < -7 {
+			return errors.New("pick a day of the month, 1 to 31, or the last day or up to 6 days before it")
+		}
+		if len(s.Times) != 1 || s.Times[0] < 0 || s.Times[0] >= 24*60 {
+			return errors.New("once a month takes one time of day")
 		}
 	case "":
 		return errors.New("say how often it runs")
@@ -221,6 +233,14 @@ func (s Spec) Next(from time.Time, rnd func() float64) (time.Time, error) {
 				return c, nil
 			}
 		}
+	case HowMonthly:
+		for i := 0; i <= 2; i++ {
+			first := time.Date(from.Year(), from.Month()+time.Month(i), 1, 0, 0, 0, 0, from.Location())
+			c := first.AddDate(0, 0, s.monthDay(first)-1).Add(time.Duration(s.Times[0]) * time.Minute)
+			if c.After(from) {
+				return c, nil
+			}
+		}
 	case HowDaily, HowTimes:
 		times := append([]int(nil), s.Times...)
 		sort.Ints(times)
@@ -277,6 +297,44 @@ func (s Spec) Next(from time.Time, rnd func() float64) (time.Time, error) {
 		}
 	}
 	return time.Time{}, errors.New("no time to fire was found")
+}
+
+// monthDay is the day HowMonthly fires in the month that starts at first:
+// Day itself, or the month's last day when it has no such day, or counted
+// back from the end for a negative Day.
+func (s Spec) monthDay(first time.Time) int {
+	last := first.AddDate(0, 1, -1).Day()
+	if s.Day < 0 {
+		return last + 1 + s.Day
+	}
+	return min(s.Day, last)
+}
+
+// MonthDayWords names a HowMonthly Day: "the 28th", "the last day", "the 2nd
+// to last day".
+func MonthDayWords(day int) string {
+	switch {
+	case day == -1:
+		return "the last day"
+	case day < 0:
+		return "the " + ordinal(-day) + " to last day"
+	}
+	return "the " + ordinal(day)
+}
+
+func ordinal(n int) string {
+	suf := "th"
+	if n%100 < 11 || n%100 > 13 {
+		switch n % 10 {
+		case 1:
+			suf = "st"
+		case 2:
+			suf = "nd"
+		case 3:
+			suf = "rd"
+		}
+	}
+	return fmt.Sprintf("%d%s", n, suf)
 }
 
 // Done reports whether a stop has been reached: the date has passed, or it has
@@ -369,10 +427,12 @@ func (s Spec) Label() string {
 		b.WriteString("at random, every " + gapWords(s.MinGapSeconds, s.MaxGapSeconds))
 	case HowYearly:
 		b.WriteString(fmt.Sprintf("every year on %s %d at %s", time.Month(s.Month).String()[:3], s.Day, HHMM(s.Times[0])))
+	case HowMonthly:
+		b.WriteString("every month on " + MonthDayWords(s.Day) + " at " + HHMM(s.Times[0]))
 	default:
 		return "(no schedule)"
 	}
-	if s.How != HowDaily && s.How != HowTimes && s.How != HowYearly {
+	if s.How != HowDaily && s.How != HowTimes && s.How != HowYearly && s.How != HowMonthly {
 		if s.HasWindow {
 			b.WriteString(" between " + HHMM(s.WindowFrom) + " and " + HHMM(s.WindowTo))
 		}
@@ -404,8 +464,9 @@ var weekdayNames = map[string]time.Weekday{
 }
 
 // FromCron reads the "{days} HH:MM" form scheduled agents have always stored
-// ("daily 09:00", "weekdays 17:00", "MON,WED 08:30"), and an annual date
-// ("DEC-25 09:00") as HowYearly.
+// ("daily 09:00", "weekdays 17:00", "MON,WED 08:30"), an annual date
+// ("DEC-25 09:00") as HowYearly, and a monthly one as HowMonthly (see
+// MonthlyCron).
 func FromCron(spec string) (Spec, bool) {
 	parts := strings.Fields(strings.TrimSpace(spec))
 	if len(parts) != 2 {
@@ -416,6 +477,10 @@ func FromCron(spec string) (Spec, bool) {
 		return Spec{}, false
 	}
 	at := t.Hour()*60 + t.Minute()
+	if day, ok := monthlyDay(parts[0]); ok {
+		m := Spec{How: HowMonthly, Day: day, Times: []int{at}}
+		return m, m.Validate() == nil
+	}
 	if mon, day, ok := monthDay(parts[0]); ok {
 		y := Spec{How: HowYearly, Month: mon, Day: day, Times: []int{at}}
 		return y, y.Validate() == nil
@@ -460,4 +525,42 @@ func monthDay(tok string) (month, day int, ok bool) {
 		return 0, 0, false
 	}
 	return month, day, true
+}
+
+// MonthlyCron is a HowMonthly day and time in the cron-like form FromCron
+// reads: "MONTHLY-28 09:00", "MONTHLY-LAST 09:00", "MONTHLY-LAST2 09:00"
+// for the 2nd to last day.
+func MonthlyCron(day, at int) string {
+	tok := fmt.Sprintf("MONTHLY-%d", day)
+	switch {
+	case day == -1:
+		tok = "MONTHLY-LAST"
+	case day < 0:
+		tok = fmt.Sprintf("MONTHLY-LAST%d", -day)
+	}
+	return tok + " " + HHMM(at)
+}
+
+// monthlyDay reads MonthlyCron's day part into a HowMonthly Day.
+func monthlyDay(tok string) (int, bool) {
+	t := strings.ToLower(tok)
+	if !strings.HasPrefix(t, "monthly-") {
+		return 0, false
+	}
+	t = strings.TrimPrefix(t, "monthly-")
+	back := strings.HasPrefix(t, "last")
+	if back {
+		t = strings.TrimPrefix(t, "last")
+		if t == "" {
+			return -1, true
+		}
+	}
+	var n int
+	if _, err := fmt.Sscanf(t, "%d", &n); err != nil || fmt.Sprint(n) != t || n < 1 {
+		return 0, false
+	}
+	if back {
+		return -n, true
+	}
+	return n, true
 }

@@ -248,6 +248,28 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
         if (!alerted || alerted.indexOf('February has no day 30') < 0) fail('nothing said why: ' + alerted);`,
 		},
 		{
+			// Once a month counted from the end ("the last day") opens as
+			// once a month and keeps its day, rather than turning daily.
+			name:   "a monthly schedule opens as monthly and keeps its day",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'roundup', mission: 'post the releases', timing: {how: 'monthly', day: -1, times: [540]}}`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        var tm = posted.timing || {};
+        if (tm.how !== 'monthly' || tm.day !== -1 || !tm.times || tm.times[0] !== 540) fail('a re-save lost the day: ' + JSON.stringify(tm));`,
+		},
+		{
+			name:   "a daily schedule can be made monthly",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'roundup', mission: 'post the releases', timing: {how: 'daily', times: [540]}}`,
+			edit: `global.made.select[1].value = 'monthly';
+        global.made.select[5].value = '28';`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        var tm = posted.timing || {};
+        if (tm.how !== 'monthly' || tm.day !== 28 || !tm.times || tm.times[0] !== 540 || tm.days) fail('monthly: ' + JSON.stringify(tm));`,
+		},
+		{
 			name:   "a random schedule opens as random and keeps its gaps",
 			action: "orchestrate_edit_standing",
 			record: `{name: 'poster', mission: 'post something', timing: {how: 'random_gap', min_gap_seconds: 1800, max_gap_seconds: 3600}}`,

@@ -12,6 +12,8 @@ import (
 	"math/rand"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/timing"
 )
 
 var cronWeekdays = map[string]time.Weekday{
@@ -46,6 +48,7 @@ var cronMonths = map[string]time.Month{
 //   - "weekdays"           — Monday–Friday
 //   - "weekends"           — Saturday–Sunday
 //   - "MON-DD" month-day   — annual date, e.g. "APR-3", "DEC-25"
+//   - "MONTHLY-DD"         — once a month, "MONTHLY-28", "MONTHLY-LAST"
 func NextCronOccurrence(spec string, from time.Time) (time.Time, error) {
 	parts := strings.Fields(strings.TrimSpace(spec))
 	if len(parts) != 2 {
@@ -56,6 +59,11 @@ func NextCronOccurrence(spec string, from time.Time) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("invalid time %q in cron spec: use HH:MM (24-hour)", parts[1])
 	}
 	hour, min := t.Hour(), t.Minute()
+
+	// Once a month ("MONTHLY-28", "MONTHLY-LAST"): the timing rule owns it.
+	if m, ok := timing.FromCron(spec); ok && m.How == timing.HowMonthly {
+		return m.Next(from, nil)
+	}
 
 	// Month-day pattern: "APR-3", "DEC-25" — annual repeat.
 	if idx := strings.Index(parts[0], "-"); idx > 0 {

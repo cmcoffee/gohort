@@ -158,7 +158,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		"run_by":       {Type: "string", Description: "(relink) The agent that runs the parked schedule from now on, by name or id: usually the one made to replace the deleted agent."},
 		"when":         {Type: "string", Enum: []string{"at", "every", "value_crosses", "output_changes", "posted", "agent_says"}, Description: "(create) The trigger: at (once, at a time) | every (on a clock, report each time) | value_crosses (a URL's value crosses a line) | output_changes (a tool's output changes) | posted (an external POST) | agent_says (an agent judges a condition)."},
 		"then":         {Type: "string", Description: "(create, edit) What to do when it fires, in plain words. edit replaces only this. every: the mission run each time (\"fetch the forecast and post it to the family chat\"). at / monitors: handed to you on wake (\"tell the user it's 1:10pm, as they asked\")."},
-		"time":         {Type: "string", Description: "(create) When, as the user said it, in their own zone (the one time_in_zone reports; never convert to UTC). at: \"13:10\", \"1:10pm\", \"in 20 minutes\", or ISO8601. every: \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", set times \"09:00,13:00\", or once a year \"DEC-25 09:00\" / \"every year on Dec 25 at 9am\". Monitors: optional set times of day to check, \"08:00\" or \"08:00,18:00\", instead of check_every."},
+		"time":         {Type: "string", Description: "(create) When, as the user said it, in their own zone (the one time_in_zone reports; never convert to UTC). at: \"13:10\", \"1:10pm\", \"in 20 minutes\", or ISO8601. every: \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", set times \"09:00,13:00\", once a month \"monthly on the 28th at 9am\" / \"monthly on the last day at 9am\" / \"monthly on the 2nd to last day at 9am\" (a day a month lacks runs on its last day), or once a year \"DEC-25 09:00\" / \"every year on Dec 25 at 9am\". Monitors: optional set times of day to check, \"08:00\" or \"08:00,18:00\", instead of check_every."},
 		"name":         {Type: "string", Description: "(create: optional, one is made up; pause/resume/run_now/delete: required) Short name, e.g. \"daily-weather\", \"nvda-below\"."},
 		"agent":        {Type: "string", Description: "(at: who is woken to do it, default you; every: who runs it, default you; agent_says: who checks, default you; list / delete / move: WHOSE schedules to act on, another of your own agents by name or id, or \"all\" for every agent you own, list only) Name or id of an existing agent."},
 		"pipeline":     {Type: "string", Description: "(every, instead of agent) A stored pipeline to run; `then` becomes its input."},
@@ -741,6 +741,11 @@ func scheduleOwnRecurring(rec recurringImpl, cron string, interval int, then, na
 	case strings.HasPrefix(cron, "daily "):
 		m["pattern"] = RecurringDaily
 		m["daily_at"] = strings.TrimPrefix(cron, "daily ")
+	case strings.HasPrefix(cron, "MONTHLY-") && m["timing"] != nil:
+		// Once a month has no pattern of its own: the timing is the whole
+		// answer, and the pattern fields only say what time of day it is.
+		m["pattern"] = RecurringDaily
+		m["daily_at"] = cron[strings.LastIndex(cron, " ")+1:]
 	default:
 		return "", fmt.Errorf("a task of your own repeats at an interval or daily at set times; %q is a weekday pattern it cannot keep. Say so, or offer the daily version", cron)
 	}
@@ -761,6 +766,12 @@ func scheduleOwnRecurring(rec recurringImpl, cron string, interval int, then, na
 }
 
 var (
+	// "monthly on the 28th at 9am", "every month on the last day at 09:00",
+	// "the 2nd to last day of each month at 9", "28th of every month 09:00",
+	// "28th 09:00": a day of the month in words, read into the MONTHLY form.
+	// Groups: 1 every/each month, 2 monthly, 3 last, 4 the day's number, 5
+	// its ordinal ending, 6 "to last", 7 "of every month", 8 the time.
+	everyMonthlyRe = regexp.MustCompile(`(?i)^(?:(?:every|each)\s+(month)\s+|(monthly)\s+)?(?:on\s+)?(?:the\s+)?(?:(last)|(\d{1,2})(st|nd|rd|th)?(?:[\s-]+(to[\s-]+last))?)(?:\s+day)?(\s+of\s+(?:every|each|the)\s+month)?,?\s+(?:at\s+)?(.+)$`)
 	// "every year on Dec 25 at 9am", "yearly on December 25th 09:00",
 	// "Dec 25 at 9am": a date in words, read into the MON-DD form.
 	everyYearlyRe   = regexp.MustCompile(`(?i)^(?:(?:every|each)\s+year\s+on\s+|(?:yearly|annually)\s+on\s+|(?:yearly|annually)\s+|on\s+)?([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(?:at\s+)?(.+)$`)
@@ -800,6 +811,12 @@ func parseEverySpec(s string) (cron string, interval int, err error) {
 			return "", 0, fmt.Errorf("could not read %q as an interval", s)
 		}
 		return "", secs, nil
+	}
+	if spec, ok := monthlySpec(s); ok {
+		if _, ok := timing.FromCron(spec); !ok {
+			return "", 0, fmt.Errorf("could not read %q as a day of the month: use the 1st to the 31st (a day a month does not have runs on its last day), the last day, or up to the 7th to last day", s)
+		}
+		return spec, 0, nil
 	}
 	if mm := everyYearlyRe.FindStringSubmatch(s); mm != nil {
 		if mon := yearMonth(mm[1]); mon != "" {
@@ -859,7 +876,42 @@ func parseEverySpec(s string) (cron string, interval int, err error) {
 	if clock, cerr := clockHHMM(s); cerr == nil {
 		return "daily " + clock, 0, nil
 	}
-	return "", 0, fmt.Errorf("could not read %q as a schedule: use \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", or once a year \"DEC-25 09:00\"", s)
+	return "", 0, fmt.Errorf("could not read %q as a schedule: use \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", once a month \"monthly on the 28th at 9am\" or \"monthly on the last day at 9am\", or once a year \"DEC-25 09:00\"", s)
+}
+
+// monthlySpec reads a day of the month in words (everyMonthlyRe) into the
+// MONTHLY form timing.FromCron takes, or the form itself ("MONTHLY-28
+// 09:00"). Only words that say "month" somewhere, or an ordinal day ("28th"),
+// read as monthly: "28 09:00" alone is not. ok with a spec FromCron refuses
+// means it was meant as monthly but the day is out of range.
+func monthlySpec(s string) (string, bool) {
+	if f := strings.Fields(s); len(f) == 2 && strings.HasPrefix(strings.ToUpper(f[0]), "MONTHLY-") {
+		return strings.ToUpper(f[0]) + " " + f[1], true
+	}
+	mm := everyMonthlyRe.FindStringSubmatch(s)
+	if mm == nil {
+		return "", false
+	}
+	saysMonth := mm[1] != "" || mm[2] != "" || mm[7] != ""
+	if !saysMonth && (mm[3] != "" || mm[5] == "") {
+		return "", false
+	}
+	clock, err := clockHHMM(strings.TrimSpace(mm[8]))
+	if err != nil {
+		return "", false
+	}
+	at, _ := time.Parse("15:04", clock)
+	day := -1
+	if mm[3] == "" {
+		day, _ = strconv.Atoi(mm[4])
+		if mm[6] != "" {
+			day = -day
+		}
+	}
+	if day == 0 {
+		return "MONTHLY-0 " + clock, true
+	}
+	return timing.MonthlyCron(day, at.Hour()*60+at.Minute()), true
 }
 
 // yearMonth is a month name or its three-letter form as the MON the yearly

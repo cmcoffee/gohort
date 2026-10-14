@@ -7865,6 +7865,7 @@ select.ui-orch-intake-input {
           ['every', 'Every…'],
           ['random_count', 'At random, a number of times a day'],
           ['random_gap', 'At random gaps'],
+          ['monthly', 'Once a month'],
           ['yearly', 'Once a year']
         ], spec.how || 'daily');
         host.appendChild(schedLabeled('How often', how));
@@ -7937,11 +7938,38 @@ select.ui-orch-intake-input {
         var yearRow = schedLabeled('On (local time)', yearWrap);
         host.appendChild(yearRow);
 
+        // Once a month: a day and a time, the day counted from the start or
+        // back from the end, since months differ in length. Built after the
+        // year row, so every input above keeps its place.
+        // 1 -> "1st", 22 -> "22nd", 13 -> "13th".
+        function ordinal(n) {
+          var t = n % 100, suf = 'th';
+          if (t < 11 || t > 13) suf = ({1: 'st', 2: 'nd', 3: 'rd'})[n % 10] || 'th';
+          return n + suf;
+        }
+        var mDays = [];
+        for (var md = 1; md <= 31; md++) mDays.push([String(md), ordinal(md)]);
+        mDays.push(['-1', 'Last day']);
+        for (var mb = 2; mb <= 7; mb++) mDays.push([String(-mb), ordinal(mb) + ' to last day']);
+        var mDay = schedSelect(mDays, String(spec.how === 'monthly' && spec.day ? spec.day : 1));
+        var mAt = schedTime(spec.how === 'monthly' && (spec.times || []).length ? schedHHMM(spec.times[0]) : '09:00');
+        var monthWrap = document.createElement('div');
+        monthWrap.style.cssText = 'display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap';
+        monthWrap.appendChild(document.createTextNode('the')); monthWrap.appendChild(mDay);
+        monthWrap.appendChild(document.createTextNode('at')); monthWrap.appendChild(mAt);
+        var monthRow = schedLabeled('Each month on (local time)', monthWrap);
+        var monthNote = document.createElement('div');
+        monthNote.className = 'ui-form-help';
+        monthNote.textContent = 'A day a month does not have, such as the 31st in April, runs on that month\'s last day.';
+        monthRow.appendChild(monthNote);
+        host.appendChild(monthRow);
+
         function show(el, on) { el.style.display = on ? '' : 'none'; }
         function sync() {
           var h = how.value;
-          show(days.el, h !== 'yearly');
+          show(days.el, h !== 'yearly' && h !== 'monthly');
           show(yearRow, h === 'yearly');
+          show(monthRow, h === 'monthly');
           show(dailyRow, h === 'daily');
           show(timesRow, h === 'times');
           show(everyRow, h === 'every');
@@ -7960,6 +7988,11 @@ select.ui-orch-intake-input {
             if (isNaN(dd) || dd < 1 || dd > most) { window.uiAlert(monthNames[mon - 1] + ' has no day ' + (isNaN(dd) ? '' : dd) + '.'); return null; }
             if (ym < 0) { window.uiAlert('Pick a time of day.'); return null; }
             return {timing: {how: 'yearly', month: mon, day: dd, times: [ym]}};
+          }
+          if (h === 'monthly') {
+            var mm = schedMinutes(mAt.value);
+            if (mm < 0) { window.uiAlert('Pick a time of day.'); return null; }
+            return {timing: {how: 'monthly', day: parseInt(mDay.value, 10), times: [mm]}};
           }
           if (days.empty()) { window.uiAlert('Pick at least one day.'); return null; }
           var out = {how: how.value, days: days.mask()};
