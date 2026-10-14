@@ -416,6 +416,12 @@ func RefToolSlug(name string) string {
 type ReferenceSelection struct {
 	Kind   string `json:"kind"`
 	ItemID string `json:"item_id"`
+	// Writes lets the attachment's tools that make changes (CapWrite) reach
+	// the agent: a guide's report tool, say. Off by default, and set only by
+	// the person, in the Sources picker: without it an attached source is
+	// read-only, so an agent that should read a source cannot also feed it
+	// unless somebody chose that.
+	Writes bool `json:"writes,omitempty"`
 }
 
 // Ref renders a selection as the "kind:item" handle the tools and the
@@ -489,16 +495,21 @@ func (rs *ReferenceSelections) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// clean_selections drops blanks and duplicates, preserving order.
+// clean_selections drops blanks and duplicates, preserving order. A
+// duplicate's Writes is kept: one copy granting it is a grant.
 func clean_selections(in []ReferenceSelection) []ReferenceSelection {
 	out := in[:0:0]
-	seen := map[string]bool{}
+	at := map[string]int{}
 	for _, s := range in {
 		s.Kind, s.ItemID = strings.TrimSpace(s.Kind), strings.TrimSpace(s.ItemID)
-		if s.Kind == "" || s.ItemID == "" || seen[s.Ref()] {
+		if s.Kind == "" || s.ItemID == "" {
 			continue
 		}
-		seen[s.Ref()] = true
+		if i, dup := at[s.Ref()]; dup {
+			out[i].Writes = out[i].Writes || s.Writes
+			continue
+		}
+		at[s.Ref()] = len(out)
 		out = append(out, s)
 	}
 	return out

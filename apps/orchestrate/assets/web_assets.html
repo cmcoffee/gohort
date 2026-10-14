@@ -4947,7 +4947,7 @@ select.ui-orch-intake-input {
         var body = m.body;
         var help = document.createElement('div');
         help.className = 'ui-orch-modal-help';
-        help.textContent = 'What this agent can reach into. Attaching a source adds its own named tools to the agent, and the "Adds:" line on each row is exactly what appears in its catalog, so you can ask for it by name.';
+        help.textContent = 'What this agent can reach into. Attaching a source adds its own named tools to the agent, and the "Adds:" line on each row is exactly what appears in its catalog, so you can ask for it by name. A source that can be changed (a guide the agent reports into) starts Read only: switch it on its pill.';
         body.appendChild(help);
 
         var list = document.createElement('div');
@@ -4963,6 +4963,13 @@ select.ui-orch-intake-input {
           post_to: 'api/reference-sources?' + qp,
           name_field: 'id', label_field: 'name', desc_field: 'desc',
           group_by_field: 'group',
+          // A source whose tools can change it (a guide's report tool) is
+          // attached read-only until its pill is switched: an agent that
+          // should read a source does not also feed it unless somebody
+          // chose that. Only those sources show the switch.
+          flag_field: 'writes', flag_when_field: 'can_write',
+          flag_label: 'Can make changes', flag_off_label: 'Read only',
+          flag_help: 'Read only: the agent gets this source\u2019s reading tools. Can make changes: it also gets the tools that change it, named on the row as "with Can make changes". Click to switch.',
           noun: 'Source',
           empty_text: '(nothing to attach yet: file stores are assigned by an admin under Admin \u2192 Files, systems appear once you have appliances in servitor, and document services once connected)'
         }, list);

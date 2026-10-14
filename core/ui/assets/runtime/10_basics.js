@@ -1334,9 +1334,12 @@
                       : (cfg.attached_field ? (r[0] && r[0][cfg.attached_field]) : record[cfg.field])) || [];
       selected = selected.slice();
       // Seed the flag from its own field on the same record, so a reload shows
-      // what is stored rather than everybody back at the default.
+      // what is stored rather than everybody back at the default. In the
+      // dedicated-endpoint mode there is no record: the options response
+      // carries the flag beside the selection.
       if (cfg.flag_field) {
-        ((record && record[cfg.flag_field]) || []).forEach(function(v){ flagged[v] = true; });
+        var flagSrc = cfg.attached_field ? r[0] : record;
+        ((flagSrc && flagSrc[cfg.flag_field]) || []).forEach(function(v){ flagged[v] = true; });
       }
 
       // persist writes the current selection back. In local mode nothing is
@@ -1461,7 +1464,7 @@
             return;
           }
           var pill = el('span', {class: 'ui-cp-pill'}, [labelOf(opt)]);
-          if (cfg.flag_field) {
+          if (cfg.flag_field && (!cfg.flag_when_field || opt[cfg.flag_when_field])) {
             // Default OFF, and it says which state it is in rather than only
             // which state it can be put into: a control that reads "make
             // contributor" tells you nothing about the person in front of it.

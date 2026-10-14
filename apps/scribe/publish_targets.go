@@ -72,38 +72,80 @@ func (j *publishJob) activity(now string) {
 	}
 }
 
-// runPublishJob publishes req to kind in the background as g's publish job,
-// reporting its steps, and files rec (filled in with where it landed) on the
-// guide when it succeeds. It does not wait: the job is what the Publish
-// dialog follows, and rejoins when it opens mid-run.
+// publishRun is one publish of a guide to one place: what to send, where,
+// and the record to file on the guide when it lands.
+type publishRun struct {
+	guideID  string
+	ownerUDB Database
+	user     string
+	kind     string
+	where    string // the place's name, for the dialog and the record's note
+	req      docs.PublishRequest
+	rec      docs.PublishRecord
+}
+
+// runPublishJob publishes in the background as the guide's publish job. It
+// does not wait: the job is what the Publish dialog follows, and rejoins when
+// it opens mid-run.
 func runPublishJob(r *http.Request, g Guide, ownerUDB Database, user, kind, where string, req docs.PublishRequest, rec docs.PublishRecord) {
-	job := &publishJob{Target: where, Started: time.Now()}
-	publishJobsMu.Lock()
-	publishJobs[g.ID] = job
-	publishJobsMu.Unlock()
+	p := publishRun{guideID: g.ID, ownerUDB: ownerUDB, user: user, kind: kind, where: where, req: req, rec: rec}
+	job := p.register()
 	// Not on the request's context: the publish outlives the request, and a
 	// closed modal must not cancel a post halfway through.
-	ctx := docs.WithPublishSteps(context.WithoutCancel(r.Context()), job.step)
+	go p.do(context.WithoutCancel(r.Context()), job)
+}
+
+// register makes this the guide's publish job, so the dialog follows it.
+func (p publishRun) register() *publishJob {
+	job := &publishJob{Target: p.where, Started: time.Now()}
+	publishJobsMu.Lock()
+	publishJobs[p.guideID] = job
+	publishJobsMu.Unlock()
+	return job
+}
+
+// do publishes and waits for the outcome, reporting its steps and activity on
+// job, and files the record (filled in with where it landed) on the guide
+// when it succeeds. Returns the publish's error.
+func (p publishRun) do(ctx context.Context, job *publishJob) error {
+	ctx = docs.WithPublishSteps(ctx, job.step)
 	ctx = docs.WithPublishActivity(ctx, job.activity)
-	go func() {
-		res, err := docs.PublishDocument(ctx, user, kind, req)
-		publishJobsMu.Lock()
-		defer publishJobsMu.Unlock()
-		job.Done, job.Ended, job.Now = true, time.Now(), ""
-		if err != nil {
-			job.Message = err.Error()
-			return
-		}
-		job.OK, job.URL = true, res.URL
-		job.Message = chFirst(res.Label, "Published to "+where+".")
-		cur, ok := loadGuide(ownerUDB, g.ID)
-		if !ok {
-			return
-		}
-		rec.ExternalID, rec.URL, rec.Version, rec.At = res.ExternalID, res.URL, res.Version, now()
-		cur.Published = docs.UpsertPublishRecord(cur.Published, rec)
-		saveGuideRev(ownerUDB, cur, "Published to "+where)
-	}()
+	res, err := docs.PublishDocument(ctx, p.user, p.kind, p.req)
+	publishJobsMu.Lock()
+	defer publishJobsMu.Unlock()
+	job.Done, job.Ended, job.Now = true, time.Now(), ""
+	if err != nil {
+		job.Message = err.Error()
+		return err
+	}
+	job.OK, job.URL = true, res.URL
+	job.Message = chFirst(res.Label, "Published to "+p.where+".")
+	cur, ok := loadGuide(p.ownerUDB, p.guideID)
+	if !ok {
+		return nil
+	}
+	rec := p.rec
+	rec.ExternalID, rec.URL, rec.Version, rec.At = res.ExternalID, res.URL, res.Version, now()
+	cur.Published = docs.UpsertPublishRecord(cur.Published, rec)
+	saveGuideRev(p.ownerUDB, cur, "Published to "+p.where)
+	return nil
+}
+
+// republishOf is the publish that updates the copy prev records, with the
+// guide as it stands now: the same page, title and answers as last time.
+func republishOf(g Guide, ownerUDB Database, user string, prev docs.PublishRecord) publishRun {
+	where := firstNonEmpty(prev.TargetTitle, prev.Kind)
+	return publishRun{guideID: g.ID, ownerUDB: ownerUDB, user: user, kind: prev.Kind, where: where,
+		req: docs.PublishRequest{
+			Target:     prev.Target,
+			Title:      prev.Title,
+			Doc:        publishDoc(g, ownerUDB),
+			ExternalID: prev.ExternalID,
+			Version:    prev.Version,
+			Answers:    prev.Answers,
+		},
+		rec: prev,
+	}
 }
 
 // publishJobKeep is how long an outcome stays for a modal that opens late.

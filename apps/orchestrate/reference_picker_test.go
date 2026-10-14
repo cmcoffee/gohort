@@ -156,7 +156,7 @@ func TestAttachedSourcesAcceptsEitherShape(t *testing.T) {
 // ever says so.
 func TestSourceRowNamesTheToolsItAdds(t *testing.T) {
 	RegisterReferenceSource(fakeRefSource{kind: "testfiles", label: "Test files"})
-	desc := refPickerDesc("u", "testfiles", ReferenceItem{ID: "prod", Desc: "Nightly capture."})
+	desc := refPickerDesc(ReferenceItem{ID: "prod", Desc: "Nightly capture."}, ReferenceItemTools("u", "testfiles", "prod"))
 	if !strings.Contains(desc, "search_prod_logs") || !strings.Contains(desc, "read_prod_file") {
 		t.Errorf("row does not name the minted tools: %q", desc)
 	}
@@ -347,5 +347,133 @@ func TestSourcesEntryHidesWhenThereIsNothingToAttach(t *testing.T) {
 	}
 	if got := pruneToolbar(nil, actions); len(got) != 3 {
 		t.Errorf("with nothing hidden every entry stays, got %d", len(got))
+	}
+}
+
+// writableRefSource is a source with a reading tool and one that makes
+// changes, like a guide an agent reads and reports into.
+type writableRefSource struct{}
+
+func (writableRefSource) Kind() string  { return "testguide" }
+func (writableRefSource) Label() string { return "Test guides" }
+func (writableRefSource) List(user string) []ReferenceItem {
+	return []ReferenceItem{{ID: "triage", Name: "Triage"}}
+}
+func (writableRefSource) Fetch(ctx context.Context, user, itemID, query string) string { return "" }
+func (writableRefSource) ItemTools(user, itemID string) []AgentToolDef {
+	return []AgentToolDef{
+		{Tool: Tool{Name: "read_triage_guide", Caps: []Capability{CapRead}}},
+		{Tool: Tool{Name: "report_to_triage_guide", Caps: []Capability{CapWrite}}},
+	}
+}
+
+func sourceToolNames(user string, a AgentRecord) string {
+	var names []string
+	for _, td := range attachedSourceToolDefs(nil, user, a, nil) {
+		names = append(names, td.Tool.Name)
+	}
+	return strings.Join(names, ",")
+}
+
+// An attached source is read-only until its "Can make changes" is switched
+// on: the agent gets its reading tools only. The picker offers the switch on
+// a source that has a tool that writes and on no other, says which tool it
+// adds, and stores the switch with the attachment.
+func TestAnAttachedSourceIsReadOnlyUntilSwitched(t *testing.T) {
+	RegisterReferenceSource(writableRefSource{})
+	RegisterReferenceSource(fakeRefSource{kind: "testfiles", label: "Test files"})
+	app, udb, user := newTestOrchestrate(t)
+	saveAgent(udb, AgentRecord{ID: "a1", Name: "Diagnostics", OrchestratorPrompt: "You diagnose."})
+
+	get := func() (map[string]map[string]any, []string) {
+		w := httptest.NewRecorder()
+		app.handleReferenceSources(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent=a1", nil), user))
+		var out struct {
+			Items  []map[string]any `json:"items"`
+			Writes []string         `json:"writes"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v %s", err, w.Body.String())
+		}
+		rows := map[string]map[string]any{}
+		for _, it := range out.Items {
+			rows[it["id"].(string)] = it
+		}
+		return rows, out.Writes
+	}
+	rows, _ := get()
+	if rows["testguide:triage"]["can_write"] != true || rows["testfiles:prod"]["can_write"] != false {
+		t.Errorf("the switch should be offered on the source that writes only: %v / %v", rows["testguide:triage"], rows["testfiles:prod"])
+	}
+	if d := rows["testguide:triage"]["desc"].(string); d != "Adds: read_triage_guide; with Can make changes, also report_to_triage_guide" {
+		t.Errorf("row = %q", d)
+	}
+
+	post := func(body string) {
+		w := httptest.NewRecorder()
+		app.handleReferenceSources(w, asUser(httptest.NewRequest("POST", "/api/reference-sources?agent=a1", strings.NewReader(body)), user))
+		if w.Code != 200 {
+			t.Fatalf("POST %s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	post(`{"references":["testguide:triage"]}`)
+	a, _ := loadAgent(udb, "a1")
+	if got := sourceToolNames(user, a); got != "read_triage_guide" {
+		t.Errorf("attached read-only, the agent got %s", got)
+	}
+
+	post(`{"references":["testguide:triage"],"writes":["testguide:triage"]}`)
+	a, _ = loadAgent(udb, "a1")
+	if got := sourceToolNames(user, a); got != "read_triage_guide,report_to_triage_guide" {
+		t.Errorf("with Can make changes, the agent got %s", got)
+	}
+	if _, writes := get(); strings.Join(writes, ",") != "testguide:triage" {
+		t.Errorf("the picker does not read the switch back: %v", writes)
+	}
+}
+
+// Builder names sources as strings, which cannot carry the switch: a source
+// it keeps attached keeps the person's setting, and one it adds starts
+// read-only. An imported agent's sources all arrive read-only.
+func TestTheSwitchSurvivesBuilderAndNotImport(t *testing.T) {
+	old := []ReferenceSelection{{Kind: "testguide", ItemID: "triage", Writes: true}, {Kind: "testfiles", ItemID: "prod"}}
+	got := keepSourceWrites([]ReferenceSelection{{Kind: "testguide", ItemID: "triage"}, {Kind: "testguide", ItemID: "other"}}, old)
+	if !got[0].Writes || got[1].Writes {
+		t.Errorf("after Builder's edit: %+v", got)
+	}
+
+	a := AgentRecord{AttachedSources: ReferenceSelections{{Kind: "testguide", ItemID: "triage", Writes: true}}}
+	makeImportedAgentInert(&a)
+	if a.AttachedSources[0].Writes {
+		t.Error("an imported agent kept Can make changes on a source")
+	}
+
+	var rec AgentRecord
+	if err := json.Unmarshal([]byte(`{"attached_sources":[{"kind":"testguide","item_id":"triage"},{"kind":"testguide","item_id":"triage","writes":true}]}`), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.AttachedSources) != 1 || !rec.AttachedSources[0].Writes {
+		t.Errorf("a duplicate that grants it should keep it: %+v", rec.AttachedSources)
+	}
+}
+
+// Builder is told a source it attaches is read-only, and that switching
+// Can make changes is the person's: its listing names the tools that need
+// it apart, and its attached_sources description says so. Without that it
+// reports an agent that "can now update the guide" when it cannot.
+func TestBuilderKnowsASourceItAttachesIsReadOnly(t *testing.T) {
+	RegisterReferenceSource(writableRefSource{})
+	out := renderReferenceSources("u")
+	if !strings.Contains(out, "testguide:triage, Triage (Adds: read_triage_guide; with Can make changes, also report_to_triage_guide)") {
+		t.Errorf("the listing does not name the write tool apart:\n%s", out)
+	}
+	src, err := os.ReadFile("agent_crud_tools.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"A source attached here is READ-ONLY", "which you cannot do", "tell the person to switch it"} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("attached_sources does not tell Builder %q", want)
+		}
 	}
 }

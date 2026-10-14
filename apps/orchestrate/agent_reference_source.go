@@ -78,12 +78,27 @@ func (s agentReferenceSource) Fetch(ctx context.Context, user, itemID, query str
 		"\n\nAnswer from what you actually know: the specific names, shapes, values and conventions involved. " +
 		"If you don't have something, say which part you don't have rather than filling it in: they are about to write code or prose on top of this answer, " +
 		"and an invented detail will look correct. Answer only; take no action and produce no deliverable."
-	out, err := s.app.RunAgentSync(ctx, user, user, itemID, ask, "reference")
+	// Confirmations are DECLINED. A consultation is answer-only, and an
+	// answer never needs an action somebody has to approve; "take no action"
+	// above is an instruction the agent can ignore, this is the part that
+	// holds. RunAgentSync approves every confirmation (a delegation has a
+	// person behind it), which let a consulted agent past a credential that
+	// asks first, or the owner's ask-before marks, on the strength of a
+	// question.
+	run, err := s.app.runAgentSyncConfirm(ctx, user, user, itemID, ask, declineConsultConfirm, "reference")
 	if err != nil {
 		Log("[orchestrate.reference] agent %q could not answer for %q: %v", itemID, user, err)
 		return ""
 	}
-	return strings.TrimSpace(out)
+	return strings.TrimSpace(run.Text)
+}
+
+// declineConsultConfirm is a consultation's answer to every confirmation:
+// no. A tool that needs approval is not run, and the agent answers from what
+// it can read.
+func declineConsultConfirm(tool, detail string) bool {
+	Log("[orchestrate.reference] a consultation declined %s: answer-only runs approve no actions", tool)
+	return false
 }
 
 // ItemTools gives the consumer a named tool per attached agent, so the model can

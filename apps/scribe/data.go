@@ -86,6 +86,10 @@ type Guide struct {
 	Published []docs.PublishRecord `json:"published,omitempty"`
 	Created   string               `json:"created"`
 	Updated   string               `json:"updated"`
+
+	// KeepPublished updates every place in Published each time the Guide
+	// Curator changes the guide (keep_published.go).
+	KeepPublished bool `json:"keep_published,omitempty"`
 }
 
 // upgradeLegacyArticle turns a stored article (one body under a title) into a

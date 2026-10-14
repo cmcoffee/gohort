@@ -130,6 +130,9 @@ func (T *Scribe) Routes() {
 	// Register Scribe as a write target so other apps (servitor) can push a
 	// section into a user's guide.
 	RegisterDocumentTarget(&guideTarget{app: T})
+	// A guide as a Source an agent is attached to: it reads and searches the
+	// guide and reports findings into it (agent_source.go).
+	RegisterReferenceSource(guideSource{app: T})
 	// The cross-app "save this as a document" seam TechWriter used to fill:
 	// servitor's save tool and its per-reply save button land a guide here.
 	T.installSaveArticleHook()

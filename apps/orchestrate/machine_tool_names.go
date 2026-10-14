@@ -173,7 +173,7 @@ func agentCatalogPreview(user string, ag AgentRecord) []AgentToolDef {
 	// because a list named them, so the allowlist does not gate them.
 	add(AgentProvidedTools(sess, user, ag.ID)...)
 	for _, ref := range ag.AttachedSources {
-		add(ReferenceItemTools(user, strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.ItemID))...)
+		add(sourceToolsFor(ref, ReferenceItemTools(user, strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.ItemID)))...)
 	}
 	return out
 }

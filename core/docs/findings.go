@@ -59,6 +59,12 @@ type Finding struct {
 	// into that user's inbox; the curator later runs in the owning context of
 	// whatever document it decides on.
 	Submitter string `json:"submitter,omitempty"`
+	// Document is the document the producer was attached to by its owner, when
+	// it was: an agent given a guide as a Source reports into THAT guide. Not
+	// a placement (the curator still decides the section, and whether it
+	// belongs at all); it says where the owner pointed this producer. Empty
+	// for a producer with no document of its own.
+	Document string `json:"document,omitempty"`
 }
 
 // FindingTarget is an optional interface a DocumentTarget implements to accept

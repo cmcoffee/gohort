@@ -91,6 +91,8 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 		T.handlePublishTo(w, r, udb, user)
 	case path == "publish/job":
 		T.handlePublishJob(w, r, udb, user)
+	case path == "publish/keep":
+		T.handleKeepPublished(w, r, udb, user)
 	// Curator: the digest (what it did), the queue (what it has not done yet),
 	// an undo per decision, and a manual drain.
 	case path == "curator/runs":
@@ -891,6 +893,9 @@ func (T *Scribe) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 		items := []map[string]string{}
 		for _, grp := range ReferenceGroups(user) {
 			for _, it := range grp.Items {
+				if grp.Kind == "guide" && it.ID == gid {
+					continue // a guide is not a source for itself
+				}
 				items = append(items, map[string]string{
 					// ReferenceSelection.Ref(), NOT a hand-rolled join. This built
 					// "kind::item" while core emits "kind:item", so the two

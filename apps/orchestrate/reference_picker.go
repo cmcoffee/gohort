@@ -61,31 +61,47 @@ func (T *OrchestrateApp) handleReferenceSources(w http.ResponseWriter, r *http.R
 		items := []map[string]any{}
 		for _, grp := range ReferenceGroups(user) {
 			for _, it := range grp.Items {
+				tools := ReferenceItemTools(user, grp.Kind, it.ID)
 				row := map[string]any{
 					"id":    ReferenceSelection{Kind: grp.Kind, ItemID: it.ID}.Ref(),
 					"name":  it.Name,
-					"desc":  refPickerDesc(user, grp.Kind, it),
+					"desc":  refPickerDesc(it, tools),
 					"group": grp.Label,
+					// Offers the "Can make changes" switch on its pill: only
+					// a source with tools that write has anything to switch.
+					"can_write": len(sourceWriteTools(tools)) > 0,
 				}
 				items = append(items, row)
 			}
 		}
-		attached := []string{}
+		attached, writes := []string{}, []string{}
 		for _, s := range rec.AttachedSources {
 			attached = append(attached, s.Ref())
+			if s.Writes {
+				writes = append(writes, s.Ref())
+			}
 		}
-		writeJSON(w, map[string]any{"items": items, "attached": attached})
+		writeJSON(w, map[string]any{"items": items, "attached": attached, "writes": writes})
 	case http.MethodPost:
 		var body struct {
 			References []string `json:"references"`
+			// Writes is the attached sources whose "Can make changes" is on.
+			Writes []string `json:"writes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		writes := map[string]bool{}
+		for _, ref := range body.Writes {
+			if s, ok := ParseReferenceRef(ref); ok {
+				writes[s.Ref()] = true
+			}
+		}
 		sel := make(ReferenceSelections, 0, len(body.References))
 		for _, ref := range body.References {
 			if s, ok := ParseReferenceRef(ref); ok {
+				s.Writes = writes[s.Ref()]
 				sel = append(sel, s)
 			}
 		}
@@ -119,21 +135,83 @@ func (T *OrchestrateApp) handleReferenceSources(w http.ResponseWriter, r *http.R
 // file store and then asks the agent to "check the logs in the log
 // folder" has no way to learn the tool is called search_prod_logs unless
 // this line says so.
-func refPickerDesc(user, kind string, it ReferenceItem) string {
+//
+// A tool that makes changes is listed apart, as what "Can make changes"
+// adds, so the line does not promise it to an attachment left read-only.
+func refPickerDesc(it ReferenceItem, tools []AgentToolDef) string {
 	desc := strings.TrimSpace(it.Desc)
-	tools := ReferenceItemTools(user, kind, it.ID)
 	if len(tools) == 0 {
 		return desc
 	}
-	names := make([]string, 0, len(tools))
+	var reads, writes []string
 	for _, t := range tools {
-		names = append(names, t.Tool.Name)
+		if toolWrites(t) {
+			writes = append(writes, t.Tool.Name)
+		} else {
+			reads = append(reads, t.Tool.Name)
+		}
 	}
-	line := "Adds: " + strings.Join(names, ", ")
+	line := "Adds: " + strings.Join(reads, ", ")
+	if len(writes) > 0 {
+		line += "; with Can make changes, also " + strings.Join(writes, ", ")
+	}
 	if desc == "" {
 		return line
 	}
 	return desc + " - " + line
+}
+
+// toolWrites reports whether a tool declares that it makes changes.
+func toolWrites(td AgentToolDef) bool {
+	for _, c := range td.Tool.Caps {
+		if c == CapWrite {
+			return true
+		}
+	}
+	return false
+}
+
+// sourceWriteTools is the tools among an attachment's that make changes.
+func sourceWriteTools(tools []AgentToolDef) []AgentToolDef {
+	var out []AgentToolDef
+	for _, t := range tools {
+		if toolWrites(t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// sourceToolsFor is the tools an attachment gives its agent: all of them when
+// "Can make changes" is on, otherwise only those that do not write.
+func sourceToolsFor(ref ReferenceSelection, tools []AgentToolDef) []AgentToolDef {
+	if ref.Writes {
+		return tools
+	}
+	out := tools[:0:0]
+	for _, t := range tools {
+		if !toolWrites(t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// keepSourceWrites carries each source's "Can make changes" over from old to
+// sel, for a save that names its sources without it (Builder's
+// attached_sources is a list of "kind:item" strings). A source new to sel
+// starts off: the switch is the person's, in the Sources picker.
+func keepSourceWrites(sel, old []ReferenceSelection) []ReferenceSelection {
+	had := map[string]bool{}
+	for _, s := range old {
+		if s.Writes {
+			had[s.Ref()] = true
+		}
+	}
+	for i := range sel {
+		sel[i].Writes = had[sel[i].Ref()]
+	}
+	return sel
 }
 
 // agentSourcesFor is core.AgentSourcesFor: the Sources an agent has chosen,

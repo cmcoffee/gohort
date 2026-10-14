@@ -896,6 +896,24 @@ const guidePublishAction = `function(ctx){
               row.appendChild(again);
               view.appendChild(row);
             });
+            // Keep published: the copies above follow the guide, updated
+            // each time the Guide Curator changes it. Only once it is
+            // published somewhere, since it only ever updates those places.
+            if ((d.published || []).length){
+              var keepBox = el('input', {type:'checkbox'});
+              keepBox.checked = !!d.keep_published;
+              keepBox.addEventListener('change', function(){
+                var want = keepBox.checked;
+                keepBox.disabled = true;
+                fetch('publish/keep?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({on: want})})
+                  .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return JSON.parse(t); }); })
+                  .then(function(res){ d.keep_published = !!res.keep_published; keepBox.checked = d.keep_published; keepBox.disabled = false; })
+                  .catch(function(err){ keepBox.checked = !want; keepBox.disabled = false;
+                    window.uiAlert('Could not change it: ' + (err && err.message || err)); });
+              });
+              view.appendChild(el('label', {class:'guide-share-row'}, [keepBox,
+                el('span', {text:'Keep published: update these copies each time the Guide Curator changes this guide.'})]));
+            }
             // The person's own targets, each opening the Publisher on it.
             if (targets.length){
               view.appendChild(el('div', {class:'guide-set-head', text:'Publish to'}));

@@ -191,8 +191,8 @@ func importAgentRecipe(udb Database, imp agentExport, owner string) (AgentRecord
 //     set them would skip it. Usernames in a share list also name people on
 //     ANOTHER install.
 //   - Autonomy: no tools pre-approved for unattended runs, no authorized
-//     identities (a master key for every "@" rule). Both are grants this
-//     install never made.
+//     identities (a master key for every "@" rule), and every attached
+//     source read-only. All are grants this install never made.
 //   - Safety: guardrails on and failing closed, the new-agent hook set when
 //     the recipe has none, and nothing that WIDENS the tool-result scanner
 //     (trusted sources, skipped tools, tightening turned off). Rules and scan
@@ -211,6 +211,11 @@ func makeImportedAgentInert(a *AgentRecord) {
 
 	a.AutoApproveTools = nil
 	a.AuthorizedIdentities = nil
+	// An attached source arrives read-only: "Can make changes" is a grant
+	// this install's owner makes in the Sources picker.
+	for i := range a.AttachedSources {
+		a.AttachedSources[i].Writes = false
+	}
 
 	a.GuardrailsDisabled = false
 	a.GuardrailFailClosed = defaultNewAgentFailClosed

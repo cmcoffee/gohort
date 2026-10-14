@@ -382,7 +382,8 @@ func attachedSourceToolDefs(sess *ToolSession, user string, a AgentRecord, empty
 		if kind == "" || item == "" {
 			continue
 		}
-		defs := ReferenceItemToolsWithSession(sess, user, kind, item)
+		// Tools that make changes only when the attachment allows them.
+		defs := sourceToolsFor(ref, ReferenceItemToolsWithSession(sess, user, kind, item))
 		if len(defs) == 0 {
 			Log("[orchestrate.tools] agent=%s: attached source %s/%s resolved to no tools (removed or no longer shared?)",
 				a.ID, kind, item)
@@ -477,9 +478,12 @@ func renderReferenceSources(user string) string {
 	for _, g := range groups {
 		fmt.Fprintf(&b, "## %s (kind: %s)\n", g.Label, g.Kind)
 		for _, it := range g.Items {
+			// The item's description with the tools it mints, the ones that
+			// make changes named apart: they need the person's Can make
+			// changes, which an attachment made here does not have.
 			fmt.Fprintf(&b, "- %s:%s, %s", g.Kind, it.ID, it.Name)
-			if strings.TrimSpace(it.Desc) != "" {
-				fmt.Fprintf(&b, " (%s)", it.Desc)
+			if d := refPickerDesc(it, ReferenceItemTools(user, g.Kind, it.ID)); d != "" {
+				fmt.Fprintf(&b, " (%s)", d)
 			}
 			b.WriteString("\n")
 		}

@@ -49,6 +49,10 @@ type ChipPicker struct {
 	FlagLabel    string `json:"flag_label,omitempty"`
 	FlagOffLabel string `json:"flag_off_label,omitempty"`
 	FlagHelp     string `json:"flag_help,omitempty"`
+	// FlagWhenField, when set, offers the flag only on the pills whose
+	// option has this key truthy: a permission that means nothing for some
+	// members is not shown on theirs. Blank = every pill.
+	FlagWhenField string `json:"flag_when_field,omitempty"`
 
 	PostTo string `json:"post_to"`          // save destination
 	Method string `json:"method,omitempty"` // default POST; PATCH sends only the changed Field

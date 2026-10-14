@@ -12,6 +12,7 @@
 package scribe
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -160,6 +161,8 @@ func (T *Scribe) handlePublishState(w http.ResponseWriter, r *http.Request, udb 
 		"other_count":  others,
 		"targets_url":  docs.PublishTargetsSetupURL(),
 		"running":      job.Target != "" && !job.Done,
+		// Whether its copies follow it when the Curator changes it.
+		"keep_published": g.KeepPublished,
 	})
 }
 
@@ -194,14 +197,8 @@ func (T *Scribe) handleRepublish(w http.ResponseWriter, r *http.Request, udb Dat
 	// A job like any publish: it outlives the request, the dialog follows its
 	// steps, and a dialog opened mid-run rejoins it. It used to run on the
 	// request, a dead button for as long as the publish took.
-	where := firstNonEmpty(prev.TargetTitle, prev.Kind)
-	runPublishJob(r, g, ownerUDB, user, kind, where, docs.PublishRequest{
-		Target:     prev.Target,
-		Title:      prev.Title,
-		Doc:        publishDoc(g, ownerUDB),
-		ExternalID: prev.ExternalID,
-		Version:    prev.Version,
-		Answers:    prev.Answers,
-	}, prev)
-	writeJSON(w, map[string]any{"started": true, "target": where})
+	p := republishOf(g, ownerUDB, user, prev)
+	job := p.register()
+	go p.do(context.WithoutCancel(r.Context()), job)
+	writeJSON(w, map[string]any{"started": true, "target": p.where})
 }

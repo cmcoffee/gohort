@@ -59,6 +59,9 @@ func (T *Scribe) handleExport(w http.ResponseWriter, r *http.Request, udb Databa
 // (admin Site Settings), used in exported-document headers/footers. Brand falls
 // back to the site name, then "".
 func docBranding() (brand, siteName string) {
+	if AuthDB == nil {
+		return "", ""
+	}
 	db := AuthDB()
 	if db == nil {
 		return "", ""

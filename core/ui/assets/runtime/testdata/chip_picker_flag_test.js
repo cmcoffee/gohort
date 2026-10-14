@@ -17,9 +17,15 @@ function check(name, cond, extra) {
 }
 
 // The flag is seeded from its OWN field on the fetched record, or a reload
-// shows everybody back at the default.
-check('the flag seeds from the record',
-  /\(\(record && record\[cfg\.flag_field\]\) \|\| \[\]\)\.forEach/.test(src));
+// shows everybody back at the default. With no record (the selection comes
+// in the options response, attached_field), it is seeded from that response.
+check('the flag seeds from the record, or the options response with no record',
+  src.indexOf('var flagSrc = cfg.attached_field ? r[0] : record;') >= 0 &&
+  /\(\(flagSrc && flagSrc\[cfg\.flag_field\]\) \|\| \[\]\)\.forEach/.test(src));
+
+// A permission that means nothing for some members is not shown on theirs.
+check('flag_when_field limits the flag to the options that have it',
+  src.indexOf('if (cfg.flag_field && (!cfg.flag_when_field || opt[cfg.flag_when_field])) {') >= 0);
 
 // Sent on EVERY save, and filtered to the current members: dropping somebody
 // has to take their flag with them.

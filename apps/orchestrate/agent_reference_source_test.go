@@ -2,8 +2,11 @@ package orchestrate
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // An agent asked NOTHING has nothing to say, and asked "the article topic"
@@ -53,5 +56,55 @@ func TestConsultationIsFramedAsAQuestion(t *testing.T) {
 		if !strings.Contains(src, want) {
 			t.Errorf("the consultation prompt should say %q", want)
 		}
+	}
+}
+
+// A consultation declines every confirmation: a consulted agent that reaches
+// for a tool needing approval does not get it run, and still answers. The
+// path it used approved everything, on the strength of a question.
+func TestAConsultationApprovesNoActions(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	fake := &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "drop_table", Args: map[string]any{}}}},
+		{Content: "The region is in invoices.region_code.", Repeat: true},
+	}}
+	app.LLM, app.LeadLLM = fake, fake
+	saveAgent(udb, AgentRecord{ID: "dba", Owner: user, Name: "DBA", OrchestratorPrompt: "You know the schema."})
+	ran := false
+	dangerous := AgentToolDef{
+		Tool:         Tool{Name: "drop_table", Description: "Drop a table.", Caps: []Capability{CapWrite}},
+		NeedsConfirm: true,
+		Handler: func(context.Context, map[string]any) (string, error) {
+			ran = true
+			return "dropped", nil
+		},
+	}
+	res, err := app.runAgentSyncAppTools(context.Background(), user, user, "dba", "Which column holds the region?",
+		declineConsultConfirm, []AgentToolDef{dangerous}, nil, "reference")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ran {
+		t.Error("a consultation ran a tool that needs approval")
+	}
+	if !strings.Contains(res.Text, "region_code") {
+		t.Errorf("the consulted agent did not still answer: %q", res.Text)
+	}
+}
+
+// Fetch is the consultation, and it runs with confirmations declined rather
+// than through RunAgentSync, which approves them all.
+func TestFetchConsultsWithConfirmationsDeclined(t *testing.T) {
+	src, err := os.ReadFile("agent_reference_source.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	i := strings.Index(body, "func (s agentReferenceSource) Fetch(")
+	j := strings.Index(body[i:], "\n}\n")
+	fetch := body[i : i+j]
+	if !strings.Contains(fetch, "runAgentSyncConfirm(ctx, user, user, itemID, ask, declineConsultConfirm,") || strings.Contains(fetch, "RunAgentSync(") {
+		t.Error("Fetch must consult with confirmations declined, not through RunAgentSync")
 	}
 }
