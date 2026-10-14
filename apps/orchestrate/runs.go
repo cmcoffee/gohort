@@ -26,9 +26,11 @@
 package orchestrate
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"sort"
 	"sync"
@@ -109,11 +111,19 @@ type Run struct {
 	AgentID   string
 	SessionID string
 
-	mu          sync.Mutex
-	status      string
-	startedAt   time.Time
-	endedAt     time.Time
-	events      []RunEvent
+	mu        sync.Mutex
+	status    string
+	startedAt time.Time
+	endedAt   time.Time
+	events    []RunEvent
+	// cards is each card's latest frame (a kind:"block" event, by its id),
+	// kept apart from the ring. A card is drawn once and then updated in
+	// place, so its frame is early in the run, and a long run (a build that
+	// streams thousands of reasoning chunks) pushes it out of the ring. A
+	// page that rejoined then got everything after it and never drew the
+	// card: Builder's plan came back as nothing. Subscribe hands back any
+	// card whose latest frame left the ring, ahead of the backlog.
+	cards       map[string]RunEvent
 	nextSeq     uint64
 	subscribers map[uint64]chan RunEvent
 	nextSubID   uint64
@@ -263,6 +273,12 @@ func (r *Run) Append(frame []byte) {
 	r.nextSeq++
 	ev := RunEvent{Seq: r.nextSeq, Frame: append([]byte(nil), frame...)}
 	r.events = append(r.events, ev)
+	if id := cardFrameID(ev.Frame); id != "" {
+		if r.cards == nil {
+			r.cards = make(map[string]RunEvent)
+		}
+		r.cards[id] = ev
+	}
 	if max := runMaxEvents(); len(r.events) > max {
 		// Drop oldest. Cheap append+slice; ring grows once then
 		// stays at runMaxEvents for the rest of the run.
@@ -291,6 +307,17 @@ func (r *Run) Subscribe(since uint64) Subscription {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var backlog []RunEvent
+	// Cards whose latest frame has left the ring come first, oldest first,
+	// so a rejoining page draws them before the rest arrives.
+	if len(r.events) > 0 {
+		oldest := r.events[0].Seq
+		for _, ev := range r.cards {
+			if ev.Seq > since && ev.Seq < oldest {
+				backlog = append(backlog, ev)
+			}
+		}
+		sort.Slice(backlog, func(i, j int) bool { return backlog[i].Seq < backlog[j].Seq })
+	}
 	for _, ev := range r.events {
 		if ev.Seq > since {
 			backlog = append(backlog, ev)
@@ -687,4 +714,28 @@ func (r *Run) BackgroundLabel() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.bgLabel
+}
+
+// cardFrameID is the id of a card frame (an SSE frame whose payload is
+// {"kind":"block", "id":...}), or "" for any other frame. Frames are stored
+// serialized, so this reads the data line back; the substring check keeps it
+// off the JSON decoder for the many frames that are not cards.
+func cardFrameID(frame []byte) string {
+	if !bytes.Contains(frame, []byte(`"kind":"block"`)) {
+		return ""
+	}
+	for _, line := range bytes.Split(frame, []byte("\n")) {
+		data, ok := bytes.CutPrefix(line, []byte("data: "))
+		if !ok {
+			continue
+		}
+		var p struct {
+			Kind string `json:"kind"`
+			ID   string `json:"id"`
+		}
+		if json.Unmarshal(data, &p) == nil && p.Kind == "block" && p.ID != "" {
+			return p.ID
+		}
+	}
+	return ""
 }
