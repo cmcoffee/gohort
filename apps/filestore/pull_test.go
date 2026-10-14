@@ -244,3 +244,21 @@ func TestThePanelPullsAndReportsTheOutcome(t *testing.T) {
 		t.Errorf("the case does not read as pulled: %s", list.Body.String())
 	}
 }
+
+// The table says the two stores are connected, from both ends, and which apps
+// use a store.
+func TestTheTableShowsWhichStoresAreConnected(t *testing.T) {
+	app, intake, analysis := pullFixture(t)
+	intake.AppGrants = []AppGrant{{App: "alice/kwprep", Write: true}}
+	SaveStore(app.DB, intake)
+	got := map[string]string{}
+	for _, row := range app.storeRows() {
+		got[row["slug"].(string)] = row["connected"].(string)
+	}
+	if got[analysis.Slug] != "pulls prepared/ from Intake" {
+		t.Errorf("Analysis: %q", got[analysis.Slug])
+	}
+	if !strings.HasPrefix(got[intake.Slug], "feeds Analysis; used by ") {
+		t.Errorf("Intake: %q", got[intake.Slug])
+	}
+}

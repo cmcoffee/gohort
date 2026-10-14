@@ -50,6 +50,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					{Field: "carries", Label: "Agent commands", Mute: true},
 					{Field: "assigned", Label: "Assigned to", Mute: true},
 					{Field: "retention", Label: "Retention", Mute: true},
+					{Field: "connected", Label: "Connected", Mute: true, Flex: 2},
 					{Field: "description", Label: "Notes", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
@@ -505,7 +506,8 @@ func storeSlugOf(body []byte, fromQuery string) string {
 // who may reach a store, and what its tools are actually called.
 func (T *FileStoreApp) storeRows() []map[string]any {
 	rows := make([]map[string]any, 0)
-	for _, st := range ListStores(T.DB) {
+	all := ListStores(T.DB)
+	for _, st := range all {
 		// Folder count is the fact that says whether the path is right. A
 		// store reading "unreadable" here is a typo caught before an agent
 		// is attached to it.
@@ -535,9 +537,51 @@ func (T *FileStoreApp) storeRows() []map[string]any {
 			// Stated on the row because it is the one setting whose effect
 			// is destructive and whose default (forever) is invisible.
 			"retention": retentionLabel(st),
+			// The stores and apps this one works with, read from both ends: a
+			// pull link is set on the store that pulls, and the store it pulls
+			// from would otherwise look unconnected, as if it could be changed
+			// or removed on its own.
+			"connected": connectedLabel(st, all),
 		})
 	}
 	return rows
+}
+
+// connectedLabel says which stores this one pulls from and feeds, and which
+// apps may use it: "pulls prepared/ from Intake; used by Diag Prep". Empty
+// when it stands alone.
+func connectedLabel(st Store, all []Store) string {
+	var parts []string
+	if strings.TrimSpace(st.PullFrom) != "" {
+		from := st.PullFrom + " (missing)"
+		for _, o := range all {
+			if o.Slug == st.PullFrom {
+				from = o.Name
+			}
+		}
+		what := st.pullSubpath() + "/"
+		if what == "/" {
+			what = "whole cases"
+		}
+		parts = append(parts, "pulls "+what+" from "+from)
+	}
+	var feeds []string
+	for _, o := range all {
+		if o.Slug != st.Slug && o.PullFrom == st.Slug {
+			feeds = append(feeds, o.Name)
+		}
+	}
+	if len(feeds) > 0 {
+		parts = append(parts, "feeds "+strings.Join(feeds, ", "))
+	}
+	var apps []string
+	for _, g := range st.AppGrants {
+		apps = append(apps, appLabel(g.App))
+	}
+	if len(apps) > 0 {
+		parts = append(parts, "used by "+strings.Join(apps, ", "))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // retentionLabel says what the store's window means in words, including
