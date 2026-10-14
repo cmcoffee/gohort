@@ -19,6 +19,9 @@ func TestAShellToolCalledByAnAgentRunsInTheBackground(t *testing.T) {
 	tdb := &DBase{Store: kvlite.MemStore()}
 	tdb.Set(WebTable, "tune_tool_detach_after", 0.3)
 	tdb.Set(WebTable, "tune_tool_idle_limit", 1.0)
+	// The disk floor is not under test: a nearly full test disk would stop the
+	// command for space before the limits being tested were reached.
+	tdb.Set(WebTable, "tune_disk_floor_gb", 1.0)
 	SetTunablesDB(tdb)
 	t.Cleanup(func() { SetTunablesDB(nil) })
 

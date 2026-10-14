@@ -98,8 +98,10 @@ type pullJob struct {
 	replace   bool
 	user      string
 
-	files, bytes        int64 // what there is to copy
-	doneFiles, doneByte atomic.Int64
+	// What there is to copy. Atomic: the copy sets them as it measures, and
+	// the progress line reads them from the page's request at the same time.
+	totalFiles, totalBytes atomic.Int64
+	doneFiles, doneByte    atomic.Int64
 }
 
 func (p *pullJob) key() string { return p.dest.Slug + "/" + p.item }
@@ -107,11 +109,11 @@ func (p *pullJob) key() string { return p.dest.Slug + "/" + p.item }
 // progress is the job's line for a person: "120 of 1,204 files, 310 MB of
 // 3.2 GB".
 func (p *pullJob) progress() string {
-	if p.files == 0 {
+	if p.totalFiles.Load() == 0 {
 		return "measuring " + p.item
 	}
-	return fmt.Sprintf("%s of %s files, %s of %s", commaN(p.doneFiles.Load()), commaN(p.files),
-		HumanSize(p.doneByte.Load()), HumanSize(p.bytes))
+	return fmt.Sprintf("%s of %s files, %s of %s", commaN(p.doneFiles.Load()), commaN(p.totalFiles.Load()),
+		HumanSize(p.doneByte.Load()), HumanSize(p.totalBytes.Load()))
 }
 
 func commaN(n int64) string {
@@ -186,7 +188,8 @@ func (p *pullJob) run(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	p.files, p.bytes = files, size
+	p.totalFiles.Store(files)
+	p.totalBytes.Store(size)
 	if err := p.dest.roomFor(size); err != nil {
 		return "", err
 	}
@@ -316,7 +319,8 @@ func (p *pullJob) runFile(ctx context.Context, from, destRoot string) (string, e
 	if err != nil {
 		return "", err
 	}
-	p.files, p.bytes = 1, info.Size()
+	p.totalFiles.Store(1)
+	p.totalBytes.Store(info.Size())
 	if err := p.dest.roomFor(info.Size()); err != nil {
 		return "", err
 	}

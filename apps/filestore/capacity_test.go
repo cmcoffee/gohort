@@ -28,6 +28,9 @@ func pretendUsage(t *testing.T, st Store, n int64) {
 // A store at its cap refuses new work, saying how full it is and that nothing
 // was deleted; under its cap, and with no cap, the same work goes ahead.
 func TestAFullStoreRefusesAndSaysHowFull(t *testing.T) {
+	// The cap is what is under test, not the disk this test happens to run
+	// on: with the floor at its default a nearly full test disk refused first.
+	withTunables(t, nil)
 	st := Store{Name: "Intake", Slug: "intake_cap", Path: t.TempDir(), MaxGB: 1}
 	pretendUsage(t, st, 900<<20)
 	if err := st.roomFor(50 << 20); err != nil {
@@ -55,10 +58,7 @@ func TestAFullStoreRefusesAndSaysHowFull(t *testing.T) {
 
 // Below the disk's free-space floor, nothing is written, cap or not.
 func TestTheDiskFloorRefusesAWrite(t *testing.T) {
-	tdb := &DBase{Store: kvlite.MemStore()}
-	tdb.Set(WebTable, "tune_disk_floor_gb", float64(1000000)) // more than any test disk
-	SetTunablesDB(tdb)
-	t.Cleanup(func() { SetTunablesDB(nil) })
+	withTunables(t, map[string]float64{"tune_disk_floor_gb": 1000000}) // more than any test disk
 	err := (Store{Name: "Intake", Slug: "intake_floor", Path: t.TempDir()}).roomFor(0)
 	if err == nil || !strings.Contains(err.Error(), "keeps free for the server") {
 		t.Errorf("a write below the floor was allowed: %v", err)

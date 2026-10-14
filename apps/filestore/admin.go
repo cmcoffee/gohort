@@ -162,16 +162,60 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// The admin runs the command to show how it is
 								// used; each run becomes an example Map learns
 								// from (command_examples.go).
-								ui.Expand("Show it how", ui.FormPanel{
-									Source:    "/filestore/api/map/try-args?id={id}",
-									TestURL:   "/filestore/api/map/try?id={id}",
-									TestLabel: "Run",
-									Fields: []ui.FormField{
-										{Field: "args", Type: "text", Label: "Arguments", Placeholder: "download --src=/Diag/dump.zip --dst=RUN-1",
-											Help:   "What you would type after the command. Run executes it in this store's folder, with no shell, and shows what it prints.",
-											Detail: "Each run is kept as an example for Map: Builder reads what you ran and what it printed, and works out the syntax from it, turning the parts that change into placeholders. Quote a value with spaces in it. Nothing is expanded: no wildcards, variables or pipes. You can run anything with this command; Builder's own limits are unchanged."},
+								ui.Expand("Show it how", ui.Stack{Children: []ui.Component{
+									ui.FormPanel{
+										Source:    "/filestore/api/map/try-args?id={id}",
+										TestURL:   "/filestore/api/map/try?id={id}",
+										TestLabel: "Run",
+										Fields: []ui.FormField{
+											{Field: "args", Type: "text", Label: "Arguments", Placeholder: "download --src=/Diag/dump.zip --dst=RUN-1",
+												Help:   "What you would type after the command. Run executes it in this store's folder, with no shell, and shows what it prints.",
+												Detail: "Each run is kept as an example for Map: Builder reads what you ran and what it printed, and works out the syntax from it, turning the parts that change into placeholders. Quote a value with spaces in it. Nothing is expanded: no wildcards, variables or pipes. You can run anything with this command; Builder's own limits are unchanged."},
+											{Field: "step", Type: "select", Label: "This run is", Options: []ui.SelectOption{
+												{Value: "new", Label: "A new use of the command"},
+												{Value: "next", Label: "The next step of the last use"},
+											},
+												Help: "A command used in steps (it prints a challenge, then takes the response) is run once per step: the first as a new use, each following one as its next step. Builder sees them as one use, in order."},
+											{Field: "note", Type: "text", Label: "Note (optional)", Placeholder: "prints the challenge",
+												Help: "What this run shows, for Builder: which step it is, what a value means. Worth it for a command used in steps, like a challenge and then its response."},
+										},
 									},
-								}),
+									// The runs kept, to review before Builder
+									// learns from them: a mistaken run, removed
+									// here, teaches it nothing.
+									ui.Table{
+										Source:        "/filestore/api/map/examples?id={id}",
+										RowKey:        "eid",
+										AutoRefreshMS: 4000,
+										Columns: []ui.Col{
+											{Field: "where", Label: "Run", Mute: true},
+											{Field: "args", Label: "Arguments", Flex: 3},
+											{Field: "exit", Label: "Exit", Mute: true},
+											{Field: "note", Label: "Note", Mute: true, Flex: 2, Line: 2},
+											{Field: "output", Label: "Ended with", Mute: true, Flex: 3, Line: 2},
+										},
+										RowActions: []ui.RowAction{
+											ui.Expand("Edit", ui.FormPanel{
+												Source:      "/filestore/api/map/examples?id={id}&eid={eid}",
+												PostURL:     "/filestore/api/map/examples?id={id}&eid={eid}",
+												SubmitLabel: "Save",
+												Fields: []ui.FormField{
+													{Field: "note", Type: "textarea", Label: "Note", Rows: 2,
+														Help: "Context for Builder: which step this is, what a value means, what to watch for."},
+													{Field: "use", Type: "number", Label: "Use", Min: 1,
+														Help: "Which use this run is a step of. Change it to move the run into another use."},
+												},
+												Invalidate: []string{"/filestore/api/map/examples"},
+											}),
+											{Type: "button", Label: "Remove", Method: "DELETE",
+												PostTo:     "/filestore/api/map/examples?id={id}&eid={eid}",
+												Variant:    "danger",
+												Confirm:    "Remove this run? Builder will no longer learn from it.",
+												Optimistic: true},
+										},
+										EmptyText: "No runs yet. Run the command above to show how it is used.",
+									},
+								}}),
 								ui.Expand("Map", ui.AgentLoopPanel{
 									SendURL:      "/filestore/api/map/chat/send?id={id}",
 									Markdown:     true,
@@ -434,6 +478,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/commands/uses", T.handleCommandUses)
 	T.HandleFunc("/api/map/try", T.handleTryCommand)
 	T.HandleFunc("/api/map/try-args", T.handleTryArgs)
+	T.HandleFunc("/api/map/examples", T.handleExamples)
 	T.HandleFunc("/api/commands/mapping", T.handleCommandMapping)
 	T.HandleFunc("/api/folders", T.handleFolders)
 	T.HandleFunc("/api/pull", T.handlePull)

@@ -147,6 +147,9 @@ func TestTheMappingIsToldExamplesAreSyntax(t *testing.T) {
 		}
 	}
 	for _, td := range app.mappingTools(context.Background(), Store{Name: "Intake"}, StoreCommand{Command: "/opt/bin/kb", AllowedUses: []string{"download --src={source}"}}) {
+		if td.Tool.Name == "admin_examples" {
+			continue // reads the admin's runs; the mapping rules are on the other two
+		}
 		if !strings.Contains(td.Tool.Description, "its value does not exist yet") {
 			t.Errorf("%s does not say placeholders are filled later", td.Tool.Name)
 		}
