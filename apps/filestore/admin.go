@@ -90,7 +90,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							"Binaries registered against this folder. A person runs one from Files. Map a command with Builder and it becomes a tool as well: turn Agents on and every agent that reaches this folder can call it; turn it off and the mapping is kept but nothing can use it.")},
 						ui.Table{
 							Source: "/filestore/api/commands?slug={slug}",
-							RowKey: "id",
+							RowKey: "cmd",
 							Columns: []ui.Col{
 								{Field: "label", Label: "Command", Flex: 1},
 								{Field: "command", Mute: true, Flex: 2},
@@ -108,15 +108,15 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// question the reader cannot answer.
 								{Type: "toggle", Field: "approved", Label: "Agents",
 									OnlyIf: "mapped_ok",
-									PostTo: "/filestore/api/commands/approve?id={id}"},
+									PostTo: "/filestore/api/commands/approve?id={cmd}"},
 								//
-								// Addressed by {id}, never by {name}. A nested
+								// Addressed by {cmd}, never by {name}. A nested
 								// table's placeholders are filled TWICE: once at
 								// expand time against the store row, and again
 								// per inner row. Whatever the store row can
 								// answer, it answers first — and a store row has
 								// a name, so {name} here arrives as the FOLDER's
-								// name and the command is never found. {id} is
+								// name and the command is never found. {cmd} is
 								// the composite slug/name the row already
 								// carries, and no store row defines it. Enforced
 								// by TestInnerRowKeysAreNotShadowedByTheStoreRow.
@@ -131,14 +131,14 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// How Builder and agents may use it: Open, or
 								// only the lines written here.
 								ui.Expand("Uses", ui.FormPanel{
-									Source:      "/filestore/api/commands/uses?id={id}",
-									PostURL:     "/filestore/api/commands/uses?id={id}",
+									Source:      "/filestore/api/commands/uses?id={cmd}",
+									PostURL:     "/filestore/api/commands/uses?id={cmd}",
 									SubmitLabel: "Save uses",
 									Fields:      commandUsesFields(),
 									Invalidate:  []string{"/filestore/api/commands"},
 								}),
 								ui.Expand("Mapping", ui.DisplayPanel{
-									Source: "/filestore/api/commands/mapping?id={id}",
+									Source: "/filestore/api/commands/mapping?id={cmd}",
 									Pairs: []ui.DisplayPair{
 										{Label: "Tool name", Field: "tool_name", Mono: true},
 										{Label: "State", Field: "state", StatusField: "state_status"},
@@ -163,8 +163,8 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// from (command_examples.go).
 								ui.Expand("Show it how", ui.Stack{Children: []ui.Component{
 									ui.FormPanel{
-										Source:    "/filestore/api/map/try-args?id={id}",
-										TestURL:   "/filestore/api/map/try?id={id}",
+										Source:    "/filestore/api/map/try-args?id={cmd}",
+										TestURL:   "/filestore/api/map/try?id={cmd}",
 										TestLabel: "Run",
 										Fields: []ui.FormField{
 											{Field: "args", Type: "text", Label: "Arguments", Placeholder: "download --src=/Diag/dump.zip --dst=RUN-1",
@@ -183,7 +183,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 									// learns from them: a mistaken run, removed
 									// here, teaches it nothing.
 									ui.Table{
-										Source:        "/filestore/api/map/examples?id={id}",
+										Source:        "/filestore/api/map/examples?id={cmd}",
 										RowKey:        "eid",
 										AutoRefreshMS: 4000,
 										Columns: []ui.Col{
@@ -195,8 +195,8 @@ func (T *FileStoreApp) adminSection() ui.Section {
 										},
 										RowActions: []ui.RowAction{
 											ui.Expand("Edit", ui.FormPanel{
-												Source:      "/filestore/api/map/examples?id={id}&eid={eid}",
-												PostURL:     "/filestore/api/map/examples?id={id}&eid={eid}",
+												Source:      "/filestore/api/map/examples?id={cmd}&eid={eid}",
+												PostURL:     "/filestore/api/map/examples?id={cmd}&eid={eid}",
 												SubmitLabel: "Save",
 												Fields: []ui.FormField{
 													{Field: "note", Type: "textarea", Label: "Note", Rows: 2,
@@ -207,7 +207,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 												Invalidate: []string{"/filestore/api/map/examples"},
 											}),
 											{Type: "button", Label: "Remove", Method: "DELETE",
-												PostTo:     "/filestore/api/map/examples?id={id}&eid={eid}",
+												PostTo:     "/filestore/api/map/examples?id={cmd}&eid={eid}",
 												Variant:    "danger",
 												Confirm:    "Remove this run? Builder will no longer learn from it.",
 												Optimistic: true},
@@ -216,7 +216,17 @@ func (T *FileStoreApp) adminSection() ui.Section {
 									},
 								}}),
 								ui.Expand("Map with Builder", ui.AgentLoopPanel{
-									SendURL:      "/filestore/api/map/chat/send?id={id}",
+									SendURL: "/filestore/api/map/chat/send?id={cmd}",
+									// This command's mapping conversations, to go
+									// back to one. {id} is the session the panel
+									// opens, which is why the row is keyed {cmd}.
+									ListURL:      "/filestore/api/map/chat/sessions?id={cmd}",
+									LoadURL:      "/filestore/api/map/chat/sessions/{id}?cmd={cmd}",
+									DeleteURL:    "/filestore/api/map/chat/sessions/{id}?cmd={cmd}",
+									CancelURL:    "/filestore/api/map/chat/cancel?id={cmd}",
+									ListTitle:    "Earlier mappings",
+									NewLabel:     "New",
+									ListPosition: "top",
 									Markdown:     true,
 									LockActivity: true,
 									// A pane, not a page. This opens inside a row
@@ -250,7 +260,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 									Placeholder: "Or ask Builder something…",
 								}),
 								{Type: "button", Label: "Delete", Method: "DELETE",
-									PostTo:     "/filestore/api/commands?id={id}",
+									PostTo:     "/filestore/api/commands?id={cmd}",
 									Variant:    "danger",
 									Confirm:    "Remove this command? Its mapping goes with it; the binary is left alone.",
 									Optimistic: true},
@@ -473,6 +483,9 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/commands/run", T.handleCommand)
 	T.HandleFunc("/api/commands", T.handleCommands)
 	T.HandleFunc("/api/map/chat/send", T.handleMapChat)
+	T.HandleFunc("/api/map/chat/sessions", T.handleMapSessions)
+	T.HandleFunc("/api/map/chat/sessions/", T.handleMapSessions)
+	T.HandleFunc("/api/map/chat/cancel", T.handleMapCancel)
 	T.HandleFunc("/api/commands/approve", T.handleCommandApprove)
 	T.HandleFunc("/api/commands/uses", T.handleCommandUses)
 	T.HandleFunc("/api/map/try", T.handleTryCommand)
@@ -810,7 +823,7 @@ func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 			// to unmapped from any distance.
 			mapped := mappingState(a)
 			rows = append(rows, map[string]any{
-				"id": commandKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
+				"cmd": commandKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
 				"name": a.Name, "label": a.Label, "command": a.Command,
 				"phases": phases, "two_phase": a.TwoPhase, "mapped": mapped,
 				// mapped_ok gates the Agents switch: a toggle offering to

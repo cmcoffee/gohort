@@ -1137,14 +1137,22 @@ func (T *OrchestrateApp) PublicHandleAgentKnowledgeSourceDelete(w http.ResponseW
 // An empty appContext means "no scoping" and behaves exactly like
 // PublicHandleSessionList.
 func (T *OrchestrateApp) PublicHandleSessionListFor(w http.ResponseWriter, r *http.Request, agentID, appContext string) {
-	T.publicSessionList(w, r, agentID, appContext)
+	T.publicSessionList(w, r, agentID, appContext, false)
 }
 
 func (T *OrchestrateApp) PublicHandleSessionList(w http.ResponseWriter, r *http.Request, agentID string) {
-	T.publicSessionList(w, r, agentID, "")
+	T.publicSessionList(w, r, agentID, "", false)
 }
 
-func (T *OrchestrateApp) publicSessionList(w http.ResponseWriter, r *http.Request, agentID, appContext string) {
+// PublicHandleSessionListOnly lists only the sessions filed under appContext,
+// leaving out ones filed under nothing. For a surface that hosts one shared
+// agent about one thing (Builder mapping one command): the agent's other
+// conversations are not about it and do not belong in its list.
+func (T *OrchestrateApp) PublicHandleSessionListOnly(w http.ResponseWriter, r *http.Request, agentID, appContext string) {
+	T.publicSessionList(w, r, agentID, appContext, true)
+}
+
+func (T *OrchestrateApp) publicSessionList(w http.ResponseWriter, r *http.Request, agentID, appContext string, only bool) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1167,6 +1175,9 @@ func (T *OrchestrateApp) publicSessionList(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 		if appContext != "" && s.AppContext != "" && s.AppContext != appContext {
+			continue
+		}
+		if only && s.AppContext != appContext {
 			continue
 		}
 		filtered = append(filtered, s)

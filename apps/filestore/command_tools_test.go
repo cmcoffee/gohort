@@ -242,7 +242,7 @@ func TestFolderPanelIsScopedToItsFolder(t *testing.T) {
 	}
 	// The approval is on the row it approves, addressed by {id} rather than
 	// {name} — see TestNestedRowURLsDoNotAddressRowsByName.
-	if !strings.Contains(src, `"/filestore/api/commands/approve?id={id}"`) {
+	if !strings.Contains(src, `"/filestore/api/commands/approve?id={cmd}"`) {
 		t.Error("the Agents switch must address the command it approves")
 	}
 	// And it is offered only once there is something to approve.

@@ -22,8 +22,9 @@ import (
 // folder — matching nothing, succeeding, and reporting that it had worked. Both
 // looked correct in the source and in the rendered page.
 //
-// Inner rows are addressed by {id} instead. These tests hold the two halves of
-// what makes that safe: the templates ask for id, and a store row has no id to
+// Inner rows are addressed by {cmd} instead (and the mapping panel keeps
+// {id} for the conversation it opens). These tests hold the two halves of
+// what makes that safe: the templates ask for cmd, and a store row has no cmd to
 // answer with.
 
 // A store row must not be able to answer the placeholders the inner tables use
@@ -40,7 +41,7 @@ func TestInnerRowKeysAreNotShadowedByTheStoreRow(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("want one store row, got %d", len(rows))
 	}
-	for _, key := range []string{"id"} {
+	for _, key := range []string{"cmd", "id"} {
 		if _, taken := rows[0][key]; taken {
 			t.Errorf("a store row now answers {%s}, which the nested commands and "+
 				"toolboxes tables use to address their OWN rows — the inner value "+
@@ -65,7 +66,7 @@ func TestNestedRowURLsDoNotAddressRowsByName(t *testing.T) {
 		}
 		if strings.Contains(m, "{name}") {
 			t.Errorf("%s addresses a nested row by {name}; the store row it is "+
-				"expanded from answers that first. Use {id}.", m)
+				"expanded from answers that first. Use {cmd}.", m)
 		}
 	}
 }

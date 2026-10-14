@@ -1,6 +1,9 @@
 package filestore
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -129,7 +132,7 @@ func TestMapConversationIsScopedToOneCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(raw)
-	if !strings.Contains(src, `"/filestore/api/map/chat/send?id={id}"`) {
+	if !strings.Contains(src, `"/filestore/api/map/chat/send?id={cmd}"`) {
 		t.Error("the mapping conversation must name the command it was opened on, by the composite id its row carries")
 	}
 	if !strings.Contains(src, `ui.Expand("Map with Builder"`) {
@@ -159,5 +162,22 @@ func TestMappingIsGuidedRatherThanTyped(t *testing.T) {
 	// At the viewport-tall default it buries the folder it belongs to.
 	if !strings.Contains(src, `Height: "420px"`) {
 		t.Error("a conversation mounted in a row expander must be bounded, or it takes the whole page")
+	}
+}
+
+// A mapping conversation's send is filed under its command, so it can be
+// listed and reopened from the command's row; a body that does not parse is
+// sent unchanged.
+func TestAMappingSendIsFiledUnderItsCommand(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"message":"map it","session_id":"s1"}`))
+	stampMapContext(r, mapContext(StoreCommand{Slug: "intake", Name: "extract"}))
+	b, _ := io.ReadAll(r.Body)
+	if !strings.Contains(string(b), `"app_context":"filestore-map:intake/extract"`) || !strings.Contains(string(b), `"session_id":"s1"`) {
+		t.Errorf("stamped body: %s", b)
+	}
+	r = httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`not json`))
+	stampMapContext(r, "ctx")
+	if b, _ := io.ReadAll(r.Body); string(b) != "not json" {
+		t.Errorf("an unparseable body was changed: %q", b)
 	}
 }

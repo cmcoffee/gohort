@@ -23,9 +23,11 @@
 package filestore
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -71,7 +73,107 @@ func (T *FileStoreApp) handleMapChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no agent is available to map commands", http.StatusServiceUnavailable)
 		return
 	}
+	// Filed under this command, so its conversations can be listed and
+	// reopened from its row (handleMapSessions).
+	stampMapContext(r, mapContext(cmd))
 	orch.PublicHandleSendWithAppTools(w, r, agent, T.mappingTools(r.Context(), st, cmd))
+}
+
+// mapContext is what a command's mapping conversations are filed under.
+func mapContext(cmd StoreCommand) string { return "filestore-map:" + commandKey(cmd.Slug, cmd.Name) }
+
+// mapAgentFor resolves the command named by the id query value and Builder,
+// for the mapping conversation's other endpoints. Writes the error itself.
+func (T *FileStoreApp) mapAgentFor(w http.ResponseWriter, r *http.Request, id string) (StoreCommand, *orchestrate.OrchestrateApp, orchestrate.AgentRecord, bool) {
+	var none orchestrate.AgentRecord
+	if !adminOnly(w, r) {
+		return StoreCommand{}, nil, none, false
+	}
+	slug, name, _ := strings.Cut(strings.TrimSpace(id), "/")
+	cmd, ok := LoadStoreCommand(T.DB, slug, RefToolSlug(name))
+	if !ok {
+		http.Error(w, "that command is not registered against this folder", http.StatusNotFound)
+		return StoreCommand{}, nil, none, false
+	}
+	orch := findOrchestrate()
+	if orch == nil {
+		http.Error(w, "the agent runtime is not available", http.StatusServiceUnavailable)
+		return StoreCommand{}, nil, none, false
+	}
+	agent, ok := orch.LookupAppAgent(AuthCurrentUser(r), mapAgentID)
+	if !ok {
+		http.Error(w, "no agent is available to map commands", http.StatusServiceUnavailable)
+		return StoreCommand{}, nil, none, false
+	}
+	return cmd, orch, agent, true
+}
+
+// handleMapSessions lists a command's mapping conversations, and loads or
+// deletes one, so an admin can go back to a mapping they started earlier.
+//
+//	GET    /filestore/api/map/chat/sessions?id=<slug/name>      this command's conversations
+//	GET    /filestore/api/map/chat/sessions/<sid>?cmd=<slug/name>  one, to reopen
+//	DELETE /filestore/api/map/chat/sessions/<sid>?cmd=<slug/name>  drop one
+func (T *FileStoreApp) handleMapSessions(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	sid := strings.Trim(strings.TrimPrefix(r.URL.Path[strings.Index(r.URL.Path, "/api/map/chat/sessions")+len("/api/map/chat/sessions"):], "/"), " ")
+	if sid == "" {
+		cmd, orch, agent, ok := T.mapAgentFor(w, r, r.URL.Query().Get("id"))
+		if !ok {
+			return
+		}
+		orch.PublicHandleSessionListOnly(w, r, agent.ID, mapContext(cmd))
+		return
+	}
+	_, orch, agent, ok := T.mapAgentFor(w, r, r.URL.Query().Get("cmd"))
+	if !ok {
+		return
+	}
+	orch.PublicHandleSessionOne(w, r, agent.ID, sid)
+}
+
+// handleMapCancel stops the mapping conversation's turn in flight.
+func (T *FileStoreApp) handleMapCancel(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	_, orch, agent, ok := T.mapAgentFor(w, r, r.URL.Query().Get("id"))
+	if !ok {
+		return
+	}
+	orch.PublicHandleCancel(w, r, agent)
+}
+
+// stampMapContext writes the command's context into the send body as
+// app_context, so the session the turn creates is filed under the command.
+// Server-side, because the first send creates the session and no page could
+// name it yet. Best-effort: a body that will not parse is sent unchanged.
+func stampMapContext(r *http.Request, ctx string) {
+	if r.Body == nil {
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	r.Body.Close()
+	restore := func() { r.Body = io.NopCloser(bytes.NewReader(raw)) }
+	if err != nil {
+		restore()
+		return
+	}
+	var body map[string]any
+	if json.Unmarshal(raw, &body) != nil || body == nil {
+		restore()
+		return
+	}
+	body["app_context"] = ctx
+	stamped, err := json.Marshal(body)
+	if err != nil {
+		restore()
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(stamped))
+	r.ContentLength = int64(len(stamped))
 }
 
 // mappingTools are the two an agent gets: one to LEARN the command, one to write
