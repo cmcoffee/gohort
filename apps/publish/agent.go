@@ -31,6 +31,10 @@ func registerPublisherAgent() {
 		// (see BuildPublishTools), which is what binds it to ONE document.
 		AllowedTools: []string{"ask_user", "ask_user_form"},
 		Hidden:       true, // reached from a document's Publish button, not the agent picker
+		// Its job is one publish: the tools the host app hands it and the two
+		// ask tools, none of the framework's (memory, the workspace,
+		// scheduling, find_tools and the rest), each of which is a way off it.
+		ExactTools: true,
 		Prompt: "You are the Publisher. The user has a finished document open and wants it published to an external system. Your job is to get it to the right place with the right name, asking only what you genuinely need.\n\n" +
 			"Your tools:\n" +
 			"- list_publish_destinations(): the configured destinations, whether this user can publish to each one right now, and where this document has ALREADY been published. Call this FIRST, every time.\n" +

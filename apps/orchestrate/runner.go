@@ -41,6 +41,10 @@ import (
 type planRun struct {
 	t    *chatTurn
 	msgs []ChatMessage
+	// exactTools holds the turn to the agent's own tools (appAgentExactTools):
+	// set while the catalog is built, and read again by the loop config so
+	// nothing outside the catalog arrives mid-turn.
+	exactTools bool
 	// telem is fed by onStepHandler and summarized when runPlan exits:
 	// rounds used, tool-call breakdown, dup-args fingerprinting and the exit
 	// reason, so budget-tuning and drift-pattern questions have data to
@@ -422,7 +426,13 @@ func (pr *planRun) assemblePrompt() {
 	// reaches the channel/dispatch path too (see appendAgentCapabilityBlocks).
 	// Each block self-gates on agent config; kept here (after the other blocks)
 	// so it's the single source both surfaces share.
-	pr.sys = appendAgentCapabilityBlocks(pr.sys, t.agent, t.udb, t.user, true)
+	// Not for an agent held to exactly its own tools: these describe the
+	// framework's tools and planning (plan_set, request_build, skills), which
+	// its catalog will not carry, and a block naming a tool it lacks is an
+	// instruction to reach for nothing.
+	if !appAgentExactTools(t.agent.ID) {
+		pr.sys = appendAgentCapabilityBlocks(pr.sys, t.agent, t.udb, t.user, true)
+	}
 }
 
 func (pr *planRun) planSetToolDef() AgentToolDef {
@@ -989,12 +999,17 @@ func (pr *planRun) catalogAssemble() error {
 			}
 		}
 	}
-	pr.cat.directCustomTools, pr.cat.lazyCustomPrompt = t.setupCustomTools(pr.sess)
-	pr.sys += pr.cat.lazyCustomPrompt
-	// The authoring index, when the catalog was deferred. Set during
-	// resolveWorkerTools, which ran before this point.
-	pr.sys += t.authoringLazyPrompt
-	pr.sys += t.builderOnDemandIndexText()
+	// An agent held to exactly its own tools (appAgentExactTools) loads no
+	// custom tools and is shown no index of tools it will not be offered.
+	pr.exactTools = appAgentExactTools(t.agent.ID)
+	if !pr.exactTools {
+		pr.cat.directCustomTools, pr.cat.lazyCustomPrompt = t.setupCustomTools(pr.sess)
+		pr.sys += pr.cat.lazyCustomPrompt
+		// The authoring index, when the catalog was deferred. Set during
+		// resolveWorkerTools, which ran before this point.
+		pr.sys += t.authoringLazyPrompt
+		pr.sys += t.builderOnDemandIndexText()
+	}
 	pr.allTools = append(pr.cat.controlTools, pr.cat.knowTools...)
 	pr.allTools = append(pr.allTools, pr.cat.workerTools...)
 	pr.allTools = append(pr.allTools, pr.cat.directCustomTools...)
@@ -1052,6 +1067,11 @@ func (pr *planRun) catalogAssemble() error {
 	// defs above never pass through the registry, and they are the ones most
 	// likely to collide with a rule. See guardrail_tool_scope.go.
 	pr.allTools = t.applyGuardrailToolWithholding(pr.allTools)
+	if pr.exactTools {
+		var dropped []string
+		pr.allTools, dropped = exactToolsOnly(pr.allTools, t.appTools, t.agent.AllowedTools)
+		Debug("[orchestrate.orch] agent=%s is held to its own tools: kept %d, dropped %v", t.agent.ID, len(pr.allTools), dropped)
+	}
 	// Says "assembled", not "rewriting": the runtime group rewriter this line
 	// used to announce was retired, and the sentence outlived it. A stale verb
 	// on a line that also prints the catalog SIZE reads as a size-triggered
@@ -2216,8 +2236,8 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// above so the two cannot disagree — see turnRouting.
 		TierOverride:         pr.tierPin,
 		StampLocation:        UserLocation(t.user), // stamp the turn in the interactive user's zone
-		DynamicTools:         t.dynamicNewTempTools(pr.sess),
-		ToolFallbackResolver: t.lazyToolFallback,
+		DynamicTools:         pr.dynamicTools(),
+		ToolFallbackResolver: pr.toolFallback(),
 		Stream:               pr.streamHandler,
 		ReasoningStream:      t.thinkChunk,
 		OnResponse:           t.thinkResponse,
@@ -2447,4 +2467,23 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// dynamicTools is the loop's feed of temp tools made mid-turn: none for an
+// agent held to exactly its own tools.
+func (pr *planRun) dynamicTools() func() []AgentToolDef {
+	if pr.exactTools {
+		return nil
+	}
+	return pr.t.dynamicNewTempTools(pr.sess)
+}
+
+// toolFallback resolves a tool the model names that is not in the catalog
+// (a lazy custom tool): none for an agent held to exactly its own tools, or a
+// dropped tool could still be reached by naming it.
+func (pr *planRun) toolFallback() func(string) (ToolHandlerFunc, bool) {
+	if pr.exactTools {
+		return nil
+	}
+	return pr.t.lazyToolFallback
 }

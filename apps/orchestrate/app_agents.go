@@ -127,6 +127,36 @@ func appAgentForcesPrivate(id string) bool {
 // carrying an explicit mode is a decision, whether the owner made it in the
 // editor or the hosting app made it on its per-turn copy, and a spec default
 // must not overrule either.
+// appAgentExactTools reports whether an app agent's spec limits its turns to
+// exactly its own tools (appagents.AppAgentSpec.ExactTools).
+func appAgentExactTools(id string) bool {
+	s, ok := appagents.AppAgentByID(id)
+	return ok && s.ExactTools
+}
+
+// exactToolsOnly keeps the tools an ExactTools agent is offered: its
+// AllowedTools, the host app's tools for this turn, and the two ask tools. It
+// returns the kept tools and the names it dropped.
+func exactToolsOnly(tools, appTools []AgentToolDef, allowed []string) ([]AgentToolDef, []string) {
+	keep := map[string]bool{"ask_user": true, "ask_user_form": true}
+	for _, n := range allowed {
+		keep[n] = true
+	}
+	for _, td := range appTools {
+		keep[td.Tool.Name] = true
+	}
+	var out []AgentToolDef
+	var dropped []string
+	for _, td := range tools {
+		if keep[td.Tool.Name] {
+			out = append(out, td)
+		} else {
+			dropped = append(dropped, td.Tool.Name)
+		}
+	}
+	return out, dropped
+}
+
 func appAgentDispatchMode(id string) (string, bool) {
 	s, ok := appagents.AppAgentByID(id)
 	if !ok {

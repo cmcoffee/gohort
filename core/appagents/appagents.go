@@ -75,6 +75,14 @@ type AppAgentSpec struct {
 	// mode and the targets on its per-turn record copy instead, the way guides
 	// binds dispatch to the open guide's attached agent Sources.
 	DispatchMode string `json:"dispatch_mode,omitempty"`
+	// ExactTools offers this agent's turns exactly its AllowedTools, the
+	// tools its host app hands it for the turn, and ask_user / ask_user_form:
+	// none of the tools the framework otherwise adds to every turn (memory,
+	// find_tools, the workspace, scheduling, the custom-tool index, and the
+	// rest). For an app agent with one narrow job, where every extra tool is
+	// a way off it. Read from the spec on every turn, so a per-user copy of
+	// the agent cannot lose it.
+	ExactTools bool `json:"exact_tools,omitempty"`
 }
 
 // Dispatch modes for AppAgentSpec.DispatchMode. Spelled here so a spec need not

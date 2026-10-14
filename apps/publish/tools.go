@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -206,9 +207,20 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 				}
 			}
 
+			// What the publish did, kept on this call's result: the card's
+			// live line shows only the latest step and ends with the call, and
+			// a publish that ends "done" without doing what was meant should
+			// leave its steps to read. Still reported to anyone already
+			// watching ctx.
+			steps := &publishStepLog{}
+			outer := ctx
+			ctx = docs.WithPublishSteps(ctx, func(s string) {
+				docs.PublishStep(outer, "%s", s)
+				steps.add(s)
+			})
 			res, err := docs.PublishDocument(ctx, user, kind, req)
 			if err != nil {
-				return "", err
+				return "", fmt.Errorf("%v%s", err, steps.text())
 			}
 
 			rec := docs.PublishRecord{
@@ -227,14 +239,14 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 					// The remote write succeeded; only the bookkeeping failed.
 					// Say both, because the page IS there and a retry would
 					// create a second one.
-					return fmt.Sprintf("Published to %s: %s. NOTE: the link could not be recorded against the document (%v), so publishing again will create a new page rather than updating this one.", kind, linkOrLabel(res), err), nil
+					return fmt.Sprintf("Published to %s: %s. NOTE: the link could not be recorded against the document (%v), so publishing again will create a new page rather than updating this one.%s", kind, linkOrLabel(res), err, steps.text()), nil
 				}
 			}
 			verb := "Published"
 			if res.Updated {
 				verb = "Updated"
 			}
-			return fmt.Sprintf("%s %q in %s: %s", verb, req.Title, kind, linkOrLabel(res)), nil
+			return fmt.Sprintf("%s %q in %s: %s%s", verb, req.Title, kind, linkOrLabel(res), steps.text()), nil
 		},
 	}
 
@@ -364,6 +376,46 @@ func linkOrLabel(res docs.PublishResult) string {
 
 // truthy reads a boolean tool argument that may arrive as a bool or as a string
 // ("true"), which is the shape some models emit.
+// publishStepLog collects a publish's steps for its tool result. Safe from
+// the publish's goroutines.
+type publishStepLog struct {
+	mu      sync.Mutex
+	lines   []string
+	dropped int
+}
+
+// publishStepLogMax bounds the steps a result carries: a run that loops keeps
+// its latest, which is where it went wrong.
+const publishStepLogMax = 25
+
+func (l *publishStepLog) add(s string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.lines) >= publishStepLogMax {
+		l.lines = l.lines[1:]
+		l.dropped++
+	}
+	l.lines = append(l.lines, s)
+}
+
+// text is the steps as a block to end a result with, "" when there were none.
+func (l *publishStepLog) text() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.lines) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nSteps:")
+	if l.dropped > 0 {
+		fmt.Fprintf(&b, "\n- (%d earlier steps not shown)", l.dropped)
+	}
+	for _, s := range l.lines {
+		b.WriteString("\n- " + s)
+	}
+	return b.String()
+}
+
 func truthy(v any) bool {
 	switch t := v.(type) {
 	case bool:

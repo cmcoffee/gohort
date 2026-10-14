@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/docs"
 )
 
 // A call made beneath a dispatch names the dispatch's card, so the page draws
@@ -87,5 +88,44 @@ func TestASyncDispatchReportsThroughItsCard(t *testing.T) {
 	}
 	if rs, r := (*dispatchProgress)(nil).hooks(); rs != nil || r != nil {
 		t.Error("no reporter, no hooks")
+	}
+}
+
+// A run that reports its own steps in words (a publish) puts each on its
+// card's live line, in the round it is in; with no card it says nothing.
+func TestAStepGoesOnTheCardsLiveLine(t *testing.T) {
+	var sent []map[string]any
+	card := toolCard{msgID: "m1", callID: "c1", send: func(ev map[string]any) { sent = append(sent, ev) }}
+	p := dispatchProgressOn(card, "Publishing")
+	roundStart, _ := p.hooks()
+	roundStart()
+	p.say("Update a Confluence page · Runbook")
+	last := sent[len(sent)-1]
+	if last["kind"] != "tool_progress" || last["call_id"] != "c1" || last["agent"] != "Publishing" ||
+		last["round"] != 1 || last["tool"] != "Update a Confluence page · Runbook" {
+		t.Errorf("the step did not reach the card: %+v", last)
+	}
+	var none *dispatchProgress
+	none.say("nobody is watching") // must not panic
+}
+
+// A publish run with no card (Scribe's publish job) lists each round as a step
+// and says its round, its thinking and the step it is on as the publish's
+// current activity.
+func TestAPublishRunWithNoCardReportsItsRounds(t *testing.T) {
+	var steps, now []string
+	ctx := docs.WithPublishSteps(context.Background(), func(s string) { steps = append(steps, s) })
+	ctx = docs.WithPublishActivity(ctx, func(s string) { now = append(now, s) })
+	l := &publishLive{ctx: ctx}
+	l.say("Publishing through wikiapi, with 1 of its tools")
+	l.roundStart()
+	l.chunk(strings.Repeat("x", 400))
+	l.say("Update a page · Runbook")
+	if strings.Join(steps, "|") != "Round 1" {
+		t.Errorf("steps = %q", steps)
+	}
+	want := []string{"Publishing through wikiapi, with 1 of its tools", "round 1", "round 1 · Thinking · ~100 tokens", "round 1 · Update a page · Runbook"}
+	if strings.Join(now, "|") != strings.Join(want, "|") {
+		t.Errorf("activity = %q\nwant       %q", now, want)
 	}
 }

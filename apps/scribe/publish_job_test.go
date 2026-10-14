@@ -59,3 +59,47 @@ func TestAPublishJobKeepsItsSteps(t *testing.T) {
 		t.Fatalf("record = %+v, %v", rec, ok)
 	}
 }
+
+// activityDest says what it is doing, then waits to be let go, so the test
+// can read the job mid-run.
+type activityDest struct{ release chan struct{} }
+
+func (activityDest) Kind() string                    { return "activitytest" }
+func (activityDest) Label() string                   { return "Activity test" }
+func (activityDest) Available(string) (bool, string) { return true, "" }
+func (activityDest) Targets(context.Context, string) ([]docs.PublishTarget, error) {
+	return nil, nil
+}
+func (d activityDest) Publish(ctx context.Context, user string, req docs.PublishRequest) (docs.PublishResult, error) {
+	docs.PublishActivity(ctx, "round 2 · Thinking · 14s")
+	<-d.release
+	return docs.PublishResult{URL: "https://wiki.example/p/2", ExternalID: "2"}, nil
+}
+
+// A publish job says what it is doing right now beside the spinner (its round
+// and thinking), and says nothing of the sort once it has ended.
+func TestAPublishJobSaysWhatItIsDoingNow(t *testing.T) {
+	d := activityDest{release: make(chan struct{})}
+	docs.RegisterPublishDestination(d)
+	udb := UserDB(&DBase{Store: kvlite.MemStore()}, "u")
+	g := saveGuide(udb, Guide{ID: "gn", Owner: "u", Title: "Runbook", Sections: []Section{{ID: "s", Title: "Install", Markdown: "Do it.", Order: 1}}})
+	runPublishJob(httptest.NewRequest("POST", "/", nil), g, udb, "u", "activitytest", "Activity test",
+		docs.PublishRequest{Title: "Runbook", Doc: docs.PublishDoc{Title: "Runbook", Markdown: "# Runbook\n\nDo it."}}, docs.PublishRecord{Kind: "activitytest", Title: "Runbook"})
+	wait := func(ok func(publishJob) bool) publishJob {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			j, _ := currentPublishJob("gn")
+			if ok(j) || time.Now().After(deadline) {
+				return j
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if j := wait(func(j publishJob) bool { return j.Now != "" }); j.Now != "round 2 · Thinking · 14s" || j.Done {
+		t.Fatalf("mid-run the job says %q (done %v)", j.Now, j.Done)
+	}
+	close(d.release)
+	if j := wait(func(j publishJob) bool { return j.Done }); !j.Done || j.Now != "" {
+		t.Errorf("an ended job still says it is doing %q", j.Now)
+	}
+}

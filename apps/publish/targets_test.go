@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -272,5 +273,58 @@ func TestUnavailableDestinationsPointAtYourOwnTargets(t *testing.T) {
 		if ok || !strings.Contains(why, "Extensions, Publishing targets") || strings.Contains(why, "Admin") {
 			t.Errorf("%s: available=%v why=%q", name, ok, why)
 		}
+	}
+}
+
+// publish_document's result carries what the publish did, step by step, so
+// its card still shows the steps once the call ends, and a failure says how
+// far it got. Anyone already watching the publish's steps still gets them.
+func TestAPublishCallKeepsItsSteps(t *testing.T) {
+	app := &PublishApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	tgt, err := normalizeTarget(Target{Label: "Team wiki", Credential: "wikiapi", Instructions: "Create a page."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt.ID = "tw"
+	app.targetsDB("erin").Set(targetTable, tgt.ID, tgt)
+	docs.RegisterPublishDestination(&targetsDest{app: app})
+	fail := false
+	docs.RegisterCredentialPublisher(func(ctx context.Context, _, _, _ string) (string, string, error) {
+		docs.PublishStep(ctx, "Looked up the space")
+		if fail {
+			docs.PublishStep(ctx, "  failed: 403 forbidden")
+			return "", "", fmt.Errorf("the wiki refused the page")
+		}
+		docs.PublishStep(ctx, "Created the page")
+		return "Page created.", "https://wiki.example/p/7", nil
+	})
+	open := func() (Document, bool) {
+		return Document{Doc: docs.PublishDoc{Title: "Runbook", Markdown: "# Runbook"}}, true
+	}
+	var publishTool AgentToolDef
+	for _, td := range BuildPublishTools(context.Background(), "erin", open) {
+		if td.Tool.Name == "publish_document" {
+			publishTool = td
+		}
+	}
+	var watched []string
+	ctx := docs.WithPublishSteps(context.Background(), func(s string) { watched = append(watched, s) })
+
+	out, err := publishTool.Handler(ctx, map[string]any{"destination": "target:tw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Steps:\n- Looked up the space\n- Created the page") {
+		t.Errorf("the result does not keep the steps:\n%s", out)
+	}
+	if strings.Join(watched, "|") != "Looked up the space|Created the page" {
+		t.Errorf("the steps stopped reaching whoever was watching: %v", watched)
+	}
+
+	fail = true
+	_, err = publishTool.Handler(context.Background(), map[string]any{"destination": "target:tw"})
+	if err == nil || !strings.Contains(err.Error(), "refused the page") || !strings.Contains(err.Error(), "- Looked up the space\n-   failed: 403 forbidden") {
+		t.Errorf("a failure should say how far it got: %v", err)
 	}
 }

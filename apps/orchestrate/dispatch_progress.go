@@ -111,6 +111,18 @@ func (p *dispatchProgress) step(info StepInfo) {
 	p.emit(round, map[string]any{"tool": info.ToolCalls[len(info.ToolCalls)-1].Name})
 }
 
+// say puts a line of what the run is doing on the card, for a run that
+// reports its own steps in words (a publish) rather than by tool name.
+func (p *dispatchProgress) say(text string) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	round := p.round
+	p.mu.Unlock()
+	p.emit(round, map[string]any{"tool": text})
+}
+
 func (p *dispatchProgress) emit(round int, extra map[string]any) {
 	ev := map[string]any{
 		"kind":    "tool_progress",

@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
@@ -75,6 +77,32 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 		if app == nil {
 			return "", "", errors.New("orchestrate runtime not initialized")
 		}
+		// Started from a chat's publish_document call, the run shows on that
+		// call's card as it goes: its round, its thinking, and each step
+		// (dispatch_progress.go). Without it the card sat still for the whole
+		// run and read as hung. nil from anywhere else (Scribe's publish job
+		// follows the steps instead).
+		prog := dispatchProgressFrom(ctx, "Publishing")
+		progRoundStart, progReasoning := prog.hooks()
+		if prog != nil {
+			outer := ctx
+			ctx = docs.WithPublishSteps(ctx, func(s string) {
+				docs.PublishStep(outer, "%s", s)
+				prog.say(s)
+			})
+		} else {
+			// No card: its rounds and thinking go to whoever follows the
+			// publish's steps and activity instead (Scribe's publish job).
+			live := &publishLive{ctx: ctx}
+			progRoundStart, progReasoning = live.roundStart, live.chunk
+			// A step replaces the thinking line too, or the activity would
+			// still say Thinking while a tool runs.
+			outer := ctx
+			ctx = docs.WithPublishSteps(ctx, func(s string) {
+				docs.PublishStep(outer, "%s", s)
+				live.say(s)
+			})
+		}
 		sess := &ToolSession{Username: user}
 		tools, err := publishIntegrationTools(sess, credential)
 		if err != nil {
@@ -113,9 +141,11 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 			},
 		}
 		resp, _, err := app.RunAgentLoop(ctx, []Message{{Role: "user", Content: instruction}}, AgentLoopConfig{
-			SystemPrompt: credentialPublisherPrompt,
-			Tools:        append(tools, report),
-			MaxRounds:    12,
+			SystemPrompt:    credentialPublisherPrompt,
+			Tools:           append(tools, report),
+			MaxRounds:       12,
+			OnRoundStart:    progRoundStart,
+			ReasoningStream: progReasoning,
 		})
 		if err != nil {
 			return "", "", err
@@ -276,4 +306,68 @@ func clipStep(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// publishLive reports a publish run that has no card to draw on: each round
+// as a step, so the list shows where the time went, and the round with its
+// thinking as the publish's current activity (docs.PublishActivity), worded
+// like the chat's thinking line.
+type publishLive struct {
+	ctx       context.Context
+	mu        sync.Mutex
+	round     int
+	spanStart time.Time
+	chars     int
+	lastSent  time.Time
+}
+
+func (l *publishLive) roundStart() []Message {
+	l.mu.Lock()
+	l.round++
+	round := l.round
+	l.spanStart, l.chars, l.lastSent = time.Time{}, 0, time.Time{}
+	l.mu.Unlock()
+	docs.PublishStep(l.ctx, "Round %d", round)
+	docs.PublishActivity(l.ctx, "round %d", round)
+	return nil
+}
+
+// say makes a step the current activity, in the round it is in.
+func (l *publishLive) say(step string) {
+	l.mu.Lock()
+	round := l.round
+	l.mu.Unlock()
+	if round == 0 { // before the first round: setting up
+		docs.PublishActivity(l.ctx, "%s", strings.TrimSpace(step))
+		return
+	}
+	docs.PublishActivity(l.ctx, "round %d · %s", round, strings.TrimSpace(step))
+}
+
+// chunk counts reasoning and reports on the thinking tick, at once for the
+// first chunk of a round so "Thinking" shows the moment it starts.
+func (l *publishLive) chunk(s string) {
+	now := time.Now()
+	l.mu.Lock()
+	if l.spanStart.IsZero() {
+		l.spanStart = now
+	}
+	l.chars += len(s)
+	due := l.lastSent.IsZero() || now.Sub(l.lastSent) >= thinkTick
+	if due {
+		l.lastSent = now
+	}
+	round, secs, tokens := l.round, int(now.Sub(l.spanStart).Seconds()), l.chars/thinkCharsPerToken
+	l.mu.Unlock()
+	if !due {
+		return
+	}
+	line := fmt.Sprintf("round %d · Thinking", round)
+	if secs >= 1 {
+		line += fmt.Sprintf(" · %ds", secs)
+	}
+	if tokens > 0 {
+		line += fmt.Sprintf(" · ~%d tokens", tokens)
+	}
+	docs.PublishActivity(l.ctx, "%s", line)
 }

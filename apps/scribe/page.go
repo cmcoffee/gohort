@@ -802,7 +802,10 @@ const guidePublishAction = `function(ctx){
             var frames = ['\u280b','\u2819','\u2839','\u2838','\u283c','\u2834','\u2826','\u2827','\u2807','\u280f'], fi = 0, last = null;
             var spin = setInterval(function(){
               fi = (fi + 1) % frames.length;
-              if (last && !last.done) line.textContent = frames[fi] + ' Publishing to ' + last.target + (last.elapsed >= 3 ? ' - ' + last.elapsed + 's' : '');
+              // What it is doing now (its round, its thinking, the step it is
+              // on) rides beside the target, so a long model round reads as
+              // working rather than stuck on the last step listed.
+              if (last && !last.done) line.textContent = frames[fi] + ' Publishing to ' + last.target + (last.now ? ' - ' + last.now : '') + (last.elapsed >= 3 ? ' - ' + last.elapsed + 's' : '');
             }, 120);
             function poll(){
               fetch('publish/job?' + qp, {credentials:'same-origin', cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){

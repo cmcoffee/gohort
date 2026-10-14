@@ -37,6 +37,10 @@ type publishJob struct {
 	// shown under the spinner while it runs and kept after, so a publish
 	// that ends "done" without doing what was meant leaves something to read.
 	Steps []publishJobStep `json:"steps,omitempty"`
+	// Now is what it is doing at this moment ("round 2 · Thinking · 14s"),
+	// beside the spinner. Cleared when it ends: a finished publish is doing
+	// nothing.
+	Now string `json:"now,omitempty"`
 }
 
 // publishJobStep is one step and when it happened, in seconds from the start.
@@ -59,6 +63,15 @@ func (j *publishJob) step(text string) {
 	j.Steps = append(j.Steps, publishJobStep{At: int(time.Since(j.Started).Seconds()), Text: text})
 }
 
+// activity records what j is doing now. Safe from the publish's goroutines.
+func (j *publishJob) activity(now string) {
+	publishJobsMu.Lock()
+	defer publishJobsMu.Unlock()
+	if !j.Done {
+		j.Now = now
+	}
+}
+
 // runPublishJob publishes req to kind in the background as g's publish job,
 // reporting its steps, and files rec (filled in with where it landed) on the
 // guide when it succeeds. It does not wait: the job is what the Publish
@@ -71,11 +84,12 @@ func runPublishJob(r *http.Request, g Guide, ownerUDB Database, user, kind, wher
 	// Not on the request's context: the publish outlives the request, and a
 	// closed modal must not cancel a post halfway through.
 	ctx := docs.WithPublishSteps(context.WithoutCancel(r.Context()), job.step)
+	ctx = docs.WithPublishActivity(ctx, job.activity)
 	go func() {
 		res, err := docs.PublishDocument(ctx, user, kind, req)
 		publishJobsMu.Lock()
 		defer publishJobsMu.Unlock()
-		job.Done, job.Ended = true, time.Now()
+		job.Done, job.Ended, job.Now = true, time.Now(), ""
 		if err != nil {
 			job.Message = err.Error()
 			return
@@ -190,6 +204,7 @@ func (T *Scribe) handlePublishJob(w http.ResponseWriter, r *http.Request, udb Da
 		"elapsed": int(time.Since(j.Started).Seconds()),
 		"took":    fmt.Sprintf("%ds", int(j.Ended.Sub(j.Started).Seconds())),
 		"steps":   j.Steps,
+		"now":     j.Now,
 	})
 }
 

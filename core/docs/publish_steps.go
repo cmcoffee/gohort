@@ -35,3 +35,28 @@ func PublishStep(ctx context.Context, format string, a ...any) {
 		report(fmt.Sprintf(format, a...))
 	}
 }
+
+type publishActivityKey struct{}
+
+// WithPublishActivity returns ctx with report receiving what a publish on it is
+// doing right now ("round 2 · Thinking · 14s"): a line that replaces the last
+// one, where a step adds to a list. For a watcher with no live surface of its
+// own to draw a run's rounds on (Scribe's publish job). report must be safe to
+// call from the publish's goroutines.
+func WithPublishActivity(ctx context.Context, report func(now string)) context.Context {
+	if report == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, publishActivityKey{}, report)
+}
+
+// PublishActivity reports what the publish running on ctx is doing now. A
+// no-op when nobody is watching.
+func PublishActivity(ctx context.Context, format string, a ...any) {
+	if ctx == nil {
+		return
+	}
+	if report, ok := ctx.Value(publishActivityKey{}).(func(string)); ok {
+		report(fmt.Sprintf(format, a...))
+	}
+}
