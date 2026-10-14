@@ -447,6 +447,11 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 			Source:    "actions",
 			DescField: "desc",
 			PostTo:    "action/{name}",
+			// A slow action answers {running} and carries on as a job: the
+			// button follows it here (spinner, latest output line, Stop) and
+			// a page reopened mid-run rejoins it.
+			ProgressSource: "action-progress/{name}",
+			CancelTo:       "action-cancel/{name}",
 			// An action upserts records, so refresh the record lists AND every
 			// script-backed panel computed from them (same as a form save).
 			Invalidate: appRecordWriteInvalidations(spec),

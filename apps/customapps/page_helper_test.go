@@ -95,3 +95,62 @@ func TestThePageHelpersDialogsAreThePages(t *testing.T) {
 		}
 	}
 }
+
+// A slow action through window.app: the first answer says it is running, the
+// helper follows that job until it ends, hands each progress line to
+// onProgress, and resolves with the outcome (or rejects with its error).
+func TestThePageHelperFollowsALongAction(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	js := strings.TrimSuffix(strings.TrimPrefix(appPageHelper, "<script>"), "</script>")
+	harness := `
+var calls = [], window = {}, polls = 0;
+var realTimeout = setTimeout; global.setTimeout = function(fn) { return realTimeout(fn, 1); };
+function resp(body) { return {ok: true, status: 200, text: function() { return Promise.resolve(JSON.stringify(body)); }}; }
+global.fetch = function(u, o) {
+  calls.push((o && o.method || "GET") + " " + u);
+  if (u === "action/extract") return Promise.resolve(resp({running: true, job: "j1", progress: "starting"}));
+  if (u === "action/broken") return Promise.resolve(resp({running: true, job: "j2", progress: "starting"}));
+  if (u.indexOf("action-progress/extract") === 0) {
+    polls++;
+    if (polls < 3) return Promise.resolve(resp({running: true, job: "j1", progress: "part " + polls + " of 8"}));
+    return Promise.resolve(resp({done: true, job: "j1", message: "CASE-1 extracted", saved: 1, records: [{id: "a"}], outcome: "CASE-1 extracted"}));
+  }
+  if (u.indexOf("action-progress/broken") === 0) return Promise.resolve(resp({done: true, job: "j2", error: "the archive is corrupt"}));
+  return Promise.resolve(resp({ok: true}));
+};
+` + js + `
+var seen = [], out = {};
+window.app.action("extract", {case: "CASE-1"}, {onProgress: function(p) { seen.push(p); }}).then(function(r) {
+  out.result = r;
+  return window.app.action("broken").catch(function(e) { out.err = e.message; });
+}).then(function() {
+  return window.app.cancelAction("extract");
+}).then(function() {
+  console.log(JSON.stringify({calls: calls, seen: seen, out: out}));
+});
+`
+	f := filepath.Join(t.TempDir(), "h.js")
+	if err := os.WriteFile(f, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := exec.Command(node, f).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, b)
+	}
+	got := string(b)
+	for _, want := range []string{
+		`GET action-progress/extract?job=j1`,
+		`"seen":["starting","part 1 of 8","part 2 of 8"]`,
+		`"message":"CASE-1 extracted"`,
+		`"saved":1`,
+		`"err":"the archive is corrupt"`,
+		`POST action-cancel/extract`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in\n%s", want, got)
+		}
+	}
+}

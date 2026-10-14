@@ -11,7 +11,13 @@ package customapps
 // never fired. window.app is that plumbing written once:
 //
 //	app.data(name, params)        GET a data source, its JSON
-//	app.action(name, body)        POST an action, {message, saved, records, result}
+//	app.action(name, body, opts)  POST an action, {message, saved, records, result}.
+//	                              A slow one keeps running on the server; the
+//	                              promise resolves when it ends, and
+//	                              opts.onProgress(line) hears its latest output
+//	                              meanwhile (show it: it is how a person knows
+//	                              a five-minute download is alive)
+//	app.cancelAction(name)        stop this person's running action of that name
 //	app.records.list()            this person's records, oldest first
 //	app.records.save(record)      create, or update by the record key
 //	app.records.remove(id)        delete one
@@ -37,7 +43,13 @@ function json(r){return r.text().then(function(t){var d=null;try{d=t?JSON.parse(
 function post(u,b){return fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})}).then(json);}
 window.app={
 data:function(n,p){return fetch("data/"+encodeURIComponent(n)+q(p)).then(json);},
-action:function(n,b){return post("action/"+encodeURIComponent(n),b);},
+action:function(n,b,o){o=o||{};var e=encodeURIComponent(n);function tell(p){if(p&&o.onProgress){try{o.onProgress(p);}catch(x){console.error(x);}}}
+return post("action/"+e,b).then(function(d){if(!d||!d.running||!d.job)return d;tell(d.progress);
+return new Promise(function(res,rej){(function poll(){setTimeout(function(){fetch("action-progress/"+e+q({job:d.job})).then(json).then(function(s){
+if(s&&s.done){if(s.error)rej(new Error(s.error));else res({message:s.message,saved:s.saved,records:s.records,result:s.result});return;}
+if(!s||!s.running){rej(new Error("the action is no longer running and left no outcome"));return;}
+tell(s.progress);poll();}).catch(function(){poll();});},2000);})();});});},
+cancelAction:function(n){return post("action-cancel/"+encodeURIComponent(n));},
 records:{list:function(){return fetch("records").then(json);},save:function(r){return post("records",r);},remove:function(id){return fetch("record?id="+encodeURIComponent(id),{method:"DELETE"}).then(json);}},
 shared:function(n){return fetch("shared/"+encodeURIComponent(n)).then(json);},
 ask:function(p,o){return post("ask",{prompt:String(p),json:!!(o&&o.json)}).then(function(d){return d&&d.text;});},

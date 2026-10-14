@@ -165,7 +165,9 @@ func (T *CustomApps) dispatchScheduledAction(_ context.Context, t ScheduledTrigg
 	records := string(recJSON)
 	args := map[string]any{"records": records}
 	T.applySettings(args, spec, owner) // a scheduled fire is the owner's own run
-	res, err := runActionAndPersist(owner, db, db, spec, *act, args, owner, false)
+	// Nobody is waiting on a timer's run, so it gets the long limits: it may
+	// take as long as its work does, stopped only if it goes quiet.
+	res, err := runActionAndPersist(owner, db, db, spec, *act, args, owner, scriptRun{Long: true, Ctx: context.Background()})
 	if err != nil {
 		Log("[customapps] scheduled action %q/%q failed: %v", slug, actName, err)
 		return

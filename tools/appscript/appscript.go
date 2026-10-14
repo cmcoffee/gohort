@@ -16,8 +16,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bgrun"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -56,6 +58,15 @@ type Job struct {
 	// than waiting behind that same person's chat. A timer's run leaves it
 	// false and stays background.
 	Interactive bool
+	// Long runs the script with no fixed time limit, for an action that may
+	// take minutes (a download, an extraction): it is stopped only when it
+	// prints nothing for the no-output limit, or would fill the disk, the
+	// same limits as an agent's background command (core/bgrun). Ctx stops
+	// it, and OnProgress hears its latest output line every two seconds.
+	// Off, the run keeps the ordinary short limit.
+	Long       bool
+	Ctx        context.Context
+	OnProgress func(line string)
 }
 
 // AppRunAgent and AppRunPipeline answer a script's gohort.run_agent and
@@ -131,7 +142,8 @@ func (j Job) Run() (string, error) {
 		Params:           params,
 	}
 	for _, c := range caps {
-		if c == "run_agent" || c == "run_pipeline" {
+		// A long run has no fixed limit to raise.
+		if (c == "run_agent" || c == "run_pipeline") && !j.Long {
 			tt.TimeoutSec = longRunSecs
 		}
 	}
@@ -143,8 +155,13 @@ func (j Job) Run() (string, error) {
 		// reach the network (the sandbox itself stays network-isolated).
 		Network: NewNetworkConnector(false),
 	}
+	base := context.Background()
+	if j.Long && j.Ctx != nil {
+		base = j.Ctx
+	}
+	sess.Ctx = base
 	if j.Interactive {
-		sess.Ctx = WithRunLane(context.Background(), LaneInteractive)
+		sess.Ctx = WithRunLane(base, LaneInteractive)
 	}
 	sess.CallTool = func(name string, args map[string]any) (string, error) {
 		return temptool.CallToolForScript(sess, name, args)
@@ -193,7 +210,12 @@ func (j Job) Run() (string, error) {
 		}
 		return AppRunPipeline(sess.Context(), spec, caller, pipeline, input)
 	}
-	out, err := temptool.DispatchTempToolDirect(sess, tt, args)
+	var out string
+	if j.Long {
+		out, err = j.runLong(sess, tt, args)
+	} else {
+		out, err = temptool.DispatchTempToolDirect(sess, tt, args)
+	}
 	names := scriptPathNames(ws, scriptName, slug, kind, name, ext)
 	out = names.Replace(out)
 	if err != nil {
@@ -202,6 +224,41 @@ func (j Job) Run() (string, error) {
 		}
 	}
 	return out, err
+}
+
+// runLong runs the script under the background-run limits. The session has no
+// conversation to deliver into, so the run never detaches: it stays here, as
+// the caller's own job, with the fixed limit replaced by the no-output and disk
+// limits. The script's hooks (call_tool, ask, run_agent) ride the session the
+// run is handed, which outlives nothing but has the job's context.
+func (j Job) runLong(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	return bgrun.BackgroundRun{Tool: tt.Name, Run: func(work *ToolSession) (string, error) {
+		work.CallTool = func(name string, a map[string]any) (string, error) {
+			return temptool.CallToolForScript(work, name, a)
+		}
+		work.Ask, work.RunAgent, work.RunPipeline = sess.Ask, sess.RunAgent, sess.RunPipeline
+		if j.OnProgress != nil {
+			if act := bgrun.RunActivityFrom(work.Context()); act != nil {
+				stop := make(chan struct{})
+				defer close(stop)
+				go func() {
+					tick := time.NewTicker(2 * time.Second)
+					defer tick.Stop()
+					for {
+						select {
+						case <-stop:
+							return
+						case <-tick.C:
+							if line := act.Summary(); line != "" {
+								j.OnProgress(line)
+							}
+						}
+					}
+				}()
+			}
+		}
+		return temptool.DispatchTempToolDirect(work, tt, args)
+	}}.Start(sess)
 }
 
 // scriptPathNames maps where a script and its libraries are staged to run to

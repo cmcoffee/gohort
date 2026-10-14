@@ -24,6 +24,7 @@
 package customapps
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -270,6 +271,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		T.handleActionsList(w, r, spec)
 	case strings.HasPrefix(rest, "action/"):
 		T.handleAction(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "action/"))
+	case strings.HasPrefix(rest, "action-progress/"):
+		T.handleActionProgress(w, r, ownerUser, user, spec, strings.TrimPrefix(rest, "action-progress/"))
+	case strings.HasPrefix(rest, "action-cancel/"):
+		T.handleActionCancel(w, r, ownerUser, user, spec, strings.TrimPrefix(rest, "action-cancel/"))
 	case rest == "records":
 		T.handleRecords(w, r, appdb, spec)
 		if r.Method == http.MethodPost {
@@ -1391,7 +1396,23 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	}
 
 	T.applySettings(args, spec, uid) // last: neither a param nor the body overrides a setting
-	res, err := runActionAndPersist(owner, T.recordBase(spec, owner), udb, spec, *act, args, uid, true)
+	// A job, not a call: it runs on its own context so a slow one outlasts this
+	// request, and answers here if it finishes soon enough (action_jobs.go).
+	ownerDB, action := T.recordBase(spec, owner), *act
+	job := startActionJob(actionJobKey(owner, spec.Slug, uid, name), func(ctx context.Context, progress func(string)) (actionOutcome, error) {
+		return runActionAndPersist(owner, ownerDB, udb, spec, action, args, uid, scriptRun{Interactive: true, Long: true, Ctx: ctx, OnProgress: progress})
+	})
+	select {
+	case <-job.done:
+	case <-time.After(actionInlineWait):
+		writeJSON(w, job.status())
+		return
+	case <-r.Context().Done():
+		return // the person left; the job carries on and keeps its outcome
+	}
+	job.mu.Lock()
+	res, err := job.res, job.err
+	job.mu.Unlock()
 	if err != nil {
 		Log("[customapps] action %q/%q failed: %v", spec.Slug, name, err)
 		http.Error(w, "action failed: "+err.Error(), http.StatusInternalServerError)
@@ -1402,6 +1423,16 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 		reply["result"] = res.Result
 	}
 	writeJSON(w, reply)
+}
+
+// scriptRun is how an action's script runs: whether a person is waiting on
+// it, and whether it runs as a long job (no fixed limit, stopped by ctx or by
+// going quiet) with its progress heard by OnProgress.
+type scriptRun struct {
+	Interactive bool
+	Long        bool
+	Ctx         context.Context
+	OnProgress  func(string)
 }
 
 // actionOutcome is what one action run did: the message for the button, how
@@ -1429,11 +1460,12 @@ type actionOutcome struct {
 // never writes the store itself.
 //
 // by is who triggered the run, stamped on any shared record it writes.
-func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act AppAction, args map[string]any, by string, interactive bool) (res actionOutcome, err error) {
+func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act AppAction, args map[string]any, by string, how scriptRun) (res actionOutcome, err error) {
 	if len(spec.SharedCollections) > 0 {
 		args["shared"] = sharedInput(ownerDB, spec)
 	}
-	out, err := runAppScript(appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries, Interactive: interactive})
+	out, err := runAppScript(appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries,
+		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress})
 	if err != nil {
 		return res, err
 	}
@@ -1444,7 +1476,11 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 		SharedDelete map[string][]string         `json:"shared_delete"`
 		Result       any                         `json:"result"`
 	}
-	trimmed := strings.TrimSpace(out)
+	// The reply is the LAST JSON object the script printed. A long action
+	// prints progress lines as it goes so a person (and the no-output limit)
+	// can see it is alive, and the sandbox hands back stdout and stderr
+	// together, so those lines come before the reply rather than instead of it.
+	trimmed := lastJSONObject(out)
 	if trimmed != "" && json.Unmarshal([]byte(trimmed), &result) != nil {
 		return res, fmt.Errorf("the action script must print a JSON object {message?, records?, result?, shared?, shared_delete?} to stdout (got %.200s)", trimmed)
 	}
@@ -1499,6 +1535,29 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 	}
 	res.Message, res.Saved, res.Result = msg, saved, result.Result
 	return res, nil
+}
+
+// lastJSONObject is the JSON object at the end of a script's output: the whole
+// output when it is one, else the shortest tail of whole lines that parses as
+// one (a reply printed on one line or pretty-printed over several). The output
+// trimmed as it was when nothing at the end parses, so the error shows it.
+func lastJSONObject(out string) string {
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" || json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+	lines := strings.Split(trimmed, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "{") {
+			continue
+		}
+		tail := strings.TrimSpace(strings.Join(lines[i:], "\n"))
+		var obj map[string]any
+		if json.Unmarshal([]byte(tail), &obj) == nil {
+			return tail
+		}
+	}
+	return trimmed
 }
 
 // --- generic record store ----------------------------------------------------
@@ -1826,7 +1885,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets", "shared/", "changes", "ask"}
+var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "assets", "shared/", "changes", "ask"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}

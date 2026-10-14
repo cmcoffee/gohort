@@ -66,7 +66,7 @@ func TestAnActionSignalsWhatItChanged(t *testing.T) {
 	runAppScript = func(appscript.Job) (string, error) {
 		return `{"shared":{"leaderboard":[{"id":"bob","score":1}]}}`, nil
 	}
-	runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob", true)
+	runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob", scriptRun{Interactive: true})
 	sv1, _ := changeVersion(sharedChangeKey("alice", "game"))
 	rv1, _ := changeVersion(recordsChangeKey("alice", "game", "bob"))
 	if sv1 == sv0 || rv1 != rv0 {
@@ -75,7 +75,7 @@ func TestAnActionSignalsWhatItChanged(t *testing.T) {
 	runAppScript = func(appscript.Job) (string, error) {
 		return `{"records":[{"note":"x"}]}`, nil
 	}
-	runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob", true)
+	runActionAndPersist("alice", ownerDB, bobDB, spec, spec.Actions[0], map[string]any{}, "bob", scriptRun{Interactive: true})
 	sv2, _ := changeVersion(sharedChangeKey("alice", "game"))
 	rv2, _ := changeVersion(recordsChangeKey("alice", "game", "bob"))
 	if sv2 != sv1 || rv2 == rv1 {
