@@ -1076,6 +1076,19 @@
     setTimeout(update, 0);
   };
 
+  // uiRevealInRow(row, item) scrolls a sideways-scrolling row (a phone's tab
+  // strip) so item sits in view, centred where the row allows. Only the row
+  // moves, never the page. Deferred a frame, so it works on a row that was
+  // only just put on the page.
+  window.uiRevealInRow = function(row, item) {
+    if (!row || !item) return;
+    setTimeout(function() {
+      if (row.scrollWidth <= row.clientWidth + 2) return;
+      var r = row.getBoundingClientRect(), i = item.getBoundingClientRect();
+      row.scrollLeft += (i.left - r.left) - (r.width - i.width) / 2;
+    }, 0);
+  };
+
   window.uiAnchorMenu = function(toggle, menu, opts) {
     opts = opts || {};
     var shown = opts.display || 'block';

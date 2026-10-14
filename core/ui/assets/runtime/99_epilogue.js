@@ -247,12 +247,20 @@
   function navStrip(cfg) {
     if (!cfg.nav || !cfg.nav.length) return null;
     var tabs = el('nav', {class: 'ui-page-tabs'});
+    var current = null;
     cfg.nav.forEach(function(it) {
-      tabs.appendChild(el('a', {
+      var a = el('a', {
         class: 'ui-page-tab' + (it.active ? ' active' : ''),
         href: it.url || '#',
-      }, [it.label || '']));
+      }, [it.label || '']);
+      if (it.active) current = a;
+      tabs.appendChild(a);
     });
+    // On a phone the tabs are a row of their own that scrolls sideways: it
+    // fades where there are more, and opens with this page's tab in view
+    // rather than wherever it fell past the edge.
+    if (window.uiEdgeFade) window.uiEdgeFade(tabs);
+    if (window.uiRevealInRow) window.uiRevealInRow(tabs, current);
     return tabs;
   }
 
@@ -378,6 +386,8 @@
       activeTab = idx;
       for (var i = 0; i < panels.length; i++) panels[i].classList.toggle('ui-tab-hidden', i !== idx);
       for (var j = 0; j < tabButtons.length; j++) tabButtons[j].classList.toggle('active', j === idx);
+      // A phone's tab bar scrolls sideways: keep the open tab in view.
+      if (window.uiRevealInRow) window.uiRevealInRow(tabbar, tabButtons[idx]);
     }
     // Which tabs hold a section of each slug, so #<slug> can reach a section
     // on ANOTHER tab. Each tab's rail already answers the hash for its own

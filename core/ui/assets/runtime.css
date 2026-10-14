@@ -2677,6 +2677,15 @@ select:-webkit-autofill {
 .ui-actionlist-desc  { font-size: var(--fs-xs); color: var(--text-mute); margin-top: 0.15rem; }
 .ui-actionlist-status { font-size: var(--fs-xs); color: var(--text-mute); min-width: 4rem; max-width: 100%; text-align: right; overflow-wrap: anywhere; }
 .ui-actionlist-empty { color: var(--text-mute); font-size: var(--fs-md); padding: 0.5rem 0; }
+/* Phone. A key/value row whose value will not fit beside its label wraps it
+ * to the line below at a word, not at any letter (break-all split ordinary
+ * words mid-way). An action row whose button drops under its text keeps the
+ * button at the row's right, where it sits on a wide screen. */
+@media (max-width: 700px) {
+  .ui-display-row { flex-wrap: wrap; row-gap: 0.15rem; }
+  .ui-display-value { flex: 1 1 auto; word-break: normal; overflow-wrap: anywhere; }
+  .ui-actionlist-row > .ui-actionlist-text + * { margin-left: auto; }
+}
 
 /* --- JSONView --- */
 .ui-jsonview-h { font-size: var(--fs-2xs); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); margin-bottom: 0.4rem; }
