@@ -51,17 +51,20 @@ func TestTouchFloorNamesRealClasses(t *testing.T) {
 		if strings.Contains(runtimeJS, c) {
 			continue
 		}
-		// A class drawn by Go-rendered markup rather than the runtime.
+		// A class drawn by Go-rendered markup rather than the runtime, in the
+		// framework or in an app that uses it.
 		found := false
-		filepath.Walk(".", func(p string, info os.FileInfo, err error) error {
-			if err != nil || found || info.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+		for _, root := range []string{".", "../../apps"} {
+			filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+				if err != nil || found || info.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+					return nil
+				}
+				if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), c) {
+					found = true
+				}
 				return nil
-			}
-			if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), c) {
-				found = true
-			}
-			return nil
-		})
+			})
+		}
 		if !found {
 			t.Errorf("the touch floor names .%s, which nothing draws", c)
 		}

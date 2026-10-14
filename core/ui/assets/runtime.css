@@ -1268,6 +1268,20 @@ select:-webkit-autofill {
  * row name off the visible width. */
 .ui-row-btn.compact { padding-left: 0.4rem; padding-right: 0.4rem; font-size: var(--fs-lg); }
 @media (pointer: coarse) { .ui-row-btn.compact { min-width: 36px; min-height: 36px; } }
+/* An icon button: one glyph (x, a pencil, a sparkle) in a quiet square, for
+ * the remove-this-row and do-this-to-it controls an app would otherwise
+ * hand-roll with its own padding and no touch size. Borderless until
+ * pointed at; .danger turns it red on hover. On a touch screen it is the
+ * compact tap size each way (the touch floor). */
+.ui-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 1.8rem; height: 1.8rem; padding: 0;
+  background: transparent; border: 1px solid transparent; border-radius: var(--btn-radius);
+  color: var(--text-mute); font: inherit; font-size: var(--fs-lg); line-height: 1; cursor: pointer;
+}
+.ui-icon-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-2); border-color: var(--border); }
+.ui-icon-btn.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+.ui-icon-btn:disabled { opacity: 0.45; cursor: default; }
 /* Stack composes multiple components in one expand panel. */
 .ui-stack { display: flex; flex-direction: column; gap: 0.6rem; }
 /* Badge — colored pill for boolean/state indicators in table rows. */
@@ -6549,7 +6563,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   }
   :is(.ui-form-chip, .ui-tw-variant) { display: inline-flex; align-items: center; }
   /* Icon buttons: square, at least the compact size each way. */
-  :is(.ui-keys-row-del, .ui-mem-del, .ui-rules-edit-btn, .ui-rules-del,
+  :is(.ui-icon-btn, .ui-keys-row-del, .ui-mem-del, .ui-rules-edit-btn, .ui-rules-del,
       .ui-assist-nav, .ui-sec-mode, .ui-sec-suggest, .ui-sec-move, .ui-sec-del,
       .ui-sec-colx, .ui-sec-rowx, .ui-sec-addcol, .ui-sec-align,
       .ui-pl-modal-close, .ui-agent-collapse, .ui-agent-expand,
@@ -6580,9 +6594,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-cw .ui-chat-side-del, .ui-tw .ui-chat-side-del { width: 2.25rem; height: 2.25rem; }
   .ui-cw .ui-chat-side-item, .ui-tw .ui-chat-side-item { min-height: 2.25rem; padding-right: 2.75rem; }
   /* iOS zooms into any focused field set under 16px and never zooms back
-   * out, so on a touch screen every field is 16px. */
-  .ui-chat-input, .ui-agent-input, .ui-input,
-  .ui-form-input, .ui-form-textarea, .ui-form-select { font-size: 16px; }
+   * out, so on a touch screen every field is 16px: the framework's, and
+   * every field an app writes itself. !important because apps size their
+   * fields inline (11 to 14px), and an inline size beats any rule without
+   * it; nothing should be under 16px here, so nothing needs to win. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="submit"]):not([type="button"]),
+  textarea, select { font-size: 16px !important; }
+  /* A single-line field stands at least the compact tap size. Zero
+   * specificity, so a field that sizes itself still wins. */
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="submit"]):not([type="button"]):not([type="hidden"]),
+         select) { min-height: var(--btn-h-sm); }
 }
 @media (max-width: 900px) {
   /* The agent composer sits at the bottom of a full-height panel; keep its

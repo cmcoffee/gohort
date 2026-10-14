@@ -228,6 +228,8 @@ behind, which is worse than not having one, so it was retired.
 | A bar chart | `ui.BarChart` |
 | An article editor with full markdown + image insertion | `ui.ArticleEditor` |
 | A code editor with diff + history | `ui.CodeEditorPanel` |
+| A button in your own HTML (ExtraHeadHTML, a client action's modal) | `class="ui-row-btn"`, with `primary` / `danger` / `ui-btn-sm` as needed. It takes the shared size, rounding and touch size; a hand-styled button takes none of them |
+| A one-glyph button in your own HTML (remove ×, edit ✎, ✨) | `class="ui-icon-btn"` (add `danger` for a remove). Never padding and a font size of your own: on a phone that is a 20px target |
 
 If your shape doesn't fit any of these cleanly, you may need a new primitive. Prefer combining existing ones first: most app surfaces are some mix of Table + FormPanel + a chat-shaped flow.
 
