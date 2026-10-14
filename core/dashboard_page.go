@@ -248,17 +248,19 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   .subtitle { color: var(--text-mute, #8b949e); margin-bottom: 3rem; font-size: var(--fs-lg, 1rem); }
   /* A notice is a thing to DO, so it reads as one: an accent edge, the
      sentence, and the button that resolves it. Sized to the grid so it sits
-     with the cards rather than floating over them. */
+     with the cards rather than floating over them. The button goes on its
+     own line under the sentence: beside it, the sentence's last line and the
+     button shared a row, and the two read as run together. */
   .notice {
     width: 100%; max-width: var(--dash-w); margin: 0 auto 1.25rem;
-    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+    display: flex; flex-direction: column; align-items: stretch; gap: 0.75rem;
     padding: 0.85rem 1.1rem; border-radius: 8px;
     background: rgba(99,102,241,0.10); border: 1px solid rgba(99,102,241,0.35);
     color: var(--text, #c9d1d9); font-size: var(--fs-lg, 0.95rem); line-height: 1.5;
   }
-  .notice span { flex: 1; min-width: 14rem; }
+  .notice span { min-width: 0; }
   .notice-act {
-    flex: 0 0 auto; text-decoration: none; font-weight: 600; font-size: var(--fs-md, 0.9rem);
+    align-self: flex-start; text-decoration: none; font-weight: 600; font-size: var(--fs-md, 0.9rem);
     padding: 0.45rem 0.9rem; border-radius: 6px;
     background: var(--accent, #6366f1); color: var(--text-on-accent, #fff);
   }
