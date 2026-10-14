@@ -293,6 +293,8 @@
     var rail = el('div', {class: 'ui-secnav-rail'});
     var content = el('div', {class: 'ui-secnav-content'});
     mountEl.appendChild(el('div', {class: 'ui-secnav'}, [rail, content]));
+    // A phone lays the rail out as one row that scrolls sideways.
+    if (window.uiEdgeFade) window.uiEdgeFade(rail);
     var subPanels = [], items = [], slugs = [];
     function activate(si) {
       for (var k = 0; k < subPanels.length; k++) subPanels[k].classList.toggle('ui-tab-hidden', k !== si);
@@ -365,6 +367,7 @@
     });
     var tabbar = el('div', {class: 'ui-tabbar'});
     root.appendChild(tabbar);
+    if (window.uiEdgeFade) window.uiEdgeFade(tabbar);
     var panels = [];
     // initial_tab opens the page on a tab by its name, for a shortcut that
     // means one part of the page (the first tab otherwise).

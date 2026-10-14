@@ -2924,37 +2924,11 @@
       // they stayed 22px tall on a phone.
       // On a phone these rows scroll sideways rather than wrap (runtime.css);
       // the fade marks the side there is more on.
-      edgeFade(actionsBar);
-      edgeFade(modesRow);
+      window.uiEdgeFade(actionsBar);
+      window.uiEdgeFade(modesRow);
     } else {
       extrasSlot.appendChild(extrasRow);
       extrasSlot.appendChild(modesRow);
-    }
-    // edgeFade marks a row that scrolls sideways with the side it has more
-    // on (ui-strip-more-left / -right), so a cut-off button reads as "swipe"
-    // rather than as the end of the row. Kept current as it scrolls, resizes,
-    // and as buttons come and go (menus and tiles show by the agent).
-    function edgeFade(strip) {
-      if (!strip) return;
-      // Touches the class only when it changes: the observer below watches
-      // class attributes, and re-setting one it already has would wake it
-      // again, round and round.
-      function mark(cls, on) {
-        if (strip.classList.contains(cls) !== on) strip.classList.toggle(cls, on);
-      }
-      function update() {
-        var room = strip.scrollWidth - strip.clientWidth;
-        var more = room > 2;
-        mark('ui-strip-more-left', more && strip.scrollLeft > 2);
-        mark('ui-strip-more-right', more && strip.scrollLeft < room - 2);
-      }
-      strip.addEventListener('scroll', update, {passive: true});
-      window.addEventListener('resize', update);
-      if (window.ResizeObserver) new ResizeObserver(update).observe(strip);
-      if (window.MutationObserver) {
-        new MutationObserver(update).observe(strip, {childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class']});
-      }
-      setTimeout(update, 0);
     }
     convoPane.appendChild(inputRow);
     convoPane.appendChild(attachStrip);

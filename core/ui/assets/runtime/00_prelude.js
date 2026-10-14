@@ -1047,6 +1047,35 @@
   // It drops below the toggle and scrolls inside itself when it is taller than
   // the room there. It opens upward only when it does not fit below and there
   // is more room above, which on a phone is a toggle near the bottom.
+  // uiEdgeFade(strip) marks a row that scrolls sideways with the side it
+  // has more on (ui-strip-more-left / -right, a fade in runtime.css), so a
+  // cut-off button or tab reads as "swipe" rather than as the end of the
+  // row. Kept current as the row scrolls, resizes, and as its items come
+  // and go. Any row that can scroll sideways: a tab bar, a section rail, a
+  // toolbar strip.
+  window.uiEdgeFade = function(strip) {
+    if (!strip) return;
+    // Touches the class only when it changes: the observer below watches
+    // class attributes, and re-setting one it already has would wake it
+    // again, round and round.
+    function mark(cls, on) {
+      if (strip.classList.contains(cls) !== on) strip.classList.toggle(cls, on);
+    }
+    function update() {
+      var room = strip.scrollWidth - strip.clientWidth;
+      var more = room > 2;
+      mark('ui-strip-more-left', more && strip.scrollLeft > 2);
+      mark('ui-strip-more-right', more && strip.scrollLeft < room - 2);
+    }
+    strip.addEventListener('scroll', update, {passive: true});
+    window.addEventListener('resize', update);
+    if (window.ResizeObserver) new ResizeObserver(update).observe(strip);
+    if (window.MutationObserver) {
+      new MutationObserver(update).observe(strip, {childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class']});
+    }
+    setTimeout(update, 0);
+  };
+
   window.uiAnchorMenu = function(toggle, menu, opts) {
     opts = opts || {};
     var shown = opts.display || 'block';

@@ -3724,6 +3724,8 @@
         shell.appendChild(rail);
         shell.appendChild(pane);
         host.appendChild(shell);
+        // A phone lays the rail out as one row that scrolls sideways.
+        if (window.uiEdgeFade) window.uiEdgeFade(rail);
 
         var bodies = [];
         var buttons = [];

@@ -1,7 +1,7 @@
 package ui
 
-// The agent top bar's rows scroll sideways on a phone, and edgeFade marks the
-// side a row has more on. Driven on a fake row: the marks follow the scroll,
+// Rows that scroll sideways (the agent top bar's, tab bars, section rails)
+// get uiEdgeFade, which marks the side a row has more on. Driven on a fake row: the marks follow the scroll,
 // a row that fits carries none, and a mark it already has is never set again,
 // since the panel watches class changes and re-setting one would wake that
 // watcher forever.
@@ -19,11 +19,12 @@ func TestEdgeFadeMarksTheSideWithMore(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node not installed")
 	}
-	src := readRuntimeFile(t, "30_agent_loop_panel.js")
-	fn := regexp.MustCompile(`(?s)    function edgeFade\(strip\) \{.*?\n    \}\n`).FindString(src)
+	src := readRuntimeFile(t, "00_prelude.js")
+	fn := regexp.MustCompile(`(?s)  window\.uiEdgeFade = function\(strip\) \{.*?\n  \};\n`).FindString(src)
 	if fn == "" {
-		t.Fatal("edgeFade not found in the agent panel")
+		t.Fatal("uiEdgeFade not found in the prelude")
 	}
+	fn = strings.Replace(fn, "window.uiEdgeFade = function(strip)", "function edgeFade(strip)", 1)
 	script := `
 var window = {addEventListener: function() {}};
 var writes = 0;

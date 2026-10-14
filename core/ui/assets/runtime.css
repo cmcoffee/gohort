@@ -5260,12 +5260,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
     flex-direction: row; height: auto; min-width: 0; gap: 0.3rem;
     padding: 0.25rem 0.55rem; border-radius: var(--btn-radius);
   }
-  .ui-strip-more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent); }
-  .ui-strip-more-left { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 1.75rem), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 1.75rem), transparent); }
-  .ui-strip-more-left.ui-strip-more-right {
-    -webkit-mask-image: linear-gradient(to right, transparent, #000 1.75rem, #000 calc(100% - 1.75rem), transparent);
-    mask-image: linear-gradient(to right, transparent, #000 1.75rem, #000 calc(100% - 1.75rem), transparent);
-  }
+}
+/* A row that scrolls sideways fades on the side it has more on (set by
+ * uiEdgeFade as it scrolls), so a cut-off button or tab reads as "swipe"
+ * rather than as the end of the row. Only a row that overflows carries a
+ * mark, so these hold at any width. */
+.ui-strip-more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent); }
+.ui-strip-more-left { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 1.75rem), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 1.75rem), transparent); }
+.ui-strip-more-left.ui-strip-more-right {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 1.75rem, #000 calc(100% - 1.75rem), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 1.75rem, #000 calc(100% - 1.75rem), transparent);
 }
 /* When the modes row hosts both pill toggles and app-relocated
  * rectangular context buttons (.ui-row-btn), keep them on the same
@@ -5923,10 +5927,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
      pane keeps full width rather than being squeezed to nothing. */
   .ui-form-nav { flex-direction: column; }
   .ui-form-nav-rail {
-    flex: 0 0 auto; flex-direction: row; flex-wrap: wrap;
+    flex: 0 0 auto; flex-direction: row; flex-wrap: nowrap;
     border-right: none; border-bottom: 1px solid var(--border);
     padding-right: 0; padding-bottom: 0.5rem; position: static;
+    /* One row that scrolls sideways, as the section rail and the tab bar
+     * do on a phone; wrapped, a long form's groups stacked into rows of
+     * pills above it. */
+    overflow-x: auto; scrollbar-width: none;
   }
+  .ui-form-nav-rail::-webkit-scrollbar { display: none; }
+  .ui-form-nav-item { flex: 0 0 auto; white-space: nowrap; }
 }
 /* Shared rules editor (openRulesPanel), inside the standard modal. */
 .ui-doc-rules-ta {
@@ -6797,4 +6807,12 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 @media (max-width: 700px) and (pointer: coarse) {
   .ui-tw-side .ui-chat-side-item { padding-right: 2.9rem; }
+}
+/* A section rail laid out as a row of tabs (a phone) holds tabs, not menu
+ * rows: a button's height there, not the touch floor's list-row height. */
+@media (max-width: 720px) and (pointer: coarse) {
+  .ui-secnav-rail .ui-secnav-item { min-height: var(--btn-h); }
+}
+@media (max-width: 760px) and (pointer: coarse) {
+  .ui-form-nav-rail .ui-form-nav-item { min-height: var(--btn-h); }
 }
