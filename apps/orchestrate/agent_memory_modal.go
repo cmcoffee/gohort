@@ -77,7 +77,7 @@ const agentMemoryModalTemplate = `<script>
       var searchInput = document.createElement('input');
       searchInput.type = 'text';
       searchInput.placeholder = 'Search this agent’s memory…';
-      searchInput.style.cssText = 'flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.55rem;font:inherit';
+      searchInput.style.cssText = 'flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:var(--btn-radius, 6px);padding:0.35rem 0.55rem;font:inherit';
       searchRow.appendChild(searchInput);
       var searchMode = 'grep';
       function modeBtn(label, mode, title) {
@@ -151,7 +151,8 @@ const agentMemoryModalTemplate = `<script>
             del.type = 'button';
             del.textContent = String.fromCharCode(215);
             del.title = 'Delete this memory (' + item.id + ')';
-            del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:var(--fs-lg, 1rem);padding:0 0.4rem;align-self:flex-start';
+            del.className = 'ui-icon-btn danger';
+            del.style.cssText = 'align-self:flex-start';
             del.onclick = function() {
               window.uiConfirm('Delete this ' + item.layer + ' memory?\n\n' + (item.text || item.title || item.id).slice(0, 200)).then(function(ok) {
                 if (!ok) return;
@@ -196,11 +197,12 @@ const agentMemoryModalTemplate = `<script>
           var inp = document.createElement('input');
           inp.type = 'text';
           inp.value = text;
-          inp.style.cssText = 'flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font:inherit';
+          inp.style.cssText = 'flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:var(--btn-radius, 6px);padding:0.3rem 0.5rem;font:inherit';
           inp.addEventListener('input', function(){ arr[idx] = inp.value; });
           var del = document.createElement('button');
           del.textContent = String.fromCharCode(215);
-          del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:var(--fs-lg, 1rem);padding:0 0.4rem';
+          del.type = 'button';
+          del.className = 'ui-icon-btn danger';
           del.addEventListener('click', function(){ arr.splice(idx, 1); renderRowList(container, arr, addLabel, emptyText); });
           row.appendChild(inp); row.appendChild(del);
           container.appendChild(row);
@@ -213,8 +215,8 @@ const agentMemoryModalTemplate = `<script>
         }
         var add = document.createElement('button');
         add.type = 'button';
-        add.className = 'ui-row-btn';
-        add.style.cssText = 'align-self:flex-start;font-size:var(--fs-xs, 0.78rem);padding:0.25rem 0.6rem;margin-top:0.2rem';
+        add.className = 'ui-row-btn ui-btn-sm';
+        add.style.cssText = 'align-self:flex-start;margin-top:0.2rem';
         add.textContent = addLabel;
         add.addEventListener('click', function() {
           arr.push('');
@@ -285,8 +287,8 @@ const agentMemoryModalTemplate = `<script>
           row.appendChild(meta);
           var undo = document.createElement('button');
           undo.type = 'button';
-          undo.className = 'ui-row-btn compact';
-          undo.style.cssText = 'font-size:var(--fs-xs, 0.78rem);padding:0.25rem 0.5rem;min-width:0;flex:0 0 auto';
+          undo.className = 'ui-row-btn ui-btn-sm';
+          undo.style.cssText = 'flex:0 0 auto';
           undo.textContent = 'Undo';
           undo.title = 'Put it back in the saved notes';
           undo.addEventListener('click', function() {
@@ -636,8 +638,9 @@ const agentMemoryModalTemplate = `<script>
             lbl.style.fontSize = '0.8rem';
             lbl.textContent = String.fromCharCode(8594) + ' ' + ed.rel + ' ' + (ed.to_name || ed.to) + (ed.note ? ' (' + ed.note + ')' : '');
             er.appendChild(lbl);
-            var edel = document.createElement('span');
-            edel.style.cssText = 'cursor:pointer;color:var(--text-mute);font-size:var(--fs-sm, 0.85rem)';
+            var edel = document.createElement('button');
+            edel.type = 'button';
+            edel.className = 'ui-icon-btn danger';
             edel.textContent = String.fromCharCode(215);
             edel.title = 'Remove this relationship';
             edel.onclick = function() {
@@ -708,7 +711,8 @@ const agentMemoryModalTemplate = `<script>
           del.type = 'button';
           del.textContent = String.fromCharCode(215);
           del.title = 'Delete this entry';
-          del.style.cssText = 'background:transparent;border:0;color:var(--text-mute);cursor:pointer;font-size:var(--fs-lg, 1rem);padding:0 0.4rem;align-self:flex-start';
+          del.className = 'ui-icon-btn danger';
+          del.style.cssText = 'align-self:flex-start';
           del.addEventListener('click', function() {
             window.uiConfirm('Delete this Reference Memory entry?').then(function(ok) {
               if (!ok) return;

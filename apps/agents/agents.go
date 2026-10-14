@@ -466,7 +466,7 @@ const intakeFormAssets = `<style>
 }
 .ui-orch-intake-input {
   background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--btn-radius, 6px);
   padding: 0.4rem 0.55rem; font: inherit;
 }
 .ui-orch-intake-textarea { resize: vertical; min-height: 3.2rem; }
@@ -1126,8 +1126,7 @@ const docsModalScript = `<script>
               var meta = document.createElement('span');
               meta.style.cssText = 'color:var(--text-mute);font-size:var(--fs-2xs, 0.7rem)';
               meta.textContent = (s.chunks || 0) + ' chunk' + (s.chunks === 1 ? '' : 's');
-              var del = document.createElement('button'); del.type = 'button'; del.className = 'ui-row-btn';
-              del.style.cssText = 'color:var(--danger,#ff7b72);font-size:var(--fs-xs, 0.74rem);padding:0.2rem 0.5rem';
+              var del = document.createElement('button'); del.type = 'button'; del.className = 'ui-row-btn danger ui-btn-sm';
               del.textContent = 'Remove';
               del.onclick = function() {
                 window.uiConfirm('Remove ' + nm.textContent + ' from your documents?').then(function(ok) {

@@ -342,7 +342,7 @@ const userAdminHTML = `<div class="uadm">
 </div>
 <style>
 .uadm { display:flex; flex-direction:column; gap:0.5rem; max-width:26rem; }
-.uadm-in { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-md, 0.9rem); }
+.uadm-in { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:var(--btn-radius, 6px); padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-md, 0.9rem); }
 .uadm-chk { display:flex; align-items:center; gap:0.4rem; font-size:var(--fs-sm, 0.85rem); color:var(--text); }
 .uadm-methods { display:flex; flex-direction:column; gap:0.25rem; font-size:var(--fs-sm, 0.85rem); color:var(--text-mute); }
 .uadm-methods label { display:flex; align-items:center; gap:0.4rem; }

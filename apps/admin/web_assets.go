@@ -14,7 +14,7 @@ const adminUsersCSS = `
 .admu-card { background:var(--bg-1); border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; width:min(30rem,92vw); display:flex; flex-direction:column; gap:0.55rem; }
 .admu-title { font-weight:600; color:var(--text-hi); }
 .admu-opt { display:flex; align-items:center; gap:0.4rem; font-size:var(--fs-md, 0.9rem); color:var(--text); }
-.admu-in { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; }
+.admu-in { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:var(--btn-radius, 6px); padding:0.4rem 0.55rem; font:inherit; }
 .admu-row { display:flex; gap:0.5rem; margin-top:0.3rem; }
 .admu-msg { font-size:var(--fs-sm, 0.82rem); }
 .admu-msg.ok { color:var(--success); }
@@ -179,21 +179,22 @@ window.uiTemplateForm = function(cfg, reload){
         });
       });
     }
-    var inCss='width:100%;padding:6px;box-sizing:border-box;font-size:12px;';
-    var taCss='width:100%;height:120px;box-sizing:border-box;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;';
-    function heading(t){ var h=document.createElement('div'); h.textContent=t; h.style.cssText='font-size:12px;font-weight:600;margin:12px 0 6px;opacity:0.9;'; body.appendChild(h); }
+    // The framework's form classes, so these fields look, size and behave on
+    // a phone like every other form's; only the JSON boxes keep a monospace.
+    var taCss='height:120px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--fs-sm);';
+    function heading(t){ var h=document.createElement('div'); h.className='ui-form-section-title'; h.textContent=t; h.style.cssText='margin:12px 0 6px;'; body.appendChild(h); }
     function makeField(f){
       var wrap=document.createElement('div'); wrap.style.cssText='margin:0 0 10px;';
-      var lb=document.createElement('div'); lb.textContent=f.label+(f.advanced?' (advanced)':''); lb.style.cssText='font-size:12px;opacity:0.8;margin-bottom:3px;';
+      var lb=document.createElement('div'); lb.className='ui-form-label'; lb.textContent=f.label+(f.advanced?' (advanced)':'');
       var inp;
-      if(f.type==='textarea'){ inp=document.createElement('textarea'); inp.spellcheck=false; inp.style.cssText=taCss; }
+      if(f.type==='textarea'){ inp=document.createElement('textarea'); inp.className='ui-form-textarea'; inp.spellcheck=false; inp.style.cssText=taCss; }
       else if(f.type==='bool'){ inp=document.createElement('input'); inp.type='checkbox'; }
-      else if(f.type==='select'){ inp=document.createElement('select'); inp.style.cssText=inCss; (f.options||[]).forEach(function(o){ var op=document.createElement('option'); op.value=o; op.textContent=o; inp.appendChild(op); }); }
+      else if(f.type==='select'){ inp=document.createElement('select'); inp.className='ui-form-select'; (f.options||[]).forEach(function(o){ var op=document.createElement('option'); op.value=o; op.textContent=o; inp.appendChild(op); }); }
       else if(f.type==='file'){
         // Reads in the browser and drops the text into f.into, so the user
         // reviews it before saving. Never a value itself: excluded from
         // collect() below, which is what the 'file' type check there is for.
-        inp=document.createElement('input'); inp.type='file'; inp.style.cssText=inCss;
+        inp=document.createElement('input'); inp.type='file'; inp.className='ui-form-file-input';
         if(f.accept) inp.accept=f.accept;
         inp.onchange=function(){
           var file=inp.files&&inp.files[0]; if(!file) return;
@@ -205,7 +206,7 @@ window.uiTemplateForm = function(cfg, reload){
           rd.readAsText(file);
         };
       }
-      else { inp=document.createElement('input'); inp.type=(f.type==='number'?'number':'text'); inp.style.cssText=inCss; }
+      else { inp=document.createElement('input'); inp.type=(f.type==='number'?'number':'text'); inp.className='ui-form-input'; }
       // Suggestions, not a restriction: the input stays typeable, so a field
       // whose candidates were detected badly is still fillable by hand.
       if(f.suggest_from){
@@ -309,7 +310,8 @@ const connectorEditSpecAction = `function(ctx){
         var ta = document.createElement('textarea');
         ta.value = data.spec || '{}';
         ta.spellcheck = false;
-        ta.style.cssText = 'width:100%;height:380px;box-sizing:border-box;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;';
+        ta.className = 'ui-form-textarea';
+        ta.style.cssText = 'height:380px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--fs-sm);line-height:1.45;';
         var msg = document.createElement('div');
         msg.style.cssText = 'margin:8px 0 0;font-size:12px;color:#e5484d;white-space:pre-wrap;min-height:16px;';
         var actions = document.createElement('div');

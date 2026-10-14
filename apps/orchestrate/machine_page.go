@@ -1093,6 +1093,12 @@ const machineMapCSS = `
   white-space: nowrap;
 }
 .machine-finding-rewrite:hover { background: var(--accent-soft, rgba(99,102,241,0.16)); }
+/* It sits in a line of text, so on a touch screen it keeps its size and its
+   hit area grows instead, as the framework's in-line marks do. */
+@media (pointer: coarse) {
+  .machine-finding-rewrite { position: relative; }
+  .machine-finding-rewrite::after { content: ""; position: absolute; inset: -0.55rem; }
+}
 .machine-map svg a { text-decoration: none; }
 /* You are here. The fill is what carries it: a border alone is lost
    among the boxes that are already drawn heavier for holding a turn. */

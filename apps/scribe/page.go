@@ -517,6 +517,8 @@ const guideSectionCtrlCSS = `<style>
 }
 .guide-add-btn:hover { color: var(--accent); border-color: var(--accent); }
 .guide-add-link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+/* A link in a sentence: on a touch screen its hit area grows, not the link. */
+@media (pointer: coarse) { .guide-add-link { position: relative; } .guide-add-link::after { content: ""; position: absolute; inset: -0.55rem; } }
 .guide-edit-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.8rem; }
 .guide-edit-field label { font-size: var(--fs-xs, 0.78rem); font-weight: 600; color: var(--text-mute); }
 .guide-edit-field input, .guide-edit-field textarea {
@@ -1037,7 +1039,8 @@ const guidePublishCSS = `.guide-pub-row { display: flex; align-items: center; ga
 .guide-pub-mute { color: var(--text-mute); font-weight: 400; }
 .guide-pub-link { color: var(--accent); font-size: var(--fs-sm, 0.85rem); text-decoration: none; }
 .guide-pub-link:hover { text-decoration: underline; }
-.guide-pub-target { display: flex; gap: 0.3rem; align-items: baseline; width: 100%; text-align: left; padding: 0.6rem 0.8rem; margin-bottom: 0.45rem; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text-hi); cursor: pointer; font: inherit; }
+.guide-pub-target { display: flex; gap: 0.3rem; align-items: baseline; width: 100%; text-align: left; padding: 0.6rem 0.8rem; margin-bottom: 0.45rem; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--btn-radius, 6px); color: var(--text-hi); cursor: pointer; font: inherit; }
+@media (pointer: coarse) { .guide-pub-target { min-height: var(--tap, 44px); align-items: center; } }
 .guide-pub-target:hover { border-color: var(--accent); }
 .guide-pub-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
 .guide-pub-status { font-size: var(--fs-lg, 0.95rem); color: var(--text-hi); padding: 0.6rem 0; }

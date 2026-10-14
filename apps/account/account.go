@@ -738,7 +738,7 @@ const passwordHTML = `<div class="acct-pw">
 </div>
 <style>
 .acct-pw { display:flex; flex-direction:column; gap:0.5rem; max-width:22rem; }
-.acct-pw-input { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-md, 0.9rem); }
+.acct-pw-input { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:var(--btn-radius, 6px); padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-md, 0.9rem); }
 .acct-pw-row { display:flex; align-items:center; gap:0.6rem; }
 .acct-pw-msg { font-size:var(--fs-sm, 0.82rem); }
 .acct-pw-msg.ok { color:var(--success); }
@@ -785,9 +785,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 @media (pointer: coarse) { .acct-tok-btn { min-height:var(--btn-h-sm, 2.25rem); } }
 .acct-tok-btn:hover { color:var(--danger); border-color:var(--danger); }
 .acct-tok-newrow { display:flex; gap:0.4rem; margin-top:0.3rem; }
-.acct-tok-input { flex:1; background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-sm, 0.85rem); }
-.acct-tok-create { cursor:pointer; background:var(--accent); color:var(--text-on-accent, #fff); border:0; border-radius:6px; padding:0.4rem 0.9rem; font:inherit; font-weight:600; }
-.acct-tok-create:disabled { opacity:0.6; cursor:default; }
+.acct-tok-input { flex:1; background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:var(--btn-radius, 6px); padding:0.4rem 0.55rem; font:inherit; font-size:var(--fs-sm, 0.85rem); }
 .acct-tok-reveal { border:1px solid var(--accent); border-radius:8px; padding:0.7rem 0.8rem; background:var(--bg-2); }
 .acct-tok-reveal code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:var(--fs-sm, 0.82rem); color:var(--text); word-break:break-all; display:block; margin-top:0.3rem; }
 .acct-tok-empty { color:var(--text-mute); font-style:italic; padding:0.4rem 0; }
@@ -944,7 +942,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
         [['0','No expiry'],['30','30 days'],['90','90 days'],['180','180 days'],['365','1 year']].forEach(function(o){
           var opt=el('option',{value:o[0],text:o[1]}); sel.appendChild(opt);
         });
-        var save = el('button',{class:'acct-tok-create',text:'Set expiry'});
+        var save = el('button',{class:'ui-row-btn primary',text:'Set expiry'});
         save.addEventListener('click',function(){
           save.disabled=true; save.textContent='Saving…';
           fetch('api/tokens?action=expiry&id='+encodeURIComponent(t.id),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({expires_days: parseInt(sel.value,10)})})
@@ -965,7 +963,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
         var existing = holder.querySelector('.acct-tok-scope');
         if(existing){ existing.parentNode.removeChild(existing); return; }
         var ed = scopeEditor(t.scope);
-        var save = el('button',{class:'acct-tok-create',text:'Save scope'});
+        var save = el('button',{class:'ui-row-btn primary',text:'Save scope'});
         save.addEventListener('click',function(){
           save.disabled=true; save.textContent='Saving…';
           fetch('api/tokens?action=scope&id='+encodeURIComponent(t.id),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope: ed.collect()})})
@@ -984,7 +982,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
     [['0','No expiry'],['30','Expires in 30 days'],['90','Expires in 90 days'],['365','Expires in 1 year']].forEach(function(o){
       expSel.appendChild(el('option',{value:o[0],text:o[1]}));
     });
-    var create = el('button',{class:'acct-tok-create',text:'Create key'});
+    var create = el('button',{class:'ui-row-btn primary',text:'Create key'});
     var newHolder = el('div',{});
     var pendingScope = null;
     var cfgBtn = el('button',{class:'acct-tok-btn',style:'color:var(--text-mute)',text:'Configure access'});

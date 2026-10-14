@@ -40,7 +40,7 @@ const documentsListAssets = `<style>
 .docs-empty { color: var(--text-mute); font-style: italic; padding: 2rem; text-align: center; border: 1px dashed var(--border); border-radius: 8px; }
 .docs-modal-form { display: flex; flex-direction: column; gap: 0.5rem; }
 .docs-modal-form label { font-size: var(--fs-sm, 0.82rem); color: var(--text); font-weight: 600; }
-.docs-modal-form input, .docs-modal-form textarea { background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 0.4rem 0.6rem; font: inherit; }
+.docs-modal-form input, .docs-modal-form textarea { background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: var(--btn-radius, 6px); padding: 0.4rem 0.6rem; font: inherit; }
 .docs-modal-form textarea { min-height: 4rem; resize: vertical; }
 </style>
 <script>
@@ -424,8 +424,7 @@ const documentsDetailAssets = `<style>
       label.textContent = text;
       var del = document.createElement('button');
       del.type = 'button';
-      del.className = 'ui-row-btn';
-      del.style.cssText = 'color:var(--danger,#ff7b72);font-size:var(--fs-2xs, 0.72rem);padding:0.15rem 0.45rem';
+      del.className = 'ui-icon-btn danger';
       del.textContent = '✕';
       del.title = 'Remove this rule';
       del.addEventListener('click', function() {
@@ -653,8 +652,7 @@ const documentsDetailAssets = `<style>
           nm.title = nm.textContent;
           var meta = document.createElement('span'); meta.className = 'docs-row-meta';
           meta.textContent = (s.chunks || 0) + ' chunk' + (s.chunks === 1 ? '' : 's');
-          var del = document.createElement('button'); del.className = 'ui-row-btn';
-          del.style.cssText = 'color:var(--danger,#ff7b72);font-size:var(--fs-xs, 0.78rem);padding:0.2rem 0.5rem';
+          var del = document.createElement('button'); del.className = 'ui-row-btn danger ui-btn-sm';
           del.textContent = 'Remove';
           del.onclick = async function() {
             if (!(await window.uiConfirm('Remove ' + nm.textContent + ' from this collection?'))) return;

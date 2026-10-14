@@ -690,6 +690,7 @@ func agentAssistHTML(id string) string {
 #agent-assist{cursor:pointer;border:none;background:none;font-size:var(--fs-lg, 1.05rem);line-height:1;opacity:.85;padding:0 .2rem}
 #agent-assist:hover{opacity:1;transform:scale(1.1)}
 #agent-assist[disabled]{opacity:.4;cursor:wait}
+@media (pointer: coarse){#agent-assist{min-width:var(--btn-h-sm, 2.25rem);min-height:var(--btn-h-sm, 2.25rem)}}
 .aa-log{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.75rem;max-height:38vh;overflow-y:auto}
 .aa-msg{padding:.45rem .6rem;border-radius:6px;font-size:var(--fs-md, .9rem);line-height:1.45;white-space:pre-wrap}
 .aa-you{background:var(--bg-2);align-self:flex-end;max-width:85%%}
