@@ -4501,6 +4501,32 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   }
   .ui-topbar-sheet > button + button { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent) !important; border-radius: 0 !important; }
 }
+/* Wider screens: the same menus, as a card hung under their button. The two
+ * kinds (the grouped toolbar menus and the nav menus) were drawn apart, one
+ * by its rule and one by inline styles, and both as a plain small box; here
+ * they share one look with the panels around them: the card radius, rows
+ * with room to read, a hover and keyboard highlight, and a short drop-in.
+ * !important where the nav menus' inline styles would otherwise win. */
+@media (min-width: 701px) {
+  .ui-topbar-sheet {
+    min-width: 220px !important; padding: 0.35rem !important; gap: 1px !important;
+    background: var(--bg-1) !important; border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35) !important;
+    animation: ui-menu-drop 0.12s ease-out;
+  }
+  .ui-topbar-sheet > button {
+    min-height: 2rem; padding: 0.45rem 0.7rem !important;
+    border-radius: var(--btn-radius) !important; font-size: var(--fs-sm) !important;
+    color: var(--text); transition: background 0.1s ease, color 0.1s ease;
+  }
+  .ui-topbar-sheet > button:hover,
+  .ui-topbar-sheet > button:focus-visible {
+    background: var(--bg-2) !important; color: var(--text-hi, var(--text)); outline: none;
+  }
+  .ui-topbar-sheet > button.danger:hover,
+  .ui-topbar-sheet > button.danger:focus-visible { color: var(--danger); }
+}
 @keyframes ui-menu-drop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 @keyframes ui-sheet-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
