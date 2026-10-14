@@ -126,6 +126,9 @@ type StoreCommand struct {
 	// command may be run with, one per entry, with {placeholders} for what
 	// an agent fills in: "download --src={source} --dst={folder}".
 	AllowedUses []string `json:"allowed_uses,omitempty"`
+	// Examples are runs an admin made to show how the command is used, which
+	// the mapping learns from (command_examples.go). The newest few.
+	Examples []CommandExample `json:"examples,omitempty"`
 
 	// --- what mapping this command produced -----------------------------
 	//

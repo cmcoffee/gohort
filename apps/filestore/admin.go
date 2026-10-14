@@ -159,6 +159,19 @@ func (T *FileStoreApp) adminSection() ui.Section {
 										}},
 									},
 								}),
+								// The admin runs the command to show how it is
+								// used; each run becomes an example Map learns
+								// from (command_examples.go).
+								ui.Expand("Show it how", ui.FormPanel{
+									Source:    "/filestore/api/map/try-args?id={id}",
+									TestURL:   "/filestore/api/map/try?id={id}",
+									TestLabel: "Run",
+									Fields: []ui.FormField{
+										{Field: "args", Type: "text", Label: "Arguments", Placeholder: "download --src=/Diag/dump.zip --dst=RUN-1",
+											Help:   "What you would type after the command. Run executes it in this store's folder, with no shell, and shows what it prints.",
+											Detail: "Each run is kept as an example for Map: Builder reads what you ran and what it printed, and works out the syntax from it, turning the parts that change into placeholders. Quote a value with spaces in it. Nothing is expanded: no wildcards, variables or pipes. You can run anything with this command; Builder's own limits are unchanged."},
+									},
+								}),
 								ui.Expand("Map", ui.AgentLoopPanel{
 									SendURL:      "/filestore/api/map/chat/send?id={id}",
 									Markdown:     true,
@@ -181,6 +194,9 @@ func (T *FileStoreApp) adminSection() ui.Section {
 										{Label: "Show its help",
 											Title:  "Just run the help flag and show the output",
 											Prompt: "Run this command's help flag and show me exactly what it printed. Do not propose anything yet."},
+										{Label: "Learn from my examples",
+											Title:  "Map the command from the runs made in Show it how",
+											Prompt: "Read the examples I ran (admin_examples) and map the command from them: one action per kind of use you see, with the parts that change between runs as placeholders. Say what each example taught you and what you are unsure of."},
 										{Label: "Refine",
 											Title:  "Check what you wrote against what the command really does, and correct it",
 											Prompt: "Check what you wrote against what the command actually does (run it again where you were guessing), and propose a corrected version."},
@@ -416,6 +432,8 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/map/chat/send", T.handleMapChat)
 	T.HandleFunc("/api/commands/approve", T.handleCommandApprove)
 	T.HandleFunc("/api/commands/uses", T.handleCommandUses)
+	T.HandleFunc("/api/map/try", T.handleTryCommand)
+	T.HandleFunc("/api/map/try-args", T.handleTryArgs)
 	T.HandleFunc("/api/commands/mapping", T.handleCommandMapping)
 	T.HandleFunc("/api/folders", T.handleFolders)
 	T.HandleFunc("/api/pull", T.handlePull)
