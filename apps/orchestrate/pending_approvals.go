@@ -50,6 +50,10 @@ func pendingApprovalBlocks(udb Database, owner, agentID string) []UIBlock {
 			Title: who,
 			Text:  detail,
 			Data:  data,
+			// When it was asked for, so the card goes back to that point in
+			// the thread. Without it every pending card loaded below the
+			// latest reply, under whatever the agent said after asking.
+			At: a.Requested,
 		})
 	}
 	return out

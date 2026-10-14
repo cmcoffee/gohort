@@ -207,10 +207,15 @@ type privilegeSnapshot struct {
 	flags []privilegeFlag
 }
 
-// snapshotPrivileges captures the card rows for a stored record as it stands.
+// snapshotPrivileges captures the card rows for a stored record as it stands,
+// its own bundled tools included. Without them a tool the agent carries on its
+// record could not be resolved here and read as "unresolved", while the rows
+// after the save, built with the tools that save sent, described it properly:
+// the same tool at the same policy came out "new", and the card asked about
+// tools already set to Allow.
 func snapshotPrivileges(sess *ToolSession, rec AgentRecord) *privilegeSnapshot {
 	return &privilegeSnapshot{
-		tools: privilegeToolRows(sess, rec, nil),
+		tools: privilegeToolRows(sess, rec, rec.Tools),
 		flags: privilegeFlagRows(rec),
 	}
 }
@@ -224,18 +229,24 @@ func (p *privilegeSnapshot) widenedBy(tools []privilegeGrant, flags []privilegeF
 }
 
 // markNew sets New on each row the snapshot did not hold (the rows widenedBy
-// counts), and says how many.
+// counts), and says how many. A row is new when the tool was not there, its
+// policy changed, or its reach did (another credential). A description going
+// from "unresolved" to a resolved one is not a change: it is the same tool,
+// seen on one side and not the other.
 func (p *privilegeSnapshot) markNew(tools []privilegeGrant, flags []privilegeFlag) int {
-	had := map[privilegeGrant]bool{}
+	before := map[string]privilegeGrant{}
 	for _, t := range p.tools {
-		t.New = false
-		had[t] = true
+		before[t.Name] = t
 	}
 	n := 0
 	for i := range tools {
-		key := tools[i]
-		key.New = false
-		if tools[i].Policy != "auto" && !had[key] {
+		tools[i].New = false
+		if tools[i].Policy == "auto" {
+			continue
+		}
+		was, had := before[tools[i].Name]
+		reachChanged := was.Detail != tools[i].Detail && was.Detail != "unresolved" && tools[i].Detail != "unresolved"
+		if !had || was.Policy != tools[i].Policy || reachChanged {
 			tools[i].New = true
 			n++
 		}

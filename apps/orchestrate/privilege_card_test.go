@@ -319,3 +319,50 @@ func TestThePrivilegeCardHasNoApplyWithNothingToChange(t *testing.T) {
 		t.Error("the privilege card offers Apply even when nothing on it can change")
 	}
 }
+
+// An update that re-sends a tool the agent already carries on its record, at
+// the policy it already had, raises no card. The snapshot before the save is
+// built from the stored record, its own bundled tools included; without them
+// the tool read as "unresolved" before and resolved after, and the card
+// announced two tools already set to Allow as new.
+func TestAnUpdateResendingAnAllowedToolRaisesNoCard(t *testing.T) {
+	shown := 0
+	sess := &ToolSession{Username: "u"}
+	sess.PrivilegePrompt = func(string, string, map[string]string) { shown++ }
+	tool := []TempTool{{Name: "post_update", CommandTemplate: "curl x", Credential: "loud_api"}}
+	rec := AgentRecord{ID: "a9", Name: "Poster", AllowedTools: []string{"post_update"},
+		AutoApproveTools: []string{"post_update"}, Tools: tool}
+	prev := snapshotPrivileges(sess, rec)
+	edited := rec
+	edited.OrchestratorPrompt = "be terse"
+	emitPrivilegeCard(sess, edited, tool, prev)
+	if shown != 0 {
+		t.Fatalf("re-sending a tool already allowed raised the card %d time(s)", shown)
+	}
+}
+
+// What counts as new: a tool that was not there, a changed policy, or a
+// changed reach. A description resolved on one side and not the other is the
+// same tool, not a new one.
+func TestWhatCountsAsNewOnThePrivilegeCard(t *testing.T) {
+	prev := &privilegeSnapshot{tools: []privilegeGrant{
+		{Name: "a", Detail: "unresolved", Policy: "allow"},
+		{Name: "b", Detail: "credential: one", Policy: "allow"},
+		{Name: "c", Detail: "credential: one", Policy: "ask"},
+	}}
+	now := []privilegeGrant{
+		{Name: "a", Detail: "credential: one", Policy: "allow"}, // resolved now: not new
+		{Name: "b", Detail: "credential: two", Policy: "allow"}, // another credential: new
+		{Name: "c", Detail: "credential: one", Policy: "allow"}, // policy changed: new
+		{Name: "d", Detail: "credential: one", Policy: "ask"},   // not there before: new
+	}
+	if n := prev.markNew(now, nil); n != 3 {
+		t.Errorf("counted %d new, want 3", n)
+	}
+	want := map[string]bool{"a": false, "b": true, "c": true, "d": true}
+	for _, r := range now {
+		if r.New != want[r.Name] {
+			t.Errorf("%s marked new=%v", r.Name, r.New)
+		}
+	}
+}

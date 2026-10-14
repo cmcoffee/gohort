@@ -1318,7 +1318,19 @@ select.ui-orch-intake-input {
 
       apply.addEventListener('click', function() {
         var hasTools = Object.keys(toolEdits).length, hasFlags = Object.keys(flagEdits).length;
-        if (!hasTools && !hasFlags) { note.textContent = 'Nothing changed.'; return; }
+        // Nothing edited: the owner has looked and is keeping what is set,
+        // which answers the card as surely as a change does. Settled here and
+        // on the stored block, so it does not come back as an open question.
+        if (!hasTools && !hasFlags) {
+          sub.textContent = 'Kept as set: permissions for "' + name + '" unchanged.';
+          wrap.classList.add('resolved');
+          rows.querySelectorAll('select').forEach(function(el2) { el2.disabled = true; });
+          wrap.querySelectorAll('input[type=checkbox]').forEach(function(el2) { el2.disabled = true; });
+          apply.remove();
+          note.textContent = '';
+          window.uiResolveBlock(d.id, 'Kept as set: permissions for "' + name + '" unchanged.');
+          return;
+        }
         apply.disabled = true;
         note.textContent = 'Saving…';
         fetch('api/console/privileges', {

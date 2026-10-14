@@ -125,3 +125,21 @@ func TestApprovalDisplayCoversQueuedActions(t *testing.T) {
 		t.Errorf("scope_tool display = %q / %q", who, detail)
 	}
 }
+
+// A pending card carries when it was asked for, so the conversation puts it
+// back at that point rather than below the latest reply, where it covered what
+// the agent said after asking.
+func TestAPendingApprovalSaysWhenItWasAskedFor(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	savedRoot := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = savedRoot })
+	if _, err := saveAgent(db, AgentRecord{ID: "a1", Owner: "u", Name: "A", OrchestratorPrompt: "x"}); err != nil {
+		t.Fatalf("saveAgent: %v", err)
+	}
+	a := SaveAuthorization(db, Authorization{Owner: "u", Action: "autonomous_tool", Agent: "a1", Brief: "send_message"})
+	blocks := pendingApprovalBlocks(db, "u", "a1")
+	if len(blocks) != 1 || blocks[0].At.IsZero() || !blocks[0].At.Equal(a.Requested) {
+		t.Errorf("the card does not say when it was asked for: %+v (requested %v)", blocks, a.Requested)
+	}
+}
