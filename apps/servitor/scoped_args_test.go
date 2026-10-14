@@ -37,7 +37,7 @@ func TestScopedArgsCarryTheCallingAgent(t *testing.T) {
 	}
 	args := map[string]any{"dir": "scan-1", "other": "left alone"}
 
-	out, err := resolveScopedArgs("alice", "linked", tool, args)
+	out, err := resolveScopedArgs("alice", "linked", tool, args, false)
 	if err != nil {
 		t.Fatalf("linked agent refused: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestScopedArgsCarryTheCallingAgent(t *testing.T) {
 		t.Errorf("resolver got (%q,%q,%q)", sawUser, sawName, sawValue)
 	}
 
-	if _, err := resolveScopedArgs("alice", "unlinked", tool, args); err == nil {
+	if _, err := resolveScopedArgs("alice", "unlinked", tool, args, false); err == nil {
 		t.Fatal("an unlinked agent resolved a scoped path")
 	} else if !strings.Contains(err.Error(), "dir") {
 		t.Errorf("the refusal should name the parameter, got %q", err)

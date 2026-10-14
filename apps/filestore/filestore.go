@@ -91,9 +91,12 @@ func init() {
 	// Bound through the package var rather than the local, so the
 	// resolvers follow whichever instance is live.
 	RegisterPathScope("files", PathScope{
-		Resolve: func(u, n, v string) (string, error) { return registeredFileStoreApp.resolveScope(u, n, v) },
-		Values:  func(u, n string) []string { return registeredFileStoreApp.listScope(u, n) },
-		Roots:   func(u string) []PathScopeRoot { return registeredFileStoreApp.scopeRoots(u) },
+		// Only the tools an admin maps from a store's own commands reach its
+		// folders; see PathScope.TrustedOnly.
+		TrustedOnly: true,
+		Resolve:     func(u, n, v string) (string, error) { return registeredFileStoreApp.resolveScope(u, n, v) },
+		Values:      func(u, n string) []string { return registeredFileStoreApp.listScope(u, n) },
+		Roots:       func(u string) []PathScopeRoot { return registeredFileStoreApp.scopeRoots(u) },
 	})
 }
 

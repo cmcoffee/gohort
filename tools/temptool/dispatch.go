@@ -369,7 +369,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// pointing somewhere else, which core/path_scope.go opens by warning
 	// about: "../../var/lib/something" is a perfectly well-formed single
 	// argument.
-	scopedArgs, scopedPaths, serr := ResolveScopedArgs(sess.Username, sess.AgentID, tt.Params, args)
+	scopedArgs, scopedPaths, serr := ResolveScopedArgs(sess.Username, sess.AgentID, tt.Params, args, tt.AdminMapped)
 	if serr != nil {
 		// Refuse. A scope that fails open is not a scope, and the model
 		// gets a message it can act on: the root it may name, and what

@@ -69,7 +69,7 @@ func TestScopedArgsAreProvedAndReturnedAbsolute(t *testing.T) {
 	}
 
 	out, resolved, err := ResolveScopedArgs("u", "ag", params,
-		map[string]any{"bundle": "bundle-a", "query": "ERROR"})
+		map[string]any{"bundle": "bundle-a", "query": "ERROR"}, false)
 	if err != nil {
 		t.Fatalf("a folder that exists should resolve: %v", err)
 	}
@@ -87,23 +87,23 @@ func TestScopedArgsAreProvedAndReturnedAbsolute(t *testing.T) {
 	// The escape the scope exists for. Shell quoting would have made
 	// this a single well-formed argument and let it through.
 	if _, _, err := ResolveScopedArgs("u", "ag", params,
-		map[string]any{"bundle": "../../etc"}); err == nil {
+		map[string]any{"bundle": "../../etc"}, false); err == nil {
 		t.Error("a traversal out of the root must be refused")
 	}
 	// A folder inside the root that does not exist is refused too — the
 	// resolver proves the path, not just the prefix.
 	if _, _, err := ResolveScopedArgs("u", "ag", params,
-		map[string]any{"bundle": "bundle-z"}); err == nil {
+		map[string]any{"bundle": "bundle-z"}, false); err == nil {
 		t.Error("a folder that is not there should be refused")
 	}
 	// An ABSENT argument is the required-check's business, not this one.
-	if _, res, err := ResolveScopedArgs("u", "ag", params, map[string]any{"query": "x"}); err != nil || len(res) != 0 {
+	if _, res, err := ResolveScopedArgs("u", "ag", params, map[string]any{"query": "x"}, false); err != nil || len(res) != 0 {
 		t.Errorf("absence should pass through: %v %v", res, err)
 	}
 	// The caller's map is not rewritten in place — it is what gets logged
 	// and echoed back, and it should say what the model actually asked.
 	args := map[string]any{"bundle": "bundle-b"}
-	if _, _, err := ResolveScopedArgs("u", "ag", params, args); err != nil {
+	if _, _, err := ResolveScopedArgs("u", "ag", params, args, false); err != nil {
 		t.Fatal(err)
 	}
 	if args["bundle"] != "bundle-b" {
@@ -111,8 +111,34 @@ func TestScopedArgsAreProvedAndReturnedAbsolute(t *testing.T) {
 	}
 	// No scoped params at all: the same map back, nothing allocated.
 	plain := map[string]ToolParam{"q": {Type: "string"}}
-	if out, res, err := ResolveScopedArgs("u", "ag", plain, args); err != nil ||
+	if out, res, err := ResolveScopedArgs("u", "ag", plain, args, false); err != nil ||
 		len(res) != 0 || out["bundle"] != "bundle-b" {
 		t.Errorf("an unscoped tool should be untouched: %v %v %v", out, res, err)
+	}
+}
+
+// A kind marked TrustedOnly refuses any caller that is not trusted, and is
+// not offered to tool authors; a trusted caller resolves as before.
+func TestATrustedOnlyScopeRefusesEveryoneElse(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "case-1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	RegisterPathScope("trustedtest", PathScope{
+		TrustedOnly: true,
+		Resolve:     func(u, n, v string) (string, error) { return filepath.Join(root, v), nil },
+		Roots:       func(u string) []PathScopeRoot { return []PathScopeRoot{{Ref: "trustedtest:x", Label: "x"}} },
+	})
+	params := map[string]ToolParam{"case": {Type: "string", PathScope: "trustedtest:x"}}
+	if _, _, err := ResolveScopedArgs("u", "", params, map[string]any{"case": "case-1"}, false); err == nil {
+		t.Error("an untrusted tool reached a trusted-only root")
+	}
+	if out, _, err := ResolveScopedArgs("u", "", params, map[string]any{"case": "case-1"}, true); err != nil || out["case"] != filepath.Join(root, "case-1") {
+		t.Errorf("a trusted tool was refused: %v %v", out, err)
+	}
+	for _, r := range PathScopeRoots("u") {
+		if r.Ref == "trustedtest:x" {
+			t.Error("a trusted-only root was offered to tool authors")
+		}
 	}
 }

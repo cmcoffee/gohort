@@ -69,6 +69,13 @@ type PathScope struct {
 	// tool AUTHOR discover that a constraint is available at all — an
 	// unadvertised constraint is one nobody declares.
 	Roots PathScopeRootsFunc
+	// TrustedOnly limits this kind to TRUSTED callers: tools an admin built
+	// for the purpose. Any other caller asking for a path in it is refused,
+	// and its roots are not offered to tool authors. File stores set it: an
+	// agent reaches a store's folders only through the tools an admin maps
+	// from that store's own commands, never through a tool a person or a
+	// model wrote, or a free command run with a store as its working folder.
+	TrustedOnly bool
 }
 
 type pathScope = PathScope
@@ -109,7 +116,7 @@ func PathScopeRoots(user string) []PathScopeRoot {
 		pathScopeMu.RLock()
 		sc := pathScopes[k]
 		pathScopeMu.RUnlock()
-		if sc.Roots == nil {
+		if sc.Roots == nil || sc.TrustedOnly {
 			continue
 		}
 		roots := sc.Roots(user)
@@ -170,7 +177,10 @@ var AgentHoldsReference func(user, agentID, kind, itemID string) bool
 // declaring a constraint nobody implements has to fail closed: the
 // alternative is a tool that silently stops being constrained the day
 // its app is compiled out, which is exactly when nobody is looking.
-func ResolvePathScope(user, agentID, ref, value string) (string, error) {
+//
+// trusted says the caller is a tool an admin built for this purpose; a kind
+// marked TrustedOnly refuses everything else (see PathScope.TrustedOnly).
+func ResolvePathScope(user, agentID, ref, value string, trusted bool) (string, error) {
 	kind, name := SplitPathScopeRef(ref)
 	pathScopeMu.RLock()
 	sc, ok := pathScopes[kind]
@@ -178,6 +188,11 @@ func ResolvePathScope(user, agentID, ref, value string) (string, error) {
 	if !ok {
 		return "", Error("this parameter is limited to " + strconv.Quote(kind) +
 			", and nothing here provides that. Nothing ran. Tell the person the constraint names a source their deployment does not have.")
+	}
+	if sc.TrustedOnly && !trusted {
+		return "", Error(strconv.Quote(ref) + " is reached only by the tools an admin builds for it, and this is not one. Nothing ran. " +
+			"For a file store: an admin maps the store's registered commands into tools on the store's own page (Admin, Files), and approves them; " +
+			"tell the person that is what this needs rather than looking for another way in.")
 	}
 	if agentID != "" && AgentHoldsReference != nil && ReferenceSourceKnown(kind) {
 		if !AgentHoldsReference(user, agentID, kind, name) {
@@ -243,7 +258,7 @@ func PathScopeKnown(ref string) bool {
 // so a proved path the script cannot open is a check that passes and a
 // tool that fails — and binding exactly what resolved is stricter than
 // binding the root it came from, which would hand over every sibling.
-func ResolveScopedArgs(user, agentID string, params map[string]ToolParam, args map[string]any) (map[string]any, []string, error) {
+func ResolveScopedArgs(user, agentID string, params map[string]ToolParam, args map[string]any, trusted bool) (map[string]any, []string, error) {
 	out := args
 	copied := false
 	var resolved []string
@@ -264,7 +279,7 @@ func ResolveScopedArgs(user, agentID string, params map[string]ToolParam, args m
 		if !present || strings.TrimSpace(fmt.Sprint(raw)) == "" {
 			continue
 		}
-		abs, err := ResolvePathScope(user, agentID, ref, fmt.Sprint(raw))
+		abs, err := ResolvePathScope(user, agentID, ref, fmt.Sprint(raw), trusted)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}

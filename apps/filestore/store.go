@@ -94,6 +94,11 @@ type Store struct {
 	// attached, seeing its case names but not their contents. See pull.go.
 	PullFrom    string `json:"pull_from,omitempty"`
 	PullSubpath string `json:"pull_subpath,omitempty"`
+	// AgentsMayPull offers pull_<store> to agents this store is attached to.
+	// Off unless an admin turns it on: an agent acts on a store only through
+	// tools an admin chose to give it. The admin's Pull button and an app's
+	// granted pull do not depend on it.
+	AgentsMayPull bool `json:"agents_may_pull,omitempty"`
 
 	// AppGrants are the apps an admin has let use this store, and how. See
 	// app_grants.go: the grant is the app's, and covers whoever uses it.

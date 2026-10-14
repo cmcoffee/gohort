@@ -110,6 +110,9 @@ func (T *FileStoreApp) handlePull(w http.ResponseWriter, r *http.Request) {
 // It runs as a background-capable run, so a big case moves to the background
 // and reports back, and Stop on the run stops the copy.
 func (T *FileStoreApp) pullToolDef(sess *ToolSession, user string, dest Store) (AgentToolDef, bool) {
+	if !dest.AgentsMayPull {
+		return AgentToolDef{}, false
+	}
 	src, ok := dest.pullSource(T.DB)
 	if !ok {
 		return AgentToolDef{}, false

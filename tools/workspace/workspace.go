@@ -616,7 +616,9 @@ func resolveRunCwd(args map[string]any, sess *ToolSession) (string, error) {
 	if sess != nil {
 		user, agentID = sess.Username, sess.AgentID
 	}
-	abs, err := ResolvePathScope(user, agentID, ref, rel)
+	// Never trusted: a command run here is whatever the model wrote, so a
+	// root that only admin-built tools may reach (a file store) refuses it.
+	abs, err := ResolvePathScope(user, agentID, ref, rel, false)
 	if err != nil {
 		if !rootRegistered(user, ref) {
 			return "", fmt.Errorf("cwd_root %q is not a registered root. Nothing ran.%s", ref, knownRootsSuffix(sess))

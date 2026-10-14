@@ -189,6 +189,12 @@ type TempTool struct {
 	// it, not on the tool record, or a copied tool would carry it away.
 	GrantRead  []string `json:"-"`
 	GrantWrite []string `json:"-"`
+	// AdminMapped marks a tool built from a file store's registered command
+	// by an admin's mapping and approval: the one kind of tool trusted to
+	// reach a store's folders (PathScope.TrustedOnly). Set by the file store
+	// when it hands its approved commands to an agent; never stored or
+	// exported, so no record, import or authoring tool can claim it.
+	AdminMapped bool `json:"-"`
 	// Mode picks the execution backend. Empty defaults to shell for
 	// backward-compatibility with TempTool records written before this
 	// field existed.

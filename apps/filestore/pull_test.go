@@ -173,6 +173,16 @@ func TestAnAgentPullsThroughTheAttachedStore(t *testing.T) {
 	app, intake, analysis := pullFixture(t)
 	src := storeSource{app: app}
 	sess := &ToolSession{Ctx: context.Background(), Username: "alice"}
+	// Off until an admin turns it on: no pull tool at all.
+	for _, td := range src.ItemToolsWithSession(sess, "alice", analysis.Slug) {
+		if strings.HasPrefix(td.Tool.Name, "pull_") {
+			t.Fatal("an agent got a pull tool no admin switched on")
+		}
+	}
+	analysis.AgentsMayPull = true
+	if _, err := SaveStore(app.DB, analysis); err != nil {
+		t.Fatal(err)
+	}
 	var pull *AgentToolDef
 	for _, td := range src.ItemToolsWithSession(sess, "alice", analysis.Slug) {
 		if td.Tool.Name == "pull_"+analysis.Slug {

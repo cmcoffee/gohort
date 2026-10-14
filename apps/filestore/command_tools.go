@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -70,6 +71,9 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 		// a network failure.
 		case strings.TrimSpace(a.URLTemplate) != "":
 			return cmd, Error("action " + a.Name + " declares a url_template; a mapped command is local, not an HTTP call")
+		}
+		if err := actionRunsTheCommand(cmd.Command, a.CommandTemplate); err != nil {
+			return cmd, Error("action " + a.Name + ": " + err.Error())
 		}
 		acts[i].Name = strings.TrimSpace(a.Name)
 
@@ -144,8 +148,70 @@ func (a StoreCommand) asTempTool() TempTool {
 		Description: desc,
 		Mode:        TempToolModeToolbox,
 		BoundOnly:   true,
-		Actions:     a.Tools,
+		Actions:     a.runnableActions(),
+		// Mapped by an admin's Map conversation and approved by an admin: the
+		// one kind of tool trusted to reach the store (PathScope.TrustedOnly).
+		AdminMapped: true,
 	}
+}
+
+// runnableActions is the mapping's actions that run this command and nothing
+// else (actionRunsTheCommand). One stored before that rule existed and broken
+// by it is left out, with a log line, rather than run: failing closed.
+func (a StoreCommand) runnableActions() []TempToolAction {
+	var out []TempToolAction
+	for _, act := range a.Tools {
+		if err := actionRunsTheCommand(a.Command, act.CommandTemplate); err != nil {
+			Log("[filestore] %s/%s action %q not offered to agents: %v (re-map the command)", a.Slug, a.Name, act.Name, err)
+			continue
+		}
+		out = append(out, act)
+	}
+	return out
+}
+
+// placeholderRe matches a {param} placeholder in a command line, which the
+// dispatcher fills with one quoted argument.
+var placeholderRe = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
+
+// actionRunsTheCommand refuses a mapped action's command line unless it runs
+// the store's registered binary, with arguments and nothing else.
+//
+// The mapping is written by a model and approved by an admin, and approval is
+// a person reading it: a line like "cd {folder} && rm -rf *" or "sh -c
+// {script}" would have been a tool that does whatever it is handed, wearing a
+// name that says otherwise. So the line must start with the binary, and
+// outside its placeholders (each filled with ONE quoted value) it may not
+// chain, pipe, redirect, substitute or expand anything.
+func actionRunsTheCommand(bin, tmpl string) error {
+	t := strings.TrimSpace(tmpl)
+	bin = strings.TrimSpace(bin)
+	first := t
+	switch {
+	case strings.HasPrefix(t, "'") || strings.HasPrefix(t, `"`):
+		if end := strings.IndexByte(t[1:], t[0]); end >= 0 {
+			first = t[1 : end+1]
+		}
+	default:
+		if i := strings.IndexAny(t, " \t"); i >= 0 {
+			first = t[:i]
+		}
+	}
+	if bin == "" || first != bin {
+		return fmt.Errorf("an action must run the registered command %s itself, as the first word of its line (got %q)", bin, firstOf(t))
+	}
+	rest := placeholderRe.ReplaceAllString(t, "X")
+	if strings.ContainsAny(rest, ";|&`<>$\n\r") {
+		return Error("an action's line may only pass arguments to the command: no ; | & ` < > $ or line breaks outside its {placeholders}")
+	}
+	return nil
+}
+
+func firstOf(s string) string {
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // commandToolDefs renders the approved, mapped commands of one folder as agent
@@ -174,7 +240,12 @@ func (s storeSource) commandToolDefs(sess *ToolSession, user string, st Store) [
 	if AuthDB != nil {
 		authDB = AuthDB()
 	}
-	bound := &ToolSession{Username: user, DB: authDB, Ctx: sess.Context()}
+	bound := &ToolSession{Username: user, DB: authDB, Ctx: sess.Context(),
+		// The conversation the call came from, so a long command can move
+		// to the background and report back there (core/bgrun) rather than
+		// hold the turn: without it there was nowhere to deliver to.
+		AgentID: sess.AgentID, ChatSessionID: sess.ChatSessionID, DeliverySessionID: sess.DeliverySessionID,
+		ChannelChatID: sess.ChannelChatID, ChannelHandle: sess.ChannelHandle}
 	if ws, err := EnsureWorkspaceDir(user); err == nil {
 		bound.WorkspaceDir = ws
 	}

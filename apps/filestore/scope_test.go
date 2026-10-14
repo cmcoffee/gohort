@@ -107,7 +107,7 @@ func TestScopeIsRegisteredUnderFiles(t *testing.T) {
 	}
 	// An unknown kind fails CLOSED: a parameter declaring a constraint
 	// nobody implements must not quietly become unconstrained.
-	if _, err := ResolvePathScope("u", "", "nosuchkind:x", "value"); err == nil {
+	if _, err := ResolvePathScope("u", "", "nosuchkind:x", "value", true); err == nil {
 		t.Error("an unknown scope kind should refuse rather than pass")
 	}
 }
@@ -131,10 +131,10 @@ func TestScopeRequiresTheCallingAgentToBeLinked(t *testing.T) {
 	}
 
 	ref := "files:" + st.Slug
-	if _, err := ResolvePathScope("u", "linked", ref, "scan-2026-08-13"); err != nil {
+	if _, err := ResolvePathScope("u", "linked", ref, "scan-2026-08-13", true); err != nil {
 		t.Errorf("a linked agent should resolve: %v", err)
 	}
-	_, err := ResolvePathScope("u", "unlinked", ref, "scan-2026-08-13")
+	_, err := ResolvePathScope("u", "unlinked", ref, "scan-2026-08-13", true)
 	if err == nil {
 		t.Fatal("an unlinked agent reached a store nobody attached to it")
 	}
@@ -147,13 +147,13 @@ func TestScopeRequiresTheCallingAgentToBeLinked(t *testing.T) {
 
 	// No agent in play (a CLI path, a test) is NOT a refusal: there is no
 	// attachment to check, and the user gate still applies.
-	if _, err := ResolvePathScope("u", "", ref, "scan-2026-08-13"); err != nil {
+	if _, err := ResolvePathScope("u", "", ref, "scan-2026-08-13", true); err != nil {
 		t.Errorf("a non-agent caller should still resolve: %v", err)
 	}
 	// Neither is a deployment with no app owning agent records — the
 	// feature would be dead rather than ungated.
 	AgentHoldsReference = nil
-	if _, err := ResolvePathScope("u", "unlinked", ref, "scan-2026-08-13"); err != nil {
+	if _, err := ResolvePathScope("u", "unlinked", ref, "scan-2026-08-13", true); err != nil {
 		t.Errorf("with no agent-record app wired this should resolve: %v", err)
 	}
 }
@@ -253,23 +253,25 @@ func TestAdminGateIsOpenWhenAuthIsNotConfigured(t *testing.T) {
 // folder parameter to one; without this it reaches for a free string or
 // a frozen enum, and the frozen enum is exactly what cannot express a
 // drop folder.
-func TestStoresAreAdvertisedAsPathScopeRoots(t *testing.T) {
+func TestStoresAreNotOfferedToToolAuthors(t *testing.T) {
 	app, st, _ := scopeFixture(t)
 	prevApp := registeredFileStoreApp
 	registeredFileStoreApp = app
 	defer func() { registeredFileStoreApp = prevApp }()
 
-	var found bool
+	// A store is reached only by the tools an admin maps from its own
+	// commands, which are pinned to it when saved: offering it to anyone
+	// writing a tool would offer a way in that is then refused.
 	for _, rt := range PathScopeRoots("u") {
 		if rt.Ref == "files:"+st.Slug {
-			found = true
-			if rt.Label != st.Name {
-				t.Errorf("root should carry the store's name, got %q", rt.Label)
-			}
+			t.Errorf("a store is offered to tool authors: %+v", rt)
 		}
 	}
-	if !found {
-		t.Errorf("the store is not advertised as a path scope root")
+	// And a caller that is not an admin-mapped tool is refused, saying
+	// what would let it in.
+	if _, err := ResolvePathScope("u", "", "files:"+st.Slug, "scan-2026-08-13", false); err == nil ||
+		!strings.Contains(err.Error(), "an admin maps the store's registered commands") {
+		t.Errorf("an untrusted caller reached a store: %v", err)
 	}
 }
 

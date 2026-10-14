@@ -64,7 +64,7 @@ func DispatchApplianceTool(ctx context.Context, udb Database, d ApplianceDispatc
 	// The CALLING agent is passed as well as the user: a scoped root that
 	// is also an attachable source has to be linked to this agent, not
 	// merely reachable by its owner. See core.ResolvePathScope.
-	args, err := resolveScopedArgs(d.UserID, d.AgentID, tool, d.Args)
+	args, err := resolveScopedArgs(d.UserID, d.AgentID, tool, d.Args, ownedByAdmin(d.Appliance))
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", tool.Name, err)
 	}
@@ -285,12 +285,25 @@ func applianceToolDescription(t ApplianceTool, a Appliance) string {
 // Returns a COPY: the caller's map is what gets logged and echoed back,
 // and rewriting it in place would make the record disagree with what the
 // model actually asked for.
-func resolveScopedArgs(user, agentID string, tool ApplianceTool, args map[string]any) (map[string]any, error) {
+//
+// trusted is whether an admin owns the system the tool runs on: a root only
+// admin-built tools may reach (a file store) refuses any other.
+func resolveScopedArgs(user, agentID string, tool ApplianceTool, args map[string]any, trusted bool) (map[string]any, error) {
 	// core.ResolveScopedArgs is this function, lifted (v0.6.240) once a
 	// second dispatch path needed it. It also returns the paths it
 	// resolved, which an appliance does not use: an appliance runs the
 	// command on the TARGET, so there is no local sandbox to bind them
 	// into.
-	out, _, err := ResolveScopedArgs(user, agentID, tool.Params, args)
+	out, _, err := ResolveScopedArgs(user, agentID, tool.Params, args, trusted)
 	return out, err
+}
+
+// ownedByAdmin reports whether the system's owner is an admin, whose approved
+// command tools count as admin-built.
+func ownedByAdmin(a Appliance) bool {
+	if AuthDB == nil || strings.TrimSpace(a.Owner) == "" {
+		return false
+	}
+	u, ok := AuthGetUser(AuthDB(), a.Owner)
+	return ok && u.Admin
 }
