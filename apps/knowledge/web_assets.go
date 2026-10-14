@@ -123,101 +123,86 @@ const documentsListAssets = `<style>
   });
 
   newBtn.addEventListener('click', function() {
-    // Div-overlay modal instead of a native <dialog>/showModal(): WKWebView
-    // (gohort-desktop) renders dynamically-built <dialog> content
-    // unreliably (the body doesn't expand), which is why the framework's
-    // own modals are div overlays too. overlay = full-screen scrim; dlg =
-    // the card.
-    var overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center';
-    var dlg = document.createElement('div');
-    dlg.style.cssText = 'background:var(--bg-1);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1rem;max-width:560px;width:92%;max-height:88vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.6)';
-    overlay.appendChild(dlg);
-    var h = document.createElement('h3');
-    h.textContent = 'New collection';
-    h.style.cssText = 'margin:0 0 0.6rem';
-    dlg.appendChild(h);
-    var bodyWrap = document.createElement('div');
-    bodyWrap.style.cssText = 'padding-right:0.3rem';
-    dlg.appendChild(bodyWrap);
-    var form = document.createElement('div');
-    form.className = 'docs-modal-form';
-    bodyWrap.appendChild(form);
+    // The framework's modal: its look, its phone layout, Escape to close,
+    // and focus handed back to New collection afterwards. There is no close
+    // on a click outside it (a drag-select copy would dismiss it mid-copy);
+    // Cancel closes.
+    var inpN, inpD;
+    window.uiOpenModal({
+      title: 'New collection',
+      actions: [
+        {label: 'Cancel'},
+        {label: 'Create', primary: true, onClick: function(modal, btn) {
+          var name = inpN.value.trim();
+          if (!name) { window.uiAlert('Name required'); return; }
+          btn.disabled = true;
+          fetch(api('/api/collections'), {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              name: name,
+              description: inpD.value.trim(),
+            }),
+          }).then(function(r) {
+            if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+            return r.json();
+          }).then(function(c) {
+            modal.close();
+            window.location.href = '/knowledge/c/' + encodeURIComponent(c.id);
+          }).catch(function(err) {
+            btn.disabled = false;
+            window.uiAlert('Create failed: ' + (err && err.message || err));
+          });
+        }},
+      ],
+      mount: function(body) {
+        var form = document.createElement('div');
+        form.className = 'docs-modal-form';
+        body.appendChild(form);
 
-    var lblN = document.createElement('label'); lblN.textContent = 'Name'; form.appendChild(lblN);
-    var inpN = document.createElement('input'); inpN.type = 'text'; inpN.placeholder = 'e.g. Kubernetes Reference'; form.appendChild(inpN);
+        var lblN = document.createElement('label'); lblN.textContent = 'Name'; form.appendChild(lblN);
+        inpN = document.createElement('input'); inpN.type = 'text'; inpN.placeholder = 'e.g. Kubernetes Reference'; form.appendChild(inpN);
 
-    var lblD = document.createElement('label'); lblD.textContent = 'Description'; form.appendChild(lblD);
-    var inpD = document.createElement('textarea');
-    inpD.placeholder = 'What documents should this collection contain? (Drives Auto-fill search queries.)';
-    form.appendChild(inpD);
-    var draftRow = document.createElement('div');
-    draftRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin-top:0.3rem';
-    var draftBtn = document.createElement('button');
-    draftBtn.type = 'button'; draftBtn.className = 'ui-row-btn';
-    draftBtn.textContent = 'Draft with AI';
-    var draftStatus = document.createElement('span');
-    draftStatus.style.cssText = 'font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)';
-    draftRow.appendChild(draftBtn); draftRow.appendChild(draftStatus);
-    form.appendChild(draftRow);
+        var lblD = document.createElement('label'); lblD.textContent = 'Description'; form.appendChild(lblD);
+        inpD = document.createElement('textarea');
+        inpD.placeholder = 'What documents should this collection contain? (Drives Auto-fill search queries.)';
+        form.appendChild(inpD);
+        var draftRow = document.createElement('div');
+        draftRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin-top:0.3rem';
+        var draftBtn = document.createElement('button');
+        draftBtn.type = 'button'; draftBtn.className = 'ui-row-btn';
+        draftBtn.textContent = 'Draft with AI';
+        var draftStatus = document.createElement('span');
+        draftStatus.style.cssText = 'font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)';
+        draftRow.appendChild(draftBtn); draftRow.appendChild(draftStatus);
+        form.appendChild(draftRow);
 
-    draftBtn.addEventListener('click', function() {
-      var name = inpN.value.trim();
-      if (!name) { window.uiAlert('Enter a name first, that\'s what the AI uses to draft.'); return; }
-      draftBtn.disabled = true;
-      draftStatus.style.color = 'var(--text-mute)';
-      draftStatus.textContent = 'Drafting…';
-      fetch(api('/api/collections/draft-description'), {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name: name, description: inpD.value.trim()}),
-      }).then(function(r){
-        if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
-        return r.json();
-      }).then(function(out) {
-        inpD.value = (out && out.description) || '';
-        draftStatus.style.color = 'var(--text-mute)';
-        draftStatus.textContent = 'Edit if needed, then Create.';
-        draftBtn.disabled = false;
-      }).catch(function(err) {
-        draftStatus.style.color = 'var(--danger,#ff7b72)';
-        draftStatus.textContent = 'Draft failed: ' + (err && err.message || err);
-        draftBtn.disabled = false;
-      });
+        draftBtn.addEventListener('click', function() {
+          var name = inpN.value.trim();
+          if (!name) { window.uiAlert('Enter a name first, that\'s what the AI uses to draft.'); return; }
+          draftBtn.disabled = true;
+          draftStatus.style.color = 'var(--text-mute)';
+          draftStatus.textContent = 'Drafting…';
+          fetch(api('/api/collections/draft-description'), {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name, description: inpD.value.trim()}),
+          }).then(function(r){
+            if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+            return r.json();
+          }).then(function(out) {
+            inpD.value = (out && out.description) || '';
+            draftStatus.style.color = 'var(--text-mute)';
+            draftStatus.textContent = 'Edit if needed, then Create.';
+            draftBtn.disabled = false;
+          }).catch(function(err) {
+            draftStatus.style.color = 'var(--danger,#ff7b72)';
+            draftStatus.textContent = 'Draft failed: ' + (err && err.message || err);
+            draftBtn.disabled = false;
+          });
+        });
+      },
     });
-
-    var actions = document.createElement('div');
-    actions.className = 'ui-modal-footer';
-    var cancel = document.createElement('button'); cancel.className = 'ui-row-btn'; cancel.textContent = 'Cancel';
-    cancel.addEventListener('click', function(){ overlay.remove(); });
-    var create = document.createElement('button'); create.className = 'ui-row-btn primary'; create.textContent = 'Create';
-    create.addEventListener('click', function() {
-      var name = inpN.value.trim();
-      if (!name) { window.uiAlert('Name required'); return; }
-      create.disabled = true;
-      fetch(api('/api/collections'), {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          name: name,
-          description: inpD.value.trim(),
-        }),
-      }).then(function(r) {
-        if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
-        return r.json();
-      }).then(function(c) {
-        overlay.remove();
-        window.location.href = '/knowledge/c/' + encodeURIComponent(c.id);
-      }).catch(function(err) {
-        create.disabled = false;
-        window.uiAlert('Create failed: ' + (err && err.message || err));
-      });
-    });
-    actions.appendChild(cancel); actions.appendChild(create);
-    dlg.appendChild(actions);
-    // No backdrop-click-to-close (drag-select copy would dismiss mid-copy); Cancel closes.
-    document.body.appendChild(overlay);
-    setTimeout(function(){ inpN.focus(); }, 0);
   });
 
   load();
