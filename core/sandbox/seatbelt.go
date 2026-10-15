@@ -159,17 +159,16 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 		spec.AllowNetwork = false
 		spec.HookSocket = ""
 	}
-	// Called for the DEPLOYMENT half only: Ensure* writes the helper package
-	// and the managed deps to their host locations and reports where they
-	// landed. There is nothing to add to the profile for them, because reads
-	// are already allowed filesystem-wide — see scopesReads.
-	//
-	// These used to append to a spec.ReadOnly field, which nothing rendered.
-	// That field is gone: an unrendered list of paths reads as a constraint in
-	// force, and it was the reason run.ReadOnly went missing here without
-	// anybody noticing.
-	gohortLibDir()
-	deps.EnsurePyDepsDir()
+	// Ensure* writes the helper package and the managed deps to their host
+	// locations and reports where they landed. Reads are open filesystem-wide,
+	// EXCEPT the data directory the deny rules take back, and these two live
+	// inside it (beside the workspaces), so they are given back explicitly,
+	// with the folders this run was handed to read.
+	for _, p := range append([]string{gohortLibDir(), deps.EnsurePyDepsDir()}, run.ReadOnly...) {
+		if strings.TrimSpace(p) != "" {
+			spec.Readable = append(spec.Readable, p)
+		}
+	}
 
 	profile := seatbeltProfile(spec)
 	var argv []string
@@ -196,9 +195,16 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 
 // seatbeltSpec is what a profile is generated from.
 type seatbeltSpec struct {
-	Workspace  string   // the single writable working directory, or "" for none
-	Writable   []string // further folders the command may write (sandboxRun.Writable)
-	HookSocket string   // unix socket the hook listens on, or ""
+	Workspace string   // the single writable working directory, or "" for none
+	Writable  []string // further folders the command may write (sandboxRun.Writable)
+	// Readable are folders read access is given BACK to after the deny rules:
+	// gohort's own helper package and Python deps, which live beside the
+	// workspaces inside the data directory those rules deny, and the folders
+	// the run was given to read (sandboxRun.ReadOnly, a store granted to an
+	// app). Without it every "from gohort import ..." on macOS failed with
+	// ModuleNotFoundError: Python skips a path entry it cannot read.
+	Readable   []string
+	HookSocket string // unix socket the hook listens on, or ""
 	// No read-only path list. Reads are allowed filesystem-wide by
 	// construction (a subpath-scoped file-read* aborts the profile), so a
 	// field naming readable directories could only ever describe paths that
@@ -248,6 +254,16 @@ func seatbeltProfile(spec seatbeltSpec) string {
 	// protecting nothing.
 	if denies := seatbeltDenyRules(); denies != "" {
 		b.WriteString(denies)
+	}
+	// And give back what a run needs from inside the denied directory: the
+	// helper package, the Python deps, the folders it was handed to read.
+	// After the denies, for the same last-match reason.
+	if len(spec.Readable) > 0 {
+		b.WriteString("(allow file-read*\n")
+		for _, p := range spec.Readable {
+			b.WriteString("  " + sbSubpath(p) + "\n")
+		}
+		b.WriteString(")\n")
 	}
 
 	write := append([]string{}, seatbeltWritePaths...)

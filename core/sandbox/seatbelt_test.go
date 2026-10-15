@@ -393,3 +393,34 @@ func TestDeniedFilesAreLiteralsToo(t *testing.T) {
 		}
 	}
 }
+
+// gohort's helper package lives beside the workspaces, inside the data
+// directory the deny rules take back, so on macOS every "from gohort import
+// ..." failed with ModuleNotFoundError (Python skips a path it cannot read).
+// The helper, and any folder the run was handed to read, are given back AFTER
+// the denies, where the last match wins.
+func TestTheHelperAndGivenFoldersAreReadableDespiteTheDataDeny(t *testing.T) {
+	prevWS, prevLib := WorkspacesDir, GohortLibDir
+	t.Cleanup(func() { WorkspacesDir, GohortLibDir = prevWS, prevLib })
+	WorkspacesDir = func() string { return "/data/gohort/workspaces" }
+	GohortLibDir = func() string { return "/data/gohort/_gohort_lib" }
+
+	cmd := seatbeltSandbox{path: "/usr/bin/sandbox-exec"}.build(context.Background(), sandboxRun{
+		Kind: sandboxShellRun, Command: "true", WorkspaceDir: "/data/gohort/workspaces/u1",
+		ReadOnly: []string{"/data/gohort/stores/intake"},
+	})
+	p := cmd.Args[2]
+	deny := strings.Index(p, `(deny file-read* (subpath "/data/gohort"))`)
+	lib := strings.Index(p, `(subpath "/data/gohort/_gohort_lib")`)
+	store := strings.Index(p, `(subpath "/data/gohort/stores/intake")`)
+	if deny < 0 {
+		t.Fatalf("the data directory is no longer denied:\n%s", p)
+	}
+	if lib < deny || store < deny {
+		t.Errorf("the helper (%d) and the given folder (%d) must be allowed after the deny (%d):\n%s", lib, store, deny, p)
+	}
+	// Given back for READING only: the store stays unwritable.
+	if w := strings.Index(p, "(allow file-read* file-write*"); w >= 0 && strings.Contains(p[w:], "stores/intake") {
+		t.Errorf("a read-only folder became writable:\n%s", p)
+	}
+}
