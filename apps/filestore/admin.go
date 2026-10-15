@@ -417,6 +417,12 @@ func actionFormFields() []ui.FormField {
 // guide to it.
 func commandUsesFields() []ui.FormField {
 	return []ui.FormField{
+		{Field: "background", Type: "select", Label: "When an agent runs it",
+			Options: []ui.SelectOption{
+				{Value: "", Label: "Wait, then background it if it is slow"},
+				{Value: "always", Label: "Always run it in the background"}},
+			Help:   "Always: the agent hears it has started and carries on, and is woken with the result when it ends.",
+			Detail: "For a command that is always slow, a download or an extraction. With the first choice an agent waits for it up to the detach time (Admin, Timeouts) before it moves to the background. Either way a run is stopped as stuck only when it has printed nothing and written nothing to its folders for the no-output limit, so a quiet download that keeps writing keeps going."},
 		{Field: "guide", Type: "textarea", Label: "How to use it", Rows: 6,
 			Placeholder: "What it is for, the order of its steps, what each value means, where its output goes, what to watch for.",
 			Help:        "Optional, in markdown. Builder reads it to map the command, and agents read it where they list this store's commands.",

@@ -165,7 +165,7 @@ func (h storeHost) RunCommand(ctx context.Context, owner, slug, store, folder, c
 	}
 	defer pathhold.Hold(dir)()
 	defer st.wrote()
-	stop := keepAlive(ctx, fmt.Sprintf("running %s on %s", act.Name, folderLabel(folder)))
+	stop := keepAlive(ctx, fmt.Sprintf("running %s on %s", act.Name, folderLabel(folder)), dir)
 	args := []string{dir}
 	if input != "" {
 		args = append(args, input) // never logged: it may be the secret half of an exchange
@@ -219,7 +219,7 @@ func (h storeHost) RunAction(ctx context.Context, owner, slug, store, command, a
 			}
 			return st.resolveValue(v)
 		}
-		stop := keepAlive(ctx, fmt.Sprintf("running %s %s on %s", cmd.Name, act.Name, st.Name))
+		stop := keepAlive(ctx, fmt.Sprintf("running %s %s on %s", cmd.Name, act.Name, st.Name), "")
 		defer stop()
 		return runSpecified(ctx, "app "+appKey(owner, slug), st, cmd, act, values, resolve)
 	}
@@ -265,16 +265,20 @@ func folderLabel(folder string) string {
 	return folder
 }
 
-// keepAlive tells the run the call belongs to that it is still working, every
-// ten seconds, until stop: a registered command prints nothing the run can
-// see, and a run silent for the no-output limit is stopped as stuck.
-func keepAlive(ctx context.Context, line string) (stop func()) {
+// keepAlive shows what the call is doing beside the run, every ten seconds,
+// until stop, and watches dir (when given) for what it writes. The line is a
+// status, not activity: a registered command that prints nothing is alive
+// while its files grow there, and stuck when they stop (bgrun's no-output
+// limit), rather than kept going by this ticking.
+func keepAlive(ctx context.Context, line, dir string) (stop func()) {
 	act := bgrun.RunActivityFrom(ctx)
 	if act == nil {
 		return func() {}
 	}
+	act.WatchGrowth(dir)
 	done := make(chan struct{})
 	start := time.Now()
+	act.Note(line)
 	go func() {
 		tick := time.NewTicker(10 * time.Second)
 		defer tick.Stop()
@@ -285,7 +289,7 @@ func keepAlive(ctx context.Context, line string) (stop func()) {
 			case <-ctx.Done():
 				return
 			case <-tick.C:
-				fmt.Fprintf(act, "%s (%s)\n", line, time.Since(start).Round(time.Second))
+				act.Note(fmt.Sprintf("%s (%s)", line, time.Since(start).Round(time.Second)))
 			}
 		}
 	}()

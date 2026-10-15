@@ -160,7 +160,7 @@ func TestARunThatGoesQuietIsStopped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(out, "waiting for the archive") || !strings.Contains(out, "[STOPPED: it printed nothing for") {
+	if !strings.HasPrefix(out, "waiting for the archive") || !strings.Contains(out, "[STOPPED: it printed nothing and wrote nothing for") {
 		t.Errorf("a quiet run was not stopped with its reason: %q", out)
 	}
 
@@ -289,5 +289,64 @@ func TestARunIsStoppedByItsDiskLimits(t *testing.T) {
 	out := stopNote("partial output", ctx2, BackgroundRun{Tool: "unpack"}, act2)
 	if !strings.Contains(out, "partial output") || !strings.Contains(out, "[STOPPED: the disk it was writing to has") {
 		t.Errorf("the note does not say why: %q", out)
+	}
+}
+
+// A run that prints nothing but keeps writing into the folder it was pointed
+// at (a download growing a file) is working, not stuck; its progress says how
+// much it has written.
+func TestARunThatKeepsWritingIsNotStopped(t *testing.T) {
+	setTuneForTest(t, map[string]float64{"tune_tool_detach_after": 60, "tune_tool_idle_limit": 0.5})
+	prev := growthCheckEvery
+	growthCheckEvery = 50 * time.Millisecond
+	t.Cleanup(func() { growthCheckEvery = prev })
+	installFakeTaskHost(t)
+	dir := t.TempDir()
+	var summary string
+	out, err := BackgroundRun{Tool: "download", Run: func(work *ToolSession) (string, error) {
+		act := RunActivityFrom(work.Context())
+		act.WatchGrowth(dir)
+		act.Note("downloading")
+		f, err := os.Create(filepath.Join(dir, "dump.zip"))
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		for i := 0; i < 15; i++ { // 1.5s, silent, writing every 0.1s
+			f.Write(make([]byte, 4096))
+			time.Sleep(100 * time.Millisecond)
+			if work.Context().Err() != nil {
+				return "killed", nil
+			}
+		}
+		summary = act.Summary()
+		return "downloaded", nil
+	}}.Start(turnSession(context.Background()))
+	if err != nil || out != "downloaded" {
+		t.Fatalf("a run that kept writing was stopped: %q %v", out, err)
+	}
+	if !strings.Contains(summary, "wrote ") || !strings.Contains(summary, "downloading") {
+		t.Errorf("progress does not say what it wrote: %q", summary)
+	}
+}
+
+// A run that says it is long moves to the background at its own time, sooner
+// than the deployment's.
+func TestARunCanDetachSooner(t *testing.T) {
+	setTuneForTest(t, map[string]float64{"tune_tool_detach_after": 60, "tune_tool_idle_limit": 60})
+	host := installFakeTaskHost(t)
+	t0 := time.Now()
+	out, err := BackgroundRun{Tool: "download", DetachAfter: 100 * time.Millisecond, Run: func(work *ToolSession) (string, error) {
+		time.Sleep(time.Second)
+		return "downloaded", nil
+	}}.Start(turnSession(context.Background()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, marked := TakeFrameworkResultMark(out); !marked || time.Since(t0) > 900*time.Millisecond {
+		t.Fatalf("it did not detach at its own time: %q after %s", out, time.Since(t0))
+	}
+	if got := <-host.delivered; got.Text != "downloaded" {
+		t.Errorf("delivered %+v", got)
 	}
 }

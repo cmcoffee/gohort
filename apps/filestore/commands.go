@@ -131,6 +131,11 @@ type StoreCommand struct {
 	// says what they cannot. Builder reads it to map the command, and agents
 	// read it where they list the store's commands.
 	Guide string `json:"guide,omitempty"`
+	// Background is "always" for a command known to run long (a download):
+	// an agent's run of it moves to the background at once, and the agent is
+	// woken with the result when it ends. "" leaves it to the deployment's
+	// detach time.
+	Background string `json:"background,omitempty"`
 	// Examples are runs an admin made to show how the command is used, which
 	// the mapping learns from (command_examples.go). The newest few.
 	Examples []CommandExample `json:"examples,omitempty"`
@@ -184,6 +189,7 @@ func SaveStoreCommand(db Database, a StoreCommand) (StoreCommand, error) {
 	a.Slug = strings.TrimSpace(a.Slug)
 	a.Name = RefToolSlug(strings.TrimSpace(a.Name))
 	a.Command = strings.TrimSpace(a.Command)
+	a.Background = backgroundMode(a.Background)
 	switch {
 	case a.Slug == "":
 		return a, Error("say which store this command belongs to")

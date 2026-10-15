@@ -308,6 +308,11 @@ func TestTheAdminsGuideReachesBuilderAndAgents(t *testing.T) {
 	if c, _ := LoadStoreCommand(app.DB, st.Slug, "extract"); !c.Approved || c.Guide != "A better guide." {
 		t.Errorf("a guide-only change: approved=%v guide=%q", c.Approved, c.Guide)
 	}
+	// How it runs is not what it runs: the approval stands.
+	post(`{"usage":"specified","allowed_uses":"{bundle}","guide":"A better guide.","background":"Always"}`)
+	if c, _ := LoadStoreCommand(app.DB, st.Slug, "extract"); !c.Approved || c.Background != "always" || c.detachAfter() != backgroundDetach {
+		t.Errorf("background: approved=%v background=%q detach=%s", c.Approved, c.Background, c.detachAfter())
+	}
 	post(`{"usage":"specified","allowed_uses":"{bundle} {response}","guide":"A better guide."}`)
 	if c, _ := LoadStoreCommand(app.DB, st.Slug, "extract"); c.Approved {
 		t.Error("a change to the uses kept the approval")

@@ -27,8 +27,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bgrun"
@@ -104,14 +107,14 @@ func (s storeSource) specifiedToolDefs(sess *ToolSession, user string, st Store,
 		out = append(out, AgentToolDef{
 			Tool: Tool{
 				Name:        name,
-				Description: fmt.Sprintf("%s Runs exactly: %s %s, with your values in the {placeholders}; nothing else about the command can be changed.%s", strings.TrimSuffix(desc, ".")+".", cmd.Command, line, guidePointer(st, cmd)),
+				Description: fmt.Sprintf("%s Runs exactly: %s %s, with your values in the {placeholders}; nothing else about the command can be changed.%s%s", strings.TrimSuffix(desc, ".")+".", cmd.Command, line, backgroundNote(cmd), guidePointer(st, cmd)),
 				Parameters:  act.Params,
 				Required:    act.Required,
 				Caps:        []Capability{CapExecute},
 				Category:    "files",
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
-				return bgrun.BackgroundRun{Tool: name, Label: cmd.Label + " on " + st.Name, Run: func(work *ToolSession) (string, error) {
+				return bgrun.BackgroundRun{Tool: name, Label: cmd.Label + " on " + st.Name, DetachAfter: cmd.detachAfter(), Run: func(work *ToolSession) (string, error) {
 					resolve := func(ref, v string) (string, error) { return ResolvePathScope(user, sess.AgentID, ref, v, true) }
 					return runSpecified(work.Context(), "agent", st, cmd, act, args, resolve)
 				}}.Start(sess)
@@ -181,6 +184,9 @@ func runSpecified(ctx context.Context, who string, st Store, cmd StoreCommand, a
 	}
 	if a := bgrun.RunActivityFrom(ctx); a != nil {
 		a.WatchDir(st.Path)
+		for _, d := range growthDirs(act, vals, dir) {
+			a.WatchGrowth(d)
+		}
 	}
 	defer pathhold.Hold(dir)()
 	defer st.wrote()
@@ -214,7 +220,7 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeJSON(w, map[string]any{"allowed_uses": strings.Join(cmd.allowedLines(), "\n"), "guide": cmd.Guide})
+		writeJSON(w, map[string]any{"allowed_uses": strings.Join(cmd.allowedLines(), "\n"), "guide": cmd.Guide, "background": cmd.Background})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -224,6 +230,7 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 	var body struct {
 		AllowedUses string `json:"allowed_uses"`
 		Guide       string `json:"guide"`
+		Background  string `json:"background"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -231,6 +238,8 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 	}
 	before := cmd.usesLabel()
 	cmd.Guide = strings.TrimSpace(body.Guide)
+	// How it runs, not what it runs: the approval stands.
+	cmd.Background = backgroundMode(body.Background)
 	cmd.AllowedUses = strings.Split(body.AllowedUses, "\n")
 	cmd.AllowedUses = cmd.allowedLines()
 	for _, l := range cmd.AllowedUses {
@@ -424,4 +433,64 @@ func argText(raw any) string {
 		return string(b)
 	}
 	return fmt.Sprint(raw)
+}
+
+// backgroundDetach is how soon a command set to always run in the background
+// moves there: long enough that a call refused at once (a bad argument)
+// still answers inline.
+const backgroundDetach = 3 * time.Second
+
+// backgroundMode is a stored Background value: "always" or "".
+func backgroundMode(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), "always") {
+		return "always"
+	}
+	return ""
+}
+
+// detachAfter is the command's own detach time, 0 for the deployment's.
+func (a StoreCommand) detachAfter() time.Duration {
+	if a.Background == "always" {
+		return backgroundDetach
+	}
+	return 0
+}
+
+// growthDirs are the folders a run's output lands in: each folder value it
+// was given (a file value's folder), or its working folder when it was given
+// none. A run whose files grow there is working, even printing nothing.
+func growthDirs(act TempToolAction, vals map[string][]string, workDir string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(d string) {
+		if d != "" && !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	for name, p := range act.Params {
+		if strings.TrimSpace(p.PathScope) == "" {
+			continue
+		}
+		for _, v := range vals[name] {
+			if info, err := os.Stat(v); err == nil && info.IsDir() {
+				add(v)
+			} else {
+				add(filepath.Dir(v))
+			}
+		}
+	}
+	if len(out) == 0 {
+		add(workDir)
+	}
+	return out
+}
+
+// backgroundNote tells an agent that a command runs in the background, so it
+// does not wait on the call for an answer.
+func backgroundNote(cmd StoreCommand) string {
+	if cmd.Background != "always" {
+		return ""
+	}
+	return " It runs in the background: the call returns at once saying it has started, and you are woken with its result when it ends, so carry on or tell the person it is under way."
 }

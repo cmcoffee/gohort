@@ -51,8 +51,8 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key: "tune_tool_idle_limit", Category: "Timeouts",
 		Label:  "Stop a running tool after no output for",
-		Help:   "A command-running tool that prints nothing for this long is taken to be stuck and stopped.",
-		Detail: "There is no limit on total time for a run that keeps printing; a tool that sets its own timeout keeps that as a ceiling too. What it printed before it was stopped is returned with the reason.",
+		Help:   "A command-running tool that prints nothing and writes nothing for this long is taken to be stuck and stopped.",
+		Detail: "There is no limit on total time for a run that keeps printing, or keeps writing into the folders it was pointed at (a download growing a file counts); a tool that sets its own timeout keeps that as a ceiling too. What it printed before it was stopped is returned with the reason.",
 		Kind:   KindSeconds, Default: 300, Min: 30, Max: 7200,
 	})
 	RegisterTunable(TunableSpec{
@@ -97,6 +97,15 @@ type RunActivity struct {
 	tail    string // the latest complete, non-blank line
 	dirs    []string
 	stopWhy string // the storage limit's own words, when one stopped it
+	// grow are the folders the run's output lands in (WatchGrowth), and
+	// wrote what it has written there so far: a run whose files keep growing
+	// is working, whether or not it prints.
+	grow  []string
+	wrote uint64
+	// note is a status line from the caller ("running download on Intake"),
+	// shown when the run itself has printed nothing. It says nothing about
+	// whether the run is alive.
+	note string
 }
 
 // WatchDir names a folder the run writes into. Its disk is held to the
@@ -115,6 +124,51 @@ func (a *RunActivity) WatchDir(dir string) {
 		}
 	}
 	a.dirs = append(a.dirs, dir)
+}
+
+// WatchGrowth names a folder the run's output lands in. While the files there
+// grow, the run counts as working even when it prints nothing (a download
+// writing a large file), and its progress says how much it has written.
+func (a *RunActivity) WatchGrowth(dir string) {
+	if a == nil || dir == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, d := range a.grow {
+		if d == dir {
+			return
+		}
+	}
+	a.grow = append(a.grow, dir)
+}
+
+// Note sets the status line shown while the run has printed nothing. It does
+// not count as activity.
+func (a *RunActivity) Note(line string) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.note = strings.TrimSpace(line)
+}
+
+func (a *RunActivity) growing() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.grow...)
+}
+
+// noteWritten records how much the run has written into its growth folders:
+// more than before is activity.
+func (a *RunActivity) noteWritten(n uint64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if n > a.wrote {
+		a.wrote = n
+		a.last = time.Now()
+	}
 }
 
 func (a *RunActivity) watched() []string {
@@ -176,8 +230,18 @@ func (a *RunActivity) Quiet() time.Duration {
 func (a *RunActivity) Summary() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	wrote := ""
+	if a.wrote > 0 {
+		wrote = "wrote " + HumanSize(int64(a.wrote))
+	}
 	if a.bytes == 0 {
-		return ""
+		var parts []string
+		for _, p := range []string{wrote, a.note} {
+			if p != "" {
+				parts = append(parts, p)
+			}
+		}
+		return strings.Join(parts, " - ")
 	}
 	tail := a.tail
 	if p := strings.TrimSpace(string(a.partial)); p != "" {
@@ -192,6 +256,9 @@ func (a *RunActivity) Summary() string {
 	head := countOf(a.lines, "line")
 	if a.lines == 0 {
 		head = humanBytes(a.bytes)
+	}
+	if wrote != "" {
+		head += ", " + wrote
 	}
 	if tail == "" {
 		return head
@@ -251,6 +318,11 @@ type BackgroundRun struct {
 	// Run does the work. sess outlives the turn and its context carries the
 	// activity (RunActivityFrom) the work reports its output to.
 	Run func(sess *ToolSession) (string, error)
+	// DetachAfter, when set, moves the run to the background this soon
+	// instead of after the deployment's detach time: for work known to be
+	// long (a download), so the turn is not held waiting for it. A run that
+	// ends before then (a bad argument) still answers inline.
+	DetachAfter time.Duration
 }
 
 type taskProgressKey struct{}
@@ -340,6 +412,7 @@ func (b BackgroundRun) Start(sess *ToolSession) (string, error) {
 		done <- runResult{out: out, err: err}
 	}()
 	go watchIdle(runCtx, act, TuneDuration("tune_tool_idle_limit"), cancel)
+	go watchGrowth(runCtx, act)
 	go watchStorage(runCtx, act, uint64(TuneInt("tune_run_max_write_gb"))<<30, cancel)
 
 	// inline waits the run out here, still stoppable by the turn, and hands
@@ -352,6 +425,9 @@ func (b BackgroundRun) Start(sess *ToolSession) (string, error) {
 	}
 
 	detachAfter := toolDetachAfter(sess)
+	if b.DetachAfter > 0 && (detachAfter <= 0 || b.DetachAfter < detachAfter) {
+		detachAfter = b.DetachAfter
+	}
 	if TaskRunnerFunc == nil || detachAfter <= 0 || sess.DeliverySession() == "" {
 		defer unlink()
 		return inline()
@@ -478,6 +554,65 @@ func watchStorage(ctx context.Context, act *RunActivity, maxWrite uint64, cancel
 	}
 }
 
+// growthCheckEvery is how often a run's growth folders are looked at, and
+// growthWalkMax the most entries one look walks: a folder bigger than that is
+// not watched for growth (the run's printed output still counts). Vars so a
+// test need not wait.
+var (
+	growthCheckEvery = 10 * time.Second
+	growthWalkMax    = 50000
+)
+
+// watchGrowth keeps the run's written total current, which keeps a run that
+// is writing alive. It ends with the run.
+func watchGrowth(ctx context.Context, act *RunActivity) {
+	tick := time.NewTicker(growthCheckEvery)
+	defer tick.Stop()
+	skip := map[string]bool{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			var total uint64
+			for _, dir := range act.growing() {
+				if skip[dir] {
+					continue
+				}
+				n, whole := writtenSinceUpTo(dir, act.started, growthWalkMax)
+				if !whole {
+					Debug("[task] %s holds more than %d entries: not watched for growth", dir, growthWalkMax)
+					skip[dir] = true
+					continue
+				}
+				total += n
+			}
+			act.noteWritten(total)
+		}
+	}
+}
+
+// writtenSinceUpTo is writtenSince stopping after max entries; whole is false
+// when it stopped early.
+func writtenSinceUpTo(dir string, since time.Time, max int) (n uint64, whole bool) {
+	seen := 0
+	whole = true
+	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if seen++; seen > max {
+			whole = false
+			return fs.SkipAll
+		}
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, ierr := d.Info(); ierr == nil && !info.ModTime().Before(since) {
+			n += uint64(info.Size())
+		}
+		return nil
+	})
+	return n, whole
+}
+
 // writtenSince is the size of the files under dir changed at or after since:
 // what a run that started then has written there. Unreadable entries are
 // skipped; this is a limit, not an audit.
@@ -501,7 +636,7 @@ func writtenSince(dir string, since time.Time) uint64 {
 func stopNote(out string, ctx context.Context, b BackgroundRun, act *RunActivity) string {
 	switch cause := context.Cause(ctx); {
 	case errors.Is(cause, errRunIdle):
-		out += fmt.Sprintf("\n[STOPPED: it printed nothing for %s, so it was taken to be stuck and killed. What it printed before that is above. If this command is normally silent for that long, the no-output limit is an admin setting (Timeouts).]", words(TuneDuration("tune_tool_idle_limit")))
+		out += fmt.Sprintf("\n[STOPPED: it printed nothing and wrote nothing for %s, so it was taken to be stuck and killed. What it printed before that is above. If this command is normally silent for that long, the no-output limit is an admin setting (Timeouts).]", words(TuneDuration("tune_tool_idle_limit")))
 	case errors.Is(cause, errDiskFloor), errors.Is(cause, errTooLarge):
 		out += "\n[STOPPED: " + act.stopReason() + ", so the command was killed. What it printed is above; what it wrote so far is still in its folder. The limits are admin settings (Limits).]"
 	case errors.Is(cause, errRunCeiling):
