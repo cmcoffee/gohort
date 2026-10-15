@@ -302,7 +302,20 @@ func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) 
 		w = io.MultiWriter(&buf, act)
 	}
 	c.Stdout, c.Stderr = w, w
-	err := c.Run()
+	err := c.Start()
+	if err == nil {
+		if act != nil {
+			// A command busy without printing or writing where it was
+			// pointed (receiving into a temporary file, verifying what it
+			// fetched) is still working: its process says so.
+			watch, stopWatch := context.WithCancel(ctx)
+			act.WatchProcess(watch, c.Process.Pid)
+			err = c.Wait()
+			stopWatch()
+		} else {
+			err = c.Wait()
+		}
+	}
 	out := buf.Bytes()
 	text := strings.TrimSpace(string(out))
 	if ctx.Err() == context.DeadlineExceeded {

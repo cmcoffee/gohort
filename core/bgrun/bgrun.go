@@ -51,8 +51,8 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key: "tune_tool_idle_limit", Category: "Timeouts",
 		Label:  "Stop a running tool after no output for",
-		Help:   "A command-running tool that prints nothing and writes nothing for this long is taken to be stuck and stopped.",
-		Detail: "There is no limit on total time for a run that keeps printing, or keeps writing into the folders it was pointed at (a download growing a file counts); a tool that sets its own timeout keeps that as a ceiling too. What it printed before it was stopped is returned with the reason.",
+		Help:   "A command-running tool that shows no sign of work for this long is taken to be stuck and stopped.",
+		Detail: "Signs of work are output, files growing in the folders it was pointed at (a download writing a file), and, for a file store's commands, its process using CPU or moving data (a download receiving into a temporary file elsewhere, a verify after the transfer). There is no limit on total time for a run that keeps working; a tool that sets its own timeout keeps that as a ceiling too. What it printed before it was stopped is returned with the reason.",
 		Kind:   KindSeconds, Default: 300, Min: 30, Max: 7200,
 	})
 	RegisterTunable(TunableSpec{
@@ -636,7 +636,7 @@ func writtenSince(dir string, since time.Time) uint64 {
 func stopNote(out string, ctx context.Context, b BackgroundRun, act *RunActivity) string {
 	switch cause := context.Cause(ctx); {
 	case errors.Is(cause, errRunIdle):
-		out += fmt.Sprintf("\n[STOPPED: it printed nothing and wrote nothing for %s, so it was taken to be stuck and killed. What it printed before that is above. If this command is normally silent for that long, the no-output limit is an admin setting (Timeouts).]", words(TuneDuration("tune_tool_idle_limit")))
+		out += fmt.Sprintf("\n[STOPPED: it showed no sign of work for %s (no output, no files growing where it writes, and, for a command whose process is watched, no CPU or data moving), so it was taken to be stuck and killed. What it printed before that is above. If this command is normally silent for that long, the no-output limit is an admin setting (Timeouts).]", words(TuneDuration("tune_tool_idle_limit")))
 	case errors.Is(cause, errDiskFloor), errors.Is(cause, errTooLarge):
 		out += "\n[STOPPED: " + act.stopReason() + ", so the command was killed. What it printed is above; what it wrote so far is still in its folder. The limits are admin settings (Limits).]"
 	case errors.Is(cause, errRunCeiling):

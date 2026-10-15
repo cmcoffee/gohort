@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -160,7 +161,7 @@ func TestARunThatGoesQuietIsStopped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(out, "waiting for the archive") || !strings.Contains(out, "[STOPPED: it printed nothing and wrote nothing for") {
+	if !strings.HasPrefix(out, "waiting for the archive") || !strings.Contains(out, "[STOPPED: it showed no sign of work for") {
 		t.Errorf("a quiet run was not stopped with its reason: %q", out)
 	}
 
@@ -348,5 +349,58 @@ func TestARunCanDetachSooner(t *testing.T) {
 	}
 	if got := <-host.delivered; got.Text != "downloaded" {
 		t.Errorf("delivered %+v", got)
+	}
+}
+
+// A command that prints nothing and writes nowhere watched, but keeps its
+// process busy, is working; the same command idle is stopped.
+func TestABusyProcessIsAlive(t *testing.T) {
+	if _, ok := processWork(os.Getpid()); !ok {
+		t.Skip("no process accounting here")
+	}
+	setTuneForTest(t, map[string]float64{"tune_tool_detach_after": 60, "tune_tool_idle_limit": 0.6})
+	prev := growthCheckEvery
+	growthCheckEvery = 100 * time.Millisecond
+	t.Cleanup(func() { growthCheckEvery = prev })
+	installFakeTaskHost(t)
+	run := func(script string) string {
+		out, _ := BackgroundRun{Tool: "fetch", Run: func(work *ToolSession) (string, error) {
+			c := exec.CommandContext(work.Context(), "sh", "-c", script)
+			if err := c.Start(); err != nil {
+				return "", err
+			}
+			RunActivityFrom(work.Context()).WatchProcess(work.Context(), c.Process.Pid)
+			if err := c.Wait(); err != nil {
+				return "killed", nil
+			}
+			return "done", nil
+		}}.Start(turnSession(context.Background()))
+		return out
+	}
+	// Busy for ~1.5s with no output: CPU keeps it alive past the 0.6s limit.
+	if out := run(`end=$(( $(date +%s) + 2 )); while [ $(date +%s) -lt $end ]; do :; done`); out != "done" {
+		t.Errorf("a busy silent process was stopped: %q", out)
+	}
+	// Idle for 2s: stopped.
+	if out := run(`sleep 2`); !strings.Contains(out, "killed") || !strings.Contains(out, "no sign of work") {
+		t.Errorf("an idle process was not stopped: %q", out)
+	}
+}
+
+func TestPsTime(t *testing.T) {
+	for in, want := range map[string]uint64{"0:01.23": 123, "1:02:03": 372300, "2-01:00:00": (2*86400 + 3600) * 100, "00:00:05": 500} {
+		if got := psTime(in); got != want {
+			t.Errorf("psTime(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// The ps route (macOS) reads this process too, where ps exists.
+func TestPsWorkFindsTheProcess(t *testing.T) {
+	if _, err := exec.LookPath("ps"); err != nil {
+		t.Skip("no ps")
+	}
+	if _, ok := psWork(os.Getpid()); !ok {
+		t.Error("ps did not report this process")
 	}
 }

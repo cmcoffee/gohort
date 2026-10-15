@@ -78,7 +78,7 @@ func TestAShellToolCalledByAnAgentRunsInTheBackground(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "started") || !strings.Contains(out, "[STOPPED: it printed nothing and wrote nothing for") {
+	if !strings.Contains(out, "started") || !strings.Contains(out, "[STOPPED: it showed no sign of work for") {
 		t.Errorf("a silent command was not stopped with its reason: %q", out)
 	}
 	if time.Since(t0) > 15*time.Second {
