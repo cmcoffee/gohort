@@ -2140,8 +2140,8 @@ def fetch_via(credential, url, method="GET", body=None, headers=None, request_he
 //
 // ON by default since 2026-09 (security audit): an open shell reached loopback
 // and LAN services past every SSRF guard the fetch paths apply. A tool that
-// needs raw sockets declares raw_network (and asks before it runs); ordinary
-// HTTP goes through gohort.fetch, which is audited and public-only. A
+// needs raw sockets declares raw_network (and asks in chat before it runs);
+// ordinary HTTP goes through gohort.fetch, which is audited and public-only. A
 // deployment that relied on the old behaviour can switch it back off.
 const tuneShellNetworkClosed = "tune_shell_network_closed"
 

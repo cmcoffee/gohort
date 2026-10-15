@@ -73,12 +73,12 @@ The checkable version of the claim: **a frontier model and a local Qwen run on t
 
 Most projects mean the key stays on your disk. This means **the model is never handed it**: on the normal paths, no prompt, tool result or chat message carries a credential.
 
-There are two deliberate exceptions, granted per tool when the tool is approved rather than asked about on each call:
+There are two deliberate exceptions, granted per tool when the tool is approved:
 
 - A tool can be given **raw network access**, for protocols the audited hook does not speak (psql, redis). A persistent shell always has it.
 - A script can be handed a key outright, with a `secret:<name>` capability.
 
-A tool with both can send that key anywhere its network reaches, and any script holding a key can print it into output the model reads. Approving such a tool is trusting it with the key. A Private conversation cuts the network either way. A scheduled or unattended run does not stop for either: attaching the tool to the agent is the approval.
+A tool with both can send that key anywhere its network reaches, and any script holding a key can print it into output the model reads. Approving such a tool is trusting it with the key. In a chat, such a tool asks the person watching before its first call, with the reason on the card ("It has raw network access"), and "Allow for this session" covers the rest of that conversation. A Private conversation cuts the network either way. A scheduled or unattended run does not stop for either: attaching the tool to the agent is the approval.
 
 There has been no external security review of this design. It is set out above, and in the source, so you can judge it rather than take it on faith.
 

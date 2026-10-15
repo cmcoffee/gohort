@@ -457,8 +457,9 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 // The long-lived shell is a connection REPL (psql, redis-cli, ssh) and needs
 // the network by design, so it declares raw network: a deployment that closes
 // shell networking by default still gives it one (the session's Private mode
-// still takes it away). What it pays instead is confirmation: a persistent
-// tool asks before it runs (tempToolNeedsConfirm), as a raw_network tool does.
+// still takes it away). In a chat it asks the person watching before its
+// first call, as a raw_network tool does; on an unattended run, attaching it
+// to the agent is the approval.
 func NewSandboxedShellCmd(ctx context.Context, command, workspaceDir string, extraEnv map[string]string) (SandboxedCmd, error) {
 	return buildSandboxedShellCmd(ctx, ShellRun{Command: command, WorkspaceDir: workspaceDir, Env: extraEnv, RawNetwork: true})
 }

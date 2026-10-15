@@ -294,6 +294,9 @@ func (t *chatTurn) confirmFuncForAsks(sess *ToolSession, asks ...func(string) bo
 			}
 		}
 		if cred == "" {
+			if why := reachPastHook(tt); why != "" {
+				return t.confirmReach(sess, name, args, why)
+			}
 			return true
 		}
 		if c, ok := Secure().Resolve(cred, t.user); ok && !c.RequiresConfirm {
@@ -779,4 +782,65 @@ func (t *chatTurn) parkConfirmVia(req toolConfirmRequest, actions []map[string]a
 		return picked, allows[picked]
 	}
 	return picked, picked == "allow" || picked == "always"
+}
+
+// reachPastHook says what a tool can do outside the audited hook, or "" when
+// nothing: raw network (a persistent shell always has it) and a key handed to
+// its script through secret:<name>. Such a tool can send what it holds
+// anywhere its network reaches, so in a chat it asks the person watching
+// before its first call. A credential that asks on every call keeps its own
+// card, which is checked first; unattended runs are the autonomous gate's.
+func reachPastHook(tt *TempTool) string {
+	if tt == nil {
+		return ""
+	}
+	var keys []string
+	for _, c := range tt.HookCapabilities {
+		if rest := strings.TrimPrefix(c, "secret:"); rest != c && strings.TrimSpace(rest) != "" {
+			keys = append(keys, strings.TrimSpace(rest))
+		}
+	}
+	handed := "is handed the key " + quotedList(keys)
+	if len(keys) > 1 {
+		handed = "is handed the keys " + quotedList(keys)
+	}
+	network := tt.RawNetwork || tt.Mode == TempToolModePersistent
+	switch {
+	case network && len(keys) > 0:
+		return "has raw network access and " + handed
+	case network:
+		return "has raw network access"
+	case len(keys) > 0:
+		return handed
+	}
+	return ""
+}
+
+// quotedList is names quoted and joined: "a", "a" and "b", "a", "b" and "c".
+func quotedList(names []string) string {
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = fmt.Sprintf("%q", n)
+	}
+	if len(q) < 2 {
+		return strings.Join(q, "")
+	}
+	return strings.Join(q[:len(q)-1], ", ") + " and " + q[len(q)-1]
+}
+
+// confirmReach asks about a tool that reaches past the hook, once per
+// conversation: "Allow for this session" covers its later calls.
+func (t *chatTurn) confirmReach(sess *ToolSession, name, args, why string) bool {
+	key := t.sessionAllowKey(name)
+	if sessionAllowed(key) {
+		return true
+	}
+	return t.escalateToolConfirm(toolConfirmRequest{
+		sessionKey: key,
+		tool:       name,
+		prompt:     fmt.Sprintf("Allow %s? It %s.", name, why),
+		detail:     confirmCallSummary(sess, name, args),
+		because:    "it " + why,
+		args:       args,
+	})
 }
