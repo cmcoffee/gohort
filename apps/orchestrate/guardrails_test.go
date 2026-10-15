@@ -1140,3 +1140,26 @@ func TestGovernanceRulesAreJudgedWhateverHooksTheOwnerPicked(t *testing.T) {
 		t.Errorf("with no global rule the owner's selection stands: %v", h)
 	}
 }
+
+// The warden names rules by number now (echoing each rule's text made every
+// check, and the wait before every turn, grow with the rules). A number maps
+// back to its rule; a rule given no verdict is NO VERDICT, never a pass.
+func TestWardenVerdictsByNumber(t *testing.T) {
+	rules := []string{"never share the address", "no jokes", "cite sources"}
+	v := parseWardenVerdicts(`{"verdicts":[{"rule":1,"status":"comply"},{"rule":"2","status":"violate","reason":"tells a joke"},{"rule":3,"status":"comply"}]}`, rules...)
+	if len(v) != 3 || v[0].Rule != "never share the address" || v[1].Rule != "no jokes" || v[1].Status != guardViolate {
+		t.Fatalf("verdicts: %+v", v)
+	}
+	if worstVerdict(v) != guardViolate {
+		t.Error("a violation was lost")
+	}
+	short := parseWardenVerdicts(`{"verdicts":[{"rule":1,"status":"comply"},{"rule":3,"status":"comply"}]}`, rules...)
+	if worstVerdict(short) != guardNoVerdict {
+		t.Errorf("a skipped rule passed: %+v", short)
+	}
+	// An older prompt's text-named verdicts still read.
+	old := parseWardenVerdicts(`{"verdicts":[{"rule":"no jokes","status":"comply","reason":"ok"}]}`, rules...)
+	if len(old) == 0 || old[0].Rule != "no jokes" {
+		t.Errorf("text-named verdict: %+v", old)
+	}
+}

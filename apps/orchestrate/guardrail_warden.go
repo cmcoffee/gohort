@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,8 +50,8 @@ The doubt bias above covers doubt about whether a BREACH occurred. For a shape (
 
 REFUSALS ARE COMPLIANT. A guardrail protects against DISCLOSING or DOING something, not against naming the topic. A good-faith refusal or deflection that WITHHOLDS the protected content is "comply" even if it references the subject: "I can't share salary details" complies with "never mention salary or wages" because it reveals no figure and does no forbidden act. Judge "violate" only when the candidate actually DISCLOSES the protected content (a number, a fact, the thing itself) or PERFORMS the forbidden action: not when it declines to.
 
-Output ONLY a JSON object, no prose:
-{"verdicts":[{"rule":"<the rule, verbatim or trimmed>","status":"comply|violate","reason":"<one short clause>"}]}`
+Output ONLY a JSON object, no prose, with one verdict for EVERY rule, naming it by its number:
+{"verdicts":[{"rule":<its number>,"status":"comply|violate","reason":"<one short clause, only when violate>"}]}`
 
 // runWarden judges a candidate against the agent's guardrails via one
 // fresh-context worker call. Returns the per-rule verdicts. The candidate is
@@ -222,7 +223,11 @@ func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRe
 	if resp == nil {
 		return nil, fmt.Errorf("warden: empty response")
 	}
-	return parseWardenVerdicts(resp.Content), nil
+	texts := make([]string, len(rules))
+	for i, r := range rules {
+		texts[i] = r.Text
+	}
+	return parseWardenVerdicts(resp.Content, texts...), nil
 }
 
 // wardenToolInPlay names the tool this check is about, or "" when the check is
@@ -250,16 +255,69 @@ func rulesForTool(rules []guardrailRule, toolName string) []guardrailRule {
 // tolerating prose around the JSON (a non-JSON model wraps it). A reply we
 // can't parse at all yields a single no-verdict result rather than a silent
 // pass — an unreadable warden must not read as compliance.
-func parseWardenVerdicts(content string) []guardrailVerdict {
+//
+// A verdict names its rule by number (the warden is asked for that: echoing
+// every rule's text made the verdict, and the wait before every turn, grow
+// with the number of rules), or by text from an older prompt. rules are the
+// rules in the order they were numbered; a number maps back to its text.
+//
+// Every rule must be answered: one the warden left out is NO VERDICT, never
+// compliance, so a short answer cannot pass for a clean one.
+func parseWardenVerdicts(content string, rules ...string) []guardrailVerdict {
 	raw := extractJSONObject(content)
 	if raw == "" {
 		return []guardrailVerdict{{Status: guardNoVerdict, Reason: "warden reply was not parseable"}}
 	}
-	var parsed struct {
-		Verdicts []guardrailVerdict `json:"verdicts"`
+	var wire struct {
+		Verdicts []struct {
+			Rule   json.RawMessage `json:"rule"`
+			Status string          `json:"status"`
+			Reason string          `json:"reason"`
+		} `json:"verdicts"`
 	}
-	if err := json.Unmarshal([]byte(raw), &parsed); err != nil || len(parsed.Verdicts) == 0 {
+	if err := json.Unmarshal([]byte(raw), &wire); err != nil || len(wire.Verdicts) == 0 {
 		return []guardrailVerdict{{Status: guardNoVerdict, Reason: "warden reply was not parseable"}}
+	}
+	var parsed struct{ Verdicts []guardrailVerdict }
+	answered := map[int]bool{}
+	for _, w := range wire.Verdicts {
+		v := guardrailVerdict{Status: w.Status, Reason: w.Reason}
+		var n int
+		var text string
+		switch {
+		case json.Unmarshal(w.Rule, &n) == nil:
+			if n >= 1 && n <= len(rules) {
+				v.Rule = rules[n-1]
+				answered[n] = true
+			} else {
+				v.Rule = fmt.Sprintf("rule %d", n)
+			}
+		case json.Unmarshal(w.Rule, &text) == nil:
+			// A number sent as text ("2") is still a number.
+			if k, err := strconv.Atoi(strings.TrimSpace(text)); err == nil && k >= 1 && k <= len(rules) {
+				v.Rule = rules[k-1]
+				answered[k] = true
+			} else {
+				v.Rule = text
+				for i, r := range rules {
+					if strings.EqualFold(strings.TrimSpace(r), strings.TrimSpace(text)) {
+						answered[i+1] = true
+					}
+				}
+			}
+		}
+		parsed.Verdicts = append(parsed.Verdicts, v)
+	}
+	// A rule given no verdict at all is not a pass. Only when the verdicts
+	// name rules by number can that be told; a text-named verdict from an
+	// older prompt that does not match a rule exactly leaves it unknown, and
+	// then nothing is added.
+	if len(answered) > 0 {
+		for i, r := range rules {
+			if !answered[i+1] {
+				parsed.Verdicts = append(parsed.Verdicts, guardrailVerdict{Rule: r, Status: guardNoVerdict, Reason: "the warden gave this rule no verdict"})
+			}
+		}
 	}
 	// Normalize statuses. Anything we do not recognize — including a warden
 	// that still answers "unsure" from an older prompt — is NO VERDICT, never
