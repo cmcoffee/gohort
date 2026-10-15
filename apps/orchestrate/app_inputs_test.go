@@ -1,6 +1,9 @@
 package orchestrate
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // An action's and a data source's declared inputs are kept from app_def, so
 // the app's agent is asked for exactly those.
@@ -17,5 +20,18 @@ func TestAppScriptInputsAreKept(t *testing.T) {
 	}
 	if acts, _ := appActionDefs([]any{map[string]any{"name": "x", "script": "y"}}); acts[0].Inputs != nil {
 		t.Error("an action with no inputs declared got some")
+	}
+}
+
+// run_agent and run_pipeline are capabilities a script may declare (the hook
+// serves both, and the author is told to use them); they used to be dropped at
+// save.
+func TestAScriptMayDeclareRunAgentAndRunPipeline(t *testing.T) {
+	keep, notes := appScriptCaps([]any{"run_agent", "run_pipeline", "fetch", "nonsense"}, "action x")
+	if len(keep) != 3 || keep[0] != "run_agent" || keep[1] != "run_pipeline" {
+		t.Errorf("kept %v", keep)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "nonsense") {
+		t.Errorf("notes %v", notes)
 	}
 }
