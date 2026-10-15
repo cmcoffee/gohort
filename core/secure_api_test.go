@@ -2050,3 +2050,28 @@ func TestTakingBackALendForOneAgent(t *testing.T) {
 		t.Error("carol's lend for agent-2 went with agent-1's")
 	}
 }
+
+// A call through a draft still waiting for its secret says so, so the caller
+// stops for the person instead of reading the refusal as a broken build. A
+// credential switched off with its secret set keeps the plain refusal.
+func TestADraftWaitingForItsSecretSaysSo(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	draft := SecureCredential{Name: "acme", Type: SecureCredBearer, BaseURL: "https://api.acme.test", Owner: "alice"}
+	if err := s.SaveAPIDraft(draft); err != nil {
+		t.Fatalf("draft: %v", err)
+	}
+	c, ok := s.Resolve("acme", "alice")
+	if !ok || !c.Disabled {
+		t.Fatalf("draft: %+v %v", c, ok)
+	}
+	if err := s.disabledError(c); !strings.Contains(err.Error(), "waiting for its secret") || !strings.Contains(err.Error(), "nothing is wrong with this call") {
+		t.Errorf("a waiting draft: %v", err)
+	}
+	if err := s.Save(draft, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = s.Resolve("acme", "alice")
+	if err := s.disabledError(c); strings.Contains(err.Error(), "waiting") {
+		t.Errorf("a credential with its secret set read as waiting: %v", err)
+	}
+}

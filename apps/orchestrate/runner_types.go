@@ -73,7 +73,11 @@ func resolveMaxWorkerRounds(a AgentRecord) int {
 // orchestratorAbortTools names the tools that close an orchestrator round the
 // moment they succeed: the turn is now waiting on the user, on a direct reply,
 // or on a plan.
-var orchestratorAbortTools = []string{"ask_user", "ask_user_form", "respond_directly", "plan_set"}
+var orchestratorAbortTools = []string{"ask_user", "ask_user_form", "respond_directly", "plan_set",
+	// A drafted credential has no secret until the person enters it on the
+	// card: nothing built against it can work this turn, so the turn ends
+	// here, as it does on a question, and resumes when they say it is set.
+	"draft_api_credential", "draft_oauth_credential"}
 
 // workerAbortTools is the orchestrator's set MINUS plan_set — a worker step is
 // already inside a plan and has none to set.
@@ -132,6 +136,10 @@ type chatTurn struct {
 	// changeAsk, when set, answers the owner's approval of a change in place
 	// of the chat card (change_approval.go). Tests set it; nil uses the card.
 	changeAsk func(prompt, detail string, yes []string) string
+	// awaitingCredential is the credential this turn drafted, waiting for the
+	// person to enter its secret (awaitingSecret names it): the turn ends on
+	// the draft, and says so if the model said nothing (credentialWaitReply).
+	awaitingCredential, awaitingSecret string
 	// askVia is the question card of the turn that DISPATCHED this one, for a
 	// sub-turn that has no viewer of its own. A run an agent starts for the
 	// user is the user's run: a change the sub-run wants the owner to approve asks

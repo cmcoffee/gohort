@@ -2190,6 +2190,12 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 	// the ask or retry instead of assuming the agent is broken. This is the
 	// "ran out of turns, got nothing back" failure (common for retrieval-heavy
 	// agents that exhaust rounds mid-investigation).
+	// Ended on a credential draft with nothing said: the person has the next
+	// step, and the reply says what it is.
+	if msg := t.credentialWaitReply(); msg != "" {
+		pr.emitCapturedAsBubble(msg)
+		return nil, "", msg, nil
+	}
 	if pr.resp != nil && pr.resp.HitRoundCap {
 		t.turnDiag("round-cap", "This turn ran out of worker rounds before finishing: raise the round limit or narrow the ask.")
 		msg := "I ran out of working rounds for this turn before I could finish, and didn't have a partial answer to show. Try narrowing the question, or ask me to continue and I'll pick up from here."

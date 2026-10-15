@@ -200,6 +200,9 @@ func (t *chatTurn) emitCredentialSetupCard(name, credType, grant, secretLabel st
 	if t == nil || t.sse == nil {
 		return
 	}
+	t.toolMu.Lock()
+	t.awaitingCredential, t.awaitingSecret = name, secretLabel
+	t.toolMu.Unlock()
 	id := "credsetup-" + name
 	data := map[string]string{"cred_type": credType}
 	if grant != "" {
@@ -284,8 +287,8 @@ func draftOAuthCredentialToolDef(t *chatTurn) AgentToolDef {
 				OAuthGrantPassword:          "the client secret AND the user's password (two separate fields)",
 			}[c.Grant]
 			t.emitCredentialSetupCard(c.Name, SecureCredOAuth2, c.Grant, secretNeeded, false)
-			return fmt.Sprintf("Drafted OAuth2 credential %q (grant=%s), created DISABLED. A setup card is now showing in the chat: an admin can paste %s and enable it right there (Admin > APIs works too), then hit Test. It goes live as fetch_url_%s.",
-				c.Name, c.Grant, secretNeeded, c.Name), nil
+			return fmt.Sprintf("Drafted OAuth2 credential %q (grant=%s), created DISABLED. A setup card is now showing in the chat: an admin can paste %s and enable it right there (Admin > APIs works too), then hit Test. It goes live as fetch_url_%s. %s",
+				c.Name, c.Grant, secretNeeded, c.Name, credentialWaitNote(c.Name)), nil
 		},
 	}
 }
@@ -367,8 +370,8 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 				secretNeeded = "the secret value"
 			}
 			t.emitCredentialSetupCard(c.Name, c.Type, "", secretNeeded, true)
-			return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials, created DISABLED. A setup card is showing in the chat: the USER pastes %s and enables it in Extensions › API credentials (no admin needed). It goes live as fetch_url_%s for their agents. Now build the tool with tool_def(mode=\"api\", credential=%q): do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift.",
-				c.Type, c.Name, secretNeeded, c.Name, c.Name), nil
+			return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials, created DISABLED. A setup card is showing in the chat: the USER pastes %s and enables it in Extensions › API credentials (no admin needed). It goes live as fetch_url_%s for their agents. %s Then build the tool with tool_def(mode=\"api\", credential=%q): do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift.",
+				c.Type, c.Name, secretNeeded, c.Name, credentialWaitNote(c.Name), c.Name), nil
 		},
 	}
 }
@@ -1474,4 +1477,30 @@ func (t *chatTurn) loadedDeferredAuthoringTools() []AgentToolDef {
 		out = append(out, td)
 	}
 	return out
+}
+
+// credentialWaitNote is what a credential draft tells the drafter to do next:
+// stop. The secret comes from the person, on the card, after this turn, so
+// anything built or tested against the credential now fails for that reason
+// alone, which reads as the build not working when nothing is wrong with it.
+// The draft tools end the conductor's turn (orchestratorAbortTools); a worker
+// step is told to stop and report.
+func credentialWaitNote(name string) string {
+	return fmt.Sprintf("Wait for the person now: it has no secret until they enter it, which happens after this turn, so your turn ends here: tell them which secret to enter on the card and that you will continue when they say it is set. Do not build, probe or test anything against it before then: a call through it fails only because the secret is not in yet, which is not a failure of your work (and in a worker step, report that %q is waiting for its secret and end the step). When they say it is set, call check_credential(%q); once READY, probe it.", name, name)
+}
+
+// credentialWaitReply is the turn's reply when it ended on a credential draft
+// with nothing said: the card shows what to enter, and this says what happens
+// next. "" when no credential is waiting.
+func (t *chatTurn) credentialWaitReply() string {
+	t.toolMu.Lock()
+	name, secret := t.awaitingCredential, t.awaitingSecret
+	t.toolMu.Unlock()
+	if name == "" {
+		return ""
+	}
+	if secret == "" {
+		secret = "its secret"
+	}
+	return fmt.Sprintf("The %s credential needs %s before I can build on it. Enter it on the card above and enable it, then tell me it is set and I will carry on from there.", name, secret)
 }

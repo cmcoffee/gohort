@@ -1772,6 +1772,17 @@ func (s *SecureAPI) CredentialStatus(name string) (exists, enabled, hasSecret bo
 // to global. Empty owner = global only. hasSecret is false for an unfinished
 // draft (the "(pending)" placeholder), so a caller can tell "needs its secret"
 // from "ready".
+// disabledError says why a disabled credential refused a call. A draft
+// waiting for its secret is not a broken one: nothing is wrong with the call,
+// and the person, not the caller, is the next step.
+func (s *SecureAPI) disabledError(c SecureCredential) error {
+	sec, ok := s.loadSecret(credStoreKey(c.Owner, c.Name))
+	if sec = strings.TrimSpace(sec); !ok || sec == "" || sec == "(pending)" {
+		return fmt.Errorf("credential %q is waiting for its secret: nothing is wrong with this call, it cannot run until the person enters the secret on its setup card and enables it. Stop here and tell them what to enter; when they say it is set, check_credential(%q) and try again", c.Name, c.Name)
+	}
+	return fmt.Errorf("credential %q is disabled", c.Name)
+}
+
 func (s *SecureAPI) CredentialStatusOwned(owner, name string) (exists, enabled, hasSecret bool) {
 	c, ok := s.Resolve(name, owner)
 	if !ok {
@@ -2336,7 +2347,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// stay dispatchable on purpose (their declaring tools keep working);
 	// Disabled is the hard kill switch.
 	if c.Disabled {
-		return "", fmt.Errorf("credential %q is disabled", c.Name)
+		return "", s.disabledError(c)
 	}
 	if err := s.callerMayDispatch(c, sess); err != nil {
 		return "", err
