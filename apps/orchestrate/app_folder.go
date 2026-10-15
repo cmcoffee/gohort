@@ -41,14 +41,15 @@ import (
 // appFolderScript is one data source or action in app.json; its body is in
 // File.
 type appFolderScript struct {
-	Name         string       `json:"name"`
-	File         string       `json:"file"`
-	Language     string       `json:"language,omitempty"`
-	Capabilities []string     `json:"capabilities,omitempty"`
-	Label        string       `json:"label,omitempty"`
-	Desc         string       `json:"desc,omitempty"`
-	Confirm      string       `json:"confirm,omitempty"`
-	Schedule     *AppSchedule `json:"schedule,omitempty"`
+	Name         string            `json:"name"`
+	File         string            `json:"file"`
+	Language     string            `json:"language,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+	Label        string            `json:"label,omitempty"`
+	Desc         string            `json:"desc,omitempty"`
+	Confirm      string            `json:"confirm,omitempty"`
+	Inputs       map[string]string `json:"inputs,omitempty"`
+	Schedule     *AppSchedule      `json:"schedule,omitempty"`
 }
 
 // appFolderManifest is app.json.
@@ -184,7 +185,7 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 		if err := write(f, []byte(ds.Script)); err != nil {
 			return out, err
 		}
-		m.DataSources = append(m.DataSources, appFolderScript{Name: ds.Name, File: f, Language: ds.Language, Capabilities: ds.Capabilities})
+		m.DataSources = append(m.DataSources, appFolderScript{Name: ds.Name, File: f, Language: ds.Language, Capabilities: ds.Capabilities, Inputs: ds.Inputs})
 	}
 	for _, a := range spec.Actions {
 		f := "actions/" + a.Name + scriptExt(a.Language)
@@ -192,7 +193,7 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 			return out, err
 		}
 		m.Actions = append(m.Actions, appFolderScript{Name: a.Name, File: f, Language: a.Language, Capabilities: a.Capabilities,
-			Label: a.Label, Desc: a.Desc, Confirm: a.Confirm, Schedule: a.Schedule})
+			Label: a.Label, Desc: a.Desc, Confirm: a.Confirm, Inputs: a.Inputs, Schedule: a.Schedule})
 	}
 	for name, src := range spec.Libraries {
 		if err := write("lib/"+name+".py", []byte(src)); err != nil {
@@ -387,6 +388,13 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 					caps[i] = c
 				}
 				e["capabilities"] = caps
+			}
+			if len(s.Inputs) > 0 {
+				in := map[string]any{}
+				for k, v := range s.Inputs {
+					in[k] = v
+				}
+				e["inputs"] = in
 			}
 			if isAction {
 				for k, v := range map[string]string{"label": s.Label, "desc": s.Desc, "confirm": s.Confirm} {

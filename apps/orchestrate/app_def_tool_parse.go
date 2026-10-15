@@ -188,6 +188,7 @@ func appDataSources(raw any) (out []AppDataSource, notes []string) {
 			Language:     strings.ToLower(strings.TrimSpace(mapStr(m, "language"))),
 			Script:       script,
 			Capabilities: caps,
+			Inputs:       appInputs(m["inputs"]),
 		})
 	}
 	return out, notes
@@ -204,6 +205,26 @@ func appUnescapeScript(script string) (string, bool) {
 	}
 	r := strings.NewReplacer(`\\`, `\`, `\n`, "\n", `\t`, "\t", `\"`, `"`, `\'`, `'`)
 	return r.Replace(script), true
+}
+
+// appInputs is an action's declared inputs: an object of name to what to give
+// it. Names are kept as written (they arrive as the script's env vars), blank
+// ones dropped.
+func appInputs(v any) map[string]string {
+	m, ok := v.(map[string]any)
+	if !ok || len(m) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for k, d := range m {
+		if k = strings.TrimSpace(k); k != "" {
+			out[k] = strings.TrimSpace(fmt.Sprint(d))
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // appConfirm is an action's confirm prompt. It is text, but an author reads
@@ -301,6 +322,7 @@ func appActionDefs(raw any) (out []AppAction, notes []string) {
 			Script:       script,
 			Capabilities: caps,
 			Confirm:      appConfirm(m["confirm"]),
+			Inputs:       appInputs(m["inputs"]),
 		}
 		sch, snotes := appSchedule(m["schedule"], name)
 		act.Schedule = sch

@@ -301,7 +301,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// chat/* and these dispatch into orchestrate's PublicHandle* methods,
 		// bound to the app's agent. Reuses ALL the chat/session/runner plumbing
 		// — customapps stores no chat state of its own.
-		T.handleChat(w, r, appdb, spec, strings.TrimPrefix(strings.TrimPrefix(rest, "chat"), "/"))
+		T.handleChat(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(strings.TrimPrefix(rest, "chat"), "/"))
 	case rest == "pipeline" || strings.HasPrefix(rest, "pipeline/"):
 		// The app's RUN surface, the same trick one level over: a pipeline
 		// section's PipelinePanel points at pipeline/*, and these dispatch into
@@ -464,8 +464,9 @@ func findOrchestrate() *orchestrate.OrchestrateApp {
 // "sessions/<sid>"). The agent is resolved from the app's bound AgentID; session
 // + memory scope come from PublicHandle* (per calling user). For a WORKBENCH app
 // (spec.BodyField set) the send path injects a co-author tool so the agent can
-// write a section directly into the OPEN document's record.
-func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, udb Database, spec AppSpec, sub string) {
+// write a section directly into the OPEN document's record, and for an app
+// with actions it hands the agent each action as a tool (agent_actions.go).
+func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, owner, uid string, udb Database, spec AppSpec, sub string) {
 	if strings.TrimSpace(spec.AgentID) == "" {
 		http.Error(w, "this app has no chat agent bound", http.StatusNotFound)
 		return
@@ -489,9 +490,18 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, udb Data
 	switch {
 	case sub == "send":
 		// Workbench → give the agent a co-author tool bound to THIS app's store +
-		// the open document. Plain chat apps (no BodyField) get the ordinary send.
+		// the open document. An app with actions or data sources → its
+		// buttons, its data and its status as tools (agent_actions.go).
+		var tools []AgentToolDef
 		if strings.TrimSpace(spec.BodyField) != "" {
-			orch.PublicHandleSendWithAppTools(w, r, agent, T.coauthorTools(udb, spec))
+			tools = append(tools, T.coauthorTools(udb, spec)...)
+		}
+		if len(spec.Actions)+len(spec.DataSources) > 0 {
+			out, run := T.latestRunForApp(spec, r)
+			tools = append(tools, T.agentToolsFor(owner, uid, udb, spec, out, run)...)
+		}
+		if len(tools) > 0 {
+			orch.PublicHandleSendWithAppTools(w, r, agent, tools)
 			return
 		}
 		orch.PublicHandleSend(w, r, agent)

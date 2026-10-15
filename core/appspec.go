@@ -352,6 +352,10 @@ type AppDataSource struct {
 	Language     string   `json:"language,omitempty"`     // "python" (default) | "bash"
 	Script       string   `json:"script"`                 // the script body
 	Capabilities []string `json:"capabilities,omitempty"` // sandbox hook caps: fetch, log, browse_page, fetch_via:<cred>
+	// Inputs names the query params the data source reads, each with what to
+	// give it, as AppAction.Inputs: the app's agent reads every data source
+	// as a tool in the app's chat, and is asked for exactly these.
+	Inputs map[string]string `json:"inputs,omitempty"`
 }
 
 // AppAction is a script-backed custom-app action: a sandboxed script a button
@@ -369,6 +373,12 @@ type AppAction struct {
 	Script       string   `json:"script"`                 // the script body
 	Capabilities []string `json:"capabilities,omitempty"` // sandbox hook caps
 	Confirm      string   `json:"confirm,omitempty"`      // optional confirm prompt before firing
+	// Inputs names the values the action reads beyond the records, each with
+	// what to give it ("folder": "the case folder to fetch into"). The page
+	// sends them in app.action's body; the app's agent, which gets every
+	// action as a tool in the app's chat, is asked for them as the tool's
+	// parameters. An action with none takes nothing from the agent.
+	Inputs map[string]string `json:"inputs,omitempty"`
 	// Schedule, when set, makes this action ALSO fire unattended on a timer, with
 	// no human clicking it — the seam that lets a custom app keep itself fresh
 	// (dashboard / tracker) while nobody has it open. Each fire runs the script in

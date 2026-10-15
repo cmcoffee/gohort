@@ -142,6 +142,9 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		ds := make([]map[string]any, len(spec.DataSources))
 		for i, d := range spec.DataSources {
 			ds[i] = map[string]any{"name": d.Name, "language": d.Language, "capabilities": d.Capabilities, "script": appScriptSummary(d.Language, d.Script)}
+			if len(d.Inputs) > 0 {
+				ds[i]["inputs"] = d.Inputs
+			}
 		}
 		out["data_sources"] = ds
 		out["scripts_note"] = "Script bodies are omitted here; get with script=<name> returns one. Edit a script in place with patch (find/replace) or replace_function, both with script=<name>: never re-send the whole data_sources/actions array to change one line."
@@ -152,6 +155,9 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 			m := map[string]any{"name": a.Name, "label": a.Label, "capabilities": a.Capabilities, "script": appScriptSummary(a.Language, a.Script)}
 			if a.Confirm != "" {
 				m["confirm"] = a.Confirm
+			}
+			if len(a.Inputs) > 0 {
+				m["inputs"] = a.Inputs
 			}
 			if a.Schedule.Scheduled() {
 				m["schedule"] = a.Schedule
