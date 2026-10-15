@@ -374,6 +374,9 @@ func (t *chatTurn) agentsRunPipelineActionFor(card toolCard, args map[string]any
 	if err != nil {
 		return "", err
 	}
+	if why := t.builderRunRefusal("pipeline", def.ID, def.Name); why != "" {
+		return "", errors.New(why)
+	}
 	if block := t.dispatchCap(dispatchPipelineCapKey(def.ID), def.Name, msg); block != "" {
 		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → pipeline %s, blocking further dispatch", t.agent.ID, def.ID)
 		// An ERROR, never a normal result: a normal result rides through

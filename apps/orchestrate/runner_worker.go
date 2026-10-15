@@ -156,13 +156,10 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// create_pipeline_tool intentionally NOT added — add_tool with
 	// mode="pipeline" is the single pipeline-authoring surface.
 	// See the matching note in runPlan above.
-	// Worker step catalog — always include agents(run). Builder's
-	// orchestrator-round restriction (no run) is structural for the
-	// chat-facing conductor turn, where Builder→Chat→Builder cycles
-	// can form. Worker steps spawned via plan_set are different:
-	// they smoke-test newly-created agents ("Step N (verify): worker
-	// dispatches to the new agent with a representative input"), and
-	// stripping run here breaks that pattern.
+	// Worker step catalog — always include agents(run). A Builder worker
+	// step smoke-tests what Builder made ("Step N (verify): send the new
+	// agent a representative input"), and its run reaches only that
+	// (builder_run_scope.go).
 	// …when there is something to dispatch TO. A worker step that can reach
 	// nothing gets no delegation surface; see agentsToolWanted.
 	if t.agentsToolWanted() {

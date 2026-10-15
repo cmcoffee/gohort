@@ -308,10 +308,10 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB Database) (extraTools []AgentToolDef, customToolPrompt string) {
 	extraTools = append(extraTools, t.frameworkConversationalTools(sess)...)
 	// agents grouped tool — sub-agents (OwnedBy set) are LEAVES (no dispatch
-	// surface → no depth cascades); top-level targets get the full surface;
-	// Builder targets stay read-only on dispatch.
+	// surface → no depth cascades); top-level targets get the full surface.
+	// Builder's run reaches only what it is building (builder_run_scope.go).
 	if t.agent.OwnedBy == "" && t.agentsToolWanted() {
-		extraTools = append(extraTools, t.agentsGroupedToolDef(!isBuilderAgent(t.agent.ID)))
+		extraTools = append(extraTools, t.agentsGroupedToolDef(true))
 	}
 	extraTools = append(extraTools, t.buildAttachedPipelineToolDefs()...)
 	// App-contributed tools for this agent (core/agent_tool_providers.go). The

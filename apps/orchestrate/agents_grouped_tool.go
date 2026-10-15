@@ -58,6 +58,9 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		allowRun = false
 	}
 	desc := "Manage and call other agents in the fleet. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (delegate work and get the result back, to a named agent for its judgement, to a named pipeline to run a saved multi-stage workflow, or to a named machine to run a saved step-by-step procedure). Single entry point for agent operations: pick the action that matches the intent."
+	if isBuilderAgent(t.agent.ID) {
+		desc = "Inspect the fleet and test what you build. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (send a test message to an agent, pipeline or machine you created or changed in this conversation, or to the agent or pipeline of an app you created or changed, and read what it does). run reaches ONLY those: it tests your work, it does not hand work to the fleet, and anything else is refused. Do the work itself with your own tools."
+	}
 	if !allowRun {
 		desc = "Inspect other agents in the fleet. Two actions: list (see what agents exist), get (read one agent's full record + set authoring focus). This catalog variant is READ-ONLY: dispatch (run) is intentionally disabled for this agent because its job is authoring/composition, not delegation. If you need to delegate execution work, use plan_set with worker steps; if you need a specialist's domain knowledge during authoring, dispatch a plan_set worker with web_search / fetch_url."
 	}
@@ -828,6 +831,9 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// the owner activates it from the Authorizations pane.
 	if target.PendingApproval {
 		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused, that agent is awaiting approval and isn't live yet; it becomes dispatchable once the user approves it in the Authorizations pane", key)
+	}
+	if why := t.builderRunRefusal("agent", target.ID, target.Name); why != "" {
+		return AgentRecord{}, "", errors.New(why)
 	}
 	if target.ID == t.agent.ID {
 		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) is impossible: you ARE %s, or you ARE a worker spawned by %s. Calling yourself is infinite recursion. STOP trying to dispatch back to yourself; do the work directly with the tools you already have. Retrying this call will keep failing: pick a different agent or just execute the work yourself", key, t.agent.Name, t.agent.Name)

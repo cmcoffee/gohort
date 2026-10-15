@@ -57,6 +57,20 @@ func (s *changeApprovalSet) has(key string) bool {
 	return s.items[key]
 }
 
+// names is the item names of one kind in the set ("app" -> its slugs).
+func (s *changeApprovalSet) names(kind string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := changeKey(kind, "")
+	var out []string
+	for k, on := range s.items {
+		if on && strings.HasPrefix(k, prefix) {
+			out = append(out, strings.TrimPrefix(k, prefix))
+		}
+	}
+	return out
+}
+
 func (s *changeApprovalSet) add(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
