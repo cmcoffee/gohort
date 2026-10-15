@@ -59,6 +59,12 @@ type InjectionNote struct {
 	ID         string
 	Text       string
 	EditLocked bool
+	// Framework marks a note the framework queued (a background task's
+	// result, an answer to an approval), not one the person wrote: it is
+	// never shown as theirs, never offered to them to edit, and what the
+	// conversation keeps of it is History ("" = Text), hidden.
+	Framework bool
+	History   string
 }
 
 // InjectionQueue is one queue of mid-flight notes for a single
@@ -94,6 +100,30 @@ func (q *InjectionQueue) Push(text string) (string, bool) {
 	return n.ID, ok
 }
 
+// PushFramework queues a note from the framework itself, for the running
+// turn to read: text is what the model reads, history what the conversation
+// keeps of it ("" = text). See InjectionNote.Framework.
+func (q *InjectionQueue) PushFramework(text, history string) (string, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	n := InjectionNote{ID: NewID(), Text: text, Framework: true, History: history}
+	ok := true
+	if len(q.notes) >= MaxInjectionQueueDepth {
+		q.notes = q.notes[1:]
+		ok = false
+	}
+	q.notes = append(q.notes, n)
+	return n.ID, ok
+}
+
+// Kept is what the conversation keeps of a note.
+func (n InjectionNote) Kept() string {
+	if n.Framework && n.History != "" {
+		return n.History
+	}
+	return n.Text
+}
+
 // Update replaces a queued note's text. Implicitly unlocks the note
 // (commit-after-edit pattern). Returns false when the ID isn't found
 // — usually because the note was already drained.
@@ -101,7 +131,7 @@ func (q *InjectionQueue) Update(id, text string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for i := range q.notes {
-		if q.notes[i].ID == id {
+		if q.notes[i].ID == id && !q.notes[i].Framework {
 			q.notes[i].Text = text
 			q.notes[i].EditLocked = false
 			return true
@@ -116,7 +146,7 @@ func (q *InjectionQueue) Lock(id string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for i := range q.notes {
-		if q.notes[i].ID == id {
+		if q.notes[i].ID == id && !q.notes[i].Framework {
 			q.notes[i].EditLocked = true
 			return true
 		}
@@ -130,7 +160,7 @@ func (q *InjectionQueue) Unlock(id string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for i := range q.notes {
-		if q.notes[i].ID == id {
+		if q.notes[i].ID == id && !q.notes[i].Framework {
 			q.notes[i].EditLocked = false
 			return true
 		}
@@ -143,7 +173,7 @@ func (q *InjectionQueue) Delete(id string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for i, n := range q.notes {
-		if n.ID == id {
+		if n.ID == id && !n.Framework {
 			q.notes = append(q.notes[:i], q.notes[i+1:]...)
 			return true
 		}

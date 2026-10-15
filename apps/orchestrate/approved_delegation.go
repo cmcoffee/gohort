@@ -156,7 +156,7 @@ func (T *OrchestrateApp) noteDeniedDelegation(a Authorization) {
 	note := fmt.Sprintf("%sThe user DENIED the delegation to %s you queued for approval (%s). It did not run and nothing came back. Do not queue it again unless they ask for it; if the work still matters to them, ask how they want to go about it.",
 		frameworkNoteTag, T.delegationTargetName(a.Owner, a.Agent), truncateObs(a.Brief, 160))
 	if q := lookupInjectionQueue(sid); q != nil && q.Owner == a.Owner {
-		q.Push(note)
+		q.PushFramework(note, "")
 		return
 	}
 	udb := UserDB(T.DB, a.Owner)

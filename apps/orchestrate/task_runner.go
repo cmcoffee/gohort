@@ -226,7 +226,7 @@ var (
 func (T *OrchestrateApp) wakeSessionWithNote(origin taskOrigin, note wakeNote) error {
 	sessionID, user := origin.SessionID, origin.User
 	if q := lookupInjectionQueue(sessionID); q != nil && q.Owner == user && !hasStagedAttachments(sessionID) {
-		q.Push(note.prompt)
+		q.PushFramework(note.prompt, note.history)
 		return nil
 	}
 	if T.bufferWake(origin, note) {
@@ -276,7 +276,8 @@ func (T *OrchestrateApp) bufferWake(origin taskOrigin, note wakeNote) bool {
 		// joining a conversation beats interrupting one. Unless files are
 		// staged: see wakeSessionWithNote.
 		if q := lookupInjectionQueue(sessionID); q != nil && q.Owner == user && !hasStagedAttachments(sessionID) {
-			q.Push(joinWakeNotes(notes).prompt)
+			joined := joinWakeNotes(notes)
+			q.PushFramework(joined.prompt, joined.history)
 			return
 		}
 		if err := T.startWakeTurn(origin, joinWakeNotes(notes)); err != nil {

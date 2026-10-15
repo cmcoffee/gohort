@@ -677,19 +677,29 @@ func (t *chatTurn) drainNotes() []injectionNote {
 	if t.session != nil {
 		now := time.Now()
 		for _, n := range taken {
+			// A framework note (a background result) is kept hidden: the model
+			// can still name what came back, and the person, who sees the reply
+			// it led to, is not shown its machinery as something they wrote.
 			t.session.Messages = append(t.session.Messages, ChatMessage{
-				Role: "user", Content: n.Text, Created: now, NoteID: n.ID,
+				Role: "user", Content: n.Kept(), Created: now, NoteID: n.ID, Hidden: n.Framework,
 			})
 		}
 		if saved, err := saveChatSession(t.udb, *t.session); err == nil {
 			*t.session = saved
 		}
 	}
-	ids := make([]string, len(taken))
-	notes := make([]map[string]string, len(taken))
-	for i, n := range taken {
-		ids[i] = n.ID
-		notes[i] = map[string]string{"id": n.ID, "text": n.Text}
+	// Only the person's own notes have bubbles to mark, or to draw.
+	var ids []string
+	var notes []map[string]string
+	for _, n := range taken {
+		if n.Framework {
+			continue
+		}
+		ids = append(ids, n.ID)
+		notes = append(notes, map[string]string{"id": n.ID, "text": n.Text})
+	}
+	if len(ids) == 0 {
+		return taken
 	}
 	// Tell the client to mark these interjection bubbles as consumed. The
 	// framework runtime tags each bubble with data-note-id on submit and
@@ -721,14 +731,31 @@ func notesContextBlock(notes []injectionNote) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("## User notes added mid-flight\n")
-	b.WriteString("The user added the following notes after the turn started. Treat as additional context / direction:\n\n")
+	var mine, framework []injectionNote
 	for _, n := range notes {
-		b.WriteString("- ")
-		b.WriteString(strings.ReplaceAll(strings.TrimSpace(n.Text), "\n", " "))
+		if n.Framework {
+			framework = append(framework, n)
+		} else {
+			mine = append(mine, n)
+		}
+	}
+	if len(mine) > 0 {
+		b.WriteString("## User notes added mid-flight\n")
+		b.WriteString("The user added the following notes after the turn started. Treat as additional context / direction:\n\n")
+		for _, n := range mine {
+			b.WriteString("- ")
+			b.WriteString(strings.ReplaceAll(strings.TrimSpace(n.Text), "\n", " "))
+			b.WriteString("\n")
+		}
 		b.WriteString("\n")
 	}
-	b.WriteString("\n")
+	// The framework's own notes (a background task's result) in full, as
+	// written: not the user's words, and a result flattened onto one line
+	// loses its shape.
+	for _, n := range framework {
+		b.WriteString(strings.TrimSpace(n.Text))
+		b.WriteString("\n\n")
+	}
 	return b.String()
 }
 

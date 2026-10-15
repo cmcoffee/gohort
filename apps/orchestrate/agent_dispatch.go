@@ -2000,10 +2000,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			}
 			out := make([]Message, 0, len(drained))
 			for _, n := range drained {
-				out = append(out, Message{
-					Role:    "user",
-					Content: "[MID-FLIGHT NOTE: submitted by the user while this run was in progress] " + n.Text,
-				})
+				content := "[MID-FLIGHT NOTE: submitted by the user while this run was in progress] " + n.Text
+				if n.Framework {
+					content = n.Text // the framework's own, carrying its own marker
+				}
+				out = append(out, Message{Role: "user", Content: content})
 			}
 			return out
 		}

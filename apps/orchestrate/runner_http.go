@@ -503,6 +503,32 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			return
 		}
 		leftover := queue.Drain()
+		// A background result no round read is delivered the way one that
+		// arrives between turns is: a turn of its own, its note kept hidden.
+		// Saved as a plain message it read as something the person wrote, and
+		// nothing acted on it until they spoke again.
+		var mine []injectionNote
+		for _, n := range leftover {
+			if !n.Framework {
+				mine = append(mine, n)
+				continue
+			}
+			note := wakeNote{prompt: n.Text, history: n.Kept()}
+			origin := taskOrigin{SessionID: sess.ID, User: user, AgentID: agent.ID}
+			go func() {
+				// After this turn's queue is released, or the wake would only
+				// land in it again (and that release would remove the queue
+				// the wake turn registers under the same session).
+				deadline := time.Now().Add(leftoverNotesWait)
+				for lookupInjectionQueue(origin.SessionID) != nil && time.Now().Before(deadline) {
+					time.Sleep(50 * time.Millisecond)
+				}
+				if err := T.startWakeTurn(origin, note); err != nil {
+					Warn("[orchestrate.inject] could not deliver a background result left unread in session %s: %v", origin.SessionID, err)
+				}
+			}()
+		}
+		leftover = mine
 		if len(leftover) == 0 {
 			return
 		}

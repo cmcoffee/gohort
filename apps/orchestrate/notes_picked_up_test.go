@@ -57,3 +57,54 @@ func TestWaitingNotesAreServedToTheirOwnerOnly(t *testing.T) {
 		t.Errorf("a picked-up note is still listed as waiting: %s", got)
 	}
 }
+
+// A background task's result reaches a running turn through the same queue as
+// the person's notes, but it is not theirs: kept hidden (as its short record),
+// never drawn as a note bubble, never listed as waiting, never editable, and
+// read by the model in full under its own marker.
+func TestABackgroundResultIsNotShownAsTheUsersNote(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	sess, _ := saveChatSession(udb, ChatSession{AgentID: "a1", Messages: []ChatMessage{{Role: "user", Content: "render it"}}})
+	key := "notes-test-" + sess.ID
+	q := RegisterInjectionQueue(key, "u", "a1")
+	defer ReleaseInjectionQueue(key)
+	full := taskWakeMarker + " The work you started earlier is done: render.\nline one\nline two of a long output"
+	id, _ := q.PushFramework(full, taskWakeMarker+" render done: image#3")
+
+	w := httptest.NewRecorder()
+	ServeWaitingNotes(w, httptest.NewRequest("GET", "/api/inject?id="+key, nil), "u")
+	if strings.Contains(w.Body.String(), "line one") {
+		t.Errorf("a background result was listed as the person's waiting note: %s", w.Body.String())
+	}
+	if q.Update(id, "edited") || q.Delete(id) {
+		t.Error("the person could edit or delete the framework's note")
+	}
+
+	buf := &syncBuf{}
+	turn := &chatTurn{user: "u", udb: udb, session: &sess, queue: q, sse: &sseWriter{live: buf}}
+	taken := turn.drainNotes()
+	got, _ := loadChatSession(udb, "a1", sess.ID)
+	last := got.Messages[len(got.Messages)-1]
+	if !last.Hidden || last.Content != taskWakeMarker+" render done: image#3" {
+		t.Errorf("kept as %+v", last)
+	}
+	if strings.Contains(buf.String(), "ui_notes_consumed") {
+		t.Errorf("a note bubble was drawn for it: %s", buf.String())
+	}
+	block := notesContextBlock(taken)
+	if strings.Contains(block, "The user added") || !strings.Contains(block, "line one\nline two") {
+		t.Errorf("the model read it as: %q", block)
+	}
+}
+
+// Conversations that saved such notes as the person's messages before show
+// them hidden when served.
+func TestOldFrameworkNotesAreHiddenWhenServed(t *testing.T) {
+	msgs := []ChatMessage{{Role: "user", Content: "hi"}, {Role: "user", Content: taskWakeMarker + " done: x"},
+		{Role: "user", Content: frameworkNoteTag + "The user DENIED it."}, {Role: "assistant", Content: taskWakeMarker}}
+	hideFrameworkNotes(msgs)
+	if msgs[0].Hidden || !msgs[1].Hidden || !msgs[2].Hidden || msgs[3].Hidden {
+		t.Errorf("hidden: %v %v %v %v", msgs[0].Hidden, msgs[1].Hidden, msgs[2].Hidden, msgs[3].Hidden)
+	}
+}

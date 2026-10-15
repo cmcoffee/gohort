@@ -203,6 +203,9 @@ func ServeWaitingNotes(w http.ResponseWriter, r *http.Request, user string) {
 	out := []note{}
 	if q := LookupInjectionQueue(strings.TrimSpace(r.URL.Query().Get("id"))); q != nil && q.Owner != "" && q.Owner == user {
 		for _, n := range q.Pending() {
+			if n.Framework {
+				continue // the framework's, not a note the person wrote
+			}
 			out = append(out, note{ID: n.ID, Text: n.Text})
 		}
 	}
@@ -245,4 +248,21 @@ func trailingNotesMatch(msgs []ChatMessage, text string) bool {
 		}
 	}
 	return false
+}
+
+// hideFrameworkNotes marks, on a copy being served, the framework's own notes
+// that a conversation saved as the person's messages before they were kept
+// hidden: a background task's result and the framework's notes to the agent.
+// The model still reads them; the transcript no longer shows them as
+// something the person wrote.
+func hideFrameworkNotes(msgs []ChatMessage) {
+	for i := range msgs {
+		if msgs[i].Role != "user" || msgs[i].Hidden {
+			continue
+		}
+		c := strings.TrimSpace(msgs[i].Content)
+		if strings.HasPrefix(c, taskWakeMarker) || strings.HasPrefix(c, strings.TrimSpace(frameworkNoteTag)) {
+			msgs[i].Hidden = true
+		}
+	}
 }
