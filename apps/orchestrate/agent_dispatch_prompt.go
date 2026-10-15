@@ -28,7 +28,12 @@ func dispatchPriorReports(target AgentRecord, sessID string, runtimeDB Database)
 // Cortex agent answering OUTSIDE its own cortex thread — its recent cortex feed.
 // Single source of truth so adding a prompt block (as custom-tools just did)
 // can't get appended to one dispatch site and forgotten on the other.
-func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database, user string) string {
+//
+// standing is the agent's facts, working notes and cortex feed: they change
+// with its own activity, so they ride the run's newest user message (each
+// caller's TurnNotes, through withStandingNotes) instead of the system prompt,
+// whose every change costs a cold prefill of the tool definitions after it.
+func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database, user string) (sysPrompt, standing string) {
 	// The agent's own Working notes, unless this run is a scheduled fire that
 	// carries the TASK's notes instead. Two always-in-prompt scratchpads with
 	// no rule for choosing between them is how running state lands in the wrong
@@ -37,11 +42,12 @@ func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []Me
 	if agentNotesSuppressed(ctx) {
 		agentNotes = OperatingNotes{}
 	}
-	sysPrompt := prependAgentContext(gatedPersonaFor(target, target.OrchestratorPrompt), target, subFacts, agentNotes)
+	sysPrompt = prependAgentContext(gatedPersonaFor(target, target.OrchestratorPrompt), target, nil, OperatingNotes{})
+	standing = standingContext(target, subFacts, agentNotes)
 	sysPrompt += availableBlock
 	sysPrompt += customToolPrompt
 	if target.Cortex && sessID != cortexSessionID(target.ID) {
-		sysPrompt += cortexContextBlock(runtimeDB, target.ID)
+		standing = withStandingBlock(standing, cortexContextBlock(runtimeDB, target.ID))
 	}
 	// Same per-agent capability guidance the web turn gets, so a capability
 	// follows the AGENT to the channel/dispatch surface instead of silently
@@ -49,7 +55,19 @@ func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []Me
 	// iMessage bridge) ran on a materially thinner prompt than in web chat —
 	// the "works in the web UI but not over a channel" drift.
 	sysPrompt = appendAgentCapabilityBlocks(sysPrompt, target, runtimeDB, user, false)
-	return sysPrompt
+	return sysPrompt, standing
+}
+
+// withStandingNotes is a run's TurnNotes with the agent's standing context
+// (dispatchSystemPrompt) put ahead of the rest.
+func withStandingNotes(standing string, notes func(string) string) func(string) string {
+	return func(user string) string {
+		rest := ""
+		if notes != nil {
+			rest = notes(user)
+		}
+		return joinStanding(standing, rest)
+	}
 }
 
 // appendAgentCapabilityBlocks appends the per-agent capability guidance that

@@ -65,7 +65,12 @@ type planRun struct {
 	mach        turnMachine
 	sys         string
 	turnContext string
-	facts       []MemoryFact
+	// standing is what the agent carries into every turn but which changes
+	// with its own activity: its saved facts, its working notes, its recent
+	// cortex activity. It rides the newest user message ahead of turnContext,
+	// not the system prompt: see standingContext.
+	standing string
+	facts    []MemoryFact
 
 	// orchCtx is the orchestrator's child context. A control tool cancels it
 	// to stop the agent loop after the current round while t.ctx stays live;
@@ -302,7 +307,8 @@ func (pr *planRun) assemblePrompt() {
 	incognito := t.session != nil && t.session.Incognito
 	pr.facts = t.facts()
 	notes := t.operatingNotes()
-	pr.sys = prependAgentContext(persona, t.agent, pr.facts, notes)
+	pr.sys = prependAgentContext(persona, t.agent, nil, OperatingNotes{})
+	pr.standing = standingContext(t.agent, pr.facts, notes)
 	// Cortex awareness injection — recent STANDING context (received channel
 	// messages, monitor fires) as read-only background so the agent greets you
 	// already aware. Concise live-read; empty when nothing's recent. Cross-session
@@ -327,11 +333,11 @@ func (pr *planRun) assemblePrompt() {
 		switch {
 		case t.readsOwnerCortex():
 			if odb := UserDB(t.app.DB, t.memoryUnderlay()); odb != nil {
-				pr.sys += cortexContextBlock(odb, t.agent.ID)
+				pr.standing = withStandingBlock(pr.standing, cortexContextBlock(odb, t.agent.ID))
 				t.cortexReports = cortexContextLines(odb, t.agent.ID)
 			}
 		case t.session.ID != cortexSessionID(t.agent.ID) && t.ownLayerShared(defaultShareCortex):
-			pr.sys += cortexContextBlock(t.udb, t.agent.ID)
+			pr.standing = withStandingBlock(pr.standing, cortexContextBlock(t.udb, t.agent.ID))
 			t.cortexReports = cortexContextLines(t.udb, t.agent.ID)
 		}
 	}
@@ -1155,8 +1161,21 @@ func (pr *planRun) catalogLog() error {
 // to call it and be refused; the same false-roster failure pointed the other
 // way.
 func (pr *planRun) appendCatalogPromptBlocks() {
-	if len(pr.allTools) > 0 {
-		pr.sys += "\n\n" + buildToolUseDirective(pr.allTools)
+	// The desktop app's tools are there only while it is connected, so they
+	// are named on the turn rather than in the roster: in the system prompt
+	// they made it differ between the desktop and the browser, and every
+	// tool definition after it was prefilled again on each switch.
+	stable, client := splitClientTools(pr.allTools)
+	if len(stable) > 0 {
+		pr.sys += "\n\n" + buildToolUseDirective(stable)
+	}
+	if note := clientToolsNote(client); note != "" {
+		for i := len(pr.llmMsgs) - 1; i >= 0; i-- {
+			if pr.llmMsgs[i].Role == "user" {
+				pr.llmMsgs[i].Content = strings.TrimSpace(pr.llmMsgs[i].Content + "\n\n" + note)
+				break
+			}
+		}
 	}
 	pr.sys += noWebAccessNotice(pr.allTools)
 	// Per-tool prompt fragments (opt-in via AgentToolDef.Prompt). Kept
@@ -1847,7 +1866,9 @@ func (pr *planRun) prepareMessages() {
 	// turns so the worker model reuses it instead of re-prefilling ~16k every
 	// turn. The new user message is new each turn anyway, so carrying the
 	// hints there costs nothing in cache terms.
-	if tc := strings.TrimSpace(pr.turnContext); tc != "" {
+	// The standing context first: reference material, ahead of the hints the
+	// turn acts on.
+	if tc := strings.TrimSpace(joinStanding(pr.standing, pr.turnContext)); tc != "" {
 		for i := len(pr.llmMsgs) - 1; i >= 0; i-- {
 			if pr.llmMsgs[i].Role == "user" {
 				if strings.TrimSpace(pr.llmMsgs[i].Content) == "" {
@@ -1908,7 +1929,7 @@ func (pr *planRun) prepareMessages() {
 			"phase %q allows %v, but %v are not in this agent's catalog under those names, so the phase ran without them. Tool names in a phase must match the catalog exactly: a remote MCP tool is exposed as \"<server>_<tool>\", not its raw remote name.",
 			pr.mach.Name(), pr.mach.phase.Tools, phaseUnmatched))
 	}
-	pr.allTools = narrowed
+	pr.allTools = clientToolsLast(narrowed)
 	// Last change to the catalog: a model too small for all of it gets the
 	// largest schemas behind load_tool. Before the mounted note and the
 	// roster, so neither names a tool that was not sent.

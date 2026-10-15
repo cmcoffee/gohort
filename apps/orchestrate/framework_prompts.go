@@ -390,3 +390,41 @@ func renderDirectiveTemplate(tpl string, tools []AgentToolDef) string {
 	}
 	return tpl
 }
+
+// splitClientTools separates the tools the person's desktop app supplies
+// (ClientToolPrefix) from the rest. They come and go with the connection, so
+// they stay out of anything that has to be the same on every call.
+func splitClientTools(tools []AgentToolDef) (stable, client []AgentToolDef) {
+	for _, t := range tools {
+		if strings.HasPrefix(t.Tool.Name, ClientToolPrefix) {
+			client = append(client, t)
+		} else {
+			stable = append(stable, t)
+		}
+	}
+	return stable, client
+}
+
+// clientToolsLast puts the desktop app's tools at the end of the catalog, in
+// their own order, so the definitions before them are the same whether or
+// not the app is connected and the model's prompt cache serves them.
+func clientToolsLast(tools []AgentToolDef) []AgentToolDef {
+	stable, client := splitClientTools(tools)
+	if len(client) == 0 {
+		return tools
+	}
+	return append(stable, client...)
+}
+
+// clientToolsNote names the desktop app's tools on the turn they are there,
+// in place of the roster line (see appendCatalogPromptBlocks).
+func clientToolsNote(client []AgentToolDef) string {
+	if len(client) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(client))
+	for _, t := range client {
+		names = append(names, t.Tool.Name)
+	}
+	return frameworkNoteTag + "The person's desktop app is connected this turn, and these tools reach their computer through it (files, contacts): " + strings.Join(names, ", ") + ". Each one's full schema accompanies this request."
+}

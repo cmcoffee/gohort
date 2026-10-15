@@ -705,7 +705,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// customToolPrompt (so the LLM SEES the names of its lazily-loaded custom
 	// tools) + per-agent capability guidance.
 	facts := ListMemoryFacts(udb, factsNamespace(agent.ID))
-	sysPrompt := dispatchSystemPrompt(ctx, agent, facts, availableBlock, customToolPrompt, schedSessID, udb, p.Username)
+	sysPrompt, standing := dispatchSystemPrompt(ctx, agent, facts, availableBlock, customToolPrompt, schedSessID, udb, p.Username)
 
 	started := time.Now()
 	// Think the SAME way every other surface runs this agent. resolveDispatchThink
@@ -833,7 +833,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// keeps failing at 09:00 is still failing at 09:00 tomorrow.
 		FailureMemoryKey:    failureMemoryKey(p.AgentID, p.SessionID),
 		StampLocation:       UserLocation(p.Username), // stamp the turn in the owning user's zone
-		TurnNotes:           func(string) string { return dependencyTurnNote(subSess) },
+		TurnNotes:           withStandingNotes(standing, func(string) string { return dependencyTurnNote(subSess) }),
 		ThinkBudget:         agent.ThinkBudget,
 		Effort:              agent.Effort,
 		ActionQuotas:        agent.ActionQuotas,

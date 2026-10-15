@@ -900,7 +900,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	if !isPhantomDispatch {
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
 	}
-	sysPrompt := dispatchSystemPrompt(ctx, target, subFacts, availableBlock, customToolPrompt, subSessID, runtimeDB, runtimeUser)
+	sysPrompt, standing := dispatchSystemPrompt(ctx, target, subFacts, availableBlock, customToolPrompt, subSessID, runtimeDB, runtimeUser)
 	// Only Builder reads the delegated marker (to skip its intake/confirm
 	// workflow); other agents ignore it. ask_user / approvals are already
 	// framework-gated off the dispatch path, so we don't add the marker for
@@ -969,7 +969,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 			liveRun.SetProgress(info.Round, info.ToolCalls)
 			prog.step(info)
 		},
-		TurnNotes:      func(user string) string { return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessID, user)) },
+		TurnNotes:      withStandingNotes(standing, func(user string) string { return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessID, user)) }),
 		CapturePrompt:  target.CapturePrompt,
 		TurnClaimJudge: subTurn.claimJudge(ctx),
 		PriorReports:   func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
@@ -1830,7 +1830,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if !isPhantomDispatch {
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
 	}
-	sysPrompt := dispatchSystemPrompt(ctx, target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB, runtimeUser)
+	sysPrompt, standing := dispatchSystemPrompt(ctx, target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB, runtimeUser)
 	// The third-party doctrine goes in the SYSTEM prompt, not on every message.
 	// It names nobody, so the text is byte-identical turn after turn and caches
 	// for the life of the thread; the volatile half — which of them is writing
@@ -2100,9 +2100,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Recent-image ids when the message is about a picture. This is the path a
 	// channel reply takes, and the one where "blend these two photos" arrives
 	// with no filenames anywhere in it. See imageSpaceNote.
-	loopCfg.TurnNotes = func(user string) string {
+	loopCfg.TurnNotes = withStandingNotes(standing, func(user string) string {
 		return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessionID, user))
-	}
+	})
 	// Last look before the reply reaches the channel. See turn_judge.go.
 	loopCfg.TurnClaimJudge = subTurn.claimJudge(ctx)
 	loopCfg.PriorReports = func() []string {

@@ -1311,7 +1311,7 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	// the target's, which is the wrong agent's tool list to be stripping a
 	// target's persona sections against; gatedPersonaFor reads the target.
 	subFacts := ListMemoryFacts(t.udb, factsNamespace(target.ID))
-	sysPrompt := dispatchSystemPrompt(t.ctx, target, subFacts, subTurn.dispatchContextBlocks(), customToolPrompt, subSessID, t.udb, t.user)
+	sysPrompt, standing := dispatchSystemPrompt(t.ctx, target, subFacts, subTurn.dispatchContextBlocks(), customToolPrompt, subSessID, t.udb, t.user)
 
 	// Ephemeral dispatch continuity: a follow-up to the SAME agent in the
 	// SAME parent session re-threads the prior exchange, so the parent can
@@ -1456,7 +1456,7 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		ReasoningStream: reasoning,
 		// The sub-agent's own missing references, which the parent's note
 		// does not cover: see dependencyTurnNote.
-		TurnNotes: func(string) string { return dependencyTurnNote(subSess) },
+		TurnNotes: withStandingNotes(standing, func(string) string { return dependencyTurnNote(subSess) }),
 		// Custom-tool resolution, same as the channel/dispatch + web paths:
 		// lazyToolFallback resolves a direct call to a has-args custom tool;
 		// dynamicNewTempTools surfaces tools loaded via load_tool this turn.
