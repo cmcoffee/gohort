@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -682,7 +683,7 @@ func surveyWorkspaceToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "survey",
-			Description: "ORIENT before you build: return a compact map of everything that already exists in this user's gohort, agents (+ their tool surface), tools (mode + credential), credentials (+ the tools wired to each), apps, pipelines, event monitors, standing agents. This is your 'read the repo' move: call it FIRST when a request could reuse or must stay consistent with existing work (a new tool on a credential others already use, an app like one that exists, an agent with a similar job). Reuse what it shows instead of re-guessing or re-building. Read-only; takes no arguments.",
+			Description: "ORIENT before you build: return a compact map of everything that already exists in this user's gohort, agents (+ their tool surface), tools (mode + credential), credentials (+ the tools wired to each), MCP servers, file stores (+ their registered commands), attachable sources, apps, pipelines, event monitors, standing agents. This is your 'read the repo' move: call it FIRST when a request could reuse or must stay consistent with existing work (a new tool on a credential others already use, an app like one that exists, an agent with a similar job). Reuse what it shows instead of re-guessing or re-building. Read-only; takes no arguments.",
 			Parameters:  map[string]ToolParam{},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -815,6 +816,60 @@ func surveyWorkspace(owner string) string {
 	for _, cfg := range servers {
 		fmt.Fprintf(&b, "  - %s: %s, %d tool(s)\n", cfg.Name, mcpServerState(owner, cfg), len(mcpServerTools(cfg.Name)))
 	}
+
+	// File stores and the commands registered on them. An app built on a
+	// store uses its commands (store_command) instead of its own download or
+	// extraction code, and an agent runs a mapped command through its tools,
+	// so a request naming either has to find them here. app_def stores has
+	// each command's guide and an app's grants.
+	if cat, ok := appstores.Provider.(appstores.Catalog); ok && appstores.Provider != nil {
+		stores := cat.Stores(owner, "")
+		section("FILE STORES", len(stores))
+		if len(stores) > 0 {
+			fmt.Fprintf(&b, "  (an app uses one only when an admin grants it, on the store's page; app_def stores has each command's guide)\n")
+		}
+		for i, st := range stores {
+			if i >= cap {
+				break
+			}
+			line := fmt.Sprintf("  - %s (store %q), %d folder(s)", st.Name, st.Store, st.FolderCount)
+			if st.PullsFrom != "" {
+				line += ", pulls from " + st.PullsFrom
+			}
+			if len(st.Commands) > 0 {
+				var cs []string
+				for _, c := range st.Commands {
+					n := c.Name
+					if c.TwoPhase {
+						n += " (two steps)"
+					}
+					cs = append(cs, n)
+				}
+				line += " | commands: " + strings.Join(cs, ", ")
+			}
+			b.WriteString(line + "\n")
+		}
+		capNote(len(stores))
+	}
+	// The other sources an agent can attach (systems, document spaces, an MCP
+	// server exposed as a source), by the id an attachment names them with.
+	var srcLines []string
+	for _, g := range ReferenceGroups(owner) {
+		if g.Kind == "files" || g.Kind == AgentReferenceKind {
+			continue
+		}
+		for _, it := range g.Items {
+			srcLines = append(srcLines, fmt.Sprintf("  - %s: %s (attach as %s:%s)", g.Label, it.Name, g.Kind, it.ID))
+		}
+	}
+	section("SOURCES", len(srcLines))
+	for i, l := range srcLines {
+		if i >= cap {
+			break
+		}
+		b.WriteString(l + "\n")
+	}
+	capNote(len(srcLines))
 
 	apps := ListAppSpecs(owner)
 	section("APPS", len(apps))
