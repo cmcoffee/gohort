@@ -78,8 +78,9 @@
       "label": "What should it build on?",
       "type": "checklist",
       "options_from": "api/intake/options?source=build_on&kind={kind}",
+      "exclusive_option": "Let Builder work it out",
       "show_when": "action:Create|Change;kind:App|Agent|Tool|Pipeline|Machine",
-      "help": "Optional. Tick the file stores, APIs, tools or agents it should use, and Builder starts from those instead of looking for them or building its own."
+      "help": "Tick the file stores, APIs, tools or agents it should use, and Builder starts from those instead of looking for them or building its own. Or leave it to Builder."
     },
     {
       "name": "problem",

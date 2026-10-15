@@ -54,7 +54,7 @@ func TestBuildOnListsWhatAThingCanUse(t *testing.T) {
 	}
 	found := false
 	for _, f := range builder.IntakeForm {
-		if f.Name == "build_on" && f.Type == "checklist" && strings.Contains(f.OptionsFrom, "source=build_on&kind={kind}") {
+		if f.Name == "build_on" && f.Type == "checklist" && strings.Contains(f.OptionsFrom, "source=build_on&kind={kind}") && f.ExclusiveOption == "Let Builder work it out" {
 			found = true
 		}
 	}

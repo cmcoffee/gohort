@@ -725,6 +725,11 @@ select.ui-orch-intake-input {
 .ui-orch-intake-checklist-item input[type=checkbox]:disabled {
   cursor: default;
 }
+/* A checklist's "decide for me" box, ticked: the list itself stays hidden. */
+.ui-orch-intake-exclusive-on > .ui-orch-intake-checklist-item:not([data-exclusive]),
+.ui-orch-intake-exclusive-on > .ui-orch-intake-help {
+  display: none;
+}
 .ui-orch-intake-checklist-other {
   margin-top: 0.2rem;
 }
@@ -8841,12 +8846,45 @@ select.ui-orch-intake-input {
               });
             }
             var knownVals = {};
+            // exclusive_option: a first box meaning "none of these, decide for
+            // me". While it is ticked (the default) the list stays out of the
+            // way; unticking it shows the list to pick from, and ticking it
+            // again clears the picks and hides the list.
+            var exclusiveBox = null;
+            if (f.exclusive_option) {
+              var exItem = document.createElement('label');
+              exItem.className = 'ui-orch-intake-checklist-item';
+              exItem.dataset.exclusive = '1';
+              exclusiveBox = document.createElement('input');
+              exclusiveBox.type = 'checkbox';
+              exclusiveBox.value = safeText(f.exclusive_option);
+              exclusiveBox.dataset.exclusive = '1';
+              knownVals[exclusiveBox.value] = true;
+              var anyPicked = Object.keys(selected).some(function(v) { return v !== exclusiveBox.value; });
+              exclusiveBox.checked = !anyPicked;
+              inp.classList.toggle('ui-orch-intake-exclusive-on', exclusiveBox.checked);
+              if (disabled) exclusiveBox.disabled = true;
+              var exTxt = document.createElement('span');
+              exTxt.textContent = safeText(f.exclusive_option);
+              exItem.appendChild(exclusiveBox);
+              exItem.appendChild(exTxt);
+              inp.appendChild(exItem);
+              (function(list, ex) {
+                list.addEventListener('change', function(ev) {
+                  if (ev.target !== ex) return;
+                  if (ex.checked) {
+                    list.querySelectorAll('input[type=checkbox]').forEach(function(b) { if (b !== ex) b.checked = false; });
+                  }
+                  list.classList.toggle('ui-orch-intake-exclusive-on', ex.checked);
+                });
+              })(inp, exclusiveBox);
+            }
             // Live options (options_from) are filled by refresh(); until then,
             // and on a replayed answer that is never refetched, the picks
             // already made show as ticked boxes of their own.
             var staticOpts = f.options || [];
             if (f.options_from) {
-              staticOpts = Object.keys(selected);
+              staticOpts = Object.keys(selected).filter(function(v) { return !exclusiveBox || v !== exclusiveBox.value; });
             }
             staticOpts.forEach(function(o) {
               var val = optionValue(o);
@@ -9090,10 +9128,11 @@ select.ui-orch-intake-input {
         function fillChecklist(f, box, url) {
           var keep = {};
           box.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
-            if (!cb.dataset.otherBox && cb.checked) keep[cb.value] = true;
+            if (!cb.dataset.otherBox && !cb.dataset.exclusive && cb.checked) keep[cb.value] = true;
           });
           var other = box.querySelector('.ui-orch-intake-checklist-other');
-          Array.prototype.slice.call(box.children).forEach(function(c) { if (c !== other) box.removeChild(c); });
+          var exRow = box.querySelector('[data-exclusive="1"].ui-orch-intake-checklist-item');
+          Array.prototype.slice.call(box.children).forEach(function(c) { if (c !== other && c !== exRow) box.removeChild(c); });
           var note = document.createElement('div');
           note.className = 'ui-orch-intake-help';
           note.textContent = 'Loading…';

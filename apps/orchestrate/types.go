@@ -1827,6 +1827,12 @@ type IntakeField struct {
 	// kind picked a step earlier.
 	OptionsFrom string `json:"options_from,omitempty"`
 
+	// ExclusiveOption, for a checklist, is a first box meaning "none of
+	// these, decide for me" ("Let Builder work it out"): ticked while nothing
+	// else is, cleared by ticking anything else, and sent like any pick, so
+	// leaving the list alone says so in the message instead of saying nothing.
+	ExclusiveOption string `json:"exclusive_option,omitempty"`
+
 	AllowOther bool `json:"allow_other,omitempty"` // for type=checklist only. When true, renders an extra "Other:" row with a free-text input. Non-empty text becomes a list value, joined with the other picks ("**Topics:** AI, Healthcare, my custom thing"). Lets the user contribute outside the curated options without forcing the LLM to pre-imagine every answer.
 }
 

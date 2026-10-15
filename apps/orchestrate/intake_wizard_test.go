@@ -26,6 +26,11 @@ func TestTheIntakeFormRunsAsSteps(t *testing.T) {
 		// A checklist can list live options too, keeping what is still ticked.
 		"if ((f.type || 'text') === 'checklist') { fillChecklist(f, e.input, url); return; }",
 		"if (keep[cb.value]) cb.checked = true;",
+		// A "decide for me" box: ticked unless something was picked, and
+		// while ticked the list is hidden and the picks cleared.
+		"exclusiveBox.checked = !anyPicked;",
+		"list.classList.toggle('ui-orch-intake-exclusive-on', ex.checked);",
+		".ui-orch-intake-exclusive-on > .ui-orch-intake-checklist-item:not([data-exclusive]),",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("the intake renderer lost a step behaviour: %q", want)
