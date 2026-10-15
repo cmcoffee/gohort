@@ -342,6 +342,9 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 			return RemotePeer{}, fmt.Errorf("the name %q is too close to the existing peer %q (they differ only in - and _): pick another", name, other.Name)
 		}
 	}
+	// What this name held before, if anything: the credential it was given
+	// belongs to THAT pairing (that address, that code).
+	prev, hadPrev := GetRemotePeer(name)
 	m, err := ProbeRemotePeer(ctx, baseURL, key)
 	if err != nil {
 		return RemotePeer{}, err
@@ -383,6 +386,20 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	// pairing first would drop the tokens on the floor. Image connectors are
 	// provisioned above against the static key and republished by the exchange,
 	// which is the ordering that leaves no window holding a stale secret.
+	//
+	// A credential held under this name from an EARLIER pairing must not
+	// stand in for this one. EnsurePeerToken trusts a live cached token and
+	// skips the exchange, so re-adding a name with a new code or a new
+	// address kept presenting the old peer's token to the new one, which
+	// refused it. Only the same address and the same code keep what they
+	// already hold (written back onto the record just replaced without it).
+	if hadPrev && prev.BaseURL == p.BaseURL && strings.TrimSpace(prev.Key) == p.Key {
+		if t := loadPeerTokens(name); t.Refresh != "" || t.Access != "" {
+			storePeerTokens(name, t)
+		}
+	} else {
+		forgetPeerTokens(name)
+	}
 	if p.UseTokens {
 		if terr := EnsurePeerToken(ctx, p); terr != nil {
 			p.LastError = terr.Error()

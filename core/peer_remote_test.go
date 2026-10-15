@@ -1008,3 +1008,32 @@ func TestDroppingARefusedAccessTokenKeepsTheNewestRefresh(t *testing.T) {
 		t.Errorf("on record: access %q refresh %q", p.AccessToken, p.RefreshToken)
 	}
 }
+
+// Adding a peer under a name that already exists, with a new code, pairs
+// afresh: the credential the earlier pairing left in the cache must not stand
+// in for it, or the peer goes on presenting a token from the pairing it
+// replaced.
+func TestReAddingANamePairsAfresh(t *testing.T) {
+	base, key1 := peerServer(t, PeerCapEmbeddings)
+	if _, err := SaveRemotePeer(t.Context(), "gpu-box", base, key1); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	first, _ := GetRemotePeer("gpu-box")
+	firstCred := PeerCredential(first)
+	// A second grant on the same instance, and the peer re-added with it.
+	second, err := MintPeerKey("consumer-2", []string{PeerCapEmbeddings}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := SaveRemotePeer(t.Context(), "gpu-box", base, second.Key)
+	if err != nil {
+		t.Fatalf("re-add with a new code: %v", err)
+	}
+	cred := PeerCredential(p)
+	if cred == firstCred {
+		t.Fatal("the re-added peer kept the earlier pairing's credential")
+	}
+	if k, live := peerKeyFromAccessToken(cred); !live || k.ID != second.ID {
+		t.Errorf("the credential is not a live token of the new grant (live %v, grant %q, want %q)", live, k.ID, second.ID)
+	}
+}

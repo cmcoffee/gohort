@@ -21,7 +21,11 @@ import (
 // peerTranscribeTestResult probes a peer for the Test button. Returns the
 // (ok, message, error) triple writeTestResult takes.
 func peerTranscribeTestResult(ctx context.Context, p RemotePeer) (bool, string, string) {
-	m, err := ProbeRemotePeer(ctx, p.BaseURL, p.Key)
+	// The CURRENT credential, exchanged now if there is no live one. The key
+	// is a pairing code, single use and spent the moment the peer paired, so
+	// probing with it failed every test of a working link with "that pairing
+	// code was already exchanged".
+	m, err := ProbeRemotePeer(ctx, p.BaseURL, PeerCredentialNow(ctx, p))
 	if err != nil {
 		return false, "", err.Error()
 	}
