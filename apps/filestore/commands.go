@@ -475,7 +475,7 @@ func describeStoreCommands(db Database, st Store) string {
 		return fmt.Sprintf("No commands are registered against %q. If a folder here is unreadable, that is not because a step is missing: nothing is set up to transform it.", st.Name)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Commands registered against %q. A person runs one from the store's page; you run one only through its tools, when an admin has mapped and approved it:\n", st.Name)
+	fmt.Fprintf(&b, "Commands registered against %q. A person runs one from the store's page; you run one only through its tools, when an admin has mapped and approved it. Run those yourself: another agent reaches this store only if it is attached to it too, so handing the work to one does not help:\n", st.Name)
 	for _, c := range cmds {
 		label := strings.TrimSpace(c.Label)
 		if label == "" {
@@ -483,9 +483,20 @@ func describeStoreCommands(db Database, st Store) string {
 		}
 		fmt.Fprintf(&b, "\n- %s (%s)", label, c.Name)
 		if c.Mapped() && c.Approved {
-			fmt.Fprintf(&b, "\n  Yours to run, through its %s_* tools.", c.ToolName())
+			// The tools by name and what each runs: "its X_* tools" left the
+			// model to find them, and one that did not went looking for
+			// another agent to do it.
+			acts := c.runnableActions()
+			if len(acts) == 0 {
+				b.WriteString("\n  Approved, but none of its mapped lines can run: an admin re-maps it.")
+			} else {
+				b.WriteString("\n  Yours to run, with these tools:")
+				for _, a := range acts {
+					fmt.Fprintf(&b, "\n    %s_%s: %s %s", c.ToolName(), a.Name, c.Command, strings.TrimSpace(argsAfterBinary(a.CommandTemplate)))
+				}
+			}
 		} else {
-			b.WriteString("\n  Not yours to run: a person runs it.")
+			b.WriteString("\n  Not yours to run, and no agent's: a person runs it from the store's page.")
 		}
 		if note := strings.TrimSpace(c.Help); note != "" {
 			fmt.Fprintf(&b, "\n  %s", note)
@@ -501,7 +512,7 @@ func describeStoreCommands(db Database, st Store) string {
 			if ask == "" {
 				ask = "a value"
 			}
-			fmt.Fprintf(&b, "\n  Asks the person for %s partway through, looked up outside gohort, so it cannot be run unattended.", ask)
+			fmt.Fprintf(&b, "\n  Runs in two steps: the first prints what the person needs, and they supply %s, looked up outside gohort. In a conversation, give them what the first step printed, ask for it, and run the next step with their answer; it cannot run with nobody there to ask.", ask)
 		}
 	}
 	b.WriteString("\n\nIf a folder looks empty or unreadable and the command that fixes it is not yours to run, say which one to run on it and let the user click it.")

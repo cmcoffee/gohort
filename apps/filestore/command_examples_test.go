@@ -290,10 +290,13 @@ func TestTheAdminsGuideReachesBuilderAndAgents(t *testing.T) {
 	}
 
 	cmd.Tools = []TempToolAction{{Name: "start", CommandTemplate: "/opt/bin/extract {bundle}"}}
-	cmd.ToolDesc, cmd.Approved = "Extracts.", true
+	cmd.ToolDesc, cmd.Approved, cmd.AllowedUses = "Extracts.", true, []string{"{bundle}"}
 	app.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
-	if listing := describeStoreCommands(app.DB, st); !strings.Contains(listing, "Yours to run, through its extract_intake_* tools") {
-		t.Errorf("an approved command should read as the agent's to run:\n%s", listing)
+	// By tool name and the line it runs: "its X_* tools" left an agent to go
+	// looking, and one that did not find them handed the work to another agent.
+	if listing := describeStoreCommands(app.DB, st); !strings.Contains(listing, "Yours to run, with these tools:") ||
+		!strings.Contains(listing, "extract_intake_start: /opt/bin/extract {bundle}") {
+		t.Errorf("an approved command should read as the agent's to run, by tool:\n%s", listing)
 	}
 	post := func(body string) {
 		r := httptest.NewRequest(http.MethodPost, "/filestore/api/commands/uses?id="+st.Slug+"/extract", bytes.NewBufferString(body))
@@ -301,11 +304,11 @@ func TestTheAdminsGuideReachesBuilderAndAgents(t *testing.T) {
 		w := httptest.NewRecorder()
 		app.handleCommandUses(w, r)
 	}
-	post(`{"usage":"specified","allowed_uses":"","guide":"A better guide."}`)
+	post(`{"usage":"specified","allowed_uses":"{bundle}","guide":"A better guide."}`)
 	if c, _ := LoadStoreCommand(app.DB, st.Slug, "extract"); !c.Approved || c.Guide != "A better guide." {
 		t.Errorf("a guide-only change: approved=%v guide=%q", c.Approved, c.Guide)
 	}
-	post(`{"usage":"specified","allowed_uses":"{bundle}","guide":"A better guide."}`)
+	post(`{"usage":"specified","allowed_uses":"{bundle} {response}","guide":"A better guide."}`)
 	if c, _ := LoadStoreCommand(app.DB, st.Slug, "extract"); c.Approved {
 		t.Error("a change to the uses kept the approval")
 	}

@@ -337,12 +337,13 @@ func TestDescribeStoreCommandsTellsTheAgentWhatToAskFor(t *testing.T) {
 	// The two-phase one cannot be driven from here at all — its answer is looked
 	// up outside gohort. Saying so is the difference between the agent asking a
 	// person and the agent trying.
-	if !strings.Contains(got, "Response key") || !strings.Contains(got, "cannot be run unattended") {
+	if !strings.Contains(got, "Response key") || !strings.Contains(got, "cannot run with nobody there to ask") {
 		t.Errorf("a two-phase command must name the input AND say a person is required:\n%s", got)
 	}
 	// A command no admin has mapped and approved must never read as something
-	// the agent can call.
-	if !strings.Contains(got, "Not yours to run: a person runs it.") {
-		t.Errorf("the answer must be explicit that running one is a person's click:\n%s", got)
+	// the agent can call, nor as something another agent could do for it:
+	// told only "not yours", an agent handed the work to a peer.
+	if !strings.Contains(got, "Not yours to run, and no agent's") || !strings.Contains(got, "handing the work to one does not help") {
+		t.Errorf("the answer must be explicit that running one is a person's click, and no other agent's:\n%s", got)
 	}
 }
