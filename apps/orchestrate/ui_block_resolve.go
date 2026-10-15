@@ -35,6 +35,9 @@ import (
 // shows in place of its controls once answered.
 type blockResolveRequest struct {
 	Note string `json:"note"`
+	// Dismiss takes the card out of the conversation instead: the person
+	// closed it, and a reload should not bring it back.
+	Dismiss bool `json:"dismiss"`
 }
 
 // handleSessionBlockResolve stamps Resolved onto one persisted block.
@@ -65,10 +68,22 @@ func (T *OrchestrateApp) handleSessionBlockResolve(w http.ResponseWriter, r *htt
 		return
 	}
 	found := false
-	for i := range s.UIBlocks {
-		if s.UIBlocks[i].ID == blockID {
-			s.UIBlocks[i].Resolved = note
-			found = true
+	if req.Dismiss {
+		kept := s.UIBlocks[:0]
+		for _, b := range s.UIBlocks {
+			if b.ID == blockID {
+				found = true
+				continue
+			}
+			kept = append(kept, b)
+		}
+		s.UIBlocks = kept
+	} else {
+		for i := range s.UIBlocks {
+			if s.UIBlocks[i].ID == blockID {
+				s.UIBlocks[i].Resolved = note
+				found = true
+			}
 		}
 	}
 	if !found {
@@ -84,7 +99,11 @@ func (T *OrchestrateApp) handleSessionBlockResolve(w http.ResponseWriter, r *htt
 		http.Error(w, "could not save", http.StatusInternalServerError)
 		return
 	}
-	Log("[orchestrate.blocks] user %q resolved block %s on session %s", user, blockID, sid)
+	verb := "resolved"
+	if req.Dismiss {
+		verb = "dismissed"
+	}
+	Log("[orchestrate.blocks] user %q %s block %s on session %s", user, verb, blockID, sid)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -44,6 +45,11 @@ var artifactNoteRe = regexp.MustCompile(`(?s)^\(\s*(?:\d+-byte HTML document: st
 // later blocks matching either, so repeated emissions stay ONE card
 // instead of stacking at the bottom of a replayed session. Appends when
 // nothing matches. Caller holds the session lock.
+//
+// A card keeps the time it was first drawn (At), stamped here when the caller
+// gives none, so a reload puts it back where it appeared rather than after
+// every message; an update keeps the original time, so a re-announced card
+// stays in its place.
 func (s *ChatSession) upsert_ui_block(blk UIBlock, same_surface func(*UIBlock) bool) {
 	out := s.UIBlocks[:0]
 	placed := false
@@ -53,12 +59,21 @@ func (s *ChatSession) upsert_ui_block(blk UIBlock, same_surface func(*UIBlock) b
 			if placed {
 				continue
 			}
+			if !b.At.IsZero() {
+				blk.At = b.At
+			}
+			if blk.At.IsZero() {
+				blk.At = time.Now()
+			}
 			b = blk
 			placed = true
 		}
 		out = append(out, b)
 	}
 	if !placed {
+		if blk.At.IsZero() {
+			blk.At = time.Now()
+		}
 		out = append(out, blk)
 	}
 	s.UIBlocks = out

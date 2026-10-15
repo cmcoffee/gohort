@@ -6986,3 +6986,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
       .ui-chat-side-source, .ui-pl-side-pill, .ui-agent-msg-sender,
       .ui-agent-msg-label, .ui-cw-mode-tag) { font-size: var(--fs-2xs); }
 }
+
+/* A chat card's Dismiss control (AgentLoopPanel), top right, in space the
+   card keeps clear for it. */
+.ui-block-dismissable:not(.ui-agent-pinned) { position: relative; }
+.ui-block-dismissable { padding-right: 2rem !important; }
+.ui-block-dismiss {
+  position: absolute; top: 0.3rem; right: 0.35rem;
+  width: 1.4rem; height: 1.4rem; padding: 0; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 4px; background: transparent;
+  color: var(--text-mute); font-size: var(--fs-lg); cursor: pointer;
+}
+.ui-block-dismiss:hover, .ui-block-dismiss:focus-visible { color: var(--text); background: var(--bg-2, rgba(127,127,127,0.15)); }

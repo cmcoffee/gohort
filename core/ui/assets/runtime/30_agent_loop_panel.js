@@ -4693,6 +4693,33 @@
       });
     };
 
+    // addBlockDismiss puts a Dismiss control on a card in the conversation:
+    // a link, a setup card, an artifact. It removes the card here and from
+    // the stored conversation (the resolve endpoint, with dismiss), so a
+    // reload does not bring it back. Only where the app settles cards
+    // (BlockResolveURL); without that a dismissal would last until reload.
+    function addBlockDismiss(id, wrap) {
+      if (!cfg.block_resolve_url || !id || wrap.querySelector(':scope > .ui-block-dismiss')) return;
+      var sid = activeSessionId;
+      wrap.classList.add('ui-block-dismissable');
+      var x = el('button', {class: 'ui-block-dismiss', type: 'button', title: 'Dismiss', 'aria-label': 'Dismiss',
+        onclick: function(ev) {
+          ev.stopPropagation();
+          if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+          delete blockEls[id];
+          refreshPins();
+          if (!sid) return;
+          var url = substituteExtras(cfg.block_resolve_url
+            .replace('{id}', encodeURIComponent(sid))
+            .replace('{block_id}', encodeURIComponent(id)));
+          fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({dismiss: true})}).catch(function(err) {
+            if (window.console && console.warn) console.warn('[ui] could not record dismissal:', id, err);
+          });
+        }}, ['\u00d7']);
+      wrap.appendChild(x);
+    }
+
     // App-registered block renderer dispatcher — same shape as
     // PipelinePanel uses. Apps register via window.uiRegisterBlockRenderer.
     function addBlock(d) {
@@ -4725,6 +4752,7 @@
       // visible area). If the block specifies pane:"activity",
       // route there instead.
       var target = d.pane === 'activity' ? activityLog : convoLog;
+      if (target === convoLog) addBlockDismiss(id, built.wrap);
       target.appendChild(built.wrap);
       if (target === convoLog) {
         keepPendingInterjectionsLast();
