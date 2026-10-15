@@ -30,6 +30,10 @@ package customapps
 //	app.alert(msg)                a notice, resolved when read
 //	app.prompt(msg, default)      a line of text, or null
 //
+// localStorage in the page is the person's own and survives a reload: the
+// frame's stand-in for it is kept on the server per person and per app
+// (view_state.go), for where they were in the app, not its data.
+//
 // The three dialogs are gohort's own, shown by the page the app sits in, so
 // a question an app asks looks like every other question gohort asks. The
 // browser's confirm() and prompt() are not these: they block the page, look

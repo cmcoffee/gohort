@@ -1203,7 +1203,7 @@
       'return String(b);}' +
     'function ask(u,o){o=o||{};return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};' +
       'var h=o.headers||{},ct=h["Content-Type"]||h["content-type"]||"";' +
-      'parent.postMessage({__uiIso:1,id:id,url:String(u),method:o.method||"GET",body:bod(o.body),ctype:ct},"*");});}' +
+      'parent.postMessage({__uiIso:1,id:id,url:String(u),method:o.method||"GET",body:bod(o.body),ctype:ct,keepalive:!!o.keepalive,quiet:!!o.quiet},"*");});}' +
     // The page's own dialogs, from inside the frame: uiConfirm, uiAlert and
     // uiPrompt here ask the page to show its modal and answer with what was
     // chosen, so a question an app asks looks like every other question
@@ -1327,6 +1327,9 @@
         return;
       }
       var opts = {method: d.method || 'GET', credentials: 'same-origin'};
+      // keepalive lets a small save sent as the page closes finish after it
+      // has gone (the browser caps such a body at 64 KB).
+      if (d.keepalive && typeof d.body === 'string' && d.body.length < 60000) opts.keepalive = true;
       if (d.body != null && opts.method !== 'GET' && opts.method !== 'HEAD') {
         if (d.body.__uiForm) {
           // The browser writes the multipart boundary; a Content-Type set
@@ -1346,7 +1349,9 @@
       // polls every ten seconds: a five-second model call behind a button
       // came and went between two polls, so the pill never lit. Look now,
       // and again when it ends so the pill does not hold a finished row.
-      var writes = opts.method !== 'GET' && opts.method !== 'HEAD';
+      // A quiet write (a page saving where its reader was) is not work
+      // anybody started, so it does not wake the pill.
+      var writes = opts.method !== 'GET' && opts.method !== 'HEAD' && !d.quiet;
       if (writes && window.uiRefreshLive) window.uiRefreshLive();
       fetch(d.url, opts).then(function(r) {
         var type = r.headers.get('Content-Type') || '';

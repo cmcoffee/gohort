@@ -254,6 +254,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// keeps its owner-side tracker running.
 		T.touchAppView(spec)
 		page := isolateAppHTML(spec.Page, T.WebPath()+"/"+slug+"/")
+		page = T.withViewState(page, appdb, spec)
 		if user == ownerUser {
 			page = withBuilderLink(page, slug)
 			// The agent it asks was deleted: say so where the owner looks,
@@ -263,6 +264,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		_ = ui.RenderPageJSON(w, page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
+	case rest == "view-state":
+		T.handleViewState(w, r, appdb, spec)
+	case rest == "_view/reset":
+		T.handleViewReset(w, r, appdb, spec)
 	case rest == "_settings":
 		// The app's Settings page — a form over the tunables it declares.
 		T.handleSettingsPage(w, r, spec, user == ownerUser)
@@ -1908,7 +1913,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "assets", "shared/", "changes", "ask"}
+var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "assets", "shared/", "changes", "ask", "view-state"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}
