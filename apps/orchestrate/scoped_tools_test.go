@@ -498,3 +498,44 @@ func TestReapTrialToolsDisabled(t *testing.T) {
 		t.Fatalf("reaped %d with TTL disabled, want 0", n)
 	}
 }
+
+// Drafts are found from the drafts table, not by loading every session: a
+// session without drafts is never read, a session in another account is not
+// listed, plumbing threads are left out, and the draft carries its session's
+// title.
+func TestListScopedToolsFindsDraftsWithoutReadingEverySession(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	savedRoot := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = savedRoot })
+	app := &OrchestrateApp{}
+	app.DB = db
+	for _, u := range []string{"alice", "bob"} {
+		if _, err := saveAgent(UserDB(db, u), AgentRecord{ID: "a1", Owner: u, Name: "Chat", OrchestratorPrompt: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	udb := UserDB(db, "alice")
+	// Many sessions with no drafts, one with a draft, and a dispatch thread
+	// with one.
+	for i := 0; i < 50; i++ {
+		saveChatSession(udb, ChatSession{ID: fmt.Sprintf("plain-%d", i), AgentID: "a1", Title: "plain"})
+	}
+	saveChatSession(udb, ChatSession{ID: "s-draft", AgentID: "a1", Title: "Tuesday"})
+	SaveSessionTempTool(udb, "s-draft", TempTool{Name: "draft_one"})
+	saveChatSession(udb, ChatSession{ID: "dispatch:p:a1", AgentID: "a1"})
+	SaveSessionTempTool(udb, "dispatch:p:a1", TempTool{Name: "plumbing_draft"})
+	// Bob's draft sits in the same drafts table.
+	saveChatSession(UserDB(db, "bob"), ChatSession{ID: "bob-s", AgentID: "a1", Title: "Bob's"})
+	SaveSessionTempTool(UserDB(db, "bob"), "bob-s", TempTool{Name: "bobs_draft"})
+
+	var drafts []string
+	for _, st := range app.listScopedTools("alice") {
+		if st.Scope == ScopeSessionTool {
+			drafts = append(drafts, st.Tool.Name+"@"+st.SessionID+"("+st.SessionTitle+")")
+		}
+	}
+	if len(drafts) != 1 || drafts[0] != "draft_one@s-draft(Tuesday)" {
+		t.Errorf("alice's drafts: %v", drafts)
+	}
+}

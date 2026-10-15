@@ -62,11 +62,11 @@ func SetBulkStagingDir(dir string) {
 	bulkStagingDirMu.Unlock()
 }
 
-// BulkStagingDir returns the configured base, or "" when unset. An empty value
+// currentBulkStagingDir returns the configured base, or "" when unset. An empty value
 // means "large uploads are not available" rather than a fallback to a temp dir:
 // a several-hundred-megabyte extract landing somewhere nobody chose is the kind
 // of surprise that fills a root partition.
-func BulkStagingDir() string {
+func currentBulkStagingDir() string {
 	bulkStagingDirMu.RLock()
 	defer bulkStagingDirMu.RUnlock()
 	return bulkStagingDir

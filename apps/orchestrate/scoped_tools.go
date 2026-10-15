@@ -95,10 +95,38 @@ func (T *OrchestrateApp) listScopedTools(user string) []ScopedTool {
 			})
 		}
 	}
+	// Drafts live in their own table, keyed by session, and only a few
+	// sessions ever hold one. This used to load every session of every agent
+	// (messages and all, via listChatSessions) to ask each whether it had
+	// drafts, which made every Extensions load as slow as the user's whole
+	// history. Now: the sessions that hold drafts, matched against each
+	// agent's session KEYS, and only those sessions read.
+	drafted := map[string]bool{}
+	for _, sid := range SessionTempToolSessionIDs(udb) {
+		drafted[sid] = true
+	}
 	for _, agent := range agents {
+		if len(drafted) == 0 {
+			break
+		}
 		parent := parentOf(agent)
-		for _, s := range listChatSessions(udb, agent.ID) {
-			for _, t := range LoadSessionTempTools(udb, s.ID) {
+		tbl := sessionTable(agent.ID)
+		// The same threads listChatSessions leaves out: a sub-agent's working
+		// thread, and dispatch and machine plumbing nobody opened.
+		workingThread := ""
+		if isSubAgent(udb, agent.ID) {
+			workingThread = cortexSessionID(agent.ID)
+		}
+		for _, sid := range udb.Keys(tbl) {
+			if !drafted[sid] || sid == workingThread || strings.HasPrefix(sid, "dispatch:") || strings.HasPrefix(sid, "machine:") {
+				continue
+			}
+			var s ChatSession
+			if !udb.Get(tbl, sid, &s) {
+				continue
+			}
+			s.ID = sid
+			for _, t := range LoadSessionTempTools(udb, sid) {
 				out = append(out, ScopedTool{
 					Tool: t, Scope: ScopeSessionTool,
 					AgentID: agent.ID, AgentName: agent.Name, ParentName: parent,

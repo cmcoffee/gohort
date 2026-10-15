@@ -1667,6 +1667,18 @@ func LoadSessionTempTools(db Database, chatSessionID string) []TempTool {
 	return out
 }
 
+// SessionTempToolSessionIDs lists the chat sessions that hold session-scoped
+// drafts, across every user (the table is keyed by session id alone). A caller
+// looking for one user's drafts intersects this with that user's session keys
+// rather than loading every session to ask each one.
+func SessionTempToolSessionIDs(db Database) []string {
+	db = tempToolStore(db)
+	if db == nil {
+		return nil
+	}
+	return db.Keys(sessionTempToolsTable)
+}
+
 // SaveSessionTempTool upserts a session-scoped temp tool by name.
 // Existing entries with the same name are replaced so re-creating a
 // tool (e.g. the LLM iterating on the schema) doesn't accumulate

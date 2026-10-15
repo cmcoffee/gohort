@@ -278,7 +278,7 @@ func init() {
 	// name the type it would have to call it on. Keeping it visible next to the
 	// other seams is also where somebody would look before changing it, and
 	// changing it is what would strand every bundle already ingested.
-	bundle.StagingDir = BulkStagingDir
+	bundle.StagingDir = currentBulkStagingDir
 	bundle.OpenStore = func(owner, id string) bundle.Store {
 		if BundleFilesDB == nil {
 			return nil
@@ -287,7 +287,7 @@ func init() {
 	}
 
 	sandbox.WorkspacesDir = WorkspacesDir
-	sandbox.BulkStagingDir = BulkStagingDir
+	sandbox.BulkStagingDir = currentBulkStagingDir
 	sandbox.GohortLibDir = EnsureGohortLibDir
 	// The broker. Typed adapter rather than a plain assignment: the mechanics
 	// take the session as `any` (they never read it) while NewSandboxHook wants
