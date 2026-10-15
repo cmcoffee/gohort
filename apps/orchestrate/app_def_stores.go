@@ -17,6 +17,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appstores"
+	"github.com/cmcoffee/gohort/core/promotion"
 )
 
 func (t *chatTurn) appDefStores(args map[string]any) (string, error) {
@@ -95,4 +96,59 @@ func (t *chatTurn) appDefStores(args map[string]any) (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// appDefRequestStore files an app's request for access to a file store
+// (app_def request_store), and, when the person building is an admin and is
+// watching, asks them on the spot: Approve applies the grant at once. Anyone
+// else's request waits for an admin under Admin, Governance, Pending
+// promotions, which is also where an unanswered card leaves it.
+func (t *chatTurn) appDefRequestStore(args map[string]any) (string, error) {
+	cat, ok := appstores.Provider.(appstores.Catalog)
+	if appstores.Provider == nil || !ok {
+		return "", fmt.Errorf("file stores are not available on this deployment")
+	}
+	slug := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug")))
+	spec, ok := LoadAppSpec(t.user, slug)
+	if !ok {
+		return "", fmt.Errorf("no app %q of yours: create it first, then ask for its stores", slug)
+	}
+	want := strings.TrimSpace(stringArg(args, "store"))
+	var st *appstores.StoreInfo
+	var names []string
+	for _, s := range cat.Stores(t.user, slug) {
+		s := s
+		names = append(names, s.Store)
+		if s.Store == want || strings.EqualFold(s.Name, want) {
+			st = &s
+		}
+	}
+	if st == nil {
+		return "", fmt.Errorf("no file store %q (there are: %s)", want, strings.Join(names, ", "))
+	}
+	write, commands, pull := boolArg(args, "write"), boolArg(args, "commands"), boolArg(args, "pull")
+	if g := st.Granted; g != nil && (!write || g.Write) && (!commands || g.Commands) && (!pull || g.Pull) {
+		return fmt.Sprintf("%s already has that on %s.", spec.Name, st.Name), nil
+	}
+	name := appstores.GrantRequestName(st.Store, slug, write, commands, pull)
+	why := strings.TrimSpace(stringArg(args, "why"))
+	if err := CreatePromotionRequest(AuthDB(), t.user, appstores.GrantRequestKind, name, why); err != nil {
+		return "", err
+	}
+	_, rights, _ := strings.Cut(name, ": ")
+	waiting := fmt.Sprintf("Requested %s on %s for %s. It is waiting for an admin under Admin, Governance, Pending promotions; scripts reach the store once it is approved.", rights, st.Name, spec.Name)
+	if !UserIsAdmin(t.user) || (t.sse == nil && t.askVia == nil) {
+		return waiting, nil
+	}
+	detail := "The app's scripts get " + rights + " on " + st.Name + ", for everyone who uses the app."
+	if why != "" {
+		detail += "\n\nWhy: " + why
+	}
+	if t.askInChat(fmt.Sprintf("Grant %s %s on the file store %s?", spec.Name, rights, st.Name), detail, []string{"Approve"}) != "Approve" {
+		return "Not granted now. " + waiting, nil
+	}
+	if err := promotion.Approve(AuthDB(), promotion.RequestKey(appstores.GrantRequestKind, t.user, name), t.user); err != nil {
+		return "", fmt.Errorf("approving the request: %w", err)
+	}
+	return fmt.Sprintf("Granted: %s now has %s on %s. Test its scripts against the store.", spec.Name, rights, st.Name), nil
 }

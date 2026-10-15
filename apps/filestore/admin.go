@@ -498,6 +498,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/app-options", T.handleAppOptions)
 	// App scripts reach the stores they were granted through this.
 	appstores.Provider = storeHost{T}
+	registerGrantRequests(T)
 	T.HandleFunc("/api/pull/", T.handlePull)
 }
 

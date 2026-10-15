@@ -245,6 +245,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 				"Approve a public-link request to mint the app's anonymous link: anyone who has the URL then runs its data sources as the owner, with no login.\n\n" +
 				"A CREDENTIAL request is the one that is not a widening. The requester is handing their key to the deployment: the secret moves into the global namespace, the credential lands secured so that it has no user list and is reachable only through the tools bound to it, and the requester becomes an ordinary user of it. They cannot take it back afterwards — read the note and be sure the deployment should own this key, because the alternative to keeping it is deleting it.\n\n" +
 				"Approve a SKILL request to move it from its author's list into the deployment's, where the classifier can activate it on any user's turn. Its bundled tools do not go with it, for the same reason a shared tool needs its own approval; its attached collections travel as references that only answer for people who can already read them. The author keeps editing it and can take it back without asking.\n\n" +
+				"A FILE STORE request is an app asking for access to one of your file stores, named as \"<store>/<app>: <rights>\" (read always; write, run commands and pull as asked), with the reason in the note. Approving adds those rights to the app's grant on that store, for everyone who uses the app; you can narrow or remove it afterwards on the store's page (Admin, Files).\n\n" +
 				"A PIPELINE or MACHINE request widens a recipe. Neither record moves and nothing of the author's travels: every run happens in the namespace of whoever started it, against their agents, tools and credentials. The author keeps editing it and can take it back without asking.\n\n" +
 				"Deny to dismiss.",
 			Body: ui.Table{
@@ -272,6 +273,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						{Value: "skill", Label: "Skill", Color: "info"},
 						{Value: "pipeline", Label: "Pipeline", Color: "info"},
 						{Value: "machine", Label: "Machine", Color: "info"},
+						{Value: "store_grant", Label: "File store", Color: "warning"},
 					}},
 					{Field: "update", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Update", Color: "warning"},
@@ -289,7 +291,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Type: "button", Label: "Approve",
 						PostTo:  "api/promotions?action=approve&id={id}",
 						Method:  "POST",
-						Confirm: "Approve this publish request? It goes live for its audience at once, running with its owner's credentials. A CREDENTIAL request instead transfers the key to the deployment, secured, and the requester cannot take it back.",
+						Confirm: "Approve this request? A publish goes live for its audience at once, running with its owner's credentials. A CREDENTIAL request instead transfers the key to the deployment, secured, and the requester cannot take it back. A FILE STORE request gives the app the rights it names on that store.",
 						// Approving a tool promotion shares it deployment-wide
 						// — which is a badge on that tool's row two sections
 						// down, in the table this queue exists to feed.

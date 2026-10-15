@@ -12,7 +12,10 @@
 // Neither imports the other, which this package exists to allow.
 package appstores
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Grant is what one app may do with one store, resolved to its folder.
 type Grant struct {
@@ -73,4 +76,50 @@ type Catalog interface {
 	// Stores is every store owner may reach, with slug's grant on each when
 	// slug names an app ("" for none yet).
 	Stores(owner, slug string) []StoreInfo
+}
+
+// GrantRequestKind is the approvals-queue kind for an app asking for access
+// to a store (core/promotion). The request's name says what is asked for, in
+// GrantRequestName's shape, so the admin reads it and the approver applies
+// exactly that.
+const GrantRequestKind = "store_grant"
+
+// GrantRequestName is the name a store-grant request is filed under:
+// "<store>/<app slug>: read, write, run commands, pull". Read is always part
+// of a grant; the rest are as asked.
+func GrantRequestName(store, slug string, write, commands, pull bool) string {
+	rights := []string{"read"}
+	if write {
+		rights = append(rights, "write")
+	}
+	if commands {
+		rights = append(rights, "run commands")
+	}
+	if pull {
+		rights = append(rights, "pull")
+	}
+	return store + "/" + slug + ": " + strings.Join(rights, ", ")
+}
+
+// ParseGrantRequestName reads a GrantRequestName back.
+func ParseGrantRequestName(name string) (store, slug string, write, commands, pull, ok bool) {
+	head, rights, found := strings.Cut(name, ": ")
+	if !found {
+		return "", "", false, false, false, false
+	}
+	store, slug, found = strings.Cut(head, "/")
+	if !found || strings.TrimSpace(store) == "" || strings.TrimSpace(slug) == "" {
+		return "", "", false, false, false, false
+	}
+	for _, r := range strings.Split(rights, ", ") {
+		switch strings.TrimSpace(r) {
+		case "write":
+			write = true
+		case "run commands":
+			commands = true
+		case "pull":
+			pull = true
+		}
+	}
+	return store, slug, write, commands, pull, true
 }
