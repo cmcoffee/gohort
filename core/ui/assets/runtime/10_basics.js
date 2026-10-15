@@ -266,6 +266,9 @@
     var records = [];
     var searchText = '';
     var openExpansions = {}; // rowKey -> {actionIndex: panel}
+    // A reload asked for while an expansion was open, run when it closes:
+    // what happened inside the expansion is often what changed the row.
+    var reloadWhenClosed = false;
 
     // Refetch when an external action invalidates our source. See
     // window.uiInvalidate above for the helper. Compare exact URL —
@@ -302,8 +305,13 @@
       return [];
     }
 
-    // Skip while any expansion is open (don't slam them shut).
-      if (Object.keys(openExpansions).some(function(k){ return Object.keys(openExpansions[k]).length > 0; })) return;
+    // Skip while any expansion is open (don't slam them shut), and catch up
+      // when it closes.
+      if (Object.keys(openExpansions).some(function(k){ return Object.keys(openExpansions[k]).length > 0; })) {
+        reloadWhenClosed = true;
+        return;
+      }
+      reloadWhenClosed = false;
       fetchJSON(cfg.source).then(function(d) {
         if (cfg.records_field) {
           // Strict: when records_field is set, use it exactly. A
@@ -921,6 +929,7 @@
       if (openExpansions[rowKey][ai]) {
         openExpansions[rowKey][ai].remove();
         delete openExpansions[rowKey][ai];
+        if (reloadWhenClosed) reload(true);
         return;
       }
       // Close any other open expansions on the same row OR other rows

@@ -133,6 +133,11 @@ type AgentLoopPanel struct {
 	// server that streams notices must give a frame the same id the trail
 	// serves for it.
 	DiagnosticsURL string `json:"diagnostics_url,omitempty"`
+	// Invalidate — data sources to refetch after each turn completes, the
+	// same contract as FormPanel.Invalidate: a turn that changes something
+	// another part of the page shows (a row it edited) refreshes it. A table
+	// with an expansion open refetches when the expansion closes.
+	Invalidate []string `json:"invalidate,omitempty"`
 	// StatusURL — optional per-session status readout. When set, the toolbar
 	// shows a small pill whose text comes from this URL, refreshed when the
 	// active session changes and after each turn completes. {session} in the

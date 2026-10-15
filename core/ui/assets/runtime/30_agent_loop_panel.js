@@ -5152,6 +5152,9 @@
           setStatus('');
           // A turn can move whatever the app's status pill reports.
           refreshStatusPill();
+          // And whatever the page shows around the panel: the sources it
+          // declared are refetched by whoever shows them.
+          if (cfg.invalidate && cfg.invalidate.length && window.uiInvalidate) window.uiInvalidate(cfg.invalidate);
           // Refresh side rail so the just-completed turn's timestamp
           // bumps to the top. Second delayed refresh catches the
           // async title summarizer that some apps fire as a

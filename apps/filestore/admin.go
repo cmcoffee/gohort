@@ -220,10 +220,15 @@ func (T *FileStoreApp) adminSection() ui.Section {
 									// This command's mapping conversations, to go
 									// back to one. {id} is the session the panel
 									// opens, which is why the row is keyed {cmd}.
-									ListURL:      "/filestore/api/map/chat/sessions?id={cmd}",
-									LoadURL:      "/filestore/api/map/chat/sessions/{id}?cmd={cmd}",
-									DeleteURL:    "/filestore/api/map/chat/sessions/{id}?cmd={cmd}",
-									CancelURL:    "/filestore/api/map/chat/cancel?id={cmd}",
+									ListURL:   "/filestore/api/map/chat/sessions?id={cmd}",
+									LoadURL:   "/filestore/api/map/chat/sessions/{id}?cmd={cmd}",
+									DeleteURL: "/filestore/api/map/chat/sessions/{id}?cmd={cmd}",
+									CancelURL: "/filestore/api/map/chat/cancel?id={cmd}",
+									// A mapping lands on this command's row:
+									// the Agents switch appears once there is
+									// something to approve. The table refetches
+									// when this panel closes.
+									Invalidate:   []string{"/filestore/api/commands?slug={slug}"},
 									ListTitle:    "Earlier mappings",
 									NewLabel:     "New",
 									ListPosition: "top",
