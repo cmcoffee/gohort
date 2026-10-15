@@ -328,6 +328,7 @@ TEXT:
 
 Reply with ONLY a JSON array of objects, each {"subject","subject_kind","relation","object","object_kind"}. Reply [] if none.`, text)},
 	}, WithSystemPrompt("You extract explicit relationships between named entities as subject-relation-object triples for a knowledge graph. Be conservative: never infer, named entities only, and never promote a speaker's speculation to a fact. Reply with ONLY a JSON array."),
+		WithCaller("memory.graph_extract"),
 		WithThink(false),
 		WithMaxTokens(512))
 	if err != nil || resp == nil {

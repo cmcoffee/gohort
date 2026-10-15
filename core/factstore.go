@@ -647,6 +647,7 @@ EXISTING facts:
 %s
 Reply with ONLY a JSON array of the numbers of existing facts the new fact replaces. Reply [] if none.`, newNote, list.String())},
 	}, WithSystemPrompt("You detect when a new memory fact supersedes existing ones (same attribute, cannot both be current). Reply with ONLY a JSON array of indices."),
+		WithCaller("memory.supersede"),
 		WithThink(false),
 		WithMaxTokens(128))
 	if err != nil || resp == nil {
@@ -711,6 +712,7 @@ EXISTING facts:
 %s
 Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers], "kind": "fact" or "event" or "open", "event_date": "YYYY-MM-DD"}. Use [] when nothing is superseded.`, now.Format("2006-01-02"), newNote, list.String())},
 	}, WithSystemPrompt("You gate a personal chatbot's long-term memory: decide whether a new note is durable enough to keep, and which existing notes it replaces. Reply with ONLY the requested JSON object."),
+		WithCaller("memory.gate"),
 		WithThink(false),
 		WithMaxTokens(256))
 	if err != nil || resp == nil {
@@ -937,6 +939,7 @@ FACTS:
 %s
 Reply with ONLY JSON: {"drop": [numbers], "merge": [{"keep": "combined text", "replace": [numbers]}]}. Use empty arrays when there is nothing to do.`, list.String())},
 	}, WithSystemPrompt("You conservatively prune a user's long-term memory: remove only clear junk, merge only clear restatements, keep everything else. Reply with ONLY the requested JSON object."),
+		WithCaller("memory.sweep"),
 		WithThink(false),
 		WithMaxTokens(512))
 	if err != nil || resp == nil {

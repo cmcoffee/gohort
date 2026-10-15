@@ -171,6 +171,7 @@ EXISTING findings:
 %s
 Reply with ONLY a JSON array of the numbers of existing findings the new one contradicts. Reply [] if none.`, newContent, list.String())},
 	}, WithSystemPrompt("You detect when a new finding contradicts existing ones (incompatible claims about the same thing). Reply with ONLY a JSON array of indices."),
+		WithCaller("memory.conflict_check"),
 		WithThink(false),
 		WithMaxTokens(128))
 	if err != nil || resp == nil {

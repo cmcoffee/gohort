@@ -236,7 +236,7 @@ func pastTenseFinding(ctx context.Context, note string, at time.Time) string {
 	defer cancel()
 	resp, err := app.WorkerChat(cctx, []Message{{Role: "user", Content: fmt.Sprintf(
 		"Rewrite this memory note as ONE short sentence in the past tense that says when it happened. Keep every name and detail in it and add nothing. The event was around %s.\n\nNote: %q\n\nReply with only the sentence.", date, note)}},
-		WithThink(false), WithMaxTokens(160))
+		WithCaller("memory.past_tense"), WithThink(false), WithMaxTokens(160))
 	if err != nil || resp == nil {
 		return fallback
 	}
