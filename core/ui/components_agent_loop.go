@@ -133,6 +133,12 @@ type AgentLoopPanel struct {
 	// server that streams notices must give a frame the same id the trail
 	// serves for it.
 	DiagnosticsURL string `json:"diagnostics_url,omitempty"`
+	// ResendUnreadNotes — when a turn ends before the agent read a note the
+	// person sent while it ran (InjectURL), send the note on as the next
+	// message instead of leaving it for whatever they send next. The send
+	// carries from_notes, for a server that saved the leftover notes itself
+	// and should not add them twice.
+	ResendUnreadNotes bool `json:"resend_unread_notes,omitempty"`
 	// Invalidate — data sources to refetch after each turn completes, the
 	// same contract as FormPanel.Invalidate: a turn that changes something
 	// another part of the page shows (a row it edited) refreshes it. A table

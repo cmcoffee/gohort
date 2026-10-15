@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -208,4 +209,40 @@ func ServeWaitingNotes(w http.ResponseWriter, r *http.Request, user string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"notes": out})
+}
+
+// leftoverNotesWait bounds how long a send of unread notes waits for the turn
+// that left them to save them (handleSend's leftover drain, which runs as that
+// turn's request ends, just after the panel hears it is done).
+var leftoverNotesWait = 5 * time.Second
+
+// awaitLeftoverNotes waits until the session's last turn has released its
+// note queue, which it does only after saving any notes it left unread, and
+// returns the session as it now stands.
+func (T *OrchestrateApp) awaitLeftoverNotes(udb Database, agentID string, sess ChatSession) ChatSession {
+	deadline := time.Now().Add(leftoverNotesWait)
+	for lookupInjectionQueue(sess.ID) != nil && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if latest, ok := loadChatSession(udb, agentID, sess.ID); ok {
+		return latest
+	}
+	return sess
+}
+
+// trailingNotesMatch reports whether the conversation ends on the person's
+// own messages whose text, joined, is text: the notes a turn saved unread.
+func trailingNotesMatch(msgs []ChatMessage, text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	var tail []string
+	for i := len(msgs) - 1; i >= 0 && msgs[i].Role == "user"; i-- {
+		tail = append([]string{strings.TrimSpace(msgs[i].Content)}, tail...)
+		if strings.Join(tail, "\n\n") == text {
+			return true
+		}
+	}
+	return false
 }

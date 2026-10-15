@@ -71,6 +71,11 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		// content in history; the chat panel just skips rendering a
 		// duplicate user bubble.
 		Hidden    bool     `json:"hidden,omitempty"`
+		// FromNotes marks a send of notes the person wrote while the last
+		// turn ran and the agent never read: the panel sends them on as the
+		// next input when that turn ends. The end of that turn already saved
+		// them to the conversation, so they are the input, not added again.
+		FromNotes bool `json:"from_notes,omitempty"`
 		Images    []string `json:"images,omitempty"` // base64-encoded image data from the chat panel's paperclip
 		Documents []struct {
 			Name     string `json:"name"`
@@ -400,6 +405,16 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 
 	// Append the user message to the persisted thread now; failures
 	// downstream still leave the user's input visible on reload.
+	// Notes the last turn left unread: wait for that turn to save them, and
+	// when they are what the conversation ends on, they are this turn's input.
+	notesAreInput := false
+	if req.FromNotes {
+		sess = T.awaitLeftoverNotes(udb, agent.ID, sess)
+		notesAreInput = trailingNotesMatch(sess.Messages, req.Message)
+		if !notesAreInput {
+			req.Hidden = true // their bubbles are already on screen
+		}
+	}
 	userMsg := ChatMessage{Role: "user", Content: req.Message, Created: time.Now(), Hidden: req.Hidden}
 	if len(req.IntakeValues) > 0 {
 		userMsg.IntakeValues = req.IntakeValues
@@ -411,9 +426,11 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		sort.Strings(keys)
 		Log("[orchestrate] intake on session %s: fields %v, kind %q", sess.ID, keys, req.IntakeValues["kind"])
 	}
-	sess.Messages = append(sess.Messages, userMsg)
-	if saved, err := saveChatSession(udb, sess); err == nil {
-		sess = saved
+	if !notesAreInput {
+		sess.Messages = append(sess.Messages, userMsg)
+		if saved, err := saveChatSession(udb, sess); err == nil {
+			sess = saved
+		}
 	}
 	// Ongoing-conversation compaction (channel home thread only): the RUN sees a
 	// bounded view — a running summary + the ContextDepth tail — and STORAGE is

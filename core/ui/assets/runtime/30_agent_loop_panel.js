@@ -5174,9 +5174,12 @@
           // here, and the turn is over. Not hooked into enableInput, which also
           // fires on session OPEN — marking there would condemn a note belonging
           // to a run that is still going.
-          markUndeliveredInterjections('The agent finished before reading this. It stays in the conversation and goes with your next message.');
+          var unread = markUndeliveredInterjections('The agent finished before reading this' + (cfg.resend_unread_notes
+            ? ', so it goes to the agent now as your next message.'
+            : '. It stays in the conversation and goes with your next message.'));
           sawTurnEnd = true;
           enableInput();
+          if (cfg.resend_unread_notes && unread.length) sendUnreadNotes(unread);
           setStatus('');
           // A turn can move whatever the app's status pill reports.
           refreshStatusPill();
@@ -5418,17 +5421,41 @@
     // the session (runner_http.go), so the text is still there and still goes
     // to the agent with the next message — dropping the bubble would claim the
     // opposite. The honest thing is to say which of the two happened.
+    // Returns the text of each note it marked, oldest first.
     function markUndeliveredInterjections(why) {
-      if (!convoLog) return;
+      var texts = [];
+      if (!convoLog) return texts;
       var pending = convoLog.querySelectorAll('.ui-agent-interjection:not(.consumed):not(.ui-agent-interjection-undelivered)');
       for (var i = 0; i < pending.length; i++) {
         var b = pending[i];
         b.classList.add('ui-agent-interjection-undelivered');
         var body = b.querySelector('.ui-agent-msg-body') || b;
+        var t = (b.dataset.noteText || body.textContent || '').trim();
+        if (t) texts.push(t);
         var note = el('div', {class: 'ui-agent-interjection-note', text: why});
         body.appendChild(note);
       }
-      return pending.length;
+      return texts;
+    }
+
+    // sendUnreadNotes sends notes the agent never read as the person's next
+    // message (AgentLoopPanel.ResendUnreadNotes): they were written for it,
+    // and the turn they were meant for ended first. No new bubble, since
+    // theirs are on screen, and anything being typed or attached meanwhile
+    // stays where it is.
+    var sendingNotes = false;
+    function sendUnreadNotes(texts) {
+      if (!texts.length) return;
+      var draft = inputArea.value;
+      var attached = pendingAttachments;
+      pendingAttachments = [];
+      inputArea.value = texts.join('\n\n');
+      window.uiSuppressNextUserBubble = true;
+      sendingNotes = true;
+      try { sendMessage(); } finally { sendingNotes = false; }
+      inputArea.value = draft;
+      pendingAttachments = attached;
+      renderAttachments();
     }
 
     function enableInput() {
@@ -5521,6 +5548,7 @@
         if (noteBubble && noteBubble.bubble) {
           noteBubble.bubble.classList.add('ui-agent-interjection');
           noteBubble.bubble.dataset.sessionId = activeSessionId;
+          noteBubble.bubble.dataset.noteText = text; // as sent, for sendUnreadNotes
           noteBubble.bubble.dataset.injectUrl = cfg.inject_url;
           // The note STAYS at the bottom from here — keepPendingInterjectionsLast
           // re-appends it under anything that arrives while it is still queued,
@@ -5626,6 +5654,7 @@
         documents:  documents,
       };
       if (suppressBubble) body.hidden = true;
+      if (sendingNotes) body.from_notes = true;
       if (cfg.list_is_context) {
         // In CONTEXT mode, the rail's active id ships under a
         // user-configured key (default "context_id"). session_id

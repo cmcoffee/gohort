@@ -267,6 +267,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					CancelURL:            "api/cancel",
 					ConfirmURL:           "api/confirm",
 					InjectURL:            "api/inject",
+					// A note the agent never read goes on as the next
+					// message; handleSend takes it from_notes.
+					ResendUnreadNotes: true,
 					// Lets an actionable card (credential setup, a config-change
 					// approval) record that it was answered. Without it those
 					// cards settle in the DOM only and replay with live buttons

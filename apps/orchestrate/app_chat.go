@@ -72,6 +72,9 @@ func (c AppChat) Panel(p ui.AgentLoopPanel) ui.AgentLoopPanel {
 	set(&p.CancelURL, c.Prefix+"cancel")
 	set(&p.ConfirmURL, c.Prefix+"confirm")
 	set(&p.InjectURL, c.Prefix+"inject")
+	// A note the agent never read goes on as the next message (handleSend
+	// takes it from_notes), as in the main chat.
+	p.ResendUnreadNotes = true
 	set(&p.ListURL, c.url("sessions"))
 	set(&p.LoadURL, c.url("sessions/{id}"))
 	set(&p.DeleteURL, c.url("sessions/{id}"))
