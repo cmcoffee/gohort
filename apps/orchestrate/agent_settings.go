@@ -341,6 +341,7 @@ func settingSource(db Database, rec AgentRecord, key string) string {
 // editor shows one choice, lead_use, and these translate both ways.
 const (
 	leadUseLead    = "lead"
+	leadUsePlan    = "plan"
 	leadUseConsult = "consult"
 	leadUseOff     = "off"
 )
@@ -349,6 +350,8 @@ const (
 // through the deployment default it may be following.
 func leadUseOf(db Database, a AgentRecord) string {
 	switch {
+	case a.LeadModel && a.LeadPlans:
+		return leadUsePlan
 	case a.LeadModel:
 		return leadUseLead
 	case settingIsOn(db, a, defaultConsultLead):
@@ -359,7 +362,7 @@ func leadUseOf(db Database, a AgentRecord) string {
 
 // leadUseDefault is what an agent that has decided nothing gets.
 func leadUseDefault(db Database, a AgentRecord) string {
-	a.LeadModel, a.ConsultLead = false, ""
+	a.LeadModel, a.LeadPlans, a.ConsultLead = false, false, ""
 	return leadUseOf(db, a)
 }
 
@@ -373,10 +376,11 @@ func applyLeadUse(db Database, a *AgentRecord, v string) {
 		return
 	}
 	switch v {
-	case leadUseLead:
+	case leadUseLead, leadUsePlan:
 		a.LeadModel = true
+		a.LeadPlans = v == leadUsePlan
 	case leadUseConsult, leadUseOff:
-		a.LeadModel = false
+		a.LeadModel, a.LeadPlans = false, false
 		want := settingOn
 		if v == leadUseOff {
 			want = settingOff

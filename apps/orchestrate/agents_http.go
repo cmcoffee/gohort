@@ -412,6 +412,7 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 		choice := existing
 		applyLeadUse(RootDB, &choice, fmt.Sprint(v))
 		patch["lead_model"] = choice.LeadModel
+		patch["lead_plans"] = choice.LeadPlans
 		patch["consult_lead"] = choice.ConsultLead
 	}
 	applied := make([]string, 0, len(patch))

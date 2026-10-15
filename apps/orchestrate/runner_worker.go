@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -75,6 +76,16 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	tools, toolNames, err := t.resolveWorkerTools(sess, false)
 	if err != nil {
 		return "", fmt.Errorf("resolve tools: %w", err)
+	}
+	// The agent's attached sources (file stores, systems, doc spaces) and
+	// pipelines, which the lead's round offers directly and a step never got:
+	// a step asked to search a store had no search_<store>, and a lead that
+	// plans (runner_lead_plans.go) has no other way to reach them.
+	for _, td := range append(t.buildAttachedSourceToolDefs(sess), t.buildAttachedPipelineToolDefs()...) {
+		if !slices.Contains(toolNames, td.Tool.Name) {
+			tools = append(tools, td)
+			toolNames = append(toolNames, td.Tool.Name)
+		}
 	}
 	// Orchestrator-curated per-step tool surface — when the plan
 	// step's Tools field is set, intersect the agent's resolved pool

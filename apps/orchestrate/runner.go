@@ -97,6 +97,10 @@ type planRun struct {
 	// hooks run in the loop goroutine), so no locking needed.
 	planSetRejects          int
 	forceNoThinkAfterReject bool
+	// leadPlansOn: this turn the lead plans and steps work (runner_lead_plans.go);
+	// delegable is what was taken off the lead for the steps.
+	leadPlansOn bool
+	delegable   []AgentToolDef
 	// compactRequested: set by the compact_context tool when the LLM wants
 	// to proactively shed verbose tool-result bodies it's done with (e.g. a
 	// smoke-test report). Consumed by the RoundCompactNow hook, which forces
@@ -480,7 +484,9 @@ func (pr *planRun) planSetToolDef() AgentToolDef {
 			// and a hard ≥2 here would loop into the rejection-then-
 			// improvise bypass that motivated this whole change.
 			minSteps := 2
-			if isBuilderAgent(t.agent.ID) {
+			if isBuilderAgent(t.agent.ID) || pr.leadPlansOn {
+				// A planning lead has no inline path either: its one-tool
+				// job is a one-step plan.
 				minSteps = 1
 			}
 			if len(steps) < minSteps {
@@ -737,6 +743,7 @@ type catalogState struct {
 // phase is a method on the run's catalogState; the first that fails stops.
 func (pr *planRun) buildCatalog() error {
 	for _, phase := range []func() error{
+		pr.decideLeadPlans,
 		pr.catalogWorkerTools,
 		pr.catalogControlTools,
 		pr.catalogKnowTools,
@@ -1077,6 +1084,7 @@ func (pr *planRun) catalogAssemble() error {
 	// on a line that also prints the catalog SIZE reads as a size-triggered
 	// rewrite, which is a mechanism that no longer exists — and it is the first
 	// thing anyone greps when tools go missing between turns.
+	pr.splitForLeadPlans()
 	Debug("[orchestrate.orch] runPlan: assembled catalog of %d tools", len(pr.allTools))
 	// Building the catalog is the other phase big enough to be felt: a hundred
 	// tools resolved, temp tools loaded from the store, schemas built.
@@ -2472,7 +2480,7 @@ func plural(n int) string {
 // dynamicTools is the loop's feed of temp tools made mid-turn: none for an
 // agent held to exactly its own tools.
 func (pr *planRun) dynamicTools() func() []AgentToolDef {
-	if pr.exactTools {
+	if pr.exactTools || pr.leadPlansOn {
 		return nil
 	}
 	return pr.t.dynamicNewTempTools(pr.sess)
@@ -2482,7 +2490,7 @@ func (pr *planRun) dynamicTools() func() []AgentToolDef {
 // (a lazy custom tool): none for an agent held to exactly its own tools, or a
 // dropped tool could still be reached by naming it.
 func (pr *planRun) toolFallback() func(string) (ToolHandlerFunc, bool) {
-	if pr.exactTools {
+	if pr.exactTools || pr.leadPlansOn {
 		return nil
 	}
 	return pr.t.lazyToolFallback

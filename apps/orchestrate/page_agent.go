@@ -1026,6 +1026,10 @@ func leadUseField(show bool, rec AgentRecord) ui.FormField {
 		return ui.SelectOption{Value: v, Label: text}
 	}
 	opts := []ui.SelectOption{label(leadUseLead, "Lead for every turn")}
+	// Builder plans already: its lead round has no work tools of its own.
+	if !isBuilderAgent(rec.ID) {
+		opts = append(opts, label(leadUsePlan, "Lead plans, worker does the work"))
+	}
 	// Consult is offered only where the deployment allows it.
 	for _, c := range deploymentDefaultChoices(RootDB, defaultConsultLead) {
 		if c == settingOn {
@@ -1037,6 +1041,7 @@ func leadUseField(show bool, rec AgentRecord) ui.FormField {
 		Field: "lead_use", Type: "select", Label: "Lead model", Options: opts,
 		Help: "Which model this agent thinks with: the lead (remote, stronger, costs per turn) or the local worker.",
 		Detail: "Lead for every turn runs the agent's whole turn on the lead model; the dispatched per-step worker phases still run on the worker.\n\n" +
+			"Lead plans, worker does the work keeps the lead to deciding and writing: in a chat with the agent, the lead sees the request with no work tools of its own, answers directly when no work is needed, and otherwise writes a plan whose steps run on the worker with the tools it picks for each. It then writes the reply from what the steps found. Two lead calls on a turn that works, both small, since no tool list and no raw tool output reach the lead. A step sees the request, earlier steps and its brief, not the whole conversation. A run that is dispatched, scheduled or arrives on a channel uses the lead for the whole turn, as Lead for every turn does.\n\n" +
 			"Ask the lead when stuck keeps the turn on the local worker and lets it ask the lead ONE self-contained question when it hits a wall (an unfamiliar API's request shape, an error it cannot read): the question and its evidence go and nothing else does, no history, no tool catalog. At most three a turn. The cheap way to use the stronger model, and the default for agents that build things.\n\n" +
 			"Never use the lead keeps everything on the worker.\n\n" +
 			"A Private conversation never reaches the lead, whatever is chosen here.",

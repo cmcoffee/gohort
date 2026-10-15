@@ -327,6 +327,13 @@ type AgentRecord struct {
 	// applyBuilderDeploymentState; drop it from that list and the toggle
 	// silently reverts.
 	LeadModel bool `json:"lead_model,omitempty"`
+	// LeadPlans, with LeadModel, has the lead PLAN rather than work: on the
+	// chat's own turn it gets no work tools, answers directly or hands the
+	// work to plan_set steps that run on the worker, then writes the reply
+	// from their results (runner_lead_plans.go). Inert without LeadModel,
+	// on a turn that cannot reach the lead, and on Builder, which plans
+	// already.
+	LeadPlans bool `json:"lead_plans,omitempty"`
 
 	// Exposed publishes this agent under the public /agents/ surface
 	// (apps/agents) so non-admin users can chat with it. The exposed
