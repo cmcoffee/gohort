@@ -2006,7 +2006,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	if d, ok := ctx.Deadline(); ok {
 		ctxDeadline = time.Until(d).Round(time.Millisecond).String()
 	}
-	Debug("[%s]: Sending request (body=%d bytes, think=%s, thinking_budget=%s, json=%v, budget=%s ctx_deadline=%s)", c.provider(), len(body), fmtThink(cfg.Think), fmtThinkBudget(payload.ThinkingBudgetTokens), cfg.JSONMode, budget, ctxDeadline)
+	Debug("[%s]: Sending request (route=%s, body=%d bytes, think=%s, thinking_budget=%s, json=%v, budget=%s ctx_deadline=%s)", c.provider(), routeForLog(cfg), len(body), fmtThink(cfg.Think), fmtThinkBudget(payload.ThinkingBudgetTokens), cfg.JSONMode, budget, ctxDeadline)
 	// Non-streaming: the whole body arrives as one read, so the
 	// operator's RequestTimeout (the header-wait / response budget)
 	// applies directly.
@@ -2242,8 +2242,8 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	if d, ok := ctx.Deadline(); ok {
 		ctxDeadline = time.Until(d).Round(time.Millisecond).String()
 	}
-	Debug("[%s]: Sending stream request (body=%d bytes, think=%s, thinking_budget=%s, json=%v, per_read=%s watchdog=%s req_timeout=%s ctx_deadline=%s)",
-		c.provider(), len(body), fmtThink(cfg.Think), fmtThinkBudget(payload.ThinkingBudgetTokens), cfg.JSONMode, streamRead, watchdogTimeout, c.api.RequestTimeout, ctxDeadline)
+	Debug("[%s]: Sending stream request (route=%s, body=%d bytes, think=%s, thinking_budget=%s, json=%v, per_read=%s watchdog=%s req_timeout=%s ctx_deadline=%s)",
+		c.provider(), routeForLog(cfg), len(body), fmtThink(cfg.Think), fmtThinkBudget(payload.ThinkingBudgetTokens), cfg.JSONMode, streamRead, watchdogTimeout, c.api.RequestTimeout, ctxDeadline)
 	resp, err := c.doRequest(ctx, body, streamRead)
 	if err != nil {
 		return nil, err
@@ -2509,4 +2509,17 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	}
 	logPrefillReuse(c.provider(), streamed)
 	return streamed, nil
+}
+
+// routeForLog names what a call is for in the request log: its route key, or
+// its caller, so a call seen at the model server can be traced to the feature
+// that made it. "unnamed" when it carries neither.
+func routeForLog(cfg ChatConfig) string {
+	if r := strings.TrimSpace(cfg.RouteKey); r != "" {
+		return r
+	}
+	if c := strings.TrimSpace(cfg.Caller); c != "" {
+		return "caller:" + c
+	}
+	return "unnamed"
 }
