@@ -814,6 +814,10 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// A scheduled fire reasons on the model the agent chose, as its direct
 	// chats and every dispatched run do (dispatchRouting).
 	firePin, fireRoute := dispatchRouting(ctx, subTurn)
+	// An agent that plans on the lead hands the fire's work to work_step
+	// (runner_lead_plans_dispatch.go). This loop has no lazy tool fallback
+	// or mid-run tool feed to turn off.
+	subTurn.applyDispatchLeadPlans(subSess, firePin, p.Prompt, &sysPrompt, &tools, gate.confirm)
 	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
 		TierOverride: firePin,
 		// A terminal-rule pre_input block refused this request outright: the loop

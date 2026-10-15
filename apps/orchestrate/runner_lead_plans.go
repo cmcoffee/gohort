@@ -16,7 +16,8 @@ package orchestrate
 //   - the reply is the synthesis round, which runs on the lead as it does for
 //     every plan.
 //
-// Only on the chat's own turn, which is the path that runs plans. A turn that
+// This is the chat's own turn, which runs plans; a run with no chat page plans
+// with work_step instead (runner_lead_plans_dispatch.go). A turn that
 // cannot reach the lead (Private, ForcePrivate), a machine phase, Builder (its
 // lead round has no work tools already), an agent with a tracked work plan
 // (no plan_set) and one held to exactly its own tools run as they would

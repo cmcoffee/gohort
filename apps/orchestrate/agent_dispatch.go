@@ -926,6 +926,13 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	}
 	subTurn.noteMountedTools(tools)
 	dispatchPin, dispatchRoute := dispatchRouting(ctx, subTurn)
+	// An agent that plans on the lead hands its work to work_step here
+	// (runner_lead_plans_dispatch.go), and the lead loses the routes back to
+	// the work tools it gave up.
+	dispatchFallback, dispatchDynamic := subTurn.lazyToolFallback, subTurn.dynamicNewTempTools(subSess)
+	if subTurn.applyDispatchLeadPlans(subSess, dispatchPin, message, &sysPrompt, &tools, confirm) {
+		dispatchFallback, dispatchDynamic = nil, nil
+	}
 	buildCheck := newDispatchBuildCheck(target, subSess)
 	// Started from a chat turn's tool call (delegate, a pipeline's agent
 	// stage): its round, the tool it just ran and its thinking show on that
@@ -991,8 +998,8 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
 		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
 		// surfaces tools the LLM loaded via load_tool this turn.
-		ToolFallbackResolver: subTurn.lazyToolFallback,
-		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
+		ToolFallbackResolver: dispatchFallback,
+		DynamicTools:         dispatchDynamic,
 		// Feed view_video's sampled frames to the model on the next round so a
 		// channel agent (phantom) actually sees a reel it was asked to watch.
 		DrainViewImages: subSess.DrainViewImages,
@@ -2175,6 +2182,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// as on the web turn.
 	if f := subTurn.machineToolFilter(); f != nil {
 		loopCfg.RoundToolFilter = f
+	}
+	// Last, once the caller's tier and the ask tool are in: an agent that
+	// plans on the lead hands its work to work_step (runner_lead_plans_dispatch.go).
+	if subTurn.applyDispatchLeadPlans(subSess, loopCfg.TierOverride, message, &loopCfg.SystemPrompt, &loopCfg.Tools, loopCfg.Confirm) {
+		loopCfg.ToolFallbackResolver, loopCfg.DynamicTools = nil, nil
 	}
 	resp, transcript, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	buildCheck.annotate(resp)

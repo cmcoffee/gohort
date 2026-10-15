@@ -1411,6 +1411,13 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		tools = append(tools, delegatedAskUserTool(ask))
 		abortTools = []string{"ask_user"}
 	}
+	// An agent that plans on the lead hands its work to work_step
+	// (runner_lead_plans_dispatch.go).
+	runConfirmFn := t.runConfirm(target.ID, subSess, subTurn.asksFirst)
+	runFallback, runDynamic := subTurn.lazyToolFallback, subTurn.dynamicNewTempTools(subSess)
+	if subTurn.applyDispatchLeadPlans(subSess, runPin, msg, &sysPrompt, &tools, runConfirmFn) {
+		runFallback, runDynamic = nil, nil
+	}
 	buildCheck := newDispatchBuildCheck(target, subSess)
 	// The target's own standing on the model, if it has one; else the
 	// caller's lane rides down (run_lane.go).
@@ -1429,7 +1436,7 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		Effort:         target.Effort,      // per-agent level; a budget above wins
 		// Asked of whoever is watching the calling turn; with nobody
 		// watching, queued for the owner (see runConfirm).
-		Confirm:             t.runConfirm(target.ID, subSess, subTurn.asksFirst),
+		Confirm:             runConfirmFn,
 		AskFirst:            subTurn.asksFirst, // its marks and the caller's (ask_first.go)
 		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
@@ -1447,8 +1454,8 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		// Custom-tool resolution, same as the channel/dispatch + web paths:
 		// lazyToolFallback resolves a direct call to a has-args custom tool;
 		// dynamicNewTempTools surfaces tools loaded via load_tool this turn.
-		ToolFallbackResolver: subTurn.lazyToolFallback,
-		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
+		ToolFallbackResolver: runFallback,
+		DynamicTools:         runDynamic,
 		FinishCheck:          buildCheck.finishCheck(),
 		FinishUnmet:          buildCheck.finishUnmet(),
 		// Whether the reply describes things that happened, as the two
