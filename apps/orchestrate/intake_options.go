@@ -125,8 +125,9 @@ func authoringTargets(udb Database, user, kind string) []intakeOption {
 
 // buildOnOptions lists what a new or changed thing of kind could be built on,
 // so the person names it in Builder's intake instead of Builder searching for
-// it or building its own: file stores (with their commands) and APIs for an
-// app, agent or tool; the user's tools and agents where those can call them.
+// it or building its own: file stores (with their commands), APIs, MCP servers
+// and the other attachable sources for an app, agent or tool; the user's tools
+// and agents where those can call them.
 // A value reads as what it is ("file store Intake (intake)"), since the ticked
 // values reach Builder as text, and carries no comma, which the form uses to
 // join them.
@@ -158,6 +159,27 @@ func buildOnOptions(udb Database, user, kind string) []intakeOption {
 		}
 		for _, c := range Secure().ListUser(user) {
 			out = append(out, intakeOption{Value: noComma("API " + c.Name), Label: "API: " + c.Name})
+		}
+		// MCP servers whose tools are offered to agents: a thing built on one
+		// calls its tools.
+		for _, m := range MCP().List() {
+			if m.Enabled && m.ExposeTools {
+				out = append(out, intakeOption{Value: noComma("MCP server " + m.Name), Label: "MCP server: " + m.Name})
+			}
+		}
+		// The other sources an agent can attach (systems, document spaces, an
+		// MCP server exposed as a source). File stores are listed above with
+		// their commands, and agents below with the other agents.
+		for _, g := range ReferenceGroups(user) {
+			if g.Kind == "files" || g.Kind == AgentReferenceKind {
+				continue
+			}
+			for _, it := range g.Items {
+				out = append(out, intakeOption{
+					Value: noComma("source " + it.Name + " (" + g.Kind + ":" + it.ID + ")"),
+					Label: g.Label + ": " + it.Name,
+				})
+			}
 		}
 	}
 	if want("app", "agent", "pipeline", "machine") {

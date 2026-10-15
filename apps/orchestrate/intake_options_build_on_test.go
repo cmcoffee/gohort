@@ -34,8 +34,20 @@ func TestBuildOnListsWhatAThingCanUse(t *testing.T) {
 		}
 		return strings.Join(out, "|")
 	}
+	// Another kind of attachable source (a system, a document space, an MCP
+	// server exposed as a source) is offered too.
+	RegisterReferenceSource(fakeRefSource{kind: "testfiles", label: "Test files"})
+	// An MCP server whose tools are offered is listed; one that is off is not.
+	if err := MCP().Save(MCPServerConfig{Name: "buildon-tracker", URL: "http://127.0.0.1:1/mcp", Enabled: true, ExposeTools: true}, ""); err != nil {
+		t.Fatal(err)
+	}
+	MCP().Save(MCPServerConfig{Name: "buildon-off", URL: "http://127.0.0.1:1/mcp", ExposeTools: true}, "")
+	t.Cleanup(func() { MCP().Delete("buildon-tracker"); MCP().Delete("buildon-off") })
 	app1 := labels("App")
-	for _, want := range []string{"File store: Intake (commands: Extract)", "File store: Analysis", "Tool: get_weather", "Agent: Investigator, senior"} {
+	if !strings.Contains(app1, "MCP server: buildon-tracker") || strings.Contains(app1, "buildon-off") {
+		t.Errorf("MCP servers: %s", app1)
+	}
+	for _, want := range []string{"File store: Intake (commands: Extract)", "File store: Analysis", "Tool: get_weather", "Agent: Investigator, senior", "Test files: Prod logs"} {
 		if !strings.Contains(app1, want) {
 			t.Errorf("App is missing %q: %s", want, app1)
 		}
