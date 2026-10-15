@@ -1,9 +1,12 @@
 package filestore
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -42,5 +45,53 @@ func TestBackgroundSettingIsNormalized(t *testing.T) {
 	}
 	if (StoreCommand{}).detachAfter() != 0 {
 		t.Error("a command left to the deployment set its own detach time")
+	}
+}
+
+// The Background switch on a mapped command's row turns it on and off without
+// touching Agents, and the row reports it so the switch shows its state.
+func TestTheBackgroundSwitch(t *testing.T) {
+	app, st, cmd := mappingFixture(t)
+	if _, err := app.proposeTools(st, cmd, map[string]any{"description": "d", "actions": `[{"name":"get","description":"Get.","command_template":"` + cmd.Command + ` get {folder}","params":{"folder":{"type":"string","path_scope":"files"}},"required":["folder"]}]`}); err != nil {
+		t.Fatal(err)
+	}
+	SetCommandApproved(app.DB, st.Slug, cmd.Name, true)
+	flip := func(on string) *httptest.ResponseRecorder {
+		r := asAdmin(t, httptest.NewRequest(http.MethodPost, "/filestore/api/commands/background?id="+st.Slug+"/"+cmd.Name, strings.NewReader(`{"background_on":`+on+`}`)), "admin")
+		AuthDB().Set(AuthTable, "user:admin", AuthUser{Username: "admin", Admin: true})
+		w := httptest.NewRecorder()
+		app.handleCommandBackground(w, r)
+		return w
+	}
+	if w := flip("true"); w.Code != 200 {
+		t.Fatalf("switch on: %d %s", w.Code, w.Body.String())
+	}
+	got, _ := LoadStoreCommand(app.DB, st.Slug, cmd.Name)
+	if got.Background != "always" || !got.Approved {
+		t.Errorf("after switching on: background=%q approved=%v", got.Background, got.Approved)
+	}
+	flip("false")
+	if got, _ := LoadStoreCommand(app.DB, st.Slug, cmd.Name); got.Background != "" || !got.Approved {
+		t.Errorf("after switching off: background=%q approved=%v", got.Background, got.Approved)
+	}
+}
+
+// Mapping a command that runs long has Builder suggest the switch, which it
+// cannot flip itself; once it is on, the suggestion stops.
+func TestMappingALongCommandSuggestsBackground(t *testing.T) {
+	app, st, cmd := mappingFixture(t)
+	acts := `[{"name":"get","description":"Get.","command_template":"` + cmd.Command + ` get {folder}","params":{"folder":{"type":"string","path_scope":"files"}},"required":["folder"]}]`
+	msg, err := app.proposeTools(st, cmd, map[string]any{"description": "d", "actions": acts, "runs_long": true})
+	if err != nil || !strings.Contains(msg, "suggest to the admin that they turn on Background") {
+		t.Errorf("no suggestion: %q %v", msg, err)
+	}
+	if msg, _ := app.proposeTools(st, cmd, map[string]any{"description": "d", "actions": acts}); strings.Contains(msg, "Background") {
+		t.Errorf("a command not marked long was given the suggestion: %q", msg)
+	}
+	c, _ := LoadStoreCommand(app.DB, st.Slug, cmd.Name)
+	c.Background = "always"
+	app.DB.Set(commandsTable, commandKey(c.Slug, c.Name), c)
+	if msg, _ := app.proposeTools(st, cmd, map[string]any{"description": "d", "actions": acts, "runs_long": "true"}); strings.Contains(msg, "suggest") {
+		t.Errorf("suggested a switch that is already on: %q", msg)
 	}
 }

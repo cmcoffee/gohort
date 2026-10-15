@@ -240,6 +240,7 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 					cmd.Label) + scope,
 				Parameters: map[string]ToolParam{
 					"description": {Type: "string", Description: "What this binary is for, in a sentence. It is what an agent reads before using it."},
+					"runs_long":   {Type: "boolean", Description: "True when using it typically takes more than a minute: a download, an extraction, a large scan, or a probe that kept you waiting. You do not decide how it runs; this tells you to suggest the Background switch to the admin."},
 					"actions": {Type: "string", Description: "JSON array of actions: [{\"name\":\"unpack\",\"description\":\"...\",\"command_template\":\"/opt/bin/cap unpack {folder}\",\"params\":{\"folder\":{\"type\":\"string\",\"description\":\"...\"}},\"required\":[\"folder\"]}]. " +
 						"Every {placeholder} in a command_template must be declared in that action's params. " +
 						"A parameter that takes a FILE or FOLDER from this store must declare \"path_scope\":\"files\", that is what turns its name into a real path inside this store when the tool runs; without it the command receives the bare name and finds nothing. " +
@@ -307,8 +308,12 @@ func (T *FileStoreApp) proposeTools(st Store, cmd StoreCommand, args map[string]
 	// Never live on save: SaveCommandTools switches Agents off, so a re-map
 	// of an approved command is approved again before agents get it.
 	live := "and it cannot be called yet: an admin turns Agents on for this command, on this row, and that switch is the approval"
-	return fmt.Sprintf("Mapped %s: %s as %s, %s. Call this again to correct it.",
-		cmd.Label, countOf(len(saved.Tools), "action", "actions"), saved.ToolName(), live), nil
+	out := fmt.Sprintf("Mapped %s: %s as %s, %s. Call this again to correct it.",
+		cmd.Label, countOf(len(saved.Tools), "action", "actions"), saved.ToolName(), live)
+	if runsLong := strings.EqualFold(fmt.Sprint(args["runs_long"]), "true"); runsLong && saved.Background != "always" {
+		out += " It runs long, so suggest to the admin that they turn on Background, the switch beside Agents on this command's row: an agent's run of it then goes straight to the background, and the agent is woken with the result instead of waiting on it. Say it in your reply; the switch is theirs, not yours."
+	}
+	return out, nil
 }
 
 // templatePlaceholders lists the {name} placeholders in a command template.

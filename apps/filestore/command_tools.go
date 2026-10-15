@@ -393,3 +393,41 @@ func (T *FileStoreApp) handleCommandApprove(w http.ResponseWriter, r *http.Reque
 		map[bool]string{true: "approved", false: "withdrew"}[body.Approved], cmd.Name, cmd.Slug)
 	writeJSON(w, cmd)
 }
+
+// handleCommandBackground switches whether an agent's run of the command goes
+// straight to the background (the row's Background switch). Admin-only, and
+// not an approval: Agents stays as it was.
+//
+//	POST /filestore/api/commands/background?id=<slug>/<name>  {"background_on": bool}
+func (T *FileStoreApp) handleCommandBackground(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	if !adminOnly(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug, name, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "/")
+	var body struct {
+		On bool `json:"background_on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	cmd, ok := LoadStoreCommand(T.DB, slug, RefToolSlug(name))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	cmd.Background = ""
+	if body.On {
+		cmd.Background = "always"
+	}
+	T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
+	Log("[filestore] %s set %s on %s to run in the background: %v", AuthCurrentUser(r), cmd.Name, cmd.Slug, body.On)
+	writeJSON(w, cmd)
+}

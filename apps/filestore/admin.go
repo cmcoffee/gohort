@@ -109,6 +109,13 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								{Type: "toggle", Field: "approved", Label: "Agents",
 									OnlyIf: "mapped_ok",
 									PostTo: "/filestore/api/commands/approve?id={cmd}"},
+								// How an agent's run of it goes, beside whether
+								// agents may run it: on, the agent hears it has
+								// started and is woken with the result. Not an
+								// approval, so flipping it leaves Agents as is.
+								{Type: "toggle", Field: "background_on", Label: "Background",
+									OnlyIf: "mapped_ok",
+									PostTo: "/filestore/api/commands/background?id={cmd}"},
 								//
 								// Addressed by {cmd}, never by {name}. A nested
 								// table's placeholders are filled TWICE: once at
@@ -497,6 +504,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/map/chat/sessions/", T.handleMapSessions)
 	T.HandleFunc("/api/map/chat/cancel", T.handleMapCancel)
 	T.HandleFunc("/api/commands/approve", T.handleCommandApprove)
+	T.HandleFunc("/api/commands/background", T.handleCommandBackground)
 	T.HandleFunc("/api/commands/uses", T.handleCommandUses)
 	T.HandleFunc("/api/map/try", T.handleTryCommand)
 	T.HandleFunc("/api/map/try-args", T.handleTryArgs)
@@ -840,6 +848,7 @@ func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 				// mapped_ok gates the Agents switch: a toggle offering to
 				// enable nothing is a question the reader cannot answer.
 				"mapped_ok": a.Mapped(), "approved": a.Approved,
+				"background": a.Background, "background_on": a.Background == "always",
 				"input_label": a.InputLabel, "help": a.Help, "uses": a.usesLabel(),
 			})
 		}
