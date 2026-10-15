@@ -23,6 +23,9 @@ func TestTheIntakeFormRunsAsSteps(t *testing.T) {
 		"collectIntake(fields, built.inputs, built.isShown)",
 		// Live options follow the answers they name, and a stale reply loses.
 		"if (lastURL[f.name] !== url) return;",
+		// A checklist can list live options too, keeping what is still ticked.
+		"if ((f.type || 'text') === 'checklist') { fillChecklist(f, e.input, url); return; }",
+		"if (keep[cb.value]) cb.checked = true;",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("the intake renderer lost a step behaviour: %q", want)

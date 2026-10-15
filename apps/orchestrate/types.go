@@ -1818,7 +1818,8 @@ type IntakeField struct {
 	// form into steps: pick an action, then a kind, then the fields that
 	// kind needs. A hidden field is neither required nor sent.
 	ShowWhen string `json:"show_when,omitempty"`
-	// OptionsFrom fetches a select's options instead of listing them: a URL
+	// OptionsFrom fetches a select's or a checklist's options instead of
+	// listing them: a URL
 	// relative to the app, where {field} is replaced by that field's current
 	// answer, answering [{value, label}]. Refetched when an answer it names
 	// changes, so "Which one?" lists the user's own agents or tools of the

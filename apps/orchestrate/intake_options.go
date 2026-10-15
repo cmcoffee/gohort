@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appstores"
 )
 
 // intakeOption is one choice for a select.
@@ -27,6 +28,8 @@ type intakeOption struct {
 //
 //	authoring&kind=agent|tool|app|pipeline|machine: the user's own things of
 //	that kind, the targets Builder can change or fix.
+//	build_on&kind=...: what the thing being built could use, for "What should
+//	it build on?" (buildOnOptions).
 func (T *OrchestrateApp) handleIntakeOptions(w http.ResponseWriter, r *http.Request) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -36,6 +39,8 @@ func (T *OrchestrateApp) handleIntakeOptions(w http.ResponseWriter, r *http.Requ
 	switch r.URL.Query().Get("source") {
 	case "authoring":
 		opts = authoringTargets(udb, user, r.URL.Query().Get("kind"))
+	case "build_on":
+		opts = buildOnOptions(udb, user, r.URL.Query().Get("kind"))
 	default:
 		http.Error(w, "unknown option source", http.StatusBadRequest)
 		return
@@ -115,5 +120,62 @@ func authoringTargets(udb Database, user, kind string) []intakeOption {
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Label) < strings.ToLower(out[j].Label) })
+	return out
+}
+
+// buildOnOptions lists what a new or changed thing of kind could be built on,
+// so the person names it in Builder's intake instead of Builder searching for
+// it or building its own: file stores (with their commands) and APIs for an
+// app, agent or tool; the user's tools and agents where those can call them.
+// A value reads as what it is ("file store Intake (intake)"), since the ticked
+// values reach Builder as text, and carries no comma, which the form uses to
+// join them.
+func buildOnOptions(udb Database, user, kind string) []intakeOption {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	want := func(kinds ...string) bool {
+		for _, k := range kinds {
+			if k == kind {
+				return true
+			}
+		}
+		return false
+	}
+	noComma := func(s string) string { return strings.ReplaceAll(s, ",", " ") }
+	var out []intakeOption
+	if want("app", "agent", "tool", "pipeline", "machine") {
+		if cat, ok := appstores.Provider.(appstores.Catalog); ok && appstores.Provider != nil {
+			for _, st := range cat.Stores(user, "") {
+				label := "File store: " + st.Name
+				var cmds []string
+				for _, c := range st.Commands {
+					cmds = append(cmds, chFirst(c.Label, c.Name))
+				}
+				if len(cmds) > 0 {
+					label += " (commands: " + strings.Join(cmds, ", ") + ")"
+				}
+				out = append(out, intakeOption{Value: noComma("file store " + st.Name + " (" + st.Store + ")"), Label: label})
+			}
+		}
+		for _, c := range Secure().ListUser(user) {
+			out = append(out, intakeOption{Value: noComma("API " + c.Name), Label: "API: " + c.Name})
+		}
+	}
+	if want("app", "agent", "pipeline", "machine") {
+		var tools []intakeOption
+		for _, p := range LoadPersistentTempTools(RootDB, user) {
+			tools = append(tools, intakeOption{Value: noComma("tool " + p.Tool.Name), Label: "Tool: " + p.Tool.Name})
+		}
+		sort.SliceStable(tools, func(i, j int) bool { return strings.ToLower(tools[i].Label) < strings.ToLower(tools[j].Label) })
+		out = append(out, tools...)
+		var agents []intakeOption
+		for _, a := range listAgents(udb, user) {
+			if fleetHidden(a.ID) || isBuilderAgent(a.ID) || a.Hidden || isAppAgent(a.ID) {
+				continue
+			}
+			agents = append(agents, intakeOption{Value: noComma("agent " + a.Name + " (id: " + a.ID + ")"), Label: "Agent: " + a.Name})
+		}
+		sort.SliceStable(agents, func(i, j int) bool { return strings.ToLower(agents[i].Label) < strings.ToLower(agents[j].Label) })
+		out = append(out, agents...)
+	}
 	return out
 }

@@ -77,7 +77,7 @@ func TestBuilderSeed_HasStartingPoints(t *testing.T) {
 	// live, so a fix arrives with the thing to fix already named.
 	var target *IntakeField
 	for i := range form {
-		if form[i].OptionsFrom != "" {
+		if form[i].Name == "target" {
 			target = &form[i]
 		}
 	}

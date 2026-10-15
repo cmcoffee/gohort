@@ -8841,7 +8841,14 @@ select.ui-orch-intake-input {
               });
             }
             var knownVals = {};
-            (f.options || []).forEach(function(o) {
+            // Live options (options_from) are filled by refresh(); until then,
+            // and on a replayed answer that is never refetched, the picks
+            // already made show as ticked boxes of their own.
+            var staticOpts = f.options || [];
+            if (f.options_from) {
+              staticOpts = Object.keys(selected);
+            }
+            staticOpts.forEach(function(o) {
               var val = optionValue(o);
               knownVals[val] = true;
               var label = optionLabel(o);
@@ -9045,6 +9052,7 @@ select.ui-orch-intake-input {
             });
             if (missing || lastURL[f.name] === url) return;
             lastURL[f.name] = url;
+            if ((f.type || 'text') === 'checklist') { fillChecklist(f, e.input, url); return; }
             var sel = e.input, keep = sel.value;
             sel.innerHTML = '';
             var wait = document.createElement('option');
@@ -9074,6 +9082,48 @@ select.ui-orch-intake-input {
               sel.appendChild(err);
               delete lastURL[f.name];
             });
+          });
+        }
+        // fillChecklist loads a live checklist's boxes, keeping what is ticked
+        // and the Other row, so changing an earlier answer re-lists without
+        // losing the picks that still apply.
+        function fillChecklist(f, box, url) {
+          var keep = {};
+          box.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
+            if (!cb.dataset.otherBox && cb.checked) keep[cb.value] = true;
+          });
+          var other = box.querySelector('.ui-orch-intake-checklist-other');
+          Array.prototype.slice.call(box.children).forEach(function(c) { if (c !== other) box.removeChild(c); });
+          var note = document.createElement('div');
+          note.className = 'ui-orch-intake-help';
+          note.textContent = 'Loading…';
+          box.insertBefore(note, other);
+          fetch(url, {credentials: 'same-origin'}).then(function(r) { return r.ok ? r.json() : []; }).then(function(list) {
+            if (lastURL[f.name] !== url) return;
+            box.removeChild(note);
+            if (!list || !list.length) {
+              note.textContent = 'Nothing to pick here yet.';
+              box.insertBefore(note, other);
+              return;
+            }
+            list.forEach(function(o) {
+              var item = document.createElement('label');
+              item.className = 'ui-orch-intake-checklist-item';
+              var cb = document.createElement('input');
+              cb.type = 'checkbox';
+              cb.value = optionValue(o);
+              if (keep[cb.value]) cb.checked = true;
+              cb.addEventListener('change', changed);
+              var txt = document.createElement('span');
+              txt.textContent = optionLabel(o);
+              item.appendChild(cb);
+              item.appendChild(txt);
+              box.insertBefore(item, other);
+            });
+          }).catch(function() {
+            if (lastURL[f.name] !== url) return;
+            note.textContent = 'Could not load the list.';
+            delete lastURL[f.name];
           });
         }
         // The rail stops at the last step on screen, which moves as steps
