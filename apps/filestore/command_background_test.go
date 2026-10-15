@@ -1,6 +1,7 @@
 package filestore
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -93,5 +95,21 @@ func TestMappingALongCommandSuggestsBackground(t *testing.T) {
 	app.DB.Set(commandsTable, commandKey(c.Slug, c.Name), c)
 	if msg, _ := app.proposeTools(st, cmd, map[string]any{"description": "d", "actions": acts, "runs_long": "true"}); strings.Contains(msg, "suggest") {
 		t.Errorf("suggested a switch that is already on: %q", msg)
+	}
+}
+
+// A command that exits while a process it started still holds its output
+// pipe is done when it exits, not when that process does: the wait stopped
+// there and the app kept reporting it as running.
+func TestACommandIsDoneWhenItExits(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "leaves-a-helper.sh")
+	os.WriteFile(bin, []byte("#!/bin/sh\necho downloaded\nsleep 60 &\nexit 0\n"), 0o755)
+	t0 := time.Now()
+	out, err := runRegisteredCommand(context.Background(), t.TempDir(), bin)
+	if took := time.Since(t0); took > commandWaitDelay+5*time.Second {
+		t.Fatalf("waited %s for a command that exited at once", took)
+	}
+	if err != nil || out != "downloaded" {
+		t.Errorf("out=%q err=%v", out, err)
 	}
 }

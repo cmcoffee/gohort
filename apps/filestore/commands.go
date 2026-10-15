@@ -40,10 +40,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,6 +101,10 @@ func MigrateStoreCommands(db Database) int {
 // and killing one halfway leaves a folder half-processed, which is worse
 // than waiting.
 const commandTimeout = 30 * time.Minute
+
+// commandWaitDelay is how long a command's output pipe is waited on after the
+// command exits (or is stopped) before it is closed.
+const commandWaitDelay = 5 * time.Second
 
 // StoreCommand is one registered command.
 type StoreCommand struct {
@@ -296,6 +302,13 @@ func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) 
 	defer cancel()
 	c := exec.CommandContext(ctx, bin, args...)
 	c.Dir = dir
+	// Done means the command exited, not that every process holding its
+	// output pipe did: a helper it left behind kept the pipe open, the wait
+	// never returned, and the app went on reporting the command as running
+	// long after it had finished. WaitDelay stops waiting for the pipe a few
+	// seconds after the exit; the group makes Stop reach the helpers too.
+	c.WaitDelay = commandWaitDelay
+	setCommandGroup(c)
 	var buf bytes.Buffer
 	var w io.Writer = &buf
 	if act != nil {
@@ -315,6 +328,12 @@ func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) 
 		} else {
 			err = c.Wait()
 		}
+	}
+	// The command finished and only a helper's hold on the pipe was cut:
+	// that is the command's own exit, not a failure.
+	if errors.Is(err, exec.ErrWaitDelay) && c.ProcessState != nil && c.ProcessState.Success() {
+		Debug("[filestore.command] %s exited; stopped waiting on its output pipe, held open by a process it left running", filepath.Base(bin))
+		err = nil
 	}
 	out := buf.Bytes()
 	text := strings.TrimSpace(string(out))
