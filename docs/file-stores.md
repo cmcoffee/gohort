@@ -1,6 +1,7 @@
 # File stores: a folder an agent can search
 
-Status: built (v0.6.096). `apps/filestore`.
+Status: built (v0.6.096). `apps/filestore`. Commands for agents, background runs, temporary stores,
+pulls between stores and app grants: v0.8.223 to v0.8.251 (2026-10-14).
 
 ## Why it exists
 
@@ -25,7 +26,12 @@ Subfolders are optional and require no declaration. Drop `scan-2026-08-13/` into
 immediately there; the tools take an optional `within` to scope to it. **That is the whole setup per
 scan**, which is the point.
 
-Three tools per store: `list_<slug>`, `search_<slug>`, `read_<slug>`.
+Four read tools per store: `list_<slug>`, `search_<slug>`, `read_<slug>`, and
+`list_<slug>_commands` (what an admin has registered against it, and the admin's guide to each).
+Beyond reading, an agent gets only what an admin chose to give it: a `pull_<slug>` tool when the
+store pulls from another and **Let attached agents pull** is on, and the tools of each command an
+admin has mapped and approved (see [Commands for agents](#commands-for-agents)). It never gets a
+free-form way to write into a store or run something in it.
 
 ## The caps are not configurable
 
@@ -131,13 +137,33 @@ expands to tens of thousands of files and this runs over every folder of every s
 deep may not refresh it, so leave headroom rather than setting the window to the exact age you care
 about.
 
-## Actions on a folder
+### Temporary stores
+
+**Temporary store** is for a working area whose contents are copied onward: raw downloads that are
+extracted and pulled into another store. Each folder is removed on its own timer, **Keep each folder
+for (hours)** (24 by default), checked every 15 minutes, with no admin sweep. A folder that a
+command, a copy or an upload is using is never removed, whatever its age (`core/pathhold`). Leave
+it off for a store that holds the only copy of something: those wait for an admin.
+
+### Size cap and free space
+
+**Size cap (GB)** refuses work that would take the store past it: uploads, commands and copies into
+the store fail saying how full it is. Nothing is deleted to make room; refusing is the only safe
+answer for a store that may hold evidence.
+
+Separately, every write on the disk keeps a free-space floor, **Keep free on disk (GB)** under Admin,
+Limits (10 GB by default; a percentage floor exists and is off by default, since 5% of a large disk
+can be far more than 10 GB). A copy or a command that would cross it is refused up front and stopped
+if it gets there while running (`core/diskguard`).
+
+## Commands on a folder
 
 `ExpandArchives` deliberately refuses `.enc` / `.gpg` / `.pgp` / `.aes` and reports them as
 **unopened** rather than pretending: a store that looks thin because half of it is still encrypted
 is a different problem from one that is thin because nothing was captured.
 
-What happens next is an **action**: an admin-registered command that runs against ONE folder.
+What happens next is a **command**: an admin-registered binary that runs against ONE folder, from
+a button on the store's page.
 Decrypting is the first one, and the reason this is a list rather than a `decrypt_command` field.
 Redacting before anyone reads it, unpacking a proprietary container, running an extractor that turns
 a binary dump into text, building an index: all of them are "run a registered binary against this
@@ -151,7 +177,7 @@ second field, a second endpoint and a second UI.
 ```
 
 ```
-POST /filestore/api/action?slug=<store>&within=<folder>&action=<name>
+POST /filestore/api/commands/run?slug=<store>&within=<folder>&command=<name>
      {}              → one phase: {"output": …} - two phases: {"challenge": …, "input_label": …}
      {"input":"…"}   → two phases, second call: {"output": …}
 ```
@@ -173,10 +199,153 @@ anything runs.
 **The input is never logged.** On a two-phase action it is the secret half of an out-of-band
 exchange, and a log line is the one place it would outlive the request.
 
-Registering an action is admin-only, and for a sharper reason than the store list: it names a binary
+Registering a command is admin-only, and for a sharper reason than the store list: it names a binary
 the server will execute. That is the same decision as registering the directory it runs against, and
-neither is a user's to make. Running one takes the WRITE grant (`Let assigned users upload`), because
-it rewrites the folder.
+neither is a user's to make. Running one from the page takes the WRITE grant (`Let assigned users
+upload`), because it rewrites the folder. An input starting with `-` is refused, since the binary
+would read it as an option rather than a value.
+
+## Long runs
+
+A download or an extraction takes as long as its input makes it take, so nothing that runs a
+command has a fixed time limit. Instead (`core/bgrun`, Admin, Timeouts and Limits):
+
+- **Move a running tool to the background after** (60s): an agent's call that is still running
+  then leaves the turn, keeps running as a task, and reports back in the conversation when it ends.
+  The live pill shows it with its latest output line and a Stop button.
+- **Stop a running tool after no output for** (5 minutes): the limit that catches a hung run. A
+  command that prints nothing while it works is kept alive by a heartbeat, so only real silence
+  counts.
+- **Stop a running tool after it writes (GB)** (50) and the free-space floor stop a run that would
+  fill the disk.
+
+An app's actions run the same way (see [Apps that use a store](#apps-that-use-a-store)).
+
+## Commands for agents
+
+A registered command is a button for a person. An agent reaches one only through tools an admin
+built for it, and only after the admin approved them: a named tool carries intent, a free-form
+command line does not, and approval only means something if the thing approved is the thing that
+runs. Each command row has the panels for this.
+
+**Show it how.** The admin runs the command here, in a box that takes only its arguments (quote a
+value with spaces; nothing is expanded, no wildcards, variables or pipes). Each run is kept as an
+example, with how it exited and the end of what it printed, and marked as a new use or the next
+step of one, so a two-phase command (a challenge, then the response) reads as one use in two steps.
+The admin can edit a run's note, move it to another use, or remove it.
+
+**Uses.** Two fields:
+
+- **Allowed uses**: the argument lines after the binary, one per line, with `{placeholders}` for
+  what the agent fills in (`download --src={source} --dst={folder}`). Each line becomes one tool,
+  and **an agent can run nothing else**. Lines written here tell Builder what to map; Builder adds
+  every line it maps.
+- **How to use it**: a markdown guide for what runs cannot show (that a signature is answered by
+  someone in support, that a response works once, where the output lands). Builder reads it first
+  when mapping, and agents read it in `list_<slug>_commands`; each mapped tool points there.
+
+**Map with Builder.** An admin-only conversation with Builder about this one command, opened from
+its row. Builder reads the runs (`admin_examples`) and the guide, runs the command itself with any
+arguments to learn it (`probe_command`: it is told a probe is real, runs as the server's account in
+the store's top folder, and to ask before one that would change anything), and writes the mapping
+(`propose_tools`). Earlier mapping conversations are listed in the panel and can be reopened. This is
+the ONLY place a command's tools can be written: no other Builder session or agent can change them.
+
+**Mapping** shows what Builder wrote: each action, its line and its parameters.
+
+**Agents.** The switch on the row is the approval. What Builder wrote is inert until it is on, and a
+re-map or a change to the allowed uses turns it off again. Changing only the guide keeps it on: that
+changes what agents are told, not what they can run.
+
+What an approved command gives an attached agent is one tool per allowed line,
+`<command>_<store>_<action>`, and a call:
+
+- runs the binary and that line exactly as written, directly as the server's account with **no
+  shell and no sandbox**, the way a person's click runs (so a binary with its own saved login works);
+- fills each placeholder with ONE argument's worth of value, whatever it contains (the line itself
+  is split the way a person typing it means it, so a quoted part of it stays one argument);
+- refuses a value that would stand alone as an option (starts with `-`);
+- proves a file or folder value is inside the store and passes its full path (`path_scope`);
+- runs as a background-capable call, reporting back when it outlives the turn.
+
+A store's folders are `PathScope.TrustedOnly`: they resolve only for these admin-mapped tools (and
+for an admin-owned servitor system). An agent's own scripts, its workspace shell and any tool a
+non-admin built cannot reach them, so a binary found some other way still cannot touch the store.
+
+Before v0.8.249 a command could also be "open", its mapped lines run in the sandbox. That mode is
+gone: at start each such command's mapped lines become its allowed uses, and one that was approved
+is switched off and logged, since its lines now run directly. Turn it back on from its row.
+
+## Pulling between stores
+
+The flow this serves: files land in a private working store (often a temporary one), a command
+prepares them there (an extractor writing a `prepared/` folder), and the store agents read copies
+the prepared part across. The working store is never attached to an agent.
+
+**Pull from another store** is set on the RECEIVING store, and that link is the permission. **Part
+of each folder to copy** is the subfolder copied when a folder is pulled (`prepared` by default; `.`
+copies the whole folder); a file is always copied whole.
+
+- A **copy, never a move**: the source keeps its own until its lifetime or retention removes it.
+- A pull into a folder that already exists **adds and updates**, never removes. An agent or an app
+  can ask for `replace`, which clears it first; the panel never does.
+- Nothing half-copied is visible: the copy goes into a hidden `.incoming-<item>` and is renamed into
+  place when complete, and a stopped copy removes it. Both sides are held so neither store's sweep
+  can take them mid-copy.
+- It is refused up front when the receiving store's cap or the disk's floor has no room, and
+  checked again as it goes.
+
+Three ways to start one, all through one registry, so a second request for the same item joins the
+first rather than starting another copy: the **Pull** panel on the receiving store's row (admin),
+an app granted pulling, and `pull_<slug>(item)` for an attached agent when **Let attached agents
+pull** is on. The agent sees the other store's item NAMES so it can ask for one, never their
+contents.
+
+The panel's endpoints, admin-only:
+
+```
+GET  /filestore/api/pull/items?slug=<dest>                 the source's files and folders, and which are here
+POST /filestore/api/pull?slug=<dest>&item=<name>           start (a folder adds to a copy already here)
+GET  /filestore/api/pull/progress?slug=<dest>&item=<name>  {"progress"} while it runs, {"outcome"} after
+POST /filestore/api/pull/cancel?slug=<dest>&item=<name>    stop it
+```
+
+## Apps that use a store
+
+A store is deployment configuration, so which app may use one is an admin's decision, made under
+**Apps that may use it** on the store's row. The grant belongs to the APP (owner and slug) and covers
+whoever uses the app, the way a tool carries what its author was allowed. Reading is always part of
+it; **Write into it**, **Run its commands** and **Pull files and folders in** are each granted on
+their own.
+
+The app's scripts reach a granted store three ways (`from gohort import ...`):
+
+- `store_path("<store>")`: the store's folder mounted in the script's sandbox, read-only, or
+  read-write with the write grant (add, change and delete files with ordinary file code).
+- `store_command("<store>", "<folder>", "<command>", input=...)`: a registered command on one
+  folder, in the button's shape, `<cmd> <folder> [input]`. A two-phase one returns its challenge,
+  and a second call with `input` finishes it. A command that needs more arguments (a download with a
+  source) is registered as a small wrapper that takes the source as its input.
+- `store_pull("<store>", "<item>", replace=False)`: a file or folder copied in from the store it
+  pulls from.
+
+An app's actions run as jobs: a request waits briefly, and a slow action carries on with its
+button showing a spinner, the latest line its script printed, and Stop, rejoined when the page is
+reopened. The live pill lists it too.
+
+**The app's agent.** In the app's own chat (since v0.8.251), its agent gets:
+
+- each **action** as a tool (`<app>_<action>`): a call is the person's click, run as them with their
+  records, shown on the button's spinner and stoppable there; an action with a confirm prompt asks
+  the person first; the inputs an action declares are the tool's parameters;
+- each **data source** as `read_<app>_<name>`, the JSON the page draws;
+- `<app>_status`: the person's actions running now with the latest line each printed (what a
+  progress bar on the page draws from), those that ended in the last half hour and how, and the
+  newest records.
+
+So the agent can do what the page's buttons do and see what the page shows, under the app's grants,
+and nothing more. Outside the app's chat it gets none of these, and the page's own `ask` reaches the
+agent with no tools at all.
 
 ## Handing off to a conversation
 
@@ -220,6 +389,8 @@ Checked at every door, not just in the picker:
 - the path scope (`resolveScope`): the door a minted servitor command tool comes through, and the
   one that would otherwise be missed
 - upload, **including for admins**: admin manages the list, membership decides reach
+- the store's folders as a path scope are `TrustedOnly`: only admin-mapped command tools and an
+  admin-owned servitor system resolve them (see [Commands for agents](#commands-for-agents))
 
 A refusal on the path scope says "no file store called X **you can reach**" rather than "not yours",
 because confirming a store exists is a fact the caller can do nothing with and should not have.
@@ -228,11 +399,13 @@ Empty stays open deliberately. Closing by default would silently break every sto
 this existed, and a security change that presents as "the tools vanished" is one nobody diagnoses
 correctly.
 
-## Running a command against one
+## Running a command through servitor
 
-A store answers "where does X appear". To RUN something over the same folder (unpack an archive, run
-an extractor), add a servitor appliance of type `command` and connect the agent to it. Three wires,
-and they are separate on purpose:
+The way to let agents run something over a store is now to register the binary on the store and map
+it ([Commands for agents](#commands-for-agents)). The older route, a servitor appliance of type
+`command` with a parameter scoped to the store, still works, but since v0.8.235 only on a system an
+**admin** owns: the store's folders are `TrustedOnly`, and a user's own system cannot reach them.
+On such a system, the wires are separate on purpose:
 
 1. **The store is assigned to you** (admin): `AllowsUser`.
 2. **The agent is connected to the command appliance** in servitor, that is what mints the command
@@ -271,11 +444,13 @@ machine in its own right before it gets that machine's tools.
 
 ## Getting files in
 
-Two routes, deliberately:
-
 - **Put them there.** scp, a mount, a cron job. Nothing to call.
 - **Upload.** `POST /filestore/api/upload?slug=<store>&within=<subfolder>`, multipart, streamed.
-  The subfolder is created if absent. Admin-gated: it writes to the host filesystem.
+  The subfolder is created if absent. An admin, or an assigned user when **Let assigned users
+  upload** is on: it writes to the host filesystem.
+- **A command.** A registered download command run from the page, by an app granted commands, or by
+  an agent through its mapped tools.
+- **A pull** from another store ([Pulling between stores](#pulling-between-stores)).
 
 Writing takes a stricter path rule than reading. `within` must be a single name, because cleaning
 would happily turn `../escaped` into `escaped` and `/etc/cron.d` into `etc/cron.d`: contained,
@@ -291,11 +466,10 @@ different problem from one that is thin because nothing was captured.
 
 ## What it deliberately does not do
 
-**Run commands.** A servitor local command appliance (`Type=="command"`, `WorkDir` on the folder)
-already mints frozen command templates behind an owner approval gate, with typed parameters quoted
-at runtime so a placeholder can never contribute syntax. A second command path here would be a
-weaker copy. The two compose: this answers "where does X appear", the appliance answers "run the
-extractor over it".
+**Let an agent act freely.** An agent searches and reads a store directly; everything else it does
+there goes through a tool an admin made and approved: a mapped command's allowed lines, a pull, or
+an app's actions under the app's grant. There is no generic write, delete or run tool for agents,
+and a model-written command line never runs.
 
 **Compete with servitor bundles.** A `Type=="bundle"` appliance is better on every axis except
 setup cost: encryption at rest, line-slice storage built for hundred-megabyte files, nested archive
@@ -310,27 +484,19 @@ matter how carefully the names were checked), declared sizes ignored in favour o
 nesting depth-capped.
 
 **Replace tools/files.** That is the session *workspace*: ephemeral, per-session, read AND write.
-This is persistent, admin-registered, read-only. Same mechanics, different mount and different
-trust. Folding both onto one engine is a real lift-to-core candidate.
+This is persistent and admin-registered, read-only to agents. Same mechanics, different mount and
+different trust. Folding both onto one engine is a real lift-to-core candidate.
 
 ## The agent
 
-`extras/investigator.agent.json`, importable at `POST /orchestrate/api/agents/import`. Two config flags carry
-the memory requirement, and the prompt has to agree with both:
+The original `extras/investigator.agent.json` was replaced in v0.6.107 by a machine,
+`extras/investigation.machine.json`, which triages, commits to one hypothesis and tests it against
+independent evidence. See [docs/investigation.md](investigation.md). Attach a store to whichever
+agent runs it.
 
-- `memory_mode: "agent"`: the Lessons-learned directive rather than the personalization one.
-- `disable_inferred: true`: Reference Memory off. This is the layer that would compound one
-  incident's findings into the next investigation by similarity, which is the actual mechanism by
-  which an agent mixes up two issues.
-- The prompt says which is which, because the mode is a **directive to the model, not a gate on the
-  write**: *"If you cannot phrase a lesson without naming this particular incident, it is not a
-  lesson."*
-
-Per-investigation specifics live in the session transcript and are discarded with it. Nothing needs
-per-bundle memory scoping, because nothing durable is written about a bundle.
-
-`core/machine_extras_test.go`'s sibling `apps/orchestrate/extras_agent_test.go` pins that those two
-flags and the prompt keep agreeing.
+The memory advice still stands: for an agent that investigates one bundle after another, keep its
+memory to lessons rather than incident specifics, and turn Reference Memory off, since that is the
+layer that would carry one incident's findings into the next by similarity.
 
 ## Setting it up
 
@@ -341,16 +507,16 @@ curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/filestore/api/stores \
   -H 'Content-Type: application/json' \
   -d '{"name":"Build logs","path":"/var/log/builds","description":"Build logs, one folder per CI run."}'
 
-# 2. Create the agent.
-curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/orchestrate/api/agents/import \
-  -H 'Content-Type: application/json' -d @extras/investigator.agent.json
+# 2. Attach the store to an agent: Configure → Sources → File stores.
 
-# 3. Attach the store to it: agent editor → Sources → File stores.
-
-# 4. Drop a scan in, or upload one.
+# 3. Drop a scan in, or upload one.
 curl -sS -b cookies.txt -F 'file=@server.log' \
   'http://127.0.0.1:8181/filestore/api/upload?slug=build_logs&within=scan-2026-08-13'
 ```
 
 Then open a session and name the scan. Next scan is a new subfolder and a new session; there is
 nothing to configure between them.
+
+To let the agent run something there as well: register the binary on the store's row (Commands),
+run it a few times under **Show it how**, write its **Uses** and guide, map it under **Map with
+Builder**, check what was written under **Mapping**, and turn **Agents** on.

@@ -85,7 +85,7 @@ func validatePull(db Database, s Store) error {
 	sub := strings.Trim(strings.TrimSpace(s.PullSubpath), "/")
 	if sub != "" && sub != "." {
 		if filepath.IsAbs(sub) || strings.Contains(sub, "..") || filepath.Clean(sub) != sub {
-			return Error("the part of each case to copy must be a plain folder name inside the case, like prepared: " + s.PullSubpath)
+			return Error("the part of each folder to copy must be a plain folder name inside it, like prepared: " + s.PullSubpath)
 		}
 	}
 	return nil

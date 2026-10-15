@@ -27,8 +27,8 @@ func (T *FileStoreApp) adminSection() ui.Section {
 		Group:    "Files",
 		Title:    "File stores",
 		Wide:     true,
-		Subtitle: "Folders on this server an agent can SEARCH and READ, never write.",
-		Detail:   "Attach a store to an agent, under Sources, and it gets tools to list what is there, search it by regular expression, and read a window around a hit, never a whole file.\n\nSubfolders are optional: a parent whose subfolders are per-ticket or per-run works, and so does a flat folder of files. Logs are the obvious case, but anything you would grep rather than embed belongs here: config trees, exports, source dumps.\n\nTo RUN commands against a folder, to unpack an archive or run an extractor, add a servitor system of type \"command\" with its Work Dir set to the same path. That path already mints approved command tools, and this one deliberately does not duplicate it.",
+		Subtitle: "Folders on this server agents can search and read, and act on only through the tools you give them.",
+		Detail:   "Attach a store to an agent, under Sources, and it gets tools to list what is there, search it by regular expression, and read a window around a hit, never a whole file.\n\nSubfolders are optional: a parent whose subfolders are per-ticket or per-run works, and so does a flat folder of files. Logs are the obvious case, but anything you would grep rather than embed belongs here: config trees, exports, source dumps.\n\nTo RUN something against a folder, to download into it, unpack an archive or run an extractor, register the binary as a command on the store's row. A person runs it from there; to let agents run it, map it with Builder under Map with Builder and turn Agents on, and an agent can then run only the lines you approved. Files move between stores by Pull, and an app gets a store only when you grant it one under Apps that may use it.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Table{
 				Source: "/filestore/api/stores",
@@ -448,7 +448,7 @@ func storeFormFields() []ui.FormField {
 		{Field: "pull_from", Type: "select", Label: "Pull from another store", OptionsSource: "/filestore/api/store-options",
 			Help:   "Optional: another store this one copies files and folders in from.",
 			Detail: "For a store agents read that takes what it holds from a private working store. The link is the permission: an app granted pulling here, or an attached agent when you allow it below, can copy a file or folder from that store by name, seeing that store's names but never its contents. Copies, never moves: the other store keeps its own until its lifetime or retention removes it."},
-		{Field: "pull_subpath", Type: "text", Label: "Part of each case to copy", Placeholder: "prepared", ShowWhen: "pull_from",
+		{Field: "pull_subpath", Type: "text", Label: "Part of each folder to copy", Placeholder: "prepared", ShowWhen: "pull_from",
 			Help: "When a folder is pulled, the part of it to copy: the subfolder holding what was prepared. prepared when empty; a single dot copies the whole folder. A file is always copied whole."},
 		{Field: "agents_may_pull", Type: "toggle", Label: "Let attached agents pull", ShowWhen: "pull_from",
 			Help:   "Gives agents this store is attached to a pull tool. Off by default.",
