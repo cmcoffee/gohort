@@ -396,6 +396,8 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		h.handleRunPipeline(conn, req.Params)
 	case "store_command":
 		h.handleStoreCommand(conn, req.Params)
+	case "store_action":
+		h.handleStoreAction(conn, req.Params)
 	case "store_pull":
 		h.handleStorePull(conn, req.Params)
 	default:
@@ -452,7 +454,7 @@ func hookMethodDeadline(method string, params map[string]interface{}) time.Durat
 		// A whole agent turn, tools and all, or a pipeline of them. A script
 		// that declares either gets the long run cap to match (appscript).
 		return 300 * time.Second
-	case "store_command", "store_pull":
+	case "store_command", "store_action", "store_pull":
 		// A store's command unpacks or decrypts a capture, and a pull copies
 		// one; both report progress to the script's run as they go, so the
 		// run's own limits are what end a stuck one, not this.
@@ -659,6 +661,24 @@ func (h *SandboxHook) handleStoreCommand(conn net.Conn, params map[string]interf
 		stringFromParams(params, "command"), stringFromParams(params, "input"))
 	if err != nil {
 		writeHookError(conn, "store_command: "+err.Error())
+		return
+	}
+	writeHookResult(conn, map[string]any{"text": out})
+}
+
+// handleStoreAction serves gohort.store_action: one of a store command's
+// mapped actions. Granted by "store_action"; the store's grant and the
+// command's approval are checked inside.
+func (h *SandboxHook) handleStoreAction(conn net.Conn, params map[string]interface{}) {
+	if h.Sess == nil || h.Sess.StoreAction == nil {
+		writeHookError(conn, "store_action is only for an app an admin has granted a file store")
+		return
+	}
+	values, _ := params["values"].(map[string]interface{})
+	out, err := h.Sess.StoreAction(stringFromParams(params, "store"), stringFromParams(params, "command"),
+		stringFromParams(params, "action"), values)
+	if err != nil {
+		writeHookError(conn, "store_action: "+err.Error())
 		return
 	}
 	writeHookResult(conn, map[string]any{"text": out})
@@ -1983,6 +2003,15 @@ class _Gohort:
         result = self._call("store_command", {"store": str(store), "folder": str(folder), "command": str(command), "input": "" if input is None else str(input)})
         return result.get("text", "") if isinstance(result, dict) else result
 
+    def store_action(self, store, command, action, values=None):
+        """Run one of a store command's mapped actions and return what it
+        printed: the line an admin approved, with values (a dict, by the
+        names of its {placeholders}) filled in. A folder value is a folder
+        or file in that store, by its name there. Needs a grant on that
+        store's commands."""
+        result = self._call("store_action", {"store": str(store), "command": str(command), "action": str(action), "values": dict(values or {})})
+        return result.get("text", "") if isinstance(result, dict) else result
+
     def store_pull(self, store, item, replace=False):
         """Copy a file or folder (item, by its name at the top of the other
         store) into store from the store it pulls from. A folder copies its
@@ -2118,6 +2147,10 @@ def store_path(store):
 
 def store_command(store, folder, command, input=None):
     return gohort.store_command(store, folder, command, input=input)
+
+
+def store_action(store, command, action, values=None):
+    return gohort.store_action(store, command, action, values=values)
 
 
 def store_pull(store, item, replace=False):

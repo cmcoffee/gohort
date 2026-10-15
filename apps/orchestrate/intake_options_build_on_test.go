@@ -47,7 +47,7 @@ func TestBuildOnListsWhatAThingCanUse(t *testing.T) {
 	if !strings.Contains(app1, "MCP server: buildon-tracker") || strings.Contains(app1, "buildon-off") {
 		t.Errorf("MCP servers: %s", app1)
 	}
-	for _, want := range []string{"File store: Intake (commands: Extract)", "File store: Analysis", "Tool: get_weather", "Agent: Investigator, senior", "Test files: Prod logs"} {
+	for _, want := range []string{"File store: Intake (commands: Extract, kb, sync)", "File store: Analysis", "Tool: get_weather", "Agent: Investigator, senior", "Test files: Prod logs"} {
 		if !strings.Contains(app1, want) {
 			t.Errorf("App is missing %q: %s", want, app1)
 		}

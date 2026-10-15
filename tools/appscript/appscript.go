@@ -129,7 +129,7 @@ func (j Job) Run() (string, error) {
 		grants = appstores.Provider.GrantsFor(user, slug)
 	}
 	if len(grants) > 0 {
-		caps = mergeCaps(caps, []string{"store_command", "store_pull"})
+		caps = mergeCaps(caps, []string{"store_command", "store_action", "store_pull"})
 		byStore := map[string]appstores.Grant{}
 		for _, g := range grants {
 			byStore[g.Store] = g
@@ -261,6 +261,9 @@ func storeFuncs(sess *ToolSession, owner, slug string) {
 	}
 	sess.StoreCommand = func(store, folder, command, input string) (string, error) {
 		return appstores.Provider.RunCommand(sess.Context(), owner, slug, store, folder, command, input)
+	}
+	sess.StoreAction = func(store, command, action string, values map[string]any) (string, error) {
+		return appstores.Provider.RunAction(sess.Context(), owner, slug, store, command, action, values)
 	}
 	sess.StorePull = func(store, item string, replace bool) (string, error) {
 		return appstores.Provider.Pull(sess.Context(), owner, slug, store, item, replace)

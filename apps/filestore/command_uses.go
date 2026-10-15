@@ -112,7 +112,8 @@ func (s storeSource) specifiedToolDefs(sess *ToolSession, user string, st Store,
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return bgrun.BackgroundRun{Tool: name, Label: cmd.Label + " on " + st.Name, Run: func(work *ToolSession) (string, error) {
-					return runSpecified(work.Context(), user, sess.AgentID, st, cmd, act, args)
+					resolve := func(ref, v string) (string, error) { return ResolvePathScope(user, sess.AgentID, ref, v, true) }
+					return runSpecified(work.Context(), "agent", st, cmd, act, args, resolve)
 				}}.Start(sess)
 			},
 		})
@@ -130,59 +131,41 @@ const specifiedOutputMax = 32 << 10
 // argument, in the action's working folder (the store root unless it
 // names one). A folder value is proved inside the store first; any other
 // value that would stand alone as an argument may not start with '-', where
-// it would be read as an option rather than a value.
-func runSpecified(ctx context.Context, user, agentID string, st Store, cmd StoreCommand, act TempToolAction, args map[string]any) (string, error) {
+// it would be read as an option rather than a value. specifiedArgv says how
+// values become words.
+//
+// who names the runner in the log ("agent", "app <owner>/<slug>"), and resolve
+// proves a folder value: through the path scope for an agent, inside this
+// store under the app's grant for an app.
+func runSpecified(ctx context.Context, who string, st Store, cmd StoreCommand, act TempToolAction, args map[string]any, resolve func(ref, value string) (string, error)) (string, error) {
 	if err := cmd.templateAllowed(act.CommandTemplate); err != nil {
 		return "", err
 	}
-	vals := map[string]string{}
+	vals := map[string][]string{}
 	for name, p := range act.Params {
-		raw, ok := args[name]
-		v := strings.TrimSpace(fmt.Sprint(raw))
-		if !ok || raw == nil || v == "" {
+		vs := argValues(args[name])
+		if len(vs) == 0 {
 			continue
 		}
 		if ref := strings.TrimSpace(p.PathScope); ref != "" {
-			abs, err := ResolvePathScope(user, agentID, ref, v, true)
-			if err != nil {
-				return "", fmt.Errorf("%s: %w", name, err)
+			for i, v := range vs {
+				abs, err := resolve(ref, v)
+				if err != nil {
+					return "", fmt.Errorf("%s: %w", name, err)
+				}
+				vs[i] = abs
 			}
-			v = abs
 		}
-		vals[name] = v
+		vals[name] = vs
 	}
 	for _, r := range act.Required {
 		if _, ok := vals[r]; !ok {
 			return "", fmt.Errorf("missing required %q", r)
 		}
 	}
-	words, err := splitArgs(argsAfterBinary(act.CommandTemplate))
+	argv, err := specifiedArgv(act, vals)
 	if err != nil {
-		return "", fmt.Errorf("the mapped line for %s does not parse (%v): re-map the command", act.Name, err)
-	}
-	var argv []string
-	for _, word := range words {
-		phs := templatePlaceholders(word)
-		if len(phs) == 0 {
-			argv = append(argv, word)
-			continue
-		}
-		filled, skip := word, false
-		for _, ph := range phs {
-			v, ok := vals[ph]
-			if !ok {
-				skip = true // an optional value not given: its argument goes with it
-				break
-			}
-			filled = strings.ReplaceAll(filled, "{"+ph+"}", v)
-		}
-		if skip {
-			continue
-		}
-		if word == "{"+phs[0]+"}" && len(phs) == 1 && strings.HasPrefix(filled, "-") && act.Params[phs[0]].PathScope == "" {
-			return "", fmt.Errorf("%s may not start with '-': it would be read as an option of the command rather than a value", phs[0])
-		}
-		argv = append(argv, filled)
+		return "", err
 	}
 	dir, err := SubRoot(st.Path, "")
 	if err != nil {
@@ -190,7 +173,7 @@ func runSpecified(ctx context.Context, user, agentID string, st Store, cmd Store
 	}
 	if wd := strings.TrimSpace(act.WorkDir); wd != "" {
 		if v, ok := vals[wd]; ok {
-			dir = v
+			dir = v[0]
 		}
 	}
 	if err := st.roomFor(0); err != nil {
@@ -206,10 +189,10 @@ func runSpecified(ctx context.Context, user, agentID string, st Store, cmd Store
 		out = "[... earlier output cut ...]\n" + out[len(out)-specifiedOutputMax:]
 	}
 	if err != nil {
-		Log("[filestore.command] agent run of %s/%s %s failed: %v", st.Name, cmd.Name, act.Name, err)
+		Log("[filestore.command] %s run of %s/%s %s failed: %v", who, st.Name, cmd.Name, act.Name, err)
 		return fmt.Sprintf("%s\n[exit: %v]", out, err), nil
 	}
-	Log("[filestore.command] agent ran %s/%s %s", st.Name, cmd.Name, act.Name)
+	Log("[filestore.command] %s ran %s/%s %s", who, st.Name, cmd.Name, act.Name)
 	if strings.TrimSpace(out) == "" {
 		return "(ran, printed nothing)", nil
 	}
@@ -306,4 +289,139 @@ func guidePointer(st Store, cmd StoreCommand) string {
 		return ""
 	}
 	return " The admin wrote a guide to using it: list_" + st.Slug + "_commands shows it; read it before the first call."
+}
+
+// specifiedArgv fills an action's line with its values, one word at a time.
+//
+//   - A word whose placeholder was given no value is left out, and so is the
+//     option just before it when the placeholder stands alone: in
+//     "--src {source}" an absent source takes --src with it, or the next
+//     word would be read as the source.
+//   - A list fills its word once per item ("{files}" with two files is two
+//     arguments; "--file={files}" is --file=a --file=b).
+//   - A placeholder the action declares no parameter for is refused: the
+//     mapping is out of date, and dropping the word would run something
+//     other than what was approved.
+func specifiedArgv(act TempToolAction, vals map[string][]string) ([]string, error) {
+	words, err := splitArgs(argsAfterBinary(act.CommandTemplate))
+	if err != nil {
+		return nil, fmt.Errorf("the mapped line for %s does not parse (%v): re-map the command", act.Name, err)
+	}
+	var argv []string
+	// lastOption is the index in argv of a literal option word just added,
+	// or -1: the option an absent standalone value takes with it.
+	lastOption := -1
+	for _, word := range words {
+		phs := templatePlaceholders(word)
+		if len(phs) == 0 {
+			argv = append(argv, word)
+			lastOption = -1
+			if strings.HasPrefix(word, "-") && !strings.Contains(word, "=") {
+				lastOption = len(argv) - 1
+			}
+			continue
+		}
+		standalone := len(phs) == 1 && word == "{"+phs[0]+"}"
+		missing, multi := false, ""
+		for _, ph := range phs {
+			if _, declared := act.Params[ph]; !declared {
+				return nil, fmt.Errorf("the mapped line for %s uses {%s}, which it declares no parameter for: re-map the command", act.Name, ph)
+			}
+			vs, ok := vals[ph]
+			if !ok {
+				missing = true
+				break
+			}
+			if len(vs) > 1 {
+				if multi != "" {
+					return nil, fmt.Errorf("{%s} and {%s} share one argument, so each takes one value, not a list", multi, ph)
+				}
+				multi = ph
+			}
+		}
+		if missing {
+			if standalone && lastOption == len(argv)-1 && lastOption >= 0 {
+				argv = argv[:lastOption]
+			}
+			lastOption = -1
+			continue
+		}
+		lastOption = -1
+		fill := func(item string) string {
+			out := word
+			for _, ph := range phs {
+				v := vals[ph][0]
+				if ph == multi {
+					v = item
+				}
+				out = strings.ReplaceAll(out, "{"+ph+"}", v)
+			}
+			return out
+		}
+		items := []string{""}
+		if multi != "" {
+			items = vals[multi]
+		}
+		for _, item := range items {
+			filled := fill(item)
+			if standalone && strings.HasPrefix(filled, "-") && act.Params[phs[0]].PathScope == "" {
+				return nil, fmt.Errorf("%s may not start with '-': it would be read as an option of the command rather than a value", phs[0])
+			}
+			argv = append(argv, filled)
+		}
+	}
+	return argv, nil
+}
+
+// argValues is one parameter's value as command-line text: nothing for an
+// absent or blank value, one entry per item for a list, a number as its
+// plain digits (a JSON number arrives as a float, which fmt prints as
+// 1.2345678e+07), and anything structured as JSON.
+func argValues(raw any) []string {
+	switch v := raw.(type) {
+	case nil:
+		return nil
+	case []any:
+		var out []string
+		for _, item := range v {
+			if _, nested := item.([]any); nested {
+				b, _ := json.Marshal(item)
+				out = append(out, string(b))
+				continue
+			}
+			out = append(out, argValues(item)...)
+		}
+		return out
+	case []string:
+		var out []string
+		for _, item := range v {
+			out = append(out, argValues(item)...)
+		}
+		return out
+	}
+	s := argText(raw)
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return []string{strings.TrimSpace(s)}
+}
+
+// argText is a single value as text.
+func argText(raw any) string {
+	switch v := raw.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32)
+	case json.Number:
+		return v.String()
+	case bool:
+		return strconv.FormatBool(v)
+	case map[string]any:
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
+	return fmt.Sprint(raw)
 }

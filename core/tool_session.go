@@ -59,6 +59,9 @@ type ToolSession struct {
 	// has granted those stores; the store side checks the grant. Nil: refused.
 	StoreCommand func(store, folder, command, input string) (string, error)
 	StorePull    func(store, item string, replace bool) (string, error)
+	// StoreAction is what gohort.store_action reaches: one of a store
+	// command's mapped actions, its approved line with values filled in.
+	StoreAction func(store, command, action string, values map[string]any) (string, error)
 
 	// imageBackends memoizes ReachableImageBackends for this turn. Resolving it
 	// reads the connector table, and the grouped `image` tool's schema is

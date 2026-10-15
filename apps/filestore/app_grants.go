@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -100,8 +101,17 @@ func (h storeHost) Stores(owner, slug string) []appstores.StoreInfo {
 			}
 		}
 		for _, c := range StoreCommandsFor(h.app.DB, st.Slug) {
-			info.Commands = append(info.Commands, appstores.CommandInfo{Name: c.Name, Label: c.Label, TwoPhase: c.TwoPhase,
-				InputLabel: c.InputLabel, Note: strings.TrimSpace(c.Help), Guide: strings.TrimSpace(c.Guide)})
+			ci := appstores.CommandInfo{Name: c.Name, Label: c.Label, TwoPhase: c.TwoPhase,
+				InputLabel: c.InputLabel, Note: strings.TrimSpace(c.Help), Guide: strings.TrimSpace(c.Guide)}
+			if c.Mapped() && !c.Approved {
+				ci.Mapped = true
+			}
+			if c.Approved {
+				for _, act := range c.runnableActions() {
+					ci.Actions = append(ci.Actions, actionInfo(act))
+				}
+			}
+			info.Commands = append(info.Commands, ci)
 		}
 		if slug != "" {
 			if g, ok := st.grantFor(owner, slug); ok {
@@ -168,6 +178,69 @@ func (h storeHost) RunCommand(ctx context.Context, owner, slug, store, folder, c
 	}
 	Log("[filestore.command] app %s ran %s on %s/%s", appKey(owner, slug), act.Name, st.Name, folderLabel(folder))
 	return out, nil
+}
+
+// RunAction runs one of command's mapped actions for the app: the line an
+// admin approved (the command's Agents switch), with the app's values in its
+// placeholders, exactly as an agent's tool for it runs. A folder value is
+// proved inside this store; the app's grant, not the owner's own access, is
+// what lets it reach the store.
+func (h storeHost) RunAction(ctx context.Context, owner, slug, store, command, action string, values map[string]any) (string, error) {
+	st, g, err := h.grantedStore(owner, slug, store)
+	if err != nil {
+		return "", err
+	}
+	if !g.Commands {
+		return "", fmt.Errorf("this app may not run %s's commands; an admin can allow it on the store's page", st.Name)
+	}
+	cmd, ok := LoadStoreCommand(h.app.DB, st.Slug, command)
+	if !ok {
+		var names []string
+		for _, c := range StoreCommandsFor(h.app.DB, st.Slug) {
+			names = append(names, c.Name)
+		}
+		return "", fmt.Errorf("%s has no command %q (registered: %s)", st.Name, command, strings.Join(names, ", "))
+	}
+	if !cmd.Mapped() {
+		return "", fmt.Errorf("%s's command %q has no mapped actions: call it with store_command, or an admin maps it with Builder on the store's page", st.Name, cmd.Name)
+	}
+	if !cmd.Approved {
+		return "", fmt.Errorf("%s's command %q is mapped but not approved yet: an admin turns on Agents on its row, and that switch is the approval", st.Name, cmd.Name)
+	}
+	var names []string
+	for _, act := range cmd.runnableActions() {
+		if act.Name != strings.TrimSpace(action) {
+			names = append(names, act.Name)
+			continue
+		}
+		resolve := func(ref, v string) (string, error) {
+			if _, pinned := SplitPathScopeRef(ref); pinned != st.Slug {
+				return "", fmt.Errorf("this value is a folder in another store (%s)", ref)
+			}
+			return st.resolveValue(v)
+		}
+		stop := keepAlive(ctx, fmt.Sprintf("running %s %s on %s", cmd.Name, act.Name, st.Name))
+		defer stop()
+		return runSpecified(ctx, "app "+appKey(owner, slug), st, cmd, act, values, resolve)
+	}
+	return "", fmt.Errorf("%s's command %q has no action %q (its actions: %s)", st.Name, cmd.Name, action, strings.Join(names, ", "))
+}
+
+// actionInfo describes a mapped action for an app's author.
+func actionInfo(act TempToolAction) appstores.ActionInfo {
+	ai := appstores.ActionInfo{Name: act.Name, Description: strings.TrimSpace(act.Description),
+		Line: strings.Join(strings.Fields(argsAfterBinary(act.CommandTemplate)), " ")}
+	var names []string
+	for n := range act.Params {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		p := act.Params[n]
+		ai.Values = append(ai.Values, appstores.ValueInfo{Name: n, Type: p.Type, Description: strings.TrimSpace(p.Description),
+			Required: slices.Contains(act.Required, n), Folder: strings.TrimSpace(p.PathScope) != ""})
+	}
+	return ai
 }
 
 func (h storeHost) Pull(ctx context.Context, owner, slug, store, item string, replace bool) (string, error) {

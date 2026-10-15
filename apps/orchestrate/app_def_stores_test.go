@@ -16,13 +16,19 @@ func (fakeStoreCatalog) GrantsFor(owner, slug string) []appstores.Grant { return
 func (fakeStoreCatalog) RunCommand(ctx context.Context, owner, slug, store, folder, command, input string) (string, error) {
 	return "", nil
 }
+func (fakeStoreCatalog) RunAction(ctx context.Context, owner, slug, store, command, action string, values map[string]any) (string, error) {
+	return "", nil
+}
 func (fakeStoreCatalog) Pull(ctx context.Context, owner, slug, store, item string, replace bool) (string, error) {
 	return "", nil
 }
 func (fakeStoreCatalog) Stores(owner, slug string) []appstores.StoreInfo {
 	return []appstores.StoreInfo{
 		{Store: "intake", Name: "Intake", About: "Raw logs per case.", Temporary: true, FolderCount: 3,
-			Commands: []appstores.CommandInfo{{Name: "extract", Label: "Extract", TwoPhase: true, InputLabel: "Response", Guide: "Support answers the signature.\nA response works once."}}},
+			Commands: []appstores.CommandInfo{{Name: "extract", Label: "Extract", TwoPhase: true, InputLabel: "Response", Guide: "Support answers the signature.\nA response works once."},
+				{Name: "kb", Actions: []appstores.ActionInfo{{Name: "download", Description: "Download a case's files.", Line: "download --id={id} --dst={folder}",
+					Values: []appstores.ValueInfo{{Name: "folder", Type: "string", Required: true, Folder: true}, {Name: "id", Type: "number", Description: "The case id.", Required: true}}}}},
+				{Name: "sync", Mapped: true}}},
 		{Store: "analysis", Name: "Analysis", PullsFrom: "intake", PullPart: "prepared"},
 	}
 }
@@ -40,7 +46,11 @@ func TestBuilderSeesTheStoresAnAppCanUse(t *testing.T) {
 	}
 	for _, want := range []string{"## Intake (store \"intake\")", "Raw logs per case.", "3 folder(s)", "Temporary",
 		"- \"extract\" (Extract): two phases, the second takes Response", "Support answers the signature.",
-		"Pulls from \"intake\" (a folder's prepared/ part)", "store_command", "A new app has no grants yet"} {
+		"Pulls from \"intake\" (a folder's prepared/ part)", "store_command", "A new app has no grants yet",
+		`Mapped actions: run each with store_action("intake", "kb", "<action>", {<value>: ...}), never store_command:`,
+		`- "download": Download a case's files. Runs: download --id={id} --dst={folder}`,
+		"values: folder (string, required, a folder or file in this store, by its name there); id (number, required): The case id",
+		"- \"sync\"\n  Mapped, but an admin has not approved the mapping yet"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}

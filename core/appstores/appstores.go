@@ -35,6 +35,10 @@ type Host interface {
 	// RunCommand runs store's command on folder for the app, when granted.
 	// input "" is a two-phase command's first phase.
 	RunCommand(ctx context.Context, owner, slug, store, folder, command, input string) (string, error)
+	// RunAction runs one of command's mapped actions for the app, when
+	// granted: the approved line with values in its placeholders, as an
+	// agent's tool for it runs.
+	RunAction(ctx context.Context, owner, slug, store, command, action string, values map[string]any) (string, error)
 	// Pull copies a file or folder into store for the app, when granted.
 	Pull(ctx context.Context, owner, slug, store, item string, replace bool) (string, error)
 }
@@ -59,7 +63,8 @@ type StoreInfo struct {
 
 // CommandInfo is one command registered on a store, as an app calls it:
 // store_command(store, folder, Name, input=...) runs `<binary> <folder>
-// [input]`.
+// [input]`, and store_action(store, Name, action, values) runs one of its
+// mapped Actions.
 type CommandInfo struct {
 	Name       string `json:"name"`
 	Label      string `json:"label,omitempty"`
@@ -67,6 +72,29 @@ type CommandInfo struct {
 	InputLabel string `json:"input_label,omitempty"`
 	Note       string `json:"note,omitempty"`
 	Guide      string `json:"guide,omitempty"` // the admin's markdown guide to using it
+	// Actions are its mapped uses an admin has approved; Mapped says it has
+	// some still waiting for that approval.
+	Actions []ActionInfo `json:"actions,omitempty"`
+	Mapped  bool         `json:"mapped,omitempty"`
+}
+
+// ActionInfo is one approved mapped use of a command: Line is what runs
+// after the binary, with each {placeholder} filled from the value of that
+// name.
+type ActionInfo struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Line        string      `json:"line"`
+	Values      []ValueInfo `json:"values,omitempty"`
+}
+
+// ValueInfo is one value an action takes.
+type ValueInfo struct {
+	Name        string `json:"name"`
+	Type        string `json:"type,omitempty"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	Folder      bool   `json:"folder,omitempty"` // a folder or file in the store, by its name there
 }
 
 // Catalog is the file-store side's answer to "what stores are there", for an

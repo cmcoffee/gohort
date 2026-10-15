@@ -37,7 +37,7 @@ func (t *chatTurn) appDefStores(args map[string]any) (string, error) {
 	}
 	var b strings.Builder
 	b.WriteString("File stores on this deployment. Build on these rather than writing your own download, extraction or copying code: an app reaches a store only when an admin grants it one, on the store's page (Admin, Files, the store's row, Apps that may use it), choosing write, run commands and pull separately.\n")
-	b.WriteString("In a script: from gohort import store_path, store_command, store_pull. store_path(\"<store>\") is its folder (read-only, or read-write with write). store_command(\"<store>\", \"<folder>\", \"<command>\") runs a registered command on one folder as `<binary> <folder>`; a two-phase one returns its challenge, and store_command(..., input=<response>) finishes it as `<binary> <folder> <input>`. store_pull(\"<store>\", \"<item>\") copies a file or folder in from the store it pulls from.\n")
+	b.WriteString(appStoresScriptUse + "\n")
 	if slug == "" {
 		b.WriteString("A new app has no grants yet: create it first, then tell the person exactly which store and which rights to grant it, and test once they have.\n")
 	}
@@ -87,6 +87,42 @@ func (t *chatTurn) appDefStores(args map[string]any) (string, error) {
 				b.WriteString(". " + strings.TrimSuffix(c.Note, "."))
 			}
 			b.WriteString("\n")
+			if len(c.Actions) > 0 {
+				fmt.Fprintf(&b, "  Mapped actions: run each with store_action(%q, %q, \"<action>\", {<value>: ...}), never store_command:\n", st.Store, c.Name)
+				for _, a := range c.Actions {
+					fmt.Fprintf(&b, "  - %q", a.Name)
+					if a.Description != "" {
+						b.WriteString(": " + strings.TrimSuffix(a.Description, "."))
+					}
+					fmt.Fprintf(&b, ". Runs: %s\n", a.Line)
+					var vals []string
+					for _, v := range a.Values {
+						d := v.Name
+						var notes []string
+						if v.Type != "" {
+							notes = append(notes, v.Type)
+						}
+						if v.Required {
+							notes = append(notes, "required")
+						} else {
+							notes = append(notes, "optional, left out when not given")
+						}
+						if v.Folder {
+							notes = append(notes, "a folder or file in this store, by its name there")
+						}
+						d += " (" + strings.Join(notes, ", ") + ")"
+						if v.Description != "" {
+							d += ": " + strings.TrimSuffix(v.Description, ".")
+						}
+						vals = append(vals, d)
+					}
+					if len(vals) > 0 {
+						b.WriteString("    values: " + strings.Join(vals, "; ") + "\n")
+					}
+				}
+			} else if c.Mapped {
+				b.WriteString("  Mapped, but an admin has not approved the mapping yet (Agents on its row): store_action refuses it until then.\n")
+			}
 			if c.Guide != "" {
 				b.WriteString("  The admin's guide to it:\n")
 				for _, l := range strings.Split(c.Guide, "\n") {
@@ -152,3 +188,9 @@ func (t *chatTurn) appDefRequestStore(args map[string]any) (string, error) {
 	}
 	return fmt.Sprintf("Granted: %s now has %s on %s. Test its scripts against the store.", spec.Name, rights, st.Name), nil
 }
+
+// appStoresScriptUse is how an app's script reaches its stores, for Builder.
+const appStoresScriptUse = "In a script: from gohort import store_path, store_action, store_command, store_pull. store_path(\"<store>\") is its folder (read-only, or read-write with write). " +
+	"A command with mapped actions is run ONLY through them: store_action(\"<store>\", \"<command>\", \"<action>\", {\"<value>\": ...}) runs the line an admin approved, with your values in its {placeholders} (a list fills its placeholder once per item; an optional value left out takes its option with it), and nothing else about the command can change. " +
+	"store_command(\"<store>\", \"<folder>\", \"<command>\") is for a command with no mapped actions: it runs `<binary> <folder>`; a two-phase one returns its challenge, and store_command(..., input=<response>) finishes it as `<binary> <folder> <input>`. " +
+	"store_pull(\"<store>\", \"<item>\") copies a file or folder in from the store it pulls from."

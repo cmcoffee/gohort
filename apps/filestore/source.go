@@ -265,7 +265,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 	commandsTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "list_" + slug + "_commands",
-			Description: fmt.Sprintf("List the commands an admin has registered against the %q file store: what each one does to a folder, and whether it asks a person for input. Read-only and instant: this NAMES them, it does not run them. Reach for it when a folder looks empty, unreadable, or still packaged: the usual reason is that one of these has to be run on it first, and telling the user WHICH one is the useful answer. Running one is a person's click in Files, not a tool call.", label),
+			Description: fmt.Sprintf("List the commands an admin has registered against the %q file store: what each one does to a folder, and whether it asks a person for input. Read-only and instant: this NAMES them, it does not run them. Reach for it when a folder looks empty, unreadable, or still packaged: the usual reason is that one of these has to be run on it first, and telling the user WHICH one is the useful answer. A command an admin has mapped and approved is run through its own tools, which this list names with the exact line each runs; any other is a person's click in Files.", label),
 			Caps:        []Capability{CapRead},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {

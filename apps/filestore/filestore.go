@@ -117,6 +117,14 @@ func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, erro
 	if !ok || !st.AllowsUser(user) {
 		return "", Error("there is no file store called " + storeSlug + " you can reach")
 	}
+	return st.resolveValue(value)
+}
+
+// resolveValue proves value names the store itself, or a folder or file
+// inside it, and returns its absolute path. Whose store it is to reach is
+// the caller's check: a person's access for a path scope, an app's grant for
+// an app.
+func (st Store) resolveValue(value string) (string, error) {
 	// The store ITSELF, by an explicit spelling. A binary that must run at
 	// the base of a tree needs to name that tree, and requiring its parent
 	// to be registered instead made the answer to "point this at my bundle

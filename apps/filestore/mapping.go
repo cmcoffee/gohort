@@ -323,10 +323,14 @@ func templatePlaceholders(tpl string) []string {
 		if j < 0 {
 			return out
 		}
-		if name := strings.TrimSpace(tpl[i+1 : i+j]); name != "" {
+		// A name, not any braces: a literal JSON argument ('{"a":1}') is
+		// part of the line, not a value to fill.
+		if name := tpl[i+1 : i+j]; placeholderName(name) {
 			out = append(out, name)
+			tpl = tpl[i+j+1:]
+			continue
 		}
-		tpl = tpl[i+j+1:]
+		tpl = tpl[i+1:]
 	}
 }
 
@@ -349,4 +353,18 @@ func findOrchestrate() *orchestrate.OrchestrateApp {
 	}
 	cachedOrch = o
 	return o
+}
+
+// placeholderName reports whether s is a placeholder's name: letters, digits,
+// _ and -.
+func placeholderName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !(r == '_' || r == '-' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }

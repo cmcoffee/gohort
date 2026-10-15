@@ -2,6 +2,7 @@ package appscript
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,11 @@ func (f *fakeStores) RunCommand(ctx context.Context, owner, slug, store, folder,
 	}
 	return "extracted", nil
 }
+func (f *fakeStores) RunAction(ctx context.Context, owner, slug, store, command, action string, values map[string]any) (string, error) {
+	b, _ := json.Marshal(values)
+	f.ran = append(f.ran, store+"/"+command+"/"+action+"/"+string(b))
+	return "fetched", nil
+}
 func (f *fakeStores) Pull(ctx context.Context, owner, slug, store, caseName string, replace bool) (string, error) {
 	return "Copied " + caseName, nil
 }
@@ -63,7 +69,7 @@ func TestAnAppScriptWorksInTheStoresItWasGranted(t *testing.T) {
 
 	script := `
 import json, os
-from gohort import store_path, store_command
+from gohort import store_path, store_command, store_action
 stores = json.loads(os.environ["GOHORT_STORES"])
 intake = store_path("intake")
 open(os.path.join(intake, "CASE-1", "dump.zip"), "w").write("raw")
@@ -74,7 +80,8 @@ except OSError:
     wrote_read_only = False
 challenge = store_command("intake", "CASE-1", "extract")
 done = store_command("intake", "CASE-1", "extract", input="s3cret")
-print(json.dumps({"message": "ok", "result": {"challenge": str(challenge), "done": str(done), "wrote_read_only": wrote_read_only, "rights": stores["analysis"]["pull"]}}))
+fetched = store_action("intake", "kb", "download", {"id": 12345678, "files": ["a.zip", "b.zip"]})
+print(json.dumps({"message": "ok", "result": {"challenge": str(challenge), "done": str(done), "fetched": str(fetched), "wrote_read_only": wrote_read_only, "rights": stores["analysis"]["pull"]}}))
 `
 	out, err := Job{Owner: "alice", Slug: "kwprep", Kind: "action", Name: "prep", Script: script, Args: map[string]any{}}.Run()
 	if err != nil {
@@ -83,7 +90,7 @@ print(json.dumps({"message": "ok", "result": {"challenge": str(challenge), "done
 	if strings.Contains(out, "sandbox") && strings.Contains(out, "not") && !strings.Contains(out, "CHALLENGE") {
 		t.Skipf("no sandbox here: %s", out)
 	}
-	for _, want := range []string{`"challenge": "CHALLENGE 4711"`, `"done": "extracted"`, `"wrote_read_only": false`, `"rights": true`} {
+	for _, want := range []string{`"challenge": "CHALLENGE 4711"`, `"done": "extracted"`, `"fetched": "fetched"`, `"wrote_read_only": false`, `"rights": true`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %s in %s", want, out)
 		}
@@ -94,7 +101,7 @@ print(json.dumps({"message": "ok", "result": {"challenge": str(challenge), "done
 	if _, err := os.Stat(filepath.Join(f.read, "sneaky.txt")); err == nil {
 		t.Error("the script wrote into a store it may only read")
 	}
-	if len(f.ran) != 2 || f.ran[1] != "intake/CASE-1/extract/s3cret" {
+	if len(f.ran) != 3 || f.ran[1] != "intake/CASE-1/extract/s3cret" || f.ran[2] != `intake/kb/download/{"files":["a.zip","b.zip"],"id":12345678}` {
 		t.Errorf("commands asked for: %v", f.ran)
 	}
 

@@ -318,14 +318,19 @@ whoever uses the app, the way a tool carries what its author was allowed. Readin
 it; **Write into it**, **Run its commands** and **Pull files and folders in** are each granted on
 their own.
 
-The app's scripts reach a granted store three ways (`from gohort import ...`):
+The app's scripts reach a granted store four ways (`from gohort import ...`):
 
 - `store_path("<store>")`: the store's folder mounted in the script's sandbox, read-only, or
   read-write with the write grant (add, change and delete files with ordinary file code).
-- `store_command("<store>", "<folder>", "<command>", input=...)`: a registered command on one
-  folder, in the button's shape, `<cmd> <folder> [input]`. A two-phase one returns its challenge,
-  and a second call with `input` finishes it. A command that needs more arguments (a download with a
-  source) is registered as a small wrapper that takes the source as its input.
+- `store_action("<store>", "<command>", "<action>", {"<value>": ...})`: one of a command's mapped
+  actions, once an admin has approved the mapping (Agents on its row). It runs the approved line
+  with the values in its `{placeholders}`, exactly as an agent's tool for it does: a list fills
+  its placeholder once per item, and an optional value left out takes its option with it
+  (`--src {source}` drops both). A folder value is a folder or file in that store, by its name.
+  Builder's `app_def(action="stores")` lists each action's line and values.
+- `store_command("<store>", "<folder>", "<command>", input=...)`: a registered command with no
+  mapped actions, on one folder, in the button's shape, `<cmd> <folder> [input]`. A two-phase one
+  returns its challenge, and a second call with `input` finishes it.
 - `store_pull("<store>", "<item>", replace=False)`: a file or folder copied in from the store it
   pulls from.
 
