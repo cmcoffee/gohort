@@ -1921,6 +1921,12 @@ select:-webkit-autofill {
 .ui-md h4 { font-size: 1em; }
 .ui-md h5, .ui-md h6 { font-size: 0.92em; color: var(--text-mute); }
 .ui-md ul, .ui-md ol { margin: 0.5em 0; padding-left: 1.4em; }
+/* A horizontal rule is a break, so it gets room on both sides; below it, the
+   same room a card leaves at its foot (.ui-section's bottom padding, which a
+   phone narrows to 0.85rem). The browser default left it
+   hard against what follows. */
+.ui-md hr { border: 0; border-top: 1px solid var(--border); margin: 0.8em 0 1rem; }
+@media (max-width: 700px) { .ui-md hr { margin-bottom: 0.85rem; } }
 .ui-md li { margin: 0.15em 0; }
 .ui-md a { color: var(--accent-hi); text-decoration: underline; }
 .ui-md strong { color: var(--text); font-weight: 700; }
