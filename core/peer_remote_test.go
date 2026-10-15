@@ -954,3 +954,57 @@ func TestAPeerThatStoppedOfferingTranscriptionKeepsItsKey(t *testing.T) {
 		t.Errorf("a peer that dropped the capability still had its key applied: %q", got.APIKey)
 	}
 }
+
+// Re-pairing with the code the peer already paired with, or with one that
+// does not take, keeps the credential the peer holds. A code is single use:
+// clearing first and then failing left the peer presenting a spent code to
+// every capability, and a second press of Update key was enough to do it.
+func TestARePairThatCannotTakeKeepsTheWorkingCredential(t *testing.T) {
+	base, key := peerServer(t, PeerCapEmbeddings)
+	p, err := SaveRemotePeer(t.Context(), "gpu-box", base, key)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	held := PeerCredential(p)
+	if held == "" || held == key {
+		t.Fatalf("precondition: the peer should be holding a token, got %q", held)
+	}
+	// The same code again: nothing to do.
+	if _, err := UpdateRemotePeerKey(t.Context(), "gpu-box", key); err != nil {
+		t.Fatalf("the same code again: %v", err)
+	}
+	if now, _ := GetRemotePeer("gpu-box"); PeerCredential(now) != held {
+		t.Error("re-pairing with the code it already used replaced its credential")
+	}
+	// A code the far side never issued: refused, and the link is untouched.
+	if _, err := UpdateRemotePeerKey(t.Context(), "gpu-box", "not-a-code"); err == nil || !strings.Contains(err.Error(), "existing credential was kept") {
+		t.Errorf("a bad code: %v", err)
+	}
+	now, _ := GetRemotePeer("gpu-box")
+	if PeerCredential(now) != held || now.Key != key {
+		t.Errorf("a failed re-pair cost the link: key %q, credential %q", now.Key, PeerCredential(now))
+	}
+	resetPeerTokenCache()
+	if reread, _ := GetRemotePeer("gpu-box"); loadPeerTokens(reread.Name).Refresh == "" {
+		t.Error("the kept credential did not survive a restart: the record lost its refresh token")
+	}
+}
+
+// Dropping a refused access token never writes back a refresh token: a
+// renewal that rotated the pair since keeps its new refresh token.
+func TestDroppingARefusedAccessTokenKeepsTheNewestRefresh(t *testing.T) {
+	base, key := peerServer(t, PeerCapEmbeddings)
+	if _, err := SaveRemotePeer(t.Context(), "gpu-box", base, key); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	storePeerTokens("gpu-box", peerTokens{Access: "a1", Refresh: "r2", Expires: time.Now().Add(time.Hour)})
+	InvalidatePeerAccessToken("gpu-box")
+	if t1 := loadPeerTokens("gpu-box"); t1.Access != "" || t1.Refresh != "r2" {
+		t.Errorf("in memory: %+v", t1)
+	}
+	resetPeerTokenCache()
+	p, _ := GetRemotePeer("gpu-box")
+	if p.AccessToken != "" || p.RefreshToken != "r2" {
+		t.Errorf("on record: access %q refresh %q", p.AccessToken, p.RefreshToken)
+	}
+}

@@ -420,6 +420,21 @@ func UpdateRemotePeerKey(ctx context.Context, name, key string) (RemotePeer, err
 	if !ok {
 		return RemotePeer{}, fmt.Errorf("no peer named %q is registered", name)
 	}
+	// The code this peer already paired with, while it still holds what the
+	// pairing gave it: nothing to do. A code is single use, so going through
+	// with it would clear a working credential and then fail to replace it,
+	// leaving the peer presenting a spent code to everything: a second press
+	// of the button was enough to take the link down.
+	if strings.TrimSpace(key) == strings.TrimSpace(p.Key) && p.UseTokens {
+		if t := loadPeerTokens(name); t.Refresh != "" || t.Access != "" {
+			Log("[peer] %q re-pair skipped: it already holds the credential that code gave it", name)
+			return p, nil
+		}
+	}
+	// What the peer holds now, put back if the new code does not take: a code
+	// that was mistyped, already spent, or not yet issued must not cost the
+	// link that is working.
+	oldRecord, oldTokens := p, loadPeerTokens(name)
 	// EXCLUSIVE for the whole re-key. Ordering alone was not enough: clearing
 	// the credential makes every reader notice, and a background renewal that
 	// starts in that window spends the operator's brand-new pairing code — it
@@ -454,7 +469,16 @@ func UpdateRemotePeerKey(ctx context.Context, name, key string) (RemotePeer, err
 	// Through SaveRemotePeer, not a field write: the new code has to be probed,
 	// exchanged and have its capabilities re-read, because a re-issued key is
 	// commonly a re-scoped one too.
-	return SaveRemotePeer(ctx, name, p.BaseURL, key)
+	np, err := SaveRemotePeer(ctx, name, p.BaseURL, key)
+	if err != nil && (oldTokens.Refresh != "" || oldTokens.Access != "") {
+		peerRecordMu.Lock()
+		RootDB.CryptSet(remotePeersTable, name, oldRecord)
+		peerRecordMu.Unlock()
+		storePeerTokens(name, oldTokens)
+		Log("[peer] %q re-pair failed (%v): kept the credential it had", name, err)
+		return oldRecord, fmt.Errorf("%w (the peer's existing credential was kept)", err)
+	}
+	return np, err
 }
 
 // peerRecordMu serializes read-modify-write of a stored peer record between a

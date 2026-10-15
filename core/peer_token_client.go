@@ -260,14 +260,36 @@ func clearPeerTokens(name string) {
 // is dropped: clearPeerTokens would take the refresh token with it, and that is
 // the one thing that can re-establish the link without an operator pasting a
 // new pairing code.
+//
+// It clears the ACCESS fields and nothing else, in place. It used to load the
+// pair, blank the access half and store the pair back, which wrote back the
+// refresh token it had read: a renewal that rotated the pair in between had
+// its new refresh token replaced with the one it had just spent, and the next
+// renewal presented that, which the far side reads as a stolen token and
+// answers by disabling the grant.
 func InvalidatePeerAccessToken(name string) {
 	key := strings.ToLower(strings.TrimSpace(name))
-	t := loadPeerTokens(key)
-	if t.Access == "" {
+	loadPeerTokens(key) // warm the cache from the record, so the edit below has something to edit
+	peerTokenState.mu.Lock()
+	t, ok := peerTokenState.by[key]
+	if !ok || t.Access == "" {
+		peerTokenState.mu.Unlock()
 		return
 	}
 	t.Access, t.Expires = "", time.Time{}
-	storePeerTokens(key, t)
+	peerTokenState.by[key] = t
+	peerTokenState.mu.Unlock()
+	if RootDB == nil {
+		return
+	}
+	peerRecordMu.Lock()
+	var p RemotePeer
+	if RootDB.Get(remotePeersTable, key, &p) {
+		p.AccessToken, p.AccessExpires = "", ""
+		RootDB.CryptSet(remotePeersTable, key, p)
+	}
+	peerRecordMu.Unlock()
+	InvalidatePeerResolution()
 }
 
 // --- credential resolution ---------------------------------------------------
