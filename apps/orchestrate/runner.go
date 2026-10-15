@@ -65,12 +65,7 @@ type planRun struct {
 	mach        turnMachine
 	sys         string
 	turnContext string
-	// standing is what the agent carries into every turn but which changes
-	// with its own activity: its saved facts, its working notes, its recent
-	// cortex activity. It rides the newest user message ahead of turnContext,
-	// not the system prompt: see standingContext.
-	standing string
-	facts    []MemoryFact
+	facts       []MemoryFact
 
 	// orchCtx is the orchestrator's child context. A control tool cancels it
 	// to stop the agent loop after the current round while t.ctx stays live;
@@ -307,8 +302,7 @@ func (pr *planRun) assemblePrompt() {
 	incognito := t.session != nil && t.session.Incognito
 	pr.facts = t.facts()
 	notes := t.operatingNotes()
-	pr.sys = prependAgentContext(persona, t.agent, nil, OperatingNotes{})
-	pr.standing = standingContext(t.agent, pr.facts, notes)
+	pr.sys = prependAgentContext(persona, t.agent, pr.facts, notes)
 	// Cortex awareness injection — recent STANDING context (received channel
 	// messages, monitor fires) as read-only background so the agent greets you
 	// already aware. Concise live-read; empty when nothing's recent. Cross-session
@@ -333,11 +327,11 @@ func (pr *planRun) assemblePrompt() {
 		switch {
 		case t.readsOwnerCortex():
 			if odb := UserDB(t.app.DB, t.memoryUnderlay()); odb != nil {
-				pr.standing = withStandingBlock(pr.standing, cortexContextBlock(odb, t.agent.ID))
+				pr.sys += cortexContextBlock(odb, t.agent.ID)
 				t.cortexReports = cortexContextLines(odb, t.agent.ID)
 			}
 		case t.session.ID != cortexSessionID(t.agent.ID) && t.ownLayerShared(defaultShareCortex):
-			pr.standing = withStandingBlock(pr.standing, cortexContextBlock(t.udb, t.agent.ID))
+			pr.sys += cortexContextBlock(t.udb, t.agent.ID)
 			t.cortexReports = cortexContextLines(t.udb, t.agent.ID)
 		}
 	}
@@ -1866,9 +1860,7 @@ func (pr *planRun) prepareMessages() {
 	// turns so the worker model reuses it instead of re-prefilling ~16k every
 	// turn. The new user message is new each turn anyway, so carrying the
 	// hints there costs nothing in cache terms.
-	// The standing context first: reference material, ahead of the hints the
-	// turn acts on.
-	if tc := strings.TrimSpace(joinStanding(pr.standing, pr.turnContext)); tc != "" {
+	if tc := strings.TrimSpace(pr.turnContext); tc != "" {
 		for i := len(pr.llmMsgs) - 1; i >= 0; i-- {
 			if pr.llmMsgs[i].Role == "user" {
 				if strings.TrimSpace(pr.llmMsgs[i].Content) == "" {

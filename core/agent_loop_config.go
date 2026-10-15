@@ -913,8 +913,17 @@ func applyTurnNotes(cfg AgentLoopConfig, history []Message) {
 		return
 	}
 	Debug("[agent_loop] turn note appended to the user turn (%d chars)", len(note))
+	if len(note) > turnNoteWarnChars {
+		Warn("[agent_loop] turn note is %d chars: a long per-turn tail costs the prompt cache on a hybrid model (Qwen 3.8 on vLLM restarts only from the last 1600-token boundary of a previous prompt, so the next conversation starts cold). Standing context (facts, notes, activity) belongs in the system prompt; keep turn notes short.", len(note))
+	}
 	history[n-1].Content += "\n\n" + note
 }
+
+// turnNoteWarnChars is the length past which a turn note is warned about
+// (applyTurnNotes): about 500 tokens, a third of a vLLM cache block on the
+// hybrid worker model. Mirrored in apps/orchestrate's
+// TestSavedFactsStayInTheSystemPrompt.
+const turnNoteWarnChars = 2000
 
 // deliveredCount / backgrounded are the nil-safe reads of the turn-evidence
 // hooks. Absent means "nothing delivered, nothing started", which is the only

@@ -50,6 +50,15 @@ func renderRulesPromptSection(rules string) string {
 // drift. Facts are loaded from the core MemoryFact store (the LLM-
 // in-band store_fact tool); the block's header + intro copy is
 // driven by the agent's MemoryMode (agent / chatbot).
+//
+// Facts and working notes stay in the system prompt, not on the user turn.
+// Moving them there (0.8.287, so a saved fact would not change the system
+// prompt) made the hybrid worker model cache worse: vLLM restarts such a
+// model only from the last 1600-token block boundary of a previous prompt,
+// so a prompt that ends about 1,200 tokens of notes past the shared part
+// leaves its one restart point inside text no other conversation has, and the
+// next conversation reads the whole prompt cold. Measured: a long previous
+// tail made the next new conversation 5.2s instead of 0.5s.
 func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact, notes OperatingNotes) string {
 	out := base
 	// Working notes sit just below the facts block (weaker than durable facts,
@@ -76,56 +85,6 @@ func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact, not
 	// mode. This is the universal choke point — every surface (web, dispatch,
 	// worker, synthesis) finalizes its persona+context here.
 	return rewriteMemoryToolNames(out)
-}
-
-// standingContext is what an agent carries into every turn that changes with
-// its own activity: its saved facts and its working notes (and, added by the
-// caller, its recent cortex activity), framed as reference material.
-//
-// It goes on the newest user message, not in the system prompt. The system
-// prompt is followed by the tool definitions (the larger part of the prompt,
-// ~24k tokens on a well-equipped agent), so anything in it that changed since
-// the last call costs a cold prefill of everything after it: a fact the agent
-// saved yesterday, a working note it rewrote at the end of its last run, a new
-// line of cortex activity. Here, after the stable prompt and the history, a
-// change costs only itself. "" when there is nothing to carry.
-func standingContext(agent AgentRecord, facts []MemoryFact, notes OperatingNotes) string {
-	var parts []string
-	c := memoryModeCopy(agent.MemoryMode)
-	if f := strings.TrimSpace(RenderMemoryFactsBlockWith(facts, c.Header, c.Intro)); f != "" {
-		parts = append(parts, f)
-	}
-	if n := strings.TrimSpace(RenderOperatingNotesBlock(notes)); n != "" {
-		parts = append(parts, n)
-	}
-	return rewriteMemoryToolNames(strings.Join(parts, "\n\n"))
-}
-
-// withStandingBlock adds a block (the cortex feed) to a standing context.
-func withStandingBlock(standing, block string) string {
-	block = strings.TrimSpace(block)
-	if block == "" {
-		return standing
-	}
-	if strings.TrimSpace(standing) == "" {
-		return block
-	}
-	return standing + "\n\n" + block
-}
-
-// joinStanding puts the standing context, framed as the framework's own
-// reference material, ahead of a turn's other notes.
-func joinStanding(standing, rest string) string {
-	standing = strings.TrimSpace(standing)
-	rest = strings.TrimSpace(rest)
-	if standing == "" {
-		return rest
-	}
-	out := frameworkNoteTag + standing
-	if rest != "" {
-		out += "\n\n" + rest
-	}
-	return out
 }
 
 // memoryModeText is the mode-specific wording for the memory section.
