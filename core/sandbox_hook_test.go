@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsNonPublicHost(t *testing.T) {
@@ -435,5 +436,22 @@ func TestPythonRunAgentAndPipelineReachTheHook(t *testing.T) {
 	}
 	if got := run([]string{"run_agent"}, pipe); !strings.Contains(got, "refused:") {
 		t.Fatalf("run_pipeline on run_agent's grant: %s", got)
+	}
+}
+
+// The script's side of a store call waits at least as long as the server's
+// deadline for it. It waited 330 seconds, so a download past five and a half
+// minutes came back to the script as "timed out" while it went on running.
+func TestTheScriptWaitsAsLongAsTheServerForStoreCalls(t *testing.T) {
+	for _, m := range []string{"store_command", "store_action", "store_pull"} {
+		if !strings.Contains(SandboxHookPythonShim, `"`+m+`": 6 * 3600 + 60`) {
+			t.Errorf("the script's wait for %s is not the server's deadline plus a minute", m)
+		}
+		if d := hookMethodDeadline(m, nil); d > 6*time.Hour+time.Minute {
+			t.Errorf("%s: the server waits %s, longer than the script does", m, d)
+		}
+	}
+	if !strings.Contains(SandboxHookPythonShim, "s.settimeout(_HOOK_WAIT.get(method, 330))") {
+		t.Error("the script's call does not use its per-method wait")
 	}
 }

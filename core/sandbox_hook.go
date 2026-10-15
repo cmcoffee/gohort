@@ -459,7 +459,9 @@ func hookMethodDeadline(method string, params map[string]interface{}) time.Durat
 	case "store_command", "store_action", "store_pull":
 		// A store's command unpacks or decrypts a capture, and a pull copies
 		// one; both report progress to the script's run as they go, so the
-		// run's own limits are what end a stuck one, not this.
+		// run's own limits are what end a stuck one, not this. The script's
+		// side waits as long (_HOOK_WAIT in the gohort module): keep the two
+		// together.
 		return 6 * time.Hour
 	}
 	return 10 * time.Second
@@ -1867,6 +1869,11 @@ class Output(str):
         return str.__iter__(self)
 
 
+# How long a call may wait for its answer, per method, a little past the
+# server's deadline for it (hookMethodDeadline). Anything not listed: 330s.
+_HOOK_WAIT = {"store_command": 6 * 3600 + 60, "store_action": 6 * 3600 + 60, "store_pull": 6 * 3600 + 60}
+
+
 class _Gohort:
     def __init__(self):
         self._path = os.environ.get("GOHORT_HOOK_PATH")
@@ -1880,13 +1887,13 @@ class _Gohort:
             )
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            # Per-I/O timeout (NOT a total operation budget). Set
-            # generous enough to cover the longest server-side method
-            # budget: fetch with timeout=300 → server deadline ~315s.
-            # The total operation is bounded by whatever the request's
-            # timeout param is set to + a small server buffer; this
-            # cap is just defense against a wedged UDS connection.
-            s.settimeout(330)
+            # Per-I/O timeout (NOT a total operation budget): defense
+            # against a wedged connection, never shorter than the server's
+            # own deadline for the method. A store command or pull waits
+            # for the whole command (a download can take an hour), and
+            # cutting it here made the script report "timed out" while
+            # the command went on running on the server.
+            s.settimeout(_HOOK_WAIT.get(method, 330))
             s.connect(self._path)
             payload = (json.dumps({"method": method, "params": params or {}})
                        + "\n").encode("utf-8")
