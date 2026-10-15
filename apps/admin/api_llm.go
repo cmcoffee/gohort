@@ -440,6 +440,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 	a.db.Get(table, "aws_region", &awsRegion)
 	a.db.Get(table, "aws_profile", &awsProfile)
 	a.db.Get(table, "bedrock_api", &bedrockAPI)
+	bedrockAPI = bedrockAPIShown(provider, bedrockAPI)
 	a.db.Get(table, "native_tools", &nativeTools)
 	a.db.Get(table, "disable_thinking", &disableThinking)
 	a.db.Get(table, "thinking_budget", &thinkingBudget)
@@ -572,6 +573,7 @@ func (a *AdminApp) handleLLMModels(table string) http.HandlerFunc {
 			Endpoint   string `json:"endpoint"`
 			AWSRegion  string `json:"aws_region"`
 			AWSProfile string `json:"aws_profile"`
+			BedrockAPI string `json:"bedrock_api"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -589,11 +591,12 @@ func (a *AdminApp) handleLLMModels(table string) http.HandlerFunc {
 			return
 		}
 		ids, err := ListModels(r.Context(), LLMProviderConfig{
-			Provider: req.Provider,
-			APIKey:   req.APIKey,
-			Endpoint: req.Endpoint,
-			Region:   req.AWSRegion,
-			Profile:  req.AWSProfile,
+			Provider:   req.Provider,
+			APIKey:     req.APIKey,
+			Endpoint:   req.Endpoint,
+			Region:     req.AWSRegion,
+			Profile:    req.AWSProfile,
+			BedrockAPI: req.BedrockAPI,
 		})
 		if err != nil {
 			reply(map[string]any{"error": "Could not list the models: " + err.Error()})
@@ -625,4 +628,30 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// bedrockAPIDetail explains the Bedrock API choice, on the settings page and
+// in the setup wizard.
+const bedrockAPIDetail = "Converse is AWS's one format for every model Bedrock hosts (Claude, Llama, Mistral, Nova and the rest) and needs bedrock:InvokeModel. The other two speak Claude's own format and serve Claude only: the Messages API needs bedrock-mantle:CreateInference, and InvokeModel needs bedrock:InvokeModel. A 403 on CreateInference means switch to Converse or InvokeModel."
+
+// bedrockAPIShown is the Bedrock API the form shows. A blank stored value on a
+// tier already set to Bedrock is the Messages API, which is what blank has
+// always meant there, so a working setup is not moved to an API its role may
+// not be allowed to call. Anywhere else blank is a setup not yet made, and a
+// new one starts on Converse.
+func bedrockAPIShown(provider, stored string) string {
+	if stored != "" {
+		return stored
+	}
+	if strings.TrimSpace(provider) == "bedrock" {
+		return "messages"
+	}
+	return "converse"
+}
+
+// bedrockUsesMantle reports whether a Bedrock API setting calls the
+// bedrock-mantle host (the Messages API), which exists in fewer regions than
+// bedrock-runtime and is checked before a test.
+func bedrockUsesMantle(api string) bool {
+	return api == "" || api == "messages"
 }

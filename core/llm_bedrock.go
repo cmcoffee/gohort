@@ -841,7 +841,7 @@ func bedrockHint(model, msg string) string {
 		// The other half of the same confusion: the account grants one Bedrock
 		// API and not the other, and the refusal names an IAM action rather
 		// than the switch that picks between them.
-		return "That is the Messages-API permission. If your role grants bedrock:InvokeModel instead, set Bedrock API to \"InvokeModel\" under Admin -> LLMs."
+		return "That is the Messages-API permission. If your role grants bedrock:InvokeModel instead, set Bedrock API to \"Converse\" (or \"InvokeModel\") under Admin -> LLMs."
 	}
 	return ""
 }

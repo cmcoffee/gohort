@@ -1264,7 +1264,7 @@ type LLMProviderConfig struct {
 	Endpoint            string
 	Region              string        // AWS region (bedrock only); blank falls back to AWS_REGION, then us-east-1. Part of both the hostname and the SigV4 signature.
 	Profile             string        // AWS profile (bedrock only); blank falls back to AWS_PROFILE. Selects which credentials/SSO session to use — the credentials themselves are never stored here.
-	BedrockAPI          string        // Which Bedrock API to speak: "" / "messages" = the Messages-API endpoint (needs bedrock-mantle:CreateInference); "invoke" = legacy bedrock-runtime InvokeModel (needs bedrock:InvokeModel). Whichever one the account's IAM policy actually grants.
+	BedrockAPI          string        // Which Bedrock API to speak: "converse" = the Converse API, any Bedrock model (needs bedrock:InvokeModel; the default for a new setup); "" / "messages" = the Messages-API endpoint, Claude only (needs bedrock-mantle:CreateInference); "invoke" = bedrock-runtime InvokeModel, Claude only (needs bedrock:InvokeModel).
 	ContextSize         int           // Working context window (tokens). Ollama/llama.cpp: sent as num_ctx. Anthropic/Bedrock: the cap agent-loop history compaction keys on (0 = 200K default — deliberately under the 1M API window; see anthropicDefaultContextSize).
 	ConnectTimeout      time.Duration // Dial timeout; defaults to 10s if zero.
 	RequestTimeout      time.Duration // Per-Read idle deadline applied via iotimeout; defaults to 5min if zero. Long because non-streaming Gemini / model-listing calls need to ride out slow handshakes; streaming paths layer a shorter StreamIdleTimeout on top.
@@ -1875,21 +1875,26 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		// Two endpoints, picked by which IAM action the account grants — see
 		// llm_bedrock_runtime.go. Defaulting to the Messages API keeps the
 		// better integration (real SSE streaming) as the norm.
-		if cfg.BedrockAPI == "invoke" {
+		switch cfg.BedrockAPI {
+		case "converse":
+			inner, err = newBedrockConverseLLM(cfg.APIKey, cfg.Model, cfg.Region, cfg.Profile, cfg.Endpoint, api)
+		case "invoke":
 			inner, err = newBedrockRuntimeLLM(cfg.APIKey, cfg.Model, cfg.Region, cfg.Profile, cfg.Endpoint, api)
-		} else {
+		default:
 			inner, err = newBedrockLLM(cfg.APIKey, cfg.Model, cfg.Region, cfg.Profile, cfg.Endpoint, api)
 		}
 		if err != nil {
 			return nil, err
 		}
-		// Both Bedrock paths serve the same Claude models; carry the working
-		// context cap so ContextSize() reflects the operator's setting.
+		// Carry the working context cap so ContextSize() reflects the
+		// operator's setting.
 		switch c := inner.(type) {
 		case *anthropicClient:
 			c.contextSize = cfg.ContextSize
 		case *bedrockRuntimeClient:
 			c.contextSize = cfg.ContextSize
+		case *bedrockConverseClient:
+			c.rt.contextSize = cfg.ContextSize
 		}
 	case "openai":
 		if cfg.APIKey == "" {
@@ -1993,6 +1998,8 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		c.effort = tier
 	case *bedrockRuntimeClient:
 		c.effort = tier
+	case *bedrockConverseClient:
+		c.rt.effort = tier
 	case *openAIClient:
 		c.effort = tier
 	case *geminiClient:

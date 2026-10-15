@@ -36,6 +36,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
@@ -491,7 +492,7 @@ const bedrockMetricsKey = "amazon-bedrock-invocationMetrics"
 // plane (bedrock.{region}.amazonaws.com, the same for either API setting):
 // the inference profiles, which most accounts must call newer models through,
 // then the foundation models that can be called by bare id. Only Anthropic's
-// are kept, because both Bedrock clients here speak Claude's format. The
+// are kept on the two modes that speak Claude's format; Converse keeps all. The
 // listing needs bedrock:ListInferenceProfiles and bedrock:ListFoundationModels,
 // which a role that may only invoke will not have; either one is enough to
 // offer something, and the error comes back only when both are refused.
@@ -519,7 +520,9 @@ func bedrockModelList(ctx context.Context, cfg LLMProviderConfig) ([]string, err
 		req.Header.Set("Content-Type", "application/json")
 		signAWSV4(req, nil, c, region, bedrockRuntimeService, time.Now().UTC())
 	}
-	claude := func(id string) bool { return strings.Contains(id, "anthropic.") }
+	// Claude's only, unless the Converse API is in use: the other two modes
+	// speak Claude's format, Converse speaks every model's.
+	claude := func(id string) bool { return cfg.BedrockAPI == "converse" || strings.Contains(id, "anthropic.") }
 
 	var ids []string
 	var profileErr error
@@ -583,4 +586,634 @@ func bedrockModelList(ctx context.Context, cfg LLMProviderConfig) ([]string, err
 		return nil, profileErr
 	}
 	return ids, nil
+}
+
+// ==== Converse API =========================================================
+
+// AWS Bedrock, Converse API (bedrock-runtime /converse and /converse-stream).
+//
+// The THIRD Bedrock mode, and the default for a new Bedrock setup. The other
+// two speak Claude's own Messages format, so they serve Claude only. Converse
+// is AWS's one format for every model Bedrock hosts (Claude, Llama, Mistral,
+// Nova, ...), and is the API most AWS accounts are set up to use. It is
+// authorized by the same IAM actions as InvokeModel (bedrock:InvokeModel and
+// bedrock:InvokeModelWithResponseStream), on the same host, signed as the same
+// service, so this client reuses the InvokeModel client's construction and
+// differs only in the request and response shapes.
+//
+// Streaming arrives in AWS's binary event-stream framing like InvokeModel's,
+// but the events inside are Converse's own (messageStart, contentBlockDelta,
+// ...), not Anthropic's. They are translated into the Anthropic events the
+// shared accumulator (anthStreamState) already assembles, so tool-call
+// assembly, thinking, the interrupted-reply rule and the decode clock are the
+// same code on every Claude-capable path.
+
+// converseDefaultContextSize is the working cap for a model that is not
+// Claude, when the operator set none. Small on purpose: Bedrock hosts models
+// from 8k to 1M tokens, and compacting early costs a summary where
+// overrunning costs the call. Set Context size on the tier to use more.
+const converseDefaultContextSize = 32_768
+
+// bedrockConverseClient implements LLM against the Converse API.
+type bedrockConverseClient struct {
+	rt *bedrockRuntimeClient
+}
+
+// newBedrockConverseLLM builds a Converse client. Host, credentials and
+// signing are InvokeModel's; only the model id rule differs (see
+// converseModelID).
+func newBedrockConverseLLM(bearer, model, region, profile, endpoint string, api *apiclient.APIClient) (LLM, error) {
+	inner, err := newBedrockRuntimeLLM(bearer, model, region, profile, endpoint, api)
+	if err != nil {
+		return nil, err
+	}
+	rt := inner.(*bedrockRuntimeClient)
+	rt.model = converseModelID(model)
+	return &bedrockConverseClient{rt: rt}, nil
+}
+
+// converseModelID is the model id as Converse wants it. Every vendor's id
+// already names its vendor ("meta.llama3-...", "us.amazon.nova-pro-v1:0"), so
+// one with a dot, or an ARN, passes through untouched. Only a bare Claude id
+// ("claude-opus-5") takes the anthropic. prefix, as on the other two modes.
+func converseModelID(model string) string {
+	model = strings.TrimSpace(model)
+	if strings.HasPrefix(model, "arn:") || strings.Contains(model, ".") {
+		return model
+	}
+	return bedrockModelID(model)
+}
+
+// converseIsClaude reports whether a model id names Claude, which decides the
+// Claude-only parts of a request: thinking, and the default output allowance.
+// An application inference profile's ARN says nothing about its model; it is
+// taken as Claude, which is what such profiles are made for in practice.
+func converseIsClaude(model string) bool {
+	return strings.HasPrefix(model, "arn:") || strings.Contains(model, "anthropic.") || strings.Contains(model, "claude")
+}
+
+// ContextSize implements ContextSizer.
+func (c *bedrockConverseClient) ContextSize() int {
+	if c.rt.contextSize > 0 {
+		return c.rt.contextSize
+	}
+	if converseIsClaude(c.rt.model) {
+		return anthropicDefaultContextSize
+	}
+	return converseDefaultContextSize
+}
+
+// --- request -------------------------------------------------------------
+
+type cvRequest struct {
+	Messages        []cvMessage    `json:"messages"`
+	System          []cvBlock      `json:"system,omitempty"`
+	InferenceConfig *cvInference   `json:"inferenceConfig,omitempty"`
+	ToolConfig      *cvToolConfig  `json:"toolConfig,omitempty"`
+	AdditionalModel map[string]any `json:"additionalModelRequestFields,omitempty"`
+}
+
+type cvInference struct {
+	MaxTokens int `json:"maxTokens,omitempty"`
+}
+
+type cvMessage struct {
+	Role    string    `json:"role"`
+	Content []cvBlock `json:"content"`
+}
+
+// cvBlock is Converse's content union: exactly one member is set.
+type cvBlock struct {
+	Text       string        `json:"text,omitempty"`
+	Image      *cvImage      `json:"image,omitempty"`
+	ToolUse    *cvToolUse    `json:"toolUse,omitempty"`
+	ToolResult *cvToolResult `json:"toolResult,omitempty"`
+	Reasoning  *cvReasoning  `json:"reasoningContent,omitempty"`
+	CachePoint *cvCachePoint `json:"cachePoint,omitempty"`
+}
+
+type cvImage struct {
+	Format string `json:"format"`
+	Source struct {
+		Bytes []byte `json:"bytes"` // base64 on the wire, by encoding/json
+	} `json:"source"`
+}
+
+type cvToolUse struct {
+	ToolUseID string          `json:"toolUseId"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
+}
+
+type cvToolResult struct {
+	ToolUseID string    `json:"toolUseId"`
+	Content   []cvBlock `json:"content"`
+	Status    string    `json:"status,omitempty"`
+}
+
+type cvReasoning struct {
+	ReasoningText *struct {
+		Text      string `json:"text"`
+		Signature string `json:"signature,omitempty"`
+	} `json:"reasoningText,omitempty"`
+	// Streamed deltas carry these directly.
+	Text      string `json:"text,omitempty"`
+	Signature string `json:"signature,omitempty"`
+}
+
+type cvCachePoint struct {
+	Type string `json:"type"` // "default"
+}
+
+type cvToolConfig struct {
+	Tools []cvTool `json:"tools"`
+}
+
+// cvTool is a toolSpec, or a cachePoint after the last one.
+type cvTool struct {
+	ToolSpec   *cvToolSpec   `json:"toolSpec,omitempty"`
+	CachePoint *cvCachePoint `json:"cachePoint,omitempty"`
+}
+
+type cvToolSpec struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	InputSchema struct {
+		JSON json.RawMessage `json:"json"`
+	} `json:"inputSchema"`
+}
+
+// Prompt caching on Converse is a cachePoint block, and a model that does not
+// support it refuses the whole request rather than ignoring the marker. Which
+// models do is not derivable from an id that will keep working (ARNs say
+// nothing), so caching is tried and the model is BELIEVED when it refuses:
+// one 400 per model per process, as with Claude's thinking shape.
+var (
+	converseNoCacheMu     sync.RWMutex
+	converseNoCacheModels = map[string]bool{}
+)
+
+func converseCaches(model string) bool {
+	converseNoCacheMu.RLock()
+	defer converseNoCacheMu.RUnlock()
+	return !converseNoCacheModels[model]
+}
+
+// noteConverseCacheRefusal records a model that refused cachePoint and says
+// whether that is what this error was.
+func noteConverseCacheRefusal(model, msg string) bool {
+	low := strings.ToLower(msg)
+	if !strings.Contains(low, "prompt caching") && !strings.Contains(low, "cachepoint") && !strings.Contains(low, "cache point") {
+		return false
+	}
+	converseNoCacheMu.Lock()
+	converseNoCacheModels[model] = true
+	converseNoCacheMu.Unlock()
+	Debug("[bedrock-converse]: %s refused prompt caching, sending without cache points from now on", model)
+	return true
+}
+
+// buildBody assembles a Converse request.
+func (c *bedrockConverseClient) buildBody(messages []Message, cfg ChatConfig) ([]byte, error) {
+	model := c.rt.model
+	cache := converseCaches(model)
+	claude := converseIsClaude(model)
+
+	systemPrompt := cfg.SystemPrompt
+	if cfg.JSONMode {
+		systemPrompt = joinNonEmpty(systemPrompt, "You must respond with valid JSON only. No markdown, no explanation, just JSON.")
+	}
+	lead, messages := hoistSystemMessages(messages)
+	systemPrompt = joinNonEmpty(systemPrompt, lead)
+
+	req := cvRequest{Messages: buildConverseMessages(messages, len(cfg.Tools) > 0)}
+	if systemPrompt != "" {
+		req.System = []cvBlock{{Text: systemPrompt}}
+		if cache {
+			req.System = append(req.System, cvBlock{CachePoint: &cvCachePoint{Type: "default"}})
+		}
+	}
+	if len(cfg.Tools) > 0 {
+		tc := &cvToolConfig{}
+		for _, t := range cfg.Tools {
+			spec := &cvToolSpec{Name: t.Name, Description: t.Description}
+			if strings.TrimSpace(spec.Description) == "" {
+				spec.Description = t.Name // required, and may not be blank
+			}
+			spec.InputSchema.JSON = buildToolParamsSchema(t)
+			tc.Tools = append(tc.Tools, cvTool{ToolSpec: spec})
+		}
+		if cache {
+			tc.Tools = append(tc.Tools, cvTool{CachePoint: &cvCachePoint{Type: "default"}})
+		}
+		req.ToolConfig = tc
+	}
+	if cache && len(req.Messages) > 0 {
+		last := &req.Messages[len(req.Messages)-1]
+		last.Content = append(last.Content, cvBlock{CachePoint: &cvCachePoint{Type: "default"}})
+	}
+
+	maxTokens := cfg.MaxTokens
+	if claude {
+		// Claude's thinking travels as Claude's own fields, which Converse
+		// passes through to the model untouched.
+		thinking, outCfg, mt := anthThinkingFor(cfg, maxTokens)
+		maxTokens = mt
+		extra := map[string]any{}
+		if thinking != nil {
+			extra["thinking"] = thinking
+		}
+		if outCfg != nil {
+			extra["output_config"] = outCfg
+		}
+		if len(extra) > 0 {
+			req.AdditionalModel = extra
+		}
+	}
+	// Other models' output limits run from 2k to 32k and a larger request is
+	// refused, so they get the model's own default unless a caller asked.
+	if maxTokens > 0 {
+		req.InferenceConfig = &cvInference{MaxTokens: maxTokens}
+	}
+	return json.Marshal(req)
+}
+
+// joinNonEmpty joins the non-blank parts with a blank line.
+func joinNonEmpty(parts ...string) string {
+	var out []string
+	for _, p := range parts {
+		if strings.TrimSpace(p) != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, "\n\n")
+}
+
+// buildConverseMessages converts the generic history. Two rules Converse
+// holds that the Messages API does not:
+//
+//   - Roles must alternate. Consecutive turns from one role (tool results
+//     followed by a user message, say) are merged into one turn.
+//   - Tool blocks are refused in a request that defines no tools. A call made
+//     without tools (a summary of a conversation that used them) gets its
+//     tool calls and results as plain text instead.
+func buildConverseMessages(messages []Message, tools bool) []cvMessage {
+	var out []cvMessage
+	add := func(role string, blocks ...cvBlock) {
+		if len(blocks) == 0 {
+			return
+		}
+		if n := len(out); n > 0 && out[n-1].Role == role {
+			out[n-1].Content = append(out[n-1].Content, blocks...)
+			return
+		}
+		out = append(out, cvMessage{Role: role, Content: blocks})
+	}
+	for _, m := range messages {
+		switch {
+		case m.Role == "assistant" && len(m.ToolCalls) > 0:
+			var blocks []cvBlock
+			if strings.TrimSpace(m.Content) != "" {
+				blocks = append(blocks, cvBlock{Text: m.Content})
+			}
+			for _, tc := range m.ToolCalls {
+				args := tc.Args
+				if args == nil {
+					args = map[string]any{}
+				}
+				input, _ := json.Marshal(args)
+				if !tools {
+					blocks = append(blocks, cvBlock{Text: fmt.Sprintf("I called %s with %s.", tc.Name, input)})
+					continue
+				}
+				blocks = append(blocks, cvBlock{ToolUse: &cvToolUse{ToolUseID: anthToolID(tc.ID), Name: tc.Name, Input: input}})
+			}
+			add("assistant", blocks...)
+		case len(m.ToolResults) > 0:
+			var blocks []cvBlock
+			for _, tr := range m.ToolResults {
+				text := tr.Content
+				if strings.TrimSpace(text) == "" {
+					text = "(no output)" // a blank text block is refused
+				}
+				if !tools {
+					blocks = append(blocks, cvBlock{Text: "Tool result: " + text})
+					continue
+				}
+				status := "success"
+				if tr.IsError {
+					status = "error"
+				}
+				blocks = append(blocks, cvBlock{ToolResult: &cvToolResult{
+					ToolUseID: anthToolID(tr.ID), Content: []cvBlock{{Text: text}}, Status: status}})
+			}
+			add("user", blocks...)
+		default:
+			role := m.Role
+			if role != "assistant" {
+				role = "user"
+			}
+			var blocks []cvBlock
+			if role == "user" {
+				for _, img := range m.Images {
+					if f := converseImageFormat(img); f != "" {
+						b := cvBlock{Image: &cvImage{Format: f}}
+						b.Image.Source.Bytes = img
+						blocks = append(blocks, b)
+					}
+				}
+			}
+			if strings.TrimSpace(m.Content) != "" {
+				blocks = append(blocks, cvBlock{Text: m.Content})
+			}
+			add(role, blocks...)
+		}
+	}
+	return out
+}
+
+// converseImageFormat is an image's format as Converse names it, or "" for
+// one it does not take.
+func converseImageFormat(b []byte) string {
+	switch http.DetectContentType(b) {
+	case "image/png":
+		return "png"
+	case "image/jpeg":
+		return "jpeg"
+	case "image/gif":
+		return "gif"
+	case "image/webp":
+		return "webp"
+	}
+	return ""
+}
+
+// --- transport -----------------------------------------------------------
+
+// send posts body to path and returns the response, or the API error with
+// Bedrock's hint. retry reports a cache refusal, after which the caller
+// rebuilds the body (now without cache points) and sends once more.
+func (c *bedrockConverseClient) send(ctx context.Context, path, accept string, body []byte) (resp *http.Response, retry bool, err error) {
+	req, err := c.rt.api.NewRequestWithContext(ctx, "POST", path)
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", accept)
+	req.Body = io.NopCloser(strings.NewReader(string(body)))
+	req.ContentLength = int64(len(body))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(string(body))), nil
+	}
+	resp, err = c.rt.api.SendRawRequest("", req)
+	if err != nil {
+		return nil, false, err
+	}
+	if resp.StatusCode == http.StatusOK {
+		return resp, false, nil
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	snoopAnthResponse(resp.StatusCode, respBody)
+	msg := string(respBody)
+	var awsErr struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(respBody, &awsErr) == nil && awsErr.Message != "" {
+		msg = awsErr.Message
+	}
+	if resp.StatusCode == http.StatusBadRequest && converseCaches(c.rt.model) && noteConverseCacheRefusal(c.rt.model, msg) {
+		return nil, true, nil
+	}
+	return nil, false, noteIfAdaptiveThinking(c.rt.model, refused(&APIError{
+		StatusCode: resp.StatusCode, Message: withBedrockHint(c.rt.model, msg), Provider: "bedrock-converse"}, c.rt.model))
+}
+
+// post builds and sends a request, rebuilding once after a cache refusal.
+func (c *bedrockConverseClient) post(ctx context.Context, path, accept string, messages []Message, cfg ChatConfig) (*http.Response, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		body, err := c.buildBody(messages, cfg)
+		if err != nil {
+			return nil, err
+		}
+		Debug("[bedrock-converse]: Sending request to %s%s", c.rt.api.Server, path)
+		resp, retry, err := c.send(ctx, path, accept, body)
+		if err != nil || !retry {
+			return resp, err
+		}
+	}
+	return nil, fmt.Errorf("bedrock converse: %s refused the request twice over prompt caching", c.rt.model)
+}
+
+func (c *bedrockConverseClient) path(suffix string) string {
+	return "/model/" + bedrockPathModel(c.rt.model) + "/" + suffix
+}
+
+// defaultMaxTokens is the output allowance when a caller sets none: Claude's
+// usual one, and the model's own default for anything else (see buildBody).
+func (c *bedrockConverseClient) defaultMaxTokens(stream bool) int {
+	if !converseIsClaude(c.rt.model) {
+		return 0
+	}
+	if stream {
+		return anthDefaultStreamMaxTokens
+	}
+	return anthDefaultMaxTokens
+}
+
+// --- response ------------------------------------------------------------
+
+type cvUsage struct {
+	InputTokens      int `json:"inputTokens"`
+	OutputTokens     int `json:"outputTokens"`
+	CacheReadTokens  int `json:"cacheReadInputTokens"`
+	CacheWriteTokens int `json:"cacheWriteInputTokens"`
+}
+
+type cvResponse struct {
+	Output struct {
+		Message cvMessage `json:"message"`
+	} `json:"output"`
+	StopReason string  `json:"stopReason"`
+	Usage      cvUsage `json:"usage"`
+}
+
+// converseStopReason maps Converse's stop reasons onto the Anthropic ones the
+// loop reads. A guardrail or content filter is a refusal.
+func converseStopReason(s string) string {
+	switch s {
+	case "guardrail_intervened", "content_filtered":
+		return "refusal"
+	case "model_context_window_exceeded":
+		return "max_tokens"
+	}
+	return s
+}
+
+// Chat sends a non-streaming Converse request.
+func (c *bedrockConverseClient) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	cfg := applyOpts(c.rt.model, c.defaultMaxTokens(false), opts)
+	c.rt.effort.resolve(&cfg)
+	resp, err := c.post(ctx, c.path("converse"), "application/json", messages, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	snoopAnthResponse(resp.StatusCode, respBody)
+	var result cvResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	var text, thinking strings.Builder
+	var calls []ToolCall
+	for _, b := range result.Output.Message.Content {
+		switch {
+		case b.Text != "":
+			text.WriteString(b.Text)
+		case b.Reasoning != nil && b.Reasoning.ReasoningText != nil:
+			thinking.WriteString(b.Reasoning.ReasoningText.Text)
+		case b.ToolUse != nil:
+			args, err := decodeToolInput(b.ToolUse.Input)
+			argsErr := ""
+			if err != nil {
+				Warn("[bedrock-converse]: tool %q: %v", b.ToolUse.Name, err)
+				argsErr = err.Error()
+			}
+			calls = append(calls, ToolCall{ID: b.ToolUse.ToolUseID, Name: b.ToolUse.Name, Args: args, ArgsError: argsErr})
+		}
+	}
+	r := &Response{
+		Content:          text.String(),
+		ToolCalls:        calls,
+		Model:            c.rt.model,
+		InputTokens:      result.Usage.InputTokens,
+		OutputTokens:     result.Usage.OutputTokens,
+		CacheReadTokens:  result.Usage.CacheReadTokens,
+		CacheWriteTokens: result.Usage.CacheWriteTokens,
+		StopReason:       converseStopReason(result.StopReason),
+	}
+	r.ReasoningTokens = estimateReasoningTokens(r.OutputTokens, thinking.String(), r.Content, calls)
+	warnStopReason(r.StopReason)
+	Debug("[bedrock-converse]: Response: model=%s input_tokens=%d output_tokens=%d tool_calls=%d stop=%s",
+		r.Model, r.InputTokens, r.OutputTokens, len(r.ToolCalls), r.StopReason)
+	return r, nil
+}
+
+// cvStreamEvent is the payload of one ConverseStream event; which fields are
+// set depends on the frame's :event-type.
+type cvStreamEvent struct {
+	Index int `json:"contentBlockIndex"`
+	Start *struct {
+		ToolUse *cvToolUse `json:"toolUse"`
+	} `json:"start"`
+	Delta *struct {
+		Text    string `json:"text"`
+		ToolUse *struct {
+			Input string `json:"input"`
+		} `json:"toolUse"`
+		Reasoning *cvReasoning `json:"reasoningContent"`
+	} `json:"delta"`
+	StopReason string   `json:"stopReason"`
+	Usage      *cvUsage `json:"usage"`
+}
+
+// converseStream translates ConverseStream events into the Anthropic events
+// anthStreamState assembles. Converse opens a block only for a tool call; a
+// text or reasoning block starts with its first delta, so the start is
+// supplied here.
+type converseStream struct {
+	st      *anthStreamState
+	started map[int]bool
+}
+
+func (cs *converseStream) emit(ev anthStreamEvent) {
+	if b, err := json.Marshal(ev); err == nil {
+		cs.st.feed(b)
+	}
+}
+
+func (cs *converseStream) open(i int, kind string) {
+	if cs.started[i] {
+		return
+	}
+	cs.started[i] = true
+	cs.emit(anthStreamEvent{Type: "content_block_start", Index: i, ContentBlock: &anthContentBlock{Type: kind}})
+}
+
+func (cs *converseStream) apply(kind string, payload []byte) {
+	var ev cvStreamEvent
+	if err := json.Unmarshal(payload, &ev); err != nil {
+		return
+	}
+	switch kind {
+	case "contentBlockStart":
+		if ev.Start != nil && ev.Start.ToolUse != nil {
+			cs.started[ev.Index] = true
+			cs.emit(anthStreamEvent{Type: "content_block_start", Index: ev.Index, ContentBlock: &anthContentBlock{
+				Type: "tool_use", ID: ev.Start.ToolUse.ToolUseID, Name: ev.Start.ToolUse.Name}})
+		}
+	case "contentBlockDelta":
+		if ev.Delta == nil {
+			return
+		}
+		switch {
+		case ev.Delta.ToolUse != nil:
+			cs.emit(anthStreamEvent{Type: "content_block_delta", Index: ev.Index,
+				Delta: &anthContentBlock{Type: "input_json_delta", PartialJSON: ev.Delta.ToolUse.Input}})
+		case ev.Delta.Reasoning != nil:
+			if ev.Delta.Reasoning.Text != "" {
+				cs.open(ev.Index, "thinking")
+				cs.emit(anthStreamEvent{Type: "content_block_delta", Index: ev.Index,
+					Delta: &anthContentBlock{Type: "thinking_delta", Thinking: ev.Delta.Reasoning.Text}})
+			}
+		case ev.Delta.Text != "":
+			cs.open(ev.Index, "text")
+			cs.emit(anthStreamEvent{Type: "content_block_delta", Index: ev.Index,
+				Delta: &anthContentBlock{Type: "text_delta", Text: ev.Delta.Text}})
+		}
+	case "contentBlockStop":
+		cs.emit(anthStreamEvent{Type: "content_block_stop", Index: ev.Index})
+	case "messageStop":
+		cs.st.stopReason = converseStopReason(ev.StopReason)
+	case "metadata":
+		if u := ev.Usage; u != nil {
+			cs.st.inputTokens = u.InputTokens
+			cs.st.outputTokens = u.OutputTokens
+			cs.st.cacheRead = u.CacheReadTokens
+			cs.st.cacheWrite = u.CacheWriteTokens
+		}
+	}
+}
+
+// ChatStream streams a Converse response token by token.
+func (c *bedrockConverseClient) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
+	cfg := applyOpts(c.rt.model, c.defaultMaxTokens(true), opts)
+	c.rt.effort.resolve(&cfg)
+	resp, err := c.post(ctx, c.path("converse-stream"), "application/vnd.amazon.eventstream", messages, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler, model: c.rt.model}
+	cs := &converseStream{st: st, started: map[int]bool{}}
+	reader := newEventStreamReader(resp.Body)
+	for {
+		frame, err := reader.next()
+		if err == io.EOF {
+			return st.finish("bedrock-converse", nil)
+		}
+		if err != nil {
+			return st.finish("bedrock-converse", err)
+		}
+		if mt := frame.messageType(); mt == "exception" || mt == "error" {
+			_, err := decodeBedrockEvent(frame)
+			return st.finish("bedrock-converse", err)
+		}
+		cs.apply(frame.Headers[":event-type"], frame.Payload)
+	}
 }

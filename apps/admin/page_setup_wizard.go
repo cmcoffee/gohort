@@ -117,10 +117,11 @@ func (a *AdminApp) setupWizardPage() ui.Page {
 				Presets:     bedrockRegionPresets()},
 			{Field: "bedrock_api", Label: "Bedrock API", Type: "select", ShowWhen: "provider:bedrock",
 				Options: []ui.SelectOption{
-					{Value: "", Label: "Messages API (bedrock-mantle)"},
-					{Value: "invoke", Label: "InvokeModel (bedrock-runtime)"}},
-				Help:   "Which Bedrock API your AWS role is allowed to call. Both stream.",
-				Detail: "The Messages API needs bedrock-mantle:CreateInference. InvokeModel needs bedrock:InvokeModel, and is what most AI-tooling permission sets grant. A 403 on CreateInference means switch to InvokeModel."},
+					{Value: "converse", Label: "Converse API (any Bedrock model)"},
+					{Value: "messages", Label: "Messages API (bedrock-mantle, Claude only)"},
+					{Value: "invoke", Label: "InvokeModel (bedrock-runtime, Claude only)"}},
+				Help:   "Which Bedrock API your AWS role is allowed to call. All three stream.",
+				Detail: bedrockAPIDetail},
 			{Field: "aws_profile", Label: "AWS profile", Type: "text", ShowWhen: "provider:bedrock",
 				Placeholder: "(default)",
 				Help:        "Which set of AWS credentials to use. Blank uses $AWS_PROFILE.",
@@ -262,10 +263,12 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 	// regions AWS documents for Bedrock have no Messages-API host, and without
 	// this the operator gets a bare DNS error that reads like a network fault.
 	credNote := ""
-	if req.Provider == "bedrock" && req.BedrockAPI != "invoke" {
-		if err := CheckBedrockEndpoint(req.AWSRegion); err != nil {
-			writeTestResult(w, false, "", err.Error())
-			return
+	if req.Provider == "bedrock" {
+		if bedrockUsesMantle(req.BedrockAPI) {
+			if err := CheckBedrockEndpoint(req.AWSRegion); err != nil {
+				writeTestResult(w, false, "", err.Error())
+				return
+			}
 		}
 		// Resolve the identity up front and report it either way. A bare
 		// "denied" is unactionable: the expensive question in a Bedrock setup
