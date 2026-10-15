@@ -38,3 +38,39 @@ type Host interface {
 
 // Provider is the registered host, nil where no file-store app is compiled in.
 var Provider Host
+
+// StoreInfo is one file store as an app's author sees it before building:
+// what it holds, the commands registered on it, where it pulls from, and what
+// the app (if one is named) is granted on it.
+type StoreInfo struct {
+	Store       string        `json:"store"`
+	Name        string        `json:"name"`
+	About       string        `json:"about,omitempty"`
+	PullsFrom   string        `json:"pulls_from,omitempty"` // the store it copies files and folders in from
+	PullPart    string        `json:"pull_part,omitempty"`  // the part of a folder a pull copies
+	Temporary   bool          `json:"temporary,omitempty"`
+	Commands    []CommandInfo `json:"commands,omitempty"`
+	Granted     *Grant        `json:"granted,omitempty"` // nil: the app has no grant on it
+	FolderCount int           `json:"folders"`
+}
+
+// CommandInfo is one command registered on a store, as an app calls it:
+// store_command(store, folder, Name, input=...) runs `<binary> <folder>
+// [input]`.
+type CommandInfo struct {
+	Name       string `json:"name"`
+	Label      string `json:"label,omitempty"`
+	TwoPhase   bool   `json:"two_phase,omitempty"`
+	InputLabel string `json:"input_label,omitempty"`
+	Note       string `json:"note,omitempty"`
+	Guide      string `json:"guide,omitempty"` // the admin's markdown guide to using it
+}
+
+// Catalog is the file-store side's answer to "what stores are there", for an
+// app's author. Optional beside Host: a host that does not offer it simply
+// lists nothing.
+type Catalog interface {
+	// Stores is every store owner may reach, with slug's grant on each when
+	// slug names an app ("" for none yet).
+	Stores(owner, slug string) []StoreInfo
+}

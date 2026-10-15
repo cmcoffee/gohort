@@ -133,3 +133,34 @@ func TestAnAdminGrantsAnAppOnTheStoresPage(t *testing.T) {
 	}
 	var _ appstores.Host = storeHost{}
 }
+
+// An app's author sees every store with its commands and the admin's guide
+// to each, where it pulls from, and, for an app, what that app is granted.
+func TestAnAppsAuthorSeesTheStoresAndTheirCommands(t *testing.T) {
+	app, intake, analysis := pullFixture(t)
+	SaveStoreCommand(app.DB, StoreCommand{Slug: intake.Slug, Name: "extract", Label: "Extract", Command: "/opt/bin/extract",
+		TwoPhase: true, InputLabel: "Response", Guide: "Support answers the signature."})
+	intake.AppGrants = []AppGrant{{App: "alice/kwprep", Write: true, Commands: true}}
+	SaveStore(app.DB, intake)
+	var cat appstores.Catalog = storeHost{app}
+
+	byStore := map[string]appstores.StoreInfo{}
+	for _, s := range cat.Stores("alice", "kwprep") {
+		byStore[s.Store] = s
+	}
+	in, an := byStore[intake.Slug], byStore[analysis.Slug]
+	if len(in.Commands) != 1 || in.Commands[0].Name != "extract" || !in.Commands[0].TwoPhase || in.Commands[0].Guide != "Support answers the signature." {
+		t.Errorf("Intake's commands: %+v", in.Commands)
+	}
+	if in.Granted == nil || !in.Granted.Write || !in.Granted.Commands || in.Granted.Pull {
+		t.Errorf("Intake's grant: %+v", in.Granted)
+	}
+	if an.Granted != nil || an.PullsFrom != intake.Slug || an.PullPart != "prepared" {
+		t.Errorf("Analysis: %+v", an)
+	}
+	for _, s := range cat.Stores("alice", "") {
+		if s.Granted != nil {
+			t.Errorf("no app named, yet %s shows a grant", s.Store)
+		}
+	}
+}

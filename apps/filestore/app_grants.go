@@ -83,6 +83,36 @@ func (h storeHost) GrantsFor(owner, slug string) []appstores.Grant {
 	return out
 }
 
+// Stores lists the stores owner may reach for an app's author, with what
+// each holds, its commands and slug's grant on it (appstores.Catalog).
+func (h storeHost) Stores(owner, slug string) []appstores.StoreInfo {
+	var out []appstores.StoreInfo
+	for _, st := range StoresForUser(h.app.DB, owner) {
+		if st.Valid() != nil {
+			continue
+		}
+		info := appstores.StoreInfo{Store: st.Slug, Name: st.Name, About: strings.TrimSpace(st.Description),
+			Temporary: st.Ephemeral, FolderCount: len(h.app.listScope(owner, st.Slug))}
+		if src, ok := st.pullSource(h.app.DB); ok {
+			info.PullsFrom, info.PullPart = src.Slug, st.PullSubpath
+			if info.PullPart == "" {
+				info.PullPart = "prepared"
+			}
+		}
+		for _, c := range StoreCommandsFor(h.app.DB, st.Slug) {
+			info.Commands = append(info.Commands, appstores.CommandInfo{Name: c.Name, Label: c.Label, TwoPhase: c.TwoPhase,
+				InputLabel: c.InputLabel, Note: strings.TrimSpace(c.Help), Guide: strings.TrimSpace(c.Guide)})
+		}
+		if slug != "" {
+			if g, ok := st.grantFor(owner, slug); ok {
+				info.Granted = &appstores.Grant{Store: st.Slug, Name: st.Name, Read: true, Write: g.Write, Commands: g.Commands, Pull: g.Pull}
+			}
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
 // grantedStore loads store and the app's grant on it, or says why not.
 func (h storeHost) grantedStore(owner, slug, store string) (Store, AppGrant, error) {
 	st, ok := LoadStore(h.app.DB, strings.TrimSpace(store))
