@@ -62,6 +62,9 @@ type ToolSession struct {
 	// StoreAction is what gohort.store_action reaches: one of a store
 	// command's mapped actions, its approved line with values filled in.
 	StoreAction func(store, command, action string, values map[string]any) (string, error)
+	// Notify is what gohort.notify reaches: a notice to the person an app's
+	// action ran for. Set only on an action's run; nil, and refused.
+	Notify func(title, body string) (string, error)
 
 	// imageBackends memoizes ReachableImageBackends for this turn. Resolving it
 	// reads the connector table, and the grouped `image` tool's schema is

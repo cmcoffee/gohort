@@ -398,6 +398,8 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		h.handleStoreCommand(conn, req.Params)
 	case "store_action":
 		h.handleStoreAction(conn, req.Params)
+	case "notify":
+		h.handleNotify(conn, req.Params)
 	case "store_pull":
 		h.handleStorePull(conn, req.Params)
 	default:
@@ -679,6 +681,21 @@ func (h *SandboxHook) handleStoreAction(conn net.Conn, params map[string]interfa
 		stringFromParams(params, "action"), values)
 	if err != nil {
 		writeHookError(conn, "store_action: "+err.Error())
+		return
+	}
+	writeHookResult(conn, map[string]any{"text": out})
+}
+
+// handleNotify serves gohort.notify: a notice to the person an app's action
+// ran for. Granted by "notify", which only an action's run carries.
+func (h *SandboxHook) handleNotify(conn net.Conn, params map[string]interface{}) {
+	if h.Sess == nil || h.Sess.Notify == nil {
+		writeHookError(conn, "notify is for an app's actions: a data source runs on every page load, where a notice would only be noise")
+		return
+	}
+	out, err := h.Sess.Notify(stringFromParams(params, "title"), stringFromParams(params, "body"))
+	if err != nil {
+		writeHookError(conn, err.Error())
 		return
 	}
 	writeHookResult(conn, map[string]any{"text": out})
@@ -2012,6 +2029,15 @@ class _Gohort:
         result = self._call("store_action", {"store": str(store), "command": str(command), "action": str(action), "values": dict(values or {})})
         return result.get("text", "") if isinstance(result, dict) else result
 
+    def notify(self, title, body=None):
+        """Tell the person this action ran for something, in gohort's
+        notifications (and by email or phone if they chose that): whoever
+        pressed the button, or the app's owner for a scheduled run. title
+        is what happened, in a line; body is the detail. The same title
+        again folds into one notice with a count. Actions only."""
+        result = self._call("notify", {"title": str(title), "body": "" if body is None else str(body)})
+        return result.get("text", "") if isinstance(result, dict) else result
+
     def store_pull(self, store, item, replace=False):
         """Copy a file or folder (item, by its name at the top of the other
         store) into store from the store it pulls from. A folder copies its
@@ -2151,6 +2177,10 @@ def store_command(store, folder, command, input=None):
 
 def store_action(store, command, action, values=None):
     return gohort.store_action(store, command, action, values=values)
+
+
+def notify(title, body=None):
+    return gohort.notify(title, body=body)
 
 
 def store_pull(store, item, replace=False):

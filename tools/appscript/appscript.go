@@ -128,6 +128,11 @@ func (j Job) Run() (string, error) {
 	if appstores.Provider != nil {
 		grants = appstores.Provider.GrantsFor(user, slug)
 	}
+	// An action may tell the person it ran for something (notify.go); a data
+	// source runs on every page load and may not.
+	if kind == "action" {
+		caps = mergeCaps(caps, []string{"notify"})
+	}
 	if len(grants) > 0 {
 		caps = mergeCaps(caps, []string{"store_command", "store_action", "store_pull"})
 		byStore := map[string]appstores.Grant{}
@@ -237,6 +242,9 @@ func (j Job) Run() (string, error) {
 		return AppRunPipeline(sess.Context(), spec, caller, pipeline, input)
 	}
 	storeFuncs(sess, user, slug)
+	if kind == "action" {
+		sess.Notify = notifier(caller, user, slug)
+	}
 	var out string
 	if j.Long {
 		out, err = j.runLong(sess, tt, args)
@@ -291,7 +299,7 @@ func (j Job) runLong(sess *ToolSession, tt *TempTool, args map[string]any) (stri
 		work.CallTool = func(name string, a map[string]any) (string, error) {
 			return temptool.CallToolForScript(work, j.Caller, name, a)
 		}
-		work.Ask, work.RunAgent, work.RunPipeline = sess.Ask, sess.RunAgent, sess.RunPipeline
+		work.Ask, work.RunAgent, work.RunPipeline, work.Notify = sess.Ask, sess.RunAgent, sess.RunPipeline, sess.Notify
 		storeFuncs(work, j.Owner, j.Slug)
 		if j.OnProgress != nil {
 			if act := bgrun.RunActivityFrom(work.Context()); act != nil {
