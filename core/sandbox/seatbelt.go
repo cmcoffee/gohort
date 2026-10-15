@@ -342,10 +342,44 @@ func seatbeltDenyRules() string {
 }
 
 // sbSubpath renders a subpath rule.
-func sbSubpath(p string) string { return `(subpath ` + sbString(p) + `)` }
+//
+// macOS matches a rule against the RESOLVED path, and /tmp, /var and /etc are
+// links into /private. A rule naming /var/folders/.../T/x (where os.TempDir
+// and so the hook's socket live) never matched the /private/var/folders/...
+// the kernel compared, so every hook call from a script was refused with
+// "Operation not permitted". Each path is therefore written as given and, when
+// it differs, as it resolves; several filters in one rule match any of them.
+func sbSubpath(p string) string { return sbFilters("subpath", p) }
 
 // sbLiteral renders an exact-path rule.
-func sbLiteral(p string) string { return `(literal ` + sbString(p) + `)` }
+func sbLiteral(p string) string { return sbFilters("literal", p) }
+
+// sbFilters renders p, and p resolved when that differs, as filters of kind.
+func sbFilters(kind, p string) string {
+	out := `(` + kind + ` ` + sbString(p) + `)`
+	if r := sbResolved(p); r != p {
+		out += ` (` + kind + ` ` + sbString(r) + `)`
+	}
+	return out
+}
+
+// sbResolved is p with its symlinks resolved, through the deepest part of it
+// that exists (a writable folder or a denied one may not exist yet).
+func sbResolved(p string) string {
+	clean := filepath.Clean(p)
+	rest := ""
+	for dir := clean; ; {
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(r, rest)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return clean
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+	}
+}
 
 // sbString quotes a path for SBPL.
 //

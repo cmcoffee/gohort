@@ -3,6 +3,8 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -148,10 +150,12 @@ func TestTheHookStaysReachableWithNetworkDenied(t *testing.T) {
 	sock := "/var/run/gohort/h1.sock"
 	p := seatbeltProfile(seatbeltSpec{Workspace: "/ws", AllowNetwork: false, HookSocket: sock})
 
-	if !strings.Contains(p, `(allow network-outbound (literal "`+sock+`"))`) {
+	// A prefix, not the whole rule: where the path runs through a link (/var/run
+	// is one on some hosts) the rule names its resolved form too.
+	if !strings.Contains(p, `(allow network-outbound (literal "`+sock+`")`) {
 		t.Errorf("the hook socket is not connectable with network denied:\n%s", p)
 	}
-	if !strings.Contains(p, `(allow file-read* file-write* (literal "`+sock+`"))`) {
+	if !strings.Contains(p, `(allow file-read* file-write* (literal "`+sock+`")`) {
 		t.Errorf("the hook socket file is not accessible:\n%s", p)
 	}
 	// Named as a literal, never a subpath — a subpath rule on its directory
@@ -422,5 +426,27 @@ func TestTheHelperAndGivenFoldersAreReadableDespiteTheDataDeny(t *testing.T) {
 	// Given back for READING only: the store stays unwritable.
 	if w := strings.Index(p, "(allow file-read* file-write*"); w >= 0 && strings.Contains(p[w:], "stores/intake") {
 		t.Errorf("a read-only folder became writable:\n%s", p)
+	}
+}
+
+// macOS matches rules against the resolved path, and its temp dir (where the
+// hook's socket lives) is under /var, a link to /private/var. A rule naming
+// only the path as given never matched, and every hook call from a script was
+// refused with "Operation not permitted". Each path is written both ways.
+func TestAPathThroughALinkIsNamedAsItResolves(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "tmp")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip("cannot make a symlink here:", err)
+	}
+	realResolved, _ := filepath.EvalSymlinks(real)
+	sock := filepath.Join(link, "gohort-hook", "h1.sock")
+	p := seatbeltProfile(seatbeltSpec{Workspace: filepath.Join(link, "ws"), HookSocket: sock})
+	want := filepath.Join(realResolved, "gohort-hook", "h1.sock")
+	if !strings.Contains(p, `(allow network-outbound (literal "`+sock+`") (literal "`+want+`"))`) {
+		t.Errorf("the socket is not named as it resolves:\n%s", p)
+	}
+	if !strings.Contains(p, `(subpath "`+filepath.Join(realResolved, "ws")+`")`) {
+		t.Errorf("the workspace is not named as it resolves:\n%s", p)
 	}
 }
