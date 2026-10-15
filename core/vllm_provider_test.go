@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -123,4 +124,28 @@ func unwrapOpenAIClient(l LLM) (*openAIClient, bool) {
 		}
 	}
 	return nil, false
+}
+
+// A system message past the first one goes to a local server as a user turn,
+// in the same place: Qwen's chat template refuses a system message anywhere
+// but first, and the guardrail's steer sits just before the request. OpenAI's
+// own API keeps it as written.
+func TestALaterSystemMessageReachesALocalServerAsAUserTurn(t *testing.T) {
+	msgs := []Message{{Role: "user", Content: "earlier"}, {Role: "assistant", Content: "ok"},
+		{Role: "system", Content: "Constraint on this reply"}, {Role: "user", Content: "now"}}
+	roles := func(c *openAIClient) string {
+		var r []string
+		for _, m := range c.buildMessages(ChatConfig{SystemPrompt: "persona"}, msgs) {
+			r = append(r, m.Role)
+		}
+		return strings.Join(r, ",")
+	}
+	for name, c := range map[string]*openAIClient{"vllm": {vllm: true}, "llama.cpp": {llamacpp: true}} {
+		if got := roles(c); got != "system,user,assistant,user,user" {
+			t.Errorf("%s: %s", name, got)
+		}
+	}
+	if got := roles(&openAIClient{}); got != "system,user,assistant,system,user" {
+		t.Errorf("openai: %s", got)
+	}
 }

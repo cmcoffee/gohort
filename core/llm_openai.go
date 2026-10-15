@@ -1233,6 +1233,19 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 			}
 		}
 	}
+	// A local server renders messages through the model's own chat template,
+	// and Qwen's raises "System message must be at the beginning" for a
+	// system message anywhere but first: the guardrail's steer (inserted just
+	// before the request it governs) failed the whole run with a 400. There
+	// it goes as a user turn in the same place, so the steer still lands and
+	// the prompt cache still holds. OpenAI's own API takes it where it is.
+	if c.vllm || c.llamacpp {
+		for i := 1; i < len(msgs); i++ {
+			if msgs[i].Role == "system" {
+				msgs[i].Role = "user"
+			}
+		}
+	}
 	return msgs
 }
 

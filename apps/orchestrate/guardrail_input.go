@@ -145,7 +145,8 @@ func (t *chatTurn) applyInputGuardrail(msgs []Message) (out []Message, decline s
 	//
 	// Here, everything up to the insertion point is byte-identical to the last
 	// turn, so the cache hits and only the tail is new. It is still a system-role
-	// message and still framework authority — and landing next to the request it
+	// message (a local server, whose chat template takes a system message only
+	// first, gets it as a user turn: core buildMessages) and still framework authority — and landing next to the request it
 	// governs, rather than above a persona the agent can edit, reads stronger
 	// rather than weaker.
 	res := make([]Message, 0, len(msgs)+1)
