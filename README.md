@@ -23,7 +23,7 @@
 [![Single binary](https://img.shields.io/badge/deploy-single%20binary-success)](#quick-start)
 [![Local-first](https://img.shields.io/badge/LLM-local--first-6366f1)](#1-the-harness)
 
-**Your agent has agents. Hand it any technical job: it delegates to the specialist that owns it, and builds the tools, agents and apps it lacks. A local tier and a lead tier on one harness, a single Go binary, and the model never sees a credential.**
+**Your agent has agents. Hand it any technical job: it delegates to the specialist that owns it, and builds the tools, agents and apps it lacks. A local tier and a lead tier on one harness, a single Go binary, and the model is never handed a credential.**
 
 <!-- Screenshots: take these from a FRESH deployment with demo data, never from a
      live instance: a real dashboard carries private app names, contacts and
@@ -55,7 +55,7 @@ Most MCP servers expose flat tools and the client does the reasoning. **gohort e
 
 It also fills a gap the desktop clients leave: one assistant, one persona, one tool set, one instructions box. You cannot scope tools per workflow, keep separate memory per domain, or route stages by sensitivity. gohort is where you configure that; Claude Desktop stays the client.
 
-The worked case is **servitor**: Claude Desktop investigating your machines over SSH, plan-driven, behind a governed agent, with credentials the model never sees.
+The worked case is **servitor**: Claude Desktop investigating your machines over SSH, plan-driven, behind a governed agent, with credentials the model is never handed.
 
 ## What actually makes it different
 
@@ -71,7 +71,16 @@ The checkable version of the claim: **a frontier model and a local Qwen run on t
 
 "Credential isolation" is a phrase others use too, so here is the design instead. Keys are registered once and stored encrypted. They are injected **server-side at call time**, never rendered into a prompt. Every outbound call is checked against a base-URL and endpoint allowlist **before** the secret attaches. A universal rule forbids any agent from asking for one in chat. Shell work runs in a bubblewrap sandbox whose only network path is an audited hook, with `urllib` / `requests` / `curl` / `wget` refused at authoring time.
 
-Most projects mean the key stays on your disk. This means **the model demonstrably cannot exfiltrate it**. There has been no external security review of that design: it is set out above, and in the source, so you can judge it rather than take it on faith.
+Most projects mean the key stays on your disk. This means **the model is never handed it**: on the normal paths, no prompt, tool result or chat message carries a credential.
+
+There are two deliberate exceptions, granted per tool when the tool is approved rather than asked about on each call:
+
+- A tool can be given **raw network access**, for protocols the audited hook does not speak (psql, redis). A persistent shell always has it.
+- A script can be handed a key outright, with a `secret:<name>` capability.
+
+A tool with both can send that key anywhere its network reaches, and any script holding a key can print it into output the model reads. Approving such a tool is trusting it with the key. A Private conversation cuts the network either way. A scheduled or unattended run does not stop for either: attaching the tool to the agent is the approval.
+
+There has been no external security review of this design. It is set out above, and in the source, so you can judge it rather than take it on faith.
 
 One thing to be straight about, because it is the question a careful reader asks: gohort **skills can carry tools**, and activating one is the opt-in that lets its bundled scripts run. They are not merely prompt text. What bounds them is that they are per-user and authored in-product rather than installed from a public registry, and that anything they bring still runs inside the sandbox and under the same credential allowlist as everything else.
 
@@ -119,9 +128,9 @@ That's the loop: **describe it, approve it, it runs.**
 
 - **Build it in the browser, not just for it.** The chat *is* the authoring surface. Tell the Builder agent "make me an agent for X" or "set up a workflow that does Y" and it assembles the right thing from primitives: a new agent, an attached pipeline, a skill, a runtime-defined tool. No code, no visual flow editor, no separate IDE. Persistence of anything consequential goes through an admin approval queue.
 
-- **Your keys never reach the model.** Credentials are registered once, stored encrypted, and injected **server-side** at call time: the LLM drives the wiring but never sees the secret, and a universal rule forbids any agent from asking for one in chat. Every external call is checked against a Base-URL + endpoint allow-list before the secret is attached. Shell tools run in a network-isolated `bwrap` sandbox whose *only* path to the network is a narrow, audited gohort hook (urllib/requests/curl/wget are refused at authoring time). An agent that holds your keys in its memory is a liability; here the model orchestrates access it can't exfiltrate.
+- **Your keys are never handed to the model.** Credentials are registered once, stored encrypted, and injected **server-side** at call time: the LLM drives the wiring but never sees the secret, and a universal rule forbids any agent from asking for one in chat. Every external call is checked against a Base-URL + endpoint allow-list before the secret is attached. Shell tools run in a network-isolated `bwrap` sandbox whose *only* path to the network is a narrow, audited gohort hook (urllib/requests/curl/wget are refused at authoring time). An agent that holds your keys in its memory is a liability; here the model orchestrates access to keys it is never handed. The two exceptions (raw network access, and a key handed to a script) are set out under [Credential isolation](#2-credential-isolation-where-the-model-orchestrates-and-never-holds).
 
-- **Memory that's governed, not just persistent.** "Memory that grows with you" is table stakes; the real question is whether you control it. Each agent gets several distinct layers: always-in-prompt facts (with semantic dedup and supersession, so a changed fact *replaces* the stale one instead of piling up), vector-grown reference memory, a graph layer of entities and relationships, a rewritable working-notes scratchpad, and drillable conversation history that archives on compaction rather than collapsing into a lossy summary. Every layer is toggled **per agent**, isolated **per (user, agent)**, and bounded by admin-tunable caps and a background prune sweep. And because credentials are injected server-side, **secrets never land in a memory layer**: the failure mode where a persistent store quietly accumulates your API keys simply can't occur.
+- **Memory that's governed, not just persistent.** "Memory that grows with you" is table stakes; the real question is whether you control it. Each agent gets several distinct layers: always-in-prompt facts (with semantic dedup and supersession, so a changed fact *replaces* the stale one instead of piling up), vector-grown reference memory, a graph layer of entities and relationships, a rewritable working-notes scratchpad, and drillable conversation history that archives on compaction rather than collapsing into a lossy summary. Every layer is toggled **per agent**, isolated **per (user, agent)**, and bounded by admin-tunable caps and a background prune sweep. And because credentials are injected server-side, **secrets never land in a memory layer**: the failure mode where a persistent store quietly accumulates your API keys does not arise on the normal paths (a script handed a key, above, is the exception).
 
 - **Local-first, not local-only.** By default the worker tier is your own GPU (Ollama / llama.cpp) and does the bulk of the work; an optional precision tier escalates to a frontier model only for the stages that earn it. Any stage can instead point at a hosted provider: run fully local, fully hosted, or any mix. Privacy is structural: `ForcePrivate` agents and `Private:true` route stages hard-lock to the local tier, so sensitive data (credentials, internal docs, system facts) never leaves the box even by accident.
 
