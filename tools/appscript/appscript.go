@@ -189,12 +189,12 @@ func (j Job) Run() (string, error) {
 	if j.Interactive {
 		sess.Ctx = WithRunLane(base, LaneInteractive)
 	}
-	sess.CallTool = func(name string, args map[string]any) (string, error) {
-		return temptool.CallToolForScript(sess, name, args)
-	}
 	caller := strings.TrimSpace(j.Caller)
 	if caller == "" {
 		caller = user
+	}
+	sess.CallTool = func(name string, args map[string]any) (string, error) {
+		return temptool.CallToolForScript(sess, caller, name, args)
 	}
 	app := func() (AppSpec, error) {
 		if j.Spec != nil {
@@ -286,7 +286,7 @@ func withArg(args map[string]any, k string, v any) map[string]any {
 func (j Job) runLong(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
 	return bgrun.BackgroundRun{Tool: tt.Name, Run: func(work *ToolSession) (string, error) {
 		work.CallTool = func(name string, a map[string]any) (string, error) {
-			return temptool.CallToolForScript(work, name, a)
+			return temptool.CallToolForScript(work, j.Caller, name, a)
 		}
 		work.Ask, work.RunAgent, work.RunPipeline = sess.Ask, sess.RunAgent, sess.RunPipeline
 		storeFuncs(work, j.Owner, j.Slug)
