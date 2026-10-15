@@ -970,9 +970,12 @@ func (t *chatTurn) dynamicNewTempTools(sess *ToolSession) func() []AgentToolDef 
 			// instead of the top-of-prompt tools block. That keeps loading a tool
 			// from invalidating the cached prefix (the ~13s load_tool cold-prefill).
 			// Zero-arg static temp tools and the agent's own kit stay at the top.
-			if t.lazyCustomToolNames[td.Tool.Name] {
-				td.Tool.RenderLate = true
-			}
+			//
+			// A tool brand new this turn (authored mid-turn, or a consulted
+			// skill's) is late for the same reason: it was not in the catalog
+			// the turn's first prompt was built from, and adding it at the top
+			// would cost the same full re-prefill.
+			td.Tool.RenderLate = true
 			out = append(out, td)
 		}
 		// Deferred authoring tools the model loaded this turn — surfaced

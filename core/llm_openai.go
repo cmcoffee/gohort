@@ -1249,6 +1249,51 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 	return msgs
 }
 
+// renderLateToolsInline does for vLLM what the split chat template did for
+// llama.cpp: keeps a tool that arrived mid-turn (RenderLate: a lazy tool once
+// loaded, a deferred one called directly, one authored this turn) out of the
+// tools block at the TOP of the prompt.
+//
+// A template renders the request's tools ahead of the conversation, so adding
+// one changes the start of the prompt and nothing after it can come from the
+// prefix cache: the whole prompt, tens of thousands of tokens, is computed
+// again, seconds with nothing generated. llama.cpp ran a template that read
+// chat_template_kwargs.lazy_tool_names and put those tools last; vLLM serves
+// the model's own template, which ignores the key (checked against the live
+// server with /tokenize). So here the late tools leave the tools block and are
+// described in a note at the END of the conversation instead, where only the
+// tail is new. vLLM parses a call to a tool that is not in the block, so they
+// stay callable; the loop dispatches them as before.
+func (c *openAIClient) renderLateToolsInline(cfg ChatConfig, messages []Message) (ChatConfig, []Message) {
+	if !c.vllm || len(cfg.Tools) == 0 {
+		return cfg, messages
+	}
+	var early, late []Tool
+	for _, t := range cfg.Tools {
+		if t.RenderLate {
+			late = append(late, t)
+		} else {
+			early = append(early, t)
+		}
+	}
+	if len(late) == 0 {
+		return cfg, messages
+	}
+	var b strings.Builder
+	b.WriteString("Tools loaded during this conversation, callable the same way as the others:\n<tools>\n")
+	for _, t := range buildOAITools(late) {
+		line, _ := json.Marshal(t)
+		b.Write(line)
+		b.WriteString("\n")
+	}
+	b.WriteString("</tools>")
+	cfg.Tools = early
+	out := make([]Message, 0, len(messages)+1)
+	out = append(out, messages...)
+	out = append(out, Message{Role: "user", Content: b.String()})
+	return cfg, out
+}
+
 func buildOAITools(tools []Tool) []oaiTool {
 	var out []oaiTool
 	for _, t := range tools {
@@ -1927,6 +1972,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	if c.isLocal() {
 		maxTokens = 0
 	}
+	cfg, messages = c.renderLateToolsInline(cfg, messages)
 	payload := oaiRequest{
 		Model:     cfg.Model,
 		Messages:  c.buildMessages(cfg, messages),
@@ -2147,6 +2193,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	if c.isLocal() {
 		streamMaxTokens = 0
 	}
+	cfg, messages = c.renderLateToolsInline(cfg, messages)
 	payload := oaiRequest{
 		Model:         cfg.Model,
 		Messages:      c.buildMessages(cfg, messages),

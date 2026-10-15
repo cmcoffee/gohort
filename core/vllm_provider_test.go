@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -147,5 +148,61 @@ func TestALaterSystemMessageReachesALocalServerAsAUserTurn(t *testing.T) {
 	}
 	if got := roles(&openAIClient{}); got != "system,user,assistant,system,user" {
 		t.Errorf("openai: %s", got)
+	}
+}
+
+// A tool that arrived mid-turn (RenderLate) leaves the tools block on vLLM,
+// whose template ignores lazy_tool_names and would put it at the top, where
+// adding it invalidates the whole cached prompt. It is described in a note at
+// the end instead, so the tools block, and the prompt up to the conversation's
+// tail, is the same as the round before it was loaded. llama.cpp's split
+// template keeps it in the block, named in lazy_tool_names.
+func TestALateToolLeavesTheToolsBlockOnVLLM(t *testing.T) {
+	early := Tool{Name: "web_search", Description: "Search.", Parameters: map[string]ToolParam{"q": {Type: "string"}}}
+	late := Tool{Name: "recall_about", Description: "Recall.", Parameters: map[string]ToolParam{"name": {Type: "string", Description: "Who"}}, RenderLate: true}
+	msgs := []Message{{Role: "user", Content: "hi"}}
+	for _, c := range []struct {
+		provider  string
+		stream    bool
+		wantBlock []string
+	}{
+		{"vllm", false, []string{"web_search"}},
+		{"vllm", true, []string{"web_search"}},
+		{"llama.cpp", false, []string{"web_search", "recall_about"}},
+	} {
+		url, bodies := recordingChatServer(t)
+		llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: c.provider, Model: "qwen", Endpoint: url})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.stream {
+			llm.ChatStream(t.Context(), msgs, func(string) {}, WithTools([]Tool{early, late}))
+		} else {
+			llm.Chat(t.Context(), msgs, WithTools([]Tool{early, late}))
+		}
+		got := bodies()
+		if len(got) == 0 {
+			t.Fatalf("%s: no request", c.provider)
+		}
+		body := got[len(got)-1]
+		var block []string
+		tools, _ := body["tools"].([]any)
+		for _, tl := range tools {
+			fn, _ := tl.(map[string]any)["function"].(map[string]any)
+			block = append(block, fmt.Sprint(fn["name"]))
+		}
+		if strings.Join(block, ",") != strings.Join(c.wantBlock, ",") {
+			t.Errorf("%s stream=%v: tools block %v, want %v", c.provider, c.stream, block, c.wantBlock)
+		}
+		sent, _ := body["messages"].([]any)
+		last, _ := sent[len(sent)-1].(map[string]any)
+		lastText := fmt.Sprint(last["content"])
+		if c.provider == "vllm" {
+			if !strings.Contains(lastText, `"name":"recall_about"`) || !strings.Contains(lastText, "Who") {
+				t.Errorf("%s: the late tool is not described at the end: %d messages, last %q", c.provider, len(sent), lastText)
+			}
+		} else if strings.Contains(lastText, "recall_about") {
+			t.Errorf("%s: a note was added where the template already places late tools", c.provider)
+		}
 	}
 }
