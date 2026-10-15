@@ -1195,11 +1195,14 @@ select:-webkit-autofill {
  * two groups and useless for six. */
 .ui-table-band {
   border: 1px solid var(--border); border-radius: 10px;
-  padding: 0 0.7rem 0.4rem; margin: 0.9rem 0 0;
+  padding: 0 0.7rem 0.7rem; margin: 0.9rem 0 0;
 }
 .ui-table-band:first-child { margin-top: 0.2rem; }
-.ui-table-band .ui-table-group { padding-top: 0.6rem; }
-.ui-table-band-body > .ui-table-row:last-child { border-bottom: none; }
+.ui-table-band .ui-table-group { padding-top: 0.6rem; margin-bottom: 0.6rem; }
+/* The band's rows are the same cards as an ungrouped list's, spaced the same
+ * way (.ui-table-list's gap). Without it they sat edge to edge, and the last
+ * one lost its bottom border to a rule written for flat rows. */
+.ui-table-band-body { display: flex; flex-direction: column; gap: 0.5rem; }
 .ui-table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-lg); }
 .ui-table-cell.mute { color: var(--text-mute); font-size: var(--fs-xs); }
 /* The second line exists for the text that says what a row IS (a
