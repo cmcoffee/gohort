@@ -31,9 +31,9 @@ func denyEveryChange(asked *int) func(string, string, []string) string {
 func TestTheChangeGateAsksTheOwner(t *testing.T) {
 	a := AgentRecord{ID: "a1", Name: "Ledger", Owner: "alice"}
 	var gotKind, gotName, gotDetail string
-	approve := func(kind, name, detail string, existed bool) string {
+	approve := func(kind, name, detail string, op ChangeOp) string {
 		gotKind, gotName, gotDetail = kind, name, detail
-		if !existed {
+		if op != ChangeEdit {
 			t.Error("an existing agent was asked about as something new")
 		}
 		return ""
@@ -49,7 +49,7 @@ func TestTheChangeGateAsksTheOwner(t *testing.T) {
 	}
 	asked := false
 	shared := AgentRecord{ID: "s1", Name: "Theirs", Owner: "bob"}
-	yes := func(string, string, string, bool) string { asked = true; return "" }
+	yes := func(string, string, string, ChangeOp) string { asked = true; return "" }
 	if msg := agentChangeGate(yes, &shared, "alice", "x"); msg == "" || asked {
 		t.Errorf("another user's agent must be refused without asking (asked=%v): %q", asked, msg)
 	}

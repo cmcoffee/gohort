@@ -15,7 +15,12 @@ package orchestrate
 //     for the rest of the session, so iterating on it asks once;
 //   - with nobody watching (a schedule, a job another agent sent), the change
 //     is not made: it waits in the owner's approval queue, and approving it
-//     lets that agent make it in its next run (for a day).
+//     lets that agent make it in its next run (for a day);
+//   - the one thing the owner picked in Builder's form ("Change" or "Fix",
+//     then "Which one?") is already approved in that session: picking it is
+//     the owner saying so. Only changes: deleting it still asks. Only that
+//     item: anything else Builder reaches for asks as before. And only
+//     Builder the owner opened: Builder another agent sent asks every time.
 //
 // Running or testing never asks. Only writes do, and only to what existed.
 
@@ -45,10 +50,13 @@ type changeGrant struct {
 }
 
 // changeApprovalSet is what one session may change without asking again:
-// what it made, and what the owner approved in it.
+// what it made, and what the owner approved in it. named is what the owner
+// picked in Builder's form, which covers changes but not deletion, so it is
+// kept apart from items.
 type changeApprovalSet struct {
 	mu    sync.Mutex
 	items map[string]bool
+	named map[string]bool
 }
 
 func (s *changeApprovalSet) has(key string) bool {
@@ -57,18 +65,44 @@ func (s *changeApprovalSet) has(key string) bool {
 	return s.items[key]
 }
 
-// names is the item names of one kind in the set ("app" -> its slugs).
+// isNamed reports whether the owner picked this item in Builder's form.
+func (s *changeApprovalSet) isNamed(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.named[key]
+}
+
+// covers reports whether this session made, was approved for, or was asked
+// by name to work on the item: what Builder may run to test it.
+func (s *changeApprovalSet) covers(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.items[key] || s.named[key]
+}
+
+// names is the item names of one kind the set covers ("app" -> its slugs).
 func (s *changeApprovalSet) names(kind string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	prefix := changeKey(kind, "")
+	seen := map[string]bool{}
 	var out []string
-	for k, on := range s.items {
-		if on && strings.HasPrefix(k, prefix) {
-			out = append(out, strings.TrimPrefix(k, prefix))
+	for _, m := range []map[string]bool{s.items, s.named} {
+		for k, on := range m {
+			if on && strings.HasPrefix(k, prefix) && !seen[k] {
+				seen[k] = true
+				out = append(out, strings.TrimPrefix(k, prefix))
+			}
 		}
 	}
 	return out
+}
+
+// name records an item the owner picked in Builder's form.
+func (s *changeApprovalSet) name(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.named[key] = true
 }
 
 func (s *changeApprovalSet) add(key string) {
@@ -82,8 +116,26 @@ func (s *changeApprovalSet) add(key string) {
 var sessionChangeApprovals sync.Map // owner\x00session -> *changeApprovalSet
 
 func changeApprovalsFor(owner, session string) *changeApprovalSet {
-	v, _ := sessionChangeApprovals.LoadOrStore(owner+"\x00"+session, &changeApprovalSet{items: map[string]bool{}})
+	v, _ := sessionChangeApprovals.LoadOrStore(owner+"\x00"+session, &changeApprovalSet{items: map[string]bool{}, named: map[string]bool{}})
 	return v.(*changeApprovalSet)
+}
+
+// changeOpFor is the op for a write to something that existed: a deletion,
+// or a change.
+func changeOpFor(deletes bool) ChangeOp {
+	if deletes {
+		return ChangeDelete
+	}
+	return ChangeEdit
+}
+
+// editOrNew is the op for a write that changes the item when it existed and
+// makes it when it did not.
+func editOrNew(existed bool) ChangeOp {
+	if existed {
+		return ChangeEdit
+	}
+	return ChangeNew
 }
 
 // changeKey names one item.
@@ -128,19 +180,19 @@ type changeAsker struct {
 }
 
 // changeApprover builds a session's ApproveChange.
-func changeApprover(sess *ToolSession, owner, agentID, agentName string, ask func(prompt, detail string, yes []string) string) func(kind, name, detail string, existed bool) string {
-	return func(kind, name, detail string, existed bool) string {
+func changeApprover(sess *ToolSession, owner, agentID, agentName string, ask func(prompt, detail string, yes []string) string) func(kind, name, detail string, op ChangeOp) string {
+	return func(kind, name, detail string, op ChangeOp) string {
 		if sess == nil {
 			return ""
 		}
 		return changeAsker{owner: owner, agentID: agentID, agentName: agentName, session: sess.ChatSessionID,
-			db: sess.DB, sentBy: sess.DispatchParentAgentID, ask: ask, sess: sess}.approve(kind, name, detail, existed)
+			db: sess.DB, sentBy: sess.DispatchParentAgentID, ask: ask, sess: sess}.approve(kind, name, detail, op)
 	}
 }
 
 // approveChange is the same question for the authoring tools that run on the
 // turn itself (app_def, pipeline, machine).
-func (t *chatTurn) approveChange(kind, name, detail string, existed bool) string {
+func (t *chatTurn) approveChange(kind, name, detail string, op ChangeOp) string {
 	if t == nil {
 		return ""
 	}
@@ -149,11 +201,11 @@ func (t *chatTurn) approveChange(kind, name, detail string, existed bool) string
 		ask = t.chatAsker() // this chat's card, or the one of the chat that started this run
 	}
 	return changeAsker{owner: t.user, agentID: t.agent.ID, agentName: t.agent.Name, session: t.chatSessionID(),
-		db: t.udb, ask: ask}.approve(kind, name, detail, existed)
+		db: t.udb, ask: ask}.approve(kind, name, detail, op)
 }
 
 // approve is "" when the change may go ahead, or the refusal to return.
-func (c changeAsker) approve(kind, name, detail string, existed bool) string {
+func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 	if strings.TrimSpace(name) == "" {
 		return ""
 	}
@@ -163,12 +215,17 @@ func (c changeAsker) approve(kind, name, detail string, existed bool) string {
 	}
 	key := changeKey(kind, name)
 	set := changeApprovalsFor(c.owner, c.session)
-	if !existed {
+	if op == ChangeNew {
 		// Made here: the session's own work.
 		set.add(key)
 		return ""
 	}
 	if set.has(key) {
+		return ""
+	}
+	// Picked in Builder's form by the owner: approved, for a change. Builder
+	// another agent sent did not get it from the owner, so it asks.
+	if op == ChangeEdit && strings.TrimSpace(c.sentBy) == "" && set.isNamed(key) {
 		return ""
 	}
 	if changeGranted(c.db, c.agentID, key) {
@@ -195,13 +252,13 @@ func (c changeAsker) approve(kind, name, detail string, existed bool) string {
 
 // sessionApprove is the change question for a tool that holds only the
 // session: "" when the change may go ahead, the refusal otherwise. A session
-// with no approver (a test, an assembly with no turn) asks nothing. existed
-// false marks something just made as this session's own.
-func sessionApprove(sess *ToolSession, kind, name, detail string, existed bool) string {
+// with no approver (a test, an assembly with no turn) asks nothing.
+// ChangeNew marks something just made as this session's own.
+func sessionApprove(sess *ToolSession, kind, name, detail string, op ChangeOp) string {
 	if sess == nil || sess.ApproveChange == nil {
 		return ""
 	}
-	return sess.ApproveChange(kind, name, detail, existed)
+	return sess.ApproveChange(kind, name, detail, op)
 }
 
 // queueChangeApproval puts a change made with nobody watching in the owner's
@@ -229,4 +286,71 @@ func queueChangeApproval(c changeAsker, kind, name, detail string) {
 	stampRequestOrigin(&a, c.sess)
 	SaveAuthorization(RootDB, a)
 	Log("[orchestrate.change] %s: %s wants to change %s, queued for approval", c.owner, c.agentID, key)
+}
+
+// intakeChangeKeys is the item the owner picked in Builder's form, as the
+// keys a change to it is asked under, or nil when the form did not pick one
+// (Create, or a kind with no "Which one?"). The values are the form's own
+// (builtin/builder.md: action, kind, target, listed by authoringTargets), so
+// each kind maps to the name its authoring tool asks with: an agent's value
+// carries its id, and a pipeline can be a pipeline tool, written by tool_def.
+// An API is a credential, which no change question covers.
+func intakeChangeKeys(values map[string]string) []string {
+	switch strings.ToLower(strings.TrimSpace(values["action"])) {
+	case "change", "fix":
+	default:
+		return nil
+	}
+	target := strings.TrimSpace(values["target"])
+	if target == "" {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(values["kind"])) {
+	case "agent":
+		name, id := target, ""
+		if i := strings.LastIndex(target, " (id: "); i >= 0 && strings.HasSuffix(target, ")") {
+			name, id = strings.TrimSpace(target[:i]), strings.TrimSpace(target[i+len(" (id: "):len(target)-1])
+		}
+		keys := []string{changeKey("agent", name)}
+		if id != "" {
+			keys = append(keys, changeKey("agent", id))
+		}
+		return keys
+	case "tool":
+		return []string{changeKey("tool", target)}
+	case "pipeline":
+		return []string{changeKey("pipeline", target), changeKey("tool", target)}
+	case "app":
+		return []string{changeKey("app", target)}
+	case "machine":
+		return []string{changeKey("machine", target)}
+	case "skill":
+		return []string{changeKey("skill", target)}
+	case "connection":
+		return []string{changeKey("bridge", target)}
+	}
+	return nil
+}
+
+// noteIntakeTargets marks what the owner picked in this Builder session's
+// form as approved for changes in it. Read from the stored form values every
+// turn, so a restart keeps it; never from the message text, which anything
+// reaching the conversation could imitate. A session another agent sent has
+// no form values, and its approver asks regardless (approve, sentBy).
+func (t *chatTurn) noteIntakeTargets() {
+	if t == nil || t.session == nil || !isBuilderAgent(t.agent.ID) {
+		return
+	}
+	var set *changeApprovalSet
+	for _, m := range t.session.Messages {
+		if m.Role != "user" || len(m.IntakeValues) == 0 {
+			continue
+		}
+		for _, key := range intakeChangeKeys(m.IntakeValues) {
+			if set == nil {
+				set = changeApprovalsFor(t.user, t.chatSessionID())
+			}
+			set.name(key)
+		}
+	}
 }

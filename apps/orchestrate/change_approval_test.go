@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -38,14 +39,14 @@ func TestAChangeToWhatExistedAsksOncePerSession(t *testing.T) {
 			}
 			return yes[0]
 		}}
-	if msg := c.approve("tool", "fresh", "", false); msg != "" || asked != 0 {
+	if msg := c.approve("tool", "fresh", "", ChangeNew); msg != "" || asked != 0 {
 		t.Fatalf("a new tool asked: %q", msg)
 	}
-	if msg := c.approve("tool", "fresh", "Change: description.", true); msg != "" || asked != 0 {
+	if msg := c.approve("tool", "fresh", "Change: description.", ChangeEdit); msg != "" || asked != 0 {
 		t.Fatalf("a tool made in this session asked when changed: %q", msg)
 	}
 	for i := 0; i < 3; i++ {
-		if msg := c.approve("tool", "wiki_read", "Change: url_template.", true); msg != "" {
+		if msg := c.approve("tool", "wiki_read", "Change: url_template.", ChangeEdit); msg != "" {
 			t.Fatalf("approved change refused: %q", msg)
 		}
 	}
@@ -54,7 +55,7 @@ func TestAChangeToWhatExistedAsksOncePerSession(t *testing.T) {
 	}
 	// A different session asks again.
 	c.session = "s2"
-	c.approve("tool", "wiki_read", "", true)
+	c.approve("tool", "wiki_read", "", ChangeEdit)
 	if asked != 2 {
 		t.Errorf("another session reused this session's approval")
 	}
@@ -64,7 +65,7 @@ func TestADeniedChangeIsRefused(t *testing.T) {
 	udb := changeTestStores(t)
 	c := changeAsker{owner: "u", agentID: "seed-builder", session: "s1", db: udb,
 		ask: func(string, string, []string) string { return "" }}
-	if msg := c.approve("app", "swing", "Delete the app.", true); !strings.Contains(msg, "declined") {
+	if msg := c.approve("app", "swing", "Delete the app.", ChangeDelete); !strings.Contains(msg, "declined") {
 		t.Errorf("a denied change went ahead: %q", msg)
 	}
 }
@@ -75,7 +76,7 @@ func TestAnUnwatchedChangeQueuesAndApprovalLetsItThrough(t *testing.T) {
 	udb := changeTestStores(t)
 	c := changeAsker{owner: "u", agentID: "a1", session: "sched-1", db: udb}
 	for i := 0; i < 2; i++ {
-		if msg := c.approve("skill", "triage", "Delete it.", true); !strings.Contains(msg, "approval queue") {
+		if msg := c.approve("skill", "triage", "Delete it.", ChangeDelete); !strings.Contains(msg, "approval queue") {
 			t.Fatalf("an unwatched change was not refused to the queue: %q", msg)
 		}
 	}
@@ -90,12 +91,12 @@ func TestAnUnwatchedChangeQueuesAndApprovalLetsItThrough(t *testing.T) {
 	}
 	grantChange(udb, queued[0].Agent, queued[0].Handle)
 	c.session = "sched-2"
-	if msg := c.approve("skill", "triage", "Delete it.", true); msg != "" {
+	if msg := c.approve("skill", "triage", "Delete it.", ChangeDelete); msg != "" {
 		t.Errorf("an approved change is still refused: %q", msg)
 	}
 	other := c
 	other.agentID, other.session = "a2", "sched-3"
-	if msg := other.approve("skill", "triage", "", true); msg == "" {
+	if msg := other.approve("skill", "triage", "", ChangeEdit); msg == "" {
 		t.Error("one agent's approval let a different agent through")
 	}
 }
@@ -117,5 +118,111 @@ func TestASubRunConfirmationAsksTheCallingChat(t *testing.T) {
 	no := &chatTurn{askVia: func(string, string, []string) string { return "" }}
 	if no.escalateToolConfirm(toolConfirmRequest{tool: "agents", prompt: "Let A hand this to B?", because: "narrowed"}) {
 		t.Error("denied in the calling chat, still allowed")
+	}
+}
+
+// The item the owner picked in Builder's form maps to the keys its authoring
+// tool asks with; Create, Other and an API pick nothing.
+func TestIntakeChangeKeysFollowTheForm(t *testing.T) {
+	cases := []struct {
+		values map[string]string
+		want   []string
+	}{
+		{map[string]string{"action": "Change", "kind": "App", "target": "swing"}, []string{"app:swing"}},
+		{map[string]string{"action": "Fix", "kind": "Agent", "target": "Ledger (id: a1)"}, []string{"agent:Ledger", "agent:a1"}},
+		{map[string]string{"action": "Change", "kind": "Pipeline", "target": "digest"}, []string{"pipeline:digest", "tool:digest"}},
+		{map[string]string{"action": "Fix", "kind": "Connection", "target": "prices"}, []string{"bridge:prices"}},
+		{map[string]string{"action": "Fix", "kind": "Tool", "target": "wiki_read"}, []string{"tool:wiki_read"}},
+		{map[string]string{"action": "Create", "kind": "App", "target": "swing"}, nil},
+		{map[string]string{"action": "Change", "kind": "API", "target": "weather"}, nil},
+		{map[string]string{"action": "Change", "kind": "Other"}, nil},
+		{map[string]string{"action": "Change", "kind": "Tool"}, nil},
+	}
+	for _, c := range cases {
+		if got := intakeChangeKeys(c.values); strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%v: got %v, want %v", c.values, got, c.want)
+		}
+	}
+}
+
+// Picking an item in Builder's form approves changes to it in that session:
+// no card. Deleting it still asks, so does anything else, and Builder another
+// agent sent asks even about the picked item.
+func TestTheIntakeTargetIsApprovedForChangesOnly(t *testing.T) {
+	udb := changeTestStores(t)
+	var asked []string
+	c := changeAsker{owner: "u", agentID: "seed-builder", agentName: "Builder", session: "s-intake", db: udb,
+		ask: func(prompt, detail string, yes []string) string {
+			asked = append(asked, prompt)
+			return ""
+		}}
+	turn := &chatTurn{user: "u", agent: AgentRecord{ID: "seed-builder"}, session: &ChatSession{ID: "s-intake", Messages: []ChatMessage{
+		{Role: "user", IntakeValues: map[string]string{"action": "Change", "kind": "App", "target": "swing"}},
+		{Role: "user", Content: "**What do you want to do?:** Fix\n**What kind of thing?:** Tool\n**Which one?:** wiki_read"},
+	}}}
+	turn.noteIntakeTargets()
+
+	if msg := c.approve("app", "swing", "Revise the app.", ChangeEdit); msg != "" || len(asked) != 0 {
+		t.Fatalf("a change to the picked app asked or refused: %q, asked %v", msg, asked)
+	}
+	if msg := c.approve("app", "swing", "Delete the app.", ChangeDelete); !strings.Contains(msg, "declined") || len(asked) != 1 {
+		t.Errorf("deleting the picked app did not ask: %q, asked %v", msg, asked)
+	}
+	if msg := c.approve("app", "other", "Revise the app.", ChangeEdit); !strings.Contains(msg, "declined") {
+		t.Errorf("an app the form did not pick went ahead: %q", msg)
+	}
+	// Text shaped like the form is not the form.
+	if msg := c.approve("tool", "wiki_read", "Change: description.", ChangeEdit); !strings.Contains(msg, "declined") {
+		t.Errorf("a target read from message text was approved: %q", msg)
+	}
+	sent := c
+	sent.sentBy = "a-helper"
+	if msg := sent.approve("app", "swing", "Revise the app.", ChangeEdit); !strings.Contains(msg, "declined") {
+		t.Errorf("Builder sent by an agent skipped the ask on the picked app: %q", msg)
+	}
+	// Builder may run what the form picked, to test it.
+	if !changeApprovalsFor("u", "s-intake").covers(changeKey("app", "swing")) {
+		t.Error("the picked app is not covered for running")
+	}
+}
+
+// Only Builder's own form counts: another agent's session with the same
+// values picks nothing.
+func TestOnlyBuildersFormNamesATarget(t *testing.T) {
+	turn := &chatTurn{user: "u", agent: AgentRecord{ID: "seed-chat"}, session: &ChatSession{ID: "s-other", Messages: []ChatMessage{
+		{Role: "user", IntakeValues: map[string]string{"action": "Change", "kind": "App", "target": "swing"}},
+	}}}
+	turn.noteIntakeTargets()
+	if changeApprovalsFor("u", "s-other").isNamed(changeKey("app", "swing")) {
+		t.Error("a non-Builder agent's form approved a target")
+	}
+}
+
+// An agent a watched turn sends is asked about as itself. Wiring the turn's
+// live callbacks onto the sub-run used to replace the sub-run's approver with
+// the sending agent's, so the card named the wrong agent.
+func TestASentAgentIsAskedAboutAsItself(t *testing.T) {
+	udb := changeTestStores(t)
+	parent := &chatTurn{user: "u", udb: udb, agent: AgentRecord{ID: "a-lead", Name: "Lead"}, sse: &sseWriter{live: &syncBuf{}}}
+	var prompts []string
+	ask := func(prompt, detail string, yes []string) string { prompts = append(prompts, prompt); return "" }
+	sub := &ToolSession{Username: "u", DB: udb, ChatSessionID: "s-sub", DispatchParentAgentID: "a-lead"}
+	sub.ApproveChange = changeApprover(sub, "u", "a-helper", "Helper", ask)
+	parent.wireLiveCallbacks(sub)
+	done := make(chan struct{})
+	go func() { sub.ApproveChange("skill", "triage", "Change it.", ChangeEdit); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the sent agent's change waited on the sending turn's own card")
+	}
+	if len(prompts) != 1 || !strings.Contains(prompts[0], "Let Helper change") {
+		t.Errorf("the sent agent was asked about as %v", prompts)
+	}
+	// A session with no approver of its own still gets the turn's.
+	own := &ToolSession{Username: "u", DB: udb}
+	parent.wireLiveCallbacks(own)
+	if own.ApproveChange == nil {
+		t.Error("the turn's own session got no approver")
 	}
 }

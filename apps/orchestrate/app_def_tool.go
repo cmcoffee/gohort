@@ -164,7 +164,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				"replace_function", "patch_function", "revert", "undo", "restore", "delete", "add_asset", "remove_asset":
 				if slug := appDefBatchLane(args); slug != "" {
 					if prev, ok := LoadAppSpec(t.user, slug); ok {
-						if msg := t.approveChange("app", slug, appChangeDetail(action, args), true); msg != "" {
+						if msg := t.approveChange("app", slug, appChangeDetail(action, args), appChangeOp(action)); msg != "" {
 							return msg, nil
 						}
 						// An agent this app stops using, by this change or by
@@ -183,7 +183,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				// A new app is this session's own work from here on.
 				if slug := slugify(firstNonEmptyStr(stringArg(args, "slug"), stringArg(args, "name"))); slug != "" {
 					if _, ok := LoadAppSpec(t.user, slug); !ok {
-						t.approveChange("app", slug, "", false)
+						t.approveChange("app", slug, "", ChangeNew)
 					}
 				}
 			}
@@ -382,6 +382,12 @@ func appDefTouches(args map[string]any) (string, bool) {
 
 // appChangeDetail says what an app_def call would change, for the owner's
 // approval card.
+// appChangeOp is what an app_def action does to the app: delete deletes it,
+// everything else changes it.
+func appChangeOp(action string) ChangeOp {
+	return changeOpFor(action == "delete")
+}
+
 func appChangeDetail(action string, args map[string]any) string {
 	var parts []string
 	for _, k := range []string{"function", "section_id", "script", "find", "to", "note"} {

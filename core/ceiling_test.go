@@ -341,7 +341,11 @@ const (
 	// values, WithRunLane and RunLaneOf, so a scheduled run gives way to the
 	// person asking a question, and an agent can be marked to give way to
 	// anything. The hold itself and its counters stay unexported.
-	coreExportCeiling = 2303
+	// 2332: the slack had been spent again (HEAD stood at 2328), plus ChangeOp
+	// with its three values: ToolSession.ApproveChange tells a deletion from a
+	// change, so the item the owner picked in Builder's form is approved for
+	// changes while deleting it still asks.
+	coreExportCeiling = 2332
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

@@ -273,7 +273,7 @@ func agentToolsRefusal(sess *ToolSession, inline []TempTool, allowed []string) s
 	if sess.ApproveChange != nil {
 		for _, t := range inline {
 			if p, ok := UserToolByName(sess.DB, sess.Username, t.Name); ok && !p.Tool.SameDefinition(t) {
-				if msg := sess.ApproveChange("tool", t.Name, "Replace its definition with the one this agent brings.", true); msg != "" {
+				if msg := sess.ApproveChange("tool", t.Name, "Replace its definition with the one this agent brings.", ChangeEdit); msg != "" {
 					return msg
 				}
 			}

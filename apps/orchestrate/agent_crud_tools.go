@@ -123,7 +123,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 	// New: this session's own work from here on (change_approval.go).
 	if sess.ApproveChange != nil {
-		sess.ApproveChange("agent", saved.Name, "", false)
+		sess.ApproveChange("agent", saved.Name, "", ChangeNew)
 	}
 	// Commit the inline tools as store rows scoped to the new agent.
 	committedTools := make([]TempTool, 0, len(inlineTools))
@@ -653,7 +653,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// A change to an agent that already exists asks the owner first, once per
 	// agent per session (change_approval.go).
 	if sess.ApproveChange != nil {
-		if msg := sess.ApproveChange("agent", existing.Name, "Update its settings ("+strings.Join(sortedArgKeys(args, "id"), ", ")+").", true); msg != "" {
+		if msg := sess.ApproveChange("agent", existing.Name, "Update its settings ("+strings.Join(sortedArgKeys(args, "id"), ", ")+").", ChangeEdit); msg != "" {
 			return msg, nil
 		}
 	}
@@ -853,7 +853,7 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 			if uses := agentUsedBy(sess.DB, sess.Username, target); len(uses) > 0 {
 				what += " These run through it and will stop working: " + agentUsesText(uses) + "."
 			}
-			if msg := sess.ApproveChange("agent", target.Name, what, true); msg != "" {
+			if msg := sess.ApproveChange("agent", target.Name, what, ChangeDelete); msg != "" {
 				return msg, nil
 			}
 		}

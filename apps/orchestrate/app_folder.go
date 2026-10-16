@@ -489,7 +489,7 @@ func (t *chatTurn) appDefPublish(args map[string]any) (string, error) {
 	}
 	// Publishing over the live app changes it: the owner says so first
 	// (change_approval.go). A new one is this session's own.
-	if msg := t.approveChange("app", m.Slug, "Publish the folder "+rel+" over the live app.", exists); msg != "" {
+	if msg := t.approveChange("app", m.Slug, "Publish the folder "+rel+" over the live app.", editOrNew(exists)); msg != "" {
 		return msg, nil
 	}
 	prevAgent := ""

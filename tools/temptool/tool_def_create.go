@@ -107,12 +107,21 @@ func persistentToolExists(sess *ToolSession, name string) bool {
 }
 
 // toolChangeRefused asks the session whether this change to a tool may go
-// ahead (ToolSession.ApproveChange). "" lets it.
-func toolChangeRefused(sess *ToolSession, name, detail string) string {
+// ahead (ToolSession.ApproveChange). "" lets it. deletes marks a deletion,
+// which asks even where a change would not; either is the session's own work
+// when the tool is only a draft of this session.
+func toolChangeRefused(sess *ToolSession, name, detail string, deletes bool) string {
 	if sess == nil || sess.ApproveChange == nil || name == "" {
 		return ""
 	}
-	return sess.ApproveChange("tool", name, detail, persistentToolExists(sess, name))
+	op := ChangeNew
+	if persistentToolExists(sess, name) {
+		op = ChangeEdit
+		if deletes {
+			op = ChangeDelete
+		}
+	}
+	return sess.ApproveChange("tool", name, detail, op)
 }
 
 // toolEditRefused asks the session whether this call may write the tool at
@@ -180,7 +189,7 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 // createGroupedMode is the create itself, mode by mode.
 func createGroupedMode(args map[string]any, sess *ToolSession) (string, error) {
 	if name := strings.TrimSpace(StringArg(args, "name")); name != "" {
-		if msg := toolChangeRefused(sess, name, toolChangeDetail("Replace it with a new definition", args)); msg != "" {
+		if msg := toolChangeRefused(sess, name, toolChangeDetail("Replace it with a new definition", args), false); msg != "" {
 			return msg, nil
 		}
 	}

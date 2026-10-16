@@ -87,21 +87,21 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 					if action == "delete" {
 						verb = "Delete it."
 					}
-					if msg := t.approveChange("pipeline", def.Name, verb, true); msg != "" {
+					if msg := t.approveChange("pipeline", def.Name, verb, changeOpFor(action == "delete")); msg != "" {
 						return msg, nil
 					}
 				}
 			case "create":
 				if old := strings.TrimSpace(stringArg(args, "replaces")); old != "" {
 					if def, ok := t.findPipeline(map[string]any{"id": old, "name": old}); ok {
-						if msg := t.approveChange("pipeline", def.Name, "Replace it with the new pipeline "+stringArg(args, "name")+", which deletes it.", true); msg != "" {
+						if msg := t.approveChange("pipeline", def.Name, "Replace it with the new pipeline "+stringArg(args, "name")+", which deletes it.", ChangeDelete); msg != "" {
 							return msg, nil
 						}
 					}
 				}
 				if n := strings.TrimSpace(stringArg(args, "name")); n != "" {
 					if _, taken := t.findPipeline(map[string]any{"name": n}); !taken {
-						t.approveChange("pipeline", n, "", false) // new: this session's own
+						t.approveChange("pipeline", n, "", ChangeNew) // new: this session's own
 					}
 				}
 			}

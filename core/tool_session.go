@@ -10,6 +10,18 @@ import (
 	"github.com/cmcoffee/gohort/core/netgate"
 )
 
+// ChangeOp is what an authoring write does to its item, for
+// ToolSession.ApproveChange. Each is asked about differently: something new
+// is the session's own work, a change to something that existed asks, and a
+// deletion asks even where a change to the same item would not.
+type ChangeOp int
+
+const (
+	ChangeNew    ChangeOp = iota // made here: the session's own work
+	ChangeEdit                   // a change to something that existed
+	ChangeDelete                 // deletes something that existed
+)
+
 // ToolSession carries mutable per-session state shared between the caller
 // and session-aware tools. Pass a *ToolSession when building agent tools via
 // GetAgentToolsWithSession; read results back from it after the loop completes.
@@ -228,13 +240,13 @@ type ToolSession struct {
 
 	// ApproveChange, when set, is asked before an authoring tool creates,
 	// changes or deletes one of the owner's things: kind ("tool", "app",
-	// "skill", ...), its name, what the change is, and whether it existed
-	// before this call. "" lets it go ahead; anything else is the refusal to
+	// "skill", ...), its name, what the change is, and what the write does
+	// to it (op). "" lets it go ahead; anything else is the refusal to
 	// return. Something new, or already approved in this session, goes
 	// ahead; a change to something that existed asks the owner once per
 	// session, or waits in their approval queue when nobody is watching.
 	// Nil = no check.
-	ApproveChange func(kind, name, detail string, existed bool) string
+	ApproveChange func(kind, name, detail string, op ChangeOp) string
 
 	// ToolFailureAdvice, when set, is asked when one of the user's own custom
 	// tools fails, and whatever it returns is added to the failed result. The

@@ -15,15 +15,15 @@ import (
 func TestToolChangesAskTheOwner(t *testing.T) {
 	type call struct {
 		name, detail string
-		existed      bool
+		op           ChangeOp
 	}
 	var calls []call
 	sess := &ToolSession{
 		Username: "alice", ChatSessionID: "s1",
 		WorkspaceDir: t.TempDir(), DB: &DBase{Store: kvlite.MemStore()},
-		ApproveChange: func(kind, name, detail string, existed bool) string {
-			calls = append(calls, call{name, detail, existed})
-			if existed {
+		ApproveChange: func(kind, name, detail string, op ChangeOp) string {
+			calls = append(calls, call{name, detail, op})
+			if op != ChangeNew {
 				return "NOT DONE: declined"
 			}
 			return ""
@@ -46,12 +46,13 @@ func TestToolChangesAskTheOwner(t *testing.T) {
 	}, sess); !strings.Contains(out, "declined") {
 		t.Fatalf("a create over an existing tool went ahead unapproved; got: %s", out)
 	}
-	if len(calls) != 3 || !strings.Contains(calls[0].detail, "description") || calls[1].detail != "Delete it." {
+	if len(calls) != 3 || !strings.Contains(calls[0].detail, "description") || calls[1].detail != "Delete it." ||
+		calls[0].op != ChangeEdit || calls[1].op != ChangeDelete || calls[2].op != ChangeEdit {
 		t.Errorf("approval asked with %+v", calls)
 	}
 	calls = nil
 	createGrouped(map[string]any{"action": "create", "name": "brand_new", "mode": "shell", "command_template": "echo x", "description": "y"}, sess)
-	if len(calls) != 1 || calls[0].existed {
+	if len(calls) != 1 || calls[0].op != ChangeNew {
 		t.Errorf("a new tool was not reported as new: %+v", calls)
 	}
 }

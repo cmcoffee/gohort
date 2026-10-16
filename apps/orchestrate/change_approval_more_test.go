@@ -20,8 +20,8 @@ type askLog struct {
 	made  []string // kind:name marked as the session's own
 }
 
-func (l *askLog) approve(kind, name, detail string, existed bool) string {
-	if !existed {
+func (l *askLog) approve(kind, name, detail string, op ChangeOp) string {
+	if op == ChangeNew {
 		l.made = append(l.made, kind+":"+name)
 		return ""
 	}

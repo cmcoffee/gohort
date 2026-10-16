@@ -52,10 +52,10 @@ func TestBundlingDoesNotSilentlyRewriteAnotherAgentsTool(t *testing.T) {
 	// owner first (change_approval.go): a no is refused before anything is
 	// bundled, and the same definition asks nothing.
 	asked := 0
-	sess := &ToolSession{Username: "alice", DB: udb, ApproveChange: func(kind, name, detail string, existed bool) string {
+	sess := &ToolSession{Username: "alice", DB: udb, ApproveChange: func(kind, name, detail string, op ChangeOp) string {
 		asked++
-		if kind != "tool" || name != "wiki_read" || !existed {
-			t.Errorf("asked about %s %s existed=%v", kind, name, existed)
+		if kind != "tool" || name != "wiki_read" || op != ChangeEdit {
+			t.Errorf("asked about %s %s op=%v", kind, name, op)
 		}
 		return "NOT DONE: declined"
 	}}

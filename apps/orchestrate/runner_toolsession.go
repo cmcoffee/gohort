@@ -362,7 +362,12 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 	// the spot.
 	sess.AskInChat = t.askInChat
 	// Changes to what already exists ask the owner first (change_approval.go).
-	sess.ApproveChange = changeApprover(sess, sess.Username, t.agent.ID, t.agent.Name, t.askInChat)
+	// A sub-run that set its own approver keeps it: an agent this turn sends
+	// is asked about as itself, and its queue entries and grants are its own,
+	// not the sending agent's.
+	if sess.ApproveChange == nil {
+		sess.ApproveChange = changeApprover(sess, sess.Username, t.agent.ID, t.agent.Name, t.askInChat)
+	}
 	// Inline privileges card — what an agent an authoring tool just saved may
 	// now do, editable in place. Persisted as a UIBlock (like the credential
 	// card) so it replays with the session, and upserted per agent so a build
@@ -485,6 +490,9 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	if t.session != nil {
 		sess.ChatSessionID = t.session.ID
 	}
+	// What the owner picked in Builder's form is approved for changes in this
+	// session (change_approval.go).
+	t.noteIntakeTargets()
 	// An uploaded picture reaches the LLM as vision content, which lets the
 	// model SEE it and gives it no way to NAME it. Asked to blend that photo
 	// with one it generated, the only handle it has is the generated image#1 —

@@ -108,14 +108,14 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				if def, ok := t.findMachine(args); ok {
 					verb := map[string]string{"update": "Change its phases or settings.", "update_phase": "Change the phase " + stringArg(args, "phase") + ".",
 						"repair": "Repair it.", "delete": "Delete it, and take it off every agent that has it."}[action]
-					if msg := t.approveChange("machine", def.Name, verb, true); msg != "" {
+					if msg := t.approveChange("machine", def.Name, verb, changeOpFor(action == "delete")); msg != "" {
 						return msg, nil
 					}
 				}
 			case "create":
 				if n := strings.TrimSpace(stringArg(args, "name")); n != "" {
 					if _, taken := t.findMachine(map[string]any{"name": n}); !taken {
-						t.approveChange("machine", n, "", false) // new: this session's own
+						t.approveChange("machine", n, "", ChangeNew) // new: this session's own
 					}
 				}
 			}

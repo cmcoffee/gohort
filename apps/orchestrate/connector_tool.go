@@ -604,7 +604,7 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("connector %q belongs to another user: only its drafter or an admin can change it", name)
 	}
 	// Changes to what already exists ask the owner (change_approval.go).
-	if msg := sessionApprove(sess, "connector", name, "Change its "+strings.Join(connectorChangedFields(args), ", ")+".", true); msg != "" {
+	if msg := sessionApprove(sess, "connector", name, "Change its "+strings.Join(connectorChangedFields(args), ", ")+".", ChangeEdit); msg != "" {
 		return msg, nil
 	}
 	owner := bridgeOwner(sess)
@@ -908,7 +908,7 @@ func connectorDelete(args map[string]any, sess *ToolSession) (string, error) {
 	if !mayManageConnector(sess, c) {
 		return "", fmt.Errorf("connector %q belongs to another user: only its drafter or an admin can delete it", name)
 	}
-	if msg := sessionApprove(sess, "connector", name, "Delete it, which tears down what it provides.", true); msg != "" {
+	if msg := sessionApprove(sess, "connector", name, "Delete it, which tears down what it provides.", ChangeDelete); msg != "" {
 		return msg, nil
 	}
 	if err := DeleteConnector(RootDB, name); err != nil {
@@ -1000,7 +1000,7 @@ func connectorMadeHere(h func(map[string]any, *ToolSession) (string, error)) fun
 	return func(args map[string]any, sess *ToolSession) (string, error) {
 		out, err := h(args, sess)
 		if err == nil {
-			sessionApprove(sess, "connector", strings.TrimSpace(stringArg(args, "name")), "", false)
+			sessionApprove(sess, "connector", strings.TrimSpace(stringArg(args, "name")), "", ChangeNew)
 		}
 		return out, err
 	}

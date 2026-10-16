@@ -310,7 +310,7 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	// New: this session's own work from here on (change_approval.go).
 	if sess.ApproveChange != nil {
-		sess.ApproveChange("skill", name, "", false)
+		sess.ApproveChange("skill", name, "", ChangeNew)
 	}
 
 	// create_collection: mint a fresh empty collection for this skill and
@@ -527,7 +527,7 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		if published {
 			what += " It is published, so the change reaches everybody who uses it."
 		}
-		if msg := sess.ApproveChange("skill", existing.Name, what, true); msg != "" {
+		if msg := sess.ApproveChange("skill", existing.Name, what, ChangeEdit); msg != "" {
 			return msg, nil
 		}
 	}
@@ -594,7 +594,7 @@ func skillDefDelete(args map[string]any, sess *ToolSession) (string, error) {
 		return "", err
 	}
 	if ok && sess.ApproveChange != nil {
-		if msg := sess.ApproveChange("skill", s.Name, "Delete it.", true); msg != "" {
+		if msg := sess.ApproveChange("skill", s.Name, "Delete it.", ChangeDelete); msg != "" {
 			return msg, nil
 		}
 	}

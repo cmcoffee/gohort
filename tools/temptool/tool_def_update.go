@@ -49,7 +49,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if msg := toolEditRefused(sess, name, args); msg != "" {
 		return msg, nil
 	}
-	if msg := toolChangeRefused(sess, name, toolChangeDetail("Change", args)); msg != "" {
+	if msg := toolChangeRefused(sess, name, toolChangeDetail("Change", args), false); msg != "" {
 		return msg, nil
 	}
 	existing, ok := loadExistingToolRecord(sess, name)
@@ -339,7 +339,7 @@ func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if msg := toolEditRefused(sess, name, nil); msg != "" {
 		return msg, nil
 	}
-	if msg := toolChangeRefused(sess, name, "Delete it."); msg != "" {
+	if msg := toolChangeRefused(sess, name, "Delete it.", true); msg != "" {
 		return msg, nil
 	}
 	// Forget this tool's secured-credential bindings (approved/pending) on delete —

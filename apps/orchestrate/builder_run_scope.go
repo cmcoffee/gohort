@@ -42,7 +42,7 @@ func (t *chatTurn) builderRunRefusal(kind, id, name string) string {
 func (t *chatTurn) builderBuilt(kind, id, name string) bool {
 	set := changeApprovalsFor(t.user, t.chatSessionID())
 	for _, n := range []string{name, id} {
-		if strings.TrimSpace(n) != "" && set.has(changeKey(kind, n)) {
+		if strings.TrimSpace(n) != "" && set.covers(changeKey(kind, n)) {
 			return true
 		}
 	}

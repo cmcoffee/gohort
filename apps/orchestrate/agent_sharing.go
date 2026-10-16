@@ -214,14 +214,14 @@ func agentEditRefusal(a AgentRecord, user string) string {
 // asks them, the same question update_agent asks (change_approval.go), so one
 // Approve covers both for the session. approve is the session's or the turn's
 // ApproveChange; nil asks nothing. "" means go ahead.
-func agentChangeGate(approve func(kind, name, detail string, existed bool) string, target *AgentRecord, user, change string) string {
+func agentChangeGate(approve func(kind, name, detail string, op ChangeOp) string, target *AgentRecord, user, change string) string {
 	if msg := agentEditRefusal(*target, user); msg != "" {
 		return msg
 	}
 	if approve == nil {
 		return ""
 	}
-	return approve("agent", chFirst(target.Name, target.ID), strings.ToUpper(change[:1])+change[1:]+".", true)
+	return approve("agent", chFirst(target.Name, target.ID), strings.ToUpper(change[:1])+change[1:]+".", ChangeEdit)
 }
 
 // chatAsker is this turn's question card, or nil with nobody watching.

@@ -100,7 +100,7 @@ Typical flow when wiring a new service:
 			out, err := bridgeCreate(args, sess, defaultWakeAgent)
 			if err == nil {
 				// Made here: changing it later this session asks nothing.
-				sessionApprove(sess, "bridge", strings.TrimSpace(stringArg(args, "name")), "", false)
+				sessionApprove(sess, "bridge", strings.TrimSpace(stringArg(args, "name")), "", ChangeNew)
 			}
 			return out, err
 		},
@@ -136,7 +136,7 @@ Typical flow when wiring a new service:
 				if channel != "" {
 					detail = "Send its changes into the channel " + channel + " instead."
 				}
-				if msg := sessionApprove(sess, "bridge", name, detail, true); msg != "" {
+				if msg := sessionApprove(sess, "bridge", name, detail, ChangeEdit); msg != "" {
 					return msg, nil
 				}
 			}
@@ -544,7 +544,7 @@ func bridgeDelete(args map[string]any, sess *ToolSession) (string, error) {
 	if !ok || !isBridgeMonitor(m) {
 		return "", fmt.Errorf("no bridge named %q", name)
 	}
-	if msg := sessionApprove(sess, "bridge", name, "Delete it, which stops its polling.", true); msg != "" {
+	if msg := sessionApprove(sess, "bridge", name, "Delete it, which stops its polling.", ChangeDelete); msg != "" {
 		return msg, nil
 	}
 	DeleteEventMonitor(RootDB, owner, name)

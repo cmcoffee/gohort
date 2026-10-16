@@ -238,7 +238,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 			case "create", "", "set", "add", "new", "schedule":
 				out, err := scheduleCreate(ctx, owner, controllerAgentID, impl, rec, args)
 				if err == nil && name != "" {
-					sessionApprove(sess, "schedule", name, "", false) // made here: this session's own
+					sessionApprove(sess, "schedule", name, "", ChangeNew) // made here: this session's own
 				}
 				return out, err
 			case "list":
@@ -1167,7 +1167,7 @@ func scheduleChangeApproval(sess *ToolSession, owner, actingAgent, action, name 
 	if db != nil && runner != "" && topAgentOf(db, runner) == topAgentOf(db, actingAgent) {
 		return ""
 	}
-	return sessionApprove(sess, "schedule", name, verb, true)
+	return sessionApprove(sess, "schedule", name, verb, changeOpFor(action == "delete" || action == "cancel" || action == "remove"))
 }
 
 // scheduledRunsListing lists the scheduled runs (standing agents) that run as
