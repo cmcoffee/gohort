@@ -5446,6 +5446,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.4rem 0.55rem; font: inherit;
   white-space: pre-wrap; word-wrap: break-word;
 }
+/* Focus is the theme's, as on the chat composer. Left unset, WebKit (the
+ * desktop app's webview) draws the system's own focus ring in the system
+ * accent colour, and the row's edges clip part of it. */
+.ui-agent-input:focus { outline: none; border-color: var(--accent); }
 /* ui-ask-card — the default ask_user / ask_user_form clarifying card
  * rendered inline in an AgentLoopPanel transcript (the framework control
  * tools). Scoped + theme-tokened; the Agency chat ships a richer variant. */
