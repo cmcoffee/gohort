@@ -531,11 +531,33 @@ func SaveAppSpecAs(s AppSpec, reason string) AppSpec {
 	}
 	s.Updated = now
 	s.Schema = appSpecSchema
+	// A verdict is pinned to the Updated stamp this save just moved, so a
+	// notes or name edit read back as "unverified" on a page that had passed:
+	// the create result asks the author to write notes, and the write it asked
+	// for then told it to verify again.
+	if hadPrior && prior.Verify.Current(prior) && appVerdictCarries(prior, s) {
+		v := *prior.Verify
+		v.Against = now
+		s.Verify = &v
+	}
 	db.Set(AppSpecTable, s.Slug, s)
 	for _, fn := range appSpecSavedHooks {
 		fn(s)
 	}
 	return s
+}
+
+// appVerdictCarries reports whether a verify of prior still describes next:
+// only the words about the app and its bookkeeping differ. Anything else,
+// including a field added later, counts as a change and drops the verdict.
+func appVerdictCarries(prior, next AppSpec) bool {
+	strip := func(s AppSpec) []byte {
+		s.Name, s.Desc, s.Notes, s.ChangeNote = "", "", "", ""
+		s.Created, s.Updated, s.Verify, s.Schema = "", "", nil, 0
+		b, _ := json.Marshal(s)
+		return b
+	}
+	return bytes.Equal(strip(prior), strip(next))
 }
 
 // appServesDifferently reports whether what an app shows or runs changed: its

@@ -23,6 +23,16 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// appHasSectionKind reports whether any of the app's sections is of kind.
+func appHasSectionKind(spec AppSpec, kind string) bool {
+	for _, m := range appSpecSections(spec) {
+		if strings.EqualFold(strings.TrimSpace(mapStr(m, "kind")), kind) {
+			return true
+		}
+	}
+	return false
+}
+
 // appInventoryLine lists the app's stored parts and forbids going beyond them.
 // Derived from the spec, so it cannot be optimistic.
 func (t *chatTurn) appInventoryLine(spec AppSpec) string {

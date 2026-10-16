@@ -46,6 +46,34 @@ func TestAppVerifyStatePinsToTheRevisionItChecked(t *testing.T) {
 	}
 }
 
+// A save that changes only words about the app keeps its verdict current; the
+// create result asks for notes, and that write used to read back unverified.
+func TestAppVerdictCarriesAcrossANotesEdit(t *testing.T) {
+	verifyTestStore(t)
+	spec := SaveAppSpec(AppSpec{Slug: "game", Name: "Game", Owner: "alice", Sections: json.RawMessage(`[{"kind":"html"}]`)})
+	// Stamp the verified revision in the past, so a verdict left behind reads
+	// stale instead of matching a save in the same second.
+	old := "2001-01-01T00:00:00Z"
+	spec.Updated = old
+	spec.Verify = &AppVerifyState{At: old, Against: old, Pass: true, Summary: "PASS"}
+	appSpecStore("alice").Set(AppSpecTable, spec.Slug, spec)
+
+	got, _ := LoadAppSpec("alice", "game")
+	got.Notes, got.Desc = "plan: swipe, undo", "a tile game"
+	noted := SaveAppSpecAs(got, "update")
+	if noted.Updated == old || !noted.Verify.Current(noted) || !noted.Verify.Pass {
+		t.Fatalf("a notes edit dropped the verdict: %+v vs %s", noted.Verify, noted.Updated)
+	}
+
+	appSpecStore("alice").Set(AppSpecTable, spec.Slug, spec)
+	got, _ = LoadAppSpec("alice", "game")
+	got.Settings = []AppSetting{{Name: "SIZE", Default: "4"}}
+	tuned := SaveAppSpecAs(got, "update")
+	if tuned.Verify.Current(tuned) {
+		t.Fatalf("a settings change kept the verdict current: %+v", tuned.Verify)
+	}
+}
+
 // Export and import both drop the verdict: a browser load on one host says
 // nothing about the host the recipe lands on.
 func TestAppVerifyStateDoesNotTravel(t *testing.T) {

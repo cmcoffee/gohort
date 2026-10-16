@@ -305,8 +305,14 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		}
 	}
 	saved := SaveAppSpecAs(spec, reason)
-	msg := fmt.Sprintf("%s app %q at /apps/%s/ (revision %s): open it in the dashboard under My Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …). Status: %s.",
-		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug, saved.VerifyStatus())
+	// Only an app with a table has records it lists; a game reading "the
+	// table lists them" was told about a part it does not have.
+	stores := ""
+	if appHasSectionKind(saved, "table") {
+		stores = " Records save to the app's own store; the table lists them."
+	}
+	msg := fmt.Sprintf("%s app %q at /apps/%s/ (revision %s): open it in the dashboard under My Apps.%s Revise with app_def(action=\"update\", id=%q, …). Status: %s.",
+		verb, saved.Name, saved.Slug, saved.Updated, stores, saved.Slug, saved.VerifyStatus())
 
 	// On create, the checklist for a complete app: shown once, in the result
 	// of the call that made it, where the next step is decided.
@@ -424,16 +430,23 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		t.noteAppStanding(saved.Slug, false, "the page calls an endpoint the app does not have (see the last app_def result)")
 	} else if pageChecked {
 		t.noteAppStanding(saved.Slug, true, "")
+		// Stored, not only said: the next result (a notes edit, a listing)
+		// reads the standing from the spec, and without this it said "never
+		// verified" about the page this save had just loaded.
+		saved.RecordVerify(true, "PASS: loaded in a real browser on save, no JS errors")
 		// The Status clause up top was written before this save loaded the
 		// page, and it still said "never verified: run verify", so one result
 		// told the author both that the page had passed and that it had not
 		// been checked.
 		msg = strings.Replace(msg, "Status: "+saved.VerifyStatus()+".", "Status: loaded in a real browser by this save, no JS errors.", 1)
 		msg += "\nThis save already parsed the inline JavaScript AND loaded /apps/" + saved.Slug + "/ in a real browser: it rendered with no JS errors. That check covered THIS revision, so you don't need a separate verify unless you change the app again."
-	} else if !isUpdate || appUpdateChangesBehavior(args) {
-		t.noteAppStanding(saved.Slug, false, "saved, and not yet verified in a browser: run app_def(action=\"verify\")")
-		msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\"): it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
+	} else if saved.Verify.Current(saved) {
+		// A notes or name edit kept the verdict (SaveAppSpecAs carries it);
+		// the Status clause above already says so.
 	} else {
+		if !isUpdate || appUpdateChangesBehavior(args) {
+			t.noteAppStanding(saved.Slug, false, "saved, and not yet verified in a browser: run app_def(action=\"verify\")")
+		}
 		msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\"): it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
 	}
 	return msg + plan, nil
