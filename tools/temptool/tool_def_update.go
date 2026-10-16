@@ -138,6 +138,16 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if v, present := args["hook_capabilities"]; present {
 		merged["hook_capabilities"] = v
 	}
+	// A carried pipeline is replaced whole, by the copy itself (pipeline_def)
+	// or by taking a saved one again (from_pipeline); either drops the copy
+	// the record round-tripped, which would otherwise ride along as a second
+	// source.
+	for _, f := range []string{"pipeline_def", "from_pipeline"} {
+		if v, present := args[f]; present {
+			delete(merged, "pipeline_def")
+			merged[f] = v
+		}
+	}
 	// Notes REPLACE the stored ones when given (an empty string clears them);
 	// helper files given here REPLACE the carried set (a tool folder's publish).
 	if v, present := args["notes"]; present {

@@ -489,6 +489,8 @@ func (s *ToolSession) ForDetachedTask(ctx context.Context) *ToolSession {
 		LLM:                s.LLM,
 		LeadLLM:            s.LeadLLM,
 		SubAgentRunner:     s.SubAgentRunner,
+		PipelineRunner:     s.PipelineRunner,
+		PipelineSource:     s.PipelineSource,
 		TempTools:          s.TempTools,
 		BundledToolNames:   s.BundledToolNames,
 		UnbundleTool:       s.UnbundleTool,

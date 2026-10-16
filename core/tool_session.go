@@ -178,6 +178,19 @@ type ToolSession struct {
 	// recursion depth so pipeline-calls-pipeline can't infinite-loop.
 	SubAgentRunner func(ctx context.Context, sysPrompt, userMsg string, allowedToolNames []string, maxRounds int) (string, error)
 
+	// PipelineRunner runs a whole pipeline definition for a tool that
+	// carries its own copy (TempTool.Pipeline), on the same engine and
+	// under the same rules as a pipeline attached to the agent. Nil means
+	// such a tool refuses with an error rather than running half of it.
+	PipelineRunner func(ctx context.Context, def PipelineDef, input string) (string, error)
+
+	// PipelineSource resolves a saved pipeline (name or id) a tool is being
+	// made from: the definition the tool copies, and fold, called once the
+	// tool is saved, which removes the original when nothing else uses it
+	// and says what it did. Set by the app that knows what can use a
+	// pipeline; nil means tools cannot be made from one here.
+	PipelineSource func(ref string) (def PipelineDef, fold func() string, err error)
+
 	// TempTools holds tools the LLM defined at runtime (via the
 	// create_temp_tool tool). They live for the session only — never
 	// persisted, never shared across users. Apps that want to expose

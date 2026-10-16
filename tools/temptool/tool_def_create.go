@@ -307,10 +307,14 @@ func createGroupedMode(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		return res, err
 	case TempToolModePipeline:
-		res, err := createPipelineGrouped(args, sess)
+		res, fold, err := createPipelineGrouped(args, sess)
 		if err == nil {
 			if scope := finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name"))); scope != "" {
 				res = strings.TrimRight(res, " ") + " " + scope
+			}
+			// The original goes only once the tool holding its copy is saved.
+			if fold != nil {
+				res = strings.TrimRight(res, " ") + " " + fold()
 			}
 		}
 		return res, err

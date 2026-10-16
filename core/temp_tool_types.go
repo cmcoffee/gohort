@@ -466,6 +466,19 @@ type TempTool struct {
 	// the other based on whether the chain needs adaptive logic.
 	PipelineSteps []PipelineStep `json:"pipeline_steps,omitempty"`
 
+	// Pipeline is a whole saved pipeline (stages, fanout, loops, declared
+	// output) this tool carries as its OWN copy, as PipelineDef JSON. When
+	// set it is what the tool runs, ahead of PipelineSteps and
+	// PipelinePrompt. A pipeline made for one tool lived beside it as a
+	// second record nothing tied together; the tool keeps the copy, so
+	// editing or deleting the original never changes it, and the original
+	// goes when nothing else uses it (see ToolSession.PipelineSource).
+	//
+	// Bytes, not a PipelineDef: tools are stored through gob, and a JSON
+	// blob keeps whatever a pipeline grows from ever deciding whether a
+	// tool record still decodes.
+	Pipeline []byte `json:"pipeline,omitempty"`
+
 	// --- Persistent-shell-mode fields (Mode == "persistent") ------------
 	// Persistent shells host a long-lived process inside the sandbox
 	// (bash, psql, ssh, etc.) and accept commands across multiple LLM

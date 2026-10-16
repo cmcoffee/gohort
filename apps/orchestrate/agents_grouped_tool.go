@@ -1099,6 +1099,8 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		AgentID:           target.ID,
 		DeniedCredentials: credentialDenySet(target, t.user),
 		SubAgentRunner:    t.runPipelineSubAgent,
+		PipelineRunner:    t.runToolPipeline,
+		PipelineSource:    t.toolPipelineSource,
 		// Carry the dispatching parent so authoring tools (Builder's
 		// create_agent) can stamp creations OwnedBy=<parent> and route them to
 		// the parent owner's approval queue.

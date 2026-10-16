@@ -26,6 +26,20 @@ import (
 // Sub-agent's tool catalog is PipelineTools (subset of the parent
 // session's). MaxRounds defaults to 6 when unset.
 func dispatchPipelineModeTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	// A tool carrying a whole saved pipeline runs it, on the pipeline engine.
+	if def, ok, err := carriedPipelineOf(tt); ok {
+		if err != nil {
+			return "", err
+		}
+		if sess.PipelineRunner == nil {
+			return "", fmt.Errorf("pipeline tool %q: this host cannot run a pipeline", tt.Name)
+		}
+		out, err := sess.PipelineRunner(sess.Context(), def, carriedPipelineInput(args))
+		if err != nil {
+			return "", fmt.Errorf("pipeline tool %q: %v", tt.Name, err)
+		}
+		return out, nil
+	}
 	// Structured-steps path takes precedence — when the author set
 	// pipeline_steps, run deterministically; no sub-agent, no LLM
 	// per step. Cheaper, faster, predictable.

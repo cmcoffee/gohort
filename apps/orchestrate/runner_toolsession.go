@@ -461,6 +461,8 @@ func (t *chatTurn) newToolSession() *ToolSession {
 		// decremented on exit) so pipeline-calls-pipeline can't
 		// infinite-loop. See runPipelineSubAgent.
 		SubAgentRunner: t.runPipelineSubAgent,
+		PipelineRunner: t.runToolPipeline,
+		PipelineSource: t.toolPipelineSource,
 	}
 	// Credential scope — the set of credentials this agent has been denied
 	// (scope pill). Carried on the session so the fetch_url auto-route (LLM

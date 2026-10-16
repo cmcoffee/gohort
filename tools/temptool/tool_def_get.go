@@ -388,6 +388,12 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 			out["params"] = tt.Params
 			out["required"] = append([]string{}, tt.Required...)
 		}
+		// A tool carrying a whole pipeline round-trips the copy, and nothing
+		// of the step or prompt forms it does not use.
+		if def, ok, err := carriedPipelineOf(&tt); ok && err == nil {
+			out["pipeline_def"] = def
+			break
+		}
 		if tt.PipelinePrompt != "" {
 			out["pipeline_prompt"] = tt.PipelinePrompt
 		}
