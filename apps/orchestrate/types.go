@@ -490,6 +490,12 @@ type AgentRecord struct {
 	// No-op when DisableExplicit is true.
 	MemoryMode string `json:"memory_mode,omitempty"`
 
+	// SessionLinks is whether the agent keeps a marker per web session and
+	// finds earlier sessions with recall ([session] hits; session_markers.go):
+	// "on", "off", or "" for the memory mode's default (on for chatbot, off
+	// for agent). A string, not a *bool: gob drops a pointer to false.
+	SessionLinks string `json:"session_links,omitempty"`
+
 	// EnableNotes opts this agent into the Working-notes layer — a single
 	// bounded, agent-rewritable block of RUNNING STATE injected always-in-
 	// prompt (distinct from the append-list Explicit Memory facts). Surfaces

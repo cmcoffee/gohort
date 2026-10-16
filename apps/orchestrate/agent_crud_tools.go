@@ -971,6 +971,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"disable_explicit":         {Type: "boolean", Description: rewriteMemoryToolNames("Turns off Explicit Memory (store_fact / list_facts / forget_fact + the always-in-prompt facts block). For agents that should hold no standing state. Orthogonal to disable_inferred. Default false.")},
 		"disable_inferred":         {Type: "boolean", Description: rewriteMemoryToolNames("Turns off Reference Memory: memory_save / memory_search / memory_forget stripped from the catalog, derived chunks excluded from recall. For agents that must answer from authoritative sources only. The per-turn Clean toggle is this switch scoped to one turn. Default false.")},
 		"memory_mode":              {Type: "string", Description: rewriteMemoryToolNames("Explicit Memory framing: \"agent\" (default) or \"chatbot\". agent = store_fact holds generalized lessons only; specifics go to Reference Memory via memory_save. chatbot = those PLUS user personalization and conversation-coherence notes. chatbot for conversational agents, agent for task-focused ones. No-op when disable_explicit is true.")},
+		"session_links":            {Type: "string", Enum: []string{"default", "on", "off"}, Description: "Whether the agent finds its earlier sessions with recall ([session] hits, each with a link to the session): \"on\", \"off\", or \"default\", which is on in chatbot memory mode and off in agent mode. On for an assistant people come back to, off for a task specialist."},
 		"allow_private_mode":       {Type: "boolean", Description: "Exposes a per-turn Private toggle that drops internet-capability tools. Default false."},
 		"force_private":            {Type: "boolean", Description: "Locks the agent into Private mode: every turn drops network-capability tools (web_search, fetch_url, dispatch, …) regardless of the user toggle, and the toggle is hidden. Overrides allow_private_mode. Default false."},
 		"disable_skills":           {Type: "boolean", Description: "Fully suppresses skills: no activation, no prompt addendum, no skill_knowledge chunks, no skill-attached tools. For agents that must faithfully report one source. The per-turn Clean toggle also suppresses skills. Default false."},
@@ -1101,6 +1102,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v := strings.TrimSpace(stringArg(args, "memory_mode")); v != "" {
 		rec.MemoryMode = v
+	}
+	if v, ok := args["session_links"].(string); ok {
+		rec.SessionLinks = normalizeSessionLinks(v)
 	}
 	if v, ok := args["allow_private_mode"].(bool); ok {
 		rec.AllowPrivateMode = v
@@ -1287,6 +1291,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v := strings.TrimSpace(stringArg(args, "memory_mode")); v != "" {
 		rec.MemoryMode = v
+	}
+	if v, ok := args["session_links"].(string); ok {
+		rec.SessionLinks = normalizeSessionLinks(v)
 	}
 	if v, ok := args["allow_private_mode"].(bool); ok {
 		rec.AllowPrivateMode = v

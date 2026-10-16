@@ -208,11 +208,18 @@ func (t *chatTurn) recallToolDef() AgentToolDef {
 	// what recall can actually return. Every other agent gets the full four-layer
 	// verb plus an optional `layer` filter to narrow to one source on demand.
 	desc := "Look something up across ALL of your memory at once: no need to pick a source. Pass `query` to search; each hit is tagged with where it came from:\n\n  [pinned]    your always-in-prompt notes\n  [finding]   things you saved with remember (may have drifted, verify when it matters)\n  [knowledge] authoritative uploaded/shared docs (source of truth)\n  [history]   earlier in this conversation, aged out of view\n\nEvery hit carries an `id:`. To read the FULL item behind a hit (a whole document, the surrounding conversation), call recall again with that `id`. Pass the same id to `forget` to delete it (findings and pinned notes only). Ids come ONLY from a recall result in front of you: never construct, guess, or reuse an id-shaped string from anywhere else. With no id in hand, search with `query` first.\n\nTo restrict the search to a SINGLE source, pass `layer` (e.g. `knowledge` to answer strictly from authoritative docs). Omit it to search everything. Pass `topic` to narrow [finding]/[knowledge] hits to one topic bucket.\n\nA 'no matches' result means your memory genuinely has nothing on this: do NOT speculate from it. Required: `query` OR `id`. Optional: `k`, `layer`, `topic`."
+	layerEnum := []string{"knowledge", "finding", "pinned", "history"}
+	if t.sessionLinksActive() {
+		// Earlier sessions with this person, found by their markers
+		// (session_markers.go).
+		desc = strings.Replace(desc, "aged out of view\n", "aged out of view\n  [session]   an earlier session with this person: read it with its id, and give the person its link when you answer from it\n", 1)
+		layerEnum = append(layerEnum, "session")
+	}
 	params := map[string]ToolParam{
 		"query": {Type: "string", Description: "What to look for, in natural language. Your current question, trimmed to the gist, usually works."},
 		"id":    {Type: "string", Description: "An id COPIED from a recall hit you can see (e.g. `doc:…`, `span:…`, `mem:…`, `fact:…`). Returns the full item behind that id instead of searching. Never assemble one yourself: if you have not run a recall query in this conversation, you have no ids, so pass `query` instead."},
 		"k":     {Type: "number", Description: "Max hits in TOTAL, split across the layers searched (default 4 per layer; per-layer share capped by the knowledge ceiling). Leave default unless you want a wider or narrower net."},
-		"layer": {Type: "string", Enum: []string{"knowledge", "finding", "pinned", "history"}, Description: "Optional. Restrict the search to ONE source, named by the tag you see on hits: `knowledge` (authoritative docs), `finding` (your saved findings), `pinned` (always-in-prompt notes), or `history` (earlier conversation). Omit to search all four. Use `knowledge` when the answer must come strictly from the corpus."},
+		"layer": {Type: "string", Enum: layerEnum, Description: "Optional. Restrict the search to ONE source, named by the tag you see on hits: `knowledge` (authoritative docs), `finding` (your saved findings), `pinned` (always-in-prompt notes), or `history` (earlier conversation). Omit to search all four. Use `knowledge` when the answer must come strictly from the corpus."},
 		"topic": {Type: "string", Description: "Optional snake_case topic slug: narrows [finding] and [knowledge] hits to one subject bucket (pinned notes and history aren't topic-filed). Pass a slug from the \"Known topics\" block, e.g. the one you filed a finding under with remember. Omit to span all topics."},
 	}
 	if t.recallCorpusOnly() {
@@ -283,8 +290,13 @@ func (t *chatTurn) recallLayerSet(args map[string]any) map[string]bool {
 		layers = map[string]bool{"pinned": true}
 	case "history":
 		layers = map[string]bool{"history": true}
+	case "session", "sessions":
+		layers = map[string]bool{"session": true}
 	default: // "", "all", or unrecognized → search everything
-		layers = map[string]bool{"pinned": true, "finding": true, "knowledge": true, "history": true}
+		layers = map[string]bool{"pinned": true, "finding": true, "knowledge": true, "history": true, "session": true}
+	}
+	if !t.sessionLinksActive() {
+		delete(layers, "session")
 	}
 	if t.explicitOff() {
 		delete(layers, "pinned")
@@ -475,6 +487,14 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 		}
 	}
 
+	// [session] — earlier sessions with this person, by their markers
+	// (session_markers.go). The id reads the conversation itself.
+	if layers["session"] {
+		if s := t.recallSessionHits(query, qVec, perLayer); s != "" {
+			sections = append(sections, s)
+		}
+	}
+
 	if len(sections) == 0 {
 		return recallNoMatchMessage(layers), nil
 	}
@@ -540,6 +560,7 @@ func recallNoMatchMessage(layers map[string]bool) string {
 		{"finding", "findings"},
 		{"knowledge", "knowledge"},
 		{"history", "conversation history"},
+		{"session", "earlier sessions"},
 	}
 	var searched []string
 	for _, l := range labels {
@@ -764,6 +785,11 @@ func (t *chatTurn) recallFetch(id string) (string, error) {
 			}
 		}
 		return fmt.Sprintf("No pinned note with id fact:%s, it may have been forgotten.", ref), nil
+	case "sess":
+		if !t.sessionLinksActive() {
+			return "Earlier sessions are not available to you in this one.", nil
+		}
+		return t.readSessionForRecall(ref), nil
 	default:
 		return "", fmt.Errorf("unrecognized id kind %q", kind)
 	}
@@ -861,6 +887,8 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 				return "That's [knowledge]: admin-managed source-of-truth. It can't be deleted from here.", nil
 			case "span":
 				return "That's [history]: the immutable record of the conversation. It can't be deleted from here.", nil
+			case "sess":
+				return "That's [session]: an earlier conversation, which the person deletes from their session list. It can't be deleted from here.", nil
 			default:
 				return "", fmt.Errorf("unrecognized id kind %q", kind)
 			}
@@ -919,7 +947,7 @@ func splitRecallID(id string) (kind, ref string, ok bool) {
 	kind = id[:i]
 	ref = id[i+1:]
 	switch kind {
-	case "fact", "mem", "doc", "span":
+	case "fact", "mem", "doc", "span", "sess":
 		return kind, ref, true
 	}
 	return "", "", false

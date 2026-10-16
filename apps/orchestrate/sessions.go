@@ -280,6 +280,8 @@ func deleteChatSession(db Database, agentID, sessionID string) {
 	// summary (prepended to every turn) outlives the history and re-primes
 	// the thread with its old context. No-op when no compact-state row exists.
 	deleteCompactState(db, agentID, sessionID)
+	// Its marker goes with it: recall must not find a session that is gone.
+	dropSessionMarker(db, agentID, sessionID)
 	// And the continuity archive: folded spans ingested for [history] recall
 	// live under lcm:<agent>:<session> in this same db. Without this wipe,
 	// "clear thread" left the conversation's content recoverable via recall —
@@ -317,6 +319,8 @@ func dropChatSessionBucket(db Database, agentID string) {
 	if n := WipeChunksBySourcePrefix(db, operatorLCMSource(agentID, "")); n > 0 {
 		Log("[orchestrate.sessions] dropped %d archived history chunk(s) for deleted agent=%s", n, agentID)
 	}
+	// And every session's marker.
+	dropAgentSessionMarkers(db, agentID)
 }
 
 // titleFromFirstMessage derives a short session title from the first

@@ -737,6 +737,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		turn.markBlockedReply(&sess)
 		_, _ = saveChatSession(udb, sess)
 		turn.titleAfterFirstTurn()
+		turn.noteSessionMarker()
 		sse.Send(map[string]any{"kind": "done"})
 		return
 	}
@@ -764,6 +765,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		turn.markBlockedReply(&sess)
 		_, _ = saveChatSession(udb, sess)
 		turn.titleAfterFirstTurn()
+		turn.noteSessionMarker()
 		sse.Send(map[string]any{"kind": "done"})
 		return
 	}
@@ -1052,6 +1054,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	}
 
 	turn.titleAfterFirstTurn()
+	turn.noteSessionMarker()
 
 	sse.Send(map[string]any{"kind": "done"})
 }
