@@ -38,7 +38,7 @@ func saveTestSession(t *testing.T, db Database, agentID, id, title string, excha
 }
 
 // On in chatbot mode, off in agent mode, and the agent's own setting wins.
-func TestSessionLinksFollowTheMemoryMode(t *testing.T) {
+func TestSessionRecallFollowTheMemoryMode(t *testing.T) {
 	cases := []struct {
 		rec  AgentRecord
 		want bool
@@ -46,16 +46,16 @@ func TestSessionLinksFollowTheMemoryMode(t *testing.T) {
 		{AgentRecord{MemoryMode: "chatbot"}, true},
 		{AgentRecord{MemoryMode: "agent"}, false},
 		{AgentRecord{}, false},
-		{AgentRecord{MemoryMode: "agent", SessionLinks: "on"}, true},
-		{AgentRecord{MemoryMode: "chatbot", SessionLinks: "off"}, false},
+		{AgentRecord{MemoryMode: "agent", SessionRecall: "on"}, true},
+		{AgentRecord{MemoryMode: "chatbot", SessionRecall: "off"}, false},
 	}
 	for _, c := range cases {
-		if got := sessionLinksOn(c.rec); got != c.want {
+		if got := sessionRecallOn(c.rec); got != c.want {
 			t.Errorf("%+v: got %v, want %v", c.rec, got, c.want)
 		}
 	}
-	if normalizeSessionLinks(" On ") != "on" || normalizeSessionLinks("maybe") != "" || normalizeSessionLinks("default") != "" {
-		t.Error("session_links is not normalized")
+	if normalizeSessionRecall(" On ") != "on" || normalizeSessionRecall("maybe") != "" || normalizeSessionRecall("default") != "" {
+		t.Error("session_recall is not normalized")
 	}
 }
 
@@ -129,14 +129,14 @@ func TestRecallFindsAnEarlierSession(t *testing.T) {
 	}
 }
 
-// With session links off, in an incognito session, or for an agent that
+// With session recall off, in an incognito session, or for an agent that
 // answers from its corpus alone, recall does not search sessions, and no
 // marker is written.
-func TestSessionLinksStayOutWhenOff(t *testing.T) {
+func TestSessionRecallStayOutWhenOff(t *testing.T) {
 	db := sessionMarkerStore(t)
 	cases := map[string]*chatTurn{
 		"agent mode":  {udb: db, agent: AgentRecord{ID: "ag", MemoryMode: "agent"}, session: &ChatSession{ID: "s1"}},
-		"turned off":  {udb: db, agent: AgentRecord{ID: "ag", MemoryMode: "chatbot", SessionLinks: "off"}, session: &ChatSession{ID: "s1"}},
+		"turned off":  {udb: db, agent: AgentRecord{ID: "ag", MemoryMode: "chatbot", SessionRecall: "off"}, session: &ChatSession{ID: "s1"}},
 		"incognito":   {udb: db, agent: AgentRecord{ID: "ag", MemoryMode: "chatbot"}, session: &ChatSession{ID: "s1", Incognito: true}},
 		"corpus only": {udb: db, agent: AgentRecord{ID: "ag", MemoryMode: "chatbot", DisableExplicit: true, DisableInferred: true}, session: &ChatSession{ID: "s1"}},
 	}

@@ -1,6 +1,6 @@
 package orchestrate
 
-// Session links: where an agent can look up an earlier conversation.
+// Session recall: where an agent can look up an earlier conversation.
 //
 // [history] reaches what scrolled out of the cortex thread, and nothing
 // reaches across sessions: an agent asked about "the session where we fixed
@@ -22,7 +22,7 @@ package orchestrate
 //
 // On by default for an agent in chatbot memory mode, whose conversations are
 // what it should remember; off for agent mode, a task specialist, where past
-// sessions are mostly noise. AgentRecord.SessionLinks overrides either way.
+// sessions are mostly noise. AgentRecord.SessionRecall overrides either way.
 // Never in an incognito session, never on a Clean turn, and never for an
 // agent that answers from its corpus alone.
 
@@ -74,10 +74,10 @@ func sessionLink(agentID, sessionID string) string {
 	return "/orchestrate/?agent=" + url.QueryEscape(agentID) + "&session=" + url.QueryEscape(sessionID)
 }
 
-// sessionLinksOn reports whether an agent keeps session links: its own
+// sessionRecallOn reports whether an agent has session recall: its own
 // setting, else on for chatbot memory mode and off for agent mode.
-func sessionLinksOn(a AgentRecord) bool {
-	switch strings.ToLower(strings.TrimSpace(a.SessionLinks)) {
+func sessionRecallOn(a AgentRecord) bool {
+	switch strings.ToLower(strings.TrimSpace(a.SessionRecall)) {
 	case "on":
 		return true
 	case "off":
@@ -86,15 +86,15 @@ func sessionLinksOn(a AgentRecord) bool {
 	return strings.EqualFold(strings.TrimSpace(a.MemoryMode), "chatbot")
 }
 
-// sessionLinksActive reports whether this turn reads session links.
-func (t *chatTurn) sessionLinksActive() bool {
-	return t != nil && sessionLinksOn(t.agent) && !t.recallCorpusOnly() && !t.incognitoSession()
+// sessionRecallActive reports whether this turn can recall earlier sessions.
+func (t *chatTurn) sessionRecallActive() bool {
+	return t != nil && sessionRecallOn(t.agent) && !t.recallCorpusOnly() && !t.incognitoSession()
 }
 
 // noteSessionMarker rewrites this session's marker after a turn. Off the
 // request: the reply is already saved, and the embed can take a moment.
 func (t *chatTurn) noteSessionMarker() {
-	if !t.sessionLinksActive() || t.inferredDisabled || t.session == nil || t.udb == nil {
+	if !t.sessionRecallActive() || t.inferredDisabled || t.session == nil || t.udb == nil {
 		return
 	}
 	agentID, sessID := t.agent.ID, t.session.ID
@@ -314,10 +314,10 @@ func fitSessionLines(lines []string, budget int) string {
 	return strings.Join(append(out, lines[start:]...), "\n")
 }
 
-// normalizeSessionLinks is a SessionLinks value as stored: "on", "off", or
+// normalizeSessionRecall is a SessionRecall value as stored: "on", "off", or
 // "" for the default. Anything else, "default" included, reads as the
 // default.
-func normalizeSessionLinks(v string) string {
+func normalizeSessionRecall(v string) string {
 	switch v = strings.ToLower(strings.TrimSpace(v)); v {
 	case "on", "off":
 		return v

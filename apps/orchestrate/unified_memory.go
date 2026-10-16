@@ -209,7 +209,7 @@ func (t *chatTurn) recallToolDef() AgentToolDef {
 	// verb plus an optional `layer` filter to narrow to one source on demand.
 	desc := "Look something up across ALL of your memory at once: no need to pick a source. Pass `query` to search; each hit is tagged with where it came from:\n\n  [pinned]    your always-in-prompt notes\n  [finding]   things you saved with remember (may have drifted, verify when it matters)\n  [knowledge] authoritative uploaded/shared docs (source of truth)\n  [history]   earlier in this conversation, aged out of view\n\nEvery hit carries an `id:`. To read the FULL item behind a hit (a whole document, the surrounding conversation), call recall again with that `id`. Pass the same id to `forget` to delete it (findings and pinned notes only). Ids come ONLY from a recall result in front of you: never construct, guess, or reuse an id-shaped string from anywhere else. With no id in hand, search with `query` first.\n\nTo restrict the search to a SINGLE source, pass `layer` (e.g. `knowledge` to answer strictly from authoritative docs). Omit it to search everything. Pass `topic` to narrow [finding]/[knowledge] hits to one topic bucket.\n\nA 'no matches' result means your memory genuinely has nothing on this: do NOT speculate from it. Required: `query` OR `id`. Optional: `k`, `layer`, `topic`."
 	layerEnum := []string{"knowledge", "finding", "pinned", "history"}
-	if t.sessionLinksActive() {
+	if t.sessionRecallActive() {
 		// Earlier sessions with this person, found by their markers
 		// (session_markers.go).
 		desc = strings.Replace(desc, "aged out of view\n", "aged out of view\n  [session]   an earlier session with this person: read it with its id, and give the person its link when you answer from it\n", 1)
@@ -295,7 +295,7 @@ func (t *chatTurn) recallLayerSet(args map[string]any) map[string]bool {
 	default: // "", "all", or unrecognized → search everything
 		layers = map[string]bool{"pinned": true, "finding": true, "knowledge": true, "history": true, "session": true}
 	}
-	if !t.sessionLinksActive() {
+	if !t.sessionRecallActive() {
 		delete(layers, "session")
 	}
 	if t.explicitOff() {
@@ -786,7 +786,7 @@ func (t *chatTurn) recallFetch(id string) (string, error) {
 		}
 		return fmt.Sprintf("No pinned note with id fact:%s, it may have been forgotten.", ref), nil
 	case "sess":
-		if !t.sessionLinksActive() {
+		if !t.sessionRecallActive() {
 			return "Earlier sessions are not available to you in this one.", nil
 		}
 		return t.readSessionForRecall(ref), nil

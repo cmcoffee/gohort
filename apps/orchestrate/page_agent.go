@@ -285,7 +285,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				},
 				Help:   "Shapes what the agent pins with remember (pin=true).",
 				Detail: "Agent, the default, pins generalized lessons only; specifics go to remember (pin=false), which is searchable rather than always in prompt. Chatbot pins the same, plus user personalization and conversation notes."},
-			ui.FormField{Field: "session_links", Type: "select", Label: "Session links",
+			ui.FormField{Field: "session_recall", Type: "select", Label: "Session recall",
 				Options: []ui.SelectOption{
 					{Value: "", Label: "Default: on in Chatbot mode, off in Agent mode"},
 					{Value: "on", Label: "On"},
