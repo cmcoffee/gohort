@@ -457,6 +457,12 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 // a build with that text in its catalog still stated no plan and shipped the
 // literal request; the call that just made the app is where the next step is
 // actually decided.
+//
+// The last line used to ask for the notes write and the reply in one breath,
+// and a build did both in one round: its account of the game went out beside
+// the notes update and show_link, raw URL and all, and the round the loop
+// still owed it came back as a filler line under the card. The reply is
+// placed after the calls, in a round of its own.
 func appCompletePlan() string {
 	return "\n\nCOMPLETE IT BEFORE YOU REPLY. A request names what an app is for, not every part of it, and the user should not have to come back for the obvious. Check THIS app against each and add what is missing now:\n" +
 		"1. Real data from where it lives, one of the owner's tools first (capabilities tool:<name>, call_tool), never invented values standing in for it.\n" +
@@ -464,7 +470,7 @@ func appCompletePlan() string {
 		"3. Pictures where they carry meaning (an icon per weather, a chart for numbers over time): made, found or generated, never left for the user to supply.\n" +
 		"4. A setting for any value a person would want to change (units, a default, a count).\n" +
 		"5. A first visit that says what to do, not a blank page.\n" +
-		"Stay inside the app's purpose: this is what a complete version of THAT includes, not extra features. Then write the plan into notes (update notes=), and open your reply with one or two lines naming what you added beyond the request and anything you left out and why."
+		"Stay inside the app's purpose: this is what a complete version of THAT includes, not extra features. Then write the plan into notes (update notes=), with nothing to the user beside that call: text written next to a tool call reaches the user before the call returns, ahead of any link it shows. Reply after every call has returned, in a round that calls no tools, and open your reply with one or two lines naming what you added beyond the request and anything you left out and why."
 }
 
 // floatArg reads a number argument, as JSON sends it or as text; 0 when it is

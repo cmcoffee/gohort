@@ -107,7 +107,7 @@ func TestTheCreateResultCarriesThePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"COMPLETE IT BEFORE YOU REPLY", "call_tool", "first visit", "open your reply with one or two lines"} {
+	for _, want := range []string{"COMPLETE IT BEFORE YOU REPLY", "call_tool", "first visit", "open your reply with one or two lines", "in a round that calls no tools"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("create result lacks %q:\n%s", want, out)
 		}
