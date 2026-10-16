@@ -1655,16 +1655,29 @@
     var icon = document.createElement('span');
     var label = document.createElement('div');
     label.style.cssText = 'flex:1 1 auto;min-width:0;font-size:var(--fs-sm, 0.85rem);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    // openPane says why when the pane cannot open. A throw while building it
+    // used to leave Open doing nothing at all, with nothing on a phone (no
+    // console) to say what had gone wrong. quiet is the automatic open on a
+    // live card: that one only logs, and a tap on Open then says it aloud.
+    function openPane(quiet) {
+      try {
+        window.uiOpenArtifactPane(paneOpts());
+      } catch (e) {
+        var why = 'Could not open "' + state.title + '": ' + (e && e.message || e);
+        if (window.console) console.error(why, e);
+        if (!quiet) (window.uiAlert || window.alert)(why);
+      }
+    }
     var btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'ui-row-btn'; btn.textContent = 'Open';
-    btn.addEventListener('click', function() { window.uiOpenArtifactPane(paneOpts()); });
+    btn.addEventListener('click', function() { openPane(false); });
     wrap.appendChild(icon); wrap.appendChild(label); wrap.appendChild(btn);
     function refresh() {
       icon.textContent = state.url ? '🖥️' : '📊';
       label.textContent = state.title;
     }
     refresh();
-    if (d.open) window.uiOpenArtifactPane(paneOpts());
+    if (d.open) openPane(true);
     return {
       wrap: wrap,
       body: label,
@@ -1678,7 +1691,7 @@
         if (pane && pane.isOpen() && pane.matches(state.id)) {
           pane.update(paneOpts());
         } else if (nd.open) {
-          window.uiOpenArtifactPane(paneOpts());
+          openPane(true);
         }
       },
     };
