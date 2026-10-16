@@ -307,3 +307,40 @@ func TestASubTurnAsksThroughTheCallingTurn(t *testing.T) {
 		t.Fatalf("the calling turn's card should have been asked, got %q", answered)
 	}
 }
+
+// What follows an approval card goes below it. A round that only called a
+// tool left its bubble open above the card, and the next round's text was
+// written into that bubble, so it showed up above the card it came after.
+func TestTextAfterAnApprovalCardOpensBelowIt(t *testing.T) {
+	buf := &syncBuf{}
+	turn := &chatTurn{user: "carder", sse: &sseWriter{live: buf}}
+	above := turn.ensureBubbleForTool() // the tool-only round's bubble
+	go func() {
+		for i := 0; i < 500; i++ {
+			answered := false
+			toolConfirms.Range(func(k, v any) bool {
+				if p := v.(*pendingToolConfirm); p.user == "carder" {
+					toolConfirms.Delete(k)
+					p.resolve("yes0")
+					answered = true
+					return false
+				}
+				return true
+			})
+			if answered {
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+	turn.askInChat("Run it?", "", []string{"Allow"})
+	below := turn.ensureBubbleForTool()
+	if below == above {
+		t.Fatalf("what came after the card went back into the bubble above it (%s)", above)
+	}
+	out := buf.String()
+	card, next := strings.Index(out, `"kind":"confirm"`), strings.Index(out, `"id":"`+below+`"`)
+	if card < 0 || next < card {
+		t.Errorf("the new bubble is not after the card:\n%s", out)
+	}
+}

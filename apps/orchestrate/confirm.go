@@ -582,6 +582,12 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 		"detail":  detail,
 		"actions": actions,
 	})
+	// The card lands below the bubble this round has open. A round that only
+	// called a tool leaves that bubble open, and the next round's text and
+	// tool calls were written into it, ABOVE the card they came after. Closed
+	// here, so what follows opens a fresh bubble below the card. A round that
+	// streamed text keeps its own id and is finalized as usual.
+	t.setCurrentMsgID("")
 	select {
 	case v := <-p.ch:
 		if !v {
