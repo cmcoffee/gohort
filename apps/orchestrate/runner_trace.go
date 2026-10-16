@@ -274,15 +274,17 @@ func persistIncompleteTurnTrace(sess *ChatSession, udb Database, turn *chatTurn,
 	// ran OUTSIDE a captured bubble (their record would otherwise have no
 	// owning message). A turn that produced only narration answers keeps the
 	// bubbles alone — no trailer noise.
+	// A delivery is a tool call, so anything the turn sent before it stopped
+	// rides this message too.
 	if len(finalCalls) > 0 {
-		sess.Messages = append(sess.Messages, ChatMessage{
+		sess.Messages = append(sess.Messages, turn.withDelivered(ChatMessage{
 			Role: "assistant",
 			Content: prompts.ApplyRuleEnforcers(
 				"_(This reply didn't finish, " + reason + ", but the tool actions this turn did run and are recorded above.)_"),
 			Created:   time.Now(),
 			Usage:     turn.drainLastUsage(),
 			ToolCalls: finalCalls,
-		})
+		}))
 	}
 	_, _ = saveChatSession(udb, *sess)
 }

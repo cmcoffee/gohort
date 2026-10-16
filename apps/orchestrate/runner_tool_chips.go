@@ -186,6 +186,16 @@ func (t *chatTurn) keepDelivered(b64 string) {
 	t.attMu.Unlock()
 }
 
+// withDelivered puts what the turn delivered (pictures by id, songs, clips and
+// files as kept records) on the message being saved, whichever way the turn
+// ends. Only the planned path carried them, and most chat turns end as a
+// direct reply: a song played live and was gone when the thread was reopened.
+func (t *chatTurn) withDelivered(m ChatMessage) ChatMessage {
+	m.Attachments = t.takeDeliveredAttachments()
+	m.Files = t.takeDeliveredFiles()
+	return m
+}
+
 // takeDeliveredAttachments hands the ids to the message being persisted and
 // clears them, so a later message in the same turn can't claim them twice.
 func (t *chatTurn) takeDeliveredAttachments() []string {

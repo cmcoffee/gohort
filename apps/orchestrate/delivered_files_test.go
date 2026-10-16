@@ -2,6 +2,10 @@ package orchestrate
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -36,5 +40,44 @@ func TestDeliveredSongsAndFilesAreKept(t *testing.T) {
 	}
 	if keepDeliveredFiles("", []string{song}, nil) != nil {
 		t.Error("nothing is kept without an owner")
+	}
+}
+
+// A song the agent sends in a turn that ends as a direct reply is on the saved
+// message, so reopening the thread offers it again. Only the planned path
+// carried deliveries, and a direct reply is how most chat turns end.
+func TestASongSentInADirectReplySurvivesTheReload(t *testing.T) {
+	T, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	savedImg := ImageDir()
+	SetImageDir(t.TempDir())
+	t.Cleanup(func() { SetImageDir(savedImg) })
+	savedWS := WorkspacesDir()
+	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir(savedWS) })
+
+	rec, _ := saveAgent(udb, AgentRecord{Name: "Singer", Owner: user, OrchestratorPrompt: "You make songs."})
+	song := "ID3\x03\x00" + strings.Repeat("a", 64)
+	T.LLM = &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "workspace", Args: map[string]any{"action": "write", "path": "song.mp3", "content": song}}}},
+		{ToolCalls: []ToolCall{{ID: "2", Name: "workspace", Args: map[string]any{"action": "attach", "path": "song.mp3"}}}},
+		{Content: "Here's your song."},
+	}}
+	agent, _ := loadAgent(udb, rec.ID)
+	body, _ := json.Marshal(map[string]any{"message": "make me a song", "session_id": "s-song"})
+	T.handleSend(httptest.NewRecorder(), asUser(httptest.NewRequest(http.MethodPost, "/api/send?agent_id="+rec.ID, strings.NewReader(string(body))), user), udb, user, agent)
+
+	got, _ := loadChatSession(udb, rec.ID, "s-song")
+	var files []deliveredFile
+	for _, m := range got.Messages {
+		if m.Role == "assistant" {
+			files = append(files, m.Files...)
+		}
+	}
+	if len(files) != 1 || files[0].Kind != "audio" {
+		for _, m := range got.Messages {
+			t.Logf("%s: %q files=%d", m.Role, m.Content, len(m.Files))
+		}
+		t.Fatalf("the song is not on the saved reply: %+v", files)
 	}
 }

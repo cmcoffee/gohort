@@ -718,7 +718,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		turn.emitStatus("Direct response.")
 		orphanCalls := appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), directReply)
 		finalCalls := turn.withMachineTrace(append(orphanCalls, turn.persistedToolCalls()...))
-		sess.Messages = append(sess.Messages, ChatMessage{
+		sess.Messages = append(sess.Messages, turn.withDelivered(ChatMessage{
 			Role: "assistant", Content: directReply,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
 			// A labelled reply ("Correction") keeps its label when its
@@ -731,7 +731,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			// directReply — without that merge, short turns lose the
 			// only carrier of their tool record.
 			ToolCalls: finalCalls,
-		})
+		}))
 		// A stopped turn leaves by HERE, not by the planned path below: the
 		// rejection writer produces one sentence and no plan.
 		turn.markBlockedReply(&sess)
@@ -747,7 +747,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		turn.emitStatus("Orchestrator asked for clarification.")
 		orphanCalls := appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), question)
 		finalCalls := turn.withMachineTrace(append(orphanCalls, turn.persistedToolCalls()...))
-		sess.Messages = append(sess.Messages, ChatMessage{
+		sess.Messages = append(sess.Messages, turn.withDelivered(ChatMessage{
 			Role: "assistant", Content: question,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
 			Label: turn.finalReplyLabel(question),
@@ -760,7 +760,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			// question. orphanCalls preserves tool records from
 			// dedup'd mid-turn bubbles — symmetric with directReply.
 			ToolCalls: finalCalls,
-		})
+		}))
 		turn.markBlockedReply(&sess)
 		_, _ = saveChatSession(udb, sess)
 		turn.titleAfterFirstTurn()
@@ -957,18 +957,14 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// it only ever ships a file the model said it was sending, not whatever
 	// happens to be lying in the workspace.
 	turn.recoverClaimedDelivery(reply)
-	sess.Messages = append(sess.Messages, ChatMessage{
+	// The live stream already painted what the turn delivered; carrying it on
+	// the message is what makes it survive a reload.
+	sess.Messages = append(sess.Messages, turn.withDelivered(ChatMessage{
 		Role: "assistant", Content: reply,
 		Created: time.Now(), Usage: turn.drainLastUsage(),
 		ToolCalls: finalCalls,
 		Label:     turn.finalReplyLabel(reply),
-		// The live stream already painted these; carrying their ids is what
-		// makes them survive a reload. Until now an image the agent delivered
-		// existed only as an SSE event, so reopening the thread showed the text
-		// that described a picture and no picture.
-		Attachments: turn.takeDeliveredAttachments(),
-		Files:       turn.takeDeliveredFiles(),
-	})
+	}))
 	sess.Plans = append(sess.Plans, PlanSnapshot{
 		RoundIndex: len(sess.Plans),
 		Steps:      steps,
