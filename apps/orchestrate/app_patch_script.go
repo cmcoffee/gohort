@@ -326,6 +326,9 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 	before := spec
 	ref.set(&spec, next)
 	spec.ChangeNote = strings.TrimSpace(stringArg(args, "note"))
+	if msg := t.appDelegationRefusal(spec); msg != "" {
+		return "", errors.New(msg)
+	}
 	saved := SaveAppSpecAs(spec, reason)
 	msg := fmt.Sprintf(summary, saved.Name, saved.Updated)
 	if ref.kind == "data" {

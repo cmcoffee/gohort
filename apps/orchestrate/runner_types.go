@@ -147,9 +147,14 @@ type chatTurn struct {
 	// than refusing because nobody watches the sub-run. Set by the inline
 	// agents(run) path; nil everywhere else.
 	askVia func(prompt, detail string, yes []string) string
-	udb    Database
-	user   string
-	agent  AgentRecord
+	// editRefusal is the limit of a Builder run another agent sent
+	// (ToolSession.ToolEditRefusal, builder_delegation.go): what that agent
+	// may not use, this run may not build into an app either. Nil on an
+	// owner's own run.
+	editRefusal func(toolName, credName string) string
+	udb         Database
+	user        string
+	agent       AgentRecord
 	// machineTools is the catalog a machine's steps draw from, built at
 	// most once per turn and only when a step actually names tools (see
 	// chatTurn.machineCatalog). The turn's own session does not exist

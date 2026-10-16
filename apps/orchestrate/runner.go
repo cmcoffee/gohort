@@ -878,30 +878,9 @@ func (pr *planRun) catalogKnowTools() error {
 			t.markStepBlockedToolDef(),
 			t.reviseBuildPlanToolDef(),
 			t.reportBuildGapsToolDef(),
-			// pipeline (create / update / run / list / get / delete) —
-			// declarative multi-stage workflow authoring + management.
-			// Builder-only: authoring pipelines is Builder's job, same as
-			// create_agent. OTHER agents RUN pipelines via their attached
-			// run_<pipeline> tools (buildAttachedPipelineToolDefs), not
-			// this management surface — that keeps their catalog lean and
-			// centralizes authoring (no more pipeline-tool clutter +
-			// LLM oscillation on general agents).
-			t.pipelineGroupedToolDef(),
-			// machine (create / update / list / get / delete) — author
-			// session-resident phase machines. Builder-only for the same
-			// reason as pipeline: shaping how an agent's conversation
-			// runs is authoring work. Other agents don't manage machines;
-			// they RUN the one they're pointed at, and leave it with
-			// change_phase.
-			t.machineGroupedToolDef(),
-			// app_def (create / update / list / get / delete) — author
-			// data-driven gohort APPS (real in-dashboard surfaces served
-			// by customapps at /apps/<slug>/). Builder-only, same
-			// rationale as pipeline: composing an app is authoring work.
-			// This is what lets Builder answer "build me an app" with an
-			// actual gohort app instead of a standalone HTML file.
-			t.appDefToolDef(),
 		)
+		// The app, pipeline and machine managers (authoringPrimitiveToolDefs).
+		pr.cat.knowTools = append(pr.cat.knowTools, t.authoringPrimitiveToolDefs()...)
 		// A session handed to Builder must name what it is fixing before it
 		// edits (builder_triage.go); this is how it names it.
 		if t.session != nil && t.session.Triage != nil {

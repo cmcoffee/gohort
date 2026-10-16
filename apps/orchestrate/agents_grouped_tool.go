@@ -1247,6 +1247,12 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	// target reached by external dispatch got the real one.
 	subTurn.intentText = msg // Tier-1 tool elevation matches against the dispatch brief
 	subTurn.noteAuthoringWithheld(authoringWithheld)
+	// The app, pipeline and machine managers, built on this sub-turn so they
+	// carry the sending agent's limits (authoring_primitives.go).
+	if mayAuthor {
+		subTurn.editRefusal = subSess.ToolEditRefusal
+		tools = mergeToolsDedup(tools, subTurn.authoringPrimitiveToolDefs())
+	}
 	poolDB, poolUser := subTurn.ownerView()
 	dispatchExtra, customToolPrompt := subTurn.dispatchExtraTools(subSess, poolUser, poolDB)
 	tools = append(tools, dispatchExtra...)

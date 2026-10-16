@@ -815,6 +815,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	mayAuthor, authoringWithheld := dispatchAuthoring(ctx, target, agentOwner, runtimeUser)
 	if mayAuthor {
 		tools = append(tools, builderAuthoringTools(subSess, nil)...)
+		tools = mergeToolsDedup(tools, T.authoringPrimitivesFor(ctx, target, runtimeUser, runtimeDB, subSess))
 	}
 	// Fleet targets get their exclusive fleet-management + delegation +
 	// event-monitor catalog here too, so a dispatched/woken fleet agent
@@ -1718,6 +1719,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	mayAuthor, authoringWithheld := dispatchAuthoring(ctx, target, agentOwner, runtimeUser)
 	if mayAuthor {
 		tools = append(tools, builderAuthoringTools(subSess, nil)...)
+		tools = mergeToolsDedup(tools, T.authoringPrimitivesFor(ctx, target, runtimeUser, runtimeDB, subSess))
 	}
 	// Fleet targets get their fleet-management + delegation + event-monitor
 	// catalog here too — this is the WAKE path (event monitors run the

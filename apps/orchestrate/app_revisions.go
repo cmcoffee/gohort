@@ -108,6 +108,9 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 	// The version being replaced goes into history like any other edit, so a
 	// revert is itself revertible — an author who reverts to the wrong one is
 	// not stuck there.
+	if msg := t.appDelegationRefusal(restored); msg != "" {
+		return "", fmt.Errorf("%s", msg)
+	}
 	saved := SaveAppSpecAs(restored, fmt.Sprintf("revert to #%d", target.Seq))
 	undo := ""
 	if kept := ListAppRevisions(t.user, saved.Slug); len(kept) > 0 {

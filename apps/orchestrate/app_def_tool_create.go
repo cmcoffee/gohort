@@ -304,6 +304,9 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			return "", errors.New("NOT CREATED: " + p)
 		}
 	}
+	if msg := t.appDelegationRefusal(spec); msg != "" {
+		return "", errors.New(msg)
+	}
 	saved := SaveAppSpecAs(spec, reason)
 	// Only an app with a table has records it lists; a game reading "the
 	// table lists them" was told about a part it does not have.
