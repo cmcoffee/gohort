@@ -4970,8 +4970,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
    * rest (rows, set by the panel), growing as the message does, with the
    * buttons kept at its foot. No resize grabber: a finger cannot use it.
    * The pill shows focus, since the field inside it no longer can. */
+  /* The bottom margin is the home-indicator inset LESS 0.75rem, with
+   * 0.4rem as the floor: the inset (about 34px on an iPhone) is a whole
+   * band, the indicator only its lowest strip, and the full band plus a
+   * gap held the pill about 40px off the bottom edge. Spacing inside the
+   * one-screen grid only; the page's height and its scroll-past are
+   * untouched. */
   .ui-agent .ui-agent-input-row {
-    margin: 0.35rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+    margin: 0.35rem 0.5rem max(0.4rem, calc(env(safe-area-inset-bottom, 0px) - 0.75rem));
     padding: 0.3rem 0.3rem 0.3rem 0.55rem;
     gap: 0.3rem; align-items: flex-end;
     border: 1px solid var(--border); border-radius: 1.4rem;
