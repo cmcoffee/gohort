@@ -1445,7 +1445,13 @@
           // task-shaped, so a fresh one, not the last). The cortex is always one
           // click away via its hero row. A real agent switch re-lands; the first
           // page load respects a ?session deep-link (which set activeSessionId).
-          var switched = (typeof lastOrchAgent !== 'undefined' && lastOrchAgent !== agentId);
+          //
+          // A switch is from one agent to another. The first pass on load can
+          // run before the host page has said which agent is picked, and so
+          // sees none; going from none to the picked agent is that same load,
+          // not a switch. Counting it as one sent a ?session link to a blank
+          // new conversation a moment after it opened the session.
+          var switched = !!lastOrchAgent && lastOrchAgent !== agentId;
           if (switched || !activeSessionId) {
             if (getLanding(agentId) === 'cortex' && altPinnedSession(agentId)) openHomeThread();
             else openSession(null);
