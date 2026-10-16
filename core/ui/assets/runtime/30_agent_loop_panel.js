@@ -6194,14 +6194,14 @@
 
 
     // appendChannelMessage — render one newly-arrived channel message (live
-    // poll). Mirrors the replay's per-message render minus the edit/scrub/tool
-    // plumbing (channel threads are read-only and append-only).
+    // poll). Channel threads are read-only and append-only, so there is no
+    // edit/scrub plumbing, but the message is otherwise drawn as a reload
+    // draws it: its tool chips and the app's replay hooks. It used to stop at
+    // the text, so a picture or song a channel reply delivered (which an app
+    // paints from a replay hook) showed only after a reload.
     function appendChannelMessage(m) {
       if (!m || m.hidden) return;
-      var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
-      addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
-      if (cfg.markdown && m.role === 'assistant') finalizeMessage(mid);
-      if (m.created || m.usage || m.report_from || m.mark || m.retracted || m.label) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, label: m.label});
+      renderObservation(m);
     }
 
     function stopChannelPolling() {
