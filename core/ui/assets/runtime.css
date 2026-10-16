@@ -5600,6 +5600,17 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-msg-edit-bar {
   margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem;
 }
+/* An earlier message being edited in the composer, and everything after
+ * it: hidden until the edit is sent (which replaces them) or cancelled. */
+.ui-agent-edit-hidden { display: none !important; }
+.ui-agent-edit-banner {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.3rem 0.55rem; margin-bottom: 0.3rem;
+  border-left: 3px solid var(--accent); border-radius: 4px;
+  background: var(--bg-1); color: var(--text-mute);
+  font-size: 0.85rem;
+}
+.ui-agent-edit-banner-text { flex: 1; min-width: 0; }
 .ui-agent-msg-edit-ta {
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;

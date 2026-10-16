@@ -1875,6 +1875,7 @@
             // clearConvo() / clearActivity() — wipe a pane. Used by app-defined
             // Clear actions that mirror the legacy chat-header Clear button.
             clearConvo: function() {
+              endComposerEdit(true);
               msgEls = {}; blockEls = {}; noticeIds = {};
               convoLog.innerHTML = '';
               emptyMsg = el('div', {class: 'ui-agent-empty'},
@@ -2261,6 +2262,7 @@
     });
     inputArea.addEventListener('keydown', function(ev) {
       if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendMessage(); }
+      if (ev.key === 'Escape' && userEdit) { ev.preventDefault(); endComposerEdit(true); }
     });
     // Auto-grow the textarea as content changes so a multi-line
     // paste doesn't get crammed into a 2-line scroller. Resets on
@@ -3848,42 +3850,68 @@
           return;
         }
       }
-      body.style.display = 'none';
-      if (actions) actions.style.display = 'none';
-      // Default rows is a starting hint; autosizeEdit grows the
-      // textarea to fit the actual content immediately after mount
-      // (so a long message gets a tall edit area without the user
-      // having to drag the resize handle). Capped via CSS max-height
-      // so a huge message doesn't push the rest of the chat off-screen.
-      var ta = el('textarea', {class: 'ui-agent-msg-edit-ta', rows: '8'});
-      ta.value = raw;
-      function autosizeEdit() {
-        ta.style.height = 'auto';
-        ta.style.height = (ta.scrollHeight + 2) + 'px';
+      beginComposerEdit(bubble, raw);
+    }
+
+    // An earlier message is edited in the composer, not in a box inside its
+    // bubble. On a phone the in-bubble box opened mid-conversation with the
+    // keyboard over its Save button, and Enter there only added a line. So
+    // the message and everything after it (a send replaces all of it) are
+    // hidden, the text goes to the input where Enter already sends, and
+    // Escape or Cancel puts everything back as it was, the draft included.
+    var userEdit = null;   // {bubble, hidden: [nodes], draft}
+    var editBanner = null;
+
+    function beginComposerEdit(bubble, raw) {
+      endComposerEdit(true);
+      var hidden = [];
+      for (var n = bubble; n; n = n.nextElementSibling) {
+        n.classList.add('ui-agent-edit-hidden');
+        hidden.push(n);
       }
-      ta.addEventListener('input', autosizeEdit);
-      var save = el('button', {class: 'ui-agent-msg-act primary', onclick: function() {
-        var newText = ta.value.trim();
-        if (!newText) return;
-        save.disabled = true;
-        commitUserEdit(bubble, newText).catch(function(err) {
-          save.disabled = false;
-          window.uiAlert('Edit failed: ' + (err && err.message || err));
-        });
-      }}, ['Save & resend']);
-      var cancel = el('button', {class: 'ui-agent-msg-act', onclick: function() {
-        editBar.remove();
-        body.style.display = '';
-        if (actions) actions.style.display = '';
-      }}, ['Cancel']);
-      var editBar = el('div', {class: 'ui-agent-msg-edit-bar'},
-        [ta, el('div', {class: 'ui-agent-msg-edit-actions'}, [save, cancel])]);
-      bubble.appendChild(editBar);
-      // Defer the initial sizing past mount so the element has a real
-      // computed scrollHeight to read (same pattern as the main input).
-      setTimeout(autosizeEdit, 0);
-      ta.focus();
-      ta.setSelectionRange(ta.value.length, ta.value.length);
+      userEdit = {bubble: bubble, hidden: hidden, draft: inputArea.value};
+      editBanner = el('div', {class: 'ui-agent-edit-banner'}, [
+        el('span', {class: 'ui-agent-edit-banner-text'}, ['Editing your message. Sending replaces it and everything after it.']),
+        el('button', {class: 'ui-agent-msg-act', type: 'button', onclick: function() { endComposerEdit(true); inputArea.focus(); }}, ['Cancel']),
+      ]);
+      inputRow.parentNode.insertBefore(editBanner, inputRow);
+      inputArea.value = raw;
+      autosizeInput();
+      inputArea.focus();
+      inputArea.setSelectionRange(inputArea.value.length, inputArea.value.length);
+    }
+
+    // endComposerEdit leaves edit mode. restore shows the hidden messages
+    // and the earlier draft again; a send passes false, because the
+    // messages it hid are about to be replaced. Returns the edit it ended.
+    function endComposerEdit(restore) {
+      var st = userEdit;
+      if (!st) return null;
+      userEdit = null;
+      if (editBanner) { editBanner.remove(); editBanner = null; }
+      if (restore) {
+        st.hidden.forEach(function(n) { n.classList.remove('ui-agent-edit-hidden'); });
+        inputArea.value = st.draft;
+        autosizeInput();
+      }
+      return st;
+    }
+
+    // commitComposerEdit sends the edited text in place of the message.
+    function commitComposerEdit() {
+      var text = inputArea.value.trim();
+      if (!text) return;
+      var st = endComposerEdit(false);
+      // Cleared now, so a second Enter while the truncate is in flight
+      // cannot send the same text again as a new message.
+      inputArea.value = '';
+      autosizeInput();
+      commitUserEdit(st.bubble, text).catch(function(err) {
+        st.hidden.forEach(function(n) { n.classList.remove('ui-agent-edit-hidden'); });
+        inputArea.value = text;
+        autosizeInput();
+        window.uiAlert('Edit failed: ' + (err && err.message || err));
+      });
     }
 
     async function deleteUserMessage(bubble) {
@@ -5509,6 +5537,7 @@
 
     function sendMessage() {
       if (recordLocked && !answerPass) return;
+      if (userEdit) { commitComposerEdit(); return; }
       var text = inputArea.value.trim();
       if (!text && !pendingAttachments.length) return;
       // Paste-marker substitution: expand any "[Pasted text #N - X
@@ -6767,6 +6796,8 @@
     // the rebuild (re-rendering the same thread for "Show earlier"), so that a
     // press does not blank what the reader is looking at while it fetches.
     function clearConvoPanes() {
+      // An edit in progress belonged to the thread being cleared.
+      endComposerEdit(true);
       msgEls = {}; activityEls = {}; blockEls = {}; noticeIds = {};
       // Cleared with the rest of the per-thread state. A stale offset carried
       // into the next thread would misplace its truncate point.
@@ -6965,6 +6996,7 @@
       if (cfg.list_is_context) {
         activeContextId = sid || '';
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid || '');
+        endComposerEdit(true);
         msgEls = {}; noticeIds = {};
         convoLog.innerHTML = '';
         if (!sid) {
