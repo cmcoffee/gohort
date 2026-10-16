@@ -5618,7 +5618,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.3rem 0.55rem; margin-bottom: 0.3rem;
   border-left: 3px solid var(--accent); border-radius: 4px;
   background: var(--bg-1); color: var(--text-mute);
-  font-size: 0.85rem;
+  font-size: var(--fs-sm);
 }
 .ui-agent-edit-banner-text { flex: 1; min-width: 0; }
 .ui-agent-msg-edit-ta {

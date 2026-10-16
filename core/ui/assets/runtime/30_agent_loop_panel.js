@@ -4297,7 +4297,16 @@
     // bubble container that holds inline image / file / video deliveries.
     // Box hangs off the bottom of the bubble so it lands BELOW the text
     // body and any tool-toggle panel.
+    //
+    // A bubble holding a delivery is shown. A tool that delivers before any
+    // text lands in the hidden lazy bubble, and only text streaming into
+    // that same bubble unhid it: when the reply arrived in another bubble
+    // (a forced final answer, a planned turn's synthesis, a turn resumed
+    // after an approval) the picture or song stayed hidden until a reload
+    // drew it under the saved reply. markEmptyBubble already leaves such a
+    // bubble alone; this is the other half.
     function agentMsgAttachmentBox(bubble) {
+      bubble.classList.remove('ui-agent-msg-empty');
       var box = bubble.querySelector(':scope > .ui-agent-msg-attachments');
       if (!box) {
         box = el('div', {class: 'ui-agent-msg-attachments'});
