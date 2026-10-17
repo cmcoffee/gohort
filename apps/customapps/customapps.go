@@ -33,6 +33,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -902,7 +903,32 @@ func (T *CustomApps) recordBase(spec AppSpec, uid string) Database {
 // been granted the coarse path. Neither can be expressed with the other, which
 // is why both exist; the tab's copy says so where an operator will read it.
 func (T *CustomApps) sharedAppReachableBy(r *http.Request, slug string) bool {
-	return UserHasAppAccess(r, T.WebPath()) || UserHasAppAccess(r, T.WebPath()+"/"+slug)
+	return T.grantedEverySharedApp(r) || UserHasAppAccess(r, T.WebPath()+"/"+slug)
+}
+
+// grantedEverySharedApp reports whether the user holds the coarse /apps grant
+// itself, as an admin does and as everybody does on a deployment with no
+// accounts. Not UserHasAppAccess(r, "/apps"): that admits a path when any
+// grant sits UNDER it (so a gate on the first path segment lets a per-app
+// grant through), and here it read a person granted one app at /apps/<slug>
+// as holding /apps, which opened every shared app to them.
+func (T *CustomApps) grantedEverySharedApp(r *http.Request) bool {
+	if AuthDB == nil {
+		return true
+	}
+	db := AuthDB()
+	if db == nil || !AuthHasUsers(db) {
+		return true
+	}
+	name := AuthCurrentUser(r)
+	if name == "" {
+		return false
+	}
+	u, ok := AuthGetUser(db, name)
+	if !ok {
+		return false
+	}
+	return u.Admin || slices.Contains(AuthResolveUserApps(db, u), T.WebPath())
 }
 
 // ListGrantableApps surfaces every SHARED custom app as its own grantable path,

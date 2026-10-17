@@ -60,6 +60,11 @@ func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 		if owner == user || seen[slug] {
 			continue
 		}
+		// The same test the My Apps list and the app's own route apply: a
+		// card for an app the viewer cannot open would lead to a 404.
+		if !T.sharedAppReachableBy(r, slug) {
+			continue
+		}
 		if s, ok := loadSpec(owner, slug); ok && appReaches(s, user) {
 			add(s, "My apps")
 		}
