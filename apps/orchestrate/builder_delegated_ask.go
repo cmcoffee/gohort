@@ -91,13 +91,13 @@ func delegatedAskUserTool(q *delegatedQuestion) AgentToolDef {
 			Required: []string{"question"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			question := strings.TrimSpace(stringArg(args, "question"))
+			question, options := askQuestionArgs(args)
 			if question == "" {
 				return "", Error("question is required: the text the user should answer")
 			}
 			q.mu.Lock()
 			q.question = question
-			q.options = formStepOptions(args)
+			q.options = options
 			q.mu.Unlock()
 			return "Sent. This run ends here; the answer arrives as the next message in this thread.", nil
 		},

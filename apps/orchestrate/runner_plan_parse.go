@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -170,6 +171,81 @@ func formStepOptions(m map[string]any) []string {
 		}
 	}
 	return nil
+}
+
+// askQuestionArgs reads an ask_user call's question and its choices.
+//
+// The question is "question", or "questions", which smaller models type for
+// it. Either may arrive as a LIST: the question first, its choices after it,
+// as a list or a JSON-encoded one. Observed:
+//
+//	questions: "[\"Where is the pain?\", \"upper right\", \"lower left\"]"
+//
+// Read as a plain string, that list was the question's text, and the person
+// got raw JSON with no buttons. Read as a list, its first item is the
+// question and the rest are its choices, unless several of them are
+// questions (end in "?"), when they are one question asked in several parts.
+// Choices given as options win over the list's.
+func askQuestionArgs(args map[string]any) (string, []string) {
+	options := formStepOptions(args)
+	for _, key := range []string{"question", "questions"} {
+		raw, ok := args[key]
+		if !ok || raw == nil {
+			continue
+		}
+		items := askListItems(raw)
+		if items == nil {
+			if q := strings.TrimSpace(stringArg(args, key)); q != "" {
+				return q, options
+			}
+			continue
+		}
+		asked := 0
+		for _, it := range items {
+			if strings.HasSuffix(it, "?") {
+				asked++
+			}
+		}
+		if asked > 1 || len(items) == 1 {
+			return strings.Join(items, "\n"), options
+		}
+		if len(options) == 0 {
+			options = items[1:]
+		}
+		return items[0], options
+	}
+	return "", options
+}
+
+// askListItems is a question value that is a list, as one or JSON-encoded,
+// with its blank items dropped. Nil when it is not a list.
+func askListItems(raw any) []string {
+	var list []any
+	switch v := raw.(type) {
+	case []any:
+		list = v
+	case []string:
+		for _, s := range v {
+			list = append(list, s)
+		}
+	case string:
+		s := strings.TrimSpace(v)
+		if !strings.HasPrefix(s, "[") || json.Unmarshal([]byte(s), &list) != nil {
+			return nil
+		}
+	default:
+		return nil
+	}
+	var out []string
+	for _, it := range list {
+		if s, ok := it.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, strings.TrimSpace(s))
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // looksLikeVacuousPlan returns a non-empty reason string when the plan

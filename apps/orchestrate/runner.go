@@ -549,18 +549,12 @@ func (pr *planRun) askUserToolDef() AgentToolDef {
 			Required: []string{"question"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			pr.capturedQuest = strings.TrimSpace(stringArg(args, "question"))
-			// Defensive: smaller LLMs occasionally typo "questions"
-			// (plural) for "question". Accept either so the call
-			// doesn't lose its primary content.
-			if pr.capturedQuest == "" {
-				pr.capturedQuest = strings.TrimSpace(stringArg(args, "questions"))
-			}
-			// Same alias tolerance as a form step's choices: options under a
-			// near-miss key are not "no options", and reading only the
-			// documented one turns a multiple-choice question into a bare
-			// prose one with the choices silently gone.
-			pr.capturedOptions = formStepOptions(args)
+			// The question under "question" or the "questions" smaller models
+			// type for it, and the choices under any near-miss key, or after
+			// the question when it came as a list (askQuestionArgs): reading
+			// only the documented shapes turned a multiple-choice question
+			// into raw JSON with the choices gone.
+			pr.capturedQuest, pr.capturedOptions = askQuestionArgs(args)
 			if v, ok := args["multi"].(bool); ok {
 				pr.capturedMulti = v
 			}
