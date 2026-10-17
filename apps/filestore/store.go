@@ -112,6 +112,12 @@ type Store struct {
 	//
 	// Deprecated: read by the migration and by nothing else.
 	Toolboxes []string `json:"toolboxes,omitempty"`
+
+	// Evidence indexes each subfolder the way an evidence bundle is (see
+	// evidence.go): encrypted, per-file index, parsed timestamps, a timeline.
+	// The folder itself is never changed. Off by default: the index is a
+	// second, encrypted copy of what the folder holds.
+	Evidence bool `json:"evidence,omitempty"`
 }
 
 // UploadsAllowedFor reports whether user may upload into this store.

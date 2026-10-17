@@ -565,3 +565,80 @@ func TestBundleSearchStopsWhenTheRunIsCancelled(t *testing.T) {
 		t.Errorf("a nil context should read as uncancellable, got %v", err)
 	}
 }
+
+// IngestFrom reads a folder somebody else owns: it must leave every file where
+// it was, unpack nothing there, and replace the index rather than add to it.
+func TestIngestFromLeavesTheFolderAsItWas(t *testing.T) {
+	withMemStore(t)
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "var", "log"), 0o755)
+	os.WriteFile(filepath.Join(dir, "var", "log", "app.log"), []byte("2026-03-14T02:00:00Z ERROR scheduler stalled\n2026-03-14T02:00:05Z INFO retry\n"), 0o644)
+	var zbuf bytes.Buffer
+	gz := gzip.NewWriter(&zbuf)
+	tw := tar.NewWriter(gz)
+	tw.WriteHeader(&tar.Header{Name: "inner.log", Mode: 0o644, Size: 4})
+	tw.Write([]byte("hi\n\n"))
+	tw.Close()
+	gz.Close()
+	os.WriteFile(filepath.Join(dir, "more.tar.gz"), zbuf.Bytes(), 0o644)
+	before := treeListing(t, dir)
+
+	b := Open("store:cases", "case-1")
+	st, err := b.IngestFrom(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after := treeListing(t, dir); after != before {
+		t.Errorf("the folder changed:\nbefore %s\nafter  %s", before, after)
+	}
+	if st.TextFiles != 1 || st.Unopened != 1 || st.Truncated {
+		t.Errorf("stats %+v: want one text file and the packed archive counted unopened", st)
+	}
+	if bf, ok := b.Lookup("more.tar.gz"); !ok || bf.Format != FormatArchive {
+		t.Errorf("the archive should be listed as unopened, got %+v %v", bf, ok)
+	}
+	if res, _ := b.Search(context.Background(), Query{Pattern: "scheduler stalled"}); len(res.Hits) != 1 {
+		t.Errorf("the indexed log should be searchable, got %+v", res)
+	}
+
+	os.Remove(filepath.Join(dir, "more.tar.gz"))
+	if _, err := b.IngestFrom(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.Lookup("more.tar.gz"); ok || b.FileCount() != 1 {
+		t.Errorf("a second pass should replace the index, not add to it: %d files", b.FileCount())
+	}
+}
+
+func TestIngestTreeStopsAtItsBudgetAndSaysSo(t *testing.T) {
+	withMemStore(t)
+	dir := t.TempDir()
+	for i := 0; i < 3; i++ {
+		os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%d.log", i)), []byte(strings.Repeat("x\n", 50)), 0o644)
+	}
+	b := Open("store:cases", "case-2")
+	var st IngestStats
+	if err := ingestTree(context.Background(), b.store(), dir, treeOpts{budget: 150, inPlace: true}, &st); err != nil {
+		t.Fatal(err)
+	}
+	if !st.Truncated || st.Files != 1 {
+		t.Errorf("want one file indexed and Truncated set, got %+v", st)
+	}
+}
+
+// treeListing is every path under dir with its size, in order.
+func treeListing(t *testing.T, dir string) string {
+	t.Helper()
+	var out []string
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, _ := d.Info()
+		rel, _ := filepath.Rel(dir, p)
+		out = append(out, fmt.Sprintf("%s:%d", rel, info.Size()))
+		return nil
+	})
+	sort.Strings(out)
+	return strings.Join(out, " ")
+}

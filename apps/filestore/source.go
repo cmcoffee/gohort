@@ -201,6 +201,17 @@ func storeToolNames(slug string) []string {
 	return []string{"list_" + slug, "search_" + slug, "read_" + slug, "list_" + slug + "_commands"}
 }
 
+// storeToolsInForce is every tool name a store gives an attached agent before
+// its mapped commands: the four of every store, and the evidence tools when it
+// indexes evidence.
+func storeToolsInForce(st Store) []string {
+	names := storeToolNames(st.Slug)
+	if st.Evidence {
+		names = append(names, evidenceToolNames(st.Slug)...)
+	}
+	return names
+}
+
 // ItemToolsWithSession is ItemTools plus the approved commands mapped on this
 // folder. It needs a session because a mapped action runs with one — a
 // workspace to work in, a context to be cancelled by.
@@ -273,7 +284,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 		},
 	}
 
-	return []AgentToolDef{
+	return append([]AgentToolDef{
 		{
 			Tool: Tool{
 				Name:        "list_" + slug,
@@ -441,7 +452,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 			},
 		},
 		commandsTool,
-	}
+	}, s.evidenceToolDefs(sess, st)...)
 }
 
 // describeSpan is the covered-period suffix of one listing line.

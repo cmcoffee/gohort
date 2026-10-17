@@ -276,6 +276,37 @@ Before v0.8.249 a command could also be "open", its mapped lines run in the sand
 gone: at start each such command's mapped lines become its allowed uses, and one that was approved
 is switched off and logged, since its lines now run directly. Turn it back on from its row.
 
+## Evidence: a folder indexed like a bundle
+
+With **Index folders as evidence** on (a store's Settings), each subfolder is indexed the way a
+servitor evidence bundle is (`apps/filestore/evidence.go`, `core/bundle`): every file's format,
+line count, the period it covers, which hosts wrote it and its error and warning counts, with
+timestamps parsed so files from several hosts merge in time order. An attached agent gets two more
+tools, each taking the folder by name:
+
+- `summarize_<store>`: what the folder holds, what period, which files are noisiest, and what is
+  present but unread (binaries, archives nobody opened). The agent's first look at a case.
+- `timeline_<store>`: lines from several files merged in time order, narrowed by `since`,
+  `until` and a path filter.
+
+The folder is never changed: the index is built by reading it (`bundle.IngestFrom`), unpacks
+nothing in place, and is kept as a second copy, encrypted, in the bundle store, under the store's
+own name so two stores never mix and each folder is its own bundle. Up to 8 GB per folder is
+indexed; past that the index says it covers only part of the folder. An archive still packed in
+the folder is listed as not opened rather than read as a binary.
+
+The index follows the folder:
+- **Indexed when files arrive** by upload or pull, at once.
+- **Picked up on a 15-minute sweep** when the folder changed some other way (a command's download,
+  a copy by hand); a folder's reading (file count, bytes, newest change) says whether it did.
+- **Indexed on demand** when an agent asks about a folder that is not indexed or has changed: the
+  call indexes it first and moves to the background past a minute, as a long command does.
+- **Wiped** when the folder is deleted (by the sweep), when the switch is turned off, or when the
+  store is removed.
+
+The store's Manage panel lists each folder's index under **Evidence index**, with **Index now**,
+its progress and Stop. Only subfolders are indexed: a flat store's top-level files are in no case.
+
 ## Pulling between stores
 
 The flow this serves: files land in a private working store (often a temporary one), a command

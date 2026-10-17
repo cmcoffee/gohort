@@ -97,6 +97,9 @@ type pullJob struct {
 	item      string
 	replace   bool
 	user      string
+	// db, when set, is where a landed pull's evidence index is recorded
+	// (noteChanged). Nil in a test that only copies.
+	db Database
 
 	// What there is to copy. Atomic: the copy sets them as it measures, and
 	// the progress line reads them from the page's request at the same time.
@@ -433,6 +436,9 @@ func (r *pullRegistry) start(job *pullJob) (*pullRun, bool) {
 		r.mu.Lock()
 		run.result, run.err, run.ended = res, err, time.Now()
 		r.mu.Unlock()
+		if err == nil && job.db != nil {
+			noteChanged(job.db, job.dest, job.item)
+		}
 	}()
 	return run, true
 }

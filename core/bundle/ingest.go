@@ -50,6 +50,7 @@ type IngestStats struct {
 	Lines     int   // total lines ingested
 	Bytes     int64 // total expanded bytes seen
 	Skipped   int   // entries refused (traversal, symlink, over cap)
+	Truncated bool  // IngestFrom stopped at MaxBytes; the rest is not indexed
 }
 
 // binarySniff is how many leading bytes are checked for a NUL before a file is
@@ -93,8 +94,64 @@ func (b Bundle) Ingest(ctx context.Context, stageDir string) (IngestStats, error
 	// rather than added to, or a file that arrived inside an archive would
 	// be counted once when written and again when walked.
 	st.Bytes = 0
+	err := ingestTree(ctx, store, stageDir, treeOpts{}, &st)
+	os.RemoveAll(stageDir) // the plaintext copy does not outlive the ingest
+	if err != nil {
+		return st, err
+	}
+	nfo.Log("[bundle] ingested %s/%s: %d files (%d text, %d binary, %d unopened), %s lines, %s",
+		b.Owner, b.ID, st.Files, st.TextFiles, st.Binaries, st.Unopened, humanCount(st.Lines), nfo.HumanSize(st.Bytes))
+	return st, nil
+}
+
+// IngestFrom indexes the files under dir into the bundle's encrypted store,
+// REPLACING what it held, and leaves dir exactly as it was: nothing is
+// unpacked there, moved or removed. For a folder somebody else owns, such as a
+// file store's, where Ingest's staging habits (expand in place, then delete)
+// would destroy the operator's files. An archive in it is recorded as unopened.
+//
+// Stops at MaxBytes of files, and says so: Truncated is set and the rest is
+// not indexed, so a reader can say the index covers part of the folder rather
+// than reading a missing file as an absent one.
+func (b Bundle) IngestFrom(ctx context.Context, dir string) (IngestStats, error) {
+	var st IngestStats
+	store := b.store()
+	if store == nil {
+		return st, fmt.Errorf("no bundle store is configured")
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return st, fmt.Errorf("%s is not a folder that can be read", dir)
+	}
+	b.Wipe()
+	err := ingestTree(ctx, store, dir, treeOpts{budget: MaxBytes, inPlace: true}, &st)
+	if err != nil {
+		return st, err
+	}
+	cut := ""
+	if st.Truncated {
+		cut = ", stopped at the size limit"
+	}
+	nfo.Log("[bundle] indexed %s/%s from %s: %d files (%d text, %d binary, %d unopened), %s lines, %s%s",
+		b.Owner, b.ID, dir, st.Files, st.TextFiles, st.Binaries, st.Unopened, humanCount(st.Lines), nfo.HumanSize(st.Bytes), cut)
+	return st, nil
+}
+
+// treeOpts is how ingestTree reads a tree.
+type treeOpts struct {
+	// budget, above zero, stops the walk once that many bytes are indexed and
+	// sets Truncated.
+	budget int64
+	// inPlace is a tree nothing expanded (IngestFrom), so an archive the
+	// expander could have opened is still packed: recorded as unopened, not
+	// read as a binary.
+	inPlace bool
+}
+
+// ingestTree walks dir and writes every regular file's index entry and slices.
+// Symlinks and devices are never followed.
+func ingestTree(ctx context.Context, store Store, dir string, opts treeOpts, st *IngestStats) error {
 	now := time.Now().UTC()
-	err := filepath.WalkDir(stageDir, func(p string, d os.DirEntry, err error) error {
+	return filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			// One unreadable entry must not abandon the rest of the dump,
 			// but it is logged: a silently skipped file reads downstream as
@@ -113,7 +170,7 @@ func (b Bundle) Ingest(ctx context.Context, stageDir string) (IngestStats, error
 			st.Skipped++
 			return nil
 		}
-		rel, rerr := filepath.Rel(stageDir, p)
+		rel, rerr := filepath.Rel(dir, p)
 		if rerr != nil {
 			st.Skipped++
 			return nil
@@ -121,6 +178,20 @@ func (b Bundle) Ingest(ctx context.Context, stageDir string) (IngestStats, error
 		info, ierr := d.Info()
 		if ierr != nil {
 			st.Skipped++
+			return nil
+		}
+		if opts.budget > 0 && st.Bytes+info.Size() > opts.budget {
+			st.Truncated = true
+			st.Skipped++
+			return nil
+		}
+		if opts.inPlace && archive.Expandable(rel) {
+			bf := File{Path: NormPath(rel), Key: fileKey(NormPath(rel)), Bytes: info.Size(),
+				Ingested: now.Format(time.RFC3339), Severity: map[string]int{}, Format: FormatArchive}
+			store.Set(filesTable, bf.Path, bf)
+			st.Files++
+			st.Bytes += bf.Bytes
+			st.Unopened++
 			return nil
 		}
 		bf, ingested, ierr := ingestOneFile(store, NormPath(rel), p, info, now)
@@ -143,13 +214,6 @@ func (b Bundle) Ingest(ctx context.Context, stageDir string) (IngestStats, error
 		}
 		return nil
 	})
-	os.RemoveAll(stageDir) // the plaintext copy does not outlive the ingest
-	if err != nil {
-		return st, err
-	}
-	nfo.Log("[bundle] ingested %s/%s: %d files (%d text, %d binary, %d unopened), %s lines, %s",
-		b.Owner, b.ID, st.Files, st.TextFiles, st.Binaries, st.Unopened, humanCount(st.Lines), nfo.HumanSize(st.Bytes))
-	return st, nil
 }
 
 // FormatArchive marks a file we recognized as an archive but have no

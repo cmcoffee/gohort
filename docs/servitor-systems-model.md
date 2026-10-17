@@ -1,6 +1,6 @@
 # Servitor holds systems; agents investigate; evidence lives in file stores
 
-Status: **plan, nothing built.** Written 2026-10-16.
+Status: **stage 1 built** (v0.8.333, evidence on file stores); stages 2 to 4 are plans. Written 2026-10-16.
 
 ## Why
 
@@ -63,7 +63,7 @@ appliance id was only doing duty as the id (`core/bundle/bundle.go:5-10`). So:
    evidence"). A folder is ingested when it lands (upload, a command's download, a pull) and again
    when it changes. The id is `store:<slug>/<folder>`, owned by the store's admin owner.
 2. **The agent gets the evidence tools for that store,** next to its existing list/search/read:
-   `<slug>_summary`, `<slug>_timeline`, and search and read that use the index. Like
+   `summarize_<slug>` and `timeline_<slug>` (search and read stay the store's own, over the files). Like
    `linkedRepoTools`, each takes the folder as an argument, so one store holds many cases.
 3. **Encryption at rest is kept for the indexed copy.** The store's folder is the operator's
    plaintext files, as it is now; the index and line slices live in the encrypted bundle store,
@@ -85,8 +85,8 @@ history and the investigation's map of the code are what they are for.
 
 Each stage ships on its own, and nothing existing stops working until its replacement is in use.
 
-1. **Evidence on file stores.** The switch, the ingest on arrival, the `<slug>_summary` and
-   `<slug>_timeline` tools, wiping on delete. Tests: a folder pulled in is indexed; two folders
+1. **Evidence on file stores. BUILT, v0.8.333** (`docs/file-stores.md`, Evidence). The switch, the
+   ingest on arrival, the `summarize_<slug>` and `timeline_<slug>` tools, wiping on delete. Tests: a folder pulled in is indexed; two folders
    in one store stay separate; deleting a folder wipes its index; the tools refuse a folder that
    is not in the store. Nothing in Servitor changes.
 2. **Stop new workspaces and bundles.** Add both to `retiredSystemTypes`

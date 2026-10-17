@@ -187,6 +187,11 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	Log("[filestore] %s uploaded %d file(s), %s, into %s/%s",
 		user, len(written), HumanSize(total), st.Name, filepath.Base(dest))
+	// Into a subfolder: that folder's evidence index follows. An upload to the
+	// store's top level is in no folder, so it indexes nothing.
+	if rel, err := filepath.Rel(st.Path, dest); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		noteChanged(T.DB, st, strings.Split(filepath.ToSlash(rel), "/")[0])
+	}
 	out := map[string]any{
 		"store": st.Slug, "within": filepath.Base(dest),
 		"files": written, "bytes": total,

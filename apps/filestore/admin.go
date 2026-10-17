@@ -307,6 +307,20 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							Invalidate:     []string{"/filestore/api/stores"},
 						},
 
+						ui.Card{HTML: folderPanelHeading("Evidence index",
+							"With Index folders as evidence on (Settings), each folder is indexed for its summary and timeline as it arrives, and again when it changes. Index now does it at once, for a folder that changed by hand.")},
+						ui.ActionList{
+							Source:         "/filestore/api/evidence/items?slug={slug}",
+							LabelField:     "item",
+							DescField:      "desc",
+							HistoryField:   "history",
+							PostTo:         "/filestore/api/evidence/index?slug={slug}&item={item}",
+							ButtonText:     "Index now",
+							ProgressSource: "/filestore/api/evidence/progress?slug={slug}&item={item}",
+							CancelTo:       "/filestore/api/evidence/cancel?slug={slug}&item={item}",
+							EmptyText:      "Not indexing: turn on Index folders as evidence in this store's Settings, or it has no folders yet.",
+						},
+
 						ui.Card{HTML: folderPanelHeading("Apps that may use it",
 							"An app granted here can read this folder from its scripts, and, as ticked, write into it (add, change and delete files), run its commands, and pull files and folders into it. The grant is the app's: it covers everyone who uses the app, whatever the list below says.")},
 						ui.Table{
@@ -452,6 +466,9 @@ func storeFormFields() []ui.FormField {
 		{Field: "allow_uploads", Type: "toggle", Label: "Let assigned users upload",
 			Help:   "Whether an agent may write into this store, as well as read it. Off by default.",
 			Detail: "Reaching a store and WRITING into it are different grants. The common case is a log directory something else fills, and pointing at it should not let every account with an agent add files to it. Turn this on for a drop store people are meant to feed. An admin can upload either way."},
+		{Field: "evidence", Type: "toggle", Label: "Index folders as evidence",
+			Help:   "Index each subfolder like an evidence bundle, and give attached agents a summary and a timeline of it. Off by default.",
+			Detail: "Each subfolder (a case, a run, a dump) is indexed as it arrives: format, line count, the period it covers, which hosts wrote it and how many errors and warnings it holds, with timestamps parsed so files can be merged in time order. Attached agents get summarize_<store> and timeline_<store>, which take the folder by name.\n\nThe folder itself is never changed. The index is a second copy, kept encrypted, of up to 8 GB per folder: a changed folder is indexed again, a deleted one's index is wiped, and turning this off wipes them all. Folders that change some other way (a command's download, a copy by hand) are picked up within 15 minutes, or at once when an agent asks about one."},
 		{Field: "ephemeral", Type: "toggle", Label: "Temporary store",
 			Help:   "Delete each folder automatically once nothing in it has changed for a set time.",
 			Detail: "For a working area whose contents are copied onward, such as raw downloads that are extracted and pulled into another store. Folders go on a timer, checked every 15 minutes, with no admin sweep. A folder that a command, a copy or an upload is using is never removed, whatever its age.\n\nLeave it off for a store that holds the only copy of something: those wait for an admin."},
@@ -495,6 +512,8 @@ func (T *FileStoreApp) Routes() {
 	MigrateCommandUses(T.DB)
 	// Temporary stores clean up after themselves; see sweepTemporaryStores.
 	go T.sweepTemporaryStores()
+	// Evidence indexes follow their folders; see evidence.go.
+	go T.sweepEvidenceLoop()
 	T.HandleFunc("/api/stores", T.handleStores)
 	T.HandleFunc("/api/upload", T.handleUpload)
 	T.HandleFunc("/api/commands/run", T.handleCommand)
@@ -512,6 +531,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/commands/mapping", T.handleCommandMapping)
 	T.HandleFunc("/api/folders", T.handleFolders)
 	T.HandleFunc("/api/pull", T.handlePull)
+	T.HandleFunc("/api/evidence/", T.handleEvidence)
 	T.HandleFunc("/api/store-options", T.handleStoreOptions)
 	T.HandleFunc("/api/app-grants", T.handleAppGrants)
 	T.HandleFunc("/api/app-options", T.handleAppOptions)
@@ -606,6 +626,7 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
+		wasEvidence := st.Evidence
 		if err := json.Unmarshal(raw, &st); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -619,9 +640,17 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		Log("[filestore] %s saved store %q (%s)", user, saved.Name, saved.Path)
+		// The index is a second copy of the folder: with the switch off it
+		// goes, rather than lingering encrypted where nothing reads it.
+		if wasEvidence && !saved.Evidence {
+			if n := wipeStoreEvidence(T.DB, saved.Slug); n > 0 {
+				Log("[filestore] %s: evidence indexing off, %d folder index(es) wiped", saved.Slug, n)
+			}
+		}
 		writeJSON(w, saved)
 	case http.MethodDelete:
 		DeleteStore(T.DB, slug)
+		wipeStoreEvidence(T.DB, slug)
 		Log("[filestore] %s removed store %q", user, slug)
 		writeJSON(w, map[string]any{"deleted": slug})
 	default:
@@ -675,7 +704,7 @@ func (T *FileStoreApp) storeRows() []map[string]any {
 			// From the same definition ItemTools builds from. These are
 			// the names in force, which after a rename are not the names
 			// the Name column would suggest.
-			"tools": strings.Join(storeToolNames(st.Slug), ", "),
+			"tools": strings.Join(storeToolsInForce(st), ", "),
 			// What this folder CARRIES, as opposed to what it mints. A mapped
 			// command is deliberately absent from the deployment tool list — it
 			// is a capability of a folder, not a tool of the installation — so
@@ -769,7 +798,7 @@ func (T *FileStoreApp) storeAbout(st Store) map[string]any {
 		carries = "none"
 	}
 	return map[string]any{
-		"tools":     strings.Join(storeToolNames(st.Slug), ", "),
+		"tools":     strings.Join(storeToolsInForce(st), ", "),
 		"carries":   carries,
 		"assigned":  assigned,
 		"apps":      appText,

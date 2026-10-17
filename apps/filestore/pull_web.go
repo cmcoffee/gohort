@@ -24,7 +24,7 @@ func (T *FileStoreApp) pullJobFor(dest Store, item, user string, replace bool) (
 	if !ok {
 		return nil, Error(dest.Name + " has no store to pull from: set one in its Settings (Pull from another store)")
 	}
-	return &pullJob{dest: dest, src: src, item: strings.TrimSpace(item), replace: replace, user: user}, nil
+	return &pullJob{dest: dest, src: src, item: strings.TrimSpace(item), replace: replace, user: user, db: T.DB}, nil
 }
 
 // pullItems is the source store's files and folders as the panel lists them:
