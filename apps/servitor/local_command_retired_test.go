@@ -1,8 +1,9 @@
 package servitor
 
-// Local command systems are retired in favour of file stores: no new one is
-// made, an existing one keeps working, and nothing that only works over SSH is
-// tried on one.
+// Local command systems are retired in favour of file stores, and tool-backed
+// services in favour of an agent's own tools: no new one of either is made, an
+// existing one keeps working, and nothing that only works over SSH is tried on
+// a local command system.
 
 import (
 	"context"
@@ -42,6 +43,20 @@ func TestNoNewLocalCommandSystemIsMade(t *testing.T) {
 	}
 	if code, body := post(`{"id":"c1","type":"command","name":"logs renamed","command":"logtool"}`); code != http.StatusOK {
 		t.Errorf("an existing local command system could not be edited: %d %s", code, body)
+	}
+
+	udb.Set(applianceTable, "t1", Appliance{ID: "t1", Name: "gitlab", Type: "toolset", Owner: "root"})
+	if code, body := post(`{"type":"toolset","name":"new service"}`); code != http.StatusBadRequest || !strings.Contains(body, "MCP") {
+		t.Errorf("a new tool-backed service was made: %d %s", code, body)
+	}
+	if code, body := post(`{"id":"s1","type":"toolset","name":"web"}`); code != http.StatusBadRequest || !strings.Contains(body, "MCP") {
+		t.Errorf("an ssh system was turned into a tool-backed service: %d %s", code, body)
+	}
+	if code, body := post(`{"id":"t1","type":"toolset","name":"gitlab renamed"}`); code != http.StatusOK {
+		t.Errorf("an existing tool-backed service could not be edited: %d %s", code, body)
+	}
+	if code, body := post(`{"type":"ssh","name":"db","host":"db.example.test"}`); code != http.StatusOK {
+		t.Errorf("a new ssh system was refused: %d %s", code, body)
 	}
 }
 

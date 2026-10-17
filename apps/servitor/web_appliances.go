@@ -84,19 +84,19 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		}
 		// Set by the "remote" case, which rewrites Type to the far side's kind.
 		isRemote := false
+		// A retired type: an existing one keeps working and can be edited, and
+		// no new one is made (the type-change check below covers turning
+		// another system into one).
+		if why, retired := retiredSystemTypes[req.Type]; retired && req.ID == "" {
+			http.Error(w, why, http.StatusBadRequest)
+			return
+		}
 		switch req.Type {
 		case "command":
 			// Runs `sh -c` on the gohort host as the gohort process: owning
 			// one is owning the server. See localCommandAllowed.
 			if !servitorIsAdmin(r) {
 				http.Error(w, "a local command system runs commands on the gohort server itself, so only an admin can create or change one", http.StatusForbidden)
-				return
-			}
-			// Retired in favour of file stores: an existing one keeps working
-			// and can be edited, and no new one is made (the type-change check
-			// below covers turning another system into one).
-			if req.ID == "" {
-				http.Error(w, localCommandRetired, http.StatusBadRequest)
 				return
 			}
 			if req.Name == "" || req.Command == "" {
@@ -240,8 +240,8 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "not allowed to edit this system", http.StatusForbidden)
 				return
 			}
-			if req.Type == "command" && existing.Type != "command" && !isRemote {
-				http.Error(w, localCommandRetired, http.StatusBadRequest)
+			if why, retired := retiredSystemTypes[req.Type]; retired && existing.Type != req.Type && !isRemote {
+				http.Error(w, why, http.StatusBadRequest)
 				return
 			}
 			targetUDB = exUDB
@@ -520,8 +520,15 @@ func purgeAppliance(userID string, udb Database, applianceID string) {
 	dropConn(userID, applianceID)
 }
 
-// localCommandRetired is why a new local command system is refused. A local
-// command system gives an agent free-form sh on this server; a file store's
-// mapped commands give it one tool per approved use instead, run without a
-// shell, with the store's caps.
-const localCommandRetired = "new local command systems are no longer made: they give an agent a free shell on this server. Register the folder as a file store (Admin, File stores), add the command to it, and map its uses there; each use becomes a tool the agent can be given. Existing local command systems keep working."
+// retiredSystemTypes are the system types no new record is made of, each with
+// why and what to use instead. Existing ones keep working and can be edited.
+//
+// A local command system gives an agent free-form sh on this server; a file
+// store's mapped commands give it one tool per approved use instead, run
+// without a shell, with the store's caps. A tool-backed service is not a
+// system at all: it is an agent working through a set of approved tools,
+// which an agent's own tools and MCP servers already are.
+var retiredSystemTypes = map[string]string{
+	"command": "new local command systems are no longer made: they give an agent a free shell on this server. Register the folder as a file store (Admin, File stores), add the command to it, and map its uses there; each use becomes a tool the agent can be given. Existing local command systems keep working.",
+	"toolset": "new tool-backed services are no longer made: a service reached through tools is the agent's own tools. Give the agent those tools directly, or connect the service as an MCP server. Existing tool-backed services keep working.",
+}

@@ -1,5 +1,9 @@
 # Servitor toolset appliances: investigating a service through curated tools
 
+**Retired for new systems (v0.8.331).** A service reached through tools is an agent's own tools,
+or an MCP server, so no new tool-backed service is made. An existing one keeps working and can be
+edited. What follows is the original design, kept for those.
+
 Status: **slices 1 and 2 built** (v0.6.019). A servitor appliance whose target is
 not a host or a clone but a **curated set of already-authored tools**. GitLab
 becomes a configuration rather than a pair of Go files, and so does everything
