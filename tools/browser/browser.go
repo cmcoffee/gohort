@@ -68,6 +68,17 @@ func Fetch(target string, maxChars int) (string, error) {
 	return shared.fetch(target, maxChars)
 }
 
+// FetchPage is Fetch with the content images the rendered page shows
+// (textutil.PageImages), for a tool that lists them after the text so the
+// agent can fetch the one an answer is in. Local rendering only: the routed
+// BrowserFetchFunc seam carries text, and a peer renders text.
+func FetchPage(target string, maxChars int) (string, []textutil.PageImage, error) {
+	return shared.fetchPage(target, maxChars)
+}
+
+// pageImageCap is how many images a page lists.
+const pageImageCap = 10
+
 // BrowsePageTool fetches a URL using a real headless browser (JavaScript
 // executed, cookies handled). A single Chromium process is shared across
 // all calls; each call gets an isolated page that is closed when done.
@@ -206,25 +217,32 @@ func browsePageTotalBudget() time.Duration {
 // callers that go around the routed BrowserFetchFunc seam, so the check has
 // to live at the one entry every local render passes through.
 func (t *BrowsePageTool) fetch(target string, maxChars int) (string, error) {
+	text, _, err := t.fetchPage(target, maxChars)
+	return text, err
+}
+
+// fetchPage is fetch with the rendered page's images.
+func (t *BrowsePageTool) fetchPage(target string, maxChars int) (string, []textutil.PageImage, error) {
 	if err := RefuseNonPublicHost(target); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	budget := browsePageTotalBudget()
 	type result struct {
-		text string
-		err  error
+		text   string
+		images []textutil.PageImage
+		err    error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		text, err := t.fetchImpl(target, maxChars)
-		ch <- result{text: text, err: err}
+		text, images, err := t.fetchImpl(target, maxChars)
+		ch <- result{text: text, images: images, err: err}
 	}()
 	select {
 	case r := <-ch:
-		return r.text, r.err
+		return r.text, r.images, r.err
 	case <-time.After(budget):
 		Log("[browse_page] outer budget %v exceeded for %s: Chromium likely wedged (page creation / CDP / idle wait); goroutine leaks until rod errors out", budget, target)
-		return "", fmt.Errorf("browse_page timed out after %v on %s: Chromium appears wedged. Try fetch_url for static content, or wait and retry if this is transient. Persistent wedge → restart the gohort process.", budget, target)
+		return "", nil, fmt.Errorf("browse_page timed out after %v on %s: Chromium appears wedged. Try fetch_url for static content, or wait and retry if this is transient. Persistent wedge → restart the gohort process.", budget, target)
 	}
 }
 
@@ -232,15 +250,15 @@ func (t *BrowsePageTool) fetch(target string, maxChars int) (string, error) {
 // runtime via browsePageTotalBudget so rod hangs outside the inner
 // page.Timeout calls (page creation, CDP wedge, etc.) don't outlast
 // the call.
-func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, error) {
+func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, []textutil.PageImage, error) {
 	parsed, err := url.Parse(target)
 	if err != nil {
-		return "", fmt.Errorf("parsing url: %w", err)
+		return "", nil, fmt.Errorf("parsing url: %w", err)
 	}
 
 	t.launch()
 	if t.initErr != nil {
-		return "", t.initErr
+		return "", nil, t.initErr
 	}
 
 	t.mu.Lock()
@@ -252,12 +270,12 @@ func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, error) 
 	// storage another left behind.
 	inc, err := b.Incognito()
 	if err != nil {
-		return "", fmt.Errorf("creating browser context: %w", err)
+		return "", nil, fmt.Errorf("creating browser context: %w", err)
 	}
 	defer inc.Close()
 	page, err := inc.Page(proto.TargetCreateTarget{})
 	if err != nil {
-		return "", fmt.Errorf("creating browser page: %w", err)
+		return "", nil, fmt.Errorf("creating browser page: %w", err)
 	}
 	defer page.MustClose()
 
@@ -283,13 +301,22 @@ func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, error) 
 				msg = fmt.Sprintf("%v", te.Value)
 			}
 		}
-		return "", fmt.Errorf("navigation failed: %s", msg)
+		return "", nil, fmt.Errorf("navigation failed: %s", msg)
 	}
 
 	html, err := page.HTML()
 	if err != nil {
-		return "", fmt.Errorf("getting rendered HTML: %w", err)
+		return "", nil, fmt.Errorf("getting rendered HTML: %w", err)
 	}
+	// The images, against the address the page ended up at: a redirect
+	// moves where a relative src points.
+	base := parsed
+	if info, ierr := page.Info(); ierr == nil && info != nil {
+		if u, perr := url.Parse(info.URL); perr == nil && u.Host != "" {
+			base = u
+		}
+	}
+	images := textutil.PageImages(html, base, pageImageCap)
 
 	var text string
 	article, rerr := readability.FromReader(strings.NewReader(html), parsed)
@@ -312,7 +339,7 @@ func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, error) 
 		}
 		text += "..."
 	}
-	return strings.TrimSpace(text), nil
+	return strings.TrimSpace(text), images, nil
 }
 
 // FetchPageImage renders pageURL in the headless browser and returns the
@@ -448,16 +475,25 @@ func (t *BrowsePageTool) runImpl(args map[string]any, sess *ToolSession) (string
 		return "", err
 	}
 
-	// Through the routed variable, not t.fetch: that is what lets an operator
-	// point page rendering at a peer and have the LLM-callable tool follow
-	// along with everything else.
-	text, err := BrowserFetchFunc(target, 10000)
+	// Through the routed variable when a peer renders pages: that is what lets
+	// an operator point page rendering at a peer and have the LLM-callable tool
+	// follow along with everything else. Rendered here, the page's images come
+	// back too and are listed after the text, so an answer that is IN an image
+	// can be fetched and looked at; a peer renders text only.
+	var text string
+	var images []textutil.PageImage
+	if _, peer := BrowsePeer(); peer {
+		text, err = BrowserFetchFunc(target, 10000)
+	} else {
+		text, images, err = FetchPage(target, 10000)
+	}
 	if err != nil {
 		return "", err
 	}
 	claim := ToolClaimNote(sess, target)
+	imagesNote := textutil.PageImagesNote(images, textutil.ImageLookHint(sess.HasTool))
 	if text == "" {
-		return "Page loaded but no readable text could be extracted." + claim, nil
+		return "Page loaded but no readable text could be extracted." + imagesNote + claim, nil
 	}
 	// A rendered page that came back as a consent banner is a failed read that
 	// looks like a successful one. Say so in the result, where the model reads
@@ -468,7 +504,7 @@ func (t *BrowsePageTool) runImpl(args map[string]any, sess *ToolSession) (string
 		Debug("[browse_page] low-yield result for %s: %s", target, note)
 	}
 	Debug("[browse_page] %s → %d chars", target, len(text))
-	return fmt.Sprintf("%sFetched %s via browser (%d chars):\n\n%s%s", lead, target, len(text), text, claim), nil
+	return fmt.Sprintf("%sFetched %s via browser (%d chars):\n\n%s%s%s", lead, target, len(text), text, imagesNote, claim), nil
 }
 
 // stripTags removes all HTML tags and collapses whitespace — minimal fallback

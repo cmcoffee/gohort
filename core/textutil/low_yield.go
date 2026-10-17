@@ -103,3 +103,12 @@ func firstWallMarker(t string) string {
 	}
 	return ""
 }
+
+// IsWallPage reports whether text is a wall rather than a page: short, and
+// carrying a consent, sign-in or bot-check marker. Unlike LowYieldNote it does
+// not count a page as a wall for being short alone, since a small API answer
+// is short and is the whole answer.
+func IsWallPage(text string) bool {
+	t := strings.TrimSpace(text)
+	return t != "" && len(t) < boilerplateMaxChars && firstWallMarker(t) != ""
+}

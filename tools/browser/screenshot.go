@@ -37,8 +37,10 @@ func (t *ScreenshotPageTool) Caps() []Capability {
 
 func (t *ScreenshotPageTool) Desc() string {
 	return "Capture a PNG screenshot of a web page using a real headless browser. " +
-		"Use when the user asks to see, view, show, or screenshot a page: visual " +
-		"questions where text extraction (browse_page / fetch_url) loses the answer. " +
+		"Use when the user asks to see, view, show, or screenshot a page, or when the answer is in " +
+		"what the page SHOWS rather than its text (a chart drawn on the page, a layout, text set as an image), " +
+		"which text extraction (browse_page / fetch_url) loses. The capture is shown to you so you can read it. " +
+		"For one particular image on a page, fetching that image (the page text lists them) is sharper. " +
 		"Set full_page=true to capture the entire scrollable page; otherwise just " +
 		"the visible viewport. The screenshot is delivered as an attachment alongside " +
 		"any text response. Slower than text fetches (5–25s). Larger pages may produce " +
@@ -193,8 +195,27 @@ func (t *ScreenshotPageTool) RunWithSession(args map[string]any, sess *ToolSessi
 		mode = "full page"
 	}
 	Debug("[screenshot_page] %s (%s) → %s (%d bytes)", target, mode, name, len(data))
-	return fmt.Sprintf("Captured %s screenshot of %s. Stored at %q (%d bytes). If the user asked you to SEND / SHARE the screenshot, call workspace(action=\"attach\", path=%q, cleanup=true) to deliver. If they just want info from it (describe, summarize, read text), skip the attach: answer from context.",
-		mode, target, name, len(data), name), nil
+	send := ""
+	if sess.HasTool("workspace") {
+		send = fmt.Sprintf(" If the user asked you to SEND / SHARE the screenshot, call workspace(action=\"attach\", path=%q, cleanup=true) to deliver it; if they only want what is on the page, do not.", name)
+	}
+	// Shown to the model, so a question about what the page SHOWS (a chart,
+	// a layout, text drawn as an image) is answered from the picture. It
+	// used to say "answer from context" with nothing in context: the model
+	// never saw what it captured and described the page from imagination.
+	// A model that does not read images gets a description in its place,
+	// written by one that does (the image gate, core/llm.go).
+	if sess.LLM != nil {
+		sess.AppendViewImageAs(data, fmt.Sprintf("the %s screenshot of %s", mode, target))
+		return fmt.Sprintf("Captured a %s screenshot of %s, stored at %q (%d bytes). LOOK AT IT: the picture is included with this result so you can read the page from it on this round. Answer only from what you can see in it; what is cut off or unreadable, say so.%s",
+			mode, target, name, len(data), send), nil
+	}
+	read := " You cannot read it from here: say what you can verify, and do not describe what the page probably shows."
+	if sess.HasTool("workspace") {
+		read = fmt.Sprintf(" To read it, call workspace(action=\"view_image\", path=%q) and answer from what that returns, not from what the page probably shows.", name)
+	}
+	return fmt.Sprintf("Captured a %s screenshot of %s, stored at %q (%d bytes). It is not in front of you.%s%s",
+		mode, target, name, len(data), read, send), nil
 }
 
 // screenshotLooksBlank samples pixels from the captured PNG and reports

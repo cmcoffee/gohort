@@ -226,7 +226,7 @@ type FetchURLTool struct{}
 func (t *FetchURLTool) Name() string       { return "fetch_url" }
 func (t *FetchURLTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // HTTP against live web
 func (t *FetchURLTool) Desc() string {
-	return "Fetch a URL from the live web. Defaults to GET; pass method=POST/PUT/PATCH/DELETE with optional body for write calls. Two response modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped), use for articles, JSON APIs, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB), use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode.\n\nJSON endpoints: the body comes back as JSON text, read fields directly out of the text (the model handles it fluently) or, inside a script, json.loads(body). There is no separate fetch_json tool.\n\nFor credentialed endpoints, use the matching `fetch_url_<credential>` tool (e.g. fetch_url_github), same shape (method / body / request_headers / save_to all work the same), auth injected server-side.\n\nFallback: when the response comes back blocked (403, captcha challenge page, Cloudflare interstitial, JS-required skeleton, empty body) and browse_page is in your catalog, retry the same URL through browse_page, the headless browser executes JavaScript, handles cookies, and clears most soft blocks. fetch_url is faster and the right default; browse_page is the recovery path."
+	return "Fetch a URL from the live web. Defaults to GET; pass method=POST/PUT/PATCH/DELETE with optional body for write calls. Two response modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped), use for articles, JSON APIs, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB), use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode.\n\nJSON endpoints: the body comes back as JSON text, read fields directly out of the text (the model handles it fluently) or, inside a script, json.loads(body). There is no separate fetch_json tool.\n\nFor credentialed endpoints, use the matching `fetch_url_<credential>` tool (e.g. fetch_url_github), same shape (method / body / request_headers / save_to all work the same), auth injected server-side.\n\nA blocked or empty page (403, 429, a captcha or bot-check page, a JS-required skeleton) is retried in the headless browser automatically, and the result says so; when even that fails, the error says what is left to try. When you can fetch an image to look at it, the page's images are listed after its text: fetch the one the answer may be IN (a chart, a photo) to see it."
 }
 
 func (t *FetchURLTool) Params() map[string]ToolParam {
@@ -421,17 +421,47 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 		return "", fmt.Errorf("response Content-Type is %q (binary). fetch_url can't return binary content as text. Retry with save_to=<workspace-relative path>", mime)
 	}
 
-	text, err := FetchArticle(target, 8000)
+	text, meta, err := fetchArticleInternal(target, 8000)
+	text = strings.TrimSpace(text)
+	// A refused request or a wall (a captcha, a "checking your browser"
+	// page) gets one try in the headless browser before the agent hears of
+	// it, as a thin page already did. The description told the agent to do
+	// this itself, and at the moment of failure a model often did not.
+	via := ""
+	if blocked := blockedFetch(err, text); blocked != "" {
+		rendered, images, berr := browser.FetchPage(target, 8000)
+		rendered = strings.TrimSpace(rendered)
+		// A page, not a wall and not a stub: a refusal rendered in a browser is
+		// still a refusal ("Forbidden"), and reading it as the page would be
+		// worse than saying it could not be read.
+		if berr == nil && len(rendered) >= textutil.ThinResultMinChars && !textutil.IsWallPage(rendered) {
+			Debug("[fetch_url] %s for %s, read through the browser instead (%d chars)", blocked, target, len(rendered))
+			text, err, via = rendered, nil, " (the plain request got "+blocked+", so it was loaded in the headless browser)"
+			if len(images) > 0 {
+				meta.Images = images
+			}
+		} else if err != nil {
+			why := "it got only a wall again"
+			if berr != nil {
+				why = berr.Error()
+			}
+			next := "Tell the user this page cannot be read, rather than guessing what it says"
+			if sess.HasTool("screenshot_page") {
+				next = "If seeing the page would answer the question, try screenshot_page; otherwise tell the user this page cannot be read, rather than guessing what it says"
+			}
+			return "", fmt.Errorf("fetch failed: %s, and the headless browser could not read it either (%s). The site is refusing automated access. %s", blocked, why, next)
+		}
+	}
 	if err != nil {
 		return "", fmt.Errorf("fetch failed: %w", err)
 	}
-	text = strings.TrimSpace(text)
 	// The tool-claim note rides on every outcome below, including the empty
 	// one: "no readable text" is exactly the moment the reader most needs to
 	// know something else already serves this host.
 	claim := ToolClaimNote(sess, target)
+	imagesNote := textutil.PageImagesNote(meta.Images, textutil.ImageLookHint(sess.HasTool))
 	if text == "" {
-		return "Fetched successfully but the page has no readable text (likely JavaScript-heavy or empty)." + claim, nil
+		return "Fetched successfully but the page has no readable text (likely JavaScript-heavy or empty)." + imagesNote + claim, nil
 	}
 	// If the article was likely truncated (close to or at the limit),
 	// auto-cache the full text so the LLM can read the rest if needed.
@@ -457,8 +487,30 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 		Debug("[fetch_url] low-yield result for %s: %s", target, note)
 	}
 	Debug("[fetch_url] %s → %d chars", target, len(text))
-	return fmt.Sprintf("%sFetched %s (%d chars):\n\n%s%s%s", lead, target, len(text), text, suffix, claim), nil
+	return fmt.Sprintf("%sFetched %s%s (%d chars):\n\n%s%s%s%s", lead, target, via, len(text), text, imagesNote, suffix, claim), nil
 }
+
+// blockedFetch names why a plain fetch of a page looks refused rather than
+// missing, or "" when it does not: a status a site answers a bot with (403,
+// 429, a 503 or a Cloudflare 52x), or a page that came back as a wall.
+// A 404 or a 500 is the page's own answer, and a browser would get it too.
+func blockedFetch(err error, text string) string {
+	var se *httpStatusError
+	if errors.As(err, &se) {
+		switch c := se.code; {
+		case c == 403, c == 406, c == 429, c == 503, c >= 520 && c <= 530:
+			return fmt.Sprintf("HTTP %d", c)
+		}
+		return ""
+	}
+	if err == nil && textutil.IsWallPage(text) {
+		return "a wall instead of the page"
+	}
+	return ""
+}
+
+// pageImageCap is how many images a fetched page lists.
+const pageImageCap = 10
 
 // errFetchCacheOff is what a cache write returns when the operator set the
 // fetch cache quota to 0. It used to be the evictor alone that read the quota,
@@ -1323,7 +1375,16 @@ type SourceMeta struct {
 	Site    string // og:site_name
 	PubDate string // article:published_time, datePublished, etc.
 	Domain  string // hostname extracted from URL
+	// Images are the content images the page shows (textutil.PageImages),
+	// which fetch_url lists after the text.
+	Images []textutil.PageImage
 }
+
+// httpStatusError is a fetch the server answered with a status other than OK,
+// kept as its code so a caller can tell a refusal (403, 429) from a miss (404).
+type httpStatusError struct{ code int }
+
+func (e *httpStatusError) Error() string { return fmt.Sprintf("HTTP %d", e.code) }
 
 // FetchArticleWithMeta fetches a URL and returns both readable text and metadata.
 func FetchArticleWithMeta(target_url string, max_chars int) (string, SourceMeta, error) {
@@ -1366,9 +1427,10 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 	// in a script via gohort.fetch_url succeeds via the same Chromium path.
 	// Falls through to HTTP on browser failure so the caller's never left empty-handed.
 	if ShouldAutoBrowseURL(target_url) {
-		text, berr := browser.Fetch(target_url, max_chars)
+		text, images, berr := browser.FetchPage(target_url, max_chars)
 		if berr == nil && strings.TrimSpace(text) != "" {
 			Debug("[fetch] browser fetch %s → %d chars", target_url, len(text))
+			meta.Images = images
 			return text, meta, nil
 		}
 		Debug("[fetch] browser failed for %s (%v), falling back to HTTP", meta.Domain, berr)
@@ -1396,7 +1458,7 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", meta, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return "", meta, &httpStatusError{code: resp.StatusCode}
 	}
 
 	// PDFs can be large; allow up to 2MB for PDFs, 512KB for HTML.
@@ -1420,6 +1482,7 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 	} else {
 		html_str := string(body)
 		meta = extractMeta(html_str, meta)
+		meta.Images = textutil.PageImages(html_str, parsed, pageImageCap)
 		article, rerr := readability.FromReader(strings.NewReader(html_str), parsed)
 		if rerr == nil && strings.TrimSpace(article.TextContent) != "" {
 			text = strings.TrimSpace(article.TextContent)
@@ -1439,10 +1502,13 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 		// left alone (see ShouldBrowserRetryResult). Keep whichever
 		// extraction is richer.
 		if ShouldBrowserRetryResult(content_type, text) {
-			if rendered, berr := browser.Fetch(target_url, max_chars); berr == nil {
+			if rendered, images, berr := browser.FetchPage(target_url, max_chars); berr == nil {
 				if rendered = strings.TrimSpace(rendered); len(rendered) > len(strings.TrimSpace(text)) {
 					Debug("[fetch] thin static result (%d chars), recovered %d via browse_page: %s", len(text), len(rendered), target_url)
 					text = rendered
+					if len(images) > 0 {
+						meta.Images = images
+					}
 				}
 			} else {
 				Debug("[fetch] browser recovery failed for %s: %v", target_url, berr)
