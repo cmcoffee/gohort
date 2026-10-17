@@ -62,6 +62,18 @@ func monitorWakeMessage(m EventMonitor, monitorName, summary, brief string) stri
 	return msg
 }
 
+// wakeCardText is what a monitor's wake leaves in the thread: the card a watch
+// attached, or else what the check found. Not the wake prompt, which a monitor
+// without a watch used to leave: its marker, the owner's brief and the closing
+// instruction are written for the model, the card's header already names the
+// monitor, and under the card's cap they crowded out the finding itself.
+func wakeCardText(ctx context.Context, summary string) string {
+	if card := EventCardFromContext(ctx); card != "" {
+		return card
+	}
+	return strings.TrimSpace(summary)
+}
+
 // monitorWakeWait bounds how long a wake waits for a busy thread before it
 // runs anyway: long enough for an ordinary turn, short enough that an event is
 // not held for a session somebody left mid-run.
@@ -338,9 +350,8 @@ func registerOperatorWake(app *OrchestrateApp) {
 			// same event to the agent as a user turn, so the owner's cortex
 			// showed the whole wake prompt — diff payload, closing instruction
 			// and all — in a bubble attributed to them.
-			// The card a watch attached (EventCardFromContext) is what the
-			// thread shows; the model still gets msg. A wake without one keeps
-			// msg as its card.
+			// The card a watch attached, or else what the check found, is
+			// what the thread shows; the model still gets msg (wakeCardText).
 			// The task's notes: mounted for the woken turn beside the pacing
 			// lever, and marked on the context so this fire carries the
 			// MONITOR's notes rather than the agent's own block.
@@ -353,7 +364,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 				AgentOwner: owner, RuntimeUser: owner, AgentKey: wakeAgent,
 				SubSessionID: wakeTarget, Message: msg,
 				InputReportFrom: monitorName, InputReportKind: cortexKindMonitor,
-				InputCardText: EventCardFromContext(ctx),
+				InputCardText: wakeCardText(ctx, summary),
 				AppTools:      append(monitorPacingTool(m, pacingAsk), tnotes.tool()...),
 			})
 			if err != nil {

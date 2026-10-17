@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -138,5 +139,23 @@ func TestAnEventCardPrefersItsReadableText(t *testing.T) {
 	plain := storedRunInput(AgentSyncRun{Message: prompt, InputReportFrom: "molty"}, prompt, now)
 	if plain.Content != prompt {
 		t.Errorf("without a card text the message is stored, got %q", plain.Content)
+	}
+}
+
+// A monitor with no watch card leaves what its check found, not the prompt it
+// woke the agent with: the card read "[EVENT, monitor ... fired] What to do:
+// ..." and the finding came last, cut off by the cap.
+func TestAWakeWithoutAWatchCardShowsTheFinding(t *testing.T) {
+	found := "YES, the official said no such instruction was given."
+	if got := wakeCardText(context.Background(), "  "+found+"\n"); got != found {
+		t.Errorf("the card should be the finding, got %q", got)
+	}
+	prompt := monitorWakeMessage(EventMonitor{}, "answer-watch", found, "\n\nWhat to do: notify me")
+	got := storedRunInput(AgentSyncRun{
+		Message: prompt, InputReportFrom: "answer-watch", InputReportKind: cortexKindMonitor,
+		InputCardText: wakeCardText(context.Background(), found),
+	}, prompt, time.Now())
+	if got.Content != found || strings.Contains(got.Content, "What to do") || strings.Contains(got.Content, "React in this thread") {
+		t.Errorf("the card carried the wake prompt: %q", got.Content)
 	}
 }
