@@ -75,6 +75,30 @@ func (T *OrchestrateApp) handleReferenceSources(w http.ResponseWriter, r *http.R
 				items = append(items, row)
 			}
 		}
+		// Its own sub-agents, which the shared list leaves out: they are hidden
+		// from the fleet, and the list is the same for every agent. Attached
+		// here, the parent reads what its sub-agent recorded (search_<sub>_memory,
+		// agent_catalog.go) before running it, which is how a Librarian sub-agent
+		// is asked first. Only this agent's own: another agent's sub-agent is
+		// private to its parent.
+		listed := map[string]bool{}
+		for _, row := range items {
+			listed[row["id"].(string)] = true
+		}
+		for _, sub := range listAgents(udb, user) {
+			if sub.OwnedBy != rec.ID {
+				continue
+			}
+			ref := ReferenceSelection{Kind: AgentReferenceKind, ItemID: sub.ID}.Ref()
+			if listed[ref] {
+				continue
+			}
+			it := ReferenceItem{ID: sub.ID, Name: sub.Name, Desc: strings.TrimSpace("This agent's sub-agent. " + sub.Description)}
+			items = append(items, map[string]any{
+				"id": ref, "name": sub.Name, "group": agentReferenceSource{}.Label(),
+				"desc": refPickerDesc(it, ReferenceItemTools(user, AgentReferenceKind, sub.ID)),
+			})
+		}
 		attached, writes := []string{}, []string{}
 		for _, s := range rec.AttachedSources {
 			attached = append(attached, s.Ref())

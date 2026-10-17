@@ -20,6 +20,8 @@ func TestMatchShapeOnRealRequests(t *testing.T) {
 		{"something that looks things up and cites sources", "research"},
 		{"a research agent for tariff news", "research"},
 		{"figure out why the build keeps failing on that repo", "investigator"},
+		{"look at our gitlab and map out where the repos are", "librarian"},
+		{"an agent that knows where the code lives before it searches", "librarian"},
 		{"someone to talk to about my day", "conversational"},
 		{"a general assistant that can also do things", "conversational"},
 	} {

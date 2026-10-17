@@ -1,6 +1,7 @@
 # Agent archetypes: Builder's starting ideas
 
-Status: **design; the Librarian's framework piece is built** (v0.8.364, `agent_catalog.go`).
+Status: **the Librarian is built** (v0.8.364 its framework piece, `agent_catalog.go`; v0.8.367
+its recipe, `archetypes/librarian.md`). Next: build one with Builder against a real subject.
 Written 2026-10-17, replacing an earlier draft of "Agent Types".
 
 ## The decision
@@ -151,7 +152,9 @@ Grows from `investigator.md` and keeps what it says about the sub-agent shape, t
 
 1. The read-first Source tools (missing piece 1). Built, with tests: they find what the agent
    recorded, they are read-only, a miss points at consult, and another user's agent offers none.
-2. `archetypes/librarian.md`, the recipe, with its `match` phrases and `asks`.
+2. `archetypes/librarian.md`, the recipe, with its `match` phrases and `asks`. Built. An agent's
+   own sub-agents are now offered in its Sources picker (they are hidden from the fleet, so the
+   shared list left them out), which is how a Librarian sub-agent is attached to its parent.
 3. Build one with Builder against a real subject and read what it does, before writing the next
    recipe.
 

@@ -477,3 +477,33 @@ func TestBuilderKnowsASourceItAttachesIsReadOnly(t *testing.T) {
 		}
 	}
 }
+
+// An agent's own sub-agents are offered in its Sources, though they are hidden
+// from the fleet: attached, the parent reads what its sub-agent recorded
+// before running it. Another agent's sub-agent is private to its parent and
+// is not offered.
+func TestAnAgentsOwnSubAgentsAreOfferedAsSources(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	saveAgent(udb, AgentRecord{ID: "parent", Name: "Coder", OrchestratorPrompt: "p"})
+	saveAgent(udb, AgentRecord{ID: "other", Name: "Other", OrchestratorPrompt: "p"})
+	saveAgent(udb, AgentRecord{ID: "lib", Name: "GitLab Librarian", OrchestratorPrompt: "p", OwnedBy: "parent", Hidden: true})
+	offered := func(agent string) map[string]string {
+		w := httptest.NewRecorder()
+		app.handleReferenceSources(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent="+agent, nil), user))
+		var out struct {
+			Items []struct{ ID, Group string } `json:"items"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &out)
+		got := map[string]string{}
+		for _, it := range out.Items {
+			got[it.ID] = it.Group
+		}
+		return got
+	}
+	if g, ok := offered("parent")["agent:lib"]; !ok || g != "Agents" {
+		t.Errorf("the parent is not offered its own sub-agent: %v", offered("parent"))
+	}
+	if _, ok := offered("other")["agent:lib"]; ok {
+		t.Error("another agent was offered a sub-agent that is private to its parent")
+	}
+}
