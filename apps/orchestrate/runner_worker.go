@@ -116,6 +116,16 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		tools = keptTools
 		toolNames = keptNames
 	}
+	// Builder's coder (code_app) writes an app, so it gets app_def; no other
+	// step does.
+	if cur.appCoder && isBuilderAgent(t.agent.ID) {
+		for _, td := range t.authoringPrimitiveToolDefs() {
+			if td.Tool.Name == "app_def" && !slices.Contains(toolNames, td.Tool.Name) {
+				tools = append(tools, td)
+				toolNames = append(toolNames, td.Tool.Name)
+			}
+		}
+	}
 	tools, toolNames = filterToolAuthoringWithoutFocus(tools, toolNames, t.session)
 	t.gateAgentCRUDTools(tools)
 	// Three layers, each gated by its own helper — same split as
@@ -341,6 +351,13 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 
 	stopKeepalive := startKeepalive(t.sse)
 	f := false
+	// Builder's coder thinks: it is writing a whole app from a design, the
+	// one step whose quality comes from working it out first (Qwen built a
+	// designed app one-shot mostly by thinking). Its budget is the agent's,
+	// as any step's is.
+	if cur.appCoder {
+		f = true
+	}
 	// Reset explorer state per worker step so a step starts at the
 	// soft cap; the LLM must opt back into explorer mode if it
 	// still needs more rounds.

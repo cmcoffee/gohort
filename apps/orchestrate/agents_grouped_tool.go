@@ -1475,7 +1475,10 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		// Whether the reply describes things that happened, as the two
 		// sync-dispatch paths already ask; this inline path did not, so a
 		// dispatched Builder's claims went to the caller unread.
-		TurnClaimJudge:     subTurn.claimJudge(ctx),
+		TurnClaimJudge: subTurn.claimJudge(ctx),
+		// The lead's review of a turn that did work, when this agent asks for one
+		// (lead_review.go).
+		TurnReview:         subTurn.leadReviewer(ctx),
 		TurnGroundingJudge: t.app.turnGroundingJudge(ctx),
 		OnWait:             t.waitNotice(target.Name),
 		ChatOptions: []ChatOption{

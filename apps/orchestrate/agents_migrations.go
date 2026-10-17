@@ -86,6 +86,10 @@ func applyBuilderDeploymentState(seed *AgentRecord, shadow AgentRecord) {
 	// saved and then read back false every time, so the toggle appeared to
 	// refuse to turn on.
 	seed.LeadModel = shadow.LeadModel
+	// And whether the lead designs while a worker writes the apps
+	// (builder_app_split.go): the same choice, its second field.
+	seed.LeadPlans = shadow.LeadPlans
+	seed.LeadReview = shadow.LeadReview
 	// The owner's enforced limits. These are deployment state in the strictest
 	// sense — the framework owns Builder's PROMPT, the deployment owns what it
 	// is allowed to do — and they are owner-only fields no agent edit path can

@@ -973,9 +973,12 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		TurnNotes:      func(user string) string { return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessID, user)) },
 		CapturePrompt:  target.CapturePrompt,
 		TurnClaimJudge: subTurn.claimJudge(ctx),
-		PriorReports:   func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
-		FinishCheck:    buildCheck.finishCheck(),
-		FinishUnmet:    buildCheck.finishUnmet(),
+		// The lead's review of a turn that did work, when this agent asks for one
+		// (lead_review.go).
+		TurnReview:   subTurn.leadReviewer(ctx),
+		PriorReports: func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
+		FinishCheck:  buildCheck.finishCheck(),
+		FinishUnmet:  buildCheck.finishUnmet(),
 		// And whether the reply KNOWS what it asserts. This site had the claim
 		// judge and not this one — an inconsistency rather than a decision, and
 		// the kind that is invisible because the path still works: a reply here

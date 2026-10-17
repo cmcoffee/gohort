@@ -425,8 +425,12 @@ type FormField struct {
 	// description can be wider than a type. Ignored elsewhere.
 	Width int `json:"width,omitempty"`
 
-	Field       string `json:"field"`
-	Label       string `json:"label,omitempty"`
+	Field string `json:"field"`
+	Label string `json:"label,omitempty"`
+	// Type is the control. Among them, "scale" is an ordered choice drawn
+	// as a track of stops, Options left to right in the order given, the
+	// chosen option's Help shown under it: for options that are steps
+	// along one line rather than a set to pick from. Saves like "select".
 	Type        string `json:"type,omitempty"`
 	Placeholder string `json:"placeholder,omitempty"`
 	Help        string `json:"help,omitempty"`

@@ -35,6 +35,7 @@ const (
 	correctionRoleBreak       = "role-break"
 	correctionMalformedCall   = "malformed-call"
 	correctionUnfinished      = "unfinished-reply"
+	correctionLeadReview      = "lead-review"
 )
 
 const (

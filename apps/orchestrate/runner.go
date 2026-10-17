@@ -1064,6 +1064,7 @@ func (pr *planRun) catalogAssemble() error {
 	// rewrite, which is a mechanism that no longer exists — and it is the first
 	// thing anyone greps when tools go missing between turns.
 	pr.splitForLeadPlans()
+	pr.splitForBuilderApps()
 	Debug("[orchestrate.orch] runPlan: assembled catalog of %d tools", len(pr.allTools))
 	// Building the catalog is the other phase big enough to be felt: a hundred
 	// tools resolved, temp tools loaded from the store, schemas built.
@@ -2298,6 +2299,9 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// know. See turn_judge.go.
 		CapturePrompt:  t.agent.CapturePrompt,
 		TurnClaimJudge: t.claimJudge(t.ctx),
+		// The lead's review of a turn that did work, when this agent asks for one
+		// (lead_review.go).
+		TurnReview: t.leadReviewer(t.ctx),
 		// What ran for this turn BEFORE the loop did — the machine steps. The
 		// loop cannot see them (they run during system-prompt assembly, on a
 		// session of their own), so without this the judge reads a turn whose

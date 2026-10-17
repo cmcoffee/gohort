@@ -332,9 +332,15 @@ type AgentRecord struct {
 	// the worker (plan_set in a chat, work_step on a dispatched, scheduled or
 	// channel run), then writes the reply from their results
 	// (runner_lead_plans.go, runner_lead_plans_dispatch.go). Inert without LeadModel,
-	// on a turn that cannot reach the lead, and on Builder, which plans
-	// already.
+	// and on a turn that cannot reach the lead. On Builder it means the lead
+	// designs and reviews apps and a worker writes them (builder_app_split.go).
 	LeadPlans bool `json:"lead_plans,omitempty"`
+	// LeadReview keeps the turn on the worker and has the lead read the
+	// finished reply, with what the turn ran and got back, before it goes
+	// out: it either lets it go or sends it back with changes
+	// (lead_review.go). Without LeadModel; inert on a turn that cannot
+	// reach the lead.
+	LeadReview bool `json:"lead_review,omitempty"`
 
 	// Exposed publishes this agent under the public /agents/ surface
 	// (apps/agents) so non-admin users can chat with it. The exposed
@@ -1735,6 +1741,10 @@ type PlanStep struct {
 	Findings      string   `json:"findings,omitempty"`
 	Output        string   `json:"output,omitempty"`
 	BlockedReason string   `json:"blocked_reason,omitempty"`
+	// appCoder: Builder's code_app step (builder_app_split.go), which writes
+	// an app and so gets app_def, a step's catalog otherwise has not. Never
+	// set from a plan the model wrote.
+	appCoder bool
 }
 
 // Plan-step status constants. Strings (not iota) so JSON roundtrips

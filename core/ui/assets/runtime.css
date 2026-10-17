@@ -1341,6 +1341,29 @@ select:-webkit-autofill {
 .ui-row-segmented .ui-seg:hover:not(.active):not(:disabled) { color: var(--text); background: var(--bg-1); }
 .ui-row-segmented .ui-seg.active { background: var(--accent); color: var(--text-on-accent, #fff); cursor: default; }
 .ui-row-segmented .ui-seg:disabled { opacity: 0.5; cursor: not-allowed; }
+/* FormField type "scale": the same track as a form field, each stop sharing
+ * the width, the chosen stop's help line beneath. Stops wrap their labels
+ * rather than overflow; on a phone they stack into a column. */
+.ui-form-scale {
+  display: flex; align-items: stretch; width: 100%;
+  border: 1px solid var(--border); border-radius: var(--btn-radius); overflow: hidden;
+}
+.ui-form-scale .ui-seg {
+  flex: 1 1 0; min-width: 0; min-height: var(--btn-h-sm, 30px); padding: 0.4rem 0.5rem;
+  background: transparent; color: var(--text-mute); border: none; border-left: 1px solid var(--border);
+  font-size: var(--fs-sm); font-family: inherit; line-height: 1.2; cursor: pointer; white-space: normal;
+  transition: background 0.12s, color 0.12s;
+}
+.ui-form-scale .ui-seg:first-child { border-left: none; }
+.ui-form-scale .ui-seg:hover:not(.active) { color: var(--text); background: var(--bg-1); }
+.ui-form-scale .ui-seg.active { background: var(--accent); color: var(--text-on-accent, #fff); cursor: default; }
+.ui-form-scale .ui-seg:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ui-form-scale-about { display: block; margin-top: 0.35rem; }
+@media (max-width: 600px) {
+  .ui-form-scale { flex-direction: column; }
+  .ui-form-scale .ui-seg { border-left: none; border-top: 1px solid var(--border); min-height: 36px; text-align: left; }
+  .ui-form-scale .ui-seg:first-child { border-top: none; }
+}
 /* Compact: trim padding so an emoji or 1-3 letter label sits in a
  * ~36x36 box. Used for secondary row buttons on narrow screens where
  * the standard 44px-min target would push the auto-reply switch and

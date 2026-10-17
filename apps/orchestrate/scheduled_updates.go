@@ -883,6 +883,9 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// and reports three posts is caught exactly as before.
 		CapturePrompt:  agent.CapturePrompt,
 		TurnClaimJudge: subTurn.claimJudge(ctx),
+		// The lead's review of a turn that did work, when this agent asks for one
+		// (lead_review.go).
+		TurnReview: subTurn.leadReviewer(ctx),
 		// What goes out with the reply, the finished picture a task wake
 		// carries included. Unset, the judge read every wake as delivering
 		// nothing: "There it is: the tagged version" went out WITH the picture

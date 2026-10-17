@@ -3228,7 +3228,65 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 			lr.emitDiag("ungrounded-claim-uncorrected", fmt.Sprintf("The reply still states %q as fact after correction. Delivered as written.", truncForLog(gv.Claim, 120)))
 		}
 	}
-	return actNone
+	return lr.leadReview(ev)
+}
+
+// leadReview is the last reader of a turn that did work (TurnReview): the
+// host's stronger model, asked whether the reply answers what was asked, is
+// complete, and is borne out by what the turn ran and got back. It comes
+// after the truth and grounding checks, so it reads a reply they have
+// already passed and spends its call on judgment rather than on a claim
+// they would have caught.
+//
+// Only turns that did work, decided by the evidence and never by the model:
+// a greeting or a short answer from what the agent knows has nothing for a
+// reviewer to check it against. A review that could not be had lets the
+// reply go, because a reviewer that cannot answer must not hold a reply up.
+func (lr *loopRun) leadReview(ev TurnClaimEvidence) loopAction {
+	if lr.cfg.TurnReview == nil || !ev.TurnDidWork() || strings.TrimSpace(ev.Reply) == "" {
+		return actNone
+	}
+	if !lr.corrections.available(correctionLeadReview) || lr.round >= lr.maxRounds {
+		if lr.corrections.exhausted(correctionLeadReview) {
+			lr.emitDiag("lead-review-uncorrected", "The lead sent the reply back twice; this version went out without a third review.")
+		}
+		return actNone
+	}
+	sendBack, changes, ok := lr.cfg.TurnReview(ev)
+	changes = strings.TrimSpace(changes)
+	if !ok {
+		Debug("[agent_loop] lead review: no review could be had; the reply goes out as written")
+		return actNone
+	}
+	if !sendBack || changes == "" {
+		Debug("[agent_loop] lead review: approved (tools=%d)", len(ev.ToolCalls))
+		return actNone
+	}
+	Debug("[agent_loop] lead review: sent back (%q): correction %d/%d",
+		truncForLog(changes, 80), lr.corrections.spend(correctionLeadReview), maxCorrectionsPerKind)
+	lr.emitDiag("lead-review-sent-back", "The lead reviewed the reply and sent it back: "+truncForLog(changes, 400))
+	// Settled, not struck: a reply sent back is unfinished, not false, and
+	// the revision that follows is labelled as one rather than read as a
+	// second answer (see the grounding correction above for why settling
+	// comes first).
+	lr.settleRound()
+	lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
+	if lr.cfg.SettleRound != nil {
+		lr.labelNextRound(reviewedLabel)
+	}
+	lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + leadReviewCorrection(changes)})
+	return actContinue
+}
+
+// reviewedLabel is what the revision a lead review asked for is shown under.
+const reviewedLabel = "Revised after review"
+
+// leadReviewCorrection is what the model is told when the review sends its
+// reply back. It asks for the whole reply again, since a review's changes
+// can touch any part of it, and for work where a change needs some.
+func leadReviewCorrection(changes string) string {
+	return "A reviewer read your reply against what this turn ran and got back, and sends it back:\n" + changes +
+		"\n\nMake these changes. Where one needs work done, do it with your tools first. Then give the complete reply again. Do not mention the review, and do not apologize."
 }
 
 func (lr *loopRun) finalRoundOutputGuardrail() loopAction {

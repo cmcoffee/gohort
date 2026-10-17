@@ -164,7 +164,11 @@ func TestEveryReplyGuardAsksItsMode(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i, line := range strings.Split(string(src), "\n") {
+			// The finish check and the lead review are the host's and the
+			// agent owner's own choices, not guards on a model's phrasing,
+			// so the per-model registry has no say over them.
 			if !strings.Contains(line, "lr.corrections.available(correction") || strings.Contains(line, "correctionFinishCheck") ||
+				strings.Contains(line, "correctionLeadReview") ||
 				strings.Contains(line, "!(lr.corrections.available(correctionToolMention)") {
 				continue
 			}

@@ -342,6 +342,7 @@ func settingSource(db Database, rec AgentRecord, key string) string {
 const (
 	leadUseLead    = "lead"
 	leadUsePlan    = "plan"
+	leadUseReview  = "review"
 	leadUseConsult = "consult"
 	leadUseOff     = "off"
 )
@@ -354,6 +355,8 @@ func leadUseOf(db Database, a AgentRecord) string {
 		return leadUsePlan
 	case a.LeadModel:
 		return leadUseLead
+	case a.LeadReview:
+		return leadUseReview
 	case settingIsOn(db, a, defaultConsultLead):
 		return leadUseConsult
 	}
@@ -362,7 +365,7 @@ func leadUseOf(db Database, a AgentRecord) string {
 
 // leadUseDefault is what an agent that has decided nothing gets.
 func leadUseDefault(db Database, a AgentRecord) string {
-	a.LeadModel, a.LeadPlans, a.ConsultLead = false, false, ""
+	a.LeadModel, a.LeadPlans, a.LeadReview, a.ConsultLead = false, false, false, ""
 	return leadUseOf(db, a)
 }
 
@@ -379,8 +382,15 @@ func applyLeadUse(db Database, a *AgentRecord, v string) {
 	case leadUseLead, leadUsePlan:
 		a.LeadModel = true
 		a.LeadPlans = v == leadUsePlan
+		a.LeadReview = false
+	case leadUseReview:
+		// The worker runs the turn; the lead only reads the result. Ask
+		// when stuck is left to follow the deployment default, since a
+		// reviewed turn can still use a question answered mid-way.
+		a.LeadModel, a.LeadPlans, a.LeadReview = false, false, true
+		a.ConsultLead = ""
 	case leadUseConsult, leadUseOff:
-		a.LeadModel, a.LeadPlans = false, false
+		a.LeadModel, a.LeadPlans, a.LeadReview = false, false, false
 		want := settingOn
 		if v == leadUseOff {
 			want = settingOff

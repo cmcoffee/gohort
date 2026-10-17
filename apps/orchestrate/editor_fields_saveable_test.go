@@ -65,8 +65,10 @@ func TestEveryEditorFieldIsSaveable(t *testing.T) {
 		"guardrails": true, "guardrails_disabled": true, "locked": true,
 		"id": true, "owner": true, "created": true,
 		"machine": true,
-		// One choice over lead_model + consult_lead: PATCH translates it into
-		// those two (applyLeadUse) before the allowlist is consulted.
+		// One choice over lead_model, lead_plans, lead_review and
+		// consult_lead: PATCH translates it into those (applyLeadUse) before
+		// the allowlist is consulted, so each of them has to be on it
+		// (TestTheLeadChoiceSavesThroughPATCH).
 		"lead_use": true,
 	}
 	// Two spellings: ui.FormField{Field: ...} on its own, and a bare

@@ -334,7 +334,10 @@ var patchAgentFields = map[string]bool{
 	"max_plan_steps": true, "max_worker_rounds": true, "think": true,
 	"think_budget": true, "effort": true, "context_depth": true, "gap_check": true,
 	"action_quotas": true, "daily_spend_usd": true,
-	"lead_model": true, "memory_mode": true, "session_recall": true, "disable_explicit": true,
+	// lead_plans and lead_review with lead_model: the editor's lead_use
+	// writes all of them (and consult_lead), and leaving one off refused
+	// that choice with a 400.
+	"lead_model": true, "lead_plans": true, "lead_review": true, "memory_mode": true, "session_recall": true, "disable_explicit": true,
 	"disable_inferred": true, "disable_compaction": true, "recall_hints": true,
 	"capture_prompt": true,
 	"allow_explorer": true, "explorer_hard_cap": true,
@@ -413,6 +416,7 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 		applyLeadUse(RootDB, &choice, fmt.Sprint(v))
 		patch["lead_model"] = choice.LeadModel
 		patch["lead_plans"] = choice.LeadPlans
+		patch["lead_review"] = choice.LeadReview
 		patch["consult_lead"] = choice.ConsultLead
 	}
 	applied := make([]string, 0, len(patch))

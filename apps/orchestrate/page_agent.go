@@ -1027,31 +1027,39 @@ func leadUseField(show bool, rec AgentRecord) ui.FormField {
 		return ui.FormField{Field: "lead_use", Type: "hidden"}
 	}
 	def := leadUseDefault(RootDB, rec)
-	label := func(v, text string) ui.SelectOption {
+	// The choices are steps along one line, from the worker alone to the
+	// lead for everything, so they are drawn as a scale in that order: how
+	// much of each turn the lead sees, and so what a turn costs.
+	stop := func(v, label, help string) ui.SelectOption {
 		if v == def {
-			text += " (default)"
+			help += " This is the default."
 		}
-		return ui.SelectOption{Value: v, Label: text}
+		return ui.SelectOption{Value: v, Label: label, Help: help}
 	}
-	opts := []ui.SelectOption{label(leadUseLead, "Lead for every turn")}
-	// Builder plans already: its lead round has no work tools of its own.
-	if !isBuilderAgent(rec.ID) {
-		opts = append(opts, label(leadUsePlan, "Lead plans, worker does the work"))
-	}
+	opts := []ui.SelectOption{stop(leadUseOff, "Worker only", "Every turn runs on the local worker; the lead is never used.")}
 	// Consult is offered only where the deployment allows it.
 	for _, c := range deploymentDefaultChoices(RootDB, defaultConsultLead) {
 		if c == settingOn {
-			opts = append(opts, label(leadUseConsult, "Ask the lead when stuck"))
+			opts = append(opts, stop(leadUseConsult, "Ask when stuck",
+				"The worker runs the turn and may ask the lead one self-contained question when it hits a wall, at most three a turn. Only the question and its evidence go."))
 		}
 	}
-	opts = append(opts, label(leadUseOff, "Never use the lead"))
+	opts = append(opts, stop(leadUseReview, "Lead reviews",
+		"The worker runs the turn; before the reply goes out, the lead reads it with what the turn ran and got back, and lets it go or sends it back with changes. Only turns that did work are reviewed."))
+	// The same choice on Builder means something of its own: the lead designs
+	// and reviews apps, and a worker writes them (builder_app_split.go).
+	if isBuilderAgent(rec.ID) {
+		opts = append(opts, stop(leadUsePlan, "Lead designs apps",
+			"For an app, the lead designs it with you, a worker on the local model writes it, and the lead reads the code and sends changes until it is right. Everything else Builder makes is built on the lead."))
+	} else {
+		opts = append(opts, stop(leadUsePlan, "Lead plans",
+			"The lead decides and writes the reply; steps on the worker do the work with the tools it picks for each. No tool list and no raw tool output reach the lead."))
+	}
+	opts = append(opts, stop(leadUseLead, "Lead every turn", "The lead runs the whole turn with every tool."))
 	return ui.FormField{
-		Field: "lead_use", Type: "select", Label: "Lead model", Options: opts,
-		Help: "Which model this agent thinks with: the lead (remote, stronger, costs per turn) or the local worker.",
-		Detail: "Lead for every turn runs the agent's whole turn on the lead model; the dispatched per-step worker phases still run on the worker.\n\n" +
-			"Lead plans, worker does the work keeps the lead to deciding and writing: the lead sees the request with no work tools of its own, answers directly when no work is needed, and otherwise hands the work to steps that run on the worker with the tools it picks for each. It then writes the reply from what the steps found. In a chat that is a plan you watch; on a dispatched, scheduled or channel run the lead takes one step at a time and can take another when a step comes back short. The lead's calls stay small, since no tool list and no raw tool output reach it. A step sees the request, its brief and earlier steps' results, not the whole conversation.\n\n" +
-			"Ask the lead when stuck keeps the turn on the local worker and lets it ask the lead ONE self-contained question when it hits a wall (an unfamiliar API's request shape, an error it cannot read): the question and its evidence go and nothing else does, no history, no tool catalog. At most three a turn. The cheap way to use the stronger model, and the default for agents that build things.\n\n" +
-			"Never use the lead keeps everything on the worker.\n\n" +
+		Field: "lead_use", Type: "scale", Label: "Lead model", Options: opts,
+		Help: "How much of each turn the lead model does: left is the local worker alone, right is the lead for everything.",
+		Detail: "Left to right, each step gives the lead more of the turn, and costs more. Worker only never uses it. Ask when stuck lets the worker ask it a question. Lead reviews has it read the finished reply against what the turn did, once, and send it back when something is wrong or missing; it never rewrites the reply itself. Lead plans has it decide and write while workers do the work (on Builder, design and review apps while a worker writes them). Lead every turn runs the whole turn on it.\n\n" +
 			"A Private conversation never reaches the lead, whatever is chosen here.",
 	}
 }

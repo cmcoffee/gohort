@@ -2112,6 +2112,41 @@
           }
           save(f.field, vals);
         });
+      } else if (t === 'scale') {
+        // An ordered choice drawn as a track: each option a stop, left to
+        // right in the order given, the chosen one filled, its help line
+        // under the track. For settings whose options are steps along one
+        // line (how much a stronger model does, how loud an alert is),
+        // where a dropdown hides the order the options stand in. Saves the
+        // value like a select; on a phone the stops stack.
+        input = el('div', {class: 'ui-form-scale-wrap'});
+        var track = el('div', {class: 'ui-form-scale', role: 'radiogroup'});
+        var about = el('div', {class: 'ui-form-help ui-form-scale-about'});
+        var stops = [];
+        var showScale = function(v) {
+          var hit = null;
+          stops.forEach(function(s) {
+            var on = String(s.o.value) === String(v);
+            s.b.classList.toggle('active', on);
+            s.b.setAttribute('aria-checked', on ? 'true' : 'false');
+            if (on) hit = s.o;
+          });
+          about.textContent = hit ? (hit.help || '') : '';
+        };
+        (f.options || []).forEach(function(o) {
+          var b = el('button', {type: 'button', class: 'ui-seg', role: 'radio'}, [o.label || o.value]);
+          b.addEventListener('click', function() {
+            if (b.classList.contains('active')) return;
+            showScale(o.value);
+            save(f.field, o.value);
+          });
+          stops.push({o: o, b: b});
+          track.appendChild(b);
+        });
+        input.appendChild(track);
+        input.appendChild(about);
+        showScale(initial == null || initial === '' ? ((f.options || [])[0] || {}).value : initial);
+        fieldSetters[f.field] = function(v) { showScale(v); save(f.field, v); };
       } else if (t === 'toggle') {
         // iOS-style switch as a form field. Saves immediately on
         // change (no debounce) since toggles are discrete decisions.

@@ -705,6 +705,14 @@ type AgentLoopConfig struct {
 	// phrase-list guards above do not know about. See turn_judge.go.
 	TurnClaimJudge TurnClaimJudge
 
+	// TurnReview is the lead's review of a turn that did work: whether the
+	// reply answers the request, is complete, and is borne out by what the
+	// turn ran and got back. sendBack with changes returns the reply to the
+	// model with them, at most twice a turn; ok false (no review could be
+	// had) lets the reply go. Nil, the default, reviews nothing. Runs after
+	// the truth and grounding checks. See leadReview in agent_loop.go.
+	TurnReview func(ev TurnClaimEvidence) (sendBack bool, changes string, ok bool)
+
 	// PriorWork reports work already done FOR this turn before the loop
 	// started, which the loop therefore cannot observe: a machine step that
 	// searched, a delegated step, a pipeline phase. One entry per piece of

@@ -1,6 +1,9 @@
 package orchestrate
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -56,10 +59,11 @@ func TestTheLeadChoiceRoundTrips(t *testing.T) {
 	if got := leadUseOf(RootDB, AgentRecord{ID: "a3", LeadPlans: true}); got == leadUsePlan {
 		t.Error("LeadPlans alone reads as planning on the lead")
 	}
-	// Builder plans already, so it is not offered the choice.
+	// On Builder the choice means its own thing, the lead designing apps and a
+	// worker writing them (builder_app_split.go), and is named for it.
 	for _, o := range leadUseField(true, AgentRecord{ID: "seed-builder"}).Options {
-		if o.Value == leadUsePlan {
-			t.Error("Builder is offered planning on the lead")
+		if o.Value == leadUsePlan && !strings.Contains(o.Label, "Lead designs apps") {
+			t.Errorf("Builder's plan choice reads %q", o.Label)
 		}
 	}
 
@@ -69,11 +73,45 @@ func TestTheLeadChoiceRoundTrips(t *testing.T) {
 		t.Errorf("lead + consult reads %q", got)
 	}
 
+	// A scale from the worker alone to the lead for everything, the default
+	// said in its stop's own help line.
 	f := leadUseField(true, plain)
-	if f.Field != "lead_use" || len(f.Options) != 4 || f.Options[0].Value != leadUseLead || f.Options[1].Value != leadUsePlan || f.Options[3].Label != "Never use the lead (default)" {
-		t.Errorf("the dropdown: %+v", f.Options)
+	var order []string
+	for _, o := range f.Options {
+		order = append(order, o.Value)
+	}
+	if f.Field != "lead_use" || f.Type != "scale" || strings.Join(order, " ") != "off consult review plan lead" ||
+		!strings.Contains(f.Options[0].Help, "This is the default.") {
+		t.Errorf("the scale: %+v", f.Options)
 	}
 	if m := withLeadUse(RootDB, plain); string(m["lead_use"]) != `"off"` {
 		t.Errorf("the form's lead_use: %s", m["lead_use"])
+	}
+}
+
+// The lead choice saves through PATCH, which is how the editor sends it, for
+// every value it offers: the translation writes lead_plans as well as
+// lead_model and consult_lead, and a field the allowlist did not know made
+// "Lead plans" (and Builder's "Lead designs apps") answer 400.
+func TestTheLeadChoiceSavesThroughPATCH(t *testing.T) {
+	T, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	for _, id := range []string{"seed-builder", ""} {
+		a, err := saveAgent(udb, AgentRecord{ID: id, Owner: user, Name: "Agent " + id, OrchestratorPrompt: "Help."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, choice := range []string{leadUsePlan, leadUseLead, leadUseReview, leadUseOff, leadUseReview, leadUsePlan} {
+			w := httptest.NewRecorder()
+			body := `{"id":"` + a.ID + `","lead_use":"` + choice + `"}`
+			T.patchAgent(w, httptest.NewRequest(http.MethodPatch, "/api/agents?id="+a.ID, strings.NewReader(body)), udb, user, a.ID)
+			if w.Code != http.StatusOK {
+				t.Fatalf("%s: lead_use=%s answered %d: %s", a.ID, choice, w.Code, w.Body.String())
+			}
+			got, _ := loadAgent(udb, a.ID)
+			if leadUseOf(RootDB, got) != choice && !(choice == leadUseOff && leadUseOf(RootDB, got) == leadUseDefault(RootDB, got)) {
+				t.Errorf("%s: chose %s, reads %s", a.ID, choice, leadUseOf(RootDB, got))
+			}
+		}
 	}
 }
