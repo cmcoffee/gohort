@@ -2939,7 +2939,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// that signal and floods the context; say it outright instead.
 	if resp.StatusCode >= 400 {
 		if b := strings.TrimSpace(string(bodyBytes)); strings.HasPrefix(b, "<!DOCTYPE") || strings.HasPrefix(b, "<!doctype") || strings.HasPrefix(b, "<html") {
-			fmt.Fprintf(&sb, "[HTML error page suppressed: the server returned a web PAGE, not an API response. The URL path is almost certainly wrong for this API (missing prefix like /api, or a route the API doesn't serve). Re-check the endpoint path against the provider's docs; do NOT retry the same URL.]")
+			sb.WriteString(secureAPIHTMLPageNote)
 			return sb.String(), nil
 		}
 	}
@@ -2956,9 +2956,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		// the same refused idea a dozen times while a builder rewrote a
 		// working tool. The fixed phrase REFUSED THE CONTENT is also how a
 		// custom tool's failure reader tells a refusal from a broken tool.
-		fmt.Fprintf(&sb, "[The provider REFUSED THE CONTENT of the request (a content, safety or usage policy), not its shape: the path, parameters, credential and tool are fine, and the same wording gets the same refusal. Rephrase what is being asked for. A common cause is naming a real person, artist, brand or copyrighted work to imitate: describe the style or qualities instead (\"90s West Coast G-funk\", not an artist's name). If the request itself is what the policy refuses, tell the user plainly.]\n")
+		sb.WriteString(secureAPIRefusalNote + "\n")
 	} else if s := resp.StatusCode; s == 400 || s == 404 || s == 405 || s == 422 {
-		fmt.Fprintf(&sb, "[The server RESPONDED with HTTP %d: it is reachable and speaking HTTP, so the credential and protocol are FINE. A %d means the PATH, QUERY PARAMS, or BODY are wrong FOR THIS ENDPOINT, iterate the request: try a different path/params, copy the shape of a working sibling tool on this credential (check_credential lists them), or read the provider's HTTP-API docs. Do NOT switch this tool to shell/telnet, and do NOT ask the user to reconfigure the credential, over a 4xx.]\n", s, s)
+		sb.WriteString(secureAPIShapeNote(s) + "\n")
 	}
 	if strings.Contains(ct, "json") {
 		var anyVal interface{}
@@ -4699,4 +4699,22 @@ func (s *SecureAPI) forgetRecipient(uid string) {
 	}
 	s.mu.Unlock()
 	peershare.DropRecipient(s.db, sharedCredentialsTable, uid)
+}
+
+// The notes the API tool writes into a response it reads back, in one place:
+// the response formatter writes them, and the injection scan leaves exactly
+// these out of what it judges (frameworkAdviceForScan). They address the agent
+// on purpose, and the scan read "iterate the request: try a different path" as
+// instructions planted in the response.
+const (
+	secureAPIHTMLPageNote = "[HTML error page suppressed: the server returned a web PAGE, not an API response. The URL path is almost certainly wrong for this API (missing prefix like /api, or a route the API doesn't serve). Re-check the endpoint path against the provider's docs; do NOT retry the same URL.]"
+	secureAPIRefusalNote  = "[The provider REFUSED THE CONTENT of the request (a content, safety or usage policy), not its shape: the path, parameters, credential and tool are fine, and the same wording gets the same refusal. Rephrase what is being asked for. A common cause is naming a real person, artist, brand or copyrighted work to imitate: describe the style or qualities instead (\"90s West Coast G-funk\", not an artist's name). If the request itself is what the policy refuses, tell the user plainly.]"
+)
+
+// secureAPIShapeNoteStatuses are the request-shape statuses that get
+// secureAPIShapeNote.
+var secureAPIShapeNoteStatuses = []int{400, 404, 405, 422}
+
+func secureAPIShapeNote(status int) string {
+	return fmt.Sprintf("[The server RESPONDED with HTTP %d: it is reachable and speaking HTTP, so the credential and protocol are FINE. A %d means the PATH, QUERY PARAMS, or BODY are wrong FOR THIS ENDPOINT, iterate the request: try a different path/params, copy the shape of a working sibling tool on this credential (check_credential lists them), or read the provider's HTTP-API docs. Do NOT switch this tool to shell/telnet, and do NOT ask the user to reconfigure the credential, over a 4xx.]", status, status)
 }

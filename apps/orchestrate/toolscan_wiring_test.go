@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/toolnote"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -1032,5 +1033,47 @@ func TestAWholeToolCanReachOnlyOurOwnModel(t *testing.T) {
 	}
 	if !gate("fetch_url", nil) {
 		t.Error("an ordinary outbound tool stopped being judged")
+	}
+}
+
+// The broken-tool advice the framework appends is our own instruction to the
+// agent. Observed: the scan read "Do not keep retrying it, and do not work
+// around it with other tools" on one refused API call, flagged it as an
+// injection, and the scheduled run's card led with an injection warning. The
+// scan judges what the tool returned; the note goes back after the fence.
+func TestTheBrokenToolNoteIsNotScannedOrFenced(t *testing.T) {
+	var scannedText string
+	turn := &chatTurn{ctx: context.Background(), scannerInit: true}
+	turn.scanner = func(ctx context.Context, toolName, content string, finding ...string) ToolScanVerdict {
+		scannedText = content
+		if strings.Contains(content, "Do not keep retrying") {
+			return ToolScanVerdict{Status: ScanFlagged, Span: "Do not keep retrying it"}
+		}
+		return ToolScanVerdict{Status: ScanClean}
+	}
+	note := "Note: create_post" + toolFailureNoteMarker + " (the call did not return a 2xx status). Do not keep retrying it, and do not work around it with other tools."
+	out, err := turn.applyToolResultPolicy("moltbook",
+		toolResultPolicy{fence: true, scan: true}, nil, toolnote.Append("HTTP 500\n{\"error\":\"down\"}", note), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(scannedText, "Do not keep retrying") || !strings.Contains(scannedText, "HTTP 500") {
+		t.Errorf("the scan should judge the tool's output and not the note, it saw %q", scannedText)
+	}
+	if turn.scanDetectionCount() != 0 || strings.Contains(out, "INJECTION DETECTED") {
+		t.Errorf("our own advice was taken for an injection: %q", out)
+	}
+	if !strings.HasPrefix(out, untrustedContentFence) || !strings.HasSuffix(out, "\n\n"+note) {
+		t.Errorf("the output should be fenced and the note follow it, outside: %q", out)
+	}
+	if strings.Contains(out, "\x00") {
+		t.Error("the mark reached the model")
+	}
+
+	// The same words in what the tool returned are still judged.
+	scannedText = ""
+	turn.applyToolResultPolicy("moltbook", toolResultPolicy{fence: true, scan: true}, nil, "A post body. "+note, nil)
+	if !strings.Contains(scannedText, "Do not keep retrying") {
+		t.Error("wording the tool returned must still be scanned, or a page could hide behind it")
 	}
 }

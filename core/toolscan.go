@@ -42,6 +42,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -486,6 +487,7 @@ func NewToolScanner(chat ToolScanChatFunc, cache *ToolScanCache) ToolScanner {
 		return nil
 	}
 	return func(ctx context.Context, toolName, content string, finding ...string) ToolScanVerdict {
+		content = withoutFrameworkAdvice(content)
 		if !ToolScanWorthScanning(content) {
 			return ToolScanVerdict{Status: ScanClean}
 		}
@@ -761,4 +763,30 @@ func ParseTaintedActionVerdict(reply string) TaintedActionVerdict {
 	default:
 		return TaintedActionVerdict{Status: ScanNoVerdict, Reason: "action check returned an unrecognized status"}
 	}
+}
+
+// skillApplyLead is the sentence the skill tools put in front of a skill's
+// instructions (skills.go: skillInstructionsBlock and read_skill).
+var skillApplyLead = regexp.MustCompile(`Apply the "[^"\n]{1,200}" approach for the REST of this turn, it governs how you read these results AND how you reply, not just this one result:|Skill "[^"\n]{1,200}", apply this approach for the REST of this turn, including your reply:`)
+
+// withoutFrameworkAdvice is content with gohort's own notes to the agent taken
+// out, for the scan to judge. Those notes address the agent on purpose ("do NOT
+// retry the same URL", "iterate the request"), and the scan took them for
+// instructions planted in what a tool fetched: a scheduled run's card led with
+// an injection warning for one refused API call.
+//
+// Only the exact notes come out, never what follows them. Matching a note by
+// its wording is forgeable, but all a page gains by copying one is that the
+// copy is not judged; everything else it says still is. The model's copy of
+// the result is untouched.
+func withoutFrameworkAdvice(content string) string {
+	if !strings.Contains(content, "[") && !strings.Contains(content, "approach for the REST of this turn") {
+		return content
+	}
+	content = strings.ReplaceAll(content, secureAPIHTMLPageNote, "")
+	content = strings.ReplaceAll(content, secureAPIRefusalNote, "")
+	for _, status := range secureAPIShapeNoteStatuses {
+		content = strings.ReplaceAll(content, secureAPIShapeNote(status), "")
+	}
+	return skillApplyLead.ReplaceAllString(content, "")
 }

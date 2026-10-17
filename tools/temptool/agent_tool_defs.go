@@ -9,6 +9,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/toolcat"
+	"github.com/cmcoffee/gohort/core/toolnote"
 )
 
 // BuildAgentToolDefs converts a session's temp tools into AgentToolDefs
@@ -689,7 +690,9 @@ func adviseOnFailure(sess *ToolSession, tt *TempTool, out string, err error) (st
 	if err != nil {
 		return out, fmt.Errorf("%w\n\n%s", err, advice)
 	}
-	return out + "\n\n" + advice, nil
+	// Marked as the framework's: the injection scan judges what the tool
+	// returned, not this, which is an instruction to the agent on purpose.
+	return toolnote.Append(out, advice), nil
 }
 
 // Why a failure is the tool's and not the caller's arguments.

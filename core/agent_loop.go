@@ -15,6 +15,7 @@ import (
 	"github.com/cmcoffee/snugforge/nfo"
 
 	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/gohort/core/toolnote"
 )
 
 // ToolHandlerFunc is a function that executes a tool call and returns its
@@ -78,6 +79,7 @@ func safeInvoke(ctx context.Context, name string, handler ToolHandlerFunc, args 
 	// read it, it must never reach the model. This is the one place every tool
 	// call passes through.
 	output, _ = TakeFrameworkResultMark(output)
+	output = toolnote.Strip(output)
 	return output, err
 }
 

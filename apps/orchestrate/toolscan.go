@@ -24,6 +24,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/toolnote"
 )
 
 func init() {
@@ -156,6 +157,18 @@ func nameListed(list []string, name string) bool {
 //     hard banner says everything the fence says and more; applying both would
 //     bury the part that is new.
 func (t *chatTurn) applyToolResultPolicy(name string, p toolResultPolicy, args map[string]any, out string, err error) (string, error) {
+	// A note the framework appended (toolnote) is our text too: it comes off
+	// before the fence and the scan, and goes back after them, outside the
+	// fence, where the agent reads it as an instruction it is meant to follow.
+	body, note := toolnote.Split(out)
+	res, err := t.applyToolResultPolicyBody(name, p, args, body, err)
+	if note != "" {
+		res += "\n\n" + note
+	}
+	return res, err
+}
+
+func (t *chatTurn) applyToolResultPolicyBody(name string, p toolResultPolicy, args map[string]any, out string, err error) (string, error) {
 	out, byFramework := TakeFrameworkResultMark(out)
 	if err != nil || byFramework || strings.TrimSpace(out) == "" {
 		return out, err
