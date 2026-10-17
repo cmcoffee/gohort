@@ -351,6 +351,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 			RequestTimeout       int    `json:"request_timeout_seconds"`
 			NativeTools          bool   `json:"native_tools"`
 			DisableThinking      bool   `json:"disable_thinking"`
+			NoImages             bool   `json:"no_images"`
 			ThinkingBudget       int    `json:"thinking_budget"`
 			DefaultEffort        string `json:"default_effort"`
 			MaxEffort            string `json:"max_effort"`
@@ -385,6 +386,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		a.db.Set(table, "bedrock_api", req.BedrockAPI)
 		a.db.Set(table, "native_tools", req.NativeTools)
 		a.db.Set(table, "disable_thinking", req.DisableThinking)
+		a.db.Set(table, "no_images", req.NoImages)
 		a.db.Set(table, "thinking_budget", req.ThinkingBudget)
 		a.db.Set(table, "default_effort", effortLevel(req.DefaultEffort))
 		a.db.Set(table, "max_effort", effortLevel(req.MaxEffort))
@@ -431,7 +433,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 	// GET — current values; api_key is masked (never returned).
 	var provider, model, endpoint, awsRegion, awsProfile, bedrockAPI string
 	var contextSize, reqTimeout, noThinkBudget int
-	var nativeTools, disableThinking, ntPrependSys, ntPrependUser bool
+	var nativeTools, disableThinking, noImages, ntPrependSys, ntPrependUser bool
 	ntKwarg, ntBudget := true, true // defaults when no-think was never configured
 	thinkingBudget := 4096          // default budget when unset (matches config.go)
 	a.db.Get(table, "provider", &provider)
@@ -443,6 +445,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 	bedrockAPI = bedrockAPIShown(provider, bedrockAPI)
 	a.db.Get(table, "native_tools", &nativeTools)
 	a.db.Get(table, "disable_thinking", &disableThinking)
+	a.db.Get(table, "no_images", &noImages)
 	a.db.Get(table, "thinking_budget", &thinkingBudget)
 	var defaultEffort, maxEffort string
 	a.db.Get(table, "default_effort", &defaultEffort)
@@ -467,6 +470,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		"bedrock_api":             bedrockAPI,
 		"native_tools":            nativeTools,
 		"disable_thinking":        disableThinking,
+		"no_images":               noImages,
 		"thinking_budget":         thinkingBudget,
 		"default_effort":          defaultEffort,
 		"max_effort":              maxEffort,

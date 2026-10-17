@@ -71,6 +71,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 						// every peer, calls tools natively (ProviderHasNativeTools).
 						ShowWhen: "provider:ollama",
 						Help:     "Disable for models without tool-calling support (ollama)."},
+					{Type: "header", Label: "Capabilities"},
+					readsImagesField(""),
 					{Type: "header", Label: "Thinking"},
 					{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle",
 						ShowWhen: "provider:!anthropic|openai|bedrock"},
@@ -147,6 +149,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "native_tools", Label: "Native tool calling", Type: "toggle",
 						ShowWhen: "provider:ollama",
 						Help:     "Disable for models without tool-calling support (ollama)."},
+					{Type: "header", Label: "Capabilities", ShowWhen: "provider"},
+					readsImagesField("provider"),
 					{Type: "header", Label: "Thinking"},
 					{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle",
 						ShowWhen: "provider;provider:!anthropic|openai|bedrock"},
@@ -284,6 +288,17 @@ const (
 
 // leadOnly gates a shared tier field on the Lead form, where a blank provider
 // means "(use primary)" and the worker's own settings apply instead.
+// readsImagesField is the image capability, the same on both tiers. Stored as
+// no_images so every model configured before it existed keeps reading them.
+func readsImagesField(showWhen string) ui.FormField {
+	return ui.FormField{Field: "no_images", Label: "Reads images", Type: "toggle", Invert: true, ShowWhen: showWhen,
+		Help: "Off: this model is never sent an image. A model that reads them describes each one in its place.",
+		Detail: "Turn it off for a model that cannot see, or for one you would rather not show your pictures to. " +
+			"Each image or video still sent to this model is replaced by a description written by the other tier when that one reads images, worker first, or by a note that an image was there when neither does. " +
+			"With the worker on and the lead off, pictures stay on this machine: the lead only ever gets the worker's words about them. " +
+			"The image stays in the conversation, so a model that can see still gets it."}
+}
+
 func leadOnly(f ui.FormField) ui.FormField {
 	f.ShowWhen = "provider"
 	return f

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1289,6 +1290,12 @@ type LLMProviderConfig struct {
 	// token budget: ThinkingBudget above stays the llama.cpp ceiling.
 	DefaultEffort string
 	MaxEffort     string
+	// NoImages keeps images from this model: each is described by a
+	// configured model that reads them, or replaced with a note when there
+	// is none (the image gate in llm.go). For a model that cannot see, and for one
+	// that should not be shown pictures. Stored as the negative so every
+	// existing configuration reads images as before.
+	NoImages bool
 }
 
 // newLLMAPIClient builds an apiclient.APIClient configured for LLM provider
@@ -1327,6 +1334,9 @@ type retryLLM struct {
 	// credential that peer REFUSES can be dropped and re-exchanged. Empty for
 	// every other provider. See peerRefused.
 	peer string
+	// noImages: this model is not shown images; they are described in their
+	// place (LLMProviderConfig.NoImages, the image gate in llm.go).
+	noImages bool
 }
 
 // peerRefused reports a peer answering 401 to a model call, and drops the
@@ -1490,6 +1500,7 @@ func isTransientError(err error) bool {
 }
 
 func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	messages = r.withoutImages(ctx, messages)
 	return doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
 		// First attempt: original opts, original messages.
 		resp, err := r.inner.Chat(ctx, messages, opts...)
@@ -1532,6 +1543,7 @@ func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOpt
 }
 
 func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
+	messages = r.withoutImages(ctx, messages)
 	var handlerCalled bool
 	var chunks int
 	wrappedHandler := func(chunk string) {
@@ -2006,7 +2018,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		c.effort = tier
 	}
 
-	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName}, nil
+	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName, noImages: cfg.NoImages}, nil
 }
 
 // ListModels asks a provider which models it offers, from the same settings a
@@ -2363,4 +2375,133 @@ func (f *FakeLLM) Streamed(i int) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return i >= 0 && i < len(f.calls) && f.calls[i].streamed
+}
+
+// ---------------------------------------------------------------- image gate
+//
+// A model that does not read images (LLMProviderConfig.NoImages) never gets
+// one. Every call to it passes through retryLLM, so the gate sits there: an
+// image or a video in the messages is taken out before the call, and in its
+// place goes a description written by a configured model that does read
+// images, or, when there is none, a note that an image was there.
+//
+// Two reasons to turn it off, and the gate serves both. A model that cannot
+// see answers better from a description than from an attachment it silently
+// drops. And a remote model an owner would rather not show their pictures to
+// gets only the words a local model wrote about them: with the worker on and
+// the lead off, a photo never leaves the machine.
+//
+// The original stays in the conversation; only the copy sent to this model
+// changes, so a later call to a model that can see still gets the picture.
+
+// imageDescribePrompt is what the describing model is asked.
+const imageDescribePrompt = `Describe this image for an assistant that cannot see it and has to answer questions about it. Say what it shows; copy any text in it exactly; give the layout, the people and their expressions, numbers, colours and anything unusual. Plain prose, no preamble, no opinion of the image.`
+
+// imageNote is what goes in an image's place when nothing could describe it.
+const imageNote = "[An image was attached here. This model does not read images, and no model that does was available to describe it, so its contents are unknown.]"
+
+// describeCacheMax bounds the descriptions kept: one turn re-sends its whole
+// history every round, so a picture would otherwise be described per round.
+const describeCacheMax = 128
+
+var (
+	describeMu    sync.Mutex
+	describeCache = map[[32]byte]string{}
+	describeOrder [][32]byte
+)
+
+// withoutImages returns messages with every image and video replaced by a
+// description, for a model that does not read them. Messages carrying none
+// are returned as they are, and the caller's slice is never changed.
+func (r *retryLLM) withoutImages(ctx context.Context, messages []Message) []Message {
+	if !r.noImages {
+		return messages
+	}
+	carries := false
+	for _, m := range messages {
+		if len(m.Images) > 0 || len(m.Videos) > 0 {
+			carries = true
+			break
+		}
+	}
+	if !carries {
+		return messages
+	}
+	describer := imageDescriber(r)
+	out := make([]Message, len(messages))
+	copy(out, messages)
+	for i, m := range out {
+		if len(m.Images) == 0 && len(m.Videos) == 0 {
+			continue
+		}
+		images := m.Images
+		var notes []string
+		if len(m.Videos) > 0 {
+			if meta := ExtractVideosMetadata(m.Videos); meta != "" {
+				notes = append(notes, meta)
+			}
+			images = append(append([][]byte(nil), images...), ExtractVideosFrames(m.Videos, VideoFrameSampleCount)...)
+		}
+		for n, img := range images {
+			notes = append(notes, fmt.Sprintf("[Image %d, described by another model because this one does not read images: %s]", n+1, describeImage(ctx, describer, img)))
+		}
+		if len(images) == 0 && len(m.Videos) > 0 {
+			notes = append(notes, "[A video was attached here, and no still could be taken from it.]")
+		}
+		text := strings.TrimSpace(m.Content)
+		if text != "" {
+			notes = append([]string{text}, notes...)
+		}
+		m.Content = strings.Join(notes, "\n\n")
+		m.Images, m.Videos = nil, nil
+		out[i] = m
+	}
+	Debug("[llm] images held back from a model that does not read them (describer available: %v)", describer != nil)
+	return out
+}
+
+// imageDescriber is a configured model that reads images, worker first: on
+// the usual setup that is the local one, so a picture is described without
+// leaving the machine. Never the model asking.
+func imageDescriber(asking *retryLLM) LLM {
+	for _, m := range []LLM{SharedWorkerLLM(), SharedLeadLLM()} {
+		r, ok := m.(*retryLLM)
+		if !ok || r == asking || r.noImages {
+			continue
+		}
+		return r
+	}
+	return nil
+}
+
+// describeImage is one picture's description, from the cache when it has
+// been described before.
+func describeImage(ctx context.Context, describer LLM, img []byte) string {
+	if describer == nil {
+		return imageNote
+	}
+	key := sha256.Sum256(img)
+	describeMu.Lock()
+	if d, ok := describeCache[key]; ok {
+		describeMu.Unlock()
+		return d
+	}
+	describeMu.Unlock()
+	resp, err := describer.Chat(ctx, []Message{{Role: "user", Content: imageDescribePrompt, Images: [][]byte{img}}}, WithThink(false))
+	if err != nil || resp == nil || strings.TrimSpace(resp.Content) == "" {
+		Debug("[llm] describing an image for a model that does not read them failed: %v", err)
+		return "it could not be described (the describing model failed), so its contents are unknown"
+	}
+	d := strings.TrimSpace(resp.Content)
+	describeMu.Lock()
+	if _, ok := describeCache[key]; !ok {
+		describeCache[key] = d
+		describeOrder = append(describeOrder, key)
+		if len(describeOrder) > describeCacheMax {
+			delete(describeCache, describeOrder[0])
+			describeOrder = describeOrder[1:]
+		}
+	}
+	describeMu.Unlock()
+	return d
 }
