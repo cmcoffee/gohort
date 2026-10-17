@@ -56,7 +56,7 @@ A type is an archetype, extended. It carries:
 
 | Part | What it is | Today |
 |---|---|---|
-| Name and purpose | "Mapper: maps one subject and keeps the map" | `summary`, `template.label` |
+| Name and purpose | "Librarian: catalogues one subject and is the one asked first" | `summary`, `template.label` |
 | Settings | The starting record: memory mode, Cortex, thinking, caps | `record` |
 | Procedure | A machine, or none | new: the record's `machine`, which a type can now ship |
 | Needs | What it cannot work without: "a way to reach the subject", "a file store" | new; declared, never granted |
@@ -69,7 +69,7 @@ The types this gives:
 |---|---|---|
 | Assistant | none | the wizard's preset today, becomes a type unchanged |
 | Specialist | none | the same |
-| Mapper | the Map machine | first new type; see below |
+| Librarian | the Map machine | first new type; see below |
 | Debate | its stages, as a machine | later; see Stages |
 | Deep research | its stages, as a machine | later |
 | A person's own | whatever Builder authored | later |
@@ -110,7 +110,7 @@ the agent can reach or who it answers to, and never holds what the agent remembe
 - State, which is never on the record at all: memory, the map, sessions, Cortex, facts and
   graph, schedules, channels, bulletins.
 
-A type lists what it **needs**; the owner decides what fills it. A Mapper needs a way to reach
+A type lists what it **needs**; the owner decides what fills it. A Librarian needs a way to reach
 its subject, and the owner gives it a GitLab credential or an MCP server.
 
 ## Following, overriding, detaching
@@ -150,9 +150,9 @@ Because a type never grants permissions, the worst a bad change to a shared type
 how its agents work, never what they can reach. A follower who wants to stay as they are uses
 Customize.
 
-## Mapper, the first type with a machine
+## Librarian, the first type with a machine
 
-The Mapper is the investigator archetype with a subject, a procedure, and a way for other agents
+The Librarian is the investigator archetype with a subject, a procedure, and a way for other agents
 to read what it found.
 
 - **Its subject is the agent's own** (a setting on the instance, like its name), so one type
@@ -165,19 +165,19 @@ to read what it found.
 - **Its memory is the map:** findings by topic, facts, and graph links (repo to group, service to
   repo). A `map` memory framing names it as one ("your map of ...") where today's modes say
   lessons, notes or shortcuts.
-- **Attached to another agent**, it gives `search_<map>_knowledge` and `get_<map>_facts`, which
+- **Attached to another agent**, it gives `search_<librarian>_knowledge` and `get_<librarian>_facts`, which
   read the recorded map at once with no live calls and say to look there first, as Servitor's do;
-  and `consult_<map>`, which answers from the map and goes live with its tools only when the map
+  and `consult_<librarian>`, which answers from the map and goes live with its tools only when the map
   lacks it, recording what it finds. The map grows from use.
 - **Sub-agent by default.** A sub-agent is private to its parent, always callable by it, and runs
   within its limits, so "my agent has a GitLab map" needs nothing new. When a second agent needs
-  the same map, the Mapper is promoted to a top-level agent and attached under Sources.
+  the same map, the Librarian is promoted to a top-level agent and attached under Sources.
 - **Private.** Servitor's investigator never reaches a hosted model unless every model is
-  declared private. A map can hold material as sensitive; the Mapper honours the agent's Private
+  declared private. A map can hold material as sensitive; the Librarian honours the agent's Private
   switch and its type sets `force_private` as a layered restriction, which an owner lifts only
   by Customize.
 
-Example: an agent that writes code against an organisation's repositories gets a Mapper sub-agent
+Example: an agent that writes code against an organisation's repositories gets a Librarian sub-agent
 with a GitLab credential. Its map says which group holds which service, where shared libraries
 live, and who owns what; the parent looks there before it searches any code, and attaches the
 repositories that matter as Servitor Git repo systems for the code itself.
@@ -195,7 +195,7 @@ Each ships on its own.
 2. **One list of types.** Assistant and Specialist become types with the settings they set today;
    the wizard's two axes become one question; the agent page shows "from the type" and "yours"
    and offers "Use the type's again".
-3. **A type can carry a machine; the Mapper.** The instance subject, the Map machine, the `map`
+3. **A type can carry a machine; the Librarian.** The instance subject, the Map machine, the `map`
    memory framing, the read-first Source tools, consults that record, the refresh schedule.
 4. **Apps register types.** A Go registration beside `appagents.RegisterAppAgent`, so an app
    ships a type as it ships an app agent.
@@ -214,13 +214,12 @@ follows, and says so in its release notes.
 
 ## Open decisions
 
-- **The name "Mapper"** (or Cartographer, Surveyor).
 - **The `map` memory framing:** a new memory mode, or the investigator's shortcuts mode reworded.
-- **Reading a shared Mapper's map:** someone who may use the agent can already learn the map by
+- **Reading a shared Librarian's map:** someone who may use the agent can already learn the map by
   asking it, which argues for letting them read it directly. Confirm against the sharing rungs.
 - **Version pinning:** what a follower sees when a newer approved version of a published type is
   waiting, and whether they can stay on the old one.
-- **One type per agent.** Proposed yes; combinations come from sub-agents (an agent with a Mapper
+- **One type per agent.** Proposed yes; combinations come from sub-agents (an agent with a Librarian
   sub-agent), not from stacking types.
-- **Servitor's systems as Mappers**, later: an SSH system as a Mapper whose tools are SSH. That
-  continues `docs/servitor-systems-model.md` and is much larger; prove the Mapper on an API first.
+- **Servitor's systems as Librarians**, later: an SSH system as a Librarian whose tools are SSH. That
+  continues `docs/servitor-systems-model.md` and is much larger; prove the Librarian on an API first.
