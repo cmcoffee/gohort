@@ -17,8 +17,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -307,89 +305,4 @@ func handoffPartner(table string) (LLM, string, bool) {
 		return nil, "", false
 	}
 	return ReloadableLeadLLM(), "the lead", true
-}
-
-// The check that runs after a save, against what is now live, so a model
-// that cannot hand off is found when it is set rather than by its answers
-// getting worse. Only the finished result is kept: it runs in the
-// background, and nothing claims it is still going.
-type handoffResult struct {
-	at    time.Time
-	model string
-	ok    bool
-	text  string // the step lines
-	first string // the first failure, for the dashboard
-}
-
-var (
-	handoffMu   sync.Mutex
-	handoffLast = map[string]handoffResult{}
-)
-
-// checkAfterSave runs the check against table's live model and keeps the
-// result. Off the request's context: the save has answered by the time this
-// is half done.
-func checkAfterSave(table string) {
-	var llm LLM
-	tools := true
-	if table == LeadLLMTable {
-		if !LeadIsDistinct() {
-			handoffMu.Lock()
-			delete(handoffLast, table)
-			handoffMu.Unlock()
-			return
-		}
-		llm = ReloadableLeadLLM()
-	} else {
-		llm = ReloadableWorkerLLM()
-		promptTools, _ := PromptToolsMode()
-		tools = !promptTools
-	}
-	partner, partnerName, partnerTools := handoffPartner(table)
-	h := &handoffCheck{llm: llm, tools: tools, partner: partner, partnerName: partnerName, partnerTools: partnerTools}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	h.run(ctx)
-	worker, lead := LiveLLMs()
-	model := worker
-	if table == LeadLLMTable {
-		model = lead
-	}
-	res := handoffResult{at: time.Now(), model: model, ok: !h.failed(), text: h.lines(), first: h.firstFailure()}
-	if ctx.Err() != nil {
-		res.ok = false
-		res.first = "the check ran out of time"
-		res.text += "\n✗ the check ran out of time before it finished"
-	}
-	handoffMu.Lock()
-	handoffLast[table] = res
-	handoffMu.Unlock()
-	if !res.ok {
-		Warn("[admin] %s failed its handoff check after the save: %s", model, res.first)
-	}
-}
-
-// handoffDescription is the last after-save result for the form, or "".
-func handoffDescription(table string) string {
-	handoffMu.Lock()
-	res, ok := handoffLast[table]
-	handoffMu.Unlock()
-	if !ok {
-		return ""
-	}
-	head := "Passed"
-	if !res.ok {
-		head = "FAILED"
-	}
-	return fmt.Sprintf("%s, checked after the save at %s (%s):%s", head, res.at.Format("Jan 2 15:04"), res.model, res.text)
-}
-
-// handoffFailure is the last after-save failure for table, or "".
-func handoffFailure(table string) (model, first string) {
-	handoffMu.Lock()
-	defer handoffMu.Unlock()
-	if res, ok := handoffLast[table]; ok && !res.ok {
-		return res.model, res.first
-	}
-	return "", ""
 }

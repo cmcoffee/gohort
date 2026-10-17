@@ -20,15 +20,9 @@ func (a *AdminApp) llmSections() []ui.Section {
 				TestURL:   "api/worker-llm/test",
 				TestLabel: "Test connection",
 				Fields: []ui.FormField{
-					{Field: "_handoff", Type: "readonly", Label: "Handoff check", ShowWhen: "_handoff",
-						Help: "Run against the live model after each save: a tool call and its result, two calls in one turn, and each tier continuing the other's call."},
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(false),
 						Help:   "Local providers, ollama, llama.cpp or vLLM, are the usual worker.",
 						Detail: "A peer offering inference appears here too, and its GPU runs the turns."},
-					// Shown only when there is something to say: a peer's model is
-					// tuned on that peer, and its wording governs here.
-					{Field: "_peer_wording", Type: "readonly", Label: "Prompt wording", ShowWhen: "_peer_wording",
-						Help: "A peer's model is tuned on that peer, and its wording is what this machine sends it."},
 					{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. qwen3.6-27b", SaveOnBlur: true,
 						SuggestionsSource: "api/worker-llm/models", SuggestionsLabel: "List models",
 						Help:   "Blank uses the provider default. List models asks the provider what it offers.",
@@ -109,8 +103,6 @@ func (a *AdminApp) llmSections() []ui.Section {
 					// the previous client serving every call - so the fields
 					// below can read back perfectly while nothing uses them.
 					{Field: "_live", Type: "readonly", Label: "In use"},
-					{Field: "_handoff", Type: "readonly", Label: "Handoff check", ShowWhen: "_handoff",
-						Help: "Run against the live model after each save: a tool call and its result, two calls in one turn, and each tier continuing the other's call."},
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(true),
 						Help: "(use primary) routes lead stages to the worker model. A peer offering inference appears here too."},
 					{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. claude-sonnet-5", SaveOnBlur: true,

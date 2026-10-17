@@ -406,18 +406,12 @@ func (a *AdminApp) DashboardNotices(r *http.Request) []DashboardNotice {
 }
 
 // llmNotices says, on the dashboard, when the lead is quietly not doing its
-// work: most of its recent calls failing over to the worker, or a model that
-// failed its handoff check after a save. Both are invisible from a chat, where
-// the only sign is answers getting worse.
+// work: it could not start, or most of its recent calls failed over to the
+// worker. Invisible from a chat, where the only sign is answers getting worse.
 func (a *AdminApp) llmNotices() []DashboardNotice {
 	var out []DashboardNotice
 	if n, ok := a.leadNotice(); ok {
 		out = append(out, n)
-	}
-	if model, first := handoffFailure(LLMTable); first != "" {
-		out = append(out, DashboardNotice{
-			Text:   fmt.Sprintf("The worker model (%s) failed its handoff check after the last save. %s", model, first),
-			Action: "Open LLM settings", URL: a.WebPath() + "/" + ui.SectionOnTab("LLMs", "Worker LLM")})
 	}
 	return out
 }
@@ -434,15 +428,12 @@ func sentence(s string) string {
 
 // leadNotice is ONE card for whatever is wrong with the lead. Its problems
 // were separate cards, and they are rarely separate events: a model that
-// fails its handoff check goes on to fail its calls, so one fault put up two
-// cards with the same button, reading like two things to fix.
+// cannot start goes on to fail its calls, so one fault put up two cards with
+// the same button, reading like two things to fix.
 func (a *AdminApp) leadNotice() (DashboardNotice, bool) {
 	var says []string
 	if e := strings.TrimSpace(LeadInitError()); e != "" {
 		says = append(says, sentence(strings.ToUpper(e[:1])+e[1:]))
-	}
-	if model, first := handoffFailure(LeadLLMTable); first != "" {
-		says = append(says, fmt.Sprintf("The lead model (%s) failed its handoff check after the last save. %s", model, first))
 	}
 	if st := LeadCalls(); st.RecentCalls >= 5 && st.RecentFailed*4 >= st.RecentCalls {
 		text := fmt.Sprintf("The lead model failed %d of its last %d calls, so that work ran on the worker.", st.RecentFailed, st.RecentCalls)
