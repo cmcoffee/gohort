@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -51,5 +52,44 @@ func TestTheJudgeLeavesTheUsersOwnNotesAloneOnAReplyToThem(t *testing.T) {
 	room := &chatTurn{user: "u", udb: udb, agent: agent, requesterChannel: "imessage", requesterHandle: "+15550199", requesterOwnerHandle: true}
 	if got := room.uncheckedClaims(room.facts()); !has(got, heard) || !has(got, typed) {
 		t.Errorf("a channel reply dropped the owner's notes from the judge: %q", got)
+	}
+}
+
+// The remember tool asks whether a note was told or concluded, and only what
+// the user told it leaves the judge's scope. A note that says neither is
+// treated as concluded.
+func TestRememberRecordsToldApartFromConcluded(t *testing.T) {
+	app, _, _ := newTestOrchestrate(t)
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "NEW", Repeat: true}}}
+	app.LLM, app.LeadLLM = fake, fake
+	ct := driftTurn(&DBase{Store: kvlite.MemStore()})
+	ct.app = app
+	ct.session = &ChatSession{ID: "s1"}
+	notes := map[string]string{
+		"told":      "the build host runs two GPUs",
+		"concluded": "the nightly job fails because the disk fills",
+		"":          "the cache server restarts every Sunday",
+	}
+	for origin, note := range notes {
+		args := map[string]any{"pin": true, "domain": "world", "content": note}
+		if origin != "" {
+			args["origin"] = origin
+		}
+		if _, err := ct.rememberToolDef().Handler(context.Background(), args); err != nil {
+			t.Fatalf("remember %q: %v", note, err)
+		}
+	}
+	if n := len(ct.facts()); n != 3 {
+		t.Fatalf("%d notes saved, want 3", n)
+	}
+	scope := map[string]bool{}
+	for _, n := range ct.uncheckedClaims(ct.facts()) {
+		scope[n] = true
+	}
+	if scope[notes["told"]] {
+		t.Error("a note the user told the agent is judged on a reply to them")
+	}
+	if !scope[notes["concluded"]] || !scope[notes[""]] {
+		t.Errorf("a conclusion left the judge's scope: %v", scope)
 	}
 }

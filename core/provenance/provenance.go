@@ -127,10 +127,10 @@ func NeedsAttribution(p MemoryProvenance) bool {
 // chatTurn.uncheckedClaims). Recall still marks it: it is no more checked
 // than before, only no longer news to the one hearing it.
 //
-// Observed is in because that is how the agent's own store_fact records what
-// it heard. It is also how it records what it worked out, and a note does not
-// say which, so a conclusion the agent wrote down in that conversation is let
-// through with the rest.
+// Observed is in because that is how the agent's remember tool records what it
+// was told. What it worked out it records as inferred, which stays out. Notes
+// saved before the tool asked which was which are all observed, as are the
+// facts a long thread's condensing distills, so those still pass as told.
 func FromPrincipalsConversation(p MemoryProvenance) bool {
 	if !p.speakerIsPrincipal() {
 		return false

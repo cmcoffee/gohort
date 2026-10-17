@@ -53,7 +53,19 @@ func claimDomainArg(args map[string]any) ClaimDomain {
 	return ClaimDomainUnknown
 }
 
-func (t *chatTurn) storeFactNote(note string, domain ClaimDomain) (string, error) {
+// claimOriginArg reads whether the model was told the note or worked it out.
+// The grounding judge leaves what the user told the agent alone on a reply to
+// them (FromPrincipalsConversation) and checks what the agent concluded, so a
+// note that says neither is read as concluded: it stays checked, and recall
+// calls it an inference rather than something the user said.
+func claimOriginArg(args map[string]any) MemSource {
+	if strings.EqualFold(strings.TrimSpace(stringArg(args, "origin")), "told") {
+		return MemSourceObserved
+	}
+	return MemSourceInferred
+}
+
+func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSource) (string, error) {
 	note = strings.TrimSpace(note)
 	if note == "" {
 		return "", errors.New("note is required")
@@ -89,10 +101,11 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain) (string, error
 		Mode: t.agent.MemoryMode,
 		Chat: t.app.WorkerChat,
 		// The model authored this note from the session, not a human directly and
-		// not a tool result — observed, so it does NOT license grounded specifics
-		// (an LLM-recorded figure may be a stale prior). Human-entered facts get
-		// MemSourceUserStated on the admin path instead.
-		Source: MemSourceObserved,
+		// not a tool result, so it does NOT license grounded specifics (an
+		// LLM-recorded figure may be a stale prior). Observed when it was told
+		// it, inferred when it concluded it (claimOriginArg). Human-entered
+		// facts get MemSourceUserStated on the admin path instead.
+		Source: origin,
 		// What the model just heard, declared by the only thing that was
 		// there. Unknown falls through to the store's own classifier.
 		Domain: domain,
