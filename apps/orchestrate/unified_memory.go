@@ -182,6 +182,13 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 			if content == "" {
 				return "", errors.New("content is required")
 			}
+			// "Closes Monday" read a week on means the wrong Monday.
+			dated, err := t.datedText(content)
+			if err != nil {
+				return "", err
+			}
+			content = dated
+			args["content"] = dated
 			if boolArg(args, "pin") {
 				if t.explicitOff() {
 					return "", errors.New("always-in-prompt memory is disabled for this agent: call remember with pin=false (or omit pin) to save a recall-only finding instead")

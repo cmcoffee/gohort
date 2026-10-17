@@ -256,6 +256,21 @@ func (t *chatTurn) updateNotesToolDef() AgentToolDef {
 			Required:    []string{"text"},
 			Caps:        []Capability{CapWrite},
 		},
-		Handler: notesWriteHandler(t.udb, factsNamespace(t.agent.ID), t.agent.SeedNotes, agentNotesCopy),
+		Handler: datedArg(t.datedText, "text", notesWriteHandler(t.udb, factsNamespace(t.agent.ID), t.agent.SeedNotes, agentNotesCopy)),
+	}
+}
+
+// datedArg runs h with args[field] dated (relative_dates.go), or refuses the
+// call when a phrase in it could mean two days.
+func datedArg(dated func(string) (string, error), field string, h func(context.Context, map[string]any) (string, error)) func(context.Context, map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
+		if s, ok := args[field].(string); ok && strings.TrimSpace(s) != "" {
+			out, err := dated(s)
+			if err != nil {
+				return "", err
+			}
+			args[field] = out
+		}
+		return h(ctx, args)
 	}
 }

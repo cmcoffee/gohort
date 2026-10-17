@@ -19,6 +19,7 @@
 package core
 
 import (
+	"github.com/cmcoffee/gohort/core/textutil"
 	"context"
 	"fmt"
 	"sort"
@@ -1475,6 +1476,16 @@ func RenderMemoryFactsBlockWith(facts []MemoryFact, header, intro string) string
 			b.WriteString("\n")
 			continue
 		}
+		// So is a note about something that was still to come and has
+		// happened: "the free window closes Monday (Mon Oct 12, 2026)",
+		// read on the 16th, is not news. Its dates were written when it was
+		// saved (textutil.ResolveRelativeDates), which is what makes this a
+		// date check rather than a guess.
+		if heldBack := pastDatedLine(f, now); heldBack != "" {
+			b.WriteString(heldBack)
+			b.WriteString("\n")
+			continue
+		}
 		b.WriteString(f.Note)
 		b.WriteString(factProvenanceMarker(f))
 		if f.Volatility == VolVolatile && f.Staleness(now) == Aging {
@@ -1593,6 +1604,25 @@ func factAttributionMarker(f MemoryFact) string {
 // or twice it, so the prompt cache sees a change at those two points, not
 // daily.
 var memoryBlockNow = time.Now
+
+// pastDatedLine is the line for a note whose every date was still to come
+// when it was saved and has gone by now, its text held back; "" for any
+// other note.
+func pastDatedLine(f MemoryFact, now time.Time) string {
+	saved := f.Updated
+	if saved.IsZero() {
+		saved = f.Created
+	}
+	if saved.IsZero() || !textutil.DatedNotesAllPast(f.Note, saved, now) {
+		return ""
+	}
+	words := strings.Fields(f.Note)
+	quote := strings.Join(words[:min(len(words), 8)], " ")
+	if len(words) > 8 {
+		quote += "..."
+	}
+	return fmt.Sprintf("[held back: about days that have now passed] %q: forget it if it no longer matters, or recall it to read it.", quote)
+}
 
 // staleVolatileLine is a stale volatile note's line in the always-in-prompt
 // block, its text held back, or "" for any other note.

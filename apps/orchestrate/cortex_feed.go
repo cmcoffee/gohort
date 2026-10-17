@@ -157,7 +157,7 @@ func cortexToolTrace(calls []PersistedToolCall) []PersistedToolCall {
 // produced artifact (a brief, a report) is filed as its OWN session; only a
 // short pointer lands in the cortex. Keeps the standing thread lean (it seeds
 // every fork). Returns nil unless the agent has Cortex on.
-func cortexDeliverableTools(db Database, agentID string) []AgentToolDef {
+func cortexDeliverableTools(db Database, agentID string, dated func(string) (string, error)) []AgentToolDef {
 	if db == nil || strings.TrimSpace(agentID) == "" {
 		return nil
 	}
@@ -211,6 +211,14 @@ func cortexDeliverableTools(db Database, agentID string) []AgentToolDef {
 				note := strings.TrimSpace(oArgStr(args, "note"))
 				if note == "" {
 					return "", fmt.Errorf("note is required")
+				}
+				// A pointer read from other sessions, days on: date its days.
+				if dated != nil {
+					d, err := dated(note)
+					if err != nil {
+						return "", err
+					}
+					note = d
 				}
 				appendCortexObs(db, agentID, "Session", cortexKindSession, note)
 				return fmt.Sprintf("Noted to your cortex: %q.", note), nil

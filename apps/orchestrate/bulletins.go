@@ -334,7 +334,12 @@ func (t *chatTurn) bulletinBoardToolDef() (AgentToolDef, bool) {
 				if strings.TrimSpace(stringArg(args, "text")) == "" {
 					return "", fmt.Errorf("a post needs text; to empty the board, use action=\"clear\"")
 				}
-				b, err := postBulletin(db, name, stringArg(args, "text"), by)
+				// Followers read a post for days: "Monday" in it needs its date.
+				text, err := t.datedText(stringArg(args, "text"))
+				if err != nil {
+					return "", err
+				}
+				b, err := postBulletin(db, name, text, by)
 				if err != nil {
 					return "", err
 				}
