@@ -1770,6 +1770,31 @@
   }
   window.uiMatchesWhen = function(expr, record) { return matchesWhen(expr, record || {}); };
 
+  // uiGuardUnsaved marks node as holding unsaved changes (on) or not. While
+  // any marked node is still on the page, leaving it (a link, a reload,
+  // closing the tab) asks first. A node taken off the page no longer counts,
+  // so a form that is gone cannot hold the page hostage.
+  var unsavedNodes = [];
+  window.uiGuardUnsaved = function(node, on) {
+    var i = unsavedNodes.indexOf(node);
+    if (on && i < 0) unsavedNodes.push(node);
+    if (!on && i >= 0) unsavedNodes.splice(i, 1);
+  };
+  window.uiHasUnsaved = function() {
+    unsavedNodes = unsavedNodes.filter(function(n) { return n.isConnected; });
+    return unsavedNodes.length > 0;
+  };
+  // uiUnsavedWithin reports whether a node inside root holds unsaved
+  // changes: a dialog asks before closing over one.
+  window.uiUnsavedWithin = function(root) {
+    return window.uiHasUnsaved() && unsavedNodes.some(function(n) { return root.contains(n); });
+  };
+  window.addEventListener('beforeunload', function(ev) {
+    if (!window.uiHasUnsaved()) return;
+    ev.preventDefault();
+    ev.returnValue = '';
+  });
+
   components.form_panel = function(cfg, ctx) {
     var wrap = el('div', {class: 'ui-form'});
     var current = {};
@@ -4239,6 +4264,25 @@
         // import that leaves an unmet reference reads as a caution, not a clean
         // success.
         var msgEl = el('div', {class: 'ui-form-msg', style: 'display:none;white-space:pre-wrap;margin-top:0.5rem;padding:0.5rem 0.7rem;border-left:3px solid var(--border);border-radius:4px;font-size:var(--fs-sm, 0.85rem);line-height:1.45;background:var(--bg-1)'});
+        // A form editing something already saved (it loaded a record) says
+        // when it holds changes that are not: a Save at the end of a long
+        // form is easy to leave unpressed, and the page looked the same
+        // either way. A create form has nothing saved to differ from.
+        //
+        // Leaving the page while one does asks first (uiGuardUnsaved): the
+        // marker alone says the changes exist, not that a click elsewhere
+        // throws them away.
+        var unsavedEl = el('span', {class: 'ui-form-unsaved'}, ['Unsaved changes: leaving this page discards them']);
+        unsavedEl.style.display = 'none';
+        var setUnsaved = function(on) {
+          unsavedEl.style.display = on ? '' : 'none';
+          window.uiGuardUnsaved(wrap, on);
+        };
+        if (cfg.source) {
+          var markUnsaved = function() { setUnsaved(true); };
+          wrap.addEventListener('input', markUnsaved);
+          wrap.addEventListener('change', markUnsaved);
+        }
         submitBtn.addEventListener('click', function() {
           // The wizard's guard validates required fields across every
           // visible step (and jumps to the first offender) before the
@@ -4284,6 +4328,7 @@
             // modal or just restores the button (204, no message) otherwise
             // looks like it did nothing — the exact "the save button should do
             // something" gap. A redirect navigates away, so skip the toast there.
+            setUnsaved(false);
             msgEl.style.display = 'none';
             if (!cfg.redirect_url) { showToast(cfg.saved_toast || 'Saved ✓'); }
             if (cfg.redirect_url) {
@@ -4323,7 +4368,17 @@
             showToast('Save failed: ' + err.message);
           });
         });
-        host.appendChild(submitBtn);
+        // In a dialog's footer when the dialog gives it one (modal_button),
+        // beside Close and sized like it; its outcome note stays by the fields.
+        var footer = !stepsMode && ctx && ctx.__modalFooter;
+        if (footer) {
+          submitBtn.className = 'ui-row-btn primary';
+          footer.insertBefore(unsavedEl, footer.firstChild);
+          footer.appendChild(submitBtn);
+        } else {
+          host.appendChild(submitBtn);
+          host.appendChild(unsavedEl);
+        }
         host.appendChild(msgEl);
       }
 
@@ -5928,10 +5983,18 @@
       //
       // One implementation now, so a dialog opened from a dialog stacks
       // (uiNextModalZ) and a toast at 9000 clears both.
+      //
+      // A dialog that IS a form with a submit button puts that button in
+      // the footer beside Close: at the end of a long form it scrolled out
+      // of sight, and the dialog read as having nothing to press but Close.
+      // Close then stops being the primary button, the submit is.
+      var b = cfg.body || {};
+      var footerSubmit = b.type === 'form_panel' && !!b.submit_label && !(b.steps && b.steps.length);
       var m = window.uiOpenModal({
         title: cfg.title || cfg.label || '',
         subtitle: cfg.subtitle || undefined,
         width: cfg.width || '520px',
+        actions: footerSubmit ? [{label: 'Close'}] : undefined,
         // No click-outside-to-close is inherited: a text-selection drag
         // ending past the dialog edge would otherwise dismiss it
         // mid-copy.
@@ -5944,6 +6007,7 @@
           var childCtx = {};
           for (var k in (ctx || {})) childCtx[k] = ctx[k];
           childCtx.__closeModal = function() { api.close(); };
+          if (footerSubmit) childCtx.__modalFooter = api.dialog.querySelector('.ui-modal-footer');
           mountComponent(cfg.body, body, childCtx);
         },
       });

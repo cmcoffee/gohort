@@ -428,7 +428,9 @@ can carry a share) or **Everyone** (`*`), and pressing an entry's level switches
 added usually needs the commands; Everyone starts at Read Only / No Commands, so opening a store to every account
 never hands them all its commands by accident. The admin's own account is listed second and marked.
 It is the first thing on the Manage panel, with a warning above it while nobody is on the list, and
-the stores table marks such a store "Nobody can reach it". Nobody reaches a store until an admin adds them, admins
+the stores table marks such a store "Nobody can reach it". The Add a file store dialog asks the
+same question first (**Who may reach it**, a list to tick), so a new store need not start closed to
+its own maker. Nobody reaches a store until an admin adds them, admins
 included: managing the list is admin-only, an entry decides reach. Someone reached two ways (by
 name and through Everyone, say) gets the higher level.
 

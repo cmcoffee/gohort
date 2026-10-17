@@ -1186,7 +1186,18 @@
     // the button that opened the dialog, not to the top of the page.
     var opener = document.activeElement;
     var released = false;
+    var discardOK = false;
     function close() {
+      // A form in here holding unsaved changes (uiGuardUnsaved): closing
+      // throws them away, so it asks, as leaving the page does.
+      if (!discardOK && typeof window.uiUnsavedWithin === 'function' && window.uiUnsavedWithin(dlg)) {
+        window.uiConfirm('Discard your unsaved changes?').then(function(ok) {
+          if (!ok) return;
+          discardOK = true;
+          close();
+        });
+        return;
+      }
       // A view inside the dialog can own a BACK step. While one is showing,
       // Close and Escape return to what it replaced instead of dismissing the
       // whole modal: leaving a sub-view should not cost you the dialog you

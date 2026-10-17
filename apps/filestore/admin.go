@@ -421,7 +421,14 @@ func (T *FileStoreApp) adminSection() ui.Section {
 				Body: ui.FormPanel{
 					PostURL:     "/filestore/api/stores",
 					SubmitLabel: "Add store",
-					Fields:      storeFormFields(),
+					// Who may reach it, first: a store made without it
+					// reaches nobody, its maker included.
+					Fields: append([]ui.FormField{{
+						Field: "members", Type: "checklist", Label: "Who may reach it",
+						OptionsSource: "/filestore/api/access-candidates",
+						Help:          "Nobody, unless you tick them. Your own account is marked.",
+						Detail:        "People and teams ticked here start with Full Access: they can upload and run the store's commands, and so can their agents. Everyone starts at Read Only / No Commands. Change anyone's level afterwards under Who may reach it on the store's Manage panel.",
+					}}, storeFormFields()...),
 				},
 			},
 		}},
@@ -564,7 +571,7 @@ func (T *FileStoreApp) handleAccessCandidates(w http.ResponseWriter, r *http.Req
 	if !ok || !adminOnly(w, r) {
 		return
 	}
-	out := []map[string]any{{"value": accessEveryone, "label": "Everyone", "desc": "every account on this server"}}
+	out := []map[string]any{{"value": accessEveryone, "label": "Everyone", "desc": "every account on this server", "help": "every account on this server"}}
 	if AuthDB == nil {
 		writeJSON(w, out)
 		return
@@ -686,6 +693,16 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(raw, &st); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
+		}
+		// A new store's members, ticked on the Add form, start at the
+		// level the access picker would give them: Full Access, but
+		// Everyone at Read Only / No Commands.
+		if !found && st.FullAccess == nil {
+			for _, e := range st.Members {
+				if e != accessEveryone {
+					st.FullAccess = append(st.FullAccess, e)
+				}
+			}
 		}
 		saved, err := SaveStore(T.DB, st)
 		if err != nil {
