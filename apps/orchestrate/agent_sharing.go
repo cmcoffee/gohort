@@ -221,7 +221,7 @@ func agentChangeGate(approve func(kind, name, detail string, op ChangeOp) string
 	if approve == nil {
 		return ""
 	}
-	return approve("agent", chFirst(target.Name, target.ID), strings.ToUpper(change[:1])+change[1:]+".", ChangeEdit)
+	return approve("agent", chFirst(target.ID, target.Name), strings.ToUpper(change[:1])+change[1:]+".", ChangeEdit)
 }
 
 // chatAsker is this turn's question card, or nil with nobody watching.

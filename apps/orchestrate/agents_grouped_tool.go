@@ -384,12 +384,7 @@ func (a dispatchAuthority) allows(target AgentRecord) bool {
 		}
 		return false
 	case dispatchExcept:
-		for _, x := range a.Targets {
-			if x == target.ID {
-				return false
-			}
-		}
-		return true
+		return !dispatchListExcludes(a.Targets, target)
 	default: // dispatchAll
 		return true
 	}
@@ -987,7 +982,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 				return AgentRecord{}, "", fmt.Errorf("agents(run): agent %q is not on this agent's dispatch allow list; ask the user to add it (Security & Access) or change the policy to Allow all", target.Name)
 			}
 		case dispatchExcept:
-			if dispatchListContains(t.agent, target.ID) {
+			if dispatchListExcludes(t.agent.AllowedDispatchTargets, target) {
 				return AgentRecord{}, "", fmt.Errorf("agents(run): agent %q is on this agent's dispatch block list; ask the user to remove it (Security & Access) to reach it", target.Name)
 			}
 			if target.Hidden {

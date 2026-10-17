@@ -98,7 +98,7 @@ func dispatchReachable(caller, target AgentRecord) bool {
 		// The explicit pick wins both ways, Hidden included.
 		return dispatchListContains(caller, target.ID)
 	case dispatchExcept:
-		return !dispatchListContains(caller, target.ID) && !target.Hidden
+		return !dispatchListExcludes(caller.AllowedDispatchTargets, target) && !target.Hidden
 	default: // dispatchAll
 		return !target.Hidden
 	}

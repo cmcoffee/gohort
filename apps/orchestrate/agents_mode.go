@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -223,6 +224,46 @@ func pinDispatchTargetNames(db Database, owner string, list []string) ([]string,
 		return list, false
 	}
 	return out, true
+}
+
+// pinDispatchAgentNames turns each agent NAME in a dispatch list the agent
+// tool was given into the id of the agent it names. Lists are read by id, so
+// a name in one meant nothing: on an "only" list the agent was unreachable,
+// and on an "except" list the agent it excluded stayed reachable. A name
+// several agents answer to is refused, naming their ids, rather than guessed.
+// Anything else (an id, a seed, a pipeline or machine name, which writeAgent
+// pins, or a name nothing carries yet) is kept as given.
+func pinDispatchAgentNames(db Database, owner string, list []string) ([]string, error) {
+	if db == nil || len(list) == 0 {
+		return list, nil
+	}
+	out := make([]string, 0, len(list))
+	for _, x := range list {
+		t := strings.TrimSpace(x)
+		if t == "" || isSeedID(t) || db.Get(agentsTable, t, &AgentRecord{}) {
+			out = append(out, x)
+			continue
+		}
+		a, ok, err := resolveAgentRef(db, owner, t)
+		if err != nil {
+			return nil, fmt.Errorf("allowed_dispatch_targets: %w", err)
+		}
+		if ok && a.ID != "" {
+			out = append(out, a.ID)
+			continue
+		}
+		out = append(out, x)
+	}
+	return out, nil
+}
+
+// dispatchListExcludes reports whether an "except" list leaves target out: by
+// its id, or by its name in any case. A list the agent tool wrote before agent
+// names were pinned to ids holds names, and checked by id alone the agent it
+// excluded stayed reachable. A name here can only exclude more, which is the
+// direction an except list is for; an "only" list stays ids alone.
+func dispatchListExcludes(list []string, target AgentRecord) bool {
+	return dispatchListNames(list, target.ID, strings.TrimSpace(target.Name))
 }
 
 // dispatchListContains reports whether id is in the agent's dispatch target list.

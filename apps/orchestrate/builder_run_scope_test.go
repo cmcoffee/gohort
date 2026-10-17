@@ -15,7 +15,7 @@ func TestBuilderRunsOnlyWhatItBuilds(t *testing.T) {
 	pinRootDB(t)
 	turn := &chatTurn{user: user, agent: AgentRecord{ID: "seed-builder", Name: "Builder"}, session: &ChatSession{ID: "conv-1"}}
 	set := changeApprovalsFor(user, "conv-1")
-	set.add(changeKey("agent", "Ticket triage"))     // created here
+	set.add(changeKey("agent", "ag-1"))              // created here, recorded by id
 	set.add(changeKey("pipeline", "Nightly digest")) // changed here, with approval
 	SaveAppSpec(AppSpec{Owner: user, Slug: "prep", Name: "Case prep", RecordKey: "id", AgentID: "ag-support", PipelineID: "pl-extract"})
 	set.add(changeKey("app", "prep"))

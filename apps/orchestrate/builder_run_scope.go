@@ -41,7 +41,13 @@ func (t *chatTurn) builderRunRefusal(kind, id, name string) string {
 // target, directly or as part of an app.
 func (t *chatTurn) builderBuilt(kind, id, name string) bool {
 	set := changeApprovalsFor(t.user, t.chatSessionID())
-	for _, n := range []string{name, id} {
+	refs := []string{name, id}
+	if kind == "agent" {
+		// An agent is recorded by id (changeKey): a name could be another
+		// agent's.
+		refs = []string{id}
+	}
+	for _, n := range refs {
 		if strings.TrimSpace(n) != "" && set.covers(changeKey(kind, n)) {
 			return true
 		}

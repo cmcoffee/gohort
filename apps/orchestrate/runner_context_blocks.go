@@ -296,7 +296,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 				continue
 			}
 		case dispatchExcept:
-			if listed[a.ID] || a.Hidden {
+			if listed[a.ID] || dispatchListExcludes(t.agent.AllowedDispatchTargets, a) || a.Hidden {
 				continue
 			}
 		default: // dispatchAll

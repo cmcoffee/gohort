@@ -138,7 +138,9 @@ func editOrNew(existed bool) ChangeOp {
 	return ChangeNew
 }
 
-// changeKey names one item.
+// changeKey names one item. An agent is named by its id: two agents can share
+// a name, and keyed by name, approving (or making) one "Report Writer" let the
+// session change or delete a different one without asking.
 func changeKey(kind, name string) string {
 	return strings.ToLower(strings.TrimSpace(kind)) + ":" + strings.TrimSpace(name)
 }
@@ -232,7 +234,7 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 		set.add(key)
 		return ""
 	}
-	what := strings.TrimSpace(kind) + " " + name
+	what := strings.TrimSpace(kind) + " " + changeItemLabel(c.db, kind, name)
 	if c.ask != nil {
 		prompt := fmt.Sprintf("Let %s change the %s?", agentName, what)
 		body := strings.TrimSpace(detail)
@@ -271,7 +273,7 @@ func queueChangeApproval(c changeAsker, kind, name, detail string) {
 			return
 		}
 	}
-	brief := fmt.Sprintf("Change the %s %s.", strings.TrimSpace(kind), name)
+	brief := fmt.Sprintf("Change the %s %s.", strings.TrimSpace(kind), changeItemLabel(c.db, kind, name))
 	if d := strings.TrimSpace(detail); d != "" {
 		brief += " " + d
 	}
@@ -286,6 +288,17 @@ func queueChangeApproval(c changeAsker, kind, name, detail string) {
 	stampRequestOrigin(&a, c.sess)
 	SaveAuthorization(RootDB, a)
 	Log("[orchestrate.change] %s: %s wants to change %s, queued for approval", c.owner, c.agentID, key)
+}
+
+// changeItemLabel is how a change names its item to a person: an agent by its
+// name, since it is asked about by id.
+func changeItemLabel(db Database, kind, name string) string {
+	if strings.EqualFold(strings.TrimSpace(kind), "agent") && db != nil {
+		if a, ok := loadAgent(db, strings.TrimSpace(name)); ok && strings.TrimSpace(a.Name) != "" {
+			return a.Name
+		}
+	}
+	return name
 }
 
 // intakeChangeKeys is the item the owner picked in Builder's form, as the
@@ -311,11 +324,12 @@ func intakeChangeKeys(values map[string]string) []string {
 		if i := strings.LastIndex(target, " (id: "); i >= 0 && strings.HasSuffix(target, ")") {
 			name, id = strings.TrimSpace(target[:i]), strings.TrimSpace(target[i+len(" (id: "):len(target)-1])
 		}
-		keys := []string{changeKey("agent", name)}
+		// By id, as the change is asked (changeKey); the name only when the
+		// form gave no id, which then matches no agent change and asks.
 		if id != "" {
-			keys = append(keys, changeKey("agent", id))
+			return []string{changeKey("agent", id)}
 		}
-		return keys
+		return []string{changeKey("agent", name)}
 	case "tool":
 		return []string{changeKey("tool", target)}
 	case "pipeline":

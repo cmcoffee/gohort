@@ -41,7 +41,7 @@ func TestTheChangeGateAsksTheOwner(t *testing.T) {
 	if msg := agentChangeGate(approve, &a, "alice", "attach skill \"x\""); msg != "" {
 		t.Fatalf("an approved change was refused: %s", msg)
 	}
-	if gotKind != "agent" || gotName != "Ledger" || gotDetail != "Attach skill \"x\"." {
+	if gotKind != "agent" || gotName != "a1" || gotDetail != "Attach skill \"x\"." {
 		t.Errorf("asked about %q %q %q", gotKind, gotName, gotDetail)
 	}
 	if msg := agentChangeGate(nil, &a, "alice", "x"); msg != "" {
@@ -270,7 +270,7 @@ func TestAnUnwatchedChangeToAnAgentWaitsForTheOwner(t *testing.T) {
 	}
 	queued := false
 	for _, a := range ListAuthorizations(RootDB, "queue-owner") {
-		if a.Action == changeApprovalAction && strings.Contains(a.Handle, "Wren") {
+		if a.Action == changeApprovalAction && a.Handle == changeKey("agent", wren.ID) && strings.Contains(a.Brief, "Wren") {
 			queued = true
 		}
 	}

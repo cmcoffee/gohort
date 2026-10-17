@@ -129,7 +129,7 @@ func TestIntakeChangeKeysFollowTheForm(t *testing.T) {
 		want   []string
 	}{
 		{map[string]string{"action": "Change", "kind": "App", "target": "swing"}, []string{"app:swing"}},
-		{map[string]string{"action": "Fix", "kind": "Agent", "target": "Ledger (id: a1)"}, []string{"agent:Ledger", "agent:a1"}},
+		{map[string]string{"action": "Fix", "kind": "Agent", "target": "Ledger (id: a1)"}, []string{"agent:a1"}},
 		{map[string]string{"action": "Change", "kind": "Pipeline", "target": "digest"}, []string{"pipeline:digest", "tool:digest"}},
 		{map[string]string{"action": "Fix", "kind": "Connection", "target": "prices"}, []string{"bridge:prices"}},
 		{map[string]string{"action": "Fix", "kind": "Tool", "target": "wiki_read"}, []string{"tool:wiki_read"}},
@@ -224,5 +224,30 @@ func TestASentAgentIsAskedAboutAsItself(t *testing.T) {
 	parent.wireLiveCallbacks(own)
 	if own.ApproveChange == nil {
 		t.Error("the turn's own session got no approver")
+	}
+}
+
+// Two agents can share a name, so an agent is approved by its id. Keyed by
+// name, making one "Report Writer" in a session let it change or delete the
+// other without asking. The question still names it.
+func TestMakingOneAgentDoesNotApproveItsNamesake(t *testing.T) {
+	udb := changeTestStores(t)
+	mine, _ := saveAgent(udb, AgentRecord{Name: "Report Writer", Owner: "u", OrchestratorPrompt: "p"})
+	theirs, _ := saveAgent(udb, AgentRecord{Name: "Report Writer", Owner: "u", OrchestratorPrompt: "p"})
+	var prompts []string
+	c := changeAsker{owner: "u", agentID: "seed-builder", agentName: "Builder", session: "s1", db: udb,
+		ask: func(prompt, detail string, yes []string) string {
+			prompts = append(prompts, prompt)
+			return ""
+		}}
+	c.approve("agent", mine.ID, "", ChangeNew)
+	if msg := c.approve("agent", mine.ID, "Update it.", ChangeEdit); msg != "" || len(prompts) != 0 {
+		t.Errorf("the agent made in this session asked to be changed: %q %v", msg, prompts)
+	}
+	if msg := c.approve("agent", theirs.ID, "Delete it.", ChangeDelete); msg == "" {
+		t.Error("the other agent with the same name was deleted without asking")
+	}
+	if len(prompts) != 1 || !strings.Contains(prompts[0], "the agent Report Writer") {
+		t.Errorf("the question should name the agent, not its id: %v", prompts)
 	}
 }

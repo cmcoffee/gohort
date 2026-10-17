@@ -82,6 +82,11 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if strings.TrimSpace(rec.OrchestratorPrompt) == "" {
 		return "", errors.New("orchestrator_prompt is required")
 	}
+	pinned, err := pinDispatchAgentNames(sess.DB, sess.Username, rec.AllowedDispatchTargets)
+	if err != nil {
+		return "", err
+	}
+	rec.AllowedDispatchTargets = pinned
 	// allowed_tools is now required — picking a deliberate tool surface
 	// is the difference between a focused agent and a fat one. The LLM
 	// must explicitly state which tools the agent gets. If the user
@@ -123,7 +128,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 	// New: this session's own work from here on (change_approval.go).
 	if sess.ApproveChange != nil {
-		sess.ApproveChange("agent", saved.Name, "", ChangeNew)
+		sess.ApproveChange("agent", saved.ID, "", ChangeNew)
 	}
 	// Commit the inline tools as store rows scoped to the new agent.
 	committedTools := make([]TempTool, 0, len(inlineTools))
@@ -653,7 +658,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// A change to an agent that already exists asks the owner first, once per
 	// agent per session (change_approval.go).
 	if sess.ApproveChange != nil {
-		if msg := sess.ApproveChange("agent", existing.Name, "Update its settings ("+strings.Join(sortedArgKeys(args, "id"), ", ")+").", ChangeEdit); msg != "" {
+		if msg := sess.ApproveChange("agent", existing.ID, "Update its settings ("+strings.Join(sortedArgKeys(args, "id"), ", ")+").", ChangeEdit); msg != "" {
 			return msg, nil
 		}
 	}
@@ -668,6 +673,13 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	priorLimits.ActionQuotas = maps.Clone(existing.ActionQuotas)
 	priorFields := agentFieldValues(existing)
 	mergeAgentArgs(&existing, args)
+	if _, ok := args["allowed_dispatch_targets"]; ok {
+		pinned, err := pinDispatchAgentNames(sess.DB, sess.Username, existing.AllowedDispatchTargets)
+		if err != nil {
+			return "", err
+		}
+		existing.AllowedDispatchTargets = pinned
+	}
 	// An agent may tighten its own ceilings and not raise them. See
 	// keepEnforcementTight: the Limits tab calls these ceilings the framework
 	// keeps, and this is what makes that true of how they are SET as well as
@@ -853,7 +865,7 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 			if uses := agentUsedBy(sess.DB, sess.Username, target); len(uses) > 0 {
 				what += " These run through it and will stop working: " + agentUsesText(uses) + "."
 			}
-			if msg := sess.ApproveChange("agent", target.Name, what, ChangeDelete); msg != "" {
+			if msg := sess.ApproveChange("agent", target.ID, what, ChangeDelete); msg != "" {
 				return msg, nil
 			}
 		}
