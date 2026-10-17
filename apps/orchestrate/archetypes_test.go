@@ -118,24 +118,21 @@ func TestInvestigatorRecipeKeepsItsLoadBearingParts(t *testing.T) {
 // The built-in variant is a two-phase machine, and nothing in the product said
 // so — which is why it kept being asked for as a setting. A checkbox cannot
 // carry it (what "look" means differs per subject), so the answer is a pointer
-// where the question arises: the agent editor's machine field, and the drafter.
+// where the question arises: the machine drafter, where machines are made and
+// assigned now that the agent editor has no machine field.
 func TestTheLookBeforeAnsweringShapeIsSignposted(t *testing.T) {
-	for _, f := range []struct{ file, want string }{
-		{"page_agent.go", "INVESTIGATES before it answers"},
-		{"machine_page.go", "a first step that goes and LOOKS"},
-	} {
-		raw, err := os.ReadFile(f.file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(raw), f.want) {
-			t.Errorf("%s must point at the look-before-answering shape (%q)", f.file, f.want)
-		}
+	raw, err := os.ReadFile("machine_page.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "a first step that goes and LOOKS"
+	i := strings.Index(string(raw), want)
+	if i < 0 {
+		t.Fatalf("machine_page.go must point at the look-before-answering shape (%q)", want)
 	}
 	// And the pointer has to name the gate, or somebody builds an agent that
 	// can act while it is meant to be looking.
-	raw, _ := os.ReadFile("page_agent.go")
-	if !strings.Contains(string(raw), "read-only") {
+	if !strings.Contains(string(raw)[i:i+len(want)+20], "read-only") {
 		t.Error("the signpost must say the looking phase is read-only")
 	}
 }

@@ -20,12 +20,12 @@
 // primitives, and it is why this file is half the length of its twin.
 //
 // Pointing an agent at a machine happens in three places, all writing
-// the same AgentRecord.Machine field: the picker on the agent editor
-// (machineSelectField), the `machine` tool's attach_to_agents, and the
-// partial-update path POST /api/agents/{agentID} {"machine": "<id>"}
-// (`""` detaches). The picker hides itself when the user has no
-// machines, so handleAgentList distinguishes a body that OMITTED the
-// field from one that cleared it — see the key probe there.
+// the same AgentRecord.Machine field: the machine page's "Assign to
+// agents", the `machine` tool's attach_to_agents, and the partial-update
+// path POST /api/agents/{agentID} {"machine": "<id>"} (`""` detaches).
+// The agent editor no longer sends the field, so handleAgentList
+// distinguishes a body that OMITTED it from one that cleared it: see the
+// key probe there.
 
 package orchestrate
 

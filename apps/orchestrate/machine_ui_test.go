@@ -17,7 +17,6 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
-	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A client action is wired in two files that know nothing about each
@@ -65,31 +64,6 @@ func TestMachinesModal_ToolbarEntryAndHandlerAgree(t *testing.T) {
 	// path is pinned in TestMachinesModalCanCreate.
 	if !strings.Contains(string(assets), `'PUT'`) {
 		t.Error("the editor should still PUT when editing an existing machine")
-	}
-}
-
-func TestMachineSelectField_HidesItselfUntilThereIsSomethingToPick(t *testing.T) {
-	root := &DBase{Store: kvlite.MemStore()}
-	udb := UserDB(root, "u")
-
-	f := machineSelectField(udb, "u")
-	if f.Type != "hidden" {
-		t.Errorf("with no machines the picker should render nothing, got type %q", f.Type)
-	}
-
-	SaveMachineDef(udb, MachineDef{
-		Name: "Triage", Owner: "u", Description: "decompose then answer",
-		Phases: []MachinePhase{{Name: "answer", Resident: true, Prompt: "x"}},
-	})
-	f = machineSelectField(udb, "u")
-	if f.Type != "select" || len(f.Options) != 2 {
-		t.Fatalf("expected None plus one machine, got type=%q options=%d", f.Type, len(f.Options))
-	}
-	if f.Options[0].Value != "" {
-		t.Error("the first option must be the detach one, or there is no way back to no machine")
-	}
-	if !strings.Contains(f.Options[1].Label, "Triage") || !strings.Contains(f.Options[1].Label, "decompose then answer") {
-		t.Errorf("the option should be identifiable: %q", f.Options[1].Label)
 	}
 }
 

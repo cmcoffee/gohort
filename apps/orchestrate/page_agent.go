@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -223,10 +222,11 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		{Field: "plan_guidance", Type: "textarea", Label: "Plan guidance", Rows: 3,
 			Help:       "Optional. Appended to the orchestrator prompt: nudges decomposition style.",
 			SuggestURL: "../api/agents/suggest"},
-		// Sits under Persona because that is what it changes: the persona
-		// above stays the agent's identity, and the machine supplies the
-		// procedure layered on top of it per phase.
-		machineSelectField(udb, user),
+		// No machine picker here. A machine is assigned from its own page
+		// (Extensions, Machines: "Assign to agents") or the chat's Configure
+		// menu. Listed on every agent, the picker offered each one every
+		// other agent's machine, named for the agent it was built for. The
+		// save keeps an agent's machine when this form does not send one.
 		bulletinsField(udb),
 		// Autonomous runs are NOT here. What this agent may do when nobody is
 		// present to click Approve is the Security page: the Unattended ladder
@@ -1061,48 +1061,6 @@ func leadUseField(show bool, rec AgentRecord) ui.FormField {
 		Help: "How much of each turn the lead model does: left is the local worker alone, right is the lead for everything.",
 		Detail: "Left to right, each step gives the lead more of the turn, and costs more. Worker only never uses it. Ask when stuck lets the worker ask it a question. Lead reviews has it read the finished reply against what the turn did, once, and send it back when something is wrong or missing; it never rewrites the reply itself. Lead plans has it decide and write while workers do the work (on Builder, design and review apps while a worker writes them). Lead every turn runs the whole turn on it.\n\n" +
 			"A Private conversation never reaches the lead, whatever is chosen here.",
-	}
-}
-
-// machineSelectField renders the phase-machine picker for the agent
-// editor (docs/agent-machines.md).
-//
-// Options are baked at render time from the user's saved machines rather
-// than fetched, because FormField has no options URL and this is a
-// short, rarely-changing list — the same choice every other select on
-// this page makes.
-//
-// A user with no machines gets a HIDDEN field rather than an empty
-// select. A control whose only option is "None" teaches nothing and
-// invites a support question; the tool that authors machines is where
-// someone learns they exist. Hidden with no Default contributes nothing
-// to the save payload, so an agent that already has a machine attached
-// (by tool or API) keeps it.
-func machineSelectField(udb Database, user string) ui.FormField {
-	defs := ListMachineDefs(udb, user)
-	if len(defs) == 0 {
-		return ui.FormField{Field: "machine", Type: "hidden"}
-	}
-	opts := []ui.SelectOption{{Value: "", Label: "None: the persona above governs every turn"}}
-	for _, d := range defs {
-		label := d.Name + " (" + strconv.Itoa(len(d.Phases)) + " phases)"
-		if desc := strings.TrimSpace(d.Description); desc != "" {
-			label += " - " + desc
-		}
-		opts = append(opts, ui.SelectOption{Value: d.ID, Label: label})
-	}
-	return ui.FormField{
-		Field: "machine", Type: "select", Label: "Phase machine", Options: opts,
-		Help: "Optional. A machine gives this agent phases it moves through and stays in.",
-		Detail: "It works out what is being asked once, picks an approach once, then answers in that frame for the rest of the thread instead of re-deciding every turn. The persona above still supplies identity and voice; the machine supplies procedure. Sessions already open keep the machine they started with, so this applies to new ones." +
-			// The shape people ask for by name and cannot find, because it is
-			// not a setting anywhere: an agent that goes and LOOKS before it
-			// answers. It is a two-phase machine, and the reason it is not a
-			// checkbox here is that what \"look\" means — which tools, what
-			// counts as determined — is different for every subject, and a
-			// checkbox has nowhere to say it.
-			"\n\nThis is also how you make an agent that INVESTIGATES before it answers: a first phase that goes and looks (set its reach to read-only, so it can inspect and never act), then a phase that answers only from what it found. Its probes never enter the conversation, so the thread stays small. " +
-			"\n\nAuthor machines from chat with the `machine` tool, or describe one in plain words at Extensions, Machines, Describe one.",
 	}
 }
 
