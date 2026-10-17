@@ -43,6 +43,9 @@ type ApplianceDispatch struct {
 // why, and what would change the answer. A refusal the model cannot act on gets
 // relayed to a person as "it didn't work".
 func DispatchApplianceTool(ctx context.Context, udb Database, d ApplianceDispatch) (string, error) {
+	if err := sshOnlyRefusal(d.Appliance, fmt.Sprintf("run %q", d.ToolName)); err != nil {
+		return "", err
+	}
 	tool, ok := LoadApplianceTool(udb, d.Appliance.ID, d.ToolName)
 	if !ok {
 		return "", fmt.Errorf("no tool named %q exists for %s: ask for the capability first, and the owner approves it before it can run",
@@ -306,4 +309,21 @@ func ownedByAdmin(a Appliance) bool {
 	}
 	u, ok := AuthGetUser(AuthDB(), a.Owner)
 	return ok && u.Admin
+}
+
+// sshOnlyRefusal refuses what can only happen over SSH on a system that has
+// none: a local command system runs on this server through sh, and has no
+// host. Minted tools and watches dial the system's host, so on one of these
+// they dialled port 22 on this machine, as root with the operator's key: at
+// best a failure, at worst this server reached over SSH as root. Refused before
+// anything dials. what names the attempt, for the message.
+//
+// Local command systems are being retired in favour of file stores, whose
+// mapped commands are the tools; nothing new is built for them.
+func sshOnlyRefusal(a Appliance, what string) error {
+	if a.Type != "command" || strings.TrimSpace(a.PeerName) != "" {
+		return nil // a remote stub of one runs on the peer
+	}
+	return fmt.Errorf("cannot %s on %s: it is a local command system, which runs on this server and has no SSH connection to run a tool or watch over. Nothing ran. Tell the person; an admin can map the command onto a file store, where each use of it becomes a tool",
+		what, applianceLabel(a.Name, a.ID))
 }

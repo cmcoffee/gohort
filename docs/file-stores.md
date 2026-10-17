@@ -406,15 +406,20 @@ correctly.
 
 ## Running a command through servitor
 
-The way to let agents run something over a store is now to register the binary on the store and map
+The way to let agents run something over a store is to register the binary on the store and map
 it ([Commands for agents](#commands-for-agents)). The older route, a servitor appliance of type
-`command` with a parameter scoped to the store, still works, but since v0.8.235 only on a system an
-**admin** owns: the store's folders are `TrustedOnly`, and a user's own system cannot reach them.
-On such a system, the wires are separate on purpose:
+`command` with a parameter scoped to the store, is closed since v0.8.330. A minted tool always ran
+over SSH, and a local command system has no host, so its tools dialled port 22 on this machine as
+root with the operator's key, never `sh` as the gohort process. A local command system now mints,
+runs and watches nothing, and no new one is made; an existing one keeps its `run_command`.
+
+What follows still describes a minted tool whose folder parameter is scoped to a store, on an SSH
+system an **admin** owns (since v0.8.235, only there: the store's folders are `TrustedOnly`, and a
+user's own system cannot reach them). The wires are separate on purpose:
 
 1. **The store is assigned to you** (admin): `AllowsUser`.
-2. **The agent is connected to the command appliance** in servitor, that is what mints the command
-   tools at all (`applianceEnabledForAgent`).
+2. **The agent is connected to the system** in servitor, that is what mints the command tools at
+   all (`applianceEnabledForAgent`).
 3. **The folder parameter declares `path_scope: "files:<slug>"`**: the mint prompt is handed your
    stores (`PathScopeRoots`) and told to prefer a scope over an enum, because an enum is frozen when
    written and a drop folder is not.

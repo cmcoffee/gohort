@@ -81,7 +81,7 @@ The machine supplies the progression; the agent supplies the reach. Attach all o
 | Reach | From |
 |---|---|
 | the log folders | a **file store** (`docs/file-stores.md`) attached under Sources |
-| the command | a servitor **Local Command** appliance, connected |
+| the command | the store's own mapped commands (`docs/file-stores.md`, Commands for agents) |
 | GitLab, Confluence, tickets | MCP servers (`core/mcp_manager.go`), admin-configured |
 | a live system | a servitor SSH appliance, connected |
 

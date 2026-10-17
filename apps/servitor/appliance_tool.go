@@ -317,6 +317,9 @@ With a folder parameter it looks like this:
 // Returns the tool UNSAVED and unapproved — the caller decides whether to keep
 // it, and the owner decides whether it may run. Minting is a proposal.
 func MintApplianceTool(ctx context.Context, chat FactChatFunc, appliance Appliance, facts []SshFact, intent, agentID, owner string) (ApplianceTool, error) {
+	if err := sshOnlyRefusal(appliance, "make a tool"); err != nil {
+		return ApplianceTool{}, err
+	}
 	if chat == nil {
 		return ApplianceTool{}, fmt.Errorf("no worker model available to map that request")
 	}

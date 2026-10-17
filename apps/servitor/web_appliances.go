@@ -92,6 +92,13 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "a local command system runs commands on the gohort server itself, so only an admin can create or change one", http.StatusForbidden)
 				return
 			}
+			// Retired in favour of file stores: an existing one keeps working
+			// and can be edited, and no new one is made (the type-change check
+			// below covers turning another system into one).
+			if req.ID == "" {
+				http.Error(w, localCommandRetired, http.StatusBadRequest)
+				return
+			}
 			if req.Name == "" || req.Command == "" {
 				http.Error(w, "name and command required", http.StatusBadRequest)
 				return
@@ -231,6 +238,10 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			// can USE a shared appliance but not change it.
 			if !canManageAppliance(userID, existing, servitorIsAdmin(r)) {
 				http.Error(w, "not allowed to edit this system", http.StatusForbidden)
+				return
+			}
+			if req.Type == "command" && existing.Type != "command" && !isRemote {
+				http.Error(w, localCommandRetired, http.StatusBadRequest)
 				return
 			}
 			targetUDB = exUDB
@@ -508,3 +519,9 @@ func purgeAppliance(userID string, udb Database, applianceID string) {
 
 	dropConn(userID, applianceID)
 }
+
+// localCommandRetired is why a new local command system is refused. A local
+// command system gives an agent free-form sh on this server; a file store's
+// mapped commands give it one tool per approved use instead, run without a
+// shell, with the store's caps.
+const localCommandRetired = "new local command systems are no longer made: they give an agent a free shell on this server. Register the folder as a file store (Admin, File stores), add the command to it, and map its uses there; each use becomes a tool the agent can be given. Existing local command systems keep working."

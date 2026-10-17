@@ -65,6 +65,9 @@ func listWatchesForAppliance(db Database, applianceID string) []ScheduledWatch {
 
 // execWatch runs the watch command via SSH and returns the output.
 func execWatch(appliance Appliance, userID, command string) (string, error) {
+	if err := sshOnlyRefusal(appliance, "run a watch"); err != nil {
+		return "", err
+	}
 	conn, err := acquireConn(userID, appliance)
 	if err != nil {
 		return "", fmt.Errorf("ssh connect: %w", err)
