@@ -308,3 +308,23 @@ console.log('OK');
 		t.Fatalf("uiAnchorMenu does not fit vertically:\n%s", out)
 	}
 }
+
+// A pinned block keeps its height. The conversation log is a flex column, and
+// a flex item that scrolls may shrink below its content: once the thread
+// outgrew the pane, a pinned plan was squeezed to its border and read as an
+// empty bubble.
+func TestAPinnedBlockDoesNotShrinkInTheThread(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("assets", "runtime.css"))
+	if err != nil {
+		t.Fatalf("reading runtime.css: %v", err)
+	}
+	css := string(b)
+	i := strings.Index(css, ".ui-agent-convo-log > .ui-agent-pinned {")
+	if i < 0 {
+		t.Fatal("the pinned block rule is gone from runtime.css")
+	}
+	rule := css[i : i+strings.Index(css[i:], "}")]
+	if !strings.Contains(rule, "flex-shrink: 0") {
+		t.Error("a pinned block may shrink, and collapses to an empty box once the thread overflows")
+	}
+}

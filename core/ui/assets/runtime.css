@@ -4767,9 +4767,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 /* A block following the running turn (data-ui-pin="live"), held at the top
  * of the thread while the turn runs; see refreshPins. A third of the pane at
- * most, scrolling inside itself, opaque so the thread passes under it. */
+ * most, scrolling inside itself, opaque so the thread passes under it.
+ * flex-shrink 0: the log is a flex column, and a flex item that scrolls may
+ * shrink below its content, so once the thread outgrew the pane the pinned
+ * plan was squeezed to its border and read as an empty bubble. */
 .ui-agent-convo-log > .ui-agent-pinned {
   position: sticky; top: 0; z-index: 3;
+  flex-shrink: 0;
   max-height: 33vh; overflow-y: auto;
   background-color: var(--bg-2, var(--bg-1));
   box-shadow: 0 6px 14px -8px rgba(0, 0, 0, 0.6);
