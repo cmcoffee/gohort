@@ -325,6 +325,9 @@ var patchAgentFields = map[string]bool{
 	"plan_guidance": true, "rules": true, "triggers": true,
 	"allowed_tools": true, "auto_approve_tools": true, "allowed_skills": true,
 	"attached_collections": true, "attached_pipelines": true,
+	// The boards it follows, set from the Knowledge dialog beside its
+	// collections. A board's post is read, and a follower gains no reach.
+	"bulletins": true,
 	"allowed_dispatch_targets": true, "allowed_users": true,
 	// How a share reaches its recipients, beside the list of who they are.
 	// These widen what a recipient can READ and never what they can change,

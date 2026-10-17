@@ -4877,7 +4877,11 @@ select.ui-orch-intake-input {
           options_source: 'api/collections',
           record_source: 'api/agents/' + encodeURIComponent(id),
           field: 'attached_collections',
-          post_to: 'api/agents',
+          // Only this field, by PATCH: the dialog has a second picker on
+          // the same agent (bulletins), and a whole-record save from either
+          // would write back the other's list as it stood when it loaded.
+          method: 'PATCH',
+          post_to: 'api/agents/' + encodeURIComponent(id),
           name_field: 'id', label_field: 'name', desc_field: 'description',
           meta_fields: ['documents', 'chunks'],
           noun: 'Knowledge',
@@ -4914,6 +4918,38 @@ select.ui-orch-intake-input {
             })
             .finally(function(){ scaffoldBtn.disabled = false; });
         };
+
+        // --- Bulletins it follows -----------------------------------
+        // A board's latest post rides on every turn of the agents that
+        // follow it: knowledge pushed to the agent, where a collection is
+        // pulled by search. It was a field on the agent editor; it sits
+        // here beside the collections, and the board's own Followers pills
+        // set the same thing from its side.
+        var bulletinsWrap = document.createElement('div');
+        bulletinsWrap.style.cssText = 'padding-top:0.8rem;margin-top:0.8rem;border-top:1px solid var(--border)';
+        var bh = document.createElement('div');
+        bh.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
+        bh.textContent = 'Bulletins it follows';
+        bulletinsWrap.appendChild(bh);
+        var bhHelp = document.createElement('div');
+        bhHelp.style.cssText = 'font-size:0.74rem;color:var(--text-mute);line-height:1.45;margin-bottom:0.5rem';
+        bhHelp.textContent = 'The latest post of each board it follows rides on every turn it takes: how several agents stay up with one thing, like today\'s headlines, without each fetching it. Boards are made under Knowledge, Bulletins. A board set to reach every agent is followed whether or not it is added here.';
+        bulletinsWrap.appendChild(bhHelp);
+        var bulletinsList = document.createElement('div');
+        bulletinsList.style.cssText = 'display:flex;flex-direction:column;gap:0.3rem';
+        bulletinsWrap.appendChild(bulletinsList);
+        body.appendChild(bulletinsWrap);
+        window.uiMountComponent({
+          type: 'chip_picker', mode: 'attach',
+          options_source: 'api/bulletins',
+          record_source: 'api/agents/' + encodeURIComponent(id),
+          field: 'bulletins',
+          method: 'PATCH',
+          post_to: 'api/agents/' + encodeURIComponent(id),
+          name_field: 'name', label_field: 'name', desc_field: 'desc',
+          noun: 'Bulletin',
+          empty_text: '(no boards yet: make one under Knowledge, Bulletins)'
+        }, bulletinsList);
       });
 
       // --- Pipelines modal -------------------------------------------

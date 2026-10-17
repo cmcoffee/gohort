@@ -23,7 +23,6 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/textutil"
-	"github.com/cmcoffee/gohort/core/ui"
 )
 
 const bulletinTable = "orchestrate_bulletins"
@@ -395,33 +394,6 @@ func bulletinPosterNames(db Database, b bulletinBoard) string {
 		return "only the owner"
 	}
 	return strings.Join(names, ", ")
-}
-
-// bulletinsField is the agent editor's list of boards this agent follows, the
-// same subscription the Followers pills set from the board's side. Hidden when
-// the owner has no boards, like the machine picker: a list with nothing in it
-// teaches nothing. A board every agent follows is shown ticked and noted.
-func bulletinsField(udb Database) ui.FormField {
-	boards := listBulletins(udb)
-	if len(boards) == 0 {
-		return ui.FormField{Field: "bulletins", Type: "hidden"}
-	}
-	var opts []ui.SelectOption
-	for _, b := range boards {
-		label := b.Name
-		if d := strings.TrimSpace(b.Desc); d != "" {
-			label += " - " + d
-		}
-		if b.AllAgents {
-			label += " (every agent follows this one)"
-		}
-		opts = append(opts, ui.SelectOption{Value: b.Name, Label: label})
-	}
-	return ui.FormField{
-		Field: "bulletins", Type: "checklist", Label: "Bulletins it follows", Options: opts,
-		Help:   "The latest post of each board you tick rides on every turn this agent takes.",
-		Detail: "Boards are made in Knowledge, Bulletins. Following one is how an agent stays up with something several agents share, like today's headlines or a message of the day, without fetching it itself. A board set to reach every agent is followed whatever you tick here.",
-	}
 }
 
 // monitorNotifyBulletin is the monitor delivery mode that posts to a board;

@@ -784,7 +784,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_tools_modal"},
 						{Group: "Configure", Label: "Memory", Title: "Review and prune the active agent's learned notes",
 							Method: "client", URL: "orchestrate_memory_modal"},
-						{Group: "Configure", Label: "Knowledge", Title: "Manage what data this agent draws on: your uploaded docs + attached Document Collections.",
+						{Group: "Configure", Label: "Knowledge", Title: "Manage what data this agent draws on: your uploaded docs, attached Document Collections, and the bulletins it follows.",
 							Method: "client", URL: "orchestrate_knowledge_modal"},
 						{Group: "Configure", Label: "Sources", Title: "Attach what this agent can reach INTO: file stores, servitor systems, connected document services. Each attachment adds its own named tools to the agent.",
 							Method: "client", URL: "orchestrate_sources_modal"},

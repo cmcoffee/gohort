@@ -227,7 +227,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// menu. Listed on every agent, the picker offered each one every
 		// other agent's machine, named for the agent it was built for. The
 		// save keeps an agent's machine when this form does not send one.
-		bulletinsField(udb),
+		// Nor the bulletins it follows: those are in the Knowledge dialog,
+		// beside its collections, and kept the same way when not sent.
 		// Autonomous runs are NOT here. What this agent may do when nobody is
 		// present to click Approve is the Security page: the Unattended ladder
 		// on each tool, and the Limits tab for how much and how often.
