@@ -407,15 +407,17 @@ const agentMemoryModalTemplate = `<script>
       factsList.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem';
       factsWrap.appendChild(factsList);
       body.appendChild(factsWrap);
-      renderRowList(factsList, facts, '+ Add', '(no entries yet)');
+      // Loading, not "(no entries yet)": an empty list while the request is
+      // still out reads as an agent that remembers nothing.
+      factsList.appendChild(window.uiLoading('Loading notes'));
       fetch(MEMBASE + 'facts').then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
-        if (!d) return;
+        if (!d) { renderRowList(factsList, facts, '+ Add', '(no entries yet)'); return; }
         facts = (d.notes || []).slice();
         var fr = d.framing || {};
         if (fr.block_header) factsTitle.textContent = String(fr.block_header).replace(/^#+\s*/, '');
         if (fr.block_intro) factsIntro.textContent = fr.block_intro;
         renderRowList(factsList, facts, '+ Add', '(no entries yet)');
-      });
+      }).catch(function() { renderRowList(factsList, facts, '+ Add', '(no entries yet)'); });
 
       // --- Working notes section (the update_notes block) ---
       // The agent rewrites this itself, unprompted, and it renders nearest the
@@ -670,6 +672,8 @@ const agentMemoryModalTemplate = `<script>
         });
       }
 
+      // The graph can take a while on a large one; say it is coming.
+      graphList.appendChild(window.uiLoading('Loading the graph'));
       fetch(MEMBASE + 'graph').then(function(r){ return r.ok ? r.json() : null; }).then(function(d){ renderGraph(d); }).catch(function(){ renderGraph(null); });
 
       function renderInferred(items) {
@@ -740,6 +744,7 @@ const agentMemoryModalTemplate = `<script>
         });
       });
 
+      inferredList.appendChild(window.uiLoading('Loading findings'));
       fetch(MEMBASE + 'inferred')
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(d){ renderInferred(d ? d.items : []); })
