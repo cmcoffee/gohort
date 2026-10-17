@@ -150,6 +150,16 @@ Because a type never grants permissions, the worst a bad change to a shared type
 how its agents work, never what they can reach. A follower who wants to stay as they are uses
 Customize.
 
+## Where types live
+
+One home per job: types are made in Extensions, used in Agents, approved in Admin.
+
+| Where | What happens there |
+|---|---|
+| **Extensions › Types** | A person's own types, those shared with them, and those published by the deployment, in the layout Skills already uses ("Your skills", "Published by your deployment", a New form). Make one, edit it, share it, ask to publish it, and see which of your agents follow it. Built-in and app types are listed read-only. It sits beside Machines and Pipelines, which Extensions already keeps, because a type is mostly settings and a machine. |
+| **Agents** | Where a type is used. The New Agent wizard asks for a type first, as its one question, in place of today's two axes. Each agent's page shows its type, marks each type setting "from the type" or "yours", and offers "Use the type's again" and Customize. |
+| **Admin › Governance** | "Pending promotions" approves a type published to everyone, as it approves tools and apps today. A request to publish a type's next version is reviewed as a tool's Update is: Review shows what changes, and approving it is what moves followers on. An admin can also hide a built-in or app type, as an app can be switched off. |
+
 ## Librarian, the first type with a machine
 
 The Librarian is the investigator archetype with a subject, a procedure, and a way for other agents
@@ -192,7 +202,7 @@ Each ships on its own.
    overlay never reads from the shape (beside `identityField`). Behaviour change, no data
    rewritten: an existing tracking agent keeps the permission values it was created with, and a
    later change to a shipped shape's tools no longer reaches it.
-2. **One list of types.** Assistant and Specialist become types with the settings they set today;
+2. **One list of types.** Assistant and Specialist become types with the settings they set today, listed in Extensions › Types;
    the wizard's two axes become one question; the agent page shows "from the type" and "yours"
    and offers "Use the type's again".
 3. **A type can carry a machine; the Librarian.** The instance subject, the Map machine, the `map`
