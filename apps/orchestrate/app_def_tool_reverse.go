@@ -83,6 +83,7 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		// update that silently drops it.
 		"pipeline_id": spec.PipelineID,
 		"full_width":  spec.FullWidth,
+		"narrow":      spec.Narrow,
 		"url":         "/apps/" + spec.Slug + "/",
 	}
 	// Hand back the AUTHORING sections — the shape action=update accepts — not

@@ -61,6 +61,7 @@ type appFolderManifest struct {
 	AgentID           string            `json:"agent_id,omitempty"`
 	PipelineID        string            `json:"pipeline_id,omitempty"`
 	FullWidth         bool              `json:"full_width,omitempty"`
+	Narrow            bool              `json:"narrow,omitempty"`
 	AskDailyUSD       float64           `json:"ask_daily_usd,omitempty"`
 	AskUserDailyUSD   float64           `json:"ask_user_daily_usd,omitempty"`
 	SharedCollections []string          `json:"shared_collections,omitempty"`
@@ -177,7 +178,7 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 		sec["html_file"] = name
 	}
 	m := appFolderManifest{Name: spec.Name, Slug: spec.Slug, Description: spec.Desc, RecordKey: spec.RecordKey,
-		AgentID: spec.AgentID, PipelineID: spec.PipelineID, FullWidth: spec.FullWidth,
+		AgentID: spec.AgentID, PipelineID: spec.PipelineID, FullWidth: spec.FullWidth, Narrow: spec.Narrow,
 		AskDailyUSD: spec.AskDailyUSD, AskUserDailyUSD: spec.AskUserDailyUSD,
 		SharedCollections: spec.SharedCollections, Settings: spec.Settings, Sections: sections}
 	for _, ds := range spec.DataSources {
@@ -444,6 +445,9 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 	if m.FullWidth {
 		args["full_width"] = true
 	}
+	if m.Narrow {
+		args["narrow"] = true
+	}
 	if m.AskDailyUSD > 0 {
 		args["ask_daily_usd"] = m.AskDailyUSD
 	}
@@ -650,9 +654,15 @@ const appFolderBaseFile = ".live"
 // holds and a publish writes. What changes on its own (verify state, samples)
 // is left out, so a verify does not read as an edit.
 func appLiveFingerprint(spec AppSpec) string {
-	b, _ := json.Marshal([]any{spec.Name, spec.Desc, spec.Notes, spec.RecordKey, spec.AgentID, spec.PipelineID,
+	parts := []any{spec.Name, spec.Desc, spec.Notes, spec.RecordKey, spec.AgentID, spec.PipelineID,
 		spec.FullWidth, spec.AskDailyUSD, spec.AskUserDailyUSD, spec.SharedCollections, spec.Settings,
-		spec.Sections, spec.DataSources, spec.Actions, spec.Libraries})
+		spec.Sections, spec.DataSources, spec.Actions, spec.Libraries}
+	// Appended only when set: a field added to the list would change every
+	// existing app's digest, and every folder would read as edited live.
+	if spec.Narrow {
+		parts = append(parts, "narrow")
+	}
+	b, _ := json.Marshal(parts)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }

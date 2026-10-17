@@ -266,13 +266,13 @@ select:-webkit-autofill {
 @media (max-width: 700px) {
   /* Descendant match, not child: a panel may be mounted bare on the root
    * (NoChrome section), inside a .ui-section-inner, or inside a tab panel. */
-  #ui-root:has(.ui-chat, .ui-tw, .ui-wb,
+  #ui-root:has(.ui-chat, .ui-tw, .ui-wb, .ui-frame-fill,
                .ui-navshell:not(.ui-navshell-embedded)):not(:has(.ui-agent)) {
     --page-pad-top: calc(0.35rem + env(safe-area-inset-top, 0px));
     padding-bottom: 0;
   }
   /* The same, under a header: it clears the notch, so the root does not. */
-  .ui-page-header + #ui-root:has(.ui-chat, .ui-tw, .ui-wb,
+  .ui-page-header + #ui-root:has(.ui-chat, .ui-tw, .ui-wb, .ui-frame-fill,
                .ui-navshell:not(.ui-navshell-embedded)):not(:has(.ui-agent)) {
     --page-pad-top: 0.35rem;
   }

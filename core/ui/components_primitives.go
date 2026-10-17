@@ -255,6 +255,12 @@ type Frame struct {
 	// Height is any CSS length for the frame box (e.g. "640px", "80vh").
 	// Defaults to a tall-but-bounded viewport when empty.
 	Height string `json:"height,omitempty"`
+	// Fill sizes the frame to the window below whatever sits above it, on
+	// any screen, in place of Height: for a page whose one surface is this
+	// document (a game, an app with its own layout). It follows the visible
+	// height both ways, so a phone's on-screen keyboard shrinks it rather
+	// than covering it, and closing the keyboard gives the room back.
+	Fill bool `json:"fill,omitempty"`
 	// Isolate and IsolateFetch: as on Card. With Isolate set a Frame IS a
 	// sandbox (no origin), which the note above says it otherwise is not.
 	Isolate      bool     `json:"isolate,omitempty"`

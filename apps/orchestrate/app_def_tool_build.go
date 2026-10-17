@@ -60,8 +60,14 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 			break
 		}
 	}
-	// Default to a centered ~900px column; the author opts into full width for
-	// data-heavy surfaces (wide tables / dashboards).
+	// A page made only of html sections is an app with its own layout,
+	// designed for the room it has: full width unless the author keeps it
+	// narrow. Everything else defaults to a centered ~900px column, and the
+	// author opts into full width for data-heavy surfaces (wide tables /
+	// dashboards).
+	if allHTMLSections(secs) && !spec.Narrow {
+		spec.FullWidth = true
+	}
 	maxWidth := "900px"
 	if spec.FullWidth {
 		maxWidth = "100%"
@@ -91,7 +97,30 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 		}
 		page.Sections = append(page.Sections, sec)
 	}
+	// A whole document that is the page's only section, given no height, is
+	// the app: it fills the window below the header, on a desktop or a
+	// phone, rather than stopping at a fixed box with the page scrolling
+	// around it (Frame.Fill).
+	if len(page.Sections) == 1 {
+		if fr, ok := page.Sections[0].Body.(ui.Frame); ok && strings.TrimSpace(fr.Height) == "" {
+			fr.Fill = true
+			page.Sections[0].Body = fr
+		}
+	}
 	return page, nil
+}
+
+// allHTMLSections reports whether every section is an html one: an app that
+// lays itself out, not a form or a list.
+func allHTMLSections(secs []map[string]any) bool {
+	for _, m := range secs {
+		switch strings.ToLower(strings.TrimSpace(mapStr(m, "kind"))) {
+		case "html", "card":
+		default:
+			return false
+		}
+	}
+	return len(secs) > 0
 }
 
 // normalizeSection makes a section object parseable when the author sent a
@@ -127,7 +156,7 @@ var sectionKeys = map[string][]string{
 // different fix. pipeline_id is absent deliberately: it is valid in both places.
 var topLevelAppKeys = map[string]bool{
 	"actions": true, "data_sources": true, "settings": true, "agent_id": true,
-	"full_width": true, "private_db": true, "record_key": true,
+	"full_width": true, "narrow": true, "private_db": true, "record_key": true,
 	"name": true, "description": true, "slug": true,
 }
 

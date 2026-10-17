@@ -84,6 +84,20 @@
     st.setProperty('--ui-chrome-h', Math.ceil(chrome) + 'px');
     st.setProperty('--ui-vh', Math.floor(vh) + 'px');
     fitFullHeightPanels(vh);
+    fitFillFrames(vh);
+  }
+  // fitFillFrames sizes each filling frame (Frame.Fill) to the room left below
+  // its own top, the way fitFullHeightPanels measures a panel. Unlike a panel
+  // it goes both ways: the frame's height is this measurement and nothing
+  // else, so there is no CSS height to fall back on, and a phone keyboard
+  // that closes, or a phone turned on its side, has to give the room back.
+  function fitFillFrames(vh) {
+    var frames = document.querySelectorAll('.ui-frame-fill > iframe');
+    for (var i = 0; i < frames.length; i++) {
+      var f = frames[i];
+      var top = f.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0);
+      f.style.height = Math.max(320, Math.floor(vh - top - 8)) + 'px';
+    }
   }
   // A full-height panel measures its OWN top instead of trusting the chrome
   // figure above.

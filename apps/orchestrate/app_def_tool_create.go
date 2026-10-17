@@ -108,6 +108,11 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if _, ok := args["full_width"]; ok {
 		spec.FullWidth = boolArg(args, "full_width")
 	}
+	// narrow: keep an all-html page in the centered column (it is full width
+	// otherwise). Same rule: only when the key is present.
+	if _, ok := args["narrow"]; ok {
+		spec.Narrow = boolArg(args, "narrow")
+	}
 	// private_db: opt the app into its own dedicated database file. Only honored
 	// when the key is present so an update without it keeps the existing choice.
 	// No migration — records already in the shared store stay there.

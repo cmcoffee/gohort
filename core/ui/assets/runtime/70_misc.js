@@ -1462,10 +1462,13 @@
   // served it, so relative fetches ('data/<source>'), cookies and storage
   // work exactly as they do in an inlined card.
   components.frame = function(cfg) {
-    var wrap = el('div', {class: 'ui-frame'});
+    var wrap = el('div', {class: 'ui-frame' + (cfg.fill ? ' ui-frame-fill' : '')});
     var f = document.createElement('iframe');
+    // Fill (Frame.Fill): the window below the page chrome to begin with, then
+    // the room actually left below the frame, measured by fitFillFrames.
     f.style.cssText = 'display:block;width:100%;border:0;background:#fff;border-radius:8px;' +
-      'height:' + (cfg.height || 'min(80vh, 860px)');
+      (cfg.fill ? 'height:calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 90px));min-height:320px'
+                : 'height:' + (cfg.height || 'min(80vh, 860px)'));
     f.setAttribute('allow', 'autoplay; fullscreen');
     if (cfg.isolate) {
       var iso = isolatedFrame(cfg, false);
@@ -1484,6 +1487,10 @@
       try { f.contentWindow.focus(); } catch (_) {}
     });
     wrap.appendChild(f);
+    // Measured once it is on the page: before that it has no top to measure.
+    if (cfg.fill && window.requestAnimationFrame) {
+      requestAnimationFrame(function() { if (window.uiSyncViewport) window.uiSyncViewport(); });
+    }
     return wrap;
   };
 

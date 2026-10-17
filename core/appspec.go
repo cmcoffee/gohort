@@ -81,6 +81,10 @@ type AppSpec struct {
 	// default centered ~900px column. The author opts in for data-heavy surfaces
 	// (wide tables, dashboards). A workbench app is always full-width regardless.
 	FullWidth bool `json:"full_width,omitempty"`
+	// Narrow keeps the centered column for a page made only of html
+	// sections, which is otherwise full width (an app with its own layout is
+	// designed for the room it has). FullWidth wins when both are set.
+	Narrow bool `json:"narrow,omitempty"`
 	// PrivateDB opts this app into its OWN dedicated, padlocked kvlite
 	// database file (via OpenCustomAppDB) instead of the shared customapps store.
 	// Its records live in an isolated, independently disposable file — the right
