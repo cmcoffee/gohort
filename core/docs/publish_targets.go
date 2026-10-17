@@ -162,3 +162,35 @@ func PublishViaCredential(ctx context.Context, user, credential, instruction str
 	}
 	return fn(ctx, user, credential, instruction)
 }
+
+// CredentialReaderFunc reads a published copy back through one credential: a
+// short agent run holding only that integration's READ tools, following
+// instruction, that reports the result holding the copy's body. Registered
+// by the package that owns the agent loop, like CredentialPublisherFunc.
+type CredentialReaderFunc func(ctx context.Context, user, credential, instruction string) (PublishedCopy, error)
+
+var (
+	credReaderMu sync.RWMutex
+	credReader   CredentialReaderFunc
+)
+
+// RegisterCredentialReader installs the credential read closure.
+func RegisterCredentialReader(fn CredentialReaderFunc) {
+	credReaderMu.Lock()
+	credReader = fn
+	credReaderMu.Unlock()
+}
+
+// ReadViaCredential reads a published copy through the named credential.
+func ReadViaCredential(ctx context.Context, user, credential, instruction string) (PublishedCopy, error) {
+	credReaderMu.RLock()
+	fn := credReader
+	credReaderMu.RUnlock()
+	if fn == nil {
+		return PublishedCopy{}, ErrCannotReadBack
+	}
+	if strings.TrimSpace(credential) == "" {
+		return PublishedCopy{}, errors.New("no API integration is named for this target")
+	}
+	return fn(ctx, user, credential, instruction)
+}

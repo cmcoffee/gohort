@@ -227,7 +227,14 @@ func PublishDocument(ctx context.Context, user, kind string, req PublishRequest)
 		return PublishResult{}, fmt.Errorf("a title is required")
 	}
 	req.Nav = AnalyzeNav(req.Doc.Markdown)
-	return d.Publish(ctx, user, req)
+	// The producer following this document checks the copy before an update
+	// overwrites it, and learns what it reads after (publish_readback.go).
+	ctx, landed := watchPublish(ctx, user, kind, req)
+	res, err := d.Publish(ctx, user, req)
+	if err == nil {
+		landed()
+	}
+	return res, err
 }
 
 // PublishRecord is where a document was last published, stored by the PRODUCER

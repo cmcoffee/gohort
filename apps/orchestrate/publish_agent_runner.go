@@ -64,6 +64,14 @@ const credentialPublisherPrompt = `You publish one document through one integrat
 
 You have the integration's tools and report_published. Use them to do exactly what the instruction says with this document (create the post, page or item it describes, with the title and the answers you are given), then call report_published with the address of what you made. If the instruction or the answers leave something the API needs unclear, pick the plainest reading and say which in the note. If the API refuses, try to correct the request from what it says; if you cannot, call report_published with ok=false and a note saying plainly what failed. Do not report success you did not see in an API response.`
 
+// credentialPublisherGuardPrompt is added when the document was published here
+// before and edits made there since must not be overwritten.
+const credentialPublisherGuardPrompt = `This document was published here before, and people may have edited it there since. Before you change anything, read it as it stands now, with its full content, and call report_current_page with the number of that result (every result is numbered at its top). Its answer says whether to go ahead. Until then the integration refuses changes.`
+
+// credentialPublisherReadBackPrompt asks for the copy as it reads after the
+// write, which is what the next update's check compares against.
+const credentialPublisherReadBackPrompt = `After your change, read the page once more the same way, with its full content, and give that result's number as readback_result in report_published.`
+
 // registerCredentialPublisher installs the closure core/docs calls when a
 // publishing target is an API integration rather than an agent. The run holds
 // ONLY that credential's API tool and report_published: a target someone set
@@ -110,11 +118,35 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 			return "", "", err
 		}
 		docs.PublishStep(ctx, "Publishing through %s, with %d of its tools", strings.TrimPrefix(credential, docs.MCPIntegrationPrefix), len(tools))
+		// An update that must not overwrite edits made at the destination
+		// reads the page first and holds its writes until the producer says
+		// go (publish_readback_runner.go); results are numbered so the model
+		// can point at the one holding the page.
+		guard, readBack := docs.GuardsUpdate(ctx), docs.WantsReadBack(ctx)
+		results, gate := &publishResults{}, &publishWriteGate{}
 		for i := range tools {
 			tools[i] = publishStepReported(ctx, tools[i])
+			if guard || readBack {
+				tools[i] = results.wrap(tools[i])
+			}
+			if guard {
+				tools[i] = gate.wrap(tools[i])
+			}
+		}
+		var extra []AgentToolDef
+		prompt := credentialPublisherPrompt
+		if guard {
+			prompt += "\n\n" + credentialPublisherGuardPrompt
+			extra = append(extra, reportCurrentPageTool(func(n int) (string, error) {
+				return gate.check(ctx, results, n)
+			}))
+		}
+		if readBack {
+			prompt += "\n\n" + credentialPublisherReadBackPrompt
 		}
 		var url, note string
 		reported, ok := false, false
+		readBackAt := 0
 		report := AgentToolDef{
 			Tool: Tool{
 				Name:        "report_published",
@@ -130,6 +162,7 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 				url = strings.TrimSpace(stringArg(args, "url"))
 				note = strings.TrimSpace(stringArg(args, "note"))
 				ok, _ = args["ok"].(bool)
+				readBackAt = intArg(args, "readback_result")
 				reported = true
 				docs.PublishStep(ctx, "Reported back: %s%s", chFirst(note, "no note"), func() string {
 					if url != "" {
@@ -140,15 +173,28 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 				return "Recorded. Reply with the same note and stop.", nil
 			},
 		}
+		if readBack {
+			report.Tool.Parameters["readback_result"] = ToolParam{Type: "integer", Description: "The number of the result holding the page as it reads AFTER your change, from reading it once more. Omit when you could not read it."}
+		}
 		resp, _, err := app.RunAgentLoop(ctx, []Message{{Role: "user", Content: instruction}}, AgentLoopConfig{
-			SystemPrompt:    credentialPublisherPrompt,
-			Tools:           append(tools, report),
-			MaxRounds:       12,
+			SystemPrompt:    prompt,
+			Tools:           append(append(tools, extra...), report),
+			MaxRounds:       14,
 			OnRoundStart:    progRoundStart,
 			ReasoningStream: progReasoning,
 		})
+		// A stopped update ends as the producer's own reason, whatever the
+		// run said after it: that is what the producer acts on.
+		if stop := gate.stoppedErr(); stop != nil {
+			return "", "", stop
+		}
 		if err != nil {
 			return "", "", err
+		}
+		if ok && readBackAt > 0 {
+			if cp, err := results.copyAt(readBackAt); err == nil {
+				docs.ReportReadBack(ctx, cp)
+			}
 		}
 		if !reported {
 			docs.PublishStep(ctx, "Ended without reporting where the document landed")

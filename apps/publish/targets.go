@@ -274,6 +274,25 @@ func (d *targetsDest) Publish(ctx context.Context, user string, req docs.Publish
 	return docs.PublishResult{URL: url, ExternalID: url, Label: label, Updated: strings.TrimSpace(req.ExternalID) != ""}, nil
 }
 
+// ReadPublished reads a copy published to one of the person's targets, through
+// the target's own integration. A target that hands its documents to an agent
+// cannot: what that agent made is its own business.
+func (d *targetsDest) ReadPublished(ctx context.Context, user string, rec docs.PublishRecord) (docs.PublishedCopy, error) {
+	t, ok := d.app.loadTarget(user, strings.TrimPrefix(rec.Kind, TargetKindPrefix))
+	if !ok {
+		return docs.PublishedCopy{}, fmt.Errorf("no publishing target %q", rec.Kind)
+	}
+	if t.Uses == "agent" {
+		return docs.PublishedCopy{}, docs.ErrCannotReadBack
+	}
+	where := chFirst(strings.TrimSpace(rec.URL), strings.TrimSpace(rec.ExternalID))
+	var b strings.Builder
+	b.WriteString("Read a document published through this integration, as it stands now. How documents are published here:\n\n")
+	b.WriteString(t.Instructions)
+	b.WriteString("\n\nThe document: " + chFirst(rec.Title, "(untitled)") + ", published at " + where + ".")
+	return docs.ReadViaCredential(ctx, user, t.Credential, b.String())
+}
+
 // --- HTTP: the Publishing targets section --------------------------------
 
 func (T *PublishApp) handleTargets(w http.ResponseWriter, r *http.Request) {

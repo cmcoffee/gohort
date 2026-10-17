@@ -103,3 +103,55 @@ func TestAPublishJobSaysWhatItIsDoingNow(t *testing.T) {
 		t.Errorf("an ended job still says it is doing %q", j.Now)
 	}
 }
+
+// waitDest runs until its context ends, as a model run does when stopped.
+type waitDest struct{}
+
+func (waitDest) Kind() string                    { return "waittest" }
+func (waitDest) Label() string                   { return "Wait test" }
+func (waitDest) Available(string) (bool, string) { return true, "" }
+func (waitDest) Targets(context.Context, string) ([]docs.PublishTarget, error) {
+	return nil, nil
+}
+func (waitDest) Publish(ctx context.Context, user string, req docs.PublishRequest) (docs.PublishResult, error) {
+	docs.PublishStep(ctx, "working")
+	<-ctx.Done()
+	return docs.PublishResult{}, ctx.Err()
+}
+
+// Stop ends a running publish: its run's context ends, it reads as stopped
+// rather than failed, and no record is filed. Closing the dialog does not
+// stop it; only Stop does.
+func TestStopEndsARunningPublish(t *testing.T) {
+	docs.RegisterPublishDestination(waitDest{})
+	udb := UserDB(&DBase{Store: kvlite.MemStore()}, "u")
+	g := saveGuide(udb, Guide{ID: "gs", Owner: "u", Title: "Runbook", Sections: []Section{{ID: "s", Title: "Install", Markdown: "Do it.", Order: 1}}})
+	runPublishJob(httptest.NewRequest("POST", "/", nil), g, udb, "u", "waittest", "Wait test",
+		docs.PublishRequest{Title: "Runbook", Doc: docs.PublishDoc{Title: "Runbook", Markdown: "# Runbook\n\nDo it."}}, docs.PublishRecord{Kind: "waittest", Title: "Runbook"})
+	wait := func(ok func(publishJob) bool) publishJob {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			j, _ := currentPublishJob("gs")
+			if ok(j) || time.Now().After(deadline) {
+				return j
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if j := wait(func(j publishJob) bool { return len(j.Steps) > 0 }); j.Done {
+		t.Fatal("the publish ended on its own")
+	}
+	if !stopPublishJob("gs") {
+		t.Fatal("Stop found nothing running")
+	}
+	j := wait(func(j publishJob) bool { return j.Done })
+	if !j.Done || j.OK || !j.Stopped || !strings.Contains(j.Message, "Stopped") {
+		t.Fatalf("a stopped publish should end as stopped: %+v", j)
+	}
+	if stopPublishJob("gs") {
+		t.Error("Stop on an ended publish reported stopping it")
+	}
+	if saved, _ := loadGuide(udb, "gs"); len(saved.Published) != 0 {
+		t.Errorf("a stopped publish filed a record: %+v", saved.Published)
+	}
+}

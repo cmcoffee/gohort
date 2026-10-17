@@ -875,7 +875,18 @@ const guidePublishAction = `function(ctx){
           function followJob(){
             view.innerHTML = '';
             var line = el('div', {class:'guide-pub-status'});
-            view.appendChild(line);
+            // Stop beside the spinner. Closing the window leaves the publish
+            // running (it outlives the page, and reopening rejoins it); Stop
+            // is how it is ended.
+            var stop = el('button', {class:'ui-row-btn', text:'Stop'});
+            stop.addEventListener('click', function(){
+              stop.disabled = true; stop.textContent = 'Stopping';
+              fetch('publish/stop?' + qp, {method:'POST', credentials:'same-origin'})
+                .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t; }); })
+                .catch(function(err){ stop.disabled = false; stop.textContent = 'Stop';
+                  window.uiAlert('Could not stop it: ' + (err && err.message || err)); });
+            });
+            view.appendChild(el('div', {class:'guide-pub-running'}, [line, stop]));
             // What the publish is doing, step by step, under the spinner;
             // kept when it ends, so an outcome can be checked against what
             // was actually done.
@@ -903,14 +914,15 @@ const guidePublishAction = `function(ctx){
                 showSteps(j.steps);
                 if (!j.done){ setTimeout(poll, 2000); return; }
                 clearInterval(spin);
-                line.textContent = (j.ok ? 'Published to ' : 'Could not publish to ') + j.target + ' (' + j.took + ').';
+                if (stop.parentNode) stop.parentNode.removeChild(stop);
+                line.textContent = (j.ok ? 'Published to ' : j.stopped ? 'Stopped publishing to ' : 'Could not publish to ') + j.target + ' (' + j.took + ').';
                 line.className = 'guide-pub-status ' + (j.ok ? 'guide-pub-ok' : 'guide-pub-fail');
                 if (j.message) view.appendChild(el('p', {class:'guide-kn-intro', text: j.message}));
                 if (j.url) view.appendChild(el('a', {class:'guide-pub-link', href: j.url, target:'_blank', rel:'noopener', text:'Open it'}));
                 var back = el('button', {class:'ui-row-btn', text:'Back'});
                 back.addEventListener('click', function(){ reload(); });
                 var btns = [back];
-                if (!j.ok){
+                if (!j.ok && !j.stopped){
                   // A quick update that failed usually needs an answer: hand
                   // it to the Publisher with what went wrong.
                   var talk = el('button', {class:'ui-row-btn primary', text:'Work it out with the Publisher'});
@@ -1001,7 +1013,7 @@ const guidePublishAction = `function(ctx){
                     window.uiAlert('Could not change it: ' + (err && err.message || err)); });
               });
               view.appendChild(el('label', {class:'guide-share-row'}, [keepBox,
-                el('span', {text:'Keep published: update these copies each time the Guide Curator changes this guide.'})]));
+                el('span', {text:'Keep published: update these copies each time the Guide Curator changes this guide, and bring edits made on them back through the Curator.'})]));
             }
             // The person's own targets, each opening the Publisher on it.
             if (targets.length){
@@ -1044,6 +1056,9 @@ const guidePublishCSS = `.guide-pub-row { display: flex; align-items: center; ga
 .guide-pub-target:hover { border-color: var(--accent); }
 .guide-pub-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
 .guide-pub-status { font-size: var(--fs-lg, 0.95rem); color: var(--text-hi); padding: 0.6rem 0; }
+.guide-pub-running { display: flex; align-items: center; gap: 0.6rem; }
+.guide-pub-running .guide-pub-status { flex: 1; min-width: 0; }
+.guide-pub-running .ui-row-btn { flex: none; }
 .guide-pub-steps { margin: 0 0 0.6rem; padding-left: 1.4rem; max-height: 16rem; overflow-y: auto; font-size: var(--fs-sm, 0.8rem); line-height: 1.45; color: var(--text); font-family: var(--mono, ui-monospace, monospace); word-break: break-word; }
 .guide-pub-steps li { margin: 0.1rem 0; }
 .guide-pub-ok { color: var(--ok, #3fb950); }

@@ -13,6 +13,7 @@ package scribe
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,6 +42,11 @@ type publishJob struct {
 	// beside the spinner. Cleared when it ends: a finished publish is doing
 	// nothing.
 	Now string `json:"now,omitempty"`
+	// Stopped is a publish someone stopped with the dialog's Stop.
+	Stopped bool `json:"stopped,omitempty"`
+	// cancel stops it. Closing the dialog does not: the publish outlives
+	// the page, and Stop is how a person ends it.
+	cancel context.CancelFunc
 }
 
 // publishJobStep is one step and when it happened, in seconds from the start.
@@ -89,19 +95,39 @@ type publishRun struct {
 // it opens mid-run.
 func runPublishJob(r *http.Request, g Guide, ownerUDB Database, user, kind, where string, req docs.PublishRequest, rec docs.PublishRecord) {
 	p := publishRun{guideID: g.ID, ownerUDB: ownerUDB, user: user, kind: kind, where: where, req: req, rec: rec}
-	job := p.register()
 	// Not on the request's context: the publish outlives the request, and a
 	// closed modal must not cancel a post halfway through.
-	go p.do(context.WithoutCancel(r.Context()), job)
+	job, ctx := p.start(context.WithoutCancel(r.Context()))
+	go p.do(ctx, job)
 }
 
-// register makes this the guide's publish job, so the dialog follows it.
-func (p publishRun) register() *publishJob {
-	job := &publishJob{Target: p.where, Started: time.Now()}
+// start makes this the guide's publish job, so the dialog follows it, and
+// returns the context it runs on: parent's, ended early by the job's Stop.
+func (p publishRun) start(parent context.Context) (*publishJob, context.Context) {
+	ctx, cancel := context.WithCancel(parent)
+	job := &publishJob{Target: p.where, Started: time.Now(), cancel: cancel}
 	publishJobsMu.Lock()
 	publishJobs[p.guideID] = job
 	publishJobsMu.Unlock()
-	return job
+	return job, ctx
+}
+
+// errPublishStopped is a publish ended by the dialog's Stop.
+var errPublishStopped = errors.New("stopped")
+
+// stopPublishJob stops the guide's running publish. False when none is
+// running.
+func stopPublishJob(guideID string) bool {
+	publishJobsMu.Lock()
+	defer publishJobsMu.Unlock()
+	j, ok := publishJobs[guideID]
+	if !ok || j.Done || j.cancel == nil {
+		return false
+	}
+	j.Stopped = true
+	j.Now = "stopping"
+	j.cancel()
+	return true
 }
 
 // do publishes and waits for the outcome, reporting its steps and activity on
@@ -114,6 +140,16 @@ func (p publishRun) do(ctx context.Context, job *publishJob) error {
 	publishJobsMu.Lock()
 	defer publishJobsMu.Unlock()
 	job.Done, job.Ended, job.Now = true, time.Now(), ""
+	if job.cancel != nil {
+		job.cancel()
+	}
+	if job.Stopped {
+		// Said as what it is: a stop can land after the write, so the page
+		// may already carry the change.
+		job.OK = false
+		job.Message = "Stopped before it finished. Anything it had already changed in " + p.where + " stays there."
+		return errPublishStopped
+	}
 	if err != nil {
 		job.Message = err.Error()
 		return err
@@ -247,7 +283,28 @@ func (T *Scribe) handlePublishJob(w http.ResponseWriter, r *http.Request, udb Da
 		"took":    fmt.Sprintf("%ds", int(j.Ended.Sub(j.Started).Seconds())),
 		"steps":   j.Steps,
 		"now":     j.Now,
+		"stopped": j.Stopped,
 	})
+}
+
+// handlePublishStop stops the guide's running publish: POST ?id=<guide>.
+// Edit rights, like starting one.
+func (T *Scribe) handlePublishStop(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	_, _, _, canEdit, found := T.resolve(r, udb, user, id)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	if !canEdit {
+		http.Error(w, "You need edit access to this guide to stop its publish.", http.StatusForbidden)
+		return
+	}
+	writeJSON(w, map[string]any{"stopping": stopPublishJob(id)})
 }
 
 func chFirst(a, b string) string {

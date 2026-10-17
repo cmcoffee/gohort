@@ -115,9 +115,12 @@ func (d *confluenceDest) Publish(ctx context.Context, user string, req docs.Publ
 	}
 	if strings.TrimSpace(req.ExternalID) != "" {
 		docs.PublishStep(ctx, "Updating Confluence page %s", req.ExternalID)
-		return d.update(user, cfg, req, storage)
+		return d.update(ctx, user, cfg, req, storage)
 	}
 	docs.PublishStep(ctx, "Creating a page in space %s", req.Target)
+	if err := ctx.Err(); err != nil {
+		return docs.PublishResult{}, err
+	}
 
 	payload, err := json.Marshal(map[string]any{
 		"spaceId": req.Target,
@@ -132,19 +135,34 @@ func (d *confluenceDest) Publish(ctx context.Context, user string, req docs.Publ
 	if err != nil {
 		return docs.PublishResult{}, err
 	}
-	return d.result(user, body, false)
+	res, err := d.result(user, body, false)
+	if err == nil {
+		d.readBack(ctx, user, cfg, res.ExternalID)
+	}
+	return res, err
 }
 
-func (d *confluenceDest) update(user string, cfg PublishConfig, req docs.PublishRequest, storage string) (docs.PublishResult, error) {
+func (d *confluenceDest) update(ctx context.Context, user string, cfg PublishConfig, req docs.PublishRequest, storage string) (docs.PublishResult, error) {
 	id := strings.TrimSpace(req.ExternalID)
-	version := req.Version
-	if cur, err := d.currentVersion(user, cfg, id); err == nil && cur > 0 {
-		version = cur
-	} else if err != nil {
+	cur, version, err := d.readPage(user, cfg, id)
+	if err != nil {
 		// The page is gone (someone deleted it in Confluence) — say so plainly,
 		// because the useful next move is publishing it as a new page, not
 		// retrying the update.
 		return docs.PublishResult{}, fmt.Errorf("could not read the existing page %s (it may have been deleted in Confluence, publish it as a new page instead): %w", id, err)
+	}
+	if version <= 0 {
+		version = req.Version
+	}
+	// What the page says now goes to whoever follows the document before it
+	// is overwritten: an edit made in Confluence since the last publish is
+	// theirs to keep, and they can stop the update.
+	if err := docs.CheckBeforeUpdate(ctx, cur); err != nil {
+		return docs.PublishResult{}, err
+	}
+	// Stopped while it read: nothing is written.
+	if err := ctx.Err(); err != nil {
+		return docs.PublishResult{}, err
 	}
 	payload, err := json.Marshal(map[string]any{
 		"id":     id,
@@ -163,23 +181,59 @@ func (d *confluenceDest) update(user string, cfg PublishConfig, req docs.Publish
 	if err != nil {
 		return docs.PublishResult{}, err
 	}
-	return d.result(user, body, true)
+	res, err := d.result(user, body, true)
+	if err == nil {
+		d.readBack(ctx, user, cfg, res.ExternalID)
+	}
+	return res, err
 }
 
-func (d *confluenceDest) currentVersion(user string, cfg PublishConfig, id string) (int, error) {
-	body, err := callAPI(user, cfg.ConfluenceCredential, "GET", d.apiURL(user, "/pages/"+id), "")
+// readPage reads a page's body in storage format and its version.
+func (d *confluenceDest) readPage(user string, cfg PublishConfig, id string) (docs.PublishedCopy, int, error) {
+	body, err := callAPI(user, cfg.ConfluenceCredential, "GET", d.apiURL(user, "/pages/"+id+"?body-format=storage"), "")
 	if err != nil {
-		return 0, err
+		return docs.PublishedCopy{}, 0, err
 	}
 	var page struct {
 		Version struct {
 			Number int `json:"number"`
 		} `json:"version"`
+		Body struct {
+			Storage struct {
+				Value string `json:"value"`
+			} `json:"storage"`
+		} `json:"body"`
 	}
 	if err := json.Unmarshal(body, &page); err != nil {
-		return 0, err
+		return docs.PublishedCopy{}, 0, err
 	}
-	return page.Version.Number, nil
+	n := page.Version.Number
+	return docs.PublishedCopy{Body: page.Body.Storage.Value, Version: strconv.Itoa(n)}, n, nil
+}
+
+// readBack reads the page just written for whoever follows the document: it
+// is what the next read is compared with. A failed read is left unreported,
+// which they take as "not known".
+func (d *confluenceDest) readBack(ctx context.Context, user string, cfg PublishConfig, id string) {
+	if !docs.WantsReadBack(ctx) || strings.TrimSpace(id) == "" {
+		return
+	}
+	if cur, _, err := d.readPage(user, cfg, id); err == nil {
+		docs.ReportReadBack(ctx, cur)
+	}
+}
+
+// ReadPublished reads a page this destination published, as it stands now.
+func (d *confluenceDest) ReadPublished(ctx context.Context, user string, rec docs.PublishRecord) (docs.PublishedCopy, error) {
+	if ok, reason := d.Available(user); !ok {
+		return docs.PublishedCopy{}, fmt.Errorf("Confluence is not available: %s", reason)
+	}
+	id := strings.TrimSpace(rec.ExternalID)
+	if id == "" {
+		return docs.PublishedCopy{}, docs.ErrCannotReadBack
+	}
+	cur, _, err := d.readPage(user, d.app.config(), id)
+	return cur, err
 }
 
 // result reads a page response into a publish result, building the page's web

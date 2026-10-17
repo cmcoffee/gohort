@@ -198,7 +198,7 @@ func (T *Scribe) handleRepublish(w http.ResponseWriter, r *http.Request, udb Dat
 	// steps, and a dialog opened mid-run rejoins it. It used to run on the
 	// request, a dead button for as long as the publish took.
 	p := republishOf(g, ownerUDB, user, prev)
-	job := p.register()
-	go p.do(context.WithoutCancel(r.Context()), job)
+	job, ctx := p.start(context.WithoutCancel(r.Context()))
+	go p.do(ctx, job)
 	writeJSON(w, map[string]any{"started": true, "target": p.where})
 }

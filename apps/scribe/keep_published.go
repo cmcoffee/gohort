@@ -8,7 +8,8 @@
 // the dialog for anyone who opens it.
 //
 // On a CHANGE, not a clock: an unchanged guide is never republished, and a
-// changed one is never far behind. Only places it was already published to by
+// changed one is never far behind. Edits made on the page itself are not
+// overwritten: they come back as findings first (published_edits.go). Only places it was already published to by
 // hand are updated, so where it lands stays the person's choice. A failure is
 // a notification; a success is routine and says nothing.
 
@@ -17,6 +18,7 @@ package scribe
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -111,7 +113,20 @@ func (T *Scribe) republishAll(ctx context.Context, user string, udb Database, gu
 			failed = append(failed, p.where+": another publish of this guide was still running")
 			continue
 		}
-		if err := p.do(ctx, p.register()); err != nil {
+		job, jctx := p.start(ctx)
+		if err := p.do(jctx, job); err != nil {
+			// Stopped from the dialog: the person ended this pass, so the
+			// rest of it is not started and nothing is reported as failed.
+			if errors.Is(err, errPublishStopped) {
+				Log("[scribe.keep_published] user=%q guide=%q: stopped from the Publish dialog", user, firstNonEmpty(g.Title, g.ID))
+				return
+			}
+			// Edits made on the page went to the Curator instead of being
+			// overwritten; its next pass updates the page with them in.
+			if errors.Is(err, errEditedThere) {
+				Log("[scribe.keep_published] user=%q guide=%q: %v", user, firstNonEmpty(g.Title, g.ID), err)
+				continue
+			}
 			failed = append(failed, p.where+": "+err.Error())
 			continue
 		}

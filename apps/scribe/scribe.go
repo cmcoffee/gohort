@@ -19,6 +19,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/docs"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
@@ -133,6 +134,9 @@ func (T *Scribe) Routes() {
 	// A guide as a Source an agent is attached to: it reads and searches the
 	// guide and reports findings into it (agent_source.go).
 	RegisterReferenceSource(guideSource{app: T})
+	// Every publish of a guide checks its copy before overwriting it: edits
+	// made there come back as findings (published_edits.go).
+	docs.RegisterPublishWatcher("guide", guideWatcher{app: T})
 	// The cross-app "save this as a document" seam TechWriter used to fill:
 	// servitor's save tool and its per-reply save button land a guide here.
 	T.installSaveArticleHook()

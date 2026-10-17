@@ -160,6 +160,7 @@ func (s guideSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 				if !ok {
 					return "", fmt.Errorf("the guide %q is no longer there", title)
 				}
+				s.app.checkPublishedSoon(user, g)
 				want := strings.TrimSpace(str(args, "section"))
 				if want == "" {
 					return guideContents(g), nil
@@ -186,6 +187,7 @@ func (s guideSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 				if !ok {
 					return "", fmt.Errorf("the guide %q is no longer there", title)
 				}
+				s.app.checkPublishedSoon(user, g)
 				return guideSearch(g, str(args, "query")), nil
 			},
 		},
