@@ -28,9 +28,10 @@ scan**, which is the point.
 
 Four read tools per store: `list_<slug>`, `search_<slug>`, `read_<slug>`, and
 `list_<slug>_commands` (what an admin has registered against it, and the admin's guide to each).
-Beyond reading, an agent gets only what an admin chose to give it: a `pull_<slug>` tool when the
-store pulls from another and **Let attached agents pull** is on, and the tools of each command an
-admin has mapped and approved (see [Commands for agents](#commands-for-agents)). It never gets a
+Beyond reading, an agent gets only what an admin chose to give it, and only when its owner has
+**Full Access** to the store and its attachment allows changes: a `pull_<slug>` tool when the store
+pulls from another, and the tools of each command an admin has mapped and approved (see
+[Commands for agents](#commands-for-agents)). It never gets a
 free-form way to write into a store or run something in it.
 
 ## The caps are not configurable
@@ -113,10 +114,9 @@ putting them there deliberately.
 
 ## Uploading, and deleting
 
-Reaching a store and WRITING into it are separate grants. **Let assigned users upload** is off by
-default: the common store is a directory something else fills, and registering `/var/log` should not
-let every account with an agent add files to it. An admin can upload either way, still bounded by
-the assignment: membership decides reach, and reach gates upload.
+Reaching a store and WRITING into it are separate levels (see [Who may reach one](#who-may-reach-one)):
+uploading takes **Full Access**. The common store is a directory something else fills, and
+registering `/var/log` should not let everyone who can read it add files to it.
 
 **Delete folders older than (days)** is 0 by default, which keeps everything forever. That is the
 only safe default for a store that may hold the only copy of an incident's evidence.
@@ -201,8 +201,8 @@ exchange, and a log line is the one place it would outlive the request.
 
 Registering a command is admin-only, and for a sharper reason than the store list: it names a binary
 the server will execute. That is the same decision as registering the directory it runs against, and
-neither is a user's to make. Running one from the page takes the WRITE grant (`Let assigned users
-upload`), because it rewrites the folder. An input starting with `-` is refused, since the binary
+neither is a user's to make. Running one from the page takes **Full Access**, because it rewrites the
+folder. An input starting with `-` is refused, since the binary
 would read it as an option rather than a value.
 
 ## Long runs
@@ -272,6 +272,11 @@ A store's folders are `PathScope.TrustedOnly`: they resolve only for these admin
 for an admin-owned servitor system). An agent's own scripts, its workspace shell and any tool a
 non-admin built cannot reach them, so a binary found some other way still cannot touch the store.
 
+Two more rules. A mapping whose tool name another command or store already gives agents is refused:
+the joined names can meet from different parts (`a_b` on store `c`, `a` on `b_c`), and an agent
+handed both keeps only the first. And deleting a store deletes its commands: left behind, they kept
+their approval, and a later store whose name made the same handle brought them back.
+
 Before v0.8.249 a command could also be "open", its mapped lines run in the sandbox. That mode is
 gone: at start each such command's mapped lines become its allowed uses, and one that was approved
 is switched off and logged, since its lines now run directly. Turn it back on from its row.
@@ -308,7 +313,7 @@ The store's Manage panel lists each folder's index under **Evidence index**, wit
 its progress and Stop. Only subfolders are indexed: a flat store's top-level files are in no case.
 
 **From a Servitor evidence bundle.** A bundle's edit panel lists, under **Move to a file store**,
-each store with this switch on that its owner may upload to. **Move here** copies the bundle's
+each store with this switch on that its owner has Full Access to. **Move here** copies the bundle's
 stored text into a new folder named after it (`appstores.EvidenceDrop`: written in a hidden
 staging folder, put in place only when complete, then indexed). Anyone who can reach the store can
 read the folder. See `servitor-systems-model.md`.
@@ -416,8 +421,20 @@ it. A half-typed message in the composer wins over the pre-filled one.
 
 ## Who may reach one
 
-Configuring a store is admin-only. **Reading one is controlled separately**, by the store's
-`allowed_users`: "Assigned to" on the admin form. Empty means every user.
+Configuring a store is admin-only. **Reaching one is controlled separately**, by two lists on the
+store's Manage panel, **Full Access** and **Read-Only** (`full_access`, `read_only`). Each entry is
+a person, a team (`group:<id>`, one that can carry a share), or **Everyone** (`*`). Nobody reaches a
+store until an admin adds them, admins included: managing the lists is admin-only, an entry decides
+reach. Someone on both lists, or reached two ways, gets the higher level.
+
+| Level | A person | Their attached agent |
+|---|---|---|
+| **Read-Only** | browse, search, read | list, search, read, evidence tools |
+| **Full Access** | also upload and run its commands | also its approved commands and pull, when the attachment allows changes |
+
+Both kinds of agent tool that change things declare `CapWrite`, so an attachment without **Can
+make changes** keeps them out even when the owner has Full Access. Apps are separate: an admin
+grants an app its own rights on the store (see [Apps that use a store](#apps-that-use-a-store)).
 
 That split exists because the two halves were mismatched: registering a path was gated from the
 start, and reading whatever is under it was not gated at all. An admin points a store at
@@ -430,16 +447,15 @@ Checked at every door, not just in the picker:
 - `Fetch`: the generic pull path
 - the path scope (`resolveScope`): the door a minted servitor command tool comes through, and the
   one that would otherwise be missed
-- upload, **including for admins**: admin manages the list, membership decides reach
+- upload and running a command, which take Full Access, **including for admins**
 - the store's folders as a path scope are `TrustedOnly`: only admin-mapped command tools and an
   admin-owned servitor system resolve them (see [Commands for agents](#commands-for-agents))
 
 A refusal on the path scope says "no file store called X **you can reach**" rather than "not yours",
 because confirming a store exists is a fact the caller can do nothing with and should not have.
 
-Empty stays open deliberately. Closing by default would silently break every store registered before
-this existed, and a security change that presents as "the tools vanished" is one nobody diagnoses
-correctly.
+Empty is closed (v0.8.340). It used to mean every user, which failed open for every new store and
+every list somebody cleared. Stores saved before then start with nobody on either list.
 
 ## Running a command through servitor
 
@@ -454,7 +470,7 @@ What follows still describes a minted tool whose folder parameter is scoped to a
 system an **admin** owns (since v0.8.235, only there: the store's folders are `TrustedOnly`, and a
 user's own system cannot reach them). The wires are separate on purpose:
 
-1. **The store is assigned to you** (admin): `AllowsUser`.
+1. **You have Full Access to the store** (admin): `FullAccessFor`.
 2. **The agent is connected to the system** in servitor, that is what mints the command tools at
    all (`applianceEnabledForAgent`).
 3. **The folder parameter declares `path_scope: "files:<slug>"`**: the mint prompt is handed your
@@ -493,8 +509,8 @@ machine in its own right before it gets that machine's tools.
 
 - **Put them there.** scp, a mount, a cron job. Nothing to call.
 - **Upload.** `POST /filestore/api/upload?slug=<store>&within=<subfolder>`, multipart, streamed.
-  The subfolder is created if absent. An admin, or an assigned user when **Let assigned users
-  upload** is on: it writes to the host filesystem.
+  The subfolder is created if absent. Anyone with Full Access: it writes to the host
+  filesystem.
 - **A command.** A registered download command run from the page, by an app granted commands, or by
   an agent through its mapped tools.
 - **A pull** from another store ([Pulling between stores](#pulling-between-stores)).

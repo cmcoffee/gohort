@@ -224,6 +224,12 @@ func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 	if !ok {
 		return tools
 	}
+	// Commands and pull change what the store holds, or act on its behalf:
+	// Full Access for the agent's owner, and an attachment that allows
+	// changes (both kinds of tool declare CapWrite).
+	if !st.FullAccessFor(user) {
+		return tools
+	}
 	tools = append(tools, s.commandToolDefs(sess, user, st)...)
 	if pull, ok := s.app.pullToolDef(sess, user, st); ok {
 		tools = append(tools, pull)

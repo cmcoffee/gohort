@@ -29,7 +29,7 @@ func scopeFixture(t *testing.T) (*FileStoreApp, Store, string) {
 	}
 	app := &FileStoreApp{}
 	app.DB = &DBase{Store: kvlite.MemStore()}
-	st, err := SaveStore(app.DB, Store{Name: "Support bundles", Path: root})
+	st, err := SaveStore(app.DB, Store{Name: "Support bundles", Path: root, FullAccess: []string{accessEveryone}})
 	if err != nil {
 		t.Fatalf("save store: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestStoresAreNotOfferedToToolAuthors(t *testing.T) {
 // account with an agent could attach it — the gate was on the cheap half.
 func TestAssignedStoreIsInvisibleToOthers(t *testing.T) {
 	app, st, _ := scopeFixture(t)
-	st.AllowedUsers = []string{"alice"}
+	st.FullAccess = []string{"alice"}
 	if _, err := SaveStore(app.DB, st); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestAssignedStoreIsInvisibleToOthers(t *testing.T) {
 // is a different door into the same folder.
 func TestAssignedStoreIsNotReachableThroughAPathScope(t *testing.T) {
 	app, st, _ := scopeFixture(t)
-	st.AllowedUsers = []string{"alice"}
+	st.FullAccess = []string{"alice"}
 	if _, err := SaveStore(app.DB, st); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -340,21 +340,21 @@ func TestAssignedStoreIsNotReachableThroughAPathScope(t *testing.T) {
 	}
 }
 
-// Empty stays open: closing by default would silently break every store
-// registered before this existed, and a security change that presents as
-// "the tools vanished" is one nobody diagnoses correctly.
-func TestUnassignedStoreStaysOpen(t *testing.T) {
+// Empty is closed: nobody reaches a store until an admin names them, and
+// an empty list that meant everyone failed open for every new store.
+func TestUnassignedStoreReachesNobody(t *testing.T) {
 	app, st, _ := scopeFixture(t)
-	if len(st.AllowedUsers) != 0 {
-		t.Fatal("fixture should be unrestricted")
+	st.FullAccess, st.ReadOnly = nil, nil
+	if _, err := SaveStore(app.DB, st); err != nil {
+		t.Fatal(err)
 	}
 	src := storeSource{app: app}
 	for _, who := range []string{"alice", "bob", ""} {
-		if !st.AllowsUser(who) {
-			t.Errorf("an empty list should allow %q", who)
+		if st.AllowsUser(who) {
+			t.Errorf("an empty list let %q in", who)
 		}
-		if len(src.ItemTools(who, st.Slug)) == 0 && who != "" {
-			t.Errorf("%q lost tools on an unrestricted store", who)
+		if len(src.ItemTools(who, st.Slug)) != 0 {
+			t.Errorf("%q got tools on a store nobody is assigned to", who)
 		}
 	}
 }
@@ -398,7 +398,7 @@ func TestRenameKeepsTheHandleAndTheTableSaysSo(t *testing.T) {
 	if st.Slug != "support_bundles" {
 		t.Fatalf("unexpected handle %q", st.Slug)
 	}
-	renamed, err := SaveStore(app.DB, Store{Slug: st.Slug, Name: "Customer captures", Path: st.Path})
+	renamed, err := SaveStore(app.DB, Store{Slug: st.Slug, Name: "Customer captures", Path: st.Path, FullAccess: st.FullAccess})
 	if err != nil {
 		t.Fatalf("rename: %v", err)
 	}

@@ -19,11 +19,11 @@ import (
 	"github.com/cmcoffee/gohort/core/pathhold"
 )
 
-// EvidenceStores lists the stores indexing evidence that user may upload to.
-func (h storeHost) EvidenceStores(user string, isAdmin bool) []appstores.EvidenceStore {
+// EvidenceStores lists the stores indexing evidence that user has Full Access to.
+func (h storeHost) EvidenceStores(user string) []appstores.EvidenceStore {
 	var out []appstores.EvidenceStore
 	for _, st := range ListStores(h.app.DB) {
-		if st.Evidence && st.UploadsAllowedFor(user, isAdmin) && st.Valid() == nil {
+		if st.Evidence && st.FullAccessFor(user) && st.Valid() == nil {
 			out = append(out, appstores.EvidenceStore{Store: st.Slug, Name: st.Name, About: st.Description})
 		}
 	}
@@ -31,7 +31,7 @@ func (h storeHost) EvidenceStores(user string, isAdmin bool) []appstores.Evidenc
 }
 
 // AddEvidenceFolder makes a new folder in store from what fill writes.
-func (h storeHost) AddEvidenceFolder(ctx context.Context, user string, isAdmin bool, slug, name string, need int64, fill func(dir string) error) (string, error) {
+func (h storeHost) AddEvidenceFolder(ctx context.Context, user, slug, name string, need int64, fill func(dir string) error) (string, error) {
 	st, ok := LoadStore(h.app.DB, slug)
 	if !ok || !st.AllowsUser(user) {
 		return "", Error("no such file store you can reach")
@@ -39,8 +39,8 @@ func (h storeHost) AddEvidenceFolder(ctx context.Context, user string, isAdmin b
 	if !st.Evidence {
 		return "", Error(st.Name + " does not index its folders as evidence")
 	}
-	if !st.UploadsAllowedFor(user, isAdmin) {
-		return "", Error("uploads are turned off for " + st.Name + ". An admin can enable them for assigned users on the store's settings (Admin, File stores).")
+	if !st.FullAccessFor(user) {
+		return "", Error("adding a folder to " + st.Name + " takes Full Access, which an admin gives on the store's Manage panel (Admin, File stores)")
 	}
 	if err := st.Valid(); err != nil {
 		return "", err

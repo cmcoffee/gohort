@@ -233,7 +233,7 @@ func TestAnAgentPassesAFileFromTheStore(t *testing.T) {
 	t.Cleanup(func() { registeredFileStoreApp = prev })
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "dump(user@example.test).enc"), []byte("x"), 0o644)
-	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: root})
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: root, FullAccess: []string{accessEveryone}})
 	bin := filepath.Join(t.TempDir(), "extract.sh")
 	os.WriteFile(bin, []byte("#!/bin/sh\nfor a in \"$@\"; do echo \"ARG<$a>\"; done\n"), 0o755)
 	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "extract", Command: bin})

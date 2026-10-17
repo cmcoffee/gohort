@@ -127,26 +127,47 @@ func TestDryRunTextMatchesWhatWouldGo(t *testing.T) {
 	}
 }
 
-// Uploading is a separate grant from reaching the store.
-func TestUploadGate(t *testing.T) {
-	open := Store{}
-	if !open.UploadsAllowedFor("anyone", true) {
-		t.Error("an admin should be able to upload to an unrestricted store")
+// Nobody reaches a store until an admin names them; Read-Only reads, Full
+// Access changes things; a team and Everyone are entries like a person; and
+// being an admin is no entry.
+func TestWhoReachesAStore(t *testing.T) {
+	adb := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prev; DeleteAppGroup(adb, "g-ops") })
+	SaveAppGroup(adb, AppGroup{ID: "g-ops", Name: "Ops", Shareable: true})
+	adb.Set(AuthTable, "user:bob", AuthUser{Username: "bob", Groups: []string{"g-ops"}})
+	adb.Set(AuthTable, "user:root", AuthUser{Username: "root", Admin: true})
+
+	if (Store{}).AllowsUser("root") {
+		t.Error("an empty list let somebody in, an admin included")
 	}
-	if open.UploadsAllowedFor("anyone", false) {
-		t.Error("a non-admin must not upload until uploads are turned on")
+	st := Store{FullAccess: []string{"alice"}, ReadOnly: []string{"group:g-ops"}}
+	for user, want := range map[string]string{"alice": accessFull, "bob": accessRead, "carol": "", "root": ""} {
+		if got := st.accessFor(user); got != want {
+			t.Errorf("%s: %q, want %q", user, got, want)
+		}
 	}
-	drop := Store{AllowUploads: true}
-	if !drop.UploadsAllowedFor("anyone", false) {
-		t.Error("a drop store should accept an assigned user's upload")
+	if st.FullAccessFor("bob") {
+		t.Error("Read-Only through a team changed things")
 	}
-	// Assignment still bounds it — turning uploads on does not widen WHO.
-	restricted := Store{AllowUploads: true, AllowedUsers: []string{"alice"}}
-	if restricted.UploadsAllowedFor("bob", false) {
-		t.Error("uploads=on must not let an unassigned user in")
+	everyone := Store{ReadOnly: []string{accessEveryone}, FullAccess: []string{"alice"}}
+	if !everyone.AllowsUser("carol") || everyone.FullAccessFor("carol") || !everyone.FullAccessFor("alice") {
+		t.Error("Everyone at Read-Only, with alice raised above it, came out wrong")
 	}
-	if restricted.UploadsAllowedFor("bob", true) {
-		t.Error("not even an admin: membership decides reach, and reach gates upload")
+}
+
+// A name in both lists keeps the higher one, once.
+func TestAStoresAccessListsAreTidied(t *testing.T) {
+	app := &FileStoreApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	st, err := SaveStore(app.DB, Store{Name: "Drop", Path: t.TempDir(),
+		FullAccess: []string{" alice ", "alice", ""}, ReadOnly: []string{"Alice", "bob"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(st.FullAccess, ",") != "alice" || strings.Join(st.ReadOnly, ",") != "bob" {
+		t.Errorf("lists %v / %v", st.FullAccess, st.ReadOnly)
 	}
 }
 

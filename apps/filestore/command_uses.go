@@ -110,7 +110,9 @@ func (s storeSource) specifiedToolDefs(sess *ToolSession, user string, st Store,
 				Description: fmt.Sprintf("%s Runs exactly: %s %s, with your values in the {placeholders}; nothing else about the command can be changed.%s%s", strings.TrimSuffix(desc, ".")+".", cmd.Command, line, backgroundNote(cmd), guidePointer(st, cmd)),
 				Parameters:  act.Params,
 				Required:    act.Required,
-				Caps:        []Capability{CapExecute},
+				// CapWrite as well: a command changes things, so it comes
+				// only through an attachment that allows changes.
+				Caps: []Capability{CapExecute, CapWrite},
 				Category:    "files",
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {

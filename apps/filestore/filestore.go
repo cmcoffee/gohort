@@ -117,6 +117,11 @@ func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, erro
 	if !ok || !st.AllowsUser(user) {
 		return "", Error("there is no file store called " + storeSlug + " you can reach")
 	}
+	// A path scope is a value a command runs against: acting on the store,
+	// so Full Access.
+	if !st.FullAccessFor(user) {
+		return "", Error("you have Read-Only access to " + st.Name + ", and running a command on its folders takes Full Access")
+	}
 	return st.resolveValue(value)
 }
 

@@ -27,7 +27,7 @@ func evidenceFixture(t *testing.T) (*FileStoreApp, Store) {
 	root := t.TempDir()
 	writeCase(t, root, "case-1", "scheduler.log", "2026-03-14T02:00:00Z ERROR scheduler stalled\n2026-03-14T02:00:09Z INFO retrying\n")
 	writeCase(t, root, "case-2", "web.log", "2026-04-01T10:00:00Z WARN slow request\n")
-	st, err := SaveStore(app.DB, Store{Name: "Cases", Path: root, Evidence: true})
+	st, err := SaveStore(app.DB, Store{Name: "Cases", Path: root, Evidence: true, ReadOnly: []string{accessEveryone}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,20 +147,20 @@ func TestAStoreNotIndexingEvidenceHasNoEvidenceTools(t *testing.T) {
 func TestEvidenceHandedOverLandsAsAFolder(t *testing.T) {
 	app, st := evidenceFixture(t)
 	h := storeHost{app}
-	if got := h.EvidenceStores("alice", false); len(got) != 0 {
+	if got := h.EvidenceStores("alice"); len(got) != 0 {
 		t.Errorf("a store not taking uploads was offered: %v", got)
 	}
-	st.AllowUploads = true
+	st.FullAccess = []string{"alice"}
 	if _, err := SaveStore(app.DB, st); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.EvidenceStores("alice", false); len(got) != 1 || got[0].Store != st.Slug {
+	if got := h.EvidenceStores("alice"); len(got) != 1 || got[0].Store != st.Slug {
 		t.Fatalf("offered %v", got)
 	}
 	fill := func(dir string) error {
 		return os.WriteFile(filepath.Join(dir, "a.log"), []byte("2026-03-14T02:00:00Z ERROR handed over\n"), 0o644)
 	}
-	folder, err := h.AddEvidenceFolder(context.Background(), "alice", false, st.Slug, "case 1", 10, fill)
+	folder, err := h.AddEvidenceFolder(context.Background(), "alice", st.Slug, "case 1", 10, fill)
 	if err != nil || folder != "case-1-2" {
 		t.Fatalf("folder %q (case-1 is taken): %v", folder, err)
 	}
@@ -170,7 +170,7 @@ func TestEvidenceHandedOverLandsAsAFolder(t *testing.T) {
 		fill(dir)
 		return Error("disk went away")
 	}
-	if _, err := h.AddEvidenceFolder(context.Background(), "alice", false, st.Slug, "half", 10, failing); err == nil {
+	if _, err := h.AddEvidenceFolder(context.Background(), "alice", st.Slug, "half", 10, failing); err == nil {
 		t.Error("a failed fill was reported as done")
 	}
 	entries, _ := os.ReadDir(st.Path)
@@ -181,7 +181,7 @@ func TestEvidenceHandedOverLandsAsAFolder(t *testing.T) {
 	}
 	st.Evidence = false
 	SaveStore(app.DB, st)
-	if _, err := h.AddEvidenceFolder(context.Background(), "alice", false, st.Slug, "x", 10, fill); err == nil {
+	if _, err := h.AddEvidenceFolder(context.Background(), "alice", st.Slug, "x", 10, fill); err == nil {
 		t.Error("handed to a store not indexing evidence")
 	}
 }

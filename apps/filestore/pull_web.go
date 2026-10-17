@@ -142,7 +142,10 @@ func (T *FileStoreApp) handlePull(w http.ResponseWriter, r *http.Request) {
 // It runs as a background-capable run, so a big case moves to the background
 // and reports back, and Stop on the run stops the copy.
 func (T *FileStoreApp) pullToolDef(sess *ToolSession, user string, dest Store) (AgentToolDef, bool) {
-	if !dest.AgentsMayPull {
+	// Pulling changes what the store holds: Full Access for the agent's
+	// owner. The attachment's "allows changes" decides the rest (the tool
+	// declares CapWrite).
+	if !dest.FullAccessFor(user) {
 		return AgentToolDef{}, false
 	}
 	src, ok := dest.pullSource(T.DB)

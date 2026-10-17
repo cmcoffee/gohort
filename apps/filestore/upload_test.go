@@ -32,7 +32,7 @@ func uploadFixture(t *testing.T) (*FileStoreApp, string, *http.Cookie) {
 	root := t.TempDir()
 	app := &FileStoreApp{}
 	app.DB = &DBase{Store: kvlite.MemStore()}
-	st, err := SaveStore(app.DB, Store{Name: "Drop", Path: root, AllowUploads: true})
+	st, err := SaveStore(app.DB, Store{Name: "Drop", Path: root, FullAccess: []string{"user-a"}})
 	if err != nil {
 		t.Fatal(err)
 	}

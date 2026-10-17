@@ -33,11 +33,11 @@ func pullFixture(t *testing.T) (*FileStoreApp, Store, Store) {
 	write("CASE-1/prepared/node2/sys.log", "kernel: oops")
 	os.Symlink("/etc/passwd", filepath.Join(intakeRoot, "CASE-1", "prepared", "escape"))
 	write("CASE-2/raw.bin", "ENCRYPTED")
-	intake, err := SaveStore(app.DB, Store{Name: "Intake", Path: intakeRoot, Ephemeral: true})
+	intake, err := SaveStore(app.DB, Store{Name: "Intake", Path: intakeRoot, Ephemeral: true, FullAccess: []string{"alice"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	analysis, err := SaveStore(app.DB, Store{Name: "Analysis", Path: analysisRoot, PullFrom: intake.Slug})
+	analysis, err := SaveStore(app.DB, Store{Name: "Analysis", Path: analysisRoot, PullFrom: intake.Slug, FullAccess: []string{"alice"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,13 +173,17 @@ func TestAnAgentPullsThroughTheAttachedStore(t *testing.T) {
 	app, intake, analysis := pullFixture(t)
 	src := storeSource{app: app}
 	sess := &ToolSession{Ctx: context.Background(), Username: "alice"}
-	// Off until an admin turns it on: no pull tool at all.
+	// Read-Only: no pull tool at all. Pulling changes the store.
+	analysis.ReadOnly, analysis.FullAccess = []string{"alice"}, nil
+	if _, err := SaveStore(app.DB, analysis); err != nil {
+		t.Fatal(err)
+	}
 	for _, td := range src.ItemToolsWithSession(sess, "alice", analysis.Slug) {
 		if strings.HasPrefix(td.Tool.Name, "pull_") {
-			t.Fatal("an agent got a pull tool no admin switched on")
+			t.Fatal("a Read-Only owner's agent got a pull tool")
 		}
 	}
-	analysis.AgentsMayPull = true
+	analysis.ReadOnly, analysis.FullAccess = nil, []string{"alice"}
 	if _, err := SaveStore(app.DB, analysis); err != nil {
 		t.Fatal(err)
 	}

@@ -108,6 +108,9 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 			}
 		}
 	}
+	if clash := toolNameClash(db, cmd, acts); clash != "" {
+		return cmd, Error("this mapping would give agents a tool named " + clash + ", which another command or store already gives them, and an agent keeps only one of two tools with the same name. Rename the action")
+	}
 	cmd.Tools = acts
 	cmd.ToolDesc = strings.TrimSpace(desc)
 	// A new mapping is not what was approved: agents lose it until an admin

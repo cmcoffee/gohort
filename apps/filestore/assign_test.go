@@ -1,5 +1,5 @@
 // Two editors write one store record: the form (name, path, retention…) and
-// the assignment picker (allowed_users). Neither sends the other's fields.
+// the assignment picker (full_access). Neither sends the other's fields.
 package filestore
 
 import (
@@ -32,13 +32,13 @@ func assignFixture(t *testing.T) *FileStoreApp {
 	app.DB = &DBase{Store: kvlite.MemStore()}
 	dir := t.TempDir()
 	if _, err := SaveStore(app.DB, Store{Name: "Support bundles", Path: dir,
-		AllowedUsers: []string{"ana", "bo"}}); err != nil {
+		FullAccess: []string{"ana", "bo"}}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	return app
 }
 
-// The failure this guards: drop allowed_users from the form and a save that
+// The failure this guards: drop full_access from the form and a save that
 // decodes into a BLANK record erases an assignment the picker just made. The
 // admin sees the store they edited, and the ACL they set five minutes ago is
 // gone with nothing said.
@@ -46,7 +46,7 @@ func TestSavingTheFormKeepsAnAssignmentItDoesNotCarry(t *testing.T) {
 	app := assignFixture(t)
 	st, _ := LoadStore(app.DB, "support_bundles")
 
-	// What the edit form posts: every field it holds, and not allowed_users.
+	// What the edit form posts: every field it holds, and not full_access.
 	body, _ := json.Marshal(map[string]any{
 		"slug": st.Slug, "name": "Support bundles", "path": st.Path,
 		"description": "one folder per ticket", "retention_days": 30,
@@ -59,8 +59,8 @@ func TestSavingTheFormKeepsAnAssignmentItDoesNotCarry(t *testing.T) {
 	}
 
 	after, _ := LoadStore(app.DB, "support_bundles")
-	if strings.Join(after.AllowedUsers, ",") != "ana,bo" {
-		t.Errorf("the form save erased an ACL it never edited: %v", after.AllowedUsers)
+	if strings.Join(after.FullAccess, ",") != "ana,bo" {
+		t.Errorf("the form save erased an ACL it never edited: %v", after.FullAccess)
 	}
 	if after.Description != "one folder per ticket" || after.RetentionDays != 30 {
 		t.Errorf("the fields the form DID carry should have landed: %+v", after)
@@ -68,19 +68,19 @@ func TestSavingTheFormKeepsAnAssignmentItDoesNotCarry(t *testing.T) {
 }
 
 // And the reverse: the picker posts the record it read back with only
-// allowed_users changed, which must not disturb anything else.
+// full_access changed, which must not disturb anything else.
 func TestTheAssignmentPickerChangesOnlyTheAssignment(t *testing.T) {
 	app := assignFixture(t)
 	st, _ := LoadStore(app.DB, "support_bundles")
-	st.AllowedUsers = []string{"ana"}
+	st.FullAccess = []string{"ana"}
 	body, _ := json.Marshal(st)
 
 	r := httptest.NewRequest("POST", "/filestore/api/stores", strings.NewReader(string(body)))
 	app.handleStores(httptest.NewRecorder(), asStoreAdmin(t, r))
 
 	after, _ := LoadStore(app.DB, "support_bundles")
-	if strings.Join(after.AllowedUsers, ",") != "ana" {
-		t.Errorf("the assignment should have changed: %v", after.AllowedUsers)
+	if strings.Join(after.FullAccess, ",") != "ana" {
+		t.Errorf("the assignment should have changed: %v", after.FullAccess)
 	}
 	if after.Name != "Support bundles" || after.Path != st.Path {
 		t.Errorf("nothing else should have moved: %+v", after)
@@ -88,22 +88,22 @@ func TestTheAssignmentPickerChangesOnlyTheAssignment(t *testing.T) {
 }
 
 // Clearing has to be sayable. An EMPTY list is present in the body and means
-// "everyone" — the one case a merge could wrongly read as "unchanged".
+// nobody: the one case a merge could wrongly read as "unchanged".
 func TestUntickingTheLastUserClearsTheList(t *testing.T) {
 	app := assignFixture(t)
 	st, _ := LoadStore(app.DB, "support_bundles")
 	body, _ := json.Marshal(map[string]any{
-		"slug": st.Slug, "name": st.Name, "path": st.Path, "allowed_users": []string{},
+		"slug": st.Slug, "name": st.Name, "path": st.Path, "full_access": []string{},
 	})
 	r := httptest.NewRequest("POST", "/filestore/api/stores", strings.NewReader(string(body)))
 	app.handleStores(httptest.NewRecorder(), asStoreAdmin(t, r))
 
 	after, _ := LoadStore(app.DB, "support_bundles")
-	if len(after.AllowedUsers) != 0 {
-		t.Errorf("an empty list means every user, and must survive the merge: %v", after.AllowedUsers)
+	if len(after.FullAccess) != 0 {
+		t.Errorf("an emptied list must survive the merge: %v", after.FullAccess)
 	}
-	if !after.AllowsUser("anyone") {
-		t.Error("with nobody assigned, everybody reaches it")
+	if after.AllowsUser("ana") || after.AllowsUser("anyone") {
+		t.Error("with nobody assigned, somebody still reaches it")
 	}
 }
 
@@ -166,10 +166,10 @@ func TestTheSettingsFormAndThePickerDoNotUndoEachOther(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &form); err != nil {
 		t.Fatalf("form load: %d %s", w.Code, w.Body.String())
 	}
-	if _, has := form["allowed_users"]; has {
-		t.Fatal("the form's load carries allowed_users, so Save would write it back stale")
+	if _, has := form["full_access"]; has {
+		t.Fatal("the form's load carries full_access, so Save would write it back stale")
 	}
-	if w := call("PATCH", "/filestore/api/stores?slug=support_bundles", `{"allowed_users":["ana"]}`); w.Code != http.StatusOK {
+	if w := call("PATCH", "/filestore/api/stores?slug=support_bundles", `{"full_access":["ana"]}`); w.Code != http.StatusOK {
 		t.Fatalf("picker: %d %s", w.Code, w.Body.String())
 	}
 	form["description"] = "edited after the chip"
@@ -178,13 +178,38 @@ func TestTheSettingsFormAndThePickerDoNotUndoEachOther(t *testing.T) {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
 	}
 	after, _ := LoadStore(app.DB, "support_bundles")
-	if strings.Join(after.AllowedUsers, ",") != "ana" {
-		t.Errorf("Save reverted the picker: %v", after.AllowedUsers)
+	if strings.Join(after.FullAccess, ",") != "ana" {
+		t.Errorf("Save reverted the picker: %v", after.FullAccess)
 	}
 	if after.Description != "edited after the chip" {
 		t.Errorf("the form's edit should land: %q", after.Description)
 	}
-	if w := call("PATCH", "/filestore/api/stores?slug=nope", `{"allowed_users":["ana"]}`); w.Code != http.StatusNotFound {
+	if w := call("PATCH", "/filestore/api/stores?slug=nope", `{"full_access":["ana"]}`); w.Code != http.StatusNotFound {
 		t.Errorf("a PATCH must not create a store: %d", w.Code)
+	}
+}
+
+// The access pickers offer Everyone first, then people and teams, and a
+// PATCH of one list leaves the other alone.
+func TestTheAccessPickersOfferEveryoneAndSaveApart(t *testing.T) {
+	app := assignFixture(t)
+	r := asStoreAdmin(t, httptest.NewRequest("GET", "/filestore/api/access-candidates", nil))
+	w := httptest.NewRecorder()
+	app.handleAccessCandidates(w, r)
+	var got []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got) < 2 || got[0]["value"] != accessEveryone {
+		t.Fatalf("candidates: %d %s", w.Code, w.Body.String())
+	}
+	call := func(body string) {
+		w := httptest.NewRecorder()
+		app.handleStores(w, asStoreAdmin(t, httptest.NewRequest("PATCH", "/filestore/api/stores?slug=support_bundles", strings.NewReader(body))))
+		if w.Code != http.StatusOK {
+			t.Fatalf("patch: %d %s", w.Code, w.Body.String())
+		}
+	}
+	call(`{"read_only":["*"]}`)
+	after, _ := LoadStore(app.DB, "support_bundles")
+	if strings.Join(after.FullAccess, ",") != "ana,bo" || !after.AllowsUser("carol") || after.FullAccessFor("carol") {
+		t.Errorf("Everyone at Read-Only beside ana and bo at Full Access: %+v", after)
 	}
 }

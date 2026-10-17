@@ -361,22 +361,12 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						},
 
 						ui.Card{HTML: folderPanelHeading("Who may reach it", "")},
-						ui.ACLPicker(ui.ACLPickerConfig{
-							OptionsSource: "/admin/api/user-candidates",
-							RecordSource:  "/filestore/api/stores?slug={slug}",
-							Field:         "allowed_users",
-							// PATCH sends the list alone. A POST carries the
-							// whole record as it stood when the row opened,
-							// which put back any setting saved since.
-							PostTo: "/filestore/api/stores?slug={slug}",
-							Method: "PATCH",
-							Noun:   "user",
-							Intro: "Empty means EVERY user: a folder of customer captures is rarely something every account should hold, " +
-								"and configuring a store is already admin-only, so without this the cheap half was gated and the reading was not. " +
-								"Applies to admins too: admin manages the list, membership decides reach.",
-							EmptyText:  "No approved users to assign yet.",
-							Invalidate: []string{"/filestore/api/stores"},
-						}),
+						ui.Card{HTML: `<p class="ui-form-hint">Nobody, until you add them: people, teams, or Everyone. ` +
+							`<b>Read-Only</b> browses, searches and reads; an attached agent gets the list, search, read and evidence tools. ` +
+							`<b>Full Access</b> also uploads and runs the store's commands; an attached agent also gets its approved commands and pull, when its attachment allows changes. ` +
+							`Applies to admins too: admin manages the lists, an entry decides reach.</p>`},
+						ui.ACLPicker(storeAccessPicker("full_access", "Full Access")),
+						ui.ACLPicker(storeAccessPicker("read_only", "Read-Only")),
 
 						ui.Card{HTML: folderPanelHeading("Settings", "")},
 						ui.FormPanel{
@@ -392,7 +382,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					{Type: "button", Label: "Delete", Method: "DELETE",
 						PostTo:     "/filestore/api/stores?slug={slug}",
 						Variant:    "danger",
-						Confirm:    "Remove this file store? The folder and its files are left alone; agents attached to it lose their search tools.",
+						Confirm:    "Remove this file store? The folder and its files are left alone. Its registered commands are removed, and agents attached to it lose its tools.",
 						Optimistic: true},
 				},
 				EmptyText: "No file stores yet. Add a folder on this server for an agent to search.",
@@ -455,6 +445,24 @@ func commandUsesFields() []ui.FormField {
 	}
 }
 
+// storeAccessPicker is one of the two access lists on a store's Manage
+// panel. Each saves its own list alone (PATCH): a POST carries the whole
+// record as it stood when the row opened, which put back any setting saved
+// since.
+func storeAccessPicker(field, level string) ui.ACLPickerConfig {
+	return ui.ACLPickerConfig{
+		OptionsSource: "/filestore/api/access-candidates",
+		RecordSource:  "/filestore/api/stores?slug={slug}",
+		Field:         field,
+		PostTo:        "/filestore/api/stores?slug={slug}",
+		Method:        "PATCH",
+		Noun:          "entry",
+		Intro:         level,
+		EmptyText:     "No people or teams to add yet.",
+		Invalidate:    []string{"/filestore/api/stores"},
+	}
+}
+
 func storeFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "Build logs",
@@ -463,9 +471,6 @@ func storeFormFields() []ui.FormField {
 		{Field: "path", Type: "text", Label: "Folder", Placeholder: "/var/log/builds",
 			Help:   "Absolute path on this server. Read-only: nothing here ever writes to it.",
 			Detail: "The folder itself is what an agent attaches to; its subfolders, if any, are what a search can be scoped to."},
-		{Field: "allow_uploads", Type: "toggle", Label: "Let assigned users upload",
-			Help:   "Whether an agent may write into this store, as well as read it. Off by default.",
-			Detail: "Reaching a store and WRITING into it are different grants. The common case is a log directory something else fills, and pointing at it should not let every account with an agent add files to it. Turn this on for a drop store people are meant to feed. An admin can upload either way."},
 		{Field: "evidence", Type: "toggle", Label: "Index folders as evidence",
 			Help:   "Index each subfolder like an evidence bundle, and give attached agents a summary and a timeline of it. Off by default.",
 			Detail: "Each subfolder (a case, a run, a dump) is indexed as it arrives: format, line count, the period it covers, which hosts wrote it and how many errors and warnings it holds, with timestamps parsed so files can be merged in time order. Attached agents get summarize_<store> and timeline_<store>, which take the folder by name.\n\nThe folder itself is never changed. The index is a second copy, kept encrypted, of up to 8 GB per folder: a changed folder is indexed again, a deleted one's index is wiped, and turning this off wipes them all. Folders that change some other way (a command's download, a copy by hand) are picked up within 15 minutes, or at once when an agent asks about one."},
@@ -482,12 +487,9 @@ func storeFormFields() []ui.FormField {
 			Detail: "Uploads, commands and copies into the store are refused once it is full, saying how full it is. Nothing is deleted to make room. Separate from the free-space floor every write on the disk keeps (Admin, Limits)."},
 		{Field: "pull_from", Type: "select", Label: "Pull from another store", OptionsSource: "/filestore/api/store-options",
 			Help:   "Optional: another store this one copies files and folders in from.",
-			Detail: "For a store agents read that takes what it holds from a private working store. The link is the permission: an app granted pulling here, or an attached agent when you allow it below, can copy a file or folder from that store by name, seeing that store's names but never its contents. Copies, never moves: the other store keeps its own until its lifetime or retention removes it."},
+			Detail: "For a store agents read that takes what it holds from a private working store. The link is the permission: an app granted pulling here, or an attached agent of someone with Full Access, can copy a file or folder from that store by name, seeing that store's names but never its contents. Copies, never moves: the other store keeps its own until its lifetime or retention removes it."},
 		{Field: "pull_subpath", Type: "text", Label: "Part of each folder to copy", Placeholder: "prepared", ShowWhen: "pull_from",
 			Help: "When a folder is pulled, the part of it to copy: the subfolder holding what was prepared. prepared when empty; a single dot copies the whole folder. A file is always copied whole."},
-		{Field: "agents_may_pull", Type: "toggle", Label: "Let attached agents pull", ShowWhen: "pull_from",
-			Help:   "Gives agents this store is attached to a pull tool. Off by default.",
-			Detail: "An agent acts on a store only through tools an admin chose to give it. Off, files and folders arrive by the Pull button here or by an app granted pulling; on, an attached agent can also pull one by name."},
 		{Field: "description", Type: "textarea", Label: "What lands here", Rows: 2,
 			Help:   "Optional, and worth writing: it tells the agent when to reach for THIS store.",
 			Detail: "It is pasted into the agent's tool descriptions. For example: \"Build logs, one folder per CI run, copied in by the build server.\""},
@@ -533,6 +535,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/pull", T.handlePull)
 	T.HandleFunc("/api/evidence/", T.handleEvidence)
 	T.HandleFunc("/api/store-options", T.handleStoreOptions)
+	T.HandleFunc("/api/access-candidates", T.handleAccessCandidates)
 	T.HandleFunc("/api/app-grants", T.handleAppGrants)
 	T.HandleFunc("/api/app-options", T.handleAppOptions)
 	// App scripts reach the stores they were granted through this.
@@ -543,6 +546,29 @@ func (T *FileStoreApp) Routes() {
 
 // handleStoreOptions lists the stores for the Pull from another store picker, with a
 // first choice of none.
+// handleAccessCandidates is who a store's access lists can name: Everyone,
+// each approved person, and each team that can carry a share (the teams a
+// person's access is looked up under, ShareRecipientKeys).
+func (T *FileStoreApp) handleAccessCandidates(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok || !adminOnly(w, r) {
+		return
+	}
+	out := []map[string]any{{"value": accessEveryone, "label": "Everyone", "desc": "every account on this server"}}
+	if AuthDB == nil {
+		writeJSON(w, out)
+		return
+	}
+	var people []map[string]any
+	json.Unmarshal(UserCandidatesJSON(AuthDB(), ""), &people)
+	out = append(out, people...)
+	for _, g := range LoadAppGroups(AuthDB()) {
+		if g.Shareable {
+			out = append(out, map[string]any{"value": "group:" + g.ID, "label": "Team: " + g.Name})
+		}
+	}
+	writeJSON(w, out)
+}
+
 func (T *FileStoreApp) handleStoreOptions(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok || !adminOnly(w, r) {
 		return
@@ -591,7 +617,8 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 				var out map[string]any
 				raw, _ := json.Marshal(st)
 				_ = json.Unmarshal(raw, &out)
-				delete(out, "allowed_users")
+				delete(out, "full_access")
+				delete(out, "read_only")
 				delete(out, "app_grants") // the grants section owns these
 				writeJSON(w, out)
 				return
@@ -603,7 +630,7 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost, http.MethodPatch:
 		// Decoded ONTO the stored record, not into a blank one. Two editors
 		// now write this record — the form (name, path, retention…) and the
-		// assignment picker (allowed_users) — and neither sends the other's
+		// assignment pickers (full_access, read_only) — and neither sends the other's
 		// fields. Into a blank Store, whichever saved second would silently
 		// erase what the first had just set: json.Unmarshal leaves absent
 		// keys alone, so starting from what is stored makes a partial save
@@ -693,14 +720,10 @@ func (T *FileStoreApp) storeRows() []map[string]any {
 		if n, err := CountFolders(st.Path); err == nil {
 			folders = strconv.Itoa(n)
 		}
-		assigned := "everyone"
-		if len(st.AllowedUsers) > 0 {
-			assigned = strings.Join(st.AllowedUsers, ", ")
-		}
 		rows = append(rows, map[string]any{
 			"slug": st.Slug, "name": st.Name, "path": st.Path,
 			"description": st.Description, "folders": folders,
-			"assigned": assigned, "allowed_users": st.AllowedUsers,
+			"assigned": st.accessText(),
 			// From the same definition ItemTools builds from. These are
 			// the names in force, which after a rename are not the names
 			// the Name column would suggest.
@@ -777,10 +800,7 @@ func keepsLabel(st Store) string {
 
 // storeAbout is the store's details for the About panel in Manage.
 func (T *FileStoreApp) storeAbout(st Store) map[string]any {
-	assigned := "everyone"
-	if len(st.AllowedUsers) > 0 {
-		assigned = strings.Join(st.AllowedUsers, ", ")
-	}
+	assigned := st.accessText()
 	var apps []string
 	for _, g := range st.AppGrants {
 		apps = append(apps, appLabel(g.App)+": "+g.rights())
@@ -819,9 +839,6 @@ func retentionLabel(st Store) string {
 	}
 	if limit := st.capBytes(); limit > 0 {
 		window += ", " + HumanSize(st.usage()) + " of " + HumanSize(limit) + " cap"
-	}
-	if st.AllowUploads {
-		return window + ", uploads on"
 	}
 	return window
 }

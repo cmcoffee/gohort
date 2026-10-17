@@ -128,7 +128,8 @@ func (T *Servitor) movableBundle(w http.ResponseWriter, r *http.Request) (rec Ap
 	return rec, "", "", false
 }
 
-// handleBundleMoveTargets lists the stores a bundle can be moved to, one row
+// handleBundleMoveTargets lists the stores a bundle can be moved to (evidence
+// on, and Full Access for its owner), one row
 // each, for the page's ActionList.
 func (T *Servitor) handleBundleMoveTargets(w http.ResponseWriter, r *http.Request) {
 	rec, _, userID, ok := T.movableBundle(w, r)
@@ -137,7 +138,7 @@ func (T *Servitor) handleBundleMoveTargets(w http.ResponseWriter, r *http.Reques
 	}
 	rows := []map[string]any{}
 	if drop, ok := evidenceDrop(); ok {
-		for _, st := range drop.EvidenceStores(userID, servitorIsAdmin(r)) {
+		for _, st := range drop.EvidenceStores(userID) {
 			desc := "Copies this bundle's files into a new folder of " + st.Name + ", which indexes it. Anyone who can reach " + st.Name + " can read the folder."
 			if about := strings.TrimSpace(st.About); about != "" {
 				desc = about + " " + desc
@@ -174,7 +175,7 @@ func (T *Servitor) handleBundleMove(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	default:
-		msg, err := T.startBundleMove(key, owner, userID, servitorIsAdmin(r), rec, store)
+		msg, err := T.startBundleMove(key, owner, userID, rec, store)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -184,13 +185,13 @@ func (T *Servitor) handleBundleMove(w http.ResponseWriter, r *http.Request) {
 }
 
 // startBundleMove checks the move can start and starts it in the background.
-func (T *Servitor) startBundleMove(key, owner, userID string, isAdmin bool, rec Appliance, store string) (string, error) {
+func (T *Servitor) startBundleMove(key, owner, userID string, rec Appliance, store string) (string, error) {
 	drop, ok := evidenceDrop()
 	if !ok {
 		return "", Error("file stores are not available on this server")
 	}
 	var target appstores.EvidenceStore
-	for _, st := range drop.EvidenceStores(userID, isAdmin) {
+	for _, st := range drop.EvidenceStores(userID) {
 		if st.Store == store {
 			target = st
 		}
@@ -226,15 +227,15 @@ func (T *Servitor) startBundleMove(key, owner, userID string, isAdmin bool, rec 
 	}
 	bundleMoves.at[key] = m
 	bundleMoves.Unlock()
-	go m.run(ctx, drop, b, files, userID, isAdmin, rec.Name)
+	go m.run(ctx, drop, b, files, userID, rec.Name)
 	return "Moving " + rec.Name + " to " + target.Name, nil
 }
 
 // run copies the files and records how it went.
-func (m *bundleMove) run(ctx context.Context, drop appstores.EvidenceDrop, b bundle.Bundle, files []bundle.File, userID string, isAdmin bool, name string) {
+func (m *bundleMove) run(ctx context.Context, drop appstores.EvidenceDrop, b bundle.Bundle, files []bundle.File, userID, name string) {
 	defer m.cancel()
 	var carried, empty []string
-	folder, err := drop.AddEvidenceFolder(ctx, userID, isAdmin, m.store, name, m.totalBytes, func(dir string) error {
+	folder, err := drop.AddEvidenceFolder(ctx, userID, m.store, name, m.totalBytes, func(dir string) error {
 		for _, bf := range files {
 			if err := ctx.Err(); err != nil {
 				return err

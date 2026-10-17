@@ -153,7 +153,7 @@ func ParseGrantRequestName(name string) (store, slug string, write, commands, pu
 }
 
 // EvidenceStore is a store that indexes its folders as evidence and that a
-// person may add a folder to.
+// person has Full Access to, so may add a folder to.
 type EvidenceStore struct {
 	Store string `json:"store"`
 	Name  string `json:"name"`
@@ -164,11 +164,11 @@ type EvidenceStore struct {
 // (Servitor, moving an evidence bundle). Optional beside Host, like Catalog.
 type EvidenceDrop interface {
 	// EvidenceStores is every store indexing evidence that user may add to.
-	EvidenceStores(user string, isAdmin bool) []EvidenceStore
+	EvidenceStores(user string) []EvidenceStore
 	// AddEvidenceFolder makes a new folder in store, named after name (made
 	// unique there), for user. fill writes the files into dir, a hidden
 	// staging folder; only when it returns nil is the folder put in place,
 	// and then indexed. need is the bytes it will write, checked against the
 	// store's room before fill runs. Returns the folder's name.
-	AddEvidenceFolder(ctx context.Context, user string, isAdmin bool, store, name string, need int64, fill func(dir string) error) (string, error)
+	AddEvidenceFolder(ctx context.Context, user, store, name string, need int64, fill func(dir string) error) (string, error)
 }

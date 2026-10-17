@@ -190,6 +190,37 @@ func (a StoreCommand) Mapped() bool { return len(a.Tools) > 0 }
 
 func commandKey(slug, name string) string { return slug + "/" + name }
 
+// toolNameClash names a tool cmd mapped as acts would give agents that another
+// command, or a store's own tools, already go by, or "". The joined names can
+// meet from different parts ("a_b" on store "c" and "a" on "b_c" are both
+// a_b_c), and an agent given both keeps only the first
+// (attachedSourceToolDefs), so the second would vanish without a word.
+func toolNameClash(db Database, cmd StoreCommand, acts []TempToolAction) string {
+	mine := map[string]bool{}
+	for _, a := range acts {
+		mine[cmd.ToolName()+"_"+strings.TrimSpace(a.Name)] = true
+	}
+	for _, other := range ListStoreCommands(db) {
+		if other.Slug == cmd.Slug && other.Name == cmd.Name {
+			continue
+		}
+		for _, a := range other.Tools {
+			if n := other.ToolName() + "_" + a.Name; mine[n] {
+				return n
+			}
+		}
+	}
+	for _, st := range ListStores(db) {
+		names := append(storeToolNames(st.Slug), evidenceToolNames(st.Slug)...)
+		for _, n := range append(names, "pull_"+st.Slug) {
+			if mine[n] {
+				return n
+			}
+		}
+	}
+	return ""
+}
+
 // SaveStoreCommand validates and stores one action.
 func SaveStoreCommand(db Database, a StoreCommand) (StoreCommand, error) {
 	a.Slug = strings.TrimSpace(a.Slug)
@@ -369,8 +400,8 @@ func (T *FileStoreApp) handleCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	// An action REWRITES the folder, so it takes the write grant rather
 	// than the read one — the same gate as upload, for the same reason.
-	if !st.UploadsAllowedFor(user, RequestIsAdmin(r)) {
-		http.Error(w, "you may read "+st.Name+" but not write to it, and a command rewrites the folder.", http.StatusForbidden)
+	if !st.FullAccessFor(user) {
+		http.Error(w, "you have Read-Only access to "+st.Name+", and running its commands takes Full Access.", http.StatusForbidden)
 		return
 	}
 	name := strings.TrimSpace(r.URL.Query().Get("command"))

@@ -110,11 +110,11 @@ type fakeDrop struct {
 	root string
 }
 
-func (fakeDrop) EvidenceStores(user string, isAdmin bool) []appstores.EvidenceStore {
+func (fakeDrop) EvidenceStores(user string) []appstores.EvidenceStore {
 	return []appstores.EvidenceStore{{Store: "cases", Name: "Cases"}}
 }
 
-func (d fakeDrop) AddEvidenceFolder(ctx context.Context, user string, isAdmin bool, store, name string, need int64, fill func(dir string) error) (string, error) {
+func (d fakeDrop) AddEvidenceFolder(ctx context.Context, user, store, name string, need int64, fill func(dir string) error) (string, error) {
 	staging := filepath.Join(d.root, ".incoming-x")
 	os.MkdirAll(staging, 0o755)
 	if err := fill(staging); err != nil {

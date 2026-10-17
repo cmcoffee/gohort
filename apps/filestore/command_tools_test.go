@@ -14,7 +14,7 @@ func commandFixture(t *testing.T) (*FileStoreApp, Store, StoreCommand) {
 	t.Helper()
 	app := &FileStoreApp{}
 	app.DB = &DBase{Store: kvlite.MemStore()}
-	st, err := SaveStore(app.DB, Store{Name: "Support bundles", Path: t.TempDir()})
+	st, err := SaveStore(app.DB, Store{Name: "Support bundles", Path: t.TempDir(), FullAccess: []string{accessEveryone}})
 	if err != nil {
 		t.Fatal(err)
 	}

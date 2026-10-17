@@ -31,34 +31,24 @@ type Store struct {
 	Path        string `json:"path"`
 	Description string `json:"description,omitempty"` // what lands here, for the agent's benefit
 
-	// AllowedUsers restricts who may reach this store. Empty = every
-	// user, matching FeatureAccessPolicy's shape so there is one answer
-	// in this codebase to "what does an empty allow-list mean".
+	// Who may reach this store, and how far. NOBODY until an admin says:
+	// a folder of customer captures is not something every account should
+	// hold, and an empty list that meant "everyone" failed open for every new
+	// store and every list somebody cleared. Each entry is a username or a
+	// team ("group:<id>"). Admins are not special here: managing the list is
+	// admin-only, reaching the files takes an entry like anyone else.
 	//
-	// It matters more here than the default suggests. An admin registers
-	// a path once; everything under it is then readable by any agent
-	// that attaches the store, and a folder of customer log bundles is
-	// not something every account should hold. Configuring the store is
-	// already admin-only; WITHOUT this, reading it was not restricted at
-	// all, which is a strange pairing — the gate was on the cheap half.
+	//   Read-Only:   browse, search and read; an attached agent gets the
+	//                list, search, read and evidence tools.
+	//   Full Access: also upload and run the store's commands; an attached
+	//                agent also gets its approved commands and pull, when
+	//                its attachment allows changes.
 	//
-	// Empty stays open because closing it by default would silently
-	// break every store registered before this existed, and a security
-	// change that presents as "the tools vanished" is one nobody
-	// diagnoses correctly.
-	AllowedUsers []string `json:"allowed_users,omitempty"`
-
-	// AllowUploads lets an assigned NON-ADMIN user write into this store
-	// through the upload endpoint. Off by default, and separate from
-	// AllowedUsers on purpose: reading a folder and writing into it are
-	// different grants, and the common store is a log directory somebody
-	// else fills — pointing at /var/log and having any account with an
-	// agent able to add files to it is not what registering a path meant.
-	//
-	// An admin can always upload (subject to AllowedUsers, like every
-	// other reach), so turning this on is about widening the door, never
-	// about opening one that was shut.
-	AllowUploads bool `json:"allow_uploads,omitempty"`
+	// Everyone (accessEveryone) is an entry like a team: it names every
+	// account, at the level of the list it is in, and is only there when an
+	// admin added it. A named entry can raise someone above it.
+	ReadOnly   []string `json:"read_only,omitempty"`
+	FullAccess []string `json:"full_access,omitempty"`
 
 	// RetentionDays deletes bundle subfolders older than this many days.
 	// Zero — the default — keeps everything forever, which is the only
@@ -94,12 +84,6 @@ type Store struct {
 	// its names but not their contents. See pull.go.
 	PullFrom    string `json:"pull_from,omitempty"`
 	PullSubpath string `json:"pull_subpath,omitempty"`
-	// AgentsMayPull offers pull_<store> to agents this store is attached to.
-	// Off unless an admin turns it on: an agent acts on a store only through
-	// tools an admin chose to give it. The admin's Pull button and an app's
-	// granted pull do not depend on it.
-	AgentsMayPull bool `json:"agents_may_pull,omitempty"`
-
 	// AppGrants are the apps an admin has let use this store, and how. See
 	// app_grants.go: the grant is the app's, and covers whoever uses it.
 	AppGrants []AppGrant `json:"app_grants,omitempty"`
@@ -120,38 +104,81 @@ type Store struct {
 	Evidence bool `json:"evidence,omitempty"`
 }
 
-// UploadsAllowedFor reports whether user may upload into this store.
-//
-// Two conditions, and they answer different questions: AllowsUser is
-// "may this person reach the store at all", AllowUploads is "may
-// non-admins write into it". An admin passes the second by identity —
-// they are the one who would have flipped the toggle.
-func (s Store) UploadsAllowedFor(user string, isAdmin bool) bool {
-	if !s.AllowsUser(user) {
-		return false
+// Access levels: what a person, or an agent of theirs, may do with a store.
+const (
+	accessRead = "read"
+	accessFull = "full"
+	// accessEveryone is the entry that names every account. Not a name an
+	// account can have.
+	accessEveryone = "*"
+)
+
+// accessFor is user's level on this store: accessFull, accessRead or "" for
+// none. The higher of every entry naming them, a team they are on, or
+// Everyone.
+func (s Store) accessFor(user string) string {
+	keys := ShareRecipientKeys(user)
+	if len(keys) == 0 {
+		return ""
 	}
-	return isAdmin || s.AllowUploads
+	keys = append(keys, accessEveryone)
+	if listNames(s.FullAccess, keys) {
+		return accessFull
+	}
+	if listNames(s.ReadOnly, keys) {
+		return accessRead
+	}
+	return ""
 }
 
-// AllowsUser reports whether user may see and reach this store.
-//
-// Admin is deliberately NOT special-cased here. An admin who wants a
-// store restricted to someone else has said so, and quietly reading it
-// anyway would make the setting mean something other than what it says.
-// Admin retains the thing admin should have: the ability to CHANGE the
-// list.
-func (s Store) AllowsUser(user string) bool {
-	if len(s.AllowedUsers) == 0 {
-		return true
-	}
-	user = strings.TrimSpace(user)
-	for _, u := range s.AllowedUsers {
-		if strings.EqualFold(strings.TrimSpace(u), user) {
-			return true
+// listNames reports whether list holds any of keys.
+func listNames(list, keys []string) bool {
+	for _, e := range list {
+		for _, k := range keys {
+			if strings.EqualFold(strings.TrimSpace(e), k) {
+				return true
+			}
 		}
 	}
 	return false
 }
+
+// accessText says who may reach the store, for the admin page.
+func (s Store) accessText() string {
+	names := func(list []string) string {
+		shown := make([]string, 0, len(list))
+		var rest []string
+		for _, e := range list {
+			if e == accessEveryone {
+				shown = append(shown, "everyone")
+			} else {
+				rest = append(rest, e)
+			}
+		}
+		if len(rest) > 0 {
+			shown = append(shown, ShareRecipientsText(rest))
+		}
+		return strings.Join(shown, ", ")
+	}
+	var parts []string
+	if len(s.FullAccess) > 0 {
+		parts = append(parts, "Full Access: "+names(s.FullAccess))
+	}
+	if len(s.ReadOnly) > 0 {
+		parts = append(parts, "Read-Only: "+names(s.ReadOnly))
+	}
+	if len(parts) == 0 {
+		return "nobody yet"
+	}
+	return strings.Join(parts, "; ")
+}
+
+// AllowsUser reports whether user may see and reach this store at all.
+func (s Store) AllowsUser(user string) bool { return s.accessFor(user) != "" }
+
+// FullAccessFor reports whether user may change what the store holds:
+// upload, run its commands, pull into it.
+func (s Store) FullAccessFor(user string) bool { return s.accessFor(user) == accessFull }
 
 // Valid reports whether a store is usable, and says why not when it
 // isn't.
@@ -213,6 +240,10 @@ func SaveStore(db Database, s Store) (Store, error) {
 	if err := validatePull(db, s); err != nil {
 		return s, err
 	}
+	// Someone with Full Access is not also listed Read-Only: one entry each,
+	// the higher one.
+	s.FullAccess = cleanAccessList(s.FullAccess, nil)
+	s.ReadOnly = cleanAccessList(s.ReadOnly, s.FullAccess)
 	if strings.TrimSpace(s.Slug) == "" {
 		s.Slug = RefToolSlug(s.Name)
 		if s.Slug == "" {
@@ -221,6 +252,19 @@ func SaveStore(db Database, s Store) (Store, error) {
 	}
 	db.Set(storesTable, s.Slug, s)
 	return s, nil
+}
+
+// cleanAccessList trims, drops blanks and repeats, and drops anyone in skip.
+func cleanAccessList(list, skip []string) []string {
+	var out []string
+	for _, e := range list {
+		e = strings.TrimSpace(e)
+		if e == "" || listNames(out, []string{e}) || listNames(skip, []string{e}) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // LoadStore reads one store by slug.
@@ -261,6 +305,12 @@ func DeleteStore(db Database, slug string) {
 		return
 	}
 	db.Unset(storesTable, slug)
+	// Its commands go with it. Left behind they kept their mapping and their
+	// approval, and a later store whose name made the same handle brought
+	// them back, approved, to every agent attached to it.
+	for _, cmd := range StoreCommandsFor(db, slug) {
+		DeleteStoreCommand(db, slug, cmd.Name)
+	}
 }
 
 // StoresForUser is ListStores filtered by access — the view every

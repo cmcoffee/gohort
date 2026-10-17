@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,7 +33,7 @@ func TestAgentsRunOnlyTheAllowedUses(t *testing.T) {
 	}
 
 	db := &DBase{Store: kvlite.MemStore()}
-	SaveStore(db, Store{Name: "Intake", Path: t.TempDir()})
+	SaveStore(db, Store{Name: "Intake", Path: t.TempDir(), FullAccess: []string{accessEveryone}})
 	saved, err := SaveStoreCommand(db, StoreCommand{Slug: "intake", Name: "kb", Command: "/opt/bin/kb", AllowedUses: []string{"download --src={source} --dst={folder}\nlist {folder}"}})
 	if err != nil || saved.Usage != usageCurrent || len(saved.AllowedUses) != 2 {
 		t.Fatalf("a new command: %+v %v", saved, err)
@@ -68,7 +69,7 @@ func TestAnAgentRunsASpecifiedCommandExactlyAsWritten(t *testing.T) {
 	t.Cleanup(func() { registeredFileStoreApp = prev })
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "CASE-1"), 0o755)
-	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: root})
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: root, FullAccess: []string{accessEveryone}})
 	bin := filepath.Join(t.TempDir(), "kb.sh")
 	os.WriteFile(bin, []byte("#!/bin/sh\nfor a in \"$@\"; do echo \"ARG<$a>\"; done\n"), 0o755)
 	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "kb", Command: bin,
@@ -170,7 +171,7 @@ func TestBuilderProbesACommandFreely(t *testing.T) {
 // run directly rather than in the sandbox. A second pass changes nothing.
 func TestOpenCommandsAreFoldedIntoTheirUses(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
-	SaveStore(db, Store{Name: "Intake", Path: t.TempDir()})
+	SaveStore(db, Store{Name: "Intake", Path: t.TempDir(), FullAccess: []string{accessEveryone}})
 	for name, usage := range map[string]string{"cap": "open", "old": ""} {
 		db.Set(commandsTable, commandKey("intake", name), StoreCommand{Slug: "intake", Name: name, Command: "/opt/bin/cap", Usage: usage, Approved: true,
 			ToolDesc: "Reads a bundle.", Tools: []TempToolAction{{Name: "report", CommandTemplate: "/opt/bin/cap report  '{folder}'"}}})
@@ -198,7 +199,7 @@ func TestAQuotedPlaceholderRunsAsOneArgument(t *testing.T) {
 	prev := registeredFileStoreApp
 	registeredFileStoreApp = app
 	t.Cleanup(func() { registeredFileStoreApp = prev })
-	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: t.TempDir()})
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: t.TempDir(), FullAccess: []string{accessEveryone}})
 	bin := filepath.Join(t.TempDir(), "cap.sh")
 	os.WriteFile(bin, []byte("#!/bin/sh\nfor a in \"$@\"; do echo \"ARG<$a>\"; done\n"), 0o755)
 	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "cap", Command: bin})
@@ -219,5 +220,53 @@ func TestAQuotedPlaceholderRunsAsOneArgument(t *testing.T) {
 	out, err := tag.Handler(context.Background(), map[string]any{"label": "x y"})
 	if err != nil || !strings.Contains(out, "ARG<a b>") || !strings.Contains(out, "ARG<x y>") {
 		t.Errorf("ran as: %q %v", out, err)
+	}
+}
+
+// Who may run a store's commands, and what goes with a store.
+func TestAStoresCommandsFollowItsAccessAndItsLife(t *testing.T) {
+	app := &FileStoreApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: t.TempDir(), ReadOnly: []string{"alice"}, FullAccess: []string{"bob"}})
+	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "kb", Command: "/opt/bin/kb", AllowedUses: []string{"list"}})
+	if _, err := SaveCommandTools(app.DB, st.Slug, "kb", "File-sharing client.",
+		[]TempToolAction{{Name: "list", CommandTemplate: "/opt/bin/kb list"}}); err != nil {
+		t.Fatal(err)
+	}
+	SetCommandApproved(app.DB, st.Slug, "kb", true)
+	has := func(user string) (cmd bool, writes bool) {
+		for _, td := range (storeSource{app: app}).ItemToolsWithSession(&ToolSession{Ctx: context.Background(), Username: user}, user, st.Slug) {
+			if td.Tool.Name == "kb_intake_list" {
+				cmd = true
+				writes = slices.Contains(td.Tool.Caps, CapWrite)
+			}
+		}
+		return
+	}
+	if cmd, _ := has("alice"); cmd {
+		t.Error("a Read-Only owner's agent got the store's commands")
+	}
+	if cmd, writes := has("bob"); !cmd || !writes {
+		t.Errorf("a Full Access owner's agent: command %v, declares a write %v (so an attachment not allowing changes keeps it out)", cmd, writes)
+	}
+	if _, err := app.resolveScope("alice", st.Slug, ""); err == nil {
+		t.Error("a Read-Only person resolved a folder to run a command on")
+	}
+
+	// Names that meet from different parts: kb on intake with action list_x,
+	// and kb on intake_list with action x, are both kb_intake_list_x.
+	clash, _ := SaveStore(app.DB, Store{Name: "Intake list", Path: t.TempDir()})
+	SaveStoreCommand(app.DB, StoreCommand{Slug: clash.Slug, Name: "kb", Command: "/opt/bin/kb"})
+	if _, err := SaveCommandTools(app.DB, "intake", "kb", "File-sharing client.",
+		[]TempToolAction{{Name: "list", CommandTemplate: "/opt/bin/kb list"}, {Name: "list_x", CommandTemplate: "/opt/bin/kb list"}}); err != nil {
+		t.Fatalf("re-mapping its own names: %v", err)
+	}
+	if _, err := SaveCommandTools(app.DB, clash.Slug, "kb", "x", []TempToolAction{{Name: "x", CommandTemplate: "/opt/bin/kb x"}}); err == nil || !strings.Contains(err.Error(), "kb_intake_list_x") {
+		t.Errorf("a tool name another command already gives was saved: %v", err)
+	}
+
+	DeleteStore(app.DB, st.Slug)
+	if _, ok := LoadStoreCommand(app.DB, st.Slug, "kb"); ok {
+		t.Error("a deleted store's command stayed, approved, for the next store with its handle")
 	}
 }

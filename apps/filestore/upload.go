@@ -91,9 +91,8 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// This endpoint used to be admin-only outright, which made the
 	// obvious workflow — a user drops a bundle and asks about it —
 	// impossible without handing out admin.
-	if !st.UploadsAllowedFor(user, RequestIsAdmin(r)) {
-		http.Error(w, "uploads are turned off for "+st.Name+
-			". An admin can enable them for assigned users on the store's settings (Admin \u2192 Files).",
+	if !st.FullAccessFor(user) {
+		http.Error(w, "you have Read-Only access to "+st.Name+": uploading takes Full Access, which an admin gives on the store's Manage panel (Admin, File stores).",
 			http.StatusForbidden)
 		return
 	}
