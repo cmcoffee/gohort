@@ -88,6 +88,13 @@ type PeerModelInfo struct {
 	// Prompts is where this instance's wording for its model is read. Absent
 	// from an older build, which a borrowing instance reads as "no wording".
 	Prompts string `json:"prompts,omitempty"`
+	// Context is the tier's context size here, in tokens: the window this
+	// instance fits its own prompts to, and so the one it knows its server
+	// takes. A borrowing instance builds against it, so a conversation there
+	// is trimmed before it outgrows what this server accepts, without anyone
+	// copying the number across. 0 (unset here, or an older build) says
+	// nothing, and the borrower keeps its own setting.
+	Context int `json:"context,omitempty"`
 }
 
 // peerServableTier is one candidate tier plus the upstream to reach it.
@@ -97,6 +104,7 @@ type peerServableTier struct {
 	Model    string
 	Endpoint string
 	APIKey   string
+	Context  int
 }
 
 // peerTierConfig reads the minimal provider fields for one tier straight from
@@ -119,6 +127,7 @@ func peerTierConfig(tier, table string) (peerServableTier, bool) {
 	db.Get(table, "model", &t.Model)
 	db.Get(table, "endpoint", &t.Endpoint)
 	db.Get(table, "api_key", &t.APIKey)
+	db.Get(table, "context_size", &t.Context)
 	t.Provider = strings.ToLower(strings.TrimSpace(t.Provider))
 	if !peerLendableProviders[t.Provider] {
 		return peerServableTier{}, false
@@ -164,7 +173,7 @@ func peerModelsInfo(path string) []PeerModelInfo {
 	for _, t := range peerServableTiers() {
 		out = append(out, PeerModelInfo{
 			Tier: t.Tier, Model: t.Model, Provider: t.Provider, Path: path,
-			Prompts: path + "/prompts",
+			Prompts: path + "/prompts", Context: max(t.Context, 0),
 		})
 	}
 	return out
@@ -664,6 +673,12 @@ func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderCo
 	}
 	cfg.Endpoint = p.ModelsURL()
 	cfg.APIKey = PeerCredential(p)
+	// The peer's window governs: a prompt fitted to a larger one here is
+	// refused there. A smaller setting here is the operator's own choice and
+	// stands, and 0 (the default) takes the peer's.
+	if peerCtx := p.ModelContext(cfg.Model); peerCtx > 0 && (cfg.ContextSize <= 0 || cfg.ContextSize > peerCtx) {
+		cfg.ContextSize = peerCtx
+	}
 	return cfg, nil
 }
 
@@ -678,6 +693,18 @@ func (p RemotePeer) ModelBackend(model string) string {
 		}
 	}
 	return ""
+}
+
+// ModelContext is the context size the peer said it builds against for model,
+// or 0 when it has not said. Matched as ModelBackend matches.
+func (p RemotePeer) ModelContext(model string) int {
+	model = strings.TrimSpace(model)
+	for _, m := range p.Models {
+		if (model != "" && m.Model == model) || (model == "" && m.Tier == "worker") {
+			return m.Context
+		}
+	}
+	return 0
 }
 
 // --- the model's wording -----------------------------------------------------

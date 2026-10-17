@@ -819,3 +819,47 @@ func TestAChangedBackendIsNoticedForTheTiersThatBorrowIt(t *testing.T) {
 		t.Error("the worker's peer is not recognised, or another peer is taken for it")
 	}
 }
+
+// The lending instance says what window it builds its own prompts against, and
+// a borrower follows it: 0 there takes it, a larger setting is lowered to it,
+// a smaller one stands. Without this the borrower trimmed to whatever it had
+// been told by hand, and a long session there could outgrow what the lending
+// server accepts.
+func TestABorrowedModelIsBuiltAgainstThePeersWindow(t *testing.T) {
+	db := peerModelDB(t)
+	setTier(db, LLMTable, "vllm", "qwen-27b", "http://127.0.0.1:8000/v1")
+	db.Set(LLMTable, "context_size", 204800)
+	pk, err := MintPeerKey("mac", []string{PeerCapModels}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
+	mux.HandleFunc("/api/peer/v1/token", HandlePeerToken)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	p, err := SaveRemotePeer(t.Context(), "den", srv.URL, pk.Key)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if p.ModelContext("qwen-27b") != 204800 || p.ModelContext("") != 204800 {
+		t.Fatalf("the peer's window was not recorded: %+v", p.Models)
+	}
+	for _, c := range []struct{ here, want int }{{0, 204800}, {262144, 204800}, {65536, 65536}} {
+		got, err := ResolveModelProvider(LLMProviderConfig{Provider: PeerProviderValue("den"), Model: "qwen-27b", ContextSize: c.here}, PeerProviderValue("den"))
+		if err != nil || got.ContextSize != c.want {
+			t.Errorf("context %d here resolved to %d (%v), want %d", c.here, got.ContextSize, err, c.want)
+		}
+	}
+
+	putTestPeer(RemotePeer{Name: "old", BaseURL: "https://old.example", Key: "k", Caps: []string{PeerCapModels}})
+	if got, _ := ResolveModelProvider(LLMProviderConfig{Provider: PeerProviderValue("old"), ContextSize: 100000}, PeerProviderValue("old")); got.ContextSize != 100000 {
+		t.Errorf("a peer that never said changed the setting here to %d", got.ContextSize)
+	}
+	a := []PeerModelInfo{{Tier: "worker", Model: "q", Provider: "vllm", Context: 204800}}
+	b := []PeerModelInfo{{Tier: "worker", Model: "q", Provider: "vllm", Context: 131072}}
+	if peerBackendsKey(a) == peerBackendsKey(b) {
+		t.Error("a changed window is not noticed, so the borrowing tiers keep the old one")
+	}
+}

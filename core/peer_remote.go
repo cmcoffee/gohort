@@ -940,12 +940,13 @@ func resolveEmbeddingPeer(cfg EmbeddingConfig) EmbeddingConfig {
 	return cfg
 }
 
-// peerBackendsKey is a peer's models and their backends as one comparable
-// string, for noticing that a refresh changed them.
+// peerBackendsKey is a peer's models, their backends and their context sizes
+// as one comparable string, for noticing that a refresh changed them: a tier
+// built against the old window would keep trimming to it.
 func peerBackendsKey(models []PeerModelInfo) string {
 	var parts []string
 	for _, m := range models {
-		parts = append(parts, m.Tier+"="+m.Model+"@"+m.Provider)
+		parts = append(parts, m.Tier+"="+m.Model+"@"+m.Provider+fmt.Sprintf("/%d", m.Context))
 	}
 	return strings.Join(parts, ",")
 }
