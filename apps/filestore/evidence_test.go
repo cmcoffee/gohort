@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -139,4 +140,59 @@ func TestAStoreNotIndexingEvidenceHasNoEvidenceTools(t *testing.T) {
 	if _, ok := evidenceStateOf(app.DB, st.Slug, "case-1"); ok {
 		t.Error("an arrival in a store not indexing evidence indexed it")
 	}
+}
+
+// Evidence another app hands over lands as a new folder, complete or not at
+// all, under a name of its own, and is indexed.
+func TestEvidenceHandedOverLandsAsAFolder(t *testing.T) {
+	app, st := evidenceFixture(t)
+	h := storeHost{app}
+	if got := h.EvidenceStores("alice", false); len(got) != 0 {
+		t.Errorf("a store not taking uploads was offered: %v", got)
+	}
+	st.AllowUploads = true
+	if _, err := SaveStore(app.DB, st); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.EvidenceStores("alice", false); len(got) != 1 || got[0].Store != st.Slug {
+		t.Fatalf("offered %v", got)
+	}
+	fill := func(dir string) error {
+		return os.WriteFile(filepath.Join(dir, "a.log"), []byte("2026-03-14T02:00:00Z ERROR handed over\n"), 0o644)
+	}
+	folder, err := h.AddEvidenceFolder(context.Background(), "alice", false, st.Slug, "case 1", 10, fill)
+	if err != nil || folder != "case-1-2" {
+		t.Fatalf("folder %q (case-1 is taken): %v", folder, err)
+	}
+	waitIndexed(t, app, st, folder)
+
+	failing := func(dir string) error {
+		fill(dir)
+		return Error("disk went away")
+	}
+	if _, err := h.AddEvidenceFolder(context.Background(), "alice", false, st.Slug, "half", 10, failing); err == nil {
+		t.Error("a failed fill was reported as done")
+	}
+	entries, _ := os.ReadDir(st.Path)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") || e.Name() == "half" {
+			t.Errorf("a failed fill left %s behind", e.Name())
+		}
+	}
+	st.Evidence = false
+	SaveStore(app.DB, st)
+	if _, err := h.AddEvidenceFolder(context.Background(), "alice", false, st.Slug, "x", 10, fill); err == nil {
+		t.Error("handed to a store not indexing evidence")
+	}
+}
+
+func waitIndexed(t *testing.T, app *FileStoreApp, st Store, folder string) {
+	t.Helper()
+	dir := filepath.Join(st.Path, folder)
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if _, current := evidenceCurrent(app.DB, st.Slug, folder, dir); current {
+			return
+		}
+	}
+	t.Fatalf("%s was not indexed", folder)
 }

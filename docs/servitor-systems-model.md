@@ -1,7 +1,7 @@
 # Servitor holds systems; agents investigate; evidence lives in file stores
 
-Status: **stages 1 and 2 built** (v0.8.333 evidence on file stores, v0.8.335 no new workspaces or
-bundles); stages 3 and 4 are plans. Written 2026-10-16.
+Status: **stages 1 to 3 built** (v0.8.333 evidence on file stores, v0.8.335 no new workspaces or
+bundles, v0.8.337 the move buttons); stage 4 is a plan. Written 2026-10-16.
 
 ## Why
 
@@ -95,12 +95,20 @@ Each stage ships on its own, and nothing existing stops working until its replac
    (`apps/servitor/web_appliances.go`); their tabs show only on existing ones. The message for a
    workspace says to attach the systems to an agent; for a bundle, to upload into a file store
    with evidence on.
-3. **Move existing ones, with a button, not a migration.**
-   - Workspace: "Make an agent from this workspace" creates an agent with the members as Sources
-     and the roles and links in its notes, then shows the agent. The workspace stays until the
-     owner deletes it.
-   - Bundle: "Move to a file store" picks a store with evidence on, copies the staged files into a
-     new folder, and re-ingests. The bundle stays until the owner deletes it.
+3. **Move existing ones, with a button, not a migration. BUILT, v0.8.337.**
+   - Workspace: "Make an agent from this workspace" (`workspace_agent.go`) makes the person an
+     agent of their own, named after the workspace, with each member they can reach as a Source
+     and the roles, links and notes in its instructions, then opens it. One agent per workspace:
+     a workspace is a set of systems, not a case. The workspace stays until the owner deletes it.
+   - Bundle: "Move to a file store" (`bundle_move.go`) lists the stores with evidence on that the
+     owner may upload to, one row each, and copies the bundle into a new folder of the chosen one
+     in the background (spinner, how far, Stop), which the store then indexes. What is copied is
+     the bundle's stored text, not the upload: the upload is deleted once ingested, and only
+     text files' lines are kept, so a binary or an unopened archive has nothing to copy and the
+     outcome names it. The bundle stays until the owner deletes it.
+   - Seams: `appagents.CreateUserAgent` (orchestrate makes the agent), `core.SetAgentSource`
+     (attaches the members), `appstores.EvidenceDrop` (the file store side takes the folder,
+     staged and renamed into place only when complete).
    A button because both need a person's choice (which agent, which store), and a silent move of
    evidence is the kind that loses a case.
 4. **Remove the types** once no records of them remain, or after a release with a notice for
@@ -136,7 +144,8 @@ Checked before writing, so a stage can find what it has to touch:
 
 ## Open decisions
 
-- **One agent for many cases, or one per case.** An agent's notes and facts outlive the session,
+- **One agent for many cases, or one per case.** (Not a question for workspaces, which are sets
+  of systems: one agent each. It is one for evidence.) An agent's notes and facts outlive the session,
   so an agent working case after case mixes them, the problem `ToolsOnly` solved for bundles.
   Options: an agent per case (made from a template agent), a per-session notes mode for case
   agents, or telling the agent to keep case detail out of standing notes and checking it does.

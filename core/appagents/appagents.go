@@ -147,3 +147,19 @@ func AppAgentByID(id string) (AppAgentSpec, bool) {
 	s, ok := specs[id]
 	return s, ok
 }
+
+// UserAgent is a person's own agent that an app makes for them from something
+// of its own (Servitor, from a workspace). Once made it is theirs like any
+// other, on its page, with nothing tying it back to the app.
+type UserAgent struct {
+	Name        string
+	Description string
+	Prompt      string
+	// MemoryMode is as on AppAgentSpec.
+	MemoryMode string
+}
+
+// CreateUserAgent saves a new agent owned by owner and returns its id and its
+// name, which is made unique among the owner's agents. Set by the app that
+// owns agents (orchestrate); nil where none is compiled in.
+var CreateUserAgent func(owner string, a UserAgent) (id, name string, err error)

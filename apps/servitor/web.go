@@ -209,6 +209,11 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/appliance-peers", T.handleAppliancePeers)
 	sub.HandleFunc("/api/bundle/upload", T.handleBundleUpload)
 	sub.HandleFunc("/api/bundle/ingest", T.handleBundleIngest)
+	// Out of Servitor: a bundle into a file store, a workspace into an agent
+	// (bundle_move.go, workspace_agent.go).
+	sub.HandleFunc("/api/bundle/move", T.handleBundleMove)
+	sub.HandleFunc("/api/bundle/move-targets", T.handleBundleMoveTargets)
+	sub.HandleFunc("/api/workspace/agent", T.handleWorkspaceAgent)
 	sub.HandleFunc("/api/collections", T.handleCollectionsList)
 	sub.HandleFunc("/api/cancel", probeSessions.HandleCancel("servitor"))
 	sub.HandleFunc("/api/save_destinations", T.handleSaveDestinations)

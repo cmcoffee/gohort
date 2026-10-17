@@ -37,6 +37,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 )
 
 // handleReferenceSources drives the Sources modal.
@@ -259,4 +260,38 @@ func setAgentSource(owner, agentID string, sel ReferenceSelection, on bool) erro
 	a.AttachedSources = kept
 	_, err := saveAgentAs(db, a, map[bool]string{true: "added source " + sel.Ref(), false: "removed source " + sel.Ref()}[on])
 	return err
+}
+
+// createUserAgent is appagents.CreateUserAgent: a new agent of the owner's,
+// under a name none of their agents answers to, since a name two agents share
+// resolves to neither.
+func createUserAgent(owner string, ua appagents.UserAgent) (string, string, error) {
+	db := agentStore(owner)
+	if db == nil {
+		return "", "", fmt.Errorf("no agent store")
+	}
+	base := strings.TrimSpace(ua.Name)
+	if base == "" {
+		return "", "", fmt.Errorf("an agent needs a name")
+	}
+	taken := map[string]bool{}
+	for _, a := range listAgents(db, owner) {
+		taken[strings.ToLower(strings.TrimSpace(a.Name))] = true
+	}
+	name := base
+	for n := 2; taken[strings.ToLower(name)]; n++ {
+		name = fmt.Sprintf("%s %d", base, n)
+	}
+	rec := AgentRecord{
+		Owner: owner, Name: name,
+		Description:        strings.TrimSpace(ua.Description),
+		OrchestratorPrompt: ua.Prompt,
+		MemoryMode:         strings.TrimSpace(ua.MemoryMode),
+	}
+	rec.Cortex = newAgentReadsCortex(rec)
+	saved, err := saveAgentAs(db, rec, "created")
+	if err != nil {
+		return "", "", err
+	}
+	return saved.ID, saved.Name, nil
 }

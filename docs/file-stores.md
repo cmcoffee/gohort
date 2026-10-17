@@ -307,6 +307,12 @@ The index follows the folder:
 The store's Manage panel lists each folder's index under **Evidence index**, with **Index now**,
 its progress and Stop. Only subfolders are indexed: a flat store's top-level files are in no case.
 
+**From a Servitor evidence bundle.** A bundle's edit panel lists, under **Move to a file store**,
+each store with this switch on that its owner may upload to. **Move here** copies the bundle's
+stored text into a new folder named after it (`appstores.EvidenceDrop`: written in a hidden
+staging folder, put in place only when complete, then indexed). Anyone who can reach the store can
+read the folder. See `servitor-systems-model.md`.
+
 ## Pulling between stores
 
 The flow this serves: files land in a private working store (often a temporary one), a command

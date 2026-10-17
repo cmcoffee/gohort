@@ -37,6 +37,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/messaging"
 )
 
@@ -330,6 +331,7 @@ func (T *OrchestrateApp) Routes() {
 	messaging.ChannelAgentFor = channelAgentFor
 	ScheduleAgentFor = scheduleAgentFor
 	AgentSourcesFor, SetAgentSource = agentSourcesFor, setAgentSource
+	appagents.CreateUserAgent = createUserAgent
 	// Events age out of saved notes and idle open items close, once a day.
 	startMemoryLifecycleLoop()
 	// Credential → declaring-tools resolver for the admin credential UI (it

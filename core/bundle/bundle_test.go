@@ -642,3 +642,35 @@ func treeListing(t *testing.T, dir string) string {
 	sort.Strings(out)
 	return strings.Join(out, " ")
 }
+
+// A bundle's files come back out as their stored lines, across slice
+// boundaries, and a binary has none to give.
+func TestABundleFileExportsItsLines(t *testing.T) {
+	withMemStore(t)
+	var body strings.Builder
+	for i := 1; i <= SliceLines+5; i++ {
+		fmt.Fprintf(&body, "line %d\n", i)
+	}
+	stage := writeStage(t, map[string]string{
+		"big.log":   body.String(),
+		"core.dump": "\x00\x01\x02binary garbage\x00",
+	})
+	b := Open("u1", "b5")
+	if _, err := b.Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	var out bytes.Buffer
+	if ok, err := b.Export("big.log", &out); !ok || err != nil {
+		t.Fatalf("export: %v %v", ok, err)
+	}
+	if out.String() != body.String() {
+		t.Errorf("the exported file differs from what was ingested: %d bytes vs %d", out.Len(), body.Len())
+	}
+	out.Reset()
+	if ok, err := b.Export("core.dump", &out); ok || err != nil || out.Len() != 0 {
+		t.Errorf("a binary has no stored lines to export: %v %v %d", ok, err, out.Len())
+	}
+	if _, err := b.Export("missing.log", &out); err == nil {
+		t.Error("a file not in the bundle was exported")
+	}
+}

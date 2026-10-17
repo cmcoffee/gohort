@@ -1029,6 +1029,40 @@
         el('div', {class: 'ui-form-hint'},
           ['Declare how the members connect: "this dump was captured from that box", "this repo is the code for that system". The coordinator reads these both ways round, so one link tells it which member to ask from either direction, and makes a correlation across two members a finding rather than a coincidence.']),
       ]);
+      // An agent does what a workspace did: make one with the members as its
+      // Sources and the roles and links in its instructions, then open it
+      // (workspace_agent.go). Saved members only, so it shows on an existing
+      // workspace.
+      if (isEdit) {
+        var wsAgentStatus = el('span', {class: 'ui-form-hint'});
+        var wsAgentBtn = el('button', {class: 'ui-row-btn', type: 'button', onclick: function() {
+          wsAgentBtn.disabled = true;
+          wsAgentStatus.textContent = 'Making the agent…';
+          fetch('api/workspace/agent', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({appliance_id: rec.id})})
+            .then(function(r) {
+              if (!r.ok) return r.text().then(function(t) { throw new Error(t || r.statusText); });
+              return r.json();
+            })
+            .then(function(d) {
+              var note = 'Made ' + d.name + ' with ' + (d.attached || []).length + ' system(s) as Sources.';
+              if ((d.skipped || []).length) note += ' Not attached (not ones you can reach): ' + d.skipped.join(', ') + '.';
+              wsAgentStatus.textContent = note + ' Opening it…';
+              setTimeout(function() { window.location.href = d.url; }, 1500);
+            })
+            .catch(function(err) {
+              wsAgentBtn.disabled = false;
+              wsAgentStatus.textContent = 'Failed: ' + err.message;
+            });
+        }}, ['Make an agent from this workspace']);
+        workspaceSection.appendChild(el('label', {}, ['Move to an agent']));
+        workspaceSection.appendChild(el('div', {class: 'ui-form-hint'},
+          ['An agent now does what a workspace does. This makes you an agent with each member system as a Source, ' +
+           'and the roles and links above written into its instructions, then opens it. ' +
+           'The workspace keeps working until you delete it; its sessions and memory stay with it.']));
+        workspaceSection.appendChild(el('div', {style: 'display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;'},
+          [wsAgentBtn, wsAgentStatus]));
+      }
 
       // Linked Source Code — repo appliances whose ingested code this SYSTEM's
       // investigations may search (search_code/read_file join the worker's
@@ -1129,6 +1163,27 @@
                 'text files are indexed by line, timestamp, and severity, and the uploaded copy is deleted afterwards.',
         }, host);
         bundleSection.appendChild(host);
+        // Evidence lives in file stores now: copy this bundle into a store
+        // that indexes its folders, one row per store (bundle_move.go).
+        if (rec.bundle_files) {
+          bundleSection.appendChild(el('label', {}, ['Move to a file store']));
+          bundleSection.appendChild(el('div', {class: 'ui-form-hint'},
+            ['New evidence goes into file stores, which index each folder the way a bundle is indexed. ' +
+             'This copies the bundle\'s files into a new folder of the store you pick; the bundle stays as it is until you delete it. ' +
+             'Only text was kept at ingest, so a binary or an archive that could not be opened has nothing to copy, and the result names them.']));
+          var moveHost = el('div', {});
+          var moveQ = 'appliance_id=' + encodeURIComponent(rec.id);
+          window.uiMountComponent({
+            type: 'action_list',
+            source: 'api/bundle/move-targets?' + moveQ,
+            post_to: 'api/bundle/move?' + moveQ + '&store={store}',
+            progress_source: 'api/bundle/move?' + moveQ + '&store={store}',
+            cancel_to: 'api/bundle/move?' + moveQ + '&cancel=1',
+            button_text: 'Move here',
+            empty_text: 'No file store indexes evidence that you can add to. An admin turns it on for a store: Admin, File stores, Index folders as evidence.',
+          }, moveHost);
+          bundleSection.appendChild(moveHost);
+        }
       }
       buildBundleSection();
 

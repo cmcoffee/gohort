@@ -18,10 +18,12 @@
 package bundle
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"path"
 	"regexp"
 	"sort"
@@ -217,6 +219,33 @@ func (b Bundle) ReadRange(p string, start, end int) ([]string, File, error) {
 		}
 	}
 	return out, bf, nil
+}
+
+// Export writes one file's stored lines to w, a line per line, and reports
+// whether the file had any to write. What comes back is what was indexed, not
+// what was uploaded: a line cut at ingest stays cut (it carries the marker),
+// line endings are "\n", and a binary or unopened archive has no stored lines
+// at all, so it writes nothing and reports false.
+func (b Bundle) Export(p string, w io.Writer) (bool, error) {
+	bf, ok := b.Lookup(p)
+	if !ok {
+		return false, fmt.Errorf("no file %q in this bundle", p)
+	}
+	if bf.Format == FormatBinary || bf.Format == FormatArchive {
+		return false, nil
+	}
+	store := b.store()
+	if store == nil {
+		return false, fmt.Errorf("bundle store unavailable")
+	}
+	bw := bufio.NewWriter(w)
+	for idx := 0; idx < bf.Slices; idx++ {
+		for _, ln := range sliceLinesAt(store, bf, idx) {
+			bw.WriteString(ln)
+			bw.WriteByte('\n')
+		}
+	}
+	return true, bw.Flush()
 }
 
 // scanFile walks every line of one file in order, slice by slice, so a
