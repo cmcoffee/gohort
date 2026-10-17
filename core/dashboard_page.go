@@ -1,11 +1,12 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"html/template"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/cmcoffee/gohort/core/ui"
@@ -95,7 +96,113 @@ const notifyPanelHTML = `<div class="notify-panel" id="notify-panel">
 })();
 </script>`
 
-func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, notices []DashboardNotice) {
+// gearGlyphSVG is the section gear: a cog, drawn in the current colour.
+const gearGlyphSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`
+
+// bandGear is a section's gear button, carrying how many of its cards are
+// new to the viewer when any are.
+func bandGear(name string, fresh int) string {
+	e := html.EscapeString(name)
+	badge := ""
+	if fresh > 0 {
+		badge = fmt.Sprintf(`<span class="band-new">%d new</span>`, fresh)
+	}
+	return fmt.Sprintf(`<button type="button" class="band-gear" data-band="%s" title="Arrange %s" aria-label="Arrange %s">%s%s</button>`, e, e, e, gearGlyphSVG, badge)
+}
+
+// emptyBand is a section with nothing showing: its heading and gear, and a
+// line saying where its cards are chosen.
+func emptyBand(name, gear string) string {
+	return fmt.Sprintf(`<div class="cluster band empty"><div class="cluster-head"><span>%s</span>%s</div><div class="band-empty">Nothing shown here. The gear chooses what this section shows.</div></div>`,
+		html.EscapeString(name), gear)
+}
+
+// sectionWindowHTML is what a gear opens: the section's cards in the same
+// draggable table the framework draws everywhere else (dashSectionTable),
+// with a switch for the whole section. The dashboard is hand-written markup
+// and does not load the framework runtime for its first paint; the gear
+// fetches it the first time it is used, putting its stylesheet ahead of the
+// dashboard's own so nothing on the page changes look. Closing the window
+// counts the section's cards as seen and redraws the page.
+func sectionWindowHTML() string {
+	cfg, _ := json.Marshal(dashSectionTable())
+	return `<script id="band-table" type="application/json">` + strings.ReplaceAll(string(cfg), "</", "<\\/") + `</script>
+<script>
+(function() {
+  var tableCfg = JSON.parse(document.getElementById('band-table').textContent);
+  var waiting = null;
+  function withUI(done, fail) {
+    if (window.uiOpenModal && window.uiMountComponent) { done(); return; }
+    if (waiting) { waiting.push([done, fail]); return; }
+    waiting = [[done, fail]];
+    var css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = '/_ui/ui.css';
+    document.head.insertBefore(css, document.head.querySelector('style'));
+    var js = document.createElement('script');
+    js.src = '/_ui/ui.js';
+    js.onload = function() { var q = waiting; waiting = null; q.forEach(function(p) { p[0](); }); };
+    js.onerror = function() { var q = waiting; waiting = null; q.forEach(function(p) { p[1](); }); };
+    document.body.appendChild(js);
+  }
+  function post(url, body) {
+    return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  }
+  function openSection(name, btn) {
+    btn.classList.add('busy');
+    withUI(function() {
+      btn.classList.remove('busy');
+      var cfg = JSON.parse(JSON.stringify(tableCfg));
+      cfg.source = cfg.source + encodeURIComponent(name);
+      window.uiOpenModal({
+        title: name,
+        subtitle: 'Drag a card by its grip to reorder it, or switch it off to take it off your dashboard. Cards you have not seen yet are marked New.',
+        width: '680px',
+        mount: function(body) {
+          var row = document.createElement('label');
+          row.className = 'band-switch';
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.className = 'ui-switch';
+          cb.checked = true;
+          cb.addEventListener('change', function() {
+            post('/api/dashboard/band?name=' + encodeURIComponent(name), {shown: cb.checked});
+          });
+          row.appendChild(cb);
+          row.appendChild(document.createTextNode(' Show this section on the dashboard'));
+          body.appendChild(row);
+          window.uiMountComponent(cfg, body);
+        },
+        onClose: function() {
+          var again = function() { location.reload(); };
+          post('/api/dashboard/seen?band=' + encodeURIComponent(name)).then(again, again);
+        }
+      });
+    }, function() {
+      btn.classList.remove('busy');
+      btn.title = 'Could not load the arranging tools: reload the page and try again.';
+    });
+  }
+  document.addEventListener('click', function(e) {
+    var t = e.target;
+    var g = t.closest && t.closest('.band-gear');
+    if (g) {
+      e.preventDefault();
+      e.stopPropagation();
+      openSection(g.getAttribute('data-band'), g);
+      return;
+    }
+    var s = t.closest && t.closest('.band-show');
+    if (s) {
+      var again = function() { location.reload(); };
+      post('/api/dashboard/band?name=' + encodeURIComponent(s.getAttribute('data-band')), {shown: true}).then(again, again);
+    }
+  });
+})();
+</script>`
+}
+
+func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, notices []DashboardNotice, bands dashBands) {
 	renderCard := func(b *strings.Builder, a dashApp, extraCls string) {
 		// Escaped: a published agent's name and description are typed by its
 		// owner and shown on other people's dashboards, and a custom app's by
@@ -120,8 +227,14 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 	// as an equal card — the cluster's title already carries the grouping, so the
 	// four hub apps sit together as a tidy grid instead of one being blown up
 	// into a full-width lead.
-	var heroB, restB strings.Builder
+	// The rest go in an outlined band per kind (dashBand: Apps, My apps,
+	// Agents), drawn like the Orchestrator cluster, each with the gear that
+	// arranges it, and a card moves only within its section. The
+	// administrator's card is in none and comes after them all.
+	var heroB, lastB strings.Builder
 	var family []dashApp
+	var bandNames []string
+	bandCards := map[string]*strings.Builder{}
 	for _, a := range apps {
 		featured := false
 		if f, ok := a.app.(WebAppFeatured); ok && f.WebFeatured() {
@@ -139,32 +252,81 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 		if wd, ok := a.app.(WebAppWide); ok && wd.WebWide() {
 			extra = " wide" // full-width row, regular height
 		}
-		renderCard(&restB, a, extra)
-	}
-	// Order the family by HubTab order so the cluster and the tab row stay in
-	// lockstep from one source (the featured lead sorts first via its low order).
-	// Unless the viewer put them in an order of their own (Customize): then
-	// it is theirs, already applied to apps.
-	if len(loadDashPrefs(AuthCurrentUser(r)).Order) == 0 {
-		sort.SliceStable(family, func(i, j int) bool {
-			return hubTabOrder(family[i].app) < hubTabOrder(family[j].app)
-		})
-	}
-
-	var cards strings.Builder
-	cards.WriteString(heroB.String())
-	if len(family) > 0 {
-		cards.WriteString(`<div class="cluster"><div class="cluster-head">Orchestrator</div><div class="cluster-grid">`)
-		for _, a := range family {
-			// Every family member renders at equal size so the four hub apps
-			// (Agents / Bridges / Knowledge / Extensions) sit together as a tidy
-			// grid. The primary (Agents) is deliberately NOT blown up into a
-			// full-width lead here — the cluster title signals the grouping.
-			renderCard(&cards, a, "")
+		band := dashBand(a)
+		if band == "" {
+			renderCard(&lastB, a, extra)
+			continue
 		}
-		cards.WriteString(`</div></div>`)
+		b, ok := bandCards[band]
+		if !ok {
+			b = &strings.Builder{}
+			bandCards[band] = b
+			bandNames = append(bandNames, band)
+		}
+		renderCard(b, a, extra)
 	}
-	cards.WriteString(restB.String())
+	// The family arrives in HubTab order unless the viewer moved its cards
+	// themselves (sortDashDefault, then their order): nothing to sort here.
+
+	// Every section the viewer may arrange is drawn, in order, with a gear
+	// that arranges it: one switched off is left out and named at the foot,
+	// and one with nothing showing yet still gets its heading and gear, or a
+	// new app or agent waiting to be switched on would have nowhere to be.
+	order := append([]string(nil), bands.order...)
+	for _, name := range bandNames {
+		if !slices.Contains(order, name) {
+			order = append(order, name)
+		}
+	}
+	var cards strings.Builder
+	var hidden []string
+	for _, name := range order {
+		if bands.hidden[name] {
+			hidden = append(hidden, name)
+			continue
+		}
+		gear := bandGear(name, bands.fresh[name])
+		switch name {
+		case "Featured":
+			if heroB.Len() == 0 {
+				cards.WriteString(emptyBand(name, gear))
+				continue
+			}
+			// The gear sits on the hero's corner, outside its link.
+			cards.WriteString(`<div class="hero-wrap">` + strings.Replace(gear, `class="band-gear"`, `class="band-gear hero-gear"`, 1) + heroB.String() + `</div>`)
+		case "Orchestrator":
+			if len(family) == 0 {
+				cards.WriteString(emptyBand(name, gear))
+				continue
+			}
+			cards.WriteString(`<div class="cluster"><div class="cluster-head"><span>Orchestrator</span>` + gear + `</div><div class="cluster-grid">`)
+			for _, a := range family {
+				// Every family member renders at equal size so the four hub apps
+				// (Agents / Bridges / Knowledge / Extensions) sit together as a tidy
+				// grid. The primary (Agents) is deliberately NOT blown up into a
+				// full-width lead here — the cluster title signals the grouping.
+				renderCard(&cards, a, "")
+			}
+			cards.WriteString(`</div></div>`)
+		default:
+			b := bandCards[name]
+			if b == nil || b.Len() == 0 {
+				cards.WriteString(emptyBand(name, gear))
+				continue
+			}
+			fmt.Fprintf(&cards, `<div class="cluster band"><div class="cluster-head"><span>%s</span>%s</div><div class="cluster-grid">%s</div></div>`,
+				html.EscapeString(name), gear, b.String())
+		}
+	}
+	cards.WriteString(lastB.String())
+	if len(hidden) > 0 {
+		cards.WriteString(`<div class="hidden-bands"><span>Hidden sections:</span>`)
+		for _, name := range hidden {
+			e := html.EscapeString(name)
+			fmt.Fprintf(&cards, `<button type="button" class="band-show" data-band="%s" title="Show %s again">%s</button>`, e, e, e)
+		}
+		cards.WriteString(`</div>`)
+	}
 
 	// Detect logged-in user for the auth bar.
 	username := AuthCurrentUser(r)
@@ -178,7 +340,6 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 		auth_html = fmt.Sprintf(
 			`<div class="auth-bar"><span class="auth-user">%s</span>`+
 				`<button type="button" class="auth-link bell" id="bell" title="Notifications" aria-label="Notifications">`+bellGlyphSVG+`<span class="bell-count" id="bell-count"></span></button>`+
-				`<a class="auth-link" href="/dashboard/customize" title="Pick which apps and agents this page shows">Customize</a>`+
 				`<a class="auth-link" href="/account">Account</a><form class="auth-logout" method="POST" action="/logout"><button type="submit" class="auth-link">Logout</button></form></div>`+
 				notifyPanelHTML,
 			username)
@@ -330,6 +491,10 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 1rem;
   }
+  /* A kind's band (Apps, My apps, Agents) is an open-ended list, like the
+     main grid used to be, so it keeps auto-FILL: one app in a band stays a
+     card's width instead of stretching across the row. */
+  .cluster.band .cluster-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
   #live-panel {
     width: 100%; max-width: var(--dash-w); margin-top: 2rem;
   }
@@ -454,7 +619,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     .notify-panel { top: 2.6rem; right: 8px; }
     .auth-user { display: none; } /* keep just the Logout button visible on narrow screens */
     .grid { grid-template-columns: 1fr; gap: 0.75rem; }
-    .cluster-grid { grid-template-columns: 1fr; gap: 0.75rem; }
+    .cluster-grid, .cluster.band .cluster-grid { grid-template-columns: 1fr; gap: 0.75rem; }
     .card { padding: 1rem; }
     /* The featured card and the group block kept their desktop size: 2.25rem
        of padding and a 1.9rem title spent a phone's first screen on one card. */
@@ -515,6 +680,38 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   .notify-meta button { background: none; border: 0; color: var(--accent, #6366f1); cursor: pointer; font-size: var(--fs-2xs, 0.7rem); padding: 0; }
   .notify-head { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0.6rem; }
   .notify-head button { background: none; border: 0; color: var(--accent, #6366f1); cursor: pointer; font-size: var(--fs-2xs, 0.72rem); padding: 0; }
+  /* A section's gear: quiet until pointed at or focused, never hidden (a
+     phone cannot point), and lit when the section has cards new to the
+     viewer. */
+  .cluster-head { display: flex; align-items: center; gap: 0.5rem; }
+  .band-gear {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 0.35rem;
+    min-width: 30px; min-height: 30px; padding: 0.25rem 0.4rem; justify-content: center;
+    background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+    color: var(--text-mute, #8b949e); opacity: 0.55; font: inherit; text-transform: none; letter-spacing: 0;
+  }
+  .band-gear:hover, .band-gear:focus-visible { opacity: 1; color: var(--text, #c9d1d9); border-color: var(--border, #30363d); }
+  .band-gear:has(.band-new) { opacity: 1; }
+  .band-gear.busy svg { animation: band-spin 0.9s linear infinite; }
+  @keyframes band-spin { to { transform: rotate(360deg); } }
+  .band-new {
+    background: var(--accent, #6366f1); color: var(--text-on-accent, #fff); border-radius: 999px;
+    padding: 0.05rem 0.45rem; font-size: var(--fs-2xs, 0.72rem); font-weight: 600;
+  }
+  @media (pointer: coarse) { .band-gear { opacity: 0.8; min-width: 36px; min-height: 36px; } }
+  .hero-wrap { grid-column: 1 / -1; position: relative; }
+  .hero-gear { position: absolute; top: 0.5rem; right: 0.5rem; z-index: 1; background: var(--bg-1, #161b22); }
+  .band-empty { color: var(--text-mute, #8b949e); font-size: var(--fs-sm, 0.85rem); }
+  .hidden-bands {
+    grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+    color: var(--text-mute, #8b949e); font-size: var(--fs-sm, 0.85rem);
+  }
+  .band-show {
+    background: none; border: 1px solid var(--border, #30363d); border-radius: 999px; color: var(--text, #c9d1d9);
+    padding: 0.2rem 0.65rem; cursor: pointer; font: inherit; min-height: 30px;
+  }
+  .band-show:hover { border-color: var(--accent, #58a6ff); }
+  .band-switch { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.9rem; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -583,12 +780,16 @@ setTimeout(function() { document.getElementById('logo').classList.remove('play')
 refreshLive();
 setInterval(refreshLive, 10000);
 </script>
+%SECTIONS%
 </body>
 </html>`
 	html = strings.Replace(html, "%THEME%", ui.ActiveTheme(), 1)
 	html = strings.Replace(html, "%APPHEAD%", ui.AppHead(ui.ActiveTheme()), 1)
 	html = strings.Replace(html, "%THEMECSS%", ui.ThemeCSS(), 1)
 	html = strings.Replace(html, "%FAVICON%", faviconLinkTag, 1)
+	// Before the notices, the account bar and the cards, which carry text
+	// people typed: filled first, its placeholder is still the template's own.
+	html = strings.Replace(html, "%SECTIONS%", sectionWindowHTML(), 1)
 	// Notices sit above the cards, because the point is to be read before the
 	// grid is used — an admin who scrolls past them has already clicked into
 	// the app that cannot work yet.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	httppprof "net/http/pprof"
+	"slices"
 	"sort"
 	"strings"
 
@@ -129,6 +130,9 @@ func ServeDashboard(addr string) error {
 	mux.HandleFunc("/api/dashboard/items", host.handleDashboardItems)
 	mux.HandleFunc("/api/dashboard/show", host.handleDashboardShow)
 	mux.HandleFunc("/api/dashboard/move", host.handleDashboardMove)
+	mux.HandleFunc("/api/dashboard/order", host.handleDashboardOrder)
+	mux.HandleFunc("/api/dashboard/band", host.handleDashboardBand)
+	mux.HandleFunc("/api/dashboard/seen", host.handleDashboardSeen)
 	mux.HandleFunc("/api/live", host.handleLive)
 	mux.HandleFunc("/debug/pprof/", handlePprof)
 	mux.HandleFunc("/api/notify-preference", handleNotifyPreference)
@@ -379,12 +383,22 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defaults, pinnable := d.cards(r)
-	prefs := loadDashPrefs(AuthCurrentUser(r))
+	user := AuthCurrentUser(r)
+	prefs := loadDashPrefs(user)
+	bands := d.bandsFor(r, user, &prefs)
 	visible := applyDashPrefs(defaults, pinnable, prefs)
 	sortDashDefault(visible)
 	orderDash(visible, prefs.Order)
 	sortDashGroups(visible)
 	lastDash(visible)
+	// A section switched off takes all its cards with it.
+	shown := visible[:0]
+	for _, a := range visible {
+		if !bands.hidden[dashBand(a)] {
+			shown = append(shown, a)
+		}
+	}
+	visible = shown
 	// Notices from any app with something the viewer must act on. Walked over
 	// the ORIGINAL list, like card sources, so a hidden app can still speak —
 	// but never a switched-off one, whose links would land on the 503 the
@@ -397,7 +411,7 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 		}
 		notices = append(notices, src.DashboardNotices(r)...)
 	}
-	serve_dashboard(w, r, visible, notices)
+	serve_dashboard(w, r, visible, notices, bands)
 }
 
 // handleLive is the global live view. Deep links are gated HERE rather than
@@ -708,6 +722,17 @@ type dashPrefs struct {
 	// Order is the person's own order of cards, by path; a card not in it
 	// keeps its default place after the ones that are.
 	Order []string `json:"order,omitempty"`
+	// HiddenBands are sections switched off whole from their gear. None of
+	// their cards is drawn, and the dashboard names them at its foot so they
+	// can be brought back.
+	HiddenBands []string `json:"hidden_bands,omitempty"`
+	// Seen is every card the person has been shown, so one that arrives later
+	// (an app shared with them, a new agent) is marked new on its section's
+	// gear until they open it. SeenInit records that the baseline was taken:
+	// the first look counts everything already there as seen, or every card
+	// would read as new at once.
+	Seen     []string `json:"seen,omitempty"`
+	SeenInit bool     `json:"seen_init,omitempty"`
 }
 
 const dashPrefsTable = "dashboard_prefs"
@@ -772,9 +797,108 @@ func applyDashPrefs(defaults, pinnable []dashApp, p dashPrefs) []dashApp {
 	return out
 }
 
-// dashItem is one row of the Customize page: a card, under the heading of
-// its kind (Apps, My apps, Agents), with a note on where it goes or who sees
-// it where the row alone would not say.
+// dashBands is what the dashboard draws about its sections besides their
+// cards: every section the viewer may arrange, in order (so a section with
+// nothing shown still gets its heading and gear), how many of its cards are
+// new to them, and which they switched off.
+type dashBands struct {
+	order  []string
+	fresh  map[string]int
+	hidden map[string]bool
+}
+
+// bandsFor reads the viewer's sections. The first time it runs for a person
+// it takes the "seen" baseline, so the cards already there are not all new.
+func (d dashboardHost) bandsFor(r *http.Request, user string, p *dashPrefs) dashBands {
+	b := dashBands{fresh: map[string]int{}, hidden: map[string]bool{}}
+	all := d.orderedCards(r, *p)
+	if user != "" && !p.SeenInit {
+		p.SeenInit = true
+		p.Seen = p.Seen[:0:0]
+		for _, a := range all {
+			p.Seen = append(p.Seen, a.path)
+		}
+		saveDashPrefs(user, *p)
+	}
+	for _, a := range all {
+		band := dashBand(a)
+		if band == "" {
+			continue
+		}
+		if !slices.Contains(b.order, band) {
+			b.order = append(b.order, band)
+		}
+		if !hasPath(p.Seen, a.path) {
+			b.fresh[band]++
+		}
+	}
+	for _, h := range p.HiddenBands {
+		if slices.Contains(b.order, h) {
+			b.hidden[h] = true
+		}
+	}
+	return b
+}
+
+// handleDashboardBand switches a whole section on or off for this viewer:
+// POST ?name=<section> with {"shown": bool}. Only a section they have.
+func (d dashboardHost) handleDashboardBand(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := AuthCurrentUser(r)
+	if user == "" {
+		http.Error(w, "sign in first", http.StatusUnauthorized)
+		return
+	}
+	var body struct {
+		Shown bool `json:"shown"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		http.Error(w, "send {\"shown\": true|false}", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	p := loadDashPrefs(user)
+	if !slices.Contains(d.bandsFor(r, user, &p).order, name) {
+		http.Error(w, "no such section on your dashboard", http.StatusNotFound)
+		return
+	}
+	p.HiddenBands = slices.DeleteFunc(p.HiddenBands, func(h string) bool { return h == name })
+	if !body.Shown {
+		p.HiddenBands = append(p.HiddenBands, name)
+	}
+	saveDashPrefs(user, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDashboardSeen counts a section's cards as seen: POST ?band=<name>,
+// sent when its gear's window closes, so the "new" marks it showed go.
+func (d dashboardHost) handleDashboardSeen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := AuthCurrentUser(r)
+	if user == "" {
+		http.Error(w, "sign in first", http.StatusUnauthorized)
+		return
+	}
+	band := strings.TrimSpace(r.URL.Query().Get("band"))
+	p := loadDashPrefs(user)
+	for _, a := range d.orderedCards(r, p) {
+		if dashBand(a) == band && !hasPath(p.Seen, a.path) {
+			p.Seen = append(p.Seen, a.path)
+		}
+	}
+	saveDashPrefs(user, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// dashItem is one row of a section's gear window: a card, under the heading
+// of the section the dashboard draws it in (dashBand), with a note where the
+// row alone would not say who sees it.
 type dashItem struct {
 	Path    string `json:"path"`
 	Name    string `json:"name"`
@@ -783,6 +907,11 @@ type dashItem struct {
 	Section string `json:"section"`
 	Shown   bool   `json:"shown"`
 	Note    string `json:"note,omitempty"`
+	// Fixed: the administrator's card, which stays last (lastDash), so
+	// Customize draws no grip on it.
+	Fixed bool `json:"fixed,omitempty"`
+	// Fresh is "new" for a card the person has not been shown yet.
+	Fresh string `json:"fresh,omitempty"`
 }
 
 // handleDashboardItems lists every card this viewer may put on their
@@ -795,11 +924,19 @@ func (d dashboardHost) handleDashboardItems(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	p := loadDashPrefs(user)
+	// ?band= narrows the list to one section, for that section's gear.
+	band, oneBand := r.URL.Query().Get("band"), r.URL.Query().Has("band")
 	var items []dashItem
 	for _, a := range d.orderedCards(r, p) {
-		it := dashItem{Path: a.path, Name: a.name, Desc: a.desc, Group: a.group, Section: dashSection(a), Shown: !hasPath(p.Hidden, a.path), Note: dashPlace(a)}
+		if oneBand && dashBand(a) != band {
+			continue
+		}
+		it := dashItem{Path: a.path, Name: a.name, Desc: a.desc, Group: dashBand(a), Section: dashSection(a), Shown: !hasPath(p.Hidden, a.path), Fixed: isLastDash(a)}
 		if a.pinnable {
 			it.Shown, it.Note = hasPath(p.Shown, a.path), "only on your dashboard"
+		}
+		if p.SeenInit && !hasPath(p.Seen, a.path) {
+			it.Fresh = "new"
 		}
 		items = append(items, it)
 	}
@@ -807,18 +944,21 @@ func (d dashboardHost) handleDashboardItems(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]any{"records": items})
 }
 
-// dashPlace says where on the dashboard a card is drawn when that is not
-// the plain grid: the featured spot, or the Orchestrator group. The
-// arrows only move a card within its place, so the row has to say what
-// that place is.
-func dashPlace(a dashApp) string {
-	switch dashSection(a) {
-	case "Featured":
-		return "featured, at the top"
-	case "Orchestrator":
-		return "in the Orchestrator group"
+// dashBand is the outlined section of the dashboard a card is drawn in, and
+// the band the Customize page lists it under: the featured spot, the
+// Orchestrator group, or its kind (Apps, My apps, Agents). A card is ordered
+// only within its band, so the two pages draw the same bands and a drag on
+// Customize is exactly a move the dashboard can show. The administrator's
+// card is in none: it comes after every band (lastDash).
+func dashBand(a dashApp) string {
+	if isLastDash(a) {
+		return ""
 	}
-	return ""
+	switch s := dashSection(a); s {
+	case "Featured", "Orchestrator":
+		return s
+	}
+	return a.group
 }
 
 // orderedCards is every card the viewer may place, shown or not, in the
@@ -859,19 +999,20 @@ func lastDash(list []dashApp) {
 
 func isLastDash(a dashApp) bool { return a.path == adminAppPath }
 
-// sortDashGroups puts cards of a kind together, keeping their order within
-// it: the dashboard's own apps, then each source's group in its declared
-// order, each group by place. The dashboard and the Customize page both
-// sort by this, so the grid reads the way the page that arranges it does.
+// sortDashGroups puts the cards of a band together, keeping their order
+// within it: the featured spot, the Orchestrator group, then the dashboard's
+// own apps and each source's group in its declared order (dashBand). The
+// dashboard and the Customize page both sort by this, so the grid reads the
+// way the page that arranges it does.
 func sortDashGroups(list []dashApp) {
 	sort.SliceStable(list, func(i, j int) bool {
+		if si, sj := dashSectionRank(list[i]), dashSectionRank(list[j]); si != sj {
+			return si < sj
+		}
 		if gi, gj := dashGroupRank(list[i]), dashGroupRank(list[j]); gi != gj {
 			return gi < gj
 		}
-		if list[i].group != list[j].group {
-			return list[i].group < list[j].group
-		}
-		return dashSectionRank(list[i]) < dashSectionRank(list[j])
+		return list[i].group < list[j].group
 	})
 }
 
@@ -916,10 +1057,10 @@ func (d dashboardHost) handleDashboardMove(w http.ResponseWriter, r *http.Reques
 	if dir == "up" {
 		step = -1
 	}
-	// The next card in the same group and place; a card cannot leave either,
-	// since the dashboard draws each place on its own.
+	// The next card in the same band; a card cannot leave it, since the
+	// dashboard draws each band on its own.
 	j := i + step
-	for j >= 0 && j < len(all) && (all[j].group != all[i].group || dashSection(all[j]) != dashSection(all[i])) {
+	for j >= 0 && j < len(all) && dashBand(all[j]) != dashBand(all[i]) {
 		j += step
 	}
 	// The administrator's card is not moved and not moved past: it is last.
@@ -935,9 +1076,67 @@ func (d dashboardHost) handleDashboardMove(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
+// handleDashboardOrder stores the order the viewer dragged their cards into
+// on the Customize page: POST {"order": [card paths]} (Table.ReorderURL).
+// Each band takes the order the paths give its cards; no card leaves its
+// band, whatever the list says, and the administrator's card stays last. A
+// path that is not one of this viewer's cards is not stored, and a card the
+// list leaves out keeps its place at the end of its band.
+func (d dashboardHost) handleDashboardOrder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := AuthCurrentUser(r)
+	if user == "" {
+		http.Error(w, "sign in first", http.StatusUnauthorized)
+		return
+	}
+	var body struct {
+		Order []string `json:"order"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+		http.Error(w, "send {\"order\": [card paths]}", http.StatusBadRequest)
+		return
+	}
+	p := loadDashPrefs(user)
+	all := d.orderedCards(r, p)
+	given := make(map[string]int, len(body.Order))
+	for i, path := range body.Order {
+		if _, dup := given[path]; !dup {
+			given[path] = i
+		}
+	}
+	band := make(map[string]int)
+	for _, a := range all {
+		if _, ok := band[dashBand(a)]; !ok {
+			band[dashBand(a)] = len(band)
+		}
+	}
+	rank := func(a dashApp) int {
+		if i, ok := given[a.path]; ok {
+			return i
+		}
+		return len(body.Order)
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if bi, bj := band[dashBand(all[i])], band[dashBand(all[j])]; bi != bj {
+			return bi < bj
+		}
+		return rank(all[i]) < rank(all[j])
+	})
+	lastDash(all)
+	p.Order = p.Order[:0:0]
+	for _, a := range all {
+		p.Order = append(p.Order, a.path)
+	}
+	saveDashPrefs(user, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // dashSection is the part of the dashboard a card is drawn in (see
 // serve_dashboard): a featured app on its own, the Orchestrator group, or the
-// rest. A card is ordered within its section.
+// rest, which dashBand splits by kind.
 func dashSection(a dashApp) string {
 	if _, ok := a.app.(WebAppHubTab); ok {
 		return "Orchestrator"
@@ -976,6 +1175,104 @@ func sortDashDefault(list []dashApp) {
 		}
 		return list[i].name < list[j].name
 	})
+	// The Orchestrator group's own default is its tab order, so the group and
+	// the tab row agree until the person moves its cards themselves. Sorted
+	// here, in the slots those cards already hold, so the dashboard and the
+	// Customize page start from the same order. The dashboard used to apply
+	// it only while the person had no order at all, so ordering My Apps (or
+	// anything) reshuffled the group by name.
+	var at []int
+	var hub []dashApp
+	for i, a := range list {
+		if _, ok := a.app.(WebAppHubTab); ok {
+			at = append(at, i)
+			hub = append(hub, a)
+		}
+	}
+	sort.SliceStable(hub, func(i, j int) bool { return hubTabOrder(hub[i].app) < hubTabOrder(hub[j].app) })
+	for k, i := range at {
+		list[i] = hub[k]
+	}
+}
+
+// DashboardOrderOf sorts paths into the order the person's dashboard shows
+// those cards in. Paths they have never placed keep their given order, after
+// the placed ones. A page that lists the same things as dashboard cards (My
+// Apps lists its apps) reads its order here, so the two never disagree.
+func DashboardOrderOf(user string, paths []string) []string {
+	out := append([]string(nil), paths...)
+	order := loadDashPrefs(user).Order
+	if len(order) == 0 {
+		return out
+	}
+	pos := make(map[string]int, len(order))
+	for i, p := range order {
+		pos[p] = i
+	}
+	rank := func(p string) int {
+		if i, ok := pos[p]; ok {
+			return i
+		}
+		return len(order)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return rank(out[i]) < rank(out[j]) })
+	return out
+}
+
+// SetDashboardOrderOf puts paths in this order among themselves on the
+// person's dashboard and leaves every other card where it was: the moved set
+// takes the place of the first of them already placed, or goes after every
+// placed card when none was. The other half of DashboardOrderOf.
+func SetDashboardOrderOf(user string, paths []string) {
+	if user == "" || len(paths) == 0 {
+		return
+	}
+	moving := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		moving[p] = true
+	}
+	p := loadDashPrefs(user)
+	next := make([]string, 0, len(p.Order)+len(paths))
+	placed := false
+	for _, have := range p.Order {
+		if !moving[have] {
+			next = append(next, have)
+			continue
+		}
+		if !placed {
+			next = append(next, paths...)
+			placed = true
+		}
+	}
+	if !placed {
+		next = append(next, paths...)
+	}
+	p.Order = next
+	saveDashPrefs(user, p)
+}
+
+// RenameDashboardCardPaths rewrites the card paths a person's dashboard
+// preferences name (shown, hidden, seen, and their order) through rename,
+// for an app whose cards change address: the person keeps every card they
+// switched on, where they put it. Reports how many entries changed.
+func RenameDashboardCardPaths(user string, rename func(path string) string) int {
+	if user == "" || rename == nil {
+		return 0
+	}
+	p := loadDashPrefs(user)
+	n := 0
+	for _, list := range []*[]string{&p.Order, &p.Shown, &p.Hidden, &p.Seen} {
+		for i, path := range *list {
+			if to := rename(path); to != path {
+				(*list)[i] = to
+				n++
+			}
+		}
+	}
+	if n > 0 {
+		saveDashPrefs(user, p)
+	}
+	return n
 }
 
 // orderDash puts cards in the person's own order: the ones it names first, in
@@ -1046,38 +1343,33 @@ func (d dashboardHost) handleDashboardShow(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]bool{"shown": body.Shown})
 }
 
-// handleCustomize is the page where a person picks what their dashboard shows.
+// handleCustomize is where the Customize page used to be. Each section is
+// arranged from its own gear on the dashboard now, so an old link or a
+// bookmark lands there.
 func (d dashboardHost) handleCustomize(w http.ResponseWriter, r *http.Request) {
-	if AuthCurrentUser(r) == "" {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// dashSectionTable is a section's gear window: its cards, new ones marked,
+// each with a switch, dragged into order within the section. The page fills
+// in the section (Source ends in ?band=, and the script appends the name).
+func dashSectionTable() ui.Table {
+	return ui.Table{
+		Source: "/api/dashboard/items?band=",
+		RowKey: "path",
+		Columns: []ui.Col{
+			{Field: "name", Flex: 2},
+			{Field: "fresh", Type: "badge", Badges: []ui.BadgeMapping{{Value: "new", Label: "New", Color: "success"}}},
+			{Field: "note", Flex: 2, Mute: true},
+			{Field: "desc", Flex: 5, Mute: true, Line: 2},
+		},
+		ReorderURL:   "/api/dashboard/order",
+		ReorderFixed: "fixed",
+		RowActions: []ui.RowAction{
+			{Type: "toggle", Field: "shown", PostTo: "/api/dashboard/show?path={path}"},
+		},
+		EmptyText: "Nothing in this section.",
 	}
-	ui.Page{
-		Title:     "Customize dashboard",
-		ShowTitle: true,
-		BackURL:   "/",
-		MaxWidth:  "820px",
-		Sections: []ui.Section{{
-			Title:    "What your dashboard shows",
-			Subtitle: "Switch a card off to hide it, or on to add it, and move it with the arrows. Only your dashboard changes: a hidden app is still there at its address, and an agent switched on here opens for you alone.",
-			Body: ui.Table{
-				Source:  "/api/dashboard/items",
-				RowKey:  "path",
-				GroupBy: "group",
-				Columns: []ui.Col{
-					{Field: "name", Flex: 2},
-					{Field: "note", Flex: 2, Mute: true},
-					{Field: "desc", Flex: 5, Mute: true, Line: 2},
-				},
-				RowActions: []ui.RowAction{
-					{Type: "button", Label: "▲", Compact: true, PostTo: "/api/dashboard/move?path={path}&dir=up"},
-					{Type: "button", Label: "▼", Compact: true, PostTo: "/api/dashboard/move?path={path}&dir=down"},
-					{Type: "toggle", Field: "shown", PostTo: "/api/dashboard/show?path={path}"},
-				},
-				EmptyText: "Nothing to show yet.",
-			},
-		}},
-	}.ServeHTTP(w, r)
 }
 
 // handleDocSinks lists the places this user may save a document: GET ->

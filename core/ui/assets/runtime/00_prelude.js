@@ -1203,7 +1203,16 @@
       }
       overlay.remove();
       document.removeEventListener('keydown', onKey);
-      if (!released) { released = true; window.uiReleaseModalZ(); }
+      if (!released) {
+        released = true;
+        window.uiReleaseModalZ();
+        // opts.onClose: told once that the dialog has gone, however it went
+        // (Escape, the close button, a click outside, an action that closed
+        // it), for a caller that has to act on what happened inside it.
+        if (typeof opts.onClose === 'function') {
+          try { opts.onClose(); } catch (e) { console.error('uiOpenModal onClose failed:', e); }
+        }
+      }
       if (opener && opener.focus && document.body.contains(opener)) {
         try { opener.focus({preventScroll: true}); } catch (_) {}
       }

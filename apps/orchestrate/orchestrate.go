@@ -520,6 +520,7 @@ func (T *OrchestrateApp) Routes() {
 	// One-shot: the Author flag is retired. Each agent that held it may hand
 	// building to Builder instead (migrateRetiredAuthorFlag).
 	T.migrateRetiredAuthorFlag()
+	T.migrateOwnAgentCardPaths()
 
 	// Namespace flatten: fold every agent record's embedded Tools into the
 	// unified per-user store (ScopeAgents rows). Idempotent — folded agents

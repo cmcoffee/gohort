@@ -373,6 +373,32 @@ func (T *OrchestrateApp) migrateLegacyOrchestratorMode() {
 // Once, deployment-wide, through the migration runner. agentCanAuthor ignores
 // the flag already, so a record this misses (an import, a restored backup)
 // grants nothing; it just does not gain the dispatch grant.
+// migrateOwnAgentCardPaths moves the dashboard cards people switched on for
+// their own agents from the full console (/orchestrate/?agent=<id>) to the
+// restricted chat (/agents/<id>), so a card they had keeps its place instead
+// of vanishing under its old address.
+func (T *OrchestrateApp) migrateOwnAgentCardPaths() {
+	NewMigrationRunner("orchestrate", "").Once("own_agent_card_paths:v1", func() int {
+		if AuthDB == nil {
+			return 0
+		}
+		authDB := AuthDB()
+		if authDB == nil {
+			return 0
+		}
+		changed := 0
+		for _, u := range AuthListUsers(authDB) {
+			changed += RenameDashboardCardPaths(u.Username, func(path string) string {
+				if id, ok := strings.CutPrefix(path, "/orchestrate/?agent="); ok && id != "" && !strings.ContainsAny(id, "&?/=") {
+					return ownAgentCardPath(id)
+				}
+				return path
+			})
+		}
+		return changed
+	})
+}
+
 func (T *OrchestrateApp) migrateRetiredAuthorFlag() {
 	NewMigrationRunner("orchestrate", "").Once("retire_author_flag:v1", func() int {
 		if T.DB == nil || AuthDB == nil {

@@ -75,6 +75,20 @@ type Table struct {
 	// swallowed; only the row's own dead space navigates. Ctrl/Cmd/middle
 	// click opens in a new tab, as with any link.
 	RowLink string `json:"row_link,omitempty"`
+	// ReorderURL lets the reader put the rows in their own order. Each row
+	// gets a grip: drag it (mouse or touch), or focus it and use the arrow
+	// keys. A row moves only within its group. When a move ends, the table
+	// POSTs {"order": [row keys]} to this URL: every row, in the order now
+	// shown. The endpoint stores it and returns rows in that order from
+	// Source from then on (the table never sorts them itself, so leave SortBy
+	// empty). A failed save says so and puts back what the server holds.
+	//
+	// Needs RowKey. Off while the search box narrows the list.
+	ReorderURL string `json:"reorder_url,omitempty"`
+	// ReorderFixed names a FIELD that, when truthy on a row, keeps that row
+	// where the server put it: it gets no grip. Its key is still in the
+	// order sent, so the endpoint sees every row.
+	ReorderFixed string `json:"reorder_fixed,omitempty"`
 }
 
 // Refresh sets AutoRefreshMS from a time.Duration for ergonomic Go.

@@ -337,8 +337,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help:   "Prefixes every message this agent sends over a channel with its name.",
 				Detail: "For example, \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
 
-			// Where it shows up is not here. Your own dashboard is the
-			// dashboard's Customize page, which pins any of your agents; the
+			// Where it shows up is not here. Your own dashboard is the gear
+			// on its Agents section, which pins any of your agents; the
 			// card for the people it is shared with is the Share tab of its
 			// Security page, beside who they are. Who may USE it, and MCP,
 			// are that Share tab too: reach an administrator grants, not

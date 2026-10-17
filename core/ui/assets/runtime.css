@@ -1215,6 +1215,28 @@ select:-webkit-autofill {
 .ui-table-cell a.ui-table-link { color: var(--accent); text-decoration: none; }
 .ui-table-cell a.ui-table-link:hover { text-decoration: underline; }
 .ui-table-empty { color: var(--text-mute); font-size: var(--fs-md); padding: 0.5rem 0; }
+/* Table.ReorderURL: a grip leads each row. touch-action: none so a finger on
+ * the grip drags the row instead of scrolling the page; the rest of the row
+ * still scrolls as before. */
+.ui-row-grip {
+  flex: 0 0 auto; align-self: center;
+  min-width: 30px; min-height: 30px; padding: 0 0.2rem;
+  background: none; border: none; border-radius: 6px;
+  color: var(--text-mute); cursor: grab; touch-action: none;
+  font-size: var(--fs-md); letter-spacing: -0.25em; line-height: 1;
+}
+.ui-row-grip:hover { color: var(--text); }
+.ui-row-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ui-row-dragging { border-color: var(--accent); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
+.ui-row-dragging .ui-row-grip { cursor: grabbing; }
+/* A stacked row has no left edge to lead with, so the grip sits in its top
+ * corner, at the larger touch size. */
+@media (max-width: 800px) {
+  .ui-table-row-movable { position: relative; padding-right: 2.8rem; }
+  .ui-table-row-movable > .ui-row-grip {
+    position: absolute; top: 0.3rem; right: 0.3rem; min-width: 36px; min-height: 36px;
+  }
+}
 
 /* Narrow viewport: row goes column, cells stack vertically (display:
  * block — more predictable than nested flex), actions stay a single

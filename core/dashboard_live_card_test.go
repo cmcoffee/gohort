@@ -16,7 +16,7 @@ func dashboardHTML(t *testing.T) string {
 	t.Helper()
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
-	serve_dashboard(w, r, nil, nil)
+	serve_dashboard(w, r, nil, nil, dashBands{})
 	return w.Body.String()
 }
 

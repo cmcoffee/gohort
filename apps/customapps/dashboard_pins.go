@@ -3,18 +3,19 @@ package customapps
 // An app on its owner's dashboard, when they ask for it.
 //
 // A custom app had no card: it was reached through My Apps and nowhere else.
-// The dashboard's Customize page lists these, and an app switched on there
+// The gear on the dashboard's My apps section lists these, and an app switched on there
 // gets a card of its own on that person's dashboard only.
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// dashboardGroupMyApps puts "My apps" right after the dashboard's own apps on
-// the Customize page, ahead of agents.
+// dashboardGroupMyApps puts "My apps" right after the dashboard's own apps,
+// ahead of agents.
 const dashboardGroupMyApps = 10
 
 // DashboardPinnable offers the viewer's own apps and the apps shared with
@@ -39,10 +40,23 @@ func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 		}
 		out = append(out, DashboardCard{Name: s.Name, Desc: desc, Path: "/apps/" + s.Slug, Group: group, GroupOrder: dashboardGroupMyApps})
 	}
-	for _, s := range listSpecs(user) {
+	// By name, where the person has not placed them: the spec store's keys
+	// promise no order.
+	own := listSpecs(user)
+	sort.SliceStable(own, func(i, j int) bool { return own[i].Name < own[j].Name })
+	for _, s := range own {
 		add(s, "My apps")
 	}
-	for slug, owner := range ListSharedOwners(T.DB, sharedAppsIndex) {
+	// In slug order: the index is a map, and a card the person never placed
+	// keeps the place it is given here.
+	owners := ListSharedOwners(T.DB, sharedAppsIndex)
+	slugs := make([]string, 0, len(owners))
+	for slug := range owners {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+	for _, slug := range slugs {
+		owner := owners[slug]
 		if owner == user || seen[slug] {
 			continue
 		}

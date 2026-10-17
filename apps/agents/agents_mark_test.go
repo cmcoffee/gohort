@@ -61,3 +61,11 @@ func TestTheOverflowSitsAfterTheModeToggles(t *testing.T) {
 		t.Fatal("the two order rules are not both present")
 	}
 }
+
+// Any signed-in person passes the coarse /agents gate; the gate that counts is
+// per agent, on every route.
+func TestTheAgentsSurfaceIsGatedPerAgent(t *testing.T) {
+	if !(&AgentsApp{}).WebEveryUser() {
+		t.Error("the coarse gate would keep an owner from their own agent's chat")
+	}
+}

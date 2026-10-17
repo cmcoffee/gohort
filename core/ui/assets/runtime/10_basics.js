@@ -260,6 +260,79 @@
     return wrap;
   };
 
+  // uiRowGrip builds the grip that moves row among its siblings of class
+  // rowClass (the rows of one group: a row never leaves its parent). Drag it
+  // with a mouse or a finger, through pointer events, so touch works where
+  // HTML5 drag and drop does not; or focus it and use the arrow keys.
+  //   hooks.can()      whether a move may start now
+  //   hooks.moved(how) after a move: 'key' on each arrow press, 'drop' when a
+  //                    drag that moved the row ends
+  //   hooks.busy(on)   a drag began (true) or ended (false)
+  // The row is moved in the page; saving the new order is the caller's.
+  function uiRowGrip(row, rowClass, hooks) {
+    var grip = el('button', {type: 'button', class: 'ui-row-grip',
+      title: 'Drag to reorder, or focus and use the arrow keys',
+      'aria-label': 'Reorder: drag, or press the up and down arrow keys'}, ['\u2807\u2807']);
+    function isRow(n) { return !!n && n !== row && n.classList.contains(rowClass); }
+    grip.addEventListener('keydown', function(ev) {
+      if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+      ev.preventDefault();
+      if (!hooks.can()) return;
+      var up = ev.key === 'ArrowUp';
+      var sib = up ? row.previousElementSibling : row.nextElementSibling;
+      while (sib && !isRow(sib)) sib = up ? sib.previousElementSibling : sib.nextElementSibling;
+      if (!sib) return;
+      row.parentNode.insertBefore(row, up ? sib : sib.nextSibling);
+      grip.focus();
+      hooks.moved('key');
+    });
+    grip.addEventListener('pointerdown', function(ev) {
+      if (ev.button !== 0 || !hooks.can()) return;
+      ev.preventDefault();
+      var host = row.parentNode;
+      var startY = ev.clientY, moved = false, pid = ev.pointerId;
+      // Followed on the document, not captured on the grip: moving the row
+      // takes the grip out of the page and back, which drops a capture, and
+      // the drag then stopped after one place with its release never seen.
+      row.classList.add('ui-row-dragging');
+      hooks.busy(true);
+      function onMove(e) {
+        if (e.pointerId !== undefined && e.pointerId !== pid) return;
+        if (!moved && Math.abs(e.clientY - startY) < 4) return;
+        moved = true;
+        // The row goes before the first other row whose middle is below the
+        // pointer, else after the last: one rule whichever way it travels.
+        var rows = Array.prototype.filter.call(host.children, isRow);
+        var before = null;
+        for (var i = 0; i < rows.length; i++) {
+          var b = rows[i].getBoundingClientRect();
+          if (e.clientY < b.top + b.height / 2) { before = rows[i]; break; }
+        }
+        if (before) {
+          if (row.nextElementSibling !== before) host.insertBefore(row, before);
+        } else if (rows.length) {
+          var last = rows[rows.length - 1];
+          if (last.nextSibling !== row) host.insertBefore(row, last.nextSibling);
+        }
+      }
+      function onEnd(e) {
+        if (e && e.pointerId !== undefined && e.pointerId !== pid) return;
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onEnd);
+        document.removeEventListener('pointercancel', onEnd);
+        row.classList.remove('ui-row-dragging');
+        // Moved first: the caller reads the new order from the page, and
+        // ending the drag may let a held reload repaint the old one.
+        if (moved) hooks.moved('drop');
+        hooks.busy(false);
+      }
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onEnd);
+      document.addEventListener('pointercancel', onEnd);
+    });
+    return grip;
+  }
+
   components.table = function(cfg) {
     var listEl = el('div', {class: 'ui-table-list'}, [uiLoading()]);
     var refreshIndicator = null;
@@ -269,6 +342,10 @@
     // A reload asked for while an expansion was open, run when it closes:
     // what happened inside the expansion is often what changed the row.
     var reloadWhenClosed = false;
+    // A row being dragged (Table.ReorderURL): a reload then would pull the
+    // row out from under the pointer, so it waits for the drop. And while
+    // the new order is being saved, a reload would fetch the old one.
+    var dragging = false, savingOrder = false;
 
     // Refetch when an external action invalidates our source. See
     // window.uiInvalidate above for the helper. Compare exact URL —
@@ -307,7 +384,7 @@
 
     // Skip while any expansion is open (don't slam them shut), and catch up
       // when it closes.
-      if (Object.keys(openExpansions).some(function(k){ return Object.keys(openExpansions[k]).length > 0; })) {
+      if (dragging || savingOrder || orderTimer || anyExpansionOpen()) {
         reloadWhenClosed = true;
         return;
       }
@@ -335,6 +412,65 @@
         .then(function(){ if (refreshIndicator) setTimeout(function(){ refreshIndicator.textContent = ''; }, 600); });
     }
 
+    function anyExpansionOpen() {
+      return Object.keys(openExpansions).some(function(k){ return Object.keys(openExpansions[k]).length > 0; });
+    }
+
+    // Reordering (Table.ReorderURL). Each row gets a grip: drag it with a
+    // mouse or a finger (pointer events, so touch works where HTML5 drag and
+    // drop does not), or focus it and press the arrow keys. A row moves
+    // only among the rows of its own group. The new order of EVERY row is
+    // POSTed as {order: [row keys]}, once the drag ends or the keys pause.
+    //
+    // Off while the search box narrows the list, since moving one of the
+    // rows left showing says nothing about the ones hidden between them; and
+    // while an expansion is open, whose panel would be left behind.
+    var orderTimer = null;
+    function canReorder() {
+      return !!cfg.reorder_url && !searchText && !anyExpansionOpen();
+    }
+    // orderShown is every row's key, in the order the page now shows them.
+    function orderShown() {
+      var keys = [];
+      listEl.querySelectorAll('.ui-table-row[data-row-key]').forEach(function(r) {
+        keys.push(r.getAttribute('data-row-key'));
+      });
+      return keys;
+    }
+    // rowMoved takes a move into records at once, so anything that repaints
+    // from them before the save lands (the search box) shows the new order.
+    function rowMoved(how) {
+      var keys = orderShown(), at = {};
+      keys.forEach(function(k, i) { at[k] = i; });
+      records.sort(function(a, b) {
+        var ai = at[String(a[cfg.row_key])], bi = at[String(b[cfg.row_key])];
+        return (ai === undefined ? keys.length : ai) - (bi === undefined ? keys.length : bi);
+      });
+      if (how === 'drop') saveOrder(); else saveOrderSoon();
+    }
+    function saveOrder() {
+      clearTimeout(orderTimer);
+      orderTimer = null;
+      // From records, which every move updates, not from the page: a search
+      // typed since the last move leaves only some rows on it.
+      var keys = records.map(function(r) { return String(r[cfg.row_key]); });
+      savingOrder = true;
+      fetchJSON(cfg.reorder_url, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({order: keys})
+      }).then(function() {
+        savingOrder = false;
+        if (reloadWhenClosed) reload(true);
+      }, function(err) {
+        savingOrder = false;
+        showToast('The new order was not saved: ' + err.message);
+        reload(true); // put back what the server holds
+      });
+    }
+    function saveOrderSoon() {
+      clearTimeout(orderTimer);
+      orderTimer = setTimeout(saveOrder, 600);
+    }
     // matchesSearch tests a record against the filter text across the values a
     // reader can actually SEE — the declared columns plus the group heading.
     // Matching hidden fields would make rows appear for reasons nothing on
@@ -407,6 +543,22 @@
         }
         var rowKey = rec[cfg.row_key];
         var row = el('div', {class: 'ui-table-row'});
+        // A fixed row (Table.ReorderFixed) keeps its key, so the order sent
+        // still names every row, but gets no grip it could not use.
+        if (cfg.reorder_url && !searchText && rowKey !== undefined && rowKey !== null) {
+          row.setAttribute('data-row-key', String(rowKey));
+        }
+        if (row.hasAttribute('data-row-key') && !(cfg.reorder_fixed && lookup(rec, cfg.reorder_fixed))) {
+          row.classList.add('ui-table-row-movable');
+          row.appendChild(uiRowGrip(row, 'ui-table-row', {
+            can: canReorder,
+            moved: rowMoved,
+            busy: function(on) {
+              dragging = on;
+              if (!on && reloadWhenClosed) reload(true); // held back by savingOrder if a save is in flight
+            },
+          }));
+        }
 
         // Leading actions go directly on the row (they stay pinned to
         // the left even when cells stack on narrow viewports).

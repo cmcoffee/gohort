@@ -178,6 +178,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// URL, and whoever finds it is not necessarily who was shown it.
 		T.handleAdmin(w, r, user, strings.TrimPrefix(path, "_admin/"))
 		return
+	case "_app/order":
+		// POST {order: [slugs]}: the order the person dragged their apps into.
+		T.handleAppOrder(w, r, user)
+		return
 	case "_app/schedule":
 		// POST ?slug=&on=… pauses / resumes an app's self-updating schedule.
 		T.handleScheduleToggle(w, r, user)
@@ -592,7 +596,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 }`).Render(),
 		Sections: []ui.Section{{
 			Title:    "Your apps",
-			Subtitle: "Apps Builder made for you, and apps colleagues shared with you. Open one here; Customize on the dashboard puts it on your front page. Import brings in an app somebody exported.",
+			Subtitle: "Apps Builder made for you, and apps colleagues shared with you. Open one here; the gear on your dashboard's My apps section puts it on your front page. Drag an app by its grip to reorder; your dashboard follows the same order. Import brings in an app somebody exported.",
 			// The row reads in two lines: what the app is called and where it
 			// stands, then what it does. One line held a name, a description
 			// and a state in front of six buttons, and the description was the
@@ -604,6 +608,8 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 				Source:  "_apps",
 				RowKey:  "slug",
 				GroupBy: "group",
+				// The same order as the dashboard's cards (inDashboardOrder).
+				ReorderURL: "_app/order",
 				Columns: []ui.Col{
 					{Field: "name", Flex: 2},
 					{Field: "state", Type: "badge", Badges: []ui.BadgeMapping{
@@ -1010,6 +1016,7 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 	}
 	// Apps other users shared to all authenticated users — offered here as a
 	// per-user copy. Own apps shadow a same-slug shared one, so skip those.
+	var shared []map[string]string
 	for slug, ownerName := range ListSharedOwners(T.DB, sharedAppsIndex) {
 		if ownerName == owner || seen[slug] {
 			continue
@@ -1037,9 +1044,67 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		if len(visibleSettings(s, false)) > 0 {
 			row["has_settings"] = "1"
 		}
-		out = append(out, row)
+		shared = append(shared, row)
 	}
-	writeJSON(w, out)
+	// By name first, where the person has not placed them: neither the spec
+	// store's keys nor the shared index (a map) promise an order, and the
+	// shared apps came back in a different one on every load.
+	sort.SliceStable(out, func(i, j int) bool { return out[i]["name"] < out[j]["name"] })
+	sort.SliceStable(shared, func(i, j int) bool { return shared[i]["name"] < shared[j]["name"] })
+	writeJSON(w, append(inDashboardOrder(owner, out), inDashboardOrder(owner, shared)...))
+}
+
+// inDashboardOrder puts rows in the order the person keeps these apps in. There
+// is one order: the dashboard's own, where each app's card is /apps/<slug>, so
+// moving an app here moves its card there and the other way round.
+func inDashboardOrder(user string, rows []map[string]string) []map[string]string {
+	paths := make([]string, len(rows))
+	bySlug := make(map[string]map[string]string, len(rows))
+	for i, row := range rows {
+		paths[i] = "/apps/" + row["slug"]
+		bySlug[paths[i]] = row
+	}
+	out := make([]map[string]string, 0, len(rows))
+	for _, p := range DashboardOrderOf(user, paths) {
+		out = append(out, bySlug[p])
+	}
+	return out
+}
+
+// handleAppOrder stores the order the person dragged My Apps into: POST
+// {"order": [slugs]} (Table.ReorderURL). Only slugs of apps on their list are
+// kept; the order lands in their dashboard's card order (inDashboardOrder).
+func (T *CustomApps) handleAppOrder(w http.ResponseWriter, r *http.Request, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Order []string `json:"order"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+		http.Error(w, "send {\"order\": [slugs]}", http.StatusBadRequest)
+		return
+	}
+	theirs := map[string]bool{}
+	for _, s := range listSpecs(user) {
+		theirs[s.Slug] = true
+	}
+	for slug, owner := range ListSharedOwners(T.DB, sharedAppsIndex) {
+		if owner != user {
+			theirs[slug] = true
+		}
+	}
+	var paths []string
+	seen := map[string]bool{}
+	for _, slug := range body.Order {
+		if theirs[slug] && !seen[slug] {
+			seen[slug] = true
+			paths = append(paths, "/apps/"+slug)
+		}
+	}
+	SetDashboardOrderOf(user, paths)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleScheduleToggle pauses or resumes an app's self-updating action

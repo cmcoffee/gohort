@@ -127,10 +127,13 @@ func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
 const dashboardGroupAgents = 20
 
 // DashboardPinnable offers the viewer's own agents that have no dashboard card
-// of their own, for them to put on their own dashboard (the Customize page).
-// Nobody else sees the card, and it publishes nothing: it opens the agent's
-// chat here, as the owner already could. Sub-agents and an app's agents are
-// left out, since they are reached through their parent and their app.
+// of their own, for them to put on their own dashboard (the gear on its Agents
+// section). Nobody else sees the card, and it publishes nothing. It opens the
+// same restricted chat a published agent's card does, at /agents/<id>, which
+// resolves for the owner alone (ownAgentByID): a dashboard card is a way to
+// talk to an agent, and the full console is a click away in the Orchestrator
+// section. Sub-agents and an app's agents are left out, since they are
+// reached through their parent and their app.
 func (T *OrchestrateApp) DashboardPinnable(r *http.Request) []DashboardCard {
 	user := AuthCurrentUser(r)
 	if T == nil || T.DB == nil || user == "" {
@@ -155,7 +158,7 @@ func (T *OrchestrateApp) DashboardPinnable(r *http.Request) []DashboardCard {
 		if r := []rune(desc); len(r) > 140 {
 			desc = string(r[:140]) + "..."
 		}
-		out = append(out, DashboardCard{Name: a.Name, Desc: desc, Path: "/orchestrate/?agent=" + a.ID, Group: "Agents", GroupOrder: dashboardGroupAgents})
+		out = append(out, DashboardCard{Name: a.Name, Desc: desc, Path: ownAgentCardPath(a.ID), Group: "Agents", GroupOrder: dashboardGroupAgents})
 	}
 	return out
 }
@@ -665,7 +668,34 @@ func (T *OrchestrateApp) LookupExposedAgent(r *http.Request, slug string) (Agent
 			break
 		}
 	}
-	return AgentRecord{}, ExposedAgentEntry{}, false
+	return T.ownAgentByID(r, slug)
+}
+
+// ownAgentCardPath is where the dashboard card for one of the viewer's own
+// agents opens: the restricted chat, by the agent's id.
+func ownAgentCardPath(agentID string) string { return "/agents/" + agentID }
+
+// ownAgentByID resolves the viewer's own agent by its record id, for the
+// restricted chat their own dashboard card opens. Last, after every
+// published and shared agent: those slugs come from names, so an id never
+// shadows one. Only the owner resolves it, and only an agent the gear could
+// offer (not a sub-agent or an app's agent).
+func (T *OrchestrateApp) ownAgentByID(r *http.Request, id string) (AgentRecord, ExposedAgentEntry, bool) {
+	user := AuthCurrentUser(r)
+	if T == nil || T.DB == nil || user == "" || strings.TrimSpace(id) == "" {
+		return AgentRecord{}, ExposedAgentEntry{}, false
+	}
+	udb := UserDB(T.DB, user)
+	if udb == nil {
+		return AgentRecord{}, ExposedAgentEntry{}, false
+	}
+	a, ok := loadAgent(udb, id)
+	if !ok || (a.Owner != user && a.Owner != seedOwner) ||
+		strings.TrimSpace(a.OwnedBy) != "" || strings.TrimSpace(a.OwningApp) != "" || isAppAgent(a.ID) {
+		return AgentRecord{}, ExposedAgentEntry{}, false
+	}
+	return a, ExposedAgentEntry{Slug: a.ID, BaseSlug: a.ID, Name: ExposedDisplayName(a), Description: a.Description,
+		Owner: user, AgentID: a.ID}, true
 }
 
 // lookupReachableAgentByID finds a published or peer-shared agent by record

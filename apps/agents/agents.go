@@ -64,6 +64,16 @@ func (T *AgentsApp) WebDesc() string {
 // for users who bookmarked it.
 func (T *AgentsApp) WebHidden() bool { return true }
 
+// WebEveryUser lets any signed-in person past the coarse /agents gate. The
+// real gate is per agent, on every route (LookupExposedAgent and
+// AgentReachableBy in dispatch): a published agent still takes the admin's
+// grant of its own path, a shared one its owner's list, and an agent of
+// one's own its owner. The coarse gate only stood between an owner and the
+// restricted chat their own dashboard card opens, and between a person and
+// an agent shared with them by name, which AgentReachableBy says nobody but
+// the owner decides.
+func (T *AgentsApp) WebEveryUser() bool { return true }
+
 // Routes registers ONE catch-all at "/" — net/http.ServeMux doesn't
 // have path-parameter routing, so we parse the slug ourselves and
 // dispatch. URLs:
