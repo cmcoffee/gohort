@@ -36,7 +36,13 @@ func TestConsultDiesWithTheCallingTurn(t *testing.T) {
 	// fast either way, and the test passes just as happily against the bug it
 	// is named for.
 	s := agentReferenceSource{app: &OrchestrateApp{AppCore: AppCore{DB: db, LLM: neverAnswers()}}}
-	defs := s.ItemTools("alice", saved.ID)
+	// Beside the instant catalogue tools (agent_catalog.go), the consult.
+	var defs []AgentToolDef
+	for _, d := range s.ItemTools("alice", saved.ID) {
+		if strings.HasPrefix(d.Tool.Name, "consult_") {
+			defs = append(defs, d)
+		}
+	}
 	if len(defs) != 1 {
 		t.Fatalf("want one consult tool, got %d", len(defs))
 	}

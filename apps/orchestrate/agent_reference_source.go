@@ -130,7 +130,10 @@ func (s agentReferenceSource) ItemTools(user, itemID string) []AgentToolDef {
 		// agent and tells the model nothing about who it is asking.
 		toolName = "consult_agent"
 	}
-	return []AgentToolDef{{
+	// Read what it has already recorded before running it: the instant pair
+	// (agent_catalog.go), for the user's own agents.
+	tools := s.app.agentCatalogTools(user, agent, name, toolName)
+	return append(tools, AgentToolDef{
 		Tool: Tool{
 			Name: toolName,
 			Description: "Ask " + name + " about this domain: schemas, table and column names, interfaces, conventions, what a field holds, how something is done here. " +
@@ -178,7 +181,7 @@ func (s agentReferenceSource) ItemTools(user, itemID string) []AgentToolDef {
 			}
 			return out, nil
 		},
-	}}
+	})
 }
 
 // agentConsultTimeout bounds one consultation. Generous enough for an agent

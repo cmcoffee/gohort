@@ -1,7 +1,7 @@
 # Agent archetypes: Builder's starting ideas
 
-Status: **design.** Written 2026-10-17, replacing an earlier draft of "Agent Types". First up: the
-Librarian.
+Status: **design; the Librarian's framework piece is built** (v0.8.364, `agent_catalog.go`).
+Written 2026-10-17, replacing an earlier draft of "Agent Types".
 
 ## The decision
 
@@ -47,6 +47,15 @@ agents that follow their type as it changes.
 
 The library only has to be good enough that step 1 usually finds the right recipe. A request it
 does not cover is composed from scratch, as now.
+
+### Where it leads: a conversational agent as liaison
+
+The composition this is aiming at: the agent a person talks to is conversational, and it holds
+sub-agents built from other recipes, a Librarian for where things are, an Investigator for live
+state, a Writer for the documents. It decides which to ask, reads what they have recorded before
+running any of them, and puts their answers together. Each sub-agent keeps its own memory and
+stays private to it. Sub-agents, their dispatch and their ownership exist; reading a sub-agent's
+memory without running it is the Librarian's piece below, built generically for this reason.
 
 ## The rule for writing a recipe
 
@@ -125,22 +134,23 @@ Grows from `investigator.md` and keeps what it says about the sub-agent shape, t
 
 ### What the framework is missing for it
 
-1. **Reading another agent's catalogue without running it.** Attached as a Source, an agent gives
-   only `consult_<agent>`, which runs it: a model call and a turn for every lookup. A Librarian
-   needs what a Servitor system gives: `search_<agent>_knowledge` and `get_<agent>_facts`, which
-   read the agent's recorded findings, facts and graph at once with no model call, described as
-   the place to look first, with `consult_` for what they do not hold. Generic rather than
-   Librarian-only: any agent attached as a Source offers them, read-only (`CapRead`). An agent
-   someone else owns offers them only as far as its share settings already let that person read
-   its memory.
+1. **Reading another agent's catalogue without running it. BUILT, v0.8.364**
+   (`apps/orchestrate/agent_catalog.go`). Attached as a Source, an agent gave only
+   `consult_<agent>`, which runs it. It now also gives `search_<agent>_memory` (its graph links,
+   pinned notes, saved findings and documents for a query, at once, with no model call, described
+   as the place to look first) and `recall_<agent>_about` (one named thing, its links and the
+   notes that name it, or with no name the things it has mapped). Named apart from a Servitor
+   system's `search_<x>_knowledge` so an agent and a system of the same name cannot clash.
+   Read-only (`CapRead`), never its conversations, and for the user's own agents only: a shared
+   agent stays consult-only until a read path honours its share settings.
 2. Nothing else. The first walk and the re-walk are a plan and a schedule, which exist; recording
    is the memory tools it already has; the subject-neutral instructions are the recipe's to
    write.
 
 ### Order
 
-1. The read-first Source tools (missing piece 1), with tests: they find what the agent recorded,
-   they are read-only, and they respect a shared agent's share settings.
+1. The read-first Source tools (missing piece 1). Built, with tests: they find what the agent
+   recorded, they are read-only, a miss points at consult, and another user's agent offers none.
 2. `archetypes/librarian.md`, the recipe, with its `match` phrases and `asks`.
 3. Build one with Builder against a real subject and read what it does, before writing the next
    recipe.
