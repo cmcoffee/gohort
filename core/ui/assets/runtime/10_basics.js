@@ -1591,6 +1591,11 @@
 
       // toggle mutates selection, re-renders, and rolls back on save failure.
       function toggle(val, on) {
+        // A new member starts at the level their option says, when the
+        // picker names a key for it (flag_default_field).
+        if (on && cfg.flag_field && cfg.flag_default_field) {
+          flagged[val] = !!(byVal[val] && byVal[val][cfg.flag_default_field]);
+        }
         if (on) { isSel[val] = true; selected.push(val); }
         else { delete isSel[val]; var i = selected.indexOf(val); if (i >= 0) selected.splice(i, 1); }
         renderPills(); renderList();

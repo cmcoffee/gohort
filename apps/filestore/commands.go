@@ -401,7 +401,7 @@ func (T *FileStoreApp) handleCommand(w http.ResponseWriter, r *http.Request) {
 	// An action REWRITES the folder, so it takes the write grant rather
 	// than the read one — the same gate as upload, for the same reason.
 	if !st.FullAccessFor(user) {
-		http.Error(w, "you have Read-Only access to "+st.Name+", and running its commands takes Full Access.", http.StatusForbidden)
+		http.Error(w, "you have Read Only / No Commands access to "+st.Name+", and running its commands takes Full Access.", http.StatusForbidden)
 		return
 	}
 	name := strings.TrimSpace(r.URL.Query().Get("command"))

@@ -38,6 +38,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 				// Eleven facts across one line were unreadable.
 				Columns: []ui.Col{
 					{Field: "name", Flex: 1},
+					{Field: "unreachable", Type: "badge", Badges: []ui.BadgeMapping{{Value: true, Label: "Nobody can reach it", Color: "warning"}}},
 					{Field: "path", Mute: true, Flex: 2},
 					// Folder count is the fact that says whether the path is
 					// right. A store reading "unreadable" here is a typo
@@ -61,6 +62,38 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// subject is what made that possible: nothing on screen said
 					// these were parts of one thing.
 					ui.Expand("Manage", ui.Stack{Children: []ui.Component{
+						// First, because nothing about a store works until
+						// somebody is on it: a warning while nobody is, which
+						// goes the moment someone is added.
+						ui.Card{Source: "/filestore/api/stores?slug={slug}&view=reach", RefreshOn: []string{"/filestore/api/stores"}},
+						ui.Subsection{
+							Title:    "Who may reach it",
+							Subtitle: "Nobody, until you add them. People and teams start with Full Access, Everyone with Read Only / No Commands; press a level to switch it.",
+							Detail: "Read Only / No Commands: browse, search and read the store's files. An agent of theirs attached to the store gets its list, search and read tools, and the evidence tools when the store indexes evidence.\n\n" +
+								"Full Access: everything Read Only / No Commands allows, and also upload files and run the store's commands. An agent of theirs also gets the store's approved commands, and pulling from the store this one pulls from, but only when the agent's attachment allows changes.\n\n" +
+								"Add people, a team, or Everyone (every account on this server). People and teams you add start with Full Access, since whoever is added to a store usually needs its commands; Read Only / No Commands is for the few who should only look. Everyone starts at Read Only / No Commands, so opening a store to every account never hands them all its commands by accident. Admins are not let in by being admins: add yourself to reach the files. Apps are separate: an app's rights are granted under Apps that use it.",
+							Body: ui.ACLPicker(ui.ACLPickerConfig{
+								OptionsSource: "/filestore/api/access-candidates",
+								RecordSource:  "/filestore/api/stores?slug={slug}",
+								Field:         "members",
+								// PATCH sends the lists alone. A POST carries the
+								// whole record as it stood when the row opened,
+								// which put back any setting saved since.
+								PostTo:       "/filestore/api/stores?slug={slug}",
+								Method:       "PATCH",
+								Noun:         "users",
+								EmptyText:    "No people or teams to add yet.",
+								FlagField:    "full_access",
+								FlagLabel:    "Full Access",
+								FlagOffLabel: "Read Only / No Commands",
+								FlagHelp:     "Read Only / No Commands browses, searches and reads. Full Access also uploads and runs the store's commands, for them and their agents. Press to switch.",
+								// People and teams start with Full Access,
+								// Everyone at Read-Only (handleAccessCandidates).
+								FlagDefaultField: "full_default",
+								Invalidate:   []string{"/filestore/api/stores"},
+							}),
+						},
+
 						ui.Card{HTML: folderPanelHeading("About", "")},
 						ui.DisplayPanel{
 							Source: "/filestore/api/stores?slug={slug}&view=about",
@@ -360,31 +393,6 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							},
 						},
 
-						ui.Subsection{
-							Title:    "Who may reach it",
-							Subtitle: "Nobody, until you add them. Each person starts Read-Only; press their level to give Full Access.",
-							Detail: "Read-Only: browse, search and read the store's files. An agent of theirs attached to the store gets its list, search and read tools, and the evidence tools when the store indexes evidence.\n\n" +
-								"Full Access: everything Read-Only allows, and also upload files and run the store's commands. An agent of theirs also gets the store's approved commands, and pulling from the store this one pulls from, but only when the agent's attachment allows changes.\n\n" +
-								"Add people, a team, or Everyone (every account on this server). Admins are not let in by being admins: add yourself to reach the files. Apps are separate: an app's rights are granted under Apps that use it.",
-							Body: ui.ACLPicker(ui.ACLPickerConfig{
-								OptionsSource: "/filestore/api/access-candidates",
-								RecordSource:  "/filestore/api/stores?slug={slug}",
-								Field:         "members",
-								// PATCH sends the lists alone. A POST carries the
-								// whole record as it stood when the row opened,
-								// which put back any setting saved since.
-								PostTo:       "/filestore/api/stores?slug={slug}",
-								Method:       "PATCH",
-								Noun:         "users",
-								EmptyText:    "No people or teams to add yet.",
-								FlagField:    "full_access",
-								FlagLabel:    "Full Access",
-								FlagOffLabel: "Read-Only",
-								FlagHelp:     "Read-Only browses, searches and reads. Full Access also uploads and runs the store's commands, for them and their agents. Press to switch.",
-								Invalidate:   []string{"/filestore/api/stores"},
-							}),
-						},
-
 						ui.Card{HTML: folderPanelHeading("Settings", "")},
 						ui.FormPanel{
 							// view=form leaves allowed_users out: the form posts
@@ -564,6 +572,8 @@ func (T *FileStoreApp) handleAccessCandidates(w http.ResponseWriter, r *http.Req
 	var people []map[string]any
 	json.Unmarshal(UserCandidatesJSON(AuthDB(), ""), &people)
 	for _, p := range people {
+		// People and teams added start with Full Access; Everyone does not.
+		p["full_default"] = true
 		if v, _ := p["value"].(string); strings.EqualFold(v, me) {
 			label, _ := p["label"].(string)
 			if label == "" {
@@ -578,7 +588,7 @@ func (T *FileStoreApp) handleAccessCandidates(w http.ResponseWriter, r *http.Req
 	}
 	for _, g := range LoadAppGroups(AuthDB()) {
 		if g.Shareable {
-			out = append(out, map[string]any{"value": "group:" + g.ID, "label": "Team: " + g.Name})
+			out = append(out, map[string]any{"value": "group:" + g.ID, "label": "Team: " + g.Name, "full_default": true})
 		}
 	}
 	writeJSON(w, out)
@@ -620,6 +630,10 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 			st, found := LoadStore(T.DB, slug)
 			if !found {
 				http.NotFound(w, r)
+				return
+			}
+			if r.URL.Query().Get("view") == "reach" {
+				writeJSON(w, map[string]any{"html": reachWarning(st)})
 				return
 			}
 			if r.URL.Query().Get("view") == "about" {
@@ -739,6 +753,7 @@ func (T *FileStoreApp) storeRows() []map[string]any {
 			"slug": st.Slug, "name": st.Name, "path": st.Path,
 			"description": st.Description, "folders": folders,
 			"assigned": st.accessText(),
+			"unreachable": len(st.Members) == 0,
 			// From the same definition ItemTools builds from. These are
 			// the names in force, which after a rename are not the names
 			// the Name column would suggest.
@@ -984,6 +999,17 @@ func adminOnly(w http.ResponseWriter, r *http.Request) bool {
 // folderPanelHeading renders a section heading inside the folder panel. The
 // panel stacks four subjects that used to be four separate expanders, and
 // without headings they read as one long form.
+// reachWarning is the line at the top of a store's Manage panel while nobody
+// is on it, and nothing once somebody is.
+func reachWarning(st Store) string {
+	if len(st.Members) > 0 {
+		return ""
+	}
+	return `<div style="margin:0.4rem 0 0.2rem;padding:0.55rem 0.75rem;border:1px solid var(--warning);border-radius:6px;` +
+		`background:color-mix(in srgb, var(--warning) 12%, transparent);font-size:var(--fs-sm, 0.85rem)">` +
+		`<b>Nobody can reach this store yet.</b> Add yourself or others under Who may reach it.</div>`
+}
+
 func folderPanelHeading(title, blurb string) string {
 	h := `<h3 style="margin:1.3rem 0 0.2rem;font-size:var(--fs-lg, 0.95rem)">` + HTMLEscape(title) + `</h3>`
 	if strings.TrimSpace(blurb) != "" {

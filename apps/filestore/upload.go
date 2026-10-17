@@ -92,7 +92,7 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// obvious workflow — a user drops a bundle and asks about it —
 	// impossible without handing out admin.
 	if !st.FullAccessFor(user) {
-		http.Error(w, "you have Read-Only access to "+st.Name+": uploading takes Full Access, which an admin gives on the store's Manage panel (Admin, File stores).",
+		http.Error(w, "you have Read Only / No Commands access to "+st.Name+": uploading takes Full Access, which an admin gives on the store's Manage panel (Admin, File stores).",
 			http.StatusForbidden)
 		return
 	}

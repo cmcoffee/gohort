@@ -53,6 +53,10 @@ type ChipPicker struct {
 	// option has this key truthy: a permission that means nothing for some
 	// members is not shown on theirs. Blank = every pill.
 	FlagWhenField string `json:"flag_when_field,omitempty"`
+	// FlagDefaultField, when set, names an option key: a member whose option
+	// has it truthy starts flagged when added, the rest start unflagged.
+	// Blank = everyone starts unflagged.
+	FlagDefaultField string `json:"flag_default_field,omitempty"`
 
 	PostTo string `json:"post_to"`          // save destination
 	Method string `json:"method,omitempty"` // default POST; PATCH sends only the changed Field
@@ -240,6 +244,11 @@ type ACLPickerConfig struct {
 	FlagLabel    string // what the ON state is called, e.g. "Contributor"
 	FlagOffLabel string // what OFF is called, e.g. "Reader"
 	FlagHelp     string // hover text: what turning it on actually allows
+	// FlagDefaultField names an option key: a candidate with it truthy starts
+	// flagged when added. For when most of those added need the extra
+	// permission, but some (a whole team, everyone) are where it would widen
+	// too far by default. Blank keeps every new member unflagged.
+	FlagDefaultField string
 }
 
 // ACLPicker builds a ChipPicker preconfigured as an access-control editor: a
@@ -269,6 +278,8 @@ func ACLPicker(c ACLPickerConfig) ChipPicker {
 		FlagLabel:     c.FlagLabel,
 		FlagOffLabel:  c.FlagOffLabel,
 		FlagHelp:      c.FlagHelp,
+
+		FlagDefaultField: c.FlagDefaultField,
 	}
 	if c.RecordSource != "" {
 		// Record mode: current selection + save both go through the owning record.

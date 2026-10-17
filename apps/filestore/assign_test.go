@@ -207,6 +207,10 @@ func TestTheAccessPickerOffersEveryoneThenYourAccount(t *testing.T) {
 	if got[0]["value"] != accessEveryone || got[1]["value"] != "root" || got[1]["label"] != "root (your account)" {
 		t.Errorf("first two candidates: %v, %v", got[0], got[1])
 	}
+	// People start with Full Access when added; Everyone does not.
+	if got[0]["full_default"] == true || got[1]["full_default"] != true {
+		t.Errorf("starting levels: Everyone %v, a person %v", got[0]["full_default"], got[1]["full_default"])
+	}
 	call := func(body string) {
 		w := httptest.NewRecorder()
 		app.handleStores(w, asStoreAdmin(t, httptest.NewRequest("PATCH", "/filestore/api/stores?slug=support_bundles", strings.NewReader(body))))
@@ -223,5 +227,28 @@ func TestTheAccessPickerOffersEveryoneThenYourAccount(t *testing.T) {
 	call(`{"members":["ana","*"],"full_access":["ana"]}`)
 	if after, _ := LoadStore(app.DB, "support_bundles"); after.FullAccessFor("bo") || !after.AllowsUser("bo") {
 		t.Errorf("bo removed by name should still read through Everyone, at Read-Only: %+v", after)
+	}
+}
+
+// A store nobody can reach says so: a warning on its Manage panel, and a
+// mark on its row, both gone once somebody is on it.
+func TestAStoreNobodyCanReachIsMarked(t *testing.T) {
+	app := assignFixture(t)
+	get := func(path string) string {
+		w := httptest.NewRecorder()
+		app.handleStores(w, asStoreAdmin(t, httptest.NewRequest("GET", path, nil)))
+		return w.Body.String()
+	}
+	if body := get("/filestore/api/stores?slug=support_bundles&view=reach"); strings.Contains(body, "Nobody") {
+		t.Errorf("a store with members warned: %s", body)
+	}
+	st, _ := LoadStore(app.DB, "support_bundles")
+	st.Members, st.FullAccess = nil, nil
+	SaveStore(app.DB, st)
+	if body := get("/filestore/api/stores?slug=support_bundles&view=reach"); !strings.Contains(body, "Nobody can reach this store yet") {
+		t.Errorf("no warning on an empty store: %s", body)
+	}
+	if body := get("/filestore/api/stores"); !strings.Contains(body, `"unreachable":true`) {
+		t.Errorf("the row is not marked: %s", body)
 	}
 }

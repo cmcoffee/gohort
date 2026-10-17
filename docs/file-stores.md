@@ -423,15 +423,18 @@ it. A half-typed message in the composer wins over the pre-filled one.
 
 Configuring a store is admin-only. **Reaching one is controlled separately**, under **Who may
 reach it** on the store's Manage panel: **Add users** adds a person, a team (`group:<id>`, one that
-can carry a share) or **Everyone** (`*`), each starting Read-Only, and pressing an entry's level
-switches it to Full Access (stored as `members` and the `full_access` subset). The admin's own
-account is listed second and marked. Nobody reaches a store until an admin adds them, admins
+can carry a share) or **Everyone** (`*`), and pressing an entry's level switches it (stored as
+`members` and the `full_access` subset). People and teams start with Full Access, since whoever is
+added usually needs the commands; Everyone starts at Read Only / No Commands, so opening a store to every account
+never hands them all its commands by accident. The admin's own account is listed second and marked.
+It is the first thing on the Manage panel, with a warning above it while nobody is on the list, and
+the stores table marks such a store "Nobody can reach it". Nobody reaches a store until an admin adds them, admins
 included: managing the list is admin-only, an entry decides reach. Someone reached two ways (by
 name and through Everyone, say) gets the higher level.
 
 | Level | A person | Their attached agent |
 |---|---|---|
-| **Read-Only** | browse, search, read | list, search, read, evidence tools |
+| **Read Only / No Commands** | browse, search, read | list, search, read, evidence tools |
 | **Full Access** | also upload and run its commands | also its approved commands and pull, when the attachment allows changes |
 
 Both kinds of agent tool that change things declare `CapWrite`, so an attachment without **Can

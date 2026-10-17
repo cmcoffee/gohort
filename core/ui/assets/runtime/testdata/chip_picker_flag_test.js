@@ -45,4 +45,10 @@ var block = i >= 0 ? src.slice(i, i + 400) : '';
 check('a refused toggle rolls back', /Save failed/.test(block) && (block.match(/flagged\[v\] = !flagged\[v\]/g) || []).length === 2,
   JSON.stringify(block.slice(0, 120)));
 
+// A new member can start at the higher level, by their option: most people
+// added to a store need its commands, while a whole team or everyone at
+// once is where that default would widen too far.
+check('a new member starts at the level their option names',
+  src.indexOf("flagged[val] = !!(byVal[val] && byVal[val][cfg.flag_default_field]);") >= 0);
+
 process.exit(fail ? 1 : 0);

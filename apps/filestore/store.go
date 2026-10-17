@@ -161,7 +161,7 @@ func (s Store) accessText() string {
 		} else if strings.HasPrefix(e, "group:") {
 			name = ShareRecipientsText([]string{e})
 		}
-		level := "Read-Only"
+		level := "Read Only / No Commands"
 		if listNames(s.FullAccess, []string{e}) {
 			level = "Full Access"
 		}
