@@ -63,3 +63,32 @@ func TestExternalAgentInfoCarriesParent(t *testing.T) {
 		t.Fatal("the id is what ask_agent takes")
 	}
 }
+
+// The main agent is where an ask with no agent named goes, so a key can
+// always be given it: it is offered first in a key's Can reach list with
+// its "Reachable over MCP" switch off, where other built-in agents are not.
+// Ticked on a key, it resolves through that key.
+func TestTheMainAgentIsAlwaysOfferedToAKey(t *testing.T) {
+	app := pipelineArtifactApp(t)
+	saved := orchRef
+	t.Cleanup(func() { orchRefMu.Lock(); orchRef = saved; orchRefMu.Unlock() })
+	orchRefMu.Lock()
+	orchRef = nil
+	orchRefMu.Unlock()
+
+	targets := externalTargetsFor(app.DB, "alice")
+	if len(targets) == 0 || targets[0].Value != "agent:"+defaultConsoleAgent || !strings.Contains(targets[0].Label, "main agent") {
+		t.Fatalf("the main agent should come first, marked: %+v", targets)
+	}
+	main, ok := findAgentByNameOrID(UserDB(app.DB, "alice"), "alice", defaultConsoleAgent)
+	if !ok || main.MCPExposed {
+		t.Fatalf("the test needs the main agent with its switch off: ok=%v exposed=%v", ok, main.MCPExposed)
+	}
+	granted := func(c string) bool { return c == "agent:"+defaultConsoleAgent }
+	if id, ok := ResolveExternalAgentGranted(app.DB, "alice", defaultConsoleAgent, granted); !ok || id != defaultConsoleAgent {
+		t.Errorf("a key that ticks the main agent should reach it: %q %v", id, ok)
+	}
+	if _, ok := ResolveExternalAgentGranted(app.DB, "alice", defaultConsoleAgent, nil); ok {
+		t.Error("with no tick and the switch off, the main agent should stay unreachable")
+	}
+}

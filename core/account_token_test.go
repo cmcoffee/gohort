@@ -147,17 +147,83 @@ func acctFixture(t *testing.T) {
 	t.Cleanup(func() { RootDB = prev })
 }
 
-func TestTokenWithNoExpiryStillWorks(t *testing.T) {
-	// Every key minted before the field existed has an empty Expires, and
-	// reading that as "expired" would log people out of integrations with no
-	// warning.
-	acctFixture(t)
-	tok := MintAccountTokenScoped("craig", "legacy", &TokenScope{})
-	if tok.Expires != "" {
-		t.Fatalf("a key minted with no ttl should carry no deadline, got %q", tok.Expires)
+// keyLifetime sets the admin's API key lifetime, in days, for one test.
+func keyLifetime(t *testing.T, days float64) {
+	t.Helper()
+	tdb := &DBase{Store: kvlite.MemStore()}
+	tdb.Set(WebTable, tuneAccountKeyLifetime, days)
+	SetTunablesDB(tdb)
+	t.Cleanup(func() { SetTunablesDB(nil) })
+}
+
+func daysLeft(t *testing.T, tok AccountToken) int {
+	t.Helper()
+	deadline, err := time.Parse(time.RFC3339, tok.Expires)
+	if err != nil {
+		t.Fatalf("no readable deadline: %q", tok.Expires)
 	}
-	if owner, ok := lookupAccountTokenOwner(tok.Token); !ok || owner != "craig" {
-		t.Error("a key with no deadline stopped working")
+	return int(time.Until(deadline).Hours()/24 + 0.5)
+}
+
+func storedToken(tok AccountToken) AccountToken {
+	var got AccountToken // fresh: gob leaves a reused struct's old values
+	RootDB.Get(accountTokenTable, accountTokenKey(tok.Token), &got)
+	return got
+}
+
+// How long a key lives is the admin's setting: a new key gets it, and with
+// the setting at 0 keys never expire.
+func TestANewKeyLivesAsLongAsTheAdminSays(t *testing.T) {
+	acctFixture(t)
+	keyLifetime(t, 30)
+	if d := daysLeft(t, MintAccountTokenScoped("craig", "laptop", &TokenScope{})); d != 30 {
+		t.Errorf("a new key has %d days, want the admin's 30", d)
+	}
+	keyLifetime(t, 0)
+	if tok := MintAccountTokenScoped("craig", "laptop", &TokenScope{}); tok.Expires != "" {
+		t.Errorf("with no lifetime set a key should not expire, got %q", tok.Expires)
+	}
+}
+
+// A key from before the setting (no deadline, or a later one than it allows)
+// is brought within it when it is next used, counted from then, and keeps
+// working: nobody is logged out the moment the setting changes. A sooner
+// deadline is left alone.
+func TestExistingKeysAreBroughtWithinTheLifetime(t *testing.T) {
+	acctFixture(t)
+	keyLifetime(t, 0)
+	legacy := MintAccountToken("craig", "legacy")
+	long := MintAccountTokenExpiring("craig", "long", &TokenScope{}, 365*24*time.Hour)
+	short := MintAccountTokenExpiring("craig", "short", &TokenScope{}, 5*24*time.Hour)
+
+	keyLifetime(t, 90)
+	for _, tok := range []AccountToken{legacy, long, short} {
+		if owner, ok := lookupAccountTokenOwner(tok.Token); !ok || owner != "craig" {
+			t.Fatalf("%s stopped working when the lifetime was set", tok.Name)
+		}
+	}
+	if d := daysLeft(t, storedToken(legacy)); d != 90 {
+		t.Errorf("a key with no deadline got %d days, want 90 from now", d)
+	}
+	if d := daysLeft(t, storedToken(long)); d != 90 {
+		t.Errorf("a key due in a year got %d days, want cut to 90", d)
+	}
+	if d := daysLeft(t, storedToken(short)); d != 5 {
+		t.Errorf("a key due sooner was moved to %d days", d)
+	}
+}
+
+// The account page's list sweeps first, so it shows the deadline that
+// applies to a key nobody has used since the setting changed.
+func TestTheSweepShowsTheLifetimeDeadline(t *testing.T) {
+	acctFixture(t)
+	keyLifetime(t, 0)
+	MintAccountToken("craig", "idle")
+	keyLifetime(t, 60)
+	SweepExpiredAccountTokens()
+	list := ListAccountTokens("craig")
+	if len(list) != 1 || daysLeft(t, list[0]) != 60 {
+		t.Fatalf("the listed key should show 60 days: %+v", list)
 	}
 }
 
@@ -238,37 +304,6 @@ func TestExpirySweepIsOwnerSafe(t *testing.T) {
 	}
 	if _, ok := lookupAccountTokenOwner(live.Token); !ok {
 		t.Error("the sweep took a key that had not expired")
-	}
-}
-
-func TestSetExpiryIsOwnerScoped(t *testing.T) {
-	acctFixture(t)
-	tok := MintAccountTokenScoped("craig", "laptop", &TokenScope{})
-
-	if SetAccountTokenExpiry("dana", tok.ID, time.Hour) {
-		t.Error("dana re-dated craig's key")
-	}
-	if !SetAccountTokenExpiry("craig", tok.ID, 30*24*time.Hour) {
-		t.Fatal("the owner could not set a deadline")
-	}
-	var stored AccountToken
-	RootDB.Get(accountTokenTable, accountTokenKey(tok.Token), &stored)
-	if stored.Expires == "" {
-		t.Fatal("the deadline was not stored")
-	}
-	// Clearing goes back to permanent. Read into a FRESH struct: kvlite
-	// encodes through gob, which omits zero values, so decoding a cleared
-	// field into a reused struct leaves the previous value sitting there.
-	if !SetAccountTokenExpiry("craig", tok.ID, 0) {
-		t.Fatal("the owner could not clear the deadline")
-	}
-	var cleared AccountToken
-	RootDB.Get(accountTokenTable, accountTokenKey(tok.Token), &cleared)
-	if cleared.Expires != "" {
-		t.Errorf("clearing left a deadline: %q", cleared.Expires)
-	}
-	if cleared.Expired() {
-		t.Error("a cleared deadline still reads as expired")
 	}
 }
 
@@ -357,5 +392,41 @@ func TestScopedTokenNeedsDesktopFeature(t *testing.T) {
 	r.Header.Set("X-Gohort-Desktop-Client-Key", narrow.Token)
 	if u := DesktopClientUser(r); u != "" {
 		t.Errorf("a key scoped away from the desktop reached the client-tool surface as %q", u)
+	}
+}
+
+// A key scoped before its agent list bound MCP reached every agent with
+// "Reachable over MCP" on. The first time it is seen after the change, the
+// agents it reached are listed on it, so the allow-list takes nothing away.
+// A key that cannot use MCP gains nothing; a new key is born bound.
+func TestAnOlderScopedKeyKeepsTheAgentsItReachedOverMCP(t *testing.T) {
+	acctFixture(t)
+	keyLifetime(t, 0)
+	saved := ListExternalReachableAgentsFn
+	ListExternalReachableAgentsFn = func(db Database, owner string, granted func(string) bool) []ExternalAgentInfo {
+		return []ExternalAgentInfo{{ID: "a1"}, {ID: "a2"}}
+	}
+	t.Cleanup(func() { ListExternalReachableAgentsFn = saved })
+
+	mcpKey := MintAccountTokenExpiring("craig", "desktop", &TokenScope{Features: []string{"mcp"}, Targets: []string{"agent:a1"}}, 0)
+	v1Key := MintAccountTokenExpiring("craig", "voice", &TokenScope{Features: []string{"openai"}, Targets: []string{"worker"}}, 0)
+	if _, ok := lookupAccountTokenOwner(mcpKey.Token); !ok {
+		t.Fatal("the older MCP key stopped working")
+	}
+	got := storedToken(mcpKey).Scope
+	if !got.AgentsBindMCP || strings.Join(got.Targets, ",") != "agent:a1,agent:a2" {
+		t.Errorf("the MCP key should list what it reached, once: %+v", got)
+	}
+	lookupAccountTokenOwner(v1Key.Token)
+	if got := storedToken(v1Key).Scope; !got.AgentsBindMCP || strings.Join(got.Targets, ",") != "worker" {
+		t.Errorf("a key that cannot use MCP gained targets: %+v", got)
+	}
+	if !MintAccountTokenScoped("craig", "new", &TokenScope{}).Scope.AgentsBindMCP {
+		t.Error("a new key should be born with its list binding MCP")
+	}
+	legacy := MintAccountToken("craig", "old")
+	lookupAccountTokenOwner(legacy.Token)
+	if storedToken(legacy).Scope != nil {
+		t.Error("a key from before scoping was given a scope")
 	}
 }

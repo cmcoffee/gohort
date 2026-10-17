@@ -35,9 +35,11 @@ type AccountToken struct {
 	// touchAccountToken): once an hour per key, not once per request, so the
 	// O(1) lookup this store was designed around stays that way.
 	LastSeen string `json:"last_seen,omitempty"`
-	// Expires bounds the key's life. RFC3339; EMPTY MEANS NEVER, which is what
-	// every key minted before this field held, and changing that silently
-	// would log people out of integrations they had no warning about.
+	// Expires bounds the key's life. RFC3339; EMPTY MEANS NEVER. How long a
+	// key lives is the admin's setting, not its owner's (AccountKeyLifetime):
+	// a new key gets that deadline, and a key with none or a later one is
+	// brought within it, counted from that moment, so a key that predates the
+	// setting gets its full lifetime rather than dying on the spot.
 	//
 	// A bearer secret with no expiry is only ever revoked by somebody
 	// remembering to. The peer surface solved the same problem with 15-minute
@@ -85,6 +87,13 @@ type TokenScope struct {
 	// user who unticks everything gets a key that calls nothing rather than a
 	// key that silently reverts to all.
 	Tools *[]string `json:"tools,omitempty"`
+	// AgentsBindMCP marks a key whose agent targets are its MCP allow-list
+	// too: over MCP it reaches the agents it lists and no others, as over
+	// the Model API. Keys scoped before this reached every agent with
+	// "Reachable over MCP" on, plus the ones they listed; such a key is
+	// migrated the first time it is seen (bindAgentsToMCP), listing the
+	// agents it reached then, so it keeps them.
+	AgentsBindMCP bool `json:"agents_bind_mcp,omitempty"`
 }
 
 // AllowsFeature reports whether the key permits a feature. A nil scope is the
@@ -252,8 +261,72 @@ func MintAccountToken(owner, name string) AccountToken {
 // MintAccountTokenScoped is MintAccountToken with an explicit scope. New keys
 // go through here so they are deny-by-default from birth; pass an empty (non-
 // nil) TokenScope for "reaches nothing yet", to be filled in by the editor.
+// The key lives as long as the admin's key lifetime allows.
 func MintAccountTokenScoped(owner, name string, scope *TokenScope) AccountToken {
-	return MintAccountTokenExpiring(owner, name, scope, 0)
+	if scope != nil {
+		scope.AgentsBindMCP = true
+	}
+	return MintAccountTokenExpiring(owner, name, scope, AccountKeyLifetime())
+}
+
+// mcpFeature is the MCP endpoint's feature key (apps/mcpserver MCPFeatureKey).
+const mcpFeature = "mcp"
+
+// bindAgentsToMCP migrates a key scoped before its agent targets bound MCP:
+// it lists the agents the key reaches over MCP now, then marks it, so the
+// switch to an allow-list takes nothing away. Only a key that may use MCP
+// gains targets. Reports whether it changed t; a deployment whose agents
+// are not loaded yet leaves it for the next look.
+func bindAgentsToMCP(t *AccountToken) bool {
+	if t == nil || t.Scope == nil || t.Scope.AgentsBindMCP {
+		return false
+	}
+	if containsFold(t.Scope.Features, mcpFeature) {
+		if ListExternalReachableAgentsFn == nil {
+			return false
+		}
+		for _, a := range ListExternalReachableAgentsFn(nil, t.Owner, t.ExplicitTarget) {
+			if target := "agent:" + a.ID; !containsFold(t.Scope.Targets, target) {
+				t.Scope.Targets = append(t.Scope.Targets, target)
+			}
+		}
+	}
+	t.Scope.AgentsBindMCP = true
+	return true
+}
+
+const tuneAccountKeyLifetime = "tune_account_key_lifetime"
+
+func init() {
+	RegisterTunable(TunableSpec{
+		Key: tuneAccountKeyLifetime, Category: "Security",
+		Label:  "API key lifetime",
+		Help:   "How long a personal API key works before it has to be replaced. 0 means keys never expire.",
+		Detail: "People create API keys on their Account page to connect outside clients; they do not choose how long a key lasts. A new key expires this many days after it is created. A key that already exists with no deadline, or a later one, gets this many days counted from the first time it is seen after the setting changes, so nothing stops working at once. Lowering it shortens existing keys the same way; raising it does not lengthen them.",
+		Kind:   KindDays, Default: 90, Min: 0, Max: 3650,
+	})
+}
+
+// AccountKeyLifetime is how long a personal API key may live: the admin's
+// setting. Zero means no limit.
+func AccountKeyLifetime() time.Duration { return TuneDuration(tuneAccountKeyLifetime) }
+
+// withinKeyLifetime brings t's deadline within the admin's key lifetime,
+// counted from now: a key with no deadline, or one later than the lifetime
+// allows, gets now + lifetime. Reports whether it changed t.
+func withinKeyLifetime(t *AccountToken) bool {
+	life := AccountKeyLifetime()
+	if t == nil || life <= 0 {
+		return false
+	}
+	latest := time.Now().UTC().Add(life)
+	if exp := strings.TrimSpace(t.Expires); exp != "" {
+		if deadline, err := time.Parse(time.RFC3339, exp); err != nil || !deadline.After(latest) {
+			return false // a bad date already reads as expired
+		}
+	}
+	t.Expires = latest.Format(time.RFC3339)
+	return true
 }
 
 // MintAccountTokenExpiring mints a key that stops working after ttl. A ttl of
@@ -271,33 +344,12 @@ func MintAccountTokenExpiring(owner, name string, scope *TokenScope, ttl time.Du
 	return t
 }
 
-// SetAccountTokenExpiry sets or clears the deadline on one of owner's keys.
-// A ttl of zero or less clears it (back to never). Owner-scoped, so a user can
-// never re-date another user's key. Returns true when a key matched.
-func SetAccountTokenExpiry(owner, id string, ttl time.Duration) bool {
-	if RootDB == nil {
-		return false
-	}
-	for _, secret := range RootDB.Keys(accountTokenTable) {
-		var t AccountToken
-		if !RootDB.Get(accountTokenTable, secret, &t) || t.Owner != owner || t.ID != id {
-			continue
-		}
-		if ttl > 0 {
-			t.Expires = time.Now().UTC().Add(ttl).Format(time.RFC3339)
-		} else {
-			t.Expires = ""
-		}
-		RootDB.Set(accountTokenTable, secret, t)
-		return true
-	}
-	return false
-}
-
 // SweepExpiredAccountTokens removes keys past their deadline and returns how
-// many went. Expiry is enforced at lookup regardless (see
-// lookupAccountTokenOwner); this just keeps the table and the account page
-// free of rows that only mean "this stopped working a while ago".
+// many went, and brings the rest within the admin's key lifetime so the
+// account page shows the deadline that applies. Expiry is enforced at lookup
+// regardless (see lookupAccountTokenOwner); this just keeps the table and
+// the account page free of rows that only mean "this stopped working a while
+// ago".
 func SweepExpiredAccountTokens() int {
 	if RootDB == nil {
 		return 0
@@ -306,9 +358,17 @@ func SweepExpiredAccountTokens() int {
 	n := 0
 	for _, secret := range RootDB.Keys(accountTokenTable) {
 		var t AccountToken
-		if RootDB.Get(accountTokenTable, secret, &t) && t.Expired() {
+		if !RootDB.Get(accountTokenTable, secret, &t) {
+			continue
+		}
+		if t.Expired() {
 			RootDB.Unset(accountTokenTable, secret)
 			n++
+			continue
+		}
+		lived, bound := withinKeyLifetime(&t), bindAgentsToMCP(&t)
+		if lived || bound {
+			RootDB.Set(accountTokenTable, secret, t)
 		}
 	}
 	return n
@@ -325,6 +385,9 @@ func SetAccountTokenScope(owner, id string, scope *TokenScope) bool {
 	for _, secret := range RootDB.Keys(accountTokenTable) {
 		var t AccountToken
 		if RootDB.Get(accountTokenTable, secret, &t) && t.Owner == owner && t.ID == id {
+			// Saved from the editor, whose agent list is the key's whole
+			// reach on every surface.
+			scope.AgentsBindMCP = true
 			t.Scope = scope
 			RootDB.Set(accountTokenTable, secret, t)
 			return true
@@ -344,8 +407,11 @@ func AccountTokenFromRequest(r *http.Request) *AccountToken {
 // accountTokenBySecret is AccountTokenFromRequest for a secret already read
 // off the wire (the desktop client-key header is not X-API-Key).
 func accountTokenBySecret(secret string) *AccountToken {
-	t, _, ok := loadAccountToken(secret)
+	t, key, ok := loadAccountToken(secret)
 	if ok && t.Owner != "" && !t.Expired() {
+		if bindAgentsToMCP(&t) {
+			RootDB.Set(accountTokenTable, key, t)
+		}
 		return &t
 	}
 	return nil
@@ -408,6 +474,12 @@ func lookupAccountTokenOwner(secret string) (string, bool) {
 	t, key, ok := loadAccountToken(secret)
 	if !ok || t.Owner == "" {
 		return "", false
+	}
+	// Written once, when the key is first seen under the current lifetime:
+	// after that its deadline is already within it.
+	lived, bound := withinKeyLifetime(&t), bindAgentsToMCP(&t)
+	if lived || bound {
+		RootDB.Set(accountTokenTable, key, t)
 	}
 	if t.Expired() {
 		// Removed on sight rather than left to a sweep: a sweep that has not

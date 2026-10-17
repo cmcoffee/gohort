@@ -219,7 +219,7 @@ func (T *MCPServer) authorize(r *http.Request, action string) (owner, refusal st
 	}
 	if tok := AccountTokenFromRequest(r); tok != nil && !tok.AllowsFeature(MCPFeatureKey) {
 		Log("[mcpserver] %s REJECTED: key %q lacks the mcp feature (owner=%s)", action, tok.Name, owner)
-		return "", "Forbidden: this access token is not allowed to use the MCP endpoint. On your Account page, open this key's Configure access and enable \"MCP endpoint\".", http.StatusForbidden
+		return "", "Forbidden: this access token is not allowed to use the MCP endpoint. On your Account page, open this key's Access and tick \"MCP endpoint\" under Connects with.", http.StatusForbidden
 	}
 	return owner, "", http.StatusOK
 }
@@ -538,7 +538,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 	// Enforced here as well as in the listing, because a client can call a name
 	// it learned somewhere else — a filtered list is a courtesy, not a gate.
 	if !token.AllowsTool(p.Name) {
-		return "", nil, fmt.Errorf("this key may not call %q: enable it on the key under Account → API keys → Configure access", p.Name)
+		return "", nil, fmt.Errorf("this key may not call %q: enable it on the key under Account → API keys → Access", p.Name)
 	}
 	switch p.Name {
 	case "ask_agent":
@@ -626,6 +626,18 @@ func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error
 		granted = token.ExplicitTarget
 	}
 	agents := ListExternalReachableAgentsFn(T.DB, owner, granted)
+	if keyListsAgents(token) {
+		kept := agents[:0]
+		for _, a := range agents {
+			if token.AllowsTarget("agent:" + a.ID) {
+				kept = append(kept, a)
+			}
+		}
+		agents = kept
+		if len(agents) == 0 {
+			return "This API key reaches no agents. On the gohort Account page, open the key's Access and tick the agents it may reach under Can reach.", nil
+		}
+	}
 	if len(agents) == 0 {
 		// Say which switch turns this on. An empty list otherwise reads as "you
 		// have no agents", which is almost never what happened.
@@ -648,8 +660,67 @@ func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error
 			fmt.Fprintf(&b, "  note: sub-agent of %s, usually reached by asking that agent instead\n", a.ParentID)
 		}
 	}
-	b.WriteString("\nPass one of these ids as ask_agent's `agent` argument. Omitting it uses the account's main agent.")
+	b.WriteString("\nPass one of these ids as ask_agent's `agent` argument.")
+	if def, err := defaultAgentFor(token); err == nil {
+		if def == defaultAgent {
+			b.WriteString(" Omitting it uses the account's main agent.")
+		} else {
+			b.WriteString(" Omitting it uses " + def + ".")
+		}
+	}
 	return b.String(), nil
+}
+
+// keyListsAgents reports a key whose own agent list is its whole reach over
+// MCP. A key from before scoping (nil scope) still reaches every agent with
+// "Reachable over MCP" on.
+func keyListsAgents(token *AccountToken) bool {
+	return token != nil && token.Scope != nil
+}
+
+// keyMayAsk refuses an agent a scoped key does not list. App agents are
+// granted by their app's tick instead (KeyAllowsAppAgent).
+func keyMayAsk(token *AccountToken, agent string) error {
+	if keyListsAgents(token) && AppFeatureKeyForAgent(agent) == "" && !token.AllowsTarget("agent:"+agent) {
+		return fmt.Errorf("this API key does not reach agent %q: tick it under Can reach in the key's Access (Account page, API keys), or ask one it lists (list_agents)", agent)
+	}
+	return nil
+}
+
+// keySeesRun reports whether a scoped key may see a run: one of an agent it
+// reaches, or of an app agent its app tick allows.
+func keySeesRun(owner string, token *AccountToken, subject string) bool {
+	id, isAgent := strings.CutPrefix(subject, "agent:")
+	if !isAgent || id == "" {
+		return false
+	}
+	if AppFeatureKeyForAgent(id) != "" {
+		ok, _ := KeyAllowsAppAgent(RootDB, owner, token, id)
+		return ok
+	}
+	return token.AllowsTarget(subject)
+}
+
+// defaultAgentFor is the agent an ask with none named goes to: the account's
+// main agent, or for a scoped key that does not list it, the one agent the
+// key lists. A key listing several has to name one.
+func defaultAgentFor(token *AccountToken) (string, error) {
+	if !keyListsAgents(token) || token.AllowsTarget("agent:"+defaultAgent) {
+		return defaultAgent, nil
+	}
+	var listed []string
+	for _, t := range token.Scope.Targets {
+		if id, ok := strings.CutPrefix(t, "agent:"); ok && id != "" {
+			listed = append(listed, id)
+		}
+	}
+	switch len(listed) {
+	case 1:
+		return listed[0], nil
+	case 0:
+		return "", fmt.Errorf("this API key reaches no agents: tick the agents it may reach under Can reach in the key's Access (Account page, API keys)")
+	}
+	return "", fmt.Errorf("this API key reaches several agents and not the main one: name one in `agent` (list_agents shows them)")
 }
 
 // Per-user ceilings on ask_agent, each call a full agent turn.
@@ -673,7 +744,10 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	defer release()
 	agent, _ := args["agent"].(string)
 	if strings.TrimSpace(agent) == "" {
-		agent = defaultAgent
+		var err error
+		if agent, err = defaultAgentFor(token); err != nil {
+			return "", nil, err
+		}
 	}
 	if !ChannelAgentRunnerReady() {
 		return "", nil, fmt.Errorf("agent runner not ready (orchestrate not loaded)")
@@ -706,6 +780,12 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	// key tier, same as the endpoint-level mcp gate.
 	if ok, msg := KeyAllowsAppAgent(RootDB, owner, token, agent); !ok {
 		return "", nil, fmt.Errorf("%s", msg)
+	}
+	// A scoped key reaches the agents it lists, here as over the Model API:
+	// an agent's own "Reachable over MCP" switch does not widen it. App
+	// agents are granted by their app's tick, checked just above.
+	if err := keyMayAsk(token, agent); err != nil {
+		return "", nil, err
 	}
 	// Synchronous: blocks until the agent finishes, returns its reply. Exactly
 	// the MCP tools/call contract. SenderName attributes the turn to the
@@ -748,20 +828,14 @@ func (T *MCPServer) recentResults(owner string, token *AccountToken, args map[st
 		f.Since = time.Now().Add(-time.Duration(h) * time.Hour)
 	}
 	runs := ListRuns(RootDB, owner, f)
-	if token != nil && token.Scope != nil {
-		narrowed := false
-		for _, t := range token.Scope.Targets {
-			narrowed = narrowed || strings.HasPrefix(t, "agent:")
-		}
-		if narrowed {
-			kept := runs[:0]
-			for _, rr := range runs {
-				if rr.Subject != "" && token.ExplicitTarget(rr.Subject) {
-					kept = append(kept, rr)
-				}
+	if keyListsAgents(token) {
+		kept := runs[:0]
+		for _, rr := range runs {
+			if keySeesRun(owner, token, rr.Subject) {
+				kept = append(kept, rr)
 			}
-			runs = kept
 		}
+		runs = kept
 	}
 	if len(runs) == 0 {
 		return "No recent runs.", nil

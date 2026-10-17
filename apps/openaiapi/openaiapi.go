@@ -197,7 +197,7 @@ func (T *OpenAIAPI) gateFeature(w http.ResponseWriter, user string, token *Accou
 		return false
 	}
 	if token != nil && !token.AllowsFeature(OpenAIFeatureKey) {
-		writeErr(w, http.StatusForbidden, "this API key is not scoped for the model API: enable it under Account → API keys → Scope")
+		writeErr(w, http.StatusForbidden, "this API key is not scoped for the model API: enable it under Account → API keys → Access")
 		return false
 	}
 	if token != nil && token.IsLegacyUnscoped() {
@@ -216,7 +216,7 @@ func gateTarget(w http.ResponseWriter, user string, token *AccountToken, canonic
 		return true
 	}
 	if token != nil && !token.AllowsTarget(canonical) {
-		writeErr(w, http.StatusForbidden, "this API key is not scoped to reach "+canonical+", grant it under Account → API keys → Scope, or use a target the key allows (GET /v1/models lists them)")
+		writeErr(w, http.StatusForbidden, "this API key is not scoped to reach "+canonical+", grant it under Account → API keys → Access, or use a target the key allows (GET /v1/models lists them)")
 		Log("[openai_api] %s: key %q denied target %q (not in scope)", user, token.ID, canonical)
 		return false
 	}

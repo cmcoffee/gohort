@@ -282,78 +282,92 @@ func init() {
 	// importing orchestrate. Sources a user's OWN exposed agents plus agents
 	// SHARED to them (AllowedUsers) that are exposed, plus their channels. Tiers
 	// (worker/lead) are added by core.ListExternalTargets around this.
-	ListExternalTargetsFn = func(db Database, user string) []ExternalTarget {
-		if db == nil || strings.TrimSpace(user) == "" {
-			return nil
-		}
-		var out []ExternalTarget
-		seen := map[string]bool{}
-		addAgent := func(id, name, note string) {
-			if id == "" || seen["agent:"+id] {
-				return
-			}
-			seen["agent:"+id] = true
-			label := name
-			if label == "" {
-				label = id
-			}
-			if note != "" {
-				label += " - " + note
-			}
-			out = append(out, ExternalTarget{Value: "agent:" + id, Label: label, Group: "Agents"})
-		}
-		// Own agents — ALL of them, not just MCPExposed ones: ticking an agent
-		// here is itself the consent that makes it reachable through THIS key
-		// (ResolveExternalAgentGranted), mirroring the app feature grant. App
-		// agents are deliberately NOT listed — the app's own feature checkbox
-		// covers them, the implementing agent stays invisible. Framework seeds
-		// are skipped like the tool-access pills unless already exposed.
-		for _, a := range listAgents(UserDB(db, user), user) {
-			if isAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
-				continue
-			}
-			if a.Owner == seedOwner && !a.MCPExposed {
-				continue
-			}
-			addAgent(a.ID, a.Name, "")
-		}
-		// Agents shared TO this user (by another owner) that are exposed. Walk
-		// every user's store — the same cross-user walk the admin governance view
-		// uses — and keep only agents whose AllowedUsers include this user and
-		// which are MCPExposed. An unexposed shared agent isn't externally
-		// reachable, so offering it would grant a key nothing.
-		for _, au := range AuthListUsers(db) {
-			if au.Username == user {
-				continue // own agents already added above
-			}
-			udb := UserDB(db, au.Username)
-			for _, a := range listAgents(udb, au.Username) {
-				if a.MCPExposed && userCanRunSharedAgent(a, user) {
-					addAgent(a.ID, a.Name, "shared by "+au.Username)
-				}
-			}
-		}
-		// Channels the user's agents serve. orchRef is the running app singleton
-		// (set at startup) — the in-package handle scheduler callbacks use.
-		orchRefMu.Lock()
-		orch := orchRef
-		orchRefMu.Unlock()
-		if orch != nil {
-			for _, c := range orch.ExternalChannels(user) {
-				if c.ChatID == "" || seen["channel:"+c.ChatID] {
-					continue
-				}
-				seen["channel:"+c.ChatID] = true
-				label := c.Name
-				if label == "" {
-					label = c.ChatID
-				}
-				if c.AgentName != "" {
-					label += " - " + c.AgentName
-				}
-				out = append(out, ExternalTarget{Value: "channel:" + c.ChatID, Label: label, Group: "Channels"})
-			}
-		}
-		return out
+	ListExternalTargetsFn = externalTargetsFor
+}
+
+// externalTargetsFor is the account page's grantable-targets list for user
+// (ListExternalTargetsFn): their agents, agents shared to them, and their
+// channels. db is the app's base store.
+func externalTargetsFor(db Database, user string) []ExternalTarget {
+	if db == nil || strings.TrimSpace(user) == "" {
+		return nil
 	}
+	var out []ExternalTarget
+	seen := map[string]bool{}
+	addAgent := func(id, name, note string) {
+		if id == "" || seen["agent:"+id] {
+			return
+		}
+		seen["agent:"+id] = true
+		label := name
+		if label == "" {
+			label = id
+		}
+		if note != "" {
+			label += " - " + note
+		}
+		out = append(out, ExternalTarget{Value: "agent:" + id, Label: label, Group: "Agents"})
+	}
+	// Own agents — ALL of them, not just MCPExposed ones: ticking an agent
+	// here is itself the consent that makes it reachable through THIS key
+	// (ResolveExternalAgentGranted), mirroring the app feature grant. App
+	// agents are deliberately NOT listed — the app's own feature checkbox
+	// covers them, the implementing agent stays invisible. Framework seeds
+	// are skipped like the tool-access pills unless already exposed, except
+	// the main agent: it is where an ask with no agent named goes, so a key
+	// can always be given it. It is listed first.
+	var main []ExternalTarget
+	for _, a := range listAgents(UserDB(db, user), user) {
+		if isAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
+			continue
+		}
+		if a.ID == defaultConsoleAgent {
+			seen["agent:"+a.ID] = true
+			main = append(main, ExternalTarget{Value: "agent:" + a.ID, Label: chFirst(a.Name, a.ID) + " - your main agent", Group: "Agents"})
+			continue
+		}
+		if a.Owner == seedOwner && !a.MCPExposed {
+			continue
+		}
+		addAgent(a.ID, a.Name, "")
+	}
+	out = append(main, out...)
+	// Agents shared TO this user (by another owner) that are exposed. Walk
+	// every user's store — the same cross-user walk the admin governance view
+	// uses — and keep only agents whose AllowedUsers include this user and
+	// which are MCPExposed. An unexposed shared agent isn't externally
+	// reachable, so offering it would grant a key nothing.
+	for _, au := range AuthListUsers(db) {
+		if au.Username == user {
+			continue // own agents already added above
+		}
+		udb := UserDB(db, au.Username)
+		for _, a := range listAgents(udb, au.Username) {
+			if a.MCPExposed && userCanRunSharedAgent(a, user) {
+				addAgent(a.ID, a.Name, "shared by "+au.Username)
+			}
+		}
+	}
+	// Channels the user's agents serve. orchRef is the running app singleton
+	// (set at startup) — the in-package handle scheduler callbacks use.
+	orchRefMu.Lock()
+	orch := orchRef
+	orchRefMu.Unlock()
+	if orch != nil {
+		for _, c := range orch.ExternalChannels(user) {
+			if c.ChatID == "" || seen["channel:"+c.ChatID] {
+				continue
+			}
+			seen["channel:"+c.ChatID] = true
+			label := c.Name
+			if label == "" {
+				label = c.ChatID
+			}
+			if c.AgentName != "" {
+				label += " - " + c.AgentName
+			}
+			out = append(out, ExternalTarget{Value: "channel:" + c.ChatID, Label: label, Group: "Channels"})
+		}
+	}
+	return out
 }

@@ -282,7 +282,7 @@ func KeyAllowsAppAgent(db Database, user string, token *AccountToken, agentID st
 		return false, "an admin has not enabled " + label + " access for your account (Admin > Feature Access)"
 	}
 	if token != nil && !token.AllowsFeature(k) {
-		return false, "this API key is not allowed to reach " + label + ", enable \"" + label + "\" on the key (Account > keys > Configure access)"
+		return false, "this API key is not allowed to reach " + label + ", enable \"" + label + "\" on the key (Account, API keys, Access, under Can reach)"
 	}
 	return true, ""
 }
