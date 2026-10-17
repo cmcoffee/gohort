@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A monitor firing is not something the owner said.
@@ -189,5 +190,23 @@ func TestAMonitorPollsOnlyASourceToolThatReads(t *testing.T) {
 	}
 	if _, found, _ := providedWatchTool(sess, owner, "", "backup_status"); found {
 		t.Error("found with no agent to ask")
+	}
+}
+
+// A thread deleted while a monitor still reports into it comes back named for
+// the monitor, not by its session id; a thread that has a name keeps it.
+func TestAThreadACardBringsBackIsNamedForWhatSentIt(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	card := ChatMessage{Role: "assistant", Content: "found it", ReportFrom: "answer-watch", ReportKind: cortexKindMonitor}
+	if err := appendToStoredSession(db, "ag", "s-gone", ChatSession{ID: "s-gone", AgentID: "ag"}, card); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := loadChatSession(db, "ag", "s-gone"); s.Title != "answer-watch" {
+		t.Errorf("the recreated thread is named %q", s.Title)
+	}
+	saveChatSession(db, ChatSession{ID: "s-named", AgentID: "ag", Title: "Starlink question"})
+	appendToStoredSession(db, "ag", "s-named", ChatSession{ID: "s-named", AgentID: "ag"}, card)
+	if s, _ := loadChatSession(db, "ag", "s-named"); s.Title != "Starlink question" {
+		t.Errorf("a named thread was renamed to %q", s.Title)
 	}
 }

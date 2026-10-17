@@ -1873,6 +1873,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if priorSession.Title == "" && run.Title != "" {
 		priorSession.Title = run.Title
 	}
+	// A wake, a scheduled fire or a report into a thread nobody named (or one
+	// deleted since it was set up) takes the name of what sent it.
+	if priorSession.Title == "" {
+		priorSession.Title = strings.TrimSpace(run.InputReportFrom)
+	}
 	// The agent's machine runs here as it does in web chat (machine.go). It used
 	// to run ONLY there: a channel message, a wake or a delegation to an agent
 	// with a machine went straight to the agent, so a router that decided which

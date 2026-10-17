@@ -65,11 +65,27 @@ func appendToStoredSession(db Database, agentID, sessionID string, fallback Chat
 		if sess.AgentID == "" {
 			sess.AgentID = agentID
 		}
+		if sess.Title == "" {
+			sess.Title = reportThreadTitle(msgs)
+		}
 		sess.Messages = append(sess.Messages, msgs...)
 		sess.LastAt = time.Now()
 		_, err = saveChatSession(db, sess)
 	})
 	return err
+}
+
+// reportThreadTitle names a thread that a card is about to start or bring
+// back, from what sent the card: a monitor, a schedule, a report. A thread
+// deleted while something still reports into it used to come back named by
+// its session id. "" when no card says who sent it.
+func reportThreadTitle(msgs []ChatMessage) string {
+	for _, m := range msgs {
+		if from := strings.TrimSpace(m.ReportFrom); from != "" {
+			return from
+		}
+	}
+	return ""
 }
 
 // saveChatSession upserts a session. Caller fills out fields; we stamp
