@@ -60,3 +60,40 @@ func TestEachTierSaysWhetherItReadsImages(t *testing.T) {
 		}
 	}
 }
+
+// A lead not set up yet starts with Reads images off when the worker reads
+// them, so pictures stay with the worker, and on when nothing else would see
+// them or every model is declared private. A lead already set up keeps what
+// it has: nothing stored changes.
+func TestANewLeadStartsWithoutImages(t *testing.T) {
+	prevAuth := AuthDB
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	leadNoImages := func() any {
+		w := httptest.NewRecorder()
+		a.handleLLMConfig(w, httptest.NewRequest("GET", "/api/llm", nil), LeadLLMTable, false)
+		var out map[string]any
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return out["no_images"]
+	}
+	a.db.Set(LLMTable, "provider", "vllm")
+	if got := leadNoImages(); got != true {
+		t.Errorf("a new lead beside a worker that reads images starts reading them: no_images=%v", got)
+	}
+	a.db.Set(LLMTable, "no_images", true)
+	if got := leadNoImages(); got != false {
+		t.Errorf("a new lead starts blind beside a worker that cannot see either: no_images=%v", got)
+	}
+	a.db.Set(LLMTable, "no_images", false)
+	auth.Set(WebTable, "all_llms_private", true)
+	if got := leadNoImages(); got != false {
+		t.Errorf("a new lead starts without images though every model is private: no_images=%v", got)
+	}
+	auth.Set(WebTable, "all_llms_private", false)
+	a.db.Set(LeadLLMTable, "provider", "gemini")
+	if got := leadNoImages(); got != false {
+		t.Errorf("a lead already set up was changed: no_images=%v", got)
+	}
+}

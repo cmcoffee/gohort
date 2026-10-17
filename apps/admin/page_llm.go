@@ -142,7 +142,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 						ShowWhen: "provider:ollama",
 						Help:     "Disable for models without tool-calling support (ollama)."},
 					{Type: "header", Label: "Capabilities", ShowWhen: "provider"},
-					readsImagesField("provider"),
+					leadReadsImagesField(),
 					{Type: "header", Label: "Thinking"},
 					{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle",
 						ShowWhen: "provider;provider:!anthropic|openai|bedrock"},
@@ -289,6 +289,14 @@ func readsImagesField(showWhen string) ui.FormField {
 			"Each image or video still sent to this model is replaced by a description written by the other tier when that one reads images, worker first, or by a note that an image was there when neither does. " +
 			"With the worker on and the lead off, pictures stay on this machine: the lead only ever gets the worker's words about them. " +
 			"The image stays in the conversation, so a model that can see still gets it."}
+}
+
+// leadReadsImagesField is readsImagesField on the Lead form, which says where
+// a new lead starts (newLeadSkipsImages).
+func leadReadsImagesField() ui.FormField {
+	f := readsImagesField("provider")
+	f.Detail += " A new lead starts with this off when the worker reads images, so your pictures stay with the worker, unless Model Privacy says every model is private."
+	return f
 }
 
 func leadOnly(f ui.FormField) ui.FormField {

@@ -445,6 +445,9 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 	a.db.Get(table, "native_tools", &nativeTools)
 	a.db.Get(table, "disable_thinking", &disableThinking)
 	a.db.Get(table, "no_images", &noImages)
+	if table == LeadLLMTable && provider == "" {
+		noImages = a.newLeadSkipsImages()
+	}
 	a.db.Get(table, "thinking_budget", &thinkingBudget)
 	var defaultEffort, maxEffort string
 	a.db.Get(table, "default_effort", &defaultEffort)
@@ -497,6 +500,22 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 // client serving every call while the form reads back the new values. The
 // difference is invisible without this, and it is the difference between
 // "my setting is wrong" and "my setting never took".
+// newLeadSkipsImages is where Reads images starts on a lead not set up yet:
+// off when the worker reads them, so the lead, usually a hosted model, gets
+// the worker's description of a picture and never the picture. On when
+// nothing else would see it, or when the operator has declared every model
+// private (Model Privacy), since then the lead is no third party.
+//
+// Only the form's starting point. What a set-up lead has stored is left as
+// it is, so no install changes until someone saves its lead.
+func (a *AdminApp) newLeadSkipsImages() bool {
+	var workerProvider string
+	var workerNoImages bool
+	a.db.Get(LLMTable, "provider", &workerProvider)
+	a.db.Get(LLMTable, "no_images", &workerNoImages)
+	return workerProvider != "" && !workerNoImages && !AllLLMsPrivate()
+}
+
 func liveTierDescription(table string) string {
 	worker, lead := LiveLLMs()
 	live := worker
