@@ -211,10 +211,12 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 		if !strings.Contains(href, "?") {
 			href += "/"
 		}
-		fmt.Fprintf(b, `<a class="card%s" href="%s">
+		// The description is held to two lines (.card-desc), so the whole of it
+		// rides on the card's title for hovering.
+		fmt.Fprintf(b, `<a class="card%s" href="%s" title="%s">
 			<div class="card-name">%s</div>
 			<div class="card-desc">%s</div>
-		</a>`, extraCls, html.EscapeString(href), html.EscapeString(a.name), html.EscapeString(a.desc))
+		</a>`, extraCls, html.EscapeString(href), html.EscapeString(a.desc), html.EscapeString(a.name), html.EscapeString(a.desc))
 	}
 
 	// Partition: the orchestrator family, standalone featured heroes, and the rest.
@@ -446,7 +448,13 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   }
   .card:hover { border-color: var(--accent, #58a6ff); transform: translateY(-2px); }
   .card-name { font-size: 1.25rem; font-weight: 600; color: var(--text-hi, #f0f6fc); margin-bottom: 0.5rem; }
-  .card-desc { font-size: var(--fs-md, 0.9rem); color: var(--text-mute, #8b949e); line-height: 1.4; }
+  /* Two lines at most. A description is whatever its author typed, and an
+     agent's often runs to a paragraph: every line of it made its card taller
+     than the rest of its row. The full text is the card's title. */
+  .card-desc {
+    font-size: var(--fs-md, 0.9rem); color: var(--text-mute, #8b949e); line-height: 1.4;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+  }
   /* Featured hero card: the primary entry point. Spans the full grid
      width and is larger so it stands apart by SIZE, not color (a blue
      border reads as a hover/selected state and is confusing here). */
@@ -462,7 +470,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
      four of them its one line of description would run the width of the
      screen. A line that long is measurably harder to read, and the card looks
      empty rather than generous. */
-  .card.featured .card-desc { font-size: var(--fs-lg, 1.02rem); max-width: 62ch; }
+  .card.featured .card-desc { font-size: var(--fs-lg, 1.02rem); max-width: 62ch; display: block; -webkit-line-clamp: unset; line-clamp: unset; }
   /* Wide card: spans the full grid row at the REGULAR card height (a
      "double" button). Used for a bottom utility entry like Administrator. */
   .card.wide { grid-column: 1 / -1; }
