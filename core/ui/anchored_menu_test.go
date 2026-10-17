@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -326,5 +327,51 @@ func TestAPinnedBlockDoesNotShrinkInTheThread(t *testing.T) {
 	rule := css[i : i+strings.Index(css[i:], "}")]
 	if !strings.Contains(rule, "flex-shrink: 0") {
 		t.Error("a pinned block may shrink, and collapses to an empty box once the thread overflows")
+	}
+}
+
+// Nothing directly inside a scrolling column of items shrinks. Every rule that
+// makes a flex column scroll is a column of items, and an item in it that
+// clips its own content shrinks below it once the column outgrows the pane.
+// This finds every such column in runtime.css, so a new one is held to the
+// shared no-shrink rule rather than found the way the last three were.
+func TestNoItemInAScrollingColumnShrinks(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("assets", "runtime.css"))
+	if err != nil {
+		t.Fatalf("reading runtime.css: %v", err)
+	}
+	css := string(b)
+	const marker = "Nothing directly inside a scrolling column of items shrinks."
+	i := strings.Index(css, marker)
+	if i < 0 {
+		t.Fatal("the shared no-shrink rule is gone from runtime.css")
+	}
+	open := strings.Index(css[i:], "*/") + i + 2
+	end := strings.Index(css[open:], "}") + open
+	guard := css[open:end]
+	if !strings.Contains(guard, "flex-shrink: 0") {
+		t.Fatal("the shared rule no longer stops items shrinking")
+	}
+	// A column whose child is MEANT to give way is not a column of items.
+	notALog := map[string]bool{".ui-cw-modal-box": true}
+	column := regexp.MustCompile(`flex-direction:\s*column`)
+	scrolls := regexp.MustCompile(`overflow(-y)?:\s*(auto|scroll)`)
+	for _, m := range regexp.MustCompile(`([^{}]+)\{([^{}]*)\}`).FindAllStringSubmatch(css, -1) {
+		if !column.MatchString(m[2]) || !scrolls.MatchString(m[2]) {
+			continue
+		}
+		sel := m[1]
+		if j := strings.LastIndex(sel, "*/"); j >= 0 {
+			sel = sel[j+2:]
+		}
+		for _, s := range strings.Split(sel, ",") {
+			s = strings.TrimSpace(s)
+			if s == "" || notALog[s] || strings.ContainsAny(s, " >:") {
+				continue
+			}
+			if !strings.Contains(guard, s+" > *") {
+				t.Errorf("%s is a scrolling column, and its items may shrink: add %q to the shared no-shrink rule", s, s+" > *")
+			}
+		}
 	}
 }

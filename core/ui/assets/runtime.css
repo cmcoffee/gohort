@@ -4761,6 +4761,18 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
    * giving them a clear lift off the canvas. */
   background: var(--bg-0);
 }
+/* Nothing directly inside a scrolling column of items shrinks. Such a column
+ * is a flex column, and an item that clips its own content (scrolls inside
+ * itself, hides overflow) may shrink below it once the column outgrows the
+ * pane: it was squeezed to its border. Found three times, one place at a time
+ * (activity rows, pipeline blocks, the pinned plan); this covers the next
+ * block anyone adds. The column scrolls, so an item never needs to give way.
+ * A new scrolling column joins this list (ui TestNoItemInAScrollingColumnShrinks). */
+.ui-agent-convo-log > *, .ui-agent-activity-log > *, .ui-pl-transcript > *,
+.ui-chat-thread > *, .ui-assist-log > *, .ui-cw-chat-msgs > *,
+.ui-tw-asst-thread > *, .ui-history > *, .ui-wb-list-body > * {
+  flex-shrink: 0;
+}
 .ui-agent-convo-log {
   flex: 1 1 auto; overflow-y: auto;
   padding: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem;
