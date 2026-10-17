@@ -421,11 +421,13 @@ it. A half-typed message in the composer wins over the pre-filled one.
 
 ## Who may reach one
 
-Configuring a store is admin-only. **Reaching one is controlled separately**, by two lists on the
-store's Manage panel, **Full Access** and **Read-Only** (`full_access`, `read_only`). Each entry is
-a person, a team (`group:<id>`, one that can carry a share), or **Everyone** (`*`). Nobody reaches a
-store until an admin adds them, admins included: managing the lists is admin-only, an entry decides
-reach. Someone on both lists, or reached two ways, gets the higher level.
+Configuring a store is admin-only. **Reaching one is controlled separately**, under **Who may
+reach it** on the store's Manage panel: **Add users** adds a person, a team (`group:<id>`, one that
+can carry a share) or **Everyone** (`*`), each starting Read-Only, and pressing an entry's level
+switches it to Full Access (stored as `members` and the `full_access` subset). The admin's own
+account is listed second and marked. Nobody reaches a store until an admin adds them, admins
+included: managing the list is admin-only, an entry decides reach. Someone reached two ways (by
+name and through Everyone, say) gets the higher level.
 
 | Level | A person | Their attached agent |
 |---|---|---|

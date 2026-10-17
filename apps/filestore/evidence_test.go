@@ -27,7 +27,7 @@ func evidenceFixture(t *testing.T) (*FileStoreApp, Store) {
 	root := t.TempDir()
 	writeCase(t, root, "case-1", "scheduler.log", "2026-03-14T02:00:00Z ERROR scheduler stalled\n2026-03-14T02:00:09Z INFO retrying\n")
 	writeCase(t, root, "case-2", "web.log", "2026-04-01T10:00:00Z WARN slow request\n")
-	st, err := SaveStore(app.DB, Store{Name: "Cases", Path: root, Evidence: true, ReadOnly: []string{accessEveryone}})
+	st, err := SaveStore(app.DB, Store{Name: "Cases", Path: root, Evidence: true, Members: []string{accessEveryone}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestEvidenceHandedOverLandsAsAFolder(t *testing.T) {
 	if got := h.EvidenceStores("alice"); len(got) != 0 {
 		t.Errorf("a store not taking uploads was offered: %v", got)
 	}
-	st.FullAccess = []string{"alice"}
+	st.Members, st.FullAccess = []string{"alice"}, []string{"alice"}
 	if _, err := SaveStore(app.DB, st); err != nil {
 		t.Fatal(err)
 	}

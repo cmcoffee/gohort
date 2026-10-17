@@ -1,5 +1,5 @@
 // Two editors write one store record: the form (name, path, retention…) and
-// the assignment picker (full_access). Neither sends the other's fields.
+// the access picker (members, full_access). Neither sends the other's fields.
 package filestore
 
 import (
@@ -32,7 +32,7 @@ func assignFixture(t *testing.T) *FileStoreApp {
 	app.DB = &DBase{Store: kvlite.MemStore()}
 	dir := t.TempDir()
 	if _, err := SaveStore(app.DB, Store{Name: "Support bundles", Path: dir,
-		FullAccess: []string{"ana", "bo"}}); err != nil {
+		Members: []string{"ana", "bo"}, FullAccess: []string{"ana", "bo"}}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	return app
@@ -93,14 +93,14 @@ func TestUntickingTheLastUserClearsTheList(t *testing.T) {
 	app := assignFixture(t)
 	st, _ := LoadStore(app.DB, "support_bundles")
 	body, _ := json.Marshal(map[string]any{
-		"slug": st.Slug, "name": st.Name, "path": st.Path, "full_access": []string{},
+		"slug": st.Slug, "name": st.Name, "path": st.Path, "members": []string{}, "full_access": []string{},
 	})
 	r := httptest.NewRequest("POST", "/filestore/api/stores", strings.NewReader(string(body)))
 	app.handleStores(httptest.NewRecorder(), asStoreAdmin(t, r))
 
 	after, _ := LoadStore(app.DB, "support_bundles")
-	if len(after.FullAccess) != 0 {
-		t.Errorf("an emptied list must survive the merge: %v", after.FullAccess)
+	if len(after.Members) != 0 || len(after.FullAccess) != 0 {
+		t.Errorf("an emptied list must survive the merge: %v %v", after.Members, after.FullAccess)
 	}
 	if after.AllowsUser("ana") || after.AllowsUser("anyone") {
 		t.Error("with nobody assigned, somebody still reaches it")
@@ -166,6 +166,9 @@ func TestTheSettingsFormAndThePickerDoNotUndoEachOther(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &form); err != nil {
 		t.Fatalf("form load: %d %s", w.Code, w.Body.String())
 	}
+	if _, has := form["members"]; has {
+		t.Fatal("the form's load carries members, so Save would write it back stale")
+	}
 	if _, has := form["full_access"]; has {
 		t.Fatal("the form's load carries full_access, so Save would write it back stale")
 	}
@@ -189,16 +192,20 @@ func TestTheSettingsFormAndThePickerDoNotUndoEachOther(t *testing.T) {
 	}
 }
 
-// The access pickers offer Everyone first, then people and teams, and a
-// PATCH of one list leaves the other alone.
-func TestTheAccessPickersOfferEveryoneAndSaveApart(t *testing.T) {
+// The access picker offers Everyone first, then the admin's own account,
+// marked, then the rest; adding someone starts them Read-Only, and pressing
+// their level gives Full Access.
+func TestTheAccessPickerOffersEveryoneThenYourAccount(t *testing.T) {
 	app := assignFixture(t)
 	r := asStoreAdmin(t, httptest.NewRequest("GET", "/filestore/api/access-candidates", nil))
 	w := httptest.NewRecorder()
 	app.handleAccessCandidates(w, r)
 	var got []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got) < 2 || got[0]["value"] != accessEveryone {
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got) < 2 {
 		t.Fatalf("candidates: %d %s", w.Code, w.Body.String())
+	}
+	if got[0]["value"] != accessEveryone || got[1]["value"] != "root" || got[1]["label"] != "root (your account)" {
+		t.Errorf("first two candidates: %v, %v", got[0], got[1])
 	}
 	call := func(body string) {
 		w := httptest.NewRecorder()
@@ -207,9 +214,14 @@ func TestTheAccessPickersOfferEveryoneAndSaveApart(t *testing.T) {
 			t.Fatalf("patch: %d %s", w.Code, w.Body.String())
 		}
 	}
-	call(`{"read_only":["*"]}`)
+	// What the picker sends: the members, and the ones flagged Full Access.
+	call(`{"members":["ana","bo","*"],"full_access":["ana","bo"]}`)
 	after, _ := LoadStore(app.DB, "support_bundles")
-	if strings.Join(after.FullAccess, ",") != "ana,bo" || !after.AllowsUser("carol") || after.FullAccessFor("carol") {
-		t.Errorf("Everyone at Read-Only beside ana and bo at Full Access: %+v", after)
+	if !after.FullAccessFor("ana") || !after.AllowsUser("carol") || after.FullAccessFor("carol") {
+		t.Errorf("Everyone Read-Only beside ana and bo at Full Access: %+v", after)
+	}
+	call(`{"members":["ana","*"],"full_access":["ana"]}`)
+	if after, _ := LoadStore(app.DB, "support_bundles"); after.FullAccessFor("bo") || !after.AllowsUser("bo") {
+		t.Errorf("bo removed by name should still read through Everyone, at Read-Only: %+v", after)
 	}
 }

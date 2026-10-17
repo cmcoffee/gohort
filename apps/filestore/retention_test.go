@@ -142,7 +142,7 @@ func TestWhoReachesAStore(t *testing.T) {
 	if (Store{}).AllowsUser("root") {
 		t.Error("an empty list let somebody in, an admin included")
 	}
-	st := Store{FullAccess: []string{"alice"}, ReadOnly: []string{"group:g-ops"}}
+	st := Store{Members: []string{"alice", "group:g-ops"}, FullAccess: []string{"alice"}}
 	for user, want := range map[string]string{"alice": accessFull, "bob": accessRead, "carol": "", "root": ""} {
 		if got := st.accessFor(user); got != want {
 			t.Errorf("%s: %q, want %q", user, got, want)
@@ -151,23 +151,24 @@ func TestWhoReachesAStore(t *testing.T) {
 	if st.FullAccessFor("bob") {
 		t.Error("Read-Only through a team changed things")
 	}
-	everyone := Store{ReadOnly: []string{accessEveryone}, FullAccess: []string{"alice"}}
+	everyone := Store{Members: []string{accessEveryone, "alice"}, FullAccess: []string{"alice"}}
 	if !everyone.AllowsUser("carol") || everyone.FullAccessFor("carol") || !everyone.FullAccessFor("alice") {
 		t.Error("Everyone at Read-Only, with alice raised above it, came out wrong")
 	}
 }
 
-// A name in both lists keeps the higher one, once.
+// Each member once, and Full Access only for members: removing someone takes
+// their level with them.
 func TestAStoresAccessListsAreTidied(t *testing.T) {
 	app := &FileStoreApp{}
 	app.DB = &DBase{Store: kvlite.MemStore()}
 	st, err := SaveStore(app.DB, Store{Name: "Drop", Path: t.TempDir(),
-		FullAccess: []string{" alice ", "alice", ""}, ReadOnly: []string{"Alice", "bob"}})
+		Members: []string{" alice ", "Alice", "", "bob"}, FullAccess: []string{"alice", "carol"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(st.FullAccess, ",") != "alice" || strings.Join(st.ReadOnly, ",") != "bob" {
-		t.Errorf("lists %v / %v", st.FullAccess, st.ReadOnly)
+	if strings.Join(st.Members, ",") != "alice,bob" || strings.Join(st.FullAccess, ",") != "alice" {
+		t.Errorf("members %v, full access %v", st.Members, st.FullAccess)
 	}
 }
 

@@ -44,10 +44,12 @@ type Store struct {
 	//                agent also gets its approved commands and pull, when
 	//                its attachment allows changes.
 	//
-	// Everyone (accessEveryone) is an entry like a team: it names every
-	// account, at the level of the list it is in, and is only there when an
-	// admin added it. A named entry can raise someone above it.
-	ReadOnly   []string `json:"read_only,omitempty"`
+	// Members is everyone who may reach it, and FullAccess the members who
+	// have Full Access; the rest are Read-Only. One list on the page, with
+	// each member's level on their own entry. Everyone (accessEveryone) is an
+	// entry like a team: every account, only when an admin added it. A
+	// named entry can raise someone above it.
+	Members    []string `json:"members,omitempty"`
 	FullAccess []string `json:"full_access,omitempty"`
 
 	// RetentionDays deletes bundle subfolders older than this many days.
@@ -116,19 +118,22 @@ const (
 // accessFor is user's level on this store: accessFull, accessRead or "" for
 // none. The higher of every entry naming them, a team they are on, or
 // Everyone.
-func (s Store) accessFor(user string) string {
+func (s Store) accessFor(user string) (level string) {
 	keys := ShareRecipientKeys(user)
 	if len(keys) == 0 {
 		return ""
 	}
 	keys = append(keys, accessEveryone)
-	if listNames(s.FullAccess, keys) {
-		return accessFull
+	for _, e := range s.Members {
+		if !listNames([]string{e}, keys) {
+			continue
+		}
+		if listNames(s.FullAccess, []string{e}) {
+			return accessFull
+		}
+		level = accessRead
 	}
-	if listNames(s.ReadOnly, keys) {
-		return accessRead
-	}
-	return ""
+	return level
 }
 
 // listNames reports whether list holds any of keys.
@@ -145,32 +150,24 @@ func listNames(list, keys []string) bool {
 
 // accessText says who may reach the store, for the admin page.
 func (s Store) accessText() string {
-	names := func(list []string) string {
-		shown := make([]string, 0, len(list))
-		var rest []string
-		for _, e := range list {
-			if e == accessEveryone {
-				shown = append(shown, "everyone")
-			} else {
-				rest = append(rest, e)
-			}
-		}
-		if len(rest) > 0 {
-			shown = append(shown, ShareRecipientsText(rest))
-		}
-		return strings.Join(shown, ", ")
-	}
-	var parts []string
-	if len(s.FullAccess) > 0 {
-		parts = append(parts, "Full Access: "+names(s.FullAccess))
-	}
-	if len(s.ReadOnly) > 0 {
-		parts = append(parts, "Read-Only: "+names(s.ReadOnly))
-	}
-	if len(parts) == 0 {
+	if len(s.Members) == 0 {
 		return "nobody yet"
 	}
-	return strings.Join(parts, "; ")
+	shown := make([]string, 0, len(s.Members))
+	for _, e := range s.Members {
+		name := e
+		if e == accessEveryone {
+			name = "everyone"
+		} else if strings.HasPrefix(e, "group:") {
+			name = ShareRecipientsText([]string{e})
+		}
+		level := "Read-Only"
+		if listNames(s.FullAccess, []string{e}) {
+			level = "Full Access"
+		}
+		shown = append(shown, name+" ("+level+")")
+	}
+	return strings.Join(shown, ", ")
 }
 
 // AllowsUser reports whether user may see and reach this store at all.
@@ -240,10 +237,16 @@ func SaveStore(db Database, s Store) (Store, error) {
 	if err := validatePull(db, s); err != nil {
 		return s, err
 	}
-	// Someone with Full Access is not also listed Read-Only: one entry each,
-	// the higher one.
-	s.FullAccess = cleanAccessList(s.FullAccess, nil)
-	s.ReadOnly = cleanAccessList(s.ReadOnly, s.FullAccess)
+	// Full Access is held by members only: removing someone takes their
+	// level with them.
+	s.Members = cleanAccessList(s.Members)
+	var full []string
+	for _, e := range cleanAccessList(s.FullAccess) {
+		if listNames(s.Members, []string{e}) {
+			full = append(full, e)
+		}
+	}
+	s.FullAccess = full
 	if strings.TrimSpace(s.Slug) == "" {
 		s.Slug = RefToolSlug(s.Name)
 		if s.Slug == "" {
@@ -254,12 +257,12 @@ func SaveStore(db Database, s Store) (Store, error) {
 	return s, nil
 }
 
-// cleanAccessList trims, drops blanks and repeats, and drops anyone in skip.
-func cleanAccessList(list, skip []string) []string {
+// cleanAccessList trims and drops blanks and repeats.
+func cleanAccessList(list []string) []string {
 	var out []string
 	for _, e := range list {
 		e = strings.TrimSpace(e)
-		if e == "" || listNames(out, []string{e}) || listNames(skip, []string{e}) {
+		if e == "" || listNames(out, []string{e}) {
 			continue
 		}
 		out = append(out, e)

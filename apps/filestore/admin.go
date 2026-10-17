@@ -360,13 +360,30 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							},
 						},
 
-						ui.Card{HTML: folderPanelHeading("Who may reach it", "")},
-						ui.Card{HTML: `<p class="ui-form-hint">Nobody, until you add them: people, teams, or Everyone. ` +
-							`<b>Read-Only</b> browses, searches and reads; an attached agent gets the list, search, read and evidence tools. ` +
-							`<b>Full Access</b> also uploads and runs the store's commands; an attached agent also gets its approved commands and pull, when its attachment allows changes. ` +
-							`Applies to admins too: admin manages the lists, an entry decides reach.</p>`},
-						ui.ACLPicker(storeAccessPicker("full_access", "Full Access")),
-						ui.ACLPicker(storeAccessPicker("read_only", "Read-Only")),
+						ui.Subsection{
+							Title:    "Who may reach it",
+							Subtitle: "Nobody, until you add them. Each person starts Read-Only; press their level to give Full Access.",
+							Detail: "Read-Only: browse, search and read the store's files. An agent of theirs attached to the store gets its list, search and read tools, and the evidence tools when the store indexes evidence.\n\n" +
+								"Full Access: everything Read-Only allows, and also upload files and run the store's commands. An agent of theirs also gets the store's approved commands, and pulling from the store this one pulls from, but only when the agent's attachment allows changes.\n\n" +
+								"Add people, a team, or Everyone (every account on this server). Admins are not let in by being admins: add yourself to reach the files. Apps are separate: an app's rights are granted under Apps that use it.",
+							Body: ui.ACLPicker(ui.ACLPickerConfig{
+								OptionsSource: "/filestore/api/access-candidates",
+								RecordSource:  "/filestore/api/stores?slug={slug}",
+								Field:         "members",
+								// PATCH sends the lists alone. A POST carries the
+								// whole record as it stood when the row opened,
+								// which put back any setting saved since.
+								PostTo:       "/filestore/api/stores?slug={slug}",
+								Method:       "PATCH",
+								Noun:         "users",
+								EmptyText:    "No people or teams to add yet.",
+								FlagField:    "full_access",
+								FlagLabel:    "Full Access",
+								FlagOffLabel: "Read-Only",
+								FlagHelp:     "Read-Only browses, searches and reads. Full Access also uploads and runs the store's commands, for them and their agents. Press to switch.",
+								Invalidate:   []string{"/filestore/api/stores"},
+							}),
+						},
 
 						ui.Card{HTML: folderPanelHeading("Settings", "")},
 						ui.FormPanel{
@@ -442,24 +459,6 @@ func commandUsesFields() []ui.FormField {
 			Placeholder: "download --src={source} --dst={folder}",
 			Help:        "One per line: the arguments after the command, with {placeholders} for what the agent fills in. Builder adds the lines it maps.",
 			Detail:      "Write lines here to tell Builder what to map, or leave it empty and let Builder work them out with you. Each line becomes one tool an agent can call, running exactly that line, and an agent can run nothing else. It runs directly as the server's account with no shell, the way a person's click runs, so a binary with its own saved login works. Each placeholder is filled with one value, never an option; a placeholder that names a file or folder in this store is proved to be inside it. A line with no placeholders is a fixed call.\n\nNothing reaches an agent until you turn Agents on. Changing these lines, or a re-map, turns it off again."},
-	}
-}
-
-// storeAccessPicker is one of the two access lists on a store's Manage
-// panel. Each saves its own list alone (PATCH): a POST carries the whole
-// record as it stood when the row opened, which put back any setting saved
-// since.
-func storeAccessPicker(field, level string) ui.ACLPickerConfig {
-	return ui.ACLPickerConfig{
-		OptionsSource: "/filestore/api/access-candidates",
-		RecordSource:  "/filestore/api/stores?slug={slug}",
-		Field:         field,
-		PostTo:        "/filestore/api/stores?slug={slug}",
-		Method:        "PATCH",
-		Noun:          "entry",
-		Intro:         level,
-		EmptyText:     "No people or teams to add yet.",
-		Invalidate:    []string{"/filestore/api/stores"},
 	}
 }
 
@@ -549,8 +548,12 @@ func (T *FileStoreApp) Routes() {
 // handleAccessCandidates is who a store's access lists can name: Everyone,
 // each approved person, and each team that can carry a share (the teams a
 // person's access is looked up under, ShareRecipientKeys).
+//
+// The admin's own account says so: reaching the files takes an entry, admins
+// included, so the one they most often need to add is themselves.
 func (T *FileStoreApp) handleAccessCandidates(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok || !adminOnly(w, r) {
+	me, _, ok := RequireUser(w, r, T.DB)
+	if !ok || !adminOnly(w, r) {
 		return
 	}
 	out := []map[string]any{{"value": accessEveryone, "label": "Everyone", "desc": "every account on this server"}}
@@ -560,7 +563,19 @@ func (T *FileStoreApp) handleAccessCandidates(w http.ResponseWriter, r *http.Req
 	}
 	var people []map[string]any
 	json.Unmarshal(UserCandidatesJSON(AuthDB(), ""), &people)
-	out = append(out, people...)
+	for _, p := range people {
+		if v, _ := p["value"].(string); strings.EqualFold(v, me) {
+			label, _ := p["label"].(string)
+			if label == "" {
+				label = v
+			}
+			p["label"] = label + " (your account)"
+			// Right after Everyone, where it is found without looking.
+			out = append(out[:1], append([]map[string]any{p}, out[1:]...)...)
+			continue
+		}
+		out = append(out, p)
+	}
 	for _, g := range LoadAppGroups(AuthDB()) {
 		if g.Shareable {
 			out = append(out, map[string]any{"value": "group:" + g.ID, "label": "Team: " + g.Name})
@@ -617,8 +632,8 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 				var out map[string]any
 				raw, _ := json.Marshal(st)
 				_ = json.Unmarshal(raw, &out)
+				delete(out, "members")
 				delete(out, "full_access")
-				delete(out, "read_only")
 				delete(out, "app_grants") // the grants section owns these
 				writeJSON(w, out)
 				return
@@ -630,7 +645,7 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost, http.MethodPatch:
 		// Decoded ONTO the stored record, not into a blank one. Two editors
 		// now write this record — the form (name, path, retention…) and the
-		// assignment pickers (full_access, read_only) — and neither sends the other's
+		// access picker (members, full_access) — and neither sends the other's
 		// fields. Into a blank Store, whichever saved second would silently
 		// erase what the first had just set: json.Unmarshal leaves absent
 		// keys alone, so starting from what is stored makes a partial save

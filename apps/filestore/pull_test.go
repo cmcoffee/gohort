@@ -33,11 +33,11 @@ func pullFixture(t *testing.T) (*FileStoreApp, Store, Store) {
 	write("CASE-1/prepared/node2/sys.log", "kernel: oops")
 	os.Symlink("/etc/passwd", filepath.Join(intakeRoot, "CASE-1", "prepared", "escape"))
 	write("CASE-2/raw.bin", "ENCRYPTED")
-	intake, err := SaveStore(app.DB, Store{Name: "Intake", Path: intakeRoot, Ephemeral: true, FullAccess: []string{"alice"}})
+	intake, err := SaveStore(app.DB, Store{Name: "Intake", Path: intakeRoot, Ephemeral: true, Members: []string{"alice"}, FullAccess: []string{"alice"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	analysis, err := SaveStore(app.DB, Store{Name: "Analysis", Path: analysisRoot, PullFrom: intake.Slug, FullAccess: []string{"alice"}})
+	analysis, err := SaveStore(app.DB, Store{Name: "Analysis", Path: analysisRoot, PullFrom: intake.Slug, Members: []string{"alice"}, FullAccess: []string{"alice"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestAnAgentPullsThroughTheAttachedStore(t *testing.T) {
 	src := storeSource{app: app}
 	sess := &ToolSession{Ctx: context.Background(), Username: "alice"}
 	// Read-Only: no pull tool at all. Pulling changes the store.
-	analysis.ReadOnly, analysis.FullAccess = []string{"alice"}, nil
+	analysis.Members, analysis.FullAccess = []string{"alice"}, nil
 	if _, err := SaveStore(app.DB, analysis); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestAnAgentPullsThroughTheAttachedStore(t *testing.T) {
 			t.Fatal("a Read-Only owner's agent got a pull tool")
 		}
 	}
-	analysis.ReadOnly, analysis.FullAccess = nil, []string{"alice"}
+	analysis.Members, analysis.FullAccess = []string{"alice"}, []string{"alice"}
 	if _, err := SaveStore(app.DB, analysis); err != nil {
 		t.Fatal(err)
 	}

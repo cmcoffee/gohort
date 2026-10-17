@@ -42,7 +42,7 @@ func actionFixture(t *testing.T, twoPhase bool) (*FileStoreApp, Store, string, s
 	bin, argvLog := fakeCommand(t, t.TempDir())
 	app := &FileStoreApp{}
 	app.DB = &DBase{Store: kvlite.MemStore()}
-	st, err := SaveStore(app.DB, Store{Name: "Bundles", Path: root, FullAccess: []string{accessEveryone}})
+	st, err := SaveStore(app.DB, Store{Name: "Bundles", Path: root, Members: []string{accessEveryone}, FullAccess: []string{accessEveryone}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestActionRefusals(t *testing.T) {
 		t.Errorf("refusal should list what exists: %d %s", w.Code, w.Body.String())
 	}
 	// Read-only store: a command rewrites the folder, so it takes the write grant.
-	ro, _ := SaveStore(app.DB, Store{Name: "ReadOnly", Path: t.TempDir(), ReadOnly: []string{accessEveryone}})
+	ro, _ := SaveStore(app.DB, Store{Name: "ReadOnly", Path: t.TempDir(), Members: []string{accessEveryone}})
 	if _, err := SaveStoreCommand(app.DB, StoreCommand{Slug: ro.Slug, Name: "decrypt", Command: bin}); err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestActionRegistrationRules(t *testing.T) {
 func TestActionListIsReadableByAnAssignedUser(t *testing.T) {
 	app, st, _, bin := actionFixture(t, true)
 	// A second store the user cannot reach, with its own action.
-	other, _ := SaveStore(app.DB, Store{Name: "Private", Path: t.TempDir(), FullAccess: []string{"someone_else"}})
+	other, _ := SaveStore(app.DB, Store{Name: "Private", Path: t.TempDir(), Members: []string{"someone_else"}, FullAccess: []string{"someone_else"}})
 	if _, err := SaveStoreCommand(app.DB, StoreCommand{Slug: other.Slug, Name: "secret", Command: bin}); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestFolderListing(t *testing.T) {
 	}
 	// A store the caller cannot reach answers the same way a missing one
 	// does — its existence is not a fact they are owed.
-	priv, _ := SaveStore(app.DB, Store{Name: "Private", Path: t.TempDir(), FullAccess: []string{"nobody"}})
+	priv, _ := SaveStore(app.DB, Store{Name: "Private", Path: t.TempDir(), Members: []string{"nobody"}, FullAccess: []string{"nobody"}})
 	r = httptest.NewRequest("GET", "/api/folders?slug="+priv.Slug, nil)
 	w = httptest.NewRecorder()
 	app.handleFolders(w, asAdmin(t, r, "alice"))

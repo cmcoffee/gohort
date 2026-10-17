@@ -29,7 +29,7 @@ func scopeFixture(t *testing.T) (*FileStoreApp, Store, string) {
 	}
 	app := &FileStoreApp{}
 	app.DB = &DBase{Store: kvlite.MemStore()}
-	st, err := SaveStore(app.DB, Store{Name: "Support bundles", Path: root, FullAccess: []string{accessEveryone}})
+	st, err := SaveStore(app.DB, Store{Name: "Support bundles", Path: root, Members: []string{accessEveryone}, FullAccess: []string{accessEveryone}})
 	if err != nil {
 		t.Fatalf("save store: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestStoresAreNotOfferedToToolAuthors(t *testing.T) {
 // account with an agent could attach it — the gate was on the cheap half.
 func TestAssignedStoreIsInvisibleToOthers(t *testing.T) {
 	app, st, _ := scopeFixture(t)
-	st.FullAccess = []string{"alice"}
+	st.Members, st.FullAccess = []string{"alice"}, []string{"alice"}
 	if _, err := SaveStore(app.DB, st); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestAssignedStoreIsInvisibleToOthers(t *testing.T) {
 // is a different door into the same folder.
 func TestAssignedStoreIsNotReachableThroughAPathScope(t *testing.T) {
 	app, st, _ := scopeFixture(t)
-	st.FullAccess = []string{"alice"}
+	st.Members, st.FullAccess = []string{"alice"}, []string{"alice"}
 	if _, err := SaveStore(app.DB, st); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestAssignedStoreIsNotReachableThroughAPathScope(t *testing.T) {
 // an empty list that meant everyone failed open for every new store.
 func TestUnassignedStoreReachesNobody(t *testing.T) {
 	app, st, _ := scopeFixture(t)
-	st.FullAccess, st.ReadOnly = nil, nil
+	st.Members, st.FullAccess = nil, nil
 	if _, err := SaveStore(app.DB, st); err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestRenameKeepsTheHandleAndTheTableSaysSo(t *testing.T) {
 	if st.Slug != "support_bundles" {
 		t.Fatalf("unexpected handle %q", st.Slug)
 	}
-	renamed, err := SaveStore(app.DB, Store{Slug: st.Slug, Name: "Customer captures", Path: st.Path, FullAccess: st.FullAccess})
+	renamed, err := SaveStore(app.DB, Store{Slug: st.Slug, Name: "Customer captures", Path: st.Path, Members: st.Members, FullAccess: st.FullAccess})
 	if err != nil {
 		t.Fatalf("rename: %v", err)
 	}

@@ -33,7 +33,7 @@ func TestAgentsRunOnlyTheAllowedUses(t *testing.T) {
 	}
 
 	db := &DBase{Store: kvlite.MemStore()}
-	SaveStore(db, Store{Name: "Intake", Path: t.TempDir(), FullAccess: []string{accessEveryone}})
+	SaveStore(db, Store{Name: "Intake", Path: t.TempDir(), Members: []string{accessEveryone}, FullAccess: []string{accessEveryone}})
 	saved, err := SaveStoreCommand(db, StoreCommand{Slug: "intake", Name: "kb", Command: "/opt/bin/kb", AllowedUses: []string{"download --src={source} --dst={folder}\nlist {folder}"}})
 	if err != nil || saved.Usage != usageCurrent || len(saved.AllowedUses) != 2 {
 		t.Fatalf("a new command: %+v %v", saved, err)
@@ -69,7 +69,7 @@ func TestAnAgentRunsASpecifiedCommandExactlyAsWritten(t *testing.T) {
 	t.Cleanup(func() { registeredFileStoreApp = prev })
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "CASE-1"), 0o755)
-	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: root, FullAccess: []string{accessEveryone}})
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: root, Members: []string{accessEveryone}, FullAccess: []string{accessEveryone}})
 	bin := filepath.Join(t.TempDir(), "kb.sh")
 	os.WriteFile(bin, []byte("#!/bin/sh\nfor a in \"$@\"; do echo \"ARG<$a>\"; done\n"), 0o755)
 	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "kb", Command: bin,
@@ -171,7 +171,7 @@ func TestBuilderProbesACommandFreely(t *testing.T) {
 // run directly rather than in the sandbox. A second pass changes nothing.
 func TestOpenCommandsAreFoldedIntoTheirUses(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
-	SaveStore(db, Store{Name: "Intake", Path: t.TempDir(), FullAccess: []string{accessEveryone}})
+	SaveStore(db, Store{Name: "Intake", Path: t.TempDir(), Members: []string{accessEveryone}, FullAccess: []string{accessEveryone}})
 	for name, usage := range map[string]string{"cap": "open", "old": ""} {
 		db.Set(commandsTable, commandKey("intake", name), StoreCommand{Slug: "intake", Name: name, Command: "/opt/bin/cap", Usage: usage, Approved: true,
 			ToolDesc: "Reads a bundle.", Tools: []TempToolAction{{Name: "report", CommandTemplate: "/opt/bin/cap report  '{folder}'"}}})
@@ -199,7 +199,7 @@ func TestAQuotedPlaceholderRunsAsOneArgument(t *testing.T) {
 	prev := registeredFileStoreApp
 	registeredFileStoreApp = app
 	t.Cleanup(func() { registeredFileStoreApp = prev })
-	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: t.TempDir(), FullAccess: []string{accessEveryone}})
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: t.TempDir(), Members: []string{accessEveryone}, FullAccess: []string{accessEveryone}})
 	bin := filepath.Join(t.TempDir(), "cap.sh")
 	os.WriteFile(bin, []byte("#!/bin/sh\nfor a in \"$@\"; do echo \"ARG<$a>\"; done\n"), 0o755)
 	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "cap", Command: bin})
@@ -227,7 +227,7 @@ func TestAQuotedPlaceholderRunsAsOneArgument(t *testing.T) {
 func TestAStoresCommandsFollowItsAccessAndItsLife(t *testing.T) {
 	app := &FileStoreApp{}
 	app.DB = &DBase{Store: kvlite.MemStore()}
-	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: t.TempDir(), ReadOnly: []string{"alice"}, FullAccess: []string{"bob"}})
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: t.TempDir(), Members: []string{"alice", "bob"}, FullAccess: []string{"bob"}})
 	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "kb", Command: "/opt/bin/kb", AllowedUses: []string{"list"}})
 	if _, err := SaveCommandTools(app.DB, st.Slug, "kb", "File-sharing client.",
 		[]TempToolAction{{Name: "list", CommandTemplate: "/opt/bin/kb list"}}); err != nil {
