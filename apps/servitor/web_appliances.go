@@ -193,6 +193,14 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		// setting changed would all carry a value the runtime then silently
 		// ignores. Refusing here means the stored record and the behavior agree.
 		req.ToolsRunAs = normalizeToolsRunAs(req.ToolsRunAs)
+		// Refused rather than dropped: an entry the gate cannot read would be
+		// quietly left out, and the owner would wonder why lookups still ask.
+		lookups, err := normalize_lookup_allow(req.LookupAllow)
+		if err != nil {
+			http.Error(w, "lookup destinations: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.LookupAllow = lookups
 		req.OrchestratorTier = normalizeApplianceTier(req.OrchestratorTier)
 		req.WorkerTier = normalizeApplianceTier(req.WorkerTier)
 		// Computed for the form, never stored — it would otherwise persist a

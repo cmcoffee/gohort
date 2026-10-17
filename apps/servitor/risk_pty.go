@@ -38,7 +38,7 @@ type pty_session struct {
 
 // pty_input_risks classifies each non-empty input line of a run_pty call and
 // returns the ones that are not read-only. Password answers are skipped.
-func pty_input_risks(cmd, input, scratch string) []pty_line_risk {
+func pty_input_risks(cmd, input, scratch string, lookups *lookup_scope) []pty_line_risk {
 	sess := pty_session_of(cmd, scratch)
 	var out []pty_line_risk
 	passwords := sess.passwords
@@ -53,7 +53,7 @@ func pty_input_risks(cmd, input, scratch string) []pty_line_risk {
 				continue
 			}
 		}
-		rc := &risk_ctx{scratch: scratch}
+		rc := &risk_ctx{scratch: scratch, lookups: lookups}
 		switch sess.kind {
 		case "shell":
 			rc.line(line)

@@ -239,7 +239,7 @@ func TestRedirectTargets(t *testing.T) {
 // reading: an unknown shell word is not known to be harmless.
 func TestPtyInputIsGated(t *testing.T) {
 	const scratch = "/tmp/servitor-abc123"
-	gated := func(cmd, input string) bool { return len(pty_input_risks(cmd, input, scratch)) > 0 }
+	gated := func(cmd, input string) bool { return len(pty_input_risks(cmd, input, scratch, nil)) > 0 }
 
 	for _, c := range []struct{ cmd, input string }{
 		{"bash", "rm -rf /var/lib/app"},
@@ -268,7 +268,7 @@ func TestPtyInputIsGated(t *testing.T) {
 		{"bash", "ps aux | grep nginx\nexit"},
 		{"redis-cli", "GET session:42\nINFO memory"},
 	} {
-		if risks := pty_input_risks(c.cmd, c.input, scratch); len(risks) > 0 {
+		if risks := pty_input_risks(c.cmd, c.input, scratch, nil); len(risks) > 0 {
 			t.Errorf("run_pty(%q, input %q) asked about %q (%v); it should not prompt", c.cmd, c.input, risks[0].line, risks[0].hits)
 		}
 	}

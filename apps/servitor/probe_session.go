@@ -405,7 +405,7 @@ func (pr *probeRun) sshExec(cmd string) (string, error) {
 // enforces — including with its `input` lines, which are commands typed into
 // an interactive session and are gated individually below.
 func (pr *probeRun) gateCommand(cmd string) error {
-	return pr.gateHits(cmd, assess_command(cmd, pr.scratch))
+	return pr.gateHits(cmd, assess_command(cmd, pr.scratch, lookup_scope_for(pr.appliance)))
 }
 
 // gateHits is the gate over an already-classified command: label is what the
@@ -652,7 +652,7 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 			// database write by another route, and used to pass as an
 			// unknown shell word. A password answer is let through unread
 			// and is never shown in a confirmation prompt.
-			for _, lr := range pty_input_risks(cmd, inputText, pr.scratch) {
+			for _, lr := range pty_input_risks(cmd, inputText, pr.scratch, lookup_scope_for(pr.appliance)) {
 				if err := pr.gateHits(lr.line, lr.hits); err != nil {
 					return "", err
 				}
@@ -1421,8 +1421,8 @@ func (pr *probeRun) reportTools() {
 			// since the run's scratch directory is gone by then. It used to
 			// register anything, which made it a way around every confirmation
 			// run_command asks for.
-			if cat, reason := classify_command_scoped(command, ""); cat != RiskNone {
-				return "", fmt.Errorf("a watch runs unattended every minute, so it can only run read-only commands; this one is %s (%s). Run it once with run_command instead, then watch with a read-only check", cat, reason)
+			if hits := assess_command(command, "", lookup_scope_for(pr.appliance)); len(hits) > 0 {
+				return "", fmt.Errorf("a watch runs unattended every minute, so it can only run read-only commands; this one is %s (%s). Run it once with run_command instead, then watch with a read-only check", hits[0].cat, hits[0].reason)
 			}
 			// The classifier is a denylist and misses things (it passes
 			// "systemctl restart"), so an unattended watch also has to be

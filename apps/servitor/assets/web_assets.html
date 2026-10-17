@@ -845,6 +845,20 @@
       var toolsOnlyIn = el('input', {type: 'checkbox'});
       toolsOnlyIn.checked = !!rec.tools_only;
       envIn.value = (rec.env_vars || []).join('\n');
+      // Lookup destinations: where ping, dig, traceroute and the like may go
+      // from this system without asking (lookup_scope.go). SSH and local
+      // command systems run commands; the other kinds do not.
+      var lookupIn = el('textarea', {class: 'ui-form-input', rows: 3,
+        placeholder: 'example.com\n10.20.0.0/16'});
+      lookupIn.value = (rec.lookup_allow || []).join('\n');
+      var lookupSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['Lookup destinations']), lookupIn,
+        el('div', {class: 'ui-form-hint'},
+          ['Where lookups (ping, dig, nslookup, host, traceroute, mtr, getent hosts) may go from this system without asking, one per line: ' +
+           'a domain (its subdomains come with it), an address, or a network like 10.20.0.0/16. ' +
+           'Private addresses, names with no dot, .local and .internal names, and the domain of this system\'s host are always included. ' +
+           'A lookup anywhere else asks first, because the name it sends can carry data off the system.']),
+      ]);
       var cmdSection = el('div', {class: 'ui-servitor-app-section'}, [
         el('label', {}, ['Command *']), cmdIn,
         el('div', {class: 'ui-form-hint'},
@@ -1351,6 +1365,7 @@
         typeWorkspace.classList.toggle('primary', t === 'workspace');
         sshSection.style.display = t === 'ssh' ? '' : 'none';
         cmdSection.style.display = t === 'command' ? '' : 'none';
+        lookupSection.style.display = (t === 'ssh' || t === 'command') ? '' : 'none';
         repoSection.style.display = t === 'repo' ? '' : 'none';
         bundleSection.style.display = t === 'bundle' ? '' : 'none';
         toolsetSection.style.display = t === 'toolset' ? '' : 'none';
@@ -1519,7 +1534,7 @@
 
       var body = el('div', {class: 'ui-pl-modal-body'}, [
         el('label', {}, ['Name *']), nameIn,
-        typeRow, sshSection, cmdSection, repoSection, bundleSection, toolsetSection, remoteSection, workspaceSection,
+        typeRow, sshSection, cmdSection, lookupSection, repoSection, bundleSection, toolsetSection, remoteSection, workspaceSection,
         el('label', {}, ['Custom Instructions']), instrIn,
         el('label', {}, ['Persona']),
         personaNameIn, personaPromptIn,
@@ -1546,6 +1561,7 @@
             command:        cmdIn.value.trim(),
             work_dir:       workIn.value.trim(),
             tools_only:     toolsOnlyIn.checked,
+            lookup_allow:   lookupIn.value.split('\n').map(function(s){return s.trim();}).filter(Boolean),
             env_vars:       envIn.value.split('\n').map(function(s){return s.trim();}).filter(Boolean),
             repo_url:       repoUrlIn.value.trim(),
             repo_branch:    repoBranchIn.value.trim(),

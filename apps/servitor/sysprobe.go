@@ -920,7 +920,7 @@ func (T *Servitor) Main() error {
 				return "", fmt.Errorf("command is required (or output_id to read on from a truncated result)")
 			}
 			// Every risk on the line must be allowed, not just the first.
-			cat, reason := risk_needing_approval(assess_command(cmd, scratch), T.cmd_allowed)
+			cat, reason := risk_needing_approval(assess_command(cmd, scratch, new_lookup_scope(T.input.host, nil)), T.cmd_allowed)
 			if cat != RiskNone {
 				if !T.confirm_cmd(cmd, reason, true) {
 					return "", fmt.Errorf("command denied by user")

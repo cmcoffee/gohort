@@ -144,7 +144,7 @@ func (T *Servitor) checkWatch(w ScheduledWatch) {
 	// Re-checked on every tick, not only when the watch was registered: a
 	// watch stored before registration was gated (or written some other
 	// way) would otherwise run unattended, every minute, with nobody asked.
-	if why := watchRunRefusal(w.Command); why != "" {
+	if why := watchRunRefusal(appliance, w.Command); why != "" {
 		Log("[servitor] watch %s on %s retired without running: %s", w.ID, w.ApplianceID, why)
 		w.Done = true
 		T.DB.Set(watchTable, w.ID, w)
@@ -165,9 +165,9 @@ func (T *Servitor) checkWatch(w ScheduledWatch) {
 // same two checks watch_condition makes at registration: the risk gate must
 // find nothing to ask about, and every command must be on the watch
 // allowlist.
-func watchRunRefusal(cmd string) string {
-	if cat, reason := classify_command_scoped(cmd, ""); cat != RiskNone {
-		return string(cat) + ": " + reason
+func watchRunRefusal(appliance Appliance, cmd string) string {
+	if hits := assess_command(cmd, "", lookup_scope_for(appliance)); len(hits) > 0 {
+		return string(hits[0].cat) + ": " + hits[0].reason
 	}
 	return watchCommandRefusal(cmd)
 }

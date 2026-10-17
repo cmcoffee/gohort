@@ -48,6 +48,11 @@ type Appliance struct {
 	// The minted tools are unaffected — executing one renders a template
 	// and runs it, and writes no memory at all.
 	ToolsOnly bool `json:"tools_only,omitempty"`
+	// LookupAllow is where ping, dig, traceroute and the other lookups may
+	// go from this system without asking: domains (with their subdomains),
+	// addresses and networks, on top of the built-in local ones and the
+	// domain of Host (lookup_scope.go). Anywhere else asks as net_egress.
+	LookupAllow []string `json:"lookup_allow,omitempty"`
 
 	// Command fields (Type == "command")
 	Command string   `json:"command"`  // local command name or path

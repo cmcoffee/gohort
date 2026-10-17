@@ -140,7 +140,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 		if err := gohortDataRefusal(appliance, cmd); err != nil {
 			return err
 		}
-		hits := assess_command(cmd, scratch)
+		hits := assess_command(cmd, scratch, lookup_scope_for(appliance))
 		if len(hits) == 0 {
 			return nil
 		}
