@@ -4283,11 +4283,13 @@ select.ui-orch-intake-input {
           };
           factsList.appendChild(addBtn);
         }
-        renderFacts();
+        // Loading until the notes arrive, not an empty list: an empty list
+        // while the request is out reads as an agent that remembers nothing.
+        factsList.appendChild(window.uiLoading('Loading notes'));
 
         fetch(factsURL).then(function(r){ return r.ok ? r.json() : null; })
           .then(function(d){
-            if (!d) return;
+            if (!d) { renderFacts(); return; }
             facts = (d.notes || []).slice();
             var fr = d.framing || {};
             if (fr.block_header) {
@@ -4299,7 +4301,7 @@ select.ui-orch-intake-input {
               factsHelp.textContent = fr.block_intro;
             }
             renderFacts();
-          }).catch(function(){ /* leave empty section on failure */ });
+          }).catch(function(){ renderFacts(); });
 
         // --- Working notes section (the update_notes block) ---
         // The agent rewrites this itself, unprompted, and it renders nearest
@@ -4524,6 +4526,7 @@ select.ui-orch-intake-input {
           });
         }
 
+        inferredList.appendChild(window.uiLoading('Loading findings'));
         fetch(inferredURL)
           .then(function(r){ return r.ok ? r.json() : null; })
           .then(function(d){ renderInferred(d ? d.items : []); })
@@ -4669,6 +4672,8 @@ select.ui-orch-intake-input {
           });
         }
 
+        // The graph can take a while on a large one; say it is coming.
+        graphList.appendChild(window.uiLoading('Loading the graph'));
         fetch(graphURL)
           .then(function(r){ return r.ok ? r.json() : null; })
           .then(function(d){ renderGraph(d || {}); })
