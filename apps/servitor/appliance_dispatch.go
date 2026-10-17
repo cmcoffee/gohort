@@ -185,7 +185,7 @@ func ApplianceToolDefs(sess *ToolSession, udb Database, userID, agentID string, 
 				Description: applianceToolDescription(tool, app),
 				Parameters:  describeScopedParams(userID, tool.Params, folders),
 				Required:    tool.Required,
-				Caps:        []Capability{CapWrite},
+				Caps:        tool.caps(app),
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return DispatchApplianceTool(WithActingAgent(sess.Context(), agentID), udb,
@@ -199,6 +199,27 @@ func ApplianceToolDefs(sess *ToolSession, udb Database, userID, agentID string, 
 // maxListedFolders caps how many names go into one parameter
 // description. A drop directory with a folder per ticket runs to
 // hundreds, and a tool description is prompt on every turn.
+// caps is what a system tool declares: read-only when it only reads, which
+// is what lets a monitor or await_result poll it (a poll runs every interval
+// with nobody there), and a write otherwise.
+func (t ApplianceTool) caps(appliance Appliance) []Capability {
+	if t.readsOnly(appliance) {
+		return []Capability{CapRead}
+	}
+	return []Capability{CapWrite}
+}
+
+// readsOnly reports whether a system tool only reads: approved as nothing to
+// ask about, and built only from the commands an unattended watch may run
+// (watchRunRefusal), with every value standing in as a plain word. Values are
+// shell-quoted when it runs, so they cannot change what the command is.
+func (t ApplianceTool) readsOnly(appliance Appliance) bool {
+	if t.Risk != RiskNone || strings.TrimSpace(t.Template) == "" {
+		return false
+	}
+	return watchRunRefusal(appliance, templatePlaceholder.ReplaceAllString(t.Template, "x")) == ""
+}
+
 const maxListedFolders = 40
 
 // describeScopedParams returns a copy of params with each path-scoped

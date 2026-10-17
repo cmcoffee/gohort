@@ -1728,7 +1728,11 @@ func (pr *probeRun) assembleToolkit() {
 			pr.newRunTool(), pr.read_log_tool, pr.search_logs_tool,
 			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
 			pr.count_lines_tool, pr.read_range_tool,
-			pr.watch_condition_tool, pr.list_watches_tool, pr.save_to_codewriter_tool, pr.save_to_scribe_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
+			// No watch_condition: waiting on a system is a monitor's job now
+			// (an agent with the system as a Source polls one of its read-only
+			// tools, and is woken). Watches already registered run out within
+			// maxWatchMinutes, so list_watches stays until they have.
+			pr.list_watches_tool, pr.save_to_codewriter_tool, pr.save_to_scribe_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		}
 		// run_pty is the one tool that needs the ssh.Client itself rather than
 		// an exec function, so it is the one tool the peer transport cannot

@@ -36,7 +36,13 @@ gets none of that). Agents and file stores now give all of those things themselv
 
 Retired: local command (v0.8.330, replaced by file store commands), tool-backed service (v0.8.331,
 replaced by an agent's own tools and MCP), workspace and evidence bundle (v0.8.335, replaced by
-an agent's Sources and file store evidence).
+an agent's Sources and file store evidence). Also retired: the investigator's **watches** (v0.8.339). `watch_condition`
+polled a read-only command every minute until a pattern showed up, for up to a day, and saved the
+result quietly for the next session. An agent with the system as a Source now waits with
+`await_result`, or a watch monitor, on one of the system's own tools, and is woken: a system tool
+approved as nothing to ask about and built only from the commands a watch could run declares
+itself read-only (CapRead), and a monitor polls only a Source tool that does. Watches already
+registered run out within the day; the loop and its table go in stage 4.
 
 ## What each one becomes
 

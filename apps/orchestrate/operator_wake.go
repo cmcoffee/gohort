@@ -17,6 +17,7 @@ package orchestrate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -60,6 +61,44 @@ func monitorWakeMessage(m EventMonitor, monitorName, summary, brief string) stri
 		msg += "\n\n" + block
 	}
 	return msg
+}
+
+// errWatchToolMakesChanges refuses a tool a monitor would poll that declares
+// it makes changes. Creating the monitor says so at once, rather than the
+// monitor failing every interval until it is parked.
+var errWatchToolMakesChanges = errors.New("a monitor runs its tool every interval with nobody there, so it can only watch a tool that only reads")
+
+// providedWatchTool finds toolName among what the agent's Sources and apps
+// give it, refusing one that does not declare it only reads.
+func providedWatchTool(sess *ToolSession, owner, agentID, toolName string) (AgentToolDef, bool, error) {
+	if agentID == "" {
+		return AgentToolDef{}, false, nil
+	}
+	for _, td := range AgentProvidedTools(sess, owner, agentID) {
+		if td.Tool.Name != toolName {
+			continue
+		}
+		if !watchableTool(td) {
+			return td, true, fmt.Errorf("%w: %s can make changes", errWatchToolMakesChanges, toolName)
+		}
+		return td, true, nil
+	}
+	return AgentToolDef{}, false, nil
+}
+
+// watchableTool reports whether a provided tool declares that it only reads.
+// One that declares nothing is not taken to.
+func watchableTool(td AgentToolDef) bool {
+	reads := false
+	for _, c := range td.Tool.Caps {
+		switch c {
+		case CapRead:
+			reads = true
+		case CapWrite, CapExecute:
+			return false
+		}
+	}
+	return reads && !td.NeedsConfirm
 }
 
 // wakeCardText is what a monitor's wake leaves in the thread: the card a watch
@@ -488,6 +527,17 @@ func registerOperatorWake(app *OrchestrateApp) {
 			if td.Tool.Name == toolName {
 				return td.Handler(sess.Context(), toolArgs)
 			}
+		}
+		// (4) what the agent's Sources and apps give it: a Servitor system's
+		// own tools, say, which is how an agent waits on a backup or a restart
+		// it started there. Only one that declares it only reads: a poll runs
+		// every interval with nobody there, so one that makes changes would
+		// make them every minute.
+		if td, found, err := providedWatchTool(sess, owner, agentID, toolName); found {
+			if err != nil {
+				return "", err
+			}
+			return td.Handler(sess.Context(), toolArgs)
 		}
 		return "", ErrWatchToolNotHandled
 	})

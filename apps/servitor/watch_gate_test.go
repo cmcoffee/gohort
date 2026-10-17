@@ -5,6 +5,7 @@ package servitor
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -102,6 +103,44 @@ func TestAWatchRefusesALookupThatCarriesData(t *testing.T) {
 	for _, cmd := range []string{"dig +short db01.corp.example.com", "ping -c1 10.0.0.1", "ping -c1 203.0.113.9"} {
 		if why := watchRunRefusal(sys, cmd); why != "" {
 			t.Errorf("%q is refused as a watch: %s", cmd, why)
+		}
+	}
+}
+
+// Waiting on a system is a monitor's job now: the investigator is no longer
+// offered watch_condition, and a system tool that only reads says so, which
+// is what lets a monitor poll it.
+func TestASystemToolThatOnlyReadsCanBeWatched(t *testing.T) {
+	sys := Appliance{ID: "a1", Type: "ssh"}
+	for _, c := range []struct {
+		tool  ApplianceTool
+		reads bool
+	}{
+		{ApplianceTool{Template: "systemctl is-active {unit}", Risk: RiskNone}, true},
+		{ApplianceTool{Template: "tail -n 50 /var/log/backup.log", Risk: RiskNone}, true},
+		{ApplianceTool{Template: "systemctl restart {unit}", Risk: RiskSysControl}, false},
+		// Approved as nothing to ask about, but not built from read-only
+		// commands alone: not watchable.
+		{ApplianceTool{Template: "myapp-cli sync {target}", Risk: RiskNone}, false},
+		{ApplianceTool{Template: "", Risk: RiskNone}, false},
+	} {
+		caps := c.tool.caps(sys)
+		if got := len(caps) == 1 && caps[0] == CapRead; got != c.reads {
+			t.Errorf("%q declares %v", c.tool.Template, caps)
+		}
+	}
+}
+
+func TestTheInvestigatorIsNotOfferedWatchCondition(t *testing.T) {
+	src, err := os.ReadFile("probe_session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(src), "\n") {
+		if strings.Contains(line, "pr.workerTools") || strings.HasPrefix(strings.TrimSpace(line), "pr.") {
+			if strings.Contains(line, "pr.watch_condition_tool,") {
+				t.Errorf("watch_condition is still in a worker toolkit: %s", strings.TrimSpace(line))
+			}
 		}
 	}
 }

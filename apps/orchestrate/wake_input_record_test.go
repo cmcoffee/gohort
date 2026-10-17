@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -157,5 +158,36 @@ func TestAWakeWithoutAWatchCardShowsTheFinding(t *testing.T) {
 	}, prompt, time.Now())
 	if got.Content != found || strings.Contains(got.Content, "What to do") || strings.Contains(got.Content, "React in this thread") {
 		t.Errorf("the card carried the wake prompt: %q", got.Content)
+	}
+}
+
+// A monitor can poll a tool the agent's Sources give it, such as a Servitor
+// system's, but only one that declares it only reads: a poll runs every
+// interval with nobody there.
+func TestAMonitorPollsOnlyASourceToolThatReads(t *testing.T) {
+	// Providers cannot be unregistered, so this one answers only its own owner
+	// and stays out of every other test's agents.
+	const owner = "watch-test-owner"
+	RegisterAgentToolProvider("test.watchable", func(sess *ToolSession, o, agentID string) []AgentToolDef {
+		if o != owner {
+			return nil
+		}
+		return []AgentToolDef{
+			{Tool: Tool{Name: "backup_status", Caps: []Capability{CapRead}}},
+			{Tool: Tool{Name: "restart_app", Caps: []Capability{CapWrite}}},
+			{Tool: Tool{Name: "says_nothing"}},
+		}
+	})
+	sess := &ToolSession{Username: owner, AgentID: "ag"}
+	if _, found, err := providedWatchTool(sess, owner, "ag", "backup_status"); !found || err != nil {
+		t.Errorf("a read-only Source tool could not be watched: %v %v", found, err)
+	}
+	for _, name := range []string{"restart_app", "says_nothing"} {
+		if _, found, err := providedWatchTool(sess, owner, "ag", name); !found || !errors.Is(err, errWatchToolMakesChanges) {
+			t.Errorf("%s was watchable: %v %v", name, found, err)
+		}
+	}
+	if _, found, _ := providedWatchTool(sess, owner, "", "backup_status"); found {
+		t.Error("found with no agent to ask")
 	}
 }

@@ -1641,7 +1641,11 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					// Seed the change baseline now from a known-good probe, so the
 					// first poll detects a REAL change instead of firing on the
 					// initial content.
-					if body, perr := InvokeWatchTool(owner, m.WakeAgent, m.ToolName, m.ToolArgs); perr == nil {
+					body, perr := InvokeWatchTool(owner, m.WakeAgent, m.ToolName, m.ToolArgs)
+					if errors.Is(perr, errWatchToolMakesChanges) {
+						return "", perr
+					}
+					if perr == nil {
 						m.LastHash = HashWatcherBody(body)
 					}
 					SaveEventMonitor(RootDB, m)
@@ -1689,7 +1693,7 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 		{
 			Tool: Tool{
 				Name:        "await_result",
-				Description: "Wait for a DEFERRED result without blocking or hand-polling. Use this whenever a step's result arrives LATER (a contact's reply, a phone call's outcome, an external job you kicked off), instead of looping on the tool yourself round after round. It runs `tool_name` in the background every interval and WAKES you here exactly once, the moment that tool's output CHANGES from now, then removes itself. END your turn right after calling it; you'll be re-woken with the result and continue the plan from there. This is the right move whenever you set something in motion whose answer comes back on someone else's schedule. Examples: after message_contact(\"Alex\", \"...questions...\"), call await_result(tool_name=\"read_chat\", tool_args={\"chat_id\":\"<Alex's chat>\"}, note=\"Alex's answers, then draft the spec and email it to the owner\") to resume when he replies; after placing a call, await_result on the call-status tool to resume when the call reports back.",
+				Description: "Wait for a DEFERRED result without blocking or hand-polling. Use this whenever a step's result arrives LATER (a contact's reply, a phone call's outcome, an external job you kicked off), instead of looping on the tool yourself round after round. It runs `tool_name` in the background every interval and WAKES you here exactly once, the moment that tool's output CHANGES from now, then removes itself. END your turn right after calling it; you'll be re-woken with the result and continue the plan from there. This is the right move whenever you set something in motion whose answer comes back on someone else's schedule. Examples: after message_contact(\"Alex\", \"...questions...\"), call await_result(tool_name=\"read_chat\", tool_args={\"chat_id\":\"<Alex's chat>\"}, note=\"Alex's answers, then draft the spec and email it to the owner\") to resume when he replies; after placing a call, await_result on the call-status tool to resume when the call reports back; after starting a backup or a restart on a system in your Sources, await_result on that system's read-only status tool. A tool that can make changes cannot be awaited.",
 				Parameters: map[string]ToolParam{
 					"tool_name":        {Type: "string", Description: "The tool polled each interval to detect the result: e.g. \"read_chat\" for a reply, a call-status tool for a call's outcome. Its output is hashed; you're woken when it changes. Must be a tool you can already call."},
 					"tool_args":        {Type: "object", Description: "Arguments passed to tool_name every check, e.g. {\"chat_id\":\"any;+;chat123\"}. Use the same args you'd pass calling it directly."},
@@ -1738,7 +1742,11 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 				// Seed the change-baseline from a probe NOW, so only a change AFTER
 				// this call wakes you — not the current content. Best-effort: if the
 				// probe fails, the first successful poll seeds it instead.
-				if body, perr := InvokeWatchTool(owner, agentID, toolName, toolArgs); perr == nil {
+				body, perr := InvokeWatchTool(owner, agentID, toolName, toolArgs)
+				if errors.Is(perr, errWatchToolMakesChanges) {
+					return "", perr
+				}
+				if perr == nil {
 					m.LastHash = HashWatcherBody(body)
 				}
 				SaveEventMonitor(RootDB, m)
