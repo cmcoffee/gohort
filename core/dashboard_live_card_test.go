@@ -222,3 +222,12 @@ func TestACardDescriptionIsHeldToTwoLines(t *testing.T) {
 		t.Error("the card should carry its whole description as its title")
 	}
 }
+
+// A live row on the dashboard goes back to the work itself, as the live pill
+// does, and to the Monitor only when the work has no page of its own. Every
+// row used to open the Monitor, so a running debate's row never led to it.
+func TestALiveRowOpensTheWorkItself(t *testing.T) {
+	if src := dashboardPageSource(t); !strings.Contains(src, "esc(it.href || '/monitor')") {
+		t.Error("a live row does not link to the work's own page")
+	}
+}

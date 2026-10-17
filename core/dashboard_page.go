@@ -773,8 +773,10 @@ function refreshLive() {
       var badge = it.queued ? '<span class="live-badge queued">Queued</span>' : '<span class="live-badge running">Running</span>';
       var app = it.app ? '<span class="live-badge" style="background:var(--bg-2);color:var(--text-mute)">' + esc(it.app) + '</span>' : '';
       var label = it.topic || it.label || 'Untitled';
-      // Every live item opens the central Monitor page (the expanded view).
-      html += '<a class="live-item" href="/monitor" title="' + esc(label) + '">';
+      // Back to the work itself, as the live pill goes: /api/live resolves
+      // where (the run's own page, if this viewer may open it). The Monitor
+      // is for work with no page of its own.
+      html += '<a class="live-item" href="' + esc(it.href || '/monitor').replace(/"/g, '&quot;') + '" title="' + esc(label).replace(/"/g, '&quot;') + '">';
       html += app + badge;
       html += '<span class="live-label">' + esc(label) + '</span>';
       if (it.status) html += '<span class="live-status">' + esc(it.status) + '</span>';
