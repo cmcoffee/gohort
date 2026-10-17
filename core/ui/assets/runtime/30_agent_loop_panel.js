@@ -2512,9 +2512,32 @@
     // decides whether to act on each one. Used today by the intake
     // form to swap an intake-derived user message's body for the
     // re-editable form widget.
-    window.uiRegisterMessageReplayHook = function(fn) {
-      if (typeof fn === 'function') messageReplayHooks.push(fn);
-    };
+    window.uiRegisterMessageReplayHook = registerReplayHook;
+    // registerReplayHook also decorates what is on screen already. An app's
+    // hook waits for this function to exist and then registers, and on a fast
+    // reload (a desktop app on a local server) the thread came back and was
+    // replayed first: its cards drew as plain bubbles, while cards arriving
+    // later were decorated. Hooks are idempotent, as the replay already
+    // requires of them, so running one over a bubble twice is harmless.
+    function registerReplayHook(fn) {
+      if (typeof fn !== 'function') return;
+      messageReplayHooks.push(fn);
+      Object.keys(msgEls).forEach(function(mid) {
+        var e = msgEls[mid];
+        if (e && e.bubble && e.replayMsg) { try { fn(e.bubble, e.replayMsg); } catch (_) { /* isolate */ } }
+      });
+    }
+    // runReplayHooks runs the app hooks on a replayed message's bubble, and
+    // keeps the message with it for a hook that registers later.
+    function runReplayHooks(mid, m) {
+      var entry = msgEls[mid];
+      var bubble = entry && entry.bubble;
+      if (!bubble) return;
+      entry.replayMsg = m;
+      messageReplayHooks.forEach(function(fn) {
+        try { fn(bubble, m); } catch (e) { /* isolate */ }
+      });
+    }
 
     // uiRenderMessageImage paints an image under a message bubble the same
     // way a live tool-delivered one is painted — same attachment box, same
@@ -6374,10 +6397,7 @@
       if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
       if (m.created || m.usage || m.report_from || m.mark || m.retracted || m.label) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, label: m.label});
       applyPersistedToolCalls(mid, m);
-      if (messageReplayHooks.length) {
-        var entry = msgEls[mid], bubble = entry && entry.bubble;
-        if (bubble) messageReplayHooks.forEach(function(fn) { try { fn(bubble, m); } catch (e) {} });
-      }
+      runReplayHooks(mid, m);
     }
     // startReportPolling — while a thread is open, re-fetch it and render any
     // NEW report cards (report_from set) live — anything the server posts to
@@ -7241,15 +7261,7 @@
             // body for the re-editable form widget). Each hook decides
             // by inspecting m. Failures isolated per-hook so one bad
             // app doesn't break replay.
-            if (messageReplayHooks.length) {
-              var entry = msgEls[mid];
-              var bubble = entry && entry.bubble;
-              if (bubble) {
-                messageReplayHooks.forEach(function(fn) {
-                  try { fn(bubble, m); } catch (e) { /* isolate */ }
-                });
-              }
-            }
+            runReplayHooks(mid, m);
           });
         }
         // Replay persisted UI blocks — session-level artifacts (dashboards
