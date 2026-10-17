@@ -120,6 +120,24 @@ func NeedsAttribution(p MemoryProvenance) bool {
 	return true
 }
 
+// FromPrincipalsConversation reports a claim the principal made in their own
+// conversation: typed into the memory editor, or written down by the agent
+// from what they said. Saying it back to that same person is not passing on
+// hearsay, so the grounding judge leaves it alone on a reply to them (see
+// chatTurn.uncheckedClaims). Recall still marks it: it is no more checked
+// than before, only no longer news to the one hearing it.
+//
+// Observed is in because that is how the agent's own store_fact records what
+// it heard. It is also how it records what it worked out, and a note does not
+// say which, so a conclusion the agent wrote down in that conversation is let
+// through with the rest.
+func FromPrincipalsConversation(p MemoryProvenance) bool {
+	if !p.speakerIsPrincipal() {
+		return false
+	}
+	return p.Source == MemSourceUserStated || p.Source == MemSourceObserved
+}
+
 // AttributionPhrase renders HOW a claim reached memory, so the marker says
 // something true rather than blaming the user for the model's own inference.
 func AttributionPhrase(src MemSource) string {

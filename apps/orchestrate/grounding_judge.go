@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/provenance"
 )
 
 // groundingJudgeSysPrompt is deliberately narrow. A judge given "is this reply
@@ -67,9 +68,12 @@ func (T *OrchestrateApp) judgeTurnGrounding(ctx context.Context, ev TurnGroundin
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "THE REPLY:\n%s\n", truncateObs(strings.TrimSpace(ev.Reply), 2000))
 
+	// Temperature 0: at the server's default the same harmless reply was
+	// convicted about one time in four, so whether a correction appeared was
+	// a coin the user could see being tossed.
 	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: b.String()}},
 		WithSystemPrompt(groundingJudgeSysPrompt), WithJSONMode(),
-		WithRouteKey("app.orchestrate.worker"), WithThink(false))
+		WithRouteKey("app.orchestrate.worker"), WithThink(false), WithTemperature(0))
 	if err != nil {
 		Debug("[grounding-judge] LLM error: %v, no opinion", err)
 		return TurnGroundingVerdict{}, false
@@ -104,6 +108,29 @@ func (T *OrchestrateApp) judgeTurnGrounding(ctx context.Context, ev TurnGroundin
 	}
 	Log("[grounding-judge] ASSERTED: %q traces to unverified note %q", truncateObs(claim, 100), truncateObs(basis, 100))
 	return TurnGroundingVerdict{Asserted: true, Claim: claim, Basis: basis}, true
+}
+
+// uncheckedClaims is the judge's scope for this turn's reply: the notes recall
+// marked as unchecked, less, when the reply goes to the person whose notes
+// they are, the ones that person told the agent. "Given you're running X",
+// said to the one who said they run X, was convicted and corrected as though
+// it were a rumour. Notes from anyone else, and anything the agent concluded
+// by other means, stay in scope.
+//
+// Only an interactive turn in the user's own memory qualifies. A channel turn
+// may be a room, and a turn with an owner's notes underneath is someone else
+// hearing them, so both keep every marked note in scope.
+func (t *chatTurn) uncheckedClaims(facts []MemoryFact) []string {
+	if t == nil || t.requesterChannel != "" || t.requesterHandle != "" || t.memoryUnderlay() != "" {
+		return UncheckedFactNotes(facts)
+	}
+	var out []string
+	for _, f := range facts {
+		if NeedsAttribution(f.MemoryProvenance) && !provenance.FromPrincipalsConversation(f.MemoryProvenance) {
+			out = append(out, f.Note)
+		}
+	}
+	return out
 }
 
 // turnGroundingJudge binds the app + context into the loop's judge slot, and

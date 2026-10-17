@@ -2329,7 +2329,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// rather than by two reads agreeing about a condition either could
 		// forget. (facts() now enforces incognito itself, so a second read would
 		// agree today — the point stands for whatever the next condition is.)
-		UncheckedClaims:    UncheckedFactNotes(pr.facts),
+		UncheckedClaims:    t.uncheckedClaims(pr.facts),
 		DeliveredCount:     func() int { return len(pr.sess.Images) + len(pr.sess.Videos) + len(pr.sess.Files) + pr.bgSent.files() },
 		Backgrounded:       func() bool { return pr.sess.Detach.Any() },
 		BackgroundEstimate: func() string { return pr.sess.Detach.EstimateText() },

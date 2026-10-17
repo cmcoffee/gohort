@@ -417,7 +417,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// memory block marked unchecked, so a turn holding none never reaches a
 		// model call. See grounding_judge.go.
 		TurnGroundingJudge: t.app.turnGroundingJudge(t.ctx),
-		UncheckedClaims:    UncheckedFactNotes(t.facts()),
+		UncheckedClaims:    t.uncheckedClaims(t.facts()),
 		DeliveredCount:     func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
 		Backgrounded:       func() bool { return sess.Detach.Any() },
 		BackgroundEstimate: func() string { return sess.Detach.EstimateText() },
