@@ -49,8 +49,7 @@ func targetAcceptsDispatch(owner string, caller, target AgentRecord) string {
 	// holds whatever route reached it. This was already honoured by the
 	// Operator's delegate tool and by agents(run), and by neither of the two
 	// routes below - "blocked" governed the surfaces that thought to ask.
-	if IsDelegationBlocked(RootDB, owner, caller.ID, target.Name) ||
-		IsDelegationBlocked(RootDB, owner, caller.ID, target.ID) {
+	if p, ok := delegationDecisionFor(owner, caller.ID, target, ""); ok && p == PolicyBlock {
 		return fmt.Sprintf("delegation to %q is BLOCKED in the user's permission settings, so this call was refused. "+
 			"Do NOT retry and do NOT route around it; only the user can change this in the Permissions pane.", agentName(target))
 	}

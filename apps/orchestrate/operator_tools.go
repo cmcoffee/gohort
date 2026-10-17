@@ -933,7 +933,7 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 		{
 			Tool: Tool{
 				Name:        "delegate",
-				Description: "Delegate a task to an existing agent: this is how you DO work (you are a controller, you delegate rather than acting directly). If the agent is pre-authorized the delegation runs now and you get the result; otherwise it's queued for the user's approval in the Authorizations pane and you tell them it's waiting.",
+				Description: "Delegate a task to an existing agent: this is how you DO work (you are a controller, you delegate rather than acting directly). It runs now and you get the result, unless the user set that agent to Ask: then it's queued for their approval in the Authorizations pane and you tell them it's waiting.",
 				Parameters: map[string]ToolParam{
 					"agent": {Type: "string", Description: "Name or id of the existing agent to delegate to."},
 					"brief": {Type: "string", Description: "What the agent should do."},
@@ -949,10 +949,31 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 				); err != nil {
 					return "", err
 				}
-				if IsDelegationBlocked(RootDB, owner, controllerAgentID, agent) {
+				// The same checks agents(run) makes, when the turn has them
+				// (chatTurn.gateDelegate): dispatch policy, what the target
+				// accepts, sub-agent privacy, cycles. Without a turn there is
+				// nothing to check against, so only an explicit Allow runs it.
+				gate := delegateGateFrom(ctx)
+				var target AgentRecord
+				if gate != nil {
+					rec, err := gate(agent, brief)
+					if err != nil {
+						return "Not delegated: " + strings.TrimPrefix(err.Error(), "agents(run): "), nil
+					}
+					target = rec
+				} else if rec, ok := findAgentByNameOrID(UserDB(orchestrateBaseDB, owner), owner, agent); ok {
+					target = rec
+				}
+				policy, decided := delegationDecisionFor(owner, controllerAgentID, target, agent)
+				if decided && policy == PolicyBlock {
 					return fmt.Sprintf("Delegation to %q is blocked in the user's permission settings: not run.", agent), nil
 				}
-				if IsDelegationPreAuthorized(RootDB, owner, controllerAgentID, agent) {
+				// Run by id, which names one agent; say it by name.
+				runKey := agent
+				if target.ID != "" {
+					runKey, agent = target.ID, chFirst(target.Name, agent)
+				}
+				if (decided && policy == PolicyAllow) || (gate != nil && !decided) {
 					// Root the delegation in the PARENT TURN'S context (sess.Context())
 					// so a Stop / cancel of the chat turn also cancels this outgoing
 					// agent call — previously it ran on context.Background() and kept
@@ -967,7 +988,7 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					// And this call's card, so the delegated run's progress
 					// shows on it (dispatch_progress.go).
 					dctx = withToolCard(dctx, toolCardFrom(ctx))
-					rec := RunDelegation(dctx, RootDB, owner, agent, brief, controllerAgentID)
+					rec := RunDelegation(dctx, RootDB, owner, runKey, brief, controllerAgentID)
 					if rec.Status == RunFailed {
 						return fmt.Sprintf("Delegated to %q but it failed: %s", agent, rec.Err), nil
 					}
@@ -975,7 +996,7 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					if out == "" {
 						out = strings.TrimSpace(rec.Raw)
 					}
-					return fmt.Sprintf("Delegated to %q (pre-authorized).%s Result:\n%s", agent, privateDelegationNote(dctx, true), out), nil
+					return fmt.Sprintf("Delegated to %q.%s Result:\n%s", agent, privateDelegationNote(dctx, true), out), nil
 				}
 				// FromAgent rides the queued record so an APPROVED delegation runs
 				// with the same channel reach a pre-authorized one gets — the user

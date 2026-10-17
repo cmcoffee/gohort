@@ -168,11 +168,17 @@ func delegationScopeKey(owner, from, target string) string {
 	return owner + ":" + from + "\x00" + strings.TrimSpace(target)
 }
 
-// IsDelegationPreAuthorized reports whether the user has granted standing
-// authorization for the Operator to delegate to this agent (model A: authorize
-// the pattern). When true, a delegation runs immediately instead of queuing.
-func IsDelegationPreAuthorized(db Database, owner, from, agent string) bool {
-	return DelegationPolicy(db, owner, from, agent) == PolicyAllow
+// DelegationDecision is the decision recorded for exactly this scope (from ""
+// is every agent), and whether there is one. Unlike DelegationPolicy it falls
+// back neither to the all-agents row nor to the ask default, so a caller that
+// reads one agent under several keys (its id, then the name a grant written
+// before grants were keyed by id carries) orders the lookups itself, and can
+// tell "never decided" from a decision to ask.
+func DelegationDecision(db Database, owner, from, agent string) (string, bool) {
+	if db == nil {
+		return "", false
+	}
+	return storedDelegationPolicy(db, delegationScopeKey(owner, from, agent))
 }
 
 // SetDelegationPreAuthorized grants or clears the legacy allow flag for one
@@ -312,7 +318,7 @@ func DelegationPolicy(db Database, owner, from, agent string) string {
 }
 
 // SetDelegationPolicy records the standing policy and keeps the legacy preauth
-// flag in sync (so ListDelegationPreAuthorizations / IsDelegationPreAuthorized
+// flag in sync (so ListDelegationPreAuthorizations / DelegationDecision
 // stay correct without every caller learning about policies).
 func SetDelegationPolicy(db Database, owner, from, agent, policy string) {
 	if db == nil || strings.TrimSpace(agent) == "" {

@@ -877,6 +877,8 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	subTurn.beginDispatchDiag(target.ID, subSessID)
 	subTurn.noteAuthoringWithheld(authoringWithheld)
 	tools = append(tools, extraTools...)
+	// delegate runs without asking only where agents(run) would.
+	tools = subTurn.gateDelegate(tools)
 	// Caller-injected per-run tools, the positional twin of AgentSyncRun.AppTools
 	// on the continuing path. After the whole catalog so the caller's name wins a
 	// collision with the agent's own, and mirrored onto subTurn so custom-tool
@@ -1821,6 +1823,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		subSess.SpeakerIsOwner = subTurn.requesterOwnerHandle
 	}
 	tools = append(tools, extraTools...)
+	// delegate runs without asking only where agents(run) would.
+	tools = subTurn.gateDelegate(tools)
 	// Caller-injected per-instance tools (e.g. an app's appliance-bound closures
 	// passed via AgentSyncRun.AppTools / RunScopedAgent). Mirror onto subTurn so
 	// custom-tool resolution (lazyToolFallback) sees them too.

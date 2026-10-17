@@ -110,10 +110,10 @@ func TestDelegationGrantsAreScopedToTheAgentDelegating(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	SetDelegationPolicy(db, "alice", "conductor", "invoices", PolicyAllow)
 
-	if !IsDelegationPreAuthorized(db, "alice", "conductor", "invoices") {
+	if p, _ := DelegationDecision(db, "alice", "conductor", "invoices"); p != PolicyAllow {
 		t.Error("the agent that was granted cannot delegate")
 	}
-	if IsDelegationPreAuthorized(db, "alice", "stranger", "invoices") {
+	if p, _ := DelegationDecision(db, "alice", "stranger", "invoices"); p == PolicyAllow {
 		t.Error("another agent spent a delegation grant it was never given")
 	}
 }

@@ -332,7 +332,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		if !t.agent.Fleet {
 			rec = t
 		}
-		om := operatorManagementToolsFor(sess, t.agent.ID, rec)
+		om := t.gateDelegate(operatorManagementToolsFor(sess, t.agent.ID, rec))
 		// No standalone history pair: `recall` spans folded-away history, and
 		// two tools that search the past is the choice the collapse removed.
 		tools = append(tools, om...)

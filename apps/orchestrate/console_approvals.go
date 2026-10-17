@@ -213,7 +213,9 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		// TARGET, so the contact path's fallback would write a grant scoped to
 		// the very agent being delegated to. A legacy record with no requester
 		// falls back to all agents rather than losing the owner's yes.
-		SetDelegationPreAuthorized(RootDB, user, strings.TrimSpace(a.FromAgent), a.Agent, true)
+		// Under the agent's id, which a rename or another spelling of its
+		// name does not change (delegation_grants.go).
+		SetDelegationPreAuthorized(RootDB, user, strings.TrimSpace(a.FromAgent), delegationGrantKey(user, a.Agent), true)
 	}
 	// a.FromAgent (captured when the delegation was queued) keeps an approved
 	// delegation's channel reach identical to a pre-authorized one's. Empty on

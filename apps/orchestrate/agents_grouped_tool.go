@@ -273,6 +273,9 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 				// with tools, and one of them may delegate to an agent.
 				return fenceAgentsOutput(t.agentsRunMachineActionFor(toolCardFrom(ctx), args))
 			}
+			if queued, ok := t.queueAskedDispatch(ctx, args); ok {
+				return queued, nil
+			}
 			return fenceAgentsOutput(t.agentsRunActionFor(toolCardFrom(ctx), args))
 		case "run_tool":
 			if !allowRunTool {
@@ -1256,6 +1259,8 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	poolDB, poolUser := subTurn.ownerView()
 	dispatchExtra, customToolPrompt := subTurn.dispatchExtraTools(subSess, poolUser, poolDB)
 	tools = append(tools, dispatchExtra...)
+	// delegate runs without asking only where agents(run) would.
+	tools = subTurn.gateDelegate(tools)
 	// Parent-tool inheritance on the DISPATCH path (this resolves tools directly,
 	// not via resolveWorkerTools, so the runtime block there wouldn't fire here).
 	// An owned sub-agent that opted in pulls its parent's non-consequential

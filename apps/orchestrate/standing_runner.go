@@ -51,6 +51,12 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// id-only lookup entirely: ok came back false and the approval hold was
 		// skipped without a word. A gate that holds or not depending on how the
 		// target was spelled is not a gate.
+		//
+		// And resolved ONCE, here, for everything below. The unattended gate
+		// reads the agent's "never unattended" marks and its auto-approved
+		// tools by id, so handed a name it found no agent and applied neither:
+		// a delegated run skipped the marks its target was given.
+		sa.AgentID = resolvedAgentID(UserDB(app.DB, sa.Owner), sa.Owner, sa.AgentID)
 		if rec, ok := findAgentByNameOrID(UserDB(app.DB, sa.Owner), sa.Owner, sa.AgentID); ok && rec.PendingApproval {
 			return StandingRunResult{
 				Status:  RunAttention,

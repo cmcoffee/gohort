@@ -280,7 +280,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 			available = append(available, a)
 			continue
 		}
-		if IsDelegationBlocked(RootDB, fleetUser, t.agent.ID, a.Name) || IsDelegationBlocked(RootDB, fleetUser, t.agent.ID, a.ID) {
+		if p, ok := delegationDecisionFor(fleetUser, t.agent.ID, a, ""); ok && p == PolicyBlock {
 			continue
 		}
 		// A sub-agent owned by ANOTHER agent is private to its owner — never surface
