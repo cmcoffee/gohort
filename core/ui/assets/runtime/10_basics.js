@@ -1564,6 +1564,25 @@
       });
     }
 
+    // cpGroups is an attach list's rows as groups: those matching the search
+    // (every word, anywhere in the row's text), each group's rows in the order
+    // they came, and the smaller groups first, so a kind with two entries is
+    // not left below one with twenty. groupOf null is one unnamed group.
+    function cpGroups(rows, groupOf, textOf, query) {
+      var words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+      var order = [], byLabel = {};
+      rows.forEach(function(o){
+        var g = groupOf ? groupOf(o) : '';
+        if (words.length) {
+          var hay = (g + ' ' + textOf(o)).toLowerCase();
+          if (!words.every(function(w){ return hay.indexOf(w) >= 0; })) return;
+        }
+        if (!byLabel[g]) { byLabel[g] = {label: g, rows: [], at: order.length}; order.push(byLabel[g]); }
+        byLabel[g].rows.push(o);
+      });
+      return order.sort(function(a, b){ return (a.rows.length - b.rows.length) || (a.at - b.at); });
+    }
+
     // --- attach mode: selected-as-pills + "+ Add" reveal-list ---
     function renderAttach(options, selected, persist) {
       if (cfg.intro) wrap.appendChild(el('div', {class: 'ui-cp-intro', text: cfg.intro}));
@@ -1663,7 +1682,9 @@
         var meta = el('div', {class: 'ui-cp-row-meta'});
         meta.appendChild(el('div', {class: 'ui-cp-name', text: labelOf(opt)}));
         var desc = (opt[descField] || '').trim();
-        if (desc) { if (desc.length > 200) desc = desc.slice(0, 200) + '…'; meta.appendChild(el('div', {class: 'ui-cp-desc', text: desc})); }
+        // Two lines at most (the stylesheet clamps it), the whole of it on
+        // hover: a long description made every row of a big group tall.
+        if (desc) { var full = desc; if (desc.length > 200) desc = desc.slice(0, 200) + '…'; meta.appendChild(el('div', {class: 'ui-cp-desc', text: desc, title: full})); }
         var bits = [];
         (cfg.meta_fields || []).forEach(function(k){ if (opt[k] != null) bits.push(opt[k] + ' ' + k); });
         if (bits.length) meta.appendChild(el('div', {class: 'ui-cp-metaline', text: bits.join(' - ')}));
@@ -1673,26 +1694,59 @@
         host.appendChild(row);
       }
 
+      // The list keeps its search box across redraws (a redraw on every add
+      // would otherwise take the box, and its focus, with it); only the rows
+      // under it are redrawn.
+      var query = '', listBody = el('div', {class: 'ui-cp-list-body'});
+      if (pool.length > 10) {
+        var search = el('input', {type: 'search', class: 'ui-cp-search', placeholder: 'Search by name or description'});
+        search.addEventListener('input', function(){ query = search.value; renderRows(); });
+        listWrap.appendChild(search);
+      }
+      listWrap.appendChild(listBody);
+
       function renderList() {
         listWrap.style.display = open ? 'block' : 'none';
-        if (!open) return;
-        listWrap.innerHTML = '';
+        if (open) renderRows();
+      }
+
+      // One big group (twenty agents) pushed every other kind off the bottom
+      // of the list. Nothing is folded away for it: a row of the groups with
+      // their counts opens the list, so every kind is in sight at once and a
+      // click goes to it; the headings stay in view while their rows scroll;
+      // and the smaller groups come first.
+      function renderRows() {
+        listBody.innerHTML = '';
         var avail = pool.filter(function(o){ return !isSel[valueOf(o)]; });
         if (!avail.length) {
-          listWrap.appendChild(el('div', {class: 'ui-cp-empty',
+          listBody.appendChild(el('div', {class: 'ui-cp-empty',
             text: options.length ? 'Everything is added.' : (cfg.empty_text || '(nothing to show)')}));
           return;
         }
-        if (cfg.group_by_field) {
-          var order = [], groups = {};
-          avail.forEach(function(o){ var g = o[cfg.group_by_field] || ''; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(o); });
-          order.forEach(function(g){
-            if (g) listWrap.appendChild(el('div', {class: 'ui-cp-group', text: g}));
-            groups[g].forEach(function(o){ addRow(o, listWrap); });
-          });
-        } else {
-          avail.forEach(function(o){ addRow(o, listWrap); });
+        var groups = cpGroups(avail,
+          cfg.group_by_field ? function(o){ return o[cfg.group_by_field] || ''; } : null,
+          function(o){ return labelOf(o) + ' ' + (o[descField] || ''); }, query);
+        if (!groups.length) {
+          listBody.appendChild(el('div', {class: 'ui-cp-empty', text: 'Nothing matches "' + query.trim() + '".'}));
+          return;
         }
+        var toc = null;
+        if (groups.filter(function(g){ return g.label; }).length > 1) {
+          toc = el('div', {class: 'ui-cp-toc'});
+          listBody.appendChild(toc);
+        }
+        groups.forEach(function(g){
+          if (g.label) {
+            var head = el('div', {class: 'ui-cp-group'}, [g.label, el('span', {class: 'ui-cp-group-n', text: String(g.rows.length)})]);
+            listBody.appendChild(head);
+            if (toc) {
+              var jump = el('button', {type: 'button', class: 'ui-cp-toc-chip'}, [g.label, el('span', {class: 'ui-cp-group-n', text: String(g.rows.length)})]);
+              jump.addEventListener('click', function(){ head.scrollIntoView({block: 'start', behavior: 'smooth'}); });
+              toc.appendChild(jump);
+            }
+          }
+          g.rows.forEach(function(o){ addRow(o, listBody); });
+        });
       }
 
       addBtn.addEventListener('click', function(){ open = !open; addBtn.textContent = open ? 'Hide list' : ('+ Add ' + noun); renderList(); });

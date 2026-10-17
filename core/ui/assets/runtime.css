@@ -1598,6 +1598,38 @@ select:-webkit-autofill {
   color: var(--text-mute); font-weight: 700; margin: 0.4rem 0 0.1rem;
 }
 .ui-cp-group:first-child { margin-top: 0; }
+/* A grouped attach list (cpGroups): the groups with their counts at the top,
+ * headings that stay in view while their rows scroll under them, and rows
+ * whose description is two lines at most (the whole of it on hover). */
+.ui-cp-search {
+  width: 100%; box-sizing: border-box; margin-bottom: 0.45rem;
+  padding: 0.35rem 0.55rem; font-size: var(--fs-sm);
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.ui-cp-toc { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.5rem; }
+.ui-cp-toc-chip {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.15rem 0.55rem; font-size: var(--fs-xs); cursor: pointer;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 999px;
+}
+.ui-cp-toc-chip:hover { border-color: var(--accent); }
+.ui-cp-group-n {
+  font-weight: 600; color: var(--text-mute); font-size: 0.9em;
+  letter-spacing: 0; text-transform: none;
+}
+.ui-cp-list-body .ui-cp-group {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.3rem 0; background: var(--bg-1);
+}
+.ui-cp-list-body > .ui-cp-row + .ui-cp-row { margin-top: 0.3rem; }
+.ui-cp-list-body > .ui-cp-group + .ui-cp-row { margin-top: 0.1rem; }
+.ui-cp-list-body .ui-cp-desc {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  line-clamp: 2; overflow: hidden;
+}
 .ui-cp-row {
   display: flex; align-items: flex-start; gap: 0.55rem;
   padding: 0.35rem 0.6rem; background: var(--bg-0);
