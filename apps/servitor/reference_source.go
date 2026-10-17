@@ -293,7 +293,7 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 	investigateTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "investigate_" + slug,
-			Description: fmt.Sprintf("Investigate %s %q, one of the user's Servitor systems, to answer a specific question, by dispatching Servitor's investigator %s. Use this only when the gathered knowledge (search_%s_knowledge / get_%s_facts) does not already hold what you need. Slow (tens of seconds). %s Call it deliberately, then ground what you write strictly in what it returns.", noun, name, live.dispatchPhrase, slug, slug, live.safetyNote),
+			Description: fmt.Sprintf("Investigate %s %q, one of the user's Servitor systems, to answer a specific question, by dispatching Servitor's investigator %s. Use this only when the gathered knowledge (search_%s_knowledge / get_%s_facts) does not already hold what you need. Slow (tens of seconds). %s Call it deliberately, then ground what you write strictly in what it returns.%s", noun, name, live.dispatchPhrase, slug, slug, live.safetyNote, live.checkNote),
 			Parameters: map[string]ToolParam{
 				"question": {Type: "string", Description: "The specific thing to find out on the live system, e.g. 'which TLS versions does the nginx config enable?'"},
 			},
@@ -471,6 +471,7 @@ func refTargetWords(a Appliance) (noun string, live refLiveWords) {
 		searchCaveat:   "touch the live machine",
 		dispatchPhrase: "to run read-only SSH commands on it right now",
 		safetyNote:     "It touches the real machine (read-only: any destructive command is auto-declined).",
+		checkNote:      " When the user asks you to check Servitor or their systems, that means a health pass over EVERY Servitor system you have: call each one's investigate tool asking about its health (services down, disk and memory, load, recent errors), then report each system's state.",
 	}
 }
 
@@ -480,4 +481,8 @@ type refLiveWords struct {
 	searchCaveat   string // completes "it does NOT …"
 	dispatchPhrase string // completes "dispatching Servitor's investigator …"
 	safetyNote     string // a full sentence about what the dispatch may do
+	// checkNote says what "check Servitor" means, on a live machine only:
+	// a health pass across every system. Repos, bundles and services have no
+	// health to check. Empty, or a sentence with its leading space.
+	checkNote string
 }

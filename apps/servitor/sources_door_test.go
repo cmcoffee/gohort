@@ -226,6 +226,11 @@ func TestEachSystemHasOneWayToAsk(t *testing.T) {
 		if !strings.Contains(d.Tool.Description, "Servitor system") {
 			t.Errorf("%s does not say it is a Servitor system: %s", d.Tool.Name, d.Tool.Description)
 		}
+		// And "check" means a health pass on every system, said where the
+		// agent would run it.
+		if d.Tool.Name == "investigate_lab_box" && !strings.Contains(d.Tool.Description, "health pass over EVERY Servitor system") {
+			t.Errorf("the investigate tool does not say what checking Servitor means: %s", d.Tool.Description)
+		}
 	}
 }
 
