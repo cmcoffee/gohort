@@ -309,11 +309,13 @@ func emitPrivilegeCard(sess *ToolSession, rec AgentRecord, bundled []TempTool, p
 	// Why it is showing, in the log: a card someone reads as asking for
 	// nothing new is a misfire or a grant they missed, and only this line
 	// tells the two apart afterwards.
+	var already []string
 	if prev != nil {
 		if prev.markNew(tools, flags) == 0 {
 			return
 		}
 		Log("[privileges] card for agent %q (%s): this save granted %s", rec.Name, rec.ID, privilegeNewSummary(tools, flags))
+		tools, flags, already = onlyNewPrivileges(tools, flags)
 	} else {
 		Log("[privileges] card for new agent %q (%s): %d tool row(s) and %d flag(s) to review", rec.Name, rec.ID, len(tools), len(flags))
 	}
@@ -323,10 +325,47 @@ func emitPrivilegeCard(sess *ToolSession, rec AgentRecord, bundled []TempTool, p
 		"tools": string(toolsJSON),
 		"flags": string(flagsJSON),
 	}
+	if len(already) > 0 {
+		alreadyJSON, _ := json.Marshal(already)
+		data["already"] = string(alreadyJSON)
+	}
 	if strings.TrimSpace(rec.OwnedBy) != "" {
 		data["sub_agent"] = "1"
 	}
 	sess.PrivilegePrompt(rec.ID, rec.Name, data)
+}
+
+// onlyNewPrivileges keeps, of an update's card, only the rows the save granted
+// or changed: those are the decisions. What the agent already held and the
+// owner already settled comes back as names (with their setting) for one line
+// of context, not as controls. Listing the whole kit with its controls armed
+// asked the owner to decide again what they had decided, and buried the one
+// new thing among it; the names stay because a new tool means something
+// beside the old ones (a new way to send next to an existing way to read).
+// Tools that run freely are left out of the line: there was nothing to settle.
+func onlyNewPrivileges(tools []privilegeGrant, flags []privilegeFlag) ([]privilegeGrant, []privilegeFlag, []string) {
+	var newTools []privilegeGrant
+	var newFlags []privilegeFlag
+	var already []string
+	for _, t := range tools {
+		switch {
+		case t.New:
+			newTools = append(newTools, t)
+		case t.Policy == "allow":
+			already = append(already, t.Name+" (Allow)")
+		case t.Policy == "ask":
+			already = append(already, t.Name+" (Ask)")
+		}
+	}
+	for _, f := range flags {
+		switch {
+		case f.New:
+			newFlags = append(newFlags, f)
+		case f.On:
+			already = append(already, firstNonEmptyStr(f.Label, f.Field))
+		}
+	}
+	return newTools, newFlags, already
 }
 
 // privilegeCardWorthShowing keeps the card off screen unless it holds a

@@ -287,6 +287,24 @@ func TestUpdateCardMarksWhatIsNew(t *testing.T) {
 	if s := privilegeNewSummary(rows, flags); !strings.Contains(s, "wipe_disk") || !strings.Contains(s, "flag fleet") || strings.Contains(s, "post_update") {
 		t.Errorf("summary = %q", s)
 	}
+	// Only the decisions are rows: what the agent already held is named, with
+	// its setting, and not offered to decide again.
+	if len(rows) != 1 || rows[0].Name != "wipe_disk" || len(flags) != 1 || flags[0].Field != "fleet" {
+		t.Errorf("the update's card offers %+v and %+v; only what is new should be a decision", rows, flags)
+	}
+	var already []string
+	json.Unmarshal([]byte(got["already"]), &already)
+	if len(already) != 1 || !strings.HasPrefix(already[0], "post_update (") {
+		t.Errorf("already held: %v", already)
+	}
+
+	// A new agent has nothing it already held: every row is a decision.
+	got = nil
+	emitPrivilegeCard(sess, more, tools, nil)
+	json.Unmarshal([]byte(got["tools"]), &rows)
+	if len(rows) != 2 || got["already"] != "" {
+		t.Errorf("a new agent's card: %d rows, already=%q", len(rows), got["already"])
+	}
 }
 
 // A locked capability is not a decision: a sub-agent, whose tools all run via

@@ -1253,6 +1253,14 @@ select.ui-orch-intake-input {
       if (fresh.length) {
         wrap.appendChild(el('div', {class: 'ui-orch-priv-whatsnew'}, ['New with this change: ' + fresh.join(', ') + '.']));
       }
+      // On an update the rows are only what the save granted; what the agent
+      // already held is named here for context, not offered to decide again.
+      var already = [];
+      try { already = JSON.parse(data.already || '[]'); } catch (e) { already = []; }
+      if (already.length) {
+        wrap.appendChild(el('div', {class: 'ui-orch-priv-sub'}, ['Already held, unchanged: ' + already.join(', ') +
+          '. Change those on its Security page.']));
+      }
 
       var rows = el('div', {class: 'ui-orch-priv-rows'});
       tools.forEach(function(t) {
