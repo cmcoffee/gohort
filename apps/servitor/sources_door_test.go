@@ -220,6 +220,13 @@ func TestEachSystemHasOneWayToAsk(t *testing.T) {
 	if got := tools("logs"); got["investigate_logs"] || !got["get_logs_facts"] {
 		t.Errorf("a tools-only Source should keep its recorded knowledge and no investigate tool: %v", got)
 	}
+	// "Check servitor" has to mean something to the agent, and the tools are
+	// all it sees of the app.
+	for _, d := range (servitorSource{app: app}).ItemToolsWithSession(nil, "alice", "lab-box") {
+		if !strings.Contains(d.Tool.Description, "Servitor system") {
+			t.Errorf("%s does not say it is a Servitor system: %s", d.Tool.Name, d.Tool.Description)
+		}
+	}
 }
 
 // Adding an agent from a system's Access dialog adds the Source and nothing
