@@ -1393,10 +1393,13 @@
       // asked for a host, and typing one cleared the peer link. peer_name is
       // what says it lives over there.
       if (rec.peer_name) rec.type = 'remote';
-      // Retired types (local command, tool-backed service): the tab shows only
-      // on an existing one, which keeps working and can be edited.
+      // Retired types (local command, tool-backed service, evidence bundle,
+      // workspace): the tab shows only on an existing one, which keeps
+      // working and can be edited.
       typeCmd.style.display = (isEdit && rec.type === 'command') ? '' : 'none';
       typeToolset.style.display = (isEdit && rec.type === 'toolset') ? '' : 'none';
+      typeBundle.style.display = (isEdit && rec.type === 'bundle') ? '' : 'none';
+      typeWorkspace.style.display = (isEdit && rec.type === 'workspace') ? '' : 'none';
       setType(rec.type || 'ssh');
 
       // Shared fields

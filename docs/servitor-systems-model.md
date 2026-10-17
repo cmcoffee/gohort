@@ -1,6 +1,7 @@
 # Servitor holds systems; agents investigate; evidence lives in file stores
 
-Status: **stage 1 built** (v0.8.333, evidence on file stores); stages 2 to 4 are plans. Written 2026-10-16.
+Status: **stages 1 and 2 built** (v0.8.333 evidence on file stores, v0.8.335 no new workspaces or
+bundles); stages 3 and 4 are plans. Written 2026-10-16.
 
 ## Why
 
@@ -34,7 +35,8 @@ gets none of that). Agents and file stores now give all of those things themselv
 | The investigation | An orchestrate agent | Joins systems, code and evidence through its Sources |
 
 Retired: local command (v0.8.330, replaced by file store commands), tool-backed service (v0.8.331,
-replaced by an agent's own tools and MCP), and, by this plan, workspace and evidence bundle.
+replaced by an agent's own tools and MCP), workspace and evidence bundle (v0.8.335, replaced by
+an agent's Sources and file store evidence).
 
 ## What each one becomes
 
@@ -89,7 +91,7 @@ Each stage ships on its own, and nothing existing stops working until its replac
    ingest on arrival, the `summarize_<slug>` and `timeline_<slug>` tools, wiping on delete. Tests: a folder pulled in is indexed; two folders
    in one store stay separate; deleting a folder wipes its index; the tools refuse a folder that
    is not in the store. Nothing in Servitor changes.
-2. **Stop new workspaces and bundles.** Add both to `retiredSystemTypes`
+2. **Stop new workspaces and bundles. BUILT, v0.8.335.** Add both to `retiredSystemTypes`
    (`apps/servitor/web_appliances.go`); their tabs show only on existing ones. The message for a
    workspace says to attach the systems to an agent; for a bundle, to upload into a file store
    with evidence on.

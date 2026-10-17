@@ -1,5 +1,10 @@
 # Servitor Evidence Bundles: asking questions of files you hand it
 
+**Retired for new systems (v0.8.335).** Evidence lives in file store folders with Index folders as
+evidence on (`file-stores.md`, Evidence), so no new bundle is made. An existing one keeps working,
+takes uploads and can be edited. See `servitor-systems-model.md`. What follows is the original
+design, kept for those.
+
 Status: **slices 1, 3 and 4 built** (v0.6.016). A new appliance type whose
 content is a set of uploaded files (a support dump, a log tarball, an encrypted
 diagnostic blob) staged, expanded, ingested, and then investigated with the

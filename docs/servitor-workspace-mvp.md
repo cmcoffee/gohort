@@ -1,5 +1,9 @@
 # Servitor Workspaces: cross-appliance investigation (MVP)
 
+**Retired for new systems (v0.8.335).** An agent with the member systems as its Sources does what a
+workspace did, so no new workspace is made. An existing one keeps working and can be edited. See
+`servitor-systems-model.md`. What follows is the original design, kept for those.
+
 Status: **slices 1–3 built** (v0.5.823). A "master" appliance that queries
 several existing appliances (repos *and* SSH boxes) at once. Builds directly
 on the per-appliance machinery (ingest, docs, scoped graph, refresh/staleness)

@@ -1,8 +1,8 @@
 package servitor
 
-// Local command systems are retired in favour of file stores, and tool-backed
-// services in favour of an agent's own tools: no new one of either is made, an
-// existing one keeps working, and nothing that only works over SSH is tried on
+// Local command systems and evidence bundles are retired in favour of file
+// stores, and tool-backed services and workspaces in favour of agents: no new
+// one of any is made, an existing one keeps working, and nothing that only works over SSH is tried on
 // a local command system.
 
 import (
@@ -54,6 +54,22 @@ func TestNoNewLocalCommandSystemIsMade(t *testing.T) {
 	}
 	if code, body := post(`{"id":"t1","type":"toolset","name":"gitlab renamed"}`); code != http.StatusOK {
 		t.Errorf("an existing tool-backed service could not be edited: %d %s", code, body)
+	}
+	udb.Set(applianceTable, "b1", Appliance{ID: "b1", Name: "incident", Type: "bundle", Owner: "root"})
+	udb.Set(applianceTable, "w1", Appliance{ID: "w1", Name: "cluster", Type: "workspace", Members: []string{"s1"}, Owner: "root"})
+	for _, c := range []struct{ kind, says, edit string }{
+		{"bundle", "file store", `{"id":"b1","type":"bundle","name":"incident renamed"}`},
+		{"workspace", "Sources", `{"id":"w1","type":"workspace","name":"cluster renamed","members":["s1"]}`},
+	} {
+		if code, body := post(`{"type":"` + c.kind + `","name":"new","members":["s1"]}`); code != http.StatusBadRequest || !strings.Contains(body, c.says) {
+			t.Errorf("a new %s was made: %d %s", c.kind, code, body)
+		}
+		if code, body := post(`{"id":"s1","type":"` + c.kind + `","name":"web","members":["c1"]}`); code != http.StatusBadRequest || !strings.Contains(body, c.says) {
+			t.Errorf("an ssh system was turned into a %s: %d %s", c.kind, code, body)
+		}
+		if code, body := post(c.edit); code != http.StatusOK {
+			t.Errorf("an existing %s could not be edited: %d %s", c.kind, code, body)
+		}
 	}
 	if code, body := post(`{"type":"ssh","name":"db","host":"db.example.test"}`); code != http.StatusOK {
 		t.Errorf("a new ssh system was refused: %d %s", code, body)

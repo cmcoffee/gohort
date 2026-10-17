@@ -527,8 +527,13 @@ func purgeAppliance(userID string, udb Database, applianceID string) {
 // store's mapped commands give it one tool per approved use instead, run
 // without a shell, with the store's caps. A tool-backed service is not a
 // system at all: it is an agent working through a set of approved tools,
-// which an agent's own tools and MCP servers already are.
+// which an agent's own tools and MCP servers already are. A workspace is a
+// coordinator over several systems, which an agent with those systems as its
+// Sources is; an evidence bundle is files with an index, which a file store
+// folder with evidence on is (docs/servitor-systems-model.md).
 var retiredSystemTypes = map[string]string{
 	"command": "new local command systems are no longer made: they give an agent a free shell on this server. Register the folder as a file store (Admin, File stores), add the command to it, and map its uses there; each use becomes a tool the agent can be given. Existing local command systems keep working.",
 	"toolset": "new tool-backed services are no longer made: a service reached through tools is the agent's own tools. Give the agent those tools directly, or connect the service as an MCP server. Existing tool-backed services keep working.",
+	"workspace": "new workspaces are no longer made: an agent does what a workspace did. Make an agent, attach each member system to it under Sources, and put the roles (which system is the scheduler, which the primary database) in its instructions; its lead can ask each one in turn. Existing workspaces keep working.",
+	"bundle":    "new evidence bundles are no longer made: evidence lives in file stores now. Upload the files into a folder of a file store with Index folders as evidence on (Admin, File stores), and give the agent that store under Sources; it gets summarize and timeline tools for each folder. Existing evidence bundles keep working.",
 }
