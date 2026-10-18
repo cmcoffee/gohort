@@ -41,10 +41,10 @@ func TestEveryCancelExitSavesTheTurn(t *testing.T) {
 	if n := strings.Count(body, `"text": "cancelled"`); n != 1 {
 		t.Errorf("the cancelled notice should be sent from one place, the helper that saves first; found %d", n)
 	}
-	if !strings.Contains(body, `persistIncompleteTurnTrace(&sess, udb, turn, "it was cancelled")`) {
+	if !strings.Contains(body, `persistIncompleteTurnTrace(&sr.sess, sr.udb, sr.turn, "it was cancelled")`) {
 		t.Error("the cancel helper should save the turn")
 	}
-	if strings.Count(body, "case <-ctx.Done():\n\t\t\tcancelled()")+strings.Count(body, "case <-ctx.Done():\n\t\t\t\t\tcancelled()") != 2 {
+	if strings.Count(body, "case <-sr.ctx.Done():\n\t\t\tsr.cancelled()")+strings.Count(body, "case <-sr.ctx.Done():\n\t\t\t\t\tsr.cancelled()") != 2 {
 		t.Error("both step loops should leave through the saving helper on a cancel")
 	}
 }

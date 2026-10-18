@@ -143,7 +143,7 @@ func TestEveryTurnEndingSiteMarksTheReply(t *testing.T) {
 	// titleAfterFirstTurn runs once per turn-ending site and nowhere else, so
 	// it counts them without this guard having to know their shapes.
 	ends := strings.Count(body, "titleAfterFirstTurn()")
-	marks := strings.Count(body, "markBlockedReply(&sess)")
+	marks := strings.Count(body, "markBlockedReply(&sr.sess)")
 	if ends == 0 {
 		t.Fatal("no turn-ending sites found; this guard needs rewriting")
 	}

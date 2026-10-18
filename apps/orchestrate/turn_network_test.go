@@ -69,7 +69,7 @@ func TestEveryRunPathStampsTheTurnsNetwork(t *testing.T) {
 	}
 
 	live := mustReadFile(t, "runner_http.go")
-	if !strings.Contains(live, "withAgentNetwork(ctx, user, agent, privateMode)") {
+	if !strings.Contains(live, "withAgentNetwork(sr.ctx, sr.user, sr.agent, sr.privateMode)") {
 		t.Error("the live turn stopped going through the one place both facts are set")
 	}
 
