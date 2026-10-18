@@ -668,6 +668,16 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		// assembler (prependAgentContext) renders base+overlay with no changes.
 		target.Rules = mergeScopeRules(target.Rules, listScopeRules(runtimeDB, target.ID))
 	}
+	// Who handed this over, checked against the limits an agents(run) chain
+	// is held to, and the run stamped with it so a hand-off from inside it
+	// carries on counting (dispatch_lineage.go). Every agent above binds it
+	// with its guardrails, as the inline path's accumulate.
+	chain, origin, lerr := handOffLineage(ctx, ownerDB, target, via...)
+	if lerr != nil {
+		return syncRunResult{}, lerr
+	}
+	target = inheritChainGuardrails(ownerDB, chain, target)
+	ctx = withDispatchLineage(ctx, append(append([]string(nil), chain...), target.ID), origin)
 	subSessID := "external-dispatch:" + runtimeUser + ":" + target.ID
 	subSess := &ToolSession{
 		LLM:           T.LLM,
@@ -871,6 +881,8 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// The agents that handed this run over: their ask marks bind it too
 	// (ask_first.go).
 	subTurn.askChain = append([]string{}, via...)
+	// And its own hand-offs are counted and bounded from here.
+	subTurn.dispatchChain, subTurn.dispatchOrigin = chain, origin
 	// Same reason as the continuing-dispatch path below: no *session on a
 	// dispatched turn means no trail, and a guard that leaves no breadcrumb is
 	// a guard nobody can account for after the fact.
@@ -1586,11 +1598,17 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// The lane this run's calls go out on: a person on the other end goes
 	// first, and the agent's own mark applies otherwise (run_lane.go).
 	ctx = agentRunLane(ctx, target, run.Interactive)
-	if id := strings.TrimSpace(run.DelegatorAgentID); id != "" && id != target.ID {
-		if from, ok := loadAgent(ownerDB, id); ok {
-			target = inheritDelegatorGuardrails(from, target)
-		}
+	// The chain above it, from the context and the delegator this run names,
+	// held to agents(run)'s limits, every agent on it binding it with its
+	// guardrails, and the run stamped so its own hand-offs keep counting
+	// (dispatch_lineage.go). A channel message or a monitor wake has no
+	// delegator and starts a chain of its own.
+	chain, origin, lerr := handOffLineage(ctx, ownerDB, target, strings.TrimSpace(run.DelegatorAgentID))
+	if lerr != nil {
+		return AgentSyncResult{}, lerr
 	}
+	target = inheritChainGuardrails(ownerDB, chain, target)
+	ctx = withDispatchLineage(ctx, append(append([]string(nil), chain...), target.ID), origin)
 	if subSessionID == "" {
 		subSessionID = "external-dispatch:" + runtimeUser + ":" + target.ID
 	}
@@ -1774,6 +1792,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Per-turn closure tools + Available agents block (mirrors
 	// RunAgentSync — see buildDispatchTurnExtras for rationale).
 	extraTools, availableBlock, customToolPrompt, subTurn := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
+	subTurn.dispatchChain, subTurn.dispatchOrigin = chain, origin
 	// A channel inbound is the one path with a third party on the other end: the
 	// run identity is a synthetic per-chat user while the agent record lives in
 	// the owner's store, and MessageSender is the contact's own display name.

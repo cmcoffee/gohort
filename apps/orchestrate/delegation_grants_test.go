@@ -58,7 +58,7 @@ func TestDelegateFollowsTheSameRuleAsAgentsRun(t *testing.T) {
 	var ran []string
 	RegisterStandingRunner(func(ctx context.Context, sa StandingAgent) StandingRunResult {
 		ran = append(ran, sa.AgentID)
-		return StandingRunResult{Status: RunOK, Summary: "a joke"}
+		return StandingRunResult{Status: RunOK, Summary: "a joke", Raw: "a joke " + strings.Repeat("that goes on ", 40) + "THE PUNCHLINE"}
 	})
 	t.Cleanup(func() { RegisterStandingRunner(nil) })
 	udb := UserDB(orchestrateBaseDB, "u")
@@ -86,6 +86,8 @@ func TestDelegateFollowsTheSameRuleAsAgentsRun(t *testing.T) {
 
 	if out := call(gated); !strings.Contains(out, "Delegated to \"Comedian\"") || len(ran) != 1 || ran[0] != comedian.ID {
 		t.Errorf("with nothing decided, a checked delegation should run, by id: %s (ran %v)", out, ran)
+	} else if !strings.Contains(out, "THE PUNCHLINE") || !strings.Contains(out, untrustedContentFence) {
+		t.Errorf("the delegator should get the whole result, fenced, not the feed's 280-character line: %s", out)
 	}
 	if out := call(context.Background()); !strings.Contains(out, "Queued") {
 		t.Errorf("with no turn to check against, an undecided delegation ran: %s", out)

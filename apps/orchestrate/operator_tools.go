@@ -985,6 +985,9 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					// so the delegate can address the channels its delegator
 					// reaches instead of handing text back up to be relayed.
 					dctx := carryNonOwnerRequester(ctx, sess.ContextWithNetworkConnector(sess.Context()))
+					// And who handed THIS run over, so the delegation counts as one
+					// more hop of the same chain (dispatch_lineage.go).
+					dctx = carryDispatchLineage(ctx, dctx)
 					// And this call's card, so the delegated run's progress
 					// shows on it (dispatch_progress.go).
 					dctx = withToolCard(dctx, toolCardFrom(ctx))
@@ -992,11 +995,16 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					if rec.Status == RunFailed {
 						return fmt.Sprintf("Delegated to %q but it failed: %s", agent, rec.Err), nil
 					}
-					out := strings.TrimSpace(rec.Summary)
+					// The whole result, as agents(run) hands it back. Summary is the
+					// Activity feed's line, cut at 280 characters, and the
+					// delegator worked from that cut. Fenced like agents(run): what
+					// a delegate returns can carry web text it read.
+					out := strings.TrimSpace(rec.Raw)
 					if out == "" {
-						out = strings.TrimSpace(rec.Raw)
+						out = strings.TrimSpace(rec.Summary)
 					}
-					return fmt.Sprintf("Delegated to %q.%s Result:\n%s", agent, privateDelegationNote(dctx, true), out), nil
+					fenced, _ := fenceAgentsOutput(out, nil)
+					return fmt.Sprintf("Delegated to %q.%s Result:\n%s", agent, privateDelegationNote(dctx, true), fenced), nil
 				}
 				// FromAgent rides the queued record so an APPROVED delegation runs
 				// with the same channel reach a pre-authorized one gets — the user

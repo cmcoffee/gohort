@@ -427,12 +427,7 @@ func (t *chatTurn) originAuthority() *dispatchAuthority {
 	if t.dispatchOrigin != nil {
 		return t.dispatchOrigin
 	}
-	return &dispatchAuthority{
-		AgentID:   t.agent.ID,
-		AgentName: t.agent.Name,
-		Mode:      effectiveDispatchMode(t.agent),
-		Targets:   append([]string(nil), t.agent.AllowedDispatchTargets...),
-	}
+	return agentAuthority(t.agent)
 }
 
 // fenceAgentsOutput wraps a dispatch result in the untrusted-content fence —
@@ -1206,7 +1201,11 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		// The caller's ask marks bind the run it hands over (ask_first.go).
 		askChain:        t.delegatedAskChain(),
 		askConversation: t.conversation(),
-		ctx:             t.ctx, // inherit caller's ctx so NetworkConnector propagates
+		// The caller's ctx, so NetworkConnector propagates, stamped with
+		// this run's lineage so a delegate or detached run from inside it
+		// keeps counting (dispatch_lineage.go).
+		ctx: withDispatchLineage(t.ctx,
+			append(append(append([]string(nil), t.dispatchChain...), t.agent.ID), target.ID), t.originAuthority()),
 		topic:           t.resolveTopic(),
 		network:         t.network,
 		// Carry the caller's chain + the caller's own agent ID forward.
@@ -1384,7 +1383,7 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	// agents(run) tool result ("context deadline exceeded"), looking like
 	// the MAIN agent failed. WithCancel keeps cleanup + client-disconnect
 	// cancellation (t.ctx) without the bogus deadline.
-	ctx, cancel := context.WithCancel(t.ctx)
+	ctx, cancel := context.WithCancel(subTurn.ctx) // the caller's, with this run's lineage
 	// The sub-agent's calls are drawn under this dispatch's card.
 	ctx = withToolCard(ctx, card)
 	prog := t.newDispatchProgress(card, target.Name)
