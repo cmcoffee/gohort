@@ -122,7 +122,11 @@ func (p toolResultPolicy) callStaysInside(args map[string]any) bool {
 	action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
 	caps, ok := p.actionCaps[action]
 	if !ok {
-		return false
+		// help is answered by the grouped-tool machinery from the tool's own
+		// definition, never from the network, and the name is reserved, so
+		// no action of a tool can be called it. A toolbox's help was fenced
+		// as content fetched from outside.
+		return action == "help"
 	}
 	if p.ownModel[action] {
 		return true

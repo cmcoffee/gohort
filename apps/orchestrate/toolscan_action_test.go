@@ -44,4 +44,15 @@ func TestAnActionThatStaysInsideIsNotFenced(t *testing.T) {
 	if out, _ := turn.applyToolResultPolicy("importer", toolResultPolicyFor(AgentRecord{}, ext), map[string]any{"action": "list"}, "items", nil); !strings.HasPrefix(out, untrustedContentFence) {
 		t.Error("a tool declared to fetch external content lost its fence")
 	}
+	// A toolbox's actions all reach the network; its help is the framework's
+	// own usage text, built from the tool's definition.
+	box := Tool{Name: "moltbook", Caps: []Capability{CapNetwork, CapExecute},
+		ActionCaps: map[string][]Capability{"get_feed": {CapNetwork, CapExecute}}}
+	pb := toolResultPolicyFor(AgentRecord{}, box)
+	if out, _ := turn.applyToolResultPolicy("moltbook", pb, map[string]any{"action": "help"}, "moltbook, usage: ...", nil); strings.HasPrefix(out, untrustedContentFence) {
+		t.Error("a toolbox's help was fenced as outside content")
+	}
+	if out, _ := turn.applyToolResultPolicy("moltbook", pb, map[string]any{"action": "get_feed"}, "feed", nil); !strings.HasPrefix(out, untrustedContentFence) {
+		t.Error("a toolbox's API call lost its fence")
+	}
 }
