@@ -454,16 +454,9 @@
  * end. Side by side, the controls took the row on a phone and the rule itself
  * shrank to a sliver.
  *
- * The rule reads on one line like the rows above it and opens to the whole
- * text while it is being edited, or from the arrow beside it; the row's script
- * sets which (is-open) and fits the height, so there is no scrollbar or resize
- * handle. */
+ * The rule itself reads on one line and opens to the whole text, like every
+ * entry in these lists (uiExpandingLine, in the shared runtime). */
 .ui-orch-guard-row { flex-wrap: wrap; }
-.ui-orch-guard-row > textarea {
-  resize: none; overflow: hidden; padding: 0; min-height: 1.4em;
-  white-space: nowrap;
-}
-.ui-orch-guard-row.is-open > textarea { white-space: pre-wrap; }
 .ui-orch-guard-apply {
   flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
 }
@@ -4271,12 +4264,13 @@ select.ui-orch-intake-input {
           facts.forEach(function(text, idx) {
             var row = document.createElement('div');
             row.className = 'ui-orch-list-row';
+            // One line that opens to the whole note (uiExpandingLine). A note
+            // may hold several lines, so Enter is a newline here.
             var ta = document.createElement('textarea');
-            ta.rows = 1;
             ta.value = text;
-            ta.addEventListener('input', function() {
-              facts[idx] = ta.value;
-            });
+            var more = window.uiExpandingLine(ta, {buttonClass: 'ui-orch-list-del', onInput: function(v) {
+              facts[idx] = v;
+            }});
             var del = document.createElement('button');
             del.className = 'ui-orch-list-del';
             del.type = 'button';
@@ -4286,6 +4280,7 @@ select.ui-orch-intake-input {
               renderFacts();
             };
             row.appendChild(ta);
+            row.appendChild(more);
             row.appendChild(del);
             factsList.appendChild(row);
           });
@@ -5574,11 +5569,12 @@ select.ui-orch-intake-input {
             rules.forEach(function(text, idx) {
               var row = document.createElement('div');
               row.className = 'ui-orch-list-row';
-              var input = document.createElement('input');
-              input.type = 'text';
+              // One line that opens to the whole rule (uiExpandingLine). Each rule
+              // is one line of the agent's rules, so it never takes a newline.
+              var input = document.createElement('textarea');
               input.value = text;
               input.placeholder = 'rule…';
-              input.addEventListener('input', function() { rules[idx] = input.value; });
+              var more = window.uiExpandingLine(input, {oneLine: true, buttonClass: 'ui-orch-list-del', onInput: function(v) { rules[idx] = v; }});
               // Elevate: promote this soft rule into the protected, enforced
               // guardrails band below. It MOVES (a rule and its guardrail would
               // otherwise drift as two editable copies); the warden then hard-
@@ -5634,6 +5630,7 @@ select.ui-orch-intake-input {
                 render();
               };
               row.appendChild(input);
+              row.appendChild(more);
               row.appendChild(up);
               row.appendChild(del);
               list.appendChild(row);
@@ -5645,7 +5642,7 @@ select.ui-orch-intake-input {
             addBtn.onclick = function() {
               rules.push('');
               render();
-              var inputs = list.querySelectorAll('input');
+              var inputs = list.querySelectorAll('textarea');
               var last = inputs[inputs.length - 1];
               if (last) last.focus();
             };
@@ -6076,69 +6073,16 @@ select.ui-orch-intake-input {
             grules.forEach(function(text, idx) {
               var row = document.createElement('div');
               row.className = 'ui-orch-list-row ui-orch-guard-row';
-              // The rule reads on one line and opens to the whole text while it is
-              // edited, or from the arrow beside it (sync). One rule is one line
-              // of the stored list, so it never takes a newline: Enter is refused
-              // and a pasted break becomes a space, or the save would split one
-              // rule into two.
+              // One line that opens to the whole rule (uiExpandingLine). One rule
+              // is one line of the stored list, so it never takes a newline.
               var input = document.createElement('textarea');
-              input.rows = 1; input.value = gBody(text); input.placeholder = 'guardrail rule…';
-              input.addEventListener('keydown', function(e) { if (e.key === 'Enter') e.preventDefault(); });
-              var more = document.createElement('button');
-              more.type = 'button';
-              more.className = 'ui-orch-list-del';
-              var pinned = false; // opened from the arrow, so leaving the box keeps it open
-              function fit() {
-                input.style.height = 'auto';
-                // 0 while the band is off screen; the observer below fits it
-                // once it is shown.
-                if (input.scrollHeight > 0) input.style.height = input.scrollHeight + 'px';
-              }
-              function sync(open) {
-                row.classList.toggle('is-open', open);
-                input.wrap = open ? 'soft' : 'off';
-                if (!open) input.scrollLeft = 0; // one line starts at the start
-                fit();
-                // The arrow only where there is more to see, or to close it again.
-                more.hidden = !open && input.scrollWidth <= input.clientWidth + 1;
-                more.textContent = open ? '⌃' : '⌄';
-                more.title = open ? 'Show on one line' : 'Show the whole rule';
-                more.setAttribute('aria-expanded', open ? 'true' : 'false');
-              }
-              input.addEventListener('focus', function() { sync(true); });
-              input.addEventListener('blur', function() { if (!pinned) sync(false); });
-              // Held on press so the box keeps focus: otherwise its blur closes it
-              // first and the click opens it straight back.
-              more.addEventListener('mousedown', function(e) { e.preventDefault(); });
-              more.onclick = function() {
-                var open = !row.classList.contains('is-open');
-                pinned = open;
-                sync(open);
-              };
+              input.value = gBody(text); input.placeholder = 'guardrail rule…';
               // Re-read the marker from the stored line on every keystroke rather
               // than closing over it: the toggle below rewrites grules[idx], and a
               // captured copy would put the stale severity back.
-              input.addEventListener('input', function() {
-                if (input.value.indexOf('\n') >= 0) {
-                  var at = input.selectionStart;
-                  input.value = input.value.replace(/\s*\n\s*/g, ' ');
-                  try { input.selectionStart = input.selectionEnd = Math.min(at, input.value.length); } catch (_) {}
-                }
-                grules[idx] = gCompose(input.value, gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), gTool(grules[idx]));
-                fit();
-              });
-              // Refit when its width changes: first shown, the page resized, the
-              // phone turned. Width only, since fitting changes the height. The
-              // arrow appearing only narrows the box, which only adds to what
-              // overflows, so this settles rather than flipping back and forth.
-              if (window.ResizeObserver) {
-                var fitWidth = 0;
-                new ResizeObserver(function() {
-                  if (input.clientWidth !== fitWidth) { fitWidth = input.clientWidth; sync(row.classList.contains('is-open')); }
-                }).observe(input);
-              } else {
-                setTimeout(function() { sync(false); }, 0);
-              }
+              var more = window.uiExpandingLine(input, {oneLine: true, buttonClass: 'ui-orch-list-del', onInput: function(v) {
+                grules[idx] = gCompose(v, gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), gTool(grules[idx]));
+              }});
               var term = document.createElement('button');
               term.type = 'button';
               term.className = 'ui-orch-list-del';
@@ -6946,11 +6890,13 @@ select.ui-orch-intake-input {
                 refreshDupeMarks();
                 renderG();
               };
-              var textIn = document.createElement('input');
-              textIn.type = 'text'; textIn.value = ex.text || '';
+              // One line that opens to the whole condition (uiExpandingLine). It
+              // is read on an Except: line under the rule, so no newline.
+              var textIn = document.createElement('textarea');
+              textIn.value = ex.text || '';
               textIn.placeholder = 'the condition, e.g. the user has already confirmed…';
               textIn.className = 'ui-orch-list-input';
-              textIn.oninput = function() { gexceptions[idx].text = textIn.value; };
+              var textMore = window.uiExpandingLine(textIn, {oneLine: true, buttonClass: 'ui-orch-list-del', onInput: function(v) { gexceptions[idx].text = v; }});
               // Name the condition for them if they didn't. The server derives
               // one anyway, and deriving it silently would leave the field
               // looking empty while a different name was what actually linked.
@@ -6971,7 +6917,7 @@ select.ui-orch-intake-input {
               // hole in a rule the owner still believes is absolute.
               del.title = 'Delete. Rules linked to it go back to applying in full. To turn it off temporarily, use the on/off button instead: that keeps the wording and the links.';
               del.onclick = function() { gexceptions.splice(idx, 1); renderE(); renderG(); gCommit(); };
-              row.appendChild(nameIn); row.appendChild(textIn); row.appendChild(del);
+              row.appendChild(nameIn); row.appendChild(textIn); row.appendChild(textMore); row.appendChild(del);
               excList.appendChild(row);
               var dupNote = document.createElement('div');
               dupNote.style.cssText = 'font-size:0.72rem;color:var(--warning,#d29922);margin:0.15rem 0 0.4rem 0;padding-left:0.2rem';
@@ -7056,14 +7002,16 @@ select.ui-orch-intake-input {
             declines.forEach(function(text, idx) {
               var row = document.createElement('div');
               row.className = 'ui-orch-list-row';
-              var input = document.createElement('input');
-              input.type = 'text'; input.value = text; input.placeholder = 'decline line\u2026';
+              // One line that opens to the whole decline (uiExpandingLine): a
+              // decline is one line a blocked reply is replaced with.
+              var input = document.createElement('textarea');
+              input.value = text; input.placeholder = 'decline line\u2026';
               input.className = 'ui-orch-list-input';
-              input.oninput = function() { declines[idx] = input.value; };
+              var more = window.uiExpandingLine(input, {oneLine: true, buttonClass: 'ui-orch-list-del', onInput: function(v) { declines[idx] = v; }});
               var del = document.createElement('button');
               del.type = 'button'; del.className = 'ui-orch-list-del'; del.textContent = '\u00d7';
               del.onclick = function() { declines.splice(idx, 1); renderD(); };
-              row.appendChild(input); row.appendChild(del);
+              row.appendChild(input); row.appendChild(more); row.appendChild(del);
               decList.appendChild(row);
             });
             var btnRow = document.createElement('div');

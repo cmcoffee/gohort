@@ -1121,6 +1121,89 @@
     }, 0);
   };
 
+  // uiExpandingLine(ta, opts) makes a textarea in a list of entries read as one
+  // line, and open to its whole text while it is edited or from the arrow it
+  // hands back. The arrow shows only when there is more to see than the line.
+  // For a list whose entries are short enough to scan but some run long: a
+  // one-line box hides the end of those, and a box as tall as every entry
+  // makes the list hard to scan.
+  //
+  // opts.oneLine: each entry is one stored line (a list kept one per line), so
+  // the box never takes a newline: Enter is refused and a pasted break becomes
+  // a space, or the save would split one entry into two.
+  // opts.buttonClass: the arrow's class, to match the row's other buttons
+  // (default ui-icon-btn).
+  // opts.onInput(value): called on each edit, after a pasted break is folded.
+  //
+  // Returns the arrow, for the caller to place. The height follows the text,
+  // with no scrollbar or resize handle, and is refitted when the box's width
+  // changes, which includes a box built while hidden being shown.
+  window.uiExpandingLine = function(ta, opts) {
+    opts = opts || {};
+    ta.rows = 1;
+    ta.classList.add('ui-xline');
+    var more = document.createElement('button');
+    more.type = 'button';
+    more.className = opts.buttonClass || 'ui-icon-btn';
+    var pinned = false; // opened from the arrow, so leaving the box keeps it open
+    function isOpen() { return ta.classList.contains('is-open'); }
+    function sync(open) {
+      if (isOpen() !== open) ta.classList.toggle('is-open', open);
+      ta.wrap = open ? 'soft' : 'off';
+      if (open) {
+        ta.style.height = 'auto';
+        // 0 while the box is off screen; the width watch below refits it
+        // once it is shown.
+        if (ta.scrollHeight > 0) ta.style.height = ta.scrollHeight + 'px';
+      } else {
+        ta.style.height = ''; // the stylesheet's one line
+        ta.scrollLeft = 0; ta.scrollTop = 0; // which starts at the start
+      }
+      var clipped = ta.scrollWidth > ta.clientWidth + 1 || ta.scrollHeight > ta.clientHeight + 1;
+      var show = open || clipped;
+      more.hidden = !show;
+      // Style too: a button class that sets display (ui-icon-btn is
+      // inline-flex) outranks the hidden attribute.
+      more.style.display = show ? '' : 'none';
+      more.textContent = open ? '⌃' : '⌄';
+      more.title = open ? 'Show on one line' : 'Show all of it';
+      more.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    if (opts.oneLine) {
+      ta.addEventListener('keydown', function(e) { if (e.key === 'Enter') e.preventDefault(); });
+    }
+    ta.addEventListener('input', function() {
+      if (opts.oneLine && ta.value.indexOf('\n') >= 0) {
+        var at = ta.selectionStart;
+        ta.value = ta.value.replace(/\s*\n\s*/g, ' ');
+        try { ta.selectionStart = ta.selectionEnd = Math.min(at, ta.value.length); } catch (_) {}
+      }
+      if (opts.onInput) opts.onInput(ta.value);
+      sync(isOpen());
+    });
+    ta.addEventListener('focus', function() { sync(true); });
+    ta.addEventListener('blur', function() { if (!pinned) sync(false); });
+    // Held on press so the box keeps focus: otherwise its blur closes it
+    // first and the click opens it straight back.
+    more.addEventListener('mousedown', function(e) { e.preventDefault(); });
+    more.addEventListener('click', function() {
+      pinned = !isOpen();
+      sync(pinned);
+    });
+    // Width only, since fitting changes the height. The arrow appearing only
+    // narrows the box, which only adds to what is hidden, so this settles
+    // rather than flipping back and forth.
+    if (window.ResizeObserver) {
+      var width = -1;
+      new ResizeObserver(function() {
+        if (ta.clientWidth !== width) { width = ta.clientWidth; sync(isOpen()); }
+      }).observe(ta);
+    } else {
+      setTimeout(function() { sync(isOpen()); }, 0);
+    }
+    return more;
+  };
+
   window.uiAnchorMenu = function(toggle, menu, opts) {
     opts = opts || {};
     var shown = opts.display || 'block';

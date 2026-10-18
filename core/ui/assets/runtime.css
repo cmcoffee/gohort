@@ -1406,6 +1406,14 @@ select:-webkit-autofill {
 .ui-icon-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-2); border-color: var(--border); }
 .ui-icon-btn.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
 .ui-icon-btn:disabled { opacity: 0.45; cursor: default; }
+/* uiExpandingLine (00_prelude.js): a list entry that reads on one line and
+ * opens to its whole text while it is edited. Closed, the height is one line
+ * from here; open, the script fits it to the text. Set on both states, two
+ * classes each, so an app's own row rule for its textareas (one class and an
+ * element) cannot bring back a resize handle or a scrollbar. */
+.ui-xline:not(.is-open), .ui-xline.is-open { resize: none; overflow: hidden; line-height: 1.4; }
+.ui-xline:not(.is-open) { white-space: pre; height: 1.4em; }
+.ui-xline.is-open { white-space: pre-wrap; }
 /* Stack composes multiple components in one expand panel. */
 .ui-stack { display: flex; flex-direction: column; gap: 0.6rem; }
 /* Badge — colored pill for boolean/state indicators in table rows. */

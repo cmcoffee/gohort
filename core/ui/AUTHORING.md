@@ -230,6 +230,7 @@ behind, which is worse than not having one, so it was retired.
 | A code editor with diff + history | `ui.CodeEditorPanel` |
 | A button in your own HTML (ExtraHeadHTML, a client action's modal) | `class="ui-row-btn"`, with `primary` / `danger` / `ui-btn-sm` as needed. It takes the shared size, rounding and touch size; a hand-styled button takes none of them |
 | A one-glyph button in your own HTML (remove ×, edit ✎, ✨) | `class="ui-icon-btn"` (add `danger` for a remove). Never padding and a font size of your own: on a phone that is a 20px target |
+| A list of editable entries in your own HTML, some of them long (rules, notes, examples) | A `textarea` per entry through `window.uiExpandingLine(ta, {oneLine, buttonClass, onInput})`: it reads on one line and opens to the whole entry while edited, or from the arrow it returns. `oneLine` when each entry is one stored line |
 
 If your shape doesn't fit any of these cleanly, you may need a new primitive. Prefer combining existing ones first: most app surfaces are some mix of Table + FormPanel + a chat-shaped flow.
 
