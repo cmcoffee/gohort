@@ -138,7 +138,7 @@ func (T *OrchestrateApp) agentCatalogTools(user string, agent AgentRecord, name,
 	}
 	search := AgentToolDef{
 		Tool: Tool{
-			Name: "search_" + slug + "_memory",
+			Name:        "search_" + slug + "_memory",
 			Description: fmt.Sprintf("Search what %s has already recorded (its notes, saved findings, documents and the links it has mapped between things) for a query, and return the best matches. Instant and read-only: it does not run %s or reach anything live. Look here FIRST, before searching for something yourself: if %s has catalogued where it lives, this says so. Use %s only when this does not hold what you need.", name, name, name, consultTool),
 			Parameters: map[string]ToolParam{
 				"query": {Type: "string", Description: "What you are looking for, e.g. \"which repository holds the billing service\"."},
@@ -161,7 +161,7 @@ func (T *OrchestrateApp) agentCatalogTools(user string, agent AgentRecord, name,
 	}
 	about := AgentToolDef{
 		Tool: Tool{
-			Name: "recall_" + slug + "_about",
+			Name:        "recall_" + slug + "_about",
 			Description: fmt.Sprintf("Everything %s has recorded about one named thing (a service, a repository, a team, a person), resolved by name or alias: what it is, what it is linked to, and the notes that name it. Instant and read-only. With no name, lists the things it has recorded.", name),
 			Parameters: map[string]ToolParam{
 				"name": {Type: "string", Description: "The thing to look up, by name or alias. Omit to list what it has recorded."},

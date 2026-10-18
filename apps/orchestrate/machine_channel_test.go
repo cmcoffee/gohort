@@ -308,3 +308,57 @@ func TestMachineDelegationIsBounded(t *testing.T) {
 		t.Error("one delegation deep is the ordinary router-to-agent case and must still run the machine")
 	}
 }
+
+// A delegation keeps its machine's place. Handed over by an agent, the run
+// resumes on a thread kept per delegator and target, and hands off after its
+// turn; started fresh every time, a machine of several steps never got past
+// its first across delegations.
+func TestADelegationResumesTheMachineWhereItLeftOff(t *testing.T) {
+	turn := channelTurnFixture(t, MachineDef{
+		Name: "relay", Start: "first",
+		Phases: []MachinePhase{
+			{Name: "first", Prompt: "Reply.", Resident: true, Next: "second"},
+			{Name: "second", Prompt: "Reply again.", Resident: true},
+		},
+	})
+	const id = "dispatch:delegated:wren:a1"
+	thread := ChatSession{ID: id, AgentID: "a1"}
+	turn.machineThread, turn.machineEphemeral = &thread, false
+	turn.completeMachine(turn.enterMachine("first delegation"))
+	got, ok := loadChatSession(turn.udb, "a1", id)
+	if !ok || got.Phase != "second" {
+		t.Fatalf("the delegator's thread should hold the machine's place, got %+v", got)
+	}
+
+	src, err := os.ReadFile("agent_dispatch.go")
+	if err != nil {
+		t.Skip("source unavailable")
+	}
+	body := string(src)
+	if !strings.Contains(body, `"dispatch:delegated:" + chain[len(chain)-1] + ":" + target.ID`) {
+		t.Error("a delegation no longer keeps its machine on a thread per delegator")
+	}
+	if strings.Count(body, "subTurn.completeMachine(subTurn.machine)") != 2 {
+		t.Error("both dispatch paths in agent_dispatch.go should hand the machine off after the turn")
+	}
+}
+
+// A dispatched machine step keeps the agent's Sources and pipelines: the
+// step filter treats them as grants only once they are noted, which only
+// the web turn did.
+func TestEveryDispatchPathNotesTheAgentsAttachments(t *testing.T) {
+	for file, want := range map[string]int{"agent_dispatch.go": 2, "agents_grouped_tool.go": 1} {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Skip("source unavailable")
+		}
+		if n := strings.Count(string(src), "subTurn.noteAgentAttachments(subSess)\n\t"); n != want {
+			t.Errorf("%s notes the agent's attachments %d time(s), want %d", file, n, want)
+		}
+	}
+	turn := channelTurnFixture(t, residentMachine())
+	turn.noteAttachedTools([]AgentToolDef{{Tool: Tool{Name: "search_cases"}}})
+	if !turn.attachedToolNames["search_cases"] {
+		t.Error("a noted attachment is not kept as a grant")
+	}
+}

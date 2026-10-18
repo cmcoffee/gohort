@@ -924,10 +924,25 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	if isBuilderAgent(target.ID) {
 		deliveredMessage = markAsDelegated(message)
 	}
-	// The target's machine, from its first step: this run keeps no thread, so
-	// there is no position to resume (enterDispatchMachine).
+	// The target's machine. Handed over by an agent, it resumes where that
+	// agent's last delegation to it left off, as an agents(run) thread does: a
+	// thread per delegator and target that holds only the machine's place.
+	// Started fresh every time, a machine of several steps never got past its
+	// first across delegations. A run nobody handed over (a scheduled fire)
+	// has no one to keep a place for, and starts at the first step.
+	machThread, ephemeral := &ChatSession{ID: subSessID, AgentID: target.ID}, true
+	if len(chain) > 0 {
+		id := "dispatch:delegated:" + chain[len(chain)-1] + ":" + target.ID
+		if prior, ok := loadChatSession(runtimeDB, target.ID, id); ok {
+			machThread = &prior
+		} else {
+			machThread = &ChatSession{ID: id, AgentID: target.ID, Created: time.Now()}
+		}
+		ephemeral = false
+	}
 	subTurn.machineToolList = machineToolNotes(subSess)
-	subTurn.enterDispatchMachine(&ChatSession{ID: subSessID, AgentID: target.ID}, true, message, &sysPrompt, &tools, "delegation")
+	subTurn.noteAgentAttachments(subSess)
+	subTurn.enterDispatchMachine(machThread, ephemeral, message, &sysPrompt, &tools, "delegation")
 	think := subTurn.machine.Think(resolveDispatchThink(target))
 	// Telemetry — each RunAgentSync invocation gets its own per-turn
 	// accumulator so pipeline agent stages, external dispatches, and
@@ -987,6 +1002,8 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		TurnNotes:      func(user string) string { return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessID, user)) },
 		CapturePrompt:  target.CapturePrompt,
 		TurnClaimJudge: subTurn.claimJudge(ctx),
+		// What the machine's steps did before the loop ran, as on the web turn.
+		PriorWork: subTurn.priorWorkForJudge,
 		// The lead's review of a turn that did work, when this agent asks for one
 		// (lead_review.go).
 		TurnReview:   subTurn.leadReviewer(ctx),
@@ -1036,6 +1053,11 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	Log("[orchestrate.RunAgentSync] owner=%s runtime=%s target=%s msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, len(message), runErr)
 	buildCheck.annotate(resp)
+	// The waiting step hands off now it has had its turn, as on every surface;
+	// kept on the delegator's thread, so the next delegation starts there.
+	if runErr == nil && resp != nil {
+		subTurn.completeMachine(subTurn.machine)
+	}
 	// The turn's tool trace, read once: the commitment ledger asks whether the
 	// turn did anything, and the caller recording the run wants the trace itself.
 	toolTrace := persistedToolCallsFromTranscript(syncTranscript)
@@ -1912,6 +1934,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// report card (a monitor firing) is the framework telling the agent
 	// something happened, which is not what a machine is there to route.
 	subTurn.machineToolList = machineToolNotes(subSess)
+	subTurn.noteAgentAttachments(subSess)
 	if strings.TrimSpace(run.SystemPromptOverride) == "" && strings.TrimSpace(run.InputReportFrom) == "" {
 		subTurn.enterDispatchMachine(&priorSession, false, message, &sysPrompt, &tools, chFirst(run.Kind, "continuing"))
 	}
@@ -2139,6 +2162,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	// Last look before the reply reaches the channel. See turn_judge.go.
 	loopCfg.TurnClaimJudge = subTurn.claimJudge(ctx)
+	// What the machine's steps did before the loop ran, as on the web turn.
+	loopCfg.PriorWork = subTurn.priorWorkForJudge
 	loopCfg.PriorReports = func() []string {
 		return append(priorReportsFrom(priorSession.Messages), dispatchPriorReports(target, subSessionID, runtimeDB)...)
 	}

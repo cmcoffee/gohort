@@ -1206,8 +1206,8 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		// keeps counting (dispatch_lineage.go).
 		ctx: withDispatchLineage(t.ctx,
 			append(append(append([]string(nil), t.dispatchChain...), t.agent.ID), target.ID), t.originAuthority()),
-		topic:           t.resolveTopic(),
-		network:         t.network,
+		topic:   t.resolveTopic(),
+		network: t.network,
 		// Carry the caller's chain + the caller's own agent ID forward.
 		// The cycle guard above runs against this slice on every
 		// further agents(run) the sub-turn makes.
@@ -1404,6 +1404,7 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		prior.ID, prior.AgentID, prior.Created = subSessID, target.ID, time.Now()
 	}
 	subTurn.machineToolList = machineToolNotes(subSess)
+	subTurn.noteAgentAttachments(subSess)
 	subTurn.enterDispatchMachine(&prior, false, msg, &sysPrompt, &tools, "agents-run")
 	think := subTurn.machine.Think(resolveDispatchThink(target))
 	// The warden judges the agent that is RUNNING, so a sub-agent answers to its
@@ -1475,6 +1476,9 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		// sync-dispatch paths already ask; this inline path did not, so a
 		// dispatched Builder's claims went to the caller unread.
 		TurnClaimJudge: subTurn.claimJudge(ctx),
+		// What the machine's steps did before the loop ran, as on the web turn,
+		// so a reply relaying a step's findings is not convicted as unsupported.
+		PriorWork: subTurn.priorWorkForJudge,
 		// The lead's review of a turn that did work, when this agent asks for one
 		// (lead_review.go).
 		TurnReview:         subTurn.leadReviewer(ctx),

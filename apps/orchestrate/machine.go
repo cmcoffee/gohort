@@ -1033,6 +1033,16 @@ func judgeFirstLine(s string, max int) string {
 }
 
 // noteAttachedTools records what an attachment minted this turn, so the
+// noteAgentAttachments records the agent's attachments for the step filter
+// on a run that assembled its catalog elsewhere (a dispatch). Only the web
+// turn noted them, so on every hand-off a step whose list did not name a
+// Source or pipeline the agent was given stripped it, and a step told to
+// search that source had nothing to search with.
+func (t *chatTurn) noteAgentAttachments(sess *ToolSession) {
+	t.noteAttachedTools(t.buildAttachedPipelineToolDefs())
+	t.noteAttachedTools(t.buildAttachedSourceToolDefs(sess))
+}
+
 // phase filter can tell a GRANT apart from a selection. Additive: the
 // sources build and the pipelines build both call it.
 func (t *chatTurn) noteAttachedTools(defs []AgentToolDef) {
