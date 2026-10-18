@@ -997,13 +997,13 @@ func operatorToolDefsUnfolded(sess *ToolSession, agentID string) []AgentToolDef 
 					}
 					// The whole result, as agents(run) hands it back. Summary is the
 					// Activity feed's line, cut at 280 characters, and the
-					// delegator worked from that cut. Fenced like agents(run): what
-					// a delegate returns can carry web text it read.
+					// delegator worked from that cut. Under the agent-result banner,
+					// as agents(run)'s: what a delegate returns can quote text it read.
 					out := strings.TrimSpace(rec.Raw)
 					if out == "" {
 						out = strings.TrimSpace(rec.Summary)
 					}
-					fenced, _ := fenceAgentsOutput(out, nil)
+					fenced, _ := fenceAgentResult(agent)(out, nil)
 					return fmt.Sprintf("Delegated to %q.%s Result:\n%s", agent, privateDelegationNote(dctx, true), fenced), nil
 				}
 				// FromAgent rides the queued record so an APPROVED delegation runs

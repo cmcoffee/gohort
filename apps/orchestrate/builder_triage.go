@@ -153,7 +153,7 @@ func triageCallFailed(tc PersistedToolCall) (bool, string) {
 	if e := strings.TrimSpace(tc.Err); e != "" {
 		return true, triageSnippet(e)
 	}
-	res := strings.TrimSpace(strings.TrimPrefix(tc.Result, UntrustedToolResultFence))
+	res := strings.TrimSpace(stripResultFence(tc.Result))
 	switch {
 	case strings.HasPrefix(res, "HTTP 4"), strings.HasPrefix(res, "HTTP 5"),
 		strings.Contains(res, "[exit: "), strings.Contains(res, "[TIMED OUT"),

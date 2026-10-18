@@ -86,7 +86,7 @@ func TestDelegateFollowsTheSameRuleAsAgentsRun(t *testing.T) {
 
 	if out := call(gated); !strings.Contains(out, "Delegated to \"Comedian\"") || len(ran) != 1 || ran[0] != comedian.ID {
 		t.Errorf("with nothing decided, a checked delegation should run, by id: %s (ran %v)", out, ran)
-	} else if !strings.Contains(out, "THE PUNCHLINE") || !strings.Contains(out, untrustedContentFence) {
+	} else if !strings.Contains(out, "THE PUNCHLINE") || !strings.Contains(out, agentResultFencePrefix+"Comedian.") {
 		t.Errorf("the delegator should get the whole result, fenced, not the feed's 280-character line: %s", out)
 	}
 	if out := call(context.Background()); !strings.Contains(out, "Queued") {

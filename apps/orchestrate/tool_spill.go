@@ -150,9 +150,7 @@ func spillFileBody(body string) (string, bool) {
 	if i := strings.LastIndex(out, "\n\nNote: "); i >= 0 && strings.Contains(out[i:], toolFailureNoteMarker) {
 		out = out[:i]
 	}
-	for strings.HasPrefix(out, untrustedContentFence) {
-		out = strings.TrimPrefix(out, untrustedContentFence)
-	}
+	out = stripResultFence(out)
 	out = strings.TrimLeft(out, " \t\r\n")
 	if loc := spillStatusLine.FindStringIndex(out); loc != nil {
 		rest := strings.TrimLeft(out[loc[1]:], " \t\r\n")
