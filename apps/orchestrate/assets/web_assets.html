@@ -449,6 +449,25 @@
   font-size: 1rem; line-height: 1;
 }
 .ui-orch-list-del:hover { color: var(--danger); }
+/* A guardrail row is two lines: the rule, then where and how it applies (the
+ * action it is bound to, its severity, its exceptions) with delete at the far
+ * end. Side by side, the controls took the row on a phone and the rule itself
+ * shrank to a sliver.
+ *
+ * The rule reads on one line like the rows above it and opens to the whole
+ * text while it is being edited, or from the arrow beside it; the row's script
+ * sets which (is-open) and fits the height, so there is no scrollbar or resize
+ * handle. */
+.ui-orch-guard-row { flex-wrap: wrap; }
+.ui-orch-guard-row > textarea {
+  resize: none; overflow: hidden; padding: 0; min-height: 1.4em;
+  white-space: nowrap;
+}
+.ui-orch-guard-row.is-open > textarea { white-space: pre-wrap; }
+.ui-orch-guard-apply {
+  flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+}
+.ui-orch-guard-apply > .ui-orch-list-del:last-child { margin-left: auto; }
 .ui-orch-list-add {
   align-self: flex-start;
   background: var(--bg-2); border: 1px dashed var(--border);
@@ -6056,13 +6075,70 @@ select.ui-orch-intake-input {
             gList.innerHTML = '';
             grules.forEach(function(text, idx) {
               var row = document.createElement('div');
-              row.className = 'ui-orch-list-row';
-              var input = document.createElement('input');
-              input.type = 'text'; input.value = gBody(text); input.placeholder = 'guardrail rule…';
+              row.className = 'ui-orch-list-row ui-orch-guard-row';
+              // The rule reads on one line and opens to the whole text while it is
+              // edited, or from the arrow beside it (sync). One rule is one line
+              // of the stored list, so it never takes a newline: Enter is refused
+              // and a pasted break becomes a space, or the save would split one
+              // rule into two.
+              var input = document.createElement('textarea');
+              input.rows = 1; input.value = gBody(text); input.placeholder = 'guardrail rule…';
+              input.addEventListener('keydown', function(e) { if (e.key === 'Enter') e.preventDefault(); });
+              var more = document.createElement('button');
+              more.type = 'button';
+              more.className = 'ui-orch-list-del';
+              var pinned = false; // opened from the arrow, so leaving the box keeps it open
+              function fit() {
+                input.style.height = 'auto';
+                // 0 while the band is off screen; the observer below fits it
+                // once it is shown.
+                if (input.scrollHeight > 0) input.style.height = input.scrollHeight + 'px';
+              }
+              function sync(open) {
+                row.classList.toggle('is-open', open);
+                input.wrap = open ? 'soft' : 'off';
+                if (!open) input.scrollLeft = 0; // one line starts at the start
+                fit();
+                // The arrow only where there is more to see, or to close it again.
+                more.hidden = !open && input.scrollWidth <= input.clientWidth + 1;
+                more.textContent = open ? '⌃' : '⌄';
+                more.title = open ? 'Show on one line' : 'Show the whole rule';
+                more.setAttribute('aria-expanded', open ? 'true' : 'false');
+              }
+              input.addEventListener('focus', function() { sync(true); });
+              input.addEventListener('blur', function() { if (!pinned) sync(false); });
+              // Held on press so the box keeps focus: otherwise its blur closes it
+              // first and the click opens it straight back.
+              more.addEventListener('mousedown', function(e) { e.preventDefault(); });
+              more.onclick = function() {
+                var open = !row.classList.contains('is-open');
+                pinned = open;
+                sync(open);
+              };
               // Re-read the marker from the stored line on every keystroke rather
               // than closing over it: the toggle below rewrites grules[idx], and a
               // captured copy would put the stale severity back.
-              input.addEventListener('input', function() { grules[idx] = gCompose(input.value, gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), gTool(grules[idx])); });
+              input.addEventListener('input', function() {
+                if (input.value.indexOf('\n') >= 0) {
+                  var at = input.selectionStart;
+                  input.value = input.value.replace(/\s*\n\s*/g, ' ');
+                  try { input.selectionStart = input.selectionEnd = Math.min(at, input.value.length); } catch (_) {}
+                }
+                grules[idx] = gCompose(input.value, gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), gTool(grules[idx]));
+                fit();
+              });
+              // Refit when its width changes: first shown, the page resized, the
+              // phone turned. Width only, since fitting changes the height. The
+              // arrow appearing only narrows the box, which only adds to what
+              // overflows, so this settles rather than flipping back and forth.
+              if (window.ResizeObserver) {
+                var fitWidth = 0;
+                new ResizeObserver(function() {
+                  if (input.clientWidth !== fitWidth) { fitWidth = input.clientWidth; sync(row.classList.contains('is-open')); }
+                }).observe(input);
+              } else {
+                setTimeout(function() { sync(false); }, 0);
+              }
               var term = document.createElement('button');
               term.type = 'button';
               term.className = 'ui-orch-list-del';
@@ -6152,7 +6228,10 @@ select.ui-orch-intake-input {
               var del = document.createElement('button');
               del.className = 'ui-orch-list-del'; del.type = 'button'; del.textContent = '×';
               del.onclick = function() { grules.splice(idx, 1); renderG(); gCommit(); };
-              row.appendChild(input); row.appendChild(toolSel); row.appendChild(term); row.appendChild(exempt); row.appendChild(del);
+              var apply = document.createElement('div');
+              apply.className = 'ui-orch-guard-apply';
+              apply.appendChild(toolSel); apply.appendChild(term); apply.appendChild(exempt); apply.appendChild(del);
+              row.appendChild(input); row.appendChild(more); row.appendChild(apply);
               gList.appendChild(row);
             });
             var addBtn = document.createElement('button');
@@ -6165,7 +6244,7 @@ select.ui-orch-intake-input {
               // expensive judge attached, and guidance belongs in the Rules band
               // above; this band is for limits that don't negotiate.
               grules.push(''); renderG(); // no commit: an empty row is not a rule yet
-              var inputs = gList.querySelectorAll('input');
+              var inputs = gList.querySelectorAll('textarea');
               if (inputs.length) inputs[inputs.length - 1].focus();
             };
             gList.appendChild(addBtn);
