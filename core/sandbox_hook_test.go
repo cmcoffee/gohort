@@ -442,8 +442,13 @@ func TestPythonRunAgentAndPipelineReachTheHook(t *testing.T) {
 // The script's side of a store call waits at least as long as the server's
 // deadline for it. It waited 330 seconds, so a download past five and a half
 // minutes came back to the script as "timed out" while it went on running.
+// An agent or pipeline run is the same shape: it reports to the run as it
+// works, and was cut off at five minutes regardless.
 func TestTheScriptWaitsAsLongAsTheServerForStoreCalls(t *testing.T) {
-	for _, m := range []string{"store_command", "store_action", "store_pull"} {
+	for _, m := range []string{"store_command", "store_action", "store_pull", "run_agent", "run_pipeline"} {
+		if d := hookMethodDeadline(m, nil); d < 6*time.Hour {
+			t.Errorf("%s: the server gives up after %s, before the run's own limits", m, d)
+		}
 		if !strings.Contains(SandboxHookPythonShim, `"`+m+`": 6 * 3600 + 60`) {
 			t.Errorf("the script's wait for %s is not the server's deadline plus a minute", m)
 		}

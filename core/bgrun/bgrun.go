@@ -154,6 +154,24 @@ func (a *RunActivity) Note(line string) {
 	a.note = strings.TrimSpace(line)
 }
 
+// Working records work done for the run by something it is waiting on: an
+// agent a script asked to run, whose rounds happen inside gohort while the
+// script sits silent on the call. The run counts as alive, and line is shown
+// while it has printed nothing. Without it a script that ran an agent for
+// longer than the no-output limit was stopped as stuck in the middle of the
+// agent's work.
+func (a *RunActivity) Working(line string) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.last = time.Now()
+	if line = strings.TrimSpace(line); line != "" {
+		a.note = line
+	}
+}
+
 func (a *RunActivity) growing() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()

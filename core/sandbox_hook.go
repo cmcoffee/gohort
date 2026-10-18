@@ -452,11 +452,15 @@ func hookMethodDeadline(method string, params map[string]interface{}) time.Durat
 		// can be slow; a script's whole run is capped well under this, which
 		// is the real bound.
 		return 120 * time.Second
-	case "run_agent", "run_pipeline":
-		// A whole agent turn, tools and all, or a pipeline of them. A script
-		// that declares either gets the long run cap to match (appscript).
-		return 300 * time.Second
-	case "store_command", "store_action", "store_pull":
+	case "run_agent", "run_pipeline", "store_command", "store_action", "store_pull":
+		// A whole agent turn, tools and all, or a pipeline of them, reports
+		// each round to the script's run (noteRunWork in orchestrate), so in an
+		// action, which runs with no fixed limit, a stuck agent is ended by the
+		// run's no-output limit and a working one is not cut off. A data source
+		// has its script's 300s cap (appscript), which still holds. Capped here
+		// at 300s, an app's scheduled refresh whose agent needed longer was cut
+		// off mid-run.
+		//
 		// A store's command unpacks or decrypts a capture, and a pull copies
 		// one; both report progress to the script's run as they go, so the
 		// run's own limits are what end a stuck one, not this. The script's
@@ -1871,7 +1875,8 @@ class Output(str):
 
 # How long a call may wait for its answer, per method, a little past the
 # server's deadline for it (hookMethodDeadline). Anything not listed: 330s.
-_HOOK_WAIT = {"store_command": 6 * 3600 + 60, "store_action": 6 * 3600 + 60, "store_pull": 6 * 3600 + 60}
+_HOOK_WAIT = {"store_command": 6 * 3600 + 60, "store_action": 6 * 3600 + 60, "store_pull": 6 * 3600 + 60,
+              "run_agent": 6 * 3600 + 60, "run_pipeline": 6 * 3600 + 60}
 
 
 class _Gohort:

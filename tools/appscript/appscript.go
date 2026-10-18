@@ -211,43 +211,50 @@ func (j Job) Run() (string, error) {
 		}
 		return spec, nil
 	}
-	sess.Ask = func(prompt string, jsonMode bool) (string, error) {
-		if AppAsk == nil {
-			return "", fmt.Errorf("ask is not available here")
+	// The model hooks run on the context of the session they are called on. A
+	// long run calls them on its own session, whose context carries the run's
+	// activity, so an agent or pipeline the script is waiting on keeps the run
+	// alive while it works.
+	bindModel := func(s *ToolSession) {
+		s.Ask = func(prompt string, jsonMode bool) (string, error) {
+			if AppAsk == nil {
+				return "", fmt.Errorf("ask is not available here")
+			}
+			spec, err := app()
+			if err != nil {
+				return "", err
+			}
+			return AppAsk(s.Context(), spec, caller, prompt, jsonMode)
 		}
-		spec, err := app()
-		if err != nil {
-			return "", err
+		s.RunAgent = func(agent, prompt string) (string, error) {
+			if AppRunAgent == nil {
+				return "", fmt.Errorf("run_agent is not available here")
+			}
+			spec, err := app()
+			if err != nil {
+				return "", err
+			}
+			return AppRunAgent(s.Context(), spec, caller, agent, prompt)
 		}
-		return AppAsk(sess.Context(), spec, caller, prompt, jsonMode)
+		s.RunPipeline = func(pipeline, input string) (string, error) {
+			if AppRunPipeline == nil {
+				return "", fmt.Errorf("run_pipeline is not available here")
+			}
+			spec, err := app()
+			if err != nil {
+				return "", err
+			}
+			return AppRunPipeline(s.Context(), spec, caller, pipeline, input)
+		}
 	}
-	sess.RunAgent = func(agent, prompt string) (string, error) {
-		if AppRunAgent == nil {
-			return "", fmt.Errorf("run_agent is not available here")
-		}
-		spec, err := app()
-		if err != nil {
-			return "", err
-		}
-		return AppRunAgent(sess.Context(), spec, caller, agent, prompt)
-	}
-	sess.RunPipeline = func(pipeline, input string) (string, error) {
-		if AppRunPipeline == nil {
-			return "", fmt.Errorf("run_pipeline is not available here")
-		}
-		spec, err := app()
-		if err != nil {
-			return "", err
-		}
-		return AppRunPipeline(sess.Context(), spec, caller, pipeline, input)
-	}
+	bindModel(sess)
 	storeFuncs(sess, user, slug)
 	if kind == "action" {
 		sess.Notify = notifier(caller, user, slug)
 	}
 	var out string
 	if j.Long {
-		out, err = j.runLong(sess, tt, args)
+		out, err = j.runLong(sess, tt, args, bindModel)
 	} else {
 		out, err = temptool.DispatchTempToolDirect(sess, tt, args)
 	}
@@ -294,12 +301,13 @@ func withArg(args map[string]any, k string, v any) map[string]any {
 // the caller's own job, with the fixed limit replaced by the no-output and disk
 // limits. The script's hooks (call_tool, ask, run_agent) ride the session the
 // run is handed, which outlives nothing but has the job's context.
-func (j Job) runLong(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+func (j Job) runLong(sess *ToolSession, tt *TempTool, args map[string]any, bindModel func(*ToolSession)) (string, error) {
 	return bgrun.BackgroundRun{Tool: tt.Name, Run: func(work *ToolSession) (string, error) {
 		work.CallTool = func(name string, a map[string]any) (string, error) {
 			return temptool.CallToolForScript(work, j.Caller, name, a)
 		}
-		work.Ask, work.RunAgent, work.RunPipeline, work.Notify = sess.Ask, sess.RunAgent, sess.RunPipeline, sess.Notify
+		bindModel(work)
+		work.Notify = sess.Notify
 		storeFuncs(work, j.Owner, j.Slug)
 		if j.OnProgress != nil {
 			if act := bgrun.RunActivityFrom(work.Context()); act != nil {

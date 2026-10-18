@@ -1009,6 +1009,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 			telem.record(info)
 			liveRun.SetProgress(info.Round, info.ToolCalls)
 			prog.step(info)
+			noteRunWork(ctx, target.Name, info)
 		},
 		TurnNotes:      func(user string) string { return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessID, user)) },
 		CapturePrompt:  target.CapturePrompt,

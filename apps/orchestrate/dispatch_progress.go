@@ -16,11 +16,29 @@ package orchestrate
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bgrun"
 )
+
+// noteRunWork tells a background run waiting on this dispatch that the agent
+// is working: an app script's run_agent, silent on the call while the agent's
+// rounds go on here, would otherwise be stopped by the no-output limit while
+// the agent was still searching. No-op when no such run is waiting.
+func noteRunWork(ctx context.Context, agent string, info StepInfo) {
+	act := bgrun.RunActivityFrom(ctx)
+	if act == nil {
+		return
+	}
+	line := fmt.Sprintf("%s: round %d", agent, info.Round)
+	if n := len(info.ToolCalls); n > 0 {
+		line += ", " + info.ToolCalls[n-1].Name
+	}
+	act.Working(line)
+}
 
 // toolCard is the chip a running tool call is drawn as: which reply bubble it
 // sits in, and its id. A call carries its card on the context it runs with,
