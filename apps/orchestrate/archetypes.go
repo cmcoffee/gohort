@@ -1,7 +1,7 @@
 // Archetype library: the agent shapes that ship an agent.
 //
 // Since 0.8.381 that is the Assistant (conversational) alone. Specialists are
-// shaped per request by Builder's shaper (builder_shaper.go). Research, which
+// written per request by Builder's agent recipe (builder_recipe.go). Research, which
 // was a shape, is a built-in (builtin/) that apps run by id; knowledge base,
 // which was one too, is gone. What follows is the history of how the library
 // came to be.
@@ -16,7 +16,7 @@
 //
 // Docs live in archetypes/*.md, embedded at build so there's no runtime file
 // dependency. Builder used to read them through an `archetype` tool, which
-// it never called; the shaper replaced it.
+// it never called; agent_recipe replaced it.
 //
 // Each doc opens with a JSON frontmatter header (see frontmatter.go) carrying
 // the facts a machine needs: the one-line summary, the aliases a model is

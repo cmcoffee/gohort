@@ -36,7 +36,7 @@ func TestMatchShapeDeclinesRatherThanGuesses(t *testing.T) {
 		"   ",
 		"something for work",
 		// Specialists whose shape depends on what they reach: Builder's
-		// shaper decides these (builder_shaper.go), not a draft.
+		// agent recipe decides these (builder_recipe.go), not a draft.
 		"I want something that watches our status page and tells me when it goes down",
 		"figure out why the build keeps failing on that repo",
 		"an agent that can send messages for me",

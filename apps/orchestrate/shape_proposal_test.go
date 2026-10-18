@@ -48,7 +48,7 @@ func TestProposalOpensWithTheAgentItWouldBuild(t *testing.T) {
 }
 
 // A specialist whose shape depends on what it reaches is no ready-made agent:
-// the wizard offers no draft for it, and Builder's shaper decides it.
+// the wizard offers no draft for it, and Builder's agent recipe decides it.
 func TestASpecialistGoesToBuilderNotADraft(t *testing.T) {
 	if p, ok := proposeAgent("watch our status page every 5 minutes"); ok {
 		t.Errorf("a watcher request opened with the %q draft", p.Shape)

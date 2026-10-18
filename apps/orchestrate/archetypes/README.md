@@ -58,7 +58,7 @@ copy verbatim is one it will copy instead of composing.
 A shape belongs here when it ships an agent: its prompt can be written without
 knowing the subject. A specialist whose prompt has to name its subject (what a
 watcher watches, whom a correspondent writes for) has no file here. Builder's
-shaper decides its shape from the request (`builder_shaper.go`, and
+agent recipe decides its shape from the request (`builder_recipe.go`, and
 `docs/agent-archetypes.md` for why the recipe-only files went).
 
 ## Rules the loader enforces

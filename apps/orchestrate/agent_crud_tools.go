@@ -69,7 +69,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if sess == nil || sess.Username == "" || sess.DB == nil {
 		return "", errors.New("create_agent requires authenticated session")
 	}
-	if msg := shapeGateRefusal(sess, "create_agent"); msg != "" {
+	if msg := recipeGateRefusal(sess, "create_agent"); msg != "" {
 		return "", errors.New(msg)
 	}
 	rec := agentRecordFromArgs(args)
@@ -627,7 +627,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if sess == nil || sess.Username == "" || sess.DB == nil {
 		return "", errors.New("update_agent requires authenticated session")
 	}
-	if msg := shapeGateRefusal(sess, "update_agent"); msg != "" {
+	if msg := recipeGateRefusal(sess, "update_agent"); msg != "" {
 		return "", errors.New(msg)
 	}
 	id, err := agentTargetArg(args, "update_agent")

@@ -17,7 +17,7 @@ func TestBuiltinAgentsLoad(t *testing.T) {
 		t.Fatal("no agents loaded from builtin/*.md")
 	}
 	// Builder, and Research, the former shape apps still run by id. A new
-	// framework agent is neither: Builder's shaper composes it, or it is a
+	// framework agent is neither: Builder's agent recipe composes it, or it is a
 	// shape under archetypes/ that ships an agent.
 	ids := map[string]bool{}
 	for _, rec := range got {
@@ -63,7 +63,7 @@ func TestBuiltinAgentsLoad(t *testing.T) {
 func TestBuiltinDocumentUnchanged(t *testing.T) {
 	const (
 		file = "builder.md"
-		want = "669d64b915e586b12a50fc0cbd384a88d8053f15847752caa78267968a681bc5"
+		want = "82f2449a9f758fee74f6bd047021f087a8dbd2336973688e5a76d55dd506193c"
 	)
 	data, err := builtinFS.ReadFile("builtin/" + file)
 	if err != nil {

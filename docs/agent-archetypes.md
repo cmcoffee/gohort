@@ -1,7 +1,7 @@
-# Agent shapes: two kinds, and Builder's shaper
+# Agent shapes: two kinds, and Builder's agent recipe
 
-Status: **the shaper is built** (`apps/orchestrate/builder_shaper.go`). The recipe library it
-replaces is gone, and the only shape left is the Assistant. Written 2026-10-17, replacing two
+Status: **the agent recipe is built** (`apps/orchestrate/builder_recipe.go`). The library of
+fixed recipes it replaces is gone, and the only shape left is the Assistant. Written 2026-10-17, replacing two
 earlier drafts ("Agent Types", then a library of archetype recipes).
 
 ## The decision
@@ -34,13 +34,14 @@ moved behind `load_tool`. And the recipes, written side by side, showed the slic
   why the Investigator and the Librarian blurred into each other;
 - what decides a shape is reach and context control, which no recipe owned.
 
-## The shaper
+## The agent recipe
 
 One call with a brief about nothing but the shape, made before Builder creates or changes an
-agent (`shape_agent`).
+agent (`agent_recipe`). Each build gets a recipe of its own, written for that request; nothing
+is looked up.
 
 - **Forced by the intake, not by a prompt.** A Builder session whose intake said Create or Change
-  and Agent cannot run `create_agent` or `update_agent` until `shape_agent` has run in it
+  and Agent cannot run `create_agent` or `update_agent` until `agent_recipe` has run in it
   (`shapeGateRefusal`). A new intake in the same session is shaped again. A session with no
   intake (another agent sent it, or a one-line request) is not held, and Builder may still call
   the tool when a request turns out to change what an agent reaches.
@@ -50,15 +51,15 @@ agent (`shape_agent`).
   reaches and, for a sub-agent, why it was split off; the wiring (delegation, a Source, a
   schedule, a board, a guardrail); and only the questions the person must decide. Builder shows
   it to the person before building.
-- **Its own route stage** (`app.orchestrate.builder_shaper`, lead by default) and its own prompt
-  block (`agent.builder.shaper`), so an operator can move it to the worker or reword it. A
-  session that may not reach the lead uses the worker. A shaper that cannot answer does not hold
+- **Its own route stage** (`app.orchestrate.builder_recipe`, lead by default) and its own prompt
+  block (`agent.builder.recipe`), so an operator can move it to the worker or reword it. A
+  session that may not reach the lead uses the worker. A recipe call that cannot answer does not hold
   the build up: the shape is advice.
 
 ### The split test
 
 A part becomes its own sub-agent (`owned_by` the parent, hidden) only when splitting it off buys
-one of three things, and the shaper names which:
+one of three things, and the recipe names which:
 
 1. **Reach** that should live on it alone: the parent should not hold that tool at all (sending
    messages to people, running code, changing a system).
@@ -72,7 +73,7 @@ the agent, which keeps the transcript out without a second agent.
 
 ### Reach is the person's
 
-The shaper names what an agent NEEDS ("a way to read the sales exports") and asks the person what
+The recipe names what an agent NEEDS ("a way to read the sales exports") and asks the person what
 fills it: tools, Sources, credentials, channels, spend and the lead model are theirs to choose,
 never assumed. It may make an agent stricter (only tools that look, a guardrail on a parent).
 
@@ -95,7 +96,7 @@ Research and knowledge base stopped being shapes in 0.8.381 (no recipe, no wizar
 draft from the matcher).
 
 - **Knowledge base is gone.** Nothing ran it; it was a template to clone. A new one is a
-  specialist like any other, and the shaper's brief carries what makes it one: documents
+  specialist like any other, and the recipe brief carries what makes it one: documents
   attached, Private, no memory of its own, and the answer-only-from-documents rule.
 - **Research is an engine.** Its record moved to `builtin/` because four features run it by id:
   Collections research and audit (the Knowledge app's Research button too), Scribe's audit and

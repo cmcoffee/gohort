@@ -12,8 +12,8 @@ shape until 0.8.381 and an engine now: hidden, and run by id by Collections
 app agent because the app-agent spec carries no rules, plan guidance, gap
 check or round budgets, and Research depends on all four.
 
-A new framework agent is none of these. Builder's shaper composes a specialist
-from the request; a shape that ships an agent goes under `../archetypes/`.
+A new framework agent is none of these. Builder's agent recipe composes a
+specialist from the request; a shape that ships an agent goes under `../archetypes/`.
 
 ## Format
 

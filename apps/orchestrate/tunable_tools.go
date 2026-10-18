@@ -19,7 +19,7 @@ package orchestrate
 import "github.com/cmcoffee/gohort/core/prompts"
 
 var authoringToolNames = []string{
-	"survey", "shape_agent", "create_agent", "update_agent", "list_reference_sources", "clone_agent",
+	"survey", "agent_recipe", "create_agent", "update_agent", "list_reference_sources", "clone_agent",
 	"delete_agent", "add_tool", "tool_def", "skill_def", "bridge", "connector", "tool_template",
 	"collections", "draft_oauth_credential", "draft_api_credential", "update_api_credential",
 	"store_credential_secret", "check_credential", "bulletins", "mcp",

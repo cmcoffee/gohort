@@ -86,10 +86,10 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// monitors). Listed FIRST so it reads as the natural orient-before-build
 		// reflex the lean prompt now asks for.
 		surveyWorkspaceToolDef(t),
-		// shape_agent: the shape of an agent build, decided before create_agent
-		// or update_agent, which an agent intake holds until it has run
-		// (builder_shaper.go).
-		shapeAgentToolDef(t, sess),
+		// agent_recipe: the recipe for an agent build, written before
+		// create_agent or update_agent, which an agent intake holds until it
+		// has run (builder_recipe.go).
+		agentRecipeToolDef(t, sess),
 		ChatToolToAgentToolDefWithSession(&createAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(&updateAgentTool{}, sess),
 		// What an agent can be attached to. Sits beside create/update because
