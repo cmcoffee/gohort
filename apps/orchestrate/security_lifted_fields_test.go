@@ -50,7 +50,7 @@ func TestEnforcementIsOfferedOnSecurityAndNotTheEditor(t *testing.T) {
 
 	// A sub-agent runs on its parent's credentials, so scoping it separately
 	// would offer a decision that never takes effect.
-	if !strings.Contains(security, `if strings.TrimSpace(agent.OwnedBy) == "" {`) {
+	if !strings.Contains(security, `if strings.TrimSpace(ap.agent.OwnedBy) == "" {`) {
 		t.Error("credential scoping is offered on sub-agents, where it decides nothing")
 	}
 }

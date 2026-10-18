@@ -246,7 +246,7 @@ func TestTheToolControlsPostToAFieldThatExists(t *testing.T) {
 	// placeholder on purpose, to say why it is wrong.
 	var assign string
 	for _, line := range strings.Split(string(src), "\n") {
-		if strings.Contains(line, "toolWrite :=") {
+		if strings.Contains(line, "ap.toolWrite = ") {
 			assign = line
 		}
 	}
