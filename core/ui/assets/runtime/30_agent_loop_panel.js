@@ -3343,12 +3343,21 @@
       if (!m || !m.bubble) return;
       m.label = label || '';
       var chip = m.bubble.querySelector(':scope > .ui-agent-msg-label');
-      if (!label) { if (chip) chip.remove(); return; }
+      if (!label) {
+        if (chip) chip.remove();
+        if (!(m.body && m.body.textContent.trim())) markEmptyBubble(m);
+        return;
+      }
       if (!chip) {
         chip = el('div', {class: 'ui-agent-msg-label'});
         m.bubble.insertBefore(chip, m.body);
       }
       chip.textContent = label;
+      // A label is something to read, so its bubble is shown even with no
+      // text. A message saved with only a label (a turn that chose to say
+      // nothing, and says why) was otherwise the hidden lazy bubble, and its
+      // label was drawn where nobody could see it.
+      m.bubble.classList.remove('ui-agent-msg-empty');
     }
 
     // uiSetMessageBadge puts a small chip at the head of a message, before its
@@ -4063,15 +4072,17 @@
     // clear) kept the text removed and the CARD on screen — the empty
     // grey bubble that shows up whenever a check fires.
     //
-    // A bubble hosting its own tool pills or attachments is left alone.
-    // Those record work that really happened, they are pinned to this
-    // element (toolHostFor / agentMsgAttachmentBox), and hiding the
-    // bubble would take them with it.
+    // A bubble hosting its own tool pills, attachments or label is left
+    // alone. Those record work that really happened (or, a label, say what
+    // the message is), they are pinned to this element (toolHostFor /
+    // agentMsgAttachmentBox / labelMessage), and hiding the bubble would
+    // take them with it.
     function markEmptyBubble(m) {
       if (!m || !m.bubble) return;
       if (m.bubble.querySelector(':scope > .ui-agent-tools-panel, ' +
                                  ':scope > .ui-agent-tools-toggle, ' +
-                                 ':scope > .ui-agent-msg-attachments')) return;
+                                 ':scope > .ui-agent-msg-attachments, ' +
+                                 ':scope > .ui-agent-msg-label')) return;
       m.bubble.classList.add('ui-agent-msg-empty');
     }
     // streamingText is what a bubble shows while its reply is still arriving.
