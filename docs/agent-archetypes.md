@@ -92,7 +92,7 @@ sub-agents: investigator, research, knowledge base, and the ones below marked bu
 | Front desk | Answers people on a channel or a public link, with guardrails, handing off to the owner |
 | Writer | Drafts and keeps a guide or document, with what agents learn reported into it |
 | Panel | Puts a question to several voices and synthesizes, with the pipeline panel stage |
-| Digest | Gathers from sources on a schedule and posts a summary or a bulletin |
+| **Digest** (built) | Gathers from sources on a schedule and posts a summary or a bulletin |
 
 Each lands as one file in `archetypes/`, plus whatever the framework is missing for it to be built
 properly, which is the part to find before writing the recipe.

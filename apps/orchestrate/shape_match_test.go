@@ -28,6 +28,8 @@ func TestMatchShapeOnRealRequests(t *testing.T) {
 		{"a second opinion before a message goes out", "reviewer"},
 		{"something to crunch the numbers in our monthly exports", "analyst"},
 		{"an agent that can analyze the data in the CSVs we upload", "analyst"},
+		{"post today's headlines to a bulletin board every morning", "digest"},
+		{"a weekly roundup of what's new in our repos", "digest"},
 		{"someone to talk to about my day", "conversational"},
 		{"a general assistant that can also do things", "conversational"},
 	} {
