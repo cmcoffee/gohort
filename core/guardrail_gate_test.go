@@ -262,7 +262,7 @@ func TestGuardrailHaltEndsTheTurn(t *testing.T) {
 			return GuardrailDecision{Blocked: hook == GuardHookPreAction, Message: "blocked"}
 		},
 		GuardrailHalted: func() bool { return true },
-		GuardrailReject: func(reason, request string) string { return "I can't help with that one." },
+		GuardrailReject: func(GuardrailHalt) string { return "I can't help with that one." },
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
@@ -288,10 +288,10 @@ func TestGuardrailHaltEndsTheTurn(t *testing.T) {
 func TestRejectionFailureFallsBackToCannedDecline(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		reject func(string, string) string
+		reject func(GuardrailHalt) string
 	}{
-		{"returns empty", func(string, string) string { return "" }},
-		{"returns whitespace", func(string, string) string { return "   \n " }},
+		{"returns empty", func(GuardrailHalt) string { return "" }},
+		{"returns whitespace", func(GuardrailHalt) string { return "   \n " }},
 		{"not wired at all", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -329,7 +329,7 @@ func TestHaltSkipsOutputCorrectionRetries(t *testing.T) {
 			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Message: "blocked"}
 		},
 		GuardrailHalted: func() bool { return true },
-		GuardrailReject: func(reason, request string) string { return "Sorry, not this one." },
+		GuardrailReject: func(GuardrailHalt) string { return "Sorry, not this one." },
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
@@ -387,7 +387,7 @@ func TestBlockingRuleSkipsCorrectionWithoutAHalt(t *testing.T) {
 			}
 		},
 		// No GuardrailHalted at all: a non-correctable block alone must end it.
-		GuardrailReject: func(reason, request string) string { return "Not one I'll get into." },
+		GuardrailReject: func(GuardrailHalt) string { return "Not one I'll get into." },
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
@@ -527,7 +527,7 @@ func TestPeriodicKeepsCheckingAfterCorrectionBudgetSpent(t *testing.T) {
 			checks++
 			return GuardrailDecision{Blocked: true, Correctable: true, Message: "blocked"}
 		},
-		GuardrailReject: func(reason, request string) string { return "Not that one." },
+		GuardrailReject: func(GuardrailHalt) string { return "Not that one." },
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
@@ -564,7 +564,7 @@ func TestBlockingRuleAtPeriodicHandsOverWithoutAHalt(t *testing.T) {
 			hooks[hook]++
 			return GuardrailDecision{Blocked: hook == GuardHookPeriodic, Correctable: false, Message: "blocked"}
 		},
-		GuardrailReject: func(reason, request string) string { return "Skipping that one." },
+		GuardrailReject: func(GuardrailHalt) string { return "Skipping that one." },
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
@@ -606,7 +606,7 @@ func TestBlockingRuleDoesNotEndTheTurnAtPreAction(t *testing.T) {
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
 			return GuardrailDecision{Blocked: hook == GuardHookPreAction, Correctable: false, Message: "blocked, change course"}
 		},
-		GuardrailReject: func(reason, request string) string { return "REJECTED" },
+		GuardrailReject: func(GuardrailHalt) string { return "REJECTED" },
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
@@ -687,7 +687,7 @@ func TestHiddenInterimStillBlocksTheReply(t *testing.T) {
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
 			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Correctable: false, Message: "blocked"}
 		},
-		GuardrailReject: func(reason, request string) string { return "Not that one." },
+		GuardrailReject: func(GuardrailHalt) string { return "Not that one." },
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
@@ -775,7 +775,7 @@ func TestZeroValueDecisionIsNotCorrectable(t *testing.T) {
 			// Severity deliberately unset — the shape a careless caller writes.
 			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Message: "blocked"}
 		},
-		GuardrailReject: func(reason, request string) string { return "Not that one." },
+		GuardrailReject: func(GuardrailHalt) string { return "Not that one." },
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)

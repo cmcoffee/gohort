@@ -164,6 +164,9 @@ func (t *chatTurn) applyInputGuardrail(msgs []Message) (out []Message, decline s
 // Never returns empty: a hard block that produced no text would leave the caller
 // with nothing to say and tempt it into running the turn after all.
 func (t *chatTurn) guardrailInputDecline(request string) string {
+	if t.nobodyAsked(t.ctx) {
+		return t.guardrailWithheldReport(GuardrailHalt{Reason: guardHookPreInput, Request: request})
+	}
 	if reply := strings.TrimSpace(t.guardrailRejection(guardHookPreInput, request)); reply != "" {
 		return reply
 	}

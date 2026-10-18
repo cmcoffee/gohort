@@ -226,6 +226,90 @@ func (t *chatTurn) guardrailRejectionAttempt(ctx context.Context, user, reason, 
 	return out
 }
 
+// A run nobody asked for.
+//
+// The rejection writer above answers a person who asked for something a rule
+// forbids, and tells them nothing about why, so a prober learns nothing. A
+// schedule's fire has no such person. Its reader is the owner, afterwards, who
+// wrote the rules, and the work it did before it halted has already happened.
+// Declining it there misreports the run: a Moltbook fire that replied, deleted
+// and upvoted had its report held back by a rule about posting links, and the
+// writer, handed only the fire's mission, declined the mission: "Not running
+// that engagement cycle."
+//
+// So such a run's reply says what happened instead: which rule stopped it, at
+// what point, and the calls it made first. Bound to the agent the fire was for,
+// so a sub-agent it dispatches (perhaps someone else's, under rules this owner
+// never wrote) still declines the ordinary way.
+type nobodyAskedKey struct{}
+
+// withNobodyAsked marks ctx as the run of agentID that nobody asked for.
+func withNobodyAsked(ctx context.Context, agentID string) context.Context {
+	return context.WithValue(ctx, nobodyAskedKey{}, agentID)
+}
+
+// nobodyAsked reports whether this turn is a run nobody asked for, of this
+// turn's own agent, for its owner.
+func (t *chatTurn) nobodyAsked(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	id, _ := ctx.Value(nobodyAskedKey{}).(string)
+	return id != "" && id == t.agent.ID && t.requester().Owner
+}
+
+// guardrailWithheldReport is the reply for a halted run nobody asked for.
+func (t *chatTurn) guardrailWithheldReport(h GuardrailHalt) string {
+	rule := "one of your guardrails"
+	if n := len(t.guardrailRulesHit); n > 0 {
+		rule = fmt.Sprintf("your guardrail %q", t.guardrailRulesHit[n-1])
+	}
+	var b strings.Builder
+	switch h.Reason {
+	case GuardHookPreInput:
+		fmt.Fprintf(&b, "This run did not start: its task breaks %s.", rule)
+	case GuardHookPreAction:
+		fmt.Fprintf(&b, "This run was stopped: it kept reaching for a call that %s refuses.", rule)
+	default:
+		fmt.Fprintf(&b, "This run's report was held back: it broke %s, and a reply that breaks one is not delivered.", rule)
+	}
+	if did := tallyCalls(h.Did); did != "" {
+		fmt.Fprintf(&b, " Before that it made %d tool call(s): %s.", len(h.Did), did)
+	} else if h.Reason != GuardHookPreInput {
+		b.WriteString(" It made no tool calls first.")
+	}
+	if h.Reason == GuardHookPreOutput || h.Reason == GuardHookPeriodic {
+		b.WriteString(" If the rule is about something the agent does with a tool, tie it to that tool in the agent's guardrails, and it is no longer judged against the agent's reports.")
+	}
+	return b.String()
+}
+
+// tallyCalls renders calls as "name ×n" in the order each first appears,
+// capped so a long run stays one paragraph.
+func tallyCalls(calls []string) string {
+	const shown = 12
+	var order []string
+	counts := map[string]int{}
+	for _, c := range calls {
+		if counts[c] == 0 {
+			order = append(order, c)
+		}
+		counts[c]++
+	}
+	parts := make([]string, 0, shown+1)
+	for i, c := range order {
+		if i == shown {
+			parts = append(parts, fmt.Sprintf("and %d more", len(order)-shown))
+			break
+		}
+		if counts[c] > 1 {
+			c = fmt.Sprintf("%s ×%d", c, counts[c])
+		}
+		parts = append(parts, c)
+	}
+	return strings.Join(parts, ", ")
+}
+
 func (t *chatTurn) notifyOwnerGuardrail(rule string, blocks int) {
 	appendCortexObs(t.udb, t.agent.ID, "Guardrail", cortexKindOverflow,
 		fmt.Sprintf("Halted a turn after %d guardrail blocks (rule: %q). The agent was repeatedly prevented from an action that violates your guardrails: review whether that was legitimate work or an attempt to work around the rule.", blocks, rule))

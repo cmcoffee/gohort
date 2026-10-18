@@ -127,6 +127,14 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// task's, and the tool is mounted beside the pacing lever: both are
 		// things only this turn can use.
 		ctx = withTaskNotes(ctx, tnotes)
+		// A stored schedule's fire was asked for by nobody, and its reader is
+		// the owner, afterwards. A delegation was asked for by the agent that
+		// delegated, and is left unmarked.
+		if len(sa.DispatchedBy) == 0 {
+			if rec, ok := findAgentByNameOrID(UserDB(app.DB, sa.Owner), sa.Owner, sa.AgentID); ok {
+				ctx = withNobodyAsked(ctx, rec.ID)
+			}
+		}
 		// liveRun goes in so the dispatch reports on THIS row rather than
 		// opening a second one for the same fire.
 		run, err := app.runAgentSyncAppTools(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm,

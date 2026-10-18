@@ -39,7 +39,7 @@ import "context"
 type StageGuardrails struct {
 	Check    func(hookPoint, candidate string) GuardrailDecision
 	Halted   func() bool
-	Reject   func(reason, request string) string
+	Reject   func(h GuardrailHalt) string
 	Declines []string
 }
 

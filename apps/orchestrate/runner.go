@@ -1603,7 +1603,7 @@ func (pr *planRun) guardAskText(q string) (string, bool) {
 	// The same fresh-context writer the loop uses for a blocked reply, so a
 	// declined ask reads like every other decline rather than like a new voice.
 	if enforce.Reject != nil {
-		if reply := strings.TrimSpace(enforce.Reject("pre_output", lastUserText(pr.msgs))); reply != "" {
+		if reply := strings.TrimSpace(enforce.Reject(GuardrailHalt{Reason: "pre_output", Request: lastUserText(pr.msgs)})); reply != "" {
 			return reply, false
 		}
 	}

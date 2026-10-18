@@ -26,7 +26,7 @@ import (
 type guardrailEnforcement struct {
 	Check  func(hookPoint, candidate string) GuardrailDecision
 	Halted func() bool
-	Reject func(reason, request string) string
+	Reject func(h GuardrailHalt) string
 	// ActionGate widens WHICH calls reach Check at pre_action, and only while
 	// this turn is tainted. It travels with the rest because it is meaningless
 	// without them: a gate with no check behind it judges nothing.
@@ -71,7 +71,12 @@ func (t *chatTurn) guardrailEnforcerCtx(ctx context.Context) guardrailEnforcemen
 		// Bound to the same context as the check, for the same reason: the
 		// rejection writer is itself a model call, and one made on a dead
 		// context falls through to the canned decline every time.
-		Reject: func(reason, request string) string { return t.guardrailRejectionCtx(ctx, reason, request) },
+		Reject: func(h GuardrailHalt) string {
+			if t.nobodyAsked(ctx) {
+				return t.guardrailWithheldReport(h)
+			}
+			return t.guardrailRejectionCtx(ctx, h.Reason, h.Request)
+		},
 	}
 }
 

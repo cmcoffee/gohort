@@ -443,7 +443,12 @@ type AgentLoopConfig struct {
 	// prober the signal the guardrail exists to withhold). Returning "" falls
 	// back to the canned decline, so a failed rejection call can never leak the
 	// draft it was meant to replace. nil ⇒ canned decline. Optional.
-	GuardrailReject func(reason, request string) string
+	//
+	// It is also told what the turn's tools did before it halted, for the one
+	// reader who is owed that: the owner reading a run nobody asked for (a
+	// schedule's fire). There the work already happened, and a decline of the
+	// mission's name reads as the run not running at all.
+	GuardrailReject func(h GuardrailHalt) string
 
 	// ChatOptions are additional options passed to every LLM call.
 	ChatOptions []ChatOption

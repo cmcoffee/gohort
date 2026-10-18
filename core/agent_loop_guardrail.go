@@ -257,7 +257,9 @@ const guardrailClosedNote = "\n<gohort-meta>That request was declined and is clo
 // because the alternative is releasing the draft it was replacing.
 func guardrailRejectionReply(cfg AgentLoopConfig, reason string, history []Message) string {
 	if cfg.GuardrailReject != nil {
-		if reply := strings.TrimSpace(cfg.GuardrailReject(reason, lastUserRequest(history))); reply != "" {
+		at, request := lastUserRequestAt(history)
+		h := GuardrailHalt{Reason: reason, Request: request, Did: haltedTurnCalls(history, at, reason)}
+		if reply := strings.TrimSpace(cfg.GuardrailReject(h)); reply != "" {
 			return reply
 		}
 		Debug("[agent_loop] guardrail rejection model returned nothing: using the canned decline")
@@ -285,6 +287,13 @@ func guardrailRejectionReply(cfg AgentLoopConfig, reason string, history []Messa
 // tells it not to) — those are skipped by the empty-Content test in native
 // mode, where results ride in ToolResults instead.
 func lastUserRequest(history []Message) string {
+	_, request := lastUserRequestAt(history)
+	return request
+}
+
+// lastUserRequestAt is lastUserRequest with where it sits in history, -1 when
+// there is none.
+func lastUserRequestAt(history []Message) (int, string) {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Role != "user" {
 			continue
@@ -310,10 +319,52 @@ func lastUserRequest(history []Message) string {
 			}
 		}
 		if c = strings.TrimSpace(c); c != "" {
-			return c
+			return i, c
 		}
 	}
-	return ""
+	return -1, ""
+}
+
+// GuardrailHalt is what the writer of a halted turn's reply is handed.
+type GuardrailHalt struct {
+	// Reason is the hook that halted the turn, for logs only.
+	Reason string
+	// Request is the last genuine user turn: attacker-controlled, so fenced as
+	// untrusted wherever it goes.
+	Request string
+	// Did is each tool call the turn made before it halted, in order: the
+	// tool's name, with the action for a grouped tool ("moltbook/upvote_post").
+	// The calls of a pre_action halt's own round are left out, because that
+	// round is the one the rule refused.
+	Did []string
+}
+
+// haltedTurnCalls lists the tool calls of this turn, the messages after the
+// request at index at.
+func haltedTurnCalls(history []Message, at int, reason string) []string {
+	end := len(history)
+	if reason == GuardHookPreAction {
+		for i := end - 1; i > at; i-- {
+			if history[i].Role == "assistant" && len(history[i].ToolCalls) > 0 {
+				end = i
+				break
+			}
+		}
+	}
+	var did []string
+	for i := at + 1; i < end; i++ {
+		if history[i].Role != "assistant" {
+			continue
+		}
+		for _, tc := range history[i].ToolCalls {
+			name := tc.Name
+			if act, _ := tc.Args["action"].(string); strings.TrimSpace(act) != "" {
+				name += "/" + strings.TrimSpace(act)
+			}
+			did = append(did, name)
+		}
+	}
+	return did
 }
 
 // nonEmptyLines trims and drops blanks — a set that is all whitespace must

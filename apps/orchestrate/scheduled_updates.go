@@ -683,6 +683,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			}
 		}
 	}
+	// Nobody asked for this fire: its reader is the owner, afterwards.
+	ctx = withNobodyAsked(ctx, agent.ID)
 	extraTools, availableBlock, customToolPrompt, subTurn := app.buildDispatchTurnExtrasWithOwner(ctx, agent, p.Username, udb, subSess, p.Username, udb)
 	tools = append(tools, extraTools...)
 	// The one lever an attempt has over its own schedule: an objective that
