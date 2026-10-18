@@ -129,7 +129,7 @@ func TestBothTurnPathsReadTheLedger(t *testing.T) {
 	}
 	src, _ := os.ReadFile("scheduled_updates.go")
 	s := string(src)
-	send, rec, warn := strings.Index(s, "deliverWakeToChannel(p, subSess"), strings.Index(s, "recordBackgroundDelivery(p.SessionID"), strings.Index(s, "but nothing sent them")
+	send, rec, warn := strings.Index(s, "deliverWakeToChannel(p, fr.subSess"), strings.Index(s, "recordBackgroundDelivery(p.SessionID"), strings.Index(s, "but nothing sent them")
 	if send < 0 || rec < send || warn < send {
 		t.Error("the wake must record (or warn about) its delivery after the channel send, not before it")
 	}

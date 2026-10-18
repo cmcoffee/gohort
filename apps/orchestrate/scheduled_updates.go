@@ -406,77 +406,17 @@ func (o scheduledOutcome) resolve() (RunStatus, string) {
 // test always runs. Returns a descriptive error only when the fire can't happen
 // at all (app not ready, or the agent/session has been deleted); the scheduled
 // caller logs it, the manual caller surfaces it.
+//
+// The fire's state is fireRun and each phase is a method on it. A phase that
+// can end the fire early returns false, and what that return handed back is
+// parked by exit for this function to return. The defers stay here, registered
+// in the order they always were.
 func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool) error {
-	orchRefMu.Lock()
-	app := orchRef
-	orchRefMu.Unlock()
-	if app == nil {
-		return fmt.Errorf("%w for session %s", errSchedNotReady, p.SessionID)
+	fr := &fireRun{ctx: ctx, p: p, reArm: reArm}
+	if !fr.admit() {
+		return fr.ret
 	}
-	// A parked (broken) task stays LISTED but never runs — re-arm its dormant tick
-	// and return. Resume/relink clears Broken and puts it back on its real cadence.
-	if p.Broken {
-		if reArm {
-			parkRecurringBroken(p, "")
-		}
-		return nil
-	}
-	// A linked task's own tick only keeps it listed: its group's time runs it
-	// (schedule_links.go). A Run now on its row still runs it once.
-	if p.LinkGroup != "" && reArm && !isLinkFire(ctx) {
-		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, time.Now().Add(brokenDormantReArm)); err != nil {
-			Log("[orchestrate/scheduled] linked task %s: dormant re-arm failed: %v", recurringName(p), err)
-		}
-		return nil
-	}
-	// Its end date, from the shared timing: the run that falls on or after it
-	// does not happen, and the task ends like one that reached its cap.
-	if reArm && !p.Timing.StopAt.IsZero() && !time.Now().Before(p.Timing.StopAt) {
-		Log("[orchestrate/scheduled] task %s reached its end date, ending", p.SessionID)
-		recordScheduledDrop(p, RunOK, fmt.Sprintf(
-			"Ended: recurring task %q reached its end date (%s) and will not run again.",
-			recurringName(p), p.Timing.StopAt.Add(-time.Second).Format("Jan 2")))
-		dropRecurringTaskNotes(p)
-		return nil
-	}
-	if reArm && p.FireCount >= p.effectiveMaxFires() {
-		Log("[orchestrate/scheduled] task %s reached %d fires, auto-cancelling", p.SessionID, p.effectiveMaxFires())
-		recordScheduledDrop(p, RunAttention, fmt.Sprintf(
-			"Auto-cancelled: this recurring task reached its cap of %d fires. It did not run and will not run again: recreate it if you still want it.",
-			p.effectiveMaxFires()))
-		dropRecurringTaskNotes(p)
-		return nil
-	}
-
-	udb := UserDB(app.DB, p.Username)
-	if udb == nil {
-		return fmt.Errorf("%w: no udb yet for user %s (session %s)", errSchedNotReady, p.Username, p.SessionID)
-	}
-	agent, ok := loadAgent(udb, p.AgentID)
-	if !ok {
-		// Don't silently drop the chain — park it as broken so the owner sees a
-		// "needs relink" task instead of a vanished one, and can relink or delete
-		// it deliberately.
-		Log("[orchestrate/scheduled] agent %s missing for user %s: parking task as broken", p.AgentID, p.Username)
-		recordScheduledDrop(p, RunFailed, fmt.Sprintf(
-			"Did not run: its agent (id %s) no longer exists. The task is parked, not deleted: relink it to a live agent from the Scheduler to resume.",
-			p.AgentID))
-		if reArm {
-			parkRecurringBroken(p, fmt.Sprintf("its agent was deleted (id %s)", p.AgentID))
-		}
-		return nil
-	}
-
-	// The network state this fire runs under - see withAgentNetwork for why
-	// both halves are set together. There is no per-fire privacy toggle to OR
-	// in the way a live turn ORs the user's, so the agent's own ForcePrivate is
-	// the whole of it.
-	//
-	// Deliberately NOT registered in inflightConnectors: a fire is not a
-	// session anybody is toggling, and leaving it unreachable means the one
-	// thing that could loosen it mid-run cannot.
-	var fireConnector *NetworkConnector
-	ctx, fireConnector = withAgentNetwork(ctx, p.Username, agent, agentForcesPrivate(agent))
+	fr.connectNetwork()
 
 	// PRE-ARM the next occurrence BEFORE running the fire. The scheduler
 	// removed this task from the persistent queue before invoking us, and the
@@ -488,20 +428,11 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// productive path updates the armed payload's idle clock at the end, and
 	// the panic guard below only falls back to reschedule() when the pre-arm
 	// itself hadn't happened yet.
-	armedID := ""
-	retireReason := ""
-	var armed orchUpdatePayload
 	if reArm {
-		var ok bool
-		armedID, armed, ok, retireReason = preArmNextFire(p)
-		if !ok {
-			// Visible where the user reads the task, not just in the log.
-			appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-retired",
-				fmt.Sprintf("Recurring task %q is retiring after this fire: %s. It will not run again: recreate it if you still want it.", recurringName(p), retireReason))
-		}
+		fr.preArm()
 		defer func() {
 			if r := recover(); r != nil {
-				if armedID != "" {
+				if fr.armedID != "" {
 					Log("[orchestrate/scheduled] fire panicked for session %s: %v (next fire already armed)", p.SessionID, r)
 					return
 				}
@@ -510,17 +441,218 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			}
 		}()
 	}
+	fr.loadThread()
+	fr.buildPrompt()
+	fr.buildSession()
+	defer DeleteSessionTempTools(fr.udb, fr.schedSessID)
+	fr.buildToolkit()
+	fr.prepareLoop()
+	fr.startLiveRun()
+	defer fr.reportUsage()
+	defer bankScopedSpend(fr.ctx, spendOwner(fr.agent, p.Username), fr.agent) // a fire bills to the agent it ran (agent_spend.go)
+	fr.subSess.Ctx = fr.ctx
+	// Safety net only — Complete is idempotent (first call sticks), and the
+	// explicit call right after the loop below lands first with the real
+	// status. This catches a panic/early-return path so the run can't be
+	// stuck "running" until the sweeper's retention window.
+	defer fr.liveRun.Complete(RunStatusFailed)
+	fr.workForSession()
+	if p.SessionID != "" {
+		defer func() {
+			fr.liveRun.Complete(RunStatusFailed)
+			noteSessionChange(p.AgentID, p.SessionID)
+		}()
+	}
+	fr.runLoop()
+	fr.prepareRecord()
+	if !fr.reportable() {
+		return fr.ret
+	}
+	fr.objectiveCheck()
+	fr.composeDetail()
+	fr.postReport()
+	fr.recordOutcome()
+	fr.renewArmed()
+	return nil
+}
+
+// fireRun is one recurring fire, from its gates to the renewed successor.
+// Each field is a local of the function it was cut from; the function is now
+// the order of the phases and the defers between them.
+type fireRun struct {
+	ctx   context.Context
+	p     orchUpdatePayload
+	reArm bool
+	app   *OrchestrateApp
+	udb   Database
+	agent AgentRecord
+	ok    bool
+	// The network state this fire runs under - see withAgentNetwork for why
+	// both halves are set together. There is no per-fire privacy toggle to OR
+	// in the way a live turn ORs the user's, so the agent's own ForcePrivate is
+	// the whole of it.
+	//
+	// Deliberately NOT registered in inflightConnectors: a fire is not a
+	// session anybody is toggling, and leaving it unreachable means the one
+	// thing that could loosen it mid-run cannot.
+	fireConnector      *NetworkConnector
+	armedID            string
+	retireReason       string
+	armed              orchUpdatePayload
+	loadSession        string
+	recordFire         bool
+	sess               ChatSession
+	msgs               []Message
+	tnotes             taskNotes
+	schedSessID        string
+	subSess            *ToolSession
+	carriedAttachments int
+	tools              []AgentToolDef
+	err                error
+	extraTools         []AgentToolDef
+	availableBlock     string
+	customToolPrompt   string
+	subTurn            *chatTurn
+	pacingAsk          *pacing.Ask
+	facts              []MemoryFact
+	sysPrompt          string
+	started            time.Time
+	think              bool
+	softCap            int
+	lastRound          int
+	// Filled by the loop's OnPromptDigest hook, read by record() below.
+	promptDigest PromptDigest
+	// liveCalls accumulates the tool calls the model actually requested each
+	// round, straight from OnStep — the SAME stream the live activity card
+	// renders. This is the faithful record: a text-based-tool-call model (the
+	// A3B emits calls as text, not native structures) doesn't always round-trip
+	// every call into the transcript's structured ToolCalls, so reconstructing
+	// the trace from the post-hoc transcript under-counts — the export then
+	// showed fewer calls than the card. Recording live off OnStep closes that
+	// gap; results get stitched back on from the transcript below.
+	liveCalls   []ToolCall
+	gate        *autonomousGate
+	liveRun     *Run
+	reportUsage func()
+	gDecline    string
+	resp        *Response
+	transcript  []Message
+	runErr      error
+	trigger     string
+	agentLabel  string
+	toolTrace   []PersistedToolCall
+	steps       []RunStep
+	reply       string
+	objLine     string
+	objStopped  bool
+	objStalled  bool
+	pacedLine   string
+	hitCap      bool
+	detail      string
+	// ret is what an early return hands back, parked by exit.
+	ret error
+}
+
+// exit records the error an early return hands back and tells the driver to
+// take it.
+func (fr *fireRun) exit(err error) bool {
+	fr.ret = err
+	return false
+}
+
+func (fr *fireRun) admit() bool {
+	p := fr.p
+	orchRefMu.Lock()
+	fr.app = orchRef
+	orchRefMu.Unlock()
+	if fr.app == nil {
+		return fr.exit(fmt.Errorf("%w for session %s", errSchedNotReady, p.SessionID))
+	}
+	// A parked (broken) task stays LISTED but never runs — re-arm its dormant tick
+	// and return. Resume/relink clears Broken and puts it back on its real cadence.
+	if p.Broken {
+		if fr.reArm {
+			parkRecurringBroken(p, "")
+		}
+		return fr.exit(nil)
+	}
+	// A linked task's own tick only keeps it listed: its group's time runs it
+	// (schedule_links.go). A Run now on its row still runs it once.
+	if p.LinkGroup != "" && fr.reArm && !isLinkFire(fr.ctx) {
+		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, time.Now().Add(brokenDormantReArm)); err != nil {
+			Log("[orchestrate/scheduled] linked task %s: dormant re-arm failed: %v", recurringName(p), err)
+		}
+		return fr.exit(nil)
+	}
+	// Its end date, from the shared timing: the run that falls on or after it
+	// does not happen, and the task ends like one that reached its cap.
+	if fr.reArm && !p.Timing.StopAt.IsZero() && !time.Now().Before(p.Timing.StopAt) {
+		Log("[orchestrate/scheduled] task %s reached its end date, ending", p.SessionID)
+		recordScheduledDrop(p, RunOK, fmt.Sprintf(
+			"Ended: recurring task %q reached its end date (%s) and will not run again.",
+			recurringName(p), p.Timing.StopAt.Add(-time.Second).Format("Jan 2")))
+		dropRecurringTaskNotes(p)
+		return fr.exit(nil)
+	}
+	if fr.reArm && p.FireCount >= p.effectiveMaxFires() {
+		Log("[orchestrate/scheduled] task %s reached %d fires, auto-cancelling", p.SessionID, p.effectiveMaxFires())
+		recordScheduledDrop(p, RunAttention, fmt.Sprintf(
+			"Auto-cancelled: this recurring task reached its cap of %d fires. It did not run and will not run again: recreate it if you still want it.",
+			p.effectiveMaxFires()))
+		dropRecurringTaskNotes(p)
+		return fr.exit(nil)
+	}
+
+	fr.udb = UserDB(fr.app.DB, p.Username)
+	if fr.udb == nil {
+		return fr.exit(fmt.Errorf("%w: no udb yet for user %s (session %s)", errSchedNotReady, p.Username, p.SessionID))
+	}
+	fr.agent, fr.ok = loadAgent(fr.udb, p.AgentID)
+	if !fr.ok {
+		// Don't silently drop the chain — park it as broken so the owner sees a
+		// "needs relink" task instead of a vanished one, and can relink or delete
+		// it deliberately.
+		Log("[orchestrate/scheduled] agent %s missing for user %s: parking task as broken", p.AgentID, p.Username)
+		recordScheduledDrop(p, RunFailed, fmt.Sprintf(
+			"Did not run: its agent (id %s) no longer exists. The task is parked, not deleted: relink it to a live agent from the Scheduler to resume.",
+			p.AgentID))
+		if fr.reArm {
+			parkRecurringBroken(p, fmt.Sprintf("its agent was deleted (id %s)", p.AgentID))
+		}
+		return fr.exit(nil)
+	}
+	return true
+}
+
+func (fr *fireRun) connectNetwork() {
+	p := fr.p
+	fr.ctx, fr.fireConnector = withAgentNetwork(fr.ctx, p.Username, fr.agent, agentForcesPrivate(fr.agent))
+}
+
+func (fr *fireRun) preArm() {
+	p := fr.p
+	var ok bool
+	fr.armedID, fr.armed, ok, fr.retireReason = preArmNextFire(p)
+	if !ok {
+		// Visible where the user reads the task, not just in the log.
+		appendSessionDiag(fr.udb, p.AgentID, p.SessionID, "recurring-retired",
+			fmt.Sprintf("Recurring task %q is retiring after this fire: %s. It will not run again: recreate it if you still want it.", recurringName(p), fr.retireReason))
+	}
+}
+
+func (fr *fireRun) loadThread() {
+	p := fr.p
 	// Surface routes the recurring conversation: "cortex" moves it (context +
 	// reply) to the agent's cortex home thread; "background" runs it but posts no
 	// reply card; "" / "session" keeps it in the creating session. The home
 	// (p.SessionID) is left intact so a switch back always works.
-	loadSession := p.SessionID
+	fr.loadSession = p.SessionID
 	if strings.TrimSpace(p.Surface) == "cortex" {
-		loadSession = cortexSessionID(p.AgentID)
+		fr.loadSession = cortexSessionID(p.AgentID)
 	}
-	recordFire := strings.TrimSpace(p.Surface) != "background"
-	sess, ok := loadChatSession(udb, p.AgentID, loadSession)
-	if !ok {
+	fr.recordFire = strings.TrimSpace(p.Surface) != "background"
+	fr.sess, fr.ok = loadChatSession(fr.udb, p.AgentID, fr.loadSession)
+	if !fr.ok {
 		// The target thread doesn't exist yet — synthesize it rather than
 		// dropping the task. A channel agent's Cortex home thread
 		// (channel:<agentID>) is created lazily and won't exist until its first
@@ -529,9 +661,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// not a failure. Start a fresh thread with the scheduled id (parity with
 		// the chat GET path, which returns an empty session on a miss); the
 		// fire's reply is what materializes it via saveChatSession below.
-		sess = ChatSession{ID: loadSession, AgentID: p.AgentID}
+		fr.sess = ChatSession{ID: fr.loadSession, AgentID: p.AgentID}
 	}
+}
 
+func (fr *fireRun) buildPrompt() {
+	p := fr.p
 	// Bound the history this fire runs on, with the same rolling-summary
 	// compaction the Cortex thread and every dispatch already use: a running
 	// summary plus a verbatim recent tail, sized by the agent's context depth.
@@ -551,13 +686,13 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// The 30 is kept as a BACKSTOP under the fold, for the case compaction
 	// declines to run at all (no worker LLM configured): fewer messages is
 	// still better than every message.
-	history := app.compactOperatorHistory(udb, p.Username, agent, loadSession, sess.Messages)
+	history := fr.app.compactOperatorHistory(fr.udb, p.Username, fr.agent, fr.loadSession, fr.sess.Messages)
 	if len(history) > 30 {
 		history = history[len(history)-30:]
 	}
-	msgs := make([]Message, 0, len(history)+1)
+	fr.msgs = make([]Message, 0, len(history)+1)
 	for _, m := range history {
-		msgs = append(msgs, Message{Role: m.Role, Content: m.Content})
+		fr.msgs = append(fr.msgs, Message{Role: m.Role, Content: m.Content})
 	}
 	// Explicit time context with the local↔UTC pairing. Engagement-style
 	// tasks count "posts today" against API timestamps that are usually
@@ -590,12 +725,15 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// what was tried, then the attempt's own record of what it learned. Always
 	// rendered, including the one-line empty state, because a first fire that
 	// is never told the register exists never starts one. See task_notes.go.
-	tnotes := recurringTaskNotes(p)
-	if block := tnotes.block(); block != "" {
+	fr.tnotes = recurringTaskNotes(p)
+	if block := fr.tnotes.block(); block != "" {
 		fireContent += "\n\n" + block
 	}
-	msgs = append(msgs, Message{Role: "user", Content: fireContent})
+	fr.msgs = append(fr.msgs, Message{Role: "user", Content: fireContent})
+}
 
+func (fr *fireRun) buildSession() {
+	p := fr.p
 	// Assemble the SAME toolkit a live turn / standing-agent fire gets, so a
 	// recurring task can actually DO its job: call its authored api / toolbox /
 	// shell tools, dispatch through SecureAPI credentials, reach its attached
@@ -610,33 +748,33 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// tool + attached pipelines + hydrated custom tools). A DISTINCT sub-session
 	// id keeps this fire's ephemeral load_tool state off the user's interactive
 	// session (we still append the reply into the real session below).
-	schedSessID := "scheduled:" + p.SessionID
-	subSess := &ToolSession{
-		LLM:           app.LLM,
-		LeadLLM:       app.LeadLLM,
+	fr.schedSessID = "scheduled:" + p.SessionID
+	fr.subSess = &ToolSession{
+		LLM:           fr.app.LLM,
+		LeadLLM:       fr.app.LeadLLM,
 		Username:      p.Username,
-		DB:            udb,
-		ChatSessionID: schedSessID,
+		DB:            fr.udb,
+		ChatSessionID: fr.schedSessID,
 		// The fire runs under its own id; anything it starts in the background
 		// belongs to the conversation the user is actually in. See
 		// ToolSession.DeliverySessionID — without this a picture started from a
 		// wake was delivered into "scheduled:<real>" and nobody ever saw it.
 		DeliverySessionID: p.SessionID,
-		AgentID:           agent.ID,
+		AgentID:           fr.agent.ID,
 		IntentText:        p.Prompt, // Tier-1 tool elevation matches against the mission
-		DeniedCredentials: credentialDenySet(agent, p.Username),
+		DeniedCredentials: credentialDenySet(fr.agent, p.Username),
 		// The SAME connector the context carries. Both, because the two
 		// questions are answered from different places: NetworkAllowed reads
 		// this field and the workspace ceiling reads the context, and
 		// WorkspaceNetworkAllowed ANDs them. One of the two set is half a gate.
-		Network: fireConnector,
+		Network: fr.fireConnector,
 	}
-	subSess.DirectCredentialRefusal = directCredentialRefusal(agent, subSess)
-	subSess.ToolFailureAdvice = toolFailureAdvice(agent, false, nil) // the owner's own automation
+	fr.subSess.DirectCredentialRefusal = directCredentialRefusal(fr.agent, fr.subSess)
+	fr.subSess.ToolFailureAdvice = toolFailureAdvice(fr.agent, false, nil) // the owner's own automation
 
 	// The fire runs in ITS AGENT's directory, the same place the agent's own
 	// turns run, so a wake can see what the agent just made.
-	subSess.WorkspaceDir, subSess.WorkspaceFallback = agentTurnWorkspace(p.Username, agent.ID)
+	fr.subSess.WorkspaceDir, fr.subSess.WorkspaceFallback = agentTurnWorkspace(p.Username, fr.agent.ID)
 	// A background task's result arrives through this same fire path, and what
 	// it produced is staged against the session rather than described in the
 	// prompt. Fold it in BEFORE the loop: from here the files are ordinary
@@ -644,17 +782,20 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// send_message on a channel, the reply on any other surface — collects them
 	// the way it collects anything else it made. Gated on the wake marker so an
 	// ordinary recurring fire never picks up a delivery meant for another turn.
-	carriedAttachments := 0
+	fr.carriedAttachments = 0
 	if isTaskWake(p.Prompt) {
-		if carriedAttachments = claimTaskAttachments(p.SessionID, subSess); carriedAttachments > 0 {
-			Log("[orchestrate/scheduled] session=%s carrying %d staged attachment(s) from a finished background task", p.SessionID, carriedAttachments)
+		if fr.carriedAttachments = claimTaskAttachments(p.SessionID, fr.subSess); fr.carriedAttachments > 0 {
+			Log("[orchestrate/scheduled] session=%s carrying %d staged attachment(s) from a finished background task", p.SessionID, fr.carriedAttachments)
 		}
 	}
-	defer DeleteSessionTempTools(udb, schedSessID)
+}
+
+func (fr *fireRun) buildToolkit() {
+	p := fr.p
 	// Clone AllowedTools; force-add the always-on delivery + utility tools the
 	// interactive turn includes so a tightly-scoped agent can still deliver an
 	// attachment / tell the time (parity with the dispatch path).
-	toolNames := append([]string(nil), agent.AllowedTools...)
+	toolNames := append([]string(nil), fr.agent.AllowedTools...)
 	if len(toolNames) == 0 {
 		for _, td := range RegisteredChatTools() {
 			toolNames = append(toolNames, td.Name())
@@ -674,44 +815,47 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			}
 		}
 	}
-	tools, err := GetAgentToolsWithSession(subSess, toolNames...)
-	if err != nil {
-		tools = nil
+	fr.tools, fr.err = GetAgentToolsWithSession(fr.subSess, toolNames...)
+	if fr.err != nil {
+		fr.tools = nil
 		for _, n := range toolNames {
-			if td, terr := GetAgentToolsWithSession(subSess, n); terr == nil && len(td) > 0 {
-				tools = append(tools, td[0])
+			if td, terr := GetAgentToolsWithSession(fr.subSess, n); terr == nil && len(td) > 0 {
+				fr.tools = append(fr.tools, td[0])
 			}
 		}
 	}
 	// Nobody asked for this fire: its reader is the owner, afterwards.
-	ctx = withNobodyAsked(ctx, agent.ID)
-	extraTools, availableBlock, customToolPrompt, subTurn := app.buildDispatchTurnExtrasWithOwner(ctx, agent, p.Username, udb, subSess, p.Username, udb)
-	tools = append(tools, extraTools...)
+	fr.ctx = withNobodyAsked(fr.ctx, fr.agent.ID)
+	fr.extraTools, fr.availableBlock, fr.customToolPrompt, fr.subTurn = fr.app.buildDispatchTurnExtrasWithOwner(fr.ctx, fr.agent, p.Username, fr.udb, fr.subSess, p.Username, fr.udb)
+	fr.tools = append(fr.tools, fr.extraTools...)
 	// The one lever an attempt has over its own schedule: an objective that
 	// cannot finish because it is WAITING on something may say when to try
 	// again (docs/objective-pacing.md). Mounted by the fire rather than by the
 	// `recurring` tool group on purpose — a Fleet agent is never given that
 	// group, and scoping objectives to it is the mistake v0.6.621 already paid
 	// for. The ask is read after the loop, in the objective block below.
-	pacingAsk := &pacing.Ask{}
-	tools = append(tools, pacingTool(p, pacingAsk, reArm)...)
+	fr.pacingAsk = &pacing.Ask{}
+	fr.tools = append(fr.tools, pacingTool(p, fr.pacingAsk, fr.reArm)...)
 	// The other thing a fire can leave behind. Mounted here rather than on the
 	// `recurring` group for the same reason the pacing lever is: the turn that
 	// can use it is this one, and a Fleet agent never gets that group.
-	tools = append(tools, tnotes.tool()...)
+	fr.tools = append(fr.tools, fr.tnotes.tool()...)
 	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
-	tools = subTurn.finalizeDispatchCatalog(subSess, tools)
+	fr.tools = fr.subTurn.finalizeDispatchCatalog(fr.subSess, fr.tools)
 	// Marks the run as belonging to a task, which is what keeps the agent's own
 	// Working-notes block out of a prompt that already carries the task's.
-	ctx = withTaskNotes(ctx, tnotes)
+	fr.ctx = withTaskNotes(fr.ctx, fr.tnotes)
+}
 
+func (fr *fireRun) prepareLoop() {
+	p := fr.p
 	// Full dispatch persona: gated prompt + facts + available blocks +
 	// customToolPrompt (so the LLM SEES the names of its lazily-loaded custom
 	// tools) + per-agent capability guidance.
-	facts := subTurn.facts() // honours the Explicit Memory switch, as a web turn's read does
-	sysPrompt := dispatchSystemPrompt(ctx, agent, facts, availableBlock, customToolPrompt, schedSessID, udb, p.Username)
+	fr.facts = fr.subTurn.facts() // honours the Explicit Memory switch, as a web turn's read does
+	fr.sysPrompt = dispatchSystemPrompt(fr.ctx, fr.agent, fr.facts, fr.availableBlock, fr.customToolPrompt, fr.schedSessID, fr.udb, p.Username)
 
-	started := time.Now()
+	fr.started = time.Now()
 	// Think the SAME way every other surface runs this agent. resolveDispatchThink
 	// defaults ON (agent's Think setting / route default) and is the single source
 	// of truth for chat, channel, and dispatch. The scheduled path used to hardcode
@@ -724,23 +868,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// a finished background task reporting in), not a message for a machine
 	// to route: run through a router, a Builder result became another joke and
 	// the news never reached the chat. The agent runs as itself.
-	think := resolveDispatchThink(agent)
+	fr.think = resolveDispatchThink(fr.agent)
 	// Track the highest round the loop reached, so we can tell a fire that
 	// finished with budget to spare from one that consumed its whole round
 	// allowance and had to be forced to wrap up (its work is likely incomplete).
-	softCap := resolveMaxWorkerRounds(agent)
-	lastRound := 0
-	// Filled by the loop's OnPromptDigest hook, read by record() below.
-	var promptDigest PromptDigest
-	// liveCalls accumulates the tool calls the model actually requested each
-	// round, straight from OnStep — the SAME stream the live activity card
-	// renders. This is the faithful record: a text-based-tool-call model (the
-	// A3B emits calls as text, not native structures) doesn't always round-trip
-	// every call into the transcript's structured ToolCalls, so reconstructing
-	// the trace from the post-hoc transcript under-counts — the export then
-	// showed fewer calls than the card. Recording live off OnStep closes that
-	// gap; results get stitched back on from the transcript below.
-	var liveCalls []ToolCall
+	fr.softCap = resolveMaxWorkerRounds(fr.agent)
+	fr.lastRound = 0
 	// Unattended fire: same pre-authorization policy as the standing runner — a
 	// NeedsConfirm tool runs only if the owner pre-authorized it (AutoApproveTools),
 	// else it's refused and queued. Replaces the old blanket auto-approve that
@@ -750,9 +883,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// guard breadcrumbs — which guardrail stopped this fire, and why — land in
 	// the same trail the rest of this function writes to, instead of being
 	// dropped for want of a session pointer.
-	subTurn.beginDispatchDiag(p.AgentID, p.SessionID)
+	fr.subTurn.beginDispatchDiag(p.AgentID, p.SessionID)
+}
 
-	gate := app.newAutonomousGate(p.Username, agent.ID, subSess)
+func (fr *fireRun) startLiveRun() {
+	p := fr.p
+	fr.gate = fr.app.newAutonomousGate(p.Username, fr.agent.ID, fr.subSess)
 	// Live-activity registration: a recurring fire runs with no HTTP client
 	// attached, so without this it was invisible while running — the "Active
 	// now" surface only knew about interactive turns. No SSE ring is tailed;
@@ -762,8 +898,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// button on the Monitor row and the Stop on the live pill reach THIS work.
 	// Both offered it before and neither could do anything, because the run was
 	// created with no cancel func.
-	ctx, liveRun := app.runsRegistry().CreateCancellable(ctx, p.Username, agent.ID, "")
-	liveRun.Describe("scheduled", agent.Name, truncateObs(p.Prompt, 100))
+	fr.ctx, fr.liveRun = fr.app.runsRegistry().CreateCancellable(fr.ctx, p.Username, fr.agent.ID, "")
+	fr.liveRun.Describe("scheduled", fr.agent.Name, truncateObs(p.Prompt, 100))
 	// Tag the context with this run, and give the session the tagged context.
 	//
 	// Without it, nothing started from a wake or a scheduled fire could detach.
@@ -780,21 +916,17 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// per-piece wake, the delivery of what it made — was off in exactly the
 	// turns that needed it, because the dispatch paths tag their runs here and
 	// this one never did.
-	ctx = withParentRun(ctx, liveRun.ID)
+	fr.ctx = withParentRun(fr.ctx, fr.liveRun.ID)
 	// A scheduled fire has no request behind it, so nothing ever reported
 	// what one costs — the tokens landed in the process counter and the
 	// admin rollup and nowhere a reader would look. Give the fire its own
 	// line, same shape as a dispatch, labelled with the run so it can be
 	// matched against the live tree.
-	ctx, reportUsage := WithSubUsage(ctx, "scheduled "+agent.Name+" "+liveRun.ID)
-	defer reportUsage()
-	defer bankScopedSpend(ctx, spendOwner(agent, p.Username), agent) // a fire bills to the agent it ran (agent_spend.go)
-	subSess.Ctx = ctx
-	// Safety net only — Complete is idempotent (first call sticks), and the
-	// explicit call right after the loop below lands first with the real
-	// status. This catches a panic/early-return path so the run can't be
-	// stuck "running" until the sweeper's retention window.
-	defer liveRun.Complete(RunStatusFailed)
+	fr.ctx, fr.reportUsage = WithSubUsage(fr.ctx, "scheduled "+fr.agent.Name+" "+fr.liveRun.ID)
+}
+
+func (fr *fireRun) workForSession() {
+	p := fr.p
 	// Working FOR its session, where a page may be open on it: register it as
 	// that session's background run (never its turn: claiming the turn would
 	// cancel one the person started there), and wake the session's card poll
@@ -807,61 +939,61 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		if isTaskWake(p.Prompt) {
 			label = "Picking up a finished background task"
 		}
-		app.runsRegistry().WorkFor(liveRun, p.SessionID, label)
+		fr.app.runsRegistry().WorkFor(fr.liveRun, p.SessionID, label)
 		noteSessionChange(p.AgentID, p.SessionID)
-		defer func() {
-			liveRun.Complete(RunStatusFailed)
-			noteSessionChange(p.AgentID, p.SessionID)
-		}()
 	}
-	msgs, gDecline := subTurn.applyInputGuardrail(msgs)
+}
+
+func (fr *fireRun) runLoop() {
+	p := fr.p
+	fr.msgs, fr.gDecline = fr.subTurn.applyInputGuardrail(fr.msgs)
 	// A scheduled fire reasons on the model the agent chose, as its direct
 	// chats and every dispatched run do (dispatchRouting).
-	firePin, fireRoute := dispatchRouting(ctx, subTurn)
+	firePin, fireRoute := dispatchRouting(fr.ctx, fr.subTurn)
 	// An agent that plans on the lead hands the fire's work to work_step
 	// (runner_lead_plans_dispatch.go). This loop has no lazy tool fallback
 	// or mid-run tool feed to turn off.
-	subTurn.applyDispatchLeadPlans(subSess, firePin, p.Prompt, &sysPrompt, &tools, gate.confirm)
-	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
+	fr.subTurn.applyDispatchLeadPlans(fr.subSess, firePin, p.Prompt, &fr.sysPrompt, &fr.tools, fr.gate.confirm)
+	fr.resp, fr.transcript, fr.runErr = fr.app.RunAgentLoop(fr.ctx, fr.msgs, AgentLoopConfig{
 		TierOverride: firePin,
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply: gDecline,
+		PreEmptedReply: fr.gDecline,
 		SendGuardKey:   sendGuardKey,
-		SystemPrompt:   sysPrompt,
-		Tools:          tools,
-		MaxRounds:      softCap,
+		SystemPrompt:   fr.sysPrompt,
+		Tools:          fr.tools,
+		MaxRounds:      fr.softCap,
 		// A fire's history is stored messages — role and content, no tool
 		// results — so the repeat guard starts every cycle knowing nothing.
 		// Keyed on the agent and the thread this schedule runs in, so what
 		// keeps failing at 09:00 is still failing at 09:00 tomorrow.
 		FailureMemoryKey:    failureMemoryKey(p.AgentID, p.SessionID),
 		StampLocation:       UserLocation(p.Username), // stamp the turn in the owning user's zone
-		TurnNotes:           func(string) string { return dependencyTurnNote(subSess) },
-		ThinkBudget:         agent.ThinkBudget,
-		Effort:              agent.Effort,
-		ActionQuotas:        agent.ActionQuotas,
-		BudgetKey:           agent.ID,
-		DailySpendUSD:       agent.DailySpendUSD,
-		SharedBudgets:       familyBudgets(agent),
-		Confirm:             gate.confirm,
-		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
-		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
-		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:     subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines:   subTurn.agent.GuardrailDeclines,
+		TurnNotes:           func(string) string { return dependencyTurnNote(fr.subSess) },
+		ThinkBudget:         fr.agent.ThinkBudget,
+		Effort:              fr.agent.Effort,
+		ActionQuotas:        fr.agent.ActionQuotas,
+		BudgetKey:           fr.agent.ID,
+		DailySpendUSD:       fr.agent.DailySpendUSD,
+		SharedBudgets:       familyBudgets(fr.agent),
+		Confirm:             fr.gate.confirm,
+		GuardrailCheck:      fr.subTurn.guardrailEnforcer().Check,
+		GuardrailActionGate: fr.subTurn.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     fr.subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:     fr.subTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines:   fr.subTurn.agent.GuardrailDeclines,
 		OnStep: func(s StepInfo) {
-			if s.Round > lastRound {
-				lastRound = s.Round
+			if s.Round > fr.lastRound {
+				fr.lastRound = s.Round
 			}
-			liveCalls = append(liveCalls, s.ToolCalls...)
-			liveRun.SetProgress(s.Round, s.ToolCalls)
+			fr.liveCalls = append(fr.liveCalls, s.ToolCalls...)
+			fr.liveRun.SetProgress(s.Round, s.ToolCalls)
 		},
 		// What this fire's prompt was made of, onto the run record below. A
 		// recurring fire re-runs a REAL session, so its prompt carries whatever
 		// that thread has accumulated since the schedule was made — the one
 		// place a context problem grows unattended and unwatched.
-		OnPromptDigest: func(d PromptDigest) { promptDigest = d },
+		OnPromptDigest: func(d PromptDigest) { fr.promptDigest = d },
 		// Is the reply true about what this fire actually did?
 		//
 		// A scheduled fire is the turn that needs this MOST and was the one
@@ -885,23 +1017,23 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// convicts: earlier actions never back a claim about THIS turn, which
 		// the evidence says in as many words, so the fire that reads nine times
 		// and reports three posts is caught exactly as before.
-		CapturePrompt:  agent.CapturePrompt,
-		TurnClaimJudge: subTurn.claimJudge(ctx),
+		CapturePrompt:  fr.agent.CapturePrompt,
+		TurnClaimJudge: fr.subTurn.claimJudge(fr.ctx),
 		// The lead's review of a turn that did work, when this agent asks for one
 		// (lead_review.go).
-		TurnReview: subTurn.leadReviewer(ctx),
+		TurnReview: fr.subTurn.leadReviewer(fr.ctx),
 		// What goes out with the reply, the finished picture a task wake
 		// carries included. Unset, the judge read every wake as delivering
 		// nothing: "There it is: the tagged version" went out WITH the picture
 		// and was convicted of presenting an image the turn did not deliver,
 		// and the rewrite replaced the caption.
-		DeliveredCount: func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) },
-		PriorTurnWork:  func() []string { return priorTurnWorkFrom(sess.Messages) },
+		DeliveredCount: func() int { return len(fr.subSess.Images) + len(fr.subSess.Videos) + len(fr.subSess.Files) },
+		PriorTurnWork:  func() []string { return priorTurnWorkFrom(fr.sess.Messages) },
 		// And the reports this thread already holds, which on a recurring
 		// schedule are this fire's own earlier cycles: their replies are stored
 		// as ReportFrom cards right here, so a cycle whose job is to report on
 		// standing work is recapping them.
-		PriorReports: func() []string { return priorReportsFrom(sess.Messages) },
+		PriorReports: func() []string { return priorReportsFrom(fr.sess.Messages) },
 		// And it is asked on every fire, not only the ones whose evidence looks
 		// wrong. The judge was already attached here for the reason above, and
 		// the pre-filter then declined to call it on exactly the turn this
@@ -914,23 +1046,51 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// one claiming work it did not do. UncheckedClaims is the scope that
 		// makes it fire at all — the agent's own remembered facts, the same
 		// ones the dispatch path hands it.
-		TurnGroundingJudge: app.turnGroundingJudge(ctx),
-		UncheckedClaims:    UncheckedFactNotes(facts),
+		TurnGroundingJudge: fr.app.turnGroundingJudge(fr.ctx),
+		UncheckedClaims:    UncheckedFactNotes(fr.facts),
 		// Custom-tool resolution, same as the dispatch path: resolve a direct
 		// call to a has-args custom tool and surface tools loaded via load_tool.
-		ToolFallbackResolver: subTurn.lazyToolFallback,
-		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
-		DrainViewImages:      subSess.DrainViewImages,
-		BeforeToolRound:      func() { SnapshotImageRefs(subSess) },
+		ToolFallbackResolver: fr.subTurn.lazyToolFallback,
+		DynamicTools:         fr.subTurn.dynamicNewTempTools(fr.subSess),
+		DrainViewImages:      fr.subSess.DrainViewImages,
+		BeforeToolRound:      func() { SnapshotImageRefs(fr.subSess) },
 		ChatOptions: []ChatOption{
 			WithRouteKey(fireRoute),
-			WithThink(think),
+			WithThink(fr.think),
 		},
 	})
 
 	// CANCELED (superseded / shutdown) is distinct from FAILED — see runOutcomeStatus.
-	liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
+	fr.liveRun.Complete(runOutcomeStatus(fr.runErr, fr.resp != nil))
+}
 
+func (fr *fireRun) record(status RunStatus, summary, raw, errStr string) {
+	p := fr.p
+	RecordRun(RootDB, RunRecord{
+		Owner:  p.Username,
+		Prompt: fr.promptDigest,
+		// The label is the agent's display name; identity is its id (see
+		// AboutAgent below), so a schedule that happens to be named after
+		// this agent no longer shares its history.
+		Agent: fr.agentLabel,
+		// The task's own name, so "did the Snuglab blog post task run
+		// today?" is a question the ledger can answer. Agent is the agent
+		// that ran and Brief is the prompt; neither is the name a person
+		// gave this schedule.
+		Task:    recurringName(p),
+		Trigger: fr.trigger,
+		Brief:   p.Prompt,
+		Status:  status,
+		Summary: summary,
+		Raw:     raw,
+		Steps:   fr.steps,
+		Started: fr.started,
+		Ended:   time.Now(),
+		Err:     errStr,
+	}.AboutAgent(fr.agent.ID))
+}
+
+func (fr *fireRun) prepareRecord() {
 	// Record every fire in the run-ledger — the same store standing agents and
 	// event monitors write to (RootDB, owner=username), so recurring fires show
 	// up in list_runs / inspect_run / the Activity feed instead of only in a
@@ -938,13 +1098,13 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// test is badged "manual" (parity with standing-agent run-now) so the two are
 	// distinguishable in the ledger. The prompt is the brief and the reply is kept
 	// (encrypted) as Raw.
-	trigger := "schedule"
-	if !reArm {
-		trigger = "manual"
+	fr.trigger = "schedule"
+	if !fr.reArm {
+		fr.trigger = "manual"
 	}
-	agentLabel := agent.Name
-	if strings.TrimSpace(agentLabel) == "" {
-		agentLabel = agent.ID
+	fr.agentLabel = fr.agent.Name
+	if strings.TrimSpace(fr.agentLabel) == "" {
+		fr.agentLabel = fr.agent.ID
 	}
 	// Tool trace: the card renders it as chips, the ledger stores it as Steps,
 	// and the preamble guard keys on whether it's empty. Prefer the LIVE OnStep
@@ -952,72 +1112,51 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// and stitch result bodies back on from the transcript. Fall back to pure
 	// transcript reconstruction only if OnStep captured nothing (e.g. a run that
 	// errored before its first round).
-	toolTrace := persistedToolCallsFromLiveCalls(liveCalls, transcript)
-	if len(toolTrace) == 0 {
-		toolTrace = persistedToolCallsFromTranscript(transcript)
+	fr.toolTrace = persistedToolCallsFromLiveCalls(fr.liveCalls, fr.transcript)
+	if len(fr.toolTrace) == 0 {
+		fr.toolTrace = persistedToolCallsFromTranscript(fr.transcript)
 	}
-	steps := runStepsFromToolCalls(toolTrace)
-	record := func(status RunStatus, summary, raw, errStr string) {
-		RecordRun(RootDB, RunRecord{
-			Owner:  p.Username,
-			Prompt: promptDigest,
-			// The label is the agent's display name; identity is its id (see
-			// AboutAgent below), so a schedule that happens to be named after
-			// this agent no longer shares its history.
-			Agent: agentLabel,
-			// The task's own name, so "did the Snuglab blog post task run
-			// today?" is a question the ledger can answer. Agent is the agent
-			// that ran and Brief is the prompt; neither is the name a person
-			// gave this schedule.
-			Task:    recurringName(p),
-			Trigger: trigger,
-			Brief:   p.Prompt,
-			Status:  status,
-			Summary: summary,
-			Raw:     raw,
-			Steps:   steps,
-			Started: started,
-			Ended:   time.Now(),
-			Err:     errStr,
-		}.AboutAgent(agent.ID))
-	}
+	fr.steps = runStepsFromToolCalls(fr.toolTrace)
+}
 
+func (fr *fireRun) reportable() bool {
+	p := fr.p
 	// NOTE: the next occurrence was pre-armed above, so the failure / empty /
 	// preamble exits below just return — nothing to reschedule.
-	if runErr != nil {
-		Log("[orchestrate/scheduled] agent=%s session=%s fire %d FAILED: %v", agentLabel, p.SessionID, p.FireCount+1, runErr)
+	if fr.runErr != nil {
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d FAILED: %v", fr.agentLabel, p.SessionID, p.FireCount+1, fr.runErr)
 		// A schedule that cannot work should not keep trying at full speed. The
 		// successor is already armed, so this moves it (failure_backoff.go).
-		backoff := noteRecurringFailure(p, &armed, armedID, reArm)
-		record(RunFailed, "Recurring fire errored before it could post."+backoff, "", runErr.Error())
-		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-failed",
-			fmt.Sprintf("Recurring task %q fire %d errored before it could post: %v.%s", recurringName(p), p.FireCount+1, runErr, backoff))
-		return nil
+		backoff := noteRecurringFailure(p, &fr.armed, fr.armedID, fr.reArm)
+		fr.record(RunFailed, "Recurring fire errored before it could post."+backoff, "", fr.runErr.Error())
+		appendSessionDiag(fr.udb, p.AgentID, p.SessionID, "recurring-fire-failed",
+			fmt.Sprintf("Recurring task %q fire %d errored before it could post: %v.%s", recurringName(p), p.FireCount+1, fr.runErr, backoff))
+		return fr.exit(nil)
 	}
 	// A guardrail that stopped this fire is the single most useful thing the
 	// ledger can say about it, and it used to say nothing: the decline text
 	// became the reply and the run recorded OK, so a task silently doing nothing
 	// looked identical to one working fine. Named rules, human-readable status.
-	if rules := subTurn.guardrailRulesHit; len(rules) > 0 {
+	if rules := fr.subTurn.guardrailRulesHit; len(rules) > 0 {
 		named := strings.Join(quoteAll(rules), ", ")
-		Log("[orchestrate/scheduled] agent=%s session=%s fire %d hit guardrail(s) %s", agentLabel, p.SessionID, p.FireCount+1, named)
-		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-guardrail",
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d hit guardrail(s) %s", fr.agentLabel, p.SessionID, p.FireCount+1, named)
+		appendSessionDiag(fr.udb, p.AgentID, p.SessionID, "recurring-fire-guardrail",
 			fmt.Sprintf("Recurring task %q fire %d was stopped by guardrail %s. The fire is recorded in Activity; nothing was posted from the blocked content.", recurringName(p), p.FireCount+1, named))
-		record(RunAttention,
+		fr.record(RunAttention,
 			fmt.Sprintf("Stopped by guardrail %s.", named),
-			strings.TrimSpace(respContent(resp)), "")
-		return nil
+			strings.TrimSpace(respContent(fr.resp)), "")
+		return fr.exit(nil)
 	}
-	reply := ""
-	if resp != nil {
-		reply = strings.TrimSpace(resp.Content)
+	fr.reply = ""
+	if fr.resp != nil {
+		fr.reply = strings.TrimSpace(fr.resp.Content)
 	}
-	if reply == "" {
-		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced no reply, skipping append", agentLabel, p.SessionID, p.FireCount+1)
-		record(RunOK, "(no output: nothing to post this cycle)", "", "")
-		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-empty",
+	if fr.reply == "" {
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced no reply, skipping append", fr.agentLabel, p.SessionID, p.FireCount+1)
+		fr.record(RunOK, "(no output: nothing to post this cycle)", "", "")
+		appendSessionDiag(fr.udb, p.AgentID, p.SessionID, "recurring-fire-empty",
 			fmt.Sprintf("Recurring task %q fire %d produced no reply: nothing was posted this cycle.", recurringName(p), p.FireCount+1))
-		return nil
+		return fr.exit(nil)
 	}
 
 	// Preamble guard (backstop to scheduledFireDirective): a fire that produced
@@ -1037,14 +1176,18 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// CORRECT shape, and suppressing it threw away the result the user was
 	// waiting for and left the conversation looking like the task never
 	// finished.
-	if len(toolTrace) == 0 && !isTaskWake(p.Prompt) {
-		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced text but no tool calls (preamble only), skipping append", agentLabel, p.SessionID, p.FireCount+1)
-		record(RunOK, "(no tool activity: preamble only, nothing posted)", reply, "")
-		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-suppressed",
+	if len(fr.toolTrace) == 0 && !isTaskWake(p.Prompt) {
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced text but no tool calls (preamble only), skipping append", fr.agentLabel, p.SessionID, p.FireCount+1)
+		fr.record(RunOK, "(no tool activity: preamble only, nothing posted)", fr.reply, "")
+		appendSessionDiag(fr.udb, p.AgentID, p.SessionID, "recurring-fire-suppressed",
 			fmt.Sprintf("Recurring task %q fire %d produced text but called no tools: treated as a preamble stub and NOT posted. The full text is preserved in the run ledger (Activity).", recurringName(p), p.FireCount+1))
-		return nil
+		return fr.exit(nil)
 	}
+	return true
+}
 
+func (fr *fireRun) objectiveCheck() {
+	p := fr.p
 	// Objective check (docs/loop-objectives.md): a task carrying an `until` is
 	// asking for a state of the world, so the fire that reaches it should be the
 	// last one, and the fire that runs out of attempts should say so rather than
@@ -1055,32 +1198,32 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// now reports the verdict on its card and deliberately leaves the schedule
 	// alone, which is that path's whole contract; it is also how an owner retries
 	// a stalled objective after fixing what the reason named.
-	objLine, objStopped, objStalled := "", false, false
-	pacedLine := ""
+	fr.objLine, fr.objStopped, fr.objStalled = "", false, false
+	fr.pacedLine = ""
 	if objective := strings.TrimSpace(p.Until); objective != "" {
 		// AttemptsBase moves forward on Resume rather than resetting a counter,
 		// so the fire count and the history survive — which is why the attempt
 		// number is derived here and not inside the settlement.
 		attempt := objectiveAttemptNumber(p)
-		settled := app.settleObjective(ctx, objectiveFire{
-			Objective: objective, Reply: reply, Trace: toolTrace,
+		settled := fr.app.settleObjective(fr.ctx, objectiveFire{
+			Objective: objective, Reply: fr.reply, Trace: fr.toolTrace,
 			Attempt: attempt, MaxAttempts: p.MaxAttempts,
 		})
-		objLine, objStopped, objStalled = settled.Line, settled.Stop, settled.Stalled
-		if reArm {
+		fr.objLine, fr.objStopped, fr.objStalled = settled.Line, settled.Stop, settled.Stalled
+		if fr.reArm {
 			// Onto the SUCCESSOR's payload, which is what carries forward. Also
 			// recorded when the chain stops: a stalled objective is parked with
 			// its history, so a resume picks up knowing what was already tried.
-			armed.Attempts = appendObjectiveAttempt(armed.Attempts, settled.Met, settled.Reason)
+			fr.armed.Attempts = appendObjectiveAttempt(fr.armed.Attempts, settled.Met, settled.Reason)
 		}
-		if objStopped && reArm && armedID != "" {
+		if fr.objStopped && fr.reArm && fr.armedID != "" {
 			// Stand the chain down. The successor was pre-armed BEFORE this fire
 			// ran (so a crash could not orphan the chain), which is exactly why
 			// it has to be cancelled here rather than simply not scheduled.
-			if err := CancelOrchestrateUpdate(p.SessionID, armedID); err != nil {
+			if err := CancelOrchestrateUpdate(p.SessionID, fr.armedID); err != nil {
 				Log("[orchestrate/objective] task %q: could not cancel the armed successor: %v, it will fire once more", recurringName(p), err)
 			} else {
-				Log("[orchestrate/objective] task %q stopped after attempt %d: %s", recurringName(p), attempt, objLine)
+				Log("[orchestrate/objective] task %q stopped after attempt %d: %s", recurringName(p), attempt, fr.objLine)
 			}
 			// A goal that was never reached must not VANISH. Cancelling alone
 			// removes the last trace of the task from the console — the fired
@@ -1090,42 +1233,45 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			// task whose agent was deleted is parked: still listed, still
 			// carrying its reason and its history, not firing. A met objective
 			// is genuinely finished and retires like any capped task.
-			if objStalled {
-				parkRecurringStalled(armed, fmt.Sprintf("objective not met after %d attempt(s): %s", attempt, settled.Reason))
+			if fr.objStalled {
+				parkRecurringStalled(fr.armed, fmt.Sprintf("objective not met after %d attempt(s): %s", attempt, settled.Reason))
 			}
 		}
 		kind := "objective-not-met"
 		switch {
-		case objStalled:
+		case fr.objStalled:
 			kind = "objective-stalled"
-		case objStopped:
+		case fr.objStopped:
 			kind = "objective-met"
 		}
-		appendSessionDiag(udb, p.AgentID, p.SessionID, kind,
-			fmt.Sprintf("Recurring task %q, attempt %d: %s (goal: %s)", recurringName(p), attempt, objLine, truncateObs(objective, 200)))
+		appendSessionDiag(fr.udb, p.AgentID, p.SessionID, kind,
+			fmt.Sprintf("Recurring task %q, attempt %d: %s (goal: %s)", recurringName(p), attempt, fr.objLine, truncateObs(objective, 200)))
 		// Pacing, last: it moves the successor the stand-down above may just
 		// have cancelled. A met objective has nothing left to move, and a
 		// stalled one is parked and must stay parked — an attempt does not get
 		// to defer its way out of a bound it has already reached.
-		if reArm && !objStopped {
-			pacedLine = applyPacing(p, &armed, armedID, pacingAsk)
-		} else if _, _, asked := pacingAsk.Get(); asked {
-			Log("[orchestrate/pacing] task %q asked to move its next attempt, but the objective %s: the ask was dropped", recurringName(p), objLine)
+		if fr.reArm && !fr.objStopped {
+			fr.pacedLine = applyPacing(p, &fr.armed, fr.armedID, fr.pacingAsk)
+		} else if _, _, asked := fr.pacingAsk.Get(); asked {
+			Log("[orchestrate/pacing] task %q asked to move its next attempt, but the objective %s: the ask was dropped", recurringName(p), fr.objLine)
 		}
 	}
+}
 
+func (fr *fireRun) composeDetail() {
+	p := fr.p
 	// Round-budget exhaustion: the loop reached its soft cap and had to be forced
 	// to wrap up, so this fire's work is probably incomplete (it ran out of rounds
 	// mid-task rather than finishing). Surface it — badge the ledger run "attention"
 	// and mark the card — instead of letting a truncated cycle read as a clean one.
 	// Raising the agent's max_worker_rounds is the fix when this recurs.
-	hitCap := lastRound >= softCap
-	detail := fmt.Sprintf("%s - %s - fire %d", agentLabel, recurringDetail(p), p.FireCount+1)
+	fr.hitCap = fr.lastRound >= fr.softCap
+	fr.detail = fmt.Sprintf("%s - %s - fire %d", fr.agentLabel, recurringDetail(p), p.FireCount+1)
 	// A background task shares this path but has no cadence and no fire count.
 	// The recurring subtitle read "recurring - every 0m - fire 1" on it, which
 	// announces a schedule that does not exist.
 	if isTaskWake(p.Prompt) {
-		detail = agentLabel + " - finished in the background"
+		fr.detail = fr.agentLabel + " - finished in the background"
 	}
 	// A wake that was told to start the next piece, and started nothing.
 	//
@@ -1140,25 +1286,25 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// waiting for it. What changes is that the set closes now rather than
 	// lingering to renumber the next unrelated render, and the stall leaves a
 	// breadcrumb instead of looking like a set that simply ended.
-	if strings.Contains(p.Prompt, SeriesContinuationMarker) && len(toolTrace) == 0 {
+	if strings.Contains(p.Prompt, SeriesContinuationMarker) && len(fr.toolTrace) == 0 {
 		CloseTaskSeries(p.SessionID, RenderDetachIdentity)
-		Log("[orchestrate/task] agent=%s session=%s delivered a piece but called no tool: the set stops here", agentLabel, p.SessionID)
-		appendSessionDiag(udb, p.AgentID, p.SessionID, "series-abandoned",
+		Log("[orchestrate/task] agent=%s session=%s delivered a piece but called no tool: the set stops here", fr.agentLabel, p.SessionID)
+		appendSessionDiag(fr.udb, p.AgentID, p.SessionID, "series-abandoned",
 			"A background set was told to start its next piece and the turn made no tool call: it answered in prose only. The finished piece was delivered; the rest of the set was NOT started, and the set has been closed rather than left open. If this recurs, the continuation instruction is not reaching the model, or the model is answering before acting.")
-		detail += " - set not continued"
+		fr.detail += " - set not continued"
 	}
-	if hitCap {
-		detail += fmt.Sprintf(" - hit round cap (%d): may be incomplete", softCap)
+	if fr.hitCap {
+		fr.detail += fmt.Sprintf(" - hit round cap (%d): may be incomplete", fr.softCap)
 	}
 	// The verdict rides the card this fire posts, so the person reading the
 	// thread sees where the goal stands without opening Activity.
-	if objLine != "" {
-		detail += " - " + objLine
+	if fr.objLine != "" {
+		fr.detail += " - " + fr.objLine
 	}
 	// A fire that moved its own successor accounts for it where the owner is
 	// already reading, rather than leaving a next-run time nobody chose.
-	if pacedLine != "" {
-		detail += " - " + pacedLine
+	if fr.pacedLine != "" {
+		fr.detail += " - " + fr.pacedLine
 	}
 	// FINAL fire: the pre-arm declined to schedule a successor, so this task
 	// stops here. Say so on the card. Retirement used to be a single log line
@@ -1166,10 +1312,13 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// outside, from a schedule the framework had dropped, which is exactly how
 	// it got read. The last thing a task posts should be the fact that it is
 	// the last thing it will post.
-	if retireReason != "" {
-		detail += " - FINAL FIRE: " + retireReason + "; this task will not run again"
+	if fr.retireReason != "" {
+		fr.detail += " - FINAL FIRE: " + fr.retireReason + "; this task will not run again"
 	}
+}
 
+func (fr *fireRun) postReport() {
+	p := fr.p
 	// Render the fire as a scheduled-report card (ReportFrom/ReportKind), the
 	// same distinct-bubble treatment standing-agent reports and monitor wakes
 	// get — a bare assistant bubble hid that the message was an automated fire.
@@ -1179,7 +1328,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// Background (Surface): the fire ran (tools executed, recorded to the run
 	// ledger below) but posts no reply card to any thread — no agent visibility.
 	toParent := false // a sub-agent's report went to its parent's Cortex
-	if recordFire {
+	if fr.recordFire {
 		// A task wake's note is the only record of WHAT came back — the handle
 		// for a finished picture, the id of a produced file. It reached this
 		// turn's model as a prompt and was then thrown away, so the next thing
@@ -1201,17 +1350,17 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		}
 		cards = append(cards, ChatMessage{
 			Role:         "assistant",
-			Content:      reply,
+			Content:      fr.reply,
 			Created:      time.Now(),
 			ReportFrom:   recurringName(p),
 			ReportKind:   cortexKindScheduled,
-			ReportDetail: detail,
-			ToolCalls:    toolTrace,
+			ReportDetail: fr.detail,
+			ToolCalls:    fr.toolTrace,
 			// This turn had no live stream to paint an attachment onto — it ran
 			// with nobody watching. Keeping the bytes is the only way the thread
 			// can ever show what it delivered.
-			Attachments: keepDeliveredAttachments(p.Username, subSess.Images),
-			Files:       keepDeliveredFiles(p.Username, subSess.Videos, subSess.Files),
+			Attachments: keepDeliveredAttachments(p.Username, fr.subSess.Images),
+			Files:       keepDeliveredFiles(p.Username, fr.subSess.Videos, fr.subSess.Files),
 		})
 		// `sess` was loaded before the agent loop ran, minutes ago on a local
 		// model. Two fires on the same thread at the same instant (the scheduler
@@ -1223,86 +1372,92 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// run ledger and the log both said it posted. The append goes through
 		// the per-session lock and re-reads the stored thread first, the same
 		// discipline RunAgentSyncContinuing uses.
-		if err := appendToStoredSession(udb, p.AgentID, loadSession, sess, cards...); err != nil {
+		if err := appendToStoredSession(fr.udb, p.AgentID, fr.loadSession, fr.sess, cards...); err != nil {
 			Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
 		}
 		// Run by a sub-agent: the report also goes to its parent's home
 		// thread, where somebody reads it (agent_family.go). A task wake is
 		// the agent's own work coming back to it, not a report.
 		if !isTaskWake(p.Prompt) {
-			toParent = reportToParent(udb, p.AgentID, cards[len(cards)-1])
+			toParent = reportToParent(fr.udb, p.AgentID, cards[len(cards)-1])
 		}
 	}
 	// The agent's cortex records every scheduled fire that reported somewhere
 	// else. Not a background task's own result coming back to it: that is the
 	// agent's work returning, not something reaching it. Nor a sub-agent's
 	// fire whose report its parent's Cortex (where its notes go) already has.
-	if (loadSession != cortexSessionID(p.AgentID) || !recordFire) && !isTaskWake(p.Prompt) && !toParent {
+	if (fr.loadSession != cortexSessionID(p.AgentID) || !fr.recordFire) && !isTaskWake(p.Prompt) && !toParent {
 		where := "full reply in its session"
-		if !recordFire {
+		if !fr.recordFire {
 			where = "ran in the background"
 		}
-		appendCortexObs(udb, p.AgentID, recurringName(p), cortexKindScheduled, cortexPointer(reply, where))
+		appendCortexObs(fr.udb, p.AgentID, recurringName(p), cortexKindScheduled, cortexPointer(fr.reply, where))
 	}
 	// A background result whose conversation lives on a messaging channel has to
 	// be SENT there — appending it to the stored session is what the recurring
 	// path wants and leaves the person who asked with nothing.
-	isChannel, sent := deliverWakeToChannel(p, subSess, reply, toolTrace)
+	isChannel, sent := deliverWakeToChannel(p, fr.subSess, fr.reply, fr.toolTrace)
 	// Where a wake's files went, judged after every route had its turn. A
 	// channel result goes out by the send above or by the turn's own
 	// send_message; a web thread's goes out as the card appended above, which
 	// keeps them. This used to be checked before the send, so it reported a
 	// picture as undelivered one line before the log said it was delivered.
-	if carriedAttachments > 0 {
-		delivered := sent || toolCallsInclude(toolTrace, "send_message") || !isChannel
+	if fr.carriedAttachments > 0 {
+		delivered := sent || toolCallsInclude(fr.toolTrace, "send_message") || !isChannel
 		if delivered {
 			// A turn that started this work may still be running on the
 			// same session: tell it (see background_deliveries.go).
-			recordBackgroundDelivery(p.SessionID, carriedAttachments, StripMetaTags(reply))
+			recordBackgroundDelivery(p.SessionID, fr.carriedAttachments, StripMetaTags(fr.reply))
 		} else {
 			Log("[orchestrate/scheduled] WARN session=%s wake carried %d attachment(s) but nothing sent them: they were not delivered",
-				p.SessionID, carriedAttachments)
+				p.SessionID, fr.carriedAttachments)
 		}
 	}
+}
+
+func (fr *fireRun) recordOutcome() {
+	p := fr.p
 	outcome := scheduledOutcome{
-		reply:       reply,
-		objLine:     objLine,
-		objStalled:  objStalled,
-		hitCap:      hitCap,
-		softCap:     softCap,
-		detections:  subTurn.scanDetectionCount(),
-		taintBlocks: subTurn.taintBlockCount(),
+		reply:       fr.reply,
+		objLine:     fr.objLine,
+		objStalled:  fr.objStalled,
+		hitCap:      fr.hitCap,
+		softCap:     fr.softCap,
+		detections:  fr.subTurn.scanDetectionCount(),
+		taintBlocks: fr.subTurn.taintBlockCount(),
 	}
 	status, summary := outcome.resolve()
-	if hitCap {
-		Log("[orchestrate/scheduled] agent=%s session=%s fire %d HIT ROUND CAP (%d): likely incomplete", agentLabel, p.SessionID, p.FireCount+1, softCap)
+	if fr.hitCap {
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d HIT ROUND CAP (%d): likely incomplete", fr.agentLabel, p.SessionID, p.FireCount+1, fr.softCap)
 	}
 	if outcome.detections > 0 {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d INJECTION DETECTED x%d (%d follow-up action(s) stopped): run flagged for attention",
-			agentLabel, p.SessionID, p.FireCount+1, outcome.detections, outcome.taintBlocks)
+			fr.agentLabel, p.SessionID, p.FireCount+1, outcome.detections, outcome.taintBlocks)
 	}
-	record(status, summary, reply, "")
+	fr.record(status, summary, fr.reply, "")
 	Log("[orchestrate/scheduled] agent=%s session=%s posted fire %d (%d chars)",
-		agentLabel, p.SessionID, p.FireCount+1, len(reply))
+		fr.agentLabel, p.SessionID, p.FireCount+1, len(fr.reply))
+}
 
-	if reArm && armedID != "" && !objStopped {
+func (fr *fireRun) renewArmed() {
+	p := fr.p
+	if fr.reArm && fr.armedID != "" && !fr.objStopped {
 		// Productive fire — reaching here means toolTrace was non-empty (a
 		// preamble-only fire returns at the guard above), so the task did real
 		// work this cycle. Renew the idle clock ON THE ALREADY-ARMED next
 		// occurrence. If that occurrence has fired already (a fire that
 		// outlived its own gap), skip the renewal — never re-create a consumed
 		// task, that's how chains duplicate.
-		armed.LastActive = time.Now().UTC().Format(time.RFC3339)
+		fr.armed.LastActive = time.Now().UTC().Format(time.RFC3339)
 		// This fire worked, so whatever was failing is not failing now. Clearing
 		// it here (rather than on every path that does not fail) means an empty
 		// or suppressed fire leaves the streak where it was, which is the honest
 		// reading: neither of those proves the thing is fixed.
-		armed.ConsecutiveFailures = 0
-		if !UpdateScheduledTaskPayload(armedID, armed) {
+		fr.armed.ConsecutiveFailures = 0
+		if !UpdateScheduledTaskPayload(fr.armedID, fr.armed) {
 			Log("[orchestrate/scheduled] session=%s: armed next fire already consumed, idle-clock renewal skipped", p.SessionID)
 		}
 	}
-	return nil
 }
 
 // preArmNextFire persists the NEXT occurrence of a recurring task BEFORE the

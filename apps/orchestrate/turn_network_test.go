@@ -58,13 +58,13 @@ func TestBothNetworkFactsComeFromOneCall(t *testing.T) {
 // reason this is a test rather than a convention.
 func TestEveryRunPathStampsTheTurnsNetwork(t *testing.T) {
 	fire := mustReadFile(t, "scheduled_updates.go")
-	if !strings.Contains(fire, "withAgentNetwork(ctx, p.Username, agent,") {
+	if !strings.Contains(fire, "withAgentNetwork(fr.ctx, p.Username, fr.agent,") {
 		t.Error("a scheduled fire runs with no network state, so an agent has more reach on a timer than in chat")
 	}
 	// On the SESSION as well as the context. NetworkAllowed reads the field
 	// and the ceiling reads the context, and WorkspaceNetworkAllowed ANDs
 	// them, so one of the two set is half a gate.
-	if !strings.Contains(fire, "Network: fireConnector,") {
+	if !strings.Contains(fire, "Network: fr.fireConnector,") {
 		t.Error("the fire's session has no connector, so NetworkAllowed answers off a nil field")
 	}
 

@@ -725,7 +725,8 @@ func main() {
 					allShared := true
 					for _, l := range n.Lhs {
 						id, ok := l.(*ast.Ident)
-						if !ok || (id.Name != "_" && byObj[info.Defs[id]] == nil) {
+						// A name redeclared by := is a Use of the variable it reuses.
+						if !ok || (id.Name != "_" && byObj[info.Defs[id]] == nil && byObj[info.Uses[id]] == nil) {
 							allShared = false
 						}
 					}

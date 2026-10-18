@@ -51,7 +51,8 @@ func TestDispatchPromptsReadNotesThroughTheTurn(t *testing.T) {
 		}
 		if strings.Contains(string(src), "ListMemoryFacts(runtimeDB, factsNamespace(target.ID))") ||
 			strings.Contains(string(src), "ListMemoryFacts(t.udb, factsNamespace(target.ID))") ||
-			strings.Contains(string(src), "ListMemoryFacts(udb, factsNamespace(agent.ID))") {
+			strings.Contains(string(src), "ListMemoryFacts(udb, factsNamespace(agent.ID))") ||
+			strings.Contains(string(src), "ListMemoryFacts(fr.udb, factsNamespace(fr.agent.ID))") {
 			t.Errorf("%s reads a dispatched agent's notes raw, past its Explicit Memory switch", file)
 		}
 	}
