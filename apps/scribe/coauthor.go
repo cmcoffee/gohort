@@ -51,40 +51,90 @@ type coauthorScope struct {
 }
 
 func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
-	ctx, udb, orch, user, canEdit := sc.Ctx, sc.UDB, sc.Orch, sc.User, sc.CanEdit
-	// openGuide resolves the active guide for this turn, fresh each call. The active
-	// marker is per-user (udb), but a SHARED guide lives in its owner's store — so
-	// resolve returns the owner's UserDB + owner username, and every content op runs
-	// there. That's what lets a collaborator on an edit-shared guide write into the
-	// one canonical document (and grow its owner-scoped research collection).
-	openGuide := func() (Guide, Database, string, bool) {
-		id := pinnedOrActiveGuide(udb, sc.Guide)
-		if id == "" {
-			return Guide{}, nil, "", false
-		}
-		g, owner, oudb, ok := resolveGuide(T.DB, udb, user, id)
-		return g, oudb, owner, ok
-	}
-	// findIdx locates a section by case-insensitive title, returning its index in
-	// the guide's slice (-1 if absent).
-	findIdx := func(g Guide, title string) int {
-		title = strings.TrimSpace(title)
-		for i := range g.Sections {
-			if strings.EqualFold(strings.TrimSpace(g.Sections[i].Title), title) {
-				return i
-			}
-		}
-		return -1
-	}
-	sectionTitles := func(g Guide) string {
-		var ts []string
-		for _, s := range g.sorted() {
-			ts = append(ts, s.Title)
-		}
-		return strings.Join(ts, ", ")
+	ctx, user, canEdit := sc.Ctx, sc.User, sc.CanEdit
+	base := []AgentToolDef{
+		T.addSectionTool(sc),
+		T.editSectionTool(sc),
+		T.readSectionTool(sc),
+		T.draftSectionTool(sc),
+		T.addImageTool(sc),
+		T.listSectionsTool(sc),
+		T.renameSectionTool(sc),
+		T.deleteSectionTool(sc),
+		T.moveSectionTool(sc),
+		T.researchTool(sc),
+		T.searchKnowledgeTool(sc),
+		T.listReferencesTool(sc),
+		T.pullReferenceTool(sc),
 	}
 
-	addSection := AgentToolDef{
+	// Attached-source tools: every source the user linked via the Sources button
+	// contributes its OWN named tools (e.g. search_<system>_knowledge,
+	// investigate_<system>) directly into the kit — so the agent SEES and calls
+	// the guide's Sources instead of having to discover them through the generic
+	// list_reference_sources → pull_reference dance (which loses to the framework's
+	// own knowledge tools, leaving attached Sources untouched). Editors only:
+	// readers keep the owner-scoped pull_reference path — their tool set is
+	// name-whitelisted (readOnlyGuideTools), and a live investigate tool must never
+	// reach a view-only visitor. A Private guide's network/execute source tools are
+	// stripped downstream in handleChatSend by capability.
+	if canEdit {
+		if g, _, _, ok := T.openGuide(sc); ok {
+			have := map[string]bool{}
+			for _, t := range base {
+				have[t.Tool.Name] = true
+			}
+			for _, ref := range g.References {
+				for _, t := range ReferenceItemToolsWithContext(ctx, user, ref.Kind, ref.ItemID) {
+					if t.Tool.Name == "" || have[t.Tool.Name] {
+						continue
+					}
+					have[t.Tool.Name] = true
+					base = append(base, t)
+				}
+			}
+		}
+	}
+	return base
+}
+
+// openGuide resolves the active guide for this turn, fresh each call. The active
+// marker is per-user (udb), but a SHARED guide lives in its owner's store — so
+// resolve returns the owner's UserDB + owner username, and every content op runs
+// there. That's what lets a collaborator on an edit-shared guide write into the
+// one canonical document (and grow its owner-scoped research collection).
+func (T *Scribe) openGuide(sc coauthorScope) (Guide, Database, string, bool) {
+	udb, user := sc.UDB, sc.User
+	id := pinnedOrActiveGuide(udb, sc.Guide)
+	if id == "" {
+		return Guide{}, nil, "", false
+	}
+	g, owner, oudb, ok := resolveGuide(T.DB, udb, user, id)
+	return g, oudb, owner, ok
+}
+
+// findIdx locates a section by case-insensitive title, returning its index in
+// the guide's slice (-1 if absent).
+func findIdx(g Guide, title string) int {
+	title = strings.TrimSpace(title)
+	for i := range g.Sections {
+		if strings.EqualFold(strings.TrimSpace(g.Sections[i].Title), title) {
+			return i
+		}
+	}
+	return -1
+}
+
+func sectionTitles(g Guide) string {
+	var ts []string
+	for _, s := range g.sorted() {
+		ts = append(ts, s.Title)
+	}
+	return strings.Join(ts, ", ")
+}
+
+func (T *Scribe) addSectionTool(sc coauthorScope) AgentToolDef {
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "add_section",
 			Caps:        []Capability{CapWrite},
@@ -102,7 +152,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			if md == "" {
 				return "", fmt.Errorf("markdown is required: pass the section body")
 			}
-			g, ownerUDB, _, ok := openGuide()
+			g, ownerUDB, _, ok := T.openGuide(sc)
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
@@ -111,8 +161,10 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return fmt.Sprintf("Added the %q section to %q (now %d section%s).", title, g.Title, len(g.Sections), plural(len(g.Sections))), nil
 		},
 	}
+}
 
-	editSection := AgentToolDef{
+func (T *Scribe) editSectionTool(sc coauthorScope) AgentToolDef {
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "edit_section",
 			Caps:        []Capability{CapWrite},
@@ -134,7 +186,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			if err := change.valid(); err != nil {
 				return "", err
 			}
-			g, ownerUDB, _, ok := openGuide()
+			g, ownerUDB, _, ok := T.openGuide(sc)
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
@@ -151,13 +203,15 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return fmt.Sprintf("Updated the %q section in %q.", title, g.Title), nil
 		},
 	}
+}
 
-	// draft_section is the DETERMINISTIC grounded-write path. Unlike add_section
-	// (where the LLM writes the body from its own head), this tool gathers from
-	// BOTH the guide's knowledge collections AND every attached Source first, then
-	// writes the section from that material — so the gather can't be skipped, it's
-	// part of the same call. Cached-knowledge gather only (no live investigate).
-	draftSection := AgentToolDef{
+// draft_section is the DETERMINISTIC grounded-write path. Unlike add_section
+// (where the LLM writes the body from its own head), this tool gathers from
+// BOTH the guide's knowledge collections AND every attached Source first, then
+// writes the section from that material — so the gather can't be skipped, it's
+// part of the same call. Cached-knowledge gather only (no live investigate).
+func (T *Scribe) draftSectionTool(sc coauthorScope) AgentToolDef {
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "draft_section",
 			Caps:        []Capability{CapWrite},
@@ -175,7 +229,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			if title == "" {
 				return "", fmt.Errorf("section_title is required")
 			}
-			g, ownerUDB, ownerUser, ok := openGuide()
+			g, ownerUDB, ownerUser, ok := T.openGuide(sc)
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
@@ -222,11 +276,13 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return fmt.Sprintf("Added %q to %q (now %d section%s), grounded in the guide's knowledge + attached Sources.", title, g.Title, len(g.Sections), plural(len(g.Sections))), nil
 		},
 	}
+}
 
-	// read_section is the section's current body in full. edit_section changes
-	// text, and without this the author had only titles to go on: asked to
-	// weave a finding into a section, it rewrote a body it had never seen.
-	readSection := AgentToolDef{
+// read_section is the section's current body in full. edit_section changes
+// text, and without this the author had only titles to go on: asked to
+// weave a finding into a section, it rewrote a body it had never seen.
+func (T *Scribe) readSectionTool(sc coauthorScope) AgentToolDef {
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "read_section",
 			Description: "Read one section of the OPEN guide in full, by its title (case-insensitive). Call it before edit_section, and whenever you need to know what a section already says.",
@@ -236,7 +292,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			Required: []string{"section_title"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			g, _, _, ok := openGuide()
+			g, _, _, ok := T.openGuide(sc)
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
@@ -252,14 +308,16 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return fmt.Sprintf("The %q section, in full:\n\n%s", g.Sections[idx].Title, body), nil
 		},
 	}
+}
 
-	listSections := AgentToolDef{
+func (T *Scribe) listSectionsTool(sc coauthorScope) AgentToolDef {
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "list_sections",
 			Description: "List the sections of the OPEN guide, in order, with their titles. Call this to see the guide's current structure before renaming, deleting, moving, or editing a section, so you use the exact existing titles and correct positions. No arguments.",
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			g, _, _, ok := openGuide()
+			g, _, _, ok := T.openGuide(sc)
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
@@ -275,8 +333,10 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return strings.TrimRight(b.String(), "\n"), nil
 		},
 	}
+}
 
-	deleteSection := AgentToolDef{
+func (T *Scribe) deleteSectionTool(sc coauthorScope) AgentToolDef {
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "delete_section",
 			Caps:        []Capability{CapWrite},
@@ -300,7 +360,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 		SingleFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
-			g, ownerUDB, _, ok := openGuide()
+			g, ownerUDB, _, ok := T.openGuide(sc)
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
@@ -315,8 +375,10 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return fmt.Sprintf("Removed the %q section from %q (%d left).", removed, g.Title, len(g.Sections)), nil
 		},
 	}
+}
 
-	renameSection := AgentToolDef{
+func (T *Scribe) renameSectionTool(sc coauthorScope) AgentToolDef {
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "rename_section",
 			Caps:        []Capability{CapWrite},
@@ -334,7 +396,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			if newTitle == "" {
 				return "", fmt.Errorf("new_title is required")
 			}
-			g, ownerUDB, _, ok := openGuide()
+			g, ownerUDB, _, ok := T.openGuide(sc)
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
@@ -347,8 +409,10 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return fmt.Sprintf("Renamed %q to %q.", title, newTitle), nil
 		},
 	}
+}
 
-	moveSection := AgentToolDef{
+func (T *Scribe) moveSectionTool(sc coauthorScope) AgentToolDef {
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "move_section",
 			Caps:        []Capability{CapWrite},
@@ -363,7 +427,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			pos := coerceIntArg(args["position"])
-			g, ownerUDB, _, ok := openGuide()
+			g, ownerUDB, _, ok := T.openGuide(sc)
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
@@ -384,14 +448,17 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return fmt.Sprintf("Moved %q to position %d in %q.", title, target+1, g.Title), nil
 		},
 	}
+}
 
-	// research dispatches to the seed-research agent — web search + source
-	// fetching + cited synthesis — and returns its findings so the Guide Author
-	// can write a section GROUNDED in real, cited sources instead of its priors.
-	// Use before drafting accuracy-critical content (commands, flags, version
-	// specifics). Runs an agent loop (tens of seconds), so the agent should call
-	// it deliberately, not for every section.
-	research := AgentToolDef{
+// research dispatches to the seed-research agent — web search + source
+// fetching + cited synthesis — and returns its findings so the Guide Author
+// can write a section GROUNDED in real, cited sources instead of its priors.
+// Use before drafting accuracy-critical content (commands, flags, version
+// specifics). Runs an agent loop (tens of seconds), so the agent should call
+// it deliberately, not for every section.
+func (T *Scribe) researchTool(sc coauthorScope) AgentToolDef {
+	orch, user := sc.Orch, sc.User
+	return AgentToolDef{
 		Tool: Tool{
 			Name: "research",
 			// Fetches the web: Private mode drops it, and what it returns is fenced
@@ -423,7 +490,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			// search_knowledge tool can recall later (across sessions). Best-effort:
 			// the findings are still returned for immediate drafting even if there's
 			// no open guide or the ingest is skipped.
-			if g, ownerUDB, ownerUser, ok := openGuide(); ok && strings.TrimSpace(out) != "" {
+			if g, ownerUDB, ownerUser, ok := T.openGuide(sc); ok && strings.TrimSpace(out) != "" {
 				collID, _ := ensureGuideCollection(ownerUDB, ownerUser, g)
 				reportID := fmt.Sprintf("guide-research-%s-%d", collID, time.Now().UnixNano())
 				IngestReportTitled(context.Background(), VectorDB, CollectionSource(collID), reportID, topic, out, "research")
@@ -432,13 +499,15 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return out, nil
 		},
 	}
+}
 
-	// search_knowledge searches the knowledge collections ATTACHED to the open
-	// guide (the user's own curated knowledge) and returns the most relevant
-	// passages. Distinct from `research` (which goes to the web): this grounds a
-	// section in the user's internal/private material. No-op-ish when the guide has
-	// no attached collections — it tells the agent to ask the user to attach some.
-	searchKnowledge := AgentToolDef{
+// search_knowledge searches the knowledge collections ATTACHED to the open
+// guide (the user's own curated knowledge) and returns the most relevant
+// passages. Distinct from `research` (which goes to the web): this grounds a
+// section in the user's internal/private material. No-op-ish when the guide has
+// no attached collections — it tells the agent to ask the user to attach some.
+func (T *Scribe) searchKnowledgeTool(sc coauthorScope) AgentToolDef {
+	return AgentToolDef{
 		Tool: Tool{
 			Name: "search_knowledge",
 			// Returns documents, not the agent's own words: fenced and scanned as
@@ -455,7 +524,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			if query == "" {
 				return "", fmt.Errorf("query is required")
 			}
-			g, _, ownerUser, ok := openGuide()
+			g, _, ownerUser, ok := T.openGuide(sc)
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
@@ -476,14 +545,17 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 				query, HitFormat{}.Render(hits)), nil
 		},
 	}
+}
 
-	// list_reference_sources + pull_reference expose the cross-app reference
-	// registry: knowledge OTHER gohort services have gathered — servitor Systems
-	// (facts about the user's appliances) and connected document sources like
-	// Confluence (any ExposeReference MCP server). This is how a guide gets BUILT
-	// FROM internal knowledge, not just web research. Per-user and access-gated by
-	// the registry: the user only ever sees their own systems / connected docs.
-	listReferences := AgentToolDef{
+// list_reference_sources + pull_reference expose the cross-app reference
+// registry: knowledge OTHER gohort services have gathered — servitor Systems
+// (facts about the user's appliances) and connected document sources like
+// Confluence (any ExposeReference MCP server). This is how a guide gets BUILT
+// FROM internal knowledge, not just web research. Per-user and access-gated by
+// the registry: the user only ever sees their own systems / connected docs.
+func (T *Scribe) listReferencesTool(sc coauthorScope) AgentToolDef {
+	user, canEdit := sc.User, sc.CanEdit
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "list_reference_sources",
 			Description: "List the internal knowledge sources you can pull into the guide from OTHER gohort services: e.g. Systems (facts gathered about the user's own servers and devices) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
@@ -493,7 +565,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			// guide, resolved under the owner's identity. The reader never sees the
 			// wider registry — just the guide's own sources.
 			if !canEdit {
-				g, _, ownerUser, ok := openGuide()
+				g, _, ownerUser, ok := T.openGuide(sc)
 				if !ok || len(g.References) == 0 {
 					return "This guide has no linked reference sources.", nil
 				}
@@ -505,7 +577,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			}
 			// Which items did the user attach to THIS guide via the Sources picker?
 			attached := map[string]bool{}
-			if g, _, _, ok := openGuide(); ok {
+			if g, _, _, ok := T.openGuide(sc); ok {
 				for _, s := range g.References {
 					attached[s.Kind+"\x00"+s.ItemID] = true
 				}
@@ -533,8 +605,11 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return strings.TrimRight(b.String(), "\n"), nil
 		},
 	}
+}
 
-	pullReference := AgentToolDef{
+func (T *Scribe) pullReferenceTool(sc coauthorScope) AgentToolDef {
+	user, canEdit := sc.User, sc.CanEdit
+	return AgentToolDef{
 		Tool: Tool{
 			Name: "pull_reference",
 			// Returns documents, not the agent's own words: fenced and scanned as
@@ -564,7 +639,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			// source the owner didn't link to this guide.
 			fetchUser := user
 			if !canEdit {
-				g, _, ownerUser, ok := openGuide()
+				g, _, ownerUser, ok := T.openGuide(sc)
 				if !ok || !referenceAttached(g, kind, itemID) {
 					return "That source isn't linked to this guide: you can only pull the sources the guide's owner attached to it.", nil
 				}
@@ -577,13 +652,15 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return txt, nil
 		},
 	}
+}
 
-	// add_image puts a picture into a section: one the user attached to this
-	// message (media#N, which the runner names for the model), or one at a
-	// web address. The attached kind is why the tool exists: a screenshot
-	// pasted into the chat with "put this under Setup" had no way into the
-	// guide, and the model could only describe it.
-	addImage := AgentToolDef{
+// add_image puts a picture into a section: one the user attached to this
+// message (media#N, which the runner names for the model), or one at a
+// web address. The attached kind is why the tool exists: a screenshot
+// pasted into the chat with "put this under Setup" had no way into the
+// guide, and the model could only describe it.
+func (T *Scribe) addImageTool(sc coauthorScope) AgentToolDef {
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "add_image",
 			Caps:        []Capability{CapWrite},
@@ -606,7 +683,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			if ref == "" || ref == "<nil>" {
 				return "", fmt.Errorf("image is required: media#N for a picture attached to this message, or an http(s) URL")
 			}
-			g, ownerUDB, _, ok := openGuide()
+			g, ownerUDB, _, ok := T.openGuide(sc)
 			if !ok {
 				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
@@ -644,37 +721,6 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			return fmt.Sprintf("Placed the picture at the end of the %q section in %q.", title, g.Title), nil
 		},
 	}
-
-	base := []AgentToolDef{addSection, editSection, readSection, draftSection, addImage, listSections, renameSection, deleteSection, moveSection, research, searchKnowledge, listReferences, pullReference}
-
-	// Attached-source tools: every source the user linked via the Sources button
-	// contributes its OWN named tools (e.g. search_<system>_knowledge,
-	// investigate_<system>) directly into the kit — so the agent SEES and calls
-	// the guide's Sources instead of having to discover them through the generic
-	// list_reference_sources → pull_reference dance (which loses to the framework's
-	// own knowledge tools, leaving attached Sources untouched). Editors only:
-	// readers keep the owner-scoped pull_reference path — their tool set is
-	// name-whitelisted (readOnlyGuideTools), and a live investigate tool must never
-	// reach a view-only visitor. A Private guide's network/execute source tools are
-	// stripped downstream in handleChatSend by capability.
-	if canEdit {
-		if g, _, _, ok := openGuide(); ok {
-			have := map[string]bool{}
-			for _, t := range base {
-				have[t.Tool.Name] = true
-			}
-			for _, ref := range g.References {
-				for _, t := range ReferenceItemToolsWithContext(ctx, user, ref.Kind, ref.ItemID) {
-					if t.Tool.Name == "" || have[t.Tool.Name] {
-						continue
-					}
-					have[t.Tool.Name] = true
-					base = append(base, t)
-				}
-			}
-		}
-	}
-	return base
 }
 
 // reorderSections moves the section at idx to clampedTarget (0-based), clamping

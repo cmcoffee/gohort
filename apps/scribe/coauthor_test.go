@@ -108,7 +108,7 @@ func TestASectionEditChangesOnlyWhatItSays(t *testing.T) {
 		t.Error("an edit with no change, or two kinds, was accepted")
 	}
 	src, _ := os.ReadFile("coauthor.go")
-	for _, want := range []string{"base := []AgentToolDef{addSection, editSection, readSection,", "read it with read_section, then use edit_section"} {
+	for _, want := range []string{"\t\tT.readSectionTool(sc),\n", "read it with read_section, then use edit_section"} {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("the author lost %q", want)
 		}
