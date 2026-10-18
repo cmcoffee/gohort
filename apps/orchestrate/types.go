@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -1637,6 +1638,13 @@ type ChatMessage struct {
 	Flag   string `json:"flag,omitempty"`
 	FlagID string `json:"flag_id,omitempty"`
 }
+
+// A message's Block holds an ask_user_form's questions as []map[string]any,
+// and kvlite encodes through gob, which refuses a concrete type inside an
+// interface field until it is registered. Without this, every session that
+// ended on a form failed to save ("type not registered for interface") and the
+// conversation was lost before its answer arrived.
+func init() { gob.Register([]map[string]any{}) }
 
 // PersistedToolCall is one tool invocation persisted alongside the
 // assistant message that owns it. Args is the LLM-supplied argument
