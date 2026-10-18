@@ -3343,9 +3343,11 @@
       if (!m || !m.bubble) return;
       m.label = label || '';
       var chip = m.bubble.querySelector(':scope > .ui-agent-msg-label');
+      var textless = !(m.body && m.body.textContent.trim());
+      m.bubble.classList.toggle('ui-agent-msg-label-only', !!label && textless);
       if (!label) {
         if (chip) chip.remove();
-        if (!(m.body && m.body.textContent.trim())) markEmptyBubble(m);
+        if (textless) markEmptyBubble(m);
         return;
       }
       if (!chip) {
@@ -3356,7 +3358,8 @@
       // A label is something to read, so its bubble is shown even with no
       // text. A message saved with only a label (a turn that chose to say
       // nothing, and says why) was otherwise the hidden lazy bubble, and its
-      // label was drawn where nobody could see it.
+      // label was drawn where nobody could see it. With no text it is drawn
+      // as the label alone (.ui-agent-msg-label-only), not over an empty card.
       m.bubble.classList.remove('ui-agent-msg-empty');
     }
 

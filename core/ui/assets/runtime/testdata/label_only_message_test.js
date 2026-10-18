@@ -30,6 +30,7 @@ function node(cls) {
       add: function(c) { n.cls[c] = true; },
       remove: function() { for (var i = 0; i < arguments.length; i++) delete n.cls[arguments[i]]; },
       contains: function(c) { return !!n.cls[c]; },
+      toggle: function(c, on) { if (on) n.cls[c] = true; else delete n.cls[c]; },
     },
     insertBefore: function(k) { k.parent = n; n.kids.unshift(k); },
     remove: function() { if (n.parent) n.parent.kids.splice(n.parent.kids.indexOf(n), 1); },
@@ -56,18 +57,21 @@ msgEls.q = {bubble: node('ui-agent-msg ui-agent-msg-assistant ui-agent-msg-empty
 labelMessage('q', 'Stayed quiet: nothing new to add');
 check('a labelled bubble with no text is shown', !msgEls.q.bubble.classList.contains('ui-agent-msg-empty'));
 check('it carries the label', (msgEls.q.bubble.querySelector(':scope > .ui-agent-msg-label') || {}).textContent === 'Stayed quiet: nothing new to add');
+check('it is drawn as the label alone, not over an empty card', msgEls.q.bubble.classList.contains('ui-agent-msg-label-only'));
 
 markEmptyBubble(msgEls.q);
 check('emptying it again leaves a labelled bubble shown', !msgEls.q.bubble.classList.contains('ui-agent-msg-empty'));
 
 labelMessage('q', '');
 check('taking the label off a bubble with no text hides it again', msgEls.q.bubble.classList.contains('ui-agent-msg-empty'));
+check('and it is no longer drawn as a label', !msgEls.q.bubble.classList.contains('ui-agent-msg-label-only'));
 
 // A labelled reply with text is unaffected.
 var tbody = node('ui-agent-msg-body');
 tbody.textContent = 'The corrected answer.';
 msgEls.c = {bubble: node('ui-agent-msg ui-agent-msg-assistant'), body: tbody};
 labelMessage('c', 'Correction');
+check('a labelled bubble with text keeps its card', !msgEls.c.bubble.classList.contains('ui-agent-msg-label-only'));
 labelMessage('c', '');
 check('a bubble with text stays shown when its label comes off', !msgEls.c.bubble.classList.contains('ui-agent-msg-empty'));
 

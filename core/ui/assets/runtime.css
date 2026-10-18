@@ -5144,6 +5144,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.05rem 0.5rem;
   margin-bottom: 0.25rem;
 }
+/* A message that is only its label (a turn that chose to say nothing, and
+ * why): the label is the message, so the empty card under it is dropped, and
+ * the label wraps as a sentence, since a reason on one uppercase line ran
+ * past a phone's edge. */
+.ui-agent-msg-label-only > .ui-agent-msg-body { display: none; }
+.ui-agent-msg-label-only > .ui-agent-msg-label {
+  width: auto; max-width: 100%;
+  text-transform: none; letter-spacing: normal; font-weight: 500;
+  border-radius: 6px; padding: 0.2rem 0.6rem;
+}
 
 .ui-agent-divider {
   flex: 0 0 4px; cursor: col-resize;
