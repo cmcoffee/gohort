@@ -684,11 +684,13 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	// Builder needs to READ prose it did NOT write this session: editing an
 	// inherited prompt after clone_agent, or an agent from a prior session.
 	// See project_long_context_management.
+	//
+	// Either way it ends with what runs as the agent (agent_runs_on.go).
 	if b, ok := args["full"].(bool); ok && b {
 		full, _ := json.Marshal(a)
-		return string(full), nil
+		return string(withRunsOn(full, fleetUser, a.ID)), nil
 	}
-	return string(slimAgentJSON(fleetDB, fleetUser, a)), nil
+	return string(withRunsOn(slimAgentJSON(fleetDB, fleetUser, a), fleetUser, a.ID)), nil
 }
 
 // agentsRunToolAction executes ONE of a target agent's attached tools

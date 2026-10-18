@@ -252,8 +252,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 				if name == "" {
 					return "", fmt.Errorf("edit needs name: the schedule to change (schedule(action=\"list\") shows them and what each does)")
 				}
-				change := missionChange{Then: strings.TrimSpace(oArgStr(args, "then")), Find: oArgStr(args, "find"),
-					Replace: oArgStr(args, "replace"), Append: strings.TrimSpace(oArgStr(args, "append"))}
+				change := missionChangeFromArgs(args)
 				if err := change.valid(); err != nil {
 					return "", err
 				}
@@ -1138,7 +1137,7 @@ func scheduleChangeApproval(sess *ToolSession, owner, actingAgent, action, name 
 		"pause": "Pause it.", "resume": "Resume it.",
 		"delete": "Delete it and cancel its schedule.", "cancel": "Delete it and cancel its schedule.", "remove": "Delete it and cancel its schedule.",
 		"move":   "Change where it reports.",
-		"edit":   "Change what it does: " + truncate(strings.TrimSpace(oArgStr(args, "then")), 300),
+		"edit":   missionChangeFromArgs(args).describe(),
 		"relink": "Hand it to " + chFirst(strings.TrimSpace(oArgStr(args, "run_by")), "another agent") + " to run.",
 	}[action]
 	if verb == "" {
@@ -1297,6 +1296,27 @@ func scheduleGet(owner, controllerAgentID string, hasFleet bool, name string) (s
 // it. A rule added to the end needs none of the rest.
 type missionChange struct {
 	Then, Find, Replace, Append string
+}
+
+func missionChangeFromArgs(args map[string]any) missionChange {
+	return missionChange{Then: strings.TrimSpace(oArgStr(args, "then")), Find: oArgStr(args, "find"),
+		Replace: oArgStr(args, "replace"), Append: strings.TrimSpace(oArgStr(args, "append"))}
+}
+
+// describe is the change in the words an approval card shows. Built only from
+// the new text, a find/replace edit read "Change what it does:" and nothing
+// after it, so the owner approved a change they could not see.
+func (c missionChange) describe() string {
+	clip := func(s string) string { return truncate(strings.TrimSpace(s), 300) }
+	switch {
+	case c.Find != "" && strings.TrimSpace(c.Replace) == "":
+		return "Remove from what it does: \"" + clip(c.Find) + "\""
+	case c.Find != "":
+		return "In what it does, replace \"" + clip(c.Find) + "\" with \"" + clip(c.Replace) + "\""
+	case c.Append != "":
+		return "Add to what it does: " + clip(c.Append)
+	}
+	return "Change what it does: " + clip(c.Then)
 }
 
 func (c missionChange) valid() error {
