@@ -303,9 +303,14 @@ func persistQuietTurn(sess *ChatSession, udb Database, turn *chatTurn) {
 		}
 	}
 	label := quietLabel(turn.silenceReason)
-	// The bubble the silence was drawn in says so live, as the saved one does
-	// on a reload (Label is display-only: the model's history never sees it).
-	if id := turn.getCurrentMsgID(); id != "" && turn.sse != nil {
+	// The page draws the silence live as its own labelled message, which is
+	// what the saved one is on a reload (Label is display-only: the model's
+	// history never sees it). It used to label the turn's current bubble, but
+	// the round that called stay_silent had already settled and cleared it, so
+	// nothing was sent and the label appeared only after a reload.
+	if turn.sse != nil {
+		id := fmt.Sprintf("orch-quiet-%d", time.Now().UnixNano())
+		turn.sse.Send(map[string]any{"kind": "message", "role": "assistant", "id": id, "text": ""})
 		turn.sse.Send(map[string]any{"kind": "message_label", "id": id, "label": label})
 	}
 	sess.Messages = append(sess.Messages, turn.withDelivered(ChatMessage{

@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -38,6 +39,26 @@ func TestAQuietTurnIsSavedAsQuietWithItsReason(t *testing.T) {
 	}
 	if quietLabel("  ") != "Stayed quiet (no reason given)" {
 		t.Errorf("no reason = %q", quietLabel(""))
+	}
+}
+
+// The page is told about the silence as it happens. The label went to the
+// turn's current bubble, which the round had already cleared by the time the
+// turn was saved, so it reached the page only on a reload.
+func TestAQuietTurnIsLabelledLive(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	sess := ChatSession{ID: "s1", AgentID: "wren", Messages: []ChatMessage{{Role: "user", Content: "ok thanks"}}}
+	var live bytes.Buffer
+	turn := &chatTurn{turnClosed: true, silenceReason: "they were only saying thanks", sse: &sseWriter{live: &live}}
+	turn.setCurrentMsgID("") // the round that called stay_silent has settled
+	persistQuietTurn(&sess, udb, turn)
+
+	out := live.String()
+	if !strings.Contains(out, `"kind":"message"`) || !strings.Contains(out, `"role":"assistant"`) {
+		t.Errorf("the silence should open its own message live:\n%s", out)
+	}
+	if !strings.Contains(out, `"kind":"message_label"`) || !strings.Contains(out, `"label":"Stayed quiet: they were only saying thanks"`) {
+		t.Errorf("the page must be told to label it:\n%s", out)
 	}
 }
 
