@@ -24,6 +24,8 @@ func TestMatchShapeOnRealRequests(t *testing.T) {
 		{"an agent that knows where the code lives before it searches", "librarian"},
 		{"an agent that can send messages for me", "correspondent"},
 		{"something to handle my texts while I'm busy", "correspondent"},
+		{"something to review my drafts against our style guide", "reviewer"},
+		{"a second opinion before a message goes out", "reviewer"},
 		{"someone to talk to about my day", "conversational"},
 		{"a general assistant that can also do things", "conversational"},
 	} {

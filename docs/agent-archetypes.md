@@ -85,7 +85,7 @@ sub-agents: investigator, research, knowledge base, and the two below marked bui
 | **Librarian** (built) | Catalogues one subject (a GitLab instance, a document estate) and is the one other agents ask first |
 | **Correspondent** (built) | The only agent in the family that holds the messaging tools; writes and sends to people on the owner's behalf |
 | Analyst | Works on data in a file store or the sandbox; scripts and large outputs stay in its run |
-| Reviewer | Checks a draft, a plan or a change against rules and requirements; a second judgement that did not write it |
+| **Reviewer** (built) | Checks a draft, a plan or a change against rules and requirements; a second judgement that did not write it |
 | Case worker | Works cases in a file store: intake, an evidence folder per case, timelines, a write-up per case |
 | System operator | Looks after Servitor systems: health checks, investigating, asking before any change |
 | Coordinator | Hands work to other agents and keeps track of it: fleet, delegation, monitors |
