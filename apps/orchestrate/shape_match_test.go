@@ -11,25 +11,11 @@ import (
 // matching category names is the easy half and never the half that fails.
 func TestMatchShapeOnRealRequests(t *testing.T) {
 	for _, tc := range []struct{ request, want string }{
-		{"I want something that watches our status page and tells me when it goes down", "scheduled_watcher"},
-		{"check the queue every 5 minutes and report the depth", "scheduled_watcher"},
-		{"let me know when the PR is merged", "scheduled_watcher"},
 		{"an agent that answers questions from our handbook", "knowledge_base"},
 		{"a support bot grounded in our documentation", "knowledge_base"},
 		{"something that only answers from what I upload", "knowledge_base"},
 		{"something that looks things up and cites sources", "research"},
 		{"a research agent for tariff news", "research"},
-		{"figure out why the build keeps failing on that repo", "investigator"},
-		{"look at our gitlab and map out where the repos are", "librarian"},
-		{"an agent that knows where the code lives before it searches", "librarian"},
-		{"an agent that can send messages for me", "correspondent"},
-		{"something to handle my texts while I'm busy", "correspondent"},
-		{"something to review my drafts against our style guide", "reviewer"},
-		{"a second opinion before a message goes out", "reviewer"},
-		{"something to crunch the numbers in our monthly exports", "analyst"},
-		{"an agent that can analyze the data in the CSVs we upload", "analyst"},
-		{"post today's headlines to a bulletin board every morning", "digest"},
-		{"a weekly roundup of what's new in our repos", "digest"},
 		{"someone to talk to about my day", "conversational"},
 		{"a general assistant that can also do things", "conversational"},
 	} {
@@ -54,6 +40,13 @@ func TestMatchShapeDeclinesRatherThanGuesses(t *testing.T) {
 		"",
 		"   ",
 		"something for work",
+		// Specialists whose shape depends on what they reach: Builder's
+		// shaper decides these (builder_shaper.go), not a draft.
+		"I want something that watches our status page and tells me when it goes down",
+		"figure out why the build keeps failing on that repo",
+		"an agent that can send messages for me",
+		"something to crunch the numbers in our monthly exports",
+		"post today's headlines to a bulletin board every morning",
 	} {
 		if got, ok := matchShape(request); ok {
 			t.Errorf("%q proposed %q via %q; it should have asked", request, got.Shape.Slug, got.Phrase)
@@ -64,9 +57,9 @@ func TestMatchShapeDeclinesRatherThanGuesses(t *testing.T) {
 // A request that fits two shapes equally has not said which, and asking one
 // question beats opening with a coin flip.
 func TestANearTieAsksInsteadOfPicking(t *testing.T) {
-	// Something to look at on a schedule, or something that looks things up:
-	// the request contains both and settles neither.
-	const both = "watch the page and look things up"
+	// Something that looks things up, or something that answers from the
+	// documents: the request contains both and settles neither.
+	const both = "look things up from our docs"
 	all := matchShapes(both)
 	if len(all) < 2 {
 		t.Fatalf("expected two shapes to score, got %d", len(all))
@@ -81,7 +74,7 @@ func TestANearTieAsksInsteadOfPicking(t *testing.T) {
 
 	// And a clear winner still wins: the margin must not turn every request
 	// with two scoring shapes into a question.
-	if got, ok := matchShape("a research agent that watches the page"); !ok || got.Shape.Slug != "research" {
+	if got, ok := matchShape("a research agent that cites sources from our docs"); !ok || got.Shape.Slug != "research" {
 		t.Errorf("a clear winner was refused: %q ok=%v", got.Shape.Slug, ok)
 	}
 }

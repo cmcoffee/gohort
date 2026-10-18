@@ -69,6 +69,9 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if sess == nil || sess.Username == "" || sess.DB == nil {
 		return "", errors.New("create_agent requires authenticated session")
 	}
+	if msg := shapeGateRefusal(sess, "create_agent"); msg != "" {
+		return "", errors.New(msg)
+	}
 	rec := agentRecordFromArgs(args)
 	if strings.TrimSpace(rec.Name) == "" {
 		// A build called create_agent(action="list") and then action="help",
@@ -624,6 +627,9 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if sess == nil || sess.Username == "" || sess.DB == nil {
 		return "", errors.New("update_agent requires authenticated session")
 	}
+	if msg := shapeGateRefusal(sess, "update_agent"); msg != "" {
+		return "", errors.New(msg)
+	}
 	id, err := agentTargetArg(args, "update_agent")
 	if err != nil {
 		return "", err
@@ -966,7 +972,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"description":         {Type: "string", Description: "One-sentence summary."},
 		"orchestrator_prompt": {Type: "string", Description: orchestratorPromptParam(includeID)},
 		"plan_guidance":       {Type: "string", Description: "Optional decomposition-style nudge appended to orchestrator prompt."},
-		"rules":               {Type: "string", Description: "Optional standing rules, one per line, applied to every turn."},
+		"rules":               {Type: "string", Description: "Optional standing rules, one per line, applied to every turn. They render above memory and above the persona and win every conflict, so put here the constraints the agent must keep when a turn pulls the other way (\"never state a value you did not see\", \"never message anyone the brief does not name\"); how it works and how it sounds stay in the persona."},
 		"allowed_tools": {
 			Type:        "array",
 			Description: "Explicit allowlist of worker tool names. REQUIRED on create: a deliberate 4-10 tool set, or [\"*\"] for everything. Omit on update to leave it unchanged. An empty stored list runs the default pool (read + network).",

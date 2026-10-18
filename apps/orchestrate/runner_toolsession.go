@@ -37,7 +37,7 @@ func init() {
 		// Builder's authoring catalog, deferred behind load_tool on every other
 		// authoring agent (builderAuthoringTools; per-credential fetch_url_*
 		// tools are named by their credential and guarded where those mint)
-		"survey", "create_agent", "update_agent", "list_reference_sources",
+		"survey", "shape_agent", "create_agent", "update_agent", "list_reference_sources",
 		"archetype", "clone_agent", "delete_agent", "add_tool",
 		"tool_def", "skill_def", "consult", "bridge", "connector",
 		"tool_template", "collections", "draft_oauth_credential",
@@ -493,6 +493,8 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// What the owner picked in Builder's form is approved for changes in this
 	// session (change_approval.go).
 	t.noteIntakeTargets()
+	// An agent intake asks for the build's shape first (builder_shaper.go).
+	t.noteShapeRequirement()
 	// An uploaded picture reaches the LLM as vision content, which lets the
 	// model SEE it and gives it no way to NAME it. Asked to blend that photo
 	// with one it generated, the only handle it has is the generated image#1 —

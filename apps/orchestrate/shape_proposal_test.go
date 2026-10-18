@@ -50,25 +50,11 @@ func TestProposalOpensWithTheAgentItWouldBuild(t *testing.T) {
 	}
 }
 
-// A shape whose subject is not known yet has no draft, and dropping the match
-// would throw away the useful half: which kind of agent this is, and what it
-// needs to be told.
-func TestAShapeWithNoAgentStillOpensTheConversation(t *testing.T) {
-	p, ok := proposeAgent("watch our status page every 5 minutes")
-	if !ok {
-		t.Fatal("a watcher request produced nothing at all")
-	}
-	if !p.NeedsComposing {
-		t.Error("a shape that ships no agent was presented as a draft")
-	}
-	if p.Name == "" || p.Summary == "" {
-		t.Errorf("nothing to show the user: name=%q summary=%q", p.Name, p.Summary)
-	}
-	if len(p.Points) != 0 {
-		t.Errorf("points were invented for an agent that does not exist yet: %v", p.Points)
-	}
-	if len(p.Asks) == 0 {
-		t.Error("no questions, so there is no way to compose one either")
+// A specialist whose shape depends on what it reaches is no ready-made agent:
+// the wizard offers no draft for it, and Builder's shaper decides it.
+func TestASpecialistGoesToBuilderNotADraft(t *testing.T) {
+	if p, ok := proposeAgent("watch our status page every 5 minutes"); ok {
+		t.Errorf("a watcher request opened with the %q draft", p.Shape)
 	}
 }
 
@@ -161,19 +147,11 @@ func TestCreatingFromAShapeWithNoAnswers(t *testing.T) {
 	}
 }
 
-// A shape whose subject is not known yet has nothing to copy, and quietly
-// building something else would be worse than saying so.
+// A shape that is not in the library is refused rather than quietly building
+// something else.
 func TestCreatingFromAShapeThatShipsNothing(t *testing.T) {
 	db := overlayTestDB(t)
 	app := &OrchestrateApp{}
-	_, err := app.createFromShape(httptest.NewRequest("POST", "/", nil), db, "craig@example.com", "scheduled_watcher",
-		wizardRequest{Name: "Watcher"})
-	if err == nil {
-		t.Fatal("a watcher was created from a shape that ships no agent")
-	}
-	if !strings.Contains(err.Error(), "Builder") {
-		t.Errorf("the error does not say what to do instead: %v", err)
-	}
 	if _, err := app.createFromShape(httptest.NewRequest("POST", "/", nil), db, "craig@example.com", "nonsense", wizardRequest{}); err == nil {
 		t.Error("an unknown shape was accepted")
 	}

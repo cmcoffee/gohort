@@ -1104,7 +1104,7 @@ func wizardDescribeHTML() string {
         function renderProposal(d,request){
           out.innerHTML=''; proposal=d;
           if(!d.matched){
-            out.appendChild(el('p',{class:'wd-hint',text:'I could not tell which kind of agent that is. Use the guided setup below, or say it another way: what should it look at, and what should it do with what it finds?'}));
+            out.appendChild(el('p',{class:'wd-hint',text:'That is not one of the ready-made agents. Ask Builder to make it, and it works out the shape (which agents, what each can reach), or use the guided setup below.'}));
             return;
           }
           var card=el('div',{class:'wd-card'});

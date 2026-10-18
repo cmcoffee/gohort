@@ -55,15 +55,13 @@ record carried none, so the wizard produced the agent the recipe warns about.
 Builder is handed the recipe alone. It composes agents, and a persona it can
 copy verbatim is one it will copy instead of composing.
 
-## Shapes that ship nothing
+## Only shapes that ship an agent
 
-`analyst`, `correspondent`, `digest`, `investigator`, `librarian`, `reviewer`
-and `scheduled_watcher` have no `record` and no persona, because each prompt
-has to name its subject: what a watcher watches, what a librarian catalogues,
-whom a correspondent writes for, what a reviewer checks against, which data an
-analyst works on, what a digest gathers. A shape is instantiable
-exactly when its prompt can be written without knowing the subject; otherwise
-Builder composes one from the recipe.
+A shape belongs here when it ships an agent: its prompt can be written without
+knowing the subject. A specialist whose prompt has to name its subject (what a
+watcher watches, whom a correspondent writes for) has no file here. Builder's
+shaper decides its shape from the request (`builder_shaper.go`, and
+`docs/agent-archetypes.md` for why the recipe-only files went).
 
 ## Rules the loader enforces
 

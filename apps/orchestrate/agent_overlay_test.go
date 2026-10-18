@@ -420,17 +420,14 @@ func TestAnInstanceSurvivesAMissingShape(t *testing.T) {
 	}
 }
 
-// Only shapes that ship a record can be instantiated. A watcher's subject
-// varies, so there is nothing to copy and nothing to track.
+// Only shapes that ship a record can be instantiated, and a shape that is
+// gone (an agent built from one keeps its ShapeID) instantiates nothing.
 func TestOnlyShapesWithARecordInstantiate(t *testing.T) {
 	if _, ok := shapeBaseRecord("research"); !ok {
 		t.Error("research does not instantiate")
 	}
 	if _, ok := shapeBaseRecord("scheduled_watcher"); ok {
-		t.Error("scheduled_watcher instantiates, but it describes an agent whose subject is not known yet")
-	}
-	if _, ok := shapeBaseRecord("investigator"); ok {
-		t.Error("investigator instantiates, but it describes a sub-agent pointed at a subject")
+		t.Error("a retired shape still instantiates")
 	}
 }
 

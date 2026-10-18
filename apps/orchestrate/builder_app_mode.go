@@ -59,35 +59,10 @@ func (t *chatTurn) builderAppMode() bool {
 // where it was read: the stored intake values, or else the intake's packed
 // text ("**<label>:** App"), which every intake send carries. Three app-mode
 // runs in a row never turned it on, and the values are the one piece of that
-// path no check could see, so the text is read too.
+// path no check could see, so the text is read too (latestIntake).
 func (t *chatTurn) intakeKind() (kind, from string) {
-	label := ""
-	for _, f := range t.agent.IntakeForm {
-		if f.Name == "kind" {
-			label = strings.TrimSpace(f.Label)
-		}
-	}
-	for i := len(t.session.Messages) - 1; i >= 0; i-- {
-		m := t.session.Messages[i]
-		if m.Role != "user" {
-			continue
-		}
-		if v := m.IntakeValues; len(v) > 0 {
-			return strings.TrimSpace(v["kind"]), "values"
-		}
-		if label == "" {
-			continue
-		}
-		marker := "**" + label + ":**"
-		if j := strings.Index(m.Content, marker); j >= 0 {
-			rest := strings.TrimSpace(m.Content[j+len(marker):])
-			if k := strings.IndexAny(rest, "\n\r"); k >= 0 {
-				rest = rest[:k]
-			}
-			return strings.TrimSpace(rest), "text"
-		}
-	}
-	return "", ""
+	vals, from := t.latestIntake()
+	return vals["kind"], from
 }
 
 // renderBuilderAppModeBlock is app mode's instructions for this turn, or "".

@@ -8,7 +8,8 @@ package orchestrate
 // billing service live", which the agent already wrote down. A Servitor
 // system offers both: search what was gathered, instantly, then investigate
 // when that is not enough. These are the same two steps for an agent, and what
-// makes a Librarian (docs/agent-archetypes.md) worth asking first.
+// makes a sub-agent that keeps a catalogue worth asking first
+// (docs/agent-archetypes.md).
 //
 // Read-only and with no model call. They read what the agent recorded: its
 // pinned notes, its saved findings, its own documents and collections, and

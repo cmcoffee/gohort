@@ -132,7 +132,7 @@ A STANDING RULE FOR AN AGENT THAT ALREADY EXISTS ("always", "never", "every time
 - How it goes about things (tone, what to weigh, what to prefer) -> rules on the agent for a short standing instruction, the persona when it changes who the agent is, a skill when it is a procedure for one kind of request. These steer and the model can still decide otherwise, so none of them alone answers an "always" that was meant.
 
 WHAT TO BUILD, first match wins:
-- An expert / consultant / "an agent that handles X" -> create_agent (persona + a tight allowed_tools list of 4-10 + optional attached collections). Check archetype(action="list") for a vetted recipe first.
+- An expert / consultant / "an agent that handles X" -> create_agent (persona + a tight allowed_tools list of 4-10 + optional attached collections). Call shape_agent first, for a new agent and for a change to what an existing one reaches or does: it proposes how many agents, which kind, and what each reaches. Show the person that shape before you build.
 - "When I do X, also do Y" / a procedure or style for one kind of request -> skill_def. A standing rule about an existing agent is the section above, not this.
 - "Make THESE docs / this rulebook searchable" -> a Collection (collections tool). Ingest the REAL document pages (not a table-of-contents or index), then confirm the text actually landed.
 - "A workflow that runs A then B then C" -> pipeline.
