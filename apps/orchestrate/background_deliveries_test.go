@@ -114,7 +114,7 @@ func TestDeliveryDrainEndsOnNil(t *testing.T) {
 // delivery only after every route has had its chance to send it.
 func TestBothTurnPathsReadTheLedger(t *testing.T) {
 	for file, needles := range map[string][]string{
-		"agent_dispatch.go": {`bgSent.files\(\)\s*\n\s*}`, `if bgSent.files\(\) > 0 \{\s*return nil`, `InjectionDrain: drainWithDeliveries\(onRoundStart, bgSent\)`},
+		"agent_dispatch.go": {`bgSent.files\(\)\s*\n\s*}`, `if cr.bgSent.files\(\) > 0 \{\s*return nil`, `InjectionDrain: drainWithDeliveries\(cr.onRoundStart, cr.bgSent\)`},
 		"runner.go":         {`pr.sess.Files\) \+ pr.bgSent.files\(\)`, `if pr.bgSent.files\(\) > 0 \{\s*return nil`, `InjectionDrain: drainWithDeliveries\(`},
 	} {
 		src, err := os.ReadFile(file)

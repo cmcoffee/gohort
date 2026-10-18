@@ -1586,147 +1586,276 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 	return res.Text, err
 }
 
+// RunAgentSyncContinuingRich runs one turn of an agent on a thread it keeps:
+// the path a channel message, a monitor wake, a machine step and agents(run)
+// take. The run's state is continuingRun and each phase is a method on it. A
+// phase that ends the run early returns false, and what that return handed
+// back is parked by exit for this method to return. The defers stay here,
+// registered in the order they always were.
 func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run AgentSyncRun) (AgentSyncResult, error) {
-	agentOwner := run.AgentOwner
-	runtimeUser := run.RuntimeUser
-	agentKey := run.AgentKey
-	subSessionID := run.SubSessionID
-	injectionQueueID := run.InjectionQueueID
-	message := run.Message
-	freshSession := run.FreshSession
+	cr := &continuingRun{T: T, ctx: ctx, run: run}
+	if !cr.admit() {
+		return cr.ret, cr.retErr
+	}
+	cr.buildSession()
+	defer clearAuthoringInProgress(cr.runtimeDB, cr.subSessionID)
+	defer DeleteSessionTempTools(cr.runtimeDB, cr.subSessionID)
+	cr.startLiveRun()
+	defer cr.liveRun.Complete(RunStatusFailed)
+	cr.tagRun()
+	defer cr.reportUsage()
+	defer bankScopedSpend(cr.ctx, spendOwner(cr.target, cr.agentOwner), cr.target)
+	cr.buildToolkit()
+	cr.buildTurn()
+	cr.buildPrompt()
+	cr.loadThread()
+	cr.buildMessages()
+	cr.configureLoop()
+	cr.wireJudges()
+	cr.prepareInput()
+	if !cr.runLoop() {
+		return cr.ret, cr.retErr
+	}
+	cr.shapeReply()
+	cr.saveExchange()
+	cr.collectMedia()
+	return AgentSyncResult{Text: cr.cleanReply, Images: cr.imgs, Videos: cr.vids, HitRoundCap: cr.resp.HitRoundCap, PhantomDelivery: cr.phantomDelivery, ToolCalls: cr.turnToolCalls, Silenced: cr.subSess != nil && cr.subSess.Silenced}, nil
+}
+
+// continuingRun is one turn of an agent on a thread it keeps, from the
+// request's checks to the media its reply carries. Each field is a local of
+// the method it was cut from; the method is now the order of the phases and
+// the defers between them.
+type continuingRun struct {
+	T                 *OrchestrateApp
+	ctx               context.Context
+	run               AgentSyncRun
+	agentOwner        string
+	runtimeUser       string
+	agentKey          string
+	subSessionID      string
+	injectionQueueID  string
+	message           string
+	freshSession      bool
+	ownerDB           Database
+	target            AgentRecord
+	ok                bool
+	err               error
+	runtimeDB         Database
+	chain             []string
+	origin            *dispatchAuthority
+	lerr              error
+	subSess           *ToolSession
+	liveKind          string
+	liveRun           *Run
+	reportUsage       func()
+	tools             []AgentToolDef
+	mayAuthor         bool
+	authoringWithheld string
+	isPhantomDispatch bool
+	extraTools        []AgentToolDef
+	availableBlock    string
+	customToolPrompt  string
+	subTurn           *chatTurn
+	// The turn's own read (chatTurn.facts), as a web turn's: it honours the
+	// agent's Explicit Memory switch and a stranger's sharing gates, which a
+	// raw list did not, so an agent with saved notes turned off still had
+	// them in every dispatched prompt.
+	subFacts         []MemoryFact
+	sysPrompt        string
+	priorSession     ChatSession
+	deliveredMessage string
+	// An agent handing Builder a brief keeps this thread, so Builder may ask and
+	// the answer comes back here (builder_delegated_ask.go). Anything else that
+	// runs Builder headless (a machine step, an app) has nobody to relay to.
+	ask         *delegatedQuestion
+	llmMessages []Message
+	bgSent      *backgroundDeliveryWatch
+	// Optional injection-queue drain hook for mid-flight user notes.
+	// Cheap no-op when the queue isn't registered.
+	onRoundStart    func() []Message
+	loopCfg         AgentLoopConfig
+	buildCheck      *dispatchBuildCheck
+	gDecline        string
+	isMessage       bool
+	resp            *Response
+	transcript      []Message
+	runErr          error
+	cleanReply      string
+	turnToolCalls   []PersistedToolCall
+	modelCalls      int
+	imgs            []string
+	vids            []string
+	phantomDelivery bool
+	// ret and retErr are what an early return hands back, parked by exit.
+	ret    AgentSyncResult
+	retErr error
+}
+
+// exit records what an early return hands back and tells the driver to take
+// it.
+func (cr *continuingRun) exit(res AgentSyncResult, err error) bool {
+	cr.ret, cr.retErr = res, err
+	return false
+}
+
+func (cr *continuingRun) admit() bool {
+	run := cr.run
+	T := cr.T
+	cr.agentOwner = run.AgentOwner
+	cr.runtimeUser = run.RuntimeUser
+	cr.agentKey = run.AgentKey
+	cr.subSessionID = run.SubSessionID
+	cr.injectionQueueID = run.InjectionQueueID
+	cr.message = run.Message
+	cr.freshSession = run.FreshSession
 	// A channel message from anyone but the owner marks this run and every run
 	// it starts, so a delegation cannot launder the sender away
 	// (authoring_requester.go).
-	if !channelSenderIsOwner(agentOwner, run) {
-		ctx = withNonOwnerRequester(ctx, run.ReplyAuthorizedKey)
+	if !channelSenderIsOwner(cr.agentOwner, run) {
+		cr.ctx = withNonOwnerRequester(cr.ctx, run.ReplyAuthorizedKey)
 	}
 	if T == nil || T.LLM == nil {
-		return AgentSyncResult{}, errors.New("orchestrate runtime not initialized")
+		return cr.exit(AgentSyncResult{}, errors.New("orchestrate runtime not initialized"))
 	}
-	if agentOwner == "" {
-		return AgentSyncResult{}, errors.New("agentOwner is required")
+	if cr.agentOwner == "" {
+		return cr.exit(AgentSyncResult{}, errors.New("agentOwner is required"))
 	}
-	if runtimeUser == "" {
-		runtimeUser = agentOwner
+	if cr.runtimeUser == "" {
+		cr.runtimeUser = cr.agentOwner
 	}
-	if strings.TrimSpace(message) == "" && len(run.Images) == 0 {
-		return AgentSyncResult{}, errors.New("message is required")
+	if strings.TrimSpace(cr.message) == "" && len(run.Images) == 0 {
+		return cr.exit(AgentSyncResult{}, errors.New("message is required"))
 	}
-	ownerDB := UserDB(T.DB, agentOwner)
-	if ownerDB == nil {
-		return AgentSyncResult{}, fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
+	cr.ownerDB = UserDB(T.DB, cr.agentOwner)
+	if cr.ownerDB == nil {
+		return cr.exit(AgentSyncResult{}, fmt.Errorf("no per-user db for agentOwner %q", cr.agentOwner))
 	}
 	// Schedules, monitors and pipeline stages name their agent, often by
 	// name. Two agents answering to it is refused with their ids rather than
 	// run on whichever sorted first.
-	target, ok, err := resolveAgentRef(ownerDB, agentOwner, agentKey)
-	if err != nil {
-		return AgentSyncResult{}, err
+	cr.target, cr.ok, cr.err = resolveAgentRef(cr.ownerDB, cr.agentOwner, cr.agentKey)
+	if cr.err != nil {
+		return cr.exit(AgentSyncResult{}, cr.err)
 	}
-	if !ok {
-		return AgentSyncResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
+	if !cr.ok {
+		return cr.exit(AgentSyncResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", cr.agentKey, cr.agentOwner))
 	}
-	target = materializeIfRetiringSeed(ownerDB, agentOwner, target)
-	runtimeDB := ownerDB
-	if runtimeUser != agentOwner {
-		runtimeDB = UserDB(T.DB, runtimeUser)
-		if runtimeDB == nil {
-			return AgentSyncResult{}, fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
+	cr.target = materializeIfRetiringSeed(cr.ownerDB, cr.agentOwner, cr.target)
+	cr.runtimeDB = cr.ownerDB
+	if cr.runtimeUser != cr.agentOwner {
+		cr.runtimeDB = UserDB(T.DB, cr.runtimeUser)
+		if cr.runtimeDB == nil {
+			return cr.exit(AgentSyncResult{}, fmt.Errorf("no per-user db for runtimeUser %q", cr.runtimeUser))
 		}
 		// Layered rules (enabler #2): instance overlay over the template's base —
 		// see the matching block in runAgentSyncConfirm.
-		target.Rules = mergeScopeRules(target.Rules, listScopeRules(runtimeDB, target.ID))
+		cr.target.Rules = mergeScopeRules(cr.target.Rules, listScopeRules(cr.runtimeDB, cr.target.ID))
 	}
 	// A delegated run carries its delegator's rules as well as its own. Read
 	// from the OWNER's store, where both records live, and applied to the local
 	// copy only — see delegated_guardrails.go.
 	// The lane this run's calls go out on: a person on the other end goes
 	// first, and the agent's own mark applies otherwise (run_lane.go).
-	ctx = agentRunLane(ctx, target, run.Interactive)
+	cr.ctx = agentRunLane(cr.ctx, cr.target, run.Interactive)
 	// The chain above it, from the context and the delegator this run names,
 	// held to agents(run)'s limits, every agent on it binding it with its
 	// guardrails, and the run stamped so its own hand-offs keep counting
 	// (dispatch_lineage.go). A channel message or a monitor wake has no
 	// delegator and starts a chain of its own.
-	chain, origin, lerr := handOffLineage(ctx, ownerDB, target, strings.TrimSpace(run.DelegatorAgentID))
-	if lerr != nil {
-		return AgentSyncResult{}, lerr
+	cr.chain, cr.origin, cr.lerr = handOffLineage(cr.ctx, cr.ownerDB, cr.target, strings.TrimSpace(run.DelegatorAgentID))
+	if cr.lerr != nil {
+		return cr.exit(AgentSyncResult{}, cr.lerr)
 	}
-	target = inheritChainGuardrails(ownerDB, chain, target)
-	ctx = withDispatchLineage(ctx, append(append([]string(nil), chain...), target.ID), origin)
-	if subSessionID == "" {
-		subSessionID = "external-dispatch:" + runtimeUser + ":" + target.ID
+	cr.target = inheritChainGuardrails(cr.ownerDB, cr.chain, cr.target)
+	cr.ctx = withDispatchLineage(cr.ctx, append(append([]string(nil), cr.chain...), cr.target.ID), cr.origin)
+	return true
+}
+
+func (cr *continuingRun) buildSession() {
+	run := cr.run
+	T := cr.T
+	if cr.subSessionID == "" {
+		cr.subSessionID = "external-dispatch:" + cr.runtimeUser + ":" + cr.target.ID
 	}
-	subSess := &ToolSession{
+	cr.subSess = &ToolSession{
 		LLM:                T.LLM,
 		LeadLLM:            T.LeadLLM,
-		Username:           runtimeUser,
-		DB:                 runtimeDB,
-		ChatSessionID:      subSessionID,
+		Username:           cr.runtimeUser,
+		DB:                 cr.runtimeDB,
+		ChatSessionID:      cr.subSessionID,
 		DeliverySessionID:  strings.TrimSpace(run.DeliverySessionID),
-		AgentID:            target.ID,
-		IntentText:         message,                // Tier-1 tool elevation matches against the brief
+		AgentID:            cr.target.ID,
+		IntentText:         cr.message,             // Tier-1 tool elevation matches against the brief
 		ReplyAuthorizedKey: run.ReplyAuthorizedKey, // in-thread reply skips the send approval gate
 		ChannelChatID:      run.ChannelChatID,      // so a background task can still reach this conversation
 		ChannelHandle:      run.ChannelHandle,
-		DeniedCredentials:  credentialDenySet(target, runtimeUser),
+		DeniedCredentials:  credentialDenySet(cr.target, cr.runtimeUser),
 	}
 	// Builder sent work by another agent stamps what it builds as that
 	// agent's, and works within that agent's limits (builder_delegation.go).
-	if id := strings.TrimSpace(run.DelegatorAgentID); id != "" && isBuilderAgent(target.ID) {
-		subSess.DispatchParentAgentID = id
-		applyBuilderDelegation(subSess, ownerDB)
+	if id := strings.TrimSpace(run.DelegatorAgentID); id != "" && isBuilderAgent(cr.target.ID) {
+		cr.subSess.DispatchParentAgentID = id
+		applyBuilderDelegation(cr.subSess, cr.ownerDB)
 	}
 	// Nobody to ask here: a change to what already exists queues
 	// (change_approval.go).
-	subSess.ApproveChange = changeApprover(subSess, runtimeUser, target.ID, target.Name, nil)
-	subSess.DirectCredentialRefusal = directCredentialRefusal(target, subSess)
-	subSess.ToolFailureAdvice = toolFailureAdvice(target, false, func() bool { return nonOwnerRequester(ctx) })
+	cr.subSess.ApproveChange = changeApprover(cr.subSess, cr.runtimeUser, cr.target.ID, cr.target.Name, nil)
+	cr.subSess.DirectCredentialRefusal = directCredentialRefusal(cr.target, cr.subSess)
+	cr.subSess.ToolFailureAdvice = toolFailureAdvice(cr.target, false, func() bool { return nonOwnerRequester(cr.ctx) })
 	// Inherit the delegator's workspace when there is one — the sub-agent is
 	// producing something its parent will read — and otherwise run in this
 	// agent's own directory rather than the shared user root.
-	if inherited := InheritedWorkspaceDir(ctx); inherited != "" {
-		subSess.WorkspaceDir = inherited
-	} else if ws, werr := EnsureAgentWorkspaceDir(runtimeUser, subSess.AgentID); werr == nil {
-		subSess.WorkspaceDir = ws
+	if inherited := InheritedWorkspaceDir(cr.ctx); inherited != "" {
+		cr.subSess.WorkspaceDir = inherited
+	} else if ws, werr := EnsureAgentWorkspaceDir(cr.runtimeUser, cr.subSess.AgentID); werr == nil {
+		cr.subSess.WorkspaceDir = ws
 	}
-	if root, rerr := EnsureWorkspaceDir(runtimeUser); rerr == nil && root != subSess.WorkspaceDir {
-		subSess.WorkspaceFallback = root
+	if root, rerr := EnsureWorkspaceDir(cr.runtimeUser); rerr == nil && root != cr.subSess.WorkspaceDir {
+		cr.subSess.WorkspaceFallback = root
 	}
 	// Mid-turn status (channel path): the agent's send_status / progress
 	// pings land here so the transport can deliver them before the final
 	// reply. nil for the legacy text-only callers — graceful no-op.
 	if run.StatusCallback != nil {
-		subSess.StatusCallback = run.StatusCallback
+		cr.subSess.StatusCallback = run.StatusCallback
 	}
-	defer clearAuthoringInProgress(runtimeDB, subSessionID)
-	defer DeleteSessionTempTools(runtimeDB, subSessionID)
+}
+
+func (cr *continuingRun) startLiveRun() {
+	run := cr.run
+	T := cr.T
 	// Register this channel/dispatch turn in the runs ledger, nested under the
 	// run that spawned it (parentRunFromCtx). Created BEFORE the sub-agent's
 	// tools build below, with ctx re-tagged to THIS run's ID, so a dispatch the
 	// sub-agent makes nests one level deeper. Kind defaults to "dispatch"; the
 	// channel caller passes "channel". defer marks Failed; success marks
 	// Completed first (idempotent — first call wins).
-	liveKind := run.Kind
-	if liveKind == "" {
-		liveKind = "dispatch"
+	cr.liveKind = run.Kind
+	if cr.liveKind == "" {
+		cr.liveKind = "dispatch"
 	}
 	// Cancellable: the ctx it hands back is what the turn runs under. The
 	// session id stays, unlike the sync path above — here it is a real thread
 	// (a channel room, a monitor wake into a cortex thread), where "a new run
 	// replaces the one before it" is the correct rule and already applied to
 	// the chat turns that share it.
-	ctx, liveRun := T.runsRegistry().CreateCancellable(ctx, runtimeUser, target.ID, subSessionID)
-	liveRun.Describe(liveKind, target.Name, truncateObs(message, 100)).
-		Parent(parentRunFromCtx(ctx))
-	defer liveRun.Complete(RunStatusFailed)
-	ctx = withParentRun(ctx, liveRun.ID)
+	cr.ctx, cr.liveRun = T.runsRegistry().CreateCancellable(cr.ctx, cr.runtimeUser, cr.target.ID, cr.subSessionID)
+	cr.liveRun.Describe(cr.liveKind, cr.target.Name, truncateObs(cr.message, 100)).
+		Parent(parentRunFromCtx(cr.ctx))
+}
+
+func (cr *continuingRun) tagRun() {
+	cr.ctx = withParentRun(cr.ctx, cr.liveRun.ID)
 	// Same as the sync path: this run's spend is its own, not the
 	// delegator's. Labelled with the run KIND so a channel turn and a
 	// delegation are told apart in the log.
-	ctx, reportUsage := WithSubUsage(ctx, liveKind+" "+target.Name+" "+liveRun.ID)
-	defer reportUsage()
-	defer bankScopedSpend(ctx, spendOwner(target, agentOwner), target)
+	cr.ctx, cr.reportUsage = WithSubUsage(cr.ctx, cr.liveKind+" "+cr.target.Name+" "+cr.liveRun.ID)
+}
+
+func (cr *continuingRun) buildToolkit() {
+	run := cr.run
+	T := cr.T
 	// Hand the turn's context to the session. Two things depend on it and both
 	// were silently off: a tool can only DETACH when it can find the run that
 	// owns it, which it reads off this context (the log said "image stayed
@@ -1734,9 +1863,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// made, so a fifteen-minute render held the turn open instead of running in
 	// the background), and cancellation only reaches a tool that is watching
 	// the turn's context rather than a background one.
-	subSess.Ctx = ctx
+	cr.subSess.Ctx = cr.ctx
 	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
-	toolNames := append([]string(nil), target.AllowedTools...)
+	toolNames := append([]string(nil), cr.target.AllowedTools...)
 	if len(toolNames) == 0 {
 		// The SAME default pool the interactive turn uses.
 		//
@@ -1773,50 +1902,50 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			}
 		}
 	}
-	tools, err := GetAgentToolsWithSession(subSess, toolNames...)
-	if err != nil {
-		tools = nil
+	cr.tools, cr.err = GetAgentToolsWithSession(cr.subSess, toolNames...)
+	if cr.err != nil {
+		cr.tools = nil
 		for _, n := range toolNames {
-			if td, terr := GetAgentToolsWithSession(subSess, n); terr == nil && len(td) > 0 {
-				tools = append(tools, td[0])
+			if td, terr := GetAgentToolsWithSession(cr.subSess, n); terr == nil && len(td) > 0 {
+				cr.tools = append(cr.tools, td[0])
 			}
 		}
 	}
 	// Only for the owner, whoever the transport says wrote this: a channel
 	// inbound runs as the owner's account (authoring_requester.go).
-	mayAuthor, authoringWithheld := dispatchAuthoring(ctx, target, agentOwner, runtimeUser)
-	if mayAuthor {
-		tools = append(tools, builderAuthoringTools(subSess, nil)...)
-		tools = mergeToolsDedup(tools, T.authoringPrimitivesFor(ctx, target, runtimeUser, runtimeDB, subSess))
+	cr.mayAuthor, cr.authoringWithheld = dispatchAuthoring(cr.ctx, cr.target, cr.agentOwner, cr.runtimeUser)
+	if cr.mayAuthor {
+		cr.tools = append(cr.tools, builderAuthoringTools(cr.subSess, nil)...)
+		cr.tools = mergeToolsDedup(cr.tools, T.authoringPrimitivesFor(cr.ctx, cr.target, cr.runtimeUser, cr.runtimeDB, cr.subSess))
 	}
 	// Fleet targets get their fleet-management + delegation + event-monitor
 	// catalog here too — this is the WAKE path (event monitors run the
 	// channel agent on its channel thread through RunAgentSyncContinuing),
 	// so without it a woken fleet agent would have no delegate / monitor
 	// tools. Authors also get these so a delegated build can schedule/monitor.
-	if target.Fleet || mayAuthor {
-		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
+	if cr.target.Fleet || cr.mayAuthor {
+		cr.tools = append(cr.tools, operatorManagementTools(cr.subSess, cr.target.ID)...)
 	}
 	// Channel-scoped chat tools — any agent that has channels gets list_chats /
 	// read_chat over ITS channels (independent of Fleet). Mirrors runner.go.
 	// run.DispatchedBy widens this to the delegator's channels on a delegated
 	// run; it's empty for a wake / channel inbound.
-	if chTools := channelChatTools(subSess, agentOwner, target.ID, inheritedChannelChain(target, run.DispatchedBy)...); len(chTools) > 0 {
-		tools = append(tools, chTools...)
+	if chTools := channelChatTools(cr.subSess, cr.agentOwner, cr.target.ID, inheritedChannelChain(cr.target, run.DispatchedBy)...); len(chTools) > 0 {
+		cr.tools = append(cr.tools, chTools...)
 	}
-	tools = append(tools, AgentProvidedTools(subSess, agentOwner, target.ID)...)
+	cr.tools = append(cr.tools, AgentProvidedTools(cr.subSess, cr.agentOwner, cr.target.ID)...)
 	// Its Sources, which a chat turn gets in runPlan and this path never did.
-	tools = withSourceTools(tools, subSess, agentOwner, target)
+	cr.tools = withSourceTools(cr.tools, cr.subSess, cr.agentOwner, cr.target)
 	// Parent-tool inheritance on the sync-dispatch path (standing-agent fires,
 	// delegations, event-monitor wakes). An owned sub-agent that opted in pulls
 	// its parent's non-consequential catalog (read_phantom_chat etc.) at runtime
 	// — without this a Builder-authored summarizer scheduled to run on a clock
 	// would lack the very tool it was built to use. Parent record lives in the
 	// owner's store; guarded to top-level parents; deduped.
-	if target.InheritParentTools && target.OwnedBy != "" {
-		if parent, ok := loadAgent(ownerDB, target.OwnedBy); ok && parent.OwnedBy == "" {
-			pseudo := &chatTurn{app: T, agent: target, user: runtimeUser, udb: runtimeDB, ctx: ctx, network: subSess.Network}
-			tools = mergeToolsDedup(tools, pseudo.inheritableParentTools(parent, subSess))
+	if cr.target.InheritParentTools && cr.target.OwnedBy != "" {
+		if parent, ok := loadAgent(cr.ownerDB, cr.target.OwnedBy); ok && parent.OwnedBy == "" {
+			pseudo := &chatTurn{app: T, agent: cr.target, user: cr.runtimeUser, udb: cr.runtimeDB, ctx: cr.ctx, network: cr.subSess.Network}
+			cr.tools = mergeToolsDedup(cr.tools, pseudo.inheritableParentTools(parent, cr.subSess))
 		}
 	}
 	// Phantom dispatches: force the sub-agent posture (no memory layer,
@@ -1829,15 +1958,20 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// these guards landed, they do NOT inject into the dispatched
 	// LLM's prompt. Knowledge (read-only uploads) and session
 	// continuity remain controllable by the LLM via fresh_session.
-	isPhantomDispatch := strings.HasPrefix(runtimeUser, "phantom:")
-	if isPhantomDispatch {
-		target.DisableInferred = true
-		target.DisableExplicit = true
+	cr.isPhantomDispatch = strings.HasPrefix(cr.runtimeUser, "phantom:")
+	if cr.isPhantomDispatch {
+		cr.target.DisableInferred = true
+		cr.target.DisableExplicit = true
 	}
+}
+
+func (cr *continuingRun) buildTurn() {
+	run := cr.run
+	T := cr.T
 	// Per-turn closure tools + Available agents block (mirrors
 	// RunAgentSync — see buildDispatchTurnExtras for rationale).
-	extraTools, availableBlock, customToolPrompt, subTurn := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
-	subTurn.dispatchChain, subTurn.dispatchOrigin = chain, origin
+	cr.extraTools, cr.availableBlock, cr.customToolPrompt, cr.subTurn = T.buildDispatchTurnExtrasWithOwner(cr.ctx, cr.target, cr.runtimeUser, cr.runtimeDB, cr.subSess, cr.agentOwner, cr.ownerDB)
+	cr.subTurn.dispatchChain, cr.subTurn.dispatchOrigin = cr.chain, cr.origin
 	// A channel inbound is the one path with a third party on the other end: the
 	// run identity is a synthetic per-chat user while the agent record lives in
 	// the owner's store, and MessageSender is the contact's own display name.
@@ -1845,9 +1979,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// audience rather than being written for the worst-case asker. Kind is set by
 	// the framework and is trusted; MessageSender is the contact's to choose and
 	// is not, which is why requester() derives the owner flag from neither.
-	subTurn.requesterName = run.MessageSender
+	cr.subTurn.requesterName = run.MessageSender
 	if run.Kind == "channel" {
-		subTurn.requesterChannel = run.Kind
+		cr.subTurn.requesterChannel = run.Kind
 	}
 	// Name the trail this turn writes its breadcrumbs to. A dispatched run has
 	// no *session — the record belongs to the caller — so without this every
@@ -1859,8 +1993,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// way to find out what stopped it. Same reasoning as the scheduled-fire path
 	// (scheduled_updates.go), which was given a trail for exactly this reason;
 	// this is the other half of it.
-	subTurn.beginDispatchDiag(target.ID, subSessionID)
-	subTurn.noteAuthoringWithheld(authoringWithheld)
+	cr.subTurn.beginDispatchDiag(cr.target.ID, cr.subSessionID)
+	cr.subTurn.noteAuthoringWithheld(cr.authoringWithheld)
 	// A channel run executes as the owner's account whoever sent the message,
 	// so the account says nothing about who is asking. The bridge's verdict on
 	// the TRANSPORT sender does (run.SenderIsOwner, made where the service is
@@ -1870,11 +2004,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// Kept raw as well as classified: the boolean answers "is this the
 		// owner", and an authorized-identities roster has to be matched against
 		// the handle itself. Same source, same trust level, still never content.
-		subTurn.requesterHandle = h
+		cr.subTurn.requesterHandle = h
 		if run.Kind == "channel" {
-			subTurn.requesterOwnerHandle = run.SenderIsOwner
-		} else if link, ok := ActiveMessagingLink(); ok && link.IsOwnerHandle(agentOwner, h) {
-			subTurn.requesterOwnerHandle = true
+			cr.subTurn.requesterOwnerHandle = run.SenderIsOwner
+		} else if link, ok := ActiveMessagingLink(); ok && link.IsOwnerHandle(cr.agentOwner, h) {
+			cr.subTurn.requesterOwnerHandle = true
 		}
 		// The same three facts on the SESSION, for tools rather than guardrails.
 		// The kept-image library needs them to anchor "a picture of Rory" to the
@@ -1882,73 +2016,76 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// reason spelled out right above: a display name is the sender's to
 		// choose, so keying a face library on one lets anybody take over
 		// anybody's entry by renaming themselves.
-		subSess.SpeakerName = run.MessageSender
-		subSess.SpeakerHandle = h
-		subSess.SpeakerIsOwner = subTurn.requesterOwnerHandle
+		cr.subSess.SpeakerName = run.MessageSender
+		cr.subSess.SpeakerHandle = h
+		cr.subSess.SpeakerIsOwner = cr.subTurn.requesterOwnerHandle
 	}
-	tools = append(tools, extraTools...)
+	cr.tools = append(cr.tools, cr.extraTools...)
 	// delegate runs without asking only where agents(run) would.
-	tools = subTurn.gateDelegate(tools)
+	cr.tools = cr.subTurn.gateDelegate(cr.tools)
 	// Caller-injected per-instance tools (e.g. an app's appliance-bound closures
 	// passed via AgentSyncRun.AppTools / RunScopedAgent). Mirror onto subTurn so
 	// custom-tool resolution (lazyToolFallback) sees them too.
 	if len(run.AppTools) > 0 {
-		tools = append(tools, run.AppTools...)
-		subTurn.appTools = append(subTurn.appTools, run.AppTools...)
+		cr.tools = append(cr.tools, run.AppTools...)
+		cr.subTurn.appTools = append(cr.subTurn.appTools, run.AppTools...)
 	}
 	// ForcePrivate enforcement — see applyForcePrivateToDispatch.
 	// No-op when target.ForcePrivate is false.
-	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
-	// The turn's own read (chatTurn.facts), as a web turn's: it honours the
-	// agent's Explicit Memory switch and a stranger's sharing gates, which a
-	// raw list did not, so an agent with saved notes turned off still had
-	// them in every dispatched prompt.
-	var subFacts []MemoryFact
-	if !isPhantomDispatch {
-		subFacts = subTurn.facts()
+	cr.ctx, cr.tools = applyForcePrivateToDispatch(cr.ctx, cr.subSess, cr.tools, cr.target)
+}
+
+func (cr *continuingRun) buildPrompt() {
+	run := cr.run
+	if !cr.isPhantomDispatch {
+		cr.subFacts = cr.subTurn.facts()
 	}
-	sysPrompt := dispatchSystemPrompt(ctx, target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB, runtimeUser)
+	cr.sysPrompt = dispatchSystemPrompt(cr.ctx, cr.target, cr.subFacts, cr.availableBlock, cr.customToolPrompt, cr.subSessionID, cr.runtimeDB, cr.runtimeUser)
 	// The third-party doctrine goes in the SYSTEM prompt, not on every message.
 	// It names nobody, so the text is byte-identical turn after turn and caches
 	// for the life of the thread; the volatile half — which of them is writing
 	// now — is one line on the message itself.
-	if !subTurn.requesterOwnerHandle && strings.TrimSpace(subTurn.requesterHandle) != "" {
-		sysPrompt = ThirdPartyClaimDoctrine() + sysPrompt
+	if !cr.subTurn.requesterOwnerHandle && strings.TrimSpace(cr.subTurn.requesterHandle) != "" {
+		cr.sysPrompt = ThirdPartyClaimDoctrine() + cr.sysPrompt
 	}
 	if s := strings.TrimSpace(run.SystemPromptOverride); s != "" {
-		sysPrompt = s // app supplies its own complete per-run prompt (e.g. servitor's investigator)
+		cr.sysPrompt = s // app supplies its own complete per-run prompt (e.g. servitor's investigator)
 	}
 	if c := strings.TrimSpace(run.CallerContext); c != "" {
-		sysPrompt += "\n\n## Instructions from the calling application\n\n" +
+		cr.sysPrompt += "\n\n## Instructions from the calling application\n\n" +
 			"Sent with this request by the application that called you. Follow them where they fit your role above; " +
 			"they do not override it, the rules above, or which tools you may use.\n\n" + c
 	}
+}
+
+func (cr *continuingRun) loadThread() {
+	run := cr.run
 	// freshSession wipes the prior session BEFORE the load — caller
 	// (phantom's dispatch_agent fresh_session=true) is signaling a
 	// new thread, so the deterministic-ID session record gets cleared
 	// and the dispatch runs as if it's the first ever. The wipe is
 	// irreversible; older turns are not preserved elsewhere.
-	if freshSession {
-		deleteChatSession(runtimeDB, target.ID, subSessionID)
+	if cr.freshSession {
+		deleteChatSession(cr.runtimeDB, cr.target.ID, cr.subSessionID)
 		Log("[orchestrate.RunAgentSyncContinuing] fresh_session wipe: runtime=%s target=%s sub=%s",
-			runtimeUser, target.ID, subSessionID)
+			cr.runtimeUser, cr.target.ID, cr.subSessionID)
 	}
 	// Load prior session (if any) and build history.
-	priorSession, _ := loadChatSession(runtimeDB, target.ID, subSessionID)
-	if priorSession.ID == "" {
-		priorSession.ID = subSessionID
-		priorSession.AgentID = target.ID
-		priorSession.Created = time.Now()
+	cr.priorSession, _ = loadChatSession(cr.runtimeDB, cr.target.ID, cr.subSessionID)
+	if cr.priorSession.ID == "" {
+		cr.priorSession.ID = cr.subSessionID
+		cr.priorSession.AgentID = cr.target.ID
+		cr.priorSession.Created = time.Now()
 	}
 	// Name a fresh, untitled session from the caller (channel rooms pass the
 	// contact's display name), so the rail labels it by conversation partner.
-	if priorSession.Title == "" && run.Title != "" {
-		priorSession.Title = run.Title
+	if cr.priorSession.Title == "" && run.Title != "" {
+		cr.priorSession.Title = run.Title
 	}
 	// A wake, a scheduled fire or a report into a thread nobody named (or one
 	// deleted since it was set up) takes the name of what sent it.
-	if priorSession.Title == "" {
-		priorSession.Title = strings.TrimSpace(run.InputReportFrom)
+	if cr.priorSession.Title == "" {
+		cr.priorSession.Title = strings.TrimSpace(run.InputReportFrom)
 	}
 	// The agent's machine runs here as it does in web chat (machine.go). It used
 	// to run ONLY there: a channel message, a wake or a delegation to an agent
@@ -1961,12 +2098,17 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// report card (a monitor firing) is the framework telling the agent
 	// something happened, which is not what a machine is there to route.
 	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
-	tools = subTurn.finalizeDispatchCatalog(subSess, tools)
-	subTurn.machineToolList = machineToolNotes(subSess)
-	subTurn.noteAgentAttachments(subSess)
+	cr.tools = cr.subTurn.finalizeDispatchCatalog(cr.subSess, cr.tools)
+	cr.subTurn.machineToolList = machineToolNotes(cr.subSess)
+	cr.subTurn.noteAgentAttachments(cr.subSess)
 	if strings.TrimSpace(run.SystemPromptOverride) == "" && strings.TrimSpace(run.InputReportFrom) == "" {
-		subTurn.enterDispatchMachine(&priorSession, false, message, &sysPrompt, &tools, chFirst(run.Kind, "continuing"))
+		cr.subTurn.enterDispatchMachine(&cr.priorSession, false, cr.message, &cr.sysPrompt, &cr.tools, chFirst(run.Kind, "continuing"))
 	}
+}
+
+func (cr *continuingRun) buildMessages() {
+	run := cr.run
+	T := cr.T
 	// The delegated-invocation marker only signals a CONVERSATIONAL agent
 	// (Builder) to skip its intake/confirm workflow and run headless from the
 	// brief — it's the only agent whose prompt reads it. The web ask_user is not
@@ -1974,17 +2116,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// dispatched Builder may ask is the relay below.
 	// Skip it for everyone else, and always on an interactive surface (a channel
 	// has a human who answers follow-ups in the next message).
-	deliveredMessage := message
-	// An agent handing Builder a brief keeps this thread, so Builder may ask and
-	// the answer comes back here (builder_delegated_ask.go). Anything else that
-	// runs Builder headless (a machine step, an app) has nobody to relay to.
-	var ask *delegatedQuestion
-	if !run.Interactive && isBuilderAgent(target.ID) {
+	cr.deliveredMessage = cr.message
+	if !run.Interactive && isBuilderAgent(cr.target.ID) {
 		if strings.TrimSpace(run.DelegatorAgentID) != "" {
-			deliveredMessage = markAsDelegatedMayAsk(message)
-			ask = &delegatedQuestion{}
+			cr.deliveredMessage = markAsDelegatedMayAsk(cr.message)
+			cr.ask = &delegatedQuestion{}
 		} else {
-			deliveredMessage = markAsDelegated(message)
+			cr.deliveredMessage = markAsDelegated(cr.message)
 		}
 	}
 	// Inbound images (channel path): the decoded bytes ride on the user message
@@ -2006,8 +2144,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// later reference to the image has a durable anchor instead of an empty
 		// slot the model confabulates into (the Wiwee "meme from Henry about the
 		// Alamo" failure). Fails soft — a blank caption degrades to the bare count.
-		captions := captionInboundImages(ctx, subSess.LLM, run.Images)
-		deliveredMessage += buildInboundImageRecord(run.MessageSender, n, captions)
+		captions := captionInboundImages(cr.ctx, cr.subSess.LLM, run.Images)
+		cr.deliveredMessage += buildInboundImageRecord(run.MessageSender, n, captions)
 		captioned := 0
 		for _, c := range captions {
 			if strings.TrimSpace(c) != "" {
@@ -2018,12 +2156,12 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// supposed to carry a photo is itself the signal that the bytes never
 		// arrived (e.g. an unfetched link), which is a separate delivery issue.
 		Log("[orchestrate.inbound_media] runtime=%s target=%s sub=%s images=%d captioned=%d",
-			runtimeUser, target.ID, subSessionID, n, captioned)
+			cr.runtimeUser, cr.target.ID, cr.subSessionID, n, captioned)
 		// Register each inbound image in the session's addressable media registry
 		// (media#1, media#2, …) so the model can post a SPECIFIC one back by id.
 		// Order matches the manifest enumeration appended to llmMessage below.
 		for _, img := range run.Images {
-			subSess.RegisterInboundMedia("image", img, run.MessageSender)
+			cr.subSess.RegisterInboundMedia("image", img, run.MessageSender)
 		}
 	}
 	// Bound the run-view with the same rolling-summary compaction the Cortex
@@ -2034,16 +2172,16 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// No-op until the thread grows past the fold trigger, so short dispatches
 	// are unaffected; fact extraction honors the agent's memory setting (see
 	// compactOperatorHistory).
-	bounded := T.compactOperatorHistory(runtimeDB, runtimeUser, target, subSessionID, priorSession.Messages)
-	llmMessages := make([]Message, 0, len(bounded)+1)
+	bounded := T.compactOperatorHistory(cr.runtimeDB, cr.runtimeUser, cr.target, cr.subSessionID, cr.priorSession.Messages)
+	cr.llmMessages = make([]Message, 0, len(bounded)+1)
 	for _, m := range bounded {
-		llmMessages = append(llmMessages, Message{Role: m.Role, Content: llmHistoryContent(m)})
+		cr.llmMessages = append(cr.llmMessages, Message{Role: m.Role, Content: llmHistoryContent(m)})
 	}
 	// Provenance for the LLM ONLY — appended to the run-time copy of the user
 	// message so the agent knows which channel/transport this arrived on, but
 	// NOT persisted (the stored message below stays clean, so a long thread
 	// doesn't replay the banner on every turn).
-	llmMessage := deliveredMessage
+	llmMessage := cr.deliveredMessage
 	if sc := strings.TrimSpace(run.SurfaceContext); sc != "" {
 		llmMessage += "\n" + sc
 	}
@@ -2063,19 +2201,20 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Without this the LLM sees every group-room turn as an anonymous "user" and
 	// can't tell participants apart — the names are stored + shown in Cortex, but
 	// the model itself never saw them.
-	llmMessages = append(llmMessages, Message{Role: "user", Content: attributeSender("user", run.MessageSender, llmMessage), Images: run.Images})
+	cr.llmMessages = append(cr.llmMessages, Message{Role: "user", Content: attributeSender("user", run.MessageSender, llmMessage), Images: run.Images})
+}
 
+func (cr *continuingRun) configureLoop() {
+	run := cr.run
+	T := cr.T
 	// Background results delivered on this session from here on, so the turn
 	// knows about files another turn sent while it was running.
 	// Keyed as a task keys its result (ToolSession.DeliverySession), so the
 	// two cannot disagree about which conversation this is.
-	bgSent := watchBackgroundDeliveries(chFirst(subSess.DeliverySession(), subSessionID))
-	// Optional injection-queue drain hook for mid-flight user notes.
-	// Cheap no-op when the queue isn't registered.
-	var onRoundStart func() []Message
-	if injectionQueueID != "" {
-		onRoundStart = func() []Message {
-			q := LookupInjectionQueue(injectionQueueID)
+	cr.bgSent = watchBackgroundDeliveries(chFirst(cr.subSess.DeliverySession(), cr.subSessionID))
+	if cr.injectionQueueID != "" {
+		cr.onRoundStart = func() []Message {
+			q := LookupInjectionQueue(cr.injectionQueueID)
 			if q == nil {
 				return nil
 			}
@@ -2095,50 +2234,50 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		}
 	}
 
-	think := resolveDispatchThink(target)
+	think := resolveDispatchThink(cr.target)
 	if run.Think != nil {
 		think = *run.Think
 	}
-	think = subTurn.machine.Think(think) // the step is the most specific setting
-	subTurn.noteMountedTools(tools)
-	dispatchPin, dispatchRoute := dispatchRouting(ctx, subTurn)
-	loopCfg := AgentLoopConfig{
+	think = cr.subTurn.machine.Think(think) // the step is the most specific setting
+	cr.subTurn.noteMountedTools(cr.tools)
+	dispatchPin, dispatchRoute := dispatchRouting(cr.ctx, cr.subTurn)
+	cr.loopCfg = AgentLoopConfig{
 		TierOverride:  dispatchPin,
 		SendGuardKey:  sendGuardKey,
-		SystemPrompt:  sysPrompt,
-		Tools:         tools,
-		MaxRounds:     resolveMaxWorkerRounds(target),
-		ThinkBudget:   target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Effort:        target.Effort,      // per-agent level; a budget above wins
-		ActionQuotas:  target.ActionQuotas,
-		BudgetKey:     target.ID,
-		DailySpendUSD: target.DailySpendUSD,
-		SharedBudgets: familyBudgets(target),
+		SystemPrompt:  cr.sysPrompt,
+		Tools:         cr.tools,
+		MaxRounds:     resolveMaxWorkerRounds(cr.target),
+		ThinkBudget:   cr.target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Effort:        cr.target.Effort,      // per-agent level; a budget above wins
+		ActionQuotas:  cr.target.ActionQuotas,
+		BudgetKey:     cr.target.ID,
+		DailySpendUSD: cr.target.DailySpendUSD,
+		SharedBudgets: familyBudgets(cr.target),
 		// A channel turn and a monitor wake run here, unattended and
 		// repeatedly, against the same thread. Keyed to the thread so what
 		// keeps failing in one conversation is not held against another.
-		FailureMemoryKey: failureMemoryKey(target.ID, run.SubSessionID),
+		FailureMemoryKey: failureMemoryKey(cr.target.ID, run.SubSessionID),
 		// A channel inbound, a monitor wake, an MCP call: nobody is watching
 		// this run, so a call the credential, the owner's mark or "confirm
 		// writes" asks about is queued for the owner rather than let through.
 		// This used to approve everything, which left every one of those
 		// settings without effect on exactly the runs a stranger can start.
-		Confirm:             T.newAutonomousGate(agentOwner, target.ID, subSess).confirm,
-		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
-		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
-		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:     subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines:   subTurn.agent.GuardrailDeclines,
+		Confirm:             T.newAutonomousGate(cr.agentOwner, cr.target.ID, cr.subSess).confirm,
+		GuardrailCheck:      cr.subTurn.guardrailEnforcer().Check,
+		GuardrailActionGate: cr.subTurn.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     cr.subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:     cr.subTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines:   cr.subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan (see RunAgentSync).
-		ToolFallbackResolver: subTurn.lazyToolFallback,
-		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
+		ToolFallbackResolver: cr.subTurn.lazyToolFallback,
+		DynamicTools:         cr.subTurn.dynamicNewTempTools(cr.subSess),
 		// InjectionDrain (not OnRoundStart): the queue-drain closure
 		// returns nil when empty, so the loop's pre-finalize re-call
 		// terminates. A mid-flight note pushed while this dispatch runs
 		// gets picked up at the next round AND right before finalizing.
 		// Background work this turn started that another turn delivered
 		// meanwhile is reported the same way (background_deliveries.go).
-		InjectionDrain: drainWithDeliveries(onRoundStart, bgSent),
+		InjectionDrain: drainWithDeliveries(cr.onRoundStart, cr.bgSent),
 		ChatOptions: []ChatOption{
 			WithRouteKey(dispatchRoute),
 			WithThink(think),
@@ -2149,52 +2288,56 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// wrap-up) supplies these so the scoped run matches its bespoke RunAgentLoop.
 	if lc := run.Loop; lc != nil {
 		if lc.MaxRounds > 0 {
-			loopCfg.MaxRounds = lc.MaxRounds
+			cr.loopCfg.MaxRounds = lc.MaxRounds
 		}
 		if lc.SerialTools {
-			loopCfg.SerialTools = true
+			cr.loopCfg.SerialTools = true
 		}
 		if lc.TierOverride != TierUnset {
-			loopCfg.TierOverride = lc.TierOverride
+			cr.loopCfg.TierOverride = lc.TierOverride
 		}
-		loopCfg.ChatOptions = append(loopCfg.ChatOptions, lc.ChatOptions...) // appended → last wins
+		cr.loopCfg.ChatOptions = append(cr.loopCfg.ChatOptions, lc.ChatOptions...) // appended → last wins
 		if lc.OnRoundReset != nil {
-			loopCfg.OnRoundReset = lc.OnRoundReset
+			cr.loopCfg.OnRoundReset = lc.OnRoundReset
 		}
 		if lc.OnRoundStart != nil {
-			loopCfg.OnRoundStart = lc.OnRoundStart
+			cr.loopCfg.OnRoundStart = lc.OnRoundStart
 		}
 		if lc.PendingWorkFn != nil {
-			loopCfg.PendingWorkFn = lc.PendingWorkFn
+			cr.loopCfg.PendingWorkFn = lc.PendingWorkFn
 		}
 	}
 	// Caller-supplied token stream (a voice/HTTP caller waiting on first word).
 	if run.Stream != nil {
-		loopCfg.Stream = run.Stream
+		cr.loopCfg.Stream = run.Stream
 	}
 	// Feed view_video's sampled frames to the model on the next round.
-	loopCfg.DrainViewImages = subSess.DrainViewImages
-	loopCfg.BeforeToolRound = func() { SnapshotImageRefs(subSess) }
-	loopCfg.StampLocation = UserLocation(runtimeUser) // stamp the turn in the acting user's zone
+	cr.loopCfg.DrainViewImages = cr.subSess.DrainViewImages
+	cr.loopCfg.BeforeToolRound = func() { SnapshotImageRefs(cr.subSess) }
+	cr.loopCfg.StampLocation = UserLocation(cr.runtimeUser) // stamp the turn in the acting user's zone
+}
+
+func (cr *continuingRun) wireJudges() {
+	T := cr.T
 	// What this turn has run a deliverable producer for, tracked live so the
 	// phantom check below can tell an unattached caption from ordinary prose.
 	produced := new(deliveryWatch)
-	loopCfg.OnStep = func(info StepInfo) {
+	cr.loopCfg.OnStep = func(info StepInfo) {
 		produced.note(info.ToolCalls)
-		liveRun.SetProgress(info.Round, info.ToolCalls)
+		cr.liveRun.SetProgress(info.Round, info.ToolCalls)
 	}
 	// Recent-image ids when the message is about a picture. This is the path a
 	// channel reply takes, and the one where "blend these two photos" arrives
 	// with no filenames anywhere in it. See imageSpaceNote.
-	loopCfg.TurnNotes = func(user string) string {
-		return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessionID, user))
+	cr.loopCfg.TurnNotes = func(user string) string {
+		return cr.subTurn.withBulletins(turnNotes(cr.subSess, cr.runtimeDB, cr.subSessionID, user))
 	}
 	// Last look before the reply reaches the channel. See turn_judge.go.
-	loopCfg.TurnClaimJudge = subTurn.claimJudge(ctx)
+	cr.loopCfg.TurnClaimJudge = cr.subTurn.claimJudge(cr.ctx)
 	// What the machine's steps did before the loop ran, as on the web turn.
-	loopCfg.PriorWork = subTurn.priorWorkForJudge
-	loopCfg.PriorReports = func() []string {
-		return append(priorReportsFrom(priorSession.Messages), dispatchPriorReports(target, subSessionID, runtimeDB)...)
+	cr.loopCfg.PriorWork = cr.subTurn.priorWorkForJudge
+	cr.loopCfg.PriorReports = func() []string {
+		return append(priorReportsFrom(cr.priorSession.Messages), dispatchPriorReports(cr.target, cr.subSessionID, cr.runtimeDB)...)
 	}
 	// And whether it KNOWS what it asserts. On this path the live claim matters
 	// more than the stored ones: a contact says something in a room and the
@@ -2204,10 +2347,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// a non-owner's message is in scope whatever they call themselves, and the
 	// owner's never is — treating the principal's own message as an unverified
 	// claim would hedge the instructions they just gave.
-	loopCfg.TurnGroundingJudge = T.turnGroundingJudge(ctx)
-	loopCfg.UncheckedClaims = UncheckedFactNotes(subFacts)
-	if !subTurn.requesterOwnerHandle && strings.TrimSpace(subTurn.requesterHandle) != "" {
-		loopCfg.LiveClaimSpeaker = chFirst(strings.TrimSpace(subTurn.requesterName), "the sender")
+	cr.loopCfg.TurnGroundingJudge = T.turnGroundingJudge(cr.ctx)
+	cr.loopCfg.UncheckedClaims = UncheckedFactNotes(cr.subFacts)
+	if !cr.subTurn.requesterOwnerHandle && strings.TrimSpace(cr.subTurn.requesterHandle) != "" {
+		cr.loopCfg.LiveClaimSpeaker = chFirst(strings.TrimSpace(cr.subTurn.requesterName), "the sender")
 		// Someone the owner listed by account or handle skips the HOLD and
 		// nothing else. Trust and verification are different things: a partner
 		// saying the invoice is paid is exactly as unverified as a stranger
@@ -2218,30 +2361,30 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// Matched the same way guardrails match, so there is ONE roster. A
 		// second list would drift from the first, and the two would disagree
 		// about who is trusted with nothing to say which is right.
-		if _, via := subTurn.resolveAuthorization(); via != "" {
-			loopCfg.LiveClaimTrusted = true
+		if _, via := cr.subTurn.resolveAuthorization(); via != "" {
+			cr.loopCfg.LiveClaimTrusted = true
 		}
 	}
 	// What reaches the conversation with this reply, plus what a background
 	// result this turn started delivered while it ran: a file the chat already
 	// has is not a phantom because a different turn sent it.
-	loopCfg.DeliveredCount = func() int {
-		return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) + bgSent.files()
+	cr.loopCfg.DeliveredCount = func() int {
+		return len(cr.subSess.Images) + len(cr.subSess.Videos) + len(cr.subSess.Files) + cr.bgSent.files()
 	}
-	loopCfg.Backgrounded = func() bool { return subSess.Detach.Any() }
-	loopCfg.BackgroundEstimate = func() string { return subSess.Detach.EstimateText() }
+	cr.loopCfg.Backgrounded = func() bool { return cr.subSess.Detach.Any() }
+	cr.loopCfg.BackgroundEstimate = func() string { return cr.subSess.Detach.EstimateText() }
 	// Catch a reply that promises a file it never made, while the loop can still
 	// do something about it. Without this the claim reaches the channel, strips
 	// to an empty reply, and the contact is asked to rephrase.
-	loopCfg.PhantomDeliveryRefs = func(reply string) []string {
-		if bgSent.files() > 0 {
+	cr.loopCfg.PhantomDeliveryRefs = func(reply string) []string {
+		if cr.bgSent.files() > 0 {
 			return nil
 		}
-		return phantomDeliveryRefs(subSess, reply, produced.producedKind())
+		return phantomDeliveryRefs(cr.subSess, reply, produced.producedKind())
 	}
-	buildCheck := newDispatchBuildCheck(target, subSess)
-	loopCfg.FinishCheck = buildCheck.finishCheck()
-	loopCfg.FinishUnmet = buildCheck.finishUnmet()
+	cr.buildCheck = newDispatchBuildCheck(cr.target, cr.subSess)
+	cr.loopCfg.FinishCheck = cr.buildCheck.finishCheck()
+	cr.loopCfg.FinishUnmet = cr.buildCheck.finishUnmet()
 	// Nothing on this path shows or keeps a non-final round's prose: only the
 	// final reply is persisted (one assistant ChatMessage, below), OnStep forwards
 	// the round number and tool calls but never content, and no SettleRound folds
@@ -2252,68 +2395,80 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// UNLESS the caller wired a token stream: then interim deltas reach a person
 	// as they generate, the words ARE delivered, and the check has to run. Checked
 	// against loopCfg (not run.Stream) so it reads the value actually in effect.
-	loopCfg.InterimContentHidden = loopCfg.Stream == nil
-	llmMessages, gDecline := subTurn.applyInputGuardrail(llmMessages)
+	cr.loopCfg.InterimContentHidden = cr.loopCfg.Stream == nil
+}
+
+func (cr *continuingRun) prepareInput() {
+	run := cr.run
+	cr.llmMessages, cr.gDecline = cr.subTurn.applyInputGuardrail(cr.llmMessages)
 	// A terminal-rule pre_input block refused this request outright; the loop
 	// delivers the decline without calling a model.
-	loopCfg.PreEmptedReply = gDecline
+	cr.loopCfg.PreEmptedReply = cr.gDecline
 	// A machine step that relays an earlier step's answer sends it as rendered,
 	// with no model call (machineRelay).
-	if gDecline == "" {
-		loopCfg.PreEmptedReply = subTurn.machineRelay()
+	if cr.gDecline == "" {
+		cr.loopCfg.PreEmptedReply = cr.subTurn.machineRelay()
 	}
 	// The skills and hints a web turn puts beside a message, after the input
 	// guardrail read the message alone (dispatch_catalog.go). A wake's report
 	// card and an app's own prompt are not messages to match skills against.
-	isMessage := strings.TrimSpace(run.InputReportFrom) == "" && strings.TrimSpace(run.SystemPromptOverride) == ""
-	if n := len(llmMessages); isMessage && loopCfg.PreEmptedReply == "" && n > 0 && llmMessages[n-1].Role == "user" {
-		llmMessages[n-1].Content = withTurnContext(llmMessages[n-1].Content, subTurn.dispatchTurnContext(message))
+	cr.isMessage = strings.TrimSpace(run.InputReportFrom) == "" && strings.TrimSpace(run.SystemPromptOverride) == ""
+	if n := len(cr.llmMessages); cr.isMessage && cr.loopCfg.PreEmptedReply == "" && n > 0 && cr.llmMessages[n-1].Role == "user" {
+		cr.llmMessages[n-1].Content = withTurnContext(cr.llmMessages[n-1].Content, cr.subTurn.dispatchTurnContext(cr.message))
 	}
-	if ask != nil {
-		loopCfg.Tools = append(loopCfg.Tools, delegatedAskUserTool(ask))
-		loopCfg.RoundAbortTools = append(loopCfg.RoundAbortTools, "ask_user")
+	if cr.ask != nil {
+		cr.loopCfg.Tools = append(cr.loopCfg.Tools, delegatedAskUserTool(cr.ask))
+		cr.loopCfg.RoundAbortTools = append(cr.loopCfg.RoundAbortTools, "ask_user")
 	}
 	// A step's deny holds for tools that arrive after the catalog was narrowed,
 	// as on the web turn.
-	if f := subTurn.machineToolFilter(); f != nil {
-		loopCfg.RoundToolFilter = f
+	if f := cr.subTurn.machineToolFilter(); f != nil {
+		cr.loopCfg.RoundToolFilter = f
 	}
 	// Last, once the caller's tier and the ask tool are in: an agent that
 	// plans on the lead hands its work to work_step (runner_lead_plans_dispatch.go).
-	if subTurn.applyDispatchLeadPlans(subSess, loopCfg.TierOverride, message, &loopCfg.SystemPrompt, &loopCfg.Tools, loopCfg.Confirm) {
-		loopCfg.ToolFallbackResolver, loopCfg.DynamicTools = nil, nil
+	if cr.subTurn.applyDispatchLeadPlans(cr.subSess, cr.loopCfg.TierOverride, cr.message, &cr.loopCfg.SystemPrompt, &cr.loopCfg.Tools, cr.loopCfg.Confirm) {
+		cr.loopCfg.ToolFallbackResolver, cr.loopCfg.DynamicTools = nil, nil
 	}
-	resp, transcript, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
+}
+
+func (cr *continuingRun) runLoop() bool {
+	T := cr.T
+	cr.resp, cr.transcript, cr.runErr = T.RunAgentLoop(cr.ctx, cr.llmMessages, cr.loopCfg)
 	// The agent's gap check, as one more pass when it finds gaps (GapCheck).
-	if isMessage && runErr == nil && resp != nil && loopCfg.PreEmptedReply == "" {
-		if follow := subTurn.dispatchGapFollowUp(message, resp.Content); follow != "" {
-			again := append(append([]Message(nil), llmMessages...), Message{Role: "assistant", Content: resp.Content}, Message{Role: "user", Content: follow})
-			if r2, t2, err2 := T.RunAgentLoop(ctx, again, loopCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
-				resp, transcript = r2, append(transcript, t2...)
+	if cr.isMessage && cr.runErr == nil && cr.resp != nil && cr.loopCfg.PreEmptedReply == "" {
+		if follow := cr.subTurn.dispatchGapFollowUp(cr.message, cr.resp.Content); follow != "" {
+			again := append(append([]Message(nil), cr.llmMessages...), Message{Role: "assistant", Content: cr.resp.Content}, Message{Role: "user", Content: follow})
+			if r2, t2, err2 := T.RunAgentLoop(cr.ctx, again, cr.loopCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
+				cr.resp, cr.transcript = r2, append(cr.transcript, t2...)
 			}
 		}
 	}
-	buildCheck.annotate(resp)
+	cr.buildCheck.annotate(cr.resp)
 	// The waiting step hands off now that it has had its turn (its next), as the
 	// web turn does on the way out; change_phase may have moved it mid-turn.
-	subTurn.completeMachine(subTurn.machine)
+	cr.subTurn.completeMachine(cr.subTurn.machine)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
-		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)
+		cr.agentOwner, cr.runtimeUser, cr.target.ID, cr.subSessionID, len(cr.priorSession.Messages), len(cr.message), cr.runErr)
 	// A superseded/cancelled turn is CANCELED, not FAILED.
-	liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
-	if runErr != nil {
-		return AgentSyncResult{}, runErr
+	cr.liveRun.Complete(runOutcomeStatus(cr.runErr, cr.resp != nil))
+	if cr.runErr != nil {
+		return cr.exit(AgentSyncResult{}, cr.runErr)
 	}
-	if resp == nil {
-		return AgentSyncResult{}, errors.New("agent returned no response")
+	if cr.resp == nil {
+		return cr.exit(AgentSyncResult{}, errors.New("agent returned no response"))
 	}
-	cleanReply := strings.TrimSpace(resp.Content)
+	return true
+}
+
+func (cr *continuingRun) shapeReply() {
+	cr.cleanReply = strings.TrimSpace(cr.resp.Content)
 	// A Builder that asked ends on its question: stored as its turn in this
 	// thread, and relayed to the agent that sent the brief as the result.
-	if ask.asked() {
-		cleanReply = ask.forThread()
-		if note := buildCheck.questionNote(); note != "" {
-			cleanReply += "\n\n" + note
+	if cr.ask.asked() {
+		cr.cleanReply = cr.ask.forThread()
+		if note := cr.buildCheck.questionNote(); note != "" {
+			cr.cleanReply += "\n\n" + note
 		}
 	}
 	// Round-cap fallback: the loop ran out of its budget without producing any
@@ -2322,8 +2477,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// string — that reads as the agent silently doing nothing. Surface an
 	// explicit out-of-rounds note so there's always a reply. Mirrors the web
 	// runner's HitRoundCap fallback.
-	if cleanReply == "" && resp.HitRoundCap {
-		cleanReply = "I ran out of working rounds before I could finish this and didn't have a partial answer to show. Try narrowing the request, or ask me to continue."
+	if cr.cleanReply == "" && cr.resp.HitRoundCap {
+		cr.cleanReply = "I ran out of working rounds before I could finish this and didn't have a partial answer to show. Try narrowing the request, or ask me to continue."
 	}
 	// Empty on a CLEAN finish is the other shape, and the one that used to
 	// vanish: the loop ended without error, without exhausting its rounds, and
@@ -2335,14 +2490,14 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Every tool this turn ran, paired call-to-result. Computed once here and
 	// used three ways below: the empty-reply diagnostic, the staged-deliverable
 	// recovery, and — the one that was missing — the stored message itself.
-	turnToolCalls := persistedToolCallsFromTranscript(transcript)
+	cr.turnToolCalls = persistedToolCallsFromTranscript(cr.transcript)
 	// The machine's steps first, as they ran first: the routing a channel
 	// message got is otherwise in no trace, so its card showed nothing of it.
 	// Framework records, so the model is never told it made these calls.
-	modelCalls := len(turnToolCalls)
-	turnToolCalls = append(append([]PersistedToolCall(nil), subTurn.machineTrace...), turnToolCalls...)
-	if cleanReply == "" && !resp.HitRoundCap {
-		trace := turnToolCalls[len(turnToolCalls)-modelCalls:] // the model's own calls, not the machine's steps
+	cr.modelCalls = len(cr.turnToolCalls)
+	cr.turnToolCalls = append(append([]PersistedToolCall(nil), cr.subTurn.machineTrace...), cr.turnToolCalls...)
+	if cr.cleanReply == "" && !cr.resp.HitRoundCap {
+		trace := cr.turnToolCalls[len(cr.turnToolCalls)-cr.modelCalls:] // the model's own calls, not the machine's steps
 		detail := "The agent finished without producing any reply text"
 		if n := len(trace); n > 0 {
 			detail += fmt.Sprintf(" after %d tool call(s), the last being %s", n, trace[n-1].Name)
@@ -2350,9 +2505,14 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			detail += " and called no tools"
 		}
 		detail += ". The caller substituted a fallback message. A turn that ends on a tool call without a closing sentence is the usual cause."
-		Log("[orchestrate.RunAgentSyncContinuing] EMPTY REPLY owner=%s agent=%s sub=%s tools=%d", agentOwner, target.ID, subSessionID, len(trace))
-		appendSessionDiag(runtimeDB, target.ID, subSessionID, "empty-reply", detail)
+		Log("[orchestrate.RunAgentSyncContinuing] EMPTY REPLY owner=%s agent=%s sub=%s tools=%d", cr.agentOwner, cr.target.ID, cr.subSessionID, len(trace))
+		appendSessionDiag(cr.runtimeDB, cr.target.ID, cr.subSessionID, "empty-reply", detail)
 	}
+}
+
+func (cr *continuingRun) saveExchange() {
+	run := cr.run
+	T := cr.T
 	// Persist the new exchange for the next continuation.
 	now := time.Now()
 	// Sender carries the author for channel-room transcripts: the inbound
@@ -2361,7 +2521,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// anonymous as before.
 	assistantSender := ""
 	if run.MessageSender != "" {
-		assistantSender = target.Name
+		assistantSender = cr.target.Name
 	}
 	// Persist under the per-session append lock and re-read first, so a
 	// recorded-only channel message that was mirrored into this same session
@@ -2372,15 +2532,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// What this reply is sending out goes to the transport as bytes and to the
 	// stored thread as ids, so opening the conversation on the web later shows
 	// the picture the contact received rather than a reply describing one.
-	deliveredIDs := keepDeliveredAttachments(subSess.Username, subSess.Images)
-	deliveredFiles := keepDeliveredFiles(subSess.Username, subSess.Videos, subSess.Files)
-	withSessionAppend(target.ID, subSessionID, func() {
-		baseCount := len(priorSession.Messages)
-		if latest, ok := loadChatSession(runtimeDB, target.ID, subSessionID); ok && len(latest.Messages) > baseCount {
-			priorSession.Messages = append(priorSession.Messages, latest.Messages[baseCount:]...)
+	deliveredIDs := keepDeliveredAttachments(cr.subSess.Username, cr.subSess.Images)
+	deliveredFiles := keepDeliveredFiles(cr.subSess.Username, cr.subSess.Videos, cr.subSess.Files)
+	withSessionAppend(cr.target.ID, cr.subSessionID, func() {
+		baseCount := len(cr.priorSession.Messages)
+		if latest, ok := loadChatSession(cr.runtimeDB, cr.target.ID, cr.subSessionID); ok && len(latest.Messages) > baseCount {
+			cr.priorSession.Messages = append(cr.priorSession.Messages, latest.Messages[baseCount:]...)
 		}
-		priorSession.Messages = append(priorSession.Messages,
-			storedRunInput(run, deliveredMessage, now),
+		cr.priorSession.Messages = append(cr.priorSession.Messages,
+			storedRunInput(run, cr.deliveredMessage, now),
 			// ToolCalls is what a replayed turn shows as its tool chips, and
 			// this path never set it — so a channel turn opened later in
 			// cortex showed the reply with no sign of the six tools behind it,
@@ -2389,18 +2549,22 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			// then dropped. Same field, same shape, same renderer as runner.go
 			// and scheduled_updates.go; a rule on one side of that symmetry is
 			// a bug.
-			ChatMessage{Role: "assistant", Content: cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs, Files: deliveredFiles, ToolCalls: turnToolCalls},
+			ChatMessage{Role: "assistant", Content: cr.cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs, Files: deliveredFiles, ToolCalls: cr.turnToolCalls},
 		)
 		// Bound STORAGE the same way the Cortex home thread does (runner.go
 		// handleSend): drop leading messages already folded into the summary
 		// AND archived to recall, cursor kept consistent. Without this, a
 		// long-lived channel / phantom thread grew without limit and was
 		// loaded whole every turn.
-		priorSession.Messages = T.trimStoredHistory(runtimeDB, target, subSessionID, priorSession.Messages)
-		if _, serr := saveChatSession(runtimeDB, priorSession); serr != nil {
-			Log("[orchestrate.RunAgentSyncContinuing] WARN failed to persist sub-session %s: %v", subSessionID, serr)
+		cr.priorSession.Messages = T.trimStoredHistory(cr.runtimeDB, cr.target, cr.subSessionID, cr.priorSession.Messages)
+		if _, serr := saveChatSession(cr.runtimeDB, cr.priorSession); serr != nil {
+			Log("[orchestrate.RunAgentSyncContinuing] WARN failed to persist sub-session %s: %v", cr.subSessionID, serr)
 		}
 	})
+}
+
+func (cr *continuingRun) collectMedia() {
+	run := cr.run
 	// Attachments: the agent may deliver an image either by calling
 	// workspace(action="attach") — which folds into subSess.Images — OR by the
 	// fire-and-forget [ATTACH: file] reply-text marker. The channel auto-reply
@@ -2413,8 +2577,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// observed failure took: "On it — let me grab some reference photos", no tool
 	// call, turn over — and then the next message ("are you really?") answered by
 	// a model with no idea it had promised anything.
-	recordTurnCommitment(runtimeDB, subSessionID, cleanReply, modelCalls > 0)
-	imgs, vids := collectMessageMedia(subSess, cleanReply)
+	recordTurnCommitment(cr.runtimeDB, cr.subSessionID, cr.cleanReply, cr.modelCalls > 0)
+	cr.imgs, cr.vids = collectMessageMedia(cr.subSess, cr.cleanReply)
 	// Phantom-delivery backstop: the model produced a file (find/generate/fetch)
 	// but never called workspace(attach), then wrote a reply CLAIMING it sent it
 	// ("here are the pics") — so collectMessageMedia found nothing and the reply
@@ -2422,48 +2586,47 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// to and attach it, turning the phantom delivery into a real one. Scoped to a
 	// delivery claim (the model's own vetting signal), so it only ships what the
 	// model said it's sending. Does NOT depend on the model doing anything.
-	phantomDelivery := false
-	if len(imgs) == 0 && len(vids) == 0 {
+	cr.phantomDelivery = false
+	if len(cr.imgs) == 0 && len(cr.vids) == 0 {
 		// Name the markers that pointed at nothing. This is the shape the logs
 		// kept showing: a reply consisting of ONE delivery marker, the file
 		// already cleaned up by an earlier attach, the marker resolving to
 		// nothing, and the whole reply stripping to empty — delivered to the
 		// contact as "I wasn't able to put together a response to that".
-		if missing := unresolvedAttachMarkers(subSess, cleanReply); len(missing) > 0 {
+		if missing := unresolvedAttachMarkers(cr.subSess, cr.cleanReply); len(missing) > 0 {
 			// Nothing attached, nothing recoverable, and the reply names a file
 			// that does not exist: the turn promised a picture it never made.
 			// Carried out so the caller can say something true about it instead
 			// of asking the person to rephrase a request that was fine.
-			phantomDelivery = true
+			cr.phantomDelivery = true
 			Log("[orchestrate.dispatch] reply carried %d delivery marker(s) that resolve to nothing: %v", len(missing), missing)
-			appendSessionDiag(runtimeDB, target.ID, subSessionID, "attach-marker-unresolved",
+			appendSessionDiag(cr.runtimeDB, cr.target.ID, cr.subSessionID, "attach-marker-unresolved",
 				fmt.Sprintf("The reply asked to send %v, but no such file was in the workspace: most often because an earlier attach already delivered it with cleanup=true. Nothing was attached; the framework recovered the most recent staged file where it could.", missing))
 		}
-		if staged := recoverStagedDeliverable(subSess, cleanReply, turnProducedDeliverable(turnToolCalls)); staged != "" {
-			if b64 := resolveWorkspaceImages(subSess, []string{staged}); len(b64) > 0 {
+		if staged := recoverStagedDeliverable(cr.subSess, cr.cleanReply, turnProducedDeliverable(cr.turnToolCalls)); staged != "" {
+			if b64 := resolveWorkspaceImages(cr.subSess, []string{staged}); len(b64) > 0 {
 				Log("[orchestrate.dispatch] reply claimed a delivery but attached nothing: backstop attaching staged %q", staged)
 				if isVideoAttachment(staged) {
-					vids = append(vids, b64...)
+					cr.vids = append(cr.vids, b64...)
 				} else {
-					imgs = append(imgs, b64...)
+					cr.imgs = append(cr.imgs, b64...)
 				}
 			}
 		}
 	}
 	// Status already finalized above (runOutcomeStatus) — reaching here is the
 	// success case, already marked Completed.
-	if len(imgs) > 0 || len(vids) > 0 {
-		phantomDelivery = false // the backstop recovered something after all
+	if len(cr.imgs) > 0 || len(cr.vids) > 0 {
+		cr.phantomDelivery = false // the backstop recovered something after all
 	}
-	if ask.asked() {
-		Log("[orchestrate.RunAgentSyncContinuing] %s asked the user a question through delegator=%s", target.Name, run.DelegatorAgentID)
-		cleanReply = delegatedRelay(target.Name, cleanReply)
-	} else if ask != nil && endsWithQuestionForUser(cleanReply) {
+	if cr.ask.asked() {
+		Log("[orchestrate.RunAgentSyncContinuing] %s asked the user a question through delegator=%s", cr.target.Name, run.DelegatorAgentID)
+		cr.cleanReply = delegatedRelay(cr.target.Name, cr.cleanReply)
+	} else if cr.ask != nil && endsWithQuestionForUser(cr.cleanReply) {
 		// Asked in prose instead of through ask_user: still the user's question.
-		Log("[orchestrate.RunAgentSyncContinuing] %s ended on a question for the user, relayed through delegator=%s", target.Name, run.DelegatorAgentID)
-		cleanReply = delegatedProseRelay(target.Name, cleanReply)
+		Log("[orchestrate.RunAgentSyncContinuing] %s ended on a question for the user, relayed through delegator=%s", cr.target.Name, run.DelegatorAgentID)
+		cr.cleanReply = delegatedProseRelay(cr.target.Name, cr.cleanReply)
 	}
-	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap, PhantomDelivery: phantomDelivery, ToolCalls: turnToolCalls, Silenced: subSess != nil && subSess.Silenced}, nil
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-

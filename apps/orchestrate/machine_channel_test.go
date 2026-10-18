@@ -121,7 +121,7 @@ func TestWakesRunWithoutTheMachine(t *testing.T) {
 		t.Skip("source unavailable")
 	}
 	if !strings.Contains(string(disp), `strings.TrimSpace(run.InputReportFrom) == "" {
-		subTurn.enterDispatchMachine(`) {
+		cr.subTurn.enterDispatchMachine(`) {
 		t.Error("a monitor wake on the continuing path must not enter the machine")
 	}
 }
@@ -338,7 +338,7 @@ func TestADelegationResumesTheMachineWhereItLeftOff(t *testing.T) {
 	if !strings.Contains(body, `"dispatch:delegated:" + chain[len(chain)-1] + ":" + target.ID`) {
 		t.Error("a delegation no longer keeps its machine on a thread per delegator")
 	}
-	if strings.Count(body, "subTurn.completeMachine(subTurn.machine)") != 2 {
+	if strings.Count(body, "subTurn.completeMachine(subTurn.machine)")+strings.Count(body, "cr.subTurn.completeMachine(cr.subTurn.machine)") != 2 {
 		t.Error("both dispatch paths in agent_dispatch.go should hand the machine off after the turn")
 	}
 }
@@ -352,7 +352,7 @@ func TestEveryDispatchPathNotesTheAgentsAttachments(t *testing.T) {
 		if err != nil {
 			t.Skip("source unavailable")
 		}
-		if n := strings.Count(string(src), "subTurn.noteAgentAttachments(subSess)\n\t"); n != want {
+		if n := strings.Count(string(src), "subTurn.noteAgentAttachments(subSess)\n\t") + strings.Count(string(src), "cr.subTurn.noteAgentAttachments(cr.subSess)\n\t"); n != want {
 			t.Errorf("%s notes the agent's attachments %d time(s), want %d", file, n, want)
 		}
 	}
