@@ -30,7 +30,7 @@
      chat content, and a README image is in git history for good. Drop the files
      at the paths below and these render as-is. -->
 
-![The Gohort dashboard: every installed app on one page, running from a single binary](docs/images/dashboard-overview.png)
+![The Gohort dashboard: every installed app on one page, running from a single binary](docs/images/dashboard-2026-10-18.png)
 
 You still talk to one thing, and it takes any job. The trick is that it never does one alone: a front agent reads what you want and hands it to whichever agent owns that part, each with its own tools, its own memory, and the right to delegate further. Gohort is the odd-job man who knows a specialist for everything, and whose real skill is knowing who to call.
 
@@ -120,7 +120,7 @@ It drafts an API credential for the status endpoint, authors a poll connector th
 
 That's the loop: **describe it, approve it, it runs.**
 
-![An agent turn: the reply alongside the tool calls that produced it](docs/images/agent-turn.png)
+![An agent turn: the reply alongside the tool calls that produced it](docs/images/agent-turn-2026-10-18.png)
 
 ## The primitives, and everything else in the box
 
@@ -231,7 +231,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 
 Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 
-![The administrator console: one tab per operator concern, from models and credentials to governance and maintenance](docs/images/admin.png)
+![The administrator console: one tab per operator concern, from models and credentials to governance and maintenance](docs/images/admin-2026-10-18.png)
 
 ## Companion client
 

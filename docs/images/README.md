@@ -5,8 +5,9 @@ Images referenced from the top-level `README.md`:
 | file | what it shows | where it appears |
 |---|---|---|
 | `wordmark-dark.svg`, `wordmark-light.svg` | the logo: the favicon's three squares and GOHORT in the dashboard's block letters, one per GitHub theme (a `<picture>` picks) | the very top, with the same logo as text in a comment below it for raw readers |
-| `dashboard-overview.png` | the dashboard with its apps: the "this is a platform, not a bot" shot. Taken from a public-only build (`git archive` export, no private apps) on a fresh instance, a placeholder `admin` account, and a worker model set so the setup notice is absent | under the badges, above **Three ways to think about it** |
-| `agent-turn.png` | one agent turn with its tool trace visible: the reply *and* what produced it | under **What it looks like in practice**, making the status-page story concrete |
+| `dashboard-2026-10-18.png` | the dashboard with its apps and one agent card: the "this is a platform, not a bot" shot. Taken from a public-only build (`git archive` export, no private apps) on a fresh instance, a placeholder `admin` account, and a worker model set so the setup notice is absent | under the badges, above **Three ways to think about it** |
+| `agent-turn-2026-10-18.png` | one agent turn with its tool trace open: the reply *and* what produced it | under **What it looks like in practice**, making the status-page story concrete |
+| `admin-2026-10-18.png` | the administrator console's System Status: its tabs, and the sandbox it reports | near the end, beside the administrator section |
 
 The logo copies the app's, it is not a separate design: the letter grid is the
 dashboard masthead's (`core/dashboard_page.go`), one rect per run of blocks, and
@@ -22,6 +23,12 @@ contacts and real conversation content, and a README image lives in git history
 
 A fresh `--setup` with a little demo data is the right source, and has a useful
 side effect: it exercises the first-run experience a release actually ships.
+
+The 2026-10-18 set: an assistant named Moneypenny made from the Assistant shape,
+one question to it ("What time is it right now in Tokyo and in London, and how
+many days are left until 25 December?"), its card shown in the dashboard's
+Agents section, 1440 px wide at 2x in the dark scheme. A headless browser needs
+a colour emoji font (Noto Color Emoji) or the icons draw as empty boxes.
 
 ## Keep them light and slow-moving
 
